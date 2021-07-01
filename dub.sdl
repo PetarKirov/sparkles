@@ -5,3 +5,5 @@ copyright "Copyright © 2023, Petar Kirov"
 license "BSL-1.0"
 
 targetPath "build"
+
+subPackage "libs/core-cli"

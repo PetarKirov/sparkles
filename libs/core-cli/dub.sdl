@@ -1,0 +1,11 @@
+name "core-cli"
+description "A library for CLI apps"
+authors "Petar Kirov"
+copyright "Copyright © 2021, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+
+#dflags "-checkaction=context"
+#dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="dmd"
+#dflags "--link-defaultlib-shared" "--linker=gold" platform="ldc"
