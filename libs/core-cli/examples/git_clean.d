@@ -1,15 +1,54 @@
+#!/usr/bin/env dub
+
+/+ dub.sdl:
+name "git-clean"
+dependency "sparkles:core-cli" version="*"
+targetPath "build"
++/
+
 import sparkles.core_cli.args;
 
-void main()
+struct CliParams
 {
-    args.parseCliArgs(
+    @cliOption!`d`
+    bool deleteDirectories;
+
+    @cliOption!`f|force`
+    bool force;
+
+    @cliOption!`i|interactive`
+    bool interactive;
+
+    @CliOption(`n|dry-run`, "Don’t actually remove anything, just show what would be done.")
+    bool dryRun;
+
+    @cliOption!`q|quiet`
+    bool quiet;
+
+    @cliOption!`e|exclude`
+    string excludePattern;
+
+    @cliOption!`x`
+    bool deleteUntracked;
+
+    @cliOption!`X`
+    bool deleteIgnored;
+}
+
+void main(string[] args)
+{
+    import std.string : split, stripRight;
+    const cli = args.parseCliArgs!CliParams(
         HelpInfo(
-            "git-clean",
+            "git clean",
             "Remove untracked files from the working tree",
+            importSections!([
+                "description",
+                "interactive mode"
+            ])
         ),
-        "c|count", "How many contracts to verify", &count,
-        "s|skip", "How many contracts to skip verifying from the list. Default is 0.", &skipContractsCount,
-        "n|network", "Network id identifying the 'networks/<id>[_args].json' file to use", &network,
-        "p|parallel", "Enable parallel verification", &parallel,
     );
+
+    import std.stdio : writeln;
+    cli.writeln;
 }

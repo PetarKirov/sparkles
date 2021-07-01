@@ -1,0 +1,1 @@
+Remove only files ignored by Git. This may be useful to rebuild everything from scratch, but keep manually created files.

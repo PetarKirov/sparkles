@@ -15,15 +15,19 @@ alias SectionText = string[];
 alias Sections = SectionText[SectionName];
 struct HelpInfo { string programName, shortDescription; Sections sections; }
 
-string formatProgramManual(HelpInfo info, Option[] options)
+string formatProgramManual(HelpInfo info, Option[] options, uint wrapColumn = 80)
 {
+    auto fmtSection(string name, string[] text) { return formatSection(name, text, wrapColumn); }
+    auto fmtOption(Option o) { return formatOption(o, wrapColumn); }
+
     return "%-(%s\n%)".format(
         [
-            formatSection("name", [info.programName.sty.bold ~ " - " ~ info.shortDescription]),
-            formatSection("synopsis", [formatSynopsis(info.programName, options)]),
+            fmtSection("name", [info.programName.sty.bold ~ " - " ~ info.shortDescription]),
+            fmtSection("synopsis", [formatSynopsis(info.programName, options)]),
+            fmtSection("description", info.sections.get("description", null)),
+            formatSection("options", options.map!(o => o.formatOption(wrapColumn)).array, 0)
         ].chain(
-            info.sections.byPair.map!(pair => formatSection(pair.expand)),
-            [formatSection("options", options.map!formatOption.array, false)],
+            info.sections.byPair.filter!(x => x.key != "description").map!(pair => fmtSection(pair.expand)),
         )
     );
 }
@@ -32,32 +36,33 @@ string formatSynopsis(string programName, Option[] options)
 {
     return "%s %-(%s %)".format(
         programName,
-        options.map!(o => o.required ? o.optLong : '[' ~ o.optLong ~ ']')
+        options.map!(o => o.required ? o.optShort : '[' ~ o.optShort ~ ']')
     );
 }
 
 auto optional(string s)
 {
-    return choose(!s.ptr || !s.length, string[].init, [s]);
+    return !s.ptr || !s.length ? string[].init : [s];
 }
 
-string formatOption(Option o)
+string formatOption(Option o, uint wrapColumn = 80)
 {
-    return "\n\t%-(%s, %)\n%s".format(
+    return "\t%-(%s, %)\n%s".format(
         o.optShort.optional.chain(o.optLong.optional).map!(x => x.sty.bold),
-        o.help.wrap(80, "\t    ", "\t    ")
+        o.help.wrap(wrapColumn, "\t    ", "\t    ")
     );
 }
 
 string formatSection(
     string name,
     string[] text,
-    bool autoWrap = true,
-    string indent = "\t")
+    uint wrapColumn = 80,
+    string indent = "\t",
+    )
 {
-    return "%s\n%-(%s\n%)".format(
+    return !text ? null : "%s\n%-(%s\n%)".format(
         name.toUpper.sty.bold,
-        text.map!(t => autoWrap ? t.wrap(80, indent, indent) : t)
+        text.map!(t => wrapColumn ? t.wrap(wrapColumn, indent, indent) : t)
     );
 }
 
