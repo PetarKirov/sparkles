@@ -7,3 +7,4 @@ license "BSL-1.0"
 targetPath "build"
 
 subPackage "libs/core-cli"
+subPackage "libs/test-utils"

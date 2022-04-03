@@ -1,0 +1,11 @@
+name "test-utils"
+authors "Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+
+dflags  "-preview=in" "-preview=dip1000"
+
+configuration "unittest" {
+  excludedSourceFiles "src/app.d"
+}
