@@ -9,3 +9,5 @@ targetPath "build"
 #dflags "-checkaction=context"
 #dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="dmd"
 #dflags "--link-defaultlib-shared" "--linker=gold" platform="ldc"
+
+dependency "sparkles:test-utils" version="*"
