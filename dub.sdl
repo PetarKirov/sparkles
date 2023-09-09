@@ -1,0 +1,7 @@
+name "sparkles"
+description "D library"
+authors "Petar Kirov"
+copyright "Copyright © 2023, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
