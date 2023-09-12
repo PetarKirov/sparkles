@@ -1,0 +1,1 @@
+Show what would be done and clean files interactively. See “Interactive mode” for details.

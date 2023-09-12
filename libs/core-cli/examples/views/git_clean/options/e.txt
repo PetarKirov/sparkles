@@ -1,0 +1,1 @@
+Use the given exclude pattern in addition to the standard ignore rules (see gitignore(5)).

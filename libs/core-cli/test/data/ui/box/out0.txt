@@ -1,0 +1,4 @@
+Device: '/dev/nvme0n1' <- '/dev/disk/by-id/nvme-Samsung_SSD_980_PRO_2TB_S69ENF0R823182M'
+Size: [1m1.8TiB[0;10m (2000398934016 bytes)
+Sector size: [1m512B[0;10m (512 bytes)
+Alignment: [1m1.0MiB[0;10m (1048576 bytes)
