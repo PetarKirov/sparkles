@@ -5,8 +5,8 @@ module sparkles.core_cli.term_unstyle;
 auto unstyle(R)(R range)
 {
     import std.regex : regex, replaceAll;
-    const re = "\x1B\\[([0-9]{1,2}(;[0-9]{1,2})*)?[m|K]";
-    return range.replaceAll(regex(re), "");
+    const pattern = regex(`\x1B\[[0-9;]*[A-Za-z]`);
+    return range.replaceAll(pattern, "");
 }
 
 unittest
