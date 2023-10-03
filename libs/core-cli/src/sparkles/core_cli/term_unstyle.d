@@ -9,6 +9,29 @@ auto unstyle(R)(R range)
     return range.replaceAll(pattern, "");
 }
 
+version (unittest)
+{
+    import std.traits : EnumMembers;
+    import sparkles.core_cli.term_style : Style, stylize;
+
+    alias Seq(T...) = T;
+
+    alias nonColorStyles = Seq!(Style.bold, Style.dim, Style.italic,
+        Style.underline, Style.inverse, Style.strikethrough);
+    static immutable colorStyles = [EnumMembers!Style[9 .. $]];
+
+    @safe string[] styleInAllPossibleWays(string text)
+    {
+        string[] table;
+        foreach (i, color; colorStyles)
+            static foreach (j; 0 .. nonColorStyles.length)
+                table ~= text
+                    .stylize(nonColorStyles[j])
+                    .stylize(color);
+        return table;
+    }
+}
+
 unittest
 {
     import sparkles.core_cli.term_style : stylizedTextBuilder;
@@ -28,6 +51,12 @@ unittest
     );
 
     assert(styledText.payload.unstyle == "Format me");
+
+    const text = "42";
+    const table = styleInAllPossibleWays(text);
+
+    foreach (el; table)
+        assert(el.unstyle == text);
 }
 
 size_t unstyledLength(R)(R range)
