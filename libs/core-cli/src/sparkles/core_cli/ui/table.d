@@ -86,7 +86,9 @@ in (hasRectangularShape(cells))
         result ~= props.verticalLine;
         foreach (i, cell; row)
         {
-            result ~= format(" %-*s ", maxColWidths[i], cell);
+            // Pad manually based on unstyled length to handle ANSI escape codes
+            const padding = maxColWidths[i] - unstyledLength(cell);
+            result ~= " " ~ cell ~ ' '.repeat(padding).to!string ~ " ";
             if (i < numCols - 1)
                 result ~= props.verticalLine;
         }
@@ -140,4 +142,35 @@ unittest
         │ c   │ asdasd │
         ╰─────┴────────╯
         `.outdent(2));
+}
+
+@("drawTable.styledContent")
+@system unittest
+{
+    import sparkles.core_cli.term_style : Style, stylize;
+    import sparkles.test_utils.string : outdent;
+    import std.stdio;
+
+    void check(string actual, string expected)
+    {
+        import sparkles.test_utils;
+        if (actual != expected)
+        {
+            diffWithTool(actual, expected, false, DiffTools.deltaUserConfig).writeln;
+            assert(0);
+        }
+    }
+
+    // Test that styled content is properly aligned
+    // "OK" styled with green should still align with "Warning"
+    check(drawTable([
+        ["Status", "Value"],
+        ["OK".stylize(Style.green), "Good"],
+        ["Warning".stylize(Style.yellow), "Check"],
+    ]),
+        "╭─────────┬───────╮\n" ~
+        "│ Status  │ Value │\n" ~
+        "│ \x1b[32mOK\x1b[39m      │ Good  │\n" ~
+        "│ \x1b[33mWarning\x1b[39m │ Check │\n" ~
+        "╰─────────┴───────╯\n");
 }
