@@ -6,6 +6,7 @@ import std.range : walkLength, repeat, iota;
 import std.format : format;
 
 import sparkles.core_cli.ui.box : BoxProps;
+import sparkles.core_cli.term_unstyle : unstyledLenght;
 
 bool hasRectangularShape(T)(const T[][] array)
 {
@@ -35,7 +36,7 @@ in (hasRectangularShape(cells))
 {
     return cells[0].length
         .iota
-        .map!(col => cells.map!(row => row[col].length).maxElement())
+        .map!(col => cells.map!(row => unstyledLenght(row[col])).maxElement())
         .array;
 }
 

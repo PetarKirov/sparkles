@@ -5,8 +5,31 @@ module sparkles.core_cli.term_unstyle;
 auto unstyle(R)(R range)
 {
     import std.regex : regex, replaceAll;
-    const re = "\x1B\\[([0-9]{1,2}(;[0-9]{1,2})*)?[m|K]";
-    return range.replaceAll(regex(re), "");
+    const pattern = regex(`\x1B\[[0-9;]*[A-Za-z]`);
+    return range.replaceAll(pattern, "");
+}
+
+version (unittest)
+{
+    import sparkles.core_cli.term_style;
+    import std;
+
+    alias Seq(T...) = T;
+
+    alias nonColorStyles = Seq!(Style.bold, Style.dim, Style.italic,
+        Style.underline, Style.inverse, Style.strikethrough);
+    static immutable colorStyles = [EnumMembers!Style[9 .. $]];
+
+    @safe string[] styleInAllPossibleWays(string text)
+    {
+        string[] table;
+        foreach (i, color; colorStyles)
+            static foreach(j; 0 .. nonColorStyles.length)
+                table ~= text
+                    .stylize(nonColorStyles[j])
+                    .stylize(color);
+        return table;
+    }
 }
 
 unittest
@@ -28,6 +51,12 @@ unittest
     );
 
     assert(styledText.payload.unstyle == "Format me");
+
+    const text = "42";
+    const table = styleInAllPossibleWays(text);
+
+    foreach (el; table)
+        assert(el.unstyle == text);
 }
 
 size_t unstyledLenght(R)(R range)
