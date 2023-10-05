@@ -6,6 +6,7 @@ import std.range : walkLength, repeat, iota;
 import std.format : format;
 
 import sparkles.core_cli.ui.box : BoxProps;
+import sparkles.core_cli.term_unstyle : unstyledLenght;
 
 bool hasRectangularShape(T)(const T[][] array)
 {
@@ -35,7 +36,7 @@ in (hasRectangularShape(cells))
 {
     return cells[0].length
         .iota
-        .map!(col => cells.map!(row => row[col].length).maxElement())
+        .map!(col => cells.map!(row => unstyledLenght(row[col])).maxElement())
         .array;
 }
 
@@ -76,9 +77,18 @@ in (hasRectangularShape(cells))
         props.topRight);
 
     foreach (row; cells)
-        result ~= format("%s %-(%s%| | %) %s\n", props.verticalLine,
-            row,
-            props.verticalLine);
+    {
+        result ~= format("%s", props.verticalLine);
+        foreach (i, cell; row)
+        {
+            result ~= format(
+                " %s%-(%s%) %s",
+                cell,
+                " ".repeat(maxColumnWidths[i] - unstyledLenght(cell)),
+                props.verticalLine);
+        }
+        result ~= "\n";
+    }
 
     result ~= format("%s%s%s\n",
         props.bottomLeft,
@@ -114,9 +124,9 @@ unittest
         `.outdent(2));
 
     check(drawTable([["123", "ab"], ["c", "asdasd"]]), `
-        ╭─────┬────────╮
+        ╭──────────────╮
         │ 123 │ ab     │
         │ c   │ asdasd │
-        ╰─────┴────────╯
+        ╰──────────────╯
         `.outdent(2));
 }
