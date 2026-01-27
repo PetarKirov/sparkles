@@ -1,18 +1,25 @@
 {
   inputs = {
-    nixpkgs.url = github:NixOS/nixpkgs/nixos-unstable;
+    mcl-nixos-modules.url = "github:metacraft-labs/nixos-modules";
 
-    flake-parts = {
-      url = "github:hercules-ci/flake-parts";
-      inputs.nixpkgs-lib.follows = "nixpkgs";
-    };
+    nixpkgs.follows = "mcl-nixos-modules/nixpkgs";
+    flake-parts.follows = "mcl-nixos-modules/flake-parts";
   };
 
-  outputs = inputs @ {flake-parts, ...}:
-    flake-parts.lib.mkFlake {inherit inputs;} {
-      systems = ["x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin"];
-      perSystem = {pkgs, ...}: {
-        devShells.default = import ./nix/shells/default.nix {inherit pkgs;};
-      };
+  outputs =
+    inputs@{ flake-parts, mcl-nixos-modules, ... }:
+    flake-parts.lib.mkFlake { inherit inputs; } {
+      imports = [
+        mcl-nixos-modules.modules.flake.git-hooks
+      ];
+      systems = [
+        "x86_64-linux"
+        "aarch64-darwin"
+      ];
+      perSystem =
+        { pkgs, ... }:
+        {
+          devShells.default = import ./nix/shells/default.nix { inherit pkgs; };
+        };
     };
 }
