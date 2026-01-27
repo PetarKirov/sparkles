@@ -1,8 +1,14 @@
 # Nix
+.result/
 result
+result-*
 
 # Direnv
 .direnv/
+.env
+
+# Pre Commit
+.pre-commit-config.yaml
 
 # build artifact dir
 build/
