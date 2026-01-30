@@ -1,4 +1,4 @@
-{pkgs}:
+{ pkgs }:
 pkgs.mkShell {
   packages = with pkgs; [
     # devshell niceties
@@ -9,6 +9,8 @@ pkgs.mkShell {
     ldc
     dtools
     dub
+
+    mold
   ];
 
   shellHook = ''
