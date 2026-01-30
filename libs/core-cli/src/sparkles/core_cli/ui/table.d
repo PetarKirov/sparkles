@@ -1,6 +1,7 @@
 module sparkles.core_cli.ui.table;
 
 import std.array : array;
+import std.conv : to;
 import std.algorithm : map, all, maxElement, sum;
 import std.range : walkLength, repeat, iota;
 import std.format : format;
@@ -63,27 +64,46 @@ unittest
 string drawTable(string[][] cells, BoxProps props = BoxProps.init)
 in (hasRectangularShape(cells))
 {
-    size_t[] maxColumnWidths = columnWidths(cells);
+    size_t[] maxColWidths = columnWidths(cells);
+    size_t numCols = maxColWidths.length;
 
-    size_t fullWidth = maxColumnWidths.sum +
-        (maxColumnWidths.length - 1) * 3 +
-        4;
-
+    // Build top border with column separators
     string result;
-    result ~= format("%s%s%s\n",
-        props.topLeft,
-        props.horizontalLine.repeat(fullWidth - 2),
-        props.topRight);
+    result ~= props.topLeft;
+    foreach (i, width; maxColWidths)
+    {
+        result ~= props.horizontalLine.repeat(width + 2).to!string;
+        if (i < numCols - 1)
+            result ~= '┬';
+    }
+    result ~= props.topRight;
+    result ~= '\n';
 
+    // Build each row with padded cells
     foreach (row; cells)
-        result ~= format("%s %-(%s%| | %) %s\n", props.verticalLine,
-            row,
-            props.verticalLine);
+    {
+        result ~= props.verticalLine;
+        foreach (i, cell; row)
+        {
+            result ~= format(" %-*s ", maxColWidths[i], cell);
+            if (i < numCols - 1)
+                result ~= props.verticalLine;
+        }
+        result ~= props.verticalLine;
+        result ~= '\n';
+    }
 
-    result ~= format("%s%s%s\n",
-        props.bottomLeft,
-        props.horizontalLine.repeat(fullWidth - 2),
-        props.bottomRight);
+    // Build bottom border with column separators
+    result ~= props.bottomLeft;
+    foreach (i, width; maxColWidths)
+    {
+        result ~= props.horizontalLine.repeat(width + 2).to!string;
+        if (i < numCols - 1)
+            result ~= '┴';
+    }
+    result ~= props.bottomRight;
+    result ~= '\n';
+
     return result;
 }
 
