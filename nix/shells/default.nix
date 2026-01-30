@@ -1,16 +1,22 @@
 { pkgs }:
+let
+  inherit (pkgs) lib;
+  inherit (pkgs.stdenv.hostPlatform) system;
+in
 pkgs.mkShell {
-  packages = with pkgs; [
+  packages = [
     # devshell niceties
-    figlet
+    pkgs.figlet
 
     # D toolchain
-    dmd
-    ldc
-    dtools
-    dub
+    pkgs.ldc
+    pkgs.dtools
+    pkgs.dub
 
-    mold
+    pkgs.mold
+  ]
+  ++ lib.optionals (system == "x86_64-linux") [
+    pkgs.dmd
   ];
 
   shellHook = ''
