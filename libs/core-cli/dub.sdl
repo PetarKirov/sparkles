@@ -16,7 +16,7 @@ configuration "unittest" {
     dependency "sparkles:test-utils" version="*"
 
     dflags "-checkaction=context" "-allinst"
-    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="dmd"
-    dflags "--link-defaultlib-shared" "--linker=gold" platform="ldc"
-    lflags "--export-dynamic" platform="ldc"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
 }
