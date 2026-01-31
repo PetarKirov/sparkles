@@ -1,4 +1,4 @@
-{ pkgs }:
+{ config, pkgs }:
 let
   inherit (pkgs) lib;
   inherit (pkgs.stdenv.hostPlatform) system;
@@ -27,5 +27,6 @@ pkgs.mkShell {
 
   shellHook = ''
     figlet 'sparkles : *'
-  '';
+  ''
+  + config.pre-commit.installationScript;
 }
