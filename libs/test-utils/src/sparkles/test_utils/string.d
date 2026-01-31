@@ -35,16 +35,16 @@ unittest
 {
     import std.array : array;
     import std.string : splitLines;
-	auto s = "
+    auto s = "
     Transaction {
-      from: 0xDcE029Dc77087DE89ED1B9DAe8b6007272fbFc2A
-      to: 0x2bc71FD2010fD525885491ff0Db7C530F1a207E4
+        from: 0xDcE029Dc77087DE89ED1B9DAe8b6007272fbFc2A
+        to: 0x2bc71FD2010fD525885491ff0Db7C530F1a207E4
     }".outdent;
 
     assert(s.array.splitLines == [
         "Transaction {"d,
-        "  from: 0xDcE029Dc77087DE89ED1B9DAe8b6007272fbFc2A",
-        "  to: 0x2bc71FD2010fD525885491ff0Db7C530F1a207E4",
+        "    from: 0xDcE029Dc77087DE89ED1B9DAe8b6007272fbFc2A",
+        "    to: 0x2bc71FD2010fD525885491ff0Db7C530F1a207E4",
         "}"
-	]);
+    ]);
 }

@@ -100,4 +100,3 @@ template CliParamsStructToDescription(alias S)
         getSymbolsByUDA!(S, CliOption)
     )].format!"%(%(\"%s\", \"%s\", &result.%s%),\n%)";
 }
-
