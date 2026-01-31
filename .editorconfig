@@ -10,7 +10,7 @@ indent_style = space
 indent_size = 2
 max_line_length = 80
 
-[*.{d,h,hpp,c,cpp,cxx,cs,hs,java,kt,py,rs,sol}]
+[*.{d,h,hpp,c,cpp,cxx,cs,hs,java,kt,py,rs,sol,sdl}]
 indent_size = 4
 
 [{Makefile,go.mod,go.sum,*.go,.gitmodules}]
