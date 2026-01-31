@@ -32,8 +32,13 @@ jobs:
         include:
           - runner: ubuntu-latest
             system: x86_64-linux
+            DC: ldc2
+          - runner: ubuntu-latest
+            system: x86_64-linux
+            DC: dmd
           - runner: macos-latest
             system: aarch64-darwin
+            DC: ldc2
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
