@@ -1,7 +1,8 @@
 module sparkles.core_cli.term_size;
 
 // TODO: upstream
-version (linux) enum SIGWINCH = 28;
+version (linux)  enum SIGWINCH = 28;
+version (OSX)    enum SIGWINCH = 28;
 
 import core.sys.posix.signal : signal;
 
