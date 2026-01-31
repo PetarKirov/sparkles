@@ -19,3 +19,8 @@ indent_size = 4
 [{CMakeLists.txt,*.cmake}]
 indent_size = 2
 indent_style = space
+
+# Disable indent checking for prettyprint.d - contains multiline string literals
+# with intentional 2-space indentation for expected test output
+[libs/core-cli/src/sparkles/core_cli/prettyprint.d]
+indent_size = unset
