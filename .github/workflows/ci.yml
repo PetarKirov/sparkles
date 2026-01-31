@@ -17,6 +17,14 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lint:
+    uses: metacraft-labs/nixos-modules/.github/workflows/reusable-lint.yml@main
+    with:
+      runner: '["ubuntu-latest"]'
+    secrets:
+      NIX_GITHUB_TOKEN: ${{ github.token }}
+      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+
   test:
     strategy:
       fail-fast: false
