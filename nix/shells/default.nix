@@ -8,6 +8,9 @@ pkgs.mkShell {
     # devshell niceties
     pkgs.figlet
 
+    # Pre-commit hooks
+    pkgs.prek
+
     # D toolchain
     pkgs.ldc
     pkgs.dtools
