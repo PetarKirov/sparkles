@@ -515,7 +515,7 @@ version (unittest)
             string file = __FILE__, size_t line = __LINE__)
     {
         import std.exception : assumeUnique;
-        import sparkles.core_cli.lifetime : staticInstance;
+        import sparkles.core_cli.lifetime : recycledInstance;
 
         static char[16 * 1024] buf;
         static size_t len;
@@ -553,7 +553,7 @@ version (unittest)
             writer.put(middle);
             writer.put(actual);
 
-            throw staticInstance!AssertError(
+            throw recycledInstance!AssertError(
                 buf[len .. *writer.plen].assumeUnique,
                 file, line);
         }

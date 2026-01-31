@@ -6,32 +6,45 @@ import core.lifetime : emplace;
  * Returns a reference to a thread-local static instance of type `T`,
  * (re)initialized with the provided arguments.
  *
- * This is useful for throwing `Error`s in `@nogc` code, where allocating
- * new objects is not allowed, but reusing a static instance is permitted.
+ * The instance is "recycled" - the same memory location is reused across
+ * calls. Each call reinitializes the instance with new arguments, which
+ * means any previously obtained references will see the updated values.
+ *
+ * This is primarily useful for throwing `Error`s in `@nogc` code, where
+ * allocating new objects is not allowed, but reusing a static instance
+ * is permitted.
+ *
+ * For structs, the destructor is called before reinitialization. For
+ * classes, destructors are NOT called (to maintain `@nogc` compatibility),
+ * so class types used with this function should not hold resources that
+ * require cleanup.
+ *
+ * Warning: Do not store references across multiple calls - they will be
+ * invalidated when the instance is recycled.
  *
  * Example:
  * ---
  * @nogc void foo() {
- *     throw staticInstance!Error("Something went wrong");
+ *     throw recycledInstance!Error("Something went wrong");
  * }
  * ---
  */
-T staticInstance(T, Args...)(auto ref Args args)
+T recycledInstance(T, Args...)(auto ref Args args)
 if (is(T == class))
 {
     enum size = __traits(classInstanceSize, T);
     enum alignment = __traits(classInstanceAlignment, T);
 
-    static align(alignment) ubyte[size] buffer;
+    align(alignment) static ubyte[size] buffer;
 
-    // Reinitialize on each acceess
+    // Reinitialize on each access
     emplace!T(buffer[], args);
 
     return cast(T) buffer.ptr;
 }
 
 /// ditto
-ref T staticInstance(T, Args...)(auto ref Args args)
+ref T recycledInstance(T, Args...)(auto ref Args args)
 if (!is(T == class))
 {
     static T instance;
@@ -39,7 +52,7 @@ if (!is(T == class))
     return instance;
 }
 
-@("staticInstance.class.basic")
+@("recycledInstance.class.basic")
 @nogc nothrow
 unittest
 {
@@ -54,11 +67,11 @@ unittest
         }
     }
 
-    auto err1 = staticInstance!MyError("first error", 1);
+    auto err1 = recycledInstance!MyError("first error", 1);
     assert(err1.msg == "first error");
     assert(err1.code == 1);
 
-    auto err2 = staticInstance!MyError("second error", 2);
+    auto err2 = recycledInstance!MyError("second error", 2);
     assert(err2.msg == "second error");
     assert(err2.code == 2);
 
@@ -66,11 +79,11 @@ unittest
     assert(err1 is err2);
 }
 
-@("staticInstance.class.canThrowInNoGC")
+@("recycledInstance.class.canThrowInNoGC")
 @nogc nothrow
 unittest
 {
-    // Verifies that the staticInstance can actually be used for throwing in @nogc code
+    // Verifies that the recycledInstance can actually be used for throwing in @nogc code
     static class TestError : Error
     {
         @nogc nothrow this(string msg)
@@ -81,7 +94,7 @@ unittest
 
     static void throwingFunc() @nogc
     {
-        throw staticInstance!TestError("test error in @nogc");
+        throw recycledInstance!TestError("test error in @nogc");
     }
 
     bool caught = false;
@@ -89,7 +102,7 @@ unittest
     {
         // We can't actually call throwingFunc here in the unittest
         // because catching would allocate, but we verify it compiles
-        auto instance = staticInstance!TestError("compiles in @nogc");
+        auto instance = recycledInstance!TestError("compiles in @nogc");
         assert(instance !is null);
     }
     catch (Error)
@@ -98,7 +111,7 @@ unittest
     }
 }
 
-@("staticInstance.class.inheritance")
+@("recycledInstance.class.inheritance")
 @nogc nothrow
 unittest
 {
@@ -125,7 +138,7 @@ unittest
         }
     }
 
-    auto derived = staticInstance!DerivedError("derived error", 10, 20);
+    auto derived = recycledInstance!DerivedError("derived error", 10, 20);
     assert(derived.msg == "derived error");
     assert(derived.baseCode == 10);
     assert(derived.derivedCode == 20);
@@ -136,7 +149,7 @@ unittest
     assert(base.baseCode == 10);
 }
 
-@("staticInstance.class.differentTypesAreDifferentInstances")
+@("recycledInstance.class.differentTypesAreDifferentInstances")
 @nogc nothrow
 unittest
 {
@@ -151,8 +164,8 @@ unittest
         @nogc nothrow this(string msg) { super(msg); }
     }
 
-    auto a = staticInstance!ErrorA("error A");
-    auto b = staticInstance!ErrorB("error B");
+    auto a = recycledInstance!ErrorA("error A");
+    auto b = recycledInstance!ErrorB("error B");
 
     // Different types should have different instances
     assert(cast(void*) a !is cast(void*) b);
@@ -160,7 +173,7 @@ unittest
     assert(b.msg == "error B");
 }
 
-@("staticInstance.class.alignment")
+@("recycledInstance.class.alignment")
 unittest
 {
     // Test that alignment is properly handled for classes with specific alignment requirements
@@ -176,7 +189,7 @@ unittest
         }
     }
 
-    auto instance = staticInstance!AlignedClass("aligned", 42);
+    auto instance = recycledInstance!AlignedClass("aligned", 42);
     assert(instance.alignedData[0] == 42);
     assert(instance.alignedData[1] == 84);
 
@@ -185,7 +198,7 @@ unittest
     assert(addr % 16 == 0, "Data should be 16-byte aligned");
 }
 
-@("staticInstance.class.zeroArgs")
+@("recycledInstance.class.zeroArgs")
 unittest
 {
     // Test class with no constructor arguments (default constructor)
@@ -197,11 +210,11 @@ unittest
         }
     }
 
-    auto err = staticInstance!SimpleError();
+    auto err = recycledInstance!SimpleError();
     assert(err.msg == "default message");
 }
 
-@("staticInstance.class.reinitialization")
+@("recycledInstance.class.reinitialization")
 @nogc nothrow
 unittest
 {
@@ -218,12 +231,12 @@ unittest
     }
 
     // First initialization
-    auto err1 = staticInstance!CountingError("msg1", 100);
+    auto err1 = recycledInstance!CountingError("msg1", 100);
     assert(err1.value == 100);
     assert(err1.msg == "msg1");
 
     // Reinitialize with different values
-    auto err2 = staticInstance!CountingError("msg2", 200);
+    auto err2 = recycledInstance!CountingError("msg2", 200);
     assert(err2.value == 200);
     assert(err2.msg == "msg2");
 
@@ -232,13 +245,13 @@ unittest
     assert(err1.msg == "msg2");
 
     // Third reinitialization
-    auto err3 = staticInstance!CountingError("msg3", 300);
+    auto err3 = recycledInstance!CountingError("msg3", 300);
     assert(err1.value == 300);
     assert(err2.value == 300);
     assert(err3.value == 300);
 }
 
-@("staticInstance.struct.basic")
+@("recycledInstance.struct.basic")
 unittest
 {
     static struct Point
@@ -246,17 +259,17 @@ unittest
         int x, y;
     }
 
-    auto p1 = &staticInstance!Point(1, 2);
+    auto p1 = &recycledInstance!Point(1, 2);
     assert(p1.x == 1 && p1.y == 2);
 
-    auto p2 = &staticInstance!Point(3, 4);
+    auto p2 = &recycledInstance!Point(3, 4);
     assert(p2.x == 3 && p2.y == 4);
 
     // Both references point to the same static instance
     assert(p1 is p2);
 }
 
-@("staticInstance.struct.reinitialization")
+@("recycledInstance.struct.reinitialization")
 unittest
 {
     // Test that struct reinitialization works correctly
@@ -267,12 +280,12 @@ unittest
         double c;
     }
 
-    auto d1 = &staticInstance!Data(1, "first", 1.5);
+    auto d1 = &recycledInstance!Data(1, "first", 1.5);
     assert(d1.a == 1);
     assert(d1.b == "first");
     assert(d1.c == 1.5);
 
-    auto d2 = &staticInstance!Data(2, "second", 2.5);
+    auto d2 = &recycledInstance!Data(2, "second", 2.5);
     assert(d2.a == 2);
     assert(d2.b == "second");
     assert(d2.c == 2.5);
@@ -282,7 +295,7 @@ unittest
     assert(d1.a == 2); // d1 sees the updated values
 }
 
-@("staticInstance.struct.nested")
+@("recycledInstance.struct.nested")
 unittest
 {
     // Test nested structs
@@ -297,16 +310,16 @@ unittest
         int other;
     }
 
-    auto o = &staticInstance!Outer(Inner(42), 100);
+    auto o = &recycledInstance!Outer(Inner(42), 100);
     assert(o.inner.value == 42);
     assert(o.other == 100);
 
-    auto o2 = &staticInstance!Outer(Inner(99), 200);
+    auto o2 = &recycledInstance!Outer(Inner(99), 200);
     assert(o.inner.value == 99); // Original reference sees new values
     assert(o.other == 200);
 }
 
-@("staticInstance.struct.withArray")
+@("recycledInstance.struct.withArray")
 unittest
 {
     // Test struct containing fixed-size array
@@ -316,26 +329,26 @@ unittest
     }
 
     int[4] initData = [1, 2, 3, 4];
-    auto c = &staticInstance!ArrayContainer(initData);
+    auto c = &recycledInstance!ArrayContainer(initData);
     assert(c.data == [1, 2, 3, 4]);
 
     int[4] newData = [5, 6, 7, 8];
-    auto c2 = &staticInstance!ArrayContainer(newData);
+    auto c2 = &recycledInstance!ArrayContainer(newData);
     assert(c.data == [5, 6, 7, 8]); // Same instance
 }
 
-@("staticInstance.struct.emptyStruct")
+@("recycledInstance.struct.emptyStruct")
 unittest
 {
     // Test empty struct (edge case)
     static struct Empty {}
 
-    auto e1 = &staticInstance!Empty();
-    auto e2 = &staticInstance!Empty();
+    auto e1 = &recycledInstance!Empty();
+    auto e2 = &recycledInstance!Empty();
     assert(e1 is e2);
 }
 
-@("staticInstance.struct.singleField")
+@("recycledInstance.struct.singleField")
 unittest
 {
     // Test single field struct
@@ -344,22 +357,22 @@ unittest
         long value;
     }
 
-    auto s = &staticInstance!Single(long.max);
+    auto s = &recycledInstance!Single(long.max);
     assert(s.value == long.max);
 
-    auto s2 = &staticInstance!Single(long.min);
+    auto s2 = &recycledInstance!Single(long.min);
     assert(s.value == long.min);
 }
 
-@("staticInstance.struct.differentTypesAreDifferentInstances")
+@("recycledInstance.struct.differentTypesAreDifferentInstances")
 unittest
 {
     // Verify that different struct types get different static instances
     static struct TypeA { int value; }
     static struct TypeB { int value; }
 
-    auto a = &staticInstance!TypeA(10);
-    auto b = &staticInstance!TypeB(20);
+    auto a = &recycledInstance!TypeA(10);
+    auto b = &recycledInstance!TypeB(20);
 
     // Different types should have different instances
     assert(cast(void*) a !is cast(void*) b);
@@ -367,12 +380,12 @@ unittest
     assert(b.value == 20);
 
     // Modifying one shouldn't affect the other
-    staticInstance!TypeA(100);
+    recycledInstance!TypeA(100);
     assert(a.value == 100);
     assert(b.value == 20); // Unchanged
 }
 
-@("staticInstance.struct.alignment")
+@("recycledInstance.struct.alignment")
 unittest
 {
     // Test structs with specific alignment requirements
@@ -382,7 +395,7 @@ unittest
     }
 
     long[4] initData = [1L, 2L, 3L, 4L];
-    auto a = &staticInstance!Aligned(initData);
+    auto a = &recycledInstance!Aligned(initData);
     assert(a.data == [1L, 2L, 3L, 4L]);
 
     // Verify alignment
@@ -390,7 +403,7 @@ unittest
     assert(addr % 32 == 0, "Data should be 32-byte aligned");
 }
 
-@("staticInstance.struct.defaultInit")
+@("recycledInstance.struct.defaultInit")
 unittest
 {
     // Test struct with default initialization
@@ -400,18 +413,18 @@ unittest
         string s = "default";
     }
 
-    // Note: staticInstance requires explicit arguments
+    // Note: recycledInstance requires explicit arguments
     // This tests the struct can be constructed with its default values
-    auto w = &staticInstance!WithDefaults(42, "default");
+    auto w = &recycledInstance!WithDefaults(42, "default");
     assert(w.x == 42);
     assert(w.s == "default");
 
-    auto w2 = &staticInstance!WithDefaults(100, "custom");
+    auto w2 = &recycledInstance!WithDefaults(100, "custom");
     assert(w.x == 100);
     assert(w.s == "custom");
 }
 
-@("staticInstance.struct.refReturned")
+@("recycledInstance.struct.refReturned")
 unittest
 {
     // Verify that the ref return works correctly
@@ -422,18 +435,18 @@ unittest
 
     ref Mutable getMutable()
     {
-        return staticInstance!Mutable(0);
+        return recycledInstance!Mutable(0);
     }
 
     getMutable().value = 42;
 
     // Changes through ref should persist
-    auto m = &staticInstance!Mutable(0);
+    auto m = &recycledInstance!Mutable(0);
     // Note: This reinitializes to 0, so value will be 0
     assert(m.value == 0);
 }
 
-@("staticInstance.struct.largeStruct")
+@("recycledInstance.struct.largeStruct")
 unittest
 {
     // Test with a larger struct to ensure memory handling is correct
@@ -446,31 +459,31 @@ unittest
     foreach (i; 0 .. 64)
         expected[i] = i * 100;
 
-    auto large = &staticInstance!LargeStruct(expected);
+    auto large = &recycledInstance!LargeStruct(expected);
 
     foreach (i; 0 .. 64)
         assert(large.data[i] == i * 100);
 }
 
-@("staticInstance.primitiveTypes")
+@("recycledInstance.primitiveTypes")
 unittest
 {
     // Test with primitive types
-    auto i = &staticInstance!int(42);
+    auto i = &recycledInstance!int(42);
     assert(*i == 42);
 
-    auto i2 = &staticInstance!int(100);
+    auto i2 = &recycledInstance!int(100);
     assert(*i == 100); // Same instance
     assert(i is i2);
 }
 
-@("staticInstance.primitiveTypes.different")
+@("recycledInstance.primitiveTypes.different")
 unittest
 {
     // Different primitive types get different instances
-    auto intVal = &staticInstance!int(1);
-    auto longVal = &staticInstance!long(2);
-    auto doubleVal = &staticInstance!double(3.0);
+    auto intVal = &recycledInstance!int(1);
+    auto longVal = &recycledInstance!long(2);
+    auto doubleVal = &recycledInstance!double(3.0);
 
     assert(*intVal == 1);
     assert(*longVal == 2);
@@ -481,7 +494,7 @@ unittest
     assert(cast(void*) longVal !is cast(void*) doubleVal);
 }
 
-@("staticInstance.struct.destructorCalled")
+@("recycledInstance.struct.destructorCalled")
 unittest
 {
     // Test that struct destructor is called before reinitialization
@@ -509,7 +522,7 @@ unittest
     constructionId = 0;
 
     // First initialization
-    auto s1 = &staticInstance!TrackedStruct(1);
+    auto s1 = &recycledInstance!TrackedStruct(1);
     assert(s1.id == 1);
     assert(constructionId == 1);
     // Destructor should be called once when the old value is replaced
@@ -517,7 +530,7 @@ unittest
     int destructorCountAfterFirst = destructorCallCount;
 
     // Second initialization - should call destructor on old instance
-    auto s2 = &staticInstance!TrackedStruct(2);
+    auto s2 = &recycledInstance!TrackedStruct(2);
     assert(s2.id == 2);
     assert(constructionId == 2);
     // Destructor should have been called one more time
@@ -525,7 +538,7 @@ unittest
         "Destructor should be called when reinitializing struct");
 }
 
-@("staticInstance.struct.destructorCalledMultipleTimes")
+@("recycledInstance.struct.destructorCalledMultipleTimes")
 unittest
 {
     // Test that destructor is called on each reinitialization
@@ -549,23 +562,23 @@ unittest
     destructorCallCount = 0;
 
     // Multiple reinitializations
-    staticInstance!CountingStruct(1);
+    recycledInstance!CountingStruct(1);
     int countAfter1 = destructorCallCount;
 
-    staticInstance!CountingStruct(2);
+    recycledInstance!CountingStruct(2);
     int countAfter2 = destructorCallCount;
     assert(countAfter2 > countAfter1, "Destructor should be called on second init");
 
-    staticInstance!CountingStruct(3);
+    recycledInstance!CountingStruct(3);
     int countAfter3 = destructorCallCount;
     assert(countAfter3 > countAfter2, "Destructor should be called on third init");
 
-    staticInstance!CountingStruct(4);
+    recycledInstance!CountingStruct(4);
     int countAfter4 = destructorCallCount;
     assert(countAfter4 > countAfter3, "Destructor should be called on fourth init");
 }
 
-@("staticInstance.struct.destructorReceivesCorrectState")
+@("recycledInstance.struct.destructorReceivesCorrectState")
 unittest
 {
     // Test that destructor sees the correct state when called
@@ -588,28 +601,28 @@ unittest
 
     lastDestroyedValue = -1;
 
-    staticInstance!StateTracker(100);
+    recycledInstance!StateTracker(100);
     // First time, destructor is called on default-initialized struct
     int afterFirst = lastDestroyedValue;
 
-    staticInstance!StateTracker(200);
+    recycledInstance!StateTracker(200);
     // Destructor should have been called with value 100
     assert(lastDestroyedValue == 100,
         "Destructor should see the previous value (100), got: " ~
         (cast(char)('0' + lastDestroyedValue / 100)).stringof);
 
-    staticInstance!StateTracker(300);
+    recycledInstance!StateTracker(300);
     // Destructor should have been called with value 200
     assert(lastDestroyedValue == 200,
         "Destructor should see the previous value (200)");
 }
 
-@("staticInstance.class.destructorBehavior")
+@("recycledInstance.class.destructorBehavior")
 unittest
 {
     // Note: For classes, the current implementation does NOT call destructors
     // before reinitializing. This test documents the current behavior.
-    // Classes used with staticInstance (like Error) typically shouldn't
+    // Classes used with recycledInstance (like Error) typically shouldn't
     // hold resources that need cleanup.
 
     static int dtorCount = 0;
@@ -632,11 +645,11 @@ unittest
 
     assert(dtorCount == 0);
 
-    auto e1 = staticInstance!TrackedError("error1", 1);
+    auto e1 = recycledInstance!TrackedError("error1", 1);
     assert(e1.id == 1);
     assert(dtorCount == 0);
 
-    auto e2 = staticInstance!TrackedError("error2", 2);
+    auto e2 = recycledInstance!TrackedError("error2", 2);
     assert(e2.id == 2);
     assert(dtorCount == 0);
 
