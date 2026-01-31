@@ -11,6 +11,8 @@
     flake-parts.lib.mkFlake { inherit inputs; } {
       imports = [
         mcl-nixos-modules.modules.flake.git-hooks
+
+        ./nix/checks/pre-commit.nix
       ];
       systems = [
         "x86_64-linux"
