@@ -17,9 +17,9 @@
         "aarch64-darwin"
       ];
       perSystem =
-        { pkgs, ... }:
+        { config, pkgs, ... }:
         {
-          devShells.default = import ./nix/shells/default.nix { inherit pkgs; };
+          devShells.default = import ./nix/shells/default.nix { inherit config pkgs; };
         };
     };
 }
