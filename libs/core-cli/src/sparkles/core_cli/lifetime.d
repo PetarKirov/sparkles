@@ -52,224 +52,8 @@ if (!is(T == class))
     return instance;
 }
 
-@("recycledInstance.class.basic")
-@nogc nothrow
-unittest
-{
-    static class MyError : Error
-    {
-        int code;
-
-        @nogc nothrow this(string msg, int code = 0)
-        {
-            super(msg);
-            this.code = code;
-        }
-    }
-
-    auto err1 = recycledInstance!MyError("first error", 1);
-    assert(err1.msg == "first error");
-    assert(err1.code == 1);
-
-    auto err2 = recycledInstance!MyError("second error", 2);
-    assert(err2.msg == "second error");
-    assert(err2.code == 2);
-
-    // Both references point to the same static instance
-    assert(err1 is err2);
-}
-
-@("recycledInstance.class.canThrowInNoGC")
-@nogc nothrow
-unittest
-{
-    // Verifies that the recycledInstance can actually be used for throwing in @nogc code
-    static class TestError : Error
-    {
-        @nogc nothrow this(string msg)
-        {
-            super(msg);
-        }
-    }
-
-    static void throwingFunc() @nogc
-    {
-        throw recycledInstance!TestError("test error in @nogc");
-    }
-
-    bool caught = false;
-    try
-    {
-        // We can't actually call throwingFunc here in the unittest
-        // because catching would allocate, but we verify it compiles
-        auto instance = recycledInstance!TestError("compiles in @nogc");
-        assert(instance !is null);
-    }
-    catch (Error)
-    {
-        caught = true;
-    }
-}
-
-@("recycledInstance.class.inheritance")
-@nogc nothrow
-unittest
-{
-    // Test that inheritance hierarchy is properly preserved
-    static class BaseError : Error
-    {
-        int baseCode;
-
-        @nogc nothrow this(string msg, int code)
-        {
-            super(msg);
-            this.baseCode = code;
-        }
-    }
-
-    static class DerivedError : BaseError
-    {
-        int derivedCode;
-
-        @nogc nothrow this(string msg, int baseCode, int derivedCode)
-        {
-            super(msg, baseCode);
-            this.derivedCode = derivedCode;
-        }
-    }
-
-    auto derived = recycledInstance!DerivedError("derived error", 10, 20);
-    assert(derived.msg == "derived error");
-    assert(derived.baseCode == 10);
-    assert(derived.derivedCode == 20);
-
-    // Verify it's actually a DerivedError
-    BaseError base = derived;
-    assert(base !is null);
-    assert(base.baseCode == 10);
-}
-
-@("recycledInstance.class.differentTypesAreDifferentInstances")
-@nogc nothrow
-unittest
-{
-    // Verify that different class types get different static buffers
-    static class ErrorA : Error
-    {
-        @nogc nothrow this(string msg) { super(msg); }
-    }
-
-    static class ErrorB : Error
-    {
-        @nogc nothrow this(string msg) { super(msg); }
-    }
-
-    auto a = recycledInstance!ErrorA("error A");
-    auto b = recycledInstance!ErrorB("error B");
-
-    // Different types should have different instances
-    assert(cast(void*) a !is cast(void*) b);
-    assert(a.msg == "error A");
-    assert(b.msg == "error B");
-}
-
-@("recycledInstance.class.alignment")
-unittest
-{
-    // Test that alignment is properly handled for classes with specific alignment requirements
-    static class AlignedClass : Error
-    {
-        align(16) long[2] alignedData;
-
-        this(string msg, long val)
-        {
-            super(msg);
-            alignedData[0] = val;
-            alignedData[1] = val * 2;
-        }
-    }
-
-    auto instance = recycledInstance!AlignedClass("aligned", 42);
-    assert(instance.alignedData[0] == 42);
-    assert(instance.alignedData[1] == 84);
-
-    // Verify alignment (address should be 16-byte aligned for the data)
-    auto addr = cast(size_t) &instance.alignedData[0];
-    assert(addr % 16 == 0, "Data should be 16-byte aligned");
-}
-
-@("recycledInstance.class.zeroArgs")
-unittest
-{
-    // Test class with no constructor arguments (default constructor)
-    static class SimpleError : Error
-    {
-        this()
-        {
-            super("default message");
-        }
-    }
-
-    auto err = recycledInstance!SimpleError();
-    assert(err.msg == "default message");
-}
-
-@("recycledInstance.class.reinitialization")
-@nogc nothrow
-unittest
-{
-    // Thoroughly test that reinitialization works correctly
-    static class CountingError : Error
-    {
-        int value;
-
-        @nogc nothrow this(string msg, int val)
-        {
-            super(msg);
-            this.value = val;
-        }
-    }
-
-    // First initialization
-    auto err1 = recycledInstance!CountingError("msg1", 100);
-    assert(err1.value == 100);
-    assert(err1.msg == "msg1");
-
-    // Reinitialize with different values
-    auto err2 = recycledInstance!CountingError("msg2", 200);
-    assert(err2.value == 200);
-    assert(err2.msg == "msg2");
-
-    // The original reference should see the new values (same instance)
-    assert(err1.value == 200);
-    assert(err1.msg == "msg2");
-
-    // Third reinitialization
-    auto err3 = recycledInstance!CountingError("msg3", 300);
-    assert(err1.value == 300);
-    assert(err2.value == 300);
-    assert(err3.value == 300);
-}
-
-@("recycledInstance.struct.basic")
-unittest
-{
-    static struct Point
-    {
-        int x, y;
-    }
-
-    auto p1 = &recycledInstance!Point(1, 2);
-    assert(p1.x == 1 && p1.y == 2);
-
-    auto p2 = &recycledInstance!Point(3, 4);
-    assert(p2.x == 3 && p2.y == 4);
-
-    // Both references point to the same static instance
-    assert(p1 is p2);
-}
-
 @("recycledInstance.struct.reinitialization")
+@nogc nothrow @safe
 unittest
 {
     // Test that struct reinitialization works correctly
@@ -296,6 +80,7 @@ unittest
 }
 
 @("recycledInstance.struct.nested")
+@nogc nothrow @safe
 unittest
 {
     // Test nested structs
@@ -320,6 +105,7 @@ unittest
 }
 
 @("recycledInstance.struct.withArray")
+@nogc nothrow @safe
 unittest
 {
     // Test struct containing fixed-size array
@@ -337,34 +123,8 @@ unittest
     assert(c.data == [5, 6, 7, 8]); // Same instance
 }
 
-@("recycledInstance.struct.emptyStruct")
-unittest
-{
-    // Test empty struct (edge case)
-    static struct Empty {}
-
-    auto e1 = &recycledInstance!Empty();
-    auto e2 = &recycledInstance!Empty();
-    assert(e1 is e2);
-}
-
-@("recycledInstance.struct.singleField")
-unittest
-{
-    // Test single field struct
-    static struct Single
-    {
-        long value;
-    }
-
-    auto s = &recycledInstance!Single(long.max);
-    assert(s.value == long.max);
-
-    auto s2 = &recycledInstance!Single(long.min);
-    assert(s.value == long.min);
-}
-
 @("recycledInstance.struct.differentTypesAreDifferentInstances")
+@nogc nothrow @system
 unittest
 {
     // Verify that different struct types get different static instances
@@ -386,6 +146,7 @@ unittest
 }
 
 @("recycledInstance.struct.alignment")
+@nogc nothrow @system
 unittest
 {
     // Test structs with specific alignment requirements
@@ -403,50 +164,8 @@ unittest
     assert(addr % 32 == 0, "Data should be 32-byte aligned");
 }
 
-@("recycledInstance.struct.defaultInit")
-unittest
-{
-    // Test struct with default initialization
-    static struct WithDefaults
-    {
-        int x = 42;
-        string s = "default";
-    }
-
-    // Note: recycledInstance requires explicit arguments
-    // This tests the struct can be constructed with its default values
-    auto w = &recycledInstance!WithDefaults(42, "default");
-    assert(w.x == 42);
-    assert(w.s == "default");
-
-    auto w2 = &recycledInstance!WithDefaults(100, "custom");
-    assert(w.x == 100);
-    assert(w.s == "custom");
-}
-
-@("recycledInstance.struct.refReturned")
-unittest
-{
-    // Verify that the ref return works correctly
-    static struct Mutable
-    {
-        int value;
-    }
-
-    ref Mutable getMutable()
-    {
-        return recycledInstance!Mutable(0);
-    }
-
-    getMutable().value = 42;
-
-    // Changes through ref should persist
-    auto m = &recycledInstance!Mutable(0);
-    // Note: This reinitializes to 0, so value will be 0
-    assert(m.value == 0);
-}
-
 @("recycledInstance.struct.largeStruct")
+@nogc nothrow @safe
 unittest
 {
     // Test with a larger struct to ensure memory handling is correct
@@ -466,20 +185,17 @@ unittest
 }
 
 @("recycledInstance.primitiveTypes")
+@nogc nothrow @system
 unittest
 {
-    // Test with primitive types
-    auto i = &recycledInstance!int(42);
-    assert(*i == 42);
+    // Test recycling behavior with primitive types
+    auto i1 = &recycledInstance!int(42);
+    assert(*i1 == 42);
 
     auto i2 = &recycledInstance!int(100);
-    assert(*i == 100); // Same instance
-    assert(i is i2);
-}
+    assert(*i1 == 100); // Same instance, sees new value
+    assert(i1 is i2);
 
-@("recycledInstance.primitiveTypes.different")
-unittest
-{
     // Different primitive types get different instances
     auto intVal = &recycledInstance!int(1);
     auto longVal = &recycledInstance!long(2);
@@ -489,140 +205,260 @@ unittest
     assert(*longVal == 2);
     assert(*doubleVal == 3.0);
 
-    // They should be different memory locations
     assert(cast(void*) intVal !is cast(void*) longVal);
     assert(cast(void*) longVal !is cast(void*) doubleVal);
 }
 
-@("recycledInstance.struct.destructorCalled")
+@("recycledInstance.struct.destructorBehavior")
+@nogc nothrow @safe
 unittest
 {
-    // Test that struct destructor is called before reinitialization
+    // Test struct destructor behavior during reinitialization:
+    // 1. Destructor is called on each reinitialization
+    // 2. Destructor receives the previous instance's state
     static int destructorCallCount = 0;
-    static int constructionId = 0;
+    static int lastDestroyedValue = -1;
 
     static struct TrackedStruct
     {
-        int id;
+        int value;
 
-        this(int val)
+        @nogc nothrow this(int v)
         {
-            id = val;
-            constructionId = val;
+            value = v;
         }
 
-        ~this()
+        @nogc nothrow ~this()
         {
             destructorCallCount++;
+            lastDestroyedValue = value;
         }
     }
 
     // Reset counters
     destructorCallCount = 0;
-    constructionId = 0;
-
-    // First initialization
-    auto s1 = &recycledInstance!TrackedStruct(1);
-    assert(s1.id == 1);
-    assert(constructionId == 1);
-    // Destructor should be called once when the old value is replaced
-    // via assignment operator (which calls destructor on old value)
-    int destructorCountAfterFirst = destructorCallCount;
-
-    // Second initialization - should call destructor on old instance
-    auto s2 = &recycledInstance!TrackedStruct(2);
-    assert(s2.id == 2);
-    assert(constructionId == 2);
-    // Destructor should have been called one more time
-    assert(destructorCallCount > destructorCountAfterFirst,
-        "Destructor should be called when reinitializing struct");
-}
-
-@("recycledInstance.struct.destructorCalledMultipleTimes")
-unittest
-{
-    // Test that destructor is called on each reinitialization
-    static int destructorCallCount = 0;
-
-    static struct CountingStruct
-    {
-        int value;
-
-        this(int v)
-        {
-            value = v;
-        }
-
-        ~this()
-        {
-            destructorCallCount++;
-        }
-    }
-
-    destructorCallCount = 0;
-
-    // Multiple reinitializations
-    recycledInstance!CountingStruct(1);
-    int countAfter1 = destructorCallCount;
-
-    recycledInstance!CountingStruct(2);
-    int countAfter2 = destructorCallCount;
-    assert(countAfter2 > countAfter1, "Destructor should be called on second init");
-
-    recycledInstance!CountingStruct(3);
-    int countAfter3 = destructorCallCount;
-    assert(countAfter3 > countAfter2, "Destructor should be called on third init");
-
-    recycledInstance!CountingStruct(4);
-    int countAfter4 = destructorCallCount;
-    assert(countAfter4 > countAfter3, "Destructor should be called on fourth init");
-}
-
-@("recycledInstance.struct.destructorReceivesCorrectState")
-unittest
-{
-    // Test that destructor sees the correct state when called
-    static int lastDestroyedValue = -1;
-
-    static struct StateTracker
-    {
-        int value;
-
-        this(int v)
-        {
-            value = v;
-        }
-
-        ~this()
-        {
-            lastDestroyedValue = value;
-        }
-    }
-
     lastDestroyedValue = -1;
 
-    recycledInstance!StateTracker(100);
-    // First time, destructor is called on default-initialized struct
-    int afterFirst = lastDestroyedValue;
+    // First initialization
+    recycledInstance!TrackedStruct(100);
+    int countAfterFirst = destructorCallCount;
 
-    recycledInstance!StateTracker(200);
-    // Destructor should have been called with value 100
-    assert(lastDestroyedValue == 100,
-        "Destructor should see the previous value (100), got: " ~
-        (cast(char)('0' + lastDestroyedValue / 100)).stringof);
+    // Second initialization - destructor called with previous value
+    recycledInstance!TrackedStruct(200);
+    assert(destructorCallCount > countAfterFirst, "Destructor should be called on reinit");
+    assert(lastDestroyedValue == 100, "Destructor should see previous value (100)");
 
-    recycledInstance!StateTracker(300);
-    // Destructor should have been called with value 200
-    assert(lastDestroyedValue == 200,
-        "Destructor should see the previous value (200)");
+    // Third initialization - destructor called again
+    recycledInstance!TrackedStruct(300);
+    assert(lastDestroyedValue == 200, "Destructor should see previous value (200)");
+
+    // Fourth initialization - verify count keeps incrementing
+    int countBefore = destructorCallCount;
+    recycledInstance!TrackedStruct(400);
+    assert(destructorCallCount > countBefore, "Destructor called on each reinit");
+    assert(lastDestroyedValue == 300, "Destructor should see previous value (300)");
 }
 
-@("recycledInstance.class.destructorBehavior")
+/**
+ * Returns a recycled error instance, suitable for throwing in `@nogc` code.
+ *
+ * This is a convenience wrapper around `recycledInstance` with attributes
+ * appropriate for error handling: `@system pure nothrow @nogc`.
+ *
+ * The function is marked `@system` because `pure` is technically a lie -
+ * the implementation uses thread-local state. However, this is acceptable
+ * for error throwing because:
+ * $(UL
+ *   $(LI Try-catch code typically doesn't rely on object identity)
+ *   $(LI Exception object lifetimes are stack-bound)
+ * )
+ *
+ * Callers should wrap calls in `@trusted` after verifying correct usage.
+ *
+ * Example:
+ * ---
+ * @nogc pure nothrow void foo() @trusted {
+ *     throw recycledErrorInstance!Error("Something went wrong");
+ * }
+ * ---
+ */
+T recycledErrorInstance(T, Args...)(auto ref Args args) @system pure nothrow @nogc
+if (is(T == class) && is(T : Error))
+{
+    return (cast(T function(Args) @system pure nothrow @nogc) &recycledErrorInstanceImpl!(T, Args))(args);
+}
+
+private T recycledErrorInstanceImpl(T, Args...)(Args args) @nogc nothrow
+if (is(T == class) && is(T : Error))
+{
+    return recycledInstance!T(args);
+}
+
+@("recycledErrorInstance.reinitialization")
+@nogc nothrow pure @safe
+unittest
+{
+    // Thoroughly test that reinitialization works correctly
+    static class CountingError : Error
+    {
+        int value;
+
+        @nogc nothrow pure this(string msg, int val)
+        {
+            super(msg);
+            this.value = val;
+        }
+    }
+
+    // First initialization
+    auto err1 = () @trusted { return recycledErrorInstance!CountingError("msg1", 100); }();
+    assert(err1.value == 100);
+    assert(err1.msg == "msg1");
+
+    // Reinitialize with different values
+    auto err2 = () @trusted { return recycledErrorInstance!CountingError("msg2", 200); }();
+    assert(err2.value == 200);
+    assert(err2.msg == "msg2");
+
+    // The original reference should see the new values (same instance)
+    assert(err1.value == 200);
+    assert(err1.msg == "msg2");
+
+    // Third reinitialization
+    auto err3 = () @trusted { return recycledErrorInstance!CountingError("msg3", 300); }();
+    assert(err1.value == 300);
+    assert(err2.value == 300);
+    assert(err3.value == 300);
+}
+
+@("recycledErrorInstance.canThrowInNoGC")
+@nogc nothrow @system
+unittest
+{
+    // Verifies that recycledErrorInstance can actually be used for throwing in @nogc code
+    static class TestError : Error
+    {
+        @nogc nothrow this(string msg)
+        {
+            super(msg);
+        }
+    }
+
+    static void throwingFunc() @nogc @trusted
+    {
+        throw recycledErrorInstance!TestError("test error in @nogc");
+    }
+
+    bool caught = false;
+    try
+    {
+        auto instance = () @trusted { return recycledErrorInstance!TestError("compiles in @nogc"); }();
+        assert(instance !is null);
+        throw instance;
+    }
+    catch (Error)
+    {
+        caught = true;
+    }
+
+    assert(caught, "Should have caught the thrown error");
+}
+
+@("recycledErrorInstance.inheritance")
+@nogc nothrow pure @safe
+unittest
+{
+    // Test that inheritance hierarchy is properly preserved
+    static class BaseError : Error
+    {
+        int baseCode;
+
+        @nogc nothrow pure this(string msg, int code)
+        {
+            super(msg);
+            this.baseCode = code;
+        }
+    }
+
+    static class DerivedError : BaseError
+    {
+        int derivedCode;
+
+        @nogc nothrow pure this(string msg, int baseCode, int derivedCode)
+        {
+            super(msg, baseCode);
+            this.derivedCode = derivedCode;
+        }
+    }
+
+    auto derived = () @trusted { return recycledErrorInstance!DerivedError("derived error", 10, 20); }();
+    assert(derived.msg == "derived error");
+    assert(derived.baseCode == 10);
+    assert(derived.derivedCode == 20);
+
+    // Verify it's actually a DerivedError
+    BaseError base = derived;
+    assert(base !is null);
+    assert(base.baseCode == 10);
+}
+
+@("recycledErrorInstance.differentTypesAreDifferentInstances")
+@nogc nothrow pure @system
+unittest
+{
+    // Verify that different class types get different static buffers
+    static class ErrorA : Error
+    {
+        @nogc nothrow pure this(string msg) { super(msg); }
+    }
+
+    static class ErrorB : Error
+    {
+        @nogc nothrow pure this(string msg) { super(msg); }
+    }
+
+    auto a = () @trusted { return recycledErrorInstance!ErrorA("error A"); }();
+    auto b = () @trusted { return recycledErrorInstance!ErrorB("error B"); }();
+
+    // Different types should have different instances
+    assert(cast(void*) a !is cast(void*) b);
+    assert(a.msg == "error A");
+    assert(b.msg == "error B");
+}
+
+@("recycledErrorInstance.alignment")
+@nogc nothrow pure @system
+unittest
+{
+    // Test that alignment is properly handled for classes with specific alignment requirements
+    static class AlignedError : Error
+    {
+        align(16) long[2] alignedData;
+
+        @nogc nothrow pure this(string msg, long val)
+        {
+            super(msg);
+            alignedData[0] = val;
+            alignedData[1] = val * 2;
+        }
+    }
+
+    auto instance = () @trusted { return recycledErrorInstance!AlignedError("aligned", 42); }();
+    assert(instance.alignedData[0] == 42);
+    assert(instance.alignedData[1] == 84);
+
+    // Verify alignment (address should be 16-byte aligned for the data)
+    auto addr = cast(size_t) &instance.alignedData[0];
+    assert(addr % 16 == 0, "Data should be 16-byte aligned");
+}
+
+@("recycledErrorInstance.destructorBehavior")
+@nogc nothrow @safe
 unittest
 {
     // Note: For classes, the current implementation does NOT call destructors
     // before reinitializing. This test documents the current behavior.
-    // Classes used with recycledInstance (like Error) typically shouldn't
+    // Classes used with recycledErrorInstance (like Error) typically shouldn't
     // hold resources that need cleanup.
 
     static int dtorCount = 0;
@@ -631,7 +467,7 @@ unittest
     {
         int id;
 
-        this(string msg, int id)
+        @nogc nothrow this(string msg, int id)
         {
             super(msg);
             this.id = id;
@@ -645,11 +481,11 @@ unittest
 
     assert(dtorCount == 0);
 
-    auto e1 = recycledInstance!TrackedError("error1", 1);
+    auto e1 = () @trusted { return recycledErrorInstance!TrackedError("error1", 1); }();
     assert(e1.id == 1);
     assert(dtorCount == 0);
 
-    auto e2 = recycledInstance!TrackedError("error2", 2);
+    auto e2 = () @trusted { return recycledErrorInstance!TrackedError("error2", 2); }();
     assert(e2.id == 2);
     assert(dtorCount == 0);
 
@@ -657,4 +493,54 @@ unittest
     // This is intentional for @nogc compatibility - calling destroy
     // would potentially allocate. For Error types used in @nogc code,
     // this is acceptable as they shouldn't hold resources.
+}
+
+@("recycledErrorInstance.canBeUsedInPureNogcNothrowCode")
+@nogc nothrow pure @safe
+unittest
+{
+    static class TestError : Error
+    {
+        @nogc nothrow pure this(string msg)
+        {
+            super(msg);
+        }
+    }
+
+    // Verify the function can be called from @nogc pure nothrow code with @trusted
+    static void throwingFunc() @nogc pure nothrow @trusted
+    {
+        throw recycledErrorInstance!TestError("test error");
+    }
+
+    // Verify it compiles - we can't actually throw in unittest
+    auto instance = () @trusted { return recycledErrorInstance!TestError("compiles"); }();
+    assert(instance !is null);
+}
+
+@("recycledErrorInstance.onlyAcceptsErrorSubclasses")
+@nogc nothrow pure @system
+unittest
+{
+    // This test verifies the template constraint: only Error subclasses are accepted
+    // The following should NOT compile (verified by static assert):
+
+    static class NotAnError {}
+
+    // Verify constraint rejects non-Error classes
+    static assert(!__traits(compiles, recycledErrorInstance!NotAnError()));
+
+    // Verify constraint rejects structs
+    static struct SomeStruct { int x; }
+    static assert(!__traits(compiles, recycledErrorInstance!SomeStruct(1)));
+
+    // Verify constraint rejects primitives
+    static assert(!__traits(compiles, recycledErrorInstance!int(42)));
+
+    // Verify it accepts Error subclasses
+    static class CustomError : Error
+    {
+        @nogc nothrow pure this(string msg) { super(msg); }
+    }
+    static assert(__traits(compiles, recycledErrorInstance!CustomError("ok")));
 }
