@@ -11,6 +11,9 @@ pkgs.mkShell {
     # Pre-commit hooks
     pkgs.prek
 
+    # Used by :test-utils package
+    pkgs.delta
+
     # D toolchain
     pkgs.ldc
     pkgs.dtools
