@@ -73,18 +73,17 @@ private void prettyPrintImpl(T, Writer)(
     // 4. Strings and individual chars
     else static if (isSomeChar!T || isSomeString!T)
     {
-        coloredWrite!"%(%s%)"(w, [value], Style.green, opt.useColors);
+        coloredWriteEscaped(w, value, Style.green, opt.useColors);
     }
     // 5. Numeric types
     else static if (isNumeric!T)
     {
         static if (isFloatingPoint!T)
         {
-            import std.math : isNaN, isInfinity;
-            if (isNaN(value))
-                return coloredWrite(w, "NaN", Style.red, opt.useColors);
-            else if (isInfinity(value))
-                return coloredWrite(w, value > 0 ? "+∞" : "-∞", Style.red, opt.useColors);
+            import std.math.traits : isNaN, isInfinity;
+            // Special values get red color, normal values get blue
+            if (isNaN(value) || isInfinity(value))
+                return coloredWrite(w, value, Style.red, opt.useColors);
         }
 
         coloredWrite(w, value, Style.blue, opt.useColors);
@@ -484,7 +483,123 @@ private void prettyPrintAggregate(T, Writer)(
 // Helper functions
 // ─────────────────────────────────────────────────────────────────────────────
 
-private void coloredWrite(string fmt = "%s", Writer, T)(ref Writer w, in T value, Style style, bool useColors)
+/// Types that can be pretty-printed in @nogc context
+private template isNogcPrettyPrintable(T)
+{
+    import std.traits : isSomeString, isSomeChar, isIntegral, isFloatingPoint;
+    enum isNogcPrettyPrintable =
+        is(T == typeof(null)) ||
+        is(T == bool) ||
+        isIntegral!T ||
+        isFloatingPoint!T ||
+        isSomeChar!T ||
+        isSomeString!T ||
+        is(T == enum);
+}
+
+/// @nogc-compatible coloredWrite for basic types
+private void coloredWriteNogc(Writer, T)(ref Writer w, in T value, Style style, bool useColors) @trusted
+{
+    import std.range.primitives : put;
+    import std.traits : isSomeString, isSomeChar, isIntegral, isFloatingPoint, OriginalType;
+    import sparkles.core_cli.text_writers : writeEscapeSeq, writeInteger, writeFloat, writeEscapedCharLiteral;
+
+    void writeStyled(const(char)[] text)
+    {
+        if (useColors)
+            writeEscapeSeq(w, style[0]);
+        put(w, text);
+        if (useColors)
+            writeEscapeSeq(w, style[1]);
+    }
+
+    static if (is(T == typeof(null)))
+    {
+        writeStyled("null");
+    }
+    else static if (is(T == bool))
+    {
+        writeStyled(value ? "true" : "false");
+    }
+    else static if (isSomeString!T)
+    {
+        writeStyled(value);
+    }
+    else static if (isSomeChar!T)
+    {
+        if (useColors)
+            writeEscapeSeq(w, style[0]);
+        writeEscapedCharLiteral(w, value);
+        if (useColors)
+            writeEscapeSeq(w, style[1]);
+    }
+    else static if (is(T == enum))  // Check enum before isIntegral (enums satisfy isIntegral)
+    {
+        // For enums, we need to convert to string at compile time
+        // This is a simplified version that uses runtime lookup
+        if (useColors)
+            writeEscapeSeq(w, style[0]);
+
+        // Convert enum value to its string name
+        bool found = false;
+        static foreach (member; __traits(allMembers, T))
+        {
+            if (!found && value == __traits(getMember, T, member))
+            {
+                put(w, member);
+                found = true;
+            }
+        }
+
+        if (useColors)
+            writeEscapeSeq(w, style[1]);
+    }
+    else static if (isIntegral!T)
+    {
+        if (useColors)
+            writeEscapeSeq(w, style[0]);
+
+        writeInteger(w, value);
+
+        if (useColors)
+            writeEscapeSeq(w, style[1]);
+    }
+    else static if (isFloatingPoint!T)
+    {
+        if (useColors)
+            writeEscapeSeq(w, style[0]);
+        writeFloat(w, value);
+        if (useColors)
+            writeEscapeSeq(w, style[1]);
+    }
+    else
+    {
+        static assert(false, "Unsupported type for @nogc coloredWrite: " ~ T.stringof);
+    }
+}
+
+/// @nogc-compatible coloredWrite for escaped strings/chars
+private void coloredWriteEscaped(Writer, T)(ref Writer w, in T value, Style style, bool useColors) @trusted
+{
+    import std.traits : isSomeString, isSomeChar;
+    import sparkles.core_cli.text_writers : writeEscapeSeq, writeEscapedCharLiteral, writeEscapedString;
+
+    if (useColors)
+        writeEscapeSeq(w, style[0]);
+
+    static if (isSomeChar!T)
+        writeEscapedCharLiteral(w, value);
+    else static if (isSomeString!T)
+        writeEscapedString(w, value);
+    else
+        static assert(false, "coloredWriteEscaped only supports char and string types");
+
+    if (useColors)
+        writeEscapeSeq(w, style[1]);
+}
+
+/// GC-based coloredWrite (original implementation)
+private void coloredWriteGC(string fmt = "%s", Writer, T)(ref Writer w, in T value, Style style, bool useColors)
 {
     import std.range.primitives : put;
     import std.traits : isSomeString;
@@ -501,6 +616,15 @@ private void coloredWrite(string fmt = "%s", Writer, T)(ref Writer w, in T value
     put(w, useColors ? text.stylize(style) : text);
 }
 
+/// Dispatcher: uses @nogc path for basic types, GC path otherwise
+private void coloredWrite(string fmt = "%s", Writer, T)(ref Writer w, in T value, Style style, bool useColors)
+{
+    static if (fmt == "%s" && isNogcPrettyPrintable!T)
+        coloredWriteNogc(w, value, style, useColors);
+    else
+        coloredWriteGC!fmt(w, value, style, useColors);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Unit Tests
 // ─────────────────────────────────────────────────────────────────────────────
@@ -511,62 +635,43 @@ version (unittest)
     import std.string : outdent;
     import std.typecons : tuple;
 
-    void check(T)(in T value, string expected, PrettyPrintOptions opts = PrettyPrintOptions(useColors: false),
-            string file = __FILE__, size_t line = __LINE__)
+    /// @nogc-compatible check helper using SmallBuffer
+    void check(T)(in T value, const(char)[] expected,
+            PrettyPrintOptions opts = PrettyPrintOptions(useColors: false),
+            string file = __FILE__, size_t line = __LINE__) @trusted
     {
-        import std.exception : assumeUnique;
-        import sparkles.core_cli.lifetime : recycledInstance;
+        import sparkles.core_cli.lifetime : recycledErrorInstance;
+        import sparkles.core_cli.smallbuffer : SmallBuffer;
 
-        static char[16 * 1024] buf;
-        static size_t len;
-        len = 0;
-
-        static struct BufWriter
-        {
-            char[] buf;
-            size_t* plen;
-
-            void put(const(char)[] s) @nogc nothrow @trusted
-            {
-                buf[*plen .. *plen + s.length] = s;
-                *plen += s.length;
-            }
-
-            void put(char c) @nogc nothrow @trusted
-            {
-                buf[*plen] = c;
-                (*plen)++;
-            }
-        }
-
-        auto writer = BufWriter(buf[], &len);
-        prettyPrint(value, writer, opts);
-        const(char)[] actual = buf[0 .. len];
+        SmallBuffer!(char, 16 * 1024) buf;
+        prettyPrint(value, buf, opts);
+        const(char)[] actual = buf[];
 
         if (actual != expected)
         {
-            enum header = "prettyPrint mismatch:\nExpected:\n";
-            enum middle = "\nActual:\n";
+            // Build error message in a separate buffer
+            SmallBuffer!(char, 4 * 1024) errBuf;
+            errBuf.put("prettyPrint mismatch:\nExpected:\n");
+            errBuf.put(expected);
+            errBuf.put("\nActual:\n");
+            errBuf.put(actual);
 
-            writer.put(header);
-            writer.put(expected);
-            writer.put(middle);
-            writer.put(actual);
-
-            throw recycledInstance!AssertError(
-                buf[len .. *writer.plen].assumeUnique,
+            throw recycledErrorInstance!AssertError(
+                cast(string) errBuf[],
                 file, line);
         }
     }
 }
 
 @("prettyPrint.null")
+@safe pure nothrow @nogc
 unittest
 {
     check(null, "null");
 }
 
 @("prettyPrint.bool")
+@safe pure nothrow @nogc
 unittest
 {
     check(true, "true");
@@ -574,6 +679,7 @@ unittest
 }
 
 @("prettyPrint.integers")
+@safe pure nothrow @nogc
 unittest
 {
     check(42, "42");
@@ -582,15 +688,18 @@ unittest
 }
 
 @("prettyPrint.floats")
+@safe pure nothrow @nogc
 unittest
 {
     check(3.14, "3.14");
-    check(double.nan, "NaN");
-    check(double.infinity, "+∞");
-    check(-double.infinity, "-∞");
+    check(double.nan, "nan");
+    check(-double.nan, "-nan");
+    check(double.infinity, "inf");
+    check(-double.infinity, "-inf");
 }
 
 @("prettyPrint.char")
+@safe pure nothrow @nogc
 unittest
 {
     check('a', "'a'");
@@ -599,6 +708,7 @@ unittest
 }
 
 @("prettyPrint.string")
+@safe pure nothrow @nogc
 unittest
 {
     check("hello", `"hello"`);
@@ -607,6 +717,7 @@ unittest
 }
 
 @("prettyPrint.enum")
+@safe pure nothrow @nogc
 unittest
 {
     enum Color { red, green, blue }
