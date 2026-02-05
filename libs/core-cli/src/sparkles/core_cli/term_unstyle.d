@@ -30,7 +30,7 @@ unittest
     assert(styledText.payload.unstyle == "Format me");
 }
 
-size_t unstyledLenght(R)(R range)
+size_t unstyledLength(R)(R range)
 {
     import std.range : walkLength;
     return range.unstyle.walkLength;
