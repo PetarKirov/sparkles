@@ -9,7 +9,7 @@ module sparkles.core_cli.ui.header;
 import std.conv : to;
 import std.range : repeat;
 
-import sparkles.core_cli.term_unstyle : unstyledLenght;
+import sparkles.core_cli.term_unstyle : unstyledLength;
 
 @safe:
 
@@ -88,7 +88,7 @@ unittest
 
 private string drawDivider(string title, HeaderProps props)
 {
-    const titleLen = title.unstyledLenght;
+    const titleLen = title.unstyledLength;
     const padding = ' '.repeat(props.titlePadding).to!string;
 
     size_t totalWidth = props.width;
@@ -106,7 +106,7 @@ private string drawDivider(string title, HeaderProps props)
 
 private string drawBanner(string title, HeaderProps props)
 {
-    const titleLen = title.unstyledLenght;
+    const titleLen = title.unstyledLength;
     const totalWidth = props.width > 0 ? props.width : titleLen + 20;
 
     const line = props.bannerLineChar.repeat(totalWidth).to!string;
