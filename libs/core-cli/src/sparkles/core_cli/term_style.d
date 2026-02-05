@@ -24,7 +24,6 @@ enum Style : uint[2]
     cyan = [36, 39],
     white = [37, 39],
     gray = [90, 39],
-    grey = [90, 39],
 
     brightRed = [91, 39],
     brightGreen = [92, 39],
@@ -43,7 +42,6 @@ enum Style : uint[2]
     bgCyan = [46, 49],
     bgWhite = [47, 49],
     bgGray = [100, 49],
-    bgGrey = [100, 49],
 
     bgBrightRed = [101, 49],
     bgBrightGreen = [102, 49],
@@ -141,6 +139,91 @@ string stylize(string text, Style style, bool resetAfter = true)
         : resetAfter
         ? style[0].escapeSeq ~ text ~ style[1].escapeSeq
         : style[0].escapeSeq ~ text;
+}
+
+/// Returns the string name of a Style enum member.
+string styleName(Style style)
+{
+    enum toKey = (Style s) => (cast(ulong) s[0] << 32) | s[1];
+
+    switch (toKey(style))
+    {
+        static foreach (member; __traits(allMembers, Style))
+            case toKey(__traits(getMember, Style, member)):
+                return member;
+        default:
+            return "unknown";
+    }
+}
+
+///
+@("styleName.basic")
+@safe pure nothrow unittest
+{
+    // Special values
+    assert(styleName(Style.none) == "none");
+    assert(styleName(Style.reset) == "reset");
+
+    // Text attributes
+    assert(styleName(Style.bold) == "bold");
+    assert(styleName(Style.dim) == "dim");
+    assert(styleName(Style.italic) == "italic");
+    assert(styleName(Style.underline) == "underline");
+    assert(styleName(Style.strikethrough) == "strikethrough");
+
+    // Foreground colors
+    assert(styleName(Style.red) == "red");
+    assert(styleName(Style.brightCyan) == "brightCyan");
+
+    // Background colors
+    assert(styleName(Style.bgBlue) == "bgBlue");
+    assert(styleName(Style.bgBrightYellow) == "bgBrightYellow");
+}
+
+/// Unknown style values return "unknown".
+@("styleName.unknown")
+@safe pure nothrow unittest
+{
+    // Construct a Style value that doesn't match any enum member
+    Style unknown = [999, 999];
+    assert(styleName(unknown) == "unknown");
+
+    // Edge case: valid codes but not a defined style
+    Style notDefined = [50, 50];
+    assert(styleName(notDefined) == "unknown");
+}
+
+/// CTFE compatibility.
+@("styleName.ctfe")
+@safe pure nothrow unittest
+{
+    static assert(styleName(Style.bold) == "bold");
+    static assert(styleName(Style.gray) == "gray");
+    static assert(styleName(Style.bgBrightMagenta) == "bgBrightMagenta");
+
+    // Verify all styles can be named at compile time
+    static foreach (member; __traits(allMembers, Style))
+    {
+        static assert(styleName(__traits(getMember, Style, member)).length > 0);
+    }
+}
+
+/// Returns the name of a Style styled with that style.
+///
+/// Useful for displaying style palettes where styles demonstrate themselves.
+///
+/// Example: `styleSample(Style.red)` returns `"red"` rendered in red.
+string styleSample(Style style, bool resetAfter = true)
+{
+    return styleName(style).stylize(style, resetAfter);
+}
+
+///
+unittest
+{
+    assert(styleSample(Style.red) == "\x1b[31mred\x1b[39m");
+    assert(styleSample(Style.bold) == "\x1b[1mbold\x1b[22m");
+    assert(styleSample(Style.green, false) == "\x1b[32mgreen");
 }
 
 // Optimized version for CT usage
