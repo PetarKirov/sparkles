@@ -5,7 +5,7 @@ import std.algorithm.searching : maxElement;
 import std.range : walkLength, repeat;
 import std.format : format;
 
-import sparkles.core_cli.term_unstyle : unstyledLenght;
+import sparkles.core_cli.term_unstyle : unstyledLength;
 
 struct BoxProps
 {
@@ -25,8 +25,8 @@ struct BoxProps
 
 string drawBox(string[] content, string title, BoxProps props = BoxProps.init)
 {
-    const outputWidth = content.map!(x => x.unstyledLenght).maxElement;
-    const titleWidth = title.unstyledLenght;
+    const outputWidth = content.map!(x => x.unstyledLength).maxElement;
+    const titleWidth = title.unstyledLength;
 
     const prefix = props.omitLeftBorder ? ""d : props.verticalLine ~ " "d;
     const prefixLen = prefix.length;
@@ -41,7 +41,7 @@ string drawBox(string[] content, string title, BoxProps props = BoxProps.init)
 
     foreach (line; content)
     {
-        const rightPadLen = outputWidth - line.unstyledLenght;
+        const rightPadLen = outputWidth - line.unstyledLength;
         result ~= "%s%s%s %s\n".format(prefix, line, ' '.repeat(rightPadLen), props.verticalLine);
     }
 
