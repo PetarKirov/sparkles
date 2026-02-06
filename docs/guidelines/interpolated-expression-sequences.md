@@ -18,6 +18,7 @@ Key benefits:
 
 - **[Code Style][code-style]** — Formatting, naming, and syntax conventions
 - **[Functional & Declarative Programming][functional-declarative]** — Range pipelines, output ranges, purity
+- **[DDoc][ddoc]** — Documentation comments; `$(...)` syntax overlap with IES
 
 ---
 

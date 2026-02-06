@@ -20,6 +20,8 @@ Organize D modules in this order:
 
 Unit tests for a specific function or type should follow that declaration directly.
 
+See [DDoc](ddoc.md) for documentation comment syntax and conventions.
+
 ### Imports
 
 Group imports in this order:
