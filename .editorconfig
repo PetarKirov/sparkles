@@ -24,3 +24,8 @@ indent_style = space
 # with intentional 2-space indentation for expected test output
 [libs/core-cli/src/sparkles/core_cli/prettyprint.d]
 indent_size = unset
+
+# Disable indent checking for markdown - code blocks may have intentional
+# spacing for visual output examples
+[*.md]
+indent_size = unset
