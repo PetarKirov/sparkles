@@ -12,7 +12,7 @@ import sparkles.core_cli.ui.box : drawBox, BoxProps;
 import sparkles.core_cli.ui.demo : Section, runDemo;
 import sparkles.core_cli.ui.table : drawTable;
 import sparkles.core_cli.term_style : Style, stylize, styleSample;
-import sparkles.core_cli.term_style : stb = stylizedTextBuilder;
+import sparkles.core_cli.styled_template : styledText;
 import sparkles.core_cli.prettyprint : prettyPrint, PrettyPrintOptions;
 
 struct Config
@@ -50,10 +50,10 @@ void main()
             Section(
                 header: "Box with Styled Content",
                 content: [
-                    "Status:    ".stylize(Style.bold) ~ "Running".stylize(Style.green),
-                    "Mode:      ".stylize(Style.bold) ~ "Production".stylize(Style.yellow),
-                    "Health:    ".stylize(Style.bold) ~ "Healthy".stylize(Style.brightGreen),
-                    "Uptime:    ".stylize(Style.bold) ~ "3 days, 14 hours".stylize(Style.cyan),
+                    styledText(i"{bold Status:    }{green Running}"),
+                    styledText(i"{bold Mode:      }{yellow Production}"),
+                    styledText(i"{bold Health:    }{brightGreen Healthy}"),
+                    styledText(i"{bold Uptime:    }{cyan 3 days, 14 hours}"),
                 ].drawBox("Status"),
             ),
             Section(
@@ -82,25 +82,25 @@ void main()
             Section(
                 header: "Dashboard Example",
                 content: [
-                    ["Metric".stylize(Style.bold), "Value".stylize(Style.bold), "Status".stylize(Style.bold)],
-                    ["CPU Usage", "45%", "OK".stylize(Style.green)],
-                    ["Memory", "2.1 GB", "OK".stylize(Style.green)],
-                    ["Disk", "89%", "Warning".stylize(Style.yellow)],
-                    ["Network", "1.2 Gbps", "OK".stylize(Style.green)],
+                    [styledText(i"{bold Metric}"), styledText(i"{bold Value}"), styledText(i"{bold Status}")],
+                    ["CPU Usage", "45%", styledText(i"{green OK}")],
+                    ["Memory", "2.1 GB", styledText(i"{green OK}")],
+                    ["Disk", "89%", styledText(i"{yellow Warning}")],
+                    ["Network", "1.2 Gbps", styledText(i"{green OK}")],
                 ].drawTable.drawBox("Metrics"),
             ),
             Section(
                 header: "Color Palette Box",
                 content: [
-                    "Foreground Colors:".stylize(Style.bold),
+                    styledText(i"{bold Foreground Colors:}"),
                     "  " ~ [Style.red, Style.green, Style.yellow, Style.blue, Style.magenta, Style.cyan]
                         .map!styleSample.joiner(" ").to!string,
                     "",
-                    "Bright Colors:".stylize(Style.bold),
+                    styledText(i"{bold Bright Colors:}"),
                     "  " ~ [Style.brightRed, Style.brightGreen, Style.brightYellow, Style.brightBlue]
                         .map!styleSample.joiner(" ").to!string,
                     "",
-                    "Styles:".stylize(Style.bold),
+                    styledText(i"{bold Styles:}"),
                     "  " ~ [Style.bold, Style.dim, Style.italic, Style.underline, Style.strikethrough]
                         .map!styleSample.joiner(" ").to!string,
                 ].drawBox("Styles"),
@@ -124,17 +124,17 @@ void main()
                     "Compiling 42 modules...",
                     "Linking executable...",
                     "Build completed in 3.2s",
-                ].drawBox("Build Log", BoxProps(footer: "✓ Success".stylize(Style.green))),
+                ].drawBox("Build Log", BoxProps(footer: styledText(i"{green ✓ Success}"))),
             ),
             Section(
                 header: "Task Status with Footer",
                 content: [
-                    "Task:      ".stylize(Style.bold) ~ "Deploy to production",
-                    "Started:   ".stylize(Style.bold) ~ "2024-01-15 10:30",
-                    "Duration:  ".stylize(Style.bold) ~ "45 seconds",
+                    styledText(i"{bold Task:      }Deploy to production"),
+                    styledText(i"{bold Started:   }2024-01-15 10:30"),
+                    styledText(i"{bold Duration:  }45 seconds"),
                 ].drawBox(
-                    "deploy-v2.1.0".stylize(Style.cyan),
-                    BoxProps(footer: "✗ Failed".stylize(Style.red)),
+                    styledText(i"{cyan deploy-v2.1.0}"),
+                    BoxProps(footer: styledText(i"{red ✗ Failed}")),
                 ),
             ),
         ],

@@ -7,7 +7,7 @@
 
 import sparkles.core_cli.ui.demo : Section, runDemo;
 import sparkles.core_cli.ui.table : drawTable;
-import sparkles.core_cli.term_style : Style, stylize;
+import sparkles.core_cli.styled_template : styledText;
 
 void main()
 {
@@ -43,7 +43,7 @@ void main()
             Section(
                 header: "Bold Headers",
                 content: [
-                    ["Name".stylize(Style.bold), "Status".stylize(Style.bold), "Priority".stylize(Style.bold)],
+                    [styledText(i"{bold Name}"), styledText(i"{bold Status}"), styledText(i"{bold Priority}")],
                     ["Task 1", "Done", "High"],
                     ["Task 2", "In Progress", "Medium"],
                     ["Task 3", "Pending", "Low"],
@@ -52,50 +52,50 @@ void main()
             Section(
                 header: "Color-Coded Status",
                 content: [
-                    ["Metric".stylize(Style.bold), "Value".stylize(Style.bold), "Status".stylize(Style.bold)],
-                    ["CPU Usage", "45%", "OK".stylize(Style.green)],
-                    ["Memory", "78%", "Warning".stylize(Style.yellow)],
-                    ["Disk", "92%", "Critical".stylize(Style.red)],
-                    ["Network", "12%", "OK".stylize(Style.green)],
+                    [styledText(i"{bold Metric}"), styledText(i"{bold Value}"), styledText(i"{bold Status}")],
+                    ["CPU Usage", "45%", styledText(i"{green OK}")],
+                    ["Memory", "78%", styledText(i"{yellow Warning}")],
+                    ["Disk", "92%", styledText(i"{red Critical}")],
+                    ["Network", "12%", styledText(i"{green OK}")],
                 ].drawTable,
             ),
             Section(
                 header: "Mixed Styles",
                 content: [
                     ["Status", "Description"],
-                    ["OK".stylize(Style.green), "Everything is working fine"],
-                    ["WARN".stylize(Style.yellow), "Some issues detected"],
-                    ["FAIL".stylize(Style.red), "Critical failure"],
+                    [styledText(i"{green OK}"), "Everything is working fine"],
+                    [styledText(i"{yellow WARN}"), "Some issues detected"],
+                    [styledText(i"{red FAIL}"), "Critical failure"],
                 ].drawTable,
             ),
             Section(
                 header: "Multiple Styles Combined",
                 content: [
-                    ["Type".stylize(Style.bold).stylize(Style.underline).stylize(Style.cyan), "Message".stylize(Style.bold).stylize(Style.underline).stylize(Style.cyan)],
-                    ["INFO".stylize(Style.blue).stylize(Style.bold), "Application started".stylize(Style.dim)],
-                    ["DEBUG".stylize(Style.magenta).stylize(Style.dim).stylize(Style.italic), "Loading configuration...".stylize(Style.italic)],
-                    ["ERROR".stylize(Style.red).stylize(Style.bold).stylize(Style.inverse), "Connection failed!".stylize(Style.red).stylize(Style.bold)],
+                    [styledText(i"{bold.underline.cyan Type}"), styledText(i"{bold.underline.cyan Message}")],
+                    [styledText(i"{bold.blue INFO}"), styledText(i"{dim Application started}")],
+                    [styledText(i"{dim.italic.magenta DEBUG}"), styledText(i"{italic Loading configuration...}")],
+                    [styledText(i"{bold.inverse.red ERROR}"), styledText(i"{bold.red Connection failed!}")],
                 ].drawTable,
             ),
             Section(
                 header: "Fully Styled Table",
                 content: [
                     [
-                        "Server".stylize(Style.bold).stylize(Style.underline).stylize(Style.brightCyan),
-                        "Status".stylize(Style.bold).stylize(Style.underline).stylize(Style.brightCyan),
-                        "Load".stylize(Style.bold).stylize(Style.underline).stylize(Style.brightCyan),
+                        styledText(i"{bold.underline.brightCyan Server}"),
+                        styledText(i"{bold.underline.brightCyan Status}"),
+                        styledText(i"{bold.underline.brightCyan Load}"),
                     ],
-                    ["web-01".stylize(Style.brightGreen).stylize(Style.bold), "UP".stylize(Style.green).stylize(Style.inverse), "23%".stylize(Style.green)],
-                    ["web-02".stylize(Style.brightGreen).stylize(Style.bold), "UP".stylize(Style.green).stylize(Style.inverse), "45%".stylize(Style.yellow).stylize(Style.bold)],
-                    ["db-01".stylize(Style.brightRed).stylize(Style.bold).stylize(Style.strikethrough), "DOWN".stylize(Style.red).stylize(Style.inverse).stylize(Style.bold), "0%".stylize(Style.dim).stylize(Style.italic)],
+                    [styledText(i"{bold.brightGreen web-01}"), styledText(i"{inverse.green UP}"), styledText(i"{green 23%}")],
+                    [styledText(i"{bold.brightGreen web-02}"), styledText(i"{inverse.green UP}"), styledText(i"{bold.yellow 45%}")],
+                    [styledText(i"{bold.strikethrough.brightRed db-01}"), styledText(i"{bold.inverse.red DOWN}"), styledText(i"{dim.italic 0%}")],
                 ].drawTable,
             ),
             Section(
                 header: "Alignment Stress Test",
                 content: [
-                    ["A".stylize(Style.red), "This is a very long description that should align properly"],
-                    ["OK".stylize(Style.green), "Short"],
-                    ["WARN".stylize(Style.yellow), "Medium length text here"],
+                    [styledText(i"{red A}"), "This is a very long description that should align properly"],
+                    [styledText(i"{green OK}"), "Short"],
+                    [styledText(i"{yellow WARN}"), "Medium length text here"],
                 ].drawTable,
             ),
         ],
