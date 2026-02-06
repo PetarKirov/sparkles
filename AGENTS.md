@@ -16,6 +16,7 @@ Detailed guidelines are in `docs/guidelines/`:
 - **[Code Style](docs/guidelines/code-style.md)** — Formatting, naming, module layout, imports
 - **[Functional & Declarative Programming](docs/guidelines/functional-declarative-programming-guidelines.md)** — Range pipelines, UFCS, purity, lazy evaluation
 - **[Design by Introspection](docs/guidelines/design-by-introspection-01-guidelines.md)** — Capability traits, optional primitives, shell-with-hooks pattern
+- **[Interpolated Expression Sequences](docs/guidelines/ies.md)** — IES syntax, metadata processing, context-aware encoding
 
 ## Building and Testing
 

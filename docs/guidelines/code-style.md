@@ -170,3 +170,40 @@ auto result = createWidget(
     resizable: false,
 );
 ```
+
+## Interpolated Expression Sequences ([DIP1036](https://github.com/dlang/DIPs/blob/master/DIPs/other/DIP1036.md))
+
+Use IES (`i"..."`) when interspersing string literals with expressions. Preference order:
+
+1. **IES** — Type-safe, enables context-aware encoding
+2. **`std.format`** — When format specifiers are needed (`%08x`, `%.2f`)
+3. **Manual concatenation** — Avoid
+
+```d
+import std.conv : text;
+import std.stdio : writeln;
+
+string name = "Alice";
+int count = 42;
+
+// Good: IES with writeln (no allocation)
+writeln(i"Hello, $(name)! Count: $(count)");
+
+// Good: IES converted to string
+string msg = i"Hello, $(name)! Count: $(count)".text;
+
+// Good: std.format when format specifiers needed
+import std.format : format;
+string hex = format!"Value: 0x%08X"(count);
+
+// Avoid: manual concatenation
+string bad = "Hello, " ~ name ~ "! Count: " ~ count.to!string;
+```
+
+**Key rules:**
+
+- IES produces a tuple, not a string — use `.text` or pass to IES-accepting functions
+- Prefer `writeln(i"...")` over `writeln(i"...".text)` to avoid allocation
+- For security-sensitive contexts (SQL, HTML, URLs), use dedicated IES-processing functions that escape interpolated values
+
+See [Interpolated Expression Sequences](interpolated-expression-sequences.md) for complete patterns including safe SQL queries, HTML templates, and structured logging.
