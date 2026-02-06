@@ -31,11 +31,11 @@ import std.conv : text, to;
 import std.file : exists, mkdirRecurse, readText, remove, tempDir, write;
 import std.path : baseName, buildPath;
 import std.process : execute;
-import std.stdio : stderr, writeln;
+import std.stdio : writeln;
 import std.string : indexOf, lineSplitter, strip;
 
 // sparkles packages
-import sparkles.core_cli.term_style : Style, stylize;
+import sparkles.core_cli.styled_template : styledText, styledWriteln, styledWritelnErr;
 import sparkles.core_cli.ui.box : BoxProps, drawBox;
 import sparkles.core_cli.ui.header : drawHeader, HeaderProps, HeaderStyle;
 
@@ -59,7 +59,7 @@ int main(string[] args)
 
     if (examples.length == 0)
     {
-        writeln("No runnable examples found.".stylize(Style.yellow));
+        styledWriteln(i"{yellow No runnable examples found.}");
         return 0;
     }
 
@@ -217,25 +217,20 @@ in (line.length > 0, "Line cannot be empty")
 }
 
 /// Formats the header line for an example run.
-@safe pure
 private string formatExampleHeader(in Example example, string progress)
 {
-    auto cmd = i"dub run --single $(example.name).d".text;
-    return progress.stylize(Style.dim) ~ " " ~
-        example.name.stylize(Style.cyan) ~ " › ".stylize(Style.dim) ~
-        cmd.stylize(Style.dim);
+    return styledText(i"{dim $(progress)} {cyan $(example.name)} {dim › dub run --single $(example.name).d}");
 }
 
 /// Formats output lines for display, truncating if necessary.
-@safe pure
 private string[] formatOutputLines(string[] lines, size_t maxLines = 8)
 in (maxLines > 1, "maxLines must be at least 2 for truncation indicator")
 {
     if (lines.length == 0)
-        return ["(no output)".stylize(Style.dim)];
+        return [styledText(i"{dim (no output)}")];
 
     if (lines.length > maxLines)
-        return lines[0 .. maxLines - 1] ~ ["...".stylize(Style.dim)];
+        return lines[0 .. maxLines - 1] ~ [styledText(i"{dim ...}")];
 
     return lines;
 }
@@ -244,8 +239,8 @@ in (maxLines > 1, "maxLines must be at least 2 for truncation indicator")
 private void displayResultBox(string[] outputLines, string header, bool success)
 {
     auto footer = success
-        ? "✓ passed".stylize(Style.green)
-        : "✗ FAILED".stylize(Style.red);
+        ? styledText(i"{green ✓ passed}")
+        : styledText(i"{red ✗ FAILED}");
 
     outputLines
         .formatOutputLines
@@ -259,14 +254,14 @@ private string parseArgs(string[] args)
 {
     if (args.length < 2)
     {
-        stderr.writeln("Usage: ".stylize(Style.bold), args[0].baseName, " <markdown-file>");
+        styledWritelnErr(i"{bold Usage:} $(args[0].baseName) <markdown-file>");
         return null;
     }
 
     const mdFile = args[1];
     if (!mdFile.exists)
     {
-        stderr.writeln("Error: ".stylize(Style.red), "File not found: ", mdFile);
+        styledWritelnErr(i"{red Error:} File not found: $(mdFile)");
         return null;
     }
 
@@ -278,20 +273,19 @@ private void displaySummary(size_t total, size_t failures)
 {
     writeln();
     auto passed = total - failures;
-    auto resultText = i"$(passed)/$(total) passed".text;
 
     if (failures == 0)
     {
         writeln([
-            "✓ ".stylize(Style.green) ~ "All examples passed!",
-            resultText.stylize(Style.dim),
-        ].drawBox("Results".stylize(Style.green)));
+            styledText(i"{green ✓} All examples passed!"),
+            styledText(i"{dim $(passed)/$(total) passed}"),
+        ].drawBox(styledText(i"{green Results}")));
     }
     else
     {
         writeln([
-            "✗ ".stylize(Style.red) ~ i"$(failures) example(s) failed".text,
-            resultText.stylize(Style.dim),
-        ].drawBox("Results".stylize(Style.red)));
+            styledText(i"{red ✗} $(failures) example(s) failed"),
+            styledText(i"{dim $(passed)/$(total) passed}"),
+        ].drawBox(styledText(i"{red Results}")));
     }
 }
