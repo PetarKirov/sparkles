@@ -117,6 +117,26 @@ void main()
                     active: true,
                 ).prettyPrint(PrettyPrintOptions(softMaxWidth: 60)).drawBox("Cluster"),
             ),
+            Section(
+                header: "Box with Footer",
+                content: [
+                    "Build started at 14:32:01",
+                    "Compiling 42 modules...",
+                    "Linking executable...",
+                    "Build completed in 3.2s",
+                ].drawBox("Build Log", BoxProps(footer: "✓ Success".stylize(Style.green))),
+            ),
+            Section(
+                header: "Task Status with Footer",
+                content: [
+                    "Task:      ".stylize(Style.bold) ~ "Deploy to production",
+                    "Started:   ".stylize(Style.bold) ~ "2024-01-15 10:30",
+                    "Duration:  ".stylize(Style.bold) ~ "45 seconds",
+                ].drawBox(
+                    "deploy-v2.1.0".stylize(Style.cyan),
+                    BoxProps(footer: "✗ Failed".stylize(Style.red)),
+                ),
+            ),
         ],
     );
 }
