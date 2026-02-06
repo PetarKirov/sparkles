@@ -11,6 +11,7 @@ import sparkles.core_cli.term_unstyle : unstyledLength;
 struct BoxProps
 {
     bool omitLeftBorder = false;
+    string footer = null;
 
     dchar topLeft = '╭';
     dchar topRight = '╮';
@@ -31,15 +32,16 @@ string drawBox(string[] content, string title, BoxProps props = BoxProps.init)
 
     // Minimum width to fit: ╭──╼ {title} ╾─╮ (overhead = 9) and bottom: ╰──────────╯ (overhead = 10)
     const titleWidth = title.unstyledLength;
-    const minWidth = max(titleWidth + 9, 10) - prefixLen;
+    const footerWidth = props.footer !is null ? props.footer.unstyledLength : 0;
+    const minTitleWidth = titleWidth + 9;
+    const minFooterWidth = footerWidth > 0 ? footerWidth + 9 : 10;  // ╰──╼ {footer} ╾──╯ or ╰──────────╯
+    const minWidth = max(minTitleWidth, minFooterWidth) - prefixLen;
     const contentWidth = content.map!(x => x.unstyledLength).maxElement;
     const outputWidth = max(contentWidth, minWidth);
 
     auto topLine = props.horizontalLine.repeat(outputWidth + prefixLen - titleWidth - 7);
-    auto bottomLine = props.horizontalLine.repeat(outputWidth + prefixLen - 10);
 
     auto top = "╭──╼ %s ╾%s─╮".format(title, topLine);
-    auto bot = "╰────────%s──╯".format(bottomLine);
 
     string result = top ~ '\n';
 
@@ -49,7 +51,17 @@ string drawBox(string[] content, string title, BoxProps props = BoxProps.init)
         result ~= "%s%s%s %s\n".format(prefix, line, ' '.repeat(rightPadLen), props.verticalLine);
     }
 
-    result ~= bot;
+    // Bottom line with optional footer
+    if (props.footer !is null)
+    {
+        auto bottomLine = props.horizontalLine.repeat(outputWidth + prefixLen - footerWidth - 7);
+        result ~= "╰──╼ %s ╾%s─╯".format(props.footer, bottomLine);
+    }
+    else
+    {
+        auto bottomLine = props.horizontalLine.repeat(outputWidth + prefixLen - 10);
+        result ~= "╰────────%s──╯".format(bottomLine);
+    }
 
     return result;
 }
@@ -168,6 +180,42 @@ string drawBox(string content, string title, BoxProps props = BoxProps.init)
         ╭──╼ Very Long Title ╾───╮
         Hi                       │
         ╰────────────────────────╯`.outdent(2));
+}
+
+@("drawBox.props.footer")
+@system unittest
+{
+    import sparkles.test_utils.string : outdent;
+
+    assert(["Content"].drawBox("Title", BoxProps(footer: "Done")) == `
+        ╭──╼ Title ╾───╮
+        │ Content      │
+        ╰──╼ Done ╾────╯`.outdent(2));
+}
+
+@("drawBox.props.footerWiderThanContent")
+@system unittest
+{
+    import sparkles.test_utils.string : outdent;
+
+    // Footer wider than content should expand the box
+    assert(["Hi"].drawBox("T", BoxProps(footer: "Completed successfully")) == `
+        ╭──╼ T ╾────────────────────────╮
+        │ Hi                            │
+        ╰──╼ Completed successfully ╾───╯`.outdent(2));
+}
+
+@("drawBox.props.footerWithAnsiCodes")
+@system unittest
+{
+    import sparkles.core_cli.term_style : Style, stylize;
+
+    // Styled footer should not affect width calculation
+    auto styledFooter = "✓ OK".stylize(Style.green);
+    assert(["Content"].drawBox("Title", BoxProps(footer: styledFooter)) ==
+        "╭──╼ Title ╾───╮\n" ~
+        "│ Content      │\n" ~
+        "╰──╼ \x1b[32m✓ OK\x1b[39m ╾────╯");
 }
 
 @("drawBox.styled.contentWithAnsiCodes")
