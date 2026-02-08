@@ -36,3 +36,8 @@ __dummy.html
 
 # Code coverage
 *.lst
+
+# Node.js / VitePress
+node_modules/
+docs/.vitepress/dist/
+docs/.vitepress/cache/
