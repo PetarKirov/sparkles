@@ -281,6 +281,7 @@ Follow the conventional commits format:
 - `chore` - Maintenance tasks
 - `build` - Build system changes
 - `ci` - CI/CD changes
+- `docs` - Documentation changes
 
 ### Scopes
 
@@ -288,6 +289,7 @@ Follow the conventional commits format:
 - `test-utils` - For test-utils package changes
 - `dub` - For dub configuration changes
 - `nix` - For Nix configuration changes
+- `guidelines` - For documentation guidelines changes
 
 ### Examples
 

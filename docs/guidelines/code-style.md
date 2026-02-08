@@ -24,7 +24,7 @@ See [DDoc](ddoc.md) for documentation comment syntax and conventions.
 
 ### Imports
 
-Group imports in this order:
+Group imports in this order, separated by a single empty line between groups:
 
 1. `core.*` modules (DRuntime)
 2. `std.*` modules (Phobos)
