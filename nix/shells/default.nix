@@ -20,6 +20,9 @@ pkgs.mkShell {
     pkgs.dub
 
     pkgs.mold
+
+    # Documentation site
+    pkgs.nodejs
   ]
   ++ lib.optionals (system == "x86_64-linux") [
     pkgs.dmd
