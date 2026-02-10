@@ -5,7 +5,7 @@ module sparkles.core_cli.term_unstyle;
 auto unstyle(R)(R range)
 {
     import std.regex : regex, replaceAll;
-    const pattern = regex(`\x1B\[[0-9;]*[A-Za-z]`);
+    const pattern = regex(`\x1B\]8;[^\x07\x1B]*;[^\x07\x1B]*(?:\x07|\x1B\\)|\x1B\[[0-9;]*[A-Za-z]`);
     return range.replaceAll(pattern, "");
 }
 
@@ -57,6 +57,50 @@ unittest
 
     foreach (el; table)
         assert(el.unstyle == text);
+}
+
+/// OSC 8 hyperlink with BEL terminator is stripped.
+@("unstyle.oscLink.basic")
+@safe unittest
+{
+    const link = "\x1b]8;;https://example.com\x07Click\x1b]8;;\x07";
+    assert(link.unstyle == "Click");
+}
+
+/// OSC 8 hyperlink with ST terminator is stripped.
+@("unstyle.oscLink.withST")
+@safe unittest
+{
+    const link = "\x1b]8;;https://example.com\x1b\\Click\x1b]8;;\x1b\\";
+    assert(link.unstyle == "Click");
+}
+
+/// OSC 8 hyperlink with id parameter is stripped.
+@("unstyle.oscLink.withId")
+@safe unittest
+{
+    const link = "\x1b]8;id=mylink;https://example.com\x07Click\x1b]8;;\x07";
+    assert(link.unstyle == "Click");
+}
+
+/// OSC 8 hyperlink combined with SGR styles is fully stripped.
+@("unstyle.oscLink.withStyles")
+@safe unittest
+{
+    import sparkles.core_cli.term_style : Style, stylize;
+
+    const styledLink = "\x1b]8;;https://example.com\x07"
+        ~ "Click".stylize(Style.blue).stylize(Style.underline)
+        ~ "\x1b]8;;\x07";
+    assert(styledLink.unstyle == "Click");
+}
+
+/// `unstyledLength` correctly counts only visible characters for OSC links.
+@("unstyledLength.oscLink")
+@safe unittest
+{
+    const link = "\x1b]8;;https://example.com\x07Click here\x1b]8;;\x07";
+    assert(link.unstyledLength == 10);
 }
 
 size_t unstyledLength(R)(R range)
