@@ -25,6 +25,10 @@ indent_style = space
 [libs/core-cli/src/sparkles/core_cli/prettyprint.d]
 indent_size = unset
 
+# Test data files contain exact byte sequences — no trailing newline
+[libs/core-cli/test/data/**]
+insert_final_newline = unset
+
 # Disable indent checking for markdown - code blocks may have intentional
 # spacing for visual output examples
 [*.md]

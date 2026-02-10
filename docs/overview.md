@@ -12,6 +12,7 @@ A D library providing utilities for building CLI applications with terminal styl
   - [Tables](#tables)
   - [Boxes](#boxes)
   - [Headers](#headers)
+  - [OSC 8 Hyperlinks](#osc-8-hyperlinks)
 - [SmallBuffer (@nogc)](#smallbuffer-nogc)
 - [Running Examples](#running-examples)
 
@@ -327,6 +328,46 @@ Output:
 ══════════════════════════════
 ```
 
+### OSC 8 Hyperlinks
+
+Make text clickable in terminal emulators that support [OSC 8](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda).
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "osclinkdemo"
+    dependency "sparkles:core-cli" version="*"
++/
+import std.stdio : writeln;
+import sparkles.core_cli.ui.osc_link : oscLink;
+import sparkles.core_cli.term_style : Style;
+
+void main()
+{
+    // Plain clickable link
+    writeln(oscLink(text: "Example", uri: "https://example.com"));
+
+    // Styled clickable link (blue text)
+    writeln(oscLink(text: "D Language", uri: "https://dlang.org", style: Style.blue));
+}
+```
+
+#### API
+
+| Function                     | Description                       |
+| ---------------------------- | --------------------------------- |
+| `oscLink(text, uri)`         | Wrap text in an OSC 8 hyperlink   |
+| `oscLink(text, uri, style)`  | Wrap styled text in an OSC 8 link |
+| `oscLinkOpenSeq(uri, props)` | Opening escape sequence only      |
+| `oscLinkCloseSeq(props)`     | Closing escape sequence only      |
+
+Configure via `OscLinkProps`:
+
+| Field        | Default             | Description                   |
+| ------------ | ------------------- | ----------------------------- |
+| `terminator` | `OscTerminator.bel` | BEL (`\x07`) or ST (`\x1b\\`) |
+| `id`         | `null`              | Optional link id for grouping |
+
 ## SmallBuffer (@nogc)
 
 A `@nogc` container with Small Buffer Optimization (SBO). Stores small data inline, automatically switches to heap when capacity is exceeded.
@@ -382,3 +423,4 @@ Available examples:
 - `table.d` - Table rendering variations
 - `box.d` - Box layouts with nested content
 - `header.d` - Header styles
+- `osc_link.d` - OSC 8 terminal hyperlinks

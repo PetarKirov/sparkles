@@ -28,7 +28,7 @@
 
 - **Styled Templates** -- Apply ANSI styles using D's Interpolated Expression Sequences (IES) with a concise `{style text}` syntax
 - **Pretty Printing** -- Colorized, type-aware formatting for any D type via compile-time introspection
-- **UI Components** -- Tables, boxes, and headers with Unicode box-drawing characters
+- **UI Components** -- Tables, boxes, headers, and OSC 8 hyperlinks
 - **Terminal Styling** -- ANSI color and text attribute support with a fluent builder API
 - **SmallBuffer** -- A `@nogc` dynamic buffer with small buffer optimization (SBO)
 - **@nogc Utilities** -- `recycledInstance`, text writers, and output range interfaces
@@ -295,6 +295,32 @@ void main()
 ════════════════════════════════════════
 ```
 
+#### OSC 8 Hyperlinks
+
+Make text clickable in terminal emulators that support [OSC 8](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda).
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "readme_osc_link"
+    dependency "sparkles:core-cli" version="*"
++/
+
+import std.stdio : writeln;
+
+import sparkles.core_cli.ui.osc_link;
+import sparkles.core_cli.term_style : Style;
+
+void main()
+{
+    // Plain clickable link
+    writeln(oscLink(text: "Example", uri: "https://example.com"));
+
+    // Styled clickable link (blue text)
+    writeln(oscLink(text: "D Language", uri: "https://dlang.org", style: Style.blue));
+}
+```
+
 ### SmallBuffer
 
 A `@nogc` dynamic array with small buffer optimization. Stores data inline up to a configurable threshold, then falls back to the heap via `pureMalloc`.
@@ -344,6 +370,7 @@ dub run --single libs/core-cli/examples/prettyprint.d
 dub run --single libs/core-cli/examples/table.d
 dub run --single libs/core-cli/examples/box.d
 dub run --single libs/core-cli/examples/header.d
+dub run --single libs/core-cli/examples/osc_link.d
 dub run --single libs/core-cli/examples/color.d
 ```
 
