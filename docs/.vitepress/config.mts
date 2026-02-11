@@ -53,6 +53,65 @@ export default defineConfig({
           },
         ],
       },
+      {
+        text: "Research",
+        items: [
+          {
+            text: "Sean Parent: Better Code",
+            link: "/research/sean-parent/",
+            items: [
+              {
+                text: "C++ Seasoning",
+                link: "/research/sean-parent/cpp-seasoning",
+              },
+              {
+                text: "Local Reasoning",
+                link: "/research/sean-parent/local-reasoning",
+              },
+              {
+                text: "Regular Types",
+                link: "/research/sean-parent/regular-types",
+              },
+              {
+                text: "Value Semantics",
+                link: "/research/sean-parent/value-semantics",
+              },
+              {
+                text: "Algorithms",
+                link: "/research/sean-parent/algorithms",
+              },
+              {
+                text: "Concurrency",
+                link: "/research/sean-parent/concurrency",
+              },
+              {
+                text: "Data Structures",
+                link: "/research/sean-parent/data-structures",
+              },
+              {
+                text: "Relationships",
+                link: "/research/sean-parent/relationships",
+              },
+              {
+                text: "Contracts",
+                link: "/research/sean-parent/contracts",
+              },
+              {
+                text: "Safety",
+                link: "/research/sean-parent/safety",
+              },
+              {
+                text: "Human Interface",
+                link: "/research/sean-parent/human-interface",
+              },
+              {
+                text: "Generic Programming",
+                link: "/research/sean-parent/generic-programming",
+              },
+            ],
+          },
+        ],
+      },
     ],
 
     socialLinks: [
