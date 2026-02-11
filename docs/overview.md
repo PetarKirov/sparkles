@@ -184,11 +184,19 @@ void main()
 
     // Custom options
     int[] numbers = [1, 2, 3, 4, 5];
-    writeln(prettyPrint(numbers, PrettyPrintOptions(useColors: false)));
+    writeln(prettyPrint(numbers, PrettyPrintOptions!void(useColors: false)));
 }
 ```
 
 ### PrettyPrintOptions
+
+`PrettyPrintOptions` is a struct template parameterized on `SourceUriHook`:
+
+```d
+PrettyPrintOptions!void(...)              // default: file:// URIs
+PrettyPrintOptions!(SchemeHook!"code")    // VS Code URIs
+PrettyPrintOptions!EditorDetectHook       // auto-detect from $EDITOR/$VISUAL
+```
 
 | Option         | Default | Description                                            |
 | -------------- | ------- | ------------------------------------------------------ |
@@ -197,6 +205,22 @@ void main()
 | `maxItems`     | 32      | Max items shown for arrays/AAs                         |
 | `softMaxWidth` | 80      | Try single-line if output fits (0 = always multi-line) |
 | `useColors`    | true    | Enable ANSI colors                                     |
+| `useOscLinks`  | false   | Wrap type names in OSC 8 hyperlinks to source location |
+
+#### Source URI Hooks
+
+The `SourceUriHook` template parameter controls the URI scheme for OSC 8 hyperlinks on type names. Available hooks from `sparkles.core_cli.source_uri`:
+
+| Hook                  | Description                                      |
+| --------------------- | ------------------------------------------------ |
+| `void` (default)      | `file://` URIs with absolute paths               |
+| `SchemeHook!"code"`   | VS Code (`vscode://`) URIs                       |
+| `SchemeHook!"cursor"` | Cursor editor URIs                               |
+| `SchemeHook!"idea"`   | JetBrains IDE URIs                               |
+| `SchemeHook!"subl"`   | Sublime Text URIs                                |
+| `EditorDetectHook`    | Auto-detects from `$VISUAL`/`$EDITOR` at runtime |
+
+Custom hooks implement `static void writeSourceUri(string path, size_t line, size_t col, Writer)(ref Writer w)` — source location is passed as template parameters for CTFE evaluation.
 
 ## UI Components
 

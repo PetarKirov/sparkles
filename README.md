@@ -132,7 +132,7 @@ void main()
         active: true,
     );
 
-    writeln(prettyPrint(cluster, PrettyPrintOptions(useColors: false)));
+    writeln(prettyPrint(cluster, PrettyPrintOptions!void(useColors: false)));
 }
 ```
 
@@ -151,14 +151,17 @@ Cluster(
 Options via `PrettyPrintOptions`:
 
 ```d
-prettyPrint(value, PrettyPrintOptions(
+prettyPrint(value, PrettyPrintOptions!void(
     indentStep: 2,       // spaces per indent level
     maxDepth: 8,         // recursion limit
     maxItems: 32,        // max array/AA items shown
     softMaxWidth: 80,    // single-line threshold
     useColors: true,     // ANSI color output
+    useOscLinks: false,  // OSC 8 hyperlinks on type names
 ));
 ```
+
+The `SourceUriHook` template parameter controls the URI scheme for OSC 8 hyperlinks. Use `SchemeHook!"code"` for VS Code, `EditorDetectHook` for auto-detection from `$EDITOR`/`$VISUAL`, or implement a custom hook via [Design by Introspection](docs/guidelines/design-by-introspection-01-guidelines.md).
 
 ### Terminal Styling
 

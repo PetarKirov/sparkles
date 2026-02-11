@@ -4,21 +4,27 @@ import std.typecons : Tuple;
 
 import sparkles.core_cli.term_style : escapeSeq, Style, stylize;
 
-struct PrettyPrintOptions
+struct PrettyPrintOptions(SourceUriHook = void)
 {
-    ushort indentStep   = 2;   // spaces per indent level
-    ushort maxDepth     = 8;   // recursion limit
-    uint   maxItems     = 32;  // for arrays/ranges/AAs
-    uint   softMaxWidth = 80;  // try single-line if output fits (0 = always multi-line)
+    ushort indentStep   = 2;     // spaces per indent level
+    ushort maxDepth     = 8;     // recursion limit
+    uint   maxItems     = 32;    // for arrays/ranges/AAs
+    uint   softMaxWidth = 80;    // try single-line if output fits (0 = always multi-line)
     bool   useColors    = true;
+    bool   useOscLinks  = false; // wrap type names in OSC 8 hyperlinks
+
+    // Zero-state optimization (DbI §5.3):
+    // Only store hook if it has runtime state
+    static if (!is(SourceUriHook == void))
+        SourceUriHook sourceUriHook;
 }
 
 /// Pretty-prints a value to a writer.
 /// Returns the writer for chaining.
-ref Writer prettyPrint(T, Writer)(
+ref Writer prettyPrint(T, Writer, Hook = void)(
     in T value,
     return ref Writer writer,
-    PrettyPrintOptions opt = PrettyPrintOptions()
+    in PrettyPrintOptions!Hook opt = PrettyPrintOptions!Hook()
 )
 {
     prettyPrintImpl(value, writer, opt, 0);
@@ -26,7 +32,7 @@ ref Writer prettyPrint(T, Writer)(
 }
 
 /// Convenience overload that returns a string.
-string prettyPrint(T)(in T value, PrettyPrintOptions opt = PrettyPrintOptions())
+string prettyPrint(T, Hook = void)(in T value, in PrettyPrintOptions!Hook opt = PrettyPrintOptions!Hook())
 {
     import std.array : appender;
     auto w = appender!string;
@@ -34,10 +40,10 @@ string prettyPrint(T)(in T value, PrettyPrintOptions opt = PrettyPrintOptions())
     return w[];
 }
 
-private void prettyPrintImpl(T, Writer)(
+private void prettyPrintImpl(T, Writer, Hook)(
     in T value,
     ref Writer w,
-    in PrettyPrintOptions opt,
+    in PrettyPrintOptions!Hook opt,
     ushort depth
 )
 {
@@ -61,7 +67,7 @@ private void prettyPrintImpl(T, Writer)(
     // 2. Enums
     static if (is(T == enum))
     {
-        coloredWrite(w, T.stringof, Style.magenta, opt.useColors);
+        writeTypeName!T(w, opt);
         put(w, ".");
         coloredWrite(w, value, Style.green, opt.useColors);
     }
@@ -125,10 +131,10 @@ private void prettyPrintImpl(T, Writer)(
     }
 }
 
-private void prettyPrintTuple(Writer, Args...)(
+private void prettyPrintTuple(Writer, Hook, Args...)(
     in Tuple!Args value,
     ref Writer w,
-    in PrettyPrintOptions opt,
+    in PrettyPrintOptions!Hook opt,
     ushort depth
 )
 {
@@ -155,10 +161,10 @@ private void prettyPrintTuple(Writer, Args...)(
     put(w, ")");
 }
 
-private void prettyPrintAA(T, Writer)(
+private void prettyPrintAA(T, Writer, Hook)(
     auto ref const T aa,
     ref Writer w,
-    in PrettyPrintOptions opt,
+    in PrettyPrintOptions!Hook opt,
     ushort depth
 )
 {
@@ -169,9 +175,9 @@ private void prettyPrintAA(T, Writer)(
 
     if (aa.length == 0)
     {
-        coloredWrite(w, KeyType!T.stringof, Style.magenta, opt.useColors);
+        writeTypeName!(KeyType!T)(w, opt);
         put(w, "[");
-        coloredWrite(w, ValueType!T.stringof, Style.magenta, opt.useColors);
+        writeTypeName!(ValueType!T)(w, opt);
         put(w, "][]");
         return;
     }
@@ -179,7 +185,7 @@ private void prettyPrintAA(T, Writer)(
     // Try single-line format first
     if (opt.softMaxWidth > 0 && aa.length <= opt.maxItems)
     {
-        auto singleLineOpt = PrettyPrintOptions(
+        auto singleLineOpt = PrettyPrintOptions!void(
             indentStep: opt.indentStep,
             maxDepth: opt.maxDepth,
             maxItems: opt.maxItems,
@@ -241,7 +247,7 @@ private void prettyPrintAA(T, Writer)(
     put(w, "]");
 }
 
-private string prettyPrintAAInline(T)(in T aa, in PrettyPrintOptions opt, ushort depth)
+private string prettyPrintAAInline(T)(in T aa, in PrettyPrintOptions!void opt, ushort depth)
 {
     import std.array : appender;
     auto w = appender!string;
@@ -260,7 +266,7 @@ private string prettyPrintAAInline(T)(in T aa, in PrettyPrintOptions opt, ushort
     return w.data;
 }
 
-private string prettyPrintRangeInline(R)(R range, in PrettyPrintOptions opt, ushort depth)
+private string prettyPrintRangeInline(R)(R range, in PrettyPrintOptions!void opt, ushort depth)
 {
     import std.array : appender;
     auto w = appender!string;
@@ -277,7 +283,7 @@ private string prettyPrintRangeInline(R)(R range, in PrettyPrintOptions opt, ush
     return w.data;
 }
 
-private string prettyPrintAggregateInline(T)(auto ref const T value, in PrettyPrintOptions opt, ushort depth)
+private string prettyPrintAggregateInline(T)(auto ref const T value, in PrettyPrintOptions!void opt, ushort depth)
 {
     import std.array : appender;
     import std.traits : FieldNameTuple;
@@ -304,10 +310,10 @@ private string prettyPrintAggregateInline(T)(auto ref const T value, in PrettyPr
     return w.data;
 }
 
-private void prettyPrintRange(R, Writer)(
+private void prettyPrintRange(R, Writer, Hook)(
     R range,
     ref Writer w,
-    in PrettyPrintOptions opt,
+    in PrettyPrintOptions!Hook opt,
     ushort depth
 )
 {
@@ -332,7 +338,7 @@ private void prettyPrintRange(R, Writer)(
     {
         if (opt.softMaxWidth > 0 && len <= opt.maxItems)
         {
-            auto singleLineOpt = PrettyPrintOptions(
+            auto singleLineOpt = PrettyPrintOptions!void(
                 indentStep: opt.indentStep,
                 maxDepth: opt.maxDepth,
                 maxItems: opt.maxItems,
@@ -398,10 +404,10 @@ private void prettyPrintRange(R, Writer)(
     put(w, "]");
 }
 
-private void prettyPrintAggregate(T, Writer)(
+private void prettyPrintAggregate(T, Writer, Hook)(
     auto ref const T value,
     ref Writer w,
-    in PrettyPrintOptions opt,
+    in PrettyPrintOptions!Hook opt,
     ushort depth
 )
 {
@@ -413,7 +419,7 @@ private void prettyPrintAggregate(T, Writer)(
 
     static if (fieldNames.length == 0)
     {
-        coloredWrite(w, T.stringof, Style.magenta, opt.useColors);
+        writeTypeName!T(w, opt);
         put(w, "()");
         return;
     }
@@ -421,7 +427,7 @@ private void prettyPrintAggregate(T, Writer)(
     // Try single-line format first
     if (opt.softMaxWidth > 0)
     {
-        auto singleLineOpt = PrettyPrintOptions(
+        auto singleLineOpt = PrettyPrintOptions!void(
             indentStep: opt.indentStep,
             maxDepth: opt.maxDepth,
             maxItems: opt.maxItems,
@@ -431,7 +437,7 @@ private void prettyPrintAggregate(T, Writer)(
         string singleLine = prettyPrintAggregateInline(value, singleLineOpt, depth);
         if (singleLine.length <= opt.softMaxWidth)
         {
-            coloredWrite(w, T.stringof, Style.magenta, opt.useColors);
+            writeTypeName!T(w, opt);
             put(w, "(");
             bool first = true;
             static foreach (i, fieldName; fieldNames)
@@ -451,7 +457,7 @@ private void prettyPrintAggregate(T, Writer)(
         }
     }
 
-    coloredWrite(w, T.stringof, Style.magenta, opt.useColors);
+    writeTypeName!T(w, opt);
     put(w, "(");
 
     auto indent = ' '.repeat(opt.indentStep * (depth + 1));
@@ -495,6 +501,42 @@ private template isNogcPrettyPrintable(T)
         isSomeChar!T ||
         isSomeString!T ||
         is(T == enum);
+}
+
+private void writeTypeName(T, Writer, Hook)(ref Writer w, in PrettyPrintOptions!Hook opt)
+{
+    import std.range.primitives : put;
+    import sparkles.core_cli.source_uri : resolveSourcePath, hasWriteSourceUri, FileUriHook;
+
+    enum hasLoc = __traits(compiles, __traits(getLocation, T));
+
+    static if (hasLoc)
+    {
+        if (opt.useOscLinks)
+        {
+            enum _loc = __traits(getLocation, T);
+            enum absPath = resolveSourcePath(_loc[0]);
+
+            put(w, "\x1b]8;;");
+
+            // DbI dispatch: hook → fallback (§6.1)
+            // Source location as template args → CTFE URI → @nogc put
+            static if (!is(Hook == void) && hasWriteSourceUri!(Hook, Writer))
+                Hook.writeSourceUri!(absPath, _loc[1], _loc[2])(w);
+            else
+                FileUriHook.writeSourceUri!(absPath, _loc[1], _loc[2])(w);
+
+            put(w, "\x07");
+        }
+    }
+
+    coloredWrite(w, T.stringof, Style.magenta, opt.useColors);
+
+    static if (hasLoc)
+    {
+        if (opt.useOscLinks)
+            put(w, "\x1b]8;;\x07");
+    }
 }
 
 /// @nogc-compatible coloredWrite for basic types
@@ -636,8 +678,8 @@ version (unittest)
     import std.typecons : tuple;
 
     /// @nogc-compatible check helper using SmallBuffer
-    void check(T)(in T value, const(char)[] expected,
-            PrettyPrintOptions opts = PrettyPrintOptions(useColors: false),
+    void check(T, Hook = void)(in T value, const(char)[] expected,
+            in PrettyPrintOptions!Hook opts = PrettyPrintOptions!Hook(useColors: false),
             string file = __FILE__, size_t line = __LINE__) @trusted
     {
         import sparkles.core_cli.lifetime : recycledErrorInstance;
@@ -727,7 +769,7 @@ unittest
 @("prettyPrint.array")
 unittest
 {
-    const opts = PrettyPrintOptions(softMaxWidth: 0, useColors: false);
+    const opts = PrettyPrintOptions!void(softMaxWidth: 0, useColors: false);
     int[] arr = [1, 2, 3];
     check(arr, outdent(`
         [
@@ -743,7 +785,7 @@ unittest
 @("prettyPrint.staticArray")
 unittest
 {
-    const opts = PrettyPrintOptions(softMaxWidth: 0, useColors: false);
+    const opts = PrettyPrintOptions!void(softMaxWidth: 0, useColors: false);
     int[3] arr = [10, 20, 30];
     check(arr, outdent(`
         [
@@ -764,7 +806,7 @@ unittest
 unittest
 {
     struct Point { int x; int y; }
-    const opts = PrettyPrintOptions(softMaxWidth: 0, useColors: false);
+    const opts = PrettyPrintOptions!void(softMaxWidth: 0, useColors: false);
     auto p = Point(10, 20);
     check(p, outdent(`
         Point(
@@ -779,7 +821,7 @@ unittest
     struct Inner { int value; }
     struct Outer { string name; Inner inner; }
 
-    const opts = PrettyPrintOptions(softMaxWidth: 0, useColors: false);
+    const opts = PrettyPrintOptions!void(softMaxWidth: 0, useColors: false);
     auto o = Outer("test", Inner(42));
     check(o, outdent(`
         Outer(
@@ -814,7 +856,7 @@ unittest
 @("prettyPrint.maxItems")
 unittest
 {
-    const opts = PrettyPrintOptions(maxItems: 3, useColors: false);
+    const opts = PrettyPrintOptions!void(maxItems: 3, useColors: false);
     int[] arr = [1, 2, 3, 4, 5];
     check(arr, outdent(`
         [
@@ -842,7 +884,7 @@ unittest
         Deep(
           value: 1,
           next: &...
-        )`)[1..$], PrettyPrintOptions(maxDepth: 1, softMaxWidth: 0, useColors: false));
+        )`)[1..$], PrettyPrintOptions!void(maxDepth: 1, softMaxWidth: 0, useColors: false));
 
     // maxDepth: 2 - one level of pointer dereference, but inner struct fields hit limit
     check(d1, outdent(`
@@ -852,7 +894,7 @@ unittest
               value: ...,
               next: ...
             )
-        )`)[1..$], PrettyPrintOptions(maxDepth: 2, softMaxWidth: 0, useColors: false));
+        )`)[1..$], PrettyPrintOptions!void(maxDepth: 2, softMaxWidth: 0, useColors: false));
 
     // maxDepth: 3 - inner struct fields visible, but next pointer hits limit
     check(d1, outdent(`
@@ -862,7 +904,7 @@ unittest
               value: 2,
               next: &...
             )
-        )`)[1..$], PrettyPrintOptions(maxDepth: 3, softMaxWidth: 0, useColors: false));
+        )`)[1..$], PrettyPrintOptions!void(maxDepth: 3, softMaxWidth: 0, useColors: false));
 
     // maxDepth: 4 - two levels of nesting visible
     check(d1, outdent(`
@@ -875,7 +917,7 @@ unittest
                   next: ...
                 )
             )
-        )`)[1..$], PrettyPrintOptions(maxDepth: 4, softMaxWidth: 0, useColors: false));
+        )`)[1..$], PrettyPrintOptions!void(maxDepth: 4, softMaxWidth: 0, useColors: false));
 
     // maxDepth: 5 - three levels of nesting visible
     check(d1, outdent(`
@@ -888,7 +930,7 @@ unittest
                   next: &...
                 )
             )
-        )`)[1..$], PrettyPrintOptions(maxDepth: 5, softMaxWidth: 0, useColors: false));
+        )`)[1..$], PrettyPrintOptions!void(maxDepth: 5, softMaxWidth: 0, useColors: false));
 
     // maxDepth: ushort.max - no practical limit, full output
     check(d1, outdent(`
@@ -907,14 +949,14 @@ unittest
                     )
                 )
             )
-        )`)[1..$], PrettyPrintOptions(maxDepth: ushort.max, softMaxWidth: 0, useColors: false));
+        )`)[1..$], PrettyPrintOptions!void(maxDepth: ushort.max, softMaxWidth: 0, useColors: false));
 }
 
 @("prettyPrint.withColors")
 unittest
 {
     // Integer 42 with blue color code prefix and reset to default foreground
-    check(42, "\x1b[34m42\x1b[39m", PrettyPrintOptions(useColors: true));
+    check(42, "\x1b[34m42\x1b[39m", PrettyPrintOptions!void(useColors: true));
 }
 
 @("prettyPrint.class")
@@ -922,7 +964,7 @@ unittest
 {
     class MyClass { int x; string name; }
 
-    const opts = PrettyPrintOptions(softMaxWidth: 0, useColors: false);
+    const opts = PrettyPrintOptions!void(softMaxWidth: 0, useColors: false);
 
     MyClass nullObj = null;
     check(nullObj, "null", opts);
@@ -935,4 +977,85 @@ unittest
           x: 10,
           name: "test"
         )`)[1..$], opts);
+}
+
+@("prettyPrint.oscLink.struct")
+@safe pure nothrow
+unittest
+{
+    import sparkles.core_cli.source_uri : resolveSourcePath, FileUriHook;
+
+    struct Coord { int x; int y; }
+    enum _loc = __traits(getLocation, Coord);
+    enum uri = {
+        import std.conv : text;
+        enum absPath = resolveSourcePath(_loc[0]);
+        return i"file://$(absPath)#L$(_loc[1])".text;
+    }();
+    check(Coord(1, 2), "\x1b]8;;" ~ uri ~ "\x07" ~ "Coord" ~ "\x1b]8;;\x07" ~ "(x: 1, y: 2)",
+        PrettyPrintOptions!void(useColors: false, useOscLinks: true));
+}
+
+@("prettyPrint.oscLink.enum")
+@safe pure nothrow
+unittest
+{
+    import sparkles.core_cli.source_uri : resolveSourcePath;
+
+    enum Dir { north, south }
+    enum _loc = __traits(getLocation, Dir);
+    enum uri = {
+        import std.conv : text;
+        enum absPath = resolveSourcePath(_loc[0]);
+        return i"file://$(absPath)#L$(_loc[1])".text;
+    }();
+    check(Dir.south, "\x1b]8;;" ~ uri ~ "\x07" ~ "Dir" ~ "\x1b]8;;\x07" ~ ".south",
+        PrettyPrintOptions!void(useColors: false, useOscLinks: true));
+}
+
+@("prettyPrint.oscLink.disabled")
+@safe pure nothrow
+unittest
+{
+    struct Pair { int a; int b; }
+    check(Pair(3, 4), "Pair(a: 3, b: 4)",
+        PrettyPrintOptions!void(useColors: false, useOscLinks: false));
+}
+
+@("prettyPrint.oscLink.withColors")
+@safe pure nothrow
+unittest
+{
+    import sparkles.core_cli.source_uri : resolveSourcePath;
+
+    struct Cell { int v; }
+    enum _loc = __traits(getLocation, Cell);
+    enum uri = {
+        import std.conv : text;
+        enum absPath = resolveSourcePath(_loc[0]);
+        return i"file://$(absPath)#L$(_loc[1])".text;
+    }();
+    // Nesting order: OSC_OPEN → SGR_OPEN → text → SGR_CLOSE → OSC_CLOSE
+    // Field names (brightCyan=96) and values (blue=34) also get color codes
+    check(Cell(7),
+        "\x1b]8;;" ~ uri ~ "\x07" ~ "\x1b[35mCell\x1b[39m" ~ "\x1b]8;;\x07"
+        ~ "(\x1b[96mv\x1b[39m: \x1b[34m7\x1b[39m)",
+        PrettyPrintOptions!void(useColors: true, useOscLinks: true));
+}
+
+@("prettyPrint.oscLink.schemeHook")
+@safe pure nothrow
+unittest
+{
+    import sparkles.core_cli.source_uri : resolveSourcePath, SchemeHook;
+
+    struct Dot { int r; }
+    enum _loc = __traits(getLocation, Dot);
+    enum uri = {
+        import std.conv : text;
+        enum absPath = resolveSourcePath(_loc[0]);
+        return i"vscode://file$(absPath):$(_loc[1]):$(_loc[2])".text;
+    }();
+    check(Dot(5), "\x1b]8;;" ~ uri ~ "\x07" ~ "Dot" ~ "\x1b]8;;\x07" ~ "(r: 5)",
+        PrettyPrintOptions!(SchemeHook!"code")(useColors: false, useOscLinks: true));
 }
