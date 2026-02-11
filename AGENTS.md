@@ -100,7 +100,7 @@ See [Code Style Guide](docs/guidelines/code-style.md#expression-based-contracts-
 Use named arguments for struct initialization (see [Code Style Guide](docs/guidelines/code-style.md#named-arguments-dip1030)):
 
 ```d
-auto opts = PrettyPrintOptions(
+auto opts = PrettyPrintOptions!void(
     indentStep: 2,
     maxDepth: 8,
     maxItems: 32,
@@ -307,10 +307,10 @@ chore(nix): Update flake inputs
 Many utilities work with output ranges for flexibility:
 
 ```d
-ref Writer prettyPrint(T, Writer)(
+ref Writer prettyPrint(T, Writer, Hook)(
     in T value,
     return ref Writer writer,
-    PrettyPrintOptions opt = PrettyPrintOptions()
+    in PrettyPrintOptions!Hook opt = PrettyPrintOptions!void()
 )
 {
     prettyPrintImpl(value, writer, opt, 0);

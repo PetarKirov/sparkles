@@ -8,6 +8,7 @@ import std.stdio : writeln;
 import std.typecons : Tuple, tuple;
 
 import sparkles.core_cli.prettyprint : prettyPrint, PrettyPrintOptions;
+import sparkles.core_cli.source_uri : EditorDetectHook, SchemeHook;
 
 // Custom enum
 enum Status { pending, running, completed, failed }
@@ -41,7 +42,6 @@ struct ComplexData {
     // Characters and strings
     char initial;
     string name;
-    wstring wideName;
 
     // Enum
     Status status;
@@ -196,7 +196,7 @@ void main() {
     writeln();
 
     // 17. Complex nested structure
-    writeln("── complex nested structure ──");
+    writeln("── complex nested structure (with OSC 8 hyperlinks) ──");
     int refVal = 99;
     auto complex = ComplexData(
         active: true,
@@ -207,7 +207,6 @@ void main() {
         precise: 3.141592653589793,
         initial: 'X',
         name: "Complex\nData",
-        wideName: "Wide"w,
         status: Status.running,
         numbers: [1, 2, 3],
         fixedNumbers: [10, 20, 30],
@@ -216,23 +215,23 @@ void main() {
         refCount: &refVal,
         metadata: tuple(123, "meta", false)
     );
-    writeln(prettyPrint(complex));
+    writeln(prettyPrint(complex, PrettyPrintOptions!void(useOscLinks: true)));
     writeln();
 
     // 18. maxItems demonstration
     writeln("── maxItems (limit: 3) ──");
     int[] bigArray = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-    writeln(prettyPrint(bigArray, PrettyPrintOptions(maxItems: 3)));
+    writeln(prettyPrint(bigArray, PrettyPrintOptions!void(maxItems: 3)));
     writeln();
 
     // 19. maxDepth demonstration
     writeln("── maxDepth (limit: 2) ──");
-    writeln(prettyPrint(complex, PrettyPrintOptions(maxDepth: 2)));
+    writeln(prettyPrint(complex, PrettyPrintOptions!void(maxDepth: 2, useOscLinks: true)));
     writeln();
 
     // 20. Without colors
     writeln("── without colors ──");
-    writeln(prettyPrint(person, PrettyPrintOptions(useColors: false)));
+    writeln(prettyPrint(person, PrettyPrintOptions!void(useColors: false)));
     writeln();
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -249,11 +248,11 @@ void main() {
     writeln();
 
     writeln("── softMaxWidth: 15 - too narrow, uses multi-line ──");
-    writeln(prettyPrint(point, PrettyPrintOptions(softMaxWidth: 15)));
+    writeln(prettyPrint(point, PrettyPrintOptions!void(softMaxWidth: 15)));
     writeln();
 
     writeln("── softMaxWidth: 0 - always multi-line ──");
-    writeln(prettyPrint(point, PrettyPrintOptions(softMaxWidth: 0)));
+    writeln(prettyPrint(point, PrettyPrintOptions!void(softMaxWidth: 0)));
     writeln();
 
     // 22. Array width comparison
@@ -263,7 +262,7 @@ void main() {
     writeln();
 
     writeln("── array with softMaxWidth: 20 ──");
-    writeln(prettyPrint(mediumArr, PrettyPrintOptions(softMaxWidth: 20)));
+    writeln(prettyPrint(mediumArr, PrettyPrintOptions!void(softMaxWidth: 20)));
     writeln();
 
     // 23. Nested struct width comparison
@@ -272,11 +271,11 @@ void main() {
     writeln();
 
     writeln("── nested struct with softMaxWidth: 40 ──");
-    writeln(prettyPrint(person, PrettyPrintOptions(softMaxWidth: 40)));
+    writeln(prettyPrint(person, PrettyPrintOptions!void(softMaxWidth: 40)));
     writeln();
 
     writeln("── nested struct with softMaxWidth: 0 ──");
-    writeln(prettyPrint(person, PrettyPrintOptions(softMaxWidth: 0)));
+    writeln(prettyPrint(person, PrettyPrintOptions!void(softMaxWidth: 0)));
     writeln();
 
     // 24. Associative array width comparison
@@ -285,16 +284,16 @@ void main() {
     writeln();
 
     writeln("── AA with softMaxWidth: 25 ──");
-    writeln(prettyPrint(aa, PrettyPrintOptions(softMaxWidth: 25)));
+    writeln(prettyPrint(aa, PrettyPrintOptions!void(softMaxWidth: 25)));
     writeln();
 
     // 25. Complex struct - shows how nested values can be inline even when parent is multi-line
     writeln("── complex struct (default) - parent multi-line, nested values inline ──");
-    writeln(prettyPrint(complex));
+    writeln(prettyPrint(complex, PrettyPrintOptions!void(useOscLinks: true)));
     writeln();
 
     writeln("── complex struct with softMaxWidth: 0 - everything multi-line ──");
-    writeln(prettyPrint(complex, PrettyPrintOptions(softMaxWidth: 0)));
+    writeln(prettyPrint(complex, PrettyPrintOptions!void(softMaxWidth: 0, useOscLinks: true)));
     writeln();
 
     // 26. Linked list width comparison
@@ -303,7 +302,31 @@ void main() {
     writeln();
 
     writeln("── linked list with softMaxWidth: 30 ──");
-    writeln(prettyPrint(n1, PrettyPrintOptions(softMaxWidth: 30)));
+    writeln(prettyPrint(n1, PrettyPrintOptions!void(softMaxWidth: 30)));
+    writeln();
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // OSC 8 hyperlink demonstrations
+    // ─────────────────────────────────────────────────────────────────────────
+
+    writeln("═══════════════════════════════════════════════════════════════════");
+    writeln("                   OSC 8 Hyperlink Demonstrations                   ");
+    writeln("═══════════════════════════════════════════════════════════════════\n");
+
+    writeln("── struct with file:// hyperlinks (default) ──");
+    writeln(prettyPrint(person, PrettyPrintOptions!void(useOscLinks: true)));
+    writeln();
+
+    writeln("── struct with editor-detected hyperlinks ──");
+    writeln(prettyPrint(person, PrettyPrintOptions!EditorDetectHook(useOscLinks: true)));
+    writeln();
+
+    writeln("── struct with VS Code hyperlinks ──");
+    writeln(prettyPrint(person, PrettyPrintOptions!(SchemeHook!"code")(useOscLinks: true)));
+    writeln();
+
+    writeln("── enum with OSC 8 hyperlinks ──");
+    writeln(prettyPrint(Status.running, PrettyPrintOptions!void(useOscLinks: true)));
     writeln();
 
     writeln("═══════════════════════════════════════════════════════════════════");
