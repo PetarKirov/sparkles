@@ -277,6 +277,8 @@ public:
 
 "Chains" is a more recent evolution in Sean Parent's guidance, presented as an alternative to the "Sender/Receiver" model (P2300).
 
+**Detailed Research:** [Better Code: Chains (An Alternative to Sender/Receivers)](./chains-alternative-to-sender-receivers.md)
+
 ### The Problem with Continuations
 
 While futures and continuations are powerful, **every continuation has a cost**. In high-frequency or latency-sensitive systems, the overhead of context switching and task scheduling for every small step can be 100x-1000x more expensive than simple function composition.

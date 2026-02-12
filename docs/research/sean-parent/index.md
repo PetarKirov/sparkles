@@ -42,7 +42,7 @@ Sean Parent's "Better Code" talks form a comprehensive curriculum for software c
 ## Other Notable Talks
 
 - **Are We There Yet?** (2025) — Reflections on the future of software development 18 years later.
-- **Chains: An alternative to sender/receivers** (2024) — Low-latency asynchronous composition.
+- **[Chains: An alternative to sender/receivers](./chains-alternative-to-sender-receivers.md)** (2024) — Low-latency asynchronous composition.
 - **Exceptions the Other Way Around** (2022) — Recovering from exceptions and developing usable operations.
 - **Where Have All the Cycles Gone?** (2022) — Why software performance doesn't scale with hardware.
 - **The Tragedy of C++** (2022) — Successes and gaps in the language's evolution.

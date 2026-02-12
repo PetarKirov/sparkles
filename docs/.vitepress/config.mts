@@ -85,6 +85,10 @@ export default defineConfig({
                 link: "/research/sean-parent/concurrency",
               },
               {
+                text: "Chains",
+                link: "/research/sean-parent/chains-alternative-to-sender-receivers",
+              },
+              {
                 text: "Data Structures",
                 link: "/research/sean-parent/data-structures",
               },
