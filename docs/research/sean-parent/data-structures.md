@@ -6,11 +6,28 @@
 
 Sean Parent's "Better Code: Data Structures" talk addresses how standard library containers are often both misused and underused. Instead of leveraging well-designed containers, applications frequently create "incidental data structures"—ad-hoc arrangements of objects referencing other objects that don't properly model the domain.
 
+> **Definition:** An incidental data structure is a data structure where there is no object representing the structure as a whole.
+
 The key insight is that proper use of containers can greatly simplify code, improve performance, and reduce bugs.
 
 ## What Are Incidental Data Structures?
 
-An incidental data structure is one that emerges accidentally rather than being intentionally designed:
+An incidental data structure is one that emerges accidentally rather than being intentionally designed. It typically lacks a "whole" object that manages the "parts."
+
+### The Components of a Data Structure
+
+Sean Parent defines a data structure as:
+
+1. **Values:** The data elements themselves.
+2. **Relationships:** A mapping from one set of values to another.
+
+In an incidental data structure, these relationships are often buried inside the values (e.g., a node containing a pointer to its neighbor).
+
+### Why They Are Harmful
+
+1. **Breaks Local Reasoning:** If objects are linked in an "object soup," you cannot reason about one object without understanding the entire graph. You don't know who owns what or what might change when you modify an object.
+2. **Prevents Generic Algorithms:** Standard algorithms (like `std::sort`, `std::partition`, or `std::rotate`) operate on ranges and structures. If your data structure is just a collection of pointers, you cannot use these highly optimized, well-tested algorithms.
+3. **Broken Whole-Part Relationship:** A proper data structure should be a "whole" that owns its "parts." Incidental structures often have unclear ownership and broken copy/move semantics.
 
 ### Example: The Object Graph
 
@@ -83,13 +100,15 @@ public:
 
 ### Sequential Containers
 
-| Container           | Use When                                   | Avoid When                            |
-| ------------------- | ------------------------------------------ | ------------------------------------- |
-| `std::vector`       | Default choice; random access needed       | Frequent insertion/deletion in middle |
-| `std::deque`        | Need push_front and push_back              | Need contiguous memory                |
-| `std::list`         | Frequent insertion/deletion anywhere       | Random access needed                  |
-| `std::forward_list` | Memory-constrained, forward traversal only | Need bidirectional traversal          |
-| `std::array`        | Size known at compile time                 | Size varies at runtime                |
+| Container           | Use When                             | Sean's Take                                                                   |
+| ------------------- | ------------------------------------ | ----------------------------------------------------------------------------- |
+| `std::vector`       | Default choice; random access needed | **The standard.** Use it for almost everything.                               |
+| `std::deque`        | Need push_front and push_back        | A "failed" vector. Rarely the right choice unless you need very large chunks. |
+| `std::list`         | Need stable iterators/pointers       | **Avoid.** Usually a sign of a bug or poor design. Cache-killer.              |
+| `std::forward_list` | Space-constrained, forward only      | Specialized; rarely used.                                                     |
+| `std::array`        | Size known at compile time           | Good for fixed-size buffers; zero overhead.                                   |
+
+> "If you have a `std::list`, you probably have a bug." — Sean Parent (Hyperbole to emphasize that stability is rarely worth the performance cost).
 
 ### Associative Containers
 
@@ -203,22 +222,26 @@ Use flat containers when:
 
 ## Modeling Relationships
 
+Relationships should be handled by the container (the "Whole"), not by the individual elements.
+
 ### One-to-Many: Parent-Child
 
 ```cpp
-// BAD: Pointers
+// BAD: Pointers (Incidental)
 class Parent {
-    std::vector<Child*> children_;
+    std::vector<Child*> children_; // Unclear ownership
 };
 
-// GOOD: Indices or IDs
+// GOOD: Indices or IDs managed by a Registry
 class Registry {
     std::vector<Parent> parents_;
     std::vector<Child> children_;
     std::vector<std::vector<size_t>> parent_to_children_;  // parent index -> child indices
 };
 
-// BETTER: Single container with hierarchy
+// BETTER: Explicit Hierarchy Container
+// Use adobe::forest for general tree structures.
+// It provides a single "Whole" object that manages all node relationships.
 class Tree {
     struct Node {
         Data data;
@@ -226,9 +249,13 @@ class Tree {
         size_t first_child;
         size_t next_sibling;
     };
-    std::vector<Node> nodes_;
+    std::vector<Node> nodes_; // All nodes owned by the Tree
 };
 ```
+
+### Relationships as First-Class Citizens
+
+In complex systems, relationships are data too. Don't hide them inside objects.
 
 ### Many-to-Many: Relationships
 
@@ -289,6 +316,18 @@ class World {
 };
 ```
 
+## Generic Algorithms and Data Structures
+
+A major benefit of avoiding incidental data structures is the ability to use **Generic Algorithms**.
+
+- **Range-based:** Most C++ algorithms operate on ranges (`[begin, end)`). If your structure isn't a range (or a collection of ranges), you can't use them.
+- **Complexity Guarantees:** Standard algorithms come with strict complexity guarantees. Incidental structures often lead to accidental O(n²) or worse because of pointer chasing.
+- **Reusability:** By using `std::vector` or `adobe::forest`, you can use `std::sort`, `std::partition`, `std::lower_bound`, etc., without writing custom traversal logic.
+
+### Stability: Property of Algorithms
+
+Sean Parent often notes that **stability** is a property of an algorithm (e.g., `std::stable_sort`), but it is enabled by the data structure's properties (like iterator stability or random access). When choosing a data structure, consider whether you need to maintain the relative order of elements during operations.
+
 ## Guidelines
 
 ### 1. Start with Vector
@@ -300,20 +339,24 @@ std::vector<Item> items;
 // Only switch if you have a specific need:
 // - Need fast lookup by key? -> unordered_map
 // - Need ordering by key? -> map or sorted vector
-// - Need stable iterators? -> list
+// - Need stable iterators? -> adobe::forest or similar (but consider indices first)
 ```
 
-### 2. Separate Data from Relationships
+### 2. Ensure Local Reasoning
+
+Ask yourself: "If I modify this object, what else in the system might change?" If the answer is "I don't know because of pointers," you have an incidental data structure. Use a "Whole" object to manage the scope of change.
+
+### 3. Separate Data from Relationships
 
 ```cpp
-// BAD: Data intertwined with relationships
+// BAD: Data intertwined with relationships (Incidental)
 class Node {
     Data data;
     Node* parent;
     std::vector<Node*> children;
 };
 
-// GOOD: Data and relationships separate
+// GOOD: Data and relationships separate (Non-incidental)
 struct NodeData {
     Data data;
 };
@@ -329,61 +372,23 @@ class Tree {
 };
 ```
 
-### 3. Use Indices Instead of Pointers
+### 4. Use Indices Instead of Pointers
 
-```cpp
-// BAD: Pointers
-struct Node {
-    Node* next;
-};
+Indices are stable across copies and moves of the container, whereas pointers are not. They also make serialization trivial.
 
-// GOOD: Indices (stable across reallocation)
-struct Node {
-    size_t next;  // Index into array, SIZE_MAX for null
-};
-```
+### 5. Favor "Whole" Objects
 
-### 4. Consider Flat Associative Containers
-
-```cpp
-// For small maps (< ~100 elements), consider:
-boost::container::flat_map<K, V>
-// or sorted vector with binary search
-
-// Faster iteration, better cache usage
-```
-
-### 5. Design for Iteration
-
-```cpp
-// Ask: "How will I iterate over this?"
-
-// If iterating by key order:
-std::map<K, V> or sorted std::vector<std::pair<K, V>>
-
-// If iterating all elements:
-std::vector<V> with separate std::unordered_map<K, size_t>
-
-// If rarely iterating:
-std::unordered_map<K, V>
-```
+Every collection of objects should be owned by a "Whole" object that defines the structure's invariants and provides a clean interface.
 
 ## Anti-Patterns
 
 ### The Object Soup
 
-```cpp
-// BAD: Objects pointing everywhere
-class A {
-    B* b;
-    std::vector<C*> cs;
-};
-class B {
-    A* a;
-    std::list<D*> ds;
-};
-// Who owns what? How to copy? How to serialize?
-```
+The most common incidental data structure. A graph of objects connected by raw or smart pointers with no clear owner and no way to operate on the collection as a unit.
+
+### Hidden Relationships
+
+Relationships modeled as member variables within the data objects themselves, making it impossible to change the structure without changing the data.
 
 ### Wrong Container Choice
 
