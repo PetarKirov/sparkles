@@ -4,80 +4,118 @@
 
 ## Overview
 
-"Better Code: Contracts" is a talk co-authored and presented by Sean Parent and Dave Abrahams at CppCon 2023. It explores how contracts—preconditions, postconditions, and invariants—form the "connective tissue" of good code and provide a foundation for reasoning about correctness.
+"Better Code: Contracts" is a philosophy and set of practices co-authored and presented by Sean Parent and Dave Abrahams (notably at CppCon 2023). It explores how contracts—preconditions, postconditions, and invariants—form the "connective tissue" of good code and provide the essential foundation for **local reasoning**.
 
-The key insight is that explicit contracts enable local reasoning, replace code reviews with something better, and chart a path toward provably correct software.
+The key insight is that explicit contracts define what "correct" means for a piece of code, allowing us to move beyond brittle processes like manual code review toward provably correct software and automated verification.
+
+## The Problem: "Code Review is a Failed Process"
+
+Sean Parent argues that traditional code review is an insufficient and failed process for ensuring software quality.
+
+- **Subjective**: It relies on the reviewer's intuition and knowledge at a specific moment.
+- **Incomplete**: It cannot catch all logical errors or edge cases.
+- **Scaling**: As systems grow, it becomes impossible for any human to hold the entire context in their head.
+
+**The Solution**: Replace code review with **contracts** and **automated verification** (like property-based testing). A contract is a formal, machine-verifiable specification of behavior.
 
 ## What Is a Contract?
 
 A contract is a formal specification of:
 
-1. **Preconditions**: What must be true before a function is called
-2. **Postconditions**: What will be true after a function returns
-3. **Invariants**: What is always true about a type or system
+1. **Preconditions** (Hoare: $\{P\}$): What must be true before a function is called.
+2. **Postconditions** (Hoare: $\{Q\}$): What will be true after a function returns.
+3. **Invariants**: What is always true about a type or system (except during internal mutation).
+
+These form a **Hoare Triple**: $\{P\} S \{Q\}$, where $S$ is the statement/execution.
 
 ```cpp
-/// Divides a by b
-/// @pre b != 0
-/// @post result * b == a (for exact division)
-int divide(int a, int b) {
-    assert(b != 0);  // Precondition check
-    return a / b;
-}
-```
-
-## Why Contracts Matter
-
-### 1. Define Correctness
-
-Without a specification, "correct" has no meaning:
-
-```cpp
-// What does this function do?
-int mystery(int x);
-
-// With contract, correctness is defined:
 /// Returns the square root of x, rounded down
 /// @pre x >= 0
 /// @post result * result <= x
 /// @post (result + 1) * (result + 1) > x
-int isqrt(int x);
+int isqrt(int x) {
+    assert(x >= 0); // Contract check (Precondition)
+    int result = std::sqrt(x);
+    // Postconditions can be checked in debug or verified formally
+    return result;
+}
 ```
 
-### 2. Enable Local Reasoning
+## Narrow vs. Wide Contracts
 
-Contracts let you understand code in isolation:
+One of the most important distinctions in Sean Parent's guidance:
+
+- **Narrow Contract**: Has preconditions (e.g., `vector::operator[]`). If preconditions are violated, behavior is undefined (a bug). Narrow contracts are often more efficient because they don't perform redundant checks.
+- **Wide Contract**: Has no preconditions (e.g., `vector::at`). It handles all possible inputs, typically by throwing an exception for "invalid" values.
 
 ```cpp
-// Can I pass a negative number? Check preconditions.
-// What can I expect back? Check postconditions.
-// Don't need to read implementation.
+// NARROW CONTRACT: Fast, assumes caller is correct.
+// Responsibility: Caller must ensure i < size()
+T& operator[](size_t i) {
+    assert(i < size());
+    return data_[i];
+}
+
+// WIDE CONTRACT: Safe, handles all inputs.
+// Responsibility: Callee handles invalid input.
+T& at(size_t i) {
+    if (i >= size()) throw std::out_of_range("...");
+    return data_[i];
+}
 ```
 
-### 3. Document Intent
+**Parent's Guidance**: Prefer **narrow contracts** for internal logic. They clarify responsibility and enable local reasoning. If a precondition is violated, it's a bug in the _caller_, not the _callee_.
 
-Contracts are executable documentation:
+## Contract Checking vs. Input Validation
+
+A critical point of confusion that Sean clarifies:
+
+- **Input Validation**: Processes untrusted, external data (user input, network packets). This is _runtime logic_ that must handle errors gracefully.
+- **Contract Checking**: Verifies the internal consistency of a defect-free program. These are _assertions_ that should never be triggered in a correct program. They are typically removed in production builds for performance.
 
 ```cpp
-/// Sorts the range [first, last) in ascending order
-/// @pre [first, last) is a valid range
-/// @post std::is_sorted(first, last)
-/// @post The range contains the same elements (permutation)
-template<typename It>
-void sort(It first, It last);
+void process_user_request(JSON data) {
+    // 1. INPUT VALIDATION (Runtime feature)
+    if (!data.contains("id")) {
+        log_error("Invalid request");
+        return;
+    }
+
+    // 2. CALL INTERNAL LOGIC (Contracted)
+    internal_process(data["id"].as_int());
+}
+
+/// @pre id > 0
+void internal_process(int id) {
+    // 3. CONTRACT CHECK (Debug assertion)
+    assert(id > 0 && "Contract violation: id must be positive");
+    // ... logic ...
+}
 ```
 
-### 4. Enable Verification
+> "A contract violation is a bug. Input validation is a feature."
 
-Contracts can be checked:
+## Why Contracts Matter
 
-- At runtime (assertions)
-- At compile time (static analysis)
-- Formally (mathematical proof)
+### 1. Enable Local Reasoning
+
+Local reasoning is the ability to understand a function or class by looking only at its definition and the definitions of things it calls. Contracts provide the boundaries that make this possible.
+
+### 2. Define Correctness
+
+Without a specification, "correct" has no meaning. A function isn't "broken" if it doesn't do what you _thought_ it would do; it's broken if it violates its contract.
+
+### 3. Replace Defensive Programming
+
+Defensive programming (checking everything everywhere) leads to "check-bloat" and performance degradation. Contracts assign responsibility: the caller guarantees preconditions, the callee guarantees postconditions.
+
+### 4. Semantic Axioms and Regular Types
+
+Contracts extend to the **axioms** of a type. For example, a **Regular Type** has an "Axiom of Copy": after `T a = b;`, the contract is that `a == b` and `a` is a disjoint copy (modifying `a` does not affect `b`).
 
 ## Preconditions
 
-Preconditions specify what the caller must guarantee:
+Preconditions specify the obligations of the **caller**.
 
 ### Writing Preconditions
 
@@ -85,40 +123,25 @@ Preconditions specify what the caller must guarantee:
 /// Pops an element from the stack
 /// @pre !empty()
 void Stack::pop() {
-    assert(!empty());  // Debug check
+    assert(!empty());
     --size_;
 }
 
-/// Returns element at index i
-/// @pre i < size()
-T& Vector::operator[](size_t i) {
-    assert(i < size());
-    return data_[i];
-}
-
-/// Copies n bytes from src to dst
-/// @pre src != nullptr
-/// @pre dst != nullptr
+/// Copies n bytes
+/// @pre src != nullptr && dst != nullptr
 /// @pre [src, src + n) and [dst, dst + n) don't overlap
 void copy(const void* src, void* dst, size_t n);
 ```
 
-### Precondition Guidelines
+### Guidelines
 
-1. **Be specific**: State exactly what's required
-2. **Be minimal**: Don't require more than necessary
-3. **Be checkable**: Preconditions should be verifiable
-4. **Document threading**: State concurrency requirements
-
-```cpp
-/// Increments the counter
-/// @pre No other thread is accessing counter during this call
-void increment(int& counter);
-```
+1. **Be specific and minimal**: Don't require more than necessary.
+2. **Checkable**: Preconditions should ideally be $O(1)$ or $O(\text{operation})$.
+3. **Complexity Requirements**: Performance characteristics (e.g., "must be $O(1)$") are part of the contract.
 
 ## Postconditions
 
-Postconditions specify what the function guarantees:
+Postconditions specify the guarantees of the **callee**.
 
 ### Writing Postconditions
 
@@ -130,25 +153,19 @@ void* allocate(size_t n);
 
 /// Sorts in place
 /// @post std::is_sorted(begin(), end())
-void Vector::sort();
-
-/// Returns the maximum element
-/// @pre !empty()
-/// @post result >= all other elements
-/// @post result is in the range
-T& Vector::max();
+/// @post is_permutation(original_range, new_range)
+void sort(Iterator first, Iterator last);
 ```
 
-### Postcondition Guidelines
+### Guidelines
 
 1. **Describe the effect**: What changed?
 2. **Describe the return value**: What does it represent?
-3. **Describe side effects**: What else happened?
-4. **Include failure modes**: What if it fails?
+3. **Exception Guarantees**: State which exception guarantee is provided (No-throw, Strong, or Basic).
 
 ## Invariants
 
-Invariants are conditions that are always true:
+Invariants are properties that must hold true for the lifetime of an object.
 
 ### Class Invariants
 
@@ -156,287 +173,69 @@ Invariants are conditions that are always true:
 class SortedVector {
     std::vector<int> data_;
 
-    // Class invariant: data_ is always sorted
-    // All public operations maintain this invariant
+    // Invariant: data_ is always sorted
+    // Invariant: data_.size() <= data_.capacity()
 
 public:
     void insert(int value) {
+        // Invariant holds on entry
         auto pos = std::lower_bound(data_.begin(), data_.end(), value);
         data_.insert(pos, value);
-        // Invariant maintained
-    }
-
-    void remove(int value) {
-        auto pos = std::lower_bound(data_.begin(), data_.end(), value);
-        if (pos != data_.end() && *pos == value) {
-            data_.erase(pos);
-        }
-        // Invariant maintained
+        // Invariant restored on exit
     }
 };
 ```
 
-### Loop Invariants
+### Mutating Operations and Invariants
 
-```cpp
-int binarySearch(const int* arr, int n, int target) {
-    int lo = 0, hi = n;
+Invariants can be **temporarily broken** during a mutating operation.
 
-    // Loop invariant: If target exists, it's in [lo, hi)
-    while (lo < hi) {
-        int mid = lo + (hi - lo) / 2;
-
-        if (arr[mid] < target) {
-            lo = mid + 1;
-            // Invariant: target not in [0, lo), still in [lo, hi)
-        } else {
-            hi = mid;
-            // Invariant: target not in [hi, n), still in [lo, hi)
-        }
-    }
-
-    // Loop ended: lo == hi, range is empty
-    // If target existed, it would be at lo
-    return (lo < n && arr[lo] == target) ? lo : -1;
-}
-```
-
-## Expressing Contracts
-
-### Documentation (Current Practice)
-
-```cpp
-/// @brief Finds the first occurrence of value in range
-/// @param first Iterator to the beginning of the range
-/// @param last Iterator past the end of the range
-/// @param value Value to search for
-/// @pre [first, last) is a valid range
-/// @return Iterator to the element, or last if not found
-/// @post If returned iterator i != last, then *i == value
-/// @complexity O(last - first)
-template<typename It, typename T>
-It find(It first, It last, const T& value);
-```
-
-### Assertions (Runtime Check)
-
-```cpp
-#include <cassert>
-
-void processPositive(int x) {
-    assert(x > 0 && "x must be positive");
-    // ...
-}
-```
-
-### C++20 Contracts (Proposed)
-
-```cpp
-// Note: Not yet in standard, but proposed
-int divide(int a, int b)
-    [[expects: b != 0]]           // Precondition
-    [[ensures r: r * b == a]]      // Postcondition
-{
-    return a / b;
-}
-
-class Stack {
-public:
-    void push(int x)
-        [[ensures: !empty()]]
-        [[ensures: top() == x]];
-
-    void pop()
-        [[expects: !empty()]];
-};
-```
-
-### GSL Expects/Ensures
-
-```cpp
-#include <gsl/gsl>
-
-void process(gsl::span<int> data) {
-    Expects(!data.empty());  // Precondition
-
-    // Process data...
-
-    Ensures(isValid(data));  // Postcondition
-}
-```
-
-## Contract-Based Design
-
-### Design by Contract Methodology
-
-1. **Write contract first**: Specify before implementing
-2. **Implement to contract**: Code fulfills the specification
-3. **Test against contract**: Verify contract is met
-4. **Document with contract**: Specification is the documentation
-
-### Example: Designing a Stack
-
-```cpp
-/// A stack of integers
-///
-/// Invariant: size() <= capacity()
-/// Invariant: Elements are stored in LIFO order
-class Stack {
-public:
-    /// Constructs an empty stack
-    /// @post empty()
-    /// @post size() == 0
-    Stack();
-
-    /// Returns true if stack is empty
-    /// @post result == (size() == 0)
-    bool empty() const;
-
-    /// Returns number of elements
-    /// @post result >= 0
-    size_t size() const;
-
-    /// Adds element to top
-    /// @post !empty()
-    /// @post size() == old size() + 1
-    /// @post top() == x
-    void push(int x);
-
-    /// Removes top element
-    /// @pre !empty()
-    /// @post size() == old size() - 1
-    void pop();
-
-    /// Returns top element
-    /// @pre !empty()
-    /// @post result == most recently pushed element not yet popped
-    int top() const;
-};
-```
+- **The Rule**: Invariants must be restored before control returns to the caller.
+- **Basic Guarantee**: Even if an operation fails, the object must be left in a valid state (invariants held), even if its value is indeterminate.
 
 ## Contracts and Testing
 
-### Contracts Replace Some Tests
-
-```cpp
-// Without contracts: test many cases
-TEST(Divide, Zero) { EXPECT_THROW(divide(1, 0), ...); }
-TEST(Divide, Positive) { EXPECT_EQ(divide(6, 2), 3); }
-TEST(Divide, Negative) { EXPECT_EQ(divide(-6, 2), -3); }
-// etc.
-
-// With contracts: test contract itself
-TEST(Divide, SatisfiesPostcondition) {
-    for (int a = -100; a <= 100; ++a) {
-        for (int b = -100; b <= 100; ++b) {
-            if (b != 0) {  // Precondition
-                int r = divide(a, b);
-                EXPECT_EQ(r * b, a);  // Postcondition
-            }
-        }
-    }
-}
-```
-
 ### Property-Based Testing
 
+Instead of writing hundreds of manual test cases, write a generator that produces inputs satisfying the **preconditions** and a test that verifies the **postconditions** and **invariants** hold.
+
 ```cpp
-// Generate random inputs that satisfy preconditions
-// Verify postconditions hold
-void testSort() {
-    for (int trial = 0; trial < 1000; ++trial) {
-        auto v = generateRandomVector();  // Any vector (precondition: none)
+// Property-based test for sort()
+void test_sort_contract() {
+    for (auto trial : range(1000)) {
+        auto v = generate_random_vector(); // Precondition: none
+        auto original = v;
 
         sort(v.begin(), v.end());
 
-        // Check postconditions
-        ASSERT_TRUE(std::is_sorted(v.begin(), v.end()));
-        // Could also check it's a permutation of original
+        // Verify Postconditions
+        assert(std::is_sorted(v.begin(), v.end()));
+        assert(std::is_permutation(v.begin(), v.end(), original.begin()));
     }
 }
 ```
 
-## Guidelines
+## Summary Guidelines
 
-### 1. Make Contracts Explicit
-
-```cpp
-// BAD: Implicit contract
-void process(int* data, int size);
-
-// GOOD: Explicit contract
-/// @pre data != nullptr
-/// @pre size > 0
-/// @pre [data, data + size) is valid
-void process(int* data, int size);
-```
-
-### 2. Check Preconditions in Debug
-
-```cpp
-void pop() {
-    assert(!empty() && "Cannot pop from empty stack");  // Debug check
-    --size_;
-}
-```
-
-### 3. Document What You Can't Check
-
-```cpp
-/// @pre No other thread accesses data during this call
-/// (Cannot check at runtime, but document it)
-void process(Data& data);
-```
-
-### 4. Keep Invariants Simple
-
-```cpp
-// Complex invariant - hard to maintain
-class Complex {
-    // Invariant: a*a + b*b == c*c && gcd(a,b,c) == 1 && ...
-};
-
-// Simple invariant - easy to maintain
-class Point {
-    double x_, y_;
-    // Invariant: none (any double values valid)
-};
-```
-
-### 5. Strengthen Gradually
-
-```cpp
-// Start with weak contract
-void process(int x);
-
-// Strengthen as understanding grows
-/// @pre x >= 0
-void process(int x);
-
-// Further strengthen
-/// @pre x >= 0
-/// @pre x < 1000
-void process(int x);
-```
+1. **Make Contracts Explicit**: Don't rely on "tribal knowledge."
+2. **Prefer Narrow Contracts**: Assign responsibility clearly.
+3. **Use Assertions for Contracts**: Use them to catch bugs during development.
+4. **Distinguish from Error Handling**: Contracts are for programmers; error handling is for users.
+5. **Complexity is a Contract**: If a function becomes $O(N^2)$ instead of $O(N)$, it has violated its contract.
 
 ## References
 
 ### Primary Sources
 
 - **[Better Code: Contracts (YouTube)](https://www.youtube.com/watch?v=OWsepDEh5lQ)** — CppCon 2023
+- **[Better Code: Data Structures (YouTube)](https://www.youtube.com/watch?v=sWgDk-o-6ZE)** — Discusses invariants and axioms.
 - **[Slides (PDF)](https://sean-parent.stlab.cc/presentations/2023-10-06-better-code-contracts/2023-10-06-better-code-contracts.pdf)**
 
 ### Related Material
 
-- **Local Reasoning in C++** — Contracts support local reasoning
-- **[GSL Guidelines Support Library](https://github.com/microsoft/GSL)** — Expects/Ensures macros
-- **[C++ Core Guidelines](https://isocpp.github.io/CppCoreGuidelines/)** — Contract recommendations
-
-### Further Reading
-
-- Meyer, Bertrand. "Object-Oriented Software Construction" — Design by Contract
-- Liskov, Barbara. "Data Abstraction and Hierarchy" — Behavioral subtyping
+- **Hoare, C. A. R.** (1969). "An axiomatic basis for computer programming."
+- **Stepanov, Alexander.** "Notes on Programming" — The basis for Regular Types and axioms.
 
 ---
 
-_"A contract is not just documentation—it's a specification that enables reasoning, testing, and verification."_ — Sean Parent & Dave Abrahams
+_"A contract is the formal expression of our intent, enabling us to reason about our code as a mathematical system rather than a collection of instructions."_
