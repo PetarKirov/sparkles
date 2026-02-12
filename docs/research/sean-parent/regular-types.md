@@ -6,31 +6,47 @@
 
 The concept of "regular types" is foundational to generic programming and comes from Alexander Stepanov's work on the STL and his book "Elements of Programming" (co-authored with Paul McJones). Sean Parent championed these ideas in his talk "Goal: Implement Complete & Efficient Types" and throughout his Better Code series.
 
-A regular type is one that supports a fundamental set of operations that allow it to work correctly with standard algorithms and containers. Implementing complete types—types that support all the expected operations with correct semantics—is essential for building robust, composable software.
+Sean Parent emphasizes that objects are **physical entities**—representations of an entity as a value in memory. A type is a pattern for storing and modifying these objects.
 
 ## What Makes a Type Regular?
 
-A regular type models the behavior of built-in types like `int`. It must support:
+A regular type models the behavior of built-in types like `int`. It must support a set of fundamental procedures in its **computational basis** that allow it to be stored in data structures and used with generic algorithms.
 
 ### Required Operations
 
-| Operation            | Syntax     | Semantics                         |
-| -------------------- | ---------- | --------------------------------- |
-| Default construction | `T a;`     | Creates a partially-formed object |
-| Copy construction    | `T a = b;` | Creates `a` such that `a == b`    |
-| Copy assignment      | `a = b;`   | Makes `a == b`                    |
-| Destruction          | `~T()`     | Releases resources                |
-| Equality             | `a == b`   | True if values are the same       |
-| Inequality           | `a != b`   | Equivalent to `!(a == b)`         |
+| Operation            | Syntax     | Semantics                                                               |
+| -------------------- | ---------- | ----------------------------------------------------------------------- |
+| Default construction | `T a;`     | Creates a **partially-formed** object (safe to destroy or assign to)    |
+| Copy construction    | `T a = b;` | Creates `a` such that `a == b`                                          |
+| Copy assignment      | `a = b;`   | Makes `a == b` without modifying `b`                                    |
+| Destruction          | `~T()`     | Releases resources; must be safe for partially-formed objects           |
+| Equality             | `a == b`   | True if values correspond to the same entity (must be a total function) |
+| Inequality           | `a != b`   | Equivalent to `!(a == b)`                                               |
+
+### Partially-Formed State
+
+A key concept in Parent's philosophy is the **partially-formed state**. An object is partially-formed if it has been constructed or moved from, but its internal value is uninitialized or violates invariants.
+
+- **The only safe operations** on a partially-formed object are **destruction** and **assignment**.
+- Default construction of a type with no natural default value (like a `File` or `Socket`) should result in a partially-formed state.
 
 ### Strongly Recommended Operations
 
-| Operation         | Syntax                | Semantics                      |
-| ----------------- | --------------------- | ------------------------------ |
-| Move construction | `T a = std::move(b);` | Efficiently transfers from `b` |
-| Move assignment   | `a = std::move(b);`   | Efficiently transfers from `b` |
-| Swap              | `swap(a, b);`         | Exchange values                |
-| Ordering          | `a < b`               | Total ordering (if applicable) |
+| Operation         | Syntax                | Semantics                                         |
+| ----------------- | --------------------- | ------------------------------------------------- |
+| Move construction | `T a = std::move(b);` | Optimization of copy; leaves `b` partially-formed |
+| Move assignment   | `a = std::move(b);`   | Optimization of copy; leaves `b` partially-formed |
+| Swap              | `swap(a, b);`         | Exchange values; must be efficient                |
+| Ordering          | `a < b`               | Total ordering (if applicable)                    |
+
+## Regular vs. Complete Types
+
+Sean Parent distinguishes between a type being **Regular** and being **Complete**:
+
+1.  **Regular**: The type supports the standard basis (copy, assignment, equality) with standard semantics, allowing it to work with standard containers and algorithms.
+2.  **Complete**: A type is complete if its set of basis operations allows for the construction and manipulation of **any valid representable value** of that type.
+
+An **Incomplete Type** (in this context) is one where certain valid states are unreachable through the public interface, or where operations are missing that are necessary to use the type effectively as a value.
 
 ## Properties of Equality
 
@@ -253,24 +269,111 @@ Benefits:
 
 ## Basis Operations
 
-Sean Parent defines the "basis" of a type as the minimal set of operations needed to define all other operations:
+Sean Parent defines the **computational basis** of a type as the set of fundamental procedures that can be used to implement all other operations and reach all valid states.
 
 ### Minimal Basis
 
-1. **Copy constructor**: `T(const T&)`
-2. **Destructor**: `~T()`
-3. **Equality**: `operator==(const T&, const T&)`
+To achieve regularity, a type must implement at least:
+
+1.  **Copy constructor**: `T(const T&)`
+2.  **Destructor**: `~T()`
+3.  **Equality**: `operator==(const T&, const T&)`
 
 ### Extended Basis
 
-From the minimal basis, we can derive:
+From this minimal basis, all other regular operations can be derived (though often less efficiently):
 
-- **Assignment** from copy + destroy
-- **Inequality** from equality
-- **Move** operations (optimization of copy)
-- **Swap** from move operations
+- **Assignment**: Can be implemented via `copy` + `swap` or `destroy` + `copy-construct`.
+- **Inequality**: `!(a == b)`.
+- **Move operations**: An optimization of copy.
+- **Swap**: Can be implemented via move operations.
 
-### Default Operations
+### Totality
+
+For a type to be **Regular**, the basis operations must be **total functions**. They must be defined for all possible values of the type. If an operation (like equality) is only defined for some values (like `double` with `NaN`), the type is only **Partially Regular**.
+
+## Broken and Incomplete Types
+
+### Broken Types (Violating Regularity)
+
+A type is **broken** if it fails to satisfy the axioms of a regular type (reflexivity, symmetry, transitivity, and substitutability).
+
+#### Non-Total Equality (Partial Regularity)
+
+```cpp
+// BAD: Equality isn't total (like floating-point NaN)
+class MaybeValue {
+    bool hasValue_ = false;
+    int value_ = 0;
+public:
+    friend bool operator==(const MaybeValue& a, const MaybeValue& b) {
+        if (!a.hasValue_ || !b.hasValue_) return false;  // NaN-like behavior
+        return a.value_ == b.value_;
+    }
+};
+
+MaybeValue empty;
+assert(empty == empty);  // FAILS! Not reflexive. This is a Partial Regular Type.
+```
+
+#### Inconsistent Copy
+
+```cpp
+// BAD: Copy doesn't produce equal objects
+class Broken {
+    int id_;
+    static int nextId_;
+public:
+    Broken() : id_(nextId_++) {}
+    Broken(const Broken&) : id_(nextId_++) {}  // Different ID!
+
+    friend bool operator==(const Broken& a, const Broken& b) {
+        return a.id_ == b.id_;
+    }
+};
+
+Broken a;
+Broken b = a;
+assert(a == b);  // FAILS! Copy doesn't produce equal value.
+```
+
+### Incomplete Types (Unreachable States)
+
+A type is **incomplete** if its basis does not allow for the construction or manipulation of every valid representable value.
+
+```cpp
+// INCOMPLETE: No way to set or get the 'secret' value
+class Incomplete {
+    int value_;
+    int secret_; // No basis operation can touch this!
+public:
+    Incomplete(int v) : value_(v), secret_(0) {}
+    friend bool operator==(const Incomplete& a, const Incomplete& b) {
+        return a.value_ == b.value_ && a.secret_ == b.secret_;
+    }
+};
+```
+
+## Efficiency and Optimizations
+
+While regularity is about correctness, Sean Parent also focuses on efficiency.
+
+### Move is an Optimization of Copy
+
+Move semantics should be viewed as an optimization of copy. A type that is moveable but not copyable (like `std::unique_ptr`) is **Semiregular** but not fully **Regular** because it lacks equality and the ability to be copied (violating the property that multiple copies are equal).
+
+### Self-Assignment
+
+Sean Parent argues against the common practice of checking for self-assignment (`if (this == &other)`) in assignment operators unless it is a significant performance win for a frequent case.
+
+- **De-optimization**: In the 99.9% of cases where it is _not_ a self-assignment, you are adding a branch.
+- **Correctness**: A correctly implemented assignment (like copy-and-swap) handles self-assignment naturally.
+
+### The Role of Swap
+
+`swap` is a fundamental optimization that allows algorithms like `std::rotate` or `std::sort` to operate efficiently on complex types without performing expensive deep copies.
+
+## Default Operations
 
 In C++11 and later, prefer defaulted operations when possible:
 
@@ -289,62 +392,6 @@ public:
 
     friend bool operator==(const Widget&, const Widget&) = default;  // C++20
 };
-```
-
-## Incomplete Types: Common Problems
-
-### Missing Equality
-
-```cpp
-// BAD: No equality comparison
-class Bad {
-    int value_;
-public:
-    Bad(int v) : value_(v) {}
-    // No operator==
-};
-
-std::vector<Bad> v;
-auto it = std::find(v.begin(), v.end(), Bad(42));  // Won't compile!
-```
-
-### Inconsistent Copy
-
-```cpp
-// BAD: Copy doesn't produce equal objects
-class Broken {
-    int id_;
-    static int nextId_;
-public:
-    Broken() : id_(nextId_++) {}
-    Broken(const Broken&) : id_(nextId_++) {}  // Different ID!
-
-    friend bool operator==(const Broken& a, const Broken& b) {
-        return a.id_ == b.id_;
-    }
-};
-
-Broken a;
-Broken b = a;
-assert(a == b);  // FAILS! Copy doesn't produce equal value
-```
-
-### Non-Total Equality
-
-```cpp
-// BAD: Equality isn't total (like floating-point NaN)
-class MaybeValue {
-    bool hasValue_;
-    int value_;
-public:
-    friend bool operator==(const MaybeValue& a, const MaybeValue& b) {
-        if (!a.hasValue_ || !b.hasValue_) return false;  // NaN-like behavior
-        return a.value_ == b.value_;
-    }
-};
-
-MaybeValue empty;
-assert(empty == empty);  // FAILS! Not reflexive
 ```
 
 ## Guidelines

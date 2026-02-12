@@ -4,9 +4,13 @@
 
 ## Overview
 
+> "Complexity is anything that prevents local reasoning." — Sean Parent
+
 Local reasoning is perhaps the most fundamental principle in Sean Parent's philosophy of software development. It addresses the core challenge of managing complexity: how can we understand and verify code when systems grow too large for any single person to hold in their head?
 
-The answer is to structure code so that each piece can be understood independently, without needing to trace through the entire codebase.
+Sean Parent argues that **global reasoning does not scale**. While we can reason globally about a small system (e.g., 10 functions), our capacity for global understanding is quickly exceeded as systems grow. Local reasoning allows us to build large, complex systems that remain understandable by ensuring that each component can be verified in isolation.
+
+This principle is grounded in how we build physical systems—a circuit designer doesn't need to understand the entire computer to verify a single logic gate.
 
 ## Why Local Reasoning Matters
 
@@ -14,10 +18,18 @@ The answer is to structure code so that each piece can be understood independent
 
 As codebases grow, understanding becomes exponentially harder:
 
-- **10 functions**: Easy to hold in your head
+- **10 functions**: Easy to hold in your head (Global Reasoning works)
 - **100 functions**: Need documentation and conventions
 - **10,000 functions**: Must be able to reason locally
 - **1,000,000 functions**: Local reasoning is the only way
+
+### The Three Ways to Achieve Independence
+
+To reason locally, a unit of code must be independent of its context. Sean Parent identifies three strategies to achieve this:
+
+1.  **No Mutation (Functional)**: If data never changes, we don't need to worry about who else might be looking at it.
+2.  **No Sharing (Value Semantics)**: If we have our own copy of the data, we can mutate it without affecting anyone else.
+3.  **No Mutation of Shared Objects (Exclusivity)**: If we must share and mutate, we must ensure **exclusive access**. This is the "Law of Exclusivity."
 
 ### Benefits of Local Reasoning
 
@@ -67,7 +79,10 @@ The specification is the contract between them.
 
 ### 3. Minimize Implicit Dependencies
 
-Hidden dependencies destroy local reasoning:
+Hidden dependencies destroy local reasoning. This includes global state, but also **aliasing**.
+
+**The Law of Exclusivity**:
+If you have a mutable reference to a value, you should have no other references to that value. While languages like Rust and Swift enforce this, in C++ it must be managed via convention.
 
 ```cpp
 // BAD: Hidden dependency on global state
@@ -80,22 +95,17 @@ int compute(int value) {
     return value * 2;
 }
 
-// BAD: Hidden mutation
-void process(std::vector<int>& v) {
-    other_function();  // Does this affect v?
+// BAD: Hidden mutation via aliasing
+void process(std::vector<int>& v, const std::vector<int>& other) {
+    // If &v == &other, modifying v changes other!
+    v.push_back(1);
     // ...
-}
-
-// GOOD: Clear that nothing else touches v
-void process(std::vector<int>& v) {
-    // Only this function accesses v during this call
-    for (auto& x : v) x *= 2;
 }
 ```
 
 ### 4. Parameter Passing Conventions
 
-Clear conventions for how arguments are passed:
+Clear conventions for how arguments are passed allow us to assume the "Law of Exclusivity" is upheld:
 
 | Convention           | Syntax           | Meaning                                        |
 | -------------------- | ---------------- | ---------------------------------------------- |
@@ -104,23 +114,15 @@ Clear conventions for how arguments are passed:
 | In-out (modify)      | `T&`             | Caller retains ownership, callee may modify    |
 | Output               | `T&` (out param) | Callee writes, typically should return instead |
 
-```cpp
-// Input: read-only access
-void print(const std::string& s);
+**Preconditions for Reasoning**:
 
-// Sink: takes ownership
-void store(std::string name);  // Pass by value, will be moved into
-
-// In-out: modifies the argument
-void sort(std::vector<int>& v);
-
-// Output: prefer return value
-std::vector<int> compute();  // Better than out parameter
-```
+- **Non-const references**: Must not be accessed by other threads or via other aliases during the call.
+- **Const references**: Must not be written to by other threads during the call.
+- **Lifetimes**: Referenced objects must remain valid for the duration of the call.
 
 ### 5. Concurrency Rules
 
-Explicitly state threading assumptions:
+Concurrency is the ultimate test of local reasoning. Shared mutable state across threads creates implicit preconditions that are often invisible and uncheckable.
 
 ```cpp
 /// Increments the counter
@@ -138,10 +140,10 @@ void increment(std::atomic<int>& counter) {
 
 ### 6. Transformations vs Actions
 
-Distinguish between:
+Sean Parent defines a specific duality between transformations and actions:
 
-- **Transformations** (pure functions): Take inputs, produce outputs, no side effects
-- **Actions** (procedures): May modify state, have side effects
+- **Transformation**: A function `f: T -> T` (or `f: (T, ...) -> T`). It takes a value and returns a new value of the same type. These are pure and support **equational reasoning** (you can replace the call with its result).
+- **Action**: The application of a transformation to the state of an object.
 
 ```cpp
 // Transformation: pure, easy to reason about
@@ -149,12 +151,13 @@ int square(int x) {
     return x * x;
 }
 
-// Action: has side effects, document clearly
-/// Writes data to the file
-/// @pre file is open for writing
-/// @post data is written, file position advanced
-void write(File& file, std::span<const std::byte> data);
+// Action: modifies state by applying a transformation
+void update_square(int& x) {
+    x = square(x);
+}
 ```
+
+By separating the "what" (transformation) from the "where" (action/state update), we isolate the complex logic into pure functions that are trivial to reason about locally.
 
 ## Guidelines for Local Reasoning
 
@@ -286,6 +289,23 @@ std::vector<int> process(std::vector<int> v) {
     return step3(std::move(v2));
 }
 ```
+
+### Guideline 7: Explicitly Model Relationships
+
+Local reasoning is often broken by "hidden" relationships between objects (e.g., pointers that create a graph where the client only sees a tree).
+
+- **Prefer Trees over Graphs**: Hierarchical ownership is much easier to reason about locally.
+- **Explicit Links**: If two objects must know about each other, make that relationship part of the model and the specification.
+- **Avoid "Spooky Action at a Distance"**: Changes to object A should not unexpectedly affect object B unless there is an explicit, documented relationship.
+
+### Safety vs. Correctness
+
+A critical distinction in Sean Parent's work:
+
+- **Safety composes**: If you build a system out of safe components (e.g., memory-safe), the resulting system is also safe.
+- **Correctness does NOT compose**: You can build a system out of "correct" components, but the whole system may be incorrect if the local reasoning about how they interact is flawed.
+
+Local reasoning is the tool we use to ensure that when we compose components, the resulting system's correctness can still be verified.
 
 ## Common Violations of Local Reasoning
 
