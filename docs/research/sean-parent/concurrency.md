@@ -4,9 +4,14 @@
 
 ## Overview
 
-Sean Parent's "Better Code: Concurrency" talks present a task-based approach to concurrent programming that avoids the pitfalls of raw threads and synchronization primitives. Instead of thinking about threads, locks, and shared state, this approach focuses on tasks, futures, and continuations.
+Sean Parent's "Better Code: Concurrency" talks present a task-based approach to concurrent programming that avoids the pitfalls of raw threads and synchronization primitives. The goal is to write software that **doesn't wait**, improving both performance (parallelism) and responsiveness (interactivity).
 
-The key insight is that concurrency should be about _what_ operations need to happen and their dependencies, not _how_ threads are managed.
+The key principles are:
+
+1.  **Local Reasoning**: You should be able to understand a piece of code by looking only at that code, not at the entire system's threading model.
+2.  **No Raw Synchronization**: Avoid mutexes, atomics, and condition variables, as they are non-local and error-prone.
+3.  **Task-Based**: Focus on _what_ operations need to happen and their dependencies (the task graph), not _how_ threads are managed.
+4.  **Goal: No Waiting**: Avoid blocking operations (like `.get()`) that stop a thread from doing other work.
 
 ## Why Concurrency?
 
@@ -100,38 +105,46 @@ use(result);
 
 ## The Task-Based Solution
 
-### Futures and Promises
+### STLab: Production-Ready Concurrency
 
-Futures represent values that will be available later:
+Sean Parent's `stlab` library provides the primary tools for this philosophy. It differs significantly from standard C++ futures:
+
+- **Regular (Copyable)**: Unlike `std::future`, `stlab::future` is regular. This allows a single task result to be shared among multiple continuations (a "split" in the task graph).
+- **Value Propagation**: `stlab` futures propagate actual values through the task graph, not other futures. This avoids nested futures (e.g., `future<future<T>>`).
+- **Multiple Continuations**: You can attach multiple `.then()` calls to the same future instance.
+- **Efficient Cancellation**: `stlab` futures use RAII for cancellation. If a future is destroyed before its task completes, the task is cancelled (if possible) and no further continuations are triggered.
+- **Exception Handling**: Exceptions are automatically propagated through the task graph.
+
+### Cancellation and RAII
+
+One of the most powerful features of `stlab::future` is its approach to cancellation:
+
+- **RAII-Based**: Cancellation is tied to the lifetime of the future object.
+- **Auto-Cancellation**: If the last copy of a future is destroyed, the library attempts to cancel the associated task.
+- **Non-Intrusive**: Tasks don't necessarily need to check a cancellation token (though they can). If a task is cancelled, its result is simply discarded, and continuations are never invoked.
 
 ```cpp
-// Promise: producer side
-std::promise<int> promise;
-auto future = promise.get_future();
-
-std::thread producer([&promise] {
-    int result = expensive_computation();
-    promise.set_value(result);  // Fulfill the promise
-});
-
-// Consumer: blocks until ready
-int value = future.get();
-
-producer.join();
+{
+    auto f = stlab::async(executor, [] {
+        return long_running_op();
+    }).then([](auto res) {
+        // This will NOT run if 'f' is destroyed early
+        display(res);
+    });
+} // 'f' goes out of scope here; long_running_op is cancelled if possible
 ```
 
-### std::async
-
-Higher-level abstraction that manages threads:
+### Comparison: std::async vs. stlab::async
 
 ```cpp
-// Launch async task
-auto future = std::async(std::launch::async, expensive_computation);
+// std::async: Often blocks on destruction (in some implementations)
+// and returns a non-copyable future.
+auto f1 = std::async(long_op);
+int res = f1.get(); // Blocks!
 
-// Do other work...
-
-// Get result (blocks if not ready)
-int result = future.get();
+// stlab::async: Returns a copyable future and supports continuations.
+auto f2 = stlab::async(stlab::default_executor, long_op)
+    .then([](int res) { display(res); }); // No blocking!
 ```
 
 ## Continuations: Chaining Operations
@@ -260,7 +273,19 @@ public:
 };
 ```
 
-## Patterns for Concurrent Code
+## Chains: Low-Latency Composition
+
+"Chains" is a more recent evolution in Sean Parent's guidance, presented as an alternative to the "Sender/Receiver" model (P2300).
+
+### The Problem with Continuations
+
+While futures and continuations are powerful, **every continuation has a cost**. In high-frequency or latency-sensitive systems, the overhead of context switching and task scheduling for every small step can be 100x-1000x more expensive than simple function composition.
+
+### The "Chains" Approach
+
+- **Separation of Concerns**: Separate the _execution context_ from the _function result_.
+- **Low-Latency**: Aim for the simplicity of sequential function composition while maintaining asynchronous behavior.
+- **Computation Graph**: Build the program (the chain) upfront and then initiate it, allowing for potential optimizations by the library or compiler.
 
 ### Fan-Out / Fan-In
 
@@ -339,76 +364,47 @@ private:
 
 ## Guidelines
 
-### 1. Don't Use Raw Threads
+### 1. Achieve Local Reasoning
 
-```cpp
-// BAD
-std::thread t(some_work);
-t.detach();  // Fire and forget - resource leak
-
-// GOOD
-auto future = std::async(std::launch::async, some_work);
-// Future ensures completion
-```
+Concurrency should not leak. If you see a mutex, you must ask: "What is this protecting?" If the answer involves looking at code in other files or distant functions, you have lost local reasoning.
 
 ### 2. Don't Use Raw Synchronization
 
-```cpp
-// BAD
-std::mutex mtx;
-std::condition_variable cv;
-// ... complex signaling ...
+Mutexes, atomics, and condition variables are low-level primitives for _library authors_, not application developers. Using them in application code almost always leads to bugs and prevents local reasoning.
 
-// GOOD
-auto result = async_operation().then(next_operation);
-```
+### 3. Don't Use Raw Threads
 
-### 3. Prefer Immutable Data
+Managed tasks are superior to raw threads. Threads are a resource, not a unit of work.
 
 ```cpp
-// BAD: Shared mutable state
-std::vector<int> shared_data;
-std::mutex data_mutex;
+// BAD: Detached thread is a resource leak and untrackable
+std::thread(some_work).detach();
 
-void task() {
-    std::lock_guard<std::mutex> lock(data_mutex);
-    shared_data.push_back(42);  // Contention!
-}
-
-// GOOD: Each task owns its data
-auto task(std::vector<int> data) {
-    data.push_back(42);
-    return data;  // Return new state
-}
+// GOOD: Future tracks the work and manages its lifetime
+auto f = stlab::async(executor, some_work);
 ```
 
-### 4. Use Message Passing
+### 4. Goal: Software that Doesn't Wait
+
+Avoid `.get()` or `blocking_get()`. The moment you block a thread, you've potentially created a deadlock or a performance bottleneck. Use continuations (`.then()`) to express what should happen next.
+
+### 5. Prefer Immutable Data and Value Semantics
+
+Shared mutable state is the root of most concurrency evils. By passing data by value (or using immutable types), you eliminate data races by design.
+
+### 6. Use Message Passing
+
+Instead of shared state, pass messages between tasks. This decouples the producer from the consumer and simplifies the task graph.
 
 ```cpp
-// Instead of shared state, pass messages
-auto producer = stlab::channel<Message>(executor);
-auto consumer = producer | [](Message msg) {
-    return process(msg);
-};
-
-producer.send(Message{...});
+auto [send, receive] = stlab::channel<Message>(executor);
+receive | [](Message msg) { return process(msg); };
+send(Message{...});
 ```
 
-### 5. Design for Cancellation
+### 7. Design for Cancellation
 
-```cpp
-// Use cancellation tokens
-std::atomic<bool> cancelled{false};
-
-auto task = async([&cancelled] {
-    while (!cancelled && work_remaining()) {
-        do_chunk_of_work();
-    }
-});
-
-// Later:
-cancelled = true;
-```
+Use RAII-based cancellation (like in `stlab::future`) or cancellation tokens for long-running tasks. This ensures resources are freed promptly when results are no longer needed.
 
 ## Common Pitfalls
 
@@ -468,39 +464,12 @@ void onButton() {
 }
 ```
 
-## STLab Libraries
-
-Sean Parent's stlab provides production-ready concurrency primitives:
-
-### stlab::future
-
-```cpp
-#include <stlab/concurrency/future.hpp>
-
-auto f = stlab::async(stlab::default_executor, [] {
-    return expensive_computation();
-}).then([](auto result) {
-    return transform(result);
-});
-```
-
-### stlab::channel
-
-```cpp
-#include <stlab/concurrency/channel.hpp>
-
-auto [send, receive] = stlab::channel<int>(stlab::default_executor);
-
-receive | [](int x) { process(x); };
-
-send(42);
-```
-
 ## References
 
 ### Primary Sources
 
 - **[Better Code: Concurrency (YouTube)](https://www.youtube.com/watch?v=zULU6Hhp42w)** — NDC London 2017
+- **[Chains: An Alternative to Senders/Receivers (YouTube)](https://www.youtube.com/watch?v=GTPXpS5Y0E8)** — CppCon 2021 (Presentation on the evolution of task graphs)
 - **[Slides (PDF)](https://sean-parent.stlab.cc/presentations/2017-01-18-concurrency/2017-01-18-concurrency.pdf)**
 - **[C++ Source Code](https://sean-parent.stlab.cc/presentations/2015-02-27-concurrency/concurrency-talk.cpp)**
 
