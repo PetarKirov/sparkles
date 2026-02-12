@@ -20,7 +20,7 @@ Sean Parent's approach to software development is built on several foundational 
 
 ## The Better Code Series
 
-Sean Parent's "Better Code" talks form a comprehensive curriculum for software craftsmanship:
+Sean Parent's "Better Code" talks form a comprehensive curriculum for software craftsmanship. While many are part of an explicit series, others provide foundational depth to the same core philosophy:
 
 | Talk                                            | Goal                             | Key Principle                                         |
 | ----------------------------------------------- | -------------------------------- | ----------------------------------------------------- |
@@ -36,6 +36,26 @@ Sean Parent's "Better Code" talks form a comprehensive curriculum for software c
 | [Safety](./safety.md)                           | All the safeties                 | Memory, type, and thread safety                       |
 | [Human Interface](./human-interface.md)         | Don't lie to users               | UI semantics match code semantics                     |
 | [Generic Programming](./generic-programming.md) | Write reusable algorithms        | Concepts and constraints                              |
+| [Runtime Polymorphism](./value-semantics.md)    | Non-intrusive polymorphism       | Value-based runtime polymorphism                      |
+| [What's Your Function?](./algorithms.md)        | Good function design             | Function as the unit of reasoning                     |
+
+## Other Notable Talks
+
+- **Are We There Yet?** (2025) — Reflections on the future of software development 18 years later.
+- **Chains: An alternative to sender/receivers** (2024) — Low-latency asynchronous composition.
+- **Exceptions the Other Way Around** (2022) — Recovering from exceptions and developing usable operations.
+- **Where Have All the Cycles Gone?** (2022) — Why software performance doesn't scale with hardware.
+- **The Tragedy of C++** (2022) — Successes and gaps in the language's evolution.
+- **Warning: std::find() is broken** (2021) — Questioning assumptions about core algorithms.
+- **Compose This** (2019) — Limitations of functional composition and the need for a better theory.
+
+## Foundational Papers
+
+- **Local Reasoning Can Help Prove Correctness** (2025) — Deep dive into the mechanics of local reasoning.
+- **indirect and polymorphic: Vocabulary Types for Composite Class Design** (2023) — Proposal for C++ standard vocabulary types.
+- **Generating Reactive Programs for GUIs...** (2015) — Declarative approach to GUI programming and dataflow.
+- **Property Models: From Incidental Algorithms to Reusable Components** (2008) — Capturing algorithms and interaction rules.
+- **Elements of Programming, Appendix B** (2009) — Syntax and semantics for the language described in Stepanov's book.
 
 ## Key Themes
 
@@ -105,6 +125,12 @@ Ideas from functional programming—immutability, pure functions, composition—
 - **[Papers and Presentations](https://sean-parent.stlab.cc/papers-and-presentations/)** — Complete archive of Sean's talks and papers
 - **[STLab](https://stlab.cc/)** — Adobe's Software Technology Lab libraries
 - **[Adobe Developer C++ Training](https://developer.adobe.com/cpp/training/)** — Internal Adobe talks made public
+
+### Key Interviews & Podcasts
+
+- **ADSP: The Podcast** — Frequent guest covering AI, Rust, Safety, and C++ history (Episodes 250-253, 202-203, 172, 160-163, etc.).
+- **CppCast** — Interviews on Concurrency (2015) and STLab (2021).
+- **Meeting C++ AMA** (2022) — Open Q&A session.
 
 ### Key Talks (Recommended Viewing Order)
 
