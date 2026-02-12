@@ -8,6 +8,26 @@ Sean Parent is famous for demonstrating how standard algorithms, particularly `s
 
 Key presentations include "C++ Seasoning", "What's Your Function?", "Better Code: Algorithms - Preliminaries", and "Better Code: Algorithms - Composition".
 
+## What is an Algorithm?
+
+Sean Parent provides a formal definition that goes beyond "a set of steps":
+
+> "An algorithm is a procedure that maps a set of inputs to a set of outputs, with a set of requirements on the inputs, a set of guarantees on the outputs, and a set of complexity guarantees."
+
+This definition emphasizes:
+
+- **Requirements**: Pre-conditions (e.g., a range must be sorted).
+- **Guarantees**: Post-conditions (e.g., the range is now partitioned).
+- **Complexity**: Big-O performance guarantees (e.g., linear time).
+
+## The Three Goals for Better Code
+
+In "C++ Seasoning", Parent proposed three goals to improve code quality:
+
+1. **No Raw Loops**: Encapsulate all loops into named algorithms.
+2. **No Raw Synchronization Primitives**: Use task-based parallelism or high-level abstractions instead of mutexes/locks.
+3. **No Raw Pointers**: Use value semantics or smart pointers to manage ownership.
+
 ## Why Algorithms Matter
 
 ### 1. Express Intent
@@ -49,7 +69,13 @@ Algorithms can use optimized implementations:
 // std::find can use SIMD on some platforms
 ```
 
-### 4. Composability
+### 4. Local Reasoning
+
+Raw loops often leave variables in a "messy" state (e.g., loop counters, intermediate flags) that persist after the loop ends. Algorithms encapsulate this state, ensuring that after the call, you only need to care about the result (the return value or the modified range).
+
+> "If you have a loop, you have to reason about the state of the system for every iteration of that loop... If you use an algorithm, you only have to reason about the state of the system before and after that algorithm." — Sean Parent
+
+### 5. Composability
 
 Algorithms combine naturally:
 
@@ -123,6 +149,22 @@ auto neg = std::find_if(pos, v.end(), [](int x) { return x < 0; });
 | `partial_sum`         | Running total                 |
 | `adjacent_difference` | Consecutive differences       |
 | `iota`                | Fill with incrementing values |
+
+## Basis Algorithms
+
+A "basis" algorithm is a fundamental building block from which many other algorithms can be composed. Sean Parent identifies several key basis algorithms:
+
+1. **`std::rotate`**: The basis for moving ranges and reordering.
+2. **`std::stable_partition`**: The basis for gathering and filtering while preserving order.
+3. **`std::sort` / `std::nth_element`**: The basis for selection and ordering.
+
+### The Selection Concept
+
+Many algorithms operate on a **Selection**—a subset of elements in a range that satisfy a predicate. In a UI, this might be the items a user has clicked.
+
+- **`gather`** collects a selection around a point.
+- **`slide`** moves a selection (expressed as a contiguous range) to a new position.
+- **`stable_partition`** divides a range into those that are selected and those that are not.
 
 ## The Power of Rotate
 
@@ -245,7 +287,24 @@ auto sum_of_squares = std::transform_reduce(
 );
 ```
 
+### Sort Subrange
+
+Used to sort only the elements that are currently visible (e.g., in a UI list), which is much faster than a full sort.
+
+```cpp
+template <typename I, typename O = std::less<>>
+void sort_subrange(I first, I last, I sub_first, I sub_last, O order = O()) {
+    if (sub_first == sub_last) return;
+    if (sub_first != first) {
+        std::nth_element(first, sub_first, last, order);
+    }
+    std::partial_sort(sub_first, sub_last, last, order);
+}
+```
+
 ### Partition-Based Algorithms
+
+`stable_partition` is a powerful basis for many algorithms. For example, `gather` is composed of two `stable_partition` calls.
 
 ```cpp
 // Move all zeros to the end
@@ -253,8 +312,6 @@ auto boundary = std::stable_partition(
     v.begin(), v.end(),
     [](int x) { return x != 0; }
 );
-// Now [v.begin(), boundary) are non-zeros
-// [boundary, v.end()) are zeros
 ```
 
 ### Finding Unique Elements
@@ -324,19 +381,29 @@ bool found = std::any_of(v.begin(), v.end(), pred);
 
 ### 2. Prefer Named Operations
 
+If a lambda is more than a simple expression, give it a name. This makes the algorithm call read like English.
+
 ```cpp
 // Instead of:
-auto it = std::find_if(v.begin(), v.end(), [](auto& x) { return x.active; });
+auto it = std::find_if(v.begin(), v.end(), [](auto& x) {
+    return x.is_active() && !x.is_hidden();
+});
 
-// Consider:
-auto is_active = [](const auto& x) { return x.active; };
-auto it = std::find_if(v.begin(), v.end(), is_active);
-
-// Or even better, define at class scope:
-auto it = std::find_if(v.begin(), v.end(), &Item::is_active);
+// Use this instead:
+auto is_visible_active = [](const auto& x) {
+    return x.is_active() && !x.is_hidden();
+};
+auto it = std::find_if(v.begin(), v.end(), is_visible_active);
 ```
 
-### 3. Use Ranges (C++20)
+### 3. Accumulate vs. Reduce
+
+Sean Parent notes that `std::accumulate` is a "left fold" and is strictly serial. `std::reduce` is an actual algorithm that allows for parallel execution because it doesn't guarantee order of operations (requires associativity).
+
+- Use **`accumulate`** when order matters (e.g., string concatenation).
+- Use **`reduce`** (or `transform_reduce`) for mathematical operations where order doesn't matter.
+
+### 4. Use Ranges (C++20)
 
 ```cpp
 // Traditional
@@ -352,7 +419,7 @@ auto evens = v | std::views::filter([](int x) { return x % 2 == 0; })
                | std::views::transform([](int x) { return x * 2; });
 ```
 
-### 4. Compose, Don't Loop
+### 5. Compose, Don't Loop
 
 ```cpp
 // Instead of nested loops:
@@ -369,7 +436,7 @@ auto pairs = std::views::cartesian_product(v1, v2)  // C++23
            | std::ranges::to<std::vector>();
 ```
 
-### 5. Understand Complexity
+### 6. Understand Complexity
 
 Choose algorithms based on complexity requirements:
 
