@@ -114,6 +114,68 @@ export default defineConfig({
               },
             ],
           },
+          {
+            text: "TUI Libraries",
+            items: [
+              { text: "Catalog", link: "/research/tui-libraries/" },
+              {
+                text: "Ratatui (Rust)",
+                link: "/research/tui-libraries/ratatui",
+              },
+              {
+                text: "Ink (JavaScript)",
+                link: "/research/tui-libraries/ink",
+              },
+              {
+                text: "Textual (Python)",
+                link: "/research/tui-libraries/textual",
+              },
+              {
+                text: "Bubble Tea (Go)",
+                link: "/research/tui-libraries/bubbletea",
+              },
+              {
+                text: "Brick (Haskell)",
+                link: "/research/tui-libraries/brick",
+              },
+              {
+                text: "Notcurses (C)",
+                link: "/research/tui-libraries/notcurses",
+              },
+              {
+                text: "FTXUI (C++)",
+                link: "/research/tui-libraries/ftxui",
+              },
+              {
+                text: "Cursive (Rust)",
+                link: "/research/tui-libraries/cursive",
+              },
+              {
+                text: "Mosaic (Kotlin)",
+                link: "/research/tui-libraries/mosaic",
+              },
+              {
+                text: "Nottui (OCaml)",
+                link: "/research/tui-libraries/nottui",
+              },
+              {
+                text: "libvaxis (Zig)",
+                link: "/research/tui-libraries/libvaxis",
+              },
+              {
+                text: "tview (Go)",
+                link: "/research/tui-libraries/tview",
+              },
+              {
+                text: "ImTui (C++)",
+                link: "/research/tui-libraries/imtui",
+              },
+              {
+                text: "Comparison",
+                link: "/research/tui-libraries/comparison",
+              },
+            ],
+          },
         ],
       },
     ],
