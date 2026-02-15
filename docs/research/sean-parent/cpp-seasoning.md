@@ -187,10 +187,10 @@ Sean Parent introduced two algorithms that demonstrate the power of composition:
 
 ### Slide
 
-Move a range of elements to a new position:
+Move a range of elements to a new position. Note that this requires `RandomAccessIterator` for the iterator comparison (`pos < first`).
 
 ```cpp
-template<typename I>  // I models BidirectionalIterator
+template<typename I>  // I models RandomAccessIterator
 auto slide(I first, I last, I pos) -> std::pair<I, I> {
     if (pos < first) return { pos, std::rotate(pos, first, last) };
     if (last < pos)  return { std::rotate(first, last, pos), pos };
@@ -200,10 +200,10 @@ auto slide(I first, I last, I pos) -> std::pair<I, I> {
 
 ### Gather
 
-Collect elements matching a predicate around a position:
+Collect elements matching a predicate around a position. This is the foundation for "Selection" in user interfaces (e.g., gathering selected items in a list).
 
 ```cpp
-template<typename I, typename P>
+template<typename I, typename P> // I models BidirectionalIterator
 auto gather(I first, I last, I pos, P pred) -> std::pair<I, I> {
     return {
         std::stable_partition(first, pos, std::not_fn(pred)),
@@ -214,12 +214,13 @@ auto gather(I first, I last, I pos, P pred) -> std::pair<I, I> {
 
 ## Key Algorithms to Know
 
-Sean emphasizes mastering these standard algorithms:
+Sean emphasizes mastering these standard algorithms as building blocks:
 
 | Algorithm                       | Purpose                 | Complexity       |
 | ------------------------------- | ----------------------- | ---------------- |
 | `find`, `find_if`               | Locate element          | O(n)             |
 | `count`, `count_if`             | Count matches           | O(n)             |
+| `lower_bound`, `upper_bound`    | Binary search (sorted)  | O(log n)         |
 | `transform`                     | Apply function to range | O(n)             |
 | `accumulate`, `reduce`          | Fold operation          | O(n)             |
 | `partition`, `stable_partition` | Divide by predicate     | O(n), O(n log n) |
@@ -227,6 +228,35 @@ Sean emphasizes mastering these standard algorithms:
 | `rotate`                        | Cycle elements          | O(n)             |
 | `copy`, `move`                  | Transfer elements       | O(n)             |
 | `remove`, `remove_if`           | Prepare for erase       | O(n)             |
+
+## The Core Driver: Local Reasoning
+
+The primary motivation behind these three goals is **Local Reasoning**. Code has local reasoning if the correctness of a function can be determined by looking at the function itself, without needing to understand the rest of the system's state or execution flow.
+
+1. **No Raw Loops**: Loops often hide the high-level intent and make invariants harder to see. Algorithms name the operation, enabling local reasoning about the transformation.
+2. **No Raw Synchronization**: Mutexes and condition variables in application logic require understanding all other threads that might access the same data, destroying local reasoning. Concurrency should be handled by the library/runtime.
+3. **No Raw Pointers**: Shared ownership and manual memory management create hidden dependencies across the codebase. Values and smart pointers make ownership and lifetimes explicit locally.
+
+## Beyond C++ Seasoning: The Better Code Series
+
+While "C++ Seasoning" established the three goals, Sean Parent expanded these into a broader "Better Code" series:
+
+### Better Code: Data Structures
+
+- **Use `std::vector` by default**: Most data should be in contiguous memory for cache efficiency.
+- **Algorithms over Member Functions**: Prefer standard algorithms that work on ranges over container-specific member functions where possible.
+- **Stability**: Many UI operations rely on `stable_partition` to maintain relative order of items (like selection).
+
+### Better Code: Concurrency
+
+- **Concurrency is not Parallelism**: Concurrency is about decomposing a problem into independent tasks; parallelism is about executing those tasks simultaneously.
+- **Avoid Threads and Mutexes**: Use task-based models (like `stlab::async`) to express data dependencies.
+- **Data Flow**: Think in terms of data moving through a system of tasks rather than shared state.
+
+### Better Code: Relationships
+
+- **Local Reasoning requires explicit relationships**: Use value semantics to make object relationships clear.
+- **Parent-Child Relationships**: Often best represented as a container (parent) holding its elements (children) by value.
 
 ## Guidelines
 
