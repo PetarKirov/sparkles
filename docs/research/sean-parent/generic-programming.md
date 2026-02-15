@@ -1,38 +1,44 @@
 # Generic Programming
 
-> "Generic programming is not just another paradigm. It's the culmination of decades of work on how to write reusable, efficient code."
+> "Generic programming is the definition of algorithms and data structures at an abstract or generic level, thereby accomplishing many related programming tasks simultaneously." — Alexander Stepanov and David Musser (1988)
 
 ## Overview
 
-Sean Parent's "Generic Programming" talk (code::dive 2018, pacific++ 2018) traces the history and principles of generic programming from its origins with Alexander Stepanov through its impact on C++ and modern software development. The talk emphasizes that generic programming is not merely "templates" but a fundamental approach to software construction based on mathematical abstraction.
+Sean Parent's "Generic Programming" talk (code::dive 2018, pacific++ 2018) traces the history and principles of generic programming from its origins with Alexander Stepanov through its impact on C++ and modern software development.
 
-## What Is Generic Programming?
+The talk emphasizes that generic programming is not merely "templates" or a "paradigm," but a fundamental approach to software construction based on the idea that **mathematics is discovery, not invention**. Consequently, writing software is the process of discovering the underlying algebraic structures and quantitative laws that govern a problem.
 
-Generic programming is:
+## Core Philosophy
 
-1. **Writing algorithms that work on any type** satisfying certain requirements
-2. **Separating algorithms from data structures** through abstract interfaces
-3. **Designing with mathematical precision** using concepts and axioms
-4. **Achieving efficiency through abstraction** rather than sacrificing it
+### Discovery vs. Invention
 
-```cpp
-// Not generic: works only with int arrays
-void sort_int_array(int* arr, int size);
+Parent (following Stepanov) argues that we don't "invent" algorithms; we discover them. Just as Euler discovered mathematical truths, programmers discover the most efficient and general way to perform a task.
 
-// Generic: works with any random-access range
-template<typename RandomIt>
-void sort(RandomIt first, RandomIt last);
+### Discovery Example: Egyptian Multiplication
 
-// More generic: works with any ordering
-template<typename RandomIt, typename Compare>
-void sort(RandomIt first, RandomIt last, Compare comp);
-```
+Parent often uses "Egyptian Multiplication" (or the Russian Peasant algorithm) to show how an efficient algorithm for one problem (multiplication) is actually a generic algorithm for any operation that is associative (like exponentiation).
+
+- **Concrete:** `n * x` can be computed by doubling and adding.
+- **Generic:** The same "template" computes `x^n` by squaring and multiplying.
+- **Discovery:** We discovered a general power algorithm, of which multiplication is just one model (where the operation is addition).
 
 ## Historical Context
 
-### Origins: Stepanov and Musser
+### 1977: John Backus and the von Neumann Critique
 
-Alexander Stepanov and David Musser coined "generic programming" in 1988. Stepanov's key insight:
+In his Turing Award lecture, Backus critiqued the "word-at-a-time" style of von Neumann programming. He proposed a functional style using "combining forms" (higher-order functions) to build complex programs from simple ones, a precursor to algorithm composition in GP.
+
+### 1979: Ken Iverson and Notation
+
+Ken Iverson (creator of APL) emphasized "Notation as a Tool of Thought." He showed that a precise mathematical notation allows for higher-level reasoning about data transformations.
+
+### 1981: Tecton
+
+D. Kapur, D.R. Musser, and Alexander Stepanov introduced **Tecton**, a language for manipulating generic objects. This was the first formal attempt to build a system based on generic principles.
+
+### 1988: Origins of GP
+
+Stepanov and Musser officially coined "generic programming" while working on libraries for Ada and later C++. Stepanov's key insight:
 
 > "Algorithms are more fundamental than the data structures on which they operate."
 
@@ -52,6 +58,14 @@ Stepanov and Paul McJones's book "Elements of Programming" provides the mathemat
 - Concepts and axioms
 - Algorithm requirements
 - Complexity guarantees
+
+### Associativity and Parallelism
+
+One of Parent's key examples of a "discovered" mathematical property in GP is **associativity**.
+
+- If an operation is associative: `(a ∙ b) ∙ c = a ∙ (b ∙ c)`
+- Then the operation can be performed in parallel (parallel reduction).
+- This links software directly to the algebraic structure of a **Monoid**.
 
 ## Core Concepts
 
@@ -117,6 +131,53 @@ Concepts have semantic requirements (axioms) beyond syntax:
 
 ## Algorithm Design
 
+### Case Study: Binary Search
+
+In "Generic Programming," Parent compares a traditional implementation of binary search (like the one in Jon Bentley's _Programming Pearls_) with the STL's `lower_bound`.
+
+#### The Traditional Approach (Jon Bentley)
+
+```cpp
+int binary_search(int x[], int n, int v) {
+    int l = 0;
+    int u = n - 1;
+    while (true) {
+        if (l > u) return -1;
+        int m = (l + u) / 2;
+        if (x[m] < v) l = m + 1;
+        else if (x[m] == v) return m;
+        else u = m - 1;
+    }
+}
+```
+
+**Issues:**
+
+- **Limited to integers:** Hard-coded types and indices.
+- **Inclusive ranges:** Using `n - 1` and `-1` for failure makes the logic brittle.
+- **Information loss:** If the value isn't found, it returns `-1`, losing the information of where the value _should_ have been.
+
+#### The Generic Approach (STL `lower_bound`)
+
+```cpp
+template <class I, class T>
+I lower_bound(I f, I l, const T& v) {
+    while (f != l) {
+        auto m = next(f, distance(f, l) / 2);
+        if (*m < v) f = next(m);
+        else l = m;
+    }
+    return f;
+}
+```
+
+**Advantages:**
+
+- **Half-Open Ranges:** Uses `[first, last)` which simplifies logic and boundary conditions.
+- **No Information Loss:** Returns the first position where `v` could be inserted while maintaining order.
+- **Minimal Requirements:** Works on any `ForwardIterator` (multi-pass), not just `RandomAccessIterator`.
+- **Compositional:** This single primitive can be used to implement `binary_search`, `equal_range`, `insert_into_sorted_list`, etc.
+
 ### Stepanov's Approach
 
 1. **Start with mathematics**: What is the abstract problem?
@@ -124,42 +185,6 @@ Concepts have semantic requirements (axioms) beyond syntax:
 3. **Write the algorithm**: Express it generically
 4. **Prove correctness**: Mathematical verification
 5. **Analyze complexity**: Time and space requirements
-
-### Example: Binary Search
-
-```cpp
-// Mathematical definition:
-// Find the first position where value could be inserted
-// to maintain sorted order
-
-// Concept requirements:
-// - ForwardIterator: multi-pass traversal
-// - Sorted range: values in non-decreasing order
-// - Value comparable with iterator's value type
-
-template<typename ForwardIt, typename T>
-ForwardIt lower_bound(ForwardIt first, ForwardIt last, const T& value) {
-    auto count = std::distance(first, last);
-
-    while (count > 0) {
-        auto step = count / 2;
-        auto mid = first;
-        std::advance(mid, step);
-
-        if (*mid < value) {
-            first = ++mid;
-            count -= step + 1;
-        } else {
-            count = step;
-        }
-    }
-
-    return first;
-}
-
-// Complexity: O(log n) comparisons, O(log n) or O(n) increments
-// (depending on iterator category)
-```
 
 ## Refinements and Hierarchies
 
