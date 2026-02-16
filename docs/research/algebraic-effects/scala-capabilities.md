@@ -105,7 +105,7 @@ Capture checking provides **passive** effect tracking -- it tells you which capa
 
 ### Current Status
 
-Capture checking is highly experimental and unstable, evolving quickly. It represents a technical breakthrough in capability-safe programming but is not yet suitable for production use.
+As of early 2026, capture checking has reached a significant level of maturity. Scala 3.8 included a highly improved capture checker and a fully capture-checked standard library. While still technically an experimental feature requiring an import, it is now being applied to real-world concurrency libraries like **Ox** to ensure safety at compile time.
 
 ---
 
@@ -188,7 +188,7 @@ These two mechanisms work together: context functions make capabilities availabl
 - **JVM limitations**: JVM does not natively support multi-shot continuations
 - **Incomplete tooling**: IDE support, error messages, and debugging are immature
 - **Unknown performance**: No benchmarks or production experience
-- **Long timeline**: Scala 3.8 (Q4 2025) and 3.9 LTS (Q2 2026) are the targets; full capabilities may take longer
+- **Long timeline**: Major milestones were achieved in 2025 (Scala 3.8); full stabilization and ecosystem-wide adoption are expected through 2026 and 2027.
 
 ## Key Design Decisions and Trade-offs
 

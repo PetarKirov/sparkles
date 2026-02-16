@@ -248,22 +248,7 @@ Library authors must often maintain both sync and async versions of their APIs, 
 
 ### The Keyword Generics Initiative
 
-The keyword generics initiative (led by Yoshua Wuyts and Oli Scherer) proposes making functions generic over effects. The proposed syntax uses `#[maybe(async)]` annotations:
-
-```rust
-// Proposed syntax (not yet implemented)
-#[maybe(async)]
-fn copy<R: Read, W: Write>(reader: &mut R, writer: &mut W) -> Result<u64, Error> {
-    let mut buf = vec![0u8; 8192];
-    loop {
-        let n = reader.read(&mut buf).await?;
-        if n == 0 { break; }
-        writer.write_all(&buf[..n]).await?;
-    }
-}
-```
-
-The initiative frames this as effect generics: a function that is generic over whether it runs synchronously or asynchronously, similar to how generic functions are parameterized over types. The key insight is that the API surface explosion is combinatorial -- with five effects, a single trait family like `Fn` would need up to 96 variants.
+The keyword generics initiative (led by Yoshua Wuyts and Oli Scherer) is the primary path toward abstracting over effects in Rust. As of early 2026, the initiative has focused on finalizing the semantics of `async` and `const` generics. The 2024 Edition of Rust (stabilized in Rust 1.85.0) provides the foundation for these improvements, with syntactical support expected to evolve in the 2027 Edition.
 
 ### Coroutines as a Unifying Mechanism
 

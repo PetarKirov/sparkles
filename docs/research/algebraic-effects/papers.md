@@ -214,14 +214,21 @@ Shows that effect algebras meeting certain safety conditions can accommodate exi
 
 ---
 
-### "Parallel Algebraic Effect Handlers" (ICFP 2024)
+### "Parallel Algebraic Effect Handlers" (Xie et al., ICFP 2024)
 
 | Field   | Value                                   |
 | ------- | --------------------------------------- |
 | Authors | Ningning Xie et al.                     |
 | Venue   | ICFP 2024 (PACMPL Volume 8, Issue ICFP) |
 
-Addresses the limitation that algebraic effects typically require sequential execution. Proposes a design for parallel effect handlers, enabling concurrent execution of effect operations.
+**Key Ideas:**
+
+1. **The parallelism problem**: Standard algebraic effect handlers are inherently sequential because resumptions are processed one by one.
+2. **`λp` Calculus**: Introduces a new calculus that models both effect handlers and parallelizable computations (inspired by Dex).
+3. **Multicore Handlers**: Enables the concurrent execution of effect operations across multiple cores while maintaining algebraic reasoning.
+4. **Haskell Implementation**: Provides a concrete library for building parallel effect handlers in Haskell.
+
+**Significance**: The first foundational work to unify user-defined effect handlers with parallel computations, bridging the gap between algebraic effects and multicore performance.
 
 ---
 

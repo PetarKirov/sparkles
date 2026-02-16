@@ -55,13 +55,17 @@ Effect<A, never, never>;
 Effect<A, E, never>;
 ```
 
-### Immutability and Referential Transparency
+### Current Status
 
-Effect values are ordinary immutable objects. The same Effect value always describes the same computation, preserving referential transparency. Effects are only executed when submitted to the Effect runtime via `Effect.runPromise`, `Effect.runSync`, or similar runners.
+As of early 2026, Effect has entered the **Effect 4.0** era, codenamed **"smol"**. This major release focuses on radical performance improvements, a drastically reduced bundle size, and a simplified core runtime. Key additions in 4.0 include:
+
+- **Core STM**: Software Transactional Memory is now integrated into the core library.
+- **Unified Batching**: Dramatic improvements to the automatic query batching system.
+- **Mailbox API**: A new high-performance messaging primitive replacing the older Queue patterns for many use cases.
 
 ---
 
-## How Effects Are Declared
+## Core Abstractions and Types
 
 ### Creating Effects
 

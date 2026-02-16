@@ -19,6 +19,7 @@ The journey from monad transformers to modern algebraic effect systems spans thr
 | ~2024      | Value-level handles               | bluefin                                 | ST-like scoping; no type-level effect rows              |
 | ~2024+     | Hefty algebras                    | heftia                                  | Sound HO effects via elaboration; continuation-based    |
 | ~2025      | Higher-order freer                | Theseus                                 | Order-independent interpretation; guaranteed finalizers |
+| ~2026      | Parallel Effects                  | λp                                      | Multicore handlers; deterministic parallel execution    |
 
 ---
 
@@ -221,15 +222,20 @@ Separate the handling of higher-order effects (via elaboration) from first-order
 ### Key Libraries
 
 - **heftia** (2024) -- First implementation of hefty algebras; fully sound HO + algebraic effects
-- **Theseus** (2025) -- Higher-order freer monad with order-independent interpretation
 
-### The Current Frontier
+- **Theseus** (2025) -- Higher-order freer monad with order-independent interpretation and guaranteed finalizers
 
-The state of the art in Haskell effect systems is a three-way trade-off:
+### The Current Frontier (2026)
+
+The state of the art in Haskell effect systems is now a four-way trade-off:
 
 1. **effectful/cleff**: Maximum performance, no algebraic effects, pragmatic IO-based semantics
-2. **heftia**: Sound semantics, all features, near-effectful performance, theoretical rigor
+
+2. **heftia / Theseus**: Sound semantics, all features, prioritize theoretical rigor and resource safety
+
 3. **bluefin + bluefin-algae**: Simple mental model (handles), algebraic effects via primops
+
+4. **λp (Parallel Effects)**: Native support for multicore handlers and parallelized effect operations
 
 ---
 

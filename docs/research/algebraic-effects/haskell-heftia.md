@@ -116,7 +116,7 @@ heftia operates at a speed roughly on par with effectful and significantly faste
 
 ### Ongoing Improvements
 
-The author is experimentally testing a new approach based on the "multi-prompt control monad" in a separate repository. If successful, this would address remaining performance gaps compared to effectful.
+The author is experimentally testing a new approach based on the "multi-prompt control monad" in a separate repository. By late 2025, heftia has gained recognition as a potential "definitive solution" to the "migration hell" caused by library incompatibilities, thanks to its `data-effects` foundation.
 
 ---
 
