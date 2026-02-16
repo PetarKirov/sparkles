@@ -15,16 +15,17 @@ A comprehensive survey of algebraic effect system implementations, encodings, pe
 | **[bluefin](haskell-bluefin.md)**             | ReaderT IO (handles)    | Fast           | Yes                  | Via bluefin-algae | Yes           |
 | **[eff](haskell-eff.md)**                     | Delimited continuations | Very fast      | Yes                  | Yes               | Yes           |
 | **[heftia](haskell-heftia.md)**               | Hefty algebras          | Near-effectful | Yes (fully sound)    | Yes               | No            |
+| **[Theseus](haskell-theseus.md)**             | Higher-order freer      | Moderate-High  | Yes (consistent)     | Yes               | No            |
 
 ### Scala Effect Systems
 
-| Library/System                                    | Approach                             | Performance        | Effect Tracking | DI Built-in  |
-| ------------------------------------------------- | ------------------------------------ | ------------------ | --------------- | ------------ |
-| **[ZIO](scala-zio.md)**                           | Fiber + ZIO[R,E,A]                   | High               | Error + Env     | Yes (ZLayer) |
-| **[Cats Effect](scala-cats-effect.md)**           | Typeclass hierarchy                  | High (lighter)     | Via typeclasses | No           |
-| **[Kyo](scala-kyo.md)**                           | Algebraic effects                    | High               | Open effect set | Partial      |
-| **[Scala 3 Capabilities](scala-capabilities.md)** | Context functions + capture checking | N/A (experimental) | Type-level      | No           |
-| **[Ox](scala-ox.md)**                             | Direct style + VT                    | Native threads     | IO capability   | No           |
+| Library/System                                    | Approach                             | Performance    | Effect Tracking | DI Built-in  |
+| ------------------------------------------------- | ------------------------------------ | -------------- | --------------- | ------------ |
+| **[ZIO](scala-zio.md)**                           | Fiber + ZIO[R,E,A]                   | High           | Error + Env     | Yes (ZLayer) |
+| **[Cats Effect](scala-cats-effect.md)**           | Typeclass hierarchy                  | High (lighter) | Via typeclasses | No           |
+| **[Kyo](scala-kyo.md)**                           | Algebraic effects                    | High           | Open effect set | Partial      |
+| **[Scala 3 Capabilities](scala-capabilities.md)** | Context functions + capture checking | High (native)  | Type-level      | No           |
+| **[Ox](scala-ox.md)**                             | Direct style + VT                    | Native threads | IO capability   | No           |
 
 ### Effect-Native Languages
 
@@ -52,11 +53,12 @@ A comprehensive survey of algebraic effect system implementations, encodings, pe
 
 ### Industry Platforms
 
-| System                             | Language    | Approach                        | Relationship to AE                              |
-| ---------------------------------- | ----------- | ------------------------------- | ----------------------------------------------- |
-| **[Effect](typescript-effect.md)** | TypeScript  | Effect\<A,E,R\> + generators    | Generator-based; Layer DI; ZIO-inspired         |
-| **[Project Loom](java-loom.md)**   | Java        | Virtual threads + continuations | Hidden continuations; no effect typing          |
-| **[WasmFX](wasmfx.md)**            | WebAssembly | Typed continuations             | Typed stack switching; multi-language AE target |
+| System                                | Language    | Approach                        | Relationship to AE                              |
+| ------------------------------------- | ----------- | ------------------------------- | ----------------------------------------------- |
+| **[Effect](typescript-effect.md)**    | TypeScript  | Effect\<A,E,R\> + generators    | Generator-based; Layer DI; ZIO-inspired         |
+| **[Project Loom](java-loom.md)**      | Java        | Virtual threads + continuations | Hidden continuations; no effect typing          |
+| **[WasmFX](wasmfx.md)**               | WebAssembly | Typed continuations             | Typed stack switching; multi-language AE target |
+| **[Swift Effects](swift-effects.md)** | Swift       | Typed throws + async/await      | Effectful properties; data-race safety          |
 
 ### Cross-Cutting Topics
 
@@ -111,10 +113,10 @@ A comprehensive survey of algebraic effect system implementations, encodings, pe
 
 Based on [effectful benchmarks](https://github.com/haskell-effectful/effectful/blob/master/benchmarks/README.md) and [community benchmarks](https://github.com/patrickt/effects-benchmarks):
 
-1. **effectful** (static dispatch) -- on par with hand-written `ST` code
+1. **effectful** (static dispatch) / **Scala 3 Capabilities** (native) -- on par with hand-written code
 2. **effectful** (dynamic dispatch) / **cleff** -- very fast, outperforms mtl in microbenchmarks
-3. **eff** -- fast by design via delimited continuations (no reliance on optimizer)
-4. **heftia** -- roughly on par with effectful for most scenarios
+3. **eff** / **WasmFX** (native) -- fast by design via delimited continuations
+4. **heftia** / **Theseus** -- roughly on par with effectful for most scenarios, prioritizing soundness
 5. **fused-effects** / **mtl** -- approximately equivalent; near-optimal with GHC optimizations
 6. **freer-simple** -- decent for free monad approach but ~30x slower than mtl
 7. **polysemy** -- similar to freer-simple with higher initial overhead
@@ -172,4 +174,7 @@ The following libraries and topics are analyzed in depth:
 - **[Evolution of Haskell Effect Systems](evolution.md)** -- The path from mtl through free monads to modern approaches
 - **[Key Academic Papers](papers.md)** -- Leijen, Wu/Schrijvers, Poulsen, King, and recent ICFP/POPL work
 - **[Comparison and Analysis](comparison.md)** -- Unified analysis of trade-offs, design decisions, and recommendations
-- **[Theory and Compilation Strategies](theory-compilation.md)** -- Evidence passing, capability passing, and compilation techniques for algebraic effects
+- **[Theory and Compilation Strategies](theory-compilation.md)** -- Evidence passing, capability passing, and compilation techniques
+- **[Parallel Algebraic Effects](parallelism.md)** -- Breakthroughs in multicore handlers and parallelized computations
+- **[Other Notable Implementations](other-implementations.md)** -- Survey of Mojo, Verse, Links, and Lean 4
+  for algebraic effects

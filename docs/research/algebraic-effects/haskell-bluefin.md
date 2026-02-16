@@ -130,7 +130,7 @@ No type-level machinery or `TypeApplications` needed -- `st1` and `st2` are simp
 
 ## Bluefin-Algae: Algebraic Effects Extension
 
-The [bluefin-algae](https://hackage.haskell.org/package/bluefin-algae) package adds algebraic effects to Bluefin by leveraging the delimited continuation primops added in GHC 9.6:
+The [bluefin-algae](https://hackage.haskell.org/package/bluefin-algae) package, released in September 2025, adds algebraic effects to Bluefin by leveraging the delimited continuation primops added in GHC 9.6:
 
 ```haskell
 -- Algebraic effect operations capture continuations
@@ -140,7 +140,7 @@ data Alg (op :: Type -> Type) e
 handleAlg :: (forall e. Alg op e -> Eff (e :& es) a) -> Handler op es a -> Eff es a
 ```
 
-With bluefin-algae, effects that were built-in to Bluefin (State, Exception, etc.) can be re-implemented from scratch as algebraic effects. Thanks to Bluefin's scoped handles, performing an operation requires a handle that identifies a specific handler, enabling new forms of abstraction boundaries.
+With bluefin-algae, effects that were built-in to Bluefin (State, Exception, etc.) can be re-implemented from scratch as algebraic effects. It introduces **named effect handlers**, which provide a unique approach to scoping that differs from the dynamic scoping used in most other effect systems. However, early benchmarks in 2025 indicated surprising performance overheads that may require further optimization.
 
 ---
 

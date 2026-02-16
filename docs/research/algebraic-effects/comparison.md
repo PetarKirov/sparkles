@@ -20,10 +20,10 @@ Every effect system navigates tension between several competing concerns. No sys
   Expressiveness  Simplicity
 ```
 
-| Concern            | Best-in-class                                                           | What it costs                                                                                   |
+| concern            | Best-in-class                                                           | What it costs                                                                                   |
 | ------------------ | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | **Performance**    | effectful, eff, Koka (evidence passing), OCaml 5 (native continuations) | Loses pure interpretation (effectful); stalled development (eff); untyped effects (OCaml 5)     |
-| **Expressiveness** | heftia, Koka (row-polymorphic), Effect-TS (three-parameter type)        | Conceptual complexity; newer/less battle-tested; runtime overhead (Effect-TS generators)        |
+| **Expressiveness** | heftia, Theseus, Koka (row-polymorphic), Effect-TS                      | Conceptual complexity; newer/less battle-tested; runtime overhead (Effect-TS generators)        |
 | **Simplicity**     | bluefin, Ox, OCaml 5 Eio                                                | Explicit handle threading (bluefin); no effect handlers (Ox); no static effect typing (OCaml 5) |
 
 ### Purity vs. Pragmatism
@@ -82,6 +82,7 @@ Every effect system navigates tension between several competing concerns. No sys
 | **ReaderT IO**                   | No                     | Partial (unsound cases) | No                   | Yes                        |
 | **Delimited continuations**      | Yes (native)           | Yes (eff)               | No (IO-based)        | Yes                        |
 | **Hefty algebras**               | Yes                    | Yes (fully sound)       | Yes                  | Yes                        |
+| **Higher-order freer (Theseus)** | Yes                    | Yes (consistent)        | Yes                  | Yes                        |
 | **Row-polymorphic (Koka)**       | Yes (multi-shot)       | N/A (first-order only)  | Yes                  | Yes (labels)               |
 | **Native continuations (OCaml)** | Yes (one-shot only)    | N/A                     | No (untyped)         | Yes                        |
 | **Coroutine-based (Rust)**       | Yes (via coroutine)    | No                      | Yes (no IO required) | Yes                        |

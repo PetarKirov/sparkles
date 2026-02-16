@@ -195,6 +195,12 @@ let run comp =
 
 The mutually recursive `expect_send` and `expect_recv` enforce alternation between `Send` and `Recv`. Because shallow handlers do not re-install themselves, each resumption provides a new handler specifying the next expected effect. OCaml does not provide syntax sugar for shallow handlers.
 
+## The Path to Typed Effects
+
+As of early 2026, OCaml 5 continues to evolve its effect system. While the runtime remains untyped, the community has established **Picos**, a library for interoperable effects-based concurrency that provides a standard interface for different effect-based schedulers to coexist.
+
+Active research at Jane Street and academic institutions is focused on adding static effect tracking to OCaml, potentially leveraging **row polymorphism** or **modular implicits**.
+
 ---
 
 ## Performance Approach

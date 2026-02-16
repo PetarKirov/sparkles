@@ -15,11 +15,9 @@ A minimal extension to WebAssembly adding typed, first-class continuations via e
 
 ## Overview
 
-### What It Solves
+### Current Status
 
-WebAssembly provides no direct support for non-local control flow. Languages with features like async/await, generators, lightweight threads, or first-class continuations must resort to whole-program transformations (continuation-passing style, Asyncify, or state machines) when compiling to Wasm. These transformations impose significant code size overhead, runtime performance penalties, and destroy the natural call stack structure that debuggers and profilers rely on.
-
-WasmFX solves this by adding a small set of typed instructions for creating, suspending, and resuming continuations directly at the Wasm level. Source language compilers can translate their non-local control flow features directly into WasmFX instructions without program-wide transformations.
+As of early 2026, the WasmFX proposal (typed continuations) has reached **Phase 3 (Implementation)** in the WebAssembly CG process. Experimental implementations exist in V8 (Google Chrome) and are in progress for SpiderMonkey (Firefox). This mechanism is becoming the standard way to implement high-performance async/await and green threads on the web platform.
 
 ### Design Philosophy
 
