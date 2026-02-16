@@ -115,6 +115,155 @@ export default defineConfig({
             ],
           },
           {
+            text: "Algebraic Effects",
+            link: "/research/algebraic-effects/",
+            items: [
+              {
+                text: "Cross-Cutting",
+                items: [
+                  {
+                    text: "Comparison",
+                    link: "/research/algebraic-effects/comparison",
+                  },
+                  {
+                    text: "Papers",
+                    link: "/research/algebraic-effects/papers",
+                  },
+                  {
+                    text: "Theory & Compilation",
+                    link: "/research/algebraic-effects/theory-compilation",
+                  },
+                ],
+              },
+              {
+                text: "Effect-Native Languages",
+                items: [
+                  {
+                    text: "Koka",
+                    link: "/research/algebraic-effects/koka",
+                  },
+                  {
+                    text: "Eff",
+                    link: "/research/algebraic-effects/eff-lang",
+                  },
+                  {
+                    text: "Frank",
+                    link: "/research/algebraic-effects/frank",
+                  },
+                  {
+                    text: "Unison",
+                    link: "/research/algebraic-effects/unison",
+                  },
+                ],
+              },
+              {
+                text: "Haskell",
+                items: [
+                  {
+                    text: "effectful",
+                    link: "/research/algebraic-effects/haskell-effectful",
+                  },
+                  {
+                    text: "polysemy",
+                    link: "/research/algebraic-effects/haskell-polysemy",
+                  },
+                  {
+                    text: "fused-effects",
+                    link: "/research/algebraic-effects/haskell-fused-effects",
+                  },
+                  {
+                    text: "cleff",
+                    link: "/research/algebraic-effects/haskell-cleff",
+                  },
+                  {
+                    text: "bluefin",
+                    link: "/research/algebraic-effects/haskell-bluefin",
+                  },
+                  {
+                    text: "freer-simple",
+                    link: "/research/algebraic-effects/haskell-freer-simple",
+                  },
+                  {
+                    text: "mtl",
+                    link: "/research/algebraic-effects/haskell-mtl",
+                  },
+                ],
+              },
+              {
+                text: "Scala",
+                items: [
+                  {
+                    text: "ZIO",
+                    link: "/research/algebraic-effects/scala-zio",
+                  },
+                  {
+                    text: "Cats Effect",
+                    link: "/research/algebraic-effects/scala-cats-effect",
+                  },
+                  {
+                    text: "Kyo",
+                    link: "/research/algebraic-effects/scala-kyo",
+                  },
+                  {
+                    text: "Scala 3 Capabilities",
+                    link: "/research/algebraic-effects/scala-capabilities",
+                  },
+                  {
+                    text: "Turbolift",
+                    link: "/research/algebraic-effects/scala-turbolift",
+                  },
+                ],
+              },
+              {
+                text: "OCaml",
+                items: [
+                  {
+                    text: "OCaml 5 Effects",
+                    link: "/research/algebraic-effects/ocaml-effects",
+                  },
+                  {
+                    text: "Eio",
+                    link: "/research/algebraic-effects/ocaml-eio",
+                  },
+                ],
+              },
+              {
+                text: "Rust",
+                items: [
+                  {
+                    text: "Implicit Effect System",
+                    link: "/research/algebraic-effects/rust-effect-system",
+                  },
+                  {
+                    text: "effing-mad",
+                    link: "/research/algebraic-effects/rust-effing-mad",
+                  },
+                  {
+                    text: "CPS Effects",
+                    link: "/research/algebraic-effects/rust-cps-effects",
+                  },
+                ],
+              },
+              {
+                text: "Industry Platforms",
+                items: [
+                  {
+                    text: "Effect (TypeScript)",
+                    link: "/research/algebraic-effects/typescript-effect",
+                  },
+                  {
+                    text: "Project Loom (Java)",
+                    link: "/research/algebraic-effects/java-loom",
+                  },
+                  {
+                    text: "WasmFX",
+                    link: "/research/algebraic-effects/wasmfx",
+                  },
+                ],
+              },
+            ],
+          },
+          {
             text: "TUI Libraries",
             items: [
               { text: "Catalog", link: "/research/tui-libraries/" },
