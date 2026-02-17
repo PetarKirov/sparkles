@@ -1,55 +1,47 @@
 # Comparison and Analysis
 
-A cross-language synthesis of design trade-offs, encoding strategies, and recommendations for understanding the algebraic effects landscape across Haskell, Scala, Rust, TypeScript, OCaml, Koka, and other languages.
+Cross-ecosystem comparison of algebraic effect systems and closely related effect platforms.
+
+**Last reviewed:** February 16, 2026.
 
 ---
 
-## The Fundamental Trade-offs
+## Reading This Table Correctly
+
+Many production systems called "effect systems" are not full algebraic handler systems. This page separates:
+
+- **full handler semantics** (operations + handlers + resumptions)
+- **effect tracking/runtime systems** that solve adjacent problems
+
+---
+
+## The Effect System Trilemma
 
 Every effect system navigates tension between several competing concerns. No system achieves all simultaneously.
 
-### The Effect System Trilemma
-
-```
-         Performance
-            /\
-           /  \
-          /    \
-         /      \
-        /________\
-  Expressiveness  Simplicity
-```
-
-| concern            | Best-in-class                                                           | What it costs                                                                                   |
+| Concern            | Best-in-class                                                           | What it costs                                                                                   |
 | ------------------ | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | **Performance**    | effectful, eff, Koka (evidence passing), OCaml 5 (native continuations) | Loses pure interpretation (effectful); stalled development (eff); untyped effects (OCaml 5)     |
-| **Expressiveness** | heftia, Theseus, Koka (row-polymorphic), Effect-TS                      | Conceptual complexity; newer/less battle-tested; runtime overhead (Effect-TS generators)        |
+| **Expressiveness** | heftia, Koka (row-polymorphic), Effect-TS                               | Conceptual complexity; newer/less battle-tested; runtime overhead (Effect-TS generators)        |
 | **Simplicity**     | bluefin, Ox, OCaml 5 Eio                                                | Explicit handle threading (bluefin); no effect handlers (Ox); no static effect typing (OCaml 5) |
 
-### Purity vs. Pragmatism
+---
 
-| Approach          | Libraries                       | Purity                                                        | Pragmatism                                                   |
-| ----------------- | ------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------ |
-| Pure, IO-free     | polysemy, fused-effects, heftia | Effects interpretable without IO; testable; composable        | Slower; cannot use IO-based optimizations                    |
-| IO-based          | effectful, cleff, bluefin       | Fastest; ecosystem interop; predictable concurrency semantics | Cannot interpret purely; IO semantics leak                   |
-| Concrete IO monad | ZIO, Cats Effect                | Maximum runtime optimization; rich concurrency                | Fixed effect set; no algebraic effects                       |
-| Effect-native     | Koka, Eff, Frank                | Effects are the language; no purity/pragmatism split          | Smaller ecosystems; less production adoption                 |
-| Runtime-native    | OCaml 5, Java Loom              | Continuations in the runtime; zero-cost abstraction           | No static effect typing (OCaml 5); no effect handlers (Loom) |
-| Implicit          | Rust                            | Zero-cost abstractions; ownership safety                      | No unified effect system; per-keyword fragmentation          |
+## 2026 Comparison Matrix
 
-### Fixed vs. Open Effect Sets
-
-| Approach                          | Libraries                                 | Flexibility                                           | Cost                                          |
-| --------------------------------- | ----------------------------------------- | ----------------------------------------------------- | --------------------------------------------- |
-| **Fixed channels**                | ZIO (R,E), Cats Effect (Throwable)        | Simple; well-optimized                                | Cannot add custom effect types                |
-| **Open type-level list**          | effectful, cleff, polysemy, fused-effects | Arbitrary effects; precise typing                     | Type complexity; longer compile times         |
-| **Open with algebraic semantics** | Kyo, heftia, eff                          | Full algebraic effect power                           | Newer; less ecosystem                         |
-| **Value-level handles**           | bluefin                                   | Simple; no type-level effects                         | Must thread handles explicitly                |
-| **Row-polymorphic**               | Koka                                      | Full inference; label-based disambiguation            | Row types add conceptual complexity           |
-| **Untyped open**                  | OCaml 5                                   | Maximum flexibility; no type overhead                 | No static guarantees about effect handling    |
-| **Ambient abilities**             | Frank, Unison                             | Effects as ambient context; handler determines scope  | Less fine-grained control                     |
-| **Three-parameter**               | Effect (TypeScript)                       | Typed errors + requirements in one type               | Fixed structure; no arbitrary effect channels |
-| **Implicit per-feature**          | Rust                                      | Each feature (async, unsafe, ?) tracked independently | No composition; no user-defined effects       |
+| System / Family                                                    | Effect Typing                                      | Full Handlers?                          | Continuation Strategy                         | Key Strengths                                                         | Current Limits                                                 |
+| ------------------------------------------------------------------ | -------------------------------------------------- | --------------------------------------- | --------------------------------------------- | --------------------------------------------------------------------- | -------------------------------------------------------------- |
+| **Koka**                                                           | Row-polymorphic effect types with inference        | Yes                                     | Selective CPS + evidence-style compilation    | Strong theory/implementation alignment; practical effect inference    | Smaller ecosystem than mainstream platforms                    |
+| **Eff / Effekt / research languages**                              | Varies, usually explicit effects                   | Yes                                     | Interpreter or compiler-specific              | Clean semantics and experimentation velocity                          | Research-oriented tooling/ecosystem                            |
+| **OCaml 5 runtime + Eio**                                          | Runtime effects (no effect rows in function types) | Yes (runtime handlers)                  | Native one-shot continuations/fibers          | Direct style, strong multicore story, production language integration | Static effect typing remains an open language-design direction |
+| **Haskell effectful / cleff**                                      | Type-level effect lists                            | Not full algebraic handlers (by design) | Reader/environment dispatch over `IO`         | Excellent practical performance and ecosystem interop                 | No general continuation-based algebraic effects                |
+| **Haskell continuation-backed libraries (`eff`, `bluefin-algae`)** | Library-specific                                   | Closer to full handlers                 | GHC delimited continuation primops            | Runtime-backed control effects in Haskell                             | API/maintenance maturity varies across libraries               |
+| **Haskell hefty-style line (`heftia`)**                            | Algebraic + higher-order structure                 | Yes                                     | Elaborate HO effects before FO interpretation | Strong soundness story for HO interactions                            | Newer ecosystem; higher conceptual load                        |
+| **Scala ZIO / Cats Effect**                                        | Typed channels/typeclasses                         | No (not algebraic handlers)             | Fiber runtime on JVM                          | Production-grade concurrency/runtime tooling                          | Different abstraction goal than algebraic handlers             |
+| **Scala Kyo**                                                      | Open effect channels                               | Handler-inspired algebraic model        | Runtime/library-specific                      | Direct-style ergonomics with effect tracking                          | Rapidly evolving API/model compared with mature stacks         |
+| **Scala 3 capabilities/capture checking**                          | Capability/capture types                           | N/A (language capability system)        | Language-level type discipline                | Promising static reasoning for authority/effects                      | Experimental status in Scala 3.8                               |
+| **Effect (TypeScript)**                                            | `Effect<A, E, R>` style channels                   | Handler-inspired library model          | Generator/runtime encoding                    | Strong industrial ergonomics in JS/TS ecosystem                       | Runtime overhead model differs from native runtimes            |
+| **WasmFX / stack-switching targets**                               | Low-level typed continuation substrate             | Target-level primitives                 | Runtime/VM continuation support               | Cross-language compilation path for handlers                          | Proposal/toolchain maturity still evolving                     |
 
 ---
 
@@ -90,95 +82,9 @@ Every effect system navigates tension between several competing concerns. No sys
 
 ---
 
-## Cross-Language Comparison
-
-### Language Philosophy Comparison
-
-| Dimension             | Haskell                                  | Scala                                     | Koka                                 | OCaml 5                       | Rust                          | TypeScript (Effect)       |
-| --------------------- | ---------------------------------------- | ----------------------------------------- | ------------------------------------ | ----------------------------- | ----------------------------- | ------------------------- |
-| **Primary concern**   | Purity and type safety                   | Pragmatism and JVM integration            | Effect typing as language design     | Runtime performance           | Zero-cost abstractions        | Developer experience      |
-| **Effect tracking**   | Type-level effect rows                   | Type parameters (ZIO) or typeclasses (CE) | Row-polymorphic types                | Untyped (runtime)             | Per-keyword implicit          | Three-parameter type      |
-| **Base monad**        | IO (effectful) or polymorphic (polysemy) | IO (concrete)                             | Pure (effects in type)               | Direct style                  | No monad (ownership)          | Effect monad              |
-| **DI approach**       | Part of the effect system                | ZLayer (ZIO) or external (CE)             | Via effect handlers                  | Capability passing (Eio)      | Trait objects / generics      | Layer system              |
-| **Concurrency model** | Green threads via RTS                    | Fiber runtimes on JVM threadpool          | Async as effect                      | Fibers via Eio                | async/await                   | Fibers                    |
-| **Community**         | Fragmented across many libraries         | Split between ZIO and Cats Effect         | Small but growing                    | Established (OCaml community) | Large; effect system informal | Growing rapidly           |
-| **Direction**         | Toward delimited continuations           | Toward direct style with capabilities     | Toward evidence passing optimization | Toward typed effects (future) | Toward keyword generics       | Toward platform expansion |
-
-### Feature Matrix
-
-| Feature      | effectful        | polysemy         | heftia         | ZIO           | Cats Effect    | Kyo           | Koka                 | OCaml 5            | Effect-TS     | Rust          |
-| ------------ | ---------------- | ---------------- | -------------- | ------------- | -------------- | ------------- | -------------------- | ------------------ | ------------- | ------------- |
-| Typed errors | No (via effect)  | Yes (via effect) | Yes            | Yes (E param) | No (Throwable) | Yes (Abort)   | Yes (exn effect)     | No (untyped)       | Yes (E param) | Yes (Result)  |
-| DI           | No built-in      | No built-in      | No built-in    | ZLayer        | No built-in    | Env effect    | Via handlers         | Capability passing | Layer         | Trait objects |
-| Streaming    | No built-in      | No built-in      | No built-in    | ZStream       | fs2 (external) | Built-in      | Iterators as effects | Eio.Flow           | Stream type   | async streams |
-| Concurrency  | Via IO           | Via IO           | Via base monad | Fibers        | Fibers         | Async effect  | Async effect         | Eio fibers         | Fibers        | async/await   |
-| STM          | Via IO           | No               | No             | Built-in      | Via stm4cats   | No            | No                   | No                 | STM           | No            |
-| NonDet       | No               | Partial          | Yes            | No            | No             | Choice effect | Yes                  | No                 | No            | No            |
-| Coroutines   | No               | No               | Yes            | No            | No             | No            | Yes                  | Yes (via effects)  | No            | No (nightly)  |
-| Pure interp. | No               | Yes              | Yes            | No            | No             | Partial       | Yes                  | No                 | Yes           | N/A           |
-| Testing      | Dynamic dispatch | Reinterpret      | Reinterpret    | ZIO Test      | Law testing    | Handler swap  | Handler swap         | Handler swap       | TestLayer     | Trait mocking |
-
----
-
-## When to Choose What
-
-### Haskell
-
-| If you need...                     | Choose                      | Why                                                                 |
-| ---------------------------------- | --------------------------- | ------------------------------------------------------------------- |
-| Maximum performance                | **effectful**               | Fastest dispatch; static + dynamic; best ecosystem interop          |
-| Simple mental model                | **bluefin**                 | Value-level handles; ST-like scoping; no type-level complexity      |
-| Sound HO + algebraic effects       | **heftia**                  | Only fully sound implementation; near-effectful performance         |
-| Minimal boilerplate                | **polysemy**                | GADTs + TH; pattern-matching interpreters (accept performance cost) |
-| Production carrier-based system    | **fused-effects**           | Battle-tested at GitHub; near-mtl performance; principled theory    |
-| Experimentation with continuations | **eff** / **bluefin-algae** | Native GHC primops; true algebraic effects                          |
-
-### Scala
-
-| If you need...                         | Choose                   | Why                                                       |
-| -------------------------------------- | ------------------------ | --------------------------------------------------------- |
-| Batteries-included production system   | **ZIO**                  | Typed errors, DI, STM, streaming, testing -- all built in |
-| Maximum abstraction & ecosystem        | **Cats Effect**          | Tagless final; fs2, http4s, doobie ecosystem              |
-| Open algebraic effects                 | **Kyo**                  | Arbitrary effect channels; direct-style aspiration        |
-| Simplest direct style                  | **Ox**                   | No wrappers; virtual threads; minimal learning curve      |
-| Future-proofing with language features | **Scala 3 Capabilities** | Context functions + capture checking (experimental)       |
-
-### Effect-Native Languages
-
-| If you need...                   | Choose     | Why                                                                                                  |
-| -------------------------------- | ---------- | ---------------------------------------------------------------------------------------------------- |
-| Production effect-typed language | **Koka**   | Row-polymorphic effects with full inference; evidence passing for performance; Perceus RC for memory |
-| Research and prototyping         | **Eff**    | Reference implementation by Bauer/Pretnar; clean semantics for exploring effect handler designs      |
-| Multihandler exploration         | **Frank**  | Ambient ability with multihandlers; CBPV foundation; novel approach to effect interaction            |
-| Content-addressed codebase       | **Unison** | Frank-inspired abilities; content-addressed code enables unique distribution and versioning model    |
-
-### Other Platforms
-
-| If you need...                    | Choose                                                             | Why                                                                                                                          |
-| --------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| Effects in TypeScript             | **Effect**                                                         | ZIO-inspired; typed errors + DI via Layer; generator-based encoding; large growing ecosystem                                 |
-| Effects in OCaml                  | **OCaml 5 + Eio**                                                  | Native continuations in runtime; Eio for structured concurrency and I/O; direct-style programming                            |
-| Effects in Rust                   | **Implicit features** (production) / **effing-mad** (experimental) | Rust has no unified effect system; use async/Result/? for production; effing-mad for algebraic effect exploration on nightly |
-| Effects in Java                   | **Project Loom**                                                   | Virtual threads with hidden continuations; not algebraic effects but solves similar concurrency problems                     |
-| Multi-language effect compilation | **WasmFX**                                                         | Typed continuations in WebAssembly; compilation target for Koka, OCaml, and other effect-typed languages                     |
-
----
-
 ## The Soundness Question
 
-A critical issue that separates effect systems is the **soundness of higher-order effects**:
-
-### The Problem
-
-When a higher-order effect (like `catch` or `local`) scopes over a computation that uses algebraic effects (like `NonDet` or `Coroutine`), the interaction can produce incorrect results. For example:
-
-```
-catch (nondet [1, 2] + nondet [10, 20]) handler
-```
-
-The question is whether `catch` captures all nondeterministic branches or just one. Different libraries give different answers, and some give inconsistent answers depending on handler ordering.
-
-### Library Standings
+A critical issue that separates effect systems is the **soundness of higher-order effects**. When a higher-order effect (like `catch` or `local`) scopes over a computation that uses algebraic effects (like `NonDet` or `Coroutine`), the interaction can produce incorrect results. Different libraries give different answers, and some give inconsistent answers depending on handler ordering.
 
 | Library       | Higher-Order Effects   | Algebraic Effects         | Sound Interaction                                                                       |
 | ------------- | ---------------------- | ------------------------- | --------------------------------------------------------------------------------------- |
@@ -198,70 +104,76 @@ The effectful/cleff approach sidesteps the problem entirely by not supporting al
 
 ---
 
-## The Future Direction
+## Where the Frontier Actually Is
 
-### Haskell
+### 1. Semantic soundness
 
-The Haskell ecosystem is converging on two camps:
+The hardest unsolved practical issue is still the interaction of higher-order effects, resumptions, and resource management. Work since 2023 (Hefty and follow-ups) is the most important movement here.
 
-1. **Pragmatic IO-based**: effectful and bluefin, with bluefin-algae providing algebraic effects when needed (using GHC 9.6 primops)
-2. **Theoretically sound**: heftia and Theseus, providing full algebraic + higher-order effects with formal guarantees
+### 2. Performance without semantic collapse
 
-The addition of delimited continuation primops to GHC (Proposal #313) is the most significant infrastructure change, enabling both camps to improve.
+The current best results avoid a single universal technique:
 
-### Scala
+- Evidence-passing style dispatch for common operations
+- Selective continuation capture when needed
+- Runtime primitives where available
 
-Scala's trajectory is more unified but longer-term:
+This combination replaces the old "handlers are elegant but too slow" narrative.
 
-1. **Current production**: ZIO and Cats Effect dominate, with Kyo as an emerging algebraic alternative
-2. **Near-term**: Ox for direct-style on virtual threads; Kyo approaching 1.0
-3. **Long-term**: Scala 3 capabilities + capture checking (Caprese) integrated into the language, potentially replacing library-based effect systems
+### 3. Parallel and resource-sensitive handlers
 
-### OCaml
+2024-2025 papers push handlers into parallel, affine, and temporal regimes. This is a major shift from earlier single-threaded, mostly first-order benchmarks.
 
-OCaml 5 introduced native effect handlers but left them **untyped** -- a deliberate pragmatic choice to ship runtime support before solving the type system challenge:
+### 4. Mainstream language integration
 
-1. **Current**: Eio builds direct-style I/O on top of untyped effects; growing adoption for concurrent applications
-2. **Near-term**: Libraries establishing conventions for effect safety through capability passing patterns
-3. **Long-term**: Active research into typed effect systems for OCaml; potential future integration of effect types into the language
+OCaml and GHC runtime support, plus Wasm target work, suggest long-term success depends on runtime/compiler cooperation, not only library encodings.
 
-### Rust
+---
 
-Rust has no unified effect system, but several threads are converging:
+## Practical Selection Guide
 
-1. **Keyword generics initiative**: Exploring ways to abstract over async/const/unsafe, which would partially unify Rust's implicit effect system
-2. **effing-mad and CPS approaches**: Demonstrating that algebraic effects can be encoded in Rust, though requiring nightly features or awkward CPS transforms
-3. **Ownership as effect tracking**: Rust's borrow checker already provides a form of effect tracking (aliasing, mutability); future work may formalize this connection
+### If your primary goal is production reliability today
 
-### TypeScript
+- Haskell: `effectful`/`cleff` when continuation-heavy algebraic semantics are not required
+- Scala: ZIO or Cats Effect for mature runtime ecosystems
+- OCaml: Eio on OCaml 5 for direct-style concurrent systems
 
-Effect-TS is driving industrial adoption of effect system concepts in the JavaScript ecosystem:
+### If your primary goal is semantic expressiveness of handlers
 
-1. **Current**: Rapid growth with Effect\<A,E,R\> providing typed errors, dependency injection, and structured concurrency
-2. **Near-term**: Platform expansion (Effect RPC, Effect Schema, Effect Cluster)
-3. **Long-term**: Potential influence on TC39 proposals for native effect support in JavaScript
+- Koka and research languages (Eff/Effekt)
+- Haskell hefty-style research line for sound HO composition
+- Experimental continuation-backed Haskell libraries
 
-### WebAssembly
+### If your primary goal is language/runtime research
 
-WasmFX is the most significant cross-language development:
+- Parallel handlers (`lambda^p`)
+- Affine and temporal effect calculi
+- Wasm continuation targets and cross-language lowering
 
-1. **Typed continuations proposal**: Adding stack switching to WebAssembly, enabling efficient compilation of algebraic effects
-2. **Multi-language target**: Koka, OCaml, and other effect-typed languages can compile to Wasm with native continuation support
-3. **Browser integration**: Potential to bring algebraic effects to web applications through any language that compiles to Wasm
+---
 
-### Cross-Language Trends
+## Misleading Comparisons to Avoid
 
-1. **Direct style is ascendant**: Both Haskell (bluefin) and Scala (Ox, Caprese) are moving toward less monadic, more direct programming styles
-2. **Runtime support matters**: GHC primops, JVM virtual threads, OCaml 5 continuations, and WasmFX all show that language/runtime support is crucial for performance
-3. **Soundness is being taken seriously**: heftia, Theseus, Caprese, and Frank all prioritize formal soundness
-4. **Parallelism**: Recent papers (ICFP 2024) address parallel algebraic effects, a previously unexplored area
-5. **Evidence passing convergence**: Koka's evidence passing and effectful's ReaderT IO pattern are converging on similar compilation strategies, suggesting a common underlying theory
-6. **Industrial adoption accelerating**: Effect-TS, OCaml 5 Eio, and Java Loom show that effect-related concepts are reaching mainstream production use
+1. **"Effect system" vs "algebraic handlers"** as if equivalent.
+2. Microbenchmark-only rankings that ignore modular compilation and optimizer boundaries.
+3. Treating "typed effects" as binary: many systems intentionally trade static tracking for runtime ergonomics.
 
 ---
 
 ## Sources
 
-- All library-specific sources listed in individual analysis documents
+- [Hefty Algebras (POPL 2023)](https://doi.org/10.1145/3571255)
+- [Effect Handlers, Evidently (ICFP 2020)](https://doi.org/10.1145/3408981)
+- [Generalized Evidence Passing (ICFP 2021)](https://doi.org/10.1145/3473576)
+- [Retrofitting Effect Handlers onto OCaml (PLDI 2021)](https://doi.org/10.1145/3453483.3454039)
+- [Parallel Algebraic Effect Handlers (ICFP 2024)](https://doi.org/10.1145/3674651)
+- [A Framework for Higher-Order Effects and Handlers (ICFP 2024)](https://doi.org/10.1145/3674632)
+- [Abstracting Effect Systems for Algebraic Effect Handlers (ICFP 2024)](https://doi.org/10.1145/3674630)
+- [Affect: Affine Algebraic Effect Handlers (POPL 2025)](https://doi.org/10.1145/3704831)
+- [Algebraic Temporal Effects (POPL 2025)](https://doi.org/10.1145/3704853)
+- [Asymptotic Speedup via Effect Handlers (POPL 2025)](https://doi.org/10.1145/3704871)
+- [OCaml 5.3.0 release notes](https://ocaml.org/releases/5.3.0)
+- [GHC 9.6.1 release notes](https://downloads.haskell.org/~ghc/9.6.5/docs/users_guide/9.6.1-notes.html)
+- [Scala 3.8 release announcement (2026-01-21)](https://www.scala-lang.org/blog/2026/01/21/scala-3.8.html)
+- [WebAssembly stack-switching proposal repo](https://github.com/WebAssembly/stack-switching)
 - [effects-bibliography](https://github.com/yallop/effects-bibliography)
-- [Algebraic Effects and Handlers Summer School 2025](https://www.cs.uoregon.edu/research/summerschool/summer25/_lectures/Xie-slides-3.pdf)

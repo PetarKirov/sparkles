@@ -1,34 +1,47 @@
-# Scala 3 Capabilities and Direct-Style Effects
+# Scala 3 Capabilities and Capture Checking
 
-An experimental approach to effect tracking built into the Scala 3 language itself, using context functions for ergonomic effect passing and capture checking for type-level safety. This represents Scala's long-term vision for effects beyond monadic IO.
+Scala 3 is exploring capability-based effect reasoning at the language level, centered on context parameters/functions and experimental capture checking.
 
-| Field        | Value                                                   |
-| ------------ | ------------------------------------------------------- |
-| Language     | Scala 3 (experimental features)                         |
-| Status       | Experimental; actively researched; not production-ready |
-| Key Authors  | Martin Odersky, EPFL LAMP team                          |
-| Project Name | Caprese (CAPability-based RESilent Effects)             |
-| Approach     | Context functions + capture checking + boundary/break   |
+**Last reviewed:** February 16, 2026.
 
----
-
-## Overview
-
-### What It Solves
-
-Scala 3 Capabilities aim to unify permissions, effects, and resources under a single concept: capabilities. The goal is to enable direct-style programming -- writing code that looks imperative but retains the reasoning benefits of functional programming -- with compile-time effect tracking built into the language rather than provided by a library.
-
-### Design Philosophy
-
-Capabilities are the missing link between functional and imperative programming. Traditional approaches require either monads (ergonomically costly) or unchecked side effects (unsafe). Capabilities allow passing effect tokens implicitly through context functions, with the type system tracking which capabilities are captured and where.
+| Field                      | Value                                                                                                       |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Language                   | Scala 3                                                                                                     |
+| Feature status             | Experimental                                                                                                |
+| Official docs              | [Scala 3 experimental features index](https://docs.scala-lang.org/scala3/reference/experimental/index.html) |
+| Capture checking reference | [Capture Checking](https://docs.scala-lang.org/scala3/reference/experimental/cc.html)                       |
 
 ---
 
-## Core Concepts
+## What This Is (and Is Not)
 
-### What Are Capabilities?
+Scala capabilities are a language-level route to effect/capability tracking.
 
-A capability is a value that grants permission to perform a specific effect. Having access to a capability value means you can perform the associated effect. The type system tracks which capabilities flow through the program.
+- **Is:** static tracking of captured capabilities through types
+- **Is not (yet):** a finalized built-in algebraic effect-handler system in mainstream Scala
+
+This work is best understood as capability discipline and effect reasoning infrastructure, still in active evolution.
+
+---
+
+## Current Status (as of February 16, 2026)
+
+- Scala 3.8 is released (January 2026 line), and capture-checking work is highlighted in release communication.
+- Capture checking remains under the experimental feature framework.
+
+Sources:
+
+- [Scala 3.8 release announcement (January 21, 2026)](https://www.scala-lang.org/blog/2026/01/21/scala-3.8.html)
+- [Scala 3 experimental feature index](https://docs.scala-lang.org/scala3/reference/experimental/index.html)
+- [Capture Checking reference](https://docs.scala-lang.org/scala3/reference/experimental/cc.html)
+
+---
+
+## Core Mechanisms
+
+### 1. Context Parameters and Context Functions
+
+Scala's `using` / context-function machinery supports implicit capability passing with direct-style call syntax. Context functions (`?=>`) enable threading capabilities through call chains without explicit plumbing:
 
 ```scala
 // A capability for performing I/O
@@ -39,25 +52,39 @@ trait IO:
 // Using a capability via context parameter
 def greet(using io: IO): Unit =
   io.println("Hello, " + io.readLine())
-```
 
-### Context Functions
-
-Context functions (using `?=>` syntax) enable implicit capability passing:
-
-```scala
+// Context function type: IO is passed implicitly
 type Effectful[A] = IO ?=> A
 
 def program: Effectful[Unit] =
   // IO capability is implicitly available
-  println("hello")  // resolved via context function
+  println("hello")
 ```
 
-This eliminates the tedium of threading capabilities through long call chains.
+Source: [Context Functions](https://docs.scala-lang.org/scala3/reference/contextual/context-functions.html)
 
-### Boundary and Break
+### 2. Capture Checking
 
-Available since Scala 3.3.0, `boundary` and `break` provide non-local returns:
+Capture checking annotates types with the capabilities they capture, preventing capability escape and improving local reasoning about effects:
+
+```scala
+import language.experimental.captureChecking
+
+// This closure captures the 'io' capability
+val f: (Int => Unit)^{io} = (x: Int) => io.println(x.toString)
+```
+
+The `^{io}` annotation indicates that `f` captures the `io` capability. The type system ensures that:
+
+1. Capabilities do not escape their intended scope
+2. Functions that perform effects are properly annotated
+3. Pure functions are guaranteed to capture no capabilities
+
+Source: [Capture Checking](https://docs.scala-lang.org/scala3/reference/experimental/cc.html)
+
+### 3. Boundary / Break for Structured Non-Local Exits
+
+Available since Scala 3.3.0, `boundary` and `break` provide non-local returns -- a stepping stone toward full algebraic effects:
 
 ```scala
 import scala.util.boundary
@@ -70,155 +97,46 @@ def findIndex(xs: List[Int], target: Int): Int =
     -1
 ```
 
-This is a stepping stone toward full algebraic effects -- `boundary` defines a scope and `break` exits it, analogous to an effect handler and an effect operation.
+`boundary` defines a scope and `break` exits it, analogous to an effect handler and an effect operation.
+
+Source: [Dropped: Nonlocal Returns (use `scala.util.boundary`)](https://docs.scala-lang.org/scala3/reference/dropped-features/nonlocal-returns.html)
 
 ---
 
-## Capture Checking
+## Why It Matters for Effect Systems
 
-### Overview
+Scala's capability direction is important because it shifts part of effect reasoning from library encodings into the language type system.
 
-Capture checking is an experimental feature that modifies Scala's type system to track references to capabilities in values. It can be enabled via:
+Potential upside:
 
-```scala
-import language.experimental.captureChecking
-```
+- stronger static guarantees for authority/effect usage
+- direct-style ergonomics without mandatory monadic wrappers
 
-### How It Works
+Current limitation:
 
-Capture checking annotates types with the capabilities they capture:
-
-```scala
-// This closure captures the 'io' capability
-val f: (Int => Unit)^{io} = (x: Int) => io.println(x.toString)
-```
-
-The `^{io}` annotation indicates that `f` captures the `io` capability. The type system ensures that:
-
-1. Capabilities do not escape their intended scope
-2. Functions that perform effects are properly annotated
-3. Pure functions are guaranteed to capture no capabilities
-
-### Relationship to Effect Tracking
-
-Capture checking provides **passive** effect tracking -- it tells you which capabilities a value has captured, which corresponds to which effects it might perform. This is complementary to context functions, which provide the mechanism for passing capabilities.
-
-### Current Status
-
-As of early 2026, capture checking has reached a significant level of maturity. Scala 3.8 included a highly improved capture checker and a fully capture-checked standard library. While still technically an experimental feature requiring an import, it is now being applied to real-world concurrency libraries like **Ox** to ensure safety at compile time.
-
----
-
-## Direct-Style Effects
-
-### The Vision
-
-Direct-style effects, also called algebraic effects and effect handlers, allow writing code in natural imperative style while retaining the benefits of functional effect tracking:
-
-```scala
-// Direct style -- looks imperative
-def processUser(id: UserId)(using db: Database, log: Logger): User =
-  val user = db.getUser(id)  // no .flatMap needed
-  log.info(s"Found user: $user")
-  user
-
-// vs. monadic style
-def processUser(id: UserId): ZIO[Database & Logger, Error, User] =
-  for
-    user <- ZIO.serviceWithZIO[Database](_.getUser(id))
-    _    <- ZIO.serviceWithZIO[Logger](_.info(s"Found user: $user"))
-  yield user
-```
-
-### How It Works (Mechanism)
-
-The mechanics come down to context functions:
-
-1. **Effect declaration**: Context functions define what effects are needed
-2. **Effect implementation**: Handlers provide the actual implementation
-3. **Separation**: Unlike IO monads where the same type indicates both the need for effects and provides implementation, direct-style effects separate these concerns
-
-### Runtime Support Requirements
-
-Full direct-style effects require continuations:
-
-- **Scala Native**: Getting first-class continuation support
-- **JVM**: Project Loom provides virtual threads (a form of one-shot continuations)
-- **Current limitation**: Scala 3 does not yet expose a continuation API; only `boundary`/`break` is available
-
----
-
-## Two Effect Tracking Mechanisms (Caprese)
-
-The Caprese project introduces two complementary mechanisms:
-
-### 1. Capture Tracking (`^{...}`)
-
-Tracks which capabilities are referenced by a value:
-
-```scala
-val f: (Int => String)^{db, log} = ???  // f captures db and log
-```
-
-### 2. Context Functions (`?=>`)
-
-Provides ergonomic passing of capabilities as implicit parameters:
-
-```scala
-def withTransaction[A](body: Transaction ?=> A)(using db: Database): A = ???
-```
-
-These two mechanisms work together: context functions make capabilities available, and capture checking ensures they are tracked properly.
+- full algebraic handlers with resumptions are still primarily a research/library domain, not a stabilized core Scala language feature.
 
 ---
 
 ## Strengths
 
-- **Language-level integration**: Effects tracked by the compiler, not a library
-- **Direct style**: Code looks natural and imperative; no monadic ceremony
-- **Unified concept**: Capabilities subsume permissions, effects, and resources
-- **Capture safety**: Compile-time guarantee that capabilities do not escape scope
-- **Gradual adoption**: Can be mixed with existing Scala code
-- **Theoretical foundation**: Based on reachability types and capability-safe programming research
+- Language-level integration (not purely library-level discipline)
+- Strong alignment with capability-based security/reasoning ideas
+- Promising path for direct-style effect-safe APIs
 
-## Weaknesses
+## Limits
 
-- **Experimental**: Not production-ready; API unstable and evolving rapidly
-- **No continuation support yet**: Full algebraic effects require continuations not yet available in Scala 3
-- **JVM limitations**: JVM does not natively support multi-shot continuations
-- **Incomplete tooling**: IDE support, error messages, and debugging are immature
-- **Unknown performance**: No benchmarks or production experience
-- **Long timeline**: Major milestones were achieved in 2025 (Scala 3.8); full stabilization and ecosystem-wide adoption are expected through 2026 and 2027.
-
-## Key Design Decisions and Trade-offs
-
-| Decision                         | Rationale                                               | Trade-off                                                      |
-| -------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------- |
-| Language-level (not library)     | Deeper integration; better ergonomics; compiler support | Slower iteration; tied to language release cycle               |
-| Context functions for passing    | Implicit capability threading; no explicit plumbing     | Less visible; can be confusing which capabilities are in scope |
-| Capture checking annotations     | Precise tracking of capability references               | New annotation syntax; learning curve; verbose types           |
-| Boundary/break as stepping stone | Available now; useful without full continuations        | Limited expressiveness compared to full algebraic effects      |
-| JVM virtual threads for runtime  | Leverages Project Loom; one-shot continuations          | No multi-shot continuations; limited backtracking support      |
-
----
-
-## Academic Foundations
-
-### Key Papers and Talks
-
-- **"Typestate via Revocable Capabilities"** (arXiv 2510.08889, 2025) -- Formalizing capabilities with revocation
-- **Scala Days 2025**: Martin Odersky presented the Scala roadmap including capabilities; Bracevac and Boruch-Gruszecki demonstrated direct-style effects
-- **The Scala Workshop 2025**: "Where Are We With Scala's Capabilities?" -- status report on Caprese
-- **Reachability types**: The theoretical framework behind capture checking, enabling Rust-style ownership concepts in a garbage-collected language
+- Experimental and evolving
+- Tooling and ecosystem practices still catching up
+- Semantics and ergonomics are not yet "finished" in the way mature effect libraries are
 
 ---
 
 ## Sources
 
-- [Capture Checking -- Scala 3 Reference](https://docs.scala-lang.org/scala3/reference/experimental/cc.html)
-- [Questions regarding Capabilities -- Scala Contributors](https://contributors.scala-lang.org/t/questions-regarding-capabilities/7223)
-- [Effects as Capabilities](https://nrinaudo.github.io/articles/capabilities.html) -- Nicolas Rinaudo
-- [Direct-style Effects Explained](https://noelwelsh.com/posts/direct-style/) -- Noel Welsh
-- [Where Are We With Scala's Capabilities?](https://2025.workshop.scala-lang.org/details/scala-2025/15/Where-Are-We-With-Scala-s-Capabilities-) -- Scala Workshop 2025
-- [Scala Days 2025 coverage](https://xebia.com/blog/scala-days-2025-ai-integration/) -- Xebia
-- [Scala's Gamble with Direct Style](https://alexn.org/blog/2025/08/29/scala-gamble-with-direct-style/) -- Alexandru Nedelcu
+- [Scala 3.8 release announcement (2026-01-21)](https://www.scala-lang.org/blog/2026/01/21/scala-3.8.html)
+- [Scala 3 experimental features index](https://docs.scala-lang.org/scala3/reference/experimental/index.html)
+- [Capture Checking (Scala 3 reference)](https://docs.scala-lang.org/scala3/reference/experimental/cc.html)
+- [Context Functions (Scala 3 reference)](https://docs.scala-lang.org/scala3/reference/contextual/context-functions.html)
+- [Dropped: Nonlocal Returns (use `scala.util.boundary`)](https://docs.scala-lang.org/scala3/reference/dropped-features/nonlocal-returns.html)
+- [Scala contributors discussion: capabilities questions](https://contributors.scala-lang.org/t/questions-regarding-capabilities/7223)

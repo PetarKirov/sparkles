@@ -1,268 +1,208 @@
-# Evolution of Haskell Effect Systems
+# Evolution of Algebraic Effect Systems
 
-The journey from monad transformers to modern algebraic effect systems spans three decades of research and engineering. Each generation addressed limitations of its predecessor while introducing new trade-offs.
+How the field moved from monads to modern handlers, and what changed by February 2026.
 
 ---
 
 ## Timeline
 
-| Era        | Approach                          | Key Libraries / Papers                  | Key Characteristics                                     |
-| ---------- | --------------------------------- | --------------------------------------- | ------------------------------------------------------- |
-| ~1994      | Extensible denotational semantics | Cartwright & Felleisen                  | First extensible approach; overlooked for 20+ years     |
-| ~1995+     | Monad transformers (mtl)          | mtl, transformers                       | Composable but O(n^2) instances; lifting overhead       |
-| ~2008+     | Free monads                       | free                                    | Effects as data; requires Functor constraint            |
-| ~2012-2015 | Extensible effects / Freer monads | extensible-effects, freer, freer-simple | No Functor needed; open unions; ~30x slower than mtl    |
-| ~2018      | Fused effects                     | fused-effects                           | Carrier fusion; near-mtl performance; HO effects        |
-| ~2019      | Freer + higher-order              | polysemy                                | Low boilerplate; Tactics API; GHC optimization issues   |
-| ~2020+     | ReaderT IO                        | effectful, cleff                        | Concrete monad; fastest dispatch; IO-based semantics    |
-| ~2020+     | Delimited continuations           | eff, GHC Proposal #313                  | Native stack capture; performance by design             |
-| ~2024      | Value-level handles               | bluefin                                 | ST-like scoping; no type-level effect rows              |
-| ~2024+     | Hefty algebras                    | heftia                                  | Sound HO effects via elaboration; continuation-based    |
-| ~2025      | Higher-order freer                | Theseus                                 | Order-independent interpretation; guaranteed finalizers |
-| ~2026      | Parallel Effects                  | λp                                      | Multicore handlers; deterministic parallel execution    |
+| Period    | Milestone                                                | Why It Matters                                                        |
+| --------- | -------------------------------------------------------- | --------------------------------------------------------------------- |
+| 1991      | Moggi's monadic metalanguage                             | Unified view of computational effects in typed lambda calculi         |
+| 2001-2003 | Plotkin and Power's algebraic view of effects            | Connected effect operations to algebraic theories and free models     |
+| 2009      | Plotkin and Pretnar: handlers of algebraic effects       | Established handlers as a general programming abstraction             |
+| 2013-2017 | Effekt/Eff/Koka era                                      | Practical effect languages and row-polymorphic typing became real     |
+| 2014-2015 | Higher-order handlers and fusion (Wu, Schrijvers, Hinze) | Scoped effects and performance techniques for handlers                |
+| 2015      | Freer monads in Haskell                                  | Extensible effects with open unions and practical APIs                |
+| 2020-2021 | Evidence-passing compilation                             | O(1) operation dispatch and stronger implementation story             |
+| 2021      | OCaml handlers in a mainstream runtime                   | Industrial language runtime adopts native handlers                    |
+| 2022+     | GHC delimited continuation primops usable in releases    | Runtime substrate for continuation-based effect libraries             |
+| 2023      | Hefty Algebras                                           | Modular and sound account of higher-order effect elaboration          |
+| 2023      | WasmFX (typed continuations for WebAssembly)             | Cross-language low-level target for control effects                   |
+| 2024-2025 | Parallel/affine/temporal research wave                   | Focus shifts to multicore, resource sensitivity, and richer semantics |
 
 ---
 
-## Generation 1: Monad Transformers (mtl)
+## Phase 1: Monadic Foundation (1991)
 
-### The Approach
+The modern story starts with monads: effects are represented by a type constructor `T` and sequencing laws. This gave a precise semantic framework but made effect composition difficult in practice.
 
-Monad transformers compose effects by stacking transformer layers:
-
-```haskell
-type App = StateT AppState (ReaderT Config (ExceptT AppError IO))
-```
-
-The `mtl` library provides typeclasses (`MonadState`, `MonadReader`, `MonadError`) that abstract over the concrete transformer stack.
-
-### Strengths
-
-- Well-understood; decades of use
-- Good GHC optimization (known, concrete types)
-- Large ecosystem of compatible libraries
-- Familiar to most Haskell developers
-
-### Limitations
-
-1. **O(n^2) instances**: Every new transformer requires instances for interaction with every existing transformer
-2. **Lifting overhead**: `lift` calls accumulate; each bind traverses n transformer layers
-3. **Ordering matters**: `StateT s (ExceptT e m)` behaves differently from `ExceptT e (StateT s m)`
-4. **Rigid composition**: Adding/removing effects requires restructuring the entire stack
-5. **One effect per type**: Cannot have two `State` effects of the same type
-
-### Historical Note
-
-Cartwright and Felleisen presented extensible denotational language specifications in April 1994 -- eight months before Liang et al.'s monad transformer paper. Their work was largely forgotten until Oleg Kiselyov rediscovered it in 2004, finding it "remarkably inspiring."
+Key result: monads made effects first-class in denotational semantics, but did not by themselves solve modular combination of independent effects.
 
 ---
 
-## Generation 2: Free Monads
+## Phase 2: Algebraic Characterization (2001-2003)
 
-### The Approach
+Plotkin and Power showed that many common effects can be described as algebraic operations with equations, and that free constructions provide canonical semantics.
 
-Instead of encoding effects as typeclasses, represent them as data types and build a syntax tree (free monad) of the computation:
-
-```haskell
-data Free f a = Pure a | Free (f (Free f a))
-```
-
-The syntax tree is then interpreted by a handler function that gives meaning to each constructor.
-
-### Strengths
-
-- Effects as data: inspectable, serializable, testable
-- Clean separation of syntax (what) and semantics (how)
-- No O(n^2) instance problem
-- Multiple interpretations of the same program
-
-### Limitations
-
-- Requires `Functor` constraint on effect types
-- Performance overhead from tree construction and traversal
-- Composing different free monads requires coproducts
-- No higher-order effects (cannot scope over sub-computations)
+Key result: this reframed effects from ad hoc monadic plumbing to a uniform algebraic theory, setting up handlers naturally.
 
 ---
 
-## Generation 3: Freer Monads and Extensible Effects
+## Phase 3: Handlers as Programming Abstraction (2009)
 
-### The Approach
+Plotkin and Pretnar introduced handlers explicitly as interpreters for effect operations and resumptions. This became the conceptual core of almost all later handler systems.
 
-The freer monad removes the `Functor` constraint by using a different representation:
-
-```haskell
-data Eff r a where
-  Pure :: a -> Eff r a
-  Impure :: Union r b -> (b -> Eff r a) -> Eff r b
-```
-
-Effects are stored in an open union (`Union r`), and continuations are chained via an efficient sequence structure.
-
-### Key Paper
-
-**"Freer Monads, More Extensible Effects"** (Oleg Kiselyov, Hiromi Ishii, 2015)
-
-### Key Libraries
-
-- **extensible-effects**: Original implementation
-- **freer**: Direct translation of the paper
-- **freer-effects**: Fork of freer
-- **freer-simple**: Simplified fork; most popular in this family
-
-### Strengths
-
-- No Functor constraint
-- Open union for effect types
-- Algorithmically better performance than monad transformers for longer stacks
-- Extensible: adding new effects does not require touching existing code
-
-### Limitations
-
-- **~30x slower than mtl** for short stacks
-- No support for higher-order effects (scoped operations)
-- The community forked multiple times, fragmenting the ecosystem
+Key result: programs can describe effects abstractly; handlers define concrete behavior locally.
 
 ---
 
-## Generation 4: Fused Effects and Higher-Order Effects
+## Phase 4: Practical Languages and Libraries (2013-2017)
 
-### The Approach
+Two streams matured:
 
-Instead of building and interpreting a free monad tree, encode effects as higher-order functors and interpret them via typeclass-based carriers that GHC fuses at compile time.
+1. **Language designs** (Eff, Koka, later Effekt/Frank) demonstrated usable effect syntax and typing.
+2. **Library encodings** (especially in Haskell) explored free/freer and higher-order effect encodings.
 
-### Key Papers
-
-1. **"Effect Handlers in Scope"** (Wu, Schrijvers, Hinze, 2014) -- Higher-order effects as higher-order functors
-2. **"Fusion for Free"** (Wu, Schrijvers, 2015) -- Fusing sequential handlers into one pass
-
-### Key Library
-
-**fused-effects** -- Achieved near-mtl performance with extensible, higher-order effects. The GitHub Semantic team reported a 250x improvement over their previous free-monad approach.
-
-### Also in This Generation
-
-**polysemy** (2019) -- Took the freer monad approach but added higher-order effects via the Tactics API. Prioritized ergonomics over performance. Sandy Maguire later documented the performance issues in "Polysemy: Mea Culpa."
-
-### The Community Split
-
-The community fragmented into four camps:
-
-1. **mtl loyalists**: "mtl works fine; effects libraries are over-engineered"
-2. **ReaderT IO pattern**: "Just use `ReaderT IO` and call it a day"
-3. **Three-layer cake**: Structured approach with pure/effect/IO layers
-4. **Free(r) monad advocates**: "The composability is worth the performance cost"
+Row-polymorphic effect types and type-directed compilation were major breakthroughs in this period.
 
 ---
 
-## Generation 5: ReaderT IO (Modern Pragmatic)
+## Phase 5: Performance and Compilation Discipline (2020-2021)
 
-### The Approach
+Evidence-passing semantics (ICFP 2020, 2021) gave a concrete answer to a long-standing concern: handlers can be compiled efficiently without abandoning type precision.
 
-Embrace `IO` as the base and build an extensible environment on top:
+Key implementation lesson:
 
-```haskell
-newtype Eff (es :: [Effect]) a = Eff (Env es -> IO a)
-```
+- Keep effect dispatch as direct indexed lookup (evidence vectors/environments)
+- Capture continuations only when necessary
+- Treat tail-resumptive operations as a fast path
 
-Effects are dispatched by looking up handlers in the environment using O(1) integer indices.
-
-### Key Libraries
-
-- **effectful** (2021+) -- Fastest; static + dynamic dispatch; active development
-- **cleff** (2022+) -- Lighter API; more expressive interpretation combinators
-
-### Key Insight
-
-Michael Snoyman's observation: most Haskell applications end up in `IO` anyway, so making the base monad concrete enables dramatic optimizations. Monadic binds become known function calls; GHC can optimize aggressively without special pragmas.
-
-### The Performance Leap
-
-effectful's static dispatch is on par with hand-written `ST` code. Dynamic dispatch outperforms mtl. This generation essentially closed the performance gap that plagued previous approaches.
-
-### Limitations
-
-- Cannot capture delimited continuations (no `NonDet`, `Coroutine`)
-- IO semantics leak into effect behavior
-- Cannot interpret effects purely (without `IO`)
+This strongly influenced practical systems and narrowed the performance gap with direct-style code.
 
 ---
 
-## Generation 6: Delimited Continuations and Native Runtime Support
+## Phase 6: Runtime Integration (2021-2025)
 
-### The Approach
+### OCaml
 
-Add native support for capturing and restoring slices of the GHC runtime stack, enabling algebraic effects without the overhead of encoding continuations as data.
+- PLDI 2021 formalized the retrofit strategy.
+- OCaml 5 delivered one-shot handlers in the runtime.
+- OCaml 5.3 (released January 8, 2025) added direct deep-handler syntax (`match ... with effect ...`).
+- OCaml 5.4 (released October 9, 2025) continues maturation of the runtime/tooling release train.
 
-### Key Work
+### GHC
 
-- **Alexis King's GHC Proposal #313** (2020, merged 2022) -- Adds `prompt#` and `control0#` primops to GHC
-- **eff library** -- Demonstrates the approach; decisive performance wins in benchmarks
-- **bluefin-algae** (2024) -- Uses the primops to add algebraic effects to Bluefin
+Delimited continuation primops from Proposal #313 became available in released toolchains (notably the 9.6 line), enabling library experimentation with runtime-backed control operations.
 
-### Key Insight
+### WebAssembly
 
-Traditional effect system benchmarks are misleading. In real programs, GHC compiles effect-polymorphic code via dictionary passing, not specialization. eff's performance advantage is most pronounced in realistic multi-module programs.
-
-### Current Status
-
-The primops are available in GHC 9.6+. The `eff` library's development has stalled, but the primops continue to be used by other libraries. This generation proved that algebraic effects can be fast on GHC.
+WasmFX (OOPSLA 2023) and the stack-switching proposal line position typed continuations/stack control as a cross-language compilation substrate.
 
 ---
 
-## Generation 7: Sound Higher-Order Effects
+## Phase 7: Current Research Frontier (2023-2025)
 
-### The Problem
+Recent work shifts from "can handlers work?" to "which guarantees and performance envelopes can we prove?"
 
-All previous generations (except eff) had unsound interactions between higher-order effects and algebraic effects. Operations like `local`, `catch`, and `mask` could produce incorrect results when combined in certain ways.
+### 1. Sound higher-order effects
 
-### The Approach
+- Hefty Algebras (POPL 2023) separates higher-order elaboration from first-order interpretation.
+- Follow-up work studies abstractions over handler frameworks and modularity properties.
 
-Separate the handling of higher-order effects (via elaboration) from first-order effects (via algebraic interpretation). This is the insight from "Hefty Algebras" (POPL 2023).
+### 2. Parallelism and multicore semantics
 
-### Key Libraries
+- Parallel Algebraic Effect Handlers (ICFP 2024) introduces `lambda^p` and a path to parallel handling.
+- Work on asymptotic speedups through handlers and multicore runtime models expands this direction.
 
-- **heftia** (2024) -- First implementation of hefty algebras; fully sound HO + algebraic effects
+### 3. Resource-sensitive effects
 
-- **Theseus** (2025) -- Higher-order freer monad with order-independent interpretation and guaranteed finalizers
+- Affine/linear handling and temporal effects papers (2025) focus on stronger control over resource usage and ordering guarantees.
 
-### The Current Frontier (2026)
+### 4. Better cross-framework understanding
 
-The state of the art in Haskell effect systems is now a four-way trade-off:
+- New frameworks compare and abstract over effect systems rather than proposing isolated encodings.
 
-1. **effectful/cleff**: Maximum performance, no algebraic effects, pragmatic IO-based semantics
+---
 
-2. **heftia / Theseus**: Sound semantics, all features, prioritize theoretical rigor and resource safety
+## Haskell-Specific Generational Evolution
 
+The Haskell ecosystem provides the clearest case study of how effect encodings evolved in a single language, because each generation directly addressed limitations of its predecessor.
+
+### Generation 1: Monad Transformers (mtl, ~1995+)
+
+Monad transformers compose effects by stacking transformer layers. The `mtl` library provides typeclasses (`MonadState`, `MonadReader`, `MonadError`) that abstract over the concrete stack.
+
+**Strengths:** Well-understood; decades of use; good GHC optimization.
+
+**Limitations:** O(n²) instances (every new transformer requires instances for every existing transformer); lifting overhead accumulates; stack ordering changes semantics.
+
+### Generation 2: Free and Freer Monads (~2008-2015)
+
+Free monads represent effects as data, building a syntax tree interpreted by handlers. The freer monad (Kiselyov, Ishii 2015) removed the Functor constraint and introduced open unions for extensible effects.
+
+**Strengths:** Effects as inspectable data; clean syntax/semantics separation; no O(n²) instance problem.
+
+**Limitations:** ~30x slower than mtl for short stacks in benchmarks; no support for higher-order effects (scoped operations).
+
+### Generation 3: Fused Effects and Higher-Order Effects (~2018-2019)
+
+fused-effects encoded effects as higher-order functors and fused sequential handlers at compile time via typeclass instances. polysemy (2019) added higher-order effects via the Tactics API but prioritized ergonomics over performance.
+
+**Key data point:** The GitHub Semantic team reported a 250x improvement switching from free monads to fused-effects. Sandy Maguire later documented polysemy's performance issues in "Polysemy: Mea Culpa."
+
+### Generation 4: ReaderT IO (~2020+)
+
+effectful and cleff embraced `IO` as the base monad, building extensible environments on top with O(1) integer-indexed dispatch.
+
+**Key insight:** Michael Snoyman's observation that most Haskell applications end up in `IO` anyway, so making the base monad concrete enables dramatic optimizations. effectful's static dispatch is on par with hand-written `ST` code. This generation essentially closed the performance gap.
+
+**Limitation:** Cannot capture delimited continuations (no `NonDet`, `Coroutine`); cannot interpret effects purely.
+
+### Generation 5: Delimited Continuations and Sound HO Effects (~2022+)
+
+Alexis King's GHC Proposal #313 added `prompt#` and `control0#` primops. The eff library demonstrated native continuation performance wins. heftia (2024) implemented hefty algebras for fully sound higher-order + algebraic effects. bluefin-algae uses the primops to add algebraic effects to Bluefin's value-level handles.
+
+**Current landscape (2026):** The Haskell ecosystem now offers four distinct strategies:
+
+1. **effectful/cleff**: Maximum performance, pragmatic IO-based semantics, no algebraic effects
+2. **heftia**: Sound semantics, all features, prioritizes theoretical rigor
 3. **bluefin + bluefin-algae**: Simple mental model (handles), algebraic effects via primops
-
-4. **λp (Parallel Effects)**: Native support for multicore handlers and parallelized effect operations
+4. **eff**: Demonstrates native continuation performance (development stalled, but primops continue to be used)
 
 ---
 
-## Summary: The Pendulum of Design
+## What Is "State of the Art" in 2026?
 
-The history of Haskell effect systems shows a pendulum between **purity** and **pragmatism**:
+State of the art is now best understood as a combination of four properties:
 
-```
-Purity                                              Pragmatism
-<----|---------|---------|---------|---------|---------|--->
-     |         |         |         |         |         |
-  Free      Freer    Fused     Polysemy  Effectful  ReaderT IO
-  Monads    Monads   Effects             Cleff      Pattern
-                                         Heftia     Bluefin
-```
+1. **Semantic clarity**: precise meaning of handlers/resumptions, especially with higher-order effects
+2. **Compilation efficiency**: evidence passing, selective continuation capture, and runtime support
+3. **Concurrency story**: structured concurrency plus emerging parallel-handler models
+4. **Adoption path**: workable ergonomics in production ecosystems
 
-Early approaches prioritized purity and theoretical elegance. The ReaderT IO generation swung toward pragmatism. The latest generation (heftia, Theseus) attempts to combine theoretical rigor with practical performance, finding a middle ground.
+Different ecosystems currently optimize different subsets of these properties.
+
+---
+
+## Open Problems
+
+1. **Typed effects in mainstream runtimes**: especially the OCaml path from untyped runtime handlers to typed surface systems.
+2. **Stable, ergonomic higher-order abstractions**: balancing formal guarantees with developer usability.
+3. **Parallel handlers in production**: moving from calculi/prototypes to robust multicore implementations.
+4. **Interop and compilation targets**: proving and engineering reliable lowering to common targets (native, JVM, Wasm).
 
 ---
 
 ## Sources
 
-- [Monad transformers, free monads, mtl, laws and a new approach](https://blog.ocharles.org.uk/posts/2016-01-26-transformers-free-monads-mtl-laws.html) -- Ollie Charles
-- [Freer Monads, More Extensible Effects](https://okmij.org/ftp/Haskell/extensible/more.pdf) -- Kiselyov, Ishii
-- [Freer Monads and Extensible Effects](https://okmij.org/ftp/Haskell/extensible/index.html) -- Oleg Kiselyov
-- [Freer Monads, More Better Programs](https://reasonablypolymorphic.com/blog/freer-monads/) -- Sandy Maguire
+- [Notions of Computation and Monads (1991)](<https://doi.org/10.1016/0890-5401(91)90052-4>)
+- [Algebraic Operations and Generic Effects (2003)](<https://doi.org/10.1016/S1571-0661(04)80969-2>)
+- [Handlers of Algebraic Effects (2009)](https://doi.org/10.1007/978-3-642-00590-9_7)
+- [Effect Handlers in Scope (2014)](https://www.cs.ox.ac.uk/people/nicolas.wu/papers/Scope.pdf)
+- [Fusion for Free (2015)](https://people.cs.kuleuven.be/~tom.schrijvers/Research/papers/mpc2015.pdf)
+- [Freer Monads, More Extensible Effects (2015)](https://doi.org/10.1145/2804302.2804319)
+- [Algebraic Effects for Functional Programming (2016)](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/08/algeff-tr-2016-v2.pdf)
+- [Type Directed Compilation of Row-Typed Algebraic Effects (2017)](https://doi.org/10.1145/3009837.3009872)
+- [Effect Handlers, Evidently (2020)](https://doi.org/10.1145/3408981)
+- [Generalized Evidence Passing (2021)](https://doi.org/10.1145/3473576)
+- [Retrofitting Effect Handlers onto OCaml (2021)](https://doi.org/10.1145/3453483.3454039)
+- [Hefty Algebras (2023)](https://doi.org/10.1145/3571255)
+- [Continuing WebAssembly with Effect Handlers (2023)](https://doi.org/10.1145/3622814)
+- [Parallel Algebraic Effect Handlers (2024)](https://doi.org/10.1145/3674651)
 - [Polysemy: Mea Culpa](https://reasonablypolymorphic.com/blog/mea-culpa/) -- Sandy Maguire
-- [effects-benchmarks](https://github.com/patrickt/effects-benchmarks) -- Patrick Thomson
 - [GHC Proposal #313](https://github.com/ghc-proposals/ghc-proposals/blob/master/proposals/0313-delimited-continuation-primops.rst)
-- [Heftia blog posts](https://sayo-hs.github.io/blog/heftia/heftia-rev-part-1-1/)
+- [Effects Bibliography (living index)](https://github.com/yallop/effects-bibliography)
+- [OCaml 5.3.0 release (2025-01-08)](https://ocaml.org/releases/5.3.0)
+- [OCaml releases index (includes 5.4.0, 2025-10-09)](https://ocaml.org/releases/)
+- [GHC 9.6.1 release notes (delimited continuation primops)](https://downloads.haskell.org/~ghc/9.6.5/docs/users_guide/9.6.1-notes.html)
