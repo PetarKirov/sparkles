@@ -30,3 +30,112 @@
   --vp-c-brand-3: #d63452;
   --vp-c-brand-soft: rgba(233, 94, 103, 0.14);
 }
+
+/* Sidebar group: base padding to prevent layout shift on hover */
+.VPSidebarItem.level-0 {
+  padding: 4px 8px;
+  border-radius: 8px;
+}
+
+.VPSidebarItem.level-1,
+.VPSidebarItem.level-2,
+.VPSidebarItem.level-3 {
+  padding: 3px 6px;
+  border-radius: 6px;
+}
+
+/* Sidebar group: active ancestor backgrounds by depth */
+.VPSidebarItem.level-0.has-active {
+  background-color: rgba(214, 52, 82, 0.08);
+}
+
+.VPSidebarItem.level-1.has-active {
+  background-color: rgba(214, 52, 82, 0.12);
+}
+
+.VPSidebarItem.level-2.has-active {
+  background-color: rgba(214, 52, 82, 0.16);
+}
+
+.VPSidebarItem.level-3.has-active {
+  background-color: rgba(214, 52, 82, 0.2);
+}
+
+.dark .VPSidebarItem.level-0.has-active {
+  background-color: rgba(233, 94, 103, 0.08);
+}
+
+.dark .VPSidebarItem.level-1.has-active {
+  background-color: rgba(233, 94, 103, 0.12);
+}
+
+.dark .VPSidebarItem.level-2.has-active {
+  background-color: rgba(233, 94, 103, 0.16);
+}
+
+.dark .VPSidebarItem.level-3.has-active {
+  background-color: rgba(233, 94, 103, 0.2);
+}
+
+/* Sidebar group: hover effect (on container, matching active background) */
+.VPSidebarItem.level-0:hover {
+  background-color: var(--vp-c-default-soft);
+}
+
+.VPSidebarItem.level-1:hover,
+.VPSidebarItem.level-2:hover,
+.VPSidebarItem.level-3:hover {
+  background-color: var(--vp-c-default-soft);
+}
+
+/* Active takes precedence over hover */
+.VPSidebarItem.level-0.has-active:hover {
+  background-color: rgba(214, 52, 82, 0.12);
+}
+
+.VPSidebarItem.level-1.has-active:hover {
+  background-color: rgba(214, 52, 82, 0.16);
+}
+
+.VPSidebarItem.level-2.has-active:hover {
+  background-color: rgba(214, 52, 82, 0.2);
+}
+
+.VPSidebarItem.level-3.has-active:hover {
+  background-color: rgba(214, 52, 82, 0.24);
+}
+
+.dark .VPSidebarItem.level-0.has-active:hover {
+  background-color: rgba(233, 94, 103, 0.12);
+}
+
+.dark .VPSidebarItem.level-1.has-active:hover {
+  background-color: rgba(233, 94, 103, 0.16);
+}
+
+.dark .VPSidebarItem.level-2.has-active:hover {
+  background-color: rgba(233, 94, 103, 0.2);
+}
+
+.dark .VPSidebarItem.level-3.has-active:hover {
+  background-color: rgba(233, 94, 103, 0.24);
+}
+
+/* Sidebar expand/collapse animation */
+.VPSidebarItem .items {
+  display: block !important;
+  overflow: hidden;
+  max-height: 1500px;
+  opacity: 1;
+  transition:
+    max-height 0.4s ease-in,
+    opacity 0.25s ease;
+}
+
+.VPSidebarItem.collapsed .items {
+  max-height: 0 !important;
+  opacity: 0;
+  transition:
+    max-height 0.25s ease-out,
+    opacity 0.15s ease;
+}
