@@ -1,83 +1,254 @@
+/* ==========================================================================
+ * Sparkles — "Midnight Aurora" Theme
+ *
+ * Typography-forward design using Space Grotesk + Inter + JetBrains Mono.
+ * Cool indigo/violet/cyan palette evoking CLI sparkles.
+ * ========================================================================== */
+
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap");
+
+/* --------------------------------------------------------------------------
+ * Color palette
+ * -------------------------------------------------------------------------- */
 :root {
+  /* Brand: indigo-violet spectrum */
+  --vp-c-brand-1: #6366f1;
+  --vp-c-brand-2: #818cf8;
+  --vp-c-brand-3: #4f46e5;
+  --vp-c-brand-soft: rgba(99, 102, 241, 0.12);
+
+  /* Accent: cyan sparkle */
+  --sparkle-accent: #22d3ee;
+  --sparkle-accent-soft: rgba(34, 211, 238, 0.1);
+
+  /* Sidebar */
   --vp-sidebar-width: 340px;
 
-  --vp-c-brand-1: #d63452;
-  --vp-c-brand-2: #e95e67;
-  --vp-c-brand-3: #a93a58;
-  --vp-c-brand-soft: rgba(214, 52, 82, 0.14);
-
+  /* Hero */
   --vp-home-hero-name-color: transparent;
   --vp-home-hero-name-background: linear-gradient(
     135deg,
-    #532360,
-    #a93a58,
-    #d63452,
-    #e95e67,
-    #f7b360
+    #6366f1 0%,
+    #818cf8 25%,
+    #a78bfa 50%,
+    #22d3ee 75%,
+    #67e8f9 100%
   );
 
   --vp-home-hero-image-background-image: linear-gradient(
     135deg,
-    #532360 30%,
-    #d63452 70%
+    #4f46e5 30%,
+    #22d3ee 70%
   );
-  --vp-home-hero-image-filter: blur(56px);
+  --vp-home-hero-image-filter: blur(68px);
 }
 
 .dark {
-  --vp-c-brand-1: #e95e67;
-  --vp-c-brand-2: #f7b360;
-  --vp-c-brand-3: #d63452;
-  --vp-c-brand-soft: rgba(233, 94, 103, 0.14);
+  --vp-c-brand-1: #818cf8;
+  --vp-c-brand-2: #a5b4fc;
+  --vp-c-brand-3: #6366f1;
+  --vp-c-brand-soft: rgba(129, 140, 248, 0.12);
+
+  --sparkle-accent: #67e8f9;
+  --sparkle-accent-soft: rgba(103, 232, 249, 0.08);
 }
 
-/* Sidebar group: base padding to prevent layout shift on hover */
+/* --------------------------------------------------------------------------
+ * Typography
+ * -------------------------------------------------------------------------- */
+:root {
+  --vp-font-family-base:
+    "Inter", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji",
+    "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --vp-font-family-mono:
+    "JetBrains Mono", ui-monospace, "Menlo", "Monaco", "Consolas",
+    "Liberation Mono", "Courier New", monospace;
+}
+
+/* -- Headings: Space Grotesk with refined tracking ----------------------- */
+.vp-doc h1,
+.vp-doc h2,
+.vp-doc h3,
+.vp-doc h4,
+.vp-doc h5,
+.vp-doc h6,
+.VPHero .name,
+.VPHero .text,
+.VPFeature .title {
+  font-family: "Space Grotesk", var(--vp-font-family-base);
+}
+
+.vp-doc h1 {
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.15;
+}
+
+.vp-doc h2 {
+  font-weight: 600;
+  letter-spacing: -0.025em;
+  line-height: 1.25;
+  border-color: var(--vp-c-brand-soft);
+}
+
+.vp-doc h3 {
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.3;
+}
+
+.vp-doc h4,
+.vp-doc h5,
+.vp-doc h6 {
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+/* -- Hero typography ----------------------------------------------------- */
+.VPHero .name {
+  font-weight: 700;
+  letter-spacing: -0.04em;
+}
+
+.VPHero .text {
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+.VPHero .tagline {
+  font-family: var(--vp-font-family-base);
+  font-weight: 400;
+  letter-spacing: 0.005em;
+  line-height: 1.6;
+  opacity: 0.85;
+}
+
+/* -- Feature cards ------------------------------------------------------- */
+.VPFeature .title {
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.VPFeature .details {
+  line-height: 1.65;
+  letter-spacing: 0.005em;
+}
+
+/* -- Body text refinements ----------------------------------------------- */
+.vp-doc p {
+  line-height: 1.75;
+  letter-spacing: 0.005em;
+}
+
+.vp-doc li {
+  line-height: 1.7;
+}
+
+/* -- Inline code --------------------------------------------------------- */
+.vp-doc :not(pre) > code {
+  font-size: 0.875em;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+/* -- Code blocks --------------------------------------------------------- */
+.vp-doc div[class*="language-"] code {
+  font-size: 0.85em;
+  line-height: 1.7;
+  font-variant-ligatures: contextual;
+}
+
+/* -- Nav & sidebar typography -------------------------------------------- */
+.VPNavBarTitle .title {
+  font-family: "Space Grotesk", var(--vp-font-family-base);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.VPSidebarItem .text {
+  letter-spacing: 0.005em;
+}
+
+/* Level-0 sidebar group labels: uppercase micro-label style */
+.VPSidebarItem.level-0 > .item > .text {
+  font-family: "Space Grotesk", var(--vp-font-family-base);
+  font-weight: 600;
+  font-size: 0.8em;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--vp-c-text-2);
+}
+
+/* --------------------------------------------------------------------------
+ * Sidebar: structural styling (preserved behavior from baseline)
+ * -------------------------------------------------------------------------- */
+
+/* Spacing between top-level sidebar groups */
+.VPSidebar .group {
+  padding-bottom: 0;
+}
+
+.VPSidebar .group + .group {
+  margin-top: 0.5em;
+}
+
+/* Base padding to prevent layout shift on hover */
 .VPSidebarItem.level-0 {
-  padding: 4px 8px;
+  padding: 8px !important;
+  border-radius: 10px;
+}
+
+.VPSidebarItem.level-1 {
+  padding: 3px 6px;
   border-radius: 8px;
 }
 
-.VPSidebarItem.level-1,
-.VPSidebarItem.level-2,
-.VPSidebarItem.level-3 {
+.VPSidebarItem.level-2 {
   padding: 3px 6px;
   border-radius: 6px;
 }
 
-/* Sidebar group: active ancestor backgrounds by depth */
+.VPSidebarItem.level-3 {
+  padding: 3px 6px;
+  border-radius: 4px;
+}
+
+/* Active ancestor backgrounds by depth */
 .VPSidebarItem.level-0.has-active {
-  background-color: rgba(214, 52, 82, 0.08);
+  background-color: var(--vp-c-brand-soft);
 }
 
 .VPSidebarItem.level-1.has-active {
-  background-color: rgba(214, 52, 82, 0.12);
+  background-color: rgba(99, 102, 241, 0.1);
 }
 
 .VPSidebarItem.level-2.has-active {
-  background-color: rgba(214, 52, 82, 0.16);
+  background-color: rgba(99, 102, 241, 0.14);
 }
 
 .VPSidebarItem.level-3.has-active {
-  background-color: rgba(214, 52, 82, 0.2);
+  background-color: rgba(99, 102, 241, 0.18);
 }
 
 .dark .VPSidebarItem.level-0.has-active {
-  background-color: rgba(233, 94, 103, 0.08);
+  background-color: rgba(129, 140, 248, 0.08);
 }
 
 .dark .VPSidebarItem.level-1.has-active {
-  background-color: rgba(233, 94, 103, 0.12);
+  background-color: rgba(129, 140, 248, 0.1);
 }
 
 .dark .VPSidebarItem.level-2.has-active {
-  background-color: rgba(233, 94, 103, 0.16);
+  background-color: rgba(129, 140, 248, 0.14);
 }
 
 .dark .VPSidebarItem.level-3.has-active {
-  background-color: rgba(233, 94, 103, 0.2);
+  background-color: rgba(129, 140, 248, 0.18);
 }
 
-/* Sidebar group: hover effect (on container, matching active background) */
+/* Hover effect */
 .VPSidebarItem.level-0:hover {
   background-color: var(--vp-c-default-soft);
 }
@@ -90,38 +261,38 @@
 
 /* Active takes precedence over hover */
 .VPSidebarItem.level-0.has-active:hover {
-  background-color: rgba(214, 52, 82, 0.12);
+  background-color: rgba(99, 102, 241, 0.14);
 }
 
 .VPSidebarItem.level-1.has-active:hover {
-  background-color: rgba(214, 52, 82, 0.16);
+  background-color: rgba(99, 102, 241, 0.16);
 }
 
 .VPSidebarItem.level-2.has-active:hover {
-  background-color: rgba(214, 52, 82, 0.2);
+  background-color: rgba(99, 102, 241, 0.2);
 }
 
 .VPSidebarItem.level-3.has-active:hover {
-  background-color: rgba(214, 52, 82, 0.24);
+  background-color: rgba(99, 102, 241, 0.24);
 }
 
 .dark .VPSidebarItem.level-0.has-active:hover {
-  background-color: rgba(233, 94, 103, 0.12);
+  background-color: rgba(129, 140, 248, 0.12);
 }
 
 .dark .VPSidebarItem.level-1.has-active:hover {
-  background-color: rgba(233, 94, 103, 0.16);
+  background-color: rgba(129, 140, 248, 0.14);
 }
 
 .dark .VPSidebarItem.level-2.has-active:hover {
-  background-color: rgba(233, 94, 103, 0.2);
+  background-color: rgba(129, 140, 248, 0.18);
 }
 
 .dark .VPSidebarItem.level-3.has-active:hover {
-  background-color: rgba(233, 94, 103, 0.24);
+  background-color: rgba(129, 140, 248, 0.22);
 }
 
-/* Sidebar expand/collapse animation */
+/* Expand/collapse animation */
 .VPSidebarItem .items {
   display: block !important;
   overflow: hidden;
@@ -138,4 +309,46 @@
   transition:
     max-height 0.25s ease-out,
     opacity 0.15s ease;
+}
+
+/* --------------------------------------------------------------------------
+ * Refined details
+ * -------------------------------------------------------------------------- */
+
+/* Subtle h2 border accent */
+.vp-doc h2 {
+  border-bottom: 1px solid var(--vp-c-brand-soft);
+  padding-bottom: 12px;
+}
+
+/* Blockquote styling */
+.vp-doc blockquote {
+  border-left-color: var(--vp-c-brand-2);
+  font-style: italic;
+  color: var(--vp-c-text-2);
+}
+
+/* Table header refinement */
+.vp-doc table th {
+  font-family: "Space Grotesk", var(--vp-font-family-base);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  font-size: 0.85em;
+  text-transform: uppercase;
+}
+
+/* Badge typography */
+.VPBadge {
+  font-family: "Space Grotesk", var(--vp-font-family-base);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+/* Outline heading in aside */
+.VPDocAsideOutline .outline-title {
+  font-family: "Space Grotesk", var(--vp-font-family-base);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 0.75em;
 }
