@@ -17,10 +17,12 @@ export default defineConfig({
     sidebar: [
       {
         text: "Overview",
+        collapsed: false,
         items: [{ text: "core-cli Package", link: "/overview" }],
       },
       {
         text: "Guidelines",
+        collapsed: true,
         items: [
           {
             text: "Functional & Declarative Programming",
@@ -28,6 +30,7 @@ export default defineConfig({
           },
           {
             text: "Design by Introspection",
+            collapsed: true,
             items: [
               {
                 text: "Intro",
@@ -46,6 +49,7 @@ export default defineConfig({
           { text: "DDoc", link: "/guidelines/ddoc" },
           {
             text: "Code Style",
+            collapsed: true,
             items: [
               { text: "Overview", link: "/guidelines/code-style" },
               { text: "Appendix: Official DStyle", link: "/guidelines/dstyle" },
@@ -55,10 +59,12 @@ export default defineConfig({
       },
       {
         text: "Research",
+        collapsed: true,
         items: [
           {
             text: "Sean Parent: Better Code",
             link: "/research/sean-parent/",
+            collapsed: true,
             items: [
               {
                 text: "C++ Seasoning",
@@ -117,9 +123,11 @@ export default defineConfig({
           {
             text: "Algebraic Effects",
             link: "/research/algebraic-effects/",
+            collapsed: true,
             items: [
               {
                 text: "Cross-Cutting",
+                collapsed: true,
                 items: [
                   {
                     text: "Comparison",
@@ -137,6 +145,7 @@ export default defineConfig({
               },
               {
                 text: "Effect-Native Languages",
+                collapsed: true,
                 items: [
                   {
                     text: "Koka",
@@ -158,6 +167,7 @@ export default defineConfig({
               },
               {
                 text: "Haskell",
+                collapsed: true,
                 items: [
                   {
                     text: "effectful",
@@ -191,6 +201,7 @@ export default defineConfig({
               },
               {
                 text: "Scala",
+                collapsed: true,
                 items: [
                   {
                     text: "ZIO",
@@ -216,6 +227,7 @@ export default defineConfig({
               },
               {
                 text: "OCaml",
+                collapsed: true,
                 items: [
                   {
                     text: "OCaml 5 Effects",
@@ -229,6 +241,7 @@ export default defineConfig({
               },
               {
                 text: "Rust",
+                collapsed: true,
                 items: [
                   {
                     text: "Implicit Effect System",
@@ -246,6 +259,7 @@ export default defineConfig({
               },
               {
                 text: "Industry Platforms",
+                collapsed: true,
                 items: [
                   {
                     text: "Effect (TypeScript)",
@@ -265,6 +279,7 @@ export default defineConfig({
           },
           {
             text: "TUI Libraries",
+            collapsed: true,
             items: [
               { text: "Catalog", link: "/research/tui-libraries/" },
               {
