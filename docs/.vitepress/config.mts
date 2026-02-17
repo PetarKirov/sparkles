@@ -134,6 +134,14 @@ export default defineConfig({
                     link: "/research/algebraic-effects/comparison",
                   },
                   {
+                    text: "Evolution",
+                    link: "/research/algebraic-effects/evolution",
+                  },
+                  {
+                    text: "Parallelism",
+                    link: "/research/algebraic-effects/parallelism",
+                  },
+                  {
                     text: "Papers",
                     link: "/research/algebraic-effects/papers",
                   },
@@ -197,6 +205,18 @@ export default defineConfig({
                     text: "mtl",
                     link: "/research/algebraic-effects/haskell-mtl",
                   },
+                  {
+                    text: "eff",
+                    link: "/research/algebraic-effects/haskell-eff",
+                  },
+                  {
+                    text: "theseus",
+                    link: "/research/algebraic-effects/haskell-theseus",
+                  },
+                  {
+                    text: "heftia",
+                    link: "/research/algebraic-effects/haskell-heftia",
+                  },
                 ],
               },
               {
@@ -214,6 +234,10 @@ export default defineConfig({
                   {
                     text: "Kyo",
                     link: "/research/algebraic-effects/scala-kyo",
+                  },
+                  {
+                    text: "Ox",
+                    link: "/research/algebraic-effects/scala-ox",
                   },
                   {
                     text: "Scala 3 Capabilities",
@@ -258,6 +282,16 @@ export default defineConfig({
                 ],
               },
               {
+                text: "Swift",
+                collapsed: true,
+                items: [
+                  {
+                    text: "Swift Effects",
+                    link: "/research/algebraic-effects/swift-effects",
+                  },
+                ],
+              },
+              {
                 text: "Industry Platforms",
                 collapsed: true,
                 items: [
@@ -274,6 +308,10 @@ export default defineConfig({
                     link: "/research/algebraic-effects/wasmfx",
                   },
                 ],
+              },
+              {
+                text: "Other Implementations",
+                link: "/research/algebraic-effects/other-implementations",
               },
             ],
           },
