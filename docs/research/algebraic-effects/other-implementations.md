@@ -1,34 +1,74 @@
-# Other Notable Effect System Implementations
+# Additional Implementations and Research Systems
 
-A brief survey of other significant or emerging effect system implementations across various languages and platforms as of 2026.
+Notable systems adjacent to (or directly implementing) algebraic effects beyond the primary language pages in this folder.
 
----
-
-## Mojo (Modular)
-
-Mojo is designed for high-performance systems programming and AI workloads. While it does not feature a traditional algebraic effect system, its **Safety Model** is a state-of-the-art implementation of memory safety by default (Phase 1 achieved by 2026). It uses an ownership and borrowing system inspired by Rust but optimized for ease of use and parallel execution.
-
-- **Status**: Version 1.0 released in 2026.
-- **Key Feature**: Performance-first memory safety without a garbage collector.
-
-## Verse (Epic Games)
-
-Verse is a functional logic programming language designed for the metaverse. It features a novel effect system based on **Failure as an Effect**. In Verse, a computation can fail, and this failure is managed through a structured hierarchy of choice and backtracking.
-
-- **Key Innovation**: Unifying logical failure with control flow.
-
-## Links (University of Edinburgh)
-
-Links is a research language for web programming that uses **Row-Polymorphic Algebraic Effects** to manage interaction between client, server, and database. It was one of the first languages to demonstrate that algebraic effects can unify local control flow with distributed asynchronous callbacks.
-
-## Lean 4
-
-Lean 4, primarily a theorem prover, has an increasingly capable programming model. It uses an **IO-based Effect System** with strong support for purely functional structures. While not algebraic in the Koka sense, its use of `do` notation and custom monads provides a highly disciplined environment for effectful code.
+**Last reviewed:** February 16, 2026.
 
 ---
 
-## Summary of Emerging Trends
+## Effekt
 
-1. **Safety First**: Languages like Mojo and Swift are integrating effect-like tracking (safety constraints) into their core systems.
-2. **Parallelism**: The trend is moving toward multicore-aware effect handlers (e.g., OCaml 5, Parallel Haskell).
-3. **Hardware Support**: WasmFX and GHC primops show that runtime support for continuations is becoming a standard requirement for high-performance effect systems.
+Effekt is a research language centered on effect handlers and direct-style programming.
+
+- Focus: language-level support for handlers and effect polymorphism
+- Value: good reference point for modern handler-oriented language design
+
+Reference: [Effekt website](https://effekt-lang.org/)
+
+---
+
+## Links
+
+Links is a research language for web programming with row-polymorphic effect typing and long-running work on effect handlers.
+
+- Focus: typed effects in client/server/database integrated programming
+- Value: shows effect systems in a full-stack language setting
+
+Reference: [Links language site](https://links-lang.org/)
+
+---
+
+## Koka (for context)
+
+Koka is covered in detail in [koka.md](koka.md), but it is worth reiterating here as one of the strongest end-to-end designs:
+
+- row-polymorphic effect types with inference
+- practical compilation strategies
+- active releases in the v3 line
+
+References:
+
+- [Koka website](https://koka-lang.github.io/koka/doc/index.html)
+- [Koka releases](https://github.com/koka-lang/koka/releases)
+
+---
+
+## Systems-Language Direction: C + Coroutines
+
+Recent work demonstrates effect handlers implemented in C via coroutine machinery.
+
+- Focus: low-level implementation route without requiring a full new language runtime
+- Value: broadens the portability story for handlers
+
+Reference: [Effect Handlers for C via Coroutines (ICFP 2024)](https://doi.org/10.1145/3649836)
+
+---
+
+## WebAssembly Target Direction
+
+Wasm continuation proposals and WasmFX work position WebAssembly as a common low-level target for effect handlers.
+
+- Focus: typed control transfer primitives for compiled handlers
+- Value: potential cross-language backend convergence
+
+References:
+
+- [Continuing WebAssembly with Effect Handlers (OOPSLA 2023)](https://doi.org/10.1145/3622814)
+- [WebAssembly stack-switching proposal repository](https://github.com/WebAssembly/stack-switching)
+
+---
+
+## Notes
+
+- This page intentionally excludes systems that are only loosely "effect-like" (for example, generic safety/ownership claims without handler semantics).
+- For full historical context, see [evolution.md](evolution.md); for active research, see [papers.md](papers.md).
