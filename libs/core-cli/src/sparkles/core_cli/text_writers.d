@@ -349,27 +349,6 @@ void writeEscapedChar(Writer)(ref Writer w, char c) @trusted
     }
 }
 
-/// Writes an escaped string to an output range (with double quotes). @nogc-compatible.
-void writeEscapedString(Writer)(ref Writer w, const(char)[] s) @trusted
-{
-    import std.range.primitives : put;
-
-    put(w, '"');
-    foreach (c; s)
-        writeEscapedChar(w, c);
-    put(w, '"');
-}
-
-/// Writes an escaped character literal to an output range (with single quotes). @nogc-compatible.
-void writeEscapedCharLiteral(Writer)(ref Writer w, char c) @trusted
-{
-    import std.range.primitives : put;
-
-    put(w, '\'');
-    writeEscapedChar(w, c);
-    put(w, '\'');
-}
-
 @("writeEscapedChar.newline")
 @safe pure nothrow @nogc
 unittest
@@ -381,6 +360,17 @@ unittest
     assert(buf[] == `\n`);
 }
 
+/// Writes an escaped string to an output range (with double quotes). @nogc-compatible.
+void writeEscapedString(Writer)(ref Writer w, const(char)[] s) @trusted
+{
+    import std.range.primitives : put;
+
+    put(w, '"');
+    foreach (c; s)
+        writeEscapedChar(w, c);
+    put(w, '"');
+}
+
 @("writeEscapedString.basic")
 @safe pure nothrow @nogc
 unittest
@@ -390,6 +380,16 @@ unittest
     SmallBuffer!(char, 64) buf;
     writeEscapedString(buf, "hello\nworld");
     assert(buf[] == `"hello\nworld"`);
+}
+
+/// Writes an escaped character literal to an output range (with single quotes). @nogc-compatible.
+void writeEscapedCharLiteral(Writer)(ref Writer w, char c) @trusted
+{
+    import std.range.primitives : put;
+
+    put(w, '\'');
+    writeEscapedChar(w, c);
+    put(w, '\'');
 }
 
 @("writeEscapedCharLiteral.basic")
@@ -404,6 +404,255 @@ unittest
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Value Writing / @nogc Conversion Traits
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// True if `T` has a `toString` overload that accepts an output range writer,
+/// i.g. `void toString(W)(ref W writer)`.
+template hasOutputRangeToString(T)
+{
+    import sparkles.core_cli.smallbuffer : SmallBuffer;
+
+    enum hasOutputRangeToString = __traits(compiles, () {
+        T t = T.init;
+        SmallBuffer!(char, 128) buf;
+        t.toString(buf);
+    }());
+}
+
+/// True if `T` has a @nogc-compatible `toString` overload that accepts an
+/// output range writer.
+template hasNogcOutputRangeToString(T)
+{
+    import sparkles.core_cli.smallbuffer : SmallBuffer;
+
+    enum hasNogcOutputRangeToString = __traits(compiles, () @nogc {
+        T t = T.init;
+        SmallBuffer!(char, 128) buf;
+        t.toString(buf);
+    }());
+}
+
+/// True if `T` has a `toString` that takes a `scope void delegate(const(char)[])` sink.
+template hasSinkToString(T)
+{
+    enum hasSinkToString = __traits(compiles, () {
+        T t = T.init;
+        static void sink(const(char)[]) {}
+        t.toString(&sink);
+    }());
+}
+
+/// True if `T` has a @nogc `toString` that takes a @nogc sink delegate.
+template hasNogcSinkToString(T)
+{
+    enum hasNogcSinkToString = __traits(compiles, () @nogc {
+        T t = T.init;
+        static void sink(const(char)[]) @nogc {}
+        t.toString(&sink);
+    }());
+}
+
+/// True if `T` has a `toString()` that returns `string` and is callable from @nogc.
+template hasNogcStringToString(T)
+{
+    enum hasNogcStringToString = __traits(compiles, () @nogc {
+        T t = T.init;
+        string s = t.toString();
+    }());
+}
+
+/// True if `T` supports `cast(string)` and the cast is @nogc.
+template hasNogcStringCast(T)
+{
+    enum hasNogcStringCast = __traits(compiles, () @nogc {
+        T t = T.init;
+        string s = cast(string) t;
+    }());
+}
+
+/// True if `T` has any @nogc-compatible string conversion mechanism.
+template hasNogcToString(T)
+{
+    enum hasNogcToString =
+        hasNogcOutputRangeToString!T ||
+        hasNogcSinkToString!T ||
+        hasNogcStringToString!T ||
+        hasNogcStringCast!T;
+}
+
+// Test struct with @nogc output range toString
+private struct NogcOutputRangeType
+{
+    int value;
+
+    void toString(Writer)(ref Writer w) const @nogc
+    {
+        import std.range.primitives : put;
+        put(w, "NogcOR");
+    }
+}
+
+@("nogcTraits.builtinTypes")
+@safe pure nothrow @nogc
+unittest
+{
+    // Built-in types don't have toString, so traits should be false
+    static assert(!hasNogcOutputRangeToString!int);
+    static assert(!hasNogcSinkToString!int);
+    static assert(!hasNogcStringToString!int);
+    static assert(!hasNogcStringCast!int);
+    static assert(!hasNogcToString!int);
+}
+
+@("nogcTraits.outputRangeToString")
+@safe pure nothrow @nogc
+unittest
+{
+    static assert(hasNogcOutputRangeToString!NogcOutputRangeType);
+    static assert(hasOutputRangeToString!NogcOutputRangeType);
+    static assert(hasNogcToString!NogcOutputRangeType);
+}
+
+/// Writes any value to an output range using best-effort @nogc conversion.
+///
+/// Dispatch order:
+/// 1. `bool` — writes `"true"` or `"false"`
+/// 2. Integral types — uses `writeInteger`
+/// 3. Floating-point types — uses `writeFloat`
+/// 4. `char` — writes the character directly
+/// 5. String/char slices — writes directly via `put`
+/// 6. User types with @nogc output range `toString` — calls `t.toString(writer)`
+/// 7. User types with @nogc sink `toString` — calls with a forwarding delegate
+/// 8. User types with @nogc `toString()` returning `string` — writes the result
+/// 9. User types with @nogc `string` cast — writes `cast(string) t`
+/// 10. Fallback — uses `std.conv.to!string` (GC-allocating)
+void writeValue(Writer, T)(ref Writer w, auto ref const T val) @trusted
+{
+    import std.range.primitives : put;
+    import std.traits : isSomeChar, isSomeString;
+
+    static if (is(T == bool))
+    {
+        put(w, val ? "true" : "false");
+    }
+    else static if (isSomeChar!T)
+    {
+        put(w, (&val)[0 .. 1]);
+    }
+    else static if (__traits(isIntegral, T))
+    {
+        writeInteger(w, val);
+    }
+    else static if (__traits(isFloating, T))
+    {
+        writeFloat(w, val);
+    }
+    else static if (isSomeString!T || is(T : const(char)[]))
+    {
+        put(w, val);
+    }
+    else static if (hasNogcOutputRangeToString!T)
+    {
+        // Best: direct output range — no allocation, no delegate
+        val.toString(w);
+    }
+    else static if (hasNogcSinkToString!T)
+    {
+        // Good: sink delegate — no allocation
+        val.toString((const(char)[] chunk) @nogc { put(w, chunk); });
+    }
+    else static if (hasNogcStringToString!T)
+    {
+        put(w, val.toString());
+    }
+    else static if (hasNogcStringCast!T)
+    {
+        put(w, cast(string) val);
+    }
+    else
+    {
+        // GC fallback
+        import std.conv : to;
+        put(w, val.to!string);
+    }
+}
+
+@("writeValue.bool")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.core_cli.smallbuffer : SmallBuffer;
+
+    SmallBuffer!(char, 32) buf;
+    writeValue(buf, true);
+    assert(buf[] == "true");
+
+    buf.clear();
+    writeValue(buf, false);
+    assert(buf[] == "false");
+}
+
+@("writeValue.integer")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.core_cli.smallbuffer : SmallBuffer;
+
+    SmallBuffer!(char, 32) buf;
+    writeValue(buf, 42);
+    assert(buf[] == "42");
+
+    buf.clear();
+    writeValue(buf, -7);
+    assert(buf[] == "-7");
+}
+
+@("writeValue.float")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.core_cli.smallbuffer : SmallBuffer;
+
+    SmallBuffer!(char, 32) buf;
+    writeValue(buf, 3.14);
+    assert(buf[] == "3.14");
+}
+
+@("writeValue.char")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.core_cli.smallbuffer : SmallBuffer;
+
+    SmallBuffer!(char, 32) buf;
+    writeValue(buf, 'A');
+    assert(buf[] == "A");
+}
+
+@("writeValue.string")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.core_cli.smallbuffer : SmallBuffer;
+
+    SmallBuffer!(char, 64) buf;
+    writeValue(buf, "hello world");
+    assert(buf[] == "hello world");
+}
+
+@("writeValue.nogcOutputRangeType")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.core_cli.smallbuffer : SmallBuffer;
+
+    SmallBuffer!(char, 32) buf;
+    writeValue(buf, NogcOutputRangeType(42));
+    assert(buf[] == "NogcOR");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ANSI Escape Sequence Writing
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -415,6 +664,17 @@ void writeEscapeSeq(Writer)(ref Writer w, uint code) @trusted
     put(w, "\x1b[");
     writeInteger(w, code);
     put(w, 'm');
+}
+
+@("writeEscapeSeq.basic")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.core_cli.smallbuffer : SmallBuffer;
+
+    SmallBuffer!(char, 32) buf;
+    writeEscapeSeq(buf, 34);
+    assert(buf[] == "\x1b[34m");
 }
 
 /// Writes styled text to an output range. @nogc-compatible.
@@ -432,17 +692,6 @@ void writeStylized(Writer)(ref Writer w, const(char)[] text, Style style, bool r
     put(w, text);
     if (resetAfter)
         writeEscapeSeq(w, style[1]);
-}
-
-@("writeEscapeSeq.basic")
-@safe pure nothrow @nogc
-unittest
-{
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-    writeEscapeSeq(buf, 34);
-    assert(buf[] == "\x1b[34m");
 }
 
 @("writeStylized.withColor")
