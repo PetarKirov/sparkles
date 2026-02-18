@@ -355,15 +355,22 @@ private struct ParserContext
     size_t styleNameStart;
     size_t styleNameEnd;
 
+    /// Tracks pushes that were dropped due to stack overflow
+    size_t overflowDepth;
+
     void pushStyle(StyleState s) @nogc nothrow
     {
         if (stackDepth < styleStack.length)
             styleStack[stackDepth++] = s;
+        else
+            overflowDepth++;
     }
 
     void popStyle() @nogc nothrow
     {
-        if (stackDepth > 0)
+        if (overflowDepth > 0)
+            overflowDepth--;
+        else if (stackDepth > 0)
             stackDepth--;
     }
 
@@ -442,10 +449,15 @@ private void parseLiteral(Writer)(
                 }
                 else if (c == '}')
                 {
-                    // Empty block like {} - treat as literal
-                    put(w, '{');
-                    put(w, '}');
-                    ctx.state = ParseState.normal;
+                    auto spec = literal[ctx.styleNameStart .. ctx.styleNameEnd];
+                    if (spec.length == 0)
+                    {
+                        // Empty block like {} - treat as literal
+                        put(w, '{');
+                        put(w, '}');
+                    }
+                    // else: Style block with no content, e.g. {red} - discard (empty output)
+                    ctx.state = ctx.hasStyles ? ParseState.content : ParseState.normal;
                 }
                 else
                 {
@@ -765,6 +777,18 @@ unittest
 {
     // Empty {} should be treated as literal
     assert(styledText(i"test {} here") == "test {} here");
+}
+
+/// Style block with no content yields empty output, not literal braces.
+@("styled.styleBlockWithNoContent")
+unittest
+{
+    // {red} with no content yields empty string
+    assert(styledText(i"{red}") == "");
+    // {bold} between text yields just the surrounding text
+    assert(styledText(i"a{bold}b") == "ab");
+    // Chained styles with no content also yield empty string
+    assert(styledText(i"{bold.red}") == "");
 }
 
 @("styled.multipleBlocks")
