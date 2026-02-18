@@ -104,7 +104,152 @@ unittest
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Style Stack for Nested Blocks
+// Core Processing Functions
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Writes styled IES output to an output range.
+void writeStyled(Writer, Args...)(
+    ref Writer w,
+    InterpolationHeader,
+    Args args,
+    InterpolationFooter
+)
+{
+    import std.conv : to;
+    import std.range.primitives : put;
+
+    ParserContext ctx;
+
+    static foreach (arg; args)
+    {{
+        alias T = typeof(arg);
+        static if (is(T == InterpolatedLiteral!lit, string lit))
+        {
+            parseLiteral(w, lit, ctx);
+        }
+        else static if (is(T == InterpolatedExpression!code, string code))
+        {
+            // Skip expression metadata
+        }
+        else
+        {
+            // Output interpolated value - styles already active from block
+            put(w, arg.to!string);
+        }
+    }}
+}
+
+/// Returns styled IES as a string.
+string styledText(Args...)(InterpolationHeader header, Args args, InterpolationFooter footer)
+{
+    import std.array : appender;
+
+    auto buf = appender!string;
+    writeStyled(buf, header, args, footer);
+    return buf[];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lazy Wrapper
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Lazy wrapper that defers styled processing until consumed.
+struct StyledText(Args...)
+{
+    Args args;
+
+    /// Convert to string (allocates)
+    string toString() const
+    {
+        import std.array : appender;
+        import std.conv : to;
+        import std.range.primitives : put;
+
+        auto buf = appender!string;
+        ParserContext ctx;
+
+        foreach (arg; args)
+        {
+            alias T = typeof(arg);
+            static if (is(T == InterpolatedLiteral!lit, string lit))
+            {
+                parseLiteral(buf, lit, ctx);
+            }
+            else static if (is(T == InterpolatedExpression!code, string code))
+            {
+                // Skip expression metadata
+            }
+            else static if (is(T == InterpolationHeader) || is(T == InterpolationFooter))
+            {
+                // Skip header/footer
+            }
+            else
+            {
+                // Output interpolated value - styles already active from block
+                put(buf, arg.to!string);
+            }
+        }
+        return buf[];
+    }
+
+    /// Callback-based toString for writeln compatibility
+    void toString(scope void delegate(const(char)[]) sink) const
+    {
+        sink(toString());
+    }
+}
+
+/// Returns a lazy wrapper that can be converted to string or written to output range.
+auto styled(Args...)(InterpolationHeader header, Args args, InterpolationFooter footer)
+{
+    // Store all components including header/footer
+    return StyledText!(InterpolationHeader, Args, InterpolationFooter)(header, args, footer);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// stdout/stderr Write Functions
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Write styled IES to stdout.
+void styledWrite(Args...)(InterpolationHeader header, Args args, InterpolationFooter footer)
+{
+    import std.stdio : stdout;
+
+    auto w = stdout.lockingTextWriter;
+    writeStyled(w, header, args, footer);
+}
+
+/// Write styled IES to stdout with newline.
+void styledWriteln(Args...)(InterpolationHeader header, Args args, InterpolationFooter footer)
+{
+    import std.stdio : stdout;
+
+    auto w = stdout.lockingTextWriter;
+    writeStyled(w, header, args, footer);
+    w.put('\n');
+}
+
+/// Write styled IES to stderr.
+void styledWriteErr(Args...)(InterpolationHeader header, Args args, InterpolationFooter footer)
+{
+    import std.stdio : stderr;
+
+    auto w = stderr.lockingTextWriter;
+    writeStyled(w, header, args, footer);
+}
+
+/// Write styled IES to stderr with newline.
+void styledWritelnErr(Args...)(InterpolationHeader header, Args args, InterpolationFooter footer)
+{
+    import std.stdio : stderr;
+
+    auto w = stderr.lockingTextWriter;
+    writeStyled(w, header, args, footer);
+    w.put('\n');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Implementation Details
 // ─────────────────────────────────────────────────────────────────────────────
 
 private struct StyleState
@@ -194,10 +339,6 @@ private struct StyleState
         return count == 0;
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Parser Implementation
-// ─────────────────────────────────────────────────────────────────────────────
 
 private enum ParseState
 {
@@ -392,151 +533,6 @@ private void applyStylePart(const(char)[] part, ref StyleState state)
         else
             state.addStyle(s);
     }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Core Processing Functions
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Writes styled IES output to an output range.
-void writeStyled(Writer, Args...)(
-    ref Writer w,
-    InterpolationHeader,
-    Args args,
-    InterpolationFooter
-)
-{
-    import std.conv : to;
-    import std.range.primitives : put;
-
-    ParserContext ctx;
-
-    static foreach (arg; args)
-    {{
-        alias T = typeof(arg);
-        static if (is(T == InterpolatedLiteral!lit, string lit))
-        {
-            parseLiteral(w, lit, ctx);
-        }
-        else static if (is(T == InterpolatedExpression!code, string code))
-        {
-            // Skip expression metadata
-        }
-        else
-        {
-            // Output interpolated value - styles already active from block
-            put(w, arg.to!string);
-        }
-    }}
-}
-
-/// Returns styled IES as a string.
-string styledText(Args...)(InterpolationHeader header, Args args, InterpolationFooter footer)
-{
-    import std.array : appender;
-
-    auto buf = appender!string;
-    writeStyled(buf, header, args, footer);
-    return buf[];
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Lazy Wrapper
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Lazy wrapper that defers styled processing until consumed.
-struct StyledText(Args...)
-{
-    Args args;
-
-    /// Convert to string (allocates)
-    string toString() const
-    {
-        import std.array : appender;
-        import std.conv : to;
-        import std.range.primitives : put;
-
-        auto buf = appender!string;
-        ParserContext ctx;
-
-        foreach (arg; args)
-        {
-            alias T = typeof(arg);
-            static if (is(T == InterpolatedLiteral!lit, string lit))
-            {
-                parseLiteral(buf, lit, ctx);
-            }
-            else static if (is(T == InterpolatedExpression!code, string code))
-            {
-                // Skip expression metadata
-            }
-            else static if (is(T == InterpolationHeader) || is(T == InterpolationFooter))
-            {
-                // Skip header/footer
-            }
-            else
-            {
-                // Output interpolated value - styles already active from block
-                put(buf, arg.to!string);
-            }
-        }
-        return buf[];
-    }
-
-    /// Callback-based toString for writeln compatibility
-    void toString(scope void delegate(const(char)[]) sink) const
-    {
-        sink(toString());
-    }
-}
-
-/// Returns a lazy wrapper that can be converted to string or written to output range.
-auto styled(Args...)(InterpolationHeader header, Args args, InterpolationFooter footer)
-{
-    // Store all components including header/footer
-    return StyledText!(InterpolationHeader, Args, InterpolationFooter)(header, args, footer);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// stdout/stderr Write Functions
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Write styled IES to stdout.
-void styledWrite(Args...)(InterpolationHeader header, Args args, InterpolationFooter footer)
-{
-    import std.stdio : stdout;
-
-    auto w = stdout.lockingTextWriter;
-    writeStyled(w, header, args, footer);
-}
-
-/// Write styled IES to stdout with newline.
-void styledWriteln(Args...)(InterpolationHeader header, Args args, InterpolationFooter footer)
-{
-    import std.stdio : stdout;
-
-    auto w = stdout.lockingTextWriter;
-    writeStyled(w, header, args, footer);
-    w.put('\n');
-}
-
-/// Write styled IES to stderr.
-void styledWriteErr(Args...)(InterpolationHeader header, Args args, InterpolationFooter footer)
-{
-    import std.stdio : stderr;
-
-    auto w = stderr.lockingTextWriter;
-    writeStyled(w, header, args, footer);
-}
-
-/// Write styled IES to stderr with newline.
-void styledWritelnErr(Args...)(InterpolationHeader header, Args args, InterpolationFooter footer)
-{
-    import std.stdio : stderr;
-
-    auto w = stderr.lockingTextWriter;
-    writeStyled(w, header, args, footer);
-    w.put('\n');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
