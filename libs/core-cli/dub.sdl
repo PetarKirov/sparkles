@@ -9,6 +9,11 @@ dflags "-preview=in" "-preview=dip1000"
 targetType "library"
 targetPath "build"
 
+configuration "library" {
+    targetType "library"
+    excludedSourceFiles "src/app.d"
+}
+
 configuration "unittest" {
     excludedSourceFiles "src/app.d"
 
