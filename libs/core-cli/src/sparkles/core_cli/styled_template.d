@@ -162,33 +162,9 @@ struct StyledText(Args...)
     string toString() const
     {
         import std.array : appender;
-        import std.conv : to;
-        import std.range.primitives : put;
 
         auto buf = appender!string;
-        ParserContext ctx;
-
-        foreach (arg; args)
-        {
-            alias T = typeof(arg);
-            static if (is(T == InterpolatedLiteral!lit, string lit))
-            {
-                parseLiteral(buf, lit, ctx);
-            }
-            else static if (is(T == InterpolatedExpression!code, string code))
-            {
-                // Skip expression metadata
-            }
-            else static if (is(T == InterpolationHeader) || is(T == InterpolationFooter))
-            {
-                // Skip header/footer
-            }
-            else
-            {
-                // Output interpolated value - styles already active from block
-                put(buf, arg.to!string);
-            }
-        }
+        writeStyled(buf, args);
         return buf[];
     }
 
@@ -252,9 +228,13 @@ void styledWritelnErr(Args...)(InterpolationHeader header, Args args, Interpolat
 // Implementation Details
 // ─────────────────────────────────────────────────────────────────────────────
 
+private enum maxStylesPerBlock = 8;
+private enum maxNestingDepth = 16;
+
+@safe
 private struct StyleState
 {
-    Style[8] styles;
+    Style[maxStylesPerBlock] styles;
     size_t count;
 
     /// Emit escape sequences for transition FROM parent TO this state
@@ -334,10 +314,7 @@ private struct StyleState
     }
 
     /// Check if any styles are active
-    bool empty() const @nogc nothrow
-    {
-        return count == 0;
-    }
+    bool empty() const @nogc nothrow => count == 0;
 }
 
 private enum ParseState
@@ -347,16 +324,16 @@ private enum ParseState
     content
 }
 
+@safe
 private struct ParserContext
 {
-    StyleState[16] styleStack;
+    StyleState[maxNestingDepth] styleStack;
     size_t stackDepth;
+    /// Tracks pushes that were dropped due to stack overflow
+    size_t overflowDepth;
     ParseState state = ParseState.normal;
     size_t styleNameStart;
     size_t styleNameEnd;
-
-    /// Tracks pushes that were dropped due to stack overflow
-    size_t overflowDepth;
 
     void pushStyle(StyleState s) @nogc nothrow
     {
@@ -384,13 +361,11 @@ private struct ParserContext
         return stackDepth > 1 ? styleStack[stackDepth - 2] : StyleState.init;
     }
 
-    bool hasStyles() const @nogc nothrow
-    {
-        return stackDepth > 0;
-    }
+    bool hasStyles() const @nogc nothrow => stackDepth > 0;
 }
 
 /// Parses a literal segment and writes styled output
+@safe
 private void parseLiteral(Writer)(
     ref Writer w,
     const(char)[] literal,
@@ -506,6 +481,7 @@ private void parseLiteral(Writer)(
 }
 
 /// Parses style specification like "bold.red" or "~red.bold"
+@safe
 private void applyStyleSpec(const(char)[] spec, ref ParserContext ctx)
 {
     // Create new style state based on parent (or empty if root)
@@ -529,6 +505,7 @@ private void applyStyleSpec(const(char)[] spec, ref ParserContext ctx)
     ctx.pushStyle(newState);
 }
 
+@safe
 private void applyStylePart(const(char)[] part, ref StyleState state)
 {
     if (part.length == 0)
@@ -552,13 +529,13 @@ private void applyStylePart(const(char)[] part, ref StyleState state)
 // ─────────────────────────────────────────────────────────────────────────────
 
 @("styled.singleStyle")
-unittest
+@safe unittest
 {
     assert(styledText(i"{red error}") == "\x1b[31merror\x1b[39m");
 }
 
 @("styled.chainedStyles")
-unittest
+@safe unittest
 {
     // bold.red applies both styles
     auto result = styledText(i"{bold.red text}");
@@ -567,14 +544,14 @@ unittest
 }
 
 @("styled.withInterpolation")
-unittest
+@safe unittest
 {
     int val = 42;
     assert(styledText(i"Value: {green $(val)}") == "Value: \x1b[32m42\x1b[39m");
 }
 
 @("styled.nested")
-unittest
+@safe unittest
 {
     // Nested: bold applies to all, red only to inner
     auto result = styledText(i"{bold A {red B} C}");
@@ -584,7 +561,7 @@ unittest
 }
 
 @("styled.negation")
-unittest
+@safe unittest
 {
     // ~red removes red, but bold remains
     auto result = styledText(i"{bold.red styled {~red unbold}}");
@@ -637,7 +614,7 @@ unittest
 /// - "G"
 /// - [39m[23m[22m → red off, italic off, bold off
 @("styled.complexNestingWithNegation")
-unittest
+@safe unittest
 {
     auto result = styledText(
         i"{bold.italic.red A{~red.underline B{cyan C{~bold.~italic D}E}F}G}"
@@ -668,7 +645,7 @@ unittest
 
 /// Test negation restores parent styles correctly when multiple styles are negated.
 @("styled.multipleNegationRestore")
-unittest
+@safe unittest
 {
     // Negate two styles, then exit - both should be restored
     // Parent: [bold, italic, underline], Child negates: bold, underline
@@ -688,7 +665,7 @@ unittest
 
 /// Test adding new styles in nested block while parent has styles.
 @("styled.nestedStyleAddition")
-unittest
+@safe unittest
 {
     // Parent has bold, child adds underline and cyan
     auto result = styledText(i"{bold parent {underline.cyan child} parent}");
@@ -706,7 +683,7 @@ unittest
 
 /// Test three levels of nesting with style additions at each level.
 @("styled.threeLevelNesting")
-unittest
+@safe unittest
 {
     auto result = styledText(i"{red L1 {bold L2 {underline L3} L2} L1}");
 
@@ -727,7 +704,7 @@ unittest
 
 /// Test negation combined with addition in same block.
 @("styled.negationWithAddition")
-unittest
+@safe unittest
 {
     // Start with bold+red, then remove red but add cyan
     auto result = styledText(i"{bold.red start {~red.cyan middle} end}");
@@ -746,60 +723,59 @@ unittest
 }
 
 @("styled.escapedOpenBrace")
-unittest
+@safe unittest
 {
     // {{ produces literal {
     assert(styledText(i"Use {{style}} syntax") == "Use {style} syntax");
 }
 
 @("styled.escapedCloseBrace")
-unittest
+@safe unittest
 {
     // }} produces literal } inside styled block
     assert(styledText(i"{red hey}} still red}") == "\x1b[31mhey} still red\x1b[39m");
 }
 
 @("styled.escapedBracesInContent")
-unittest
+@safe unittest
 {
     // {{ and }} inside a styled block
     assert(styledText(i"{bold use {{braces}}}") == "\x1b[1muse {braces}\x1b[22m");
 }
 
 @("styled.noStyle")
-unittest
+@safe unittest
 {
     assert(styledText(i"plain text") == "plain text");
 }
 
 @("styled.emptyBlock")
-unittest
+@safe unittest
 {
     // Empty {} should be treated as literal
     assert(styledText(i"test {} here") == "test {} here");
 }
 
-/// Style block with no content yields empty output, not literal braces.
 @("styled.styleBlockWithNoContent")
-unittest
+@safe unittest
 {
     // {red} with no content yields empty string
     assert(styledText(i"{red}") == "");
-    // {bold} between text yields just the surrounding text
+    // Mixed: {bold} between text yields just the text
     assert(styledText(i"a{bold}b") == "ab");
-    // Chained styles with no content also yield empty string
+    // {bold.red} also yields empty string
     assert(styledText(i"{bold.red}") == "");
 }
 
 @("styled.multipleBlocks")
-unittest
+@safe unittest
 {
     auto result = styledText(i"{red error} and {green success}");
     assert(result == "\x1b[31merror\x1b[39m and \x1b[32msuccess\x1b[39m");
 }
 
 @("styled.lazyWrapper")
-unittest
+@safe unittest
 {
     int val = 99;
     auto lazy_ = styled(i"Test: {blue $(val)}");
