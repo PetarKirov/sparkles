@@ -1,0 +1,10 @@
+name "doc-coverage-fixture"
+description "Fixture package that exercises D constructs used by sparkle-docs"
+authors "Petar Kirov"
+license "BSL-1.0"
+
+targetType "library"
+targetPath "build"
+excludedSourceFiles "source/doc_coverage/broken/missing_import_case.d"
+
+dflags "-preview=in" "-preview=dip1000"

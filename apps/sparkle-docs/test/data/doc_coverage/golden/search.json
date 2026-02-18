@@ -1,0 +1,676 @@
+{
+  "index": [
+    {
+      "kind": "template",
+      "name": "hasRenderName",
+      "qualifiedName": "doc_coverage.game.rendering.hasRenderName",
+      "summary": "Trait-like template used in docs for constraints.",
+      "url": "/api/doc_coverage/game/rendering/hasRenderName"
+    },
+    {
+      "kind": "variable",
+      "name": "hasRenderName",
+      "qualifiedName": "doc_coverage.game.rendering.hasRenderName.hasRenderName",
+      "summary": "",
+      "url": "/api/doc_coverage/game/rendering/hasRenderName/hasRenderName"
+    },
+    {
+      "kind": "template",
+      "name": "renderLabel",
+      "qualifiedName": "doc_coverage.game.rendering.renderLabel",
+      "summary": "Renders type names for diagnostic overlays.",
+      "url": "/api/doc_coverage/game/rendering/renderLabel"
+    },
+    {
+      "kind": "function",
+      "name": "renderLabel",
+      "qualifiedName": "doc_coverage.game.rendering.renderLabel.renderLabel",
+      "summary": "",
+      "url": "/api/doc_coverage/game/rendering/renderLabel/renderLabel"
+    },
+    {
+      "kind": "struct",
+      "name": "Sprite",
+      "qualifiedName": "doc_coverage.game.rendering.Sprite",
+      "summary": "",
+      "url": "/api/doc_coverage/game/rendering/Sprite"
+    },
+    {
+      "kind": "variable",
+      "name": "renderName",
+      "qualifiedName": "doc_coverage.game.rendering.Sprite.renderName",
+      "summary": "",
+      "url": "/api/doc_coverage/game/rendering/Sprite/renderName"
+    },
+    {
+      "kind": "alias",
+      "name": "EntityRef",
+      "qualifiedName": "doc_coverage.game.systems.EntityRef",
+      "summary": "Alias to exercise alias symbol generation.",
+      "url": "/api/doc_coverage/game/systems/EntityRef"
+    },
+    {
+      "kind": "template",
+      "name": "runSystem",
+      "qualifiedName": "doc_coverage.game.systems.runSystem",
+      "summary": "Template mixin-style system runner.",
+      "url": "/api/doc_coverage/game/systems/runSystem"
+    },
+    {
+      "kind": "function",
+      "name": "runSystem",
+      "qualifiedName": "doc_coverage.game.systems.runSystem.runSystem",
+      "summary": "",
+      "url": "/api/doc_coverage/game/systems/runSystem/runSystem"
+    },
+    {
+      "kind": "struct",
+      "name": "TickSystem",
+      "qualifiedName": "doc_coverage.game.systems.TickSystem",
+      "summary": "Stateless tick system.",
+      "url": "/api/doc_coverage/game/systems/TickSystem"
+    },
+    {
+      "kind": "function",
+      "name": "step",
+      "qualifiedName": "doc_coverage.game.systems.TickSystem.step",
+      "summary": "",
+      "url": "/api/doc_coverage/game/systems/TickSystem/step"
+    },
+    {
+      "kind": "function",
+      "name": "spawnEntity",
+      "qualifiedName": "doc_coverage.game.systems.spawnEntity",
+      "summary": "Creates a player entity as interface alias type.",
+      "url": "/api/doc_coverage/game/systems/spawnEntity"
+    },
+    {
+      "kind": "interface",
+      "name": "IEntity",
+      "qualifiedName": "doc_coverage.game.entities.IEntity",
+      "summary": "Basic interface for game entities.",
+      "url": "/api/doc_coverage/game/entities/IEntity"
+    },
+    {
+      "kind": "function",
+      "name": "id",
+      "qualifiedName": "doc_coverage.game.entities.IEntity.id",
+      "summary": "",
+      "url": "/api/doc_coverage/game/entities/IEntity/id"
+    },
+    {
+      "kind": "enum",
+      "name": "EntityState",
+      "qualifiedName": "doc_coverage.game.entities.EntityState",
+      "summary": "Public enum for state coverage.",
+      "url": "/api/doc_coverage/game/entities/EntityState"
+    },
+    {
+      "kind": "enumMember",
+      "name": "idle",
+      "qualifiedName": "doc_coverage.game.entities.EntityState.idle",
+      "summary": "",
+      "url": "/api/doc_coverage/game/entities/EntityState/idle"
+    },
+    {
+      "kind": "enumMember",
+      "name": "moving",
+      "qualifiedName": "doc_coverage.game.entities.EntityState.moving",
+      "summary": "",
+      "url": "/api/doc_coverage/game/entities/EntityState/moving"
+    },
+    {
+      "kind": "enumMember",
+      "name": "disabled",
+      "qualifiedName": "doc_coverage.game.entities.EntityState.disabled",
+      "summary": "",
+      "url": "/api/doc_coverage/game/entities/EntityState/disabled"
+    },
+    {
+      "kind": "class",
+      "name": "EntityBase",
+      "qualifiedName": "doc_coverage.game.entities.EntityBase",
+      "summary": "Entity base class with protected and private members.",
+      "url": "/api/doc_coverage/game/entities/EntityBase"
+    },
+    {
+      "kind": "variable",
+      "name": "_id",
+      "qualifiedName": "doc_coverage.game.entities.EntityBase._id",
+      "summary": "",
+      "url": "/api/doc_coverage/game/entities/EntityBase/_id"
+    },
+    {
+      "kind": "constructor",
+      "name": "this",
+      "qualifiedName": "doc_coverage.game.entities.EntityBase.this",
+      "summary": "",
+      "url": "/api/doc_coverage/game/entities/EntityBase/this"
+    },
+    {
+      "kind": "function",
+      "name": "id",
+      "qualifiedName": "doc_coverage.game.entities.EntityBase.id",
+      "summary": "",
+      "url": "/api/doc_coverage/game/entities/EntityBase/id"
+    },
+    {
+      "kind": "function",
+      "name": "state",
+      "qualifiedName": "doc_coverage.game.entities.EntityBase.state",
+      "summary": "",
+      "url": "/api/doc_coverage/game/entities/EntityBase/state"
+    },
+    {
+      "kind": "function",
+      "name": "setState",
+      "qualifiedName": "doc_coverage.game.entities.EntityBase.setState",
+      "summary": "",
+      "url": "/api/doc_coverage/game/entities/EntityBase/setState"
+    },
+    {
+      "kind": "class",
+      "name": "PlayerEntity",
+      "qualifiedName": "doc_coverage.game.entities.PlayerEntity",
+      "summary": "Concrete entity class.",
+      "url": "/api/doc_coverage/game/entities/PlayerEntity"
+    },
+    {
+      "kind": "constructor",
+      "name": "this",
+      "qualifiedName": "doc_coverage.game.entities.PlayerEntity.this",
+      "summary": "",
+      "url": "/api/doc_coverage/game/entities/PlayerEntity/this"
+    },
+    {
+      "kind": "function",
+      "name": "move",
+      "qualifiedName": "doc_coverage.game.entities.PlayerEntity.move",
+      "summary": "",
+      "url": "/api/doc_coverage/game/entities/PlayerEntity/move"
+    },
+    {
+      "kind": "struct",
+      "name": "PlayerId",
+      "qualifiedName": "doc_coverage.mixed.types.PlayerId",
+      "summary": "Strongly typed player id.",
+      "url": "/api/doc_coverage/mixed/types/PlayerId"
+    },
+    {
+      "kind": "variable",
+      "name": "value",
+      "qualifiedName": "doc_coverage.mixed.types.PlayerId.value",
+      "summary": "",
+      "url": "/api/doc_coverage/mixed/types/PlayerId/value"
+    },
+    {
+      "kind": "alias",
+      "name": "TickCallback",
+      "qualifiedName": "doc_coverage.mixed.types.TickCallback",
+      "summary": "Public alias for callback shape.",
+      "url": "/api/doc_coverage/mixed/types/TickCallback"
+    },
+    {
+      "kind": "variable",
+      "name": "activeTickCallback",
+      "qualifiedName": "doc_coverage.mixed.types.activeTickCallback",
+      "summary": "Optional callback holder.",
+      "url": "/api/doc_coverage/mixed/types/activeTickCallback"
+    },
+    {
+      "kind": "function",
+      "name": "invokeTick",
+      "qualifiedName": "doc_coverage.mixed.types.invokeTick",
+      "summary": "",
+      "url": "/api/doc_coverage/mixed/types/invokeTick"
+    },
+    {
+      "kind": "template",
+      "name": "Box",
+      "qualifiedName": "doc_coverage.mixed.templates.Box",
+      "summary": "Generic box used to exercise aggregate template docs.",
+      "url": "/api/doc_coverage/mixed/templates/Box"
+    },
+    {
+      "kind": "struct",
+      "name": "Box",
+      "qualifiedName": "doc_coverage.mixed.templates.Box.Box",
+      "summary": "",
+      "url": "/api/doc_coverage/mixed/templates/Box/Box"
+    },
+    {
+      "kind": "variable",
+      "name": "value",
+      "qualifiedName": "doc_coverage.mixed.templates.Box.Box.value",
+      "summary": "",
+      "url": "/api/doc_coverage/mixed/templates/Box/Box/value"
+    },
+    {
+      "kind": "constructor",
+      "name": "this",
+      "qualifiedName": "doc_coverage.mixed.templates.Box.Box.this",
+      "summary": "",
+      "url": "/api/doc_coverage/mixed/templates/Box/Box/this"
+    },
+    {
+      "kind": "function",
+      "name": "__invariant1",
+      "qualifiedName": "doc_coverage.mixed.templates.Box.Box.__invariant1",
+      "summary": "",
+      "url": "/api/doc_coverage/mixed/templates/Box/Box/__invariant1"
+    },
+    {
+      "kind": "destructor",
+      "name": "~this",
+      "qualifiedName": "doc_coverage.mixed.templates.Box.Box.~this",
+      "summary": "",
+      "url": "/api/doc_coverage/mixed/templates/Box/Box/~this"
+    },
+    {
+      "kind": "template",
+      "name": "makeBox",
+      "qualifiedName": "doc_coverage.mixed.templates.makeBox",
+      "summary": "Returns a boxed value.",
+      "url": "/api/doc_coverage/mixed/templates/makeBox"
+    },
+    {
+      "kind": "function",
+      "name": "makeBox",
+      "qualifiedName": "doc_coverage.mixed.templates.makeBox.makeBox",
+      "summary": "",
+      "url": "/api/doc_coverage/mixed/templates/makeBox/makeBox"
+    },
+    {
+      "kind": "template",
+      "name": "stringify",
+      "qualifiedName": "doc_coverage.mixed.templates.stringify",
+      "summary": "Constrained template overload.",
+      "url": "/api/doc_coverage/mixed/templates/stringify"
+    },
+    {
+      "kind": "function",
+      "name": "stringify",
+      "qualifiedName": "doc_coverage.mixed.templates.stringify.stringify",
+      "summary": "",
+      "url": "/api/doc_coverage/mixed/templates/stringify/stringify"
+    },
+    {
+      "kind": "function",
+      "name": "doc_coverage.core.commands",
+      "qualifiedName": "doc_coverage.doc_coverage.core.commands",
+      "summary": "",
+      "url": "/api/doc_coverage/doc_coverage/core/commands"
+    },
+    {
+      "kind": "function",
+      "name": "doc_coverage.core.formatting",
+      "qualifiedName": "doc_coverage.doc_coverage.core.formatting",
+      "summary": "",
+      "url": "/api/doc_coverage/doc_coverage/core/formatting"
+    },
+    {
+      "kind": "function",
+      "name": "doc_coverage.game.entities",
+      "qualifiedName": "doc_coverage.doc_coverage.game.entities",
+      "summary": "",
+      "url": "/api/doc_coverage/doc_coverage/game/entities"
+    },
+    {
+      "kind": "function",
+      "name": "doc_coverage.game.systems",
+      "qualifiedName": "doc_coverage.doc_coverage.game.systems",
+      "summary": "",
+      "url": "/api/doc_coverage/doc_coverage/game/systems"
+    },
+    {
+      "kind": "function",
+      "name": "doc_coverage.game.rendering",
+      "qualifiedName": "doc_coverage.doc_coverage.game.rendering",
+      "summary": "",
+      "url": "/api/doc_coverage/doc_coverage/game/rendering"
+    },
+    {
+      "kind": "function",
+      "name": "doc_coverage.mixed.templates",
+      "qualifiedName": "doc_coverage.doc_coverage.mixed.templates",
+      "summary": "",
+      "url": "/api/doc_coverage/doc_coverage/mixed/templates"
+    },
+    {
+      "kind": "function",
+      "name": "doc_coverage.mixed.types",
+      "qualifiedName": "doc_coverage.doc_coverage.mixed.types",
+      "summary": "",
+      "url": "/api/doc_coverage/doc_coverage/mixed/types"
+    },
+    {
+      "kind": "enum",
+      "name": "CommandKind",
+      "qualifiedName": "doc_coverage.core.commands.CommandKind",
+      "summary": "Command categories used by both CLI and gameplay systems.",
+      "url": "/api/doc_coverage/core/commands/CommandKind"
+    },
+    {
+      "kind": "enumMember",
+      "name": "none",
+      "qualifiedName": "doc_coverage.core.commands.CommandKind.none",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandKind/none"
+    },
+    {
+      "kind": "enumMember",
+      "name": "move",
+      "qualifiedName": "doc_coverage.core.commands.CommandKind.move",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandKind/move"
+    },
+    {
+      "kind": "enumMember",
+      "name": "render",
+      "qualifiedName": "doc_coverage.core.commands.CommandKind.render",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandKind/render"
+    },
+    {
+      "kind": "enumMember",
+      "name": "quit",
+      "qualifiedName": "doc_coverage.core.commands.CommandKind.quit",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandKind/quit"
+    },
+    {
+      "kind": "alias",
+      "name": "CommandName",
+      "qualifiedName": "doc_coverage.core.commands.CommandName",
+      "summary": "Alias used by parser coverage tests.",
+      "url": "/api/doc_coverage/core/commands/CommandName"
+    },
+    {
+      "kind": "variable",
+      "name": "publicCommandCount",
+      "qualifiedName": "doc_coverage.core.commands.publicCommandCount",
+      "summary": "Global command count exposed for documentation.",
+      "url": "/api/doc_coverage/core/commands/publicCommandCount"
+    },
+    {
+      "kind": "variable",
+      "name": "packageCommandCount",
+      "qualifiedName": "doc_coverage.core.commands.packageCommandCount",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/packageCommandCount"
+    },
+    {
+      "kind": "variable",
+      "name": "exportedCommandCount",
+      "qualifiedName": "doc_coverage.core.commands.exportedCommandCount",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/exportedCommandCount"
+    },
+    {
+      "kind": "interface",
+      "name": "ICommand",
+      "qualifiedName": "doc_coverage.core.commands.ICommand",
+      "summary": "Interface for executable commands.",
+      "url": "/api/doc_coverage/core/commands/ICommand"
+    },
+    {
+      "kind": "function",
+      "name": "name",
+      "qualifiedName": "doc_coverage.core.commands.ICommand.name",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/ICommand/name"
+    },
+    {
+      "kind": "function",
+      "name": "execute",
+      "qualifiedName": "doc_coverage.core.commands.ICommand.execute",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/ICommand/execute"
+    },
+    {
+      "kind": "struct",
+      "name": "CommandContext",
+      "qualifiedName": "doc_coverage.core.commands.CommandContext",
+      "summary": "Context passed to command execution.",
+      "url": "/api/doc_coverage/core/commands/CommandContext"
+    },
+    {
+      "kind": "variable",
+      "name": "activePlayer",
+      "qualifiedName": "doc_coverage.core.commands.CommandContext.activePlayer",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandContext/activePlayer"
+    },
+    {
+      "kind": "variable",
+      "name": "mode",
+      "qualifiedName": "doc_coverage.core.commands.CommandContext.mode",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandContext/mode"
+    },
+    {
+      "kind": "constructor",
+      "name": "this",
+      "qualifiedName": "doc_coverage.core.commands.CommandContext.this",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandContext/this"
+    },
+    {
+      "kind": "function",
+      "name": "__invariant0",
+      "qualifiedName": "doc_coverage.core.commands.CommandContext.__invariant0",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandContext/__invariant0"
+    },
+    {
+      "kind": "destructor",
+      "name": "~this",
+      "qualifiedName": "doc_coverage.core.commands.CommandContext.~this",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandContext/~this"
+    },
+    {
+      "kind": "alias",
+      "name": "__xdtor",
+      "qualifiedName": "doc_coverage.core.commands.CommandContext.__xdtor",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandContext/__xdtor"
+    },
+    {
+      "kind": "alias",
+      "name": "__xpostblit",
+      "qualifiedName": "doc_coverage.core.commands.CommandContext.__xpostblit",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandContext/__xpostblit"
+    },
+    {
+      "kind": "function",
+      "name": "opAssign",
+      "qualifiedName": "doc_coverage.core.commands.CommandContext.opAssign",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandContext/opAssign"
+    },
+    {
+      "kind": "function",
+      "name": "__invariant",
+      "qualifiedName": "doc_coverage.core.commands.CommandContext.__invariant",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandContext/__invariant"
+    },
+    {
+      "kind": "class",
+      "name": "CommandBase",
+      "qualifiedName": "doc_coverage.core.commands.CommandBase",
+      "summary": "Base class with multiple protection levels for member docs.",
+      "url": "/api/doc_coverage/core/commands/CommandBase"
+    },
+    {
+      "kind": "variable",
+      "name": "prefix",
+      "qualifiedName": "doc_coverage.core.commands.CommandBase.prefix",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandBase/prefix"
+    },
+    {
+      "kind": "variable",
+      "name": "packageVisibleCounter",
+      "qualifiedName": "doc_coverage.core.commands.CommandBase.packageVisibleCounter",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandBase/packageVisibleCounter"
+    },
+    {
+      "kind": "variable",
+      "name": "title",
+      "qualifiedName": "doc_coverage.core.commands.CommandBase.title",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandBase/title"
+    },
+    {
+      "kind": "constructor",
+      "name": "this",
+      "qualifiedName": "doc_coverage.core.commands.CommandBase.this",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandBase/this"
+    },
+    {
+      "kind": "destructor",
+      "name": "~this",
+      "qualifiedName": "doc_coverage.core.commands.CommandBase.~this",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandBase/~this"
+    },
+    {
+      "kind": "function",
+      "name": "name",
+      "qualifiedName": "doc_coverage.core.commands.CommandBase.name",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandBase/name"
+    },
+    {
+      "kind": "function",
+      "name": "execute",
+      "qualifiedName": "doc_coverage.core.commands.CommandBase.execute",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandBase/execute"
+    },
+    {
+      "kind": "function",
+      "name": "bump",
+      "qualifiedName": "doc_coverage.core.commands.CommandBase.bump",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandBase/bump"
+    },
+    {
+      "kind": "alias",
+      "name": "__xdtor",
+      "qualifiedName": "doc_coverage.core.commands.CommandBase.__xdtor",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandBase/__xdtor"
+    },
+    {
+      "kind": "class",
+      "name": "MoveCommand",
+      "qualifiedName": "doc_coverage.core.commands.MoveCommand",
+      "summary": "Concrete command implementation.",
+      "url": "/api/doc_coverage/core/commands/MoveCommand"
+    },
+    {
+      "kind": "constructor",
+      "name": "this",
+      "qualifiedName": "doc_coverage.core.commands.MoveCommand.this",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/MoveCommand/this"
+    },
+    {
+      "kind": "function",
+      "name": "execute",
+      "qualifiedName": "doc_coverage.core.commands.MoveCommand.execute",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/MoveCommand/execute"
+    },
+    {
+      "kind": "function",
+      "name": "createCommand",
+      "qualifiedName": "doc_coverage.core.commands.createCommand",
+      "summary": "Creates a command by kind.",
+      "url": "/api/doc_coverage/core/commands/createCommand"
+    },
+    {
+      "kind": "function",
+      "name": "exportedApi",
+      "qualifiedName": "doc_coverage.core.commands.exportedApi",
+      "summary": "Exported function used to test `export` protection serialization.",
+      "url": "/api/doc_coverage/core/commands/exportedApi"
+    },
+    {
+      "kind": "enum",
+      "name": "UiStyle",
+      "qualifiedName": "doc_coverage.core.formatting.UiStyle",
+      "summary": "Style values rendered in diagnostics.",
+      "url": "/api/doc_coverage/core/formatting/UiStyle"
+    },
+    {
+      "kind": "enumMember",
+      "name": "plain",
+      "qualifiedName": "doc_coverage.core.formatting.UiStyle.plain",
+      "summary": "",
+      "url": "/api/doc_coverage/core/formatting/UiStyle/plain"
+    },
+    {
+      "kind": "enumMember",
+      "name": "warning",
+      "qualifiedName": "doc_coverage.core.formatting.UiStyle.warning",
+      "summary": "",
+      "url": "/api/doc_coverage/core/formatting/UiStyle/warning"
+    },
+    {
+      "kind": "enumMember",
+      "name": "error",
+      "qualifiedName": "doc_coverage.core.formatting.UiStyle.error",
+      "summary": "",
+      "url": "/api/doc_coverage/core/formatting/UiStyle/error"
+    },
+    {
+      "kind": "struct",
+      "name": "StyleTag",
+      "qualifiedName": "doc_coverage.core.formatting.StyleTag",
+      "summary": "Wrapper struct used for docs and nested members.",
+      "url": "/api/doc_coverage/core/formatting/StyleTag"
+    },
+    {
+      "kind": "variable",
+      "name": "style",
+      "qualifiedName": "doc_coverage.core.formatting.StyleTag.style",
+      "summary": "",
+      "url": "/api/doc_coverage/core/formatting/StyleTag/style"
+    },
+    {
+      "kind": "variable",
+      "name": "label",
+      "qualifiedName": "doc_coverage.core.formatting.StyleTag.label",
+      "summary": "",
+      "url": "/api/doc_coverage/core/formatting/StyleTag/label"
+    },
+    {
+      "kind": "constructor",
+      "name": "this",
+      "qualifiedName": "doc_coverage.core.formatting.StyleTag.this",
+      "summary": "",
+      "url": "/api/doc_coverage/core/formatting/StyleTag/this"
+    },
+    {
+      "kind": "function",
+      "name": "render",
+      "qualifiedName": "doc_coverage.core.formatting.StyleTag.render",
+      "summary": "",
+      "url": "/api/doc_coverage/core/formatting/StyleTag/render"
+    },
+    {
+      "kind": "function",
+      "name": "formatLine",
+      "qualifiedName": "doc_coverage.core.formatting.formatLine",
+      "summary": "Formats a command line for display.",
+      "url": "/api/doc_coverage/core/formatting/formatLine"
+    }
+  ]
+}

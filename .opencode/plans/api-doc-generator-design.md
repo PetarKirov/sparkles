@@ -124,7 +124,7 @@ auto json = symbol.toJSON();
 writeJsonFile(moduleData, "docs/.vitepress/data/api/symbols.json");
 
 // Deserialize config file
-auto config = tryDeserializeFromJsonFile!Config("sparkle-docs.json");
+auto config = readJsonFile!Config("sparkle-docs.json");
 ```
 
 The `sparkles.core_cli.json` module provides:
@@ -132,7 +132,7 @@ The `sparkles.core_cli.json` module provides:
 - `toJSON!T(T value)` - Serialize any struct/array/AA to JSONValue
 - `fromJSON!T(JSONValue)` - Deserialize JSONValue to D types
 - `writeJsonFile!T(T value, path)` - Write serialized JSON to file
-- `tryDeserializeFromJsonFile!T(path)` - Read and deserialize from file
+- `readJsonFile!T(path)` - Read and deserialize from file
 
 This eliminates the need for a custom `output/json.d` module.
 

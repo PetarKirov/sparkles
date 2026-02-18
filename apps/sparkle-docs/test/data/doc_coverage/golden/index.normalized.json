@@ -1,0 +1,4603 @@
+{
+  "generated": "__GEN__",
+  "modules": {
+    "doc_coverage": {
+      "attributes": [],
+      "description": "",
+      "fileName": "apps/doc-coverage-fixture/source/doc_coverage/package.d",
+      "imports": [],
+      "line": 0,
+      "publicImports": [],
+      "qualifiedName": "doc_coverage",
+      "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/package.d",
+      "summary": "",
+      "symbols": [
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 15,
+          "constraints": [],
+          "deprecated": "",
+          "description": "",
+          "examples": [],
+          "kind": "function",
+          "line": 3,
+          "members": [],
+          "name": "doc_coverage.core.commands",
+          "paramDocs": [],
+          "parameters": [],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.doc_coverage.core.commands",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/package.d",
+          "summary": "",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 15,
+          "constraints": [],
+          "deprecated": "",
+          "description": "",
+          "examples": [],
+          "kind": "function",
+          "line": 4,
+          "members": [],
+          "name": "doc_coverage.core.formatting",
+          "paramDocs": [],
+          "parameters": [],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.doc_coverage.core.formatting",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/package.d",
+          "summary": "",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 15,
+          "constraints": [],
+          "deprecated": "",
+          "description": "",
+          "examples": [],
+          "kind": "function",
+          "line": 5,
+          "members": [],
+          "name": "doc_coverage.game.entities",
+          "paramDocs": [],
+          "parameters": [],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.doc_coverage.game.entities",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/package.d",
+          "summary": "",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 15,
+          "constraints": [],
+          "deprecated": "",
+          "description": "",
+          "examples": [],
+          "kind": "function",
+          "line": 6,
+          "members": [],
+          "name": "doc_coverage.game.systems",
+          "paramDocs": [],
+          "parameters": [],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.doc_coverage.game.systems",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/package.d",
+          "summary": "",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 15,
+          "constraints": [],
+          "deprecated": "",
+          "description": "",
+          "examples": [],
+          "kind": "function",
+          "line": 7,
+          "members": [],
+          "name": "doc_coverage.game.rendering",
+          "paramDocs": [],
+          "parameters": [],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.doc_coverage.game.rendering",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/package.d",
+          "summary": "",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 15,
+          "constraints": [],
+          "deprecated": "",
+          "description": "",
+          "examples": [],
+          "kind": "function",
+          "line": 8,
+          "members": [],
+          "name": "doc_coverage.mixed.templates",
+          "paramDocs": [],
+          "parameters": [],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.doc_coverage.mixed.templates",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/package.d",
+          "summary": "",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 15,
+          "constraints": [],
+          "deprecated": "",
+          "description": "",
+          "examples": [],
+          "kind": "function",
+          "line": 9,
+          "members": [],
+          "name": "doc_coverage.mixed.types",
+          "paramDocs": [],
+          "parameters": [],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.doc_coverage.mixed.types",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/package.d",
+          "summary": "",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        }
+      ]
+    },
+    "doc_coverage.core.commands": {
+      "attributes": [],
+      "description": "",
+      "fileName": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+      "imports": [],
+      "line": 0,
+      "publicImports": [],
+      "qualifiedName": "doc_coverage.core.commands",
+      "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+      "summary": "",
+      "symbols": [
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 1,
+          "constraints": [],
+          "deprecated": "",
+          "description": "Command categories used by both CLI and gameplay systems.",
+          "examples": [],
+          "kind": "enum",
+          "line": 6,
+          "members": [
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 5,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "enumMember",
+              "line": 8,
+              "members": [],
+              "name": "none",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.commands.CommandKind.none",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 5,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "enumMember",
+              "line": 9,
+              "members": [],
+              "name": "move",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.commands.CommandKind.move",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 5,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "enumMember",
+              "line": 10,
+              "members": [],
+              "name": "render",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.commands.CommandKind.render",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 5,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "enumMember",
+              "line": 11,
+              "members": [],
+              "name": "quit",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.commands.CommandKind.quit",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            }
+          ],
+          "name": "CommandKind",
+          "paramDocs": [],
+          "parameters": [],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.core.commands.CommandKind",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+          "summary": "Command categories used by both CLI and gameplay systems.",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 1,
+          "constraints": [],
+          "deprecated": "",
+          "description": "Alias used by parser coverage tests.",
+          "examples": [],
+          "kind": "alias",
+          "line": 15,
+          "members": [],
+          "name": "CommandName",
+          "paramDocs": [],
+          "parameters": [],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.core.commands.CommandName",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+          "summary": "Alias used by parser coverage tests.",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 5,
+          "constraints": [],
+          "deprecated": "",
+          "description": "Global command count exposed for documentation.",
+          "examples": [],
+          "kind": "variable",
+          "line": 18,
+          "members": [],
+          "name": "publicCommandCount",
+          "paramDocs": [],
+          "parameters": [],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.core.commands.publicCommandCount",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+          "summary": "Global command count exposed for documentation.",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 13,
+          "constraints": [],
+          "deprecated": "",
+          "description": "",
+          "examples": [],
+          "kind": "variable",
+          "line": 20,
+          "members": [],
+          "name": "packageCommandCount",
+          "paramDocs": [],
+          "parameters": [],
+          "protection": "package",
+          "qualifiedName": "doc_coverage.core.commands.packageCommandCount",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+          "summary": "",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 12,
+          "constraints": [],
+          "deprecated": "",
+          "description": "",
+          "examples": [],
+          "kind": "variable",
+          "line": 21,
+          "members": [],
+          "name": "exportedCommandCount",
+          "paramDocs": [],
+          "parameters": [],
+          "protection": "export",
+          "qualifiedName": "doc_coverage.core.commands.exportedCommandCount",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+          "summary": "",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 1,
+          "constraints": [],
+          "deprecated": "",
+          "description": "Interface for executable commands.",
+          "examples": [],
+          "kind": "interface",
+          "line": 24,
+          "members": [
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 12,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "function",
+              "line": 26,
+              "members": [],
+              "name": "name",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.commands.ICommand.name",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 9,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "function",
+              "line": 27,
+              "members": [],
+              "name": "execute",
+              "paramDocs": [],
+              "parameters": [
+                {
+                  "defaultValue": "",
+                  "isVariadic": false,
+                  "name": "ctx",
+                  "storageClass": "none",
+                  "type": ""
+                }
+              ],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.commands.ICommand.execute",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            }
+          ],
+          "name": "ICommand",
+          "paramDocs": [],
+          "parameters": [],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.core.commands.ICommand",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+          "summary": "Interface for executable commands.",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 1,
+          "constraints": [],
+          "deprecated": "",
+          "description": "Context passed to command execution.\n\nExamples:\n---\nCommandContext ctx = CommandContext(PlayerId(7), \"ready\");\nassert(ctx.activePlayer.value == 7);\n---",
+          "examples": [
+            "CommandContext ctx = CommandContext(PlayerId(7), \"ready\");\nassert(ctx.activePlayer.value == 7);"
+          ],
+          "kind": "struct",
+          "line": 37,
+          "members": [
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 14,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "variable",
+              "line": 39,
+              "members": [],
+              "name": "activePlayer",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.commands.CommandContext.activePlayer",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 12,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "variable",
+              "line": 40,
+              "members": [],
+              "name": "mode",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.commands.CommandContext.mode",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 5,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "constructor",
+              "line": 42,
+              "members": [],
+              "name": "this",
+              "paramDocs": [],
+              "parameters": [
+                {
+                  "defaultValue": "",
+                  "isVariadic": false,
+                  "name": "activePlayer",
+                  "storageClass": "none",
+                  "type": ""
+                },
+                {
+                  "defaultValue": "",
+                  "isVariadic": false,
+                  "name": "mode",
+                  "storageClass": "none",
+                  "type": ""
+                }
+              ],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.commands.CommandContext.this",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 5,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "function",
+              "line": 53,
+              "members": [],
+              "name": "__invariant0",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.commands.CommandContext.__invariant0",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 5,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "destructor",
+              "line": 58,
+              "members": [],
+              "name": "~this",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.commands.CommandContext.~this",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 0,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "alias",
+              "line": 0,
+              "members": [],
+              "name": "__xdtor",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.commands.CommandContext.__xdtor",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 0,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "alias",
+              "line": 0,
+              "members": [],
+              "name": "__xpostblit",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.commands.CommandContext.__xpostblit",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 1,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "function",
+              "line": 37,
+              "members": [],
+              "name": "opAssign",
+              "paramDocs": [],
+              "parameters": [
+                {
+                  "defaultValue": "",
+                  "isVariadic": false,
+                  "name": "p",
+                  "storageClass": "none",
+                  "type": ""
+                }
+              ],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.commands.CommandContext.opAssign",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 1,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "function",
+              "line": 37,
+              "members": [],
+              "name": "__invariant",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.commands.CommandContext.__invariant",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            }
+          ],
+          "name": "CommandContext",
+          "paramDocs": [],
+          "parameters": [],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.core.commands.CommandContext",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+          "summary": "Context passed to command execution.",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": ["doc_coverage.core.commands.ICommand"],
+          "bugs": [],
+          "column": 1,
+          "constraints": [],
+          "deprecated": "",
+          "description": "Base class with multiple protection levels for member docs.",
+          "examples": [],
+          "kind": "class",
+          "line": 64,
+          "members": [
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 22,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "variable",
+              "line": 66,
+              "members": [],
+              "name": "prefix",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "protected",
+              "qualifiedName": "doc_coverage.core.commands.CommandBase.prefix",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 17,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "variable",
+              "line": 68,
+              "members": [],
+              "name": "packageVisibleCounter",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "package",
+              "qualifiedName": "doc_coverage.core.commands.CommandBase.packageVisibleCounter",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 19,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "variable",
+              "line": 69,
+              "members": [],
+              "name": "title",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.commands.CommandBase.title",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 5,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "constructor",
+              "line": 71,
+              "members": [],
+              "name": "this",
+              "paramDocs": [],
+              "parameters": [
+                {
+                  "defaultValue": "",
+                  "isVariadic": false,
+                  "name": "title",
+                  "storageClass": "none",
+                  "type": ""
+                }
+              ],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.commands.CommandBase.this",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 5,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "destructor",
+              "line": 77,
+              "members": [],
+              "name": "~this",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.commands.CommandBase.~this",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 21,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "function",
+              "line": 81,
+              "members": [],
+              "name": "name",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.commands.CommandBase.name",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 18,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "function",
+              "line": 86,
+              "members": [],
+              "name": "execute",
+              "paramDocs": [],
+              "parameters": [
+                {
+                  "defaultValue": "",
+                  "isVariadic": false,
+                  "name": "ctx",
+                  "storageClass": "none",
+                  "type": ""
+                }
+              ],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.commands.CommandBase.execute",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 19,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "function",
+              "line": 91,
+              "members": [],
+              "name": "bump",
+              "paramDocs": [],
+              "parameters": [
+                {
+                  "defaultValue": "",
+                  "isVariadic": false,
+                  "name": "ctx",
+                  "storageClass": "none",
+                  "type": ""
+                }
+              ],
+              "protection": "protected",
+              "qualifiedName": "doc_coverage.core.commands.CommandBase.bump",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 0,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "alias",
+              "line": 0,
+              "members": [],
+              "name": "__xdtor",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.commands.CommandBase.__xdtor",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            }
+          ],
+          "name": "CommandBase",
+          "paramDocs": [],
+          "parameters": [],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.core.commands.CommandBase",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+          "summary": "Base class with multiple protection levels for member docs.",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": ["doc_coverage.core.commands.CommandBase"],
+          "bugs": [],
+          "column": 1,
+          "constraints": [],
+          "deprecated": "",
+          "description": "Concrete command implementation.\n\nExample:\n---\nauto cmd = new MoveCommand(\"north\");\nCommandContext ctx = CommandContext(PlayerId(1), \"play\");\nassert(cmd.execute(ctx) > 0);\n---",
+          "examples": [
+            "auto cmd = new MoveCommand(\"north\");\nCommandContext ctx = CommandContext(PlayerId(1), \"play\");\nassert(cmd.execute(ctx) > 0);"
+          ],
+          "kind": "class",
+          "line": 107,
+          "members": [
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 5,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "constructor",
+              "line": 109,
+              "members": [],
+              "name": "this",
+              "paramDocs": [],
+              "parameters": [
+                {
+                  "defaultValue": "",
+                  "isVariadic": false,
+                  "name": "direction",
+                  "storageClass": "none",
+                  "type": ""
+                }
+              ],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.commands.MoveCommand.this",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 18,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "function",
+              "line": 114,
+              "members": [],
+              "name": "execute",
+              "paramDocs": [],
+              "parameters": [
+                {
+                  "defaultValue": "",
+                  "isVariadic": false,
+                  "name": "ctx",
+                  "storageClass": "none",
+                  "type": ""
+                }
+              ],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.commands.MoveCommand.execute",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            }
+          ],
+          "name": "MoveCommand",
+          "paramDocs": [],
+          "parameters": [],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.core.commands.MoveCommand",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+          "summary": "Concrete command implementation.",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 10,
+          "constraints": [],
+          "deprecated": "",
+          "description": "Creates a command by kind.",
+          "examples": [],
+          "kind": "function",
+          "line": 121,
+          "members": [],
+          "name": "createCommand",
+          "paramDocs": [],
+          "parameters": [
+            {
+              "defaultValue": "",
+              "isVariadic": false,
+              "name": "kind",
+              "storageClass": "none",
+              "type": ""
+            }
+          ],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.core.commands.createCommand",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+          "summary": "Creates a command by kind.",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 12,
+          "constraints": [],
+          "deprecated": "",
+          "description": "Exported function used to test `export` protection serialization.",
+          "examples": [],
+          "kind": "function",
+          "line": 133,
+          "members": [],
+          "name": "exportedApi",
+          "paramDocs": [],
+          "parameters": [
+            {
+              "defaultValue": "",
+              "isVariadic": false,
+              "name": "value",
+              "storageClass": "none",
+              "type": ""
+            }
+          ],
+          "protection": "export",
+          "qualifiedName": "doc_coverage.core.commands.exportedApi",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/commands.d",
+          "summary": "Exported function used to test `export` protection serialization.",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": [
+            "unittest\n{\n    CommandContext ctx = CommandContext(PlayerId(4), \"play\");\n    auto cmd = createCommand(CommandKind.move);\n    assert(cmd.execute(ctx) > 0);\n}"
+          ]
+        }
+      ]
+    },
+    "doc_coverage.core.formatting": {
+      "attributes": [],
+      "description": "",
+      "fileName": "apps/doc-coverage-fixture/source/doc_coverage/core/formatting.d",
+      "imports": [],
+      "line": 0,
+      "publicImports": [],
+      "qualifiedName": "doc_coverage.core.formatting",
+      "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/formatting.d",
+      "summary": "",
+      "symbols": [
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 1,
+          "constraints": [],
+          "deprecated": "",
+          "description": "Style values rendered in diagnostics.",
+          "examples": [],
+          "kind": "enum",
+          "line": 4,
+          "members": [
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 5,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "enumMember",
+              "line": 6,
+              "members": [],
+              "name": "plain",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.formatting.UiStyle.plain",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/formatting.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 5,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "enumMember",
+              "line": 7,
+              "members": [],
+              "name": "warning",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.formatting.UiStyle.warning",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/formatting.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 5,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "enumMember",
+              "line": 8,
+              "members": [],
+              "name": "error",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.formatting.UiStyle.error",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/formatting.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            }
+          ],
+          "name": "UiStyle",
+          "paramDocs": [],
+          "parameters": [],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.core.formatting.UiStyle",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/formatting.d",
+          "summary": "Style values rendered in diagnostics.",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 1,
+          "constraints": [],
+          "deprecated": "",
+          "description": "Wrapper struct used for docs and nested members.",
+          "examples": [],
+          "kind": "struct",
+          "line": 12,
+          "members": [
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 13,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "variable",
+              "line": 14,
+              "members": [],
+              "name": "style",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.formatting.StyleTag.style",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/formatting.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 12,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "variable",
+              "line": 15,
+              "members": [],
+              "name": "label",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.formatting.StyleTag.label",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/formatting.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 5,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "constructor",
+              "line": 17,
+              "members": [],
+              "name": "this",
+              "paramDocs": [],
+              "parameters": [
+                {
+                  "defaultValue": "",
+                  "isVariadic": false,
+                  "name": "style",
+                  "storageClass": "none",
+                  "type": ""
+                },
+                {
+                  "defaultValue": "",
+                  "isVariadic": false,
+                  "name": "label",
+                  "storageClass": "none",
+                  "type": ""
+                }
+              ],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.formatting.StyleTag.this",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/formatting.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 12,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "function",
+              "line": 23,
+              "members": [],
+              "name": "render",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.core.formatting.StyleTag.render",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/formatting.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            }
+          ],
+          "name": "StyleTag",
+          "paramDocs": [],
+          "parameters": [],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.core.formatting.StyleTag",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/formatting.d",
+          "summary": "Wrapper struct used for docs and nested members.",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 8,
+          "constraints": [],
+          "deprecated": "",
+          "description": "Formats a command line for display.\n\nExample:\n---\nassert(formatLine(\"move\", UiStyle.warning) == \"[warning] move\");\n---",
+          "examples": [
+            "assert(formatLine(\"move\", UiStyle.warning) == \"[warning] move\");"
+          ],
+          "kind": "function",
+          "line": 35,
+          "members": [],
+          "name": "formatLine",
+          "paramDocs": [],
+          "parameters": [
+            {
+              "defaultValue": "",
+              "isVariadic": false,
+              "name": "line",
+              "storageClass": "none",
+              "type": ""
+            },
+            {
+              "defaultValue": "UiStyle.plain",
+              "isVariadic": false,
+              "name": "style",
+              "storageClass": "none",
+              "type": ""
+            }
+          ],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.core.formatting.formatLine",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/core/formatting.d",
+          "summary": "Formats a command line for display.",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": [
+            "unittest\n{\n    assert(formatLine(\"quit\", UiStyle.error) == \"[error] quit\");\n}"
+          ]
+        }
+      ]
+    },
+    "doc_coverage.game.entities": {
+      "attributes": [],
+      "description": "",
+      "fileName": "apps/doc-coverage-fixture/source/doc_coverage/game/entities.d",
+      "imports": [],
+      "line": 0,
+      "publicImports": [],
+      "qualifiedName": "doc_coverage.game.entities",
+      "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/entities.d",
+      "summary": "",
+      "symbols": [
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 1,
+          "constraints": [],
+          "deprecated": "",
+          "description": "Basic interface for game entities.",
+          "examples": [],
+          "kind": "interface",
+          "line": 4,
+          "members": [
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 9,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "function",
+              "line": 6,
+              "members": [],
+              "name": "id",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.game.entities.IEntity.id",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/entities.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            }
+          ],
+          "name": "IEntity",
+          "paramDocs": [],
+          "parameters": [],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.game.entities.IEntity",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/entities.d",
+          "summary": "Basic interface for game entities.",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 1,
+          "constraints": [],
+          "deprecated": "",
+          "description": "Public enum for state coverage.",
+          "examples": [],
+          "kind": "enum",
+          "line": 10,
+          "members": [
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 5,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "enumMember",
+              "line": 12,
+              "members": [],
+              "name": "idle",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.game.entities.EntityState.idle",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/entities.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 5,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "enumMember",
+              "line": 13,
+              "members": [],
+              "name": "moving",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.game.entities.EntityState.moving",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/entities.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 5,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "enumMember",
+              "line": 14,
+              "members": [],
+              "name": "disabled",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.game.entities.EntityState.disabled",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/entities.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            }
+          ],
+          "name": "EntityState",
+          "paramDocs": [],
+          "parameters": [],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.game.entities.EntityState",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/entities.d",
+          "summary": "Public enum for state coverage.",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": ["doc_coverage.game.entities.IEntity"],
+          "bugs": [],
+          "column": 1,
+          "constraints": [],
+          "deprecated": "",
+          "description": "Entity base class with protected and private members.",
+          "examples": [],
+          "kind": "class",
+          "line": 18,
+          "members": [
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 19,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "variable",
+              "line": 20,
+              "members": [],
+              "name": "_id",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "protected",
+              "qualifiedName": "doc_coverage.game.entities.EntityBase._id",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/entities.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 5,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "constructor",
+              "line": 23,
+              "members": [],
+              "name": "this",
+              "paramDocs": [],
+              "parameters": [
+                {
+                  "defaultValue": "",
+                  "isVariadic": false,
+                  "name": "id",
+                  "storageClass": "none",
+                  "type": ""
+                }
+              ],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.game.entities.EntityBase.this",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/entities.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 18,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "function",
+              "line": 29,
+              "members": [],
+              "name": "id",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.game.entities.EntityBase.id",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/entities.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 17,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "function",
+              "line": 34,
+              "members": [],
+              "name": "state",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.game.entities.EntityBase.state",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/entities.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 10,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "function",
+              "line": 39,
+              "members": [],
+              "name": "setState",
+              "paramDocs": [],
+              "parameters": [
+                {
+                  "defaultValue": "",
+                  "isVariadic": false,
+                  "name": "next",
+                  "storageClass": "none",
+                  "type": ""
+                }
+              ],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.game.entities.EntityBase.setState",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/entities.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            }
+          ],
+          "name": "EntityBase",
+          "paramDocs": [],
+          "parameters": [],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.game.entities.EntityBase",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/entities.d",
+          "summary": "Entity base class with protected and private members.",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": ["doc_coverage.game.entities.EntityBase"],
+          "bugs": [],
+          "column": 1,
+          "constraints": [],
+          "deprecated": "",
+          "description": "Concrete entity class.",
+          "examples": [],
+          "kind": "class",
+          "line": 46,
+          "members": [
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 5,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "constructor",
+              "line": 48,
+              "members": [],
+              "name": "this",
+              "paramDocs": [],
+              "parameters": [
+                {
+                  "defaultValue": "",
+                  "isVariadic": false,
+                  "name": "id",
+                  "storageClass": "none",
+                  "type": ""
+                }
+              ],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.game.entities.PlayerEntity.this",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/entities.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            },
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 10,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "function",
+              "line": 53,
+              "members": [],
+              "name": "move",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.game.entities.PlayerEntity.move",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/entities.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            }
+          ],
+          "name": "PlayerEntity",
+          "paramDocs": [],
+          "parameters": [],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.game.entities.PlayerEntity",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/entities.d",
+          "summary": "Concrete entity class.",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": [
+            "unittest\n{\n    auto p = new PlayerEntity(42);\n    p.move();\n    assert(p.state() == EntityState.moving);\n}"
+          ]
+        }
+      ]
+    },
+    "doc_coverage.game.rendering": {
+      "attributes": [],
+      "description": "",
+      "fileName": "apps/doc-coverage-fixture/source/doc_coverage/game/rendering.d",
+      "imports": [],
+      "line": 0,
+      "publicImports": [],
+      "qualifiedName": "doc_coverage.game.rendering",
+      "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/rendering.d",
+      "summary": "",
+      "symbols": [
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 6,
+          "constraints": [],
+          "deprecated": "",
+          "description": "Trait-like template used in docs for constraints.",
+          "examples": [],
+          "kind": "template",
+          "line": 4,
+          "members": [
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 6,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "variable",
+              "line": 4,
+              "members": [],
+              "name": "hasRenderName",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.game.rendering.hasRenderName.hasRenderName",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/rendering.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            }
+          ],
+          "name": "hasRenderName",
+          "paramDocs": [],
+          "parameters": [
+            {
+              "defaultValue": "",
+              "isVariadic": false,
+              "name": "T",
+              "storageClass": "none",
+              "type": ""
+            }
+          ],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.game.rendering.hasRenderName",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/rendering.d",
+          "summary": "Trait-like template used in docs for constraints.",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 8,
+          "constraints": [],
+          "deprecated": "",
+          "description": "Renders type names for diagnostic overlays.\n\nExample:\n---\nstruct Sprite { enum renderName = \"sprite\"; }\nassert(renderLabel(Sprite.init) == \"sprite\");\n---",
+          "examples": [
+            "struct Sprite { enum renderName = \"sprite\"; }\nassert(renderLabel(Sprite.init) == \"sprite\");"
+          ],
+          "kind": "template",
+          "line": 13,
+          "members": [
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 8,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "function",
+              "line": 13,
+              "members": [],
+              "name": "renderLabel",
+              "paramDocs": [],
+              "parameters": [
+                {
+                  "defaultValue": "",
+                  "isVariadic": false,
+                  "name": "value",
+                  "storageClass": "none",
+                  "type": "T"
+                }
+              ],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.game.rendering.renderLabel.renderLabel",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "string",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/rendering.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            }
+          ],
+          "name": "renderLabel",
+          "paramDocs": [],
+          "parameters": [
+            {
+              "defaultValue": "",
+              "isVariadic": false,
+              "name": "T",
+              "storageClass": "none",
+              "type": ""
+            }
+          ],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.game.rendering.renderLabel",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/rendering.d",
+          "summary": "Renders type names for diagnostic overlays.",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 1,
+          "constraints": [],
+          "deprecated": "",
+          "description": "",
+          "examples": [],
+          "kind": "struct",
+          "line": 19,
+          "members": [
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 10,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "variable",
+              "line": 21,
+              "members": [],
+              "name": "renderName",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.game.rendering.Sprite.renderName",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/rendering.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            }
+          ],
+          "name": "Sprite",
+          "paramDocs": [],
+          "parameters": [],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.game.rendering.Sprite",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/rendering.d",
+          "summary": "",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": [
+            "unittest\n{\n    assert(renderLabel(Sprite.init) == \"sprite\");\n}"
+          ]
+        }
+      ]
+    },
+    "doc_coverage.game.systems": {
+      "attributes": [],
+      "description": "",
+      "fileName": "apps/doc-coverage-fixture/source/doc_coverage/game/systems.d",
+      "imports": [],
+      "line": 0,
+      "publicImports": [],
+      "qualifiedName": "doc_coverage.game.systems",
+      "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/systems.d",
+      "summary": "",
+      "symbols": [
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 1,
+          "constraints": [],
+          "deprecated": "",
+          "description": "Alias to exercise alias symbol generation.",
+          "examples": [],
+          "kind": "alias",
+          "line": 6,
+          "members": [],
+          "name": "EntityRef",
+          "paramDocs": [],
+          "parameters": [],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.game.systems.EntityRef",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/systems.d",
+          "summary": "Alias to exercise alias symbol generation.",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 5,
+          "constraints": [],
+          "deprecated": "",
+          "description": "Template mixin-style system runner.\n\nExamples:\n---\nauto out = runSystem!TickSystem(3);\nassert(out == 6);\n---",
+          "examples": [
+            "auto out = runSystem!TickSystem(3);\nassert(out == 6);"
+          ],
+          "kind": "template",
+          "line": 15,
+          "members": [
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 5,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "function",
+              "line": 15,
+              "members": [],
+              "name": "runSystem",
+              "paramDocs": [],
+              "parameters": [
+                {
+                  "defaultValue": "",
+                  "isVariadic": false,
+                  "name": "ticks",
+                  "storageClass": "none",
+                  "type": ""
+                }
+              ],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.game.systems.runSystem.runSystem",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "int",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/systems.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            }
+          ],
+          "name": "runSystem",
+          "paramDocs": [],
+          "parameters": [
+            {
+              "defaultValue": "",
+              "isVariadic": false,
+              "name": "SystemT",
+              "storageClass": "none",
+              "type": ""
+            }
+          ],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.game.systems.runSystem",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/systems.d",
+          "summary": "Template mixin-style system runner.",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 1,
+          "constraints": [],
+          "deprecated": "",
+          "description": "Stateless tick system.",
+          "examples": [],
+          "kind": "struct",
+          "line": 23,
+          "members": [
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 9,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "function",
+              "line": 25,
+              "members": [],
+              "name": "step",
+              "paramDocs": [],
+              "parameters": [
+                {
+                  "defaultValue": "",
+                  "isVariadic": false,
+                  "name": "ticks",
+                  "storageClass": "none",
+                  "type": ""
+                }
+              ],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.game.systems.TickSystem.step",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/systems.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            }
+          ],
+          "name": "TickSystem",
+          "paramDocs": [],
+          "parameters": [],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.game.systems.TickSystem",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/systems.d",
+          "summary": "Stateless tick system.",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 11,
+          "constraints": [],
+          "deprecated": "",
+          "description": "Creates a player entity as interface alias type.",
+          "examples": [],
+          "kind": "function",
+          "line": 32,
+          "members": [],
+          "name": "spawnEntity",
+          "paramDocs": [],
+          "parameters": [
+            {
+              "defaultValue": "",
+              "isVariadic": false,
+              "name": "id",
+              "storageClass": "none",
+              "type": ""
+            }
+          ],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.game.systems.spawnEntity",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/game/systems.d",
+          "summary": "Creates a player entity as interface alias type.",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": [
+            "unittest\n{\n    assert(runSystem!TickSystem(5) == 10);\n}"
+          ]
+        }
+      ]
+    },
+    "doc_coverage.internal.private_bits": {
+      "attributes": [],
+      "description": "",
+      "fileName": "apps/doc-coverage-fixture/source/doc_coverage/internal/private_bits.d",
+      "imports": [],
+      "line": 0,
+      "publicImports": [],
+      "qualifiedName": "doc_coverage.internal.private_bits",
+      "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/internal/private_bits.d",
+      "summary": "",
+      "symbols": []
+    },
+    "doc_coverage.mixed.templates": {
+      "attributes": [],
+      "description": "",
+      "fileName": "apps/doc-coverage-fixture/source/doc_coverage/mixed/templates.d",
+      "imports": [],
+      "line": 0,
+      "publicImports": [],
+      "qualifiedName": "doc_coverage.mixed.templates",
+      "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/mixed/templates.d",
+      "summary": "",
+      "symbols": [
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 1,
+          "constraints": [],
+          "deprecated": "",
+          "description": "Generic box used to exercise aggregate template docs.",
+          "examples": [],
+          "kind": "template",
+          "line": 4,
+          "members": [
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 1,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "struct",
+              "line": 4,
+              "members": [
+                {
+                  "attributes": [],
+                  "baseTypes": [],
+                  "bugs": [],
+                  "column": 7,
+                  "constraints": [],
+                  "deprecated": "",
+                  "description": "",
+                  "examples": [],
+                  "kind": "variable",
+                  "line": 6,
+                  "members": [],
+                  "name": "value",
+                  "paramDocs": [],
+                  "parameters": [],
+                  "protection": "public",
+                  "qualifiedName": "doc_coverage.mixed.templates.Box.Box.value",
+                  "referencedBy": [],
+                  "references": [],
+                  "returnType": "T",
+                  "returnsDoc": "",
+                  "seeAlso": [],
+                  "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/mixed/templates.d",
+                  "summary": "",
+                  "templateParams": [],
+                  "throwsDoc": [],
+                  "unittests": []
+                },
+                {
+                  "attributes": [],
+                  "baseTypes": [],
+                  "bugs": [],
+                  "column": 5,
+                  "constraints": [],
+                  "deprecated": "",
+                  "description": "",
+                  "examples": [],
+                  "kind": "constructor",
+                  "line": 8,
+                  "members": [],
+                  "name": "this",
+                  "paramDocs": [],
+                  "parameters": [
+                    {
+                      "defaultValue": "",
+                      "isVariadic": false,
+                      "name": "value",
+                      "storageClass": "none",
+                      "type": "T"
+                    }
+                  ],
+                  "protection": "public",
+                  "qualifiedName": "doc_coverage.mixed.templates.Box.Box.this",
+                  "referencedBy": [],
+                  "references": [],
+                  "returnType": "",
+                  "returnsDoc": "",
+                  "seeAlso": [],
+                  "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/mixed/templates.d",
+                  "summary": "",
+                  "templateParams": [],
+                  "throwsDoc": [],
+                  "unittests": []
+                },
+                {
+                  "attributes": [],
+                  "baseTypes": [],
+                  "bugs": [],
+                  "column": 5,
+                  "constraints": [],
+                  "deprecated": "",
+                  "description": "",
+                  "examples": [],
+                  "kind": "function",
+                  "line": 17,
+                  "members": [],
+                  "name": "__invariant1",
+                  "paramDocs": [],
+                  "parameters": [],
+                  "protection": "public",
+                  "qualifiedName": "doc_coverage.mixed.templates.Box.Box.__invariant1",
+                  "referencedBy": [],
+                  "references": [],
+                  "returnType": "",
+                  "returnsDoc": "",
+                  "seeAlso": [],
+                  "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/mixed/templates.d",
+                  "summary": "",
+                  "templateParams": [],
+                  "throwsDoc": [],
+                  "unittests": []
+                },
+                {
+                  "attributes": [],
+                  "baseTypes": [],
+                  "bugs": [],
+                  "column": 5,
+                  "constraints": [],
+                  "deprecated": "",
+                  "description": "",
+                  "examples": [],
+                  "kind": "destructor",
+                  "line": 21,
+                  "members": [],
+                  "name": "~this",
+                  "paramDocs": [],
+                  "parameters": [],
+                  "protection": "public",
+                  "qualifiedName": "doc_coverage.mixed.templates.Box.Box.~this",
+                  "referencedBy": [],
+                  "references": [],
+                  "returnType": "",
+                  "returnsDoc": "",
+                  "seeAlso": [],
+                  "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/mixed/templates.d",
+                  "summary": "",
+                  "templateParams": [],
+                  "throwsDoc": [],
+                  "unittests": []
+                }
+              ],
+              "name": "Box",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.mixed.templates.Box.Box",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/mixed/templates.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            }
+          ],
+          "name": "Box",
+          "paramDocs": [],
+          "parameters": [
+            {
+              "defaultValue": "",
+              "isVariadic": false,
+              "name": "T",
+              "storageClass": "none",
+              "type": ""
+            }
+          ],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.mixed.templates.Box",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/mixed/templates.d",
+          "summary": "Generic box used to exercise aggregate template docs.",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 7,
+          "constraints": [],
+          "deprecated": "",
+          "description": "Returns a boxed value.\n\nExamples:\n---\nauto b = makeBox!int(9);\nassert(b.value == 9);\n---",
+          "examples": ["auto b = makeBox!int(9);\nassert(b.value == 9);"],
+          "kind": "template",
+          "line": 33,
+          "members": [
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 7,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "function",
+              "line": 33,
+              "members": [],
+              "name": "makeBox",
+              "paramDocs": [],
+              "parameters": [
+                {
+                  "defaultValue": "",
+                  "isVariadic": false,
+                  "name": "value",
+                  "storageClass": "none",
+                  "type": "T"
+                }
+              ],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.mixed.templates.makeBox.makeBox",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "Box!T",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/mixed/templates.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            }
+          ],
+          "name": "makeBox",
+          "paramDocs": [],
+          "parameters": [
+            {
+              "defaultValue": "",
+              "isVariadic": false,
+              "name": "T",
+              "storageClass": "none",
+              "type": ""
+            }
+          ],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.mixed.templates.makeBox",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/mixed/templates.d",
+          "summary": "Returns a boxed value.",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 8,
+          "constraints": [],
+          "deprecated": "",
+          "description": "Constrained template overload.",
+          "examples": [],
+          "kind": "template",
+          "line": 39,
+          "members": [
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 8,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "function",
+              "line": 39,
+              "members": [],
+              "name": "stringify",
+              "paramDocs": [],
+              "parameters": [
+                {
+                  "defaultValue": "",
+                  "isVariadic": false,
+                  "name": "value",
+                  "storageClass": "none",
+                  "type": "T"
+                }
+              ],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.mixed.templates.stringify.stringify",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "string",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/mixed/templates.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            }
+          ],
+          "name": "stringify",
+          "paramDocs": [],
+          "parameters": [
+            {
+              "defaultValue": "",
+              "isVariadic": false,
+              "name": "T",
+              "storageClass": "none",
+              "type": ""
+            }
+          ],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.mixed.templates.stringify",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/mixed/templates.d",
+          "summary": "Constrained template overload.",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": [
+            "unittest\n{\n    auto b = makeBox!int(3);\n    assert(b.value == 3);\n}"
+          ]
+        }
+      ]
+    },
+    "doc_coverage.mixed.types": {
+      "attributes": [],
+      "description": "",
+      "fileName": "apps/doc-coverage-fixture/source/doc_coverage/mixed/types.d",
+      "imports": [],
+      "line": 0,
+      "publicImports": [],
+      "qualifiedName": "doc_coverage.mixed.types",
+      "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/mixed/types.d",
+      "summary": "",
+      "symbols": [
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 1,
+          "constraints": [],
+          "deprecated": "",
+          "description": "Strongly typed player id.",
+          "examples": [],
+          "kind": "struct",
+          "line": 4,
+          "members": [
+            {
+              "attributes": [],
+              "baseTypes": [],
+              "bugs": [],
+              "column": 9,
+              "constraints": [],
+              "deprecated": "",
+              "description": "",
+              "examples": [],
+              "kind": "variable",
+              "line": 6,
+              "members": [],
+              "name": "value",
+              "paramDocs": [],
+              "parameters": [],
+              "protection": "public",
+              "qualifiedName": "doc_coverage.mixed.types.PlayerId.value",
+              "referencedBy": [],
+              "references": [],
+              "returnType": "",
+              "returnsDoc": "",
+              "seeAlso": [],
+              "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/mixed/types.d",
+              "summary": "",
+              "templateParams": [],
+              "throwsDoc": [],
+              "unittests": []
+            }
+          ],
+          "name": "PlayerId",
+          "paramDocs": [],
+          "parameters": [],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.mixed.types.PlayerId",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/mixed/types.d",
+          "summary": "Strongly typed player id.",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 1,
+          "constraints": [],
+          "deprecated": "",
+          "description": "Public alias for callback shape.",
+          "examples": [],
+          "kind": "alias",
+          "line": 10,
+          "members": [],
+          "name": "TickCallback",
+          "paramDocs": [],
+          "parameters": [],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.mixed.types.TickCallback",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/mixed/types.d",
+          "summary": "Public alias for callback shape.",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 14,
+          "constraints": [],
+          "deprecated": "",
+          "description": "Optional callback holder.",
+          "examples": [],
+          "kind": "variable",
+          "line": 13,
+          "members": [],
+          "name": "activeTickCallback",
+          "paramDocs": [],
+          "parameters": [],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.mixed.types.activeTickCallback",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/mixed/types.d",
+          "summary": "Optional callback holder.",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": []
+        },
+        {
+          "attributes": [],
+          "baseTypes": [],
+          "bugs": [],
+          "column": 5,
+          "constraints": [],
+          "deprecated": "",
+          "description": "",
+          "examples": [],
+          "kind": "function",
+          "line": 15,
+          "members": [],
+          "name": "invokeTick",
+          "paramDocs": [],
+          "parameters": [
+            {
+              "defaultValue": "",
+              "isVariadic": false,
+              "name": "ticks",
+              "storageClass": "none",
+              "type": ""
+            }
+          ],
+          "protection": "public",
+          "qualifiedName": "doc_coverage.mixed.types.invokeTick",
+          "referencedBy": [],
+          "references": [],
+          "returnType": "",
+          "returnsDoc": "",
+          "seeAlso": [],
+          "sourceFile": "apps/doc-coverage-fixture/source/doc_coverage/mixed/types.d",
+          "summary": "",
+          "templateParams": [],
+          "throwsDoc": [],
+          "unittests": [
+            "unittest\n{\n    activeTickCallback = (int t) => t + 1;\n    assert(invokeTick(4) == 5);\n}"
+          ]
+        }
+      ]
+    }
+  },
+  "searchIndex": [
+    {
+      "kind": "template",
+      "name": "hasRenderName",
+      "qualifiedName": "doc_coverage.game.rendering.hasRenderName",
+      "summary": "Trait-like template used in docs for constraints.",
+      "url": "/api/doc_coverage/game/rendering/hasRenderName"
+    },
+    {
+      "kind": "variable",
+      "name": "hasRenderName",
+      "qualifiedName": "doc_coverage.game.rendering.hasRenderName.hasRenderName",
+      "summary": "",
+      "url": "/api/doc_coverage/game/rendering/hasRenderName/hasRenderName"
+    },
+    {
+      "kind": "template",
+      "name": "renderLabel",
+      "qualifiedName": "doc_coverage.game.rendering.renderLabel",
+      "summary": "Renders type names for diagnostic overlays.",
+      "url": "/api/doc_coverage/game/rendering/renderLabel"
+    },
+    {
+      "kind": "function",
+      "name": "renderLabel",
+      "qualifiedName": "doc_coverage.game.rendering.renderLabel.renderLabel",
+      "summary": "",
+      "url": "/api/doc_coverage/game/rendering/renderLabel/renderLabel"
+    },
+    {
+      "kind": "struct",
+      "name": "Sprite",
+      "qualifiedName": "doc_coverage.game.rendering.Sprite",
+      "summary": "",
+      "url": "/api/doc_coverage/game/rendering/Sprite"
+    },
+    {
+      "kind": "variable",
+      "name": "renderName",
+      "qualifiedName": "doc_coverage.game.rendering.Sprite.renderName",
+      "summary": "",
+      "url": "/api/doc_coverage/game/rendering/Sprite/renderName"
+    },
+    {
+      "kind": "alias",
+      "name": "EntityRef",
+      "qualifiedName": "doc_coverage.game.systems.EntityRef",
+      "summary": "Alias to exercise alias symbol generation.",
+      "url": "/api/doc_coverage/game/systems/EntityRef"
+    },
+    {
+      "kind": "template",
+      "name": "runSystem",
+      "qualifiedName": "doc_coverage.game.systems.runSystem",
+      "summary": "Template mixin-style system runner.",
+      "url": "/api/doc_coverage/game/systems/runSystem"
+    },
+    {
+      "kind": "function",
+      "name": "runSystem",
+      "qualifiedName": "doc_coverage.game.systems.runSystem.runSystem",
+      "summary": "",
+      "url": "/api/doc_coverage/game/systems/runSystem/runSystem"
+    },
+    {
+      "kind": "struct",
+      "name": "TickSystem",
+      "qualifiedName": "doc_coverage.game.systems.TickSystem",
+      "summary": "Stateless tick system.",
+      "url": "/api/doc_coverage/game/systems/TickSystem"
+    },
+    {
+      "kind": "function",
+      "name": "step",
+      "qualifiedName": "doc_coverage.game.systems.TickSystem.step",
+      "summary": "",
+      "url": "/api/doc_coverage/game/systems/TickSystem/step"
+    },
+    {
+      "kind": "function",
+      "name": "spawnEntity",
+      "qualifiedName": "doc_coverage.game.systems.spawnEntity",
+      "summary": "Creates a player entity as interface alias type.",
+      "url": "/api/doc_coverage/game/systems/spawnEntity"
+    },
+    {
+      "kind": "interface",
+      "name": "IEntity",
+      "qualifiedName": "doc_coverage.game.entities.IEntity",
+      "summary": "Basic interface for game entities.",
+      "url": "/api/doc_coverage/game/entities/IEntity"
+    },
+    {
+      "kind": "function",
+      "name": "id",
+      "qualifiedName": "doc_coverage.game.entities.IEntity.id",
+      "summary": "",
+      "url": "/api/doc_coverage/game/entities/IEntity/id"
+    },
+    {
+      "kind": "enum",
+      "name": "EntityState",
+      "qualifiedName": "doc_coverage.game.entities.EntityState",
+      "summary": "Public enum for state coverage.",
+      "url": "/api/doc_coverage/game/entities/EntityState"
+    },
+    {
+      "kind": "enumMember",
+      "name": "idle",
+      "qualifiedName": "doc_coverage.game.entities.EntityState.idle",
+      "summary": "",
+      "url": "/api/doc_coverage/game/entities/EntityState/idle"
+    },
+    {
+      "kind": "enumMember",
+      "name": "moving",
+      "qualifiedName": "doc_coverage.game.entities.EntityState.moving",
+      "summary": "",
+      "url": "/api/doc_coverage/game/entities/EntityState/moving"
+    },
+    {
+      "kind": "enumMember",
+      "name": "disabled",
+      "qualifiedName": "doc_coverage.game.entities.EntityState.disabled",
+      "summary": "",
+      "url": "/api/doc_coverage/game/entities/EntityState/disabled"
+    },
+    {
+      "kind": "class",
+      "name": "EntityBase",
+      "qualifiedName": "doc_coverage.game.entities.EntityBase",
+      "summary": "Entity base class with protected and private members.",
+      "url": "/api/doc_coverage/game/entities/EntityBase"
+    },
+    {
+      "kind": "variable",
+      "name": "_id",
+      "qualifiedName": "doc_coverage.game.entities.EntityBase._id",
+      "summary": "",
+      "url": "/api/doc_coverage/game/entities/EntityBase/_id"
+    },
+    {
+      "kind": "constructor",
+      "name": "this",
+      "qualifiedName": "doc_coverage.game.entities.EntityBase.this",
+      "summary": "",
+      "url": "/api/doc_coverage/game/entities/EntityBase/this"
+    },
+    {
+      "kind": "function",
+      "name": "id",
+      "qualifiedName": "doc_coverage.game.entities.EntityBase.id",
+      "summary": "",
+      "url": "/api/doc_coverage/game/entities/EntityBase/id"
+    },
+    {
+      "kind": "function",
+      "name": "state",
+      "qualifiedName": "doc_coverage.game.entities.EntityBase.state",
+      "summary": "",
+      "url": "/api/doc_coverage/game/entities/EntityBase/state"
+    },
+    {
+      "kind": "function",
+      "name": "setState",
+      "qualifiedName": "doc_coverage.game.entities.EntityBase.setState",
+      "summary": "",
+      "url": "/api/doc_coverage/game/entities/EntityBase/setState"
+    },
+    {
+      "kind": "class",
+      "name": "PlayerEntity",
+      "qualifiedName": "doc_coverage.game.entities.PlayerEntity",
+      "summary": "Concrete entity class.",
+      "url": "/api/doc_coverage/game/entities/PlayerEntity"
+    },
+    {
+      "kind": "constructor",
+      "name": "this",
+      "qualifiedName": "doc_coverage.game.entities.PlayerEntity.this",
+      "summary": "",
+      "url": "/api/doc_coverage/game/entities/PlayerEntity/this"
+    },
+    {
+      "kind": "function",
+      "name": "move",
+      "qualifiedName": "doc_coverage.game.entities.PlayerEntity.move",
+      "summary": "",
+      "url": "/api/doc_coverage/game/entities/PlayerEntity/move"
+    },
+    {
+      "kind": "struct",
+      "name": "PlayerId",
+      "qualifiedName": "doc_coverage.mixed.types.PlayerId",
+      "summary": "Strongly typed player id.",
+      "url": "/api/doc_coverage/mixed/types/PlayerId"
+    },
+    {
+      "kind": "variable",
+      "name": "value",
+      "qualifiedName": "doc_coverage.mixed.types.PlayerId.value",
+      "summary": "",
+      "url": "/api/doc_coverage/mixed/types/PlayerId/value"
+    },
+    {
+      "kind": "alias",
+      "name": "TickCallback",
+      "qualifiedName": "doc_coverage.mixed.types.TickCallback",
+      "summary": "Public alias for callback shape.",
+      "url": "/api/doc_coverage/mixed/types/TickCallback"
+    },
+    {
+      "kind": "variable",
+      "name": "activeTickCallback",
+      "qualifiedName": "doc_coverage.mixed.types.activeTickCallback",
+      "summary": "Optional callback holder.",
+      "url": "/api/doc_coverage/mixed/types/activeTickCallback"
+    },
+    {
+      "kind": "function",
+      "name": "invokeTick",
+      "qualifiedName": "doc_coverage.mixed.types.invokeTick",
+      "summary": "",
+      "url": "/api/doc_coverage/mixed/types/invokeTick"
+    },
+    {
+      "kind": "template",
+      "name": "Box",
+      "qualifiedName": "doc_coverage.mixed.templates.Box",
+      "summary": "Generic box used to exercise aggregate template docs.",
+      "url": "/api/doc_coverage/mixed/templates/Box"
+    },
+    {
+      "kind": "struct",
+      "name": "Box",
+      "qualifiedName": "doc_coverage.mixed.templates.Box.Box",
+      "summary": "",
+      "url": "/api/doc_coverage/mixed/templates/Box/Box"
+    },
+    {
+      "kind": "variable",
+      "name": "value",
+      "qualifiedName": "doc_coverage.mixed.templates.Box.Box.value",
+      "summary": "",
+      "url": "/api/doc_coverage/mixed/templates/Box/Box/value"
+    },
+    {
+      "kind": "constructor",
+      "name": "this",
+      "qualifiedName": "doc_coverage.mixed.templates.Box.Box.this",
+      "summary": "",
+      "url": "/api/doc_coverage/mixed/templates/Box/Box/this"
+    },
+    {
+      "kind": "function",
+      "name": "__invariant1",
+      "qualifiedName": "doc_coverage.mixed.templates.Box.Box.__invariant1",
+      "summary": "",
+      "url": "/api/doc_coverage/mixed/templates/Box/Box/__invariant1"
+    },
+    {
+      "kind": "destructor",
+      "name": "~this",
+      "qualifiedName": "doc_coverage.mixed.templates.Box.Box.~this",
+      "summary": "",
+      "url": "/api/doc_coverage/mixed/templates/Box/Box/~this"
+    },
+    {
+      "kind": "template",
+      "name": "makeBox",
+      "qualifiedName": "doc_coverage.mixed.templates.makeBox",
+      "summary": "Returns a boxed value.",
+      "url": "/api/doc_coverage/mixed/templates/makeBox"
+    },
+    {
+      "kind": "function",
+      "name": "makeBox",
+      "qualifiedName": "doc_coverage.mixed.templates.makeBox.makeBox",
+      "summary": "",
+      "url": "/api/doc_coverage/mixed/templates/makeBox/makeBox"
+    },
+    {
+      "kind": "template",
+      "name": "stringify",
+      "qualifiedName": "doc_coverage.mixed.templates.stringify",
+      "summary": "Constrained template overload.",
+      "url": "/api/doc_coverage/mixed/templates/stringify"
+    },
+    {
+      "kind": "function",
+      "name": "stringify",
+      "qualifiedName": "doc_coverage.mixed.templates.stringify.stringify",
+      "summary": "",
+      "url": "/api/doc_coverage/mixed/templates/stringify/stringify"
+    },
+    {
+      "kind": "function",
+      "name": "doc_coverage.core.commands",
+      "qualifiedName": "doc_coverage.doc_coverage.core.commands",
+      "summary": "",
+      "url": "/api/doc_coverage/doc_coverage/core/commands"
+    },
+    {
+      "kind": "function",
+      "name": "doc_coverage.core.formatting",
+      "qualifiedName": "doc_coverage.doc_coverage.core.formatting",
+      "summary": "",
+      "url": "/api/doc_coverage/doc_coverage/core/formatting"
+    },
+    {
+      "kind": "function",
+      "name": "doc_coverage.game.entities",
+      "qualifiedName": "doc_coverage.doc_coverage.game.entities",
+      "summary": "",
+      "url": "/api/doc_coverage/doc_coverage/game/entities"
+    },
+    {
+      "kind": "function",
+      "name": "doc_coverage.game.systems",
+      "qualifiedName": "doc_coverage.doc_coverage.game.systems",
+      "summary": "",
+      "url": "/api/doc_coverage/doc_coverage/game/systems"
+    },
+    {
+      "kind": "function",
+      "name": "doc_coverage.game.rendering",
+      "qualifiedName": "doc_coverage.doc_coverage.game.rendering",
+      "summary": "",
+      "url": "/api/doc_coverage/doc_coverage/game/rendering"
+    },
+    {
+      "kind": "function",
+      "name": "doc_coverage.mixed.templates",
+      "qualifiedName": "doc_coverage.doc_coverage.mixed.templates",
+      "summary": "",
+      "url": "/api/doc_coverage/doc_coverage/mixed/templates"
+    },
+    {
+      "kind": "function",
+      "name": "doc_coverage.mixed.types",
+      "qualifiedName": "doc_coverage.doc_coverage.mixed.types",
+      "summary": "",
+      "url": "/api/doc_coverage/doc_coverage/mixed/types"
+    },
+    {
+      "kind": "enum",
+      "name": "CommandKind",
+      "qualifiedName": "doc_coverage.core.commands.CommandKind",
+      "summary": "Command categories used by both CLI and gameplay systems.",
+      "url": "/api/doc_coverage/core/commands/CommandKind"
+    },
+    {
+      "kind": "enumMember",
+      "name": "none",
+      "qualifiedName": "doc_coverage.core.commands.CommandKind.none",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandKind/none"
+    },
+    {
+      "kind": "enumMember",
+      "name": "move",
+      "qualifiedName": "doc_coverage.core.commands.CommandKind.move",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandKind/move"
+    },
+    {
+      "kind": "enumMember",
+      "name": "render",
+      "qualifiedName": "doc_coverage.core.commands.CommandKind.render",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandKind/render"
+    },
+    {
+      "kind": "enumMember",
+      "name": "quit",
+      "qualifiedName": "doc_coverage.core.commands.CommandKind.quit",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandKind/quit"
+    },
+    {
+      "kind": "alias",
+      "name": "CommandName",
+      "qualifiedName": "doc_coverage.core.commands.CommandName",
+      "summary": "Alias used by parser coverage tests.",
+      "url": "/api/doc_coverage/core/commands/CommandName"
+    },
+    {
+      "kind": "variable",
+      "name": "publicCommandCount",
+      "qualifiedName": "doc_coverage.core.commands.publicCommandCount",
+      "summary": "Global command count exposed for documentation.",
+      "url": "/api/doc_coverage/core/commands/publicCommandCount"
+    },
+    {
+      "kind": "variable",
+      "name": "packageCommandCount",
+      "qualifiedName": "doc_coverage.core.commands.packageCommandCount",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/packageCommandCount"
+    },
+    {
+      "kind": "variable",
+      "name": "exportedCommandCount",
+      "qualifiedName": "doc_coverage.core.commands.exportedCommandCount",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/exportedCommandCount"
+    },
+    {
+      "kind": "interface",
+      "name": "ICommand",
+      "qualifiedName": "doc_coverage.core.commands.ICommand",
+      "summary": "Interface for executable commands.",
+      "url": "/api/doc_coverage/core/commands/ICommand"
+    },
+    {
+      "kind": "function",
+      "name": "name",
+      "qualifiedName": "doc_coverage.core.commands.ICommand.name",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/ICommand/name"
+    },
+    {
+      "kind": "function",
+      "name": "execute",
+      "qualifiedName": "doc_coverage.core.commands.ICommand.execute",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/ICommand/execute"
+    },
+    {
+      "kind": "struct",
+      "name": "CommandContext",
+      "qualifiedName": "doc_coverage.core.commands.CommandContext",
+      "summary": "Context passed to command execution.",
+      "url": "/api/doc_coverage/core/commands/CommandContext"
+    },
+    {
+      "kind": "variable",
+      "name": "activePlayer",
+      "qualifiedName": "doc_coverage.core.commands.CommandContext.activePlayer",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandContext/activePlayer"
+    },
+    {
+      "kind": "variable",
+      "name": "mode",
+      "qualifiedName": "doc_coverage.core.commands.CommandContext.mode",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandContext/mode"
+    },
+    {
+      "kind": "constructor",
+      "name": "this",
+      "qualifiedName": "doc_coverage.core.commands.CommandContext.this",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandContext/this"
+    },
+    {
+      "kind": "function",
+      "name": "__invariant0",
+      "qualifiedName": "doc_coverage.core.commands.CommandContext.__invariant0",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandContext/__invariant0"
+    },
+    {
+      "kind": "destructor",
+      "name": "~this",
+      "qualifiedName": "doc_coverage.core.commands.CommandContext.~this",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandContext/~this"
+    },
+    {
+      "kind": "alias",
+      "name": "__xdtor",
+      "qualifiedName": "doc_coverage.core.commands.CommandContext.__xdtor",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandContext/__xdtor"
+    },
+    {
+      "kind": "alias",
+      "name": "__xpostblit",
+      "qualifiedName": "doc_coverage.core.commands.CommandContext.__xpostblit",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandContext/__xpostblit"
+    },
+    {
+      "kind": "function",
+      "name": "opAssign",
+      "qualifiedName": "doc_coverage.core.commands.CommandContext.opAssign",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandContext/opAssign"
+    },
+    {
+      "kind": "function",
+      "name": "__invariant",
+      "qualifiedName": "doc_coverage.core.commands.CommandContext.__invariant",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandContext/__invariant"
+    },
+    {
+      "kind": "class",
+      "name": "CommandBase",
+      "qualifiedName": "doc_coverage.core.commands.CommandBase",
+      "summary": "Base class with multiple protection levels for member docs.",
+      "url": "/api/doc_coverage/core/commands/CommandBase"
+    },
+    {
+      "kind": "variable",
+      "name": "prefix",
+      "qualifiedName": "doc_coverage.core.commands.CommandBase.prefix",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandBase/prefix"
+    },
+    {
+      "kind": "variable",
+      "name": "packageVisibleCounter",
+      "qualifiedName": "doc_coverage.core.commands.CommandBase.packageVisibleCounter",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandBase/packageVisibleCounter"
+    },
+    {
+      "kind": "variable",
+      "name": "title",
+      "qualifiedName": "doc_coverage.core.commands.CommandBase.title",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandBase/title"
+    },
+    {
+      "kind": "constructor",
+      "name": "this",
+      "qualifiedName": "doc_coverage.core.commands.CommandBase.this",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandBase/this"
+    },
+    {
+      "kind": "destructor",
+      "name": "~this",
+      "qualifiedName": "doc_coverage.core.commands.CommandBase.~this",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandBase/~this"
+    },
+    {
+      "kind": "function",
+      "name": "name",
+      "qualifiedName": "doc_coverage.core.commands.CommandBase.name",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandBase/name"
+    },
+    {
+      "kind": "function",
+      "name": "execute",
+      "qualifiedName": "doc_coverage.core.commands.CommandBase.execute",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandBase/execute"
+    },
+    {
+      "kind": "function",
+      "name": "bump",
+      "qualifiedName": "doc_coverage.core.commands.CommandBase.bump",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandBase/bump"
+    },
+    {
+      "kind": "alias",
+      "name": "__xdtor",
+      "qualifiedName": "doc_coverage.core.commands.CommandBase.__xdtor",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/CommandBase/__xdtor"
+    },
+    {
+      "kind": "class",
+      "name": "MoveCommand",
+      "qualifiedName": "doc_coverage.core.commands.MoveCommand",
+      "summary": "Concrete command implementation.",
+      "url": "/api/doc_coverage/core/commands/MoveCommand"
+    },
+    {
+      "kind": "constructor",
+      "name": "this",
+      "qualifiedName": "doc_coverage.core.commands.MoveCommand.this",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/MoveCommand/this"
+    },
+    {
+      "kind": "function",
+      "name": "execute",
+      "qualifiedName": "doc_coverage.core.commands.MoveCommand.execute",
+      "summary": "",
+      "url": "/api/doc_coverage/core/commands/MoveCommand/execute"
+    },
+    {
+      "kind": "function",
+      "name": "createCommand",
+      "qualifiedName": "doc_coverage.core.commands.createCommand",
+      "summary": "Creates a command by kind.",
+      "url": "/api/doc_coverage/core/commands/createCommand"
+    },
+    {
+      "kind": "function",
+      "name": "exportedApi",
+      "qualifiedName": "doc_coverage.core.commands.exportedApi",
+      "summary": "Exported function used to test `export` protection serialization.",
+      "url": "/api/doc_coverage/core/commands/exportedApi"
+    },
+    {
+      "kind": "enum",
+      "name": "UiStyle",
+      "qualifiedName": "doc_coverage.core.formatting.UiStyle",
+      "summary": "Style values rendered in diagnostics.",
+      "url": "/api/doc_coverage/core/formatting/UiStyle"
+    },
+    {
+      "kind": "enumMember",
+      "name": "plain",
+      "qualifiedName": "doc_coverage.core.formatting.UiStyle.plain",
+      "summary": "",
+      "url": "/api/doc_coverage/core/formatting/UiStyle/plain"
+    },
+    {
+      "kind": "enumMember",
+      "name": "warning",
+      "qualifiedName": "doc_coverage.core.formatting.UiStyle.warning",
+      "summary": "",
+      "url": "/api/doc_coverage/core/formatting/UiStyle/warning"
+    },
+    {
+      "kind": "enumMember",
+      "name": "error",
+      "qualifiedName": "doc_coverage.core.formatting.UiStyle.error",
+      "summary": "",
+      "url": "/api/doc_coverage/core/formatting/UiStyle/error"
+    },
+    {
+      "kind": "struct",
+      "name": "StyleTag",
+      "qualifiedName": "doc_coverage.core.formatting.StyleTag",
+      "summary": "Wrapper struct used for docs and nested members.",
+      "url": "/api/doc_coverage/core/formatting/StyleTag"
+    },
+    {
+      "kind": "variable",
+      "name": "style",
+      "qualifiedName": "doc_coverage.core.formatting.StyleTag.style",
+      "summary": "",
+      "url": "/api/doc_coverage/core/formatting/StyleTag/style"
+    },
+    {
+      "kind": "variable",
+      "name": "label",
+      "qualifiedName": "doc_coverage.core.formatting.StyleTag.label",
+      "summary": "",
+      "url": "/api/doc_coverage/core/formatting/StyleTag/label"
+    },
+    {
+      "kind": "constructor",
+      "name": "this",
+      "qualifiedName": "doc_coverage.core.formatting.StyleTag.this",
+      "summary": "",
+      "url": "/api/doc_coverage/core/formatting/StyleTag/this"
+    },
+    {
+      "kind": "function",
+      "name": "render",
+      "qualifiedName": "doc_coverage.core.formatting.StyleTag.render",
+      "summary": "",
+      "url": "/api/doc_coverage/core/formatting/StyleTag/render"
+    },
+    {
+      "kind": "function",
+      "name": "formatLine",
+      "qualifiedName": "doc_coverage.core.formatting.formatLine",
+      "summary": "Formats a command line for display.",
+      "url": "/api/doc_coverage/core/formatting/formatLine"
+    }
+  ],
+  "typeGraph": {
+    "edges": [
+      {
+        "from": "doc_coverage.game.rendering.hasRenderName",
+        "to": "doc_coverage.game.rendering.hasRenderName.hasRenderName",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.game.rendering.renderLabel",
+        "to": "doc_coverage.game.rendering.renderLabel.renderLabel",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.game.rendering.Sprite",
+        "to": "doc_coverage.game.rendering.Sprite.renderName",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.mixed.templates.Box",
+        "to": "doc_coverage.mixed.templates.Box.Box",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.mixed.templates.Box.Box",
+        "to": "doc_coverage.mixed.templates.Box.Box.value",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.mixed.templates.Box.Box",
+        "to": "doc_coverage.mixed.templates.Box.Box.this",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.mixed.templates.Box.Box",
+        "to": "doc_coverage.mixed.templates.Box.Box.__invariant1",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.mixed.templates.Box.Box",
+        "to": "doc_coverage.mixed.templates.Box.Box.~this",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.mixed.templates.makeBox",
+        "to": "doc_coverage.mixed.templates.makeBox.makeBox",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.mixed.templates.stringify",
+        "to": "doc_coverage.mixed.templates.stringify.stringify",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.commands.CommandKind",
+        "to": "doc_coverage.core.commands.CommandKind.none",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.commands.CommandKind",
+        "to": "doc_coverage.core.commands.CommandKind.move",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.commands.CommandKind",
+        "to": "doc_coverage.core.commands.CommandKind.render",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.commands.CommandKind",
+        "to": "doc_coverage.core.commands.CommandKind.quit",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.commands.CommandName",
+        "to": "string",
+        "type": "aliases"
+      },
+      {
+        "from": "doc_coverage.core.commands.ICommand",
+        "to": "doc_coverage.core.commands.ICommand.name",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.commands.ICommand",
+        "to": "doc_coverage.core.commands.ICommand.execute",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.commands.CommandContext",
+        "to": "doc_coverage.core.commands.CommandContext.activePlayer",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.commands.CommandContext",
+        "to": "doc_coverage.core.commands.CommandContext.mode",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.commands.CommandContext",
+        "to": "doc_coverage.core.commands.CommandContext.this",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.commands.CommandContext",
+        "to": "doc_coverage.core.commands.CommandContext.__invariant0",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.commands.CommandContext",
+        "to": "doc_coverage.core.commands.CommandContext.~this",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.commands.CommandContext",
+        "to": "doc_coverage.core.commands.CommandContext.__xdtor",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.commands.CommandContext",
+        "to": "doc_coverage.core.commands.CommandContext.__xpostblit",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.commands.CommandContext",
+        "to": "doc_coverage.core.commands.CommandContext.opAssign",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.commands.CommandContext",
+        "to": "doc_coverage.core.commands.CommandContext.__invariant",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.commands.CommandBase",
+        "to": "doc_coverage.core.commands.CommandBase.prefix",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.commands.CommandBase",
+        "to": "doc_coverage.core.commands.CommandBase.packageVisibleCounter",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.commands.CommandBase",
+        "to": "doc_coverage.core.commands.CommandBase.title",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.commands.CommandBase",
+        "to": "doc_coverage.core.commands.CommandBase.this",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.commands.CommandBase",
+        "to": "doc_coverage.core.commands.CommandBase.~this",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.commands.CommandBase",
+        "to": "doc_coverage.core.commands.CommandBase.name",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.commands.CommandBase",
+        "to": "doc_coverage.core.commands.CommandBase.execute",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.commands.CommandBase",
+        "to": "doc_coverage.core.commands.CommandBase.bump",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.commands.CommandBase",
+        "to": "doc_coverage.core.commands.CommandBase.__xdtor",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.commands.CommandBase",
+        "to": "doc_coverage.core.commands.ICommand",
+        "type": "implements"
+      },
+      {
+        "from": "doc_coverage.core.commands.MoveCommand",
+        "to": "doc_coverage.core.commands.MoveCommand.this",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.commands.MoveCommand",
+        "to": "doc_coverage.core.commands.MoveCommand.execute",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.commands.MoveCommand",
+        "to": "doc_coverage.core.commands.CommandBase",
+        "type": "extends"
+      },
+      {
+        "from": "doc_coverage.mixed.types.PlayerId",
+        "to": "doc_coverage.mixed.types.PlayerId.value",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.mixed.types.TickCallback",
+        "to": "int delegate(int ticks)",
+        "type": "aliases"
+      },
+      {
+        "from": "doc_coverage.core.formatting.UiStyle",
+        "to": "doc_coverage.core.formatting.UiStyle.plain",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.formatting.UiStyle",
+        "to": "doc_coverage.core.formatting.UiStyle.warning",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.formatting.UiStyle",
+        "to": "doc_coverage.core.formatting.UiStyle.error",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.formatting.StyleTag",
+        "to": "doc_coverage.core.formatting.StyleTag.style",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.formatting.StyleTag",
+        "to": "doc_coverage.core.formatting.StyleTag.label",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.formatting.StyleTag",
+        "to": "doc_coverage.core.formatting.StyleTag.this",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.core.formatting.StyleTag",
+        "to": "doc_coverage.core.formatting.StyleTag.render",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.game.entities.IEntity",
+        "to": "doc_coverage.game.entities.IEntity.id",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.game.entities.EntityState",
+        "to": "doc_coverage.game.entities.EntityState.idle",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.game.entities.EntityState",
+        "to": "doc_coverage.game.entities.EntityState.moving",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.game.entities.EntityState",
+        "to": "doc_coverage.game.entities.EntityState.disabled",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.game.entities.EntityBase",
+        "to": "doc_coverage.game.entities.EntityBase._id",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.game.entities.EntityBase",
+        "to": "doc_coverage.game.entities.EntityBase.this",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.game.entities.EntityBase",
+        "to": "doc_coverage.game.entities.EntityBase.id",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.game.entities.EntityBase",
+        "to": "doc_coverage.game.entities.EntityBase.state",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.game.entities.EntityBase",
+        "to": "doc_coverage.game.entities.EntityBase.setState",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.game.entities.EntityBase",
+        "to": "doc_coverage.game.entities.IEntity",
+        "type": "implements"
+      },
+      {
+        "from": "doc_coverage.game.entities.PlayerEntity",
+        "to": "doc_coverage.game.entities.PlayerEntity.this",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.game.entities.PlayerEntity",
+        "to": "doc_coverage.game.entities.PlayerEntity.move",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.game.entities.PlayerEntity",
+        "to": "doc_coverage.game.entities.EntityBase",
+        "type": "extends"
+      },
+      {
+        "from": "doc_coverage.game.systems.EntityRef",
+        "to": "IEntity",
+        "type": "aliases"
+      },
+      {
+        "from": "doc_coverage.game.systems.runSystem",
+        "to": "doc_coverage.game.systems.runSystem.runSystem",
+        "type": "has-part"
+      },
+      {
+        "from": "doc_coverage.game.systems.TickSystem",
+        "to": "doc_coverage.game.systems.TickSystem.step",
+        "type": "has-part"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "doc_coverage.game.rendering.hasRenderName",
+        "kind": "template",
+        "label": "doc_coverage.game.rendering.hasRenderName"
+      },
+      {
+        "id": "doc_coverage.game.rendering.hasRenderName.hasRenderName",
+        "kind": "variable",
+        "label": "doc_coverage.game.rendering.hasRenderName.hasRenderName"
+      },
+      {
+        "id": "doc_coverage.game.rendering.renderLabel",
+        "kind": "template",
+        "label": "doc_coverage.game.rendering.renderLabel"
+      },
+      {
+        "id": "doc_coverage.game.rendering.renderLabel.renderLabel",
+        "kind": "function",
+        "label": "doc_coverage.game.rendering.renderLabel.renderLabel"
+      },
+      {
+        "id": "doc_coverage.game.rendering.Sprite",
+        "kind": "struct",
+        "label": "doc_coverage.game.rendering.Sprite"
+      },
+      {
+        "id": "doc_coverage.game.rendering.Sprite.renderName",
+        "kind": "variable",
+        "label": "doc_coverage.game.rendering.Sprite.renderName"
+      },
+      {
+        "id": "doc_coverage.mixed.templates.Box",
+        "kind": "template",
+        "label": "doc_coverage.mixed.templates.Box"
+      },
+      {
+        "id": "doc_coverage.mixed.templates.Box.Box",
+        "kind": "struct",
+        "label": "doc_coverage.mixed.templates.Box.Box"
+      },
+      {
+        "id": "doc_coverage.mixed.templates.Box.Box.value",
+        "kind": "variable",
+        "label": "doc_coverage.mixed.templates.Box.Box.value"
+      },
+      {
+        "id": "doc_coverage.mixed.templates.Box.Box.this",
+        "kind": "constructor",
+        "label": "doc_coverage.mixed.templates.Box.Box.this"
+      },
+      {
+        "id": "doc_coverage.mixed.templates.Box.Box.__invariant1",
+        "kind": "function",
+        "label": "doc_coverage.mixed.templates.Box.Box.__invariant1"
+      },
+      {
+        "id": "doc_coverage.mixed.templates.Box.Box.~this",
+        "kind": "destructor",
+        "label": "doc_coverage.mixed.templates.Box.Box.~this"
+      },
+      {
+        "id": "doc_coverage.mixed.templates.makeBox",
+        "kind": "template",
+        "label": "doc_coverage.mixed.templates.makeBox"
+      },
+      {
+        "id": "doc_coverage.mixed.templates.makeBox.makeBox",
+        "kind": "function",
+        "label": "doc_coverage.mixed.templates.makeBox.makeBox"
+      },
+      {
+        "id": "doc_coverage.mixed.templates.stringify",
+        "kind": "template",
+        "label": "doc_coverage.mixed.templates.stringify"
+      },
+      {
+        "id": "doc_coverage.mixed.templates.stringify.stringify",
+        "kind": "function",
+        "label": "doc_coverage.mixed.templates.stringify.stringify"
+      },
+      {
+        "id": "doc_coverage.doc_coverage.core.commands",
+        "kind": "function",
+        "label": "doc_coverage.doc_coverage.core.commands"
+      },
+      {
+        "id": "doc_coverage.doc_coverage.core.formatting",
+        "kind": "function",
+        "label": "doc_coverage.doc_coverage.core.formatting"
+      },
+      {
+        "id": "doc_coverage.doc_coverage.game.entities",
+        "kind": "function",
+        "label": "doc_coverage.doc_coverage.game.entities"
+      },
+      {
+        "id": "doc_coverage.doc_coverage.game.systems",
+        "kind": "function",
+        "label": "doc_coverage.doc_coverage.game.systems"
+      },
+      {
+        "id": "doc_coverage.doc_coverage.game.rendering",
+        "kind": "function",
+        "label": "doc_coverage.doc_coverage.game.rendering"
+      },
+      {
+        "id": "doc_coverage.doc_coverage.mixed.templates",
+        "kind": "function",
+        "label": "doc_coverage.doc_coverage.mixed.templates"
+      },
+      {
+        "id": "doc_coverage.doc_coverage.mixed.types",
+        "kind": "function",
+        "label": "doc_coverage.doc_coverage.mixed.types"
+      },
+      {
+        "id": "doc_coverage.core.commands.CommandKind",
+        "kind": "enum",
+        "label": "doc_coverage.core.commands.CommandKind"
+      },
+      {
+        "id": "doc_coverage.core.commands.CommandKind.none",
+        "kind": "enumMember",
+        "label": "doc_coverage.core.commands.CommandKind.none"
+      },
+      {
+        "id": "doc_coverage.core.commands.CommandKind.move",
+        "kind": "enumMember",
+        "label": "doc_coverage.core.commands.CommandKind.move"
+      },
+      {
+        "id": "doc_coverage.core.commands.CommandKind.render",
+        "kind": "enumMember",
+        "label": "doc_coverage.core.commands.CommandKind.render"
+      },
+      {
+        "id": "doc_coverage.core.commands.CommandKind.quit",
+        "kind": "enumMember",
+        "label": "doc_coverage.core.commands.CommandKind.quit"
+      },
+      {
+        "id": "doc_coverage.core.commands.CommandName",
+        "kind": "alias",
+        "label": "doc_coverage.core.commands.CommandName"
+      },
+      {
+        "id": "string",
+        "kind": "unknown",
+        "label": "string"
+      },
+      {
+        "id": "doc_coverage.core.commands.publicCommandCount",
+        "kind": "variable",
+        "label": "doc_coverage.core.commands.publicCommandCount"
+      },
+      {
+        "id": "doc_coverage.core.commands.packageCommandCount",
+        "kind": "variable",
+        "label": "doc_coverage.core.commands.packageCommandCount"
+      },
+      {
+        "id": "doc_coverage.core.commands.exportedCommandCount",
+        "kind": "variable",
+        "label": "doc_coverage.core.commands.exportedCommandCount"
+      },
+      {
+        "id": "doc_coverage.core.commands.ICommand",
+        "kind": "interface",
+        "label": "doc_coverage.core.commands.ICommand"
+      },
+      {
+        "id": "doc_coverage.core.commands.ICommand.name",
+        "kind": "function",
+        "label": "doc_coverage.core.commands.ICommand.name"
+      },
+      {
+        "id": "doc_coverage.core.commands.ICommand.execute",
+        "kind": "function",
+        "label": "doc_coverage.core.commands.ICommand.execute"
+      },
+      {
+        "id": "doc_coverage.core.commands.CommandContext",
+        "kind": "struct",
+        "label": "doc_coverage.core.commands.CommandContext"
+      },
+      {
+        "id": "doc_coverage.core.commands.CommandContext.activePlayer",
+        "kind": "variable",
+        "label": "doc_coverage.core.commands.CommandContext.activePlayer"
+      },
+      {
+        "id": "doc_coverage.core.commands.CommandContext.mode",
+        "kind": "variable",
+        "label": "doc_coverage.core.commands.CommandContext.mode"
+      },
+      {
+        "id": "doc_coverage.core.commands.CommandContext.this",
+        "kind": "constructor",
+        "label": "doc_coverage.core.commands.CommandContext.this"
+      },
+      {
+        "id": "doc_coverage.core.commands.CommandContext.__invariant0",
+        "kind": "function",
+        "label": "doc_coverage.core.commands.CommandContext.__invariant0"
+      },
+      {
+        "id": "doc_coverage.core.commands.CommandContext.~this",
+        "kind": "destructor",
+        "label": "doc_coverage.core.commands.CommandContext.~this"
+      },
+      {
+        "id": "doc_coverage.core.commands.CommandContext.__xdtor",
+        "kind": "alias",
+        "label": "doc_coverage.core.commands.CommandContext.__xdtor"
+      },
+      {
+        "id": "doc_coverage.core.commands.CommandContext.__xpostblit",
+        "kind": "alias",
+        "label": "doc_coverage.core.commands.CommandContext.__xpostblit"
+      },
+      {
+        "id": "doc_coverage.core.commands.CommandContext.opAssign",
+        "kind": "function",
+        "label": "doc_coverage.core.commands.CommandContext.opAssign"
+      },
+      {
+        "id": "doc_coverage.core.commands.CommandContext.__invariant",
+        "kind": "function",
+        "label": "doc_coverage.core.commands.CommandContext.__invariant"
+      },
+      {
+        "id": "doc_coverage.core.commands.CommandBase",
+        "kind": "class",
+        "label": "doc_coverage.core.commands.CommandBase"
+      },
+      {
+        "id": "doc_coverage.core.commands.CommandBase.prefix",
+        "kind": "variable",
+        "label": "doc_coverage.core.commands.CommandBase.prefix"
+      },
+      {
+        "id": "doc_coverage.core.commands.CommandBase.packageVisibleCounter",
+        "kind": "variable",
+        "label": "doc_coverage.core.commands.CommandBase.packageVisibleCounter"
+      },
+      {
+        "id": "doc_coverage.core.commands.CommandBase.title",
+        "kind": "variable",
+        "label": "doc_coverage.core.commands.CommandBase.title"
+      },
+      {
+        "id": "doc_coverage.core.commands.CommandBase.this",
+        "kind": "constructor",
+        "label": "doc_coverage.core.commands.CommandBase.this"
+      },
+      {
+        "id": "doc_coverage.core.commands.CommandBase.~this",
+        "kind": "destructor",
+        "label": "doc_coverage.core.commands.CommandBase.~this"
+      },
+      {
+        "id": "doc_coverage.core.commands.CommandBase.name",
+        "kind": "function",
+        "label": "doc_coverage.core.commands.CommandBase.name"
+      },
+      {
+        "id": "doc_coverage.core.commands.CommandBase.execute",
+        "kind": "function",
+        "label": "doc_coverage.core.commands.CommandBase.execute"
+      },
+      {
+        "id": "doc_coverage.core.commands.CommandBase.bump",
+        "kind": "function",
+        "label": "doc_coverage.core.commands.CommandBase.bump"
+      },
+      {
+        "id": "doc_coverage.core.commands.CommandBase.__xdtor",
+        "kind": "alias",
+        "label": "doc_coverage.core.commands.CommandBase.__xdtor"
+      },
+      {
+        "id": "doc_coverage.core.commands.MoveCommand",
+        "kind": "class",
+        "label": "doc_coverage.core.commands.MoveCommand"
+      },
+      {
+        "id": "doc_coverage.core.commands.MoveCommand.this",
+        "kind": "constructor",
+        "label": "doc_coverage.core.commands.MoveCommand.this"
+      },
+      {
+        "id": "doc_coverage.core.commands.MoveCommand.execute",
+        "kind": "function",
+        "label": "doc_coverage.core.commands.MoveCommand.execute"
+      },
+      {
+        "id": "doc_coverage.core.commands.createCommand",
+        "kind": "function",
+        "label": "doc_coverage.core.commands.createCommand"
+      },
+      {
+        "id": "doc_coverage.core.commands.exportedApi",
+        "kind": "function",
+        "label": "doc_coverage.core.commands.exportedApi"
+      },
+      {
+        "id": "doc_coverage.mixed.types.PlayerId",
+        "kind": "struct",
+        "label": "doc_coverage.mixed.types.PlayerId"
+      },
+      {
+        "id": "doc_coverage.mixed.types.PlayerId.value",
+        "kind": "variable",
+        "label": "doc_coverage.mixed.types.PlayerId.value"
+      },
+      {
+        "id": "doc_coverage.mixed.types.TickCallback",
+        "kind": "alias",
+        "label": "doc_coverage.mixed.types.TickCallback"
+      },
+      {
+        "id": "int delegate(int ticks)",
+        "kind": "unknown",
+        "label": "int delegate(int ticks)"
+      },
+      {
+        "id": "doc_coverage.mixed.types.activeTickCallback",
+        "kind": "variable",
+        "label": "doc_coverage.mixed.types.activeTickCallback"
+      },
+      {
+        "id": "doc_coverage.mixed.types.invokeTick",
+        "kind": "function",
+        "label": "doc_coverage.mixed.types.invokeTick"
+      },
+      {
+        "id": "doc_coverage.core.formatting.UiStyle",
+        "kind": "enum",
+        "label": "doc_coverage.core.formatting.UiStyle"
+      },
+      {
+        "id": "doc_coverage.core.formatting.UiStyle.plain",
+        "kind": "enumMember",
+        "label": "doc_coverage.core.formatting.UiStyle.plain"
+      },
+      {
+        "id": "doc_coverage.core.formatting.UiStyle.warning",
+        "kind": "enumMember",
+        "label": "doc_coverage.core.formatting.UiStyle.warning"
+      },
+      {
+        "id": "doc_coverage.core.formatting.UiStyle.error",
+        "kind": "enumMember",
+        "label": "doc_coverage.core.formatting.UiStyle.error"
+      },
+      {
+        "id": "doc_coverage.core.formatting.StyleTag",
+        "kind": "struct",
+        "label": "doc_coverage.core.formatting.StyleTag"
+      },
+      {
+        "id": "doc_coverage.core.formatting.StyleTag.style",
+        "kind": "variable",
+        "label": "doc_coverage.core.formatting.StyleTag.style"
+      },
+      {
+        "id": "doc_coverage.core.formatting.StyleTag.label",
+        "kind": "variable",
+        "label": "doc_coverage.core.formatting.StyleTag.label"
+      },
+      {
+        "id": "doc_coverage.core.formatting.StyleTag.this",
+        "kind": "constructor",
+        "label": "doc_coverage.core.formatting.StyleTag.this"
+      },
+      {
+        "id": "doc_coverage.core.formatting.StyleTag.render",
+        "kind": "function",
+        "label": "doc_coverage.core.formatting.StyleTag.render"
+      },
+      {
+        "id": "doc_coverage.core.formatting.formatLine",
+        "kind": "function",
+        "label": "doc_coverage.core.formatting.formatLine"
+      },
+      {
+        "id": "doc_coverage.game.entities.IEntity",
+        "kind": "interface",
+        "label": "doc_coverage.game.entities.IEntity"
+      },
+      {
+        "id": "doc_coverage.game.entities.IEntity.id",
+        "kind": "function",
+        "label": "doc_coverage.game.entities.IEntity.id"
+      },
+      {
+        "id": "doc_coverage.game.entities.EntityState",
+        "kind": "enum",
+        "label": "doc_coverage.game.entities.EntityState"
+      },
+      {
+        "id": "doc_coverage.game.entities.EntityState.idle",
+        "kind": "enumMember",
+        "label": "doc_coverage.game.entities.EntityState.idle"
+      },
+      {
+        "id": "doc_coverage.game.entities.EntityState.moving",
+        "kind": "enumMember",
+        "label": "doc_coverage.game.entities.EntityState.moving"
+      },
+      {
+        "id": "doc_coverage.game.entities.EntityState.disabled",
+        "kind": "enumMember",
+        "label": "doc_coverage.game.entities.EntityState.disabled"
+      },
+      {
+        "id": "doc_coverage.game.entities.EntityBase",
+        "kind": "class",
+        "label": "doc_coverage.game.entities.EntityBase"
+      },
+      {
+        "id": "doc_coverage.game.entities.EntityBase._id",
+        "kind": "variable",
+        "label": "doc_coverage.game.entities.EntityBase._id"
+      },
+      {
+        "id": "doc_coverage.game.entities.EntityBase.this",
+        "kind": "constructor",
+        "label": "doc_coverage.game.entities.EntityBase.this"
+      },
+      {
+        "id": "doc_coverage.game.entities.EntityBase.id",
+        "kind": "function",
+        "label": "doc_coverage.game.entities.EntityBase.id"
+      },
+      {
+        "id": "doc_coverage.game.entities.EntityBase.state",
+        "kind": "function",
+        "label": "doc_coverage.game.entities.EntityBase.state"
+      },
+      {
+        "id": "doc_coverage.game.entities.EntityBase.setState",
+        "kind": "function",
+        "label": "doc_coverage.game.entities.EntityBase.setState"
+      },
+      {
+        "id": "doc_coverage.game.entities.PlayerEntity",
+        "kind": "class",
+        "label": "doc_coverage.game.entities.PlayerEntity"
+      },
+      {
+        "id": "doc_coverage.game.entities.PlayerEntity.this",
+        "kind": "constructor",
+        "label": "doc_coverage.game.entities.PlayerEntity.this"
+      },
+      {
+        "id": "doc_coverage.game.entities.PlayerEntity.move",
+        "kind": "function",
+        "label": "doc_coverage.game.entities.PlayerEntity.move"
+      },
+      {
+        "id": "doc_coverage.game.systems.EntityRef",
+        "kind": "alias",
+        "label": "doc_coverage.game.systems.EntityRef"
+      },
+      {
+        "id": "IEntity",
+        "kind": "unknown",
+        "label": "IEntity"
+      },
+      {
+        "id": "doc_coverage.game.systems.runSystem",
+        "kind": "template",
+        "label": "doc_coverage.game.systems.runSystem"
+      },
+      {
+        "id": "doc_coverage.game.systems.runSystem.runSystem",
+        "kind": "function",
+        "label": "doc_coverage.game.systems.runSystem.runSystem"
+      },
+      {
+        "id": "doc_coverage.game.systems.TickSystem",
+        "kind": "struct",
+        "label": "doc_coverage.game.systems.TickSystem"
+      },
+      {
+        "id": "doc_coverage.game.systems.TickSystem.step",
+        "kind": "function",
+        "label": "doc_coverage.game.systems.TickSystem.step"
+      },
+      {
+        "id": "doc_coverage.game.systems.spawnEntity",
+        "kind": "function",
+        "label": "doc_coverage.game.systems.spawnEntity"
+      }
+    ]
+  },
+  "version": "0.1.0"
+}

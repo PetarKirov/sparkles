@@ -8,3 +8,5 @@ targetPath "build"
 
 subPackage "libs/core-cli"
 subPackage "libs/test-utils"
+subPackage "apps/sparkle-docs"
+subPackage "apps/doc-coverage-fixture"

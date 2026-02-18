@@ -99,16 +99,10 @@ string enumToString(E)(in E value) if (is(E == enum))
         {
             case enumMember:
             {
-                static if (!hasUDA!(enumMember, StringRepresentation))
-                {
-                    debug pragma(msg,
-                        "Enum memer doesn't have StringRepresentation: ",
-                        enumMember
-                    );
-                    return enumMember.to!string;
-                }
-                else
+                static if (hasUDA!(enumMember, StringRepresentation))
                     return getUDAs!(enumMember, StringRepresentation)[0].repr;
+                else
+                    return enumMember.to!string;
             }
         }
     }

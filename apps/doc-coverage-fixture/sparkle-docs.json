@@ -1,0 +1,10 @@
+{
+  "name": "doc-coverage-fixture",
+  "version": "0.1.0",
+  "sourcePaths": ["apps/doc-coverage-fixture/source"],
+  "outputPath": "apps/sparkle-docs/test/data/doc_coverage/generated-from-config",
+  "excludePatterns": ["*broken*", "*internal*"],
+  "includePrivate": false,
+  "sourceUrl": "https://example.invalid/{file}#L{line}",
+  "runnerUrl": "https://run.dlang.io"
+}

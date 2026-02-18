@@ -376,34 +376,36 @@ T tryGet(T)(lazy T value, string errorMsg, string file = __FILE__, size_t line =
     }
 }
 
-T tryDeserializeFromJsonFile(T)(string path)
+T readJsonFile(T)(string path)
 {
     import std.file : readText;
-    import std.format : format;
     import std.json : parseJSON;
     import std.string : strip;
 
-    import mcl.utils.tui : bold;
+    import sparkles.core_cli.styled_template : styledText;
 
     auto txt = path
         .readText()
         .strip()
-        .tryGet("Error reading file: '%s'".format(path.bold));
+        .tryGet(styledText(i"Error reading file: '{bold $(path)}'"));
 
     auto json = txt
         .parseJSON()
-        .tryGet("Error parsing JSON. File contents: '%s'".format(txt.bold));
+        .tryGet(styledText(i"Error parsing JSON. File contents: '{bold $(txt)}'"));
 
     return json
         .fromJSON!T()
-        .tryGet("Error deserializing %s. JSON: \n%s".format(T.stringof.bold, json.toPrettyString().bold));
+        .tryGet(styledText(i"Error deserializing {bold $(T.stringof)}. JSON: \n{bold $(json.toPrettyString())}"));
 }
 
-void writeJsonFile(T)(in T value, const(char)[] path)
+void writeJsonFile(T)(in T value, const(char)[] path, bool compact = false)
 {
     import std.path : dirName;
     import std.file : mkdirRecurse, writeFile = write;
-    auto json = value.toJSON.toPrettyString(JSONOptions.doNotEscapeSlashes);
+    auto j = value.toJSON;
+    auto json = compact
+        ? j.toString(JSONOptions.doNotEscapeSlashes)
+        : j.toPrettyString(JSONOptions.doNotEscapeSlashes);
     mkdirRecurse(path.dirName);
     writeFile(path, json);
 }
