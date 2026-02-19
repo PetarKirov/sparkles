@@ -5,6 +5,8 @@
 /// Introspection to let callers plug in custom URI writers.
 module sparkles.core_cli.source_uri;
 
+import std.conv : text;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Path Resolution
 // ─────────────────────────────────────────────────────────────────────────────
@@ -38,70 +40,45 @@ string resolveSourcePath(
 struct EditorScheme
 {
     string name;
-    string function(string, size_t, size_t) pure uriFun;
+    string function(string, size_t, size_t) pure @safe uriFun;
     immutable(string)[] aliases;
 }
 
 // ── URI format functions (IES-based, CTFE-evaluable) ────────────────────
 
-private string fileUri(string path, size_t line, size_t col) pure
+private @safe pure
 {
-    import std.conv : text;
-    return i"file://$(path)#L$(line)".text;
-}
 
-private string vsCodeUri(string path, size_t line, size_t col) pure
-{
-    import std.conv : text;
-    return i"vscode://file$(path):$(line):$(col)".text;
-}
+string fileUri(string path, size_t line, size_t col) =>
+    i"file://$(path)#L$(line)".text;
 
-private string vsCodeInsidersUri(string path, size_t line, size_t col) pure
-{
-    import std.conv : text;
-    return i"vscode-insiders://file$(path):$(line):$(col)".text;
-}
+string vsCodeUri(string path, size_t line, size_t col) =>
+    i"vscode://file$(path):$(line):$(col)".text;
 
-private string cursorUri(string path, size_t line, size_t col) pure
-{
-    import std.conv : text;
-    return i"cursor://file$(path):$(line):$(col)".text;
-}
+string vsCodeInsidersUri(string path, size_t line, size_t col) =>
+    i"vscode-insiders://file$(path):$(line):$(col)".text;
 
-private string zedUri(string path, size_t line, size_t col) pure
-{
-    import std.conv : text;
-    return i"zed://file$(path):$(line):$(col)".text;
-}
+string cursorUri(string path, size_t line, size_t col) =>
+    i"cursor://file$(path):$(line):$(col)".text;
 
-private string jetBrainsUri(string path, size_t line, size_t col) pure
-{
-    import std.conv : text;
-    return i"jetbrains://open?file=$(path)&line=$(line)&column=$(col)".text;
-}
+string zedUri(string path, size_t line, size_t col) =>
+    i"zed://file$(path):$(line):$(col)".text;
 
-private string sublimeUri(string path, size_t line, size_t col) pure
-{
-    import std.conv : text;
-    return i"subl://open?url=file://$(path)&line=$(line)&column=$(col)".text;
-}
+string jetBrainsUri(string path, size_t line, size_t col) =>
+    i"jetbrains://open?file=$(path)&line=$(line)&column=$(col)".text;
 
-private string emacsUri(string path, size_t line, size_t col) pure
-{
-    import std.conv : text;
-    return i"org-protocol://open-file?url=file://$(path)&line=$(line)&column=$(col)".text;
-}
+string sublimeUri(string path, size_t line, size_t col) =>
+    i"subl://open?url=file://$(path)&line=$(line)&column=$(col)".text;
 
-private string atomUri(string path, size_t line, size_t col) pure
-{
-    import std.conv : text;
-    return i"atom://core/open/file?filename=$(path)&line=$(line)&column=$(col)".text;
-}
+string emacsUri(string path, size_t line, size_t col) =>
+    i"org-protocol://open-file?url=file://$(path)&line=$(line)&column=$(col)".text;
 
-private string lapceUri(string path, size_t line, size_t col) pure
-{
-    import std.conv : text;
-    return i"lapce://open?path=$(path)&line=$(line)&column=$(col)".text;
+string atomUri(string path, size_t line, size_t col) =>
+    i"atom://core/open/file?filename=$(path)&line=$(line)&column=$(col)".text;
+
+string lapceUri(string path, size_t line, size_t col) =>
+    i"lapce://open?path=$(path)&line=$(line)&column=$(col)".text;
+
 }
 
 // ── Declarative scheme table ────────────────────────────────────────────
