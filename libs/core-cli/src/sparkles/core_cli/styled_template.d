@@ -36,7 +36,11 @@ import sparkles.core_cli.term_style : Style;
 /// more dot-separated style names. Blocks can be nested, and inner blocks
 /// inherit styles from outer blocks. Use `~` prefix to negate (remove) an
 /// inherited style.
-void writeStyled(Writer, Args...)(
+///
+/// Params:
+///     colored = when `false`, style markup is parsed and stripped but no ANSI
+///              escape sequences are emitted — producing plain text output.
+void writeStyled(bool colored = true, Writer, Args...)(
     ref Writer w,
     InterpolationHeader,
     Args args,
@@ -52,7 +56,7 @@ void writeStyled(Writer, Args...)(
         alias T = typeof(arg);
         static if (is(T == InterpolatedLiteral!lit, string lit))
         {
-            parseLiteral(w, lit, ctx);
+            parseLiteral!colored(w, lit, ctx);
         }
         else static if (is(T == InterpolatedExpression!code, string code))
         {
@@ -167,6 +171,18 @@ void writeStyled(Writer, Args...)(
     assert(result == "\x1b[31merror\x1b[39m and \x1b[32msuccess\x1b[39m");
 }
 
+/// When `colored` is `false`, style markup is stripped, producing plain text.
+@("writeStyled.uncolored")
+@safe unittest
+{
+    assert(plainText(i"{red error}") == "error");
+    assert(plainText(i"{bold.red text}") == "text");
+    assert(plainText(i"plain text") == "plain text");
+    int val = 42;
+    assert(plainText(i"Value: {green $(val)}") == "Value: 42");
+    assert(plainText(i"{bold A {red B} C}") == "A B C");
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // String Conversion
 // ─────────────────────────────────────────────────────────────────────────────
@@ -178,6 +194,16 @@ string styledText(Args...)(InterpolationHeader header, Args args, InterpolationF
 
     auto buf = appender!string;
     writeStyled(buf, header, args, footer);
+    return buf[];
+}
+
+/// Returns IES with style markup stripped as a plain string.
+string plainText(Args...)(InterpolationHeader header, Args args, InterpolationFooter footer)
+{
+    import std.array : appender;
+
+    auto buf = appender!string;
+    writeStyled!false(buf, header, args, footer);
     return buf[];
 }
 
@@ -563,7 +589,7 @@ private struct ParserContext
 
 /// Parses a literal segment and writes styled output
 @safe
-private void parseLiteral(Writer)(
+private void parseLiteral(bool colored = true, Writer)(
     ref Writer w,
     const(char)[] literal,
     ref ParserContext ctx
@@ -613,7 +639,8 @@ private void parseLiteral(Writer)(
                     auto spec = literal[ctx.styleNameStart .. ctx.styleNameEnd];
                     applyStyleSpec(spec, ctx);
                     // Only emit styles that are NEW (not inherited from parent)
-                    ctx.topStyle.emitOpenDiff(w, ctx.parentStyle);
+                    static if (colored)
+                        ctx.topStyle.emitOpenDiff(w, ctx.parentStyle);
                     ctx.state = ParseState.content;
                 }
                 else if (c == '}')
@@ -657,7 +684,8 @@ private void parseLiteral(Writer)(
                 else if (c == '}')
                 {
                     // End of block - close only styles that were added in this block
-                    ctx.topStyle.emitCloseDiff(w, ctx.parentStyle);
+                    static if (colored)
+                        ctx.topStyle.emitCloseDiff(w, ctx.parentStyle);
                     ctx.popStyle();
                     ctx.state = ctx.hasStyles ? ParseState.content : ParseState.normal;
                 }
