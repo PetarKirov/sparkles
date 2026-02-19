@@ -108,6 +108,71 @@ enum editorSchemes = [
 ];
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Runtime Editor Detection
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Returns the detected editor command name from `$VISUAL` / `$EDITOR`.
+///
+/// The result is the `baseName` of the first non-empty variable, cached
+/// in a thread-local slot after the first call.
+@safe
+string getEditor()
+{
+    // Thread-local lazy cache
+    static string cached = null;
+    if (cached is null)
+    {
+        import std.path : baseName;
+        import std.process : environment;
+        cached = environment.get("VISUAL", environment.get("EDITOR", "")).baseName;
+    }
+    return cached;
+}
+
+/// Writes an editor-appropriate source URI for runtime path/line/col values.
+///
+/// Looks up `editor` in [editorSchemes] and calls the matching `uriFun`.
+/// Falls back to a `file://` URI when no scheme matches.
+@safe
+void writeEditorUri(Writer)(ref Writer w, string editor, string path, size_t line, size_t col)
+{
+    import std.range.primitives : put;
+
+    foreach (scheme; editorSchemes)
+        foreach (a; scheme.aliases)
+            if (a == editor)
+            {
+                put(w, scheme.uriFun(path, line, col));
+                return;
+            }
+
+    // Default: file:// URI
+    put(w, fileUri(path, line, col));
+}
+
+/// Writes a `file://` URI when no editor is specified.
+@("sourceUri.writeEditorUri.fallback")
+@safe
+unittest
+{
+    import std.array : appender;
+    auto w = appender!string;
+    writeEditorUri(w, "", "/src/main.d", 10, 1);
+    assert(w[] == "file:///src/main.d#L10");
+}
+
+/// Writes a vscode URI when editor is "code".
+@("sourceUri.writeEditorUri.vscode")
+@safe
+unittest
+{
+    import std.array : appender;
+    auto w = appender!string;
+    writeEditorUri(w, "code", "/src/main.d", 10, 3);
+    assert(w[] == "vscode://file/src/main.d:10:3");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Hook Interface and Capability Trait
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -165,7 +230,7 @@ struct EditorDetectHook
     {
         import std.range.primitives : put;
 
-        immutable editor = editorName();  // runtime: lazy-cached
+        immutable editor = getEditor();  // runtime: lazy-cached
 
         // Generated from declarative table — each URI is CTFE-computed
         switch (editor)
@@ -187,19 +252,6 @@ struct EditorDetectHook
                 return;
             }
         }
-    }
-
-    private static string editorName()
-    {
-        // Thread-local lazy cache
-        static string cached = null;
-        if (cached is null)
-        {
-            import std.path : baseName;
-            import std.process : environment;
-            cached = environment.get("VISUAL", environment.get("EDITOR", "")).baseName;
-        }
-        return cached;
     }
 }
 
