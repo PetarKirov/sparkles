@@ -13,6 +13,7 @@ A D library providing utilities for building CLI applications with terminal styl
   - [Boxes](#boxes)
   - [Headers](#headers)
   - [OSC 8 Hyperlinks](#osc-8-hyperlinks)
+- [Logger](#logger)
 - [SmallBuffer (@nogc)](#smallbuffer-nogc)
 - [Running Examples](#running-examples)
 
@@ -116,8 +117,8 @@ void main()
 | `{bold.red text}`          | Chain multiple styles                |
 | `{bold outer {red inner}}` | Nested blocks (inner inherits outer) |
 | `{red text {~red normal}}` | Negation with `~` removes a style    |
-| `{{`                       | Escaped literal `{`                  |
-| `}}`                       | Escaped literal `}`                  |
+| `#{`                       | Escaped literal `{`                  |
+| `#}`                       | Escaped literal `}`                  |
 
 :::
 
@@ -128,6 +129,8 @@ void main()
 | `styledText(i"...")`          | Returns styled string                        |
 | `styledWriteln(i"...")`       | Writes to stdout with newline                |
 | `styledWrite(i"...")`         | Writes to stdout without newline             |
+| `styledWritelnErr(i"...")`    | Writes to stderr with newline                |
+| `styledWriteErr(i"...")`      | Writes to stderr without newline             |
 | `styled(i"...")`              | Returns lazy wrapper for deferred processing |
 | `writeStyled(writer, i"...")` | Writes to any output range                   |
 
@@ -158,7 +161,7 @@ void main()
     styledWriteln(i"{dim $(file):} {red.bold $(errors) errors}");
 
     // Escaped braces for literals
-    styledWriteln(i"Use {{style text}} syntax");
+    styledWriteln(i"Use #{style text#} syntax");
 }
 ```
 
@@ -392,6 +395,57 @@ Configure via `OscLinkProps`:
 | `terminator` | `OscTerminator.bel` | BEL (`\x07`) or ST (`\x1b\\`) |
 | `id`         | `null`              | Optional link id for grouping |
 
+## Logger
+
+The `logger` module provides `DeltaTimeLogger`, a `std.logger.Logger` subclass that prints formatted log lines with wall-clock time, elapsed time since start, and elapsed time since the previous log entry.
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "loggerdemo"
+    dependency "sparkles:core-cli" version="*"
++/
+import std.logger : log, logf, LogLevel;
+import sparkles.core_cli.logger : initLogger;
+
+void main()
+{
+    initLogger(LogLevel.trace);
+
+    log(LogLevel.info, "Listening on port 8080");
+    log(LogLevel.warning, "Disk usage above 80%");
+    log(LogLevel.error, "Connection to database lost");
+    log(LogLevel.critical, "Out of memory");
+
+    immutable host = "db-01.prod";
+    logf(LogLevel.info, "Reconnected to %s:%d", host, 5432);
+}
+```
+
+Output:
+
+```text
+[ 14:32:01 | Δt 0ms   | Δtᵢ 0ms   | INF | app.d:17 ]: Listening on port 8080
+[ 14:32:01 | Δt 3ms   | Δtᵢ 3ms   | WRN | app.d:18 ]: Disk usage above 80%
+[ 14:32:01 | Δt 5ms   | Δtᵢ 2ms   | ERR | app.d:19 ]: Connection to database lost
+[ 14:32:01 | Δt 5ms   | Δtᵢ 0ms   | CRT | app.d:20 ]: Out of memory
+[ 14:32:01 | Δt 12ms  | Δtᵢ 7ms   | INF | app.d:23 ]: Reconnected to db-01.prod:5432
+```
+
+### Features
+
+- **Delta timestamps**: Each line shows `Δt` (total elapsed) and `Δtᵢ` (since previous entry) for quick performance profiling
+- **Colored output**: Log levels are color-coded (green=info, yellow=warn, red=error, bold+red=critical/fatal) using `writeStyled` IES
+- **Thread-safe**: Uses `core.atomic` for delta tracking, safe as a `shared` global logger
+- **Human-friendly durations**: Automatically scales to ms, s, m, h, or d with one decimal place
+
+### API
+
+| Function              | Description                                           |
+| --------------------- | ----------------------------------------------------- |
+| `initLogger(level)`   | Install as the global `std.logger` with minimum level |
+| `writeLogPrefix(...)` | Write prefix to an output range (zero-allocation)     |
+
 ## SmallBuffer (@nogc)
 
 A `@nogc` container with Small Buffer Optimization (SBO). Stores small data inline, automatically switches to heap when capacity is exceeded.
@@ -448,3 +502,4 @@ Available examples:
 - `box.d` - Box layouts with nested content
 - `header.d` - Header styles
 - `osc_link.d` - OSC 8 terminal hyperlinks
+- `logger.d` - Delta-time-prefixed logging
