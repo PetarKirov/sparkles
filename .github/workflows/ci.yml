@@ -43,6 +43,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Setup Nix
         uses: metacraft-labs/nixos-modules/.github/setup-nix@main
@@ -59,6 +61,9 @@ jobs:
 
       - name: Build and test with dub
         run: ./scripts/run-tests.sh
+
+      - name: Register local package
+        run: dub add-local .
 
       - name: Verify README examples
         run: ./scripts/run_md_examples.d --verify --glob='**/*.md'
