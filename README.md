@@ -30,6 +30,7 @@
 - **Pretty Printing** -- Colorized, type-aware formatting for any D type via compile-time introspection
 - **UI Components** -- Tables, boxes, headers, and OSC 8 hyperlinks
 - **Terminal Styling** -- ANSI color and text attribute support with a fluent builder API
+- **Logger** -- Delta-time-prefixed logger with wall-clock time, elapsed-since-start, and per-entry delta timestamps
 - **SmallBuffer** -- A `@nogc` dynamic buffer with small buffer optimization (SBO)
 - **@nogc Utilities** -- `recycledInstance`, text writers, and output range interfaces
 
@@ -89,7 +90,7 @@ Syntax at a glance:
 | `{bold.red text}`           | Chained styles                 |
 | `{bold outer {red nested}}` | Nested blocks with inheritance |
 | `{red text {~red normal}}`  | Style negation with `~`        |
-| `{{` / `}}`                 | Escaped literal braces         |
+| `#{` / `#}`                 | Escaped literal braces         |
 
 ### Pretty Printing
 
@@ -324,6 +325,39 @@ void main()
 }
 ```
 
+### Logger
+
+Delta-time-prefixed logging via `DeltaTimeLogger`, a `std.logger.Logger` subclass. Each log line shows wall-clock time, elapsed time since start, and delta since the previous entry.
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "readme_logger"
+    dependency "sparkles:core-cli" version="*"
++/
+
+import std.logger : log, LogLevel;
+
+import sparkles.core_cli.logger : initLogger;
+
+void main()
+{
+    initLogger(LogLevel.trace);
+
+    log(LogLevel.info, "Listening on port 8080");
+    log(LogLevel.warning, "Disk usage above 80%");
+    log(LogLevel.error, "Connection to database lost");
+}
+```
+
+```
+[ 14:32:01 | Δt 0ms   | Δtᵢ 0ms   | INF | app.d:17 ]: Listening on port 8080
+[ 14:32:01 | Δt 5ms   | Δtᵢ 5ms   | WRN | app.d:18 ]: Disk usage above 80%
+[ 14:32:01 | Δt 12ms  | Δtᵢ 7ms   | ERR | app.d:19 ]: Connection to database lost
+```
+
+The colored output uses `writeStyled` IES for ANSI styling -- log levels are color-coded (green for info, yellow for warnings, red for errors, bold+red for critical/fatal), durations are highlighted, and file locations are dimmed.
+
 ### SmallBuffer
 
 A `@nogc` dynamic array with small buffer optimization. Stores data inline up to a configurable threshold, then falls back to the heap via `pureMalloc`.
@@ -357,7 +391,7 @@ import sparkles.core_cli.lifetime;
 }
 ```
 
-**`text_writers`** -- Write integers, floats, escaped characters, and ANSI codes without GC allocation.
+**`text_writers`** -- Write integers, floats, escaped characters, and ANSI codes without GC allocation. Includes `writeValue` for best-effort `@nogc` conversion of any type, and `writeStyledValue` for hook-controlled styled output.
 
 **`term_unstyle`** -- Strip ANSI escape sequences from styled text.
 
@@ -374,6 +408,7 @@ dub run --single libs/core-cli/examples/table.d
 dub run --single libs/core-cli/examples/box.d
 dub run --single libs/core-cli/examples/header.d
 dub run --single libs/core-cli/examples/osc_link.d
+dub run --single libs/core-cli/examples/logger.d
 dub run --single libs/core-cli/examples/color.d
 ```
 

@@ -226,6 +226,9 @@ sparkles/
 │   │   ├── src/sparkles/core_cli/
 │   │   │   ├── smallbuffer.d      # @nogc dynamic buffer
 │   │   │   ├── prettyprint.d      # Colorized pretty-printing
+│   │   │   ├── text_writers.d     # @nogc text writing utilities
+│   │   │   ├── styled_template.d  # IES-based styled text processing
+│   │   │   ├── logger.d           # Delta-time-prefixed logger
 │   │   │   ├── term_style.d       # Terminal styling/colors
 │   │   │   ├── term_size.d        # Terminal size detection
 │   │   │   ├── process_utils.d    # Process execution
