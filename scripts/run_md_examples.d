@@ -79,6 +79,9 @@ struct CliParams
 
     @CliOption(`u|update`, "Rewrite the markdown file with actual example output.")
     bool update;
+
+    @CliOption(`g|glob`, "Glob pattern to find markdown files (e.g. '*.md' or '**/*.md').")
+    string glob;
 }
 
 struct Example
@@ -128,34 +131,61 @@ int main(string[] args)
         return 1;
     }
 
-    if (args.length < 2)
+    // Collect markdown files: from --glob, positional args, or both.
+    string[] mdFiles;
+
+    if (cli.glob.length > 0)
     {
-        styledWritelnErr(i"{bold Usage:} $(args[0].baseName) [--verify|--update] <markdown-file>");
+        auto result = execute(["git", "ls-files", "--", cli.glob]);
+        if (result.status == 0)
+            mdFiles = result.output.lineSplitter
+                .filter!(l => l.length > 0)
+                .map!(l => l.idup)
+                .array;
+    }
+
+    if (args.length >= 2)
+        mdFiles ~= args[1 .. $].map!(a => a.idup).array;
+
+    if (mdFiles.length == 0)
+    {
+        styledWritelnErr(i"{bold Usage:} $(args[0].baseName) [--verify|--update] [--glob=PATTERN] [markdown-file...]");
         return 1;
     }
 
-    const mdFile = args[1];
-    if (!mdFile.exists)
+    int totalFailures = 0;
+
+    foreach (mdFile; mdFiles)
     {
-        styledWritelnErr(i"{red Error:} File not found: $(mdFile)");
-        return 1;
+        if (!mdFile.exists)
+        {
+            styledWritelnErr(i"{red Error:} File not found: $(mdFile)");
+            totalFailures++;
+            continue;
+        }
+
+        auto content = mdFile.readText;
+        auto examples = extractExamples(content);
+
+        if (examples.length == 0)
+        {
+            styledWriteln(i"{yellow No runnable examples found in $(mdFile).}");
+            continue;
+        }
+
+        int rc;
+        if (cli.verify)
+            rc = runVerifyMode(examples, mdFile);
+        else if (cli.update)
+            rc = runUpdateMode(examples, mdFile);
+        else
+            rc = runDefaultMode(examples, mdFile);
+
+        if (rc != 0)
+            totalFailures++;
     }
 
-    auto content = mdFile.readText;
-    auto examples = extractExamples(content);
-
-    if (examples.length == 0)
-    {
-        styledWriteln(i"{yellow No runnable examples found.}");
-        return 0;
-    }
-
-    if (cli.verify)
-        return runVerifyMode(examples, mdFile);
-    else if (cli.update)
-        return runUpdateMode(examples, mdFile);
-    else
-        return runDefaultMode(examples, mdFile);
+    return totalFailures > 0 ? 1 : 0;
 }
 
 // === Core Functions ===
