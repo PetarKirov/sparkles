@@ -228,10 +228,10 @@ void writeStyledLevel(bool colored = true, Writer)(ref Writer w, LogLevel level)
 
     switch (level)
     {
-        case LogLevel.trace:    writeStyled!colored(w, i"{gray TRC}");     break;
+        case LogLevel.trace:    writeStyled!colored(w, i"{blue TRC}");     break;
         case LogLevel.info:     writeStyled!colored(w, i"{green INF}");    break;
         case LogLevel.warning:  writeStyled!colored(w, i"{yellow WRN}");   break;
-        case LogLevel.error:    writeStyled!colored(w, i"{red ERR}");      break;
+        case LogLevel.error:    writeStyled!colored(w, i"{brightRed ERR}");      break;
         case LogLevel.critical: writeStyled!colored(w, i"{bold.red CRT}"); break;
         case LogLevel.fatal:    writeStyled!colored(w, i"{bold.red FTL}"); break;
         default: assert(0, "unexpected log level");
@@ -259,7 +259,22 @@ void writeLogPrefix(bool colored = false, Writer)(
     writeDurationPadded(prevBuf, sincePrev, 5);
     auto loc = file.baseName;
 
-    writeStyled!colored(w, i"{gray [ $(timeStr)} | Δt {yellow $(startBuf[])} | Δtᵢ {yellow $(prevBuf[])} | ");
+    writeStyled!colored(w, i"{gray.dim [} {cyan $(timeStr)} {dim | Δt} {yellow $(startBuf[])} {dim | Δtᵢ} {yellow $(prevBuf[])} {dim |} ");
     writeStyledLevel!colored(w, level);
-    writeStyled!colored(w, i" | {dim $(loc):$(line)} ]: ");
+    writeStyled!colored(w, i" {gray.dim |}");
+    static if (colored)
+    {
+        import sparkles.core_cli.source_uri : getEditor, resolveSourcePath, writeEditorUri;
+        import sparkles.core_cli.ui.osc_link : oscLinkOpenSeq, oscLinkCloseSeq;
+        import std.range.primitives : put;
+
+        SmallBuffer!(char, 256) uriBuf;
+        writeEditorUri(uriBuf, getEditor(), resolveSourcePath(file), line, 1);
+        put(w, oscLinkOpenSeq(uri: uriBuf[]));
+        writeStyled!colored(w, i" $(loc):$(line) ");
+        put(w, oscLinkCloseSeq());
+    }
+    else
+        writeStyled!colored(w, i" $(loc):$(line) ");
+    writeStyled!colored(w, i"{gray.dim ]:} ");
 }
