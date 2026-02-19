@@ -43,8 +43,7 @@ void writeStyled(Writer, Args...)(
     InterpolationFooter
 )
 {
-    import std.conv : to;
-    import std.range.primitives : put;
+    import sparkles.core_cli.text_writers : writeValue;
 
     ParserContext ctx;
 
@@ -61,8 +60,9 @@ void writeStyled(Writer, Args...)(
         }
         else
         {
-            // Output interpolated value - styles already active from block
-            put(w, arg.to!string);
+            // Output interpolated value — best-effort @nogc via writeValue,
+            // falls back to std.conv.to!string for types without @nogc conversion.
+            writeValue(w, arg);
         }
     }}
 }

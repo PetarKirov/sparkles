@@ -2,7 +2,8 @@ module sparkles.core_cli.prettyprint;
 
 import std.typecons : Tuple;
 
-import sparkles.core_cli.term_style : escapeSeq, Style, stylize;
+import sparkles.core_cli.term_style : Style;
+import sparkles.core_cli.text_writers : EnumRender, writeEscapeSeq, writeStylized, writeStyledValue;
 
 struct PrettyPrintOptions(SourceUriHook = void)
 {
@@ -48,12 +49,12 @@ private void prettyPrintImpl(T, Writer, Hook)(
 )
 {
     import std.range.primitives : isForwardRange, hasLength, put;
-    import std.traits : isSomeChar, isSomeString, isNumeric, isFloatingPoint,
+    import std.traits : isSomeChar, isSomeString, isNumeric,
         isPointer, isAssociativeArray, isStaticArray, isDynamicArray;
 
     // Check depth limit
     if (depth > opt.maxDepth)
-        return coloredWrite(w, "...", Style.red, opt.useColors);
+        return writeStylized(w, "...", opt.useColors ? Style.red : Style.none);
 
     enum isNullable = __traits(compiles, T.init is null) && !is(T == U[], U);
 
@@ -61,7 +62,7 @@ private void prettyPrintImpl(T, Writer, Hook)(
     static if (isNullable)
     {
         if (value is null)
-            return coloredWrite(w, "null", Style.yellow, opt.useColors);
+            return writeStylized(w, "null", opt.useColors ? Style.yellow : Style.none);
     }
 
     // 2. Enums
@@ -69,58 +70,40 @@ private void prettyPrintImpl(T, Writer, Hook)(
     {
         writeTypeName!T(w, opt);
         put(w, ".");
-        coloredWrite(w, value, Style.green, opt.useColors);
+        writeStyledValue(w, value, prettyLeafHook, opt.useColors);
     }
-    // 3. Boolean
-    else static if (is(T == bool))
+    // 3. Leaf types (bool, char, string, numeric)
+    else static if (is(T == bool) || isSomeChar!T || isSomeString!T || isNumeric!T)
     {
-        coloredWrite(w, value ? "true" : "false", Style.yellow, opt.useColors);
+        writeStyledValue(w, value, prettyLeafHook, opt.useColors);
     }
-    // 4. Strings and individual chars
-    else static if (isSomeChar!T || isSomeString!T)
-    {
-        coloredWriteEscaped(w, value, Style.green, opt.useColors);
-    }
-    // 5. Numeric types
-    else static if (isNumeric!T)
-    {
-        static if (isFloatingPoint!T)
-        {
-            import std.math.traits : isNaN, isInfinity;
-            // Special values get red color, normal values get blue
-            if (isNaN(value) || isInfinity(value))
-                return coloredWrite(w, value, Style.red, opt.useColors);
-        }
-
-        coloredWrite(w, value, Style.blue, opt.useColors);
-    }
-    // 6. Pointers
+    // 4. Pointers
     else static if (isPointer!T)
     {
-        coloredWrite(w, "&", Style.magenta, opt.useColors);
+        writeStylized(w, "&", opt.useColors ? Style.magenta : Style.none);
         prettyPrintImpl(*value, w, opt, cast(ushort)(depth + 1));
     }
-    // 7. std.typecons.Tuple
+    // 5. std.typecons.Tuple
     else static if (is(T : Tuple!Args, Args...))
     {
         prettyPrintTuple(value, w, opt, depth);
     }
-    // 8. Associative arrays
+    // 6. Associative arrays
     else static if (isAssociativeArray!T)
     {
         prettyPrintAA(value, w, opt, depth);
     }
-    // 9. Static arrays - slice them
+    // 7. Static arrays - slice them
     else static if (isStaticArray!T)
     {
         prettyPrintRange(value[], w, opt, depth);
     }
-    // 10. Dynamic arrays / slices and forward ranges with length
+    // 8. Dynamic arrays / slices and forward ranges with length
     else static if (isDynamicArray!T || (isForwardRange!T && hasLength!T))
     {
         prettyPrintRange(value, w, opt, depth);
     }
-    // 11. Structs and classes
+    // 9. Structs and classes
     else static if (is(T == struct) || is(T == class))
     {
         prettyPrintAggregate(value, w, opt, depth);
@@ -139,7 +122,6 @@ private void prettyPrintTuple(Writer, Hook, Args...)(
 )
 {
     import std.range.primitives : put;
-    import std.format : formattedWrite;
 
     put(w, "(");
 
@@ -151,7 +133,7 @@ private void prettyPrintTuple(Writer, Hook, Args...)(
         // Print field name if available
         static if (value.fieldNames[i].length > 0)
         {
-            coloredWrite(w, value.fieldNames[i], Style.brightCyan, opt.useColors);
+            writeStylized(w, value.fieldNames[i], opt.useColors ? Style.brightCyan : Style.none);
             put(w, ": ");
         }
 
@@ -170,8 +152,9 @@ private void prettyPrintAA(T, Writer, Hook)(
 {
     import std.range : repeat;
     import std.range.primitives : put;
-    import std.format : formattedWrite;
     import std.traits : KeyType, ValueType;
+
+    import sparkles.core_cli.text_writers : writeInteger;
 
     if (aa.length == 0)
     {
@@ -227,10 +210,12 @@ private void prettyPrintAA(T, Writer, Hook)(
             put(w, "\n");
             put(w, indent);
             if (opt.useColors)
-                put(w, Style.gray[0].escapeSeq);
-            w.formattedWrite("... %d more", aa.length - count);
+                writeEscapeSeq(w, Style.gray[0]);
+            put(w, "... ");
+            writeInteger(w, aa.length - count);
+            put(w, " more");
             if (opt.useColors)
-                put(w, Style.gray[1].escapeSeq);
+                writeEscapeSeq(w, Style.gray[1]);
             break;
         }
 
@@ -319,7 +304,8 @@ private void prettyPrintRange(R, Writer, Hook)(
 {
     import std.range : repeat;
     import std.range.primitives : put, empty, front, popFront, hasLength;
-    import std.format : formattedWrite;
+
+    import sparkles.core_cli.text_writers : writeInteger;
 
     static if (hasLength!R)
     {
@@ -381,14 +367,16 @@ private void prettyPrintRange(R, Writer, Hook)(
             static if (hasLength!R)
             {
                 if (opt.useColors)
-                    put(w, Style.gray[0].escapeSeq);
-                w.formattedWrite("... %d more", len - count);
+                    writeEscapeSeq(w, Style.gray[0]);
+                put(w, "... ");
+                writeInteger(w, len - count);
+                put(w, " more");
                 if (opt.useColors)
-                    put(w, Style.gray[1].escapeSeq);
+                    writeEscapeSeq(w, Style.gray[1]);
             }
             else
             {
-                coloredWrite(w, "... more", Style.gray, opt.useColors);
+                writeStylized(w, "... more", opt.useColors ? Style.gray : Style.none);
             }
             break;
         }
@@ -447,7 +435,7 @@ private void prettyPrintAggregate(T, Writer, Hook)(
                     if (!first)
                         put(w, ", ");
                     first = false;
-                    coloredWrite(w, fieldName, Style.brightCyan, opt.useColors);
+                    writeStylized(w, fieldName, opt.useColors ? Style.brightCyan : Style.none);
                     put(w, ": ");
                     prettyPrintImpl(value.tupleof[i], w, opt, cast(ushort)(depth + 1));
                 }
@@ -473,7 +461,7 @@ private void prettyPrintAggregate(T, Writer, Hook)(
 
             put(w, "\n");
             put(w, indent);
-            coloredWrite(w, fieldName, Style.brightCyan, opt.useColors);
+            writeStylized(w, fieldName, opt.useColors ? Style.brightCyan : Style.none);
             put(w, ": ");
 
             prettyPrintImpl(value.tupleof[i], w, opt, cast(ushort)(depth + 1));
@@ -489,19 +477,44 @@ private void prettyPrintAggregate(T, Writer, Hook)(
 // Helper functions
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Types that can be pretty-printed in @nogc context
-private template isNogcPrettyPrintable(T)
+/// DbI hook for `writeStyledValue` that encodes prettyPrint's leaf rendering
+/// rules: escaped strings/chars with quotes, enum member names, and
+/// per-type/per-value ANSI color selection.
+private struct PrettyLeafHook
 {
-    import std.traits : isSomeString, isSomeChar, isIntegral, isFloatingPoint;
-    enum isNogcPrettyPrintable =
-        is(T == typeof(null)) ||
-        is(T == bool) ||
-        isIntegral!T ||
-        isFloatingPoint!T ||
-        isSomeChar!T ||
-        isSomeString!T ||
-        is(T == enum);
+    enum escapeStrings = true;
+    enum escapeChars = true;
+    enum enumRender = EnumRender.memberName;
+
+    Style styleOf(T)(in T val) const @safe pure nothrow @nogc
+    {
+        import std.traits : isSomeChar, isSomeString, isNumeric, isFloatingPoint;
+
+        static if (is(T == typeof(null)))
+            return Style.yellow;
+        else static if (is(T == bool))
+            return Style.yellow;
+        else static if (is(T == enum))
+            return Style.green;
+        else static if (isSomeChar!T || isSomeString!T)
+            return Style.green;
+        else static if (isNumeric!T)
+        {
+            static if (isFloatingPoint!T)
+            {
+                import std.math.traits : isNaN, isInfinity;
+                if (isNaN(val) || isInfinity(val))
+                    return Style.red;
+            }
+            return Style.blue;
+        }
+        else
+            return Style.none;
+    }
 }
+
+/// Module-level instance avoids repeated construction.
+private immutable PrettyLeafHook prettyLeafHook;
 
 private void writeTypeName(T, Writer, Hook)(ref Writer w, in PrettyPrintOptions!Hook opt)
 {
@@ -530,141 +543,13 @@ private void writeTypeName(T, Writer, Hook)(ref Writer w, in PrettyPrintOptions!
         }
     }
 
-    coloredWrite(w, T.stringof, Style.magenta, opt.useColors);
+    writeStylized(w, T.stringof, opt.useColors ? Style.magenta : Style.none);
 
     static if (hasLoc)
     {
         if (opt.useOscLinks)
             put(w, "\x1b]8;;\x07");
     }
-}
-
-/// @nogc-compatible coloredWrite for basic types
-private void coloredWriteNogc(Writer, T)(ref Writer w, in T value, Style style, bool useColors) @trusted
-{
-    import std.range.primitives : put;
-    import std.traits : isSomeString, isSomeChar, isIntegral, isFloatingPoint, OriginalType;
-    import sparkles.core_cli.text_writers : writeEscapeSeq, writeInteger, writeFloat, writeEscapedCharLiteral;
-
-    void writeStyled(const(char)[] text)
-    {
-        if (useColors)
-            writeEscapeSeq(w, style[0]);
-        put(w, text);
-        if (useColors)
-            writeEscapeSeq(w, style[1]);
-    }
-
-    static if (is(T == typeof(null)))
-    {
-        writeStyled("null");
-    }
-    else static if (is(T == bool))
-    {
-        writeStyled(value ? "true" : "false");
-    }
-    else static if (isSomeString!T)
-    {
-        writeStyled(value);
-    }
-    else static if (isSomeChar!T)
-    {
-        if (useColors)
-            writeEscapeSeq(w, style[0]);
-        writeEscapedCharLiteral(w, value);
-        if (useColors)
-            writeEscapeSeq(w, style[1]);
-    }
-    else static if (is(T == enum))  // Check enum before isIntegral (enums satisfy isIntegral)
-    {
-        // For enums, we need to convert to string at compile time
-        // This is a simplified version that uses runtime lookup
-        if (useColors)
-            writeEscapeSeq(w, style[0]);
-
-        // Convert enum value to its string name
-        bool found = false;
-        static foreach (member; __traits(allMembers, T))
-        {
-            if (!found && value == __traits(getMember, T, member))
-            {
-                put(w, member);
-                found = true;
-            }
-        }
-
-        if (useColors)
-            writeEscapeSeq(w, style[1]);
-    }
-    else static if (isIntegral!T)
-    {
-        if (useColors)
-            writeEscapeSeq(w, style[0]);
-
-        writeInteger(w, value);
-
-        if (useColors)
-            writeEscapeSeq(w, style[1]);
-    }
-    else static if (isFloatingPoint!T)
-    {
-        if (useColors)
-            writeEscapeSeq(w, style[0]);
-        writeFloat(w, value);
-        if (useColors)
-            writeEscapeSeq(w, style[1]);
-    }
-    else
-    {
-        static assert(false, "Unsupported type for @nogc coloredWrite: " ~ T.stringof);
-    }
-}
-
-/// @nogc-compatible coloredWrite for escaped strings/chars
-private void coloredWriteEscaped(Writer, T)(ref Writer w, in T value, Style style, bool useColors) @trusted
-{
-    import std.traits : isSomeString, isSomeChar;
-    import sparkles.core_cli.text_writers : writeEscapeSeq, writeEscapedCharLiteral, writeEscapedString;
-
-    if (useColors)
-        writeEscapeSeq(w, style[0]);
-
-    static if (isSomeChar!T)
-        writeEscapedCharLiteral(w, value);
-    else static if (isSomeString!T)
-        writeEscapedString(w, value);
-    else
-        static assert(false, "coloredWriteEscaped only supports char and string types");
-
-    if (useColors)
-        writeEscapeSeq(w, style[1]);
-}
-
-/// GC-based coloredWrite (original implementation)
-private void coloredWriteGC(string fmt = "%s", Writer, T)(ref Writer w, in T value, Style style, bool useColors)
-{
-    import std.range.primitives : put;
-    import std.traits : isSomeString;
-
-    string text;
-    static if (fmt == "%s" && isSomeString!T)
-        text = value;
-    else
-    {
-        import std.format : format;
-        text = format!fmt(value);
-    }
-
-    put(w, useColors ? text.stylize(style) : text);
-}
-
-/// Dispatcher: uses @nogc path for basic types, GC path otherwise
-private void coloredWrite(string fmt = "%s", Writer, T)(ref Writer w, in T value, Style style, bool useColors)
-{
-    static if (fmt == "%s" && isNogcPrettyPrintable!T)
-        coloredWriteNogc(w, value, style, useColors);
-    else
-        coloredWriteGC!fmt(w, value, style, useColors);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

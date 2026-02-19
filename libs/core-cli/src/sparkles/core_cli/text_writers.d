@@ -726,3 +726,388 @@ unittest
     writeStylized(buf, "hello", Style.none);
     assert(buf[] == "hello");
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Enum Member Name Writing
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Writes an enum value's member name to an output range. @nogc-compatible.
+///
+/// Uses `static foreach` over `__traits(allMembers, E)` for a compile-time
+/// generated lookup. Falls back to writing the underlying integer value
+/// if no member matches (e.g., combined bit flags).
+void writeEnumMemberName(E, Writer)(ref Writer w, const E val) @trusted
+if (is(E == enum))
+{
+    import std.range.primitives : put;
+    import std.traits : OriginalType;
+
+    bool matched = false;
+
+    static foreach (member; __traits(allMembers, E))
+    {{
+        if (!matched && val == __traits(getMember, E, member))
+        {
+            put(w, member);
+            matched = true;
+        }
+    }}
+
+    if (!matched)
+        writeInteger(w, cast(OriginalType!E) val);
+}
+
+@("writeEnumMemberName.basic")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.core_cli.smallbuffer : SmallBuffer;
+
+    enum Color { red, green, blue }
+
+    SmallBuffer!(char, 32) buf;
+    writeEnumMemberName(buf, Color.green);
+    assert(buf[] == "green");
+}
+
+@("writeEnumMemberName.fallback")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.core_cli.smallbuffer : SmallBuffer;
+
+    enum Flags : ubyte { a = 1, b = 2 }
+
+    SmallBuffer!(char, 32) buf;
+    writeEnumMemberName(buf, cast(Flags) 3);
+    assert(buf[] == "3");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Styled Value Writing
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Controls how enum values are rendered by `writeStyledValue`.
+enum EnumRender
+{
+    underlying, /// Write as underlying integer (default for `writeValue`)
+    memberName, /// Write the member name string (e.g., `"green"`)
+}
+
+/// True if `T` is a leaf type that can be written by `writeStyledValue`
+/// without requiring recursive pretty-printing.
+///
+/// Leaf types: `null`, `bool`, integrals, floating-point, `char`, `string`, `enum`.
+template isLeafValue(T)
+{
+    import std.traits : isSomeChar, isSomeString;
+
+    enum isLeafValue =
+        is(T == typeof(null)) ||
+        is(T == bool) ||
+        is(T == enum) ||
+        __traits(isIntegral, T) ||
+        __traits(isFloating, T) ||
+        isSomeChar!T ||
+        isSomeString!T;
+}
+
+@("isLeafValue.builtinTypes")
+@safe pure nothrow @nogc
+unittest
+{
+    static assert(isLeafValue!bool);
+    static assert(isLeafValue!int);
+    static assert(isLeafValue!double);
+    static assert(isLeafValue!char);
+    static assert(isLeafValue!string);
+    static assert(isLeafValue!(typeof(null)));
+
+    enum Color { red }
+    static assert(isLeafValue!Color);
+}
+
+@("isLeafValue.nonLeafTypes")
+@safe pure nothrow @nogc
+unittest
+{
+    struct S { int x; }
+    static assert(!isLeafValue!S);
+    static assert(!isLeafValue!(int[]));
+    static assert(!isLeafValue!(int[string]));
+}
+
+/// Writes a leaf value to an output range with optional ANSI styling.
+///
+/// Parameterized by a DbI hook that controls:
+/// $(UL
+///   $(LI `Style styleOf(T)(val)` — per-type/per-value style selection)
+///   $(LI `enum bool escapeStrings` — write strings with quotes and escapes)
+///   $(LI `enum bool escapeChars` — write chars with quotes and escapes)
+///   $(LI `enum EnumRender enumRender` — how to render enum values)
+/// )
+///
+/// All hook primitives are optional (DbI §5). When absent, defaults apply:
+/// no styling, raw strings/chars, enums as underlying integers.
+void writeStyledValue(Hook, Writer, T)(ref Writer w, in T value, in Hook hook, bool useColors) @trusted
+{
+    import std.range.primitives : put;
+    import std.traits : isSomeChar, isSomeString;
+
+    // 1. Compute style from hook (optional primitive)
+    Style style = Style.none;
+    static if (__traits(compiles, hook.styleOf(value)))
+    {
+        if (useColors)
+            style = hook.styleOf(value);
+    }
+
+    // 2. Open style
+    if (style != Style.none)
+        writeEscapeSeq(w, style[0]);
+
+    // 3. Dispatch by type
+    static if (is(T == typeof(null)))
+    {
+        put(w, "null");
+    }
+    else static if (is(T == enum))
+    {
+        // Hook-controlled enum rendering
+        enum render = {
+            static if (__traits(compiles, Hook.enumRender))
+                return Hook.enumRender;
+            else
+                return EnumRender.underlying;
+        }();
+
+        static if (render == EnumRender.memberName)
+            writeEnumMemberName(w, value);
+        else
+        {
+            import std.traits : OriginalType;
+            writeInteger(w, cast(OriginalType!T) value);
+        }
+    }
+    else static if (is(T == bool))
+    {
+        put(w, value ? "true" : "false");
+    }
+    else static if (isSomeChar!T)
+    {
+        enum esc = {
+            static if (__traits(compiles, Hook.escapeChars))
+                return Hook.escapeChars;
+            else
+                return false;
+        }();
+
+        static if (esc)
+            writeEscapedCharLiteral(w, value);
+        else
+            put(w, (&value)[0 .. 1]);
+    }
+    else static if (isSomeString!T)
+    {
+        enum esc = {
+            static if (__traits(compiles, Hook.escapeStrings))
+                return Hook.escapeStrings;
+            else
+                return false;
+        }();
+
+        static if (esc)
+            writeEscapedString(w, value);
+        else
+            put(w, value);
+    }
+    else static if (__traits(isIntegral, T))
+    {
+        writeInteger(w, value);
+    }
+    else static if (__traits(isFloating, T))
+    {
+        writeFloat(w, value);
+    }
+    else
+    {
+        // Non-leaf fallback: delegate to plain writeValue
+        writeValue(w, value);
+    }
+
+    // 4. Close style
+    if (style != Style.none)
+        writeEscapeSeq(w, style[1]);
+}
+
+/// Default hook: no styling, no escaping, enums as integers.
+@("writeStyledValue.defaultHook")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.core_cli.smallbuffer : SmallBuffer;
+
+    struct NoHook {}
+
+    SmallBuffer!(char, 64) buf;
+    writeStyledValue(buf, 42, NoHook(), false);
+    assert(buf[] == "42");
+
+    buf.clear();
+    writeStyledValue(buf, "hello", NoHook(), false);
+    assert(buf[] == "hello");
+}
+
+/// Hook with styling: values get ANSI color codes.
+@("writeStyledValue.withStyle")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.core_cli.smallbuffer : SmallBuffer;
+
+    struct BlueInts
+    {
+        Style styleOf(T)(in T) const @safe pure nothrow @nogc
+        {
+            static if (__traits(isIntegral, T))
+                return Style.blue;
+            else
+                return Style.none;
+        }
+    }
+
+    SmallBuffer!(char, 64) buf;
+    writeStyledValue(buf, 42, BlueInts(), true);
+    assert(buf[] == "\x1b[34m42\x1b[39m");
+}
+
+/// Hook with string escaping: strings get quotes and escape sequences.
+@("writeStyledValue.escapedStrings")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.core_cli.smallbuffer : SmallBuffer;
+
+    struct EscHook
+    {
+        enum escapeStrings = true;
+        enum escapeChars = true;
+    }
+
+    SmallBuffer!(char, 64) buf;
+    writeStyledValue(buf, "hi\nthere", EscHook(), false);
+    assert(buf[] == `"hi\nthere"`);
+
+    buf.clear();
+    writeStyledValue(buf, '\t', EscHook(), false);
+    assert(buf[] == `'\t'`);
+}
+
+/// Hook with enum member name rendering.
+@("writeStyledValue.enumMemberName")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.core_cli.smallbuffer : SmallBuffer;
+
+    enum Dir { north, south, east, west }
+
+    struct EnumHook
+    {
+        enum enumRender = EnumRender.memberName;
+    }
+
+    SmallBuffer!(char, 32) buf;
+    writeStyledValue(buf, Dir.south, EnumHook(), false);
+    assert(buf[] == "south");
+}
+
+/// Hook with styling disabled (useColors=false): no escape codes emitted.
+@("writeStyledValue.stylingDisabled")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.core_cli.smallbuffer : SmallBuffer;
+
+    struct AlwaysBlue
+    {
+        Style styleOf(T)(in T) const @safe pure nothrow @nogc => Style.blue;
+    }
+
+    SmallBuffer!(char, 64) buf;
+    writeStyledValue(buf, 42, AlwaysBlue(), false);
+    assert(buf[] == "42");
+}
+
+/// Null value rendering.
+@("writeStyledValue.null")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.core_cli.smallbuffer : SmallBuffer;
+
+    struct YellowNull
+    {
+        Style styleOf(T)(in T) const @safe pure nothrow @nogc => Style.yellow;
+    }
+
+    SmallBuffer!(char, 64) buf;
+    writeStyledValue(buf, null, YellowNull(), true);
+    assert(buf[] == "\x1b[33mnull\x1b[39m");
+}
+
+/// Bool value rendering with styling.
+@("writeStyledValue.bool")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.core_cli.smallbuffer : SmallBuffer;
+
+    struct YellowBool
+    {
+        Style styleOf(T)(in T) const @safe pure nothrow @nogc
+        {
+            static if (is(T == bool))
+                return Style.yellow;
+            else
+                return Style.none;
+        }
+    }
+
+    SmallBuffer!(char, 64) buf;
+    writeStyledValue(buf, true, YellowBool(), true);
+    assert(buf[] == "\x1b[33mtrue\x1b[39m");
+}
+
+/// Float special values with per-value styling.
+@("writeStyledValue.floatSpecial")
+@safe pure nothrow @nogc
+unittest
+{
+    import std.math.traits : isNaN;
+    import sparkles.core_cli.smallbuffer : SmallBuffer;
+
+    struct FloatHook
+    {
+        Style styleOf(T)(in T val) const @safe pure nothrow @nogc
+        {
+            static if (__traits(isFloating, T))
+            {
+                import std.math.traits : isNaN, isInfinity;
+                if (isNaN(val) || isInfinity(val))
+                    return Style.red;
+                return Style.blue;
+            }
+            else
+                return Style.none;
+        }
+    }
+
+    SmallBuffer!(char, 64) buf;
+    writeStyledValue(buf, double.nan, FloatHook(), true);
+    assert(buf[] == "\x1b[31mnan\x1b[39m");
+
+    buf.clear();
+    writeStyledValue(buf, 3.14, FloatHook(), true);
+    assert(buf[] == "\x1b[34m3.14\x1b[39m");
+}
