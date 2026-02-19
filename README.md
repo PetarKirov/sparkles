@@ -350,6 +350,12 @@ void main()
 }
 ```
 
+<!-- md-example-expected
+[ {{_}} | Δt {{_}} | Δtᵢ {{_}} | INF | {{_}} ]: Listening on port 8080
+[ {{_}} | Δt {{_}} | Δtᵢ {{_}} | WRN | {{_}} ]: Disk usage above 80%
+[ {{_}} | Δt {{_}} | Δtᵢ {{_}} | ERR | {{_}} ]: Connection to database lost
+-->
+
 ```
 [ 14:32:01 | Δt 0ms   | Δtᵢ 0ms   | INF | app.d:17 ]: Listening on port 8080
 [ 14:32:01 | Δt 5ms   | Δtᵢ 5ms   | WRN | app.d:18 ]: Disk usage above 80%
