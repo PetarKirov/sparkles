@@ -26,7 +26,7 @@ struct OscLinkProps
 
 /// Returns the OSC 8 opening escape sequence for `uri`.
 pure nothrow
-string oscLinkOpenSeq(string uri, OscLinkProps props = OscLinkProps.init)
+string oscLinkOpenSeq(const(char)[] uri, OscLinkProps props = OscLinkProps.init)
 {
     const params = props.id !is null ? "id=" ~ props.id : "";
     const term = props.terminator == OscTerminator.st ? "\x1b\\" : "\x07";
@@ -80,7 +80,7 @@ string oscLinkCloseSeq(OscLinkProps props = OscLinkProps.init)
 
 /// Wraps `text` in an OSC 8 hyperlink to `uri`.
 pure nothrow
-string oscLink(string text, string uri, OscLinkProps props = OscLinkProps.init)
+string oscLink(in char[] text, in char[] uri, OscLinkProps props = OscLinkProps.init)
 {
     return oscLinkOpenSeq(uri: uri, props: props) ~ text ~ oscLinkCloseSeq(props: props);
 }
@@ -114,7 +114,7 @@ string oscLink(string text, string uri, OscLinkProps props = OscLinkProps.init)
 /// The SGR styling is applied inside the link, so terminal emulators
 /// render the styled text as a clickable hyperlink.
 pure nothrow
-string oscLink(string text, string uri, Style style, OscLinkProps props = OscLinkProps.init)
+string oscLink(string text, in char[] uri, Style style, OscLinkProps props = OscLinkProps.init)
 {
     import sparkles.core_cli.term_style : stylize;
     return oscLinkOpenSeq(uri: uri, props: props) ~ text.stylize(style) ~ oscLinkCloseSeq(props: props);
