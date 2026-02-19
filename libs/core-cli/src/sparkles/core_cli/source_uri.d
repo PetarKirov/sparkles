@@ -17,7 +17,7 @@ import std.conv : text;
 /// the compiler's working directory, then resolves `path` against it.
 /// Works at compile time (CTFE) and at runtime.
 string resolveSourcePath(
-    string path,
+    in char[] path,
     string fullPath = __FILE_FULL_PATH__,
     string relPath = __FILE__,
 ) @safe pure
@@ -26,11 +26,11 @@ string resolveSourcePath(
 
     // Already absolute — return as-is
     if (path.length > 0 && path[0] == '/')
-        return path;
+        return path.idup;
 
     // Derive compiler working directory: strip relative suffix from full path
     string base = fullPath[0 .. $ - relPath.length];
-    return absolutePath(path, base);
+    return absolutePath(path.idup, base);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -134,7 +134,7 @@ string getEditor()
 /// Looks up `editor` in [editorSchemes] and calls the matching `uriFun`.
 /// Falls back to a `file://` URI when no scheme matches.
 @safe
-void writeEditorUri(Writer)(ref Writer w, string editor, string path, size_t line, size_t col)
+void writeEditorUri(Writer)(ref Writer w, in char[] editor, string path, size_t line, size_t col)
 {
     import std.range.primitives : put;
 

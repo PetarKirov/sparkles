@@ -241,11 +241,11 @@ void writeStyledLevel(bool colored = true, Writer)(ref Writer w, LogLevel level)
 @safe
 void writeLogPrefix(bool colored = false, Writer)(
     ref Writer w,
-    const(char)[] timeStr,
+    in char[] timeStr,
     Duration sinceStart,
     Duration sincePrev,
     LogLevel level,
-    string file,
+    in char[] file,
     int line,
 )
 {
