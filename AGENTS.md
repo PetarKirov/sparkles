@@ -361,6 +361,66 @@ For complex capability detection patterns (traits, optional primitives, fallback
 3. **Check @nogc compatibility**: Ensure tests compile with `@nogc` attribute
 4. **Use `check` helper**: In tests, use the `check` function for pretty error messages with diffs
 
+## Documenting New Features
+
+When adding a new feature to sparkles, add a runnable example to `README.md` as a dub single-file program inside a fenced `d` code block:
+
+````markdown
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "readme_my_feature"
+    dependency "sparkles:core-cli" version="*"
++/
+
+import sparkles.core_cli.my_module;
+
+void main()
+{
+    // Example usage
+}
+```
+````
+
+Follow the code block with a bare fenced output block (no language tag) showing the expected output:
+
+````markdown
+```
+Expected output here
+```
+````
+
+### Verifying README Examples
+
+Use `./scripts/run_md_examples.d` to verify that all README examples compile and produce correct output:
+
+```bash
+# Verify all examples match their expected output
+./scripts/run_md_examples.d --verify README.md
+
+# Update output blocks with actual output (golden snapshot update)
+./scripts/run_md_examples.d --update README.md
+
+# Just run examples and display results
+./scripts/run_md_examples.d README.md
+```
+
+### Dynamic Output with `<!-- md-example-expected -->`
+
+When an example produces dynamic output (timestamps, file paths, durations, etc.), add a `<!-- md-example-expected -->` HTML comment directive between the code block and the output block. The directive contains a wildcard pattern used by `--verify`, while the literal output block below it is preserved for readers. Use `{{_}}` as a wildcard that matches any non-empty text:
+
+````markdown
+<!-- md-example-expected
+[ {{_}} | info | {{_}} ]: Server started
+-->
+
+```
+[ 14:32:01 | info | app.d:12 ]: Server started
+```
+````
+
+The HTML comment is invisible in rendered markdown, so readers see the nice hardcoded values. The `--verify` mode uses the wildcard pattern instead of the literal block for comparison.
+
 ## Dependencies
 
 - `silly` - Test runner (dev dependency)

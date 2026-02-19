@@ -33,6 +33,24 @@ The script looks for D code blocks starting with:
 
 When an output block (a bare fenced code block with no language tag) immediately
 follows a runnable code block, it is treated as the expected output for that example.
+
+For examples with dynamic output (timestamps, file locations, etc.), place a
+`<!-- md-example-expected -->` HTML comment directive between the code block
+and the output block. The directive contains a wildcard pattern used for
+`--verify` instead of the literal output block. Use `{{_}}` as a wildcard
+that matches any non-empty text:
+
+---html
+<!-- md-example-expected
+[ {{_}} | info ]: Listening on port 8080
+-->
+```
+[ 14:32:01 | info ]: Listening on port 8080
+```
+---
+
+The literal output block is kept for display in rendered markdown, while the
+wildcard pattern handles verification against the actual (dynamic) output.
 +/
 
 // std.* modules
@@ -68,6 +86,7 @@ struct Example
     string name;
     string code;
     string expectedOutput;
+    string verifyPattern; /// Wildcard pattern from `<!-- md-example-expected -->` directive
     size_t codeBlockStart;
     size_t codeBlockEnd;
     size_t outputBlockStart;
@@ -149,10 +168,34 @@ Example[] extractExamples(string content)
     Example[] examples;
     auto lines = content.lineSplitter.array;
 
+    size_t outerFenceEnd = 0; // tracks end of outer (non-D) fenced blocks
+
     for (size_t idx = 0; idx < lines.length; idx++)
     {
+        auto stripped = lines[idx].strip;
+
+        // Track outer fenced blocks (````markdown, etc.) to skip nested code blocks.
+        // An outer fence uses ≥4 backticks or is a non-D triple-backtick block.
+        if (idx >= outerFenceEnd && stripped.length >= 4
+            && stripped[0 .. 4] == "````")
+        {
+            auto fenceLen = stripped.countUntil!(c => c != '`');
+            if (fenceLen < 0) fenceLen = stripped.length;
+            auto closeFence = stripped[0 .. fenceLen];
+            // Find matching closing fence
+            auto closeIdx = lines[idx + 1 .. $]
+                .countUntil!(l => l.strip.length >= fenceLen
+                    && l.strip[0 .. fenceLen] == closeFence);
+            if (closeIdx >= 0)
+            {
+                outerFenceEnd = idx + 1 + closeIdx + 1;
+                idx = outerFenceEnd - 1;
+                continue;
+            }
+        }
+
         // Look for ```d code fence
-        if (!lines[idx].strip.startsWith("```d"))
+        if (!stripped.startsWith("```d"))
             continue;
 
         auto codeStart = idx;
@@ -173,8 +216,10 @@ Example[] extractExamples(string content)
 
         auto name = extractExampleName(codeLines);
 
-        // Look for adjacent output block (bare ``` fence, no language tag)
+        // Look for adjacent output block (bare ``` fence, no language tag),
+        // optionally preceded by a <!-- md-example-expected ... --> directive.
         string expectedOutput = null;
+        string verifyPattern = null;
         size_t outputStart = size_t.max;
         size_t outputEnd = size_t.max;
 
@@ -182,6 +227,18 @@ Example[] extractExamples(string content)
         // Skip blank lines
         while (searchStart < lines.length && lines[searchStart].strip.length == 0)
             searchStart++;
+
+        // Check for <!-- md-example-expected ... --> comment directive
+        if (searchStart < lines.length)
+            verifyPattern = parseExpectedDirective(lines, searchStart);
+
+        // If we found a directive, skip past it (and any trailing blanks)
+        if (verifyPattern !is null)
+        {
+            while (searchStart < lines.length
+                && !lines[searchStart].strip.startsWith("```"))
+                searchStart++;
+        }
 
         if (searchStart < lines.length && lines[searchStart].strip == "```")
         {
@@ -200,6 +257,7 @@ Example[] extractExamples(string content)
             name: name,
             code: codeLines.join("\n"),
             expectedOutput: expectedOutput,
+            verifyPattern: verifyPattern,
             codeBlockStart: codeStart,
             codeBlockEnd: codeEnd,
             outputBlockStart: outputStart,
@@ -296,7 +354,13 @@ int runVerifyMode(Example[] examples, string mdFile)
             continue;
         }
 
-        if (example.expectedOutput is null)
+        // Use verifyPattern (from <!-- md-example-expected --> directive)
+        // if present, otherwise fall back to the literal output block.
+        auto verifyAgainst = example.verifyPattern !is null
+            ? example.verifyPattern
+            : example.expectedOutput;
+
+        if (verifyAgainst is null)
         {
             outputLines
                 .formatOutputLines
@@ -307,9 +371,9 @@ int runVerifyMode(Example[] examples, string mdFile)
         }
 
         auto actual = result.programOutput.strip;
-        auto expected = example.expectedOutput.strip;
+        auto expected = verifyAgainst.strip;
 
-        if (actual == expected)
+        if (matchesWithWildcards(actual, expected))
         {
             outputLines
                 .formatOutputLines
@@ -409,7 +473,143 @@ int runUpdateMode(Example[] examples, string mdFile)
     return 0;
 }
 
+// === Wildcard Matching ===
+
+/// Checks if `actual` matches `expected`, treating `{{_}}` in `expected` as
+/// a wildcard that matches any non-empty sequence of non-newline characters.
+///
+/// Both strings are compared line-by-line after stripping trailing whitespace.
+/// Returns `true` when every line matches (wildcards expand greedily within
+/// the line).
+@safe pure
+bool matchesWithWildcards(string actual, string expected)
+{
+    auto actLines = actual.lineSplitter.map!(l => l.stripRight).array;
+    auto expLines = expected.lineSplitter.map!(l => l.stripRight).array;
+
+    if (actLines.length != expLines.length)
+        return false;
+
+    foreach (i; 0 .. actLines.length)
+    {
+        if (!lineMatchesPattern(actLines[i], expLines[i]))
+            return false;
+    }
+    return true;
+}
+
+/// Matches a single actual line against a pattern line containing `{{_}}` wildcards.
+@safe pure
+private bool lineMatchesPattern(const(char)[] actual, const(char)[] pattern)
+{
+    // Fast path: no wildcards
+    if (pattern.indexOf("{{_}}") < 0)
+        return actual == pattern;
+
+    // Split pattern on {{_}} and verify actual contains the literal segments in order.
+    size_t apos = 0;
+    auto rest = pattern;
+
+    while (rest.length > 0)
+    {
+        auto wcIdx = rest.indexOf("{{_}}");
+        if (wcIdx < 0)
+        {
+            // Remaining pattern is a literal suffix
+            if (actual.length < apos + rest.length)
+                return false;
+            return actual[apos .. $].length >= rest.length
+                && actual[$ - rest.length .. $] == rest;
+        }
+
+        auto literal = rest[0 .. wcIdx];
+        rest = rest[wcIdx + 5 .. $]; // skip "{{_}}"
+
+        // Literal segment must appear at current position
+        if (actual.length < apos + literal.length)
+            return false;
+        if (actual[apos .. apos + literal.length] != literal)
+            return false;
+        apos += literal.length;
+
+        if (rest.length == 0)
+        {
+            // Trailing wildcard — matches rest of line (must be non-empty)
+            return apos < actual.length;
+        }
+
+        // Find next literal segment to know where wildcard ends
+        auto nextWc = rest.indexOf("{{_}}");
+        auto nextLiteral = (nextWc < 0) ? rest : rest[0 .. nextWc];
+
+        if (nextLiteral.length == 0)
+            continue; // consecutive wildcards — skip
+
+        // Search for nextLiteral in actual starting from apos
+        auto searchArea = actual[apos .. $];
+        auto found = searchArea.indexOf(nextLiteral);
+        if (found < 0)
+            return false;
+        if (found == 0)
+            return false; // wildcard must match at least 1 char
+
+        apos += found;
+    }
+
+    return apos == actual.length;
+}
+
 // === Private Helpers ===
+
+/// Parses a `<!-- md-example-expected ... -->` HTML comment directive starting
+/// at `startIdx`. The directive may span multiple lines:
+///
+/// ---html
+/// <!-- md-example-expected
+/// [ {{_}} | info ]: message
+/// [ {{_}} | warn ]: other
+/// -->
+/// ---
+///
+/// Returns the content between the opening tag and `-->`, or `null` if no
+/// directive is found at `startIdx`.
+@safe pure
+private string parseExpectedDirective(const(char[])[] lines, size_t startIdx)
+{
+    enum openTag = "<!-- md-example-expected";
+    enum closeTag = "-->";
+
+    auto firstLine = lines[startIdx].strip;
+    if (!firstLine.startsWith(openTag))
+        return null;
+
+    // Single-line form: <!-- md-example-expected ... -->
+    if (firstLine.length >= closeTag.length
+        && firstLine[$ - closeTag.length .. $] == closeTag
+        && firstLine.length > openTag.length + closeTag.length)
+    {
+        auto inner = firstLine[openTag.length .. $ - closeTag.length].strip;
+        return inner.length > 0 ? inner.idup : null;
+    }
+
+    // Multi-line form: collect lines until -->
+    string[] contentLines;
+    foreach (line; lines[startIdx + 1 .. $])
+    {
+        auto stripped = line.strip;
+        if (stripped.length >= closeTag.length
+            && stripped[$ - closeTag.length .. $] == closeTag)
+        {
+            // If there's content before --> on the closing line, include it
+            if (stripped.length > closeTag.length)
+                contentLines ~= stripped[0 .. $ - closeTag.length].stripRight.idup;
+            break;
+        }
+        contentLines ~= line.idup;
+    }
+
+    return contentLines.length > 0 ? contentLines.join("\n") : null;
+}
 
 /// Checks if code lines represent a dub single-file program.
 @safe pure nothrow @nogc
