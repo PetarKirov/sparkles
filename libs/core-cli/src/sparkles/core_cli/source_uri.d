@@ -7,6 +7,8 @@ module sparkles.core_cli.source_uri;
 
 import std.conv : text;
 
+import sparkles.core_cli.text_writers : OutputSpan;
+
 version (unittest)
     import sparkles.core_cli.text_writers.expect_written : expectWritten, WriterBuf;
 
@@ -137,20 +139,23 @@ string getEditor()
 /// Looks up `editor` in [editorSchemes] and calls the matching `uriFun`.
 /// Falls back to a `file://` URI when no scheme matches.
 @safe
-void writeEditorUri(Writer)(ref Writer w, in char[] editor, string path, size_t line, size_t col)
+OutputSpan writeEditorUri(Writer)(ref Writer w, in char[] editor, string path, size_t line, size_t col)
 {
-    import std.range.primitives : put;
+    import sparkles.core_cli.text_writers : OutputSpanWriter;
+
+    auto writer = OutputSpanWriter!Writer(w);
 
     foreach (scheme; editorSchemes)
         foreach (a; scheme.aliases)
             if (a == editor)
             {
-                put(w, scheme.uriFun(path, line, col));
-                return;
+                writer.put(scheme.uriFun(path, line, col));
+                return writer.release();
             }
 
     // Default: file:// URI
-    put(w, fileUri(path, line, col));
+    writer.put(fileUri(path, line, col));
+    return writer.release();
 }
 
 /// Writes a `file://` URI when no editor is specified.

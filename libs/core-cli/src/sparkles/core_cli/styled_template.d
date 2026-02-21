@@ -22,6 +22,7 @@ module sparkles.core_cli.styled_template;
 import core.interpolation;
 
 import sparkles.core_cli.term_style : Style;
+import sparkles.core_cli.text_writers : OutputSpan;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Core Processing Functions
@@ -40,23 +41,24 @@ import sparkles.core_cli.term_style : Style;
 /// Params:
 ///     colored = when `false`, style markup is parsed and stripped but no ANSI
 ///              escape sequences are emitted — producing plain text output.
-void writeStyled(bool colored = true, Writer, Args...)(
-    ref Writer w,
+OutputSpan writeStyled(bool colored = true, Writer, Args...)(
+    scope ref Writer w,
     InterpolationHeader,
     Args args,
     InterpolationFooter
 )
 {
-    import sparkles.core_cli.text_writers : writeValue;
+    import sparkles.core_cli.text_writers : OutputSpanWriter, writeValue;
 
     ParserContext ctx;
+    auto writer = OutputSpanWriter!Writer(w);
 
     static foreach (arg; args)
     {{
         alias T = typeof(arg);
         static if (is(T == InterpolatedLiteral!lit, string lit))
         {
-            parseLiteral!colored(w, lit, ctx);
+            parseLiteral!colored(writer, lit, ctx);
         }
         else static if (is(T == InterpolatedExpression!code, string code))
         {
@@ -66,9 +68,10 @@ void writeStyled(bool colored = true, Writer, Args...)(
         {
             // Output interpolated value — best-effort @nogc via writeValue,
             // falls back to std.conv.to!string for types without @nogc conversion.
-            writeValue(w, arg);
+            writeValue(writer, arg);
         }
     }}
+    return writer.release();
 }
 
 /// Single style: `{red text}` wraps text with red foreground escape codes.
@@ -461,7 +464,7 @@ private struct StyleState
     size_t count;
 
     /// Emit escape sequences for transition FROM parent TO this state
-    void emitOpenDiff(Writer)(ref Writer w, in StyleState parent) const
+    void emitOpenDiff(Writer)(scope ref Writer w, in StyleState parent) const
     {
         import sparkles.core_cli.text_writers : writeEscapeSeq;
 
@@ -477,7 +480,7 @@ private struct StyleState
     }
 
     /// Emit escape sequences for transition FROM this state back TO parent
-    void emitCloseDiff(Writer)(ref Writer w, in StyleState parent) const
+    void emitCloseDiff(Writer)(scope ref Writer w, in StyleState parent) const
     {
         import sparkles.core_cli.text_writers : writeEscapeSeq;
 
@@ -493,13 +496,13 @@ private struct StyleState
     }
 
     /// Emit opening escape sequences for all active styles
-    void emitOpen(Writer)(ref Writer w) const
+    void emitOpen(Writer)(scope ref Writer w) const
     {
         emitOpenDiff(w, StyleState.init);
     }
 
     /// Emit closing escape sequences for all active styles (reverse order)
-    void emitClose(Writer)(ref Writer w) const
+    void emitClose(Writer)(scope ref Writer w) const
     {
         emitCloseDiff(w, StyleState.init);
     }
@@ -590,7 +593,7 @@ private struct ParserContext
 /// Parses a literal segment and writes styled output
 @safe
 private void parseLiteral(bool colored = true, Writer)(
-    ref Writer w,
+    scope ref Writer w,
     const(char)[] literal,
     ref ParserContext ctx
 )

@@ -54,7 +54,10 @@ private void prettyPrintImpl(T, Writer, Hook)(
 
     // Check depth limit
     if (depth > opt.maxDepth)
-        return writeStylized(w, "...", opt.useColors ? Style.red : Style.none);
+    {
+        writeStylized(w, "...", opt.useColors ? Style.red : Style.none);
+        return;
+    }
 
     enum isNullable = __traits(compiles, T.init is null) && !is(T == U[], U);
 
@@ -62,7 +65,10 @@ private void prettyPrintImpl(T, Writer, Hook)(
     static if (isNullable)
     {
         if (value is null)
-            return writeStylized(w, "null", opt.useColors ? Style.yellow : Style.none);
+        {
+            writeStylized(w, "null", opt.useColors ? Style.yellow : Style.none);
+            return;
+        }
     }
 
     // 2. Enums
