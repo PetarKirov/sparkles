@@ -141,12 +141,12 @@ struct TreeOptions {
     only_folders: bool,
     respect_git_ignore: bool,
     filter_by_git_status: bool,
-    pattern: [`InputPattern`][broot-input-pattern],  // active search pattern
+    pattern: InputPattern,              // active search pattern
     trim_root: bool,                    // cut out direct children of root
 
     // Structure
     max_depth: Option<u16>,             // recursion limit
-    sort: [`Sort`][broot-sort],         // sorting strategy
+    sort: Sort,                         // sorting strategy
     cols_order: ColsOrder,              // column display order
     date_time_format: String,
 }
@@ -218,7 +218,7 @@ The `gather_lines` method (on [`TreeBuilder`][broot-tree-builder]) implements BF
    c. For each entry:
       - Apply filters: hidden files, git-ignore, type (only_folders), symlink validation
       - If pattern is active: compute score = pattern.score_of(candidate)
-      - If score > 0 or entry is a directory (kept for hierarchy): create [`BLine`][broot-bline]
+      - If score > 0 or entry is a directory (kept for hierarchy): create BLine
       - If entry is a directory: add to next_level_dirs
    d. When current level is exhausted ("this depth is finished, we must go deeper"):
       - Move next_level_dirs into open_dirs
