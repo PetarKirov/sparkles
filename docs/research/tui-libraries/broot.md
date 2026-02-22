@@ -45,17 +45,17 @@ The central architectural decision is a **flat array of lines** (`Vec<`[`TreeLin
 The architecture has three layers:
 
 1. **[`TreeBuilder`][broot-tree-builder]** -- BFS traversal that reads the filesystem, applies pattern matching, scores candidates, and produces a flat `Vec<`[`TreeLine`][broot-tree-line]`>`.
-2. **Tree** -- owns the flat line array plus viewport state (scroll offset, selection index). Provides navigation, refresh, and selection management.
-3. **DisplayableTree** -- renders the visible portion of the flat array to the terminal, drawing branch connectors, highlighting matches, and showing a scrollbar.
+2. **[`Tree`][broot-tree]** -- owns the flat line array plus viewport state (scroll offset, selection index). Provides navigation, refresh, and selection management.
+3. **[`DisplayableTree`][broot-displayable-tree]** -- renders the visible portion of the flat array to the terminal, drawing branch connectors, highlighting matches, and showing a scrollbar.
 
-### Dual-Tree State in BrowserState
+### Dual-Tree State in [`BrowserState`][broot-browser-state]
 
-The `BrowserState` (the main application state) maintains **two trees**:
+The [`BrowserState`][broot-browser-state] (the main application state) maintains **two trees**:
 
 - **`tree`** -- the base (unfiltered) tree.
 - **`filtered_tree`** -- an optional second tree built when a search pattern is active.
 
-The `displayed_tree()` accessor returns `filtered_tree` when present, `tree` otherwise. This means filtering does not mutate the base tree; instead, a fresh tree is built from the filesystem with the pattern applied. Clearing the filter discards the filtered tree and returns to the base tree.
+The [`displayed_tree()`][broot-displayed-tree] accessor returns `filtered_tree` when present, `tree` otherwise. This means filtering does not mutate the base tree; instead, a fresh tree is built from the filesystem with the pattern applied. Clearing the filter discards the filtered tree and returns to the base tree.
 
 ---
 
@@ -107,7 +107,7 @@ Key design points:
 - **`unlisted`** supports the `Pruning` pseudo-line: a synthetic line that says "N more items not shown", collapsing invisible children into a count.
 - **`score`** is 0 when there is no active pattern, and positive when the line matched. Higher scores indicate better matches.
 
-### TreeLineType
+### [`TreeLineType`][broot-tree-line-type]
 
 ```rust
 enum TreeLineType {
@@ -121,7 +121,7 @@ enum TreeLineType {
 
 The `Pruning` variant is architecturally significant. It is not a real filesystem entry -- it is a placeholder inserted during tree construction to represent children that were excluded by scoring or capacity limits. This keeps the user informed about what was pruned without wasting screen space.
 
-### TreeOptions -- Configuration
+### [`TreeOptions`][broot-tree-options] -- Configuration
 
 ```rust
 struct TreeOptions {
@@ -141,18 +141,18 @@ struct TreeOptions {
     only_folders: bool,
     respect_git_ignore: bool,
     filter_by_git_status: bool,
-    pattern: InputPattern,              // active search pattern
+    pattern: [`InputPattern`][broot-input-pattern],  // active search pattern
     trim_root: bool,                    // cut out direct children of root
 
     // Structure
     max_depth: Option<u16>,             // recursion limit
-    sort: Sort,                         // sorting strategy
+    sort: [`Sort`][broot-sort],         // sorting strategy
     cols_order: ColsOrder,              // column display order
     date_time_format: String,
 }
 ```
 
-### Sort and Deep Display
+### [`Sort`][broot-sort] and Deep Display
 
 ```rust
 enum Sort {
@@ -173,9 +173,9 @@ A critical design insight: **quantitative sorts (Count, Date, Size) flatten the 
 
 Tree construction is the core of broot's architecture. It is handled by [`TreeBuilder`][broot-tree-builder], which performs a **breadth-first search** of the filesystem, scoring candidates against the active pattern, and producing a flat `Vec<`[`TreeLine`][broot-tree-line]`>`.
 
-### Intermediate Representation: BLine
+### Intermediate Representation: [`BLine`][broot-bline]
 
-During construction, the builder works with `BLine` objects stored in an arena (`id_arena`):
+During construction, the builder works with [`BLine`][broot-bline] objects stored in an arena (`id_arena`):
 
 ```rust
 struct BLine {
@@ -201,14 +201,14 @@ struct BLine {
 }
 ```
 
-`BLine` differs from `TreeLine` in two ways:
+[`BLine`][broot-bline] differs from [`TreeLine`][broot-tree-line] in two ways:
 
 1. It has **child pointers** (`children: Vec<BId>`) because the builder needs to traverse the hierarchy.
 2. It stores **build-time state** (`next_child_idx`, `git_ignore_chain`) that is discarded after construction.
 
 ### The Build Algorithm
 
-The `gather_lines` method implements BFS with early termination:
+The `gather_lines` method (on [`TreeBuilder`][broot-tree-builder]) implements BFS with early termination:
 
 ```
 1. Initialize: push root directory into open_dirs queue
@@ -218,7 +218,7 @@ The `gather_lines` method implements BFS with early termination:
    c. For each entry:
       - Apply filters: hidden files, git-ignore, type (only_folders), symlink validation
       - If pattern is active: compute score = pattern.score_of(candidate)
-      - If score > 0 or entry is a directory (kept for hierarchy): create BLine
+      - If score > 0 or entry is a directory (kept for hierarchy): create [`BLine`][broot-bline]
       - If entry is a directory: add to next_level_dirs
    d. When current level is exhausted ("this depth is finished, we must go deeper"):
       - Move next_level_dirs into open_dirs
@@ -251,9 +251,9 @@ if pattern matches:
 
 Depth penalty ensures that shallower matches rank higher. The pattern score comes from the fuzzy matcher (see below). The `+10` bonus distinguishes direct matches from ancestor-only matches.
 
-### Trimming with SortableBId
+### Trimming with `SortableBId`
 
-When more lines are gathered than can be displayed, `trim_excess` uses a **min-heap** of `SortableBId`:
+When more lines are gathered than can be displayed, the `trim_excess` method uses a **min-heap** of `SortableBId`:
 
 ```rust
 struct SortableBId {
@@ -271,14 +271,14 @@ impl Ord for SortableBId {
 
 The min-heap keeps the lowest-scoring nodes at the top. When the heap exceeds capacity, the lowest-scoring node is popped and discarded. This ensures the final tree contains the highest-scoring matches.
 
-### Conversion: BLine to TreeLine
+### Conversion: [`BLine`][broot-bline] to [`TreeLine`][broot-tree-line]
 
-The `take_as_tree` method iterates the arena, converting surviving `BLine` entries into `TreeLine` objects:
+The `take_as_tree` method iterates the arena, converting surviving [`BLine`][broot-bline] entries into [`TreeLine`][broot-tree-line] objects:
 
 1. Only BLines with `has_match == true` (or necessary ancestors) are included.
 2. `left_branches` is computed by scanning ancestor chain.
 3. Pruning lines are inserted for directories with `unlisted > 0`.
-4. The result is `Vec<TreeLine>` -- the flat array owned by `Tree`.
+4. The result is `Vec<`[`TreeLine`][broot-tree-line]`>` -- the flat array owned by [`Tree`][broot-tree].
 
 ---
 
@@ -299,7 +299,7 @@ Broot's pattern system is its defining feature. It supports multiple match modes
 
 ### Fuzzy Matching Algorithm
 
-The `FuzzyPattern` implements subsequence matching with a sophisticated scoring system:
+The [`FuzzyPattern`][broot-fuzzy-pattern] implements subsequence matching with a sophisticated scoring system:
 
 **Match definition**: All pattern characters must appear in order in the candidate string, but need not be consecutive. Gaps ("holes") between matched characters are allowed but penalized.
 
@@ -324,7 +324,7 @@ The `FuzzyPattern` implements subsequence matching with a sophisticated scoring 
 
 ### Composite Patterns (Boolean Operators)
 
-`CompositePattern` uses a `BeTree<PatternOperator, Pattern>` expression tree:
+[`CompositePattern`][broot-composite-pattern] uses a `BeTree<PatternOperator, Pattern>` expression tree:
 
 - **AND**: Both operands must match. Scores are summed. Short-circuits on `None`.
 - **OR**: Either operand suffices. Scores are summed if both match.
@@ -341,7 +341,7 @@ The pattern is evaluated during BFS, not after. This is critical for performance
 3. After BFS completes, directories whose subtrees produced no matches are pruned.
 4. The remaining lines are sorted by score for display.
 
-This means the tree is **built filtered**. There is no separate "filter" pass over a pre-built tree. The tree structure itself is shaped by the search pattern.
+This means the tree is **built filtered**. There is no separate "filter" pass over a pre-built tree. The tree structure itself is shaped by the search pattern (whether [`FuzzyPattern`][broot-fuzzy-pattern], regex, or [`CompositePattern`][broot-composite-pattern]).
 
 ---
 
@@ -378,7 +378,7 @@ struct Tree {
 }
 ```
 
-Navigation methods (`move_selection`, `try_select_path`, `try_select_first`, etc.) manipulate this index. The Pruning lines are **not selectable** -- `is_selectable()` returns false for them, so navigation skips over them.
+Navigation methods (`move_selection`, `try_select_path`, `try_select_first`, etc.) manipulate this index. The [`Pruning`][broot-tree-line-type] lines are **not selectable** -- `is_selectable()` returns false for them, so navigation skips over them.
 
 ### State Preservation Across Rebuilds
 
@@ -403,7 +403,7 @@ struct Tree {
 }
 ```
 
-The `DisplayableTree` renderer iterates from `scroll` to `scroll + viewport_height`, drawing one `TreeLine` per terminal row.
+The [`DisplayableTree`][broot-displayable-tree] renderer iterates from `scroll` to `scroll + viewport_height`, drawing one [`TreeLine`][broot-tree-line] per terminal row.
 
 ### Rendering Loop
 
@@ -431,7 +431,7 @@ When `in_app` mode is active, `termimad::compute_scrollbar()` calculates the thu
 
 ## Branch Connector Drawing
 
-The `left_branches: Box<[bool]>` field on each `TreeLine` is a depth-sized boolean array. For each depth level, it records whether a vertical branch connector (`│`) should be drawn at that column.
+The `left_branches: Box<[bool]>` field on each [`TreeLine`][broot-tree-line] is a depth-sized boolean array. For each depth level, it records whether a vertical branch connector (`│`) should be drawn at that column.
 
 This is computed during `after_lines_changed()` by scanning the flat array:
 
@@ -510,7 +510,7 @@ Each file is counted in at most one category. This allows broot to display a sum
 
 ### 1. Flat Array Over Recursive Tree
 
-Broot's most important design decision is representing the tree as `Vec<TreeLine>` rather than a recursive structure. This provides:
+Broot's most important design decision is representing the tree as `Vec<`[`TreeLine`][broot-tree-line]`>` rather than a recursive structure. This provides:
 
 - **O(1) selection by index**: no tree traversal needed.
 - **Trivial scrolling**: viewport is a slice of the array.
@@ -547,7 +547,7 @@ BFS stops when enough lines are gathered, and excess lines are pruned via a min-
 
 ### 7. Cancellable Builds
 
-The `Dam` parameter allows builds to be interrupted when the user types a new character. This provides responsive real-time filtering: each keystroke cancels the previous build and starts a new one.
+The [`Dam`][broot-dam] parameter allows builds to be interrupted when the user types a new character. This provides responsive real-time filtering: each keystroke cancels the previous build and starts a new one.
 
 ---
 
@@ -555,15 +555,15 @@ The `Dam` parameter allows builds to be interrupted when the user types a new ch
 
 ### Directly Applicable Patterns
 
-- **Flat array representation**: The `Vec<TreeLine>` model maps directly to a D `TreeLine[]` or `SmallBuffer!(TreeLine, N)`. This is the simplest correct representation for a scrollable, selectable tree view.
+- **Flat array representation**: The `Vec<`[`TreeLine`][broot-tree-line]`>` model maps directly to a D `TreeLine[]` or `SmallBuffer!(TreeLine, N)`. This is the simplest correct representation for a scrollable, selectable tree view.
 
 - **Build-time filtering**: Rather than building a full tree and hiding non-matching nodes, build a filtered tree from scratch. This avoids the complexity of maintaining visibility state and parent-chain invariants.
 
-- **Pruning lines**: Inserting synthetic "N unlisted" lines is a user-friendly way to handle truncation. Sparkles should adopt this pattern.
+- **Pruning lines**: Inserting synthetic "N unlisted" lines (using the [`Pruning`][broot-tree-line-type] variant) is a user-friendly way to handle truncation. Sparkles should adopt this pattern.
 
 - **Score-based ranking**: The `10000 - depth + pattern_score` formula is a simple but effective way to rank matches. Shallower results are preferred, with pattern quality as a tiebreaker.
 
-- **Precomputed branch connectors**: The `left_branches` array per line eliminates the need to look up ancestors during rendering. This is especially valuable in `@nogc` D code where dynamic lookups are constrained.
+- **Precomputed branch connectors**: The `left_branches` array per [`TreeLine`][broot-tree-line] eliminates the need to look up ancestors during rendering. This is especially valuable in `@nogc` D code where dynamic lookups are constrained.
 
 ### Design Differences to Consider
 
@@ -596,3 +596,14 @@ Broot demonstrates that a tree view does not need to be a tree data structure. A
 [broot-tree-line]: https://docs.rs/broot/latest/broot/tree/struct.TreeLine.html
 [broot-tree-builder]: https://docs.rs/broot/latest/broot/tree/struct.TreeBuilder.html
 [broot-dam]: https://docs.rs/broot/latest/broot/task_sync/struct.Dam.html
+[broot-browser-state]: https://docs.rs/broot/latest/broot/browser/struct.BrowserState.html
+[broot-tree]: https://docs.rs/broot/latest/broot/tree/struct.Tree.html
+[broot-displayable-tree]: https://docs.rs/broot/latest/broot/display/struct.DisplayableTree.html
+[broot-displayed-tree]: https://docs.rs/broot/latest/broot/browser/struct.BrowserState.html#method.displayed_tree
+[broot-bline]: https://docs.rs/broot/latest/broot/tree/struct.BLine.html
+[broot-tree-line-type]: https://docs.rs/broot/latest/broot/tree/enum.TreeLineType.html
+[broot-tree-options]: https://docs.rs/broot/latest/broot/tree/struct.TreeOptions.html
+[broot-sort]: https://docs.rs/broot/latest/broot/tree/enum.Sort.html
+[broot-input-pattern]: https://docs.rs/broot/latest/broot/pattern/struct.InputPattern.html
+[broot-fuzzy-pattern]: https://docs.rs/broot/latest/broot/pattern/struct.FuzzyPattern.html
+[broot-composite-pattern]: https://docs.rs/broot/latest/broot/pattern/struct.CompositePattern.html
