@@ -173,9 +173,9 @@ A critical design insight: **quantitative sorts (Count, Date, Size) flatten the 
 
 Tree construction is the core of broot's architecture. It is handled by [`TreeBuilder`][broot-tree-builder], which performs a **breadth-first search** of the filesystem, scoring candidates against the active pattern, and producing a flat `Vec<`[`TreeLine`][broot-tree-line]`>`.
 
-### Intermediate Representation: [`BLine`][broot-bline]
+### Intermediate Representation: `BLine`
 
-During construction, the builder works with [`BLine`][broot-bline] objects stored in an arena (`id_arena`):
+During construction, the builder works with `BLine` objects stored in an arena (`id_arena`):
 
 ```rust
 struct BLine {
@@ -201,7 +201,7 @@ struct BLine {
 }
 ```
 
-[`BLine`][broot-bline] differs from [`TreeLine`][broot-tree-line] in two ways:
+`BLine` differs from [`TreeLine`][broot-tree-line] in two ways:
 
 1. It has **child pointers** (`children: Vec<BId>`) because the builder needs to traverse the hierarchy.
 2. It stores **build-time state** (`next_child_idx`, `git_ignore_chain`) that is discarded after construction.
@@ -271,9 +271,9 @@ impl Ord for SortableBId {
 
 The min-heap keeps the lowest-scoring nodes at the top. When the heap exceeds capacity, the lowest-scoring node is popped and discarded. This ensures the final tree contains the highest-scoring matches.
 
-### Conversion: [`BLine`][broot-bline] to [`TreeLine`][broot-tree-line]
+### Conversion: `BLine` to [`TreeLine`][broot-tree-line]
 
-The `take_as_tree` method iterates the arena, converting surviving [`BLine`][broot-bline] entries into [`TreeLine`][broot-tree-line] objects:
+The `take_as_tree` method iterates the arena, converting surviving `BLine` entries into [`TreeLine`][broot-tree-line] objects:
 
 1. Only BLines with `has_match == true` (or necessary ancestors) are included.
 2. `left_branches` is computed by scanning ancestor chain.
@@ -594,16 +594,14 @@ Broot demonstrates that a tree view does not need to be a tree data structure. A
 ## Markdown References
 
 [broot-tree-line]: https://docs.rs/broot/latest/broot/tree/struct.TreeLine.html
-[broot-tree-builder]: https://docs.rs/broot/latest/broot/tree/struct.TreeBuilder.html
+[broot-tree-builder]: https://docs.rs/broot/latest/broot/tree_build/struct.TreeBuilder.html
 [broot-dam]: https://docs.rs/broot/latest/broot/task_sync/struct.Dam.html
 [broot-browser-state]: https://docs.rs/broot/latest/broot/browser/struct.BrowserState.html
 [broot-tree]: https://docs.rs/broot/latest/broot/tree/struct.Tree.html
 [broot-displayable-tree]: https://docs.rs/broot/latest/broot/display/struct.DisplayableTree.html
 [broot-displayed-tree]: https://docs.rs/broot/latest/broot/browser/struct.BrowserState.html#method.displayed_tree
-[broot-bline]: https://docs.rs/broot/latest/broot/tree/struct.BLine.html
 [broot-tree-line-type]: https://docs.rs/broot/latest/broot/tree/enum.TreeLineType.html
 [broot-tree-options]: https://docs.rs/broot/latest/broot/tree/struct.TreeOptions.html
 [broot-sort]: https://docs.rs/broot/latest/broot/tree/enum.Sort.html
-[broot-input-pattern]: https://docs.rs/broot/latest/broot/pattern/struct.InputPattern.html
 [broot-fuzzy-pattern]: https://docs.rs/broot/latest/broot/pattern/struct.FuzzyPattern.html
 [broot-composite-pattern]: https://docs.rs/broot/latest/broot/pattern/struct.CompositePattern.html
