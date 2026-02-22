@@ -24,12 +24,20 @@ void expectWritten(
     size_t line = __LINE__,
 ) @trusted pure nothrow @nogc
 {
-    import core.exception : AssertError;
-    import sparkles.core_cli.lifetime : recycledErrorInstance;
-
     WriterBuf buf;
     write(buf);
-    const(char)[] actual = buf[];
+    checkWritten(buf[], expected, file, line);
+}
+
+void checkWritten(
+    in char[] actual,
+    in char[] expected,
+    string file,
+    size_t line,
+) @trusted pure nothrow @nogc
+{
+    import core.exception : AssertError;
+    import sparkles.core_cli.lifetime : recycledErrorInstance;
 
     if (actual != expected)
     {
