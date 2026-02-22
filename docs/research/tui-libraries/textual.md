@@ -37,7 +37,7 @@ Textual applications can also run in a web browser via [textual-web](https://git
 
 ### Rendering Model
 
-Textual uses a **retained-mode** rendering model with a DOM-like widget tree. The application maintains a persistent tree of widget objects; when state changes, only the affected widgets are re-rendered. This contrasts with immediate-mode frameworks (like Ratatui or Bubble Tea) where the application redraws the entire UI each frame.
+Textual uses a **retained-mode** rendering model with a DOM-like [`Widget`][textual-widget] tree. The application maintains a persistent tree of widget objects; when state changes, only the affected widgets are re-rendered. This contrasts with immediate-mode frameworks (like Ratatui or Bubble Tea) where the application redraws the entire UI each frame.
 
 ### Core Concepts
 
@@ -814,3 +814,15 @@ Textual's compositor diffs visible regions and only repaints changed areas. D co
 ### Books
 
 - _Creating TUI Applications with Textual and Python_ (July 2025) -- comprehensive book on Textual application development
+
+---
+
+## Markdown References
+
+[textual-widget]: https://textual.textualize.io/api/widgets/
+[textual-app]: https://textual.textualize.io/api/app/
+[textual-screen]: https://textual.textualize.io/api/screen/
+[textual-css]: https://textual.textualize.io/guide/CSS/
+[textual-reactive]: https://textual.textualize.io/guide/reactive/
+[textual-messages]: https://textual.textualize.io/guide/message_pump/
+[textual-containers]: https://textual.textualize.io/api/containers/
