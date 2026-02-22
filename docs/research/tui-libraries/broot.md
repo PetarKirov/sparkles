@@ -16,7 +16,7 @@ A terminal tree navigator and file manager that treats the entire directory tree
 
 Broot is not a TUI framework -- it is a standalone terminal application. However, its internal architecture for representing, building, filtering, and rendering file trees is one of the most sophisticated in any terminal tool. It is studied here because it solves the exact problem Sparkles' tree view needs to address: displaying a potentially huge tree in a terminal viewport with real-time fuzzy filtering.
 
-The central architectural decision is a **flat array of lines** (`Vec<TreeLine>`) rather than a recursive tree structure. The tree is _rebuilt from the filesystem_ on every filter change, using a BFS traversal that scores, prunes, and flattens in a single pass. This eliminates the complexity of maintaining parent-child pointers, simplifies scrolling to array indexing, and makes the filtered tree a first-class data structure rather than a view over a hidden full tree.
+The central architectural decision is a **flat array of lines** (`Vec<`[`TreeLine`][broot-tree-line]`>`) rather than a recursive tree structure. The tree is _rebuilt from the filesystem_ on every filter change, using a BFS traversal that scores, prunes, and flattens in a single pass. This eliminates the complexity of maintaining parent-child pointers, simplifies scrolling to array indexing, and makes the filtered tree a first-class data structure rather than a view over a hidden full tree.
 
 ---
 
@@ -44,7 +44,7 @@ The central architectural decision is a **flat array of lines** (`Vec<TreeLine>`
 
 The architecture has three layers:
 
-1. **TreeBuilder** -- BFS traversal that reads the filesystem, applies pattern matching, scores candidates, and produces a flat `Vec<TreeLine>`.
+1. **[`TreeBuilder`][broot-tree-builder]** -- BFS traversal that reads the filesystem, applies pattern matching, scores candidates, and produces a flat `Vec<`[`TreeLine`][broot-tree-line]`>`.
 2. **Tree** -- owns the flat line array plus viewport state (scroll offset, selection index). Provides navigation, refresh, and selection management.
 3. **DisplayableTree** -- renders the visible portion of the flat array to the terminal, drawing branch connectors, highlighting matches, and showing a scrollbar.
 
@@ -61,9 +61,9 @@ The `displayed_tree()` accessor returns `filtered_tree` when present, `tree` oth
 
 ## Data Model
 
-### TreeLine -- The Flat Node
+### [`TreeLine`][broot-tree-line] -- The Flat Node
 
-Each line in the flat array is a `TreeLine`:
+Each line in the flat array is a [`TreeLine`][broot-tree-line]:
 
 ```rust
 struct TreeLine {
@@ -171,7 +171,7 @@ A critical design insight: **quantitative sorts (Count, Date, Size) flatten the 
 
 ## Tree Building -- The BFS Algorithm
 
-Tree construction is the core of broot's architecture. It is handled by `TreeBuilder`, which performs a **breadth-first search** of the filesystem, scoring candidates against the active pattern, and producing a flat `Vec<TreeLine>`.
+Tree construction is the core of broot's architecture. It is handled by [`TreeBuilder`][broot-tree-builder], which performs a **breadth-first search** of the filesystem, scoring candidates against the active pattern, and producing a flat `Vec<`[`TreeLine`][broot-tree-line]`>`.
 
 ### Intermediate Representation: BLine
 
@@ -232,7 +232,7 @@ Broot does **not** read the entire filesystem. It stops when it has enough lines
 - **Without a pattern**: stops at `targeted_size` lines (approximately the screen height).
 - **With a pattern**: gathers `10 * targeted_size` lines before stopping, to allow better ranking among candidates.
 
-The `Dam` parameter enables **cancellation**: when the user types a new character, the current build is interrupted and a new build starts. This provides responsive real-time filtering even on large trees.
+The [`Dam`][broot-dam] parameter enables **cancellation**: when the user types a new character, the current build is interrupted and a new build starts. This provides responsive real-time filtering even on large trees.
 
 ### Depth Limits
 
