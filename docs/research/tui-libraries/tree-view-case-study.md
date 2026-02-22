@@ -196,21 +196,21 @@ The `!` prefix for directories sorts them before `#`-prefixed files at each leve
 
 ## 3. ratatui-tree-widget — Deep Dive
 
-Source: [ratatui-tree-widget repository](https://github.com/ratatui/ratatui-widgets/tree/main/ratatui-tree-widget)
+Source: [tui-rs-tree-widget repository](https://github.com/EdJoPaTo/tui-rs-tree-widget)
 
 ### Three-layer architecture
 
 ratatui-tree-widget cleanly separates concerns into three types:
 
-| Type                                                 | File            | Role                                               |
-| ---------------------------------------------------- | --------------- | -------------------------------------------------- |
-| `TreeItem<'text, Identifier>`                        | `tree_item.rs`  | Data model — tree structure and content            |
-| [`TreeState<Identifier>`][ratatui-tree-widget-state] | `tree_state.rs` | Interaction state — opened, selected, scroll       |
-| `Tree<'a, Identifier>`                               | `lib.rs`        | Rendering widget — visual configuration and output |
+| Type                                                  | File            | Role                                               |
+| ----------------------------------------------------- | --------------- | -------------------------------------------------- |
+| [`TreeItem<'text, Identifier>`][tui-tree-widget-item] | `tree_item.rs`  | Data model — tree structure and content            |
+| [`TreeState<Identifier>`][tui-tree-widget-state]      | `tree_state.rs` | Interaction state — opened, selected, scroll       |
+| [`Tree<'a, Identifier>`][tui-tree-widget-tree]        | `lib.rs`        | Rendering widget — visual configuration and output |
 
 This separation is the library's central design insight. The data model knows nothing about selection or rendering. The state knows nothing about visual symbols or styles. The widget borrows both and produces output.
 
-### TreeItem — data model
+### [`TreeItem`][tui-tree-widget-item] — data model
 
 ```rust
 #[derive(Debug, Clone)]
@@ -230,7 +230,7 @@ Key design choices:
 
 The identifier is deliberately separate from the display text — the doc comment uses a filename analogy: `main.rs` is the identifier while `main` might be the displayed text.
 
-### TreeState — interaction state
+### [`TreeState`][tui-tree-widget-state] — interaction state
 
 ```rust
 pub struct TreeState<Identifier> {
@@ -264,6 +264,8 @@ Mouse support uses `last_rendered_identifiers` — a list of `(y_coordinate, ide
 - **`click_at(Position)`** — select the node at a position; if already selected, toggle it.
 
 ### Flatten — the bridge algorithm
+
+The [`Flattened`][tui-tree-widget-flattened] struct bridges the tree structure with the rendering layer:
 
 ```rust
 pub struct Flattened<'text, Identifier> {
@@ -303,7 +305,7 @@ fn depth_works() {
 }
 ```
 
-### Tree — rendering widget
+### [`Tree`][tui-tree-widget-tree] — rendering widget
 
 ```rust
 pub struct Tree<'a, Identifier> {
@@ -658,7 +660,10 @@ broot demonstrates that a tree view does not require persistent expand/collapse 
 
 ## Rust Crate References
 
-[ratatui-tree-widget-state]: https://github.com/ratatui/ratatui-widgets/tree/main/ratatui-tree-widget
+[tui-tree-widget-item]: https://docs.rs/tui-tree-widget/latest/tui_tree_widget/struct.TreeItem.html
+[tui-tree-widget-state]: https://docs.rs/tui-tree-widget/latest/tui_tree_widget/struct.TreeState.html
+[tui-tree-widget-flattened]: https://docs.rs/tui-tree-widget/latest/tui_tree_widget/struct.Flattened.html
+[tui-tree-widget-tree]: https://docs.rs/tui-tree-widget/latest/tui_tree_widget/struct.Tree.html
 [cursive-tree-view]: https://docs.rs/cursive_tree_view/latest/cursive_tree_view/
 [stlab-forest]: https://github.com/stlab/libraries/blob/main/include/stlab/forest.hpp
 [broot-tree-line]: https://docs.rs/broot/latest/broot/tree/struct.TreeLine.html
