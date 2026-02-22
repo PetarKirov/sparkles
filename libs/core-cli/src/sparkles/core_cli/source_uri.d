@@ -7,6 +7,9 @@ module sparkles.core_cli.source_uri;
 
 import std.conv : text;
 
+version (unittest)
+    import sparkles.core_cli.text_writers.expect_written : expectWritten, WriterBuf;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Path Resolution
 // ─────────────────────────────────────────────────────────────────────────────
@@ -155,10 +158,10 @@ void writeEditorUri(Writer)(ref Writer w, in char[] editor, string path, size_t 
 @safe
 unittest
 {
-    import std.array : appender;
-    auto w = appender!string;
-    writeEditorUri(w, "", "/src/main.d", 10, 1);
-    assert(w[] == "file:///src/main.d#L10");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeEditorUri(buf, "", "/src/main.d", 10, 1); },
+        expected: "file:///src/main.d#L10",
+    );
 }
 
 /// Writes a vscode URI when editor is "code".
@@ -166,10 +169,10 @@ unittest
 @safe
 unittest
 {
-    import std.array : appender;
-    auto w = appender!string;
-    writeEditorUri(w, "code", "/src/main.d", 10, 3);
-    assert(w[] == "vscode://file/src/main.d:10:3");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeEditorUri(buf, "code", "/src/main.d", 10, 3); },
+        expected: "vscode://file/src/main.d:10:3",
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -311,10 +314,12 @@ unittest
 @safe pure
 unittest
 {
-    import std.array : appender;
-    auto w = appender!string;
-    FileUriHook.writeSourceUri!("/home/user/project/main.d", size_t(42), size_t(5))(w);
-    assert(w[] == "file:///home/user/project/main.d#L42");
+    expectWritten(
+        write: (ref WriterBuf buf) {
+            FileUriHook.writeSourceUri!("/home/user/project/main.d", size_t(42), size_t(5))(buf);
+        },
+        expected: "file:///home/user/project/main.d#L42",
+    );
 }
 
 /// SchemeHook!"code" produces vscode:// URIs.
@@ -322,10 +327,12 @@ unittest
 @safe pure
 unittest
 {
-    import std.array : appender;
-    auto w = appender!string;
-    SchemeHook!"code".writeSourceUri!("/home/user/project/main.d", size_t(10), size_t(3))(w);
-    assert(w[] == "vscode://file/home/user/project/main.d:10:3");
+    expectWritten(
+        write: (ref WriterBuf buf) {
+            SchemeHook!"code".writeSourceUri!("/home/user/project/main.d", size_t(10), size_t(3))(buf);
+        },
+        expected: "vscode://file/home/user/project/main.d:10:3",
+    );
 }
 
 /// CTFE evaluation of uriFun from the table.

@@ -87,8 +87,8 @@ void checkWritten(
 unittest
 {
     expectWritten(
-        (ref WriterBuf buf) { buf.put("hello"); },
-        "hello",
+        write: (ref WriterBuf buf) { buf.put("hello"); },
+        expected: "hello",
     );
 }
 
@@ -98,8 +98,8 @@ unittest
 unittest
 {
     expectWritten(
-        (ref WriterBuf buf) {},
-        "",
+        write: (ref WriterBuf buf) {},
+        expected: "",
     );
 }
 
@@ -109,11 +109,11 @@ unittest
 unittest
 {
     expectWritten(
-        (ref WriterBuf buf) {
+        write: (ref WriterBuf buf) {
             buf.put("foo");
             buf.put("bar");
         },
-        "foobar",
+        expected: "foobar",
     );
 }
 
@@ -127,8 +127,8 @@ unittest
     bool threw = false;
     try
         expectWritten(
-            (ref WriterBuf buf) { buf.put("actual"); },
-            "expected",
+            write: (ref WriterBuf buf) { buf.put("actual"); },
+            expected: "expected",
         );
     catch (AssertError)
         threw = true;
@@ -141,7 +141,7 @@ unittest
 void checkExpectWrittenAttrs(uint writerAttrs)()
 {
     alias WriteDg = SetFunctionAttributes!(BaseWriteDg, functionLinkage!BaseWriteDg, writerAttrs);
-    alias call = (WriteDg dg) => expectWritten(dg, "ok");
+    alias call = (WriteDg dg) => expectWritten(write: dg, expected: "ok");
     enum actual = functionAttributes!call;
 
     static assert(

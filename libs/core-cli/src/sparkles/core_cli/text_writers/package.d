@@ -8,6 +8,9 @@ module sparkles.core_cli.text_writers;
 
 import sparkles.core_cli.term_style : Style;
 
+version (unittest)
+    import sparkles.core_cli.text_writers.expect_written : expectWritten, WriterBuf;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Integer Writing
 // ─────────────────────────────────────────────────────────────────────────────
@@ -69,44 +72,40 @@ if (__traits(isUnsigned, T))
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-    writeInteger(buf, 42);
-    assert(buf[] == "42");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeInteger(buf, 42); },
+        expected: "42",
+    );
 }
 
 @("writeInteger.negative")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-    writeInteger(buf, -123);
-    assert(buf[] == "-123");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeInteger(buf, -123); },
+        expected: "-123",
+    );
 }
 
 @("writeInteger.zero")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-    writeInteger(buf, 0);
-    assert(buf[] == "0");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeInteger(buf, 0); },
+        expected: "0",
+    );
 }
 
 @("writeInteger.unsigned")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-    writeInteger(buf, 0uL);
-    assert(buf[] == "0");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeInteger(buf, 0uL); },
+        expected: "0",
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -230,71 +229,64 @@ if (__traits(isFloating, T))
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-    writeFloat(buf, 3.14);
-    assert(buf[] == "3.14");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeFloat(buf, 3.14); },
+        expected: "3.14",
+    );
 }
 
 @("writeFloat.specialValues")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-
-    writeFloat(buf, double.nan);
-    assert(buf[] == "nan");
-
-    buf.clear();
-    writeFloat(buf, -double.nan);
-    assert(buf[] == "-nan");
-
-    buf.clear();
-    writeFloat(buf, double.infinity);
-    assert(buf[] == "inf");
-
-    buf.clear();
-    writeFloat(buf, -double.infinity);
-    assert(buf[] == "-inf");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeFloat(buf, double.nan); },
+        expected: "nan",
+    );
+    expectWritten(
+        write: (ref WriterBuf buf) { writeFloat(buf, -double.nan); },
+        expected: "-nan",
+    );
+    expectWritten(
+        write: (ref WriterBuf buf) { writeFloat(buf, double.infinity); },
+        expected: "inf",
+    );
+    expectWritten(
+        write: (ref WriterBuf buf) { writeFloat(buf, -double.infinity); },
+        expected: "-inf",
+    );
 }
 
 @("writeFloat.zero")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-
-    writeFloat(buf, 0.0);
-    assert(buf[] == "0");
-
-    buf.clear();
-    writeFloat(buf, -0.0);
-    assert(buf[] == "-0");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeFloat(buf, 0.0); },
+        expected: "0",
+    );
+    expectWritten(
+        write: (ref WriterBuf buf) { writeFloat(buf, -0.0); },
+        expected: "-0",
+    );
 }
 
 @("writeFloat.common")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-
-    writeFloat(buf, 10.0);
-    assert(buf[] == "10");
-
-    buf.clear();
-    writeFloat(buf, -10.0);
-    assert(buf[] == "-10");
-
-    buf.clear();
-    writeFloat(buf, 0.1);
-    assert(buf[] == "0.1");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeFloat(buf, 10.0); },
+        expected: "10",
+    );
+    expectWritten(
+        write: (ref WriterBuf buf) { writeFloat(buf, -10.0); },
+        expected: "-10",
+    );
+    expectWritten(
+        write: (ref WriterBuf buf) { writeFloat(buf, 0.1); },
+        expected: "0.1",
+    );
 }
 
 @("writeFloat.scientific")
@@ -353,11 +345,10 @@ void writeEscapedChar(Writer)(ref Writer w, char c) @trusted
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-    writeEscapedChar(buf, '\n');
-    assert(buf[] == `\n`);
+    expectWritten(
+        write: (ref WriterBuf buf) { writeEscapedChar(buf, '\n'); },
+        expected: `\n`,
+    );
 }
 
 /// Writes an escaped string to an output range (with double quotes). @nogc-compatible.
@@ -375,11 +366,10 @@ void writeEscapedString(Writer)(ref Writer w, const(char)[] s) @trusted
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 64) buf;
-    writeEscapedString(buf, "hello\nworld");
-    assert(buf[] == `"hello\nworld"`);
+    expectWritten(
+        write: (ref WriterBuf buf) { writeEscapedString(buf, "hello\nworld"); },
+        expected: `"hello\nworld"`,
+    );
 }
 
 /// Writes an escaped character literal to an output range (with single quotes). @nogc-compatible.
@@ -396,11 +386,10 @@ void writeEscapedCharLiteral(Writer)(ref Writer w, char c) @trusted
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-    writeEscapedCharLiteral(buf, '\t');
-    assert(buf[] == `'\t'`);
+    expectWritten(
+        write: (ref WriterBuf buf) { writeEscapedCharLiteral(buf, '\t'); },
+        expected: `'\t'`,
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -582,74 +571,68 @@ void writeValue(Writer, T)(ref Writer w, auto ref const T val) @trusted
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-    writeValue(buf, true);
-    assert(buf[] == "true");
-
-    buf.clear();
-    writeValue(buf, false);
-    assert(buf[] == "false");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeValue(buf, true); },
+        expected: "true",
+    );
+    expectWritten(
+        write: (ref WriterBuf buf) { writeValue(buf, false); },
+        expected: "false",
+    );
 }
 
 @("writeValue.integer")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-    writeValue(buf, 42);
-    assert(buf[] == "42");
-
-    buf.clear();
-    writeValue(buf, -7);
-    assert(buf[] == "-7");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeValue(buf, 42); },
+        expected: "42",
+    );
+    expectWritten(
+        write: (ref WriterBuf buf) { writeValue(buf, -7); },
+        expected: "-7",
+    );
 }
 
 @("writeValue.float")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-    writeValue(buf, 3.14);
-    assert(buf[] == "3.14");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeValue(buf, 3.14); },
+        expected: "3.14",
+    );
 }
 
 @("writeValue.char")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-    writeValue(buf, 'A');
-    assert(buf[] == "A");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeValue(buf, 'A'); },
+        expected: "A",
+    );
 }
 
 @("writeValue.string")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 64) buf;
-    writeValue(buf, "hello world");
-    assert(buf[] == "hello world");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeValue(buf, "hello world"); },
+        expected: "hello world",
+    );
 }
 
 @("writeValue.nogcOutputRangeType")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-    writeValue(buf, NogcOutputRangeType(42));
-    assert(buf[] == "NogcOR");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeValue(buf, NogcOutputRangeType(42)); },
+        expected: "NogcOR",
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -670,11 +653,10 @@ void writeEscapeSeq(Writer)(ref Writer w, uint code) @trusted
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-    writeEscapeSeq(buf, 34);
-    assert(buf[] == "\x1b[34m");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeEscapeSeq(buf, 34); },
+        expected: "\x1b[34m",
+    );
 }
 
 /// Writes styled text to an output range. @nogc-compatible.
@@ -698,33 +680,30 @@ void writeStylized(Writer)(ref Writer w, const(char)[] text, Style style, bool r
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 64) buf;
-    writeStylized(buf, "hello", Style.blue);
-    assert(buf[] == "\x1b[34mhello\x1b[39m");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeStylized(buf, "hello", Style.blue); },
+        expected: "\x1b[34mhello\x1b[39m",
+    );
 }
 
 @("writeStylized.noReset")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 64) buf;
-    writeStylized(buf, "hello", Style.blue, false);
-    assert(buf[] == "\x1b[34mhello");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeStylized(buf, "hello", Style.blue, false); },
+        expected: "\x1b[34mhello",
+    );
 }
 
 @("writeStylized.noStyle")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-    writeStylized(buf, "hello", Style.none);
-    assert(buf[] == "hello");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeStylized(buf, "hello", Style.none); },
+        expected: "hello",
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -761,26 +740,24 @@ if (is(E == enum))
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
     enum Color { red, green, blue }
 
-    SmallBuffer!(char, 32) buf;
-    writeEnumMemberName(buf, Color.green);
-    assert(buf[] == "green");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeEnumMemberName(buf, Color.green); },
+        expected: "green",
+    );
 }
 
 @("writeEnumMemberName.fallback")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
     enum Flags : ubyte { a = 1, b = 2 }
 
-    SmallBuffer!(char, 32) buf;
-    writeEnumMemberName(buf, cast(Flags) 3);
-    assert(buf[] == "3");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeEnumMemberName(buf, cast(Flags) 3); },
+        expected: "3",
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -945,17 +922,16 @@ void writeStyledValue(Hook, Writer, T)(ref Writer w, in T value, in Hook hook, b
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
     struct NoHook {}
 
-    SmallBuffer!(char, 64) buf;
-    writeStyledValue(buf, 42, NoHook(), false);
-    assert(buf[] == "42");
-
-    buf.clear();
-    writeStyledValue(buf, "hello", NoHook(), false);
-    assert(buf[] == "hello");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeStyledValue(buf, 42, NoHook(), false); },
+        expected: "42",
+    );
+    expectWritten(
+        write: (ref WriterBuf buf) { writeStyledValue(buf, "hello", NoHook(), false); },
+        expected: "hello",
+    );
 }
 
 /// Hook with styling: values get ANSI color codes.
@@ -963,8 +939,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
     struct BlueInts
     {
         Style styleOf(T)(in T) const @safe pure nothrow @nogc
@@ -976,9 +950,10 @@ unittest
         }
     }
 
-    SmallBuffer!(char, 64) buf;
-    writeStyledValue(buf, 42, BlueInts(), true);
-    assert(buf[] == "\x1b[34m42\x1b[39m");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeStyledValue(buf, 42, BlueInts(), true); },
+        expected: "\x1b[34m42\x1b[39m",
+    );
 }
 
 /// Hook with string escaping: strings get quotes and escape sequences.
@@ -986,21 +961,20 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
     struct EscHook
     {
         enum escapeStrings = true;
         enum escapeChars = true;
     }
 
-    SmallBuffer!(char, 64) buf;
-    writeStyledValue(buf, "hi\nthere", EscHook(), false);
-    assert(buf[] == `"hi\nthere"`);
-
-    buf.clear();
-    writeStyledValue(buf, '\t', EscHook(), false);
-    assert(buf[] == `'\t'`);
+    expectWritten(
+        write: (ref WriterBuf buf) { writeStyledValue(buf, "hi\nthere", EscHook(), false); },
+        expected: `"hi\nthere"`,
+    );
+    expectWritten(
+        write: (ref WriterBuf buf) { writeStyledValue(buf, '\t', EscHook(), false); },
+        expected: `'\t'`,
+    );
 }
 
 /// Hook with enum member name rendering.
@@ -1008,8 +982,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
     enum Dir { north, south, east, west }
 
     struct EnumHook
@@ -1017,9 +989,10 @@ unittest
         enum enumRender = EnumRender.memberName;
     }
 
-    SmallBuffer!(char, 32) buf;
-    writeStyledValue(buf, Dir.south, EnumHook(), false);
-    assert(buf[] == "south");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeStyledValue(buf, Dir.south, EnumHook(), false); },
+        expected: "south",
+    );
 }
 
 /// Hook with styling disabled (useColors=false): no escape codes emitted.
@@ -1027,16 +1000,15 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
     struct AlwaysBlue
     {
         Style styleOf(T)(in T) const @safe pure nothrow @nogc => Style.blue;
     }
 
-    SmallBuffer!(char, 64) buf;
-    writeStyledValue(buf, 42, AlwaysBlue(), false);
-    assert(buf[] == "42");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeStyledValue(buf, 42, AlwaysBlue(), false); },
+        expected: "42",
+    );
 }
 
 /// Null value rendering.
@@ -1044,16 +1016,15 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
     struct YellowNull
     {
         Style styleOf(T)(in T) const @safe pure nothrow @nogc => Style.yellow;
     }
 
-    SmallBuffer!(char, 64) buf;
-    writeStyledValue(buf, null, YellowNull(), true);
-    assert(buf[] == "\x1b[33mnull\x1b[39m");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeStyledValue(buf, null, YellowNull(), true); },
+        expected: "\x1b[33mnull\x1b[39m",
+    );
 }
 
 /// Bool value rendering with styling.
@@ -1061,8 +1032,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
     struct YellowBool
     {
         Style styleOf(T)(in T) const @safe pure nothrow @nogc
@@ -1074,9 +1043,10 @@ unittest
         }
     }
 
-    SmallBuffer!(char, 64) buf;
-    writeStyledValue(buf, true, YellowBool(), true);
-    assert(buf[] == "\x1b[33mtrue\x1b[39m");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeStyledValue(buf, true, YellowBool(), true); },
+        expected: "\x1b[33mtrue\x1b[39m",
+    );
 }
 
 /// Float special values with per-value styling.
@@ -1084,9 +1054,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import std.math.traits : isNaN;
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
     struct FloatHook
     {
         Style styleOf(T)(in T val) const @safe pure nothrow @nogc
@@ -1103,11 +1070,12 @@ unittest
         }
     }
 
-    SmallBuffer!(char, 64) buf;
-    writeStyledValue(buf, double.nan, FloatHook(), true);
-    assert(buf[] == "\x1b[31mnan\x1b[39m");
-
-    buf.clear();
-    writeStyledValue(buf, 3.14, FloatHook(), true);
-    assert(buf[] == "\x1b[34m3.14\x1b[39m");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeStyledValue(buf, double.nan, FloatHook(), true); },
+        expected: "\x1b[31mnan\x1b[39m",
+    );
+    expectWritten(
+        write: (ref WriterBuf buf) { writeStyledValue(buf, 3.14, FloatHook(), true); },
+        expected: "\x1b[34m3.14\x1b[39m",
+    );
 }
