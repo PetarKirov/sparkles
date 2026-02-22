@@ -18,14 +18,14 @@ A C++ library for building functional terminal user interfaces through declarati
 FTXUI is a C++ library for building terminal user interfaces using a functional,
 declarative approach inspired by React and the browser DOM. It targets a problem space
 that most C++ TUI libraries (ncurses, notcurses) address with imperative, stateful APIs:
-FTXUI instead models the UI as a tree of immutable value-like **Element** nodes
-constructed by composing pure functions, then rendered to a **Screen** each frame.
+FTXUI instead models the UI as a tree of immutable value-like [`Element`][ftxui-element] nodes
+constructed by composing pure functions, then rendered to a [`Screen`][ftxui-screen] each frame.
 
 **What it solves.** Building terminal UIs in C++ traditionally means managing raw ANSI
 sequences, stateful cursor positioning, and complex widget hierarchies with manual
 invalidation. FTXUI replaces all of this with a functional composition model: you
 construct an Element tree from functions like `text`, `hbox`, `vbox`, `border`, and
-`gauge`, hand it to a `Screen`, and the library handles layout computation, diffing,
+`gauge`, hand it to a [`Screen`][ftxui-screen], and the library handles layout computation, diffing,
 and terminal output. The programmer never manages cursor state or escape codes directly.
 
 **Design philosophy.** FTXUI has two distinct layers by design:
@@ -36,9 +36,9 @@ and terminal output. The programmer never manages cursor state or escape codes d
    immediate-mode rendering layer.
 
 2. **Component layer** -- Retained-mode. Components wrap Elements with event handling
-   and mutable state. A Component produces an Element tree via its `Render()` method,
+   and mutable state. A [`Component`][ftxui-component] produces an Element tree via its `Render()` method,
    handles keyboard/mouse events via `OnEvent()`, and participates in a focus tree.
-   The `ScreenInteractive` class drives the event loop.
+   The [`ScreenInteractive`][ftxui-screen-interactive] class drives the event loop.
 
 This separation means you can use the dom layer alone for static output (dashboards,
 progress displays, formatted reports) without ever touching the component layer. When
@@ -1278,3 +1278,13 @@ to ANSI for terminals or HTML for browsers.
 - **Examples Directory**: <https://github.com/ArthurSonzogni/FTXUI/tree/main/examples>
 - **FlexboxConfig Header**: <https://github.com/ArthurSonzogni/FTXUI/blob/main/include/ftxui/dom/flexbox_config.hpp>
 - **Online Interactive Demos**: <https://arthursonzogni.github.io/FTXUI/examples/>
+
+---
+
+## Markdown References
+
+[ftxui-element]: https://arthursonzogni.github.io/FTXUI/group__dom.html
+[ftxui-screen]: https://arthursonzogni.github.io/FTXUI/group__screen.html
+[ftxui-component]: https://arthursonzogni.github.io/FTXUI/group__component.html
+[ftxui-screen-interactive]: https://arthursonzogni.github.io/FTXUI/group__component.html
+[ftxui-flexbox]: https://github.com/ArthurSonzogni/FTXUI/blob/main/include/ftxui/dom/flexbox_config.hpp
