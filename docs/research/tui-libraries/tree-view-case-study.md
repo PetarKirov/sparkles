@@ -1,6 +1,6 @@
 # Tree-View Case Study
 
-A comparative analysis of tree-view implementations in TUI libraries, evaluating their designs through the lens of [Sean Parent's principles](../sean-parent/index.md) (value semantics, avoiding incidental data structures, separating algorithms from data) and the project's D guidelines ([Design by Introspection](../../guidelines/design-by-introspection-01-guidelines.md), [functional/declarative style](../../guidelines/functional-declarative-programming-guidelines.md)). The two primary references are **snacks.nvim's explorer** and **ratatui-tree-widget**, with cross-references to other libraries from the [TUI catalog](index.md).
+A comparative analysis of tree-view implementations in TUI libraries, evaluating their designs through the lens of [Sean Parent's principles][sean-parent-index] (value semantics, avoiding incidental data structures, separating algorithms from data) and the project's D guidelines ([Design by Introspection][dbi-guidelines], [functional/declarative style][functional-guidelines]). The two primary references are **snacks.nvim's explorer** and **ratatui-tree-widget**, with cross-references to other libraries from the [TUI catalog][tui-index].
 
 ## Contents
 
@@ -338,13 +338,13 @@ The scroll viewport handles variable-height items. The ensure-selected-in-view l
 
 ## 4. Cross-Library Tree Patterns
 
-Coverage of tree-related patterns from other studied libraries. See the [TUI catalog](index.md) and [comparison](comparison.md) for full details.
+Coverage of tree-related patterns from other studied libraries. See the [TUI catalog][tui-index] and [comparison][comparison] for full details.
 
-### [ImTui](imtui.md) / Dear ImGui (C++)
+### [ImTui][imtui] / Dear ImGui (C++)
 
 Immediate-mode tree via `ImGui::TreeNode()` / `TreePop()`. There is no data model — the tree structure is implicit in the call sequence. Expand/collapse state is managed by ImGui's internal hot/active state keyed by string IDs. This is the simplest possible tree API but offers no model for external algorithms to operate on.
 
-### [Textual](textual.md) (Python)
+### [Textual][textual] (Python)
 
 Textual provides built-in `Tree[TreeDataType]` and `TreeNode[TreeDataType]` widgets with a rich feature set.
 
@@ -386,9 +386,9 @@ Four character sets are provided: ASCII, Unicode, Bold Unicode (`┣━━`/`┗
 
 This four-state model with per-depth-level accumulation is the canonical algorithm for tree guide rendering.
 
-### broot (Rust) — Tree as search result
+### [broot][broot] (Rust) — Tree as search result
 
-[broot](https://github.com/Canop/broot) is a terminal file navigator that treats the tree as a function of the search pattern. Its architecture is fundamentally different from expand/collapse-based trees.
+A terminal file navigator that treats the tree as a function of the search pattern. Its architecture is fundamentally different from expand/collapse-based trees. (See [detailed broot study][broot].)
 
 **Data model.** The tree is a flat `Vec<TreeLine>` — no recursive structure. Each `TreeLine` stores `id`, `parent_id: Option<usize>`, `depth: u16`, `score: i32`, and `left_branches: Box<[bool]>`. There are no child pointers. The `left_branches` array is precomputed during construction: `left_branches[d]` is `true` if the ancestor at depth `d` has more siblings below, determining whether a vertical continuation line (`│`) should be drawn at that depth.
 
@@ -402,7 +402,7 @@ This four-state model with per-depth-level accumulation is the canonical algorit
 
 ### cursive_tree_view (Rust)
 
-[cursive_tree_view](https://github.com/BonsaiDen/cursive_tree_view) is a tree-view widget for the Cursive TUI framework that validates the flat-array approach to tree storage.
+A tree-view widget for the [Cursive][cursive] TUI framework that validates the flat-array approach to tree storage.
 
 **Data model.** The tree is stored as a flat `Vec<TreeNode<T>>` where `T: Display + Debug`. Each `TreeNode` stores `value: T`, `level: usize` (depth), `is_collapsed: bool`, `children: usize` (descendant count), and `height: usize` (subtree size including self). Parent-child relationships are implicit — a node's children occupy the contiguous indices immediately after it. Parent lookup is a backward scan for the first entry with a strictly lower `level`.
 
@@ -423,7 +423,7 @@ All public API methods use row indices. Internal conversion between the two is O
 
 ### stlab::forest (C++) — Sean Parent's tree container
 
-[stlab::forest](https://github.com/stlab/libraries) is Sean Parent's own answer to the "incidental data structure" problem for trees.
+Sean Parent's own answer to the "incidental data structure" problem for trees.
 
 **Node structure.** Each node stores a 2×2 link array: `_nodes[leading|trailing][prior|next]`. The leading edge represents "entering" a node (pre-order visit); the trailing edge represents "leaving" (post-order visit). This dual-edge model is the central abstraction — every node is visited twice in a fullorder traversal.
 
@@ -445,23 +445,23 @@ The `depth_fullorder_iterator` filtered to leading edges is directly applicable 
 
 **Relevance.** stlab::forest solves the ownership and value semantics problems but uses individual heap allocations, trading cache locality for O(1) structural modification and stable iterators. The flat-array approach (contiguous `Node[]` with indices) reverses this tradeoff: better cache locality and `@nogc` friendliness, but O(n) insertion.
 
-### [Brick](brick.md) (Haskell)
+### [Brick][brick] (Haskell)
 
 No built-in tree widget. Functional combinators (`vBox`, `padLeft`) compose a tree visually. The tree model is user-defined — Brick provides the layout primitives, and the application builds tree display from those primitives. This is the most "library, not framework" approach.
 
-### [Bubble Tea](bubbletea.md) (Go)
+### [Bubble Tea][bubbletea] (Go)
 
 No built-in tree widget. Community `bubbles/tree` follows the MVU pattern: the model stores a flat list of visible nodes annotated with depth. Expand/collapse dispatches an update message that recomputes the flat list. Pure functional approach where the view is derived from the model.
 
-### [tview](tview.md) (Go)
+### [tview][tview] (Go)
 
 `TreeView` widget with `TreeNode` model. Nodes have a `reference` field (user data), `children` slice, and `expanded` boolean. Virtual scrolling via a `GetChildren` callback enables lazy loading. The expand/collapse state lives directly on the node — mixing data and view state.
 
-### [FTXUI](ftxui.md) (C++)
+### [FTXUI][ftxui] (C++)
 
 No built-in tree widget. Flexbox layout + `Collapsible()` component can compose one. `Collapsible(label, child)` toggles visibility of its child on click. Building a full tree requires nesting collapsibles, which is verbose but gives full control over rendering.
 
-### [Nottui](nottui.md) (OCaml)
+### [Nottui][nottui] (OCaml)
 
 Incremental reactive model ideal for trees. Reactive variables (`Lwd.var`) for expand/collapse state trigger minimal recomputation of only the affected subtree. The DAG-based computation model means expanding a deep node doesn't recompute siblings. This is architecturally the most sophisticated approach for large trees.
 
@@ -503,7 +503,7 @@ Incremental reactive model ideal for trees. Reactive variables (`Lwd.var`) for e
 
 ### Avoiding incidental data structures
 
-> "An incidental data structure is a data structure where there is no object representing the structure as a whole." — [Data Structures](../sean-parent/data-structures.md)
+> "An incidental data structure is a data structure where there is no object representing the structure as a whole." — [Data Structures][sean-parent-ds]
 
 **Snacks' `Tree`** is an incidental data structure in Sean Parent's sense. The `parent` field on each `Node` is a direct Lua reference creating a doubly-linked tree. There is a "whole" object (`Tree`), but the `nodes` table (a path → node lookup) and the `parent` back-references create multiple overlapping ways to traverse the structure. Copying the tree would require deep-copying all nodes and re-wiring parent references — which Snacks doesn't support.
 
@@ -525,7 +525,7 @@ struct Tree(Identifier) {
 
 ### Value semantics
 
-> "Value semantics are the cleanest way to implement Whole-Part relationships." — [Value Semantics](../sean-parent/value-semantics.md)
+> "Value semantics are the cleanest way to implement Whole-Part relationships." — [Value Semantics][sean-parent-vs]
 
 **ratatui-tree-widget** achieves value semantics well. `TreeItem` derives `Clone`; the entire tree can be copied as a value. `TreeState` is also a regular type with `Default`. This enables easy testing (construct a tree, copy it, modify the copy, compare) and undo/redo (snapshot the tree before modification).
 
@@ -535,7 +535,7 @@ For D, the tree should be a regular copyable value. With flat storage (`Node[]`)
 
 ### Separate algorithms from data
 
-> "Algorithms are more fundamental than the data structures on which they operate." — [Generic Programming](../sean-parent/generic-programming.md)
+> "Algorithms are more fundamental than the data structures on which they operate." — [Generic Programming][sean-parent-gp]
 
 **ratatui-tree-widget's `flatten()`** is a free function taking data + state → flat list. This is the right pattern — the algorithm is separate from both the data model and the interaction state. It can be tested independently, reused with different state, and composed with other operations.
 
@@ -557,13 +557,13 @@ The ratatui pattern is the one to follow.
 
 ### Regular types
 
-> "A type is regular if it behaves like int." — [Regular Types](../sean-parent/regular-types.md)
+> "A type is regular if it behaves like int." — [Regular Types][sean-parent-rt]
 
 **ratatui-tree-widget's Identifier constraint** (`Clone + PartialEq + Eq + Hash`) defines the minimum interface for a node identifier to be usable in sets and maps, comparable, and copyable. This maps directly to D's `opEquals` and `toHash`.
 
 **Snacks nodes** are identity-based — two nodes are the "same" if they are the same Lua table (reference equality). Path strings serve as external identifiers but nodes themselves don't have value equality.
 
-For D, node identifiers should be regular types satisfying the [Regular Types](../sean-parent/regular-types.md) requirements.
+For D, node identifiers should be regular types satisfying the [Regular Types][sean-parent-rt] requirements.
 
 ### Sean Parent's own tree: stlab::forest
 
@@ -587,7 +587,7 @@ Follow ratatui's separation: `TreeItem` (data), `TreeState` (interaction), and `
 
 ### 2. Flat storage with index-based relationships
 
-Follow [Sean Parent's guidance on data structures](../sean-parent/data-structures.md): store all nodes in a contiguous `Node[]` array with parent/child/sibling indices rather than recursive pointer-based trees. This gives better cache locality than ratatui's recursive `Vec<Self>` and avoids the incidental structure of Snacks' parent references.
+Follow [Sean Parent's guidance on data structures][sean-parent-ds]: store all nodes in a contiguous `Node[]` array with parent/child/sibling indices rather than recursive pointer-based trees. This gives better cache locality than ratatui's recursive `Vec<Self>` and avoids the incidental structure of Snacks' parent references.
 
 ### 3. Separate data model from view state
 
@@ -603,15 +603,15 @@ Follow both references: nodes are identified by a `Identifier[]` path from root.
 
 ### 6. DbI for node capabilities
 
-Follow the project's [Design by Introspection guidelines](../../guidelines/design-by-introspection-01-guidelines.md): use optional primitives for `hasChildren`, `hasIcon`, `hasStatus`, etc. A tree of file-system entries has different capabilities than a tree of AST nodes — DbI lets the renderer adapt without separate type hierarchies.
+Follow the project's [Design by Introspection guidelines][dbi-guidelines]: use optional primitives for `hasChildren`, `hasIcon`, `hasStatus`, etc. A tree of file-system entries has different capabilities than a tree of AST nodes — DbI lets the renderer adapt without separate type hierarchies.
 
 ### 7. Output range rendering
 
-Follow the project's [functional/declarative guidelines](../../guidelines/functional-declarative-programming-guidelines.md): the tree renderer writes to any output range, not just stdout. This enables rendering to `SmallBuffer`, `appender!string`, or a terminal buffer.
+Follow the project's [functional/declarative guidelines][functional-guidelines]: the tree renderer writes to any output range, not just stdout. This enables rendering to `SmallBuffer`, `appender!string`, or a terminal buffer.
 
 ### 8. Value semantics
 
-Follow ratatui + [Sean Parent's value semantics](../sean-parent/value-semantics.md): the entire tree is copyable. With flat storage, this is a single array copy. Enables snapshot-based testing, undo/redo, and the snapshot-diffing pattern Snacks demonstrates.
+Follow ratatui + [Sean Parent's value semantics][sean-parent-vs]: the entire tree is copyable. With flat storage, this is a single array copy. Enables snapshot-based testing, undo/redo, and the snapshot-diffing pattern Snacks demonstrates.
 
 ### 9. `@nogc` path
 
@@ -632,3 +632,26 @@ Follow stlab::forest's `depth_fullorder_iterator` pattern: provide a `depthFirst
 ### 13. Tree-as-search-result paradigm
 
 broot demonstrates that a tree view does not require persistent expand/collapse state. An alternative mode where the visible tree is rebuilt as a function of `(data_source, search_pattern, depth_limit)` can coexist with traditional expand/collapse. The tree data model should be cheap enough to construct that rebuilding per-keystroke is viable — flat storage with precomputed guide state makes this feasible.
+
+---
+
+## References
+
+[tui-index]: index.md
+[comparison]: comparison.md
+[broot]: broot.md
+[cursive]: cursive.md
+[textual]: textual.md
+[brick]: brick.md
+[bubbletea]: bubbletea.md
+[tview]: tview.md
+[ftxui]: ftxui.md
+[nottui]: nottui.md
+[imtui]: imtui.md
+[sean-parent-index]: ../sean-parent/index.md
+[sean-parent-ds]: ../sean-parent/data-structures.md
+[sean-parent-vs]: ../sean-parent/value-semantics.md
+[sean-parent-rt]: ../sean-parent/regular-types.md
+[sean-parent-gp]: ../sean-parent/generic-programming.md
+[dbi-guidelines]: ../../guidelines/design-by-introspection-01-guidelines.md
+[functional-guidelines]: ../../guidelines/functional-declarative-programming-guidelines.md

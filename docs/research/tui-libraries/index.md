@@ -167,21 +167,43 @@ A breadth-first survey of terminal user interface (TUI) libraries across program
 
 The following libraries are analyzed in depth:
 
-- **[Ratatui](ratatui.md)** — Rust immediate-mode TUI with constraint-based layout
-- **[Ink](ink.md)** — React for the terminal (JavaScript)
-- **[Textual](textual.md)** — CSS-styled retained-mode framework (Python)
-- **[Bubble Tea](bubbletea.md)** — Elm Architecture for terminals (Go)
-- **[Brick](brick.md)** — Pure functional declarative TUI (Haskell)
-- **[Notcurses](notcurses.md)** — Modern ncurses successor (C)
-- **[FTXUI](ftxui.md)** — Functional DOM-like components with flexbox layout (C++)
-- **[Cursive](cursive.md)** — Retained-mode callback-based view hierarchy (Rust)
-- **[Mosaic](mosaic.md)** — Jetpack Compose runtime for terminals (Kotlin)
-- **[Nottui](nottui.md)** — Incremental computation / functional reactive TUI (OCaml)
-- **[libvaxis](libvaxis.md)** — comptime-powered, allocator-aware terminal library (Zig)
-- **[tview](tview.md)** — Retained widget tree with flex layout (Go)
-- **[ImTui](imtui.md)** — Dear ImGui paradigm adapted for terminals (C++)
-- **[Snacks.nvim](snacks-nvim.md)** — Neovim UI toolkit built on floating windows and layouts
+- **[Ratatui][ratatui]** — Rust immediate-mode TUI with constraint-based layout
+- **[Ink][ink]** — React for the terminal (JavaScript)
+- **[Textual][textual]** — CSS-styled retained-mode framework (Python)
+- **[Bubble Tea][bubbletea]** — Elm Architecture for terminals (Go)
+- **[Brick][brick]** — Pure functional declarative TUI (Haskell)
+- **[Notcurses][notcurses]** — Modern ncurses successor (C)
+- **[FTXUI][ftxui]** — Functional DOM-like components with flexbox layout (C++)
+- **[Cursive][cursive]** — Retained-mode callback-based view hierarchy (Rust)
+- **[Mosaic][mosaic]** — Jetpack Compose runtime for terminals (Kotlin)
+- **[Nottui][nottui]** — Incremental computation / functional reactive TUI (OCaml)
+- **[libvaxis][libvaxis]** — comptime-powered, allocator-aware terminal library (Zig)
+- **[tview][tview]** — Retained widget tree with flex layout (Go)
+- **[ImTui][imtui]** — Dear ImGui paradigm adapted for terminals (C++)
+- **[Snacks.nvim][snacks-nvim]** — Neovim UI toolkit built on floating windows and layouts
 
-See the **[Comparison](comparison.md)** for cross-library synthesis and design recommendations for Sparkles.
+## Comparative & Specialized Studies
 
-See the **[Tree-View Case Study](tree-view-case-study.md)** for a focused analysis of tree-view implementations across libraries.
+See the **[Comparison][comparison]** for cross-library synthesis and design recommendations for Sparkles.
+
+See the **[Tree-View Case Study][tree-view-case-study]** for a focused analysis of tree-view implementations across 13 libraries, including detailed studies of [snacks.nvim][snacks-nvim], [ratatui][ratatui], [Textual][textual], Rich (Python), [broot][broot], cursive_tree_view (Rust), and stlab::forest (C++).
+
+## References
+
+[ratatui]: ratatui.md
+[ink]: ink.md
+[textual]: textual.md
+[bubbletea]: bubbletea.md
+[brick]: brick.md
+[notcurses]: notcurses.md
+[ftxui]: ftxui.md
+[cursive]: cursive.md
+[mosaic]: mosaic.md
+[nottui]: nottui.md
+[libvaxis]: libvaxis.md
+[tview]: tview.md
+[imtui]: imtui.md
+[snacks-nvim]: snacks-nvim.md
+[broot]: broot.md
+[comparison]: comparison.md
+[tree-view-case-study]: tree-view-case-study.md
