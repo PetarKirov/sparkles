@@ -50,14 +50,14 @@ App
       +-- Widget (Footer)
 ```
 
-- **App**: The top-level object. Manages screens, themes, bindings, and the event loop.
-- **Screen**: A full-screen layer of widgets. Screens can be stacked (for modals, overlays).
-- **Widget**: A rectangular region that renders content. Widgets form a tree (the DOM).
+- **[`App`][textual-app]**: The top-level object. Manages screens, themes, bindings, and the event loop.
+- **[`Screen`][textual-screen]**: A full-screen layer of widgets. Screens can be stacked (for modals, overlays).
+- **[`Widget`][textual-widget]**: A rectangular region that renders content. Widgets form a tree (the DOM).
 - **Message**: An event object that propagates through the DOM.
 
-### Message-Passing System
+### [Message][textual-messages]-Passing System
 
-All inter-widget communication happens through messages. Messages bubble **up** the DOM tree from child to parent (analogous to DOM event bubbling in browsers). A widget posts a message via `self.post_message(MyMessage(...))`, and any ancestor can handle it. This enforces a unidirectional data flow: **attributes flow down, messages flow up**.
+All inter-widget communication happens through [messages][textual-messages]. Messages bubble **up** the DOM tree from child to parent (analogous to DOM event bubbling in browsers). A widget posts a message via `self.post_message(MyMessage(...))`, and any ancestor can handle it. This enforces a unidirectional data flow: **attributes flow down, messages flow up**.
 
 ### Compositor
 
@@ -87,7 +87,7 @@ Textual is built on Python's `asyncio`. The event loop, message dispatch, timers
 
 ### Dirty Widget Tracking
 
-When a reactive attribute changes or a widget calls `self.refresh()`, Textual marks that widget as **dirty**. On the next frame, only dirty widgets are re-rendered and recomposed. If multiple reactive attributes change in the same frame, Textual coalesces them into a single refresh, minimizing redundant work.
+When a [`reactive`][textual-reactive] attribute changes or a widget calls `self.refresh()`, Textual marks that widget as **dirty**. On the next frame, only dirty widgets are re-rendered and recomposed. If multiple reactive attributes change in the same frame, Textual coalesces them into a single refresh, minimizing redundant work.
 
 ---
 
@@ -241,19 +241,19 @@ A widget uses one or the other. `render()` is for simple, self-contained content
 
 Textual ships with a comprehensive set of widgets:
 
-| Category       | Widgets                                                                                                        |
-| -------------- | -------------------------------------------------------------------------------------------------------------- |
-| **Text**       | `Static`, `Label`, `Digits`, `Pretty`, `Rule`, `Link`, `Tooltip`                                               |
-| **Input**      | `Input`, `MaskedInput`, `TextArea`, `Checkbox`, `RadioButton`, `RadioSet`, `Switch`, `Select`, `SelectionList` |
-| **Buttons**    | `Button`                                                                                                       |
-| **Data**       | `DataTable`, `OptionList`, `ListView`, `ListItem`                                                              |
-| **Trees**      | `Tree`, `DirectoryTree`                                                                                        |
-| **Tabs**       | `Tabs`, `Tab`, `TabbedContent`, `TabPane`, `ContentSwitcher`                                                   |
-| **Containers** | `Horizontal`, `Vertical`, `Grid`, `Center`, `Middle`, `ScrollableContainer`, `Collapsible`                     |
-| **Feedback**   | `ProgressBar`, `LoadingIndicator`, `Sparkline`, `Log`, `RichLog`                                               |
-| **Document**   | `Markdown`, `MarkdownViewer`                                                                                   |
-| **Chrome**     | `Header`, `Footer`, `HelpPanel`, `KeyPanel`                                                                    |
-| **Dev**        | `Placeholder`, `Welcome`                                                                                       |
+| Category                               | Widgets                                                                                                        |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| **Text**                               | `Static`, `Label`, `Digits`, `Pretty`, `Rule`, `Link`, `Tooltip`                                               |
+| **Input**                              | `Input`, `MaskedInput`, `TextArea`, `Checkbox`, `RadioButton`, `RadioSet`, `Switch`, `Select`, `SelectionList` |
+| **Buttons**                            | `Button`                                                                                                       |
+| **Data**                               | `DataTable`, `OptionList`, `ListView`, `ListItem`                                                              |
+| **Trees**                              | `Tree`, `DirectoryTree`                                                                                        |
+| **Tabs**                               | `Tabs`, `Tab`, `TabbedContent`, `TabPane`, `ContentSwitcher`                                                   |
+| **[`Containers`][textual-containers]** | `Horizontal`, `Vertical`, `Grid`, `Center`, `Middle`, `ScrollableContainer`, `Collapsible`                     |
+| **Feedback**                           | `ProgressBar`, `LoadingIndicator`, `Sparkline`, `Log`, `RichLog`                                               |
+| **Document**                           | `Markdown`, `MarkdownViewer`                                                                                   |
+| **Chrome**                             | `Header`, `Footer`, `HelpPanel`, `KeyPanel`                                                                    |
+| **Dev**                                | `Placeholder`, `Welcome`                                                                                       |
 
 ### Custom Widget Example
 
@@ -318,9 +318,9 @@ Key patterns:
 
 ## Styling
 
-### CSS System
+### [CSS System][textual-css]
 
-Textual implements **TCSS** (Textual Cascading Style Sheets), a purpose-built CSS dialect for terminal UIs. Styles can be specified in three places, listed in increasing specificity:
+Textual implements **TCSS** (Textual Cascading Style Sheets), a purpose-built [CSS][textual-css] dialect for terminal UIs. Styles can be specified in three places, listed in increasing specificity:
 
 1. **`DEFAULT_CSS`**: A class variable on widgets. Defines the widget's base styles. Lowest specificity.
 2. **External `.tcss` files**: Referenced via `CSS_PATH` on the App class. Standard application-level styles.
