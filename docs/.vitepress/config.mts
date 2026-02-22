@@ -335,8 +335,20 @@ export default defineConfig({
                 link: "/research/tui-libraries/imtui",
               },
               {
+                text: "Snacks.nvim (Lua)",
+                link: "/research/tui-libraries/snacks-nvim",
+              },
+              {
+                text: "broot (Rust)",
+                link: "/research/tui-libraries/broot",
+              },
+              {
                 text: "Comparison",
                 link: "/research/tui-libraries/comparison",
+              },
+              {
+                text: "Tree-View Case Study",
+                link: "/research/tui-libraries/tree-view-case-study",
               },
             ],
           },

@@ -34,6 +34,12 @@ A breadth-first survey of terminal user interface (TUI) libraries across program
 | **Terminal Kit**  | Hybrid              | Imperative + widgets | Mid-level   | Maintained   | [repo](https://github.com/cronvel/terminal-kit)   |
 | **Yoga (layout)** | N/A (layout engine) | Flexbox              | Low-level   | Active       | [repo](https://github.com/nicolo-ribaudo/yoga)    |
 
+## Neovim / Lua
+
+| Library                           | Rendering Model            | Architecture              | Abstraction | Status | Links                                                                                                      |
+| --------------------------------- | -------------------------- | ------------------------- | ----------- | ------ | ---------------------------------------------------------------------------------------------------------- |
+| **[Snacks.nvim](snacks-nvim.md)** | Retained (buffers/windows) | Event-driven plugin suite | High-level  | Active | [repo](https://github.com/folke/snacks.nvim) · [docs](https://github.com/folke/snacks.nvim/tree/main/docs) |
+
 ## Go
 
 | Library                        | Rendering Model | Architecture    | Abstraction | Status     | Links                                              |
@@ -174,5 +180,8 @@ The following libraries are analyzed in depth:
 - **[libvaxis](libvaxis.md)** — comptime-powered, allocator-aware terminal library (Zig)
 - **[tview](tview.md)** — Retained widget tree with flex layout (Go)
 - **[ImTui](imtui.md)** — Dear ImGui paradigm adapted for terminals (C++)
+- **[Snacks.nvim](snacks-nvim.md)** — Neovim UI toolkit built on floating windows and layouts
 
 See the **[Comparison](comparison.md)** for cross-library synthesis and design recommendations for Sparkles.
+
+See the **[Tree-View Case Study](tree-view-case-study.md)** for a focused analysis of tree-view implementations across libraries.
