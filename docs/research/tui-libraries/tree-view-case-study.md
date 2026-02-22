@@ -32,7 +32,7 @@ The two primary case studies — snacks.nvim's explorer and ratatui-tree-widget 
 
 ## 2. Snacks.nvim Explorer — Deep Dive
 
-Source: `/home/petar/code/repos/neovim/snacks.nvim/lua/snacks/explorer/`
+Source: [snacks.nvim repository](https://github.com/folke/snacks.nvim/tree/main/lua/snacks/explorer)
 
 ### "A picker in disguise"
 
@@ -196,7 +196,7 @@ The `!` prefix for directories sorts them before `#`-prefixed files at each leve
 
 ## 3. ratatui-tree-widget — Deep Dive
 
-Source: `/home/petar/code/repos/rust/tui-rs-tree-widget/src/`
+Source: [ratatui-tree-widget repository](https://github.com/ratatui/ratatui-widgets/tree/main/ratatui-tree-widget)
 
 ### Three-layer architecture
 
