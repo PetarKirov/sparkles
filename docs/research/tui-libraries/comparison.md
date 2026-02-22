@@ -1,6 +1,8 @@
 # TUI Library Comparison & Design Recommendations
 
-A cross-library synthesis of thirteen TUI frameworks -- Ratatui (Rust), Ink (JavaScript), Textual (Python), Bubble Tea (Go), Brick (Haskell), Notcurses (C), FTXUI (C++), Cursive (Rust), Mosaic (Kotlin), Nottui (OCaml), libvaxis (Zig), tview (Go), and ImTui (C++) -- with concrete design recommendations for Sparkles.
+A cross-library synthesis of thirteen TUI frameworks -- [Ratatui][ratatui] (Rust), [Ink][ink] (JavaScript), [Textual][textual] (Python), [Bubble Tea][bubbletea] (Go), [Brick][brick] (Haskell), [Notcurses][notcurses] (C), [FTXUI][ftxui] (C++), [Cursive][cursive] (Rust), [Mosaic][mosaic] (Kotlin), [Nottui][nottui] (OCaml), [libvaxis][libvaxis] (Zig), [tview][tview] (Go), and [ImTui][imtui] (C++) -- with concrete design recommendations for Sparkles.
+
+For specialized analysis of tree-view components across libraries, see the [Tree-View Case Study][tree-view-case-study].
 
 ---
 
@@ -1033,3 +1035,22 @@ Rationale:
 - **Dependency cost.** Notcurses has a non-trivial build chain. Building from scratch in D keeps the dependency graph minimal.
 
 - **Selective borrowing.** Specific innovations should be adopted: inline glyph cluster packing (via `SmallBuffer!(char, 8)`), packed cell representation, Kitty keyboard protocol support, and synchronized output. These can be implemented natively in D.
+
+---
+
+## References
+
+[ratatui]: ratatui.md
+[ink]: ink.md
+[textual]: textual.md
+[bubbletea]: bubbletea.md
+[brick]: brick.md
+[notcurses]: notcurses.md
+[ftxui]: ftxui.md
+[cursive]: cursive.md
+[mosaic]: mosaic.md
+[nottui]: nottui.md
+[libvaxis]: libvaxis.md
+[tview]: tview.md
+[imtui]: imtui.md
+[tree-view-case-study]: tree-view-case-study.md

@@ -576,3 +576,15 @@ The `Dam` parameter allows builds to be interrupted when the user types a new ch
 ### Key Takeaway
 
 Broot demonstrates that a tree view does not need to be a tree data structure. A flat array with depth annotations, parent references, and precomputed rendering hints is simpler, faster, and more flexible. The "tree as search result" paradigm -- where the tree structure is a function of the active filter -- is a powerful alternative to traditional expand/collapse navigation.
+
+---
+
+## See Also
+
+- [Tree-View Case Study][tree-view-case-study] — Comparative analysis of tree implementations across 13 libraries
+- [Ratatui][ratatui] — Rust TUI with a clean tree-widget architecture
+- [Comparison][comparison] — Cross-library design synthesis
+
+[tree-view-case-study]: tree-view-case-study.md
+[ratatui]: ratatui.md
+[comparison]: comparison.md

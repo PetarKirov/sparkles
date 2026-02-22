@@ -590,3 +590,15 @@ The explorer's `snapshot()` / `changed()` pattern captures specific fields of a 
 ### Key Limitation
 
 Snacks relies entirely on Neovim's window system and cannot run outside the editor. Its abstractions are useful references, but Sparkles must implement equivalent primitives (surfaces, z-ordering, backdrop blending, event dispatch) directly against terminal escape sequences.
+
+---
+
+## See Also
+
+- [Tree-View Case Study][tree-view-case-study] — Detailed snacks.nvim explorer analysis and comparative study with 13 libraries
+- [Comparison][comparison] — Cross-library design synthesis and recommendations
+- [Ratatui][ratatui] — Alternative tree-view design with clean separation of data and state
+
+[tree-view-case-study]: tree-view-case-study.md
+[comparison]: comparison.md
+[ratatui]: ratatui.md
