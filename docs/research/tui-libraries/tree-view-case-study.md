@@ -202,11 +202,11 @@ Source: `/home/petar/code/repos/rust/tui-rs-tree-widget/src/`
 
 ratatui-tree-widget cleanly separates concerns into three types:
 
-| Type                          | File            | Role                                               |
-| ----------------------------- | --------------- | -------------------------------------------------- |
-| `TreeItem<'text, Identifier>` | `tree_item.rs`  | Data model — tree structure and content            |
-| `TreeState<Identifier>`       | `tree_state.rs` | Interaction state — opened, selected, scroll       |
-| `Tree<'a, Identifier>`        | `lib.rs`        | Rendering widget — visual configuration and output |
+| Type                                                 | File            | Role                                               |
+| ---------------------------------------------------- | --------------- | -------------------------------------------------- |
+| `TreeItem<'text, Identifier>`                        | `tree_item.rs`  | Data model — tree structure and content            |
+| [`TreeState<Identifier>`][ratatui-tree-widget-state] | `tree_state.rs` | Interaction state — opened, selected, scroll       |
+| `Tree<'a, Identifier>`                               | `lib.rs`        | Rendering widget — visual configuration and output |
 
 This separation is the library's central design insight. The data model knows nothing about selection or rendering. The state knows nothing about visual symbols or styles. The widget borrows both and produces output.
 
@@ -655,3 +655,11 @@ broot demonstrates that a tree view does not require persistent expand/collapse 
 [sean-parent-gp]: ../sean-parent/generic-programming.md
 [dbi-guidelines]: ../../guidelines/design-by-introspection-01-guidelines.md
 [functional-guidelines]: ../../guidelines/functional-declarative-programming-guidelines.md
+
+## Rust Crate References
+
+[ratatui-tree-widget-state]: https://github.com/ratatui/ratatui-widgets/tree/main/ratatui-tree-widget
+[cursive-tree-view]: https://docs.rs/cursive_tree_view/latest/cursive_tree_view/
+[stlab-forest]: https://github.com/stlab/libraries/blob/main/include/stlab/forest.hpp
+[broot-tree-line]: https://docs.rs/broot/latest/broot/tree/struct.TreeLine.html
+[broot-dam]: https://docs.rs/broot/latest/broot/task_sync/struct.Dam.html

@@ -15,9 +15,9 @@ A Rust library for building terminal user interfaces using a retained-mode view 
 
 ## Overview
 
-Cursive is a retained-mode TUI framework for Rust that manages an in-memory view tree,
+Cursive is a retained-mode TUI framework for Rust that manages an in-memory [`View`][cursive-view] tree,
 owns the event loop, and handles layout and rendering on behalf of the application. The
-developer describes views (widgets), wires up callbacks, and calls `siv.run()` -- the
+developer describes views (widgets), wires up callbacks, and calls `siv.run()` on a [`Cursive`][cursive-app] instance -- the
 framework takes care of the rest.
 
 **What it solves.** Building terminal interfaces typically requires managing escape
@@ -1425,3 +1425,17 @@ efficiency, enabled by D's unique ability to straddle compile-time and runtime p
   - cursive_tree_view: <https://github.com/BonsaiDen/cursive_tree_view>
   - cursive-tabs: <https://github.com/deinstapel/cursive-tabs>
   - cursive-aligned-view: <https://github.com/deinstapel/cursive-aligned-view>
+
+---
+
+## Markdown References
+
+[cursive-view]: https://docs.rs/cursive/latest/cursive/view/trait.View.html
+[cursive-app]: https://docs.rs/cursive/latest/cursive/struct.Cursive.html
+[cursive-event]: https://docs.rs/cursive/latest/cursive/event/enum.Event.html
+[cursive-event-result]: https://docs.rs/cursive/latest/cursive/event/enum.EventResult.html
+[cursive-linear-layout]: https://docs.rs/cursive/latest/cursive/views/struct.LinearLayout.html
+[cursive-dialog]: https://docs.rs/cursive/latest/cursive/views/struct.Dialog.html
+[cursive-textview]: https://docs.rs/cursive/latest/cursive/views/struct.TextView.html
+[cursive-select-view]: https://docs.rs/cursive/latest/cursive/views/struct.SelectView.html
+[cursive-color-style]: https://docs.rs/cursive/latest/cursive/theme/struct.ColorStyle.html

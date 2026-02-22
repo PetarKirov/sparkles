@@ -16,7 +16,7 @@ The thirteen libraries span five rendering paradigms: immediate mode, retained m
 
 **How the render cycle works:**
 
-- **Ratatui**: The application calls `terminal.draw(|frame| { ... })`. Inside the closure, widgets are constructed inline from application state and rendered into a `Buffer` (a flat `Vec<Cell>` grid). After the closure returns, the `Terminal` diffs the current buffer against the previous one and emits only changed cells to the backend. Widgets are consumed by value on render -- they do not persist between frames.
+- **Ratatui**: The application calls `terminal.draw(|frame| { ... })`. Inside the closure, widgets are constructed inline from application state and rendered into a [`Buffer`][ratatui-buffer] (a flat `Vec<Cell>` grid). After the closure returns, the [`Terminal`][ratatui-terminal] diffs the current buffer against the previous one and emits only changed cells to the backend. Widgets are consumed by value on render -- they do not persist between frames.
 
 - **Bubble Tea**: The `View()` method returns a plain `string` representing the entire UI. The framework diffs the new string against the previous one at the line level and overwrites only changed lines. There is no structured buffer -- just string comparison.
 
@@ -47,7 +47,7 @@ The thirteen libraries span five rendering paradigms: immediate mode, retained m
 
 - **Ink**: Uses React's `react-reconciler` to manage a virtual component tree. State changes trigger reconciliation (virtual tree diffing), then Yoga computes Flexbox layout, and the result is rendered to an ANSI string buffer. The framework patches the terminal by overwriting its output region.
 
-- **Cursive**: Maintains a persistent tree of `View` trait objects (`Box<dyn View>`). The framework owns the event loop, calls `required_size` / `layout` / `draw` on the tree, and routes events through the focused path. Views hold their own mutable state (scroll position, text content, selection index) and persist between frames. Named views can be accessed from callbacks via `call_on_name`.
+- **Cursive**: Maintains a persistent tree of [`View`][cursive-view] trait objects (`Box<dyn View>`). The framework owns the event loop, calls `required_size` / `layout` / `draw` on the tree, and routes events through the focused path. Views hold their own mutable state (scroll position, text content, selection index) and persist between frames. Named views can be accessed from callbacks via `call_on_name`.
 
 - **tview**: Maintains a tree of `Primitive` interface objects. `Application.Run()` owns the event loop, dispatching terminal events to the focused widget. On each event, the framework calls `Draw` on the entire tree -- tcell's internal diff layer optimizes actual terminal writes. Widgets own their state via getters/setters.
 
@@ -1054,3 +1054,9 @@ Rationale:
 [tview]: tview.md
 [imtui]: imtui.md
 [tree-view-case-study]: tree-view-case-study.md
+
+## Rust Crate References
+
+[ratatui-buffer]: https://docs.rs/ratatui/latest/ratatui/buffer/struct.Buffer.html
+[ratatui-terminal]: https://docs.rs/ratatui/latest/ratatui/struct.Terminal.html
+[cursive-view]: https://docs.rs/cursive/latest/cursive/view/trait.View.html
