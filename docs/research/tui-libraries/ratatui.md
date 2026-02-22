@@ -22,8 +22,8 @@ tools, log viewers, file managers, and similar applications.
 **What it solves.** Writing terminal UIs from scratch requires managing raw ANSI escape
 sequences, screen buffering, cursor positioning, resize handling, and color support across
 different terminal emulators. Ratatui provides a high-level abstraction over all of this:
-a `Buffer` you write widgets into, a `Layout` engine that subdivides screen real estate,
-and a `Terminal` that diffs frames and emits only the changed cells.
+a [`Buffer`][ratatui-buffer] you write widgets into, a [`Layout`][ratatui-layout] engine that subdivides screen real estate,
+and a [`Terminal`][ratatui-terminal] that diffs frames and emits only the changed cells.
 
 **Design philosophy.** Ratatui is deliberately minimal in what it _enforces_. It does not
 own your main loop, does not impose a state management pattern, and does not bundle an
@@ -46,10 +46,10 @@ Rust TUI development.
 
 Ratatui uses an **immediate-mode rendering model**. Every frame, the application rebuilds
 the entire UI from scratch by calling `terminal.draw(|frame| { ... })`. There is no
-retained widget tree; no persistent scene graph. The `draw` closure receives a `Frame`,
+retained widget tree; no persistent scene graph. The `draw` closure receives a [`Frame`][ratatui-frame],
 which exposes `render_widget(widget, area)` to place widgets into a back buffer.
 
-Under the hood, `Terminal` maintains **two buffers** (current and previous). After the
+Under the hood, [`Terminal`][ratatui-terminal] maintains **two buffers** (current and previous). After the
 draw closure returns, the terminal diffs the current buffer against the previous one and
 writes only the changed cells to the backend. This gives the _programming model_ of
 immediate mode (stateless re-render) with the _performance_ of differential updates.
@@ -100,6 +100,8 @@ fn main() -> Result<()> {
 }
 ```
 
+(See [`Terminal`][ratatui-terminal] and [`Frame`][ratatui-frame] documentation.)
+
 This pattern is compatible with Elm/MVU if you choose to structure it that way (separate
 `update` and `view` functions), but nothing in the library requires it.
 
@@ -113,8 +115,8 @@ state. They do not persist between frames.
 
 ## Terminal Backend
 
-Ratatui abstracts the underlying terminal library through a `Backend` trait. The
-`Terminal<B: Backend>` struct wraps a backend and manages buffering, diffing, and cursor
+Ratatui abstracts the underlying terminal library through a [`Backend`][ratatui-backend] trait. The
+[`Terminal<B: Backend>`][ratatui-terminal] struct wraps a backend and manages buffering, diffing, and cursor
 state.
 
 ### Backend Trait
@@ -199,7 +201,7 @@ region.
 
 Ratatui's layout engine subdivides rectangular areas using a **constraint solver** (the
 `kasuari` crate, a Rust port of the Cassowary algorithm). Constraints are resolved in
-priority order to produce a set of non-overlapping `Rect` values.
+priority order to produce a set of non-overlapping [`Rect`][ratatui-rect] values.
 
 ### Constraint Variants
 
@@ -475,7 +477,7 @@ pub struct Style {
 }
 ```
 
-Styles are **incremental** -- applying a style patches only the fields it sets, leaving
+[`Style`][ratatui-style] is **incremental** -- applying a style patches only the fields it sets, leaving
 others untouched. This enables layered styling (e.g., a `Block` style sets the background,
 then a `Span` style sets the foreground).
 
@@ -492,9 +494,11 @@ pub enum Color {
 }
 ```
 
+(See [`Color`][ratatui-color] documentation.)
+
 ### Modifier Flags
 
-`Modifier` is a bitflag set: `BOLD`, `DIM`, `ITALIC`, `UNDERLINED`, `SLOW_BLINK`,
+[`Modifier`][ratatui-modifier] is a bitflag set: `BOLD`, `DIM`, `ITALIC`, `UNDERLINED`, `SLOW_BLINK`,
 `RAPID_BLINK`, `REVERSED`, `HIDDEN`, `CROSSED_OUT`.
 
 ### Stylize Trait (Builder Pattern)
@@ -980,3 +984,21 @@ The template approach is more idiomatic for D and mirrors Ratatui's `Terminal<B>
   - tui-logger: <https://github.com/gin66/tui-logger>
   - ratatui-macros: <https://github.com/ratatui/ratatui-macros>
   - Project templates: <https://github.com/ratatui/templates>
+
+---
+
+## Markdown References
+
+[ratatui-buffer]: https://docs.rs/ratatui/latest/ratatui/buffer/struct.Buffer.html
+[ratatui-terminal]: https://docs.rs/ratatui/latest/ratatui/struct.Terminal.html
+[ratatui-frame]: https://docs.rs/ratatui/latest/ratatui/frame/struct.Frame.html
+[ratatui-layout]: https://docs.rs/ratatui/latest/ratatui/layout/struct.Layout.html
+[ratatui-constraint]: https://docs.rs/ratatui/latest/ratatui/layout/enum.Constraint.html
+[ratatui-rect]: https://docs.rs/ratatui/latest/ratatui/layout/struct.Rect.html
+[ratatui-widget]: https://docs.rs/ratatui/latest/ratatui/widgets/trait.Widget.html
+[ratatui-stateful-widget]: https://docs.rs/ratatui/latest/ratatui/widgets/trait.StatefulWidget.html
+[ratatui-style]: https://docs.rs/ratatui/latest/ratatui/style/struct.Style.html
+[ratatui-color]: https://docs.rs/ratatui/latest/ratatui/style/enum.Color.html
+[ratatui-modifier]: https://docs.rs/ratatui/latest/ratatui/style/struct.Modifier.html
+[ratatui-backend]: https://docs.rs/ratatui/latest/ratatui/backend/trait.Backend.html
+[ratatui-cell]: https://docs.rs/ratatui/latest/ratatui/buffer/struct.Cell.html

@@ -588,3 +588,11 @@ Broot demonstrates that a tree view does not need to be a tree data structure. A
 [tree-view-case-study]: tree-view-case-study.md
 [ratatui]: ratatui.md
 [comparison]: comparison.md
+
+---
+
+## Markdown References
+
+[broot-tree-line]: https://docs.rs/broot/latest/broot/tree/struct.TreeLine.html
+[broot-tree-builder]: https://docs.rs/broot/latest/broot/tree/struct.TreeBuilder.html
+[broot-dam]: https://docs.rs/broot/latest/broot/task_sync/struct.Dam.html
