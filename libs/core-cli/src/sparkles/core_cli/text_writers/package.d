@@ -681,49 +681,6 @@ enum EnumRender
     memberName, /// Write the member name string (e.g., `"green"`)
 }
 
-/// True if `T` is a leaf type that can be written by `writeStyledValue`
-/// without requiring recursive pretty-printing.
-///
-/// Leaf types: `null`, `bool`, integrals, floating-point, `char`, `string`, `enum`.
-template isLeafValue(T)
-{
-    import std.traits : isSomeChar, isSomeString;
-
-    enum isLeafValue =
-        is(T == typeof(null)) ||
-        is(T == bool) ||
-        is(T == enum) ||
-        __traits(isIntegral, T) ||
-        __traits(isFloating, T) ||
-        isSomeChar!T ||
-        isSomeString!T;
-}
-
-@("isLeafValue.builtinTypes")
-@safe pure nothrow @nogc
-unittest
-{
-    static assert(isLeafValue!bool);
-    static assert(isLeafValue!int);
-    static assert(isLeafValue!double);
-    static assert(isLeafValue!char);
-    static assert(isLeafValue!string);
-    static assert(isLeafValue!(typeof(null)));
-
-    enum Color { red }
-    static assert(isLeafValue!Color);
-}
-
-@("isLeafValue.nonLeafTypes")
-@safe pure nothrow @nogc
-unittest
-{
-    struct S { int x; }
-    static assert(!isLeafValue!S);
-    static assert(!isLeafValue!(int[]));
-    static assert(!isLeafValue!(int[string]));
-}
-
 /// Writes a leaf value to an output range with optional ANSI styling.
 ///
 /// Parameterized by a DbI hook that controls:
