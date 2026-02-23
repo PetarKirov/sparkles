@@ -352,3 +352,232 @@
   text-transform: uppercase;
   font-size: 0.75em;
 }
+
+/* --------------------------------------------------------------------------
+ * Content expand (lightbox for tables & code blocks)
+ * -------------------------------------------------------------------------- */
+
+/* Expand button */
+.table-expand-wrapper {
+  position: relative;
+}
+
+/* Expand button (tables) */
+.content-expand-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 6px;
+  background: var(--vp-c-bg);
+  color: var(--vp-c-text-3);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.15s ease,
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.table-expand-wrapper:hover > .content-expand-btn {
+  opacity: 1;
+}
+
+.content-expand-btn:hover {
+  color: var(--vp-c-brand-1);
+  border-color: var(--vp-c-brand-1);
+}
+
+/* Code block actions bar — flex row for expand + copy buttons */
+.code-block-actions {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 3;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+}
+
+div[class*="language-"]:hover > .code-block-actions {
+  opacity: 1;
+}
+
+/* Code group — position relative for actions bar, show on group hover */
+.vp-code-group {
+  position: relative;
+}
+
+.vp-code-group > .code-block-actions {
+  top: 4px;
+}
+
+.vp-code-group:hover > .code-block-actions {
+  opacity: 1;
+}
+
+/* Re-apply copy button styles — VitePress uses `> button.copy` direct-child
+ * selector which no longer matches once the button is inside the actions bar
+ */
+.code-block-actions > button.copy {
+  position: static;
+  opacity: 1;
+  direction: ltr;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--vp-code-copy-code-border-color);
+  border-radius: 4px;
+  background-color: var(--vp-code-copy-code-bg);
+  background-image: var(--vp-icon-copy);
+  background-position: 50%;
+  background-size: 20px;
+  background-repeat: no-repeat;
+  cursor: pointer;
+}
+
+.code-block-actions > button.copy:hover,
+.code-block-actions > button.copy.copied {
+  border-color: var(--vp-code-copy-code-hover-border-color);
+  background-color: var(--vp-code-copy-code-hover-bg);
+}
+
+.code-block-actions > button.copy.copied {
+  border-radius: 0 4px 4px 0;
+  background-image: var(--vp-icon-copied);
+}
+
+.code-block-actions > button.copy.copied::before {
+  position: relative;
+  top: -1px;
+  transform: translateX(calc(-100% - 1px));
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  border: 1px solid var(--vp-code-copy-code-hover-border-color);
+  border-right: 0;
+  border-radius: 4px 0 0 4px;
+  padding: 0 10px;
+  width: fit-content;
+  height: 40px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--vp-code-copy-code-active-text);
+  content: var(--vp-code-copy-copied-text-content);
+}
+
+/* Expand button inside the actions bar — match copy button size */
+.code-block-actions > .content-expand-btn {
+  position: static;
+  opacity: 1;
+  width: 40px;
+  height: 40px;
+  border-radius: 4px;
+  border-color: var(--vp-code-copy-code-border-color);
+  background: var(--vp-code-copy-code-bg);
+}
+
+.code-block-actions > .content-expand-btn:hover {
+  border-color: var(--vp-code-copy-code-hover-border-color);
+  background: var(--vp-code-copy-code-hover-bg);
+}
+
+/* Overlay */
+.content-expand-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.content-expand-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+}
+
+.dark .content-expand-backdrop {
+  background: rgba(0, 0, 0, 0.75);
+}
+
+.content-expand-container {
+  position: relative;
+  width: calc(100vw - 4rem);
+  max-height: calc(100vh - 4rem);
+  overflow: auto;
+  background: var(--vp-c-bg);
+  border-radius: 12px;
+  border: 1px solid var(--vp-c-divider);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.2);
+  padding: 1rem;
+}
+
+/* Toolbar — fixed at top-right of overlay, holds copy + close buttons */
+.content-expand-toolbar {
+  position: absolute;
+  top: calc(2rem + 4px);
+  right: calc(2rem + 4px);
+  z-index: 101;
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.content-expand-toolbar > button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+  background: var(--vp-c-bg);
+  color: var(--vp-c-text-2);
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.content-expand-toolbar > button:hover {
+  color: var(--vp-c-brand-1);
+  border-color: var(--vp-c-brand-1);
+}
+
+/* Copy button in the toolbar — re-apply icon styles */
+.content-expand-toolbar > button.copy {
+  background-image: var(--vp-icon-copy);
+  background-position: 50%;
+  background-size: 18px;
+  background-repeat: no-repeat;
+  opacity: 1;
+}
+
+.content-expand-toolbar > button.copy.copied {
+  background-image: var(--vp-icon-copied);
+}
+
+/* Table inside overlay: no horizontal constraint */
+.content-expand-body table {
+  width: max-content;
+  min-width: 100%;
+  display: table;
+  overflow: visible;
+}
+
+/* Code block inside overlay: remove max-height */
+.content-expand-body div[class*="language-"] {
+  max-height: none;
+}
