@@ -6,8 +6,8 @@ An algebraic effects library for Rust built on nightly coroutines, providing typ
 | ------------- | ---------------------------------------------------------------------------------------- |
 | Language      | Rust (nightly)                                                                           |
 | License       | MIT OR Apache-2.0                                                                        |
-| Repository    | [github.com/rosefromthedead/effing-mad](https://github.com/rosefromthedead/effing-mad)   |
-| Documentation | [docs.rs/effing-mad](https://docs.rs/effing-mad/latest/effing_mad/)                      |
+| Repository    | [github.com/rosefromthedead/effing-mad]                                                  |
+| Documentation | [docs.rs/effing-mad]                                                                     |
 | Key Authors   | Rose Hudson                                                                              |
 | Encoding      | Coroutine-based yield/resume with typed effect traits and macro-generated state machines |
 
@@ -17,9 +17,9 @@ An algebraic effects library for Rust built on nightly coroutines, providing typ
 
 ### What It Solves
 
-effing-mad brings algebraic effects and effect handlers to Rust. It addresses the function coloring problem by allowing a single effectful function to be handled differently depending on the call site -- the same I/O-performing function can be called from a synchronous context, an async context, or a test context, with different handlers providing different semantics each time.
+effing-mad brings algebraic effects and effect handlers to Rust. It addresses the [function coloring problem] by allowing a single effectful function to be handled differently depending on the call site -- the same I/O-performing function can be called from a synchronous context, an async context, or a test context, with different handlers providing different semantics each time.
 
-The library demonstrates that Rust's nightly coroutine feature (originally built for async/await compilation) is general enough to implement full algebraic effects. Effectful functions yield typed effect values to their callers, which handle those effects and resume the function with a typed injection value.
+The library demonstrates that Rust's nightly coroutine feature (originally built for async/await compilation) is general enough to implement full algebraic effects. Effectful functions yield typed effect values to their callers, which handle those effects and resume the function with a typed injection value. See [Rust's Implicit Effect System] for more on how Rust handles effects at the language level.
 
 ### Design Philosophy
 
@@ -67,7 +67,7 @@ An effectful function returns a `Computation` -- an opaque coroutine frame param
 ```rust
 // Calling an effectful function produces a Computation
 let computation = combined();
-// The computation's effects must be handled before it can run
+// The computation's effects must be handled before it can be run
 ```
 
 ### EffectGroup
@@ -289,10 +289,24 @@ let test = handle(read_and_log(), handler!(FileRead(name) => {
 
 ## Sources
 
-- [effing-mad GitHub repository](https://github.com/rosefromthedead/effing-mad)
-- [effing-mad on crates.io](https://crates.io/crates/effing-mad)
-- [effing-mad API documentation](https://docs.rs/effing-mad/latest/effing_mad/)
-- [effing-mad basic example](https://github.com/rosefromthedead/effing-mad/blob/main/examples/basic.rs)
-- [Effing-mad discussion on Hacker News](https://news.ycombinator.com/item?id=35358336)
-- [Effing-mad discussion on Lobsters](https://lobste.rs/s/blkfub/effing_mad_algebraic_effects_for_rust)
-- [Generators are dead, long live coroutines, generators are back -- Inside Rust Blog](https://blog.rust-lang.org/inside-rust/2023/10/23/coroutines/)
+- [effing-mad GitHub repository]
+- [effing-mad on crates.io]
+- [effing-mad API documentation]
+- [effing-mad basic example]
+- [Effing-mad discussion on Hacker News]
+- [Effing-mad discussion on Lobsters]
+- [Generators are dead, long live coroutines, generators are back -- Inside Rust Blog]
+
+<!-- References -->
+
+[function coloring problem]: rust-effect-system.md
+[Rust's Implicit Effect System]: rust-effect-system.md
+[github.com/rosefromthedead/effing-mad]: https://github.com/rosefromthedead/effing-mad
+[docs.rs/effing-mad]: https://docs.rs/effing-mad/latest/effing_mad/
+[effing-mad GitHub repository]: https://github.com/rosefromthedead/effing-mad
+[effing-mad on crates.io]: https://crates.io/crates/effing-mad
+[effing-mad API documentation]: https://docs.rs/effing-mad/latest/effing_mad/
+[effing-mad basic example]: https://github.com/rosefromthedead/effing-mad/blob/main/examples/basic.rs
+[Effing-mad discussion on Hacker News]: https://news.ycombinator.com/item?id=35358336
+[Effing-mad discussion on Lobsters]: https://lobste.rs/s/blkfub/effing_mad_algebraic_effects_for_rust
+[Generators are dead, long live coroutines, generators are back -- Inside Rust Blog]: https://blog.rust-lang.org/inside-rust/2023/10/23/coroutines/

@@ -2,14 +2,14 @@
 
 A work-in-progress effect system built on delimited continuation primops added to the GHC runtime, achieving high performance by design rather than relying on compiler optimizations. Created by Alexis King at Hasura.
 
-| Field       | Value                                                  |
-| ----------- | ------------------------------------------------------ |
-| Language    | Haskell                                                |
-| License     | ISC                                                    |
-| Repository  | [github.com/hasura/eff](https://github.com/hasura/eff) |
-| Key Authors | Alexis King                                            |
-| Status      | Work in progress; development stalled                  |
-| Encoding    | Delimited continuations via GHC runtime primops        |
+| Field       | Value                                           |
+| ----------- | ----------------------------------------------- |
+| Language    | Haskell                                         |
+| License     | ISC                                             |
+| Repository  | [github.com/hasura/eff]                         |
+| Key Authors | Alexis King                                     |
+| Status      | Work in progress; development stalled           |
+| Encoding    | Delimited continuations via GHC runtime primops |
 
 ---
 
@@ -29,7 +29,7 @@ Traditional effect system benchmarks fail to capture the performance of real cod
 
 ### Delimited Continuations
 
-At the heart of eff are three GHC primops (from [GHC Proposal #313](https://github.com/ghc-proposals/ghc-proposals/blob/master/proposals/0313-delimited-continuation-primops.rst)):
+At the heart of eff are three GHC primops (from [GHC Proposal #313]):
 
 ```haskell
 -- A tag that identifies a prompt (handler boundary)
@@ -50,7 +50,7 @@ When an effect operation is performed, `control0#` captures the continuation (st
 
 ### Effect Interface
 
-eff's interface is comparable to freer-simple and polysemy:
+eff's interface is comparable to freer-simple and [polysemy]:
 
 - Effects are defined as data types
 - Operations are invoked via `send`
@@ -64,7 +64,7 @@ eff supports both:
 - **First-order (algebraic) effects**: Standard operations that can capture continuations
 - **Higher-order (scoped) effects**: Operations like `local` and `catchError` that scope over sub-computations
 
-Unlike polysemy and fused-effects, eff's semantics for scoped operations are consistent regardless of handler order, and scoped operations compose in predictable ways.
+Unlike [polysemy] and [fused-effects], eff's semantics for scoped operations are consistent regardless of handler order, and scoped operations compose in predictable ways.
 
 ---
 
@@ -106,7 +106,7 @@ The continuation can be:
 - Called multiple times (backtracking, like `NonDet`)
 - Stored for later use (coroutines)
 
-This is the key advantage over effectful/cleff, which cannot capture or resume continuations at all.
+This is the key advantage over [effectful]/[cleff], which cannot capture or resume continuations at all.
 
 ---
 
@@ -138,7 +138,7 @@ Alexis King argued that traditional microbenchmarks are misleading because GHC i
 
 ### Consistent Semantics
 
-Unlike polysemy and fused-effects, where handler order can produce surprising or nonsensical results with certain higher-order effect combinations, eff's semantics are based on delimited control and are consistent regardless of handler order. Scoped operations compose predictably.
+Unlike [polysemy] and [fused-effects], where handler order can produce surprising or nonsensical results with certain higher-order effect combinations, eff's semantics are based on delimited control and are consistent regardless of handler order. Scoped operations compose predictably.
 
 ### Effect Stacking
 
@@ -154,7 +154,7 @@ program :: Eff '[State Int, Error String, IO] ()
 
 ### The Proposal
 
-Alexis King authored [GHC Proposal #313](https://github.com/ghc-proposals/ghc-proposals/blob/master/proposals/0313-delimited-continuation-primops.rst), which adds native delimited continuation primops to GHC. The proposal was accepted and the primops were merged into GHC (as of late 2022, available from GHC 9.6).
+Alexis King authored [GHC Proposal #313], which adds native delimited continuation primops to GHC. The proposal was accepted and the primops were merged into GHC (as of late 2022, available from GHC 9.6).
 
 Key design principles:
 
@@ -176,7 +176,7 @@ The proposal explicitly states it is neither about nor coupled to eff. Any effec
 
 - **Performance by design**: Fast without relying on fragile GHC optimizations
 - **True algebraic effects**: Full support for continuation capture and resumption
-- **NonDet and Coroutine support**: Unlike effectful/cleff, can implement backtracking and coroutines
+- **NonDet and Coroutine support**: Unlike [effectful]/[cleff], can implement backtracking and coroutines
 - **Consistent semantics**: Handler order does not produce nonsensical results
 - **Low boilerplate**: Comparable to freer-simple; no TH required
 - **Influence on GHC**: Led to permanent addition of delimited continuation primops
@@ -203,9 +203,24 @@ The proposal explicitly states it is neither about nor coupled to eff. Any effec
 
 ## Sources
 
-- [eff GitHub repository](https://github.com/hasura/eff)
-- [GHC Proposal #313: Delimited continuation primops](https://github.com/ghc-proposals/ghc-proposals/blob/master/proposals/0313-delimited-continuation-primops.rst)
-- [GHC Proposal #313 PR discussion](https://github.com/ghc-proposals/ghc-proposals/pull/313)
-- [Alexis King -- Delimited Continuations, Demystified](https://www.lambdadays.org/lambdadays2023/alexis-king) (Lambda Days 2023)
-- [From delimited continuations to algebraic effects in Haskell](https://blog.poisson.chat/posts/2023-01-02-del-cont-examples.html) -- Lysxia
-- [What happens now after delimited continuations is merged to GHC?](https://discourse.haskell.org/t/what-happens-now-after-delimited-continuations-is-merged-to-ghc/5460)
+- [eff GitHub repository]
+- [GHC Proposal #313: Delimited continuation primops]
+- [GHC Proposal #313 PR discussion]
+- [Alexis King -- Delimited Continuations, Demystified] (Lambda Days 2023)
+- [From delimited continuations to algebraic effects in Haskell] -- Lysxia
+- [What happens now after delimited continuations is merged to GHC?]
+
+<!-- References -->
+
+[polysemy]: haskell-polysemy.md
+[fused-effects]: haskell-fused-effects.md
+[effectful]: haskell-effectful.md
+[cleff]: haskell-cleff.md
+[github.com/hasura/eff]: https://github.com/hasura/eff
+[GHC Proposal #313]: https://github.com/ghc-proposals/ghc-proposals/blob/master/proposals/0313-delimited-continuation-primops.rst
+[eff GitHub repository]: https://github.com/hasura/eff
+[GHC Proposal #313: Delimited continuation primops]: https://github.com/ghc-proposals/ghc-proposals/blob/master/proposals/0313-delimited-continuation-primops.rst
+[GHC Proposal #313 PR discussion]: https://github.com/ghc-proposals/ghc-proposals/pull/313
+[Alexis King -- Delimited Continuations, Demystified]: https://www.lambdadays.org/lambdadays2023/alexis-king
+[From delimited continuations to algebraic effects in Haskell]: https://blog.poisson.chat/posts/2023-01-02-del-cont-examples.html
+[What happens now after delimited continuations is merged to GHC?]: https://discourse.haskell.org/t/what-happens-now-after-delimited-continuations-is-merged-to-ghc/5460

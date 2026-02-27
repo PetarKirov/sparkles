@@ -6,8 +6,8 @@ A zero-dependency Scala library for asynchronous and concurrent programming, pro
 | ------------- | ---------------------------------------------------- |
 | Language      | Scala 2.13 / Scala 3                                 |
 | License       | Apache-2.0                                           |
-| Repository    | [github.com/zio/zio](https://github.com/zio/zio)     |
-| Documentation | [zio.dev](https://zio.dev)                           |
+| Repository    | [github.com/zio/zio]                                 |
+| Documentation | [zio.dev]                                            |
 | Key Authors   | John De Goes (Ziverge)                               |
 | Approach      | Fiber-based runtime with three-parameter effect type |
 
@@ -168,7 +168,7 @@ This avoids the overhead of generic monad transformer stacking.
 
 ### Memory Footprint
 
-ZIO fibers carry more context than Cats Effect fibers (roughly 3x larger memory footprint), which is the cost of the richer built-in features (typed errors, environment, etc.).
+ZIO fibers carry more context than [Cats Effect] fibers (roughly 3x larger memory footprint), which is the cost of the richer built-in features (typed errors, environment, etc.).
 
 ---
 
@@ -220,10 +220,10 @@ Built-in concurrent data structures:
 ## Weaknesses
 
 - **Not true algebraic effects**: Fixed to two effect channels (R and E); cannot define arbitrary new effect types
-- **Heavier fibers**: ~3x memory overhead compared to Cats Effect fibers
+- **Heavier fibers**: ~3x memory overhead compared to [Cats Effect] fibers
 - **No tagless final**: Concrete `ZIO` type; cannot abstract over effect implementation
 - **Learning curve**: Three type parameters and the layer system take time to master
-- **Ecosystem fragmentation**: Some libraries support only Cats Effect or only ZIO
+- **Ecosystem fragmentation**: Some libraries support only [Cats Effect] or only ZIO
 - **Scala market decline**: Fewer companies adopting Scala for new projects
 
 ## Key Design Decisions and Trade-offs
@@ -251,11 +251,25 @@ Built-in concurrent data structures:
 
 ## Sources
 
-- [ZIO documentation](https://zio.dev)
-- [ZIO GitHub repository](https://github.com/zio/zio)
-- [ZIO in 2025](https://www.ziverge.com/post/zio-in-2025) -- Ziverge
-- [ZIO core reference](https://zio.dev/reference/core/zio/)
-- [Getting Started with DI in ZIO](https://zio.dev/reference/di/dependency-injection-in-zio/)
-- [The Tri-Z Architecture](https://blog.pierre-ricadat.com/the-tri-z-architecture-a-pattern-for-layering-zio-applications-in-scala)
-- [Structuring ZIO 2 Applications](https://softwaremill.com/structuring-zio-2-applications/) -- SoftwareMill
-- [Cats Effect vs ZIO](https://softwaremill.com/cats-effect-vs-zio/) -- SoftwareMill
+- [ZIO documentation]
+- [ZIO GitHub repository]
+- [ZIO in 2025] -- Ziverge
+- [ZIO core reference]
+- [Getting Started with DI in ZIO]
+- [The Tri-Z Architecture]
+- [Structuring ZIO 2 Applications] -- SoftwareMill
+- [Cats Effect vs ZIO] -- SoftwareMill
+
+<!-- References -->
+
+[Cats Effect]: scala-cats-effect.md
+[github.com/zio/zio]: https://github.com/zio/zio
+[zio.dev]: https://zio.dev
+[ZIO documentation]: https://zio.dev
+[ZIO GitHub repository]: https://github.com/zio/zio
+[ZIO in 2025]: https://www.ziverge.com/post/zio-in-2025
+[ZIO core reference]: https://zio.dev/reference/core/zio/
+[Getting Started with DI in ZIO]: https://zio.dev/reference/di/dependency-injection-in-zio/
+[The Tri-Z Architecture]: https://blog.pierre-ricadat.com/the-tri-z-architecture-a-pattern-for-layering-zio-applications-in-scala
+[Structuring ZIO 2 Applications]: https://softwaremill.com/structuring-zio-2-applications/
+[Cats Effect vs ZIO]: https://softwaremill.com/cats-effect-vs-zio/

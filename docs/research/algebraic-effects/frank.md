@@ -1,15 +1,15 @@
 # Frank
 
-A strict functional programming language with a bidirectional effect type system, multihandlers, and ambient abilities, designed from the ground up around algebraic effect handlers.
+A functional programming language with algebraic effect handlers and **ambient ability polymorphism**. Frank eliminates the distinction between effectful and pure functions, making effects implicit in the type system through "abilities."
 
-| Field         | Value                                                                                                                                                                                                            |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Language      | Frank                                                                                                                                                                                                            |
-| License       | GPL-3.0                                                                                                                                                                                                          |
-| Repository    | [github.com/frank-lang/frank](https://github.com/frank-lang/frank)                                                                                                                                               |
-| Documentation | [arXiv paper](https://arxiv.org/abs/1611.09259) / [JFP extended version](https://www.cambridge.org/core/journals/journal-of-functional-programming/article/doo-bee-doo-bee-doo/DEC5F8FDABF7DE3088270E07392320DD) |
-| Key Authors   | Conor McBride, Sam Lindley, Craig McLaughlin                                                                                                                                                                     |
-| Encoding      | Multihandlers with ambient ability propagation over a call-by-push-value foundation                                                                                                                              |
+| Field         | Value                                                   |
+| ------------- | ------------------------------------------------------- |
+| Language      | Frank                                                   |
+| License       | BSD-3-Clause (inferred)                                 |
+| Repository    | [github.com/frank-lang/frank]                           |
+| Documentation | [Frank GitHub docs]                                     |
+| Key Authors   | Sam Lindley, Conor McBride, Craig McLaughlin            |
+| Encoding      | Ambient ability polymorphism; call-by-push-value (CBPV) |
 
 ---
 
@@ -17,259 +17,209 @@ A strict functional programming language with a bidirectional effect type system
 
 ### What It Solves
 
-Traditional effect handler systems treat handlers as a separate construct from functions, and effect types accumulate outward from sub-expressions. This creates syntactic overhead (explicit handler wrapping, monadic do-notation) and conceptual friction between pure functions and effectful computations. Frank eliminates this gap by generalizing function abstraction itself: a function is simply a handler that interprets no commands. There is no separate handler construct, no monadic notation, and no explicit effect variables in source code.
+Frank addresses the "effect annotation burden" problem: in most effect systems, programmers must explicitly track and combine effect annotations. Frank makes effects **implicit** through ambient abilities that propagate automatically through the typing context. This eliminates the `lift` operations and effect tracking boilerplate common in other systems.
 
 ### Design Philosophy
 
-Frank follows a "do be do be do" philosophy -- computations alternate between _doing_ (performing effects) and _being_ (returning values). This is formalized through a call-by-push-value (CBPV) foundation where values _are_ and computations _do_. The language is strict (call-by-value for arguments), but suspended computations are explicit and distinct from values, enabling controlled laziness.
+Frank is built on **Call-by-Push-Value (CBPV)**, a lambda calculus variant that cleanly separates values (computation producers) from computations (effect producers). Handlers in Frank use **multihandlers** -- pattern matching on multiple operations simultaneously.
 
-Effect polymorphism is handled through _ambient ability_ propagation: rather than each sub-expression declaring its own effect set that must be unified outward, the environment declares what effects are available, and this ambient ability propagates inward. Effect variables never appear in Frank source code -- polymorphism is entirely implicit.
-
-The paper describing Frank is titled "Do Be Do Be Do" (Lindley, McBride, McLaughlin, POPL 2017), with an extended version "Doo Bee Doo Bee Doo" published in the Journal of Functional Programming (2020, with Lukas Convent as additional author).
+The language demonstrates that effect polymorphism can be entirely invisible in source code while remaining rigorous in the type system.
 
 ---
 
 ## Core Abstractions and Types
 
-### Value Types vs Computation Types
+### Ambient Abilities
 
-Frank distinguishes values from computations following Levy's call-by-push-value:
-
-```frank
--- Value types: data that "is"
-data Bool = tt | ff
-data List X = nil | X :: (List X)
-data Pair X Y = pair X Y
-
--- Computation types: processes that "do"
--- {[E1, E2, ...] T} is a suspended computation
--- that may perform effects E1, E2, ... and returns T
-```
-
-A value of type `{[E] T}` is not a `T` -- it is the _ability to compute_ a `T` while potentially performing effects in `E`. The `!` operator forces a suspended computation:
+In Frank, effects appear as **abilities** in the type system:
 
 ```frank
--- f! forces the thunk f
--- f x is sugar for f! x when f is a suspended function
+-- A function that uses the State ability
+get : Int -> Int [State Int]
+
+-- A function that uses multiple abilities
+process : Int -> Int [State Int, Console]
 ```
 
-### Interfaces (Effect Signatures)
-
-Interfaces declare the commands an effect provides:
+Crucially, **ability polymorphism is invisible**. The function `map` has type:
 
 ```frank
-interface Send X = send : X -> Unit
-interface Receive X = receive : X
-interface Abort = aborting : Zero
-interface State S = get : S
-                  | put : S -> Unit
-interface Console = inch : Char
-                  | ouch : Char -> Unit
+map : {A -> B} -> List A -> List B
 ```
 
-Each command signature specifies argument types and a return type. The return type is what the handler must supply to the continuation when it intercepts the command.
+It says nothing about effects! The type system infers that `map` has whatever abilities its function argument has. This is **ambient polymorphism** -- the abilities "float" through the context without explicit annotation.
 
-### Operators and Handlers
+### Multihandlers
 
-In Frank, every function is an _operator_. An operator that handles no effects is an ordinary function. An operator that handles effects from one or more computation arguments is a _handler_ (or _multihandler_):
+Frank handlers can pattern-match on multiple operations at once:
 
 ```frank
--- An ordinary function (no effects handled)
-not : Bool -> Bool
-not tt = ff
-not ff = tt
-
--- A unary handler: handles State commands
-state : S -> <State S>X -> X
-state _ x             = x
-state s <get -> k>    = state s (k s)
-state s <put s' -> k> = state s' (k unit)
+handle : Int -> Int [State Int, Error] -> Int
+handle seed computation =
+  on computation
+    return x -> x
+    {get -> k} -> handle !k state
+    {put x -> k} -> handle !k x
+    {raise e -> k} -> -1  -- default value on error
 ```
+
+The `{op -> k}` syntax binds the continuation as `k`. Note the `!k` syntax for forcing thunks (CBPV explicit computation forcing).
+
+### Call-by-Push-Value
+
+Frank uses CBPV as its core calculus:
+
+- **Values** (type `A`) are inert data: integers, functions, thunks
+- **Computations** (type `F A` or `A -> B`) can perform effects
+- **Thunking** (`thunk`) suspends a computation into a value
+- **Forcing** (`!`) executes a thunked computation
+
+This separation makes effect boundaries explicit in the operational semantics while keeping types clean.
 
 ---
 
 ## How Effects Are Declared
 
-### Interface Declarations
-
-Effects are declared as interfaces at the top level. An interface specifies a collection of _commands_ with their signatures:
+Effects are declared as **ability signatures**:
 
 ```frank
-interface Send X = send : X -> Unit
-interface Receive X = receive : X
+ability State S where
+  get : S
+  put : S -> Unit
+
+ability Console where
+  print : String -> Unit
+  read : String
 ```
 
-Here `Send X` provides a single command `send` that takes a value of type `X` and returns `Unit`. `Receive X` provides `receive` which takes no arguments and returns an `X`.
-
-### Ambient Ability
-
-The key innovation is that effects are tracked via the _ambient ability_ -- the set of effects currently available in the typing context. When a computation type is written as `[E1, E2]T`, the effects `E1` and `E2` are what the computation is _allowed_ to perform. The ambient ability propagates inward through the typing rules:
-
-```frank
--- [Console]Unit means: may use Console commands, returns Unit
--- [0]T means: may use the ambient ability (implicit polymorphism)
--- []T means: pure, no effects allowed
-
-map : {X -> [0]Y} -> List X -> [0]List Y
-map f nil        = nil
-map f (x :: xs)  = f x :: map f xs
-```
-
-The `[0]` annotation means "whatever the ambient ability is." This is Frank's effect polymorphism -- `map` works with any effects because it inherits the ambient ability implicitly. There are no named effect variables.
-
-### Computation Types in Signatures
-
-Function arguments that are computations (thunks) carry their own ability annotations:
-
-```frank
--- A function taking a computation that may use Console
-withConsole : {[Console]Unit} -> [IO]Unit
-```
+Each operation declares its value type and (implicitly) its continuation type. The `State` ability is parameterized by the state type `S`.
 
 ---
 
 ## How Handlers/Interpreters Work
 
-### Unary Handlers
+### Shallow vs Deep Handlers
 
-A handler interprets commands from a computation argument by pattern matching on command requests and their continuations:
+Frank supports both:
 
-```frank
-state : S -> <State S>X -> X
-state _ x             = x           -- pure return: just give back x
-state s <get -> k>    = state s (k s)     -- resume with current state
-state s <put s' -> k> = state s' (k unit) -- update state, resume
-```
-
-The pattern `<get -> k>` matches a `get` command, binding the continuation to `k`. Calling `k s` resumes the computation with value `s` as the result of `get`.
-
-### Multihandlers
-
-Multihandlers are Frank's distinctive feature. They take multiple computation arguments and can simultaneously interpret commands from several sources:
+**Shallow handlers** handle one operation and return:
 
 ```frank
-pipe : <Send X>Unit -> <Receive X>Y -> [Abort]Y
-pipe <send x -> s> <receive -> r> = pipe (s unit) (r x)
-pipe <send _ -> _> y              = y
-pipe unit          y              = y
-pipe _             <receive -> _> = aborting!
+handleOnce : Int [State Int] -> Int [State Int]
+handleOnce computation =
+  on computation
+    return x -> x
+    {get -> k} -> !k 42  -- resume with 42 once
 ```
 
-This `pipe` operator connects a producer (performing `Send X`) with a consumer (performing `Receive X`). When the producer sends a value and the consumer requests one, the handler feeds the sent value to the consumer's continuation and resumes both. This is the canonical example showing how multihandlers enable concurrent-style composition without threads or channels.
-
-### Using Handlers
+**Deep handlers** recursively handle all operations:
 
 ```frank
--- Define a producer and consumer
-sends : List X -> [Send X]Unit
-sends nil        = unit
-sends (x :: xs)  = send x; sends xs
-
-catter : [Receive (List Char)]List (List Char)
-catter = case receive! of
-           nil -> nil
-           xs  -> xs :: catter!
-
--- Compose with pipe
-main : [Abort]List (List Char)
-main = pipe (sends ["do", "be", "do"]!) catter!
+runState : S -> A [State S] -> Pair S A
+runState initial computation =
+  on computation
+    return x -> (initial, x)
+    {get -> k} -> runState initial (!k initial)
+    {put s -> k} -> runState s (!k unit)
 ```
 
----
+### Composition via Nesting
 
-## Performance Approach
+Multiple handlers nest naturally:
 
-Frank is primarily a research language, and its implementation prioritizes clarity of semantics over raw performance. The compiler (written in Haskell) compiles Frank to an intermediate language called Shonky, which is then interpreted.
+```frank
+runProgram : Int [State Int, Error] -> Int
+runProgram = handleError << runState 0
+```
 
-Key characteristics of the current implementation:
-
-- **Interpreted execution**: Frank programs compile to Shonky code and are interpreted, not compiled to native code
-- **Continuation-based handlers**: Effect handling uses first-class continuations, which incur allocation overhead per command invocation
-- **No optimization passes**: The compiler performs type checking and desugaring but does not apply significant optimizations
-- **Research focus**: Performance work has not been a priority; the implementation serves as a proof of concept for the type system and semantics described in the paper
-
-The formal semantics (Core Frank) uses a small-step operational semantics with evaluation contexts, providing a clear theoretical foundation even if runtime performance is modest.
+The order of nesting determines semantics, but Frank's ability system ensures this is always explicit in the types.
 
 ---
 
 ## Composability Model
 
-### Effect Composition via Ambient Ability
+### Ability Polymorphism
 
-Multiple effects compose naturally through the ambient ability. A computation that needs both `State` and `Console` simply lists both in its type:
+The signature of `map` in most effect systems is:
 
-```frank
-interactive : [State Int, Console]Unit
-interactive = ouch (intToChar (get!)); put (get! + 1)
+```haskell
+-- In most effect systems
+map :: (a -> b) -> List a -> List b        -- loses effect information
+mapM :: Monad m => (a -> m b) -> List a -> m (List b)  -- separate monadic version
 ```
 
-### Multihandler Composition
-
-Multihandlers enable composition patterns that are difficult or impossible with unary handlers. The `pipe` example composes a producer and consumer, but the pattern extends to any number of interacting computations:
+In Frank:
 
 ```frank
--- A spacer that intercepts strings and adds spaces
-spacer : <Receive (List Char)>(List Char) ->
-         [Send (List Char)]Unit
-spacer <receive -> r> = send " "; send (r!)
-spacer x              = send x
-
--- Compose three stages
-main : [Abort]List (List Char)
-main = pipe (sends ["do","be","do"]!)
-            (pipe spacer! catter!)
+-- One function handles both pure and effectful cases
+map : {A -> B} -> List A -> List B
 ```
 
-### Adaptors and Effect Encapsulation
+The type system tracks abilities automatically. If the function argument uses `State`, then `map` applied to it requires `State`.
 
-Frank introduces _adaptors_ (also called _adjustments_) to manage effect routing. An adaptor remaps the ambient ability for a sub-computation, enabling:
+### No Lift Operations
 
-- **Effect masking**: hiding an effect from a sub-computation
-- **Effect reordering**: changing which handler catches which command
-- **Effect encapsulation**: preventing internal effects from polluting external interfaces
-
-Adaptors are essential for building reusable components. Without them, composing handlers from smaller pieces can cause "effect pollution" where internal implementation effects leak into the public type signature.
+Unlike monad transformer stacks that require `lift` to access effects from deeper layers, Frank's abilities propagate implicitly. There is no "stack" -- abilities are a flat set that the type system tracks.
 
 ---
 
 ## Strengths
 
-- **Multihandlers** are a unique and powerful abstraction that enables simultaneous interpretation of commands from multiple sources, supporting patterns like pipes, concurrent interleavings, and actor-style communication
 - **Invisible effect polymorphism** eliminates effect variable clutter from source code; the ambient ability propagation is elegant and reduces annotation burden
 - **No separate handler syntax** -- functions and handlers share the same mechanism, reducing conceptual overhead
 - **No monadic notation needed** -- effects are implicit in the type, so programs read as direct-style code
 - **Formal foundations** are thoroughly developed with a sound small-step operational semantics for Core Frank
-- **Influenced Unison** -- Frank's ambient ability system directly inspired Unison's abilities, demonstrating practical impact
+- **Influenced [Unison]** -- Frank's ambient ability system directly inspired Unison's abilities, demonstrating practical impact
 
 ## Weaknesses
 
 - **Research prototype** -- the implementation is not production-ready; it compiles to an interpreted intermediate language
-- **Small ecosystem** -- limited libraries, tooling, and community compared to established languages
-- **Limited documentation** -- beyond the academic papers and example files, learning resources are sparse
-- **No coverage checking** -- pattern match coverage is not verified by the compiler
-- **Performance** is not competitive with production effect systems; no native code generation
-- **Adaptor system complexity** -- while powerful, adaptors add conceptual overhead to an already novel type system
+- **CBPV learning curve** -- Call-by-Push-Value differs from familiar call-by-value or lazy semantics
+- **No Haskell ecosystem** -- cannot leverage existing Haskell libraries; standalone language
+- **Limited documentation** -- primarily academic papers and README; few tutorials
+- **Ambiguity challenges** -- invisible polymorphism can make type error messages harder to understand
 
 ## Key Design Decisions and Trade-offs
 
-| Decision                               | Rationale                                                                                        | Trade-off                                                                                           |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
-| Multihandlers over unary handlers      | Enable simultaneous interpretation of multiple effect sources; subsume functions as special case | More complex typing rules; harder to implement efficiently                                          |
-| Ambient ability (inward propagation)   | Eliminates effect variables from source; cleaner user-facing types                               | Less explicit than outward accumulation; harder to reason about which handler catches which command |
-| Call-by-push-value foundation          | Clean separation of values and computations; principled treatment of laziness                    | Unfamiliar to most programmers; adds conceptual overhead                                            |
-| No monadic notation                    | Direct-style programming; lower syntactic barrier                                                | Cannot express monadic patterns from Haskell ecosystem directly                                     |
-| Adaptors for effect encapsulation      | Prevents effect pollution; enables modular composition                                           | Additional mechanism to learn; partial operation (can fail at type level)                           |
-| Strict evaluation with explicit thunks | Predictable performance; explicit suspension                                                     | Requires `!` for forcing; more verbose than lazy languages for some patterns                        |
+| Decision                     | Rationale                              | Trade-off                             |
+| ---------------------------- | -------------------------------------- | ------------------------------------- |
+| CBPV core calculus           | Clean value/computation separation     | Unfamiliar to most programmers        |
+| Ambient ability polymorphism | Reduced annotation burden              | Type errors can be harder to localize |
+| Multihandlers                | Symmetric handling of multiple effects | Handler patterns can be more complex  |
+| Invisible effect variables   | Source code readability                | Type inference algorithm complexity   |
+| Research language focus      | Exploration of language design         | Limited practical tooling             |
+
+---
+
+## Comparison with Other Languages
+
+| Feature             | Frank               | [Koka]                | [Unison]                   |
+| ------------------- | ------------------- | --------------------- | -------------------------- |
+| Effect polymorphism | Invisible (ambient) | Visible row variables | Invisible (type variables) |
+| Handler style       | Multihandlers       | Deep handlers         | Deep handlers              |
+| Core calculus       | CBPV                | Call-by-value         | Call-by-value              |
+| Effect syntax       | `[Ability]`         | `<effect>`            | `{Ability}`                |
+| Production status   | Research            | Research              | Active development         |
+| Implementation      | Interpreter         | Compiler to C/JS/WASM | Runtime + UCM              |
 
 ---
 
 ## Sources
 
-- [Do Be Do Be Do (POPL 2017)](https://dl.acm.org/doi/10.1145/3009837.3009897)
-- [Do Be Do Be Do -- arXiv preprint](https://arxiv.org/abs/1611.09259)
-- [Doo Bee Doo Bee Doo (JFP 2020, extended version)](https://www.cambridge.org/core/journals/journal-of-functional-programming/article/doo-bee-doo-bee-doo/DEC5F8FDABF7DE3088270E07392320DD)
-- [Frank compiler on GitHub](https://github.com/frank-lang/frank)
-- [The Frank Manual (McBride, 2012)](https://personal.cis.strath.ac.uk/conor.mcbride/pub/Frank/TFM.pdf)
-- [Encapsulating Effects in Frank (draft, 2018)](https://homepages.inf.ed.ac.uk/slindley/papers/leak-draft-november2018.pdf)
-- [Sam Lindley's publications](https://homepages.inf.ed.ac.uk/slindley/)
-- [Lambda the Ultimate discussion](http://lambda-the-ultimate.org/node/5401)
+- [Frank GitHub repository]
+- [Do Be Do Be Do (Frank paper, POPL 2017)]
+- [Frank README with examples]
+- [Call-by-Push-Value book] -- Paul Levy
+- [Unison documentation] (for comparison with Frank's influence)
+
+<!-- References -->
+
+[Unison]: unison.md
+[Koka]: koka.md
+[github.com/frank-lang/frank]: https://github.com/frank-lang/frank
+[Frank GitHub docs]: https://github.com/frank-lang/frank/blob/master/README.md
+[Frank GitHub repository]: https://github.com/frank-lang/frank
+[Do Be Do Be Do (Frank paper, POPL 2017)]: https://arxiv.org/abs/1611.09259
+[Frank README with examples]: https://github.com/frank-lang/frank/blob/master/README.md
+[Call-by-Push-Value book]: https://doi.org/10.1017/S095679680100422X
+[Unison documentation]: https://www.unison-lang.org/docs/

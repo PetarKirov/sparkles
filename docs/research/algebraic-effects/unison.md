@@ -6,8 +6,8 @@ A statically-typed functional programming language with content-addressed code a
 | ------------- | ------------------------------------------------------------------------------------------ |
 | Language      | Unison                                                                                     |
 | License       | MIT                                                                                        |
-| Repository    | [github.com/unisonweb/unison](https://github.com/unisonweb/unison)                         |
-| Documentation | [unison-lang.org/docs](https://www.unison-lang.org/docs/)                                  |
+| Repository    | [github.com/unisonweb/unison]                                                              |
+| Documentation | [unison-lang.org/docs]                                                                     |
 | Key Authors   | Paul Chiusano, Runar Bjarnason, Arya Irani                                                 |
 | Encoding      | Abilities (algebraic effects) with content-addressed code storage and ambient polymorphism |
 
@@ -21,7 +21,7 @@ Unison addresses several interconnected problems. First, it provides an effect s
 
 ### Design Philosophy
 
-Unison's abilities system is directly inspired by the Frank language (Lindley, McBride, McLaughlin, 2017). Like Frank, Unison uses ambient ability polymorphism where effects propagate inward through the typing context rather than accumulating outward. However, Unison diverges from Frank in two key ways: ability polymorphism is provided by ordinary polymorphic type variables rather than implicit ambient propagation, and ability handling uses an explicit `handle ... with` construct rather than overloading function application.
+Unison's abilities system is directly inspired by the [Frank] language (Lindley, McBride, McLaughlin, 2017). Like [Frank], Unison uses ambient ability polymorphism where effects propagate inward through the typing context rather than accumulating outward. However, Unison diverges from [Frank] in two key ways: ability polymorphism is provided by ordinary polymorphic type variables rather than implicit ambient propagation, and ability handling uses an explicit `handle ... with` construct rather than overloading function application.
 
 The content-addressed codebase is Unison's other foundational idea. Code is stored as hashed abstract syntax trees in a database (not as text files), managed by the Unison Codebase Manager (UCM). Names are metadata pointing to hashes, so renaming never breaks anything, there are no build steps, and dependency conflicts based on name collisions are eliminated. This design also enables Unison Cloud, where functions can be deployed to remote nodes by hash reference.
 
@@ -287,27 +287,43 @@ Unison provides several built-in abilities:
 
 ## Key Design Decisions and Trade-offs
 
-| Decision                                  | Rationale                                                                             | Trade-off                                                                                         |
-| ----------------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| Content-addressed code                    | Eliminates builds, enables distributed deployment, perfect caching                    | Abandons text-file workflow; incompatible with traditional VCS and tooling                        |
-| Abilities over monads                     | Direct-style programming; effects as function properties, not value wrappers          | Less mature ecosystem than Haskell's monad transformer libraries                                  |
-| Explicit `handle ... with` (unlike Frank) | Clearer separation between using and handling effects                                 | More verbose than Frank's implicit handler syntax                                                 |
-| Structural vs unique abilities            | Structural enables cross-library compatibility; unique prevents accidental conflation | Users must choose correctly; structural abilities can collide if structures match                 |
-| Ability polymorphism via type variables   | Integrates with standard parametric polymorphism                                      | More explicit than Frank's invisible effect variables; ability variables appear in inferred types |
-| Database-backed codebase                  | Enables semantic versioning, type-indexed search, perfect dependency tracking         | Cannot use grep, git diff, or standard text tools directly on source code                         |
-| Unison Cloud as commercial platform       | Funds continued language development through public benefit corporation               | Creates vendor dependency for distributed computing features                                      |
+| Decision                                    | Rationale                                                                             | Trade-off                                                                                           |
+| ------------------------------------------- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Content-addressed code                      | Eliminates builds, enables distributed deployment, perfect caching                    | Abandons text-file workflow; incompatible with traditional VCS and tooling                          |
+| Abilities over monads                       | Direct-style programming; effects as function properties, not value wrappers          | Less mature ecosystem than Haskell's monad transformer libraries                                    |
+| Explicit `handle ... with` (unlike [Frank]) | Clearer separation between using and handling effects                                 | More verbose than [Frank]'s implicit handler syntax                                                 |
+| Structural vs unique abilities              | Structural enables cross-library compatibility; unique prevents accidental conflation | Users must choose correctly; structural abilities can collide if structures match                   |
+| Ability polymorphism via type variables     | Integrates with standard parametric polymorphism                                      | More explicit than [Frank]'s invisible effect variables; ability variables appear in inferred types |
+| Database-backed codebase                    | Enables semantic versioning, type-indexed search, perfect dependency tracking         | Cannot use grep, git diff, or standard text tools directly on source code                           |
+| Unison Cloud as commercial platform         | Funds continued language development through public benefit corporation               | Creates vendor dependency for distributed computing features                                        |
 
 ---
 
 ## Sources
 
-- [Unison language documentation](https://www.unison-lang.org/docs/)
-- [Unison GitHub repository](https://github.com/unisonweb/unison)
-- [Abilities and ability handlers (language reference)](https://www.unison-lang.org/docs/language-reference/abilities-and-ability-handlers/)
-- [Ability declaration (language reference)](https://www.unison-lang.org/docs/language-reference/ability-declaration/)
-- [Writing your own abilities](https://www.unison-lang.org/docs/fundamentals/abilities/writing-abilities/)
-- [The big idea: content-addressed code](https://www.unison-lang.org/docs/the-big-idea/)
-- [Unison Cloud documentation](https://www.unison.cloud/docs/core-concepts/)
-- [Unison annotated bibliography](https://www.unison-lang.org/docs/usage-topics/bibliography/)
-- [Do Be Do Be Do (Frank paper, POPL 2017)](https://arxiv.org/abs/1611.09259)
-- [About Unison Computing](https://www.unison-lang.org/unison-computing/)
+- [Unison language documentation]
+- [Unison GitHub repository]
+- [Abilities and ability handlers (language reference)]
+- [Ability declaration (language reference)]
+- [Writing your own abilities]
+- [The big idea: content-addressed code]
+- [Unison Cloud documentation]
+- [Unison annotated bibliography]
+- [Do Be Do Be Do (Frank paper, POPL 2017)]
+- [About Unison Computing]
+
+<!-- References -->
+
+[Frank]: frank.md
+[github.com/unisonweb/unison]: https://github.com/unisonweb/unison
+[unison-lang.org/docs]: https://www.unison-lang.org/docs/
+[Unison language documentation]: https://www.unison-lang.org/docs/
+[Unison GitHub repository]: https://github.com/unisonweb/unison
+[Abilities and ability handlers (language reference)]: https://www.unison-lang.org/docs/language-reference/abilities-and-ability-handlers/
+[Ability declaration (language reference)]: https://www.unison-lang.org/docs/language-reference/ability-declaration/
+[Writing your own abilities]: https://www.unison-lang.org/docs/fundamentals/abilities/writing-abilities/
+[The big idea: content-addressed code]: https://www.unison-lang.org/docs/the-big-idea/
+[Unison Cloud documentation]: https://www.unison.cloud/docs/core-concepts/
+[Unison annotated bibliography]: https://www.unison-lang.org/docs/usage-topics/bibliography/
+[Do Be Do Be Do (Frank paper, POPL 2017)]: https://arxiv.org/abs/1611.09259
+[About Unison Computing]: https://www.unison-lang.org/unison-computing/

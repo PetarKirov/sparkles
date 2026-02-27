@@ -6,8 +6,8 @@ Virtual threads, structured concurrency, and scoped values -- Java's platform-le
 | ------------- | --------------------------------------------------------------- |
 | Language      | Java 21+                                                        |
 | License       | GPL-2.0 with Classpath Exception (OpenJDK)                      |
-| Repository    | [github.com/openjdk/loom](https://github.com/openjdk/loom)      |
-| Documentation | [openjdk.org/projects/loom](https://openjdk.org/projects/loom/) |
+| Repository    | [github.com/openjdk/loom]                                       |
+| Documentation | [openjdk.org/projects/loom]                                     |
 | Key Authors   | Ron Pressler, Alan Bateman (Oracle)                             |
 | Approach      | JVM-managed virtual threads with hidden delimited continuations |
 
@@ -138,7 +138,7 @@ This is a deliberate design choice: Java developers write ordinary sequential co
 
 Internally, virtual threads are implemented using a `jdk.internal.vm.Continuation` class -- a scoped, stackful, one-shot delimited continuation. This class is not part of the public API:
 
-```
+```java
 jdk.internal.vm.Continuation
     - yield(ContinuationScope scope)  // suspend execution
     - run()                            // resume execution
@@ -210,6 +210,8 @@ Loom's features map to a subset of what a full algebraic effect system provides:
 | Custom user-defined effects | Not provided                               |
 | Effect handlers (resume)    | Not exposed (internal `Continuation`)      |
 
+For capability-based I/O in a similar spirit, see [Scala's Ox] which uses Java 21 virtual threads with Scala 3's capability system.
+
 Loom provides the three most practically important effects (async I/O, context propagation, structured concurrency) without requiring developers to learn effect system concepts. However, it does not support user-defined effects or custom handlers.
 
 ### Impact on the Java Ecosystem
@@ -256,13 +258,29 @@ However, reactive frameworks still provide value for backpressure, stream proces
 
 ## Sources
 
-- [OpenJDK Project Loom](https://openjdk.org/projects/loom/)
-- [JEP 444: Virtual Threads](https://openjdk.org/jeps/444)
-- [JEP 453: Structured Concurrency (Preview)](https://openjdk.org/jeps/453)
-- [JEP 464: Scoped Values (Second Preview)](https://openjdk.org/jeps/464)
-- [Project Loom proposal](https://cr.openjdk.org/~rpressler/loom/Loom-Proposal.html) -- Ron Pressler
-- [Why Continuations are Coming to Java](https://www.infoq.com/presentations/continuations-java/) -- InfoQ
-- [Java Virtual Threads: a Case Study](https://www.infoq.com/articles/java-virtual-threads-a-case-study/) -- InfoQ
-- [Beyond Loom: Weaving new concurrency patterns](https://developers.redhat.com/articles/2023/10/03/beyond-loom-weaving-new-concurrency-patterns) -- Red Hat
-- [Project Loom: Structured Concurrency in Java](https://rockthejvm.com/articles/structured-concurrency-in-java) -- Rock the JVM
-- [Java Scoped Values deep dive](https://www.happycoders.eu/java/scoped-values/) -- HappyCoders
+- [OpenJDK Project Loom]
+- [JEP 444: Virtual Threads]
+- [JEP 453: Structured Concurrency (Preview)]
+- [JEP 464: Scoped Values (Second Preview)]
+- [Project Loom proposal] -- Ron Pressler
+- [Why Continuations are Coming to Java] -- InfoQ
+- [Java Virtual Threads: a Case Study] -- InfoQ
+- [Beyond Loom: Weaving new concurrency patterns] -- Red Hat
+- [Project Loom: Structured Concurrency in Java] -- Rock the JVM
+- [Java Scoped Values deep dive] -- HappyCoders
+
+<!-- References -->
+
+[Scala's Ox]: scala-ox.md
+[github.com/openjdk/loom]: https://github.com/openjdk/loom
+[openjdk.org/projects/loom]: https://openjdk.org/projects/loom/
+[OpenJDK Project Loom]: https://openjdk.org/projects/loom/
+[JEP 444: Virtual Threads]: https://openjdk.org/jeps/444
+[JEP 453: Structured Concurrency (Preview)]: https://openjdk.org/jeps/453
+[JEP 464: Scoped Values (Second Preview)]: https://openjdk.org/jeps/464
+[Project Loom proposal]: https://cr.openjdk.org/~rpressler/loom/Loom-Proposal.html
+[Why Continuations are Coming to Java]: https://www.infoq.com/presentations/continuations-java/
+[Java Virtual Threads: a Case Study]: https://www.infoq.com/articles/java-virtual-threads-a-case-study/
+[Beyond Loom: Weaving new concurrency patterns]: https://developers.redhat.com/articles/2023/10/03/beyond-loom-weaving-new-concurrency-patterns
+[Project Loom: Structured Concurrency in Java]: https://rockthejvm.com/articles/structured-concurrency-in-java
+[Java Scoped Values deep dive]: https://www.happycoders.eu/java/scoped-values/

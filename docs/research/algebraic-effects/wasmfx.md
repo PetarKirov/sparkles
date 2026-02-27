@@ -4,12 +4,12 @@ WasmFX is the research line that shaped WebAssembly's stack-switching / typed-co
 
 **Last reviewed:** February 16, 2026.
 
-| Field               | Value                                                                                        |
-| ------------------- | -------------------------------------------------------------------------------------------- |
-| Ecosystem           | WebAssembly proposal and tooling ecosystem                                                   |
-| Main proposal track | [WebAssembly stack-switching proposal](https://github.com/WebAssembly/stack-switching)       |
-| Research origin     | [Continuing WebAssembly with Effect Handlers (OOPSLA 2023)](https://doi.org/10.1145/3622814) |
-| Primary explainer   | [wasmfx.dev](https://wasmfx.dev/)                                                            |
+| Field               | Value                                                       |
+| ------------------- | ----------------------------------------------------------- |
+| Ecosystem           | WebAssembly proposal and tooling ecosystem                  |
+| Main proposal track | [WebAssembly stack-switching proposal]                      |
+| Research origin     | [Continuing WebAssembly with Effect Handlers (OOPSLA 2023)] |
+| Primary explainer   | [wasmfx.dev]                                                |
 
 ---
 
@@ -30,7 +30,7 @@ Important nuance:
 - Phase 3 means active implementation work, not final standardization.
 - Runtime support is still evolving by engine and toolchain.
 
-Source: [WebAssembly proposals tracker](https://github.com/WebAssembly/proposals)
+Source: [WebAssembly proposals tracker]
 
 ---
 
@@ -85,9 +85,9 @@ This gives the programmer explicit control over handler installation while keepi
 
 Sources:
 
-- [WasmFX project site](https://wasmfx.dev/)
-- [Typed continuations core extensions](https://wasmfx.dev/specs/core/)
-- [WasmFX explainer](https://wasmfx.dev/specs/explainer/)
+- [WasmFX project site]
+- [Typed continuations core extensions]
+- [WasmFX explainer]
 
 ---
 
@@ -154,9 +154,9 @@ WasmFX provides a universal compilation target for diverse non-local control flo
 | Async/await               | C#, Dart, JavaScript, Rust, Swift | Tag per async boundary; suspend/resume |
 | Generators/iterators      | C#, JavaScript, Kotlin, Python    | Yield tag; resume loop in consumer     |
 | Coroutines                | C++, Kotlin, Python               | Symmetric switch or suspend/resume     |
-| Lightweight threads       | Erlang, Go, Haskell, OCaml        | Yield tag; round-robin scheduler       |
-| First-class continuations | Haskell, OCaml, Scheme            | Direct mapping to cont type            |
-| Effect handlers           | Koka, OCaml 5, Eff                | Direct mapping to tags + resume        |
+| Lightweight threads       | Erlang, Go, Haskell, [OCaml 5]    | Yield tag; round-robin scheduler       |
+| First-class continuations | Haskell, [OCaml 5], Scheme        | Direct mapping to cont type            |
+| Effect handlers           | [Koka], [OCaml 5], [Eff]          | Direct mapping to tags + resume        |
 
 ---
 
@@ -168,7 +168,7 @@ From an effect-systems perspective, typed continuations give Wasm a practical ba
 - handlers map to resume logic with installed clauses
 - continuation capture/resume happens at the runtime substrate level
 
-This does not force one specific source-language effect system; it provides a shared target for many of them.
+This does not force one specific source-language effect system; it provides a shared target for many of them. See [Theory and Compilation] for more on compilation strategies for algebraic effects.
 
 ---
 
@@ -193,7 +193,7 @@ Two implementation streams are visible in public artifacts:
 
 The 2025 WAW report documents continued implementation experience in Wasmtime-oriented tooling.
 
-Source: [Continuing Stack Switching in Wasmtime (WAW 2025)](https://popl25.sigplan.org/details/waw-2025-papers/7/Continuing-Stack-Switching-in-Wasmtime)
+Source: [Continuing Stack Switching in Wasmtime (WAW 2025)]
 
 ---
 
@@ -217,11 +217,29 @@ Source: [Continuing Stack Switching in Wasmtime (WAW 2025)](https://popl25.sigpl
 
 ## Sources
 
-- [WasmFX project site](https://wasmfx.dev/)
-- [WasmFX explainer](https://wasmfx.dev/specs/explainer/)
-- [Typed continuations core extensions](https://wasmfx.dev/specs/core/)
-- [WebAssembly stack-switching proposal](https://github.com/WebAssembly/stack-switching)
-- [WebAssembly proposals tracker](https://github.com/WebAssembly/proposals)
-- [Continuing WebAssembly with Effect Handlers (OOPSLA 2023)](https://doi.org/10.1145/3622814)
-- [Continuing Stack Switching in Wasmtime (WAW 2025 session page)](https://popl25.sigplan.org/details/waw-2025-papers/7/Continuing-Stack-Switching-in-Wasmtime)
-- [Generator example in WAT](https://github.com/wasmfx/wasmfxtime/blob/main/examples/generator.wat)
+- [WasmFX project site]
+- [WasmFX explainer]
+- [Typed continuations core extensions]
+- [WebAssembly stack-switching proposal]
+- [WebAssembly proposals tracker]
+- [Continuing WebAssembly with Effect Handlers (OOPSLA 2023)]
+- [Continuing Stack Switching in Wasmtime (WAW 2025 session page)]
+- [Generator example in WAT]
+
+<!-- References -->
+
+[OCaml 5]: ocaml-effects.md
+[Koka]: koka.md
+[OCaml 5]: ocaml-effects.md
+[Eff]: eff-lang.md
+[Theory and Compilation]: theory-compilation.md
+[WebAssembly stack-switching proposal]: https://github.com/WebAssembly/stack-switching
+[Continuing WebAssembly with Effect Handlers (OOPSLA 2023)]: https://doi.org/10.1145/3622814
+[wasmfx.dev]: https://wasmfx.dev/
+[WebAssembly proposals tracker]: https://github.com/WebAssembly/proposals
+[WasmFX project site]: https://wasmfx.dev/
+[Typed continuations core extensions]: https://wasmfx.dev/specs/core/
+[WasmFX explainer]: https://wasmfx.dev/specs/explainer/
+[Continuing Stack Switching in Wasmtime (WAW 2025)]: https://popl25.sigplan.org/details/waw-2025-papers/7/Continuing-Stack-Switching-in-Wasmtime
+[Continuing Stack Switching in Wasmtime (WAW 2025 session page)]: https://popl25.sigplan.org/details/waw-2025-papers/7/Continuing-Stack-Switching-in-Wasmtime
+[Generator example in WAT]: https://github.com/wasmfx/wasmfxtime/blob/main/examples/generator.wat

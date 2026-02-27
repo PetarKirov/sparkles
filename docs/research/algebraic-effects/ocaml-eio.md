@@ -2,14 +2,14 @@
 
 Effects-based direct-style I/O library for OCaml 5, providing structured concurrency and capability-based security without monadic encoding.
 
-| Field         | Value                                                                                                                  |
-| ------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Language      | OCaml 5.x                                                                                                              |
-| License       | ISC                                                                                                                    |
-| Repository    | [github.com/ocaml-multicore/eio](https://github.com/ocaml-multicore/eio)                                               |
-| Documentation | [OCaml Package](https://ocaml.org/p/eio/latest) / [API Docs](https://ocaml-multicore.github.io/eio/eio/Eio/index.html) |
-| Key Authors   | Thomas Leonard, KC Sivaramakrishnan, Anil Madhavapeddy                                                                 |
-| Encoding      | Direct-style I/O over OCaml 5 algebraic effects with capability passing                                                |
+| Field         | Value                                                                     |
+| ------------- | ------------------------------------------------------------------------- |
+| Language      | OCaml 5.x                                                                 |
+| License       | ISC                                                                       |
+| Repository    | [github.com/ocaml-multicore/eio]                                          |
+| Documentation | [OCaml Package] / [API Docs]                                              |
+| Key Authors   | Thomas Leonard, KC Sivaramakrishnan, Anil Madhavapeddy                    |
+| Encoding      | Direct-style I/O over [OCaml 5] algebraic effects with capability passing |
 
 ---
 
@@ -17,7 +17,7 @@ Effects-based direct-style I/O library for OCaml 5, providing structured concurr
 
 ### What It Solves
 
-Before OCaml 5, concurrent I/O required monadic libraries like Lwt or Async, which simulate multiple stacks on the heap using monadic bind. This imposes allocation overhead, breaks backtraces, and forces a different coding style where every I/O operation must be threaded through monadic combinators. Eio eliminates this by building on OCaml 5's native [algebraic effect handlers](ocaml-effects.md), allowing concurrent code to be written in ordinary direct style -- plain function calls, `try...with` for error handling, and natural backtraces.
+Before [OCaml 5], concurrent I/O required monadic libraries like Lwt or Async, which simulate multiple stacks on the heap using monadic bind. This imposes allocation overhead, breaks backtraces, and forces a different coding style where every I/O operation must be threaded through monadic combinators. Eio eliminates this by building on [OCaml 5]'s native [algebraic effect handlers], allowing concurrent code to be written in ordinary direct style -- plain function calls, `try...with` for error handling, and natural backtraces.
 
 ### Design Philosophy
 
@@ -74,7 +74,7 @@ end
 
 ## How Effects Are Declared
 
-Eio does not expose its internal effects to users. Instead, it uses OCaml 5 effects internally for fiber scheduling, I/O suspension, and cancellation. From the user's perspective, I/O operations are ordinary function calls:
+Eio does not expose its internal effects to users. Instead, it uses [OCaml 5] effects internally for fiber scheduling, I/O suspension, and cancellation. From the user's perspective, I/O operations are ordinary function calls:
 
 ```ocaml
 (* Reading a file -- no monadic bind, no effect declaration *)
@@ -150,7 +150,7 @@ Eio.Switch.run @@ fun sw ->
 
 ## Performance Approach
 
-Lwt and Async simulate concurrent stacks by allocating promise chains on the heap. Eio uses real stacks (fibers) via OCaml 5's effect runtime, so suspending and resuming a fiber is a stack switch with no heap allocation for control flow.
+Lwt and Async simulate concurrent stacks by allocating promise chains on the heap. Eio uses real stacks (fibers) via [OCaml 5]'s effect runtime, so suspending and resuming a fiber is a stack switch with no heap allocation for control flow.
 
 ### Platform-Optimized Backends
 
@@ -202,7 +202,7 @@ File system capabilities are sandboxed. `Eio.Stdenv.cwd` restricts access to the
 
 - **Requires OCaml 5.1+**, limiting adoption on older compiler versions
 - **Ecosystem maturity** lags behind Lwt, which has over a decade of library support
-- **Untyped effects underneath** inherit the lack of static effect tracking from OCaml 5
+- **Untyped effects underneath** inherit the lack of static effect tracking from [OCaml 5]
 - **Windows backend incomplete**, limiting cross-platform use
 - **Performance tuning required** for some workloads where Lwt's scheduling incidentally helps
 - **Learning curve** for developers accustomed to monadic concurrency patterns
@@ -212,7 +212,7 @@ File system capabilities are sandboxed. `Eio.Stdenv.cwd` restricts access to the
 
 | Decision                          | Rationale                                        | Trade-off                                     |
 | --------------------------------- | ------------------------------------------------ | --------------------------------------------- |
-| Direct style over monadic         | Natural code; real backtraces; no bind overhead  | Requires OCaml 5 effects                      |
+| Direct style over monadic         | Natural code; real backtraces; no bind overhead  | Requires [OCaml 5] effects                    |
 | Capability passing                | Explicit dependencies; testable; least authority | Verbose signatures; threading required        |
 | Structured concurrency via Switch | No orphaned fibers; automatic resource cleanup   | Less flexible than unstructured spawn         |
 | Effects hidden from users         | Simpler API; ordinary function calls             | Cannot compose with user-defined effects      |
@@ -223,13 +223,30 @@ File system capabilities are sandboxed. `Eio.Stdenv.cwd` restricts access to the
 
 ## Sources
 
-- [Eio GitHub Repository](https://github.com/ocaml-multicore/eio)
-- [Eio 1.0 Release Announcement (Tarides)](https://tarides.com/blog/2024-03-20-eio-1-0-release-introducing-a-new-effects-based-i-o-library-for-ocaml/)
-- [Eio on OCaml Packages](https://ocaml.org/p/eio/latest)
-- [Eio API Documentation](https://ocaml-multicore.github.io/eio/eio/Eio/index.html)
-- [Eio.Fiber API](https://ocaml-multicore.github.io/eio/eio/Eio/Fiber/index.html)
-- [Eio.Path API](https://ocaml-multicore.github.io/eio/eio/Eio/Path/index.html)
-- [Eio 1.0 -- Effects-based IO for OCaml 5 (OCaML'23 paper)](https://kcsrk.info/papers/eio_ocaml23a.pdf)
-- [OCaml 5 Effects (companion document)](ocaml-effects.md)
-- [OCaml 5 Performance Analysis (Thomas Leonard)](https://roscidus.com/blog/blog/2024/07/22/performance/)
-- [Eio 0.1 Announcement (OCaml Discuss)](https://discuss.ocaml.org/t/eio-0-1-effects-based-direct-style-io-for-ocaml-5/9298)
+- [Eio GitHub Repository]
+- [Eio 1.0 Release Announcement (Tarides)]
+- [Eio on OCaml Packages]
+- [Eio API Documentation]
+- [Eio.Fiber API]
+- [Eio.Path API]
+- [Eio 1.0 -- Effects-based IO for OCaml 5 (OCaML'23 paper)]
+- [OCaml 5 Effects (companion document)]: ocaml-effects.md
+- [OCaml 5 Performance Analysis (Thomas Leonard)]
+- [Eio 0.1 Announcement (OCaml Discuss)]
+
+<!-- References -->
+
+[OCaml 5]: ocaml-effects.md
+[algebraic effect handlers]: ocaml-effects.md
+[github.com/ocaml-multicore/eio]: https://github.com/ocaml-multicore/eio
+[OCaml Package]: https://ocaml.org/p/eio/latest
+[API Docs]: https://ocaml-multicore.github.io/eio/eio/Eio/index.html
+[Eio GitHub Repository]: https://github.com/ocaml-multicore/eio
+[Eio 1.0 Release Announcement (Tarides)]: https://tarides.com/blog/2024-03-20-eio-1-0-release-introducing-a-new-effects-based-i-o-library-for-ocaml/
+[Eio on OCaml Packages]: https://ocaml.org/p/eio/latest
+[Eio API Documentation]: https://ocaml-multicore.github.io/eio/eio/Eio/index.html
+[Eio.Fiber API]: https://ocaml-multicore.github.io/eio/eio/Eio/Fiber/index.html
+[Eio.Path API]: https://ocaml-multicore.github.io/eio/eio/Eio/Path/index.html
+[Eio 1.0 -- Effects-based IO for OCaml 5 (OCaML'23 paper)]: https://kcsrk.info/papers/eio_ocaml23a.pdf
+[OCaml 5 Performance Analysis (Thomas Leonard)]: https://roscidus.com/blog/blog/2024/07/22/performance/
+[Eio 0.1 Announcement (OCaml Discuss)]: https://discuss.ocaml.org/t/eio-0-1-effects-based-direct-style-io-for-ocaml-5/9298

@@ -6,8 +6,8 @@ Safe direct-style streaming, concurrency, and resiliency for Scala on the JVM. O
 | ------------- | ------------------------------------------------------------------------- |
 | Language      | Scala 3 (JVM only)                                                        |
 | License       | Apache-2.0                                                                |
-| Repository    | [github.com/softwaremill/ox](https://github.com/softwaremill/ox)          |
-| Documentation | [ox.softwaremill.com](https://ox.softwaremill.com/)                       |
+| Repository    | [github.com/softwaremill/ox]                                              |
+| Documentation | [ox.softwaremill.com]                                                     |
 | Key Authors   | Adam Warski, SoftwareMill                                                 |
 | Approach      | Direct style on virtual threads; IO capability; boundary/break for errors |
 
@@ -17,7 +17,7 @@ Safe direct-style streaming, concurrency, and resiliency for Scala on the JVM. O
 
 ### What It Solves
 
-Ox provides safe concurrency and error handling in direct style -- no monads, no `flatMap`, no effect wrappers. Computations return values directly, and effects are tracked through Scala 3's capability system. Ox targets the practical middle ground between unsafe imperative I/O and the complexity of monadic effect systems.
+Ox provides safe concurrency and error handling in direct style -- no monads, no `flatMap`, no effect wrappers. Computations return values directly, and effects are tracked through [Scala 3's capability system]. Ox targets the practical middle ground between unsafe imperative I/O and the complexity of monadic effect systems like [ZIO] or [Cats Effect].
 
 ### Design Philosophy
 
@@ -29,13 +29,13 @@ Direct style means that results of effectful computations are available directly
 
 ### No Wrapper Type
 
-Unlike ZIO (`ZIO[R,E,A]`) or Cats Effect (`IO[A]`), Ox does not have an effect wrapper. Functions return their result type directly:
+Unlike [ZIO] (`ZIO[R,E,A]`) or [Cats Effect] (`IO[A]`), Ox does not have an effect wrapper. Functions return their result type directly:
 
 ```scala
 // Ox style -- direct
 def fetchUser(id: UserId)(using Ox): User = ???
 
-// vs. ZIO style -- wrapped
+// vs. [ZIO] style -- wrapped
 def fetchUser(id: UserId): ZIO[Any, Error, User] = ???
 ```
 
@@ -174,24 +174,37 @@ Ox provides utilities for retry, rate limiting, timeout, and circuit breaking th
 - **Limited effect tracking**: Only IO and Ox capabilities; no user-defined effects
 - **Java 21+ required**: Needs modern JVM
 - **Not algebraic effects**: No continuation capture; no nondeterminism; no effect rotation
-- **Smaller ecosystem**: Fewer integrations than ZIO or Cats Effect
+- **Smaller ecosystem**: Fewer integrations than [ZIO] or [Cats Effect]
 
 ## Key Design Decisions and Trade-offs
 
-| Decision                  | Rationale                                     | Trade-off                                                     |
-| ------------------------- | --------------------------------------------- | ------------------------------------------------------------- |
-| Direct style (no wrapper) | Simplicity; readability; no monadic overhead  | Cannot abstract over effect implementation                    |
-| Virtual threads           | JVM-native concurrency; excellent performance | JVM-only; Java 21+ required                                   |
-| IO as capability          | Truthful method signatures                    | Cannot intercept or mock IO at type level                     |
-| Go-like channels          | Familiar model; proven design                 | Different paradigm from streaming libraries (fs2, ZIO Stream) |
-| No effect handlers        | Simplicity; lower learning curve              | Less flexibility; no testable effect interpretation           |
+| Decision                  | Rationale                                     | Trade-off                                                       |
+| ------------------------- | --------------------------------------------- | --------------------------------------------------------------- |
+| Direct style (no wrapper) | Simplicity; readability; no monadic overhead  | Cannot abstract over effect implementation                      |
+| Virtual threads           | JVM-native concurrency; excellent performance | JVM-only; Java 21+ required                                     |
+| IO as capability          | Truthful method signatures                    | Cannot intercept or mock IO at type level                       |
+| Go-like channels          | Familiar model; proven design                 | Different paradigm from streaming libraries (fs2, [ZIO] Stream) |
+| No effect handlers        | Simplicity; lower learning curve              | Less flexibility; no testable effect interpretation             |
 
 ---
 
 ## Sources
 
-- [Ox GitHub repository](https://github.com/softwaremill/ox)
-- [Ox documentation](https://ox.softwaremill.com/)
-- [IO Effect Tracking Using Ox](https://softwaremill.com/io-effect-tracking-using-ox/) -- SoftwareMill
-- [Direct style -- Ox documentation](https://ox.softwaremill.com/latest/basics/direct-style.html)
-- [How Functional is Direct-Style?](https://2025.workshop.scala-lang.org/details/scala-2025/1/How-Functional-is-Direct-Style-) -- Scala Workshop 2025
+- [Ox GitHub repository]
+- [Ox documentation]
+- [IO Effect Tracking Using Ox] -- SoftwareMill
+- [Direct style -- Ox documentation]
+- [How Functional is Direct-Style?] -- Scala Workshop 2025
+
+<!-- References -->
+
+[Scala 3's capability system]: scala-capabilities.md
+[ZIO]: scala-zio.md
+[Cats Effect]: scala-cats-effect.md
+[github.com/softwaremill/ox]: https://github.com/softwaremill/ox
+[ox.softwaremill.com]: https://ox.softwaremill.com/
+[Ox GitHub repository]: https://github.com/softwaremill/ox
+[Ox documentation]: https://ox.softwaremill.com/
+[IO Effect Tracking Using Ox]: https://softwaremill.com/io-effect-tracking-using-ox/
+[Direct style -- Ox documentation]: https://ox.softwaremill.com/latest/basics/direct-style.html
+[How Functional is Direct-Style?]: https://2025.workshop.scala-lang.org/details/scala-2025/1/How-Functional-is-Direct-Style-

@@ -1,15 +1,15 @@
 # Effect (TypeScript)
 
-Effect is a production-focused TypeScript effect framework inspired by ZIO, centered on the `Effect<A, E, R>` type and a fiber runtime.
+Effect is a production-focused TypeScript effect framework inspired by [ZIO], centered on the `Effect<A, E, R>` type and a fiber runtime.
 
 **Last reviewed:** February 16, 2026.
 
-| Field      | Value                                                              |
-| ---------- | ------------------------------------------------------------------ |
-| Language   | TypeScript                                                         |
-| Repository | [github.com/Effect-TS/effect](https://github.com/Effect-TS/effect) |
-| Docs       | [effect.website](https://effect.website/)                          |
-| License    | MIT                                                                |
+| Field      | Value                         |
+| ---------- | ----------------------------- |
+| Language   | TypeScript                    |
+| Repository | [github.com/Effect-TS/effect] |
+| Docs       | [effect.website]              |
+| License    | MIT                           |
 
 ---
 
@@ -100,11 +100,11 @@ Layers are memoized (each constructed once per scope), integrate with `Scope` fo
 
 Sources:
 
-- [Using Generators](https://effect.website/docs/getting-started/using-generators/)
-- [Services](https://effect.website/docs/requirements-management/services/)
-- [Layers](https://effect.website/docs/requirements-management/layers/)
-- [Fibers](https://effect.website/docs/concurrency/fibers/)
-- [Scope](https://effect.website/docs/resource-management/scope/)
+- [Using Generators]
+- [Services]
+- [Layers]
+- [Fibers]
+- [Scope]
 
 ---
 
@@ -114,7 +114,7 @@ Sources:
 
 The primary `effect` repository publishes an active **3.x** release line (for example, `effect@3.19.17` released February 16, 2026).
 
-Source: [GitHub releases](https://github.com/Effect-TS/effect/releases)
+Source: [GitHub releases]
 
 ### v4 direction
 
@@ -127,8 +127,8 @@ Implication:
 
 Sources:
 
-- [Effect Days 2025 announcement](https://effect.website/blog/events/effect-days-2025/)
-- [effect-smol repository](https://github.com/Effect-TS/effect-smol)
+- [Effect Days 2025 announcement]
+- [effect-smol repository]
 
 ---
 
@@ -150,9 +150,9 @@ Sources:
 
 ## Comparison Note
 
-Effect and ZIO share similar design goals and type shape:
+Effect and [ZIO] share similar design goals and type shape:
 
-| ZIO Concept          | Effect Equivalent                  |
+| [ZIO] Concept        | Effect Equivalent                  |
 | -------------------- | ---------------------------------- |
 | `ZIO[R, E, A]`       | `Effect<A, E, R>`                  |
 | `ZLayer[In, E, Out]` | `Layer<Out, E, In>`                |
@@ -166,13 +166,31 @@ TypeScript constraints (runtime model, type system ergonomics, JS interoperabili
 
 ## Sources
 
-- [Effect documentation](https://effect.website/)
-- [Effect GitHub repository](https://github.com/Effect-TS/effect)
-- [Effect GitHub releases](https://github.com/Effect-TS/effect/releases)
-- [Using Generators](https://effect.website/docs/getting-started/using-generators/)
-- [Services](https://effect.website/docs/requirements-management/services/)
-- [Layers](https://effect.website/docs/requirements-management/layers/)
-- [Fibers](https://effect.website/docs/concurrency/fibers/)
-- [Scope](https://effect.website/docs/resource-management/scope/)
-- [Effect Days 2025](https://effect.website/blog/events/effect-days-2025/)
-- [effect-smol repository](https://github.com/Effect-TS/effect-smol)
+- [Effect documentation]
+- [Effect GitHub repository]
+- [Effect GitHub releases]
+- [Using Generators]
+- [Services]
+- [Layers]
+- [Fibers]
+- [Scope]
+- [Effect Days 2025]
+- [effect-smol repository]
+
+<!-- References -->
+
+[ZIO]: scala-zio.md
+[github.com/Effect-TS/effect]: https://github.com/Effect-TS/effect
+[effect.website]: https://effect.website/
+[Using Generators]: https://effect.website/docs/getting-started/using-generators/
+[Services]: https://effect.website/docs/requirements-management/services/
+[Layers]: https://effect.website/docs/requirements-management/layers/
+[Fibers]: https://effect.website/docs/concurrency/fibers/
+[Scope]: https://effect.website/docs/resource-management/scope/
+[GitHub releases]: https://github.com/Effect-TS/effect/releases
+[Effect Days 2025 announcement]: https://effect.website/blog/events/effect-days-2025/
+[effect-smol repository]: https://github.com/Effect-TS/effect-smol
+[Effect documentation]: https://effect.website/
+[Effect GitHub repository]: https://github.com/Effect-TS/effect
+[Effect GitHub releases]: https://github.com/Effect-TS/effect/releases
+[Effect Days 2025]: https://effect.website/blog/events/effect-days-2025/

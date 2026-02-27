@@ -7,7 +7,7 @@ A design pattern for encoding algebraic effects and handlers on stable Rust usin
 | Language      | Rust (stable)                                                                                        |
 | License       | N/A (design pattern, not a published crate)                                                          |
 | Repository    | N/A                                                                                                  |
-| Documentation | [Faking Algebraic Effects with Traits](https://blog.shtsoft.eu/2022/12/22/effect-trait-dp.html)      |
+| Documentation | [Faking Algebraic Effects with Traits]                                                               |
 | Key Authors   | SHTSoft (blog), various community contributors                                                       |
 | Encoding      | Traits as effect interfaces in CPS; trait implementations as handlers; monomorphization for dispatch |
 
@@ -115,7 +115,7 @@ impl<S: Clone, R> State<S, R> for PureState<S> {
 }
 ```
 
-Notice that `get` passes `self` back into the continuation so the handler can be reused. This is the "shallow handler" pattern -- the handler is consumed by each operation and must be explicitly threaded through.
+Notice that `get` passes `self` back into the continuation so the handler can be reused. This is the "shallow handler" pattern -- the handler is consumed by each effect operation and must be explicitly threaded through.
 
 ---
 
@@ -275,7 +275,7 @@ This is straightforward when all effects share the same handler type. When effec
 
 ### Shallow vs. Deep Handlers
 
-The CPS-trait pattern naturally produces shallow handlers: the handler is consumed by each effect operation and must be explicitly passed back into the continuation. This contrasts with deep handlers (as in effing-mad or most algebraic effect libraries) where the handler is implicitly available for the entire scope of the computation.
+The CPS-trait pattern naturally produces shallow handlers: the handler is consumed by each effect operation and must be explicitly passed back into the continuation. This contrasts with deep handlers (as in [effing-mad] or most algebraic effect libraries) where the handler is implicitly available for the entire scope of the computation.
 
 To simulate deep handlers, the handler must either implement `Clone` (to be copied back into each continuation) or be threaded explicitly through every continuation parameter.
 
@@ -337,10 +337,22 @@ Several features that would make CPS-based effects more ergonomic are absent or 
 
 ## Sources
 
-- [Faking Algebraic Effects and Handlers With Traits: A Rust Design Pattern -- SHTSoft](https://blog.shtsoft.eu/2022/12/22/effect-trait-dp.html)
-- [A universal lowering strategy for control effects in Rust -- Abubalay](https://www.abubalay.com/blog/2024/01/14/rust-effect-lowering)
-- [Continuation Passing Style for Effect Handlers -- Hillerström et al. (academic paper)](https://homepages.inf.ed.ac.uk/slindley/papers/handlers-cps.pdf)
-- [Simplifying Continuation-Passing Style in Rust -- Inferara](https://medium.com/@inferara/simplifying-continuation-passing-style-cps-in-rust-e43621d98fb5)
-- [Algebraic Effects, Ownership, and Borrowing -- Ante language blog](https://antelang.org/blog/effects_ownership_and_borrowing/)
-- [GATs encode higher-order functions on types -- Will Crichton](https://willcrichton.net/notes/gats-are-hofs/)
-- [Pre-RFC: CPS transform for generators -- Rust Internals](https://internals.rust-lang.org/t/pre-rfc-cps-transform-for-generators/7120)
+- [Faking Algebraic Effects and Handlers With Traits: A Rust Design Pattern -- SHTSoft]
+- [A universal lowering strategy for control effects in Rust -- Abubalay]
+- [Continuation Passing Style for Effect Handlers -- Hillerström et al. (academic paper)]
+- [Simplifying Continuation-Passing Style in Rust -- Inferara]
+- [Algebraic Effects, Ownership, and Borrowing -- Ante language blog]
+- [GATs encode higher-order functions on types -- Will Crichton]
+- [Pre-RFC: CPS transform for generators -- Rust Internals]
+
+<!-- References -->
+
+[effing-mad]: rust-effing-mad.md
+[Faking Algebraic Effects with Traits]: https://blog.shtsoft.eu/2022/12/22/effect-trait-dp.html
+[Faking Algebraic Effects and Handlers With Traits: A Rust Design Pattern -- SHTSoft]: https://blog.shtsoft.eu/2022/12/22/effect-trait-dp.html
+[A universal lowering strategy for control effects in Rust -- Abubalay]: https://www.abubalay.com/blog/2024/01/14/rust-effect-lowering
+[Continuation Passing Style for Effect Handlers -- Hillerström et al. (academic paper)]: https://homepages.inf.ed.ac.uk/slindley/papers/handlers-cps.pdf
+[Simplifying Continuation-Passing Style in Rust -- Inferara]: https://medium.com/@inferara/simplifying-continuation-passing-style-cps-in-rust-e43621d98fb5
+[Algebraic Effects, Ownership, and Borrowing -- Ante language blog]: https://antelang.org/blog/effects_ownership_and_borrowing/
+[GATs encode higher-order functions on types -- Will Crichton]: https://willcrichton.net/notes/gats-are-hofs/
+[Pre-RFC: CPS transform for generators -- Rust Internals]: https://internals.rust-lang.org/t/pre-rfc-cps-transform-for-generators/7120

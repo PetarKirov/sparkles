@@ -1,304 +1,237 @@
 # Rust's Implicit Effect System (Rust)
 
-Rust encodes effects as independent language features -- async, fallibility, iteration, constness, and unsafety -- each with its own keyword and trait mechanism, rather than providing a unified algebraic effect system.
+An analysis of how Rust already has an implicit effect system through async, const, unsafe, and other keyword-based effect markers, despite lacking explicit effect handlers.
 
-| Field         | Value                                                                                     |
-| ------------- | ----------------------------------------------------------------------------------------- |
-| Language      | Rust                                                                                      |
-| License       | MIT / Apache-2.0 (Rust itself)                                                            |
-| Repository    | [github.com/rust-lang/rust](https://github.com/rust-lang/rust)                            |
-| Documentation | [doc.rust-lang.org](https://doc.rust-lang.org/)                                           |
-| Key Authors   | without.boats (coroutine-effect analysis), Yoshua Wuyts (keyword generics), Niko Matsakis |
-| Approach      | Per-effect keywords and traits lowered to coroutine state machines                        |
+| Field       | Value                                                         |
+| ----------- | ------------------------------------------------------------- |
+| Language    | Rust (stable)                                                 |
+| Focus       | Analysis of existing language effect markers                  |
+| Key Authors | without.boats (blog series), Rust language team               |
+| Approach    | Keyword-based effect tracking without general effect handlers |
 
 ---
 
 ## Overview
 
-### What It Solves
+### What This Is
 
-Rust does not have a formal, unified effect system. Instead, it provides a collection of independent language features that each address a specific kind of effectful computation. Each feature has its own syntax, trait, and compilation strategy. The result is a pragmatic but fragmented approach where effects are encoded implicitly through type signatures and keywords rather than declared explicitly through a single effect abstraction.
-
-The five primary effect-like features in Rust are:
-
-| Effect            | Keyword / Syntax   | Trait / Type            | Status (2025)                                   |
-| ----------------- | ------------------ | ----------------------- | ----------------------------------------------- |
-| Asynchrony        | `async` / `.await` | `Future`                | Stable                                          |
-| Fallibility       | `?` operator       | `Result<T, E>`          | Stable                                          |
-| Iteration         | `gen` / `yield`    | `Iterator`              | Keyword reserved (2024 edition), blocks nightly |
-| Compile-time eval | `const fn`         | (constness constraint)  | Stable, const traits nightly                    |
-| Safety boundary   | `unsafe`           | (not a semantic effect) | Stable                                          |
+Rust does not have user-defined algebraic effect handlers, but it **does** have a form of implicit effect system. The language tracks certain computational capabilities through keywords (`async`, `const`, `unsafe`) that behave similarly to effect annotations in other languages. Understanding these existing mechanisms clarifies both what Rust already achieves and what gaps remain.
 
 ### Design Philosophy
 
-Rust prioritizes zero-cost abstractions and explicit control over runtime behavior. Each effect-like feature is designed to compile down to efficient, predictable machine code -- typically through state machine transformations for `async` and `gen`, monadic chaining via `?` for errors, and compile-time evaluation for `const fn`. This per-effect approach avoids the overhead of a general-purpose effect runtime but creates a "function coloring" problem where each effect introduces a distinct function flavor that does not compose generically with others.
+Rust prioritizes zero-cost abstractions and explicit control. The language effects that _are_ tracked (async, const, unsafe) are those where the overhead of tracking is minimal and the benefit (memory safety, compile-time evaluation) is substantial. General effect handlers have not been prioritized because:
+
+1. No consensus on the right trade-offs for Rust's constraints (zero-cost, no runtime)
+2. Existing patterns (CPS, generics) cover many use cases
+3. The complexity budget is spent on ownership/borrowing, which already provides significant capability control
 
 ---
 
 ## Core Abstractions and Types
 
-### Async / Await (Asynchrony Effect)
+### The "Function Coloring" Effect System
 
-Async functions compile to state machines implementing the `Future` trait. Each `.await` point becomes a state transition:
+without.boats and others have analyzed Rust's keywords as an implicit effect system:
 
-```rust
-use std::future::Future;
-use std::pin::Pin;
-use std::task::{Context, Poll};
+| Keyword  | Effect Meaning              | Propagation                   | Composition                   |
+| -------- | --------------------------- | ----------------------------- | ----------------------------- |
+| `async`  | May suspend at await points | `async fn` calls `async fn`   | `.await` at call sites        |
+| `const`  | Compile-time evaluable      | `const fn` calls `const fn`   | Must be `const` context       |
+| `unsafe` | May break memory safety     | `unsafe fn` calls `unsafe fn` | `unsafe` blocks at call sites |
+| `?`      | May return early via Err    | `?` in fallible functions     | Return type must match        |
 
-// The Future trait -- Rust's encoding of the async effect
-trait Future {
-    type Output;
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output>;
-}
+Each of these creates a "color" that functions must match. An `async fn` can only call other `async` functions (or functions that return futures). A `const fn` can only call other `const` functions. This is effect polymorphism through keyword propagation.
 
-// An async fn is syntactic sugar for a function returning impl Future
-async fn fetch_data(url: &str) -> Result<String, Error> {
-    let response = client.get(url).await?;  // .await suspends here
-    let body = response.text().await?;       // and here
-    Ok(body)
-}
-```
+### The Function Coloring Problem
 
-The compiler transforms this into a self-referential state machine. `Pin` is required because the state machine may hold references across yield points, and moving it would invalidate those references.
+The "function coloring" blog post by Robert Nystrom (not Rust-specific) pointed out that async/await creates a split where:
 
-### Result / ? Operator (Fallibility Effect)
+- Red functions (async) can call blue functions (sync) easily
+- Blue functions (sync) calling red functions (async) requires ceremony
 
-The `?` operator provides early return on error, functioning as a monadic bind:
+Rust's `async`/`.await` exhibits this exactly. The general problem is: when an effect is introduced, how do you handle code that doesn't use that effect calling code that does?
 
-```rust
-// Without ? -- explicit pattern matching
-fn read_config(path: &str) -> Result<Config, Error> {
-    let contents = match std::fs::read_to_string(path) {
-        Ok(s) => s,
-        Err(e) => return Err(e.into()),
-    };
-    let config = match toml::from_str(&contents) {
-        Ok(c) => c,
-        Err(e) => return Err(e.into()),
-    };
-    Ok(config)
-}
+Rust's answer varies by effect:
 
-// With ? -- desugared to the same thing
-fn read_config(path: &str) -> Result<Config, Error> {
-    let contents = std::fs::read_to_string(path)?;
-    let config = toml::from_str(&contents)?;
-    Ok(config)
-}
-```
-
-### Gen Blocks (Iteration Effect)
-
-RFC 3513 reserves `gen` in the 2024 edition. Gen blocks produce `Iterator` values via `yield`, mirroring how `async` blocks produce `Future` values:
-
-```rust
-// Nightly syntax (gen blocks)
-#![feature(gen_blocks)]
-
-fn fibonacci() -> impl Iterator<Item = u64> {
-    gen {
-        let (mut a, mut b) = (0, 1);
-        loop {
-            yield a;
-            (a, b) = (b, a + b);
-        }
-    }
-}
-```
-
-Like async functions, gen blocks compile to state machines. Unlike the full `Coroutine` trait (nightly), gen blocks cannot hold references across yield points in the current design.
-
-### Const Fn (Constness Effect)
-
-`const fn` restricts a function to operations that can be evaluated at compile time:
-
-```rust
-const fn factorial(n: u64) -> u64 {
-    if n == 0 { 1 } else { n * factorial(n - 1) }
-}
-
-// Evaluated at compile time
-const FACT_10: u64 = factorial(10);
-
-// Also callable at runtime
-let runtime_result = factorial(5);
-```
-
-Const functions cannot allocate, access globals, or perform I/O. This is the inverse of most effects: rather than adding a capability, `const` removes capabilities to guarantee compile-time evaluability.
-
-### Unsafe (Safety Boundary)
-
-After discussion with Ralf Jung, the Rust keyword generics initiative concluded that `unsafe` is not semantically an effect. It is a contract mechanism that shifts proof obligations to the caller rather than adding or removing computational capabilities:
-
-```rust
-// unsafe fn: caller promises preconditions are met
-unsafe fn deref_raw<T>(ptr: *const T) -> &'static T {
-    &*ptr
-}
-
-// unsafe block: programmer asserts safety invariants hold
-let value = unsafe { deref_raw(some_ptr) };
-```
+- **async**: Requires `.await` (explicit suspension point)
+- **const**: Not callable from non-const contexts without compile-time guarantees
+- **unsafe**: Requires `unsafe` block (explicit opt-in to potential UB)
+- **?**: Requires compatible return types
 
 ---
 
 ## How Effects Are Declared
 
-Each effect is declared through distinct syntax. There is no unified effect declaration mechanism:
+### Keyword-Based Declaration
+
+Effects are declared at the function level through keywords:
 
 ```rust
-// Async effect: declared with `async` keyword
-async fn fetch(url: &str) -> String { /* ... */ }
+// async effect: may suspend
+async fn fetch_data() -> Result<Data, Error> {
+    let response = reqwest::get("...").await?;
+    response.json().await
+}
 
-// Fallibility effect: declared via return type
-fn parse(input: &str) -> Result<Value, ParseError> { /* ... */ }
+// const effect: compile-time evaluable
+const fn compute_size() -> usize {
+    1024 * 64  // can be used in array sizes, const contexts
+}
 
-// Iteration effect: declared with gen (nightly)
-gen fn numbers() -> i32 { yield 1; yield 2; yield 3; }
+// unsafe effect: memory safety responsibility
+unsafe fn transmute_bytes<T>(bytes: [u8; size_of::<T>()]) -> T {
+    // Bypasses borrow checker, caller must ensure validity
+    std::mem::transmute(bytes)
+}
 
-// Constness: declared with const keyword
-const fn square(x: i32) -> i32 { x * x }
-
-// Safety: declared with unsafe keyword
-unsafe fn raw_access(ptr: *mut u8) -> u8 { *ptr }
-```
-
-The function signature encodes which effects are in play. A function that is both async and fallible must combine the mechanisms:
-
-```rust
-// Combining async + fallibility
-async fn fetch_and_parse(url: &str) -> Result<Data, Error> {
-    let resp = client.get(url).await?;  // both .await and ? in one expression
-    Ok(resp.json().await?)
+// ? effect: early return via Result
+fn fallible_operation() -> Result<(), MyError> {
+    let x = another_fallible()?;  // may return early with Err
+    Ok(x)
 }
 ```
+
+### Type System Integration
+
+Each effect keyword has corresponding type system support:
+
+- `async fn` returns `impl Future<Output = T>`
+- `const fn` can be evaluated at compile time in const contexts
+- `unsafe fn` requires `unsafe` block to call
+- `?` works via the `Try` trait with associated `Output` type
 
 ---
 
 ## How Handlers/Interpreters Work
 
-Rust does not have general-purpose effect handlers. Each effect has its own "handling" mechanism:
+### The Runtime as Handler
 
-| Effect      | Handler mechanism                                                      |
-| ----------- | ---------------------------------------------------------------------- |
-| Async       | Runtime executor (`tokio::runtime`, `async-std`, `smol`) polls futures |
-| Fallibility | Caller uses `match`, `?`, `.unwrap()`, or combinators                  |
-| Iteration   | `for` loop or iterator combinators (`.map()`, `.filter()`, etc.)       |
-| Constness   | Compiler evaluates at compile time in const contexts                   |
-| Unsafe      | Programmer provides proof of safety via `unsafe` block                 |
+Unlike algebraic effect systems where handlers are user-defined, Rust's effects are "handled" by the language runtime or compilation process:
+
+**Async**: The async runtime (Tokio, async-std) handles await points by suspending and resuming tasks.
 
 ```rust
-// "Handling" the async effect: an executor drives the future
-#[tokio::main]
-async fn main() {
-    let data = fetch_data("https://example.com").await;
-}
-
-// "Handling" the fallibility effect: match on the result
-fn main() {
-    match read_config("config.toml") {
-        Ok(config) => run(config),
-        Err(e) => eprintln!("Error: {e}"),
-    }
-}
-
-// "Handling" the iteration effect: for loop
-fn main() {
-    for n in fibonacci().take(10) {
-        println!("{n}");
-    }
-}
+// The runtime handles the suspension/resumption
+tokio::spawn(async {
+    let data = fetch_data().await;  // suspend here, resume when ready
+});
 ```
 
----
+**Const**: The compiler's const evaluator handles const evaluation.
 
-## Performance Approach
+**Unsafe**: The programmer (via `unsafe` block) takes responsibility -- no runtime check.
 
-Rust compiles each effect to zero-cost abstractions:
+**?**: The `Try` trait's `branch` method handles the control flow transformation.
 
-- **Async**: State machines with no heap allocation for the frame itself (the caller decides where to store it). No implicit boxing unless using `Box<dyn Future>`.
-- **Fallibility**: `Result<T, E>` is a plain enum. The `?` operator compiles to a branch instruction. No exception tables, no stack unwinding.
-- **Iteration**: Gen blocks compile to state machines identical to hand-written iterator implementations.
-- **Constness**: Evaluated at compile time via CTFE (Compile-Time Function Evaluation). Zero runtime cost.
+### No User-Defined Handlers
 
-This per-effect compilation strategy avoids the overhead of a general-purpose effect runtime or continuation-passing transform, but also prevents generic composition across effects.
+The critical difference from languages like [Koka], [OCaml 5], or Haskell's [eff] is that Rust does **not** allow user-defined handlers for these effects. You cannot:
+
+- Intercept an `await` and provide a different async semantics
+- Handle `?` with custom error recovery at the call site
+- Redefine what `unsafe` means
+
+The effects are baked into the language and handled by the compiler/runtime.
 
 ---
 
 ## Composability Model
 
-### The Function Coloring Problem
+### Effect Composition Through Generics
 
-Each effect introduces a "color" that propagates through the call graph. An async function can only be awaited from another async function (or a runtime entry point). A `const fn` can only call other `const fn`s. This creates parallel ecosystems:
+Rust's primary mechanism for effect-like composition is the trait system. Instead of effect rows or handlers, you use bounds:
 
 ```rust
-// Sync version
-fn read_file(path: &str) -> Result<String, io::Error> {
-    std::fs::read_to_string(path)
-}
-
-// Async version -- different color, different ecosystem
-async fn read_file(path: &str) -> Result<String, io::Error> {
-    tokio::fs::read_to_string(path).await
+// Effect polymorphism via generic bounds
+async fn process<T, F>(items: Vec<T>, f: F) -> Vec<Result<T, Error>>
+where
+    F: AsyncFn(T) -> Result<Processed, Error>,
+{
+    // Can process items concurrently because f is async
+    futures::stream::iter(items)
+        .map(|item| f(item))
+        .buffer_unordered(10)
+        .collect()
+        .await
 }
 ```
 
-Library authors must often maintain both sync and async versions of their APIs, leading to code duplication. Crates like `maybe_async` attempt to paper over this with macros, but the solution is limited.
-
-### The Keyword Generics Initiative
-
-The keyword generics initiative (led by Yoshua Wuyts and Oli Scherer) is the primary path toward abstracting over effects in Rust. As of early 2026, the initiative has focused on finalizing the semantics of `async` and `const` generics. The 2024 Edition of Rust (stabilized in Rust 1.85.0) provides the foundation for these improvements, with syntactical support expected to evolve in the 2027 Edition.
+This achieves some effect polymorphism but without the full handler mechanism.
 
 ### Coroutines as a Unifying Mechanism
 
 without.boats has argued that Rust's async functions and generators are both instances of stackless coroutines, and that coroutines and algebraic effect systems are "in some ways isomorphic to one another." The coroutine frame is the universal lowering target: each effect operation becomes a yield point in the state machine, and the handler (executor, for-loop, match) drives the coroutine by resuming it.
 
-This analysis suggests that Rust already has the low-level machinery for a general effect system but lacks the high-level abstraction to unify the per-effect syntax and trait families.
+This analysis suggests that Rust already has the low-level machinery for a general effect system but lacks the high-level abstraction to unify the per-effect syntax and trait families. See [effing-mad] for a library that builds algebraic effects on Rust's nightly coroutine feature.
 
 ---
 
 ## Strengths
 
-- Zero-cost compilation for every effect -- no runtime overhead, no boxing, no vtables (unless explicitly opted into)
-- Each effect is well-understood in isolation with clear, predictable semantics
-- Ownership and borrowing provide compile-time guarantees about resource safety that interact naturally with effects
-- The `?` operator is arguably the most ergonomic error handling in any systems language
-- Async/await enables high-performance concurrent I/O without garbage collection or a heavy runtime
-- The per-effect approach avoids the complexity of a full effect type system
+- **Zero-cost abstractions**: async/await, const evaluation compile to efficient code
+- **Explicit is better than implicit**: Effect boundaries are visible at call sites (`.await`, `unsafe` blocks)
+- **Compositional through traits**: The effect-like patterns compose through generics and bounds
+- **Strong static guarantees**: const and unsafe have clear semantic boundaries
+- **Production battle-tested**: The async ecosystem (Tokio, etc.) is mature and widely used
 
 ## Weaknesses
 
-- Function coloring creates parallel ecosystems (sync vs async, const vs non-const) with code duplication
-- No way to abstract over effects generically -- library authors must choose or duplicate
-- Combining multiple effects (async + fallible + generator) requires ad-hoc composition rather than principled effect rows
-- No first-class effect handlers -- cannot swap the interpretation of an effect at the call site
-- Pin and self-referential state machines add significant complexity to async Rust
-- No equivalent to algebraic effect handler resumption (one-shot or multi-shot continuations)
-- The "effect" framing is implicit -- Rust programmers must learn each feature individually rather than understanding a unified concept
+- **No user-defined handlers**: Cannot abstract over control flow the way algebraic effects do
+- **Function coloring problem**: async/sync split creates library ecosystem friction
+- **No effect rows**: Cannot easily express "this function uses effects A and B"
+- **Inconsistent effect syntax**: Each effect (async, const, unsafe, ?) has different syntax and rules
+- **No resumption control**: Cannot implement backtracking, nondeterminism, or custom control flow
 
 ## Key Design Decisions and Trade-offs
 
-| Decision                        | Rationale                                                       | Trade-off                                                  |
-| ------------------------------- | --------------------------------------------------------------- | ---------------------------------------------------------- |
-| Per-effect keywords             | Each effect gets optimized syntax and compilation               | No generic composition; combinatorial API explosion        |
-| State machine lowering          | Zero-cost; no heap allocation for coroutine frames              | Pin complexity; self-referential types are hard            |
-| Result instead of exceptions    | Explicit, zero-cost error handling; no hidden control flow      | Verbose for deep call chains; no stack traces by default   |
-| No effect polymorphism          | Simpler type system; each effect independently stable           | Code duplication between sync/async, const/non-const       |
-| unsafe is not an effect         | Keeps effect system compositional; unsafe is a proof obligation | Cannot abstract over safety boundaries generically         |
-| External iteration (pull-based) | Composable with ownership; lazy by default                      | Cannot express push-based or concurrent iteration natively |
+| Decision                     | Rationale                                     | Trade-off                                          |
+| ---------------------------- | --------------------------------------------- | -------------------------------------------------- |
+| Keyword-based effects        | Minimal syntax overhead; clear visual markers | Inconsistent between effects; no general mechanism |
+| No user-defined handlers     | Complexity budget; zero-cost constraint       | Cannot abstract over control flow patterns         |
+| Runtime/async executor model | Performance; ecosystem flexibility            | Function coloring; library dependencies            |
+| Separate unsafe keyword      | Security; explicit opt-in to UB               | Verbose; some safe operations require unsafe       |
+| No effect polymorphism       | Type system simplicity                        | Less expressive than full effect systems           |
+
+---
+
+## Comparison with Full Effect Systems
+
+| Feature              | Rust (implicit)                | [Koka]           | [OCaml 5]             | [eff] (Haskell)  |
+| -------------------- | ------------------------------ | ---------------- | --------------------- | ---------------- |
+| Effect declaration   | Keywords                       | `effect` keyword | `effect` keyword      | GADT data types  |
+| Effect composition   | Manual/traits                  | Row polymorphism | Untyped at runtime    | Type-level lists |
+| User handlers        | No                             | `handle`         | `match...with effect` | `handle`         |
+| Continuation capture | No (stackless coroutines only) | Yes              | Yes (one-shot)        | Yes              |
+| Resumption control   | No (runtime managed)           | Yes              | Yes                   | Yes              |
 
 ---
 
 ## Sources
 
-- [Coroutines and effects -- without.boats](https://without.boats/blog/coroutines-and-effects/)
-- [The registers of Rust -- without.boats](https://without.boats/blog/the-registers-of-rust/)
-- [Extending Rust's effect system -- Yoshua Wuyts](https://blog.yoshuawuyts.com/extending-rusts-effect-system/)
-- [Keyword Generics Initiative](https://rust-lang.github.io/keyword-generics-initiative/)
-- [Announcing the Keyword Generics Initiative -- Inside Rust Blog](https://blog.rust-lang.org/inside-rust/2022/07/27/keyword-generics.html)
-- [A universal lowering strategy for control effects in Rust -- Abubalay](https://www.abubalay.com/blog/2024/01/14/rust-effect-lowering)
-- [RFC 3513: gen blocks](https://rust-lang.github.io/rfcs/3513-gen-blocks.html)
-- [Const traits -- Rust Project Goals 2024h2](https://rust-lang.github.io/rust-project-goals/2024h2/const-traits.html)
-- [Rust async is colored, and that's not a big deal -- More Stina Blog](https://morestina.net/1686/rust-async-is-colored)
-- [In Defense of Async: Function Colors Are Rusty -- The Coded Message](https://www.thecodedmessage.com/posts/async-colors/)
+- [What I want from async in Rust -- without.boats]
+- [Async functions in traits are just regular generic functions -- without.boats]
+- [Rust async fundamentals]
+- [The Rust Programming Language -- Async/Await]
+- [Function Coloring is a Myth -- Robert Nystrom]
+- [RFC 2394: Async/Await]
+- [RFC 2920: Const Generics]
+- [Const evaluation -- Rust Reference]
+- [Unsafe Rust -- Rust Book]
+- [The Try trait -- Rust RFC]
+
+<!-- References -->
+
+[Koka]: koka.md
+[OCaml 5]: ocaml-effects.md
+[eff]: haskell-eff.md
+[effing-mad]: rust-effing-mad.md
+[What I want from async in Rust -- without.boats]: https://without.boats/blog/what-i-want-from-async/
+[Async functions in traits are just regular generic functions -- without.boats]: https://without.boats/blog/async-generics/
+[Rust async fundamentals]: https://rust-lang.github.io/async-book/
+[The Rust Programming Language -- Async/Await]: https://doc.rust-lang.org/book/ch17-01-async-await.html
+[Function Coloring is a Myth -- Robert Nystrom]: https://journal.stuffwithstuff.com/2015/02/01/what-color-is-your-function/
+[RFC 2394: Async/Await]: https://rust-lang.github.io/rfcs/2394-async_await.html
+[RFC 2920: Const Generics]: https://rust-lang.github.io/rfcs/2920-const-generics.html
+[Const evaluation -- Rust Reference]: https://doc.rust-lang.org/reference/const_eval.html
+[Unsafe Rust -- Rust Book]: https://doc.rust-lang.org/book/ch19-01-unsafe-rust.html
+[The Try trait -- Rust RFC]: https://rust-lang.github.io/rfcs/3058-try-trait-v2.html
