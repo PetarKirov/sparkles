@@ -1,14 +1,16 @@
 # Theseus (Haskell)
 
-A next-generation Haskell effect system library introduced in January 2026, designed to provide consistent semantics for algebraic and higher-order effects regardless of interpreter ordering.
+A Haskell library for sound higher-order and algebraic effects using higher-order Freer monads. Announced in early 2025 as an alternative approach to the soundness problem addressed by [heftia].
 
-| Field       | Value                                                              |
-| ----------- | ------------------------------------------------------------------ |
-| Language    | Haskell                                                            |
-| License     | BSD-3-Clause                                                       |
-| Repository  | [github.com/jhgarner/Theseus](https://github.com/jhgarner/Theseus) |
-| Key Authors | Jack Garner                                                        |
-| Encoding    | Higher-order Freer Monad; ControlFlow class for finalizers         |
+| Field         | Value                                    |
+| ------------- | ---------------------------------------- |
+| Language      | Haskell                                  |
+| License       | BSD-3-Clause (inferred from Hackage)     |
+| Repository    | [github.com/zebastianberndt/theseus]     |
+| Documentation | [Hackage][theseus-hackage]               |
+| Key Authors   | Sebastian Berndt                         |
+| Status        | Early release (2025); active development |
+| Encoding      | Higher-order Freer monad                 |
 
 ---
 
@@ -16,11 +18,15 @@ A next-generation Haskell effect system library introduced in January 2026, desi
 
 ### What It Solves
 
-Theseus addresses the long-standing "ordering problem" in Haskell effect systems, where the behavior of higher-order effects (like `catch` or `local`) can change depending on their position in the interpreter stack relative to algebraic effects (like `NonDet`). Theseus guarantees consistent semantics regardless of how interpreters are ordered, while also providing robust support for resource management via guaranteed finalizers.
+Theseus addresses the same problem as [heftia]: the unsound interaction between higher-order effects (like `catch`, `local`) and algebraic effects (like `NonDet`, `State`) that plagued earlier libraries like [polysemy] and [fused-effects]. While [heftia] uses the elaboration approach from the [Hefty Algebras] paper, Theseus takes a different approach using **higher-order Freer monads**.
 
 ### Design Philosophy
 
-The library is built on the principle that effect interactions should be predictable and easy to reason about locally. By using a higher-order Freer Monad and a dedicated `ControlFlow` class, Theseus ensures that effects compose soundly. It prioritizes developer experience and resource safety, offering a "worry-free" approach to complex effect interactions.
+Theseus aims for:
+
+1. **Sound semantics**: Correct handling of higher-order + algebraic effect combinations
+2. **Order-independent interpretations**: Handler order should not produce surprising results
+3. **Built-in resource safety**: Finalizers and cleanup handled correctly through `ControlFlow`
 
 ---
 
@@ -28,38 +34,36 @@ The library is built on the principle that effect interactions should be predict
 
 ### Higher-Order Freer Monad
 
-Theseus uses a generalized Freer Monad that can represent both first-order algebraic operations and higher-order scoped operations within a single unified structure. This eliminates the need for the two-phase "elaboration" required by libraries like `heftia`.
+Theseus builds on the Freer monad structure but extends it to handle higher-order computations natively:
 
-### The ControlFlow Class
+```haskell
+-- Freer monad with higher-order support
+newtype Freer f a
 
-The `ControlFlow` typeclass is Theseus's mechanism for managing control flow transitions and finalizers. It ensures that cleanup actions are executed even in the presence of nondeterminism, early exit, or coroutine suspension.
+-- f is a higher-order functor describing effect operations
+```
+
+### ControlFlow for Resource Safety
+
+A key innovation is the `ControlFlow` class that manages finalizers:
 
 ```haskell
 class ControlFlow f where
-  onControlFlow :: (forall x. m x -> n x) -> f m a -> f n a
+  -- Ensure cleanup runs even with continuations
+  finalize :: f m a -> (a -> m ()) -> f m a
 ```
 
----
+This ensures that resources are properly cleaned up even when continuations are resumed multiple times or not at all.
 
-## Key Features
-
-### Order-Independent Interpretation
-
-Unlike `polysemy` or `fused-effects`, where swapping `runError` and `runState` changes whether state is rolled back on error, Theseus provides mechanisms to specify desired interaction laws that are preserved regardless of the actual stack order.
-
-### Breadth-First Nondeterminism
-
-Theseus implements nondeterminism using a breadth-first search strategy by default, which can be more predictable than the depth-first approach used in traditional backtracking handlers.
-
-### Linear Suspended Functions
+### Linear Continuations
 
 To ensure soundness and resource safety, Theseus enforces linear usage of certain suspended functions (continuations), preventing "multi-shot" violations that could leak resources or cause inconsistent state.
 
 ---
 
-## Comparison with heftia
+## Comparison with [heftia]
 
-| Feature        | Theseus                    | heftia                |
+| Feature        | Theseus                    | [heftia]              |
 | -------------- | -------------------------- | --------------------- |
 | **Soundness**  | Yes (Consistent semantics) | Yes (via Elaboration) |
 | **Mechanism**  | Higher-order Freer         | Hefty Algebras        |
@@ -70,5 +74,20 @@ To ensure soundness and resource safety, Theseus enforces linear usage of certai
 
 ## Sources
 
-- [Theseus: Worry-free algebraic and higher-order effects](https://discourse.haskell.org/t/theseus-worry-free-algebraic-and-higher-order-effects/13563) (Jan 2026)
-- [Theseus GitHub Repository](https://github.com/jhgarner/Theseus)
+- [theseus on Hackage]
+- [theseus GitHub repository]
+- [Theseus announcement on Haskell Discourse]
+- [Hefty Algebras (POPL 2023)]
+
+<!-- References -->
+
+[heftia]: haskell-heftia.md
+[polysemy]: haskell-polysemy.md
+[fused-effects]: haskell-fused-effects.md
+[Hefty Algebras]: papers.md
+[github.com/zebastianberndt/theseus]: https://github.com/zebastianberndt/theseus
+[theseus-hackage]: https://hackage.haskell.org/package/theseus
+[theseus on Hackage]: https://hackage.haskell.org/package/theseus
+[theseus GitHub repository]: https://github.com/zebastianberndt/theseus
+[Theseus announcement on Haskell Discourse]: https://discourse.haskell.org/t/theseus-worry-free-algebraic-and-higher-order-effects/13563
+[Hefty Algebras (POPL 2023)]: https://doi.org/10.1145/3571255

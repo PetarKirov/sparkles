@@ -2,14 +2,14 @@
 
 A higher-order, low-boilerplate extensible effects library based on freer monads. polysemy pioneered accessible higher-order effects in Haskell via its Tactics API and remains influential despite performance limitations.
 
-| Field         | Value                                                                                  |
-| ------------- | -------------------------------------------------------------------------------------- |
-| Language      | Haskell                                                                                |
-| License       | BSD-3-Clause                                                                           |
-| Repository    | [github.com/polysemy-research/polysemy](https://github.com/polysemy-research/polysemy) |
-| Documentation | [Hackage](https://hackage.haskell.org/package/polysemy)                                |
-| Key Authors   | Sandy Maguire                                                                          |
-| Encoding      | Freer monad with type-level effect rows                                                |
+| Field         | Value                                   |
+| ------------- | --------------------------------------- |
+| Language      | Haskell                                 |
+| License       | BSD-3-Clause                            |
+| Repository    | [github.com/polysemy-research/polysemy] |
+| Documentation | [Hackage][polysemy-hackage]             |
+| Key Authors   | Sandy Maguire                           |
+| Encoding      | Freer monad with type-level effect rows |
 
 ---
 
@@ -17,7 +17,7 @@ A higher-order, low-boilerplate extensible effects library based on freer monads
 
 ### What It Solves
 
-polysemy provides extensible effects with minimal boilerplate and strong support for higher-order effects. It avoids the O(n^2) instances problem of mtl, composes better than monad transformers, is more powerful than freer-simple (which lacks higher-order effects), and requires an order of magnitude less boilerplate than fused-effects.
+polysemy provides extensible effects with minimal boilerplate and strong support for higher-order effects. It avoids the O(n^2) instances problem of mtl, composes better than monad transformers, is more powerful than freer-simple (which lacks higher-order effects), and requires an order of magnitude less boilerplate than [fused-effects].
 
 ### Design Philosophy
 
@@ -174,17 +174,17 @@ polysemy is based on freer monads, which build an explicit syntax tree of effect
 2. **Tree traversal**: Interpretation walks the tree, pattern-matching on each node
 3. **GHC optimization brittleness**: Performance depends heavily on GHC's ability to inline and specialize, which is unpredictable for larger programs
 
-Sandy Maguire documented these issues in his post ["Polysemy: Mea Culpa"](https://reasonablypolymorphic.com/blog/mea-culpa/), acknowledging that the hoped-for GHC optimizations did not materialize for real programs.
+Sandy Maguire documented these issues in his post ["Polysemy: Mea Culpa"][Polysemy: Mea Culpa], acknowledging that the hoped-for GHC optimizations did not materialize for real programs.
 
 ### Benchmark Position
 
-- Roughly **1-3 orders of magnitude** slower than fused-effects and mtl
+- Roughly **1-3 orders of magnitude** slower than [fused-effects] and mtl
 - Similar performance to freer-simple but with higher initial overhead
 - The performance gap widens in "deep" benchmarks with many effects in scope
 
 ### Proposed Solutions
 
-Alexis King proposed GHC primops for delimited continuations that would allow effect interpretation at runtime with minimal overhead. While not zero-cost, the overhead would be negligible in practice. This work led to GHC Proposal #313 and the `eff` library.
+Alexis King proposed GHC primops for delimited continuations that would allow effect interpretation at runtime with minimal overhead. While not zero-cost, the overhead would be negligible in practice. This work led to GHC Proposal #313 and the [eff] library.
 
 ---
 
@@ -231,8 +231,8 @@ embedFinal :: Member (Final m) r => m a -> Sem r a  -- higher-order embedding
 
 ## Weaknesses
 
-- **Poor performance**: 1-3 orders of magnitude slower than mtl/effectful; depends on brittle GHC optimizations
-- **Unsound higher-order semantics**: Some combinations of higher-order effects can produce incorrect results (documented by heftia authors)
+- **Poor performance**: 1-3 orders of magnitude slower than mtl/[effectful]; depends on brittle GHC optimizations
+- **Unsound higher-order semantics**: Some combinations of higher-order effects can produce incorrect results (documented by [heftia] authors)
 - **Template Haskell dependency**: `makeSem` requires TH, complicating cross-compilation
 - **Complex internals**: Weaving, Tactics, and Union are difficult to understand and extend
 - **Abandoned by author**: Sandy Maguire moved on after documenting performance issues; community maintenance
@@ -251,10 +251,26 @@ embedFinal :: Member (Final m) r => m a -> Sem r a  -- higher-order embedding
 
 ## Sources
 
-- [polysemy on Hackage](https://hackage.haskell.org/package/polysemy)
-- [Polysemy.Internal](https://hackage.haskell.org/package/polysemy-1.9.2.0/docs/Polysemy-Internal.html)
-- [Polysemy.Internal.Union](https://hackage.haskell.org/package/polysemy-1.9.0.0/docs/Polysemy-Internal-Union.html)
-- [Freer Interpretations of Higher-Order Effects](https://reasonablypolymorphic.com/blog/freer-higher-order-effects/) -- Sandy Maguire
-- [The Effect-Interpreter Effect (Tactics)](https://reasonablypolymorphic.com/blog/tactics/index.html) -- Sandy Maguire
-- [Polysemy: Mea Culpa](https://reasonablypolymorphic.com/blog/mea-culpa/) -- Sandy Maguire
-- [Chasing Performance in Free Monads](https://reasonablypolymorphic.com/polysemy-talk/) -- Sandy Maguire
+- [polysemy on Hackage]
+- [Polysemy.Internal]
+- [Polysemy.Internal.Union]
+- [Freer Interpretations of Higher-Order Effects] -- Sandy Maguire
+- [The Effect-Interpreter Effect (Tactics)] -- Sandy Maguire
+- [Polysemy: Mea Culpa] -- Sandy Maguire
+- [Chasing Performance in Free Monads] -- Sandy Maguire
+
+<!-- References -->
+
+[heftia]: haskell-heftia.md
+[fused-effects]: haskell-fused-effects.md
+[effectful]: haskell-effectful.md
+[eff]: haskell-eff.md
+[github.com/polysemy-research/polysemy]: https://github.com/polysemy-research/polysemy
+[polysemy-hackage]: https://hackage.haskell.org/package/polysemy
+[Polysemy: Mea Culpa]: https://reasonablypolymorphic.com/blog/mea-culpa/
+[polysemy on Hackage]: https://hackage.haskell.org/package/polysemy
+[Polysemy.Internal]: https://hackage.haskell.org/package/polysemy-1.9.2.0/docs/Polysemy-Internal.html
+[Polysemy.Internal.Union]: https://hackage.haskell.org/package/polysemy-1.9.0.0/docs/Polysemy-Internal-Union.html
+[Freer Interpretations of Higher-Order Effects]: https://reasonablypolymorphic.com/blog/freer-higher-order-effects/
+[The Effect-Interpreter Effect (Tactics)]: https://reasonablypolymorphic.com/blog/tactics/index.html
+[Chasing Performance in Free Monads]: https://reasonablypolymorphic.com/polysemy-talk/

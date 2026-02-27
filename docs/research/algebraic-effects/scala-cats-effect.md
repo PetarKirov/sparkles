@@ -2,14 +2,14 @@
 
 The pure asynchronous runtime for Scala, providing a concrete `IO` monad and a typeclass hierarchy that defines what it means to be a purely functional runtime system. Powers a thriving ecosystem including fs2, http4s, doobie, and more.
 
-| Field         | Value                                                                        |
-| ------------- | ---------------------------------------------------------------------------- |
-| Language      | Scala 2.13 / Scala 3                                                         |
-| License       | Apache-2.0                                                                   |
-| Repository    | [github.com/typelevel/cats-effect](https://github.com/typelevel/cats-effect) |
-| Documentation | [typelevel.org/cats-effect](https://typelevel.org/cats-effect/)              |
-| Key Authors   | Daniel Spiewak, Typelevel community                                          |
-| Approach      | Typeclass hierarchy + concrete IO monad + work-stealing fiber runtime        |
+| Field         | Value                                                                 |
+| ------------- | --------------------------------------------------------------------- |
+| Language      | Scala 2.13 / Scala 3                                                  |
+| License       | Apache-2.0                                                            |
+| Repository    | [github.com/typelevel/cats-effect]                                    |
+| Documentation | [typelevel.org/cats-effect]                                           |
+| Key Authors   | Daniel Spiewak, Typelevel community                                   |
+| Approach      | Typeclass hierarchy + concrete IO monad + work-stealing fiber runtime |
 
 ---
 
@@ -21,7 +21,7 @@ Cats Effect provides the tools to architect highly-asynchronous, highly-concurre
 
 ### Design Philosophy
 
-Cats Effect follows the Typelevel philosophy: simple, orthogonal, primitive capabilities that compose to express all necessary computation. Unlike ZIO's batteries-included approach, Cats Effect is minimalist -- it provides the runtime and typeclass contracts, while the ecosystem provides the features. This enables maximum abstraction: code can be written against `F[_]` with typeclass constraints rather than a concrete IO type.
+Cats Effect follows the Typelevel philosophy: simple, orthogonal, primitive capabilities that compose to express all necessary computation. Unlike [ZIO]'s batteries-included approach, Cats Effect is minimalist -- it provides the runtime and typeclass contracts, while the ecosystem provides the features. This enables maximum abstraction: code can be written against `F[_]` with typeclass constraints rather than a concrete IO type.
 
 ---
 
@@ -35,11 +35,11 @@ The concrete effect type has a single type parameter:
 IO[+A]
 ```
 
-`IO[A]` represents a potentially side-effectful computation that produces a value of type `A`. Like ZIO, `IO` values are immutable descriptions of effects, not the effects themselves. They are executed by the runtime.
+`IO[A]` represents a potentially side-effectful computation that produces a value of type `A`. Like [ZIO], `IO` values are immutable descriptions of effects, not the effects themselves. They are executed by the runtime.
 
 ### Error Handling
 
-Unlike ZIO's typed error channel, Cats Effect fixes the error type to `Throwable`:
+Unlike [ZIO]'s typed error channel, Cats Effect fixes the error type to `Throwable`:
 
 ```scala
 // Errors are always Throwable
@@ -59,19 +59,19 @@ The typeclass hierarchy is the defining feature of Cats Effect. It defines contr
 
 ### Cats Effect 3 Hierarchy (Bottom to Top)
 
-```
+```scala
                     Monad
                       |
                    Unique
                       |
-                  MonadCancel
-                   /      \
-              Spawn      GenConcurrent
-               |              |
-           Concurrent         |
-               |              |
-            Temporal     GenTemporal
-               \            /
+                 MonadCancel
+                  /      \
+             Spawn      GenConcurrent
+              |              |
+          Concurrent         |
+              |              |
+           Temporal     GenTemporal
+              \            /
                 \          /
                   Sync   Async
                     \   /
@@ -182,7 +182,7 @@ Cats Effect 3 uses an extremely low-contention, lock-free work-stealing schedule
 
 ### Fiber Memory Footprint
 
-Cats Effect fibers are roughly **3x smaller** than ZIO fibers in memory, since they carry less context (no typed error channel, no environment).
+Cats Effect fibers are roughly **3x smaller** than [ZIO] fibers in memory, since they carry less context (no typed error channel, no environment).
 
 ### io_uring Integration (v3.6.0)
 
@@ -216,7 +216,7 @@ The tagless final approach means the same library code works with any compliant 
 | circe   | JSON serialization   |
 | skunk   | PostgreSQL           |
 
-### ZIO Interop
+### [ZIO] Interop
 
 `zio-interop-cats` provides Cats Effect typeclass instances for ZIO, allowing ZIO programs to use Cats Effect libraries.
 
@@ -224,7 +224,7 @@ The tagless final approach means the same library code works with any compliant 
 
 ## Strengths
 
-- **Lightweight fibers**: ~3x less memory than ZIO; highly scalable
+- **Lightweight fibers**: ~3x less memory than [ZIO]; highly scalable
 - **Work-stealing scheduler**: Gets more efficient with more CPUs; inspired by Tokio
 - **Tagless final**: Maximum abstraction; code works with any compliant effect type
 - **Rich ecosystem**: fs2, http4s, doobie, etc. -- the largest FP Scala library ecosystem
@@ -234,7 +234,7 @@ The tagless final approach means the same library code works with any compliant 
 
 ## Weaknesses
 
-- **No typed errors**: Fixed to `Throwable`; less type safety than ZIO's error channel
+- **No typed errors**: Fixed to `Throwable`; less type safety than [ZIO]'s error channel
 - **No built-in DI**: Must use external patterns or libraries for dependency injection
 - **Tagless final overhead**: Higher-kinded abstractions can be confusing; error messages cryptic
 - **Minimal built-in features**: No STM, scheduling, or streaming in core (requires fs2, etc.)
@@ -256,13 +256,29 @@ The tagless final approach means the same library code works with any compliant 
 
 ## Sources
 
-- [Cats Effect documentation](https://typelevel.org/cats-effect/)
-- [Cats Effect GitHub repository](https://github.com/typelevel/cats-effect)
-- [Why Are Fibers Fast?](https://typelevel.org/blog/2021/02/21/fibers-fast-mkay.html) -- Typelevel Blog
-- [Concurrency in Cats Effect 3](https://typelevel.org/blog/2020/10/30/concurrency-in-ce3.html) -- Typelevel Blog
-- [Thread Model](https://typelevel.org/cats-effect/docs/thread-model) -- Cats Effect Docs
-- [CE3 Proposal Issue #634](https://github.com/typelevel/cats-effect/issues/634)
-- [CE2 Typeclass Overview](https://typelevel.org/cats-effect/docs/2.x/typeclasses/overview)
-- [Cats Effect vs ZIO](https://softwaremill.com/cats-effect-vs-zio/) -- SoftwareMill
-- [Comparative Benchmarks](https://gist.github.com/djspiewak/f4cfc08e0827088f17032e0e9099d292) -- Daniel Spiewak
-- [Polymorphic Effects in Scala](https://timwspence.github.io/blog/posts/2020-11-22-polymorphic-effects-in-scala.html) -- Tim Spence
+- [Cats Effect documentation] -- Typelevel
+- [Cats Effect GitHub repository]
+- [Why Are Fibers Fast?] -- Typelevel Blog
+- [Concurrency in Cats Effect 3] -- Typelevel Blog
+- [Thread Model] -- Cats Effect Docs
+- [CE3 Proposal Issue #634]
+- [CE2 Typeclass Overview]
+- [Cats Effect vs ZIO] -- SoftwareMill
+- [Comparative Benchmarks] -- Daniel Spiewak
+- [Polymorphic Effects in Scala] -- Tim Spence
+
+<!-- References -->
+
+[ZIO]: scala-zio.md
+[github.com/typelevel/cats-effect]: https://github.com/typelevel/cats-effect
+[typelevel.org/cats-effect]: https://typelevel.org/cats-effect/
+[Cats Effect documentation]: https://typelevel.org/cats-effect/
+[Cats Effect GitHub repository]: https://github.com/typelevel/cats-effect
+[Why Are Fibers Fast?]: https://typelevel.org/blog/2021/02/21/fibers-fast-mkay.html
+[Concurrency in Cats Effect 3]: https://typelevel.org/blog/2020/10/30/concurrency-in-ce3.html
+[Thread Model]: https://typelevel.org/cats-effect/docs/thread-model
+[CE3 Proposal Issue #634]: https://github.com/typelevel/cats-effect/issues/634
+[CE2 Typeclass Overview]: https://typelevel.org/cats-effect/docs/2.x/typeclasses/overview
+[Cats Effect vs ZIO]: https://softwaremill.com/cats-effect-vs-zio/
+[Comparative Benchmarks]: https://gist.github.com/djspiewak/f4cfc08e0827088f17032e0e9099d292
+[Polymorphic Effects in Scala]: https://timwspence.github.io/blog/posts/2020-11-22-polymorphic-effects-in-scala.html

@@ -6,8 +6,8 @@ A strongly typed functional language with effect types and handlers, where every
 | ------------- | ------------------------------------------------------------------- |
 | Language      | Koka                                                                |
 | License       | Apache-2.0                                                          |
-| Repository    | [github.com/koka-lang/koka](https://github.com/koka-lang/koka)      |
-| Documentation | [Koka Book](https://koka-lang.github.io/koka/doc/book.html)         |
+| Repository    | [github.com/koka-lang/koka]                                         |
+| Documentation | [Koka Book]                                                         |
 | Key Authors   | Daan Leijen (Microsoft Research)                                    |
 | Encoding      | Row-polymorphic effect types with evidence passing compilation to C |
 
@@ -299,13 +299,28 @@ linear effect pretty
 
 ## Sources
 
-- [Koka GitHub repository](https://github.com/koka-lang/koka)
-- [The Koka Programming Language (Book)](https://koka-lang.github.io/koka/doc/book.html)
-- [Koka: Programming with Row Polymorphic Effect Types (MSFP 2014)](https://arxiv.org/abs/1406.2061)
-- [Algebraic Effects for Functional Programming (MSR-TR-2016-29)](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/08/algeff-tr-2016-v2.pdf)
-- [Effect Handlers, Evidently (ICFP 2020)](https://doi.org/10.1145/3408981)
-- [Generalized Evidence Passing for Effect Handlers (ICFP 2021)](https://dl.acm.org/doi/10.1145/3473576)
-- [Perceus: Garbage Free Reference Counting with Reuse (PLDI 2021)](https://dl.acm.org/doi/10.1145/3453483.3454032)
-- [FP2: Fully in-Place Functional Programming (ICFP 2023)](https://www.microsoft.com/en-us/research/wp-content/uploads/2023/07/fip.pdf)
-- [First-class Named Effect Handlers (OOPSLA 2022)](https://dl.acm.org/doi/abs/10.1145/3563289)
-- [Koka at Microsoft Research](https://www.microsoft.com/en-us/research/project/koka/)
+- [Koka GitHub repository]
+- [The Koka Programming Language (Book)]
+- [Koka: Programming with Row Polymorphic Effect Types (MSFP 2014)]
+- [Algebraic Effects for Functional Programming (MSR-TR-2016-29)]
+- [Effect Handlers, Evidently (ICFP 2020)]
+- [Generalized Evidence Passing for Effect Handlers (ICFP 2021)]
+- [Perceus: Garbage Free Reference Counting with Reuse (PLDI 2021)]
+- [FP2: Fully in-Place Functional Programming (ICFP 2023)]
+- [First-class Named Effect Handlers (OOPSLA 2022)]
+- [Koka at Microsoft Research]
+
+<!-- References -->
+
+[github.com/koka-lang/koka]: https://github.com/koka-lang/koka
+[Koka Book]: https://koka-lang.github.io/koka/doc/book.html
+[Koka GitHub repository]: https://github.com/koka-lang/koka
+[The Koka Programming Language (Book)]: https://koka-lang.github.io/koka/doc/book.html
+[Koka: Programming with Row Polymorphic Effect Types (MSFP 2014)]: https://arxiv.org/abs/1406.2061
+[Algebraic Effects for Functional Programming (MSR-TR-2016-29)]: https://www.microsoft.com/en-us/research/wp-content/uploads/2016/08/algeff-tr-2016-v2.pdf
+[Effect Handlers, Evidently (ICFP 2020)]: https://doi.org/10.1145/3408981
+[Generalized Evidence Passing for Effect Handlers (ICFP 2021)]: https://dl.acm.org/doi/10.1145/3473576
+[Perceus: Garbage Free Reference Counting with Reuse (PLDI 2021)]: https://dl.acm.org/doi/10.1145/3453483.3454032
+[FP2: Fully in-Place Functional Programming (ICFP 2023)]: https://www.microsoft.com/en-us/research/wp-content/uploads/2023/07/fip.pdf
+[First-class Named Effect Handlers (OOPSLA 2022)]: https://dl.acm.org/doi/abs/10.1145/3563289
+[Koka at Microsoft Research]: https://www.microsoft.com/en-us/research/project/koka/

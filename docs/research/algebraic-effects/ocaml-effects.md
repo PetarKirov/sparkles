@@ -6,8 +6,8 @@ Native algebraic effect handlers built into the OCaml 5 runtime, providing first
 | ------------- | --------------------------------------------------------------------- |
 | Language      | OCaml 5.x                                                             |
 | License       | LGPL-2.1                                                              |
-| Repository    | [github.com/ocaml/ocaml](https://github.com/ocaml/ocaml)              |
-| Documentation | [OCaml Manual - Effects](https://ocaml.org/manual/5.2/effects.html)   |
+| Repository    | [github.com/ocaml/ocaml]                                              |
+| Documentation | [OCaml Manual - Effects]                                              |
 | Key Authors   | KC Sivaramakrishnan, Stephen Dolan, Leo White, Anil Madhavapeddy      |
 | Encoding      | Untyped algebraic effects with one-shot continuations on fiber stacks |
 
@@ -280,13 +280,33 @@ Since effects are untyped, there is no compile-time verification that all effect
 
 ## Sources
 
-- [OCaml 5.2 Manual - Language Extensions: Effect Handlers](https://ocaml.org/manual/5.2/effects.html)
-- [Effect.Deep API Documentation](https://ocaml.org/manual/5.2/api/Effect.Deep.html)
-- [Effect.Shallow API Documentation](https://ocaml.org/manual/5.2/api/Effect.Shallow.html)
-- [Retrofitting Effect Handlers onto OCaml (PLDI 2021)](https://dl.acm.org/doi/10.1145/3453483.3454039)
-- [Retrofitting Effect Handlers onto OCaml (arXiv preprint)](https://arxiv.org/abs/2104.00250)
-- [OCaml Effects Tutorial](https://github.com/ocaml-multicore/ocaml-effects-tutorial)
-- [Effects Examples Repository](https://github.com/ocaml-multicore/effects-examples)
-- [Effective Programming: Adding an Effect System to OCaml (Jane Street)](https://www.janestreet.com/tech-talks/effective-programming/)
-- [Introducing OxCaml (Jane Street Blog)](https://blog.janestreet.com/introducing-oxcaml/)
-- [Add Effect Syntax PR #12309](https://github.com/ocaml/ocaml/pull/12309)
+- [OCaml 5.2 Manual - Language Extensions: Effect Handlers]
+- [Effect.Deep API Documentation]
+- [Effect.Shallow API Documentation]
+- [Retrofitting Effect Handlers onto OCaml (PLDI 2021)]
+- [Retrofitting Effect Handlers onto OCaml (arXiv preprint)]
+- [OCaml Effects Tutorial]
+- [Effects Examples Repository]
+- [Effective Programming: Adding an Effect System to OCaml (Jane Street)]
+- [Introducing OxCaml (Jane Street Blog)]
+- [Add Effect Syntax PR #12309]
+
+<!-- References -->
+
+[github.com/ocaml/ocaml]: https://github.com/ocaml/ocaml
+[OCaml Manual - Effects]: https://ocaml.org/manual/5.2/effects.html
+[OCaml 5.2 Manual - Language Extensions: Effect Handlers]: https://ocaml.org/manual/5.2/effects.html
+[Effect.Deep API Documentation]: https://ocaml.org/manual/5.2/api/Effect.Deep.html
+[Effect.Shallow API Documentation]: https://ocaml.org/manual/5.2/api/Effect.Shallow.html
+[Retrofitting Effect Handlers onto OCaml (PLDI 2021)]: https://dl.acm.org/doi/10.1145/3453483.3454039
+[Retrofitting Effect Handlers onto OCaml (arXiv preprint)]: https://arxiv.org/abs/2104.00250
+[OCaml Effects Tutorial]: https://github.com/ocaml-multicore/ocaml-effects-tutorial
+[Effects Examples Repository]: https://github.com/ocaml-multicore/effects-examples
+[Effective Programming: Adding an Effect System to OCaml (Jane Street)]: https://www.janestreet.com/tech-talks/effective-programming/
+[Introducing OxCaml (Jane Street Blog)]: https://blog.janestreet.com/introducing-oxcaml/
+[Add Effect Syntax PR #12309]: https://github.com/ocaml/ocaml/pull/12309
+[Eio]: ocaml-eio.md
+[Papers]: papers.md
+[Theory and Compilation]: theory-compilation.md
+[WasmFX]: wasmfx.md
+[Evolution]: evolution.md

@@ -6,8 +6,8 @@ The first programming language designed specifically around algebraic effects an
 | ------------- | --------------------------------------------------------------------------- |
 | Language      | Eff                                                                         |
 | License       | BSD-2-Clause                                                                |
-| Repository    | [github.com/matijapretnar/eff](https://github.com/matijapretnar/eff)        |
-| Documentation | [eff-lang.org](https://www.eff-lang.org/)                                   |
+| Repository    | [github.com/matijapretnar/eff]                                              |
+| Documentation | [eff-lang.org]                                                              |
 | Key Authors   | Andrej Bauer, Matija Pretnar (University of Ljubljana)                      |
 | Encoding      | Native algebraic effect handlers with first-class effects and continuations |
 
@@ -238,11 +238,24 @@ Resources can be overridden by enclosing handlers, allowing redirection (e.g., s
 
 ## Sources
 
-- [Eff GitHub repository](https://github.com/matijapretnar/eff)
-- [Eff language website](https://www.eff-lang.org/)
-- [Programming with Algebraic Effects and Handlers (Bauer, Pretnar 2012)](https://arxiv.org/abs/1203.1539)
-- [An Effect System for Algebraic Effects and Handlers (Bauer, Pretnar 2013)](https://arxiv.org/abs/1306.6316)
-- [Handlers of Algebraic Effects (Plotkin, Pretnar 2009)](https://link.springer.com/chapter/10.1007/978-3-642-00590-9_7)
-- [An Introduction to Algebraic Effects and Handlers (Pretnar 2015)](https://www.eff-lang.org/handlers-tutorial.pdf)
-- [Handling Algebraic Effects (Plotkin, Pretnar 2013, LMCS journal version)](<https://doi.org/10.2168/LMCS-9(4:23)2013>)
-- [Eff Directly in OCaml (Kiselyov, Sivaramakrishnan 2018)](https://arxiv.org/abs/1812.11664)
+- [Eff GitHub repository]
+- [Eff language website]
+- [Programming with Algebraic Effects and Handlers (Bauer, Pretnar 2012)]
+- [An Effect System for Algebraic Effects and Handlers (Bauer, Pretnar 2013)]
+- [Handlers of Algebraic Effects (Plotkin, Pretnar 2009)]
+- [An Introduction to Algebraic Effects and Handlers (Pretnar 2015)]
+- [Handling Algebraic Effects (Plotkin, Pretnar 2013, LMCS journal version)]
+- [Eff Directly in OCaml (Kiselyov, Sivaramakrishnan 2018)]
+
+<!-- References -->
+
+[github.com/matijapretnar/eff]: https://github.com/matijapretnar/eff
+[eff-lang.org]: https://www.eff-lang.org/
+[Eff GitHub repository]: https://github.com/matijapretnar/eff
+[Eff language website]: https://www.eff-lang.org/
+[Programming with Algebraic Effects and Handlers (Bauer, Pretnar 2012)]: https://arxiv.org/abs/1203.1539
+[An Effect System for Algebraic Effects and Handlers (Bauer, Pretnar 2013)]: https://arxiv.org/abs/1306.6316
+[Handlers of Algebraic Effects (Plotkin, Pretnar 2009)]: https://link.springer.com/chapter/10.1007/978-3-642-00590-9_7
+[An Introduction to Algebraic Effects and Handlers (Pretnar 2015)]: https://www.eff-lang.org/handlers-tutorial.pdf
+[Handling Algebraic Effects (Plotkin, Pretnar 2013, LMCS journal version)]: https://doi.org/10.2168/LMCS-9(4:23)2013
+[Eff Directly in OCaml (Kiselyov, Sivaramakrishnan 2018)]: https://arxiv.org/abs/1812.11664

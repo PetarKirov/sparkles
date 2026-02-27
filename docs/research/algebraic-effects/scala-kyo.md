@@ -1,13 +1,13 @@
 # Kyo (Scala)
 
-A powerful toolkit for Scala development based on algebraic effects, providing an open set of composable effects rather than a fixed number of effect channels. Kyo generalizes ZIO's effect rotation to support arbitrary effect types.
+A powerful toolkit for Scala development based on algebraic effects, providing an open set of composable effects rather than a fixed number of effect channels. Kyo generalizes [ZIO]'s effect rotation to support arbitrary effect types.
 
 | Field         | Value                                                         |
 | ------------- | ------------------------------------------------------------- |
 | Language      | Scala 3                                                       |
 | License       | Apache-2.0                                                    |
-| Repository    | [github.com/getkyo/kyo](https://github.com/getkyo/kyo)        |
-| Documentation | [getkyo.io](https://getkyo.io/)                               |
+| Repository    | [github.com/getkyo/kyo]                                       |
+| Documentation | [getkyo.io]                                                   |
 | Key Authors   | Flavio Brasil                                                 |
 | Approach      | Algebraic effects with modular handlers; open effect channels |
 
@@ -17,11 +17,11 @@ A powerful toolkit for Scala development based on algebraic effects, providing a
 
 ### What It Solves
 
-Kyo provides an algebraic effects system that goes beyond ZIO and Cats Effect by allowing an arbitrary number of user-defined effect types, not just the fixed error and environment channels. This enables more precise and granular control over computational context. Kyo achieves this without requiring category theory concepts or cryptic operators.
+Kyo provides an algebraic effects system that goes beyond [ZIO] and [Cats Effect] by allowing an arbitrary number of user-defined effect types, not just the fixed error and environment channels. This enables more precise and granular control over computational context. Kyo achieves this without requiring category theory concepts or cryptic operators.
 
 ### Design Philosophy
 
-Kyo brings algebraic effects to practical Scala programming. While ZIO provides two fixed effect channels (environment R and error E), Kyo allows developers to define and compose an open set of effects tailored to their specific needs. The design is direct-style-inspired, leveraging Scala 3's type system to minimize the distinction between `map` and `flatMap`.
+Kyo brings algebraic effects to practical Scala programming. While [ZIO] provides two fixed effect channels (environment R and error E), Kyo allows developers to define and compose an open set of effects tailored to their specific needs. The design is direct-style-inspired, leveraging Scala 3's type system to minimize the distinction between `map` and `flatMap`.
 
 ---
 
@@ -77,17 +77,17 @@ This removes the need to juggle between `map` and `flatMap`, allowing developers
 
 Kyo provides a comprehensive set of core effects:
 
-| Effect      | Purpose                            | Analogous To           |
-| ----------- | ---------------------------------- | ---------------------- |
-| `Abort[E]`  | Short-circuiting with error type E | ZIO's E channel        |
-| `Env[R]`    | Dependency injection               | ZIO's R channel        |
-| `IO`        | Side-effecting operations          | ZIO's IO               |
-| `Async`     | Fiber scheduling, parking          | ZIO's fiber operations |
-| `Resource`  | Resource lifecycle management      | ZIO's Scope            |
-| `Stream[V]` | Streaming values                   | ZIO Stream             |
-| `Var[V]`    | Mutable state                      | ZIO Ref                |
-| `Emit[V]`   | Emitting values                    | Writer effect          |
-| `Choice`    | Non-deterministic computation      | List/NonDet            |
+| Effect      | Purpose                            | Analogous To             |
+| ----------- | ---------------------------------- | ------------------------ |
+| `Abort[E]`  | Short-circuiting with error type E | [ZIO]'s E channel        |
+| `Env[R]`    | Dependency injection               | [ZIO]'s R channel        |
+| `IO`        | Side-effecting operations          | [ZIO]'s IO               |
+| `Async`     | Fiber scheduling, parking          | [ZIO]'s fiber operations |
+| `Resource`  | Resource lifecycle management      | [ZIO]'s Scope            |
+| `Stream[V]` | Streaming values                   | [ZIO] Stream             |
+| `Var[V]`    | Mutable state                      | [ZIO] Ref                |
+| `Emit[V]`   | Emitting values                    | Writer effect            |
+| `Choice`    | Non-deterministic computation      | List/NonDet              |
 
 ### Custom Effects
 
@@ -159,9 +159,9 @@ Kyo's performance comes from its algebraic effects architecture:
 2. **Minimal indirection**: Each effect handler directly processes its operations
 3. **Compile-time effect resolution**: Scala 3's type system resolves effect composition at compile time
 
-### Comparison with ZIO
+### Comparison with [ZIO]
 
-Where ZIO bakes two effects (R and E) into its type and adds overhead for the fixed channels, Kyo only pays for the effects actually used. A computation with a single `Abort[String]` effect does not carry unused environment or state machinery.
+Where [ZIO] bakes two effects (R and E) into its type and adds overhead for the fixed channels, Kyo only pays for the effects actually used. A computation with a single `Abort[String]` effect does not carry unused environment or state machinery.
 
 ### Stream Optimizations
 
@@ -178,16 +178,16 @@ While effectful `map` accepts pure functions (via automatic lifting), the `Pure`
 
 ### Open Effect Set
 
-Unlike ZIO (fixed to R, E) or Cats Effect (fixed typeclass hierarchy), Kyo allows arbitrary effect types:
+Unlike [ZIO] (fixed to R, E) or [Cats Effect] (fixed typeclass hierarchy), Kyo allows arbitrary effect types:
 
 ```scala
 // Mix any effects freely
 def program: Result < (Abort[AppError] & Env[Config] & Async & Stream[LogEntry]) = ???
 ```
 
-### Effect Rotation (Generalized from ZIO)
+### Effect Rotation (Generalized from [ZIO])
 
-Kyo generalizes ZIO's "effect rotation" mechanism. In ZIO, the R and E channels can be transformed independently (e.g., `mapError` transforms E without touching R). Kyo extends this to arbitrary effect channels -- each effect can be handled independently regardless of what other effects are present.
+Kyo generalizes [ZIO]'s "effect rotation" mechanism. In [ZIO], the R and E channels can be transformed independently (e.g., `mapError` transforms E without touching R). Kyo extends this to arbitrary effect channels -- each effect can be handled independently regardless of what other effects are present.
 
 ### Intersection Types for Composition
 
@@ -213,11 +213,11 @@ def myProgram: Result < MyEffects = ???
 ## Weaknesses
 
 - **Pre-1.0**: APIs have been frequently broken; not yet production-stable
-- **Smaller ecosystem**: Fewer libraries and integrations than ZIO or Cats Effect
+- **Smaller ecosystem**: Fewer libraries and integrations than [ZIO] or [Cats Effect]
 - **Scala 3 only**: Cannot be used with Scala 2.13 projects
 - **Learning curve**: Algebraic effects and the `<` type require adjustment
 - **Limited community**: Fewer resources, tutorials, and production experience
-- **Performance not yet fully benchmarked**: Less evidence than ZIO/CE
+- **Performance not yet fully benchmarked**: Less evidence than [ZIO]/[Cats Effect]
 
 ## Key Design Decisions and Trade-offs
 
@@ -243,10 +243,24 @@ def myProgram: Result < MyEffects = ???
 
 ## Sources
 
-- [Kyo GitHub repository](https://github.com/getkyo/kyo)
-- [Kyo website](https://getkyo.io/)
-- [Kyo on Scaladex](https://index.scala-lang.org/getkyo/kyo)
-- [Writing Modular Applications Using The Kyo Library](https://www.scalamatters.io/post/writing-modular-applications-using-the-kyo-library) -- Scala Matters
-- [What are Effect Systems and Why Do We Care?](https://idiomaticsoft.com/post/2024-01-02-effect-systems/) -- Idiomatic Soft
-- [Kyo -- Functional Scala 2023 slides](https://speakerdeck.com/fwbrasil/kyo-functional-scala-2023) -- Flavio Brasil
-- [Debasish Ghosh on Kyo's type encoding](https://x.com/debasishg/status/1881557372331856347)
+- [Kyo GitHub repository]
+- [Kyo website]
+- [Kyo on Scaladex]
+- [Writing Modular Applications Using The Kyo Library] -- Scala Matters
+- [What are Effect Systems and Why Do We Care?] -- Idiomatic Soft
+- [Kyo -- Functional Scala 2023 slides] -- Flavio Brasil
+- [Debasish Ghosh on Kyo's type encoding]
+
+<!-- References -->
+
+[ZIO]: scala-zio.md
+[Cats Effect]: scala-cats-effect.md
+[github.com/getkyo/kyo]: https://github.com/getkyo/kyo
+[getkyo.io]: https://getkyo.io/
+[Kyo GitHub repository]: https://github.com/getkyo/kyo
+[Kyo website]: https://getkyo.io/
+[Kyo on Scaladex]: https://index.scala-lang.org/getkyo/kyo
+[Writing Modular Applications Using The Kyo Library]: https://www.scalamatters.io/post/writing-modular-applications-using-the-kyo-library
+[What are Effect Systems and Why Do We Care?]: https://idiomaticsoft.com/post/2024-01-02-effect-systems/
+[Kyo -- Functional Scala 2023 slides]: https://speakerdeck.com/fwbrasil/kyo-functional-scala-2023
+[Debasish Ghosh on Kyo's type encoding]: https://x.com/debasishg/status/1881557372331856347

@@ -28,7 +28,7 @@ Monads provide equational laws (e.g., the state monad laws guarantee that `get` 
 
 ## Evidence Passing
 
-The paper "Effect Handlers, Evidently" (Xie, Brachthaeuser, Hillerstroemm, Schuster, Leijen, ICFP 2020) introduced _evidence-passing semantics_ for algebraic effect handlers. The core idea is to compile away the runtime search for a handler by threading evidence -- a proof that a handler exists -- directly to each operation call.
+The paper "Effect Handlers, Evidently" (Xie, Brachthaeuser, Hillerstroemm, Schuster, Leijen, ICFP 2020) introduced _evidence-passing semantics_ for algebraic effect handlers. The core idea is to compile away the runtime search for a handler by threading evidence -- a proof that a handler exists -- directly to each operation call. This technique is used by [effectful], [cleff], and [Koka].
 
 ### Evidence Vectors
 
@@ -44,9 +44,9 @@ When an operation is invoked, it indexes into the evidence vector to find the ha
 
 The original evidence-passing translation requires _scoped resumptions_: when a handler resumes a captured continuation, the resumed computation runs under the same set of handlers it had before being suspended. This rules out "non-scoped" uses where a resumption is invoked under a different handler configuration, which the authors argue is undesirable in practice because it breaks local reasoning about effects.
 
-### The effectful Library
+### The [effectful] Library
 
-Haskell's effectful library applies a pragmatic version of evidence passing. Its `Eff` monad is essentially `ReaderT Env IO`, where `Env` is a mutable environment indexed by **Int-based offsets**. Looking up a handler is an O(1) array index operation. The `:>` constraint carries evidence that an effect exists in the environment. This design achieves performance on par with hand-written `ST` code for static dispatch and outperforms mtl for dynamic dispatch.
+Haskell's [effectful] library applies a pragmatic version of evidence passing. Its `Eff` monad is essentially `ReaderT Env IO`, where `Env` is a mutable environment indexed by **Int-based offsets**. Looking up a handler is an O(1) array index operation. The `:>` constraint carries evidence that an effect exists in the environment. This design achieves performance on par with hand-written `ST` code for static dispatch and outperforms mtl for dynamic dispatch.
 
 ### Generalized Evidence Passing
 
@@ -58,17 +58,17 @@ The follow-up paper "Generalized Evidence Passing for Effect Handlers" (Xie, Lei
 
 An alternative framing views effects not as labels in a type-level row but as **capabilities**: values that grant permission to perform operations. A function can only perform an effect if it holds a handle to the corresponding capability. This connects to the object-capability security model, where authority is determined by which references are in scope.
 
-### Bluefin (Haskell)
+### [Bluefin] (Haskell)
 
-Bluefin represents effects as value-level handles rather than type-level labels. Each handle is scoped using a mechanism similar to Haskell's `ST` trick: the handle cannot escape the lexical scope of its handler. Having two `State Int` effects in scope is trivial because they are distinct values, whereas type-level approaches require awkward disambiguation. The bluefin-algae extension adds algebraic effects on top of this design using GHC's delimited continuation primops.
+[Bluefin] represents effects as value-level handles rather than type-level labels. Each handle is scoped using a mechanism similar to Haskell's `ST` trick: the handle cannot escape the lexical scope of its handler. Having two `State Int` effects in scope is trivial because they are distinct values, whereas type-level approaches require awkward disambiguation. The bluefin-algae extension adds algebraic effects on top of this design using GHC's delimited continuation primops.
 
-### Scala 3 Capture Checking
+### [Scala 3 Capture Checking]
 
-Scala 3 introduces capture checking as an experimental feature that tracks which capabilities a value captures through the type system. Rather than adding a separate effect row, it extends the existing type system: a closure type `A -> B` becomes `A ->{c1, c2} B` indicating that the closure captures capabilities `c1` and `c2`. Effect polymorphism emerges naturally -- `map` is classified as pure because it does not use capabilities itself, but its type propagates the capabilities of whatever function argument is passed to it. Minimal annotations are needed for strict code; they only become necessary for delayed effects (lazy lists, side-effecting iterators).
+Scala 3 introduces [capture checking] as an experimental feature that tracks which capabilities a value captures through the type system. Rather than adding a separate effect row, it extends the existing type system: a closure type `A -> B` becomes `A ->{c1, c2} B` indicating that the closure captures capabilities `c1` and `c2`. Effect polymorphism emerges naturally -- `map` is classified as pure because it does not use capabilities itself, but its type propagates the capabilities of whatever function argument is passed to it. Minimal annotations are needed for strict code; they only become necessary for delayed effects (lazy lists, side-effecting iterators).
 
-### OCaml Eio
+### [OCaml Eio]
 
-Eio, the effects-based direct-style IO library for OCaml 5, adopts an object-capability model. All authority originates at `Eio_main.run`, which receives an `env` value containing capabilities for the network, filesystem, clock, and so on. Functions receive only the capabilities they need. For example, a function that only takes a `net` capability visibly cannot access the filesystem. Since OCaml is not a pure capability language, code can bypass Eio and use the stdlib directly, but the design still aids auditing and testing of non-malicious code.
+[Eio], the effects-based direct-style IO library for [OCaml 5], adopts an object-capability model. All authority originates at `Eio_main.run`, which receives an `env` value containing capabilities for the network, filesystem, clock, and so on. Functions receive only the capabilities they need. For example, a function that only takes a `net` capability visibly cannot access the filesystem. Since OCaml is not a pure capability language, code can bypass Eio and use the stdlib directly, but the design still aids auditing and testing of non-malicious code.
 
 ### Benefits of Capability Passing
 
@@ -83,9 +83,9 @@ Eio, the effects-based direct-style IO library for OCaml 5, adopts an object-cap
 
 A type-and-effect system extends a standard type system to track not only the types of expressions but also their computational effects. The design of the effect type language has significant consequences for usability and expressiveness.
 
-### Row Polymorphism (Koka, Links)
+### Row Polymorphism ([Koka], Links)
 
-Koka and Links represent effect types as _rows_ -- extensible sequences of effect labels. A function type carries its effect row: `(a) -> e b` means "given `a`, produces `b` with effects `e`." Row polymorphism allows abstracting over unknown effects:
+[Koka] and Links represent effect types as _rows_ -- extensible sequences of effect labels. A function type carries its effect row: `(a) -> e b` means "given `a`, produces `b` with effects `e`." Row polymorphism allows abstracting over unknown effects:
 
 ```koka
 fun map(xs : list<a>, f : (a) -> e b) : e list<b>
@@ -110,17 +110,17 @@ Subeffecting is a subtyping-like relation on effects: a pure computation can be 
 
 ### Effect Inference
 
-Many effect systems infer effects automatically. Koka infers full effect types without programmer annotations. The challenge intensifies with higher-rank polymorphism and subeffecting: the recent paper "Deciding not to Decide: Sound and Complete Effect Inference" (2025) addresses these interactions by delaying constraint solving and reducing effect constraints to propositional logic.
+Many effect systems infer effects automatically. [Koka] infers full effect types without programmer annotations. The challenge intensifies with higher-rank polymorphism and subeffecting: the recent paper "Deciding not to Decide: Sound and Complete Effect Inference" (2025) addresses these interactions by delaying constraint solving and reducing effect constraints to propositional logic.
 
-### Untyped Effects (OCaml 5)
+### Untyped Effects ([OCaml 5])
 
-OCaml 5 introduced algebraic effects without typing them -- effects are not tracked in function signatures. This was a pragmatic decision: the delta for OCaml 5 was already large (multicore GC plus effects), and typed effects will be introduced in a future release. The trade-off is clear: untyped effects provide the runtime benefits (structured concurrency, direct-style IO, no monadic overhead) without the static safety guarantees. An unhandled effect is a runtime error, not a compile-time one.
+[OCaml 5] introduced algebraic effects without typing them -- effects are not tracked in function signatures. This was a pragmatic decision: the delta for OCaml 5 was already large (multicore GC plus effects), and typed effects will be introduced in a future release. The trade-off is clear: untyped effects provide the runtime benefits (structured concurrency, direct-style IO, no monadic overhead) without the static safety guarantees. An unhandled effect is a runtime error, not a compile-time one.
 
 ---
 
 ## Compilation Strategies
 
-Compiling algebraic effects efficiently is challenging because effect handlers capture delimited continuations -- slices of the execution context that can be suspended and resumed. Different strategies make different trade-offs between generality, performance, and implementation complexity.
+Compiling algebraic effects efficiently is challenging because effect handlers capture delimited continuations -- slices of the execution context that can be suspended and resumed. Different strategies make different trade-offs between generality, performance, and implementation complexity. See [WasmFX] for a cross-language compilation target for effect handlers.
 
 ### CPS Transformation
 
@@ -154,7 +154,7 @@ Capture and restore actual stack frames at runtime. The program runs on segmente
 
 Only CPS-transform functions whose types indicate they may capture continuations. Functions that are total or only use tail-resumptive effects remain in direct style.
 
-- **Pros**: Minimizes code expansion (in Koka, less than 20% of core library functions need CPS); preserves tail calls for pure code.
+- **Pros**: Minimizes code expansion (in [Koka], less than 20% of core library functions need CPS); preserves tail calls for pure code.
 - **Cons**: Requires type-directed analysis; polymorphic effect variables need special handling (code duplication to pick the correct runtime representation).
 
 ### Bubble Semantics (Yield Bubbling)
@@ -166,14 +166,14 @@ When an operation needs to capture a continuation, it sets a thread-local flag a
 
 ### Comparison
 
-| Strategy                  | Languages / Libraries               | Performance                                     | Continuation Support               | Complexity                              |
-| ------------------------- | ----------------------------------- | ----------------------------------------------- | ---------------------------------- | --------------------------------------- |
-| CPS transformation        | Links (JS backend)                  | Moderate; code bloat from full CPS              | Full multi-shot                    | Low (well-understood transform)         |
-| Monadic translation       | Eff (original), Haskell free/freer  | Slow; allocation per bind                       | Full multi-shot                    | Low                                     |
-| Evidence passing          | effectful, Ev.Eff, Koka (partial)   | Fast; O(1) dispatch, zero-alloc tail-resumptive | One-shot (scoped)                  | Medium (type-directed)                  |
-| Direct stack manipulation | OCaml 5 fibers, GHC primops, WasmFX | Fastest; native call conventions                | One-shot (OCaml), multi-shot (GHC) | High (runtime support)                  |
-| Selective CPS             | Koka (C backend)                    | Fast; direct style on pure paths                | Full (via CPS'd paths)             | Medium (type-directed code duplication) |
-| Bubble semantics / yield  | Koka (generalized), Mp.Eff          | Fast; flag check on pure path                   | Full one-shot                      | Medium-high                             |
+| Strategy                  | Languages / Libraries                   | Performance                                     | Continuation Support               | Complexity                              |
+| ------------------------- | --------------------------------------- | ----------------------------------------------- | ---------------------------------- | --------------------------------------- |
+| CPS transformation        | Links (JS backend)                      | Moderate; code bloat from full CPS              | Full multi-shot                    | Low (well-understood transform)         |
+| Monadic translation       | Eff (original), Haskell free/freer      | Slow; allocation per bind                       | Full multi-shot                    | Low                                     |
+| Evidence passing          | [effectful], Ev.Eff, [Koka] (partial)   | Fast; O(1) dispatch, zero-alloc tail-resumptive | One-shot (scoped)                  | Medium (type-directed)                  |
+| Direct stack manipulation | [OCaml 5] fibers, GHC primops, [WasmFX] | Fastest; native call conventions                | One-shot (OCaml), multi-shot (GHC) | High (runtime support)                  |
+| Selective CPS             | [Koka] (C backend)                      | Fast; direct style on pure paths                | Full (via CPS'd paths)             | Medium (type-directed code duplication) |
+| Bubble semantics / yield  | [Koka] (generalized), Mp.Eff            | Fast; flag check on pure path                   | Full one-shot                      | Medium-high                             |
 
 ---
 
@@ -185,7 +185,7 @@ The evidence-passing compilation pipeline deserves closer examination because it
 
 An operation is **tail-resumptive** if its handler clause resumes the continuation in tail position and does nothing afterward. The canonical examples are `State` operations:
 
-```
+```text
 get ()  -> resume(s)          -- returns the state and resumes
 put(s') -> resume(())         -- updates the state and resumes
 ```
@@ -213,30 +213,64 @@ In practice, the vast majority of effect operations in real programs are tail-re
 
 ### Effect-Selective Monadic Translation
 
-Koka's compiler combines evidence passing with a type-selective monadic translation: functions whose effect type is total (no effects) are compiled without monadic wrapping at all. Functions that use only tail-resumptive effects get evidence-passing dispatch but no monadic overhead. Only functions that may perform general (non-tail-resumptive) operations are compiled monadically. This ensures the fast path -- the overwhelmingly common path -- incurs no allocation.
+[Koka]'s compiler combines evidence passing with a type-selective monadic translation: functions whose effect type is total (no effects) are compiled without monadic wrapping at all. Functions that use only tail-resumptive effects get evidence-passing dispatch but no monadic overhead. Only functions that may perform general (non-tail-resumptive) operations are compiled monadically. This ensures the fast path -- the overwhelmingly common path -- incurs no allocation.
 
 ---
 
 ## Sources
 
-- [Notions of Computation Determine Monads](https://link.springer.com/chapter/10.1007/3-540-45931-6_24) -- Plotkin, Power (FoSSaCS 2002)
-- [Handlers of Algebraic Effects](https://homepages.inf.ed.ac.uk/gdp/publications/Effect_Handlers.pdf) -- Plotkin, Pretnar (ESOP 2009)
-- [Algebraic Effects for Functional Programming](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/08/algeff-tr-2016-v2.pdf) -- Leijen (MSR-TR-2016-29)
-- [Koka: Programming with Row-Polymorphic Effect Types](https://arxiv.org/abs/1406.2061) -- Leijen (2014)
-- [Type Directed Compilation of Row-Typed Algebraic Effects](https://dl.acm.org/doi/10.1145/3093333.3009872) -- Leijen (POPL 2017)
-- [Effect Handlers, Evidently](https://dl.acm.org/doi/10.1145/3408981) -- Xie, Brachthaeuser, Hillerstroemm, Schuster, Leijen (ICFP 2020)
-- [Generalized Evidence Passing for Effect Handlers](https://dl.acm.org/doi/10.1145/3473576) -- Xie, Leijen (ICFP 2021)
-- [Implementing Algebraic Effects in C](https://www.microsoft.com/en-us/research/publication/implementing-algebraic-effects-in-c/) -- Leijen (APLAS 2017)
-- [Retrofitting Effect Handlers onto OCaml](https://dl.acm.org/doi/pdf/10.1145/3453483.3454039) -- Sivaramakrishnan et al. (PLDI 2021)
-- [Continuation Passing Style for Effect Handlers](https://homepages.inf.ed.ac.uk/slindley/papers/handlers-cps.pdf) -- Hillerstroemm, Lindley, Atkey, Sivaramakrishnan
-- [Continuing WebAssembly with Effect Handlers](https://dl.acm.org/doi/10.1145/3622814) -- Phipps-Costin et al. (OOPSLA 2023)
-- [Delimited Continuation Primops -- GHC Proposal #313](https://github.com/ghc-proposals/ghc-proposals/blob/master/proposals/0313-delimited-continuation-primops.rst)
-- [Monad Transformers and Modular Algebraic Effects](https://www.fceia.unr.edu.ar/~mauro/pubs/haskell2019.pdf) -- Schrijvers, Pirog, Wu, Jaskelioff (Haskell 2019)
-- [Capture Checking -- Scala 3 Reference](https://docs.scala-lang.org/scala3/reference/experimental/cc.html)
-- [Eio -- Effects-Based Direct-Style IO for OCaml 5](https://github.com/ocaml-multicore/eio)
-- [Bluefin -- Haskell Effect System](https://hackage.haskell.org/package/bluefin)
-- [effectful -- Haskell Effect Library](https://hackage.haskell.org/package/effectful)
-- [Convenient Explicit Effects](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/effects-techreport-2010.pdf) -- Leijen (MSR-TR-2010)
-- [Explicit Effect Subtyping](https://www.cambridge.org/core/journals/journal-of-functional-programming/article/explicit-effect-subtyping/4851B1C994BEAAB7F04A58B60F11D0AF) -- Koprivec, Pretnar (JFP)
-- [libmprompt -- Multi-Prompt Delimited Control in C/C++](https://github.com/koka-lang/libmprompt)
-- [effects-bibliography](https://github.com/yallop/effects-bibliography) -- Yallop et al.
+- [Notions of Computation Determine Monads] -- Plotkin, Power (FoSSaCS 2002)
+- [Handlers of Algebraic Effects] -- Plotkin, Pretnar (ESOP 2009)
+- [Algebraic Effects for Functional Programming] -- Leijen (MSR-TR-2016-29)
+- [Koka: Programming with Row-Polymorphic Effect Types] -- Leijen (2014)
+- [Type Directed Compilation of Row-Typed Algebraic Effects] -- Leijen (POPL 2017)
+- [Effect Handlers, Evidently] -- Xie, Brachthaeuser, Hillerstroemm, Schuster, Leijen (ICFP 2020)
+- [Generalized Evidence Passing for Effect Handlers] -- Xie, Leijen (ICFP 2021)
+- [Implementing Algebraic Effects in C] -- Leijen (APLAS 2017)
+- [Retrofitting Effect Handlers onto OCaml] -- Sivaramakrishnan et al. (PLDI 2021)
+- [Continuation Passing Style for Effect Handlers] -- Hillerstroemm, Lindley, Atkey, Sivaramakrishnan
+- [Continuing WebAssembly with Effect Handlers] -- Phipps-Costin et al. (OOPSLA 2023)
+- [Delimited Continuation Primops -- GHC Proposal #313]
+- [Monad Transformers and Modular Algebraic Effects] -- Schrijvers, Pirog, Wu, Jaskelioff (Haskell 2019)
+- [Capture Checking -- Scala 3 Reference]
+- [Eio -- Effects-Based Direct-Style IO for OCaml 5]
+- [Bluefin -- Haskell Effect System]
+- [effectful -- Haskell Effect Library]
+- [Convenient Explicit Effects] -- Leijen (MSR-TR-2010)
+- [Explicit Effect Subtyping] -- Koprivec, Pretnar (JFP)
+- [libmprompt -- Multi-Prompt Delimited Control in C/C++]
+- [effects-bibliography] -- Yallop et al.
+
+<!-- References -->
+
+[effectful]: haskell-effectful.md
+[cleff]: haskell-cleff.md
+[Koka]: koka.md
+[Bluefin]: haskell-bluefin.md
+[capture checking]: scala-capabilities.md
+[Eio]: ocaml-eio.md
+[OCaml 5]: ocaml-effects.md
+[OCaml 5 fibers]: ocaml-effects.md
+[WasmFX]: wasmfx.md
+[evolution]: evolution.md
+[Notions of Computation Determine Monads]: https://link.springer.com/chapter/10.1007/3-540-45931-6_24
+[Handlers of Algebraic Effects]: https://homepages.inf.ed.ac.uk/gdp/publications/Effect_Handlers.pdf
+[Algebraic Effects for Functional Programming]: https://www.microsoft.com/en-us/research/wp-content/uploads/2016/08/algeff-tr-2016-v2.pdf
+[Koka: Programming with Row-Polymorphic Effect Types]: https://arxiv.org/abs/1406.2061
+[Type Directed Compilation of Row-Typed Algebraic Effects]: https://dl.acm.org/doi/10.1145/3093333.3009872
+[Effect Handlers, Evidently]: https://dl.acm.org/doi/10.1145/3408981
+[Generalized Evidence Passing for Effect Handlers]: https://dl.acm.org/doi/10.1145/3473576
+[Implementing Algebraic Effects in C]: https://www.microsoft.com/en-us/research/publication/implementing-algebraic-effects-in-c/
+[Retrofitting Effect Handlers onto OCaml]: https://dl.acm.org/doi/pdf/10.1145/3453483.3454039
+[Continuation Passing Style for Effect Handlers]: https://homepages.inf.ed.ac.uk/slindley/papers/handlers-cps.pdf
+[Continuing WebAssembly with Effect Handlers]: https://dl.acm.org/doi/10.1145/3622814
+[Delimited Continuation Primops -- GHC Proposal #313]: https://github.com/ghc-proposals/ghc-proposals/blob/master/proposals/0313-delimited-continuation-primops.rst
+[Monad Transformers and Modular Algebraic Effects]: https://www.fceia.unr.edu.ar/~mauro/pubs/haskell2019.pdf
+[Capture Checking -- Scala 3 Reference]: https://docs.scala-lang.org/scala3/reference/experimental/cc.html
+[Eio -- Effects-Based Direct-Style IO for OCaml 5]: https://github.com/ocaml-multicore/eio
+[Bluefin -- Haskell Effect System]: https://hackage.haskell.org/package/bluefin
+[effectful -- Haskell Effect Library]: https://hackage.haskell.org/package/effectful
+[Convenient Explicit Effects]: https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/effects-techreport-2010.pdf
+[Explicit Effect Subtyping]: https://www.cambridge.org/core/journals/journal-of-functional-programming/article/explicit-effect-subtyping/4851B1C994BEAAB7F04A58B60F11D0AF
+[libmprompt -- Multi-Prompt Delimited Control in C/C++]: https://github.com/koka-lang/libmprompt
+[effects-bibliography]: https://github.com/yallop/effects-bibliography

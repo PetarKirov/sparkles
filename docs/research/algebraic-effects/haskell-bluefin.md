@@ -1,15 +1,15 @@
 # Bluefin (Haskell)
 
-A new Haskell effect system where effects are accessed through value-level handles rather than type-level constraints. Strongly inspired by effectful, Bluefin can be described as a well-typed implementation of "the functions-that-return-IO pattern."
+A new Haskell effect system where effects are accessed through value-level handles rather than type-level constraints. Strongly inspired by [effectful], Bluefin can be described as a well-typed implementation of "the functions-that-return-IO pattern."
 
-| Field         | Value                                                                      |
-| ------------- | -------------------------------------------------------------------------- |
-| Language      | Haskell                                                                    |
-| License       | MIT                                                                        |
-| Repository    | [github.com/tomjaguarpaw/bluefin](https://github.com/tomjaguarpaw/bluefin) |
-| Documentation | [Hackage](https://hackage.haskell.org/package/bluefin)                     |
-| Key Authors   | Tom Ellis                                                                  |
-| Encoding      | ReaderT IO with value-level handles; ST-like scoping                       |
+| Field         | Value                                                |
+| ------------- | ---------------------------------------------------- |
+| Language      | Haskell                                              |
+| License       | MIT                                                  |
+| Repository    | [github.com/tomjaguarpaw/bluefin]                    |
+| Documentation | [Hackage][bluefin-hackage]                           |
+| Key Authors   | Tom Ellis                                            |
+| Encoding      | ReaderT IO with value-level handles; ST-like scoping |
 
 ---
 
@@ -21,7 +21,7 @@ Bluefin provides a simple, composable, and efficient effect system with a distin
 
 ### Design Philosophy
 
-Where effectful provides "a well-typed implementation of the ReaderT IO pattern," Bluefin provides something even simpler: a well-typed implementation of "the functions-that-return-IO pattern." Effects are introduced by handlers and accessed through handles, with the type system ensuring (via ST-like scoping) that handles never escape their handler's scope.
+Where [effectful] provides "a well-typed implementation of the ReaderT IO pattern," Bluefin provides something even simpler: a well-typed implementation of "the functions-that-return-IO pattern." Effects are introduced by handlers and accessed through handles, with the type system ensuring (via ST-like scoping) that handles never escape their handler's scope.
 
 ---
 
@@ -130,7 +130,7 @@ No type-level machinery or `TypeApplications` needed -- `st1` and `st2` are simp
 
 ## Bluefin-Algae: Algebraic Effects Extension
 
-The [bluefin-algae](https://hackage.haskell.org/package/bluefin-algae) package, released in September 2025, adds algebraic effects to Bluefin by leveraging the delimited continuation primops added in GHC 9.6:
+The [bluefin-algae] package, released in September 2025, adds algebraic effects to Bluefin by leveraging the delimited continuation primops added in GHC 9.6:
 
 ```haskell
 -- Algebraic effect operations capture continuations
@@ -148,7 +148,7 @@ With bluefin-algae, effects that were built-in to Bluefin (State, Exception, etc
 
 ### Implementation
 
-Because `Eff` wraps `IO`, `State` wraps `IORef`, and `Exception` throws real IO exceptions, performance is excellent -- comparable to effectful. The type system provides safety guarantees without runtime overhead beyond what the underlying IO operations cost.
+Because `Eff` wraps `IO`, `State` wraps `IORef`, and `Exception` throws real IO exceptions, performance is excellent -- comparable to [effectful]. The type system provides safety guarantees without runtime overhead beyond what the underlying IO operations cost.
 
 ### No Indirection
 
@@ -172,14 +172,14 @@ helper st rd = do
 
 This is more explicit than constraint-based approaches but eliminates all ambiguity.
 
-### Relationship to effectful
+### Relationship to [effectful]
 
-All the design points that make effectful fast apply to Bluefin too. The major difference is that Bluefin uses value-level handles where effectful uses type-level constraints. This means:
+All the design points that make [effectful] fast apply to Bluefin too. The major difference is that Bluefin uses value-level handles where [effectful] uses type-level constraints. This means:
 
 - Bluefin functions take handles as explicit arguments
-- effectful functions use `(:>)` constraints
+- [effectful] functions use `(:>)` constraints
 - Bluefin trivially supports multiple same-type effects
-- effectful requires type-level disambiguation for the same
+- [effectful] requires type-level disambiguation for the same
 
 ---
 
@@ -188,7 +188,7 @@ All the design points that make effectful fast apply to Bluefin too. The major d
 - **Simple mental model**: Effects are values; handlers introduce them; scope prevents escape
 - **Multiple same-type effects**: Trivially supported through different handle values
 - **No type-level complexity**: No `Member` constraints, no type-level lists, no functional dependencies
-- **Fast**: Same ReaderT IO performance as effectful
+- **Fast**: Same ReaderT IO performance as [effectful]
 - **ST-like safety**: Handles cannot escape their scope, guaranteed by the type system
 - **Algebraic effects available**: Via bluefin-algae and GHC 9.6 delimited continuations
 - **Active development**: Talks at ZuriHac 2025, Functional Conf 2025
@@ -196,8 +196,8 @@ All the design points that make effectful fast apply to Bluefin too. The major d
 ## Weaknesses
 
 - **Explicit handle passing**: Functions must take handles as arguments, which can be verbose for deeply nested code
-- **IO dependency**: Like effectful, fundamentally IO-based
-- **Newer library**: Smaller ecosystem and community than effectful or polysemy
+- **IO dependency**: Like [effectful], fundamentally IO-based
+- **Newer library**: Smaller ecosystem and community than [effectful] or [polysemy]
 - **No implicit effect resolution**: Cannot automatically dispatch to the "nearest" handler of a given type
 - **bluefin-algae requires GHC 9.6+**: Delimited continuation support is recent
 
@@ -215,8 +215,21 @@ All the design points that make effectful fast apply to Bluefin too. The major d
 
 ## Sources
 
-- [Bluefin on Hackage](https://hackage.haskell.org/package/bluefin)
-- [Bluefin GitHub repository](https://github.com/tomjaguarpaw/bluefin)
-- [Bluefin announcement on Haskell Discourse](https://discourse.haskell.org/t/bluefin-a-new-effect-system/9395)
-- [bluefin-algae on Hackage](https://hackage.haskell.org/package/bluefin-algae)
-- [Bluefin-algae announcement](https://discourse.haskell.org/t/bluefin-algae-algebraic-effects-in-bluefin/9470)
+- [Bluefin on Hackage]
+- [Bluefin GitHub repository]
+- [Bluefin announcement on Haskell Discourse]
+- [bluefin-algae on Hackage]
+- [Bluefin-algae announcement]
+
+<!-- References -->
+
+[effectful]: haskell-effectful.md
+[polysemy]: haskell-polysemy.md
+[github.com/tomjaguarpaw/bluefin]: https://github.com/tomjaguarpaw/bluefin
+[bluefin-hackage]: https://hackage.haskell.org/package/bluefin
+[bluefin-algae]: https://hackage.haskell.org/package/bluefin-algae
+[Bluefin on Hackage]: https://hackage.haskell.org/package/bluefin
+[Bluefin GitHub repository]: https://github.com/tomjaguarpaw/bluefin
+[Bluefin announcement on Haskell Discourse]: https://discourse.haskell.org/t/bluefin-a-new-effect-system/9395
+[bluefin-algae on Hackage]: https://hackage.haskell.org/package/bluefin-algae
+[Bluefin-algae announcement]: https://discourse.haskell.org/t/bluefin-algae-algebraic-effects-in-bluefin/9470

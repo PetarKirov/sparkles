@@ -45,17 +45,17 @@ Together with `lambda^p`, this reframes handlers from "possibly slower abstracti
 
 ## Relationship to Mainstream Runtimes
 
-### OCaml 5
+### [OCaml 5]
 
-OCaml 5 provides native effect handlers and multicore runtime support, but production libraries are still primarily optimized around practical structured concurrency and I/O, not full parallel handler calculi.
+[OCaml 5] provides native effect handlers and multicore runtime support, but production libraries like [Eio] are still primarily optimized around practical structured concurrency and I/O, not full parallel handler calculi.
 
 ### GHC / Haskell
 
-Delimited continuation primops enable experimentation with continuation-heavy effect libraries, but parallel algebraic handlers are still largely a research frontier rather than a settled production pattern.
+Delimited continuation primops enable experimentation with continuation-heavy effect libraries like [heftia] and [Theseus], but parallel algebraic handlers are still largely a research frontier rather than a settled production pattern.
 
 ### WebAssembly
 
-Typed continuation work (WasmFX / stack-switching proposals) could become an important target substrate for cross-language implementations of parallel effect handlers.
+Typed continuation work ([WasmFX] / stack-switching proposals) could become an important target substrate for cross-language implementations of parallel effect handlers.
 
 ---
 
@@ -70,9 +70,23 @@ Typed continuation work (WasmFX / stack-switching proposals) could become an imp
 
 ## Sources
 
-- [Parallel Algebraic Effect Handlers (ICFP 2024)](https://doi.org/10.1145/3674651)
-- [Asymptotic Speedup via Effect Handlers (POPL 2025)](https://doi.org/10.1145/3704871)
-- [Retrofitting Effect Handlers onto OCaml (PLDI 2021)](https://doi.org/10.1145/3453483.3454039)
-- [OCaml release index](https://ocaml.org/releases/)
-- [GHC 9.6.1 release notes (delimited continuation primops)](https://downloads.haskell.org/~ghc/9.6.5/docs/users_guide/9.6.1-notes.html)
-- [Continuing WebAssembly with Effect Handlers (OOPSLA 2023)](https://doi.org/10.1145/3622814)
+- [Parallel Algebraic Effect Handlers (ICFP 2024)]
+- [Asymptotic Speedup via Effect Handlers (POPL 2025)]
+- [Retrofitting Effect Handlers onto OCaml (PLDI 2021)]
+- [OCaml release index]
+- [GHC 9.6.1 release notes (delimited continuation primops)]
+- [Continuing WebAssembly with Effect Handlers (OOPSLA 2023)]
+
+<!-- References -->
+
+[OCaml 5]: ocaml-effects.md
+[Eio]: ocaml-eio.md
+[heftia]: haskell-heftia.md
+[Theseus]: haskell-theseus.md
+[WasmFX]: wasmfx.md
+[Parallel Algebraic Effect Handlers (ICFP 2024)]: https://doi.org/10.1145/3674651
+[Asymptotic Speedup via Effect Handlers (POPL 2025)]: https://doi.org/10.1145/3704871
+[Retrofitting Effect Handlers onto OCaml (PLDI 2021)]: https://doi.org/10.1145/3453483.3454039
+[OCaml release index]: https://ocaml.org/releases/
+[GHC 9.6.1 release notes (delimited continuation primops)]: https://downloads.haskell.org/~ghc/9.6.5/docs/users_guide/9.6.1-notes.html
+[Continuing WebAssembly with Effect Handlers (OOPSLA 2023)]: https://doi.org/10.1145/3622814

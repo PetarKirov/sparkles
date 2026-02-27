@@ -51,7 +51,7 @@ Key result: programs can describe effects abstractly; handlers define concrete b
 
 Two streams matured:
 
-1. **Language designs** (Eff, Koka, later Effekt/Frank) demonstrated usable effect syntax and typing.
+1. **Language designs** (Eff, [Koka], later Effekt/[Frank]) demonstrated usable effect syntax and typing.
 2. **Library encodings** (especially in Haskell) explored free/freer and higher-order effect encodings.
 
 Row-polymorphic effect types and type-directed compilation were major breakthroughs in this period.
@@ -77,17 +77,18 @@ This strongly influenced practical systems and narrowed the performance gap with
 ### OCaml
 
 - PLDI 2021 formalized the retrofit strategy.
-- OCaml 5 delivered one-shot handlers in the runtime.
+- [OCaml 5] delivered one-shot handlers in the runtime.
 - OCaml 5.3 (released January 8, 2025) added direct deep-handler syntax (`match ... with effect ...`).
 - OCaml 5.4 (released October 9, 2025) continues maturation of the runtime/tooling release train.
+- [Eio] provides effects-based direct-style I/O built on OCaml 5's runtime.
 
 ### GHC
 
-Delimited continuation primops from Proposal #313 became available in released toolchains (notably the 9.6 line), enabling library experimentation with runtime-backed control operations.
+Delimited continuation primops from Proposal #313 became available in released toolchains (notably the 9.6 line), enabling library experimentation with runtime-backed control operations for libraries like [eff] and [bluefin-algae].
 
 ### WebAssembly
 
-WasmFX (OOPSLA 2023) and the stack-switching proposal line position typed continuations/stack control as a cross-language compilation substrate.
+[WasmFX] (OOPSLA 2023) and the stack-switching proposal line position typed continuations/stack control as a cross-language compilation substrate.
 
 ---
 
@@ -97,12 +98,13 @@ Recent work shifts from "can handlers work?" to "which guarantees and performanc
 
 ### 1. Sound higher-order effects
 
-- Hefty Algebras (POPL 2023) separates higher-order elaboration from first-order interpretation.
+- [Hefty Algebras] (POPL 2023) separates higher-order elaboration from first-order interpretation, implemented in the [heftia] library.
+- [Theseus] (2025) provides an alternative approach to sound higher-order effects using higher-order Freer monads.
 - Follow-up work studies abstractions over handler frameworks and modularity properties.
 
 ### 2. Parallelism and multicore semantics
 
-- Parallel Algebraic Effect Handlers (ICFP 2024) introduces `lambda^p` and a path to parallel handling.
+- [Parallel Algebraic Effect Handlers] (ICFP 2024) introduces `lambda^p` and a path to parallel handling.
 - Work on asymptotic speedups through handlers and multicore runtime models expands this direction.
 
 ### 3. Resource-sensitive effects
@@ -137,13 +139,13 @@ Free monads represent effects as data, building a syntax tree interpreted by han
 
 ### Generation 3: Fused Effects and Higher-Order Effects (~2018-2019)
 
-fused-effects encoded effects as higher-order functors and fused sequential handlers at compile time via typeclass instances. polysemy (2019) added higher-order effects via the Tactics API but prioritized ergonomics over performance.
+[fused-effects] encoded effects as higher-order functors and fused sequential handlers at compile time via typeclass instances. [polysemy] (2019) added higher-order effects via the Tactics API but prioritized ergonomics over performance.
 
 **Key data point:** The GitHub Semantic team reported a 250x improvement switching from free monads to fused-effects. Sandy Maguire later documented polysemy's performance issues in "Polysemy: Mea Culpa."
 
 ### Generation 4: ReaderT IO (~2020+)
 
-effectful and cleff embraced `IO` as the base monad, building extensible environments on top with O(1) integer-indexed dispatch.
+[effectful] and [cleff] embraced `IO` as the base monad, building extensible environments on top with O(1) integer-indexed dispatch.
 
 **Key insight:** Michael Snoyman's observation that most Haskell applications end up in `IO` anyway, so making the base monad concrete enables dramatic optimizations. effectful's static dispatch is on par with hand-written `ST` code. This generation essentially closed the performance gap.
 
@@ -151,14 +153,14 @@ effectful and cleff embraced `IO` as the base monad, building extensible environ
 
 ### Generation 5: Delimited Continuations and Sound HO Effects (~2022+)
 
-Alexis King's GHC Proposal #313 added `prompt#` and `control0#` primops. The eff library demonstrated native continuation performance wins. heftia (2024) implemented hefty algebras for fully sound higher-order + algebraic effects. bluefin-algae uses the primops to add algebraic effects to Bluefin's value-level handles.
+Alexis King's GHC Proposal #313 added `prompt#` and `control0#` primops. The [eff] library demonstrated native continuation performance wins. [heftia] (2024) implemented hefty algebras for fully sound higher-order + algebraic effects. [bluefin-algae] uses the primops to add algebraic effects to [Bluefin]'s value-level handles.
 
 **Current landscape (2026):** The Haskell ecosystem now offers four distinct strategies:
 
-1. **effectful/cleff**: Maximum performance, pragmatic IO-based semantics, no algebraic effects
-2. **heftia**: Sound semantics, all features, prioritizes theoretical rigor
-3. **bluefin + bluefin-algae**: Simple mental model (handles), algebraic effects via primops
-4. **eff**: Demonstrates native continuation performance (development stalled, but primops continue to be used)
+1. **[effectful]/[cleff]**: Maximum performance, pragmatic IO-based semantics, no algebraic effects
+2. **[heftia]**: Sound semantics, all features, prioritizes theoretical rigor
+3. **[bluefin] + bluefin-algae**: Simple mental model (handles), algebraic effects via primops
+4. **[eff]**: Demonstrates native continuation performance (development stalled, but primops continue to be used)
 
 ---
 
@@ -186,23 +188,63 @@ Different ecosystems currently optimize different subsets of these properties.
 
 ## Sources
 
-- [Notions of Computation and Monads (1991)](<https://doi.org/10.1016/0890-5401(91)90052-4>)
-- [Algebraic Operations and Generic Effects (2003)](<https://doi.org/10.1016/S1571-0661(04)80969-2>)
-- [Handlers of Algebraic Effects (2009)](https://doi.org/10.1007/978-3-642-00590-9_7)
-- [Effect Handlers in Scope (2014)](https://www.cs.ox.ac.uk/people/nicolas.wu/papers/Scope.pdf)
-- [Fusion for Free (2015)](https://people.cs.kuleuven.be/~tom.schrijvers/Research/papers/mpc2015.pdf)
-- [Freer Monads, More Extensible Effects (2015)](https://doi.org/10.1145/2804302.2804319)
-- [Algebraic Effects for Functional Programming (2016)](https://www.microsoft.com/en-us/research/wp-content/uploads/2016/08/algeff-tr-2016-v2.pdf)
-- [Type Directed Compilation of Row-Typed Algebraic Effects (2017)](https://doi.org/10.1145/3009837.3009872)
-- [Effect Handlers, Evidently (2020)](https://doi.org/10.1145/3408981)
-- [Generalized Evidence Passing (2021)](https://doi.org/10.1145/3473576)
-- [Retrofitting Effect Handlers onto OCaml (2021)](https://doi.org/10.1145/3453483.3454039)
-- [Hefty Algebras (2023)](https://doi.org/10.1145/3571255)
-- [Continuing WebAssembly with Effect Handlers (2023)](https://doi.org/10.1145/3622814)
-- [Parallel Algebraic Effect Handlers (2024)](https://doi.org/10.1145/3674651)
-- [Polysemy: Mea Culpa](https://reasonablypolymorphic.com/blog/mea-culpa/) -- Sandy Maguire
-- [GHC Proposal #313](https://github.com/ghc-proposals/ghc-proposals/blob/master/proposals/0313-delimited-continuation-primops.rst)
-- [Effects Bibliography (living index)](https://github.com/yallop/effects-bibliography)
-- [OCaml 5.3.0 release (2025-01-08)](https://ocaml.org/releases/5.3.0)
-- [OCaml releases index (includes 5.4.0, 2025-10-09)](https://ocaml.org/releases/)
-- [GHC 9.6.1 release notes (delimited continuation primops)](https://downloads.haskell.org/~ghc/9.6.5/docs/users_guide/9.6.1-notes.html)
+- [Notions of Computation and Monads (1991)]
+- [Algebraic Operations and Generic Effects (2003)]
+- [Handlers of Algebraic Effects (2009)]
+- [Effect Handlers in Scope (2014)]
+- [Fusion for Free (2015)]
+- [Freer Monads, More Extensible Effects (2015)]
+- [Algebraic Effects for Functional Programming (2016)]
+- [Type Directed Compilation of Row-Typed Algebraic Effects (2017)]
+- [Effect Handlers, Evidently (2020)]
+- [Generalized Evidence Passing (2021)]
+- [Retrofitting Effect Handlers onto OCaml (2021)]
+- [Hefty Algebras (2023)]
+- [Continuing WebAssembly with Effect Handlers (2023)]
+- [Parallel Algebraic Effect Handlers (2024)]
+- [Polysemy: Mea Culpa] -- Sandy Maguire
+- [GHC Proposal #313]
+- [Effects Bibliography (living index)]
+- [OCaml 5.3.0 release (2025-01-08)]
+- [OCaml releases index (includes 5.4.0, 2025-10-09)]
+- [GHC 9.6.1 release notes (delimited continuation primops)]
+
+<!-- References -->
+
+[Notions of Computation and Monads (1991)]: https://doi.org/10.1016/0890-5401(91)90052-4
+[Algebraic Operations and Generic Effects (2003)]: https://doi.org/10.1016/S1571-0661(04)80969-2
+[Handlers of Algebraic Effects (2009)]: https://doi.org/10.1007/978-3-642-00590-9_7
+[Effect Handlers in Scope (2014)]: https://www.cs.ox.ac.uk/people/nicolas.wu/papers/Scope.pdf
+[Fusion for Free (2015)]: https://people.cs.kuleuven.be/~tom.schrijvers/Research/papers/mpc2015.pdf
+[Freer Monads, More Extensible Effects (2015)]: https://doi.org/10.1145/2804302.2804319
+[Algebraic Effects for Functional Programming (2016)]: https://www.microsoft.com/en-us/research/wp-content/uploads/2016/08/algeff-tr-2016-v2.pdf
+[Type Directed Compilation of Row-Typed Algebraic Effects (2017)]: https://doi.org/10.1145/3009837.3009872
+[Effect Handlers, Evidently (2020)]: https://doi.org/10.1145/3408981
+[Generalized Evidence Passing (2021)]: https://doi.org/10.1145/3473576
+[Retrofitting Effect Handlers onto OCaml (2021)]: https://doi.org/10.1145/3453483.3454039
+[Hefty Algebras (2023)]: https://doi.org/10.1145/3571255
+[Continuing WebAssembly with Effect Handlers (2023)]: https://doi.org/10.1145/3622814
+[Parallel Algebraic Effect Handlers (2024)]: https://doi.org/10.1145/3674651
+[Polysemy: Mea Culpa]: https://reasonablypolymorphic.com/blog/mea-culpa/
+[GHC Proposal #313]: https://github.com/ghc-proposals/ghc-proposals/blob/master/proposals/0313-delimited-continuation-primops.rst
+[Effects Bibliography (living index)]: https://github.com/yallop/effects-bibliography
+[OCaml 5.3.0 release (2025-01-08)]: https://ocaml.org/releases/5.3.0
+[OCaml releases index (includes 5.4.0, 2025-10-09)]: https://ocaml.org/releases/
+[GHC 9.6.1 release notes (delimited continuation primops)]: https://downloads.haskell.org/~ghc/9.6.5/docs/users_guide/9.6.1-notes.html
+[Koka]: koka.md
+[Frank]: frank.md
+[OCaml 5]: ocaml-effects.md
+[Eio]: ocaml-eio.md
+[WasmFX]: wasmfx.md
+[Hefty Algebras]: papers.md
+[heftia]: haskell-heftia.md
+[Theseus]: haskell-theseus.md
+[Parallel Algebraic Effect Handlers]: parallelism.md
+[fused-effects]: haskell-fused-effects.md
+[polysemy]: haskell-polysemy.md
+[effectful]: haskell-effectful.md
+[cleff]: haskell-cleff.md
+[eff]: haskell-eff.md
+[bluefin-algae]: haskell-bluefin.md
+[Bluefin]: haskell-bluefin.md
+[bluefin]: haskell-bluefin.md

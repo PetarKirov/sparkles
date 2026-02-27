@@ -6,8 +6,8 @@ A modern implementation of effect tracking in a mainstream systems language, com
 | ------------- | -------------------------------------------------------------------------- |
 | Language      | Swift 6.x                                                                  |
 | License       | Apache-2.0                                                                 |
-| Repository    | [github.com/swiftlang/swift](https://github.com/swiftlang/swift)           |
-| Documentation | [swift.org](https://swift.org/documentation/concurrency/)                  |
+| Repository    | [github.com/swiftlang/swift]                                               |
+| Documentation | [swift.org]                                                                |
 | Key Authors   | John McCall, Joe Groff, Doug Gregor                                        |
 | Approach      | Keyword-based effect specifiers (async, throws) with full data-race safety |
 
@@ -89,6 +89,14 @@ Actors serve as a "contextual handler" for concurrency. Code running within an a
 
 ## Sources
 
-- [Swift Concurrency Manifest](https://github.com/swiftlang/swift/blob/main/docs/Concurrency/Manifesto.md)
-- [SE-0310: Effectful Read-only Properties](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0310-effectful-readonly-properties.md)
-- [SE-0413: Typed Throws](https://github.com/swiftlang/swift-evolution/blob/main/proposals/0413-typed-throws.md)
+- [Swift Concurrency Manifest]
+- [SE-0310: Effectful Read-only Properties]
+- [SE-0413: Typed Throws]
+
+<!-- References -->
+
+[github.com/swiftlang/swift]: https://github.com/swiftlang/swift
+[swift.org]: https://swift.org/documentation/concurrency/
+[Swift Concurrency Manifest]: https://github.com/swiftlang/swift/blob/main/docs/Concurrency/Manifesto.md
+[SE-0310: Effectful Read-only Properties]: https://github.com/swiftlang/swift-evolution/blob/main/proposals/0310-effectful-readonly-properties.md
+[SE-0413: Typed Throws]: https://github.com/swiftlang/swift-evolution/blob/main/proposals/0413-typed-throws.md
