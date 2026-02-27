@@ -556,17 +556,9 @@ div[class*="language-"]:hover > .code-block-actions {
   border-color: var(--vp-c-brand-1);
 }
 
-/* Copy button in the toolbar — re-apply icon styles */
-.content-expand-toolbar > button.copy {
-  background-image: var(--vp-icon-copy);
-  background-position: 50%;
-  background-size: 18px;
-  background-repeat: no-repeat;
-  opacity: 1;
-}
-
-.content-expand-toolbar > button.copy.copied {
-  background-image: var(--vp-icon-copied);
+/* Copy button in toolbar — uses inline SVG, inherits generic toolbar button styles */
+.content-expand-copy svg {
+  transition: color 0.15s ease;
 }
 
 /* Table inside overlay: no horizontal constraint */
