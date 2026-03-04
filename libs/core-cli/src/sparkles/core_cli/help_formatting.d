@@ -32,7 +32,7 @@ string formatProgramManual(HelpInfo info, Option[] options, uint wrapColumn = 80
     );
 }
 
-string formatSynopsis(string programName, Option[] options)
+string formatSynopsis(in char[] programName, Option[] options)
 {
     return "%s %-(%s %)".format(
         programName,
