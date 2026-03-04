@@ -1,0 +1,19 @@
+# Lychee link checker configuration
+# https://lychee.cli.rs/#/usage/config
+
+# Exclude sites that block automated requests or are frequently unreliable
+exclude = [
+    "^https://doi\\.org/",
+    "^https://dl\\.acm\\.org/",
+    "^https://link\\.springer\\.com/",
+    "^https://developers\\.redhat\\.com/",
+    "^https://www\\.microsoft\\.com/",
+]
+
+include_fragments = false
+
+# Timeout per request (seconds)
+timeout = 30
+
+# Maximum number of retries per request
+max_retries = 2
