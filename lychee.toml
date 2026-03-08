@@ -6,6 +6,8 @@ exclude = [
     "^https://doi\\.org/",
     "^https://dl\\.acm\\.org/",
     "^https://link\\.springer\\.com/",
+    "^https://rosettacode\\.org/",
+    "^https://hnterm\\.ggerganov\\.com/",
     # Deleted repositories (marked as struck-through in docs)
     "^https://github\\.com/sackosoft/zbox$",
     "^https://github\\.com/unvariant/tuile$",
@@ -13,6 +15,14 @@ exclude = [
 ]
 
 include_fragments = false
+
+# Rewrite GitHub web URLs to avoid HTTP 429 rate limiting.
+# - blob (file) URLs → raw.githubusercontent.com (no auth needed)
+# - tree (directory) URLs → GitHub Contents API (uses GITHUB_TOKEN via --header)
+remap = [
+    "https://github\\.com/([^/]+)/([^/]+)/blob/([^/]+)/(.*) https://raw.githubusercontent.com/$1/$2/$3/$4",
+    "https://github\\.com/([^/]+)/([^/]+)/tree/([^/]+)/(.*) https://api.github.com/repos/$1/$2/contents/$4?ref=$3",
+]
 
 # Timeout per request (seconds)
 timeout = 30
