@@ -6,8 +6,9 @@
 # Discard cached results older than this duration
 max_cache_age = "2d"
 
-# Don't cache rate-limited responses as failures
-cache_exclude_status = [429]
+# Don't cache error responses — they may be transient (rate limits,
+# server issues) and would prevent remaps from being applied on retry.
+cache_exclude_status = [401, 403, 404, 429, "500.."]
 
 #############################  Requests  ############################
 
@@ -32,11 +33,10 @@ include_fragments = false
 # When a link is broken, suggest replacements from web archives
 suggest = true
 
-# Rewrite GitHub web URLs to avoid HTTP 429 rate limiting.
-# - blob (file) URLs → raw.githubusercontent.com (no auth needed)
-# - tree (directory) URLs → GitHub Contents API (uses GITHUB_TOKEN via --header)
+# Rewrite GitHub blob/tree URLs to the Contents API to avoid HTTP 429.
+# Requires GITHUB_TOKEN passed via --header for authentication.
 remap = [
-    "https://github\\.com/([^/]+)/([^/]+)/blob/([^/]+)/(.*) https://raw.githubusercontent.com/$1/$2/$3/$4",
+    "https://github\\.com/([^/]+)/([^/]+)/blob/([^/]+)/(.*) https://api.github.com/repos/$1/$2/contents/$4?ref=$3",
     "https://github\\.com/([^/]+)/([^/]+)/tree/([^/]+)/(.*) https://api.github.com/repos/$1/$2/contents/$4?ref=$3",
 ]
 
@@ -51,6 +51,8 @@ exclude = [
     "^https://www\\.microsoft\\.com/",
     "^https://rosettacode\\.org/",
     "^https://hnterm\\.ggerganov\\.com/",
+    "^https://medium\\.com/",
+    "^https://www\\.npmjs\\.com/",
     # Deleted repositories (marked as struck-through in docs)
     "^https://github\\.com/sackosoft/zbox$",
     "^https://github\\.com/unvariant/tuile$",
@@ -62,9 +64,6 @@ exclude = [
 # Throttle requests to github.com to reduce rate limiting
 [hosts."github.com"]
 request_interval = "1s"
-
-[hosts."raw.githubusercontent.com"]
-request_interval = "200ms"
 
 [hosts."api.github.com"]
 request_interval = "200ms"
