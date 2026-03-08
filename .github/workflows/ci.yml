@@ -18,12 +18,37 @@ concurrency:
 
 jobs:
   lint:
-    uses: metacraft-labs/nixos-modules/.github/workflows/reusable-lint.yml@main
-    with:
-      runner: '["ubuntu-latest"]'
-    secrets:
-      NIX_GITHUB_TOKEN: ${{ github.token }}
-      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Nix
+        uses: metacraft-labs/nixos-modules/.github/setup-nix@main
+        with:
+          push-to-cache: false
+          nix-github-token: ${{ github.token }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+
+      - name: Restore lychee cache
+        id: restore-lychee-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .lycheecache
+          key: cache-lychee-${{ github.sha }}
+          restore-keys: cache-lychee-
+
+      - name: Check formatting
+        run: nix develop --accept-flake-config .#pre-commit -c prek run --all-files --show-diff-on-failure --color always
+
+      - name: Save lychee cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: .lycheecache
+          key: ${{ steps.restore-lychee-cache.outputs.cache-primary-key }}
 
   test:
     strategy:
