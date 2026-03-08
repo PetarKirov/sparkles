@@ -348,8 +348,8 @@ Several features that would make CPS-based effects more ergonomic are absent or 
 <!-- References -->
 
 [effing-mad]: rust-effing-mad.md
-[Faking Algebraic Effects with Traits]: https://blog.shtsoft.eu/2022/12/22/effect-trait-dp.html
-[Faking Algebraic Effects and Handlers With Traits: A Rust Design Pattern -- SHTSoft]: https://blog.shtsoft.eu/2022/12/22/effect-trait-dp.html
+[Faking Algebraic Effects with Traits]: https://github.com/shtsoft/posts/blob/master/2022-12-22-effect-trait-dp.md
+[Faking Algebraic Effects and Handlers With Traits: A Rust Design Pattern -- SHTSoft]: https://github.com/shtsoft/posts/blob/master/2022-12-22-effect-trait-dp.md
 [A universal lowering strategy for control effects in Rust -- Abubalay]: https://www.abubalay.com/blog/2024/01/14/rust-effect-lowering
 [Continuation Passing Style for Effect Handlers -- Hillerström et al. (academic paper)]: https://homepages.inf.ed.ac.uk/slindley/papers/handlers-cps.pdf
 [Simplifying Continuation-Passing Style in Rust -- Inferara]: https://medium.com/@inferara/simplifying-continuation-passing-style-cps-in-rust-e43621d98fb5

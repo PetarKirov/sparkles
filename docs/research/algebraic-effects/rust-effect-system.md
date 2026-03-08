@@ -208,13 +208,13 @@ This analysis suggests that Rust already has the low-level machinery for a gener
 
 ## Sources
 
-- [What I want from async in Rust -- without.boats]
-- [Async functions in traits are just regular generic functions -- without.boats]
+- [A four year plan for async Rust -- without.boats]
+- [Patterns & Abstractions -- without.boats]
 - [Rust async fundamentals]
 - [The Rust Programming Language -- Async/Await]
 - [Function Coloring is a Myth -- Robert Nystrom]
 - [RFC 2394: Async/Await]
-- [RFC 2920: Const Generics]
+- [RFC 2000: Const Generics]
 - [Const evaluation -- Rust Reference]
 - [Unsafe Rust -- Rust Book]
 - [The Try trait -- Rust RFC]
@@ -225,13 +225,13 @@ This analysis suggests that Rust already has the low-level machinery for a gener
 [OCaml 5]: ocaml-effects.md
 [eff]: haskell-eff.md
 [effing-mad]: rust-effing-mad.md
-[What I want from async in Rust -- without.boats]: https://without.boats/blog/what-i-want-from-async/
-[Async functions in traits are just regular generic functions -- without.boats]: https://without.boats/blog/async-generics/
+[A four year plan for async Rust -- without.boats]: https://without.boats/blog/a-four-year-plan/
+[Patterns & Abstractions -- without.boats]: https://without.boats/blog/patterns-and-abstractions/
 [Rust async fundamentals]: https://rust-lang.github.io/async-book/
-[The Rust Programming Language -- Async/Await]: https://doc.rust-lang.org/book/ch17-01-async-await.html
+[The Rust Programming Language -- Async/Await]: https://doc.rust-lang.org/book/ch17-01-futures-and-syntax.html
 [Function Coloring is a Myth -- Robert Nystrom]: https://journal.stuffwithstuff.com/2015/02/01/what-color-is-your-function/
 [RFC 2394: Async/Await]: https://rust-lang.github.io/rfcs/2394-async_await.html
-[RFC 2920: Const Generics]: https://rust-lang.github.io/rfcs/2920-const-generics.html
+[RFC 2000: Const Generics]: https://rust-lang.github.io/rfcs/2000-const-generics.html
 [Const evaluation -- Rust Reference]: https://doc.rust-lang.org/reference/const_eval.html
 [Unsafe Rust -- Rust Book]: https://doc.rust-lang.org/book/ch19-01-unsafe-rust.html
 [The Try trait -- Rust RFC]: https://rust-lang.github.io/rfcs/3058-try-trait-v2.html

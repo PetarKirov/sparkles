@@ -977,7 +977,7 @@ The template approach is more idiomatic for D and mirrors Ratatui's `Terminal<B>
   - Forum: <https://forum.ratatui.rs>
 - **History:**
   - Original tui-rs by Florian Dehau: <https://github.com/fdehau/tui-rs>
-  - Fork announcement and rationale: <https://github.com/ratatui/ratatui/discussions/167>
+  - Fork announcement and rationale: see the [ratatui README](https://github.com/ratatui/ratatui#readme) for history
 - **Ecosystem:**
   - tui-textarea: <https://github.com/rhysd/tui-textarea>
   - tui-input: <https://github.com/sayanarijit/tui-input>
@@ -991,7 +991,7 @@ The template approach is more idiomatic for D and mirrors Ratatui's `Terminal<B>
 
 [ratatui-buffer]: https://docs.rs/ratatui/latest/ratatui/buffer/struct.Buffer.html
 [ratatui-terminal]: https://docs.rs/ratatui/latest/ratatui/struct.Terminal.html
-[ratatui-frame]: https://docs.rs/ratatui/latest/ratatui/frame/struct.Frame.html
+[ratatui-frame]: https://docs.rs/ratatui/latest/ratatui/struct.Frame.html
 [ratatui-layout]: https://docs.rs/ratatui/latest/ratatui/layout/struct.Layout.html
 [ratatui-constraint]: https://docs.rs/ratatui/latest/ratatui/layout/enum.Constraint.html
 [ratatui-rect]: https://docs.rs/ratatui/latest/ratatui/layout/struct.Rect.html

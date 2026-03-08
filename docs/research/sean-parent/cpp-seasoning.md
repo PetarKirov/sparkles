@@ -347,7 +347,7 @@ std::vector<Widget*> widgets;  // Who deletes these?
 ### Further Reading
 
 - **[C++ Core Guidelines](https://isocpp.github.io/CppCoreGuidelines/)** — Industry guidelines aligned with these principles
-- **[STLab Libraries](https://stlab.cc/libraries/)** — Sean Parent's concurrency library
+- **[STLab Libraries](https://stlab.cc/)** — Sean Parent's concurrency library
 
 ---
 
