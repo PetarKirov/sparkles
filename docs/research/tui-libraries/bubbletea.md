@@ -2,14 +2,14 @@
 
 A functional framework for building terminal user interfaces in Go, based on The Elm Architecture (Model-View-Update).
 
-| Field          | Value                                                              |
-| -------------- | ------------------------------------------------------------------ |
-| Language       | Go                                                                 |
-| License        | MIT                                                                |
-| Repository     | <https://github.com/charmbracelet/bubbletea>                       |
-| Documentation  | <https://github.com/charmbracelet/bubbletea/tree/master/tutorials> |
-| Latest Version | ~1.2.x (2025)                                                      |
-| GitHub Stars   | ~39k                                                               |
+| Field          | Value                                                            |
+| -------------- | ---------------------------------------------------------------- |
+| Language       | Go                                                               |
+| License        | MIT                                                              |
+| Repository     | <https://github.com/charmbracelet/bubbletea>                     |
+| Documentation  | <https://github.com/charmbracelet/bubbletea/tree/main/tutorials> |
+| Latest Version | ~1.2.x (2025)                                                    |
+| GitHub Stars   | ~39k                                                             |
 
 ---
 
@@ -982,8 +982,8 @@ The combination of `pure`, `@nogc`, and `SmallBuffer` means UI tests run with ze
 ## References
 
 - **Repository**: <https://github.com/charmbracelet/bubbletea>
-- **Tutorial**: <https://github.com/charmbracelet/bubbletea/tree/master/tutorials>
-- **Examples**: <https://github.com/charmbracelet/bubbletea/tree/master/examples>
+- **Tutorial**: <https://github.com/charmbracelet/bubbletea/tree/main/tutorials>
+- **Examples**: <https://github.com/charmbracelet/bubbletea/tree/main/examples>
 - **Bubbles (components)**: <https://github.com/charmbracelet/bubbles>
 - **Lip Gloss (styling)**: <https://github.com/charmbracelet/lipgloss>
 - **Wish (SSH)**: <https://github.com/charmbracelet/wish>
