@@ -5,9 +5,9 @@ A Haskell library for sound higher-order and algebraic effects using higher-orde
 | Field         | Value                                    |
 | ------------- | ---------------------------------------- |
 | Language      | Haskell                                  |
-| License       | BSD-3-Clause (inferred from Hackage)     |
-| Repository    | [github.com/zebastianberndt/theseus]     |
-| Documentation | [Hackage][theseus-hackage]               |
+| License       | BSD-3-Clause                             |
+| Repository    | [github.com/jhgarner/Theseus]            |
+| Documentation | [GitHub][theseus GitHub repository]      |
 | Key Authors   | Sebastian Berndt                         |
 | Status        | Early release (2025); active development |
 | Encoding      | Higher-order Freer monad                 |
@@ -74,7 +74,6 @@ To ensure soundness and resource safety, Theseus enforces linear usage of certai
 
 ## Sources
 
-- [theseus on Hackage]
 - [theseus GitHub repository]
 - [Theseus announcement on Haskell Discourse]
 - [Hefty Algebras (POPL 2023)]
@@ -85,9 +84,7 @@ To ensure soundness and resource safety, Theseus enforces linear usage of certai
 [polysemy]: haskell-polysemy.md
 [fused-effects]: haskell-fused-effects.md
 [Hefty Algebras]: papers.md
-[github.com/zebastianberndt/theseus]: https://github.com/zebastianberndt/theseus
-[theseus-hackage]: https://hackage.haskell.org/package/theseus
-[theseus on Hackage]: https://hackage.haskell.org/package/theseus
-[theseus GitHub repository]: https://github.com/zebastianberndt/theseus
+[github.com/jhgarner/Theseus]: https://github.com/jhgarner/Theseus
+[theseus GitHub repository]: https://github.com/jhgarner/Theseus
 [Theseus announcement on Haskell Discourse]: https://discourse.haskell.org/t/theseus-worry-free-algebraic-and-higher-order-effects/13563
 [Hefty Algebras (POPL 2023)]: https://doi.org/10.1145/3571255

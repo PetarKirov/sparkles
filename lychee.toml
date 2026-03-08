@@ -1,0 +1,69 @@
+# Lychee link checker configuration
+# https://lychee.cli.rs/#/usage/config
+
+#############################  Cache  ###############################
+
+# Discard cached results older than this duration
+max_cache_age = "2d"
+
+# Don't cache error responses — they may be transient (rate limits,
+# server issues) and would prevent remaps from being applied on retry.
+cache_exclude_status = [401, 403, 404, 429, "500.."]
+
+#############################  Requests  ############################
+
+# Timeout per request (seconds)
+timeout = 30
+
+# Maximum number of retries per request
+max_retries = 2
+
+# Wait time in seconds between retries (helps with rate-limited servers)
+retry_wait_time = 2
+
+# Resolve cross-referenced files that omit their extension
+fallback_extensions = ["md", "html"]
+
+# Don't check URLs inside code blocks (they're often illustrative, not real)
+include_verbatim = false
+
+# Don't check fragments within URLs
+include_fragments = false
+
+# When a link is broken, suggest replacements from web archives
+suggest = true
+
+# Rewrite GitHub blob/tree URLs to the Contents API to avoid HTTP 429.
+# Requires GITHUB_TOKEN passed via --header for authentication.
+remap = [
+    "https://github\\.com/([^/]+)/([^/]+)/blob/([^/]+)/(.*) https://api.github.com/repos/$1/$2/contents/$4?ref=$3",
+    "https://github\\.com/([^/]+)/([^/]+)/tree/([^/]+)/(.*) https://api.github.com/repos/$1/$2/contents/$4?ref=$3",
+]
+
+#############################  Exclusions  ##########################
+
+# Exclude sites that block automated requests or are frequently unreliable
+exclude = [
+    "^https://doi\\.org/",
+    "^https://dl\\.acm\\.org/",
+    "^https://link\\.springer\\.com/",
+    "^https://developers\\.redhat\\.com/",
+    "^https://www\\.microsoft\\.com/",
+    "^https://rosettacode\\.org/",
+    "^https://hnterm\\.ggerganov\\.com/",
+    "^https://medium\\.com/",
+    "^https://www\\.npmjs\\.com/",
+    # Deleted repositories (marked as struck-through in docs)
+    "^https://github\\.com/sackosoft/zbox$",
+    "^https://github\\.com/unvariant/tuile$",
+    "^https://github\\.com/zhfkt/nice$",
+]
+
+#############################  Hosts  ###############################
+
+# Throttle requests to github.com to reduce rate limiting
+[hosts."github.com"]
+request_interval = "1s"
+
+[hosts."api.github.com"]
+request_interval = "200ms"

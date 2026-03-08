@@ -381,7 +381,7 @@ Don't handle errors at every function. Catch exceptions and check cancellation a
 
 - **[Better Code: Concurrency (YouTube)](https://www.youtube.com/watch?v=zULU6Hhp42w)** — NDC London 2017 (the stlab futures talk)
 - **[Future Ruminations (Blog)](https://sean-parent.stlab.cc/2017/07/10/future-ruminations.html)** — Design rationale for stlab futures, separation of execution context from result
-- **[stlab Concurrency Library](https://stlab.cc/libraries/)** — Production futures/channels library underlying Chains
+- **[stlab Concurrency Library](https://stlab.cc/)** — Production futures/channels library underlying Chains
 - **[ADSP Episode 172: Sean Parent on Flash, Chains & Memory Safety](https://adspthepodcast.com/2024/03/08/Episode-172.html)** — Podcast discussion of Chains (March 2024)
 - **[Papers and Presentations](https://sean-parent.stlab.cc/papers-and-presentations/)** — Complete archive of Sean Parent's talks
 

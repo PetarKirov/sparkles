@@ -29,6 +29,7 @@ pkgs.mkShell {
   ];
 
   shellHook = ''
+    export GITHUB_TOKEN="$(gh auth token)"
     figlet 'sparkles : *'
   ''
   + config.pre-commit.installationScript;

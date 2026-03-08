@@ -32,7 +32,7 @@ A breadth-first survey of terminal user interface (TUI) libraries across program
 | **Blessed**       | Retained            | Widget tree          | High-level  | Unmaintained | [repo](https://github.com/chjj/blessed)           |
 | **Neo-blessed**   | Retained            | Widget tree          | High-level  | Low activity | [repo](https://github.com/embarklabs/neo-blessed) |
 | **Terminal Kit**  | Hybrid              | Imperative + widgets | Mid-level   | Maintained   | [repo](https://github.com/cronvel/terminal-kit)   |
-| **Yoga (layout)** | N/A (layout engine) | Flexbox              | Low-level   | Active       | [repo](https://github.com/nicolo-ribaudo/yoga)    |
+| **Yoga (layout)** | N/A (layout engine) | Flexbox              | Low-level   | Active       | [repo](https://github.com/facebook/yoga)          |
 
 ## Neovim / Lua
 
@@ -72,11 +72,11 @@ A breadth-first survey of terminal user interface (TUI) libraries across program
 
 ## D
 
-| Library           | Rendering Model | Architecture         | Abstraction | Status       | Links                                      |
-| ----------------- | --------------- | -------------------- | ----------- | ------------ | ------------------------------------------ |
-| **Scone**         | Immediate       | Imperative           | Low-level   | Low activity | [repo](https://github.com/Elronnd/scone)   |
-| **Arsd terminal** | Hybrid          | Imperative + widgets | Mid-level   | Active       | [repo](https://github.com/adamdruppe/arsd) |
-| **Nice**          | N/A (backend)   | Imperative           | Low-level   | Unmaintained | [repo](https://github.com/zhfkt/nice)      |
+| Library           | Rendering Model | Architecture         | Abstraction | Status       | Links                                               |
+| ----------------- | --------------- | -------------------- | ----------- | ------------ | --------------------------------------------------- |
+| **Scone**         | Immediate       | Imperative           | Low-level   | Archived     | [repo](https://github.com/vladdeSV/scone)           |
+| **Arsd terminal** | Hybrid          | Imperative + widgets | Mid-level   | Active       | [repo](https://github.com/adamdruppe/arsd)          |
+| **Nice**          | N/A (backend)   | Imperative           | Low-level   | Unmaintained | ~~[repo](https://github.com/zhfkt/nice)~~ (deleted) |
 
 ## Java / Kotlin
 
@@ -95,11 +95,11 @@ A breadth-first survey of terminal user interface (TUI) libraries across program
 
 ## Zig
 
-| Library                     | Rendering Model | Architecture     | Abstraction | Status | Links                                          |
-| --------------------------- | --------------- | ---------------- | ----------- | ------ | ---------------------------------------------- |
-| **Tuile**                   | Immediate       | Functional       | Mid-level   | Early  | [repo](https://github.com/unvariant/tuile)     |
-| **zbox**                    | Immediate       | Ratatui-inspired | Mid-level   | Active | [repo](https://github.com/sackosoft/zbox)      |
-| **[libvaxis](libvaxis.md)** | Immediate       | Imperative       | Low-level   | Active | [repo](https://github.com/rockorager/libvaxis) |
+| Library                     | Rendering Model | Architecture     | Abstraction | Status   | Links                                                    |
+| --------------------------- | --------------- | ---------------- | ----------- | -------- | -------------------------------------------------------- |
+| **Tuile**                   | Immediate       | Functional       | Mid-level   | Archived | ~~[repo](https://github.com/unvariant/tuile)~~ (deleted) |
+| **zbox**                    | Immediate       | Ratatui-inspired | Mid-level   | Archived | ~~[repo](https://github.com/sackosoft/zbox)~~ (deleted)  |
+| **[libvaxis](libvaxis.md)** | Immediate       | Imperative       | Low-level   | Active   | [repo](https://github.com/rockorager/libvaxis)           |
 
 ## Nim
 

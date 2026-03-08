@@ -720,7 +720,7 @@ struct HBox(Widgets...) {
 - **Repository**: <https://github.com/jtdaugherty/brick>
 - **User Guide**: <https://github.com/jtdaugherty/brick/blob/master/docs/guide.rst>
 - **Hackage (API docs)**: <https://hackage.haskell.org/package/brick>
-- **FAQ**: <https://github.com/jtdaugherty/brick/blob/master/docs/FAQ.md>
+- **FAQ**: <https://github.com/jtdaugherty/brick/blob/master/FAQ.md>
 - **Demo Programs**: <https://github.com/jtdaugherty/brick/tree/master/programs>
 - **Vty (terminal backend)**: <https://github.com/jtdaugherty/vty>
 - **Vty on Hackage**: <https://hackage.haskell.org/package/vty>

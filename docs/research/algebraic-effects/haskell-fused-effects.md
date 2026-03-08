@@ -246,7 +246,7 @@ Like [polysemy], fused-effects has documented unsound cases where combinations o
 - [fused-effects on Hackage]
 - [fused-effects GitHub repository]
 - [Fusion for Free (Wu, Schrijvers 2015)]
-- [GitHub Semantic's blog post on fused-effects]
+- [GitHub Semantic's Strange Loop talk on fused-effects]
 - [fused-effects README with examples]
 
 <!-- References -->
@@ -258,5 +258,5 @@ Like [polysemy], fused-effects has documented unsound cases where combinations o
 [fused-effects on Hackage]: https://hackage.haskell.org/package/fused-effects
 [fused-effects GitHub repository]: https://github.com/fused-effects/fused-effects
 [Fusion for Free (Wu, Schrijvers 2015)]: https://people.cs.kuleuven.be/~tom.schrijvers/Research/papers/mpc2015.pdf
-[GitHub Semantic's blog post on fused-effects]: https://github.blog/2019-09-26-fused-effects-a-250x-speedup/
-[fused-effects README with examples]: https://github.com/fused-effects/fused-effects/blob/master/README.md
+[GitHub Semantic's Strange Loop talk on fused-effects]: https://www.youtube.com/watch?v=vfDazZfxlNs
+[fused-effects README with examples]: https://github.com/fused-effects/fused-effects/blob/main/README.md

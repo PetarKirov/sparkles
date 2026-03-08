@@ -9,6 +9,7 @@ result-*
 
 # Pre Commit
 .pre-commit-config.yaml
+.lycheecache
 
 # build artifact dir
 build/
