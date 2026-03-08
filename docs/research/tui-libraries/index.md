@@ -72,11 +72,11 @@ A breadth-first survey of terminal user interface (TUI) libraries across program
 
 ## D
 
-| Library           | Rendering Model | Architecture         | Abstraction | Status       | Links                                                  |
-| ----------------- | --------------- | -------------------- | ----------- | ------------ | ------------------------------------------------------ |
-| **Scone**         | Immediate       | Imperative           | Low-level   | Archived     | [repo](https://github.com/vladdeSV/scone)              |
-| **Arsd terminal** | Hybrid          | Imperative + widgets | Mid-level   | Active       | [repo](https://github.com/adamdruppe/arsd)             |
-| **Nice**          | N/A (backend)   | Imperative           | Low-level   | Unmaintained | ~~[repo](https://github.com/zhfkt/nice)~~ (deleted)    |
+| Library           | Rendering Model | Architecture         | Abstraction | Status       | Links                                               |
+| ----------------- | --------------- | -------------------- | ----------- | ------------ | --------------------------------------------------- |
+| **Scone**         | Immediate       | Imperative           | Low-level   | Archived     | [repo](https://github.com/vladdeSV/scone)           |
+| **Arsd terminal** | Hybrid          | Imperative + widgets | Mid-level   | Active       | [repo](https://github.com/adamdruppe/arsd)          |
+| **Nice**          | N/A (backend)   | Imperative           | Low-level   | Unmaintained | ~~[repo](https://github.com/zhfkt/nice)~~ (deleted) |
 
 ## Java / Kotlin
 
