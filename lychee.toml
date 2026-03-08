@@ -1,6 +1,47 @@
 # Lychee link checker configuration
 # https://lychee.cli.rs/#/usage/config
 
+#############################  Cache  ###############################
+
+# Discard cached results older than this duration
+max_cache_age = "2d"
+
+# Don't cache rate-limited responses as failures
+cache_exclude_status = [429]
+
+#############################  Requests  ############################
+
+# Timeout per request (seconds)
+timeout = 30
+
+# Maximum number of retries per request
+max_retries = 2
+
+# Wait time in seconds between retries (helps with rate-limited servers)
+retry_wait_time = 2
+
+# Resolve cross-referenced files that omit their extension
+fallback_extensions = ["md", "html"]
+
+# Don't check URLs inside code blocks (they're often illustrative, not real)
+include_verbatim = false
+
+# Don't check fragments within URLs
+include_fragments = false
+
+# When a link is broken, suggest replacements from web archives
+suggest = true
+
+# Rewrite GitHub web URLs to avoid HTTP 429 rate limiting.
+# - blob (file) URLs → raw.githubusercontent.com (no auth needed)
+# - tree (directory) URLs → GitHub Contents API (uses GITHUB_TOKEN via --header)
+remap = [
+    "https://github\\.com/([^/]+)/([^/]+)/blob/([^/]+)/(.*) https://raw.githubusercontent.com/$1/$2/$3/$4",
+    "https://github\\.com/([^/]+)/([^/]+)/tree/([^/]+)/(.*) https://api.github.com/repos/$1/$2/contents/$4?ref=$3",
+]
+
+#############################  Exclusions  ##########################
+
 # Exclude sites that block automated requests or are frequently unreliable
 exclude = [
     "^https://doi\\.org/",
@@ -14,18 +55,14 @@ exclude = [
     "^https://github\\.com/zhfkt/nice$",
 ]
 
-include_fragments = false
+#############################  Hosts  ###############################
 
-# Rewrite GitHub web URLs to avoid HTTP 429 rate limiting.
-# - blob (file) URLs → raw.githubusercontent.com (no auth needed)
-# - tree (directory) URLs → GitHub Contents API (uses GITHUB_TOKEN via --header)
-remap = [
-    "https://github\\.com/([^/]+)/([^/]+)/blob/([^/]+)/(.*) https://raw.githubusercontent.com/$1/$2/$3/$4",
-    "https://github\\.com/([^/]+)/([^/]+)/tree/([^/]+)/(.*) https://api.github.com/repos/$1/$2/contents/$4?ref=$3",
-]
+# Throttle requests to github.com to reduce rate limiting
+[hosts."github.com"]
+request_interval = "1s"
 
-# Timeout per request (seconds)
-timeout = 30
+[hosts."raw.githubusercontent.com"]
+request_interval = "200ms"
 
-# Maximum number of retries per request
-max_retries = 2
+[hosts."api.github.com"]
+request_interval = "200ms"
