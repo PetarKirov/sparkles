@@ -471,13 +471,13 @@ void onButton() {
 ### Primary Sources
 
 - **[Better Code: Concurrency (YouTube)](https://www.youtube.com/watch?v=zULU6Hhp42w)** — NDC London 2017
-- **[Chains: An Alternative to Senders/Receivers (YouTube)](https://www.youtube.com/watch?v=GTPXpS5Y0E8)** — CppCon 2021 (Presentation on the evolution of task graphs)
+- **[Chains: Exploration of an Alternative to Senders/Receivers (YouTube)](https://youtu.be/nQpXOx0D7I8)** — NYC++ 2024 (Presentation on the evolution of task graphs)
 - **[Slides (PDF)](https://sean-parent.stlab.cc/presentations/2017-01-18-concurrency/2017-01-18-concurrency.pdf)**
 - **[C++ Source Code](https://sean-parent.stlab.cc/presentations/2015-02-27-concurrency/concurrency-talk.cpp)**
 
 ### STLab Resources
 
-- **[STLab Libraries](https://stlab.cc/libraries/)** — Concurrency library
+- **[STLab Libraries](https://stlab.cc/)** — Concurrency library
 - **[STLab GitHub](https://github.com/stlab/libraries)** — Source code
 
 ### Related Talks

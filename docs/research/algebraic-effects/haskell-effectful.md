@@ -265,7 +265,7 @@ The trade-off is accepted: most real applications end up in IO anyway, and the p
 [effectful on Hackage]: https://hackage.haskell.org/package/effectful
 [effectful GitHub repository]: https://github.com/haskell-effectful/effectful
 [effectful website]: https://haskell-effectful.github.io/
-[effectful documentation]: https://haskell-effectful.github.io/effectful-docs/
+[effectful documentation]: https://haskell-effectful.github.io/
 [effectful benchmarks]: https://github.com/haskell-effectful/effectful/blob/master/benchmarks/README.md
 [Effect Handlers, Evidently (ICFP 2020)]: https://doi.org/10.1145/3408981
 [Polysemy: Mea Culpa]: https://reasonablypolymorphic.com/blog/mea-culpa/

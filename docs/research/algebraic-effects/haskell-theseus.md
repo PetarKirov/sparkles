@@ -85,9 +85,9 @@ To ensure soundness and resource safety, Theseus enforces linear usage of certai
 [polysemy]: haskell-polysemy.md
 [fused-effects]: haskell-fused-effects.md
 [Hefty Algebras]: papers.md
-[github.com/zebastianberndt/theseus]: https://github.com/zebastianberndt/theseus
+[github.com/zebastianberndt/theseus]: https://github.com/jhgarner/Theseus
 [theseus-hackage]: https://hackage.haskell.org/package/theseus
 [theseus on Hackage]: https://hackage.haskell.org/package/theseus
-[theseus GitHub repository]: https://github.com/zebastianberndt/theseus
+[theseus GitHub repository]: https://github.com/jhgarner/Theseus
 [Theseus announcement on Haskell Discourse]: https://discourse.haskell.org/t/theseus-worry-free-algebraic-and-higher-order-effects/13563
 [Hefty Algebras (POPL 2023)]: https://doi.org/10.1145/3571255

@@ -6,6 +6,10 @@ exclude = [
     "^https://doi\\.org/",
     "^https://dl\\.acm\\.org/",
     "^https://link\\.springer\\.com/",
+    # Deleted repositories (marked as struck-through in docs)
+    "^https://github\\.com/sackosoft/zbox$",
+    "^https://github\\.com/unvariant/tuile$",
+    "^https://github\\.com/zhfkt/nice$",
 ]
 
 include_fragments = false
