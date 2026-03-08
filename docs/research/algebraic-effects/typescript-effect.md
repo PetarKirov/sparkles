@@ -188,9 +188,9 @@ TypeScript constraints (runtime model, type system ergonomics, JS interoperabili
 [Fibers]: https://effect.website/docs/concurrency/fibers/
 [Scope]: https://effect.website/docs/resource-management/scope/
 [GitHub releases]: https://github.com/Effect-TS/effect/releases
-[Effect Days 2025 announcement]: https://effect.website/blog/events/effect-days-2025/
+[Effect Days 2025 announcement]: https://effect.website/events/effect-days
 [effect-smol repository]: https://github.com/Effect-TS/effect-smol
 [Effect documentation]: https://effect.website/
 [Effect GitHub repository]: https://github.com/Effect-TS/effect
 [Effect GitHub releases]: https://github.com/Effect-TS/effect/releases
-[Effect Days 2025]: https://effect.website/blog/events/effect-days-2025/
+[Effect Days 2025]: https://effect.website/events/effect-days

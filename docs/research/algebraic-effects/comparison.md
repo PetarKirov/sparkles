@@ -192,7 +192,7 @@ OCaml and GHC runtime support, plus Wasm target work, suggest long-term success 
 [Asymptotic Speedup via Effect Handlers (POPL 2025)]: https://doi.org/10.1145/3704871
 [OCaml 5.3.0 release notes]: https://ocaml.org/releases/5.3.0
 [GHC 9.6.1 release notes]: https://downloads.haskell.org/~ghc/9.6.5/docs/users_guide/9.6.1-notes.html
-[Scala 3.8 release announcement (2026-01-21)]: https://www.scala-lang.org/blog/2026/01/21/scala-3.8.html
+[Scala 3.8 release announcement (2026-01-21)]: https://www.scala-lang.org/news/3.8/
 [WebAssembly stack-switching proposal repo]: https://github.com/WebAssembly/stack-switching
 [effects-bibliography]: https://github.com/yallop/effects-bibliography
 [effectful]: haskell-effectful.md

@@ -803,7 +803,7 @@ Textual's compositor diffs visible regions and only repaints changed areas. D co
 
 - [Anatomy of a Textual User Interface](https://textual.textualize.io/blog/2024/09/15/anatomy-of-a-textual-user-interface/) -- deep dive into architecture and rendering pipeline
 - [Algorithms for High Performance Terminal Apps](https://textual.textualize.io/blog/2024/12/12/algorithms-for-high-performance-terminal-apps/) -- compositor algorithms, cuts, chops, and partial updates
-- [CSS in the Terminal with Python and Textual](https://www.willmcgugan.com/blog/tech/post/css-in-the-terminal-with-python-and-textual/) -- Will McGugan on the CSS design decisions
+- [CSS in the Terminal with Python and Textual](https://textual.textualize.io/blog/2022/11/08/version-040/#css) -- Will McGugan on the CSS design decisions
 - [Python Textual: Build Beautiful UIs in the Terminal](https://realpython.com/python-textual/) -- Real Python tutorial
 - [Textual: a framework for terminal user interfaces](https://lwn.net/Articles/929123/) -- LWN.net technical overview
 
@@ -819,10 +819,10 @@ Textual's compositor diffs visible regions and only repaints changed areas. D co
 
 ## Markdown References
 
-[textual-widget]: https://textual.textualize.io/api/widgets/
+[textual-widget]: https://textual.textualize.io/api/widget/
 [textual-app]: https://textual.textualize.io/api/app/
 [textual-screen]: https://textual.textualize.io/api/screen/
 [textual-css]: https://textual.textualize.io/guide/CSS/
-[textual-reactive]: https://textual.textualize.io/guide/reactive/
-[textual-messages]: https://textual.textualize.io/guide/message_pump/
+[textual-reactive]: https://textual.textualize.io/guide/reactivity/
+[textual-messages]: https://textual.textualize.io/api/message_pump/
 [textual-containers]: https://textual.textualize.io/api/containers/
