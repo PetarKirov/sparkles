@@ -781,12 +781,12 @@ unittest {
 
 - **Repository**: <https://github.com/vadimdemedes/ink>
 - **README / API Documentation**: <https://github.com/vadimdemedes/ink#readme>
-- **npm Package**: <https://www.npmjs.com/package/ink>
+- **npm Package**: <https://github.com/vadimdemedes/ink#readme>
 - **ink-testing-library**: <https://github.com/vadimdemedes/ink-testing-library>
 - **create-ink-app scaffolding**: <https://github.com/vadimdemedes/create-ink-app>
 - **Pastel framework**: <https://github.com/vadimdemedes/pastel>
 - **Yoga Layout Engine**: <https://github.com/facebook/yoga>
-- **react-reconciler**: <https://www.npmjs.com/package/react-reconciler>
+- **react-reconciler**: <https://github.com/facebook/react/tree/main/packages/react-reconciler>
 - **Vadim Demedes (author)**: <https://github.com/vadimdemedes>
 - **"Building a React Renderer" (Sophie Alpert talk)**: <https://www.youtube.com/watch?v=CGpMlWVcHok> -- foundational talk on custom React renderers that influenced Ink's architecture
 - **Awesome Ink (community components)**: <https://github.com/vadimdemedes/ink#useful-components> -- curated list of Ink ecosystem packages

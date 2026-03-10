@@ -32,23 +32,17 @@ jobs:
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
 
-      - name: Restore lychee cache
-        id: restore-lychee-cache
-        uses: actions/cache/restore@v4
+      - name: Cache lychee results
+        uses: actions/cache@v4
         with:
           path: .lycheecache
-          key: cache-lychee-${{ github.sha }}
-          restore-keys: cache-lychee-
+          key: cache-lychee-v2-${{ github.sha }}
+          restore-keys: cache-lychee-v2-
 
-      - name: Check formatting
+      - name: Lint and check links
         run: nix develop --accept-flake-config .#pre-commit -c prek run --all-files --show-diff-on-failure --color always
-
-      - name: Save lychee cache
-        uses: actions/cache/save@v4
-        if: always()
-        with:
-          path: .lycheecache
-          key: ${{ steps.restore-lychee-cache.outputs.cache-primary-key }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
 
   test:
     strategy:
