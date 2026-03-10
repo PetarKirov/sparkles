@@ -4,15 +4,18 @@
 #############################  Cache  ###############################
 
 # Discard cached results older than this duration
-max_cache_age = "2d"
+max_cache_age = "1d"
 
-# Don't cache rate-limited responses as failures
-cache_exclude_status = [429]
+# Don't cache transient failures (rate limits, server errors)
+cache_exclude_status = [429, "500.."]
 
 #############################  Requests  ############################
 
 # Timeout per request (seconds)
 timeout = 30
+
+# Reduce concurrent requests in CI to avoid rate limits and connection resets
+max_concurrency = 16
 
 # Maximum number of retries per request
 max_retries = 2
@@ -32,11 +35,10 @@ include_fragments = false
 # When a link is broken, suggest replacements from web archives
 suggest = true
 
-# Rewrite GitHub web URLs to avoid HTTP 429 rate limiting.
-# - blob (file) URLs → raw.githubusercontent.com (no auth needed)
-# - tree (directory) URLs → GitHub Contents API (uses GITHUB_TOKEN via --header)
+# Rewrite GitHub blob/tree URLs to the Contents API to avoid HTTP 429.
+# Requires GITHUB_TOKEN passed via --header for authentication.
 remap = [
-    "https://github\\.com/([^/]+)/([^/]+)/blob/([^/]+)/(.*) https://raw.githubusercontent.com/$1/$2/$3/$4",
+    "https://github\\.com/([^/]+)/([^/]+)/blob/([^/]+)/(.*) https://api.github.com/repos/$1/$2/contents/$4?ref=$3",
     "https://github\\.com/([^/]+)/([^/]+)/tree/([^/]+)/(.*) https://api.github.com/repos/$1/$2/contents/$4?ref=$3",
 ]
 
@@ -49,6 +51,14 @@ exclude = [
     "^https://link\\.springer\\.com/",
     "^https://rosettacode\\.org/",
     "^https://hnterm\\.ggerganov\\.com/",
+    "^https://medium\\.com/",
+    # These endpoints are flaky for automated CI checks despite resolving interactively
+    "^https://developers\\.redhat\\.com/articles/2023/10/03/beyond-loom-weaving-new-concurrency-patterns/?$",
+    "^https://www\\.unison-lang\\.org/docs/.*",
+    "^https://ocaml\\.org/releases/5\\.3\\.0/?$",
+    "^https://www\\.happycoders\\.eu/java/scoped-values/?$",
+    "^https://journal\\.stuffwithstuff\\.com/2015/02/01/what-color-is-your-function/?$",
+    "^http://www\\.fm2gp\\.com/?$",
     # Deleted repositories (marked as struck-through in docs)
     "^https://github\\.com/sackosoft/zbox$",
     "^https://github\\.com/unvariant/tuile$",
@@ -60,9 +70,6 @@ exclude = [
 # Throttle requests to github.com to reduce rate limiting
 [hosts."github.com"]
 request_interval = "1s"
-
-[hosts."raw.githubusercontent.com"]
-request_interval = "200ms"
 
 [hosts."api.github.com"]
 request_interval = "200ms"
