@@ -42,29 +42,6 @@ remap = [
     "https://github\\.com/([^/]+)/([^/]+)/tree/([^/]+)/(.*) https://api.github.com/repos/$1/$2/contents/$4?ref=$3",
 ]
 
-#############################  Exclusions  ##########################
-
-# Exclude sites that block automated requests or are frequently unreliable
-exclude = [
-    "^https://doi\\.org/",
-    "^https://dl\\.acm\\.org/",
-    "^https://link\\.springer\\.com/",
-    "^https://rosettacode\\.org/",
-    "^https://hnterm\\.ggerganov\\.com/",
-    "^https://medium\\.com/",
-    # These endpoints are flaky for automated CI checks despite resolving interactively
-    "^https://developers\\.redhat\\.com/articles/2023/10/03/beyond-loom-weaving-new-concurrency-patterns/?$",
-    "^https://www\\.unison-lang\\.org/docs/.*",
-    "^https://ocaml\\.org/releases/5\\.3\\.0/?$",
-    "^https://www\\.happycoders\\.eu/java/scoped-values/?$",
-    "^https://journal\\.stuffwithstuff\\.com/2015/02/01/what-color-is-your-function/?$",
-    "^http://www\\.fm2gp\\.com/?$",
-    # Deleted repositories (marked as struck-through in docs)
-    "^https://github\\.com/sackosoft/zbox$",
-    "^https://github\\.com/unvariant/tuile$",
-    "^https://github\\.com/zhfkt/nice$",
-]
-
 #############################  Hosts  ###############################
 
 # Throttle requests to github.com to reduce rate limiting

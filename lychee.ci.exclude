@@ -1,0 +1,7 @@
+# CI-only lychee exclusions for endpoints that are flaky under GitHub Actions
+^https://developers\.redhat\.com/articles/2023/10/03/beyond-loom-weaving-new-concurrency-patterns/?$
+^https://www\.unison-lang\.org/docs/.*
+^https://ocaml\.org/releases/5\.3\.0/?$
+^https://www\.happycoders\.eu/java/scoped-values/?$
+^https://journal\.stuffwithstuff\.com/2015/02/01/what-color-is-your-function/?$
+^http://www\.fm2gp\.com/?$
