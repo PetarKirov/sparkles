@@ -6,8 +6,8 @@ An algebraic effects library for Rust built on nightly coroutines, providing typ
 | ------------- | ---------------------------------------------------------------------------------------- |
 | Language      | Rust (nightly)                                                                           |
 | License       | MIT OR Apache-2.0                                                                        |
-| Repository    | [github.com/rosefromthedead/effing-mad]                                                  |
-| Documentation | [docs.rs/effing-mad]                                                                     |
+| Repository    | [effing-mad GitHub repository]                                                           |
+| Documentation | [effing-mad API documentation]                                                           |
 | Key Authors   | Rose Hudson                                                                              |
 | Encoding      | Coroutine-based yield/resume with typed effect traits and macro-generated state machines |
 
@@ -301,8 +301,6 @@ let test = handle(read_and_log(), handler!(FileRead(name) => {
 
 [function coloring problem]: rust-effect-system.md
 [Rust's Implicit Effect System]: rust-effect-system.md
-[github.com/rosefromthedead/effing-mad]: https://github.com/rosefromthedead/effing-mad
-[docs.rs/effing-mad]: https://docs.rs/effing-mad/latest/effing_mad/
 [effing-mad GitHub repository]: https://github.com/rosefromthedead/effing-mad
 [effing-mad on crates.io]: https://crates.io/crates/effing-mad
 [effing-mad API documentation]: https://docs.rs/effing-mad/latest/effing_mad/

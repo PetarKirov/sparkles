@@ -7,7 +7,7 @@ A higher-order, low-boilerplate extensible effects library based on freer monads
 | Language      | Haskell                                 |
 | License       | BSD-3-Clause                            |
 | Repository    | [github.com/polysemy-research/polysemy] |
-| Documentation | [Hackage][polysemy-hackage]             |
+| Documentation | [Hackage][polysemy on Hackage]          |
 | Key Authors   | Sandy Maguire                           |
 | Encoding      | Freer monad with type-level effect rows |
 
@@ -266,7 +266,6 @@ embedFinal :: Member (Final m) r => m a -> Sem r a  -- higher-order embedding
 [effectful]: haskell-effectful.md
 [eff]: haskell-eff.md
 [github.com/polysemy-research/polysemy]: https://github.com/polysemy-research/polysemy
-[polysemy-hackage]: https://hackage.haskell.org/package/polysemy
 [Polysemy: Mea Culpa]: https://reasonablypolymorphic.com/blog/mea-culpa/
 [polysemy on Hackage]: https://hackage.haskell.org/package/polysemy
 [Polysemy.Internal]: https://hackage.haskell.org/package/polysemy-1.9.2.0/docs/Polysemy-Internal.html

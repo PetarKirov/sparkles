@@ -2,14 +2,14 @@
 
 A fast and concise extensible effects library focused on the balance of performance, expressiveness, and ease of use. cleff uses a ReaderT IO approach like [effectful] but provides more versatile effect interpretation and a lighter-weight API.
 
-| Field         | Value                     |
-| ------------- | ------------------------- |
-| Language      | Haskell                   |
-| License       | BSD-3-Clause              |
-| Repository    | [github.com/re-xyr/cleff] |
-| Documentation | [Hackage][cleff-hackage]  |
-| Key Authors   | re-xyr                    |
-| Encoding      | ReaderT IO                |
+| Field         | Value                       |
+| ------------- | --------------------------- |
+| Language      | Haskell                     |
+| License       | BSD-3-Clause                |
+| Repository    | [cleff GitHub repository]   |
+| Documentation | [Hackage][cleff on Hackage] |
+| Key Authors   | re-xyr                      |
+| Encoding      | ReaderT IO                  |
 
 ---
 
@@ -192,8 +192,6 @@ The `IOE` effect provides `MonadIO`, `MonadUnliftIO`, `PrimMonad`, `MonadCatch`,
 [effectful]: haskell-effectful.md
 [polysemy]: haskell-polysemy.md
 [fused-effects]: haskell-fused-effects.md
-[github.com/re-xyr/cleff]: https://github.com/re-xyr/cleff
-[cleff-hackage]: https://hackage.haskell.org/package/cleff
 [cleff on Hackage]: https://hackage.haskell.org/package/cleff
 [cleff GitHub repository]: https://github.com/re-xyr/cleff
 [cleff announcement on Haskell Discourse]: https://discourse.haskell.org/t/ann-cleff-fast-and-concise-extensible-effects/4002

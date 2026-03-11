@@ -4,12 +4,12 @@ Effect is a production-focused TypeScript effect framework inspired by [ZIO], ce
 
 **Last reviewed:** February 16, 2026.
 
-| Field      | Value                         |
-| ---------- | ----------------------------- |
-| Language   | TypeScript                    |
-| Repository | [github.com/Effect-TS/effect] |
-| Docs       | [effect.website]              |
-| License    | MIT                           |
+| Field      | Value                      |
+| ---------- | -------------------------- |
+| Language   | TypeScript                 |
+| Repository | [Effect GitHub repository] |
+| Docs       | [Effect documentation]     |
+| License    | MIT                        |
 
 ---
 
@@ -114,7 +114,7 @@ Sources:
 
 The primary `effect` repository publishes an active **3.x** release line (for example, `effect@3.19.17` released February 16, 2026).
 
-Source: [GitHub releases]
+Source: [Effect GitHub releases]
 
 ### v4 direction
 
@@ -174,23 +174,19 @@ TypeScript constraints (runtime model, type system ergonomics, JS interoperabili
 - [Layers]
 - [Fibers]
 - [Scope]
-- [Effect Days 2025]
+- [Effect Days 2025 announcement]
 - [effect-smol repository]
 
 <!-- References -->
 
 [ZIO]: scala-zio.md
-[github.com/Effect-TS/effect]: https://github.com/Effect-TS/effect
-[effect.website]: https://effect.website/
 [Using Generators]: https://effect.website/docs/getting-started/using-generators/
 [Services]: https://effect.website/docs/requirements-management/services/
 [Layers]: https://effect.website/docs/requirements-management/layers/
 [Fibers]: https://effect.website/docs/concurrency/fibers/
 [Scope]: https://effect.website/docs/resource-management/scope/
-[GitHub releases]: https://github.com/Effect-TS/effect/releases
 [Effect Days 2025 announcement]: https://effect.website/events/effect-days
 [effect-smol repository]: https://github.com/Effect-TS/effect-smol
 [Effect documentation]: https://effect.website/
 [Effect GitHub repository]: https://github.com/Effect-TS/effect
 [Effect GitHub releases]: https://github.com/Effect-TS/effect/releases
-[Effect Days 2025]: https://effect.website/events/effect-days

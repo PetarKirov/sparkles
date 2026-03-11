@@ -6,8 +6,8 @@ The first programming language designed specifically around algebraic effects an
 | ------------- | --------------------------------------------------------------------------- |
 | Language      | Eff                                                                         |
 | License       | BSD-2-Clause                                                                |
-| Repository    | [github.com/matijapretnar/eff]                                              |
-| Documentation | [eff-lang.org]                                                              |
+| Repository    | [Eff GitHub repository]                                                     |
+| Documentation | [Eff language website]                                                      |
 | Key Authors   | Andrej Bauer, Matija Pretnar (University of Ljubljana)                      |
 | Encoding      | Native algebraic effect handlers with first-class effects and continuations |
 
@@ -249,8 +249,6 @@ Resources can be overridden by enclosing handlers, allowing redirection (e.g., s
 
 <!-- References -->
 
-[github.com/matijapretnar/eff]: https://github.com/matijapretnar/eff
-[eff-lang.org]: https://www.eff-lang.org/
 [Eff GitHub repository]: https://github.com/matijapretnar/eff
 [Eff language website]: https://www.eff-lang.org/
 [Programming with Algebraic Effects and Handlers (Bauer, Pretnar 2012)]: https://arxiv.org/abs/1203.1539

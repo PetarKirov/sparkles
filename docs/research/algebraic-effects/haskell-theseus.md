@@ -6,7 +6,7 @@ A Haskell library for sound higher-order and algebraic effects using higher-orde
 | ------------- | ---------------------------------------- |
 | Language      | Haskell                                  |
 | License       | BSD-3-Clause                             |
-| Repository    | [github.com/jhgarner/Theseus]            |
+| Repository    | [theseus GitHub repository]              |
 | Documentation | [GitHub][theseus GitHub repository]      |
 | Key Authors   | Sebastian Berndt                         |
 | Status        | Early release (2025); active development |
@@ -84,7 +84,6 @@ To ensure soundness and resource safety, Theseus enforces linear usage of certai
 [polysemy]: haskell-polysemy.md
 [fused-effects]: haskell-fused-effects.md
 [Hefty Algebras]: papers.md
-[github.com/jhgarner/Theseus]: https://github.com/jhgarner/Theseus
 [theseus GitHub repository]: https://github.com/jhgarner/Theseus
 [Theseus announcement on Haskell Discourse]: https://discourse.haskell.org/t/theseus-worry-free-algebraic-and-higher-order-effects/13563
 [Hefty Algebras (POPL 2023)]: https://doi.org/10.1145/3571255

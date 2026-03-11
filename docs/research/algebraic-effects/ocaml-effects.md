@@ -7,7 +7,7 @@ Native algebraic effect handlers built into the OCaml 5 runtime, providing first
 | Language      | OCaml 5.x                                                             |
 | License       | LGPL-2.1                                                              |
 | Repository    | [github.com/ocaml/ocaml]                                              |
-| Documentation | [OCaml Manual - Effects]                                              |
+| Documentation | [OCaml 5.2 Manual - Language Extensions: Effect Handlers]             |
 | Key Authors   | KC Sivaramakrishnan, Stephen Dolan, Leo White, Anil Madhavapeddy      |
 | Encoding      | Untyped algebraic effects with one-shot continuations on fiber stacks |
 
@@ -294,7 +294,6 @@ Since effects are untyped, there is no compile-time verification that all effect
 <!-- References -->
 
 [github.com/ocaml/ocaml]: https://github.com/ocaml/ocaml
-[OCaml Manual - Effects]: https://ocaml.org/manual/5.2/effects.html
 [OCaml 5.2 Manual - Language Extensions: Effect Handlers]: https://ocaml.org/manual/5.2/effects.html
 [Effect.Deep API Documentation]: https://ocaml.org/manual/5.2/api/Effect.Deep.html
 [Effect.Shallow API Documentation]: https://ocaml.org/manual/5.2/api/Effect.Shallow.html

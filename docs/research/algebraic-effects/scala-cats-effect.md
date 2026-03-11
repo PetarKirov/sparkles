@@ -6,8 +6,8 @@ The pure asynchronous runtime for Scala, providing a concrete `IO` monad and a t
 | ------------- | --------------------------------------------------------------------- |
 | Language      | Scala 2.13 / Scala 3                                                  |
 | License       | Apache-2.0                                                            |
-| Repository    | [github.com/typelevel/cats-effect]                                    |
-| Documentation | [typelevel.org/cats-effect]                                           |
+| Repository    | [Cats Effect GitHub repository]                                       |
+| Documentation | [Cats Effect documentation]                                           |
 | Key Authors   | Daniel Spiewak, Typelevel community                                   |
 | Approach      | Typeclass hierarchy + concrete IO monad + work-stealing fiber runtime |
 
@@ -270,8 +270,6 @@ The tagless final approach means the same library code works with any compliant 
 <!-- References -->
 
 [ZIO]: scala-zio.md
-[github.com/typelevel/cats-effect]: https://github.com/typelevel/cats-effect
-[typelevel.org/cats-effect]: https://typelevel.org/cats-effect/
 [Cats Effect documentation]: https://typelevel.org/cats-effect/
 [Cats Effect GitHub repository]: https://github.com/typelevel/cats-effect
 [Why Are Fibers Fast?]: https://typelevel.org/blog/2021/02/21/fibers-fast-mkay.html

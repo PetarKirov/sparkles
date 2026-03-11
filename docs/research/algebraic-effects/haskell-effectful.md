@@ -2,14 +2,14 @@
 
 A fast, flexible, and easy-to-use extensible effects library for Haskell. effectful rethinks the approach of existing effect libraries to provide the best balance of performance, ergonomics, and safety.
 
-| Field         | Value                                                       |
-| ------------- | ----------------------------------------------------------- |
-| Language      | Haskell                                                     |
-| License       | BSD-3-Clause                                                |
-| Repository    | [github.com/haskell-effectful/effectful]                    |
-| Documentation | [Hackage][effectful-hackage] / [Website][effectful-website] |
-| Key Authors   | Andrzej Rybczak                                             |
-| Encoding      | ReaderT IO with evidence passing                            |
+| Field         | Value                                                                |
+| ------------- | -------------------------------------------------------------------- |
+| Language      | Haskell                                                              |
+| License       | BSD-3-Clause                                                         |
+| Repository    | [effectful GitHub repository]                                        |
+| Documentation | [Hackage][effectful on Hackage] / [Website][effectful documentation] |
+| Key Authors   | Andrzej Rybczak                                                      |
+| Encoding      | ReaderT IO with evidence passing                                     |
 
 ---
 
@@ -247,9 +247,8 @@ The trade-off is accepted: most real applications end up in IO anyway, and the p
 
 - [effectful on Hackage]
 - [effectful GitHub repository]
-- [effectful website]
 - [effectful documentation]
-- [effectful benchmarks]
+- [effectful benchmark suite]
 - [Effect Handlers, Evidently (ICFP 2020)] -- theoretical basis
 - [Polysemy: Mea Culpa] -- motivation for effectful's design
 
@@ -258,14 +257,9 @@ The trade-off is accepted: most real applications end up in IO anyway, and the p
 [polysemy]: haskell-polysemy.md
 [fused-effects]: haskell-fused-effects.md
 [heftia]: haskell-heftia.md
-[github.com/haskell-effectful/effectful]: https://github.com/haskell-effectful/effectful
-[effectful-hackage]: https://hackage.haskell.org/package/effectful
-[effectful-website]: https://haskell-effectful.github.io/
 [effectful benchmark suite]: https://github.com/haskell-effectful/effectful/blob/master/benchmarks/README.md
 [effectful on Hackage]: https://hackage.haskell.org/package/effectful
 [effectful GitHub repository]: https://github.com/haskell-effectful/effectful
-[effectful website]: https://haskell-effectful.github.io/
 [effectful documentation]: https://haskell-effectful.github.io/
-[effectful benchmarks]: https://github.com/haskell-effectful/effectful/blob/master/benchmarks/README.md
 [Effect Handlers, Evidently (ICFP 2020)]: https://doi.org/10.1145/3408981
 [Polysemy: Mea Culpa]: https://reasonablypolymorphic.com/blog/mea-culpa/

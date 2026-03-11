@@ -6,8 +6,8 @@ A zero-dependency Scala library for asynchronous and concurrent programming, pro
 | ------------- | ---------------------------------------------------- |
 | Language      | Scala 2.13 / Scala 3                                 |
 | License       | Apache-2.0                                           |
-| Repository    | [github.com/zio/zio]                                 |
-| Documentation | [zio.dev]                                            |
+| Repository    | [ZIO GitHub repository]                              |
+| Documentation | [ZIO documentation]                                  |
 | Key Authors   | John De Goes (Ziverge)                               |
 | Approach      | Fiber-based runtime with three-parameter effect type |
 
@@ -263,8 +263,6 @@ Built-in concurrent data structures:
 <!-- References -->
 
 [Cats Effect]: scala-cats-effect.md
-[github.com/zio/zio]: https://github.com/zio/zio
-[zio.dev]: https://zio.dev
 [ZIO documentation]: https://zio.dev
 [ZIO GitHub repository]: https://github.com/zio/zio
 [ZIO in 2025]: https://www.ziverge.com/post/zio-in-2025

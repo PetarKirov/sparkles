@@ -6,8 +6,8 @@ Effects-based direct-style I/O library for OCaml 5, providing structured concurr
 | ------------- | ------------------------------------------------------------------------- |
 | Language      | OCaml 5.x                                                                 |
 | License       | ISC                                                                       |
-| Repository    | [github.com/ocaml-multicore/eio]                                          |
-| Documentation | [OCaml Package] / [API Docs]                                              |
+| Repository    | [Eio GitHub Repository]                                                   |
+| Documentation | [Eio on OCaml Packages] / [Eio API Documentation]                         |
 | Key Authors   | Thomas Leonard, KC Sivaramakrishnan, Anil Madhavapeddy                    |
 | Encoding      | Direct-style I/O over [OCaml 5] algebraic effects with capability passing |
 
@@ -238,9 +238,6 @@ File system capabilities are sandboxed. `Eio.Stdenv.cwd` restricts access to the
 
 [OCaml 5]: ocaml-effects.md
 [algebraic effect handlers]: ocaml-effects.md
-[github.com/ocaml-multicore/eio]: https://github.com/ocaml-multicore/eio
-[OCaml Package]: https://ocaml.org/p/eio/latest
-[API Docs]: https://ocaml-multicore.github.io/eio/eio/Eio/index.html
 [Eio GitHub Repository]: https://github.com/ocaml-multicore/eio
 [Eio 1.0 Release Announcement (Tarides)]: https://tarides.com/blog/2024-03-20-eio-1-0-release-introducing-a-new-effects-based-i-o-library-for-ocaml/
 [Eio on OCaml Packages]: https://ocaml.org/p/eio/latest

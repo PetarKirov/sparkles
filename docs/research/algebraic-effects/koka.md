@@ -6,8 +6,8 @@ A strongly typed functional language with effect types and handlers, where every
 | ------------- | ------------------------------------------------------------------- |
 | Language      | Koka                                                                |
 | License       | Apache-2.0                                                          |
-| Repository    | [github.com/koka-lang/koka]                                         |
-| Documentation | [Koka Book]                                                         |
+| Repository    | [Koka GitHub repository]                                            |
+| Documentation | [The Koka Programming Language (Book)]                              |
 | Key Authors   | Daan Leijen (Microsoft Research)                                    |
 | Encoding      | Row-polymorphic effect types with evidence passing compilation to C |
 
@@ -312,8 +312,6 @@ linear effect pretty
 
 <!-- References -->
 
-[github.com/koka-lang/koka]: https://github.com/koka-lang/koka
-[Koka Book]: https://koka-lang.github.io/koka/doc/book.html
 [Koka GitHub repository]: https://github.com/koka-lang/koka
 [The Koka Programming Language (Book)]: https://koka-lang.github.io/koka/doc/book.html
 [Koka: Programming with Row Polymorphic Effect Types (MSFP 2014)]: https://arxiv.org/abs/1406.2061

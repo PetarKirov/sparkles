@@ -6,8 +6,8 @@ A functional programming language with algebraic effect handlers and **ambient a
 | ------------- | ------------------------------------------------------- |
 | Language      | Frank                                                   |
 | License       | BSD-3-Clause (inferred)                                 |
-| Repository    | [github.com/frank-lang/frank]                           |
-| Documentation | [Frank GitHub docs]                                     |
+| Repository    | [Frank GitHub repository]                               |
+| Documentation | [Frank README with examples]                            |
 | Key Authors   | Sam Lindley, Conor McBride, Craig McLaughlin            |
 | Encoding      | Ambient ability polymorphism; call-by-push-value (CBPV) |
 
@@ -216,8 +216,6 @@ Unlike monad transformer stacks that require `lift` to access effects from deepe
 
 [Unison]: unison.md
 [Koka]: koka.md
-[github.com/frank-lang/frank]: https://github.com/frank-lang/frank
-[Frank GitHub docs]: https://github.com/frank-lang/frank/blob/master/README.md
 [Frank GitHub repository]: https://github.com/frank-lang/frank
 [Do Be Do Be Do (Frank paper, POPL 2017)]: https://arxiv.org/abs/1611.09259
 [Frank README with examples]: https://github.com/frank-lang/frank/blob/master/README.md

@@ -6,8 +6,8 @@ A library for higher-order effects and handlers using Hefty algebras. heftia sep
 | ------------- | --------------------------------------------------------- |
 | Language      | Haskell                                                   |
 | License       | BSD-3-Clause                                              |
-| Repository    | [github.com/sayo-hs/heftia]                               |
-| Documentation | [Hackage (heftia)] / [Hackage (heftia-effects)]           |
+| Repository    | [heftia GitHub repository]                                |
+| Documentation | [heftia on Hackage] / [heftia-effects on Hackage]         |
 | Key Authors   | sayo-hs                                                   |
 | Encoding      | Hefty algebras (higher-order effects + algebraic effects) |
 
@@ -232,9 +232,6 @@ A recently announced library that also addresses higher-order + algebraic effect
 [eff]: haskell-eff.md
 [Theseus]: haskell-theseus.md
 [Hefty Algebras]: papers.md
-[github.com/sayo-hs/heftia]: https://github.com/sayo-hs/heftia
-[Hackage (heftia)]: https://hackage.haskell.org/package/heftia
-[Hackage (heftia-effects)]: https://hackage.haskell.org/package/heftia-effects
 [Theseus announcement]: https://discourse.haskell.org/t/theseus-worry-free-algebraic-and-higher-order-effects/13563
 [heftia GitHub repository]: https://github.com/sayo-hs/heftia
 [heftia on Hackage]: https://hackage.haskell.org/package/heftia

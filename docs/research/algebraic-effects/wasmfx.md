@@ -9,7 +9,7 @@ WasmFX is the research line that shaped WebAssembly's stack-switching / typed-co
 | Ecosystem           | WebAssembly proposal and tooling ecosystem                  |
 | Main proposal track | [WebAssembly stack-switching proposal]                      |
 | Research origin     | [Continuing WebAssembly with Effect Handlers (OOPSLA 2023)] |
-| Primary explainer   | [wasmfx.dev]                                                |
+| Primary explainer   | [WasmFX project site]                                       |
 
 ---
 
@@ -193,7 +193,7 @@ Two implementation streams are visible in public artifacts:
 
 The 2025 WAW report documents continued implementation experience in Wasmtime-oriented tooling.
 
-Source: [Continuing Stack Switching in Wasmtime (WAW 2025)]
+Source: [Continuing Stack Switching in Wasmtime (WAW 2025 session page)]
 
 ---
 
@@ -235,11 +235,9 @@ Source: [Continuing Stack Switching in Wasmtime (WAW 2025)]
 [Theory and Compilation]: theory-compilation.md
 [WebAssembly stack-switching proposal]: https://github.com/WebAssembly/stack-switching
 [Continuing WebAssembly with Effect Handlers (OOPSLA 2023)]: https://doi.org/10.1145/3622814
-[wasmfx.dev]: https://wasmfx.dev/
 [WebAssembly proposals tracker]: https://github.com/WebAssembly/proposals
 [WasmFX project site]: https://wasmfx.dev/
 [Typed continuations core extensions]: https://wasmfx.dev/specs/core/
 [WasmFX explainer]: https://wasmfx.dev/specs/explainer/
-[Continuing Stack Switching in Wasmtime (WAW 2025)]: https://popl25.sigplan.org/details/waw-2025-papers/7/Continuing-Stack-Switching-in-Wasmtime
 [Continuing Stack Switching in Wasmtime (WAW 2025 session page)]: https://popl25.sigplan.org/details/waw-2025-papers/7/Continuing-Stack-Switching-in-Wasmtime
 [Generator example in WAT]: https://github.com/wasmfx/wasmfxtime/blob/main/examples/generator.wat
