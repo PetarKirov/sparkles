@@ -6,8 +6,8 @@ A powerful toolkit for Scala development based on algebraic effects, providing a
 | ------------- | ------------------------------------------------------------- |
 | Language      | Scala 3                                                       |
 | License       | Apache-2.0                                                    |
-| Repository    | [github.com/getkyo/kyo]                                       |
-| Documentation | [getkyo.io]                                                   |
+| Repository    | [Kyo GitHub repository]                                       |
+| Documentation | [Kyo website]                                                 |
 | Key Authors   | Flavio Brasil                                                 |
 | Approach      | Algebraic effects with modular handlers; open effect channels |
 
@@ -255,8 +255,6 @@ def myProgram: Result < MyEffects = ???
 
 [ZIO]: scala-zio.md
 [Cats Effect]: scala-cats-effect.md
-[github.com/getkyo/kyo]: https://github.com/getkyo/kyo
-[getkyo.io]: https://getkyo.io/
 [Kyo GitHub repository]: https://github.com/getkyo/kyo
 [Kyo website]: https://getkyo.io/
 [Kyo on Scaladex]: https://index.scala-lang.org/getkyo/kyo

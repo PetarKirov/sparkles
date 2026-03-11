@@ -4,12 +4,12 @@ Scala 3 is exploring capability-based effect reasoning at the language level, ce
 
 **Last reviewed:** February 16, 2026.
 
-| Field                      | Value                                 |
-| -------------------------- | ------------------------------------- |
-| Language                   | Scala 3                               |
-| Feature status             | Experimental                          |
-| Official docs              | [Scala 3 experimental features index] |
-| Capture checking reference | [Capture Checking]                    |
+| Field                      | Value                                  |
+| -------------------------- | -------------------------------------- |
+| Language                   | Scala 3                                |
+| Feature status             | Experimental                           |
+| Official docs              | [Scala 3 experimental features index]  |
+| Capture checking reference | [Capture Checking (Scala 3 reference)] |
 
 ---
 
@@ -32,8 +32,8 @@ This work is best understood as capability discipline and effect reasoning infra
 Sources:
 
 - [Scala 3.8 release announcement (January 21, 2026)]
-- [Scala 3 experimental feature index]
-- [Capture Checking reference]
+- [Scala 3 experimental features index]
+- [Capture Checking (Scala 3 reference)]
 
 ---
 
@@ -61,7 +61,7 @@ def program: Effectful[Unit] =
   println("hello")
 ```
 
-Source: [Context Functions]
+Source: [Context Functions (Scala 3 reference)]
 
 ### 2. Capture Checking
 
@@ -80,7 +80,7 @@ The `^{io}` annotation indicates that `f` captures the `io` capability. The type
 2. Functions that perform effects are properly annotated
 3. Pure functions are guaranteed to capture no capabilities
 
-Source: [Capture Checking]
+Source: [Capture Checking (Scala 3 reference)]
 
 ### 3. Boundary / Break for Structured Non-Local Exits
 
@@ -134,7 +134,7 @@ Current limitation:
 
 ## Sources
 
-- [Scala 3.8 release announcement (2026-01-21)]
+- [Scala 3.8 release announcement (January 21, 2026)]
 - [Scala 3 experimental features index]
 - [Capture Checking (Scala 3 reference)]
 - [Context Functions (Scala 3 reference)]
@@ -144,13 +144,8 @@ Current limitation:
 <!-- References -->
 
 [Scala 3 experimental features index]: https://docs.scala-lang.org/scala3/reference/experimental/index.html
-[Capture Checking]: https://docs.scala-lang.org/scala3/reference/experimental/cc.html
 [Scala 3.8 release announcement (January 21, 2026)]: https://www.scala-lang.org/news/3.8/
-[Scala 3 experimental feature index]: https://docs.scala-lang.org/scala3/reference/experimental/index.html
-[Capture Checking reference]: https://docs.scala-lang.org/scala3/reference/experimental/cc.html
-[Context Functions]: https://docs.scala-lang.org/scala3/reference/contextual/context-functions.html
 [Dropped: Nonlocal Returns (use `scala.util.boundary`)]: https://docs.scala-lang.org/scala3/reference/dropped-features/nonlocal-returns.html
-[Scala 3.8 release announcement (2026-01-21)]: https://www.scala-lang.org/news/3.8/
 [Capture Checking (Scala 3 reference)]: https://docs.scala-lang.org/scala3/reference/experimental/cc.html
 [Context Functions (Scala 3 reference)]: https://docs.scala-lang.org/scala3/reference/contextual/context-functions.html
 [Scala contributors discussion: capabilities questions]: https://contributors.scala-lang.org/t/questions-regarding-capabilities/7223

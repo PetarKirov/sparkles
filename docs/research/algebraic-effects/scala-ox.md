@@ -6,8 +6,8 @@ Safe direct-style streaming, concurrency, and resiliency for Scala on the JVM. O
 | ------------- | ------------------------------------------------------------------------- |
 | Language      | Scala 3 (JVM only)                                                        |
 | License       | Apache-2.0                                                                |
-| Repository    | [github.com/softwaremill/ox]                                              |
-| Documentation | [ox.softwaremill.com]                                                     |
+| Repository    | [Ox GitHub repository]                                                    |
+| Documentation | [Ox documentation]                                                        |
 | Key Authors   | Adam Warski, SoftwareMill                                                 |
 | Approach      | Direct style on virtual threads; IO capability; boundary/break for errors |
 
@@ -201,8 +201,6 @@ Ox provides utilities for retry, rate limiting, timeout, and circuit breaking th
 [Scala 3's capability system]: scala-capabilities.md
 [ZIO]: scala-zio.md
 [Cats Effect]: scala-cats-effect.md
-[github.com/softwaremill/ox]: https://github.com/softwaremill/ox
-[ox.softwaremill.com]: https://ox.softwaremill.com/
 [Ox GitHub repository]: https://github.com/softwaremill/ox
 [Ox documentation]: https://ox.softwaremill.com/
 [IO Effect Tracking Using Ox]: https://softwaremill.com/io-effect-tracking-using-ox/

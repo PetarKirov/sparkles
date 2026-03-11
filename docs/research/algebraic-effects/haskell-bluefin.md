@@ -6,8 +6,8 @@ A new Haskell effect system where effects are accessed through value-level handl
 | ------------- | ---------------------------------------------------- |
 | Language      | Haskell                                              |
 | License       | MIT                                                  |
-| Repository    | [github.com/tomjaguarpaw/bluefin]                    |
-| Documentation | [Hackage][bluefin-hackage]                           |
+| Repository    | [Bluefin GitHub repository]                          |
+| Documentation | [Hackage][Bluefin on Hackage]                        |
 | Key Authors   | Tom Ellis                                            |
 | Encoding      | ReaderT IO with value-level handles; ST-like scoping |
 
@@ -130,7 +130,7 @@ No type-level machinery or `TypeApplications` needed -- `st1` and `st2` are simp
 
 ## Bluefin-Algae: Algebraic Effects Extension
 
-The [bluefin-algae] package, released in September 2025, adds algebraic effects to Bluefin by leveraging the delimited continuation primops added in GHC 9.6:
+The [bluefin-algae on Hackage] package, released in September 2025, adds algebraic effects to Bluefin by leveraging the delimited continuation primops added in GHC 9.6:
 
 ```haskell
 -- Algebraic effect operations capture continuations
@@ -225,9 +225,6 @@ All the design points that make [effectful] fast apply to Bluefin too. The major
 
 [effectful]: haskell-effectful.md
 [polysemy]: haskell-polysemy.md
-[github.com/tomjaguarpaw/bluefin]: https://github.com/tomjaguarpaw/bluefin
-[bluefin-hackage]: https://hackage.haskell.org/package/bluefin
-[bluefin-algae]: https://hackage.haskell.org/package/bluefin-algae
 [Bluefin on Hackage]: https://hackage.haskell.org/package/bluefin
 [Bluefin GitHub repository]: https://github.com/tomjaguarpaw/bluefin
 [Bluefin announcement on Haskell Discourse]: https://discourse.haskell.org/t/bluefin-a-new-effect-system/9395

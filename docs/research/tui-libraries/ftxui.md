@@ -38,7 +38,7 @@ and terminal output. The programmer never manages cursor state or escape codes d
 2. **Component layer** -- Retained-mode. Components wrap Elements with event handling
    and mutable state. A [`Component`][ftxui-component] produces an Element tree via its `Render()` method,
    handles keyboard/mouse events via `OnEvent()`, and participates in a focus tree.
-   The [`ScreenInteractive`][ftxui-screen-interactive] class drives the event loop.
+   The [`ScreenInteractive`][ftxui-component] class drives the event loop.
 
 This separation means you can use the dom layer alone for static output (dashboards,
 progress displays, formatted reports) without ever touching the component layer. When
@@ -1286,5 +1286,4 @@ to ANSI for terminals or HTML for browsers.
 [ftxui-element]: https://arthursonzogni.github.io/FTXUI/group__dom.html
 [ftxui-screen]: https://arthursonzogni.github.io/FTXUI/group__screen.html
 [ftxui-component]: https://arthursonzogni.github.io/FTXUI/group__component.html
-[ftxui-screen-interactive]: https://arthursonzogni.github.io/FTXUI/group__component.html
 [ftxui-flexbox]: https://github.com/ArthurSonzogni/FTXUI/blob/main/include/ftxui/dom/flexbox_config.hpp

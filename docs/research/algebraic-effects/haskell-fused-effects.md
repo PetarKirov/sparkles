@@ -6,8 +6,8 @@ A fast and flexible effect system for Haskell with fused effect handlers, combin
 | ------------- | ------------------------------------------------------------------- |
 | Language      | Haskell                                                             |
 | License       | BSD-3-Clause                                                        |
-| Repository    | [github.com/fused-effects/fused-effects]                            |
-| Documentation | [Hackage][fused-effects-hackage]                                    |
+| Repository    | [fused-effects GitHub repository]                                   |
+| Documentation | [Hackage][fused-effects on Hackage]                                 |
 | Key Authors   | Rob Rix, Josh Vera, GitHub Semantic team                            |
 | Encoding      | Higher-order functors fused at compile time via typeclass instances |
 
@@ -253,8 +253,6 @@ Like [polysemy], fused-effects has documented unsound cases where combinations o
 
 [polysemy]: haskell-polysemy.md
 [effectful]: haskell-effectful.md
-[github.com/fused-effects/fused-effects]: https://github.com/fused-effects/fused-effects
-[fused-effects-hackage]: https://hackage.haskell.org/package/fused-effects
 [fused-effects on Hackage]: https://hackage.haskell.org/package/fused-effects
 [fused-effects GitHub repository]: https://github.com/fused-effects/fused-effects
 [Fusion for Free (Wu, Schrijvers 2015)]: https://people.cs.kuleuven.be/~tom.schrijvers/Research/papers/mpc2015.pdf

@@ -7,7 +7,7 @@ A design pattern for encoding algebraic effects and handlers on stable Rust usin
 | Language      | Rust (stable)                                                                                        |
 | License       | N/A (design pattern, not a published crate)                                                          |
 | Repository    | N/A                                                                                                  |
-| Documentation | [Faking Algebraic Effects with Traits]                                                               |
+| Documentation | [Faking Algebraic Effects and Handlers With Traits: A Rust Design Pattern -- SHTSoft]                |
 | Key Authors   | SHTSoft (blog), various community contributors                                                       |
 | Encoding      | Traits as effect interfaces in CPS; trait implementations as handlers; monomorphization for dispatch |
 
@@ -348,7 +348,6 @@ Several features that would make CPS-based effects more ergonomic are absent or 
 <!-- References -->
 
 [effing-mad]: rust-effing-mad.md
-[Faking Algebraic Effects with Traits]: https://github.com/shtsoft/posts/blob/master/2022-12-22-effect-trait-dp.md
 [Faking Algebraic Effects and Handlers With Traits: A Rust Design Pattern -- SHTSoft]: https://github.com/shtsoft/posts/blob/master/2022-12-22-effect-trait-dp.md
 [A universal lowering strategy for control effects in Rust -- Abubalay]: https://www.abubalay.com/blog/2024/01/14/rust-effect-lowering
 [Continuation Passing Style for Effect Handlers -- Hillerström et al. (academic paper)]: https://homepages.inf.ed.ac.uk/slindley/papers/handlers-cps.pdf

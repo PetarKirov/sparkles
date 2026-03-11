@@ -6,7 +6,7 @@ A work-in-progress effect system built on delimited continuation primops added t
 | ----------- | ----------------------------------------------- |
 | Language    | Haskell                                         |
 | License     | ISC                                             |
-| Repository  | [github.com/hasura/eff]                         |
+| Repository  | [eff GitHub repository]                         |
 | Key Authors | Alexis King                                     |
 | Status      | Work in progress; development stalled           |
 | Encoding    | Delimited continuations via GHC runtime primops |
@@ -29,7 +29,7 @@ Traditional effect system benchmarks fail to capture the performance of real cod
 
 ### Delimited Continuations
 
-At the heart of eff are three GHC primops (from [GHC Proposal #313]):
+At the heart of eff are three GHC primops (from [GHC Proposal #313: Delimited continuation primops]):
 
 ```haskell
 -- A tag that identifies a prompt (handler boundary)
@@ -154,7 +154,7 @@ program :: Eff '[State Int, Error String, IO] ()
 
 ### The Proposal
 
-Alexis King authored [GHC Proposal #313], which adds native delimited continuation primops to GHC. The proposal was accepted and the primops were merged into GHC (as of late 2022, available from GHC 9.6).
+Alexis King authored [GHC Proposal #313: Delimited continuation primops], which adds native delimited continuation primops to GHC. The proposal was accepted and the primops were merged into GHC (as of late 2022, available from GHC 9.6).
 
 Key design principles:
 
@@ -216,8 +216,6 @@ The proposal explicitly states it is neither about nor coupled to eff. Any effec
 [fused-effects]: haskell-fused-effects.md
 [effectful]: haskell-effectful.md
 [cleff]: haskell-cleff.md
-[github.com/hasura/eff]: https://github.com/hasura/eff
-[GHC Proposal #313]: https://github.com/ghc-proposals/ghc-proposals/blob/master/proposals/0313-delimited-continuation-primops.rst
 [eff GitHub repository]: https://github.com/hasura/eff
 [GHC Proposal #313: Delimited continuation primops]: https://github.com/ghc-proposals/ghc-proposals/blob/master/proposals/0313-delimited-continuation-primops.rst
 [GHC Proposal #313 PR discussion]: https://github.com/ghc-proposals/ghc-proposals/pull/313

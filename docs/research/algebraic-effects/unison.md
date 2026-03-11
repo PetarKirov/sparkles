@@ -6,8 +6,8 @@ A statically-typed functional programming language with content-addressed code a
 | ------------- | ------------------------------------------------------------------------------------------ |
 | Language      | Unison                                                                                     |
 | License       | MIT                                                                                        |
-| Repository    | [github.com/unisonweb/unison]                                                              |
-| Documentation | [unison-lang.org/docs]                                                                     |
+| Repository    | [Unison GitHub repository]                                                                 |
+| Documentation | [Unison language documentation]                                                            |
 | Key Authors   | Paul Chiusano, Runar Bjarnason, Arya Irani                                                 |
 | Encoding      | Abilities (algebraic effects) with content-addressed code storage and ambient polymorphism |
 
@@ -315,8 +315,6 @@ Unison provides several built-in abilities:
 <!-- References -->
 
 [Frank]: frank.md
-[github.com/unisonweb/unison]: https://github.com/unisonweb/unison
-[unison-lang.org/docs]: https://www.unison-lang.org/docs/
 [Unison language documentation]: https://www.unison-lang.org/docs/
 [Unison GitHub repository]: https://github.com/unisonweb/unison
 [Abilities and ability handlers (language reference)]: https://www.unison-lang.org/docs/language-reference/abilities-and-ability-handlers/

@@ -7,7 +7,7 @@ Virtual threads, structured concurrency, and scoped values -- Java's platform-le
 | Language      | Java 21+                                                        |
 | License       | GPL-2.0 with Classpath Exception (OpenJDK)                      |
 | Repository    | [github.com/openjdk/loom]                                       |
-| Documentation | [openjdk.org/projects/loom]                                     |
+| Documentation | [OpenJDK Project Loom]                                          |
 | Key Authors   | Ron Pressler, Alan Bateman (Oracle)                             |
 | Approach      | JVM-managed virtual threads with hidden delimited continuations |
 
@@ -273,7 +273,6 @@ However, reactive frameworks still provide value for backpressure, stream proces
 
 [Scala's Ox]: scala-ox.md
 [github.com/openjdk/loom]: https://github.com/openjdk/loom
-[openjdk.org/projects/loom]: https://openjdk.org/projects/loom/
 [OpenJDK Project Loom]: https://openjdk.org/projects/loom/
 [JEP 444: Virtual Threads]: https://openjdk.org/jeps/444
 [JEP 453: Structured Concurrency (Preview)]: https://openjdk.org/jeps/453
