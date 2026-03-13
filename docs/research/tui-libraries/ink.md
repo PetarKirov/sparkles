@@ -156,8 +156,8 @@ Padding and margin are specified in character cells:
 ### Multi-Panel Layout Example
 
 ```jsx
-import React from "react";
-import { render, Box, Text } from "ink";
+import React from 'react';
+import { render, Box, Text } from 'ink';
 
 function Dashboard() {
   return (
@@ -277,7 +277,7 @@ This produces a terminal layout with a centered header, a two-column body (sideb
 **`<Transform>`** -- Applies a transformation function to its children's rendered output, line by line. Useful for adding prefixes, indentation, or post-processing:
 
 ```jsx
-<Transform transform={(output) => `>> ${output}`}>
+<Transform transform={output => `>> ${output}`}>
   <Text>This line will be prefixed</Text>
 </Transform>
 ```
@@ -307,8 +307,8 @@ This produces a terminal layout with a centered header, a two-column body (sideb
 Custom components are standard React function components. There is no special registration or base class required. Any function that returns JSX using Ink's built-in components is a valid Ink component:
 
 ```jsx
-import React, { useState, useEffect } from "react";
-import { Box, Text, useInput, useApp } from "ink";
+import React, { useState, useEffect } from 'react';
+import { Box, Text, useInput, useApp } from 'ink';
 
 function Timer() {
   const [seconds, setSeconds] = useState(0);
@@ -319,36 +319,36 @@ function Timer() {
     if (!running) return;
 
     const timer = setInterval(() => {
-      setSeconds((prev) => prev + 1);
+      setSeconds(prev => prev + 1);
     }, 1000);
 
     return () => clearInterval(timer);
   }, [running]);
 
   useInput((input, key) => {
-    if (input === " ") {
-      setRunning((prev) => !prev);
+    if (input === ' ') {
+      setRunning(prev => !prev);
     }
-    if (input === "q") {
+    if (input === 'q') {
       exit();
     }
   });
 
   const minutes = Math.floor(seconds / 60);
   const secs = seconds % 60;
-  const display = `${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+  const display = `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 
   return (
     <Box flexDirection="column" alignItems="center" padding={1}>
       <Text bold>Stopwatch</Text>
       <Box marginY={1}>
-        <Text color={running ? "green" : "yellow"} bold>
+        <Text color={running ? 'green' : 'yellow'} bold>
           {display}
         </Text>
       </Box>
       <Text dimColor>
-        {running ? "Press SPACE to pause" : "Press SPACE to resume"}
-        {" | Press Q to quit"}
+        {running ? 'Press SPACE to pause' : 'Press SPACE to resume'}
+        {' | Press Q to quit'}
       </Text>
     </Box>
   );
@@ -410,12 +410,12 @@ Colors support multiple formats (powered by chalk's terminal color detection):
 ### Styling Code Example
 
 ```jsx
-import React from "react";
-import { render, Box, Text } from "ink";
+import React from 'react';
+import { render, Box, Text } from 'ink';
 
 function StyledCard({ title, status, description }) {
   const statusColor =
-    status === "passing" ? "green" : status === "failing" ? "red" : "yellow";
+    status === 'passing' ? 'green' : status === 'failing' ? 'red' : 'yellow';
 
   return (
     <Box
@@ -431,8 +431,8 @@ function StyledCard({ title, status, description }) {
           {title}
         </Text>
         <Text color={statusColor} bold inverse>
-          {" "}
-          {status.toUpperCase()}{" "}
+          {' '}
+          {status.toUpperCase()}{' '}
         </Text>
       </Box>
 
@@ -444,11 +444,11 @@ function StyledCard({ title, status, description }) {
 
       <Box marginTop={1}>
         <Text>
-          Priority:{" "}
+          Priority:{' '}
           <Text color="#ff6347" bold>
             HIGH
           </Text>
-          {" | "}
+          {' | '}
           Updated: <Text underline>2 hours ago</Text>
         </Text>
       </Box>
@@ -472,8 +472,8 @@ render(
 The primary mechanism for handling keyboard input is the `useInput` hook. It receives two arguments: the raw input string, and a `key` object with boolean flags for special keys.
 
 ```jsx
-import React, { useState } from "react";
-import { Box, Text, useInput, useApp } from "ink";
+import React, { useState } from 'react';
+import { Box, Text, useInput, useApp } from 'ink';
 
 function SelectableList({ items }) {
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -482,18 +482,18 @@ function SelectableList({ items }) {
 
   useInput((input, key) => {
     if (key.upArrow) {
-      setSelectedIndex((prev) => Math.max(0, prev - 1));
+      setSelectedIndex(prev => Math.max(0, prev - 1));
     }
 
     if (key.downArrow) {
-      setSelectedIndex((prev) => Math.min(items.length - 1, prev + 1));
+      setSelectedIndex(prev => Math.min(items.length - 1, prev + 1));
     }
 
     if (key.return) {
       setConfirmed(items[selectedIndex]);
     }
 
-    if (input === "q" || key.escape) {
+    if (input === 'q' || key.escape) {
       exit();
     }
   });
@@ -506,8 +506,8 @@ function SelectableList({ items }) {
     <Box flexDirection="column">
       <Text bold>Choose an option (arrows to move, enter to select):</Text>
       {items.map((item, i) => (
-        <Text key={item} color={i === selectedIndex ? "cyan" : undefined}>
-          {i === selectedIndex ? "> " : "  "}
+        <Text key={item} color={i === selectedIndex ? 'cyan' : undefined}>
+          {i === selectedIndex ? '> ' : '  '}
           {item}
         </Text>
       ))}
@@ -537,8 +537,8 @@ function FocusableItem({ label }) {
 
   return (
     <Box>
-      <Text color={isFocused ? "green" : "gray"}>
-        {isFocused ? "> " : "  "}
+      <Text color={isFocused ? 'green' : 'gray'}>
+        {isFocused ? '> ' : '  '}
         {label}
       </Text>
     </Box>
@@ -552,7 +552,7 @@ Programmatic focus control is available through `useFocusManager()`:
 const { focusNext, focusPrevious, focus } = useFocusManager();
 focusNext(); // Move focus to next component
 focusPrevious(); // Move focus to previous component
-focus("submit-btn"); // Focus a specific component by ID
+focus('submit-btn'); // Focus a specific component by ID
 ```
 
 ### Mouse Support
@@ -615,14 +615,14 @@ Ink has a rich ecosystem of community components and tools:
 - `stdin.write(input)` -- Simulate keyboard input
 
 ```jsx
-import { render } from "ink-testing-library";
-import Counter from "./Counter.js";
+import { render } from 'ink-testing-library';
+import Counter from './Counter.js';
 
 const { lastFrame, stdin } = render(<Counter />);
-assert.equal(lastFrame(), "Count: 0");
+assert.equal(lastFrame(), 'Count: 0');
 
-stdin.write("i"); // simulate pressing 'i' to increment
-assert.equal(lastFrame(), "Count: 1");
+stdin.write('i'); // simulate pressing 'i' to increment
+assert.equal(lastFrame(), 'Count: 1');
 ```
 
 ### Popular Community Components

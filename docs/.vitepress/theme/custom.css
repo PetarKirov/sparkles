@@ -5,7 +5,7 @@
  * Cool indigo/violet/cyan palette evoking CLI sparkles.
  * ========================================================================== */
 
-@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap");
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap');
 
 /* --------------------------------------------------------------------------
  * Color palette
@@ -58,11 +58,11 @@
  * -------------------------------------------------------------------------- */
 :root {
   --vp-font-family-base:
-    "Inter", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji",
-    "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+    'Inter', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji',
+    'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
   --vp-font-family-mono:
-    "JetBrains Mono", ui-monospace, "Menlo", "Monaco", "Consolas",
-    "Liberation Mono", "Courier New", monospace;
+    'JetBrains Mono', ui-monospace, 'Menlo', 'Monaco', 'Consolas',
+    'Liberation Mono', 'Courier New', monospace;
 }
 
 /* -- Headings: Space Grotesk with refined tracking ----------------------- */
@@ -75,7 +75,7 @@
 .VPHero .name,
 .VPHero .text,
 .VPFeature .title {
-  font-family: "Space Grotesk", var(--vp-font-family-base);
+  font-family: 'Space Grotesk', var(--vp-font-family-base);
 }
 
 .vp-doc h1 {
@@ -154,7 +154,7 @@
 }
 
 /* -- Code blocks --------------------------------------------------------- */
-.vp-doc div[class*="language-"] code {
+.vp-doc div[class*='language-'] code {
   font-size: 0.85em;
   line-height: 1.7;
   font-variant-ligatures: contextual;
@@ -162,7 +162,7 @@
 
 /* -- Nav & sidebar typography -------------------------------------------- */
 .VPNavBarTitle .title {
-  font-family: "Space Grotesk", var(--vp-font-family-base);
+  font-family: 'Space Grotesk', var(--vp-font-family-base);
   font-weight: 700;
   letter-spacing: -0.02em;
 }
@@ -173,7 +173,7 @@
 
 /* Level-0 sidebar group labels: uppercase micro-label style */
 .VPSidebarItem.level-0 > .item > .text {
-  font-family: "Space Grotesk", var(--vp-font-family-base);
+  font-family: 'Space Grotesk', var(--vp-font-family-base);
   font-weight: 600;
   font-size: 0.8em;
   letter-spacing: 0.06em;
@@ -330,7 +330,7 @@
 
 /* Table header refinement */
 .vp-doc table th {
-  font-family: "Space Grotesk", var(--vp-font-family-base);
+  font-family: 'Space Grotesk', var(--vp-font-family-base);
   font-weight: 600;
   letter-spacing: 0.02em;
   font-size: 0.85em;
@@ -339,14 +339,14 @@
 
 /* Badge typography */
 .VPBadge {
-  font-family: "Space Grotesk", var(--vp-font-family-base);
+  font-family: 'Space Grotesk', var(--vp-font-family-base);
   font-weight: 600;
   letter-spacing: 0.02em;
 }
 
 /* Outline heading in aside */
 .VPDocAsideOutline .outline-title {
-  font-family: "Space Grotesk", var(--vp-font-family-base);
+  font-family: 'Space Grotesk', var(--vp-font-family-base);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -408,7 +408,7 @@
   transition: opacity 0.25s ease;
 }
 
-div[class*="language-"]:hover > .code-block-actions {
+div[class*='language-']:hover > .code-block-actions {
   opacity: 1;
 }
 
@@ -570,6 +570,6 @@ div[class*="language-"]:hover > .code-block-actions {
 }
 
 /* Code block inside overlay: remove max-height */
-.content-expand-body div[class*="language-"] {
+.content-expand-body div[class*='language-'] {
   max-height: none;
 }

@@ -1,15 +1,15 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, nextTick } from "vue";
+import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue';
 
-import { useRoute } from "vitepress";
-import DefaultTheme from "vitepress/theme";
+import { useRoute } from 'vitepress';
+import DefaultTheme from 'vitepress/theme';
 
 const { Layout: VPLayout } = DefaultTheme;
 const route = useRoute();
 
-const EXPAND_BTN_CLS = "content-expand-btn";
-const TABLE_WRAPPER_CLS = "table-expand-wrapper";
-const CODE_ACTIONS_CLS = "code-block-actions";
+const EXPAND_BTN_CLS = 'content-expand-btn';
+const TABLE_WRAPPER_CLS = 'table-expand-wrapper';
+const CODE_ACTIONS_CLS = 'code-block-actions';
 
 // --- Reactive state ---
 const isOverlayOpen = ref(false);
@@ -32,7 +32,7 @@ function openOverlay(contentEl: HTMLElement) {
   pendingContentEl = contentEl;
   isCopied.value = false;
   isOverlayOpen.value = true;
-  document.body.style.overflow = "hidden";
+  document.body.style.overflow = 'hidden';
 
   nextTick(() => {
     if (!overlayBodyRef.value || !pendingContentEl) return;
@@ -43,18 +43,18 @@ function openOverlay(contentEl: HTMLElement) {
     // Remove expand buttons and actions bars from the clone
     clone
       .querySelectorAll(`.${EXPAND_BTN_CLS}, .${CODE_ACTIONS_CLS}`)
-      .forEach((el) => el.remove());
+      .forEach(el => el.remove());
 
     // Fix code group tab switching — cloned radio inputs share names with originals
-    if (clone.classList?.contains("vp-code-group")) {
+    if (clone.classList?.contains('vp-code-group')) {
       fixClonedCodeGroupTabs(clone);
     }
-    for (const group of clone.querySelectorAll(".vp-code-group")) {
+    for (const group of clone.querySelectorAll('.vp-code-group')) {
       fixClonedCodeGroupTabs(group);
     }
 
     overlayBodyRef.value.appendChild(clone);
-    hasCodeContent.value = !!overlayBodyRef.value.querySelector("pre code");
+    hasCodeContent.value = !!overlayBodyRef.value.querySelector('pre code');
 
     closeButtonRef.value?.focus();
   });
@@ -62,10 +62,10 @@ function openOverlay(contentEl: HTMLElement) {
 
 function closeOverlay() {
   isOverlayOpen.value = false;
-  document.body.style.overflow = "";
+  document.body.style.overflow = '';
 
   if (overlayBodyRef.value) {
-    overlayBodyRef.value.innerHTML = "";
+    overlayBodyRef.value.innerHTML = '';
   }
 
   if (copyTimeout) {
@@ -75,7 +75,7 @@ function closeOverlay() {
   isCopied.value = false;
 
   // Restore focus to the element that triggered the overlay
-  if (triggerElement && typeof triggerElement.focus === "function") {
+  if (triggerElement && typeof triggerElement.focus === 'function') {
     triggerElement.focus();
     triggerElement = null;
   }
@@ -83,10 +83,10 @@ function closeOverlay() {
 
 function copyOverlayCode() {
   if (!overlayBodyRef.value) return;
-  const codeEl = overlayBodyRef.value.querySelector("pre code");
+  const codeEl = overlayBodyRef.value.querySelector('pre code');
   if (!codeEl) return;
 
-  navigator.clipboard.writeText(codeEl.textContent ?? "");
+  navigator.clipboard.writeText(codeEl.textContent ?? '');
   isCopied.value = true;
   if (copyTimeout) clearTimeout(copyTimeout);
   copyTimeout = setTimeout(() => {
@@ -96,11 +96,11 @@ function copyOverlayCode() {
 
 // --- Focus trap ---
 function handleOverlayKeydown(e: KeyboardEvent) {
-  if (e.key === "Escape") {
+  if (e.key === 'Escape') {
     closeOverlay();
     return;
   }
-  if (e.key !== "Tab" || !overlayRef.value) return;
+  if (e.key !== 'Tab' || !overlayRef.value) return;
 
   const focusable = overlayRef.value.querySelectorAll<HTMLElement>(
     'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
@@ -121,51 +121,51 @@ function handleOverlayKeydown(e: KeyboardEvent) {
 
 // --- DOM scanning for expand buttons ---
 function setupExpandButtons() {
-  if (typeof document === "undefined") return;
+  if (typeof document === 'undefined') return;
 
   scanController?.abort();
   scanController = new AbortController();
   const { signal } = scanController;
 
-  const root = document.querySelector(".vp-doc") ?? document;
+  const root = document.querySelector('.vp-doc') ?? document;
 
   // Clean up old expand buttons
-  root.querySelectorAll(`.${EXPAND_BTN_CLS}`).forEach((b) => b.remove());
+  root.querySelectorAll(`.${EXPAND_BTN_CLS}`).forEach(b => b.remove());
 
   // Add a delegated listener for all moved copy buttons (VitePress's default
   // listener uses a direct child selector which breaks when we wrap the button)
   root.addEventListener(
-    "click",
-    (e) => {
+    'click',
+    e => {
       const target = e.target as HTMLElement;
       const btn = target.closest(
         `.${CODE_ACTIONS_CLS} button.copy`,
       ) as HTMLButtonElement;
-      if (!btn || btn.classList.contains("copied")) return;
+      if (!btn || btn.classList.contains('copied')) return;
 
       const actionsBar = btn.closest(`.${CODE_ACTIONS_CLS}`) as HTMLElement;
       const parent = actionsBar.parentElement;
       if (!parent) return;
 
-      const codeBlock = parent.classList.contains("vp-code-group")
+      const codeBlock = parent.classList.contains('vp-code-group')
         ? parent.querySelector('div[class*="language-"].active')
         : parent;
 
-      const codeEl = codeBlock?.querySelector("pre code");
+      const codeEl = codeBlock?.querySelector('pre code');
       if (codeEl) {
-        navigator.clipboard.writeText(codeEl.textContent || "");
-        btn.classList.add("copied");
-        setTimeout(() => btn.classList.remove("copied"), 2000);
+        navigator.clipboard.writeText(codeEl.textContent || '');
+        btn.classList.add('copied');
+        setTimeout(() => btn.classList.remove('copied'), 2000);
       }
     },
     { signal },
   );
 
   // Tables
-  for (const table of root.querySelectorAll("table")) {
+  for (const table of root.querySelectorAll('table')) {
     let wrapper = table.closest(`.${TABLE_WRAPPER_CLS}`);
     if (!wrapper) {
-      wrapper = document.createElement("div");
+      wrapper = document.createElement('div');
       wrapper.className = TABLE_WRAPPER_CLS;
       table.parentNode!.insertBefore(wrapper, table);
       wrapper.appendChild(table);
@@ -174,9 +174,9 @@ function setupExpandButtons() {
   }
 
   // Code groups — actions bar on the group container, over the tabs
-  for (const group of root.querySelectorAll(".vp-code-group")) {
+  for (const group of root.querySelectorAll('.vp-code-group')) {
     if (group.querySelector(`.${CODE_ACTIONS_CLS}`)) continue;
-    const actionsBar = document.createElement("div");
+    const actionsBar = document.createElement('div');
     actionsBar.className = CODE_ACTIONS_CLS;
     const expandBtn = createExpandButton(group as HTMLElement, signal);
     // Move the active tab's copy button into the actions bar, then expand
@@ -184,9 +184,9 @@ function setupExpandButtons() {
     actionsBar.appendChild(expandBtn);
     group.appendChild(actionsBar);
     // Update copy button when tabs change
-    for (const input of group.querySelectorAll(".tabs input")) {
+    for (const input of group.querySelectorAll('.tabs input')) {
       input.addEventListener(
-        "change",
+        'change',
         () => nextTick(() => syncCopyButton(group as HTMLElement, actionsBar)),
         { signal },
       );
@@ -195,10 +195,10 @@ function setupExpandButtons() {
 
   // Standalone code blocks (not inside a code group)
   for (const block of root.querySelectorAll('div[class*="language-"]')) {
-    if (block.closest(".vp-code-group")) continue;
+    if (block.closest('.vp-code-group')) continue;
     if (block.querySelector(`.${CODE_ACTIONS_CLS}`)) continue;
-    const copyBtn = block.querySelector("button.copy") as any;
-    const actionsBar = document.createElement("div");
+    const copyBtn = block.querySelector('button.copy') as any;
+    const actionsBar = document.createElement('div');
     actionsBar.className = CODE_ACTIONS_CLS;
     if (copyBtn) {
       copyBtn._originalParent = block;
@@ -211,19 +211,19 @@ function setupExpandButtons() {
 
 function fixClonedCodeGroupTabs(group: Element) {
   const suffix = `-overlay-${overlayGroupCounter++}`;
-  for (const input of group.querySelectorAll(".tabs input")) {
+  for (const input of group.querySelectorAll('.tabs input')) {
     const oldId = input.id;
     input.id = oldId + suffix;
     (input as HTMLInputElement).name =
       (input as HTMLInputElement).name + suffix;
     const label = group.querySelector(`label[for="${oldId}"]`);
-    if (label) label.setAttribute("for", input.id);
+    if (label) label.setAttribute('for', input.id);
   }
 }
 
 function syncCopyButton(group: HTMLElement, actionsBar: HTMLElement) {
   // Return any previous copy button to its code block
-  const prev = actionsBar.querySelector("button.copy") as any;
+  const prev = actionsBar.querySelector('button.copy') as any;
   if (prev && prev._originalParent) {
     prev._originalParent.appendChild(prev);
   }
@@ -243,27 +243,27 @@ function createExpandButton(
   contentEl: HTMLElement,
   signal: AbortSignal,
 ): HTMLButtonElement {
-  const btn = document.createElement("button");
+  const btn = document.createElement('button');
   btn.className = EXPAND_BTN_CLS;
-  btn.title = "Expand to fullscreen";
-  btn.setAttribute("aria-label", "Expand to fullscreen");
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("width", "14");
-  svg.setAttribute("height", "14");
-  svg.setAttribute("viewBox", "0 0 24 24");
-  svg.setAttribute("fill", "none");
-  svg.setAttribute("stroke", "currentColor");
-  svg.setAttribute("stroke-width", "2");
-  svg.setAttribute("stroke-linecap", "round");
-  svg.setAttribute("stroke-linejoin", "round");
-  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  btn.title = 'Expand to fullscreen';
+  btn.setAttribute('aria-label', 'Expand to fullscreen');
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('width', '14');
+  svg.setAttribute('height', '14');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.setAttribute('fill', 'none');
+  svg.setAttribute('stroke', 'currentColor');
+  svg.setAttribute('stroke-width', '2');
+  svg.setAttribute('stroke-linecap', 'round');
+  svg.setAttribute('stroke-linejoin', 'round');
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   path.setAttribute(
-    "d",
-    "M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3",
+    'd',
+    'M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3',
   );
   svg.appendChild(path);
   btn.appendChild(svg);
-  btn.addEventListener("click", () => openOverlay(contentEl), { signal });
+  btn.addEventListener('click', () => openOverlay(contentEl), { signal });
   return btn;
 }
 
@@ -288,7 +288,7 @@ onUnmounted(() => {
     copyTimeout = null;
   }
   if (isOverlayOpen.value) {
-    document.body.style.overflow = "";
+    document.body.style.overflow = '';
   }
 });
 

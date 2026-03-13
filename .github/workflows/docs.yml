@@ -4,15 +4,15 @@ on:
   push:
     branches: [main]
     paths:
-      - "docs/**"
-      - "package.json"
-      - "package-lock.json"
+      - 'docs/**'
+      - 'package.json'
+      - 'package-lock.json'
   pull_request:
     branches: [main]
     paths:
-      - "docs/**"
-      - "package.json"
-      - "package-lock.json"
+      - 'docs/**'
+      - 'package.json'
+      - 'package-lock.json'
   workflow_dispatch:
 
 concurrency:
