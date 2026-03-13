@@ -92,6 +92,8 @@ Note: systems marked as having "no effect tracking" (Rust implicit features, Jav
 
 ### Haskell
 
+- [mtl]
+- [freer-simple]
 - [effectful]
 - [cleff]
 - [polysemy]
@@ -106,6 +108,7 @@ Note: systems marked as having "no effect tracking" (Rust implicit features, Jav
 - [ZIO]
 - [Cats Effect]
 - [Kyo]
+- [TurboLift]
 - [Scala Capabilities]
 - [Ox]
 
@@ -199,11 +202,14 @@ Note: systems marked as having "no effect tracking" (Rust implicit features, Jav
 [OCaml 5 Effects]: ocaml-effects.md
 [OCaml Eio]: ocaml-eio.md
 [WasmFX]: wasmfx.md
+[mtl]: haskell-mtl.md
+[freer-simple]: haskell-freer-simple.md
 [Effect (TypeScript)]: typescript-effect.md
 [TypeScript Effect]: typescript-effect.md
 [Java Loom]: java-loom.md
 [Rust Effect Notes]: rust-effect-system.md
 [Additional Implementations]: other-implementations.md
+[TurboLift]: scala-turbolift.md
 [Evolution of Effect Systems]: evolution.md
 [Comparison and Analysis]: comparison.md
 [Theory and Compilation]: theory-compilation.md
