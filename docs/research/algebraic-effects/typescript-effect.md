@@ -45,16 +45,16 @@ An `Effect<A, E, R>` is an immutable description of a computation that, when exe
 `Effect.gen` is the primary composition mechanism, playing the same role as `async/await` but with full effect tracking:
 
 ```typescript
-import { Effect, Context } from "effect";
+import { Effect, Context } from 'effect';
 
-class Database extends Context.Tag("@app/Database")<
+class Database extends Context.Tag('@app/Database')<
   Database,
   {
     readonly query: (sql: string) => Effect.Effect<unknown[], DatabaseError>;
   }
 >() {}
 
-class Logger extends Context.Tag("@app/Logger")<
+class Logger extends Context.Tag('@app/Logger')<
   Logger,
   {
     readonly info: (msg: string) => Effect.Effect<void>;
@@ -79,7 +79,7 @@ Each `yield*` adds its error and requirement types to the composite effect. The 
 `Layer<ROut, E, RIn>` is a blueprint for constructing services from their dependencies:
 
 ```typescript
-import { Layer } from "effect";
+import { Layer } from 'effect';
 
 const DatabaseLive = Layer.effect(
   Database,
@@ -87,7 +87,7 @@ const DatabaseLive = Layer.effect(
     const config = yield* ConfigService;
     const pool = yield* createPool(config.dbUrl);
     return {
-      query: (sql) => Effect.tryPromise(() => pool.query(sql)),
+      query: sql => Effect.tryPromise(() => pool.query(sql)),
     };
   }),
 );
