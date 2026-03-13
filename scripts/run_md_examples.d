@@ -12,7 +12,8 @@ dub single-file programs, executes them, and reports results.
 
 Usage:
 ---
-./run_md_examples.d [--verify|--update] <markdown-file>
+./run_md_examples.d [--verify|--update] [--glob=PATTERN] <markdown-file...>
+./run_md_examples.d [--dedup-reference-links|--fix-reference-links] [--glob=PATTERN] [markdown-file...]
 ---
 
 Modes:
@@ -21,6 +22,8 @@ $(LIST
     $(ITEM Default — run examples and display results in boxes)
     $(ITEM `--verify` — compare output against expected output blocks, report mismatches)
     $(ITEM `--update` — rewrite the markdown file with actual output (golden snapshot update))
+    $(ITEM `--dedup-reference-links` — report duplicate markdown reference definitions by URL)
+    $(ITEM `--fix-reference-links` — rewrite duplicates to a canonical label)
 )
 
 The script looks for D code blocks starting with:
@@ -54,14 +57,15 @@ wildcard pattern handles verification against the actual (dynamic) output.
 +/
 
 // std.* modules
-import std.algorithm : countUntil, filter, map, startsWith;
+import std.algorithm : any, canFind, countUntil, filter, map, sort, startsWith;
 import std.array : array, join;
 import std.conv : text, to;
 import std.file : exists, mkdirRecurse, readText, remove, tempDir, write;
 import std.path : baseName, buildPath;
 import std.process : execute;
+import std.regex : ctRegex, matchFirst;
 import std.stdio : writeln;
-import std.string : indexOf, lineSplitter, strip, stripRight;
+import std.string : endsWith, indexOf, lineSplitter, replace, strip, stripRight, toLower;
 
 // sparkles packages
 import sparkles.core_cli.args : CliOption, HelpInfo, parseCliArgs;
@@ -82,6 +86,21 @@ struct CliParams
 
     @CliOption(`g|glob`, "Glob pattern to find markdown files (e.g. '*.md' or '**/*.md').")
     string glob;
+
+    @CliOption(`d|dedup-reference-links`, "Report duplicate markdown reference definitions that point to the same URL.")
+    bool dedupReferenceLinks;
+
+    @CliOption(`f|fix-reference-links`, "Rewrite duplicate markdown references to one canonical label per URL.")
+    bool fixReferenceLinks;
+}
+
+enum ProgramMode
+{
+    runExamples,
+    verifyExamples,
+    updateExamples,
+    checkReferenceLinks,
+    fixReferenceLinks,
 }
 
 struct Example
@@ -102,6 +121,23 @@ struct ExampleResult
     string programOutput; // ANSI-stripped
     string rawOutput;     // with ANSI codes for display
 }
+
+struct ReferenceDef
+{
+    size_t lineIndex;
+    string label;
+    string url;
+}
+
+struct DuplicateGroup
+{
+    string filePath;
+    string canonicalLabel;
+    string url;
+    ReferenceDef[] defs;
+}
+
+private __gshared immutable refDefRegex = ctRegex!(r"^\[([^\]]+)\]:\s+(https?://\S+)");
 
 // === Main Entry Point ===
 
@@ -125,34 +161,124 @@ int main(string[] args)
         ),
     );
 
-    if (cli.verify && cli.update)
+    const modeError = validateCliMode(cli);
+    if (modeError !is null)
     {
-        styledWritelnErr(i"{red Error:} --verify and --update are mutually exclusive");
+        styledWritelnErr(i"{red Error:} $(modeError)");
         return 1;
     }
 
-    // Collect markdown files: from --glob, positional args, or both.
+    const mode = resolveProgramMode(cli);
+    auto mdFiles = collectMarkdownFiles(cli, args[1 .. $], mode);
+
+    if (mdFiles.length == 0)
+    {
+        if (isReferenceMode(mode))
+            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) [--dedup-reference-links|--fix-reference-links] [--glob=PATTERN] [markdown-file...]");
+        else
+            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) [--verify|--update] [--glob=PATTERN] [markdown-file...]");
+        return 1;
+    }
+
+    if (mode == ProgramMode.checkReferenceLinks)
+        return runReferenceLinkMode(mdFiles, false);
+
+    if (mode == ProgramMode.fixReferenceLinks)
+        return runReferenceLinkMode(mdFiles, true);
+
+    return runExamplesForFiles(mdFiles, mode);
+}
+
+private string validateCliMode(in CliParams cli)
+{
+    if (cli.verify && cli.update)
+        return "--verify and --update are mutually exclusive";
+
+    if ((cli.verify || cli.update)
+        && (cli.dedupReferenceLinks || cli.fixReferenceLinks))
+    {
+        return "example modes (--verify/--update) cannot be combined with reference deduplication modes (--dedup-reference-links/--fix-reference-links)";
+    }
+
+    return null;
+}
+
+private ProgramMode resolveProgramMode(in CliParams cli)
+{
+    if (cli.fixReferenceLinks)
+        return ProgramMode.fixReferenceLinks;
+
+    if (cli.dedupReferenceLinks)
+        return ProgramMode.checkReferenceLinks;
+
+    if (cli.update)
+        return ProgramMode.updateExamples;
+
+    if (cli.verify)
+        return ProgramMode.verifyExamples;
+
+    return ProgramMode.runExamples;
+}
+
+private bool isReferenceMode(in ProgramMode mode)
+{
+    return mode == ProgramMode.checkReferenceLinks
+        || mode == ProgramMode.fixReferenceLinks;
+}
+
+private string[] trackedMarkdownFiles()
+{
+    const result = execute(["git", "ls-files", "--", "*.md"]);
+    if (result.status != 0)
+    {
+        styledWritelnErr(i"{red Error:} Failed to enumerate markdown files with git ls-files");
+        return [];
+    }
+
+    return result.output
+        .lineSplitter
+        .filter!(line => line.length != 0)
+        .map!(line => line.idup)
+        .array;
+}
+
+private string[] collectMarkdownFiles(
+    in CliParams cli,
+    string[] positionalArgs,
+    in ProgramMode mode,
+)
+{
+    const hasExplicitSelection = cli.glob.length > 0 || positionalArgs.length > 0;
+
     string[] mdFiles;
 
     if (cli.glob.length > 0)
     {
         auto result = execute(["git", "ls-files", "--", cli.glob]);
         if (result.status == 0)
-            mdFiles = result.output.lineSplitter
-                .filter!(l => l.length > 0)
-                .map!(l => l.idup)
+        {
+            mdFiles ~= result.output.lineSplitter
+                .filter!(line => line.length > 0)
+                .map!(line => line.idup)
                 .array;
+        }
     }
 
-    if (args.length >= 2)
-        mdFiles ~= args[1 .. $].map!(a => a.idup).array;
+    if (positionalArgs.length > 0)
+        mdFiles ~= positionalArgs;
 
-    if (mdFiles.length == 0)
-    {
-        styledWritelnErr(i"{bold Usage:} $(args[0].baseName) [--verify|--update] [--glob=PATTERN] [markdown-file...]");
-        return 1;
-    }
+    if (mdFiles.length == 0 && isReferenceMode(mode) && !hasExplicitSelection)
+        mdFiles = trackedMarkdownFiles();
 
+    return mdFiles
+        .filter!(path => path.length > 0)
+        .filter!(path => path.endsWith(".md"))
+        .map!(path => path.idup)
+        .array;
+}
+
+private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode)
+{
     int totalFailures = 0;
 
     foreach (mdFile; mdFiles)
@@ -174,18 +300,72 @@ int main(string[] args)
         }
 
         int rc;
-        if (cli.verify)
-            rc = runVerifyMode(examples, mdFile);
-        else if (cli.update)
-            rc = runUpdateMode(examples, mdFile);
-        else
-            rc = runDefaultMode(examples, mdFile);
+        final switch (mode)
+        {
+            case ProgramMode.runExamples:
+                rc = runDefaultMode(examples, mdFile);
+                break;
+            case ProgramMode.verifyExamples:
+                rc = runVerifyMode(examples, mdFile);
+                break;
+            case ProgramMode.updateExamples:
+                rc = runUpdateMode(examples, mdFile);
+                break;
+            case ProgramMode.checkReferenceLinks:
+            case ProgramMode.fixReferenceLinks:
+                rc = 1;
+                break;
+        }
 
         if (rc != 0)
             totalFailures++;
     }
 
     return totalFailures > 0 ? 1 : 0;
+}
+
+private int runReferenceLinkMode(string[] mdFiles, bool fix)
+{
+    const title = fix
+        ? "Rewriting duplicate markdown reference links"
+        : "Checking duplicate markdown reference links";
+    title
+        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: 60))
+        .writeln("\n");
+
+    string[] existingFiles;
+    int missingFiles = 0;
+    foreach (filePath; mdFiles)
+    {
+        if (!filePath.exists)
+        {
+            styledWritelnErr(i"{red Error:} File not found: $(filePath)");
+            missingFiles++;
+            continue;
+        }
+        existingFiles ~= filePath;
+    }
+
+    auto duplicateGroups = collectDuplicateGroups(existingFiles);
+    if (duplicateGroups.length == 0)
+    {
+        styledWriteln(i"{green ✓} No duplicate markdown reference URLs found.");
+        return missingFiles > 0 ? 1 : 0;
+    }
+
+    printDuplicateGroups(duplicateGroups);
+
+    if (!fix)
+        return 1;
+
+    auto changedFiles = fixDuplicateGroups(existingFiles, duplicateGroups);
+
+    writeln();
+    styledWriteln(i"{green ✓} Updated $(changedFiles.length) file(s).");
+    foreach (filePath; changedFiles)
+        writeln("  ", filePath);
+
+    return missingFiles > 0 ? 1 : 0;
 }
 
 // === Core Functions ===
@@ -501,6 +681,234 @@ int runUpdateMode(Example[] examples, string mdFile)
     }
 
     return 0;
+}
+
+// === Reference Link Deduplication ===
+
+private DuplicateGroup[] collectDuplicateGroups(string[] mdFiles)
+{
+    DuplicateGroup[] groups;
+
+    foreach (filePath; mdFiles)
+    {
+        auto refsByUrl = parseReferenceDefs(filePath);
+
+        foreach (url, defs; refsByUrl)
+        {
+            if (defs.length < 2)
+                continue;
+
+            const canonicalLabel = chooseCanonicalLabel(defs);
+
+            groups ~= DuplicateGroup(
+                filePath: filePath,
+                canonicalLabel: canonicalLabel,
+                url: url,
+                defs: defs.sort!((a, b) => a.lineIndex < b.lineIndex).array,
+            );
+        }
+    }
+
+    groups.sort!((a, b)
+        => a.filePath < b.filePath
+        || (a.filePath == b.filePath && a.url < b.url)
+    );
+
+    return groups;
+}
+
+private ReferenceDef[][string] parseReferenceDefs(string filePath)
+{
+    ReferenceDef[][string] refsByUrl;
+    const lines = filePath.readText.lineSplitter.array;
+
+    foreach (lineIndex, line; lines)
+    {
+        auto match = matchFirst(line, refDefRegex);
+        if (match.empty)
+            continue;
+
+        refsByUrl[match.captures[2]] ~= ReferenceDef(
+            lineIndex: lineIndex,
+            label: match.captures[1].idup,
+            url: match.captures[2].idup,
+        );
+    }
+
+    return refsByUrl;
+}
+
+private string chooseCanonicalLabel(ReferenceDef[] defs)
+{
+    auto best = defs[0].label;
+    auto bestScore = labelScore(best);
+
+    foreach (def; defs[1 .. $])
+    {
+        const score = labelScore(def.label);
+        if (score > bestScore)
+        {
+            best = def.label;
+            bestScore = score;
+        }
+    }
+
+    return best;
+}
+
+private int labelScore(string label)
+{
+    int score = 0;
+
+    if (label.canFind(" "))
+        score += 40;
+
+    if (label.any!(c => c >= 'A' && c <= 'Z'))
+        score += 10;
+
+    if (containsKeyword(label))
+        score += 15;
+
+    if (isUrlishLabel(label))
+        score -= 60;
+
+    if (label.canFind("-hackage") || label.canFind("-website") || label.canFind("-docs"))
+        score -= 10;
+
+    return score;
+}
+
+private bool containsKeyword(string label)
+{
+    static immutable keywords = [
+        "repository",
+        "documentation",
+        "announcement",
+        "website",
+        "release",
+        "hackage",
+        "book",
+        "api",
+        "guide",
+        "proposal",
+    ];
+
+    const lower = label.toLower;
+    return keywords.any!(kw => lower.canFind(kw));
+}
+
+private bool isUrlishLabel(string label)
+{
+    if (label.canFind("/") || label.canFind("://"))
+        return true;
+
+    if (!label.canFind(" ") && label.canFind("."))
+        return true;
+
+    return false;
+}
+
+private void printDuplicateGroups(DuplicateGroup[] groups)
+{
+    styledWriteln(i"{yellow Duplicate markdown reference URLs found:}");
+
+    foreach (group; groups)
+    {
+        writeln();
+        styledWriteln(i"{cyan $(group.filePath)}:");
+        writeln("  canonical: [", group.canonicalLabel, "]");
+        writeln("  url: ", group.url);
+
+        foreach (def; group.defs)
+            writeln("    - [", def.label, "] @ line ", def.lineIndex + 1);
+    }
+}
+
+private string[] fixDuplicateGroups(string[] mdFiles, DuplicateGroup[] groups)
+{
+    DuplicateGroup[][string] groupsByFile;
+    foreach (group; groups)
+        groupsByFile[group.filePath] ~= group;
+
+    string[] changedFiles;
+
+    foreach (filePath; mdFiles)
+    {
+        if (filePath !in groupsByFile)
+            continue;
+
+        const originalText = filePath.readText;
+        auto lines = originalText.lineSplitter.array;
+        const hadTrailingNewline = originalText.length > 0 && originalText[$ - 1] == '\n';
+
+        bool[] removeLine = new bool[](lines.length);
+        string[string] replacementByLabel;
+
+        foreach (group; groupsByFile[filePath])
+        {
+            size_t keepLine = size_t.max;
+            foreach (def; group.defs)
+            {
+                if (def.label == group.canonicalLabel)
+                {
+                    keepLine = def.lineIndex;
+                    break;
+                }
+            }
+
+            if (keepLine == size_t.max)
+                keepLine = group.defs[0].lineIndex;
+
+            foreach (def; group.defs)
+            {
+                if (def.lineIndex == keepLine)
+                    continue;
+
+                removeLine[def.lineIndex] = true;
+                if (def.label != group.canonicalLabel)
+                    replacementByLabel[def.label] = group.canonicalLabel;
+            }
+        }
+
+        auto oldLabels = replacementByLabel.keys.array;
+        oldLabels.sort!((a, b) => a.length > b.length);
+
+        string[] outputLines;
+        foreach (lineIndex, originalLine; lines)
+        {
+            if (removeLine[lineIndex])
+                continue;
+
+            auto line = originalLine.idup;
+            foreach (oldLabel; oldLabels)
+                line = line.replace("[" ~ oldLabel ~ "]", "[" ~ replacementByLabel[oldLabel] ~ "]");
+
+            // Avoid introducing repeated bullets after relabeling:
+            //   - [A]
+            //   - [B]
+            // can become a duplicate pair when B rewrites to A.
+            if (line.length >= 4 && line[0 .. 4] == "- ["
+                && outputLines.length > 0
+                && outputLines[$ - 1] == line)
+            {
+                continue;
+            }
+
+            outputLines ~= line;
+        }
+
+        auto rewritten = outputLines.join("\n");
+        if (hadTrailingNewline)
+            rewritten ~= "\n";
+
+        if (rewritten != originalText)
+        {
+            filePath.write(rewritten);
+            changedFiles ~= filePath;
+        }
+    }
+
+    return changedFiles;
 }
 
 // === Wildcard Matching ===
