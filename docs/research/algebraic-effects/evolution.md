@@ -121,9 +121,9 @@ Recent work shifts from "can handlers work?" to "which guarantees and performanc
 
 The Haskell ecosystem provides the clearest case study of how effect encodings evolved in a single language, because each generation directly addressed limitations of its predecessor.
 
-### Generation 1: Monad Transformers (mtl, ~1995+)
+### Generation 1: Monad Transformers ([mtl], ~1995+)
 
-Monad transformers compose effects by stacking transformer layers. The `mtl` library provides typeclasses (`MonadState`, `MonadReader`, `MonadError`) that abstract over the concrete stack.
+Monad transformers compose effects by stacking transformer layers. The [mtl] library provides typeclasses (`MonadState`, `MonadReader`, `MonadError`) that abstract over the concrete stack.
 
 **Strengths:** Well-understood; decades of use; good GHC optimization.
 
@@ -131,11 +131,11 @@ Monad transformers compose effects by stacking transformer layers. The `mtl` lib
 
 ### Generation 2: Free and Freer Monads (~2008-2015)
 
-Free monads represent effects as data, building a syntax tree interpreted by handlers. The freer monad (Kiselyov, Ishii 2015) removed the Functor constraint and introduced open unions for extensible effects.
+Free monads represent effects as data, building a syntax tree interpreted by handlers. The freer monad (Kiselyov, Ishii 2015) removed the Functor constraint and introduced open unions for extensible effects, later popularized in libraries like [freer-simple].
 
 **Strengths:** Effects as inspectable data; clean syntax/semantics separation; no O(n²) instance problem.
 
-**Limitations:** ~30x slower than mtl for short stacks in benchmarks; no support for higher-order effects (scoped operations).
+**Limitations:** ~30x slower than [mtl] for short stacks in benchmarks; no support for higher-order effects (scoped operations).
 
 ### Generation 3: Fused Effects and Higher-Order Effects (~2018-2019)
 
@@ -242,6 +242,8 @@ Different ecosystems currently optimize different subsets of these properties.
 [Parallel Algebraic Effect Handlers]: parallelism.md
 [fused-effects]: haskell-fused-effects.md
 [polysemy]: haskell-polysemy.md
+[mtl]: haskell-mtl.md
+[freer-simple]: haskell-freer-simple.md
 [effectful]: haskell-effectful.md
 [cleff]: haskell-cleff.md
 [eff]: haskell-eff.md

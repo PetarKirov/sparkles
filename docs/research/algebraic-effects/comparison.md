@@ -38,7 +38,7 @@ Every effect system navigates tension between several competing concerns. No sys
 | **Haskell continuation-backed libraries ([eff], [bluefin-algae])** | Library-specific                                   | Closer to full handlers                 | GHC delimited continuation primops            | Runtime-backed control effects in Haskell                             | API/maintenance maturity varies across libraries               |
 | **Haskell hefty-style line ([heftia], [Theseus])**                 | Algebraic + higher-order structure                 | Yes                                     | Elaborate HO effects before FO interpretation | Strong soundness story for HO interactions                            | Newer ecosystem; higher conceptual load                        |
 | **[Scala ZIO] / [Cats Effect]**                                    | Typed channels/typeclasses                         | No (not algebraic handlers)             | Fiber runtime on JVM                          | Production-grade concurrency/runtime tooling                          | Different abstraction goal than algebraic handlers             |
-| **[Scala Kyo]**                                                    | Open effect channels                               | Handler-inspired algebraic model        | Runtime/library-specific                      | Direct-style ergonomics with effect tracking                          | Rapidly evolving API/model compared with mature stacks         |
+| **[Scala Kyo] / [TurboLift]**                                      | Open effect channels                               | Handler-inspired algebraic model        | Runtime/library-specific                      | Direct-style ergonomics with effect tracking                          | Rapidly evolving API/model compared with mature stacks         |
 | **[Scala 3 capabilities] / capture checking**                      | Capability/capture types                           | N/A (language capability system)        | Language-level type discipline                | Promising static reasoning for authority/effects                      | Experimental status in Scala 3.8                               |
 | **[Effect (TypeScript)]**                                          | `Effect<A, E, R>` style channels                   | Handler-inspired library model          | Generator/runtime encoding                    | Strong industrial ergonomics in JS/TS ecosystem                       | Runtime overhead model differs from native runtimes            |
 | **[WasmFX] / stack-switching targets**                             | Low-level typed continuation substrate             | Target-level primitives                 | Runtime/VM continuation support               | Cross-language compilation path for handlers                          | Proposal/toolchain maturity still evolving                     |
@@ -51,9 +51,9 @@ Every effect system navigates tension between several competing concerns. No sys
 
 | Encoding                             | Bind Cost      | Dispatch Cost            | Memory         | GHC Optimization Dependency |
 | ------------------------------------ | -------------- | ------------------------ | -------------- | --------------------------- |
-| **mtl (transformers)**               | O(n) per layer | O(1)                     | Low            | Moderate                    |
+| **[mtl] (transformers)**             | O(n) per layer | O(1)                     | Low            | Moderate                    |
 | **Free monad**                       | O(1) amortized | O(n) per handler         | High (tree)    | Low                         |
-| **Freer monad**                      | O(1) amortized | O(n) per handler         | High (tree)    | Low                         |
+| **Freer monad** ([freer-simple])     | O(1) amortized | O(n) per handler         | High (tree)    | Low                         |
 | **Carrier fusion**                   | O(1)           | O(1) (fused)             | Low            | High (inlining critical)    |
 | **ReaderT IO**                       | O(1)           | O(1)                     | Low            | Low (concrete monad)        |
 | **Delimited continuations**          | O(1)           | O(1)                     | Low-Medium     | None (by design)            |
@@ -67,9 +67,9 @@ Every effect system navigates tension between several competing concerns. No sys
 
 | Encoding                         | Captures Continuations | Sound HO Effects        | Pure Interpretation  | Multiple Same-Type Effects |
 | -------------------------------- | ---------------------- | ----------------------- | -------------------- | -------------------------- |
-| **mtl**                          | No                     | N/A (no HO as data)     | Yes                  | No (fundeps)               |
+| **[mtl]**                        | No                     | N/A (no HO as data)     | Yes                  | No (fundeps)               |
 | **Free monad**                   | Via tree inspection    | No HO effects           | Yes                  | Yes                        |
-| **Freer monad**                  | Via tree inspection    | No HO effects           | Yes                  | Yes                        |
+| **Freer monad** ([freer-simple]) | Via tree inspection    | No HO effects           | Yes                  | Yes                        |
 | **Carrier fusion**               | Limited                | Partial (unsound cases) | Yes                  | Yes                        |
 | **ReaderT IO**                   | No                     | Partial (unsound cases) | No                   | Yes                        |
 | **Delimited continuations**      | Yes (native)           | Yes (eff)               | No (IO-based)        | Yes                        |
@@ -135,7 +135,7 @@ OCaml and GHC runtime support, plus Wasm target work, suggest long-term success 
 ### If your primary goal is production reliability today
 
 - Haskell: [effectful]/[cleff] when continuation-heavy algebraic semantics are not required
-- Scala: [ZIO] or [Cats Effect] for mature runtime ecosystems
+- Scala: [ZIO] or [Cats Effect] for mature runtime ecosystems; [TurboLift] for handler-centric typed effects
 - OCaml: [Eio] on [OCaml 5] for direct-style concurrent systems
 
 ### If your primary goal is semantic expressiveness of handlers
@@ -196,6 +196,8 @@ OCaml and GHC runtime support, plus Wasm target work, suggest long-term success 
 [WebAssembly stack-switching proposal repo]: https://github.com/WebAssembly/stack-switching
 [effects-bibliography]: https://github.com/yallop/effects-bibliography
 [effectful]: haskell-effectful.md
+[mtl]: haskell-mtl.md
+[freer-simple]: haskell-freer-simple.md
 [eff]: haskell-eff.md
 [Koka]: koka.md
 [OCaml 5]: ocaml-effects.md
@@ -214,6 +216,7 @@ OCaml and GHC runtime support, plus Wasm target work, suggest long-term success 
 [ZIO]: scala-zio.md
 [Cats Effect]: scala-cats-effect.md
 [Scala Kyo]: scala-kyo.md
+[TurboLift]: scala-turbolift.md
 [Scala 3 capabilities]: scala-capabilities.md
 [WasmFX]: wasmfx.md
 [Parallel handlers]: parallelism.md
