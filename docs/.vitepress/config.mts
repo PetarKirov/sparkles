@@ -68,6 +68,22 @@ export default defineConfig({
         ],
       },
       {
+        text: 'Specs',
+        collapsed: true,
+        items: [
+          { text: 'All Specs', link: '/specs/' },
+          {
+            text: 'Markdown',
+            collapsed: true,
+            items: [
+              { text: 'Overview', link: '/specs/markdown/' },
+              { text: 'Parser Spec', link: '/specs/markdown/SPEC' },
+              { text: 'Testing Spec', link: '/specs/markdown/TESTING' },
+            ],
+          },
+        ],
+      },
+      {
         text: 'Research',
         collapsed: true,
         items: [
