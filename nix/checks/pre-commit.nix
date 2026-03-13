@@ -1,12 +1,21 @@
 { lib, ... }:
 {
   perSystem =
-    { pkgs, ... }:
+    { config, pkgs, ... }:
     {
       pre-commit.settings.hooks.rustfmt.enable = lib.mkForce false;
 
       # Test data files contain exact byte sequences — no trailing newline
       pre-commit.settings.hooks.end-of-file-fixer.excludes = [ "^libs/core-cli/test/data/" ];
+
+      pre-commit.settings.hooks.fix-markdown-reference-links = {
+        enable = true;
+        files = "\\.md$";
+        language = "system";
+        name = "fix-markdown-reference-links";
+        require_serial = true;
+        entry = "${lib.getExe config.packages.dedup_md_reference_links} --fix";
+      };
 
       pre-commit.settings.hooks.lychee = {
         enable = true;

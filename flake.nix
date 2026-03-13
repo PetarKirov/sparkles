@@ -12,6 +12,7 @@
       imports = [
         mcl-nixos-modules.modules.flake.git-hooks
 
+        ./nix/packages/default.nix
         ./nix/checks/pre-commit.nix
       ];
       systems = [
