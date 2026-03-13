@@ -14,7 +14,18 @@
         language = "system";
         name = "fix-markdown-reference-links";
         require_serial = true;
-        entry = "${lib.getExe config.packages.dedup_md_reference_links} --fix";
+        entry = lib.getExe config.packages.run_md_examples;
+        args = [ "--fix-reference-links" ];
+      };
+
+      pre-commit.settings.hooks.verify-md-examples = {
+        enable = true;
+        files = "\\.md$";
+        language = "system";
+        name = "verify-md-examples";
+        require_serial = true;
+        entry = lib.getExe config.packages.run_md_examples;
+        args = [ "--verify" ];
       };
 
       pre-commit.settings.hooks.lychee = {
