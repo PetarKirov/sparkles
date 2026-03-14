@@ -15,11 +15,11 @@ Design a **best-in-class**, **spec-compliant**, **high-performance** Markdown en
 
 ## Design Principles
 
-This design follows Sparkles engineering guidance and explicitly applies:
+This design follows Sparkles engineering guidance from [Code Style][code-style-guide], [Functional & Declarative Programming][functional-guidelines], [Design by Introspection][dbi-intro], and the [Sean Parent research index][sean-parent-index], and explicitly applies:
 
-1. Local reasoning and explicit contracts.
-2. Functional, pipeline-oriented processing where possible.
-3. Design-by-introspection (DbI): shell + optional hooks.
+1. [Local reasoning][sean-local-reasoning] and explicit [contracts][sean-contracts].
+2. [Functional, pipeline-oriented processing][functional-guidelines] where possible.
+3. [Design-by-introspection][dbi-guidelines] (DbI): shell + optional hooks.
 4. Clear separation between parsing semantics and rendering/presentation semantics.
 
 ## Non-Goals
@@ -32,7 +32,7 @@ This design follows Sparkles engineering guidance and explicitly applies:
 
 1. `libs/markdown` parser package.
 2. `libs/markdown/SPEC.md` (this document).
-3. `libs/markdown/TESTING.md` (detailed conformance, compatibility, adversarial, and benchmark strategy).
+3. [`libs/markdown/TESTING.md`][markdown-testing-spec] (detailed conformance, compatibility, adversarial, and benchmark strategy).
 4. Conformance and compatibility corpus with provenance metadata.
 5. Benchmark harness with adapters for major parsers.
 
@@ -124,7 +124,7 @@ The engine exposes explicit profiles:
 ## High-Level Pipeline
 
 ```text
-input range (ubyte[] or char[])
+input source (slice or range of ubyte/char)
   -> UTF-8 decoding (ubyte input only) + newline normalization
   -> preprocessors (optional: include, snippet import, frontmatter split)
   -> block parser (Markdown) / MDX parser (profile-dependent)
@@ -135,7 +135,48 @@ input range (ubyte[] or char[])
   -> renderer(s): HTML / XML / CommonMark / event sink
 ```
 
-Input may be a range of `ubyte` (raw bytes requiring UTF-8 decoding) or a range of `char` (assumed valid UTF-8). Slice inputs (`const(ubyte)[]`, `const(char)[]`) are a special case of ranges and avoid copying.
+Input may be a range of `ubyte` (raw bytes requiring UTF-8 decoding) or a range of `char` (assumed valid UTF-8). Slice inputs (`const(ubyte)[]`, `const(char)[]`) are a special case of ranges and can avoid copying when ownership policy permits borrowing.
+
+## Memory Model and Lifetime Semantics
+
+The parser exposes two orthogonal contracts that must always be explicit:
+
+1. **Source ownership**: whether `ParseResult` borrows caller memory or owns a parser-managed copy.
+2. **Allocation strategy**: where parser state (events, AST nodes, rewrite buffers) is allocated.
+
+### Input Abstraction Matrix
+
+| Input Category          | Example Types                                        | `BorrowPolicy.auto` Behavior                                                | Copy Required | Lifetime Contract                                                                                  |
+| ----------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------- | ------------- | -------------------------------------------------------------------------------------------------- |
+| GC immutable slice      | `immutable(char)[]`, `immutable(ubyte)[]`            | Borrow source by default                                                    | No            | Borrowed slices are effectively unbounded (GC-managed) for parser/result lifetime needs.           |
+| Non-GC const slice      | `const(char)[]`, `const(ubyte)[]`                    | Borrow source by default                                                    | No            | Caller must keep backing memory alive for as long as any borrowed `ParseResult`/AST/event is used. |
+| Forward or better range | `ForwardRange`/`RandomAccessRange` of `char`/`ubyte` | Borrow if stable contiguous view exists; otherwise materialize owned source | Sometimes     | If borrowing is not provably safe, parser materializes and marks result as owned.                  |
+| Strict input-only range | `InputRange` (not forward) of `char`/`ubyte`         | Always materialize owned source                                             | Yes           | Parser buffers normalized UTF-8 using configured allocator before block parsing.                   |
+
+### SourceSpan as Canonical Text Reference
+
+`SourceSpan` is the canonical identity for textual payload (`byteOffset + byteLength + line/column`). This keeps core parse data memory-model-agnostic and avoids forcing borrowed slices into every node.
+
+1. Events always carry spans.
+2. AST nodes carry spans and may additionally expose convenience `const(char)[]` views.
+3. Consumers that need lifetime-independent storage copy text explicitly from spans (`sourceSlice(result, span)` pattern).
+
+### Borrowed vs Owned Result Contracts
+
+1. **Borrowed result** (`SourceOwnership.borrowed`): no source copy; caller owns lifetime obligations.
+2. **Owned result** (`SourceOwnership.owned`): parser stores normalized source in allocator-backed storage owned by the result.
+3. `BorrowPolicy.auto` is borrow-first for `const(T)[]` and `immutable(T)[]`; it may downgrade to owned storage when borrowing becomes invalid.
+4. `BorrowPolicy.requireBorrow` is a hard contract: if borrowing cannot be honored, parse fails with a diagnostic instead of silently copying.
+5. `BorrowPolicy.requireCopy` is a hard contract: parser always decouples result lifetime from caller memory.
+
+### Mixed-Ownership Source Rope for Rewrites
+
+Preprocessors (especially include/snippet expansion) may produce documents that combine borrowed and owned segments. The normalized source model supports a rope-like representation where each segment carries ownership metadata.
+
+1. Each rope segment is either borrowed (`const(char)[]` view into caller memory) or owned (allocator-backed copied text).
+2. The aggregate rope lifetime must not exceed the lifetime of any borrowed segment it references.
+3. Include expansion should preserve borrowing for untouched segments when valid, and allocate only rewritten/inserted segments.
+4. When rope flattening is required (e.g., contiguous buffer for hot parse loops), flattening uses allocator-backed owned storage.
 
 ## CommonMark Parsing Algorithm
 
@@ -283,6 +324,8 @@ All nodes share:
 
 - `sourceSpan`: byte offset range into original input, plus start/end line and column.
 
+`sourceSpan` is authoritative for diagnostics and downstream slicing. Literal string fields are convenience views and must never be required for semantic correctness.
+
 Node origin is determined by the `SumType` variant itself — core CommonMark nodes are distinct types from extension nodes (e.g., `CustomContainer` is inherently a VitePress extension, `Strikethrough` is GFM). No runtime origin tag is needed.
 
 ### Representation
@@ -365,7 +408,19 @@ alias AstNode = SumType!(InlineNode, BlockNode);
 3. Low allocation strategy: arenas and reusable buffers.
 4. Separate parse and render passes to preserve composability.
 
-## Memory Management and Arena Strategy
+## Allocation Strategy and Determinism
+
+The parser separates ownership of source text from allocation of parser state so each can be tuned independently.
+
+### Allocator Roles
+
+1. **Source materialization allocator**: contiguous UTF-8 buffer used when copying/decoding/rewrite is required.
+2. **Parse arena allocator**: events, AST nodes, and variable-sized parser structures.
+3. **Scratch allocator/buffer**: temporary rewrite and normalization storage.
+
+By default, ergonomic wrappers can use GC-backed allocation. Deterministic and `@nogc` paths provide explicit allocators.
+
+Allocator hooks use `std.experimental.allocator`-style primitives. `allocate` is required; `deallocate` is optional.
 
 ### Arena Allocator
 
@@ -375,9 +430,17 @@ AST nodes are allocated from a per-parse arena allocator (using `std.experimenta
 
 The event stream uses a growable `SmallBuffer`-like array. Events are appended sequentially with no per-event heap allocation in the common case. When the inline buffer is exhausted, the array falls back to arena-backed growth.
 
-### Zero-Copy String Slices
+### Input Materialization Rules
 
-String content (code literals, text runs, info strings) is represented as slices into the original input buffer. The `ParseResult` holds a reference to the input, and all string slices share its lifetime. This eliminates copying for the majority of string data.
+1. `ubyte` inputs that are already contiguous may still require owned materialization to store UTF-8-decoded `char` text.
+2. Strict input ranges are always materialized before parsing to guarantee deterministic rescans and span validity.
+3. Preprocessor rewrites allocate owned storage for rewritten segments; unaffected regions may remain borrowed in rope form.
+4. Borrowing is only used when span-to-source mapping remains valid without copying.
+5. Under `BorrowPolicy.auto`, borrow-to-owned fallback is silent in release; implementations may expose debug instrumentation via `debug pragma(msg, ...)`.
+
+### Zero-Copy and Span-First Access
+
+When borrowing is valid, textual data is exposed as zero-copy slices into the source buffer. Regardless of ownership mode, spans remain the canonical reference and permit explicit caller-controlled copying.
 
 ### Parser State Reuse
 
@@ -385,10 +448,18 @@ The parser struct is designed for reuse across multiple documents. Internal buff
 
 ### `@nogc` API Surface
 
-- The core parsing API (`parse()`) is `@nogc` — it uses only arena and buffer allocations.
+- Allocator-based parse paths (`parseOwned`, `parse` with explicit allocator) are designed to be fully `@nogc`.
 - The event stream and AST are fully `@nogc`-compatible.
 - Convenience functions like `toHtml()` returning `string` may allocate via the GC for ergonomics.
 - Users needing `@nogc` rendering use the output-range-based `renderHtml(ref Writer)` overload.
+
+### DbI-Based Safety and Zero-Cost Paths
+
+Memory management customizations follow DbI capability detection, not mandatory interfaces.
+
+1. If an allocator hook provides required primitives (`allocate`, optional `deallocate`), parser code selects allocator-backed paths.
+2. If allocator/hook is `void`, compiler removes unused branches and defaults to baseline behavior.
+3. Public APIs are best-effort `@safe`, `pure`, `nothrow`, and `@nogc`, with capability-gated fallbacks documented per overload.
 
 ## Safety and Limits
 
@@ -398,7 +469,7 @@ The parser struct is designed for reuse across multiple documents. Internal buff
 
 ## DbI Extension System (Shell With Hooks)
 
-The parser core is the shell; extensions are hooks with optional capabilities. This follows the DbI shell-with-hooks pattern from the [Design by Introspection guidelines](../../guidelines/design-by-introspection-01-guidelines.md).
+The parser core is the shell; extensions are hooks with optional capabilities. This follows the DbI shell-with-hooks pattern from the [DbI guidelines][dbi-guidelines].
 
 ### Required Hook Primitive
 
@@ -469,7 +540,7 @@ ErrorAction onError(ParseError error);
 ```d
 struct ParseContext
 {
-    const(char)[] input;          // Original input (mutable view for preprocessors)
+    const(char)[] input;          // Current normalized input view (borrowed or owned)
     SmallBuffer!(char, 4096) buf; // Scratch buffer for rewriting
     string sourcePath;            // File path for diagnostics
     Limits limits;                // Active parser limits
@@ -512,10 +583,11 @@ Multiple extensions are composed as a tuple. The parser iterates extensions in p
 ```d
 alias Extensions = AliasSeq!(FrontmatterExt, ContainerExt, EmojiExt);
 
-struct MarkdownOptions(Hook = void)
+struct MarkdownOptions(Hook = void, Alloc = void)
 {
     // When Hook is void, no extension overhead.
     // When Hook is a tuple, extensions compose.
+    // Allocator selection remains orthogonal and is controlled separately.
 }
 ```
 
@@ -525,7 +597,7 @@ struct MarkdownOptions(Hook = void)
 2. Event-specific hook — extension observes/handles at a critical point.
 3. Core fallback path — baseline CommonMark behavior.
 
-A `void` hook compiles to the pure baseline with zero overhead (the `void` hook test from DbI guidelines).
+A `void` hook compiles to the pure baseline with zero overhead (the `void` hook test from [DbI guidelines][dbi-guidelines]).
 
 ### Stateless Optimization
 
@@ -587,10 +659,51 @@ struct Limits
 }
 ```
 
+### Ownership and Allocation Controls
+
+```d
+enum BorrowPolicy
+{
+    auto,
+    requireBorrow,
+    requireCopy,
+}
+
+enum SourceOwnership
+{
+    borrowed,
+    owned,
+}
+
+enum Utf8ErrorMode
+{
+    replace,     // replace invalid sequences (U+FFFD)
+    strictFail,  // emit error and abort parse
+}
+
+struct SourceStorage
+{
+    SourceOwnership ownership;
+    const(char)[] text;  // Borrowed caller memory or parser-owned normalized storage
+}
+
+struct RawByteStorage
+{
+    SourceOwnership ownership;
+    const(ubyte)[] bytes;  // Preserved original bytes for tooling/debug workflows
+}
+
+enum HeadingIdSyntaxPreference
+{
+    vitepressBraceFirst,
+    nextraBracketFirst,
+}
+```
+
 ### Parser Options
 
 ```d
-struct MarkdownOptions(Hook = void)
+struct MarkdownOptions(Hook = void, Alloc = void)
 {
     Profile profile = Profile.commonmark_strict;
     FeatureFlags features;
@@ -598,6 +711,13 @@ struct MarkdownOptions(Hook = void)
     bool sourcePos = true;
     bool safeMode = true;
     Limits limits;
+    BorrowPolicy borrowPolicy = BorrowPolicy.auto;
+    Utf8ErrorMode utf8ErrorMode = Utf8ErrorMode.replace;
+    HeadingIdSyntaxPreference headingIdPreference = HeadingIdSyntaxPreference.vitepressBraceFirst;
+
+    // Optional allocator hook. `void` means use baseline allocation path.
+    static if (!is(Alloc == void))
+        Alloc allocator;
 }
 ```
 
@@ -607,7 +727,8 @@ struct MarkdownOptions(Hook = void)
 struct ParseResult
 {
     EventStream events;         // Primary output: flat event sequence
-    const(char)[] source;       // Reference to original input for string slices
+    SourceStorage source;       // Borrowed/owned normalized source text (or rope view)
+    RawByteStorage rawBytes;    // Preserved original input bytes
     SourceMap sourceMap;        // Byte offset → line/column mapping
     DiagnosticList diagnostics; // Warnings and recoverable errors
 }
@@ -629,13 +750,41 @@ struct RenderOptions
 ```d
 /// Parse markdown from any input range of char or ubyte.
 /// - `char` ranges are assumed valid UTF-8.
-/// - `ubyte` ranges are UTF-8 decoded (with replacement on error).
-/// - Slice inputs (const(char)[], const(ubyte)[]) work without copying.
-ParseResult parse(R, Hook = void)(
+/// - `ubyte` ranges are UTF-8 decoded according to `utf8ErrorMode`.
+/// - Ownership is controlled by BorrowPolicy (auto/requireBorrow/requireCopy).
+ParseResult parse(R, Hook = void, Alloc = void)(
     R input,
-    MarkdownOptions!Hook opts = MarkdownOptions!void(),
+    MarkdownOptions!(Hook, Alloc) opts = MarkdownOptions!(Hook, Alloc)(),
 )
 if (isInputRange!R && (is(ElementType!R : const(char)) || is(ElementType!R : const(ubyte))));
+
+/// Hard guarantee: no source copy and slice-only inputs.
+/// Statically rejects `BorrowPolicy.auto`; caller must request explicit borrow semantics.
+/// Implementation includes: `static assert(opts.borrowPolicy != BorrowPolicy.auto);`.
+ParseResult parseBorrowed(S, Hook = void)(
+    S input,
+    MarkdownOptions!(Hook, void) opts = MarkdownOptions!(Hook, void)(
+        borrowPolicy: BorrowPolicy.requireBorrow,
+    ),
+)
+if (is(S == const(char)[]) || is(S == immutable(char)[]) || is(S == const(ubyte)[]) || is(S == immutable(ubyte)[]));
+
+/// Hard guarantee: source is owned by ParseResult storage using provided allocator.
+ParseResult parseOwned(R, Hook = void, Alloc)(
+    R input,
+    ref Alloc allocator,
+    MarkdownOptions!(Hook, Alloc) opts = MarkdownOptions!(Hook, Alloc)(
+        borrowPolicy: BorrowPolicy.requireCopy,
+        allocator: allocator,
+    ),
+)
+if (isInputRange!R && (is(ElementType!R : const(char)) || is(ElementType!R : const(ubyte))));
+
+/// Resolve a span into text; callers choose whether to keep borrowing or copy.
+const(char)[] sourceSlice(in ParseResult result, in SourceSpan span);
+
+/// Resolve a span into original raw bytes.
+const(ubyte)[] rawSlice(in ParseResult result, in SourceSpan span);
 
 /// Render events to HTML using an output range (Writer).
 ref Writer renderHtml(Writer, Hook = void)(
@@ -656,7 +805,7 @@ AstNode buildAst(in ParseResult result);
 
 ## Verification and Benchmarking
 
-The complete strategy is defined in [TESTING.md](./TESTING.md).
+The complete strategy is defined in [Markdown Testing Strategy][markdown-testing-spec].
 
 At a high level:
 
@@ -665,6 +814,7 @@ At a high level:
 3. Comparison uses canonicalized HTML with explicit profile-scoped override policy for ambiguous cases.
 4. Compatibility packs explicitly cover both VitePress and Nextra markdown/MDX semantics without conflating framework-runtime behavior.
 5. Benchmarking compares major JavaScript, Rust, C, and Go implementations under pinned, reproducible fairness constraints.
+6. Benchmark execution happens in a dedicated markdown benchmarking devshell with pinned Rust, Go, and Node toolchains.
 
 ## Success Criteria
 
@@ -697,20 +847,42 @@ At a high level:
 1. **Vue component interpolation**: markdown-stage only. Full Vue SFC/component interpolation is a non-goal for the parser; it belongs to the VitePress build pipeline.
 2. **Math rendering**: token-only. The parser emits `MathInline` and `MathBlock` nodes with raw LaTeX content. Downstream renderers handle MathJax/KaTeX integration via `onRenderNode` hooks.
 3. **Default profile**: `commonmark_strict`. VitePress and Nextra features are opt-in via their respective profiles. This ensures the parser is safe and predictable by default.
+4. **Benchmark environment reproducibility**: use a dedicated benchmark devshell with pinned Rust, Go, and Node toolchains.
+5. **Heading ID precedence**: configurable via `HeadingIdSyntaxPreference`; default is VitePress brace syntax (`{#my-anchor}`) first.
+6. **BorrowPolicy auto for `const(T)[]`**: borrow-first.
+7. **Include preprocessing ownership**: mixed ownership is allowed via rope segments (borrowed + owned) with explicit lifetime constraints.
+8. **`parseBorrowed` policy enforcement**: slice-only API with static rejection of `BorrowPolicy.auto`; `parse(...)` handles auto fallback.
+9. **UTF-8 error behavior**: configurable (`replace`, `strictFail`).
+10. **Auto borrow fallback visibility**: debug-only instrumentation via `debug pragma(msg, ...)`.
+11. **Allocator interface**: `std.experimental.allocator` primitives (`allocate` required, `deallocate` optional).
+12. **Raw source preservation**: `ParseResult` preserves original raw bytes.
 
 ### Open
 
-1. What minimum Rust/Node/Go toolchain versions should benchmark CI pin?
-2. When both VitePress `{#id}` and Nextra `[#id]` heading ID syntaxes are enabled simultaneously, which precedence rule applies? Current candidate: VitePress syntax wins (it is more widely adopted), with a diagnostic warning when both are present on the same heading.
+1. None currently. New decisions should be appended here and promoted to **Resolved** once finalized.
 
 ## Glossary
 
 - **Event stream**: a flat sequence of typed events (e.g., `EnterParagraph`, `Text`, `ExitParagraph`) representing parsed document structure. Primary output of the parser; more cache-friendly than a tree.
 - **AST**: Abstract Syntax Tree — a tree-structured representation built from the event stream when consumers need parent/child navigation or tree transformations.
 - **Arena**: a bulk-allocation strategy where all allocations share a single memory region freed together, avoiding per-object deallocation overhead.
+- **SourceSpan**: a byte-offset/length pair (with line/column metadata) that identifies source text without borrowing string memory directly.
+- **Source ownership**: whether `ParseResult` references caller memory (`borrowed`) or parser-managed storage (`owned`).
+- **Source rope**: a composite source representation made of borrowed and owned text segments with explicit lifetime constraints.
 - **Hook**: an optional capability provided by an extension type, discovered at compile time via DbI capability traits.
 - **Shell**: the parser core that provides baseline CommonMark behavior; hooks extend it without modifying its source.
 - **Profile**: a named feature configuration preset (`commonmark_strict`, `gfm`, `vitepress_compatible`, `nextra_compatible`, `custom`).
 - **Capability trait**: a compile-time predicate (e.g., `hasPreprocessDocument`) that detects whether a type provides a specific hook.
 - **Delimiter run**: a sequence of delimiter characters (`*`, `_`) used in the CommonMark emphasis algorithm; processed via a stack-based algorithm that guarantees O(n) complexity.
 - **Lazy continuation**: a CommonMark rule allowing paragraph text to continue inside containers (block quotes, list items) without repeating container markers on every line.
+
+## Reference Links
+
+[markdown-testing-spec]: ./TESTING.md
+[code-style-guide]: ../../guidelines/code-style.md
+[functional-guidelines]: ../../guidelines/functional-declarative-programming-guidelines.md
+[dbi-intro]: ../../guidelines/design-by-introspection-00-intro.md
+[dbi-guidelines]: ../../guidelines/design-by-introspection-01-guidelines.md
+[sean-parent-index]: ../../research/sean-parent/index.md
+[sean-local-reasoning]: ../../research/sean-parent/local-reasoning.md
+[sean-contracts]: ../../research/sean-parent/contracts.md

@@ -478,7 +478,7 @@ Each competitor requires a specific build and measurement strategy. All adapters
 #### JavaScript/TypeScript Parsers (commonmark.js, markdown-it, micromark, marked)
 
 - Adapter: Node.js scripts using `process.hrtime.bigint()` for nanosecond precision.
-- Node.js version pinned in Nix (`nix/shells/default.nix`).
+- Node.js version pinned in dedicated benchmark devshell.
 - Warm-up: 5 iterations within the Node.js process before measurement (avoids JIT noise).
 - Startup overhead: measured separately and reported but not subtracted from primary results (real-world usage includes startup).
 
@@ -486,14 +486,14 @@ Each competitor requires a specific build and measurement strategy. All adapters
 
 - Build: `--release` profile with LTO enabled.
 - Timing: `std::time::Instant` for wall-clock within the Rust binary.
-- Pin toolchain via `rust-toolchain.toml` in the benchmark directory.
+- Pin toolchain via dedicated benchmark devshell (plus `rust-toolchain.toml` in adapter directories when needed).
 - Use `criterion`-style measurement when available; otherwise manual timing loop.
 
 #### Go Parser (goldmark)
 
 - Build: `go build -ldflags="-s -w"` for stripped release binary.
 - Timing: `time.Now()` with nanosecond precision within the Go binary.
-- Pin Go version via `go.mod` and Nix.
+- Pin Go version via dedicated benchmark devshell (plus `go.mod` constraints in adapter directories).
 
 #### Sparkles Parser (D)
 
@@ -610,7 +610,7 @@ Each measurement produces one JSONL record:
 
 #### Nix Reproducibility
 
-All toolchains (D compiler, Rust, Node.js, Go, C compiler) are pinned in `nix/shells/default.nix`. The benchmark harness runs inside `nix develop` to ensure reproducible builds and consistent environments across CI and local runs.
+All toolchains (D compiler, Rust, Node.js, Go, C compiler) are pinned in a dedicated markdown benchmark devshell (e.g., `nix develop .#markdown-bench`). The benchmark harness runs inside this shell to ensure reproducible builds and consistent environments across CI and local runs.
 
 #### Reporting
 
@@ -717,11 +717,7 @@ libs/markdown/
 
 ## Open Questions and Decision Log Hooks
 
-1. Should VitePress compatibility include Vue component interpolation semantics or markdown-stage behavior only?
-2. Should math rendering ownership remain token-only or include renderer coupling?
-3. What is the default profile for consumers of `libs/markdown`?
-4. Which minimum Node/Rust/Go toolchain versions are pinned for benchmark CI?
-5. When both VitePress `{#id}` and Nextra `[#id]` heading ID syntaxes are active, which precedence rule applies?
+1. None currently. New testing/benchmark policy decisions should be tracked here and mirrored in `SPEC.md`.
 
 Each answer should be captured in an ADR with:
 
