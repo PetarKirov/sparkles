@@ -222,7 +222,7 @@ The parser must guarantee O(n) time complexity for all inputs. This is achieved 
 
 ## AST Node Types
 
-The following node types define the complete AST vocabulary. Each node carries a source span (byte offset + line/column) and an optional extension origin tag indicating which extension produced it.
+The following node types define the complete AST vocabulary. Each node carries a source span (byte offset + line/column). Extension origin is encoded in the type itself — each extension contributes distinct node types.
 
 ### Block Nodes
 
@@ -280,11 +280,81 @@ The following node types define the complete AST vocabulary. Each node carries a
 All nodes share:
 
 - `sourceSpan`: byte offset range into original input, plus start/end line and column.
-- `extensionOrigin`: optional tag (`null` for core CommonMark, otherwise the extension identifier that produced the node).
+
+Node origin is determined by the `SumType` variant itself — core CommonMark nodes are distinct types from extension nodes (e.g., `CustomContainer` is inherently a VitePress extension, `Strikethrough` is GFM). No runtime origin tag is needed.
 
 ### Representation
 
-Nodes use a tagged union with `SmallBuffer`-backed child lists. This provides value semantics and `@nogc` compatibility. Inline content and child block lists are stored in `SmallBuffer` arrays that fall back to arena allocation when the small buffer overflows.
+Nodes are plain structs composed via `std.sumtype.SumType` — no classes, no GC. Child lists use `SmallBuffer` arrays that fall back to arena allocation when the inline buffer overflows.
+
+```d
+import std.sumtype : SumType;
+
+struct SourceSpan { /* byte offsets, line/column — layout TBD */ }
+
+// --- Block node structs ---
+
+struct Document       { SourceSpan span; SmallBuffer!(AstNode*, 8) children; }
+struct BlockQuote     { SourceSpan span; SmallBuffer!(AstNode*, 4) children; }
+struct ListBlock      { SourceSpan span; bool ordered; uint start; bool tight; SmallBuffer!(AstNode*, 8) children; }
+struct ListItem       { SourceSpan span; TaskStatus taskStatus; SmallBuffer!(AstNode*, 4) children; }
+struct Paragraph      { SourceSpan span; SmallBuffer!(InlineNode, 8) inlines; }
+struct Heading        { SourceSpan span; ubyte level; const(char)[] customId; SmallBuffer!(InlineNode, 4) inlines; }
+struct ThematicBreak  { SourceSpan span; }
+struct FencedCode     { SourceSpan span; const(char)[] infoString; CodeMeta metadata; const(char)[] literal; }
+struct IndentedCode   { SourceSpan span; const(char)[] literal; }
+struct HtmlBlock      { SourceSpan span; const(char)[] literal; }
+struct TableBlock     { SourceSpan span; SmallBuffer!(Alignment, 8) alignments; SmallBuffer!(AstNode*, 8) children; }
+struct TableRow       { SourceSpan span; bool isHeader; SmallBuffer!(AstNode*, 8) children; }
+struct TableCell      { SourceSpan span; Alignment alignment; SmallBuffer!(InlineNode, 4) inlines; }
+struct CustomContainer{ SourceSpan span; const(char)[] type; const(char)[] title; SmallBuffer!(AstNode*, 4) children; }
+struct CodeGroup      { SourceSpan span; SmallBuffer!(AstNode*, 4) children; }
+struct FrontmatterBlk { SourceSpan span; const(char)[] format; const(char)[] literal; }
+struct TocToken       { SourceSpan span; }
+struct MathBlock      { SourceSpan span; const(char)[] literal; }
+
+// --- Inline node structs ---
+
+struct Text           { SourceSpan span; const(char)[] literal; }
+struct SoftBreak      { SourceSpan span; }
+struct HardBreak      { SourceSpan span; }
+struct Code           { SourceSpan span; const(char)[] literal; const(char)[] languageHint; }
+struct Emphasis       { SourceSpan span; SmallBuffer!(InlineNode, 4) inlines; }
+struct Strong         { SourceSpan span; SmallBuffer!(InlineNode, 4) inlines; }
+struct Link           { SourceSpan span; const(char)[] destination; const(char)[] title; SmallBuffer!(InlineNode, 4) inlines; }
+struct Image          { SourceSpan span; const(char)[] destination; const(char)[] title; const(char)[] alt; }
+struct HtmlInline     { SourceSpan span; const(char)[] literal; }
+struct Autolink       { SourceSpan span; const(char)[] destination; }
+struct Strikethrough  { SourceSpan span; SmallBuffer!(InlineNode, 4) inlines; }
+struct Emoji          { SourceSpan span; const(char)[] shortcode; }
+struct MathInline     { SourceSpan span; const(char)[] literal; }
+struct CodeMarker     { SourceSpan span; MarkerKind kind; uint line; }
+
+// --- MDX node structs ---
+
+struct MdxJsxElement  { SourceSpan span; const(char)[] name; bool selfClosing; SmallBuffer!(AstNode*, 4) children; }
+struct MdxEsmImport   { SourceSpan span; const(char)[] source; }
+struct MdxEsmExport   { SourceSpan span; const(char)[] declaration; }
+struct MdxExpression  { SourceSpan span; const(char)[] expression; }
+
+// --- Composite SumTypes ---
+
+alias InlineNode = SumType!(
+    Text, SoftBreak, HardBreak, Code, Emphasis, Strong,
+    Link, Image, HtmlInline, Autolink, Strikethrough,
+    Emoji, MathInline, CodeMarker, MdxExpression,
+);
+
+alias BlockNode = SumType!(
+    Document, BlockQuote, ListBlock, ListItem, Paragraph,
+    Heading, ThematicBreak, FencedCode, IndentedCode,
+    HtmlBlock, TableBlock, TableRow, TableCell,
+    CustomContainer, CodeGroup, FrontmatterBlk, TocToken,
+    MathBlock, MdxJsxElement, MdxEsmImport, MdxEsmExport,
+);
+
+alias AstNode = SumType!(InlineNode, BlockNode);
+```
 
 ## Performance Constraints
 
