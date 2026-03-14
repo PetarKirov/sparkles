@@ -68,6 +68,10 @@ export default defineConfig({
             items: [
               { text: 'Overview', link: '/specs/algebraic-effects/' },
               {
+                text: 'Introduction',
+                link: '/specs/algebraic-effects/intro',
+              },
+              {
                 text: 'System Spec',
                 link: '/specs/algebraic-effects/SPEC',
               },
