@@ -16,7 +16,7 @@ Design a D-native algebraic effect system for Sparkles with:
 
 ## Design Principles
 
-This design explicitly applies the Sparkles guidelines and research conclusions:
+This design explicitly applies the Sparkles guidelines and research conclusions from [Functional & Declarative Programming], [DbI Guidelines], [Algebraic Effects Research], and [Sean Parent: Better Code]:
 
 1. Local reasoning and explicit contracts.
 2. Value semantics where honest, explicit affinity where required.
@@ -27,7 +27,7 @@ This design explicitly applies the Sparkles guidelines and research conclusions:
 
 ## Delivery Target
 
-The primary target is a library implementation on today's D, with an experimental extension path for lower-level control/runtime work later.
+The primary target is a library implementation on today's D, with an experimental extension path for lower-level control/runtime work later. This follows the trade-offs documented in [Comparison and Analysis], [Theory and Compilation], [effectful], [bluefin], [OCaml 5 Effects], and [OCaml Eio].
 
 ## Non-Goals
 
@@ -58,6 +58,8 @@ This is the default production surface.
 4. Executes common operations as direct calls or O(1) context lookups.
 5. Treats structured concurrency, cancellation, and resource cleanup as mandatory semantics.
 
+This layer is most strongly informed by [effectful], [bluefin], [OCaml Eio], and [Scala 3 Capabilities].
+
 ### Layer 2: Experimental Control Effects
 
 This layer is opt-in and deliberately narrower.
@@ -67,9 +69,11 @@ This layer is opt-in and deliberately narrower.
 3. Forbids continuation escape across resource scopes, borrowed references, or scheduler boundaries.
 4. Exists behind a separate namespace and separate capability traits so the core layer stays simple and fast.
 
+This layer is constrained by [Theory and Compilation], [OCaml 5 Effects], [Parallelism], and the limits summarized in [Comparison and Analysis].
+
 ## Public Model
 
-## Effect Keys
+### Effect Keys
 
 Effects are identified by explicit key types, not by payload type alone.
 
@@ -88,9 +92,9 @@ struct State(Tag, S);
 struct Error(Tag, E);
 ```
 
-The `Tag` parameter distinguishes multiple effects with the same payload shape.
+The `Tag` parameter distinguishes multiple effects with the same payload shape, following the named-handle and value-level capability direction described in [bluefin], [Koka], and [Scala 3 Capabilities].
 
-## Effect Rows
+### Effect Rows
 
 Static effect requirements are represented as explicit type-level rows:
 
@@ -111,7 +115,9 @@ Rules:
 3. Row normalization preserves distinct tagged instances.
 4. Missing effects fail at the API boundary with clear diagnostics.
 
-## Context
+This keeps the static surface closer to D-friendly explicit rows than to full inference-heavy systems such as [Koka].
+
+### Context
 
 `Context!(E...)` is the ergonomic bundle for active handles.
 
@@ -129,7 +135,7 @@ Rules:
 3. Reusable APIs may accept a `scope Context!(...)` instead of many individual handles.
 4. Explicit handles remain the semantic ground truth; `Context` is only a bundling convenience.
 
-## Handles
+### Handles
 
 Handles are the primitive operational interface.
 
@@ -151,7 +157,9 @@ Rules:
 3. Handles for resources, cancellation scopes, nurseries, and future resumptions are affine when needed.
 4. If a handle cannot honestly be regular, the type must make that visible.
 
-## Handler Introduction
+This is aligned with [Local Reasoning], [Value Semantics], and [Safety].
+
+### Handler Introduction
 
 Effects are introduced lexically:
 
@@ -180,11 +188,11 @@ Required handler forms:
 
 Handler nesting defines precedence and semantics. No separate global resolution order exists.
 
-## Operation Classes
+### Operation Classes
 
 The runtime distinguishes three operation classes and generates different machinery for each.
 
-### Tail-Resumptive
+#### Tail-Resumptive
 
 Examples: `Reader.ask`, `State.get`, `State.put`, clock reads.
 
@@ -194,7 +202,9 @@ Rules:
 2. Must stay on the zero-allocation fast path.
 3. Compile to direct handle calls or O(1) context lookup.
 
-### Abortive
+This follows the compilation guidance in [Theory and Compilation].
+
+#### Abortive
 
 Examples: `Error.raise`, cancellation, early-return style exits.
 
@@ -204,7 +214,7 @@ Rules:
 2. Unwind to the nearest lexical handler.
 3. Must run cleanup deterministically.
 
-### General Resumable
+#### General Resumable
 
 Examples: user-defined control effects such as `yield`, `choose`, or protocol-driven pause/resume.
 
@@ -215,7 +225,7 @@ Rules:
 3. Resume-twice and escape-after-scope are hard errors.
 4. Crossing thread, domain, or resource boundaries is forbidden unless a later experiment proves it safe.
 
-## Higher-Order Operations
+### Higher-Order Operations
 
 Higher-order behaviors are not primitive effect ops in the core layer. They are library combinators elaborated into smaller pieces.
 
@@ -233,6 +243,8 @@ Rationale:
 1. This keeps the core algebra first-order and tractable.
 2. It avoids the known unsoundness traps around higher-order handlers.
 3. It fits D's strengths: RAII, `scope`, and explicit lexical structure.
+
+This reflects the direction argued by [Comparison and Analysis], [Theory and Compilation], and [Koka].
 
 ## Structured Concurrency
 
@@ -256,6 +268,8 @@ The concurrency API should support:
 6. cancellation propagation
 7. timeouts built from cancellation and clock capabilities
 
+This section is primarily motivated by [OCaml Eio], [Concurrency], and [Parallelism].
+
 ## Safety and Attributes
 
 The public surface defaults to the strongest practical attributes:
@@ -270,6 +284,8 @@ Rules:
 1. Attribute propagation must be documented and tested.
 2. Unsafe code belongs only in small audited kernels.
 3. Fast paths must remain behaviorally equivalent to fallback paths.
+
+This section follows [DbI Guidelines], [Functional & Declarative Programming], and [Safety].
 
 ## Capability Detection and DbI Rules
 
@@ -290,6 +306,8 @@ Rules:
 2. Business logic must not scatter ad hoc `__traits(compiles)` checks.
 3. `void` or empty-hook baselines must compile for the generic shells that permit them.
 
+These rules are inherited directly from [DbI Intro] and [DbI Guidelines].
+
 ## Core API Shape
 
 The system uses a hybrid surface:
@@ -297,6 +315,8 @@ The system uses a hybrid surface:
 1. Boundary APIs declare typed effect rows explicitly.
 2. Internal implementations may accept either explicit handles or a `Context`.
 3. Convenience layers may reduce manual threading, but they must lower to explicit handles and lexical scopes.
+
+This hybrid surface balances the explicitness of [bluefin] with the bundling ergonomics suggested by [effectful] and [Scala 3 Capabilities].
 
 Illustrative boundary pattern:
 
@@ -329,6 +349,8 @@ Restrictions:
 2. Shallow handlers are reserved for protocol/state-machine use cases.
 3. Multi-shot semantics are explicitly out of scope.
 4. Reference semantics or tree interpreters may exist for testing and research, not for production dispatch.
+
+The restrictions here are intentionally conservative relative to [OCaml 5 Effects], [Parallelism], and [Comparison and Analysis].
 
 ## Testing and Verification
 
@@ -377,3 +399,43 @@ The design is successful when:
 3. Multiple same-shape effects work through tags and scoped handles.
 4. Structured concurrency guarantees hold under success, failure, and cancellation.
 5. The experimental control layer does not contaminate the core fast path.
+
+## References
+
+- [Functional & Declarative Programming]
+- [DbI Intro]
+- [DbI Guidelines]
+- [Algebraic Effects Research]
+- [Comparison and Analysis]
+- [Theory and Compilation]
+- [Parallelism]
+- [Koka]
+- [effectful]
+- [bluefin]
+- [OCaml 5 Effects]
+- [OCaml Eio]
+- [Scala 3 Capabilities]
+- [Sean Parent: Better Code]
+- [Local Reasoning]
+- [Value Semantics]
+- [Concurrency]
+- [Safety]
+
+[Functional & Declarative Programming]: ../../guidelines/functional-declarative-programming-guidelines.md
+[DbI Intro]: ../../guidelines/design-by-introspection-00-intro.md
+[DbI Guidelines]: ../../guidelines/design-by-introspection-01-guidelines.md
+[Algebraic Effects Research]: ../../research/algebraic-effects/
+[Comparison and Analysis]: ../../research/algebraic-effects/comparison.md
+[Theory and Compilation]: ../../research/algebraic-effects/theory-compilation.md
+[Parallelism]: ../../research/algebraic-effects/parallelism.md
+[Koka]: ../../research/algebraic-effects/koka.md
+[effectful]: ../../research/algebraic-effects/haskell-effectful.md
+[bluefin]: ../../research/algebraic-effects/haskell-bluefin.md
+[OCaml 5 Effects]: ../../research/algebraic-effects/ocaml-effects.md
+[OCaml Eio]: ../../research/algebraic-effects/ocaml-eio.md
+[Scala 3 Capabilities]: ../../research/algebraic-effects/scala-capabilities.md
+[Sean Parent: Better Code]: ../../research/sean-parent/
+[Local Reasoning]: ../../research/sean-parent/local-reasoning.md
+[Value Semantics]: ../../research/sean-parent/value-semantics.md
+[Concurrency]: ../../research/sean-parent/concurrency.md
+[Safety]: ../../research/sean-parent/safety.md
