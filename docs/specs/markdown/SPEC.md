@@ -79,9 +79,13 @@ The parser must support syntax and metadata needed by VitePress and Nextra featu
 | Line highlight           | `{1,3-5}` and marker comments             | code metadata transform          | on in vitepress profile |
 | Focus/diff/error markers | `[!code focus]`, `[!code --]`, etc        | code metadata transform          | on in vitepress profile |
 | Line numbers             | global + per-block override               | render transform                 | on in vitepress profile |
+| Line numbers start       | `:line-numbers=2` custom start number     | code metadata transform          | on in vitepress profile |
 | Code import              | `<<< @/file{...}`                         | preprocessor                     | on in vitepress profile |
+| Code snippet regions     | `#region`/`#endregion` markers in source  | preprocessor                     | on in vitepress profile |
+| Code group snippet title | inferred from imported file path          | code metadata transform          | on in vitepress profile |
 | Code groups              | `::: code-group`                          | block extension                  | on in vitepress profile |
 | Markdown include         | `<!--@include: ...-->`                    | preprocessor                     | on in vitepress profile |
+| Include heading anchor   | `<!--@include: ./file.md{#heading}-->`    | preprocessor                     | on in vitepress profile |
 | Math equations           | `$...$`, `$$...$$`                        | inline/block extension           | off (opt-in)            |
 | Image lazy loading       | `loading="lazy"` behavior                 | render transform                 | off                     |
 
@@ -131,6 +135,84 @@ bytes
   -> renderer(s): HTML / XML / CommonMark / event sink
 ```
 
+## CommonMark Parsing Algorithm
+
+The parser follows the two-phase strategy described in the CommonMark spec appendix "A parsing strategy." This section summarizes the algorithm to guide implementation.
+
+### Phase 1: Block Structure
+
+Block structure is determined by a line-by-line scan of the input. The parser maintains a stack of open block containers.
+
+#### Line Classification
+
+Each input line is classified by testing (in order):
+
+1. **Blank line** — empty or whitespace-only.
+2. **Thematic break** — three or more `*`, `-`, or `_` (optionally space-separated).
+3. **ATX heading** — 1–6 `#` characters followed by space or end of line.
+4. **Fenced code open/close** — three or more backticks or tildes; close must match open fence character and be at least as long.
+5. **HTML block start** — one of the seven HTML block start conditions (CommonMark §4.6).
+6. **Block quote marker** — `>` optionally followed by a space.
+7. **List item marker** — bullet (`-`, `*`, `+`) or ordered (`1.`, `1)`) followed by 1–3 spaces.
+8. **Indented code** — 4+ spaces of indentation (only when not in a paragraph continuation context).
+9. **Setext heading underline** — `=` or `-` characters (only when closing an open paragraph).
+10. **Continuation** — anything else continues the current open block.
+
+#### Open/Close State Machine
+
+- New blocks are pushed onto the open block stack when their start condition matches.
+- On each line, the parser walks the open block stack from root to tip, checking whether each open block accepts the line as a continuation.
+- A block that does not accept continuation is **closed** (finalized and removed from the stack).
+- **Lazy continuation**: paragraph lines can continue inside block quotes and list items without repeating the container markers.
+
+#### Rule Precedence
+
+When multiple block starts could match, the following precedence applies:
+
+1. Block quote markers (highest).
+2. List item markers.
+3. Indented code blocks (only if no open paragraph).
+4. Paragraph continuation (lowest — default fallback).
+
+### Phase 2: Inline Parsing
+
+After block structure is finalized, the contents of leaf blocks (paragraphs, headings, etc.) are parsed for inline content.
+
+#### Delimiter Run Algorithm
+
+Emphasis and links use the delimiter run algorithm (CommonMark §6.2):
+
+1. Scan text left-to-right, pushing potential openers (`*`, `_`, `[`) onto a delimiter stack.
+2. When a potential closer is found, search the stack for a matching opener.
+3. If a match is found, emit the appropriate inline node (emphasis, strong, link) and remove delimiters between opener and closer.
+4. Unmatched delimiters are emitted as literal text.
+
+#### Bracket Matching
+
+Links and images use a separate bracket stack:
+
+1. `[` pushes a bracket marker.
+2. `]` triggers a look-ahead for `(...)` or `[...]` link destinations.
+3. On match, the bracket and its contents become a `Link` or `Image` node.
+4. After a link is closed, all `[` markers inside it are deactivated (links cannot nest).
+
+#### Inline Precedence
+
+1. Code spans (backtick matching) — highest, contents are literal.
+2. Autolinks and raw HTML — next, detected before delimiter processing.
+3. Links/images — bracket matching with deactivation.
+4. Emphasis/strong — delimiter run algorithm.
+5. Hard/soft line breaks — lowest.
+
+### Backtrack Avoidance and O(n) Guarantee
+
+The parser must guarantee O(n) time complexity for all inputs. This is achieved by:
+
+1. **Bounded delimiter stack processing**: when a closer is found, the scan for a matching opener is bounded — openers that cannot match are removed from the stack, preventing repeated scans.
+2. **Single-pass block parsing**: each line is examined once; continuation checks walk only the open block stack (bounded by nesting depth limit).
+3. **No regex in hot paths**: all pattern matching uses hand-written scanners with explicit state.
+4. **Nesting depth limit**: a hard cap prevents stack depth from growing unboundedly.
+
 ## Core Representation
 
 1. Event stream is the primary representation for performance and streaming-style transforms.
@@ -138,12 +220,103 @@ bytes
 3. Source positions are carried in both forms.
 4. In MDX-enabled profiles, AST must preserve JSX and ESM node boundaries losslessly.
 
+## AST Node Types
+
+The following node types define the complete AST vocabulary. Each node carries a source span (byte offset + line/column) and an optional extension origin tag indicating which extension produced it.
+
+### Block Nodes
+
+| Node               | Key Fields                      | Notes                              |
+| ------------------ | ------------------------------- | ---------------------------------- |
+| `Document`         | children                        | Root node                          |
+| `BlockQuote`       | children                        | `>` container                      |
+| `List`             | ordered, start, tight, children | Ordered/unordered, tight/loose     |
+| `ListItem`         | children, taskStatus            | Optional task checkbox             |
+| `Paragraph`        | inlines                         | Leaf block                         |
+| `Heading`          | level (1–6), inlines, customId  | Optional `{#id}` anchor            |
+| `ThematicBreak`    | —                               | `---`, `***`, `___`                |
+| `FencedCode`       | infoString, metadata, literal   | Metadata: line highlights, markers |
+| `IndentedCode`     | literal                         | 4-space indented blocks            |
+| `HtmlBlock`        | literal                         | Raw HTML blocks (7 types)          |
+| `Table`            | alignments, children            | GFM pipe tables                    |
+| `TableRow`         | isHeader, children              | Header or body row                 |
+| `TableCell`        | alignment, inlines              | Individual cell                    |
+| `CustomContainer`  | type, title, attrs, children    | `::: info`, `::: details {open}`   |
+| `CodeGroup`        | children                        | `::: code-group` wrapper           |
+| `FrontmatterBlock` | format, literal                 | YAML `---` block                   |
+| `TocToken`         | —                               | `[[toc]]` placeholder              |
+| `MathBlock`        | literal                         | `$$...$$` display math             |
+
+### Inline Nodes
+
+| Node            | Key Fields                  | Notes                               |
+| --------------- | --------------------------- | ----------------------------------- |
+| `Text`          | literal                     | Plain text run                      |
+| `SoftBreak`     | —                           | Newline within paragraph            |
+| `HardBreak`     | —                           | `\\` or two trailing spaces         |
+| `Code`          | literal, languageHint       | Optional `{:lang}` hint             |
+| `Emphasis`      | inlines                     | `*` or `_`                          |
+| `Strong`        | inlines                     | `**` or `__`                        |
+| `Link`          | destination, title, inlines | `[text](url)` or reference          |
+| `Image`         | destination, title, alt     | `![alt](url)`                       |
+| `HtmlInline`    | literal                     | Inline raw HTML                     |
+| `Autolink`      | destination                 | `<url>` or GFM autolink             |
+| `Strikethrough` | inlines                     | GFM `~~text~~`                      |
+| `Emoji`         | shortcode                   | `:tada:` → resolved name            |
+| `MathInline`    | literal                     | `$...$` inline math                 |
+| `CodeMarker`    | kind, line                  | `[!code focus]`, `[!code --]`, etc. |
+
+### MDX Nodes
+
+| Node            | Key Fields                         | Notes                           |
+| --------------- | ---------------------------------- | ------------------------------- |
+| `MdxJsxElement` | name, attrs, children, selfClosing | `<Component />` or `<C>...</C>` |
+| `MdxEsmImport`  | specifiers, source                 | `import X from 'y'`             |
+| `MdxEsmExport`  | declaration                        | `export const meta = ...`       |
+| `MdxExpression` | expression                         | `{variable}` inline expressions |
+
+### Common Fields
+
+All nodes share:
+
+- `sourceSpan`: byte offset range into original input, plus start/end line and column.
+- `extensionOrigin`: optional tag (`null` for core CommonMark, otherwise the extension identifier that produced the node).
+
+### Representation
+
+Nodes use a tagged union with `SmallBuffer`-backed child lists. This provides value semantics and `@nogc` compatibility. Inline content and child block lists are stored in `SmallBuffer` arrays that fall back to arena allocation when the small buffer overflows.
+
 ## Performance Constraints
 
 1. O(n) parse time for typical and adversarial documents.
 2. No catastrophic backtracking; avoid regex-heavy critical paths.
 3. Low allocation strategy: arenas and reusable buffers.
 4. Separate parse and render passes to preserve composability.
+
+## Memory Management and Arena Strategy
+
+### Arena Allocator
+
+AST nodes are allocated from a per-parse arena allocator (using `std.experimental.allocator` patterns). The arena is bulk-freed when the parse result is released, avoiding per-node deallocation overhead.
+
+### Event Stream Storage
+
+The event stream uses a growable `SmallBuffer`-like array. Events are appended sequentially with no per-event heap allocation in the common case. When the inline buffer is exhausted, the array falls back to arena-backed growth.
+
+### Zero-Copy String Slices
+
+String content (code literals, text runs, info strings) is represented as slices into the original input buffer. The `ParseResult` holds a reference to the input, and all string slices share its lifetime. This eliminates copying for the majority of string data.
+
+### Parser State Reuse
+
+The parser struct is designed for reuse across multiple documents. Internal buffers (delimiter stack, open block stack, event array) are cleared but not freed between invocations, amortizing allocation costs across batch processing.
+
+### `@nogc` API Surface
+
+- The core parsing API (`parse()`) is `@nogc` — it uses only arena and buffer allocations.
+- The event stream and AST are fully `@nogc`-compatible.
+- Convenience functions like `toHtml()` returning `string` may allocate via the GC for ergonomics.
+- Users needing `@nogc` rendering use the output-range-based `renderHtml(ref Writer)` overload.
 
 ## Safety and Limits
 
@@ -153,24 +326,86 @@ bytes
 
 ## DbI Extension System (Shell With Hooks)
 
-The parser core is the shell; extensions are hooks with optional capabilities.
+The parser core is the shell; extensions are hooks with optional capabilities. This follows the DbI shell-with-hooks pattern from the [Design by Introspection guidelines](../../guidelines/design-by-introspection-01-guidelines.md).
 
-## Required Hook Primitive
+### Required Hook Primitive
 
-An extension must provide only identity and registration metadata.
+An extension must provide only identity and registration metadata:
 
-## Optional Hook Primitives
+```d
+struct MyExtension
+{
+    enum name = "my_extension";
+    enum priority = 100;  // lower = earlier in chain
+}
+```
 
-1. `preprocessDocument`
-2. `tryStartBlock`
-3. `tryParseInline`
-4. `onPostParse`
-5. `onRenderNode`
-6. `onError`
+### Optional Hook Primitives
 
-Absence of any optional primitive must preserve baseline correctness.
+Each hook primitive has a specific signature and purpose. Absence of any hook preserves baseline correctness.
 
-## Capability Detection
+#### 1. `preprocessDocument`
+
+Mutates the input before block parsing begins. Use for include/snippet expansion, frontmatter extraction, or input rewriting.
+
+```d
+void preprocessDocument(ref ParseContext ctx);
+```
+
+#### 2. `tryStartBlock`
+
+Recognizes new block-level constructs. Called when the core parser cannot match a line to a known block type. Returns a `BlockStart` if the extension claims the line, or `null` to defer.
+
+```d
+Nullable!BlockStart tryStartBlock(ref LineScanner scanner, ref BlockStack openBlocks);
+```
+
+#### 3. `tryParseInline`
+
+Parses extension-specific inline tokens (e.g., emoji shortcodes, math delimiters). Called at each character position during inline parsing. Returns an `InlineNode` if matched, or `null` to defer.
+
+```d
+Nullable!InlineNode tryParseInline(ref InlineScanner scanner, ref DelimiterStack delims);
+```
+
+#### 4. `onPostParse`
+
+Transforms the event stream after parsing is complete. Use for heading anchor generation, TOC assembly, or cross-reference resolution.
+
+```d
+void onPostParse(ref EventStream events);
+```
+
+#### 5. `onRenderNode`
+
+Provides custom rendering for specific node types. Returns `true` if the hook handled rendering (suppressing the default renderer), `false` to fall through.
+
+```d
+bool onRenderNode(in AstNode node, ref Writer writer);
+```
+
+#### 6. `onError`
+
+Handles parse errors with custom recovery. Returns an `ErrorAction` indicating whether to skip, recover, or abort.
+
+```d
+ErrorAction onError(ParseError error);
+```
+
+### ParseContext
+
+```d
+struct ParseContext
+{
+    const(char)[] input;          // Original input (mutable view for preprocessors)
+    SmallBuffer!(char, 4096) buf; // Scratch buffer for rewriting
+    string sourcePath;            // File path for diagnostics
+    Limits limits;                // Active parser limits
+    DiagnosticSink diagnostics;   // Error/warning accumulator
+}
+```
+
+### Capability Detection
 
 Capability checks are centralized in traits; no scattered ad-hoc `__traits(compiles, ...)`.
 
@@ -180,28 +415,167 @@ enum bool hasPreprocessDocument(E, Ctx) = __traits(compiles, {
     Ctx c = Ctx.init;
     e.preprocessDocument(c);
 });
+
+enum bool hasTryStartBlock(E, Scanner, Stack) = __traits(compiles, {
+    E e = E.init;
+    Scanner s = Scanner.init;
+    Stack st = Stack.init;
+    auto r = e.tryStartBlock(s, st);
+});
+
+enum bool hasTryParseInline(E, Scanner, Delims) = __traits(compiles, {
+    E e = E.init;
+    Scanner s = Scanner.init;
+    Delims d = Delims.init;
+    auto r = e.tryParseInline(s, d);
+});
+
+// ... analogous traits for onPostParse, onRenderNode, onError
 ```
 
-## Dispatch Precedence
+### Multi-Extension Composition
 
-1. Full override hook (if present)
-2. Event-specific hook
-3. Core fallback path
+Multiple extensions are composed as a tuple. The parser iterates extensions in priority order (lowest `priority` value first). For hooks like `tryStartBlock`, the first extension to return a non-null result wins. For hooks like `onPostParse`, all extensions run in priority order.
 
-## API Sketch
+```d
+alias Extensions = AliasSeq!(FrontmatterExt, ContainerExt, EmojiExt);
+
+struct MarkdownOptions(Hook = void)
+{
+    // When Hook is void, no extension overhead.
+    // When Hook is a tuple, extensions compose.
+}
+```
+
+### Dispatch Precedence
+
+1. Full override hook (if present) — extension takes complete control.
+2. Event-specific hook — extension observes/handles at a critical point.
+3. Core fallback path — baseline CommonMark behavior.
+
+A `void` hook compiles to the pure baseline with zero overhead (the `void` hook test from DbI guidelines).
+
+### Stateless Optimization
+
+Extensions without state are not stored in the parser struct:
+
+```d
+static if (stateSize!Hook > 0)
+    Hook hook;
+else
+    alias hook = Hook;
+```
+
+## API Surface
+
+### Profile and Feature Flags
+
+```d
+enum Profile
+{
+    commonmark_strict,
+    gfm,
+    vitepress_compatible,
+    nextra_compatible,
+    custom,
+}
+
+struct FeatureFlags
+{
+    bool tables = false;
+    bool strikethrough = false;
+    bool taskLists = false;
+    bool autolinks = false;
+    bool customContainers = false;
+    bool emojiShortcodes = false;
+    bool tocToken = false;
+    bool mathSyntax = false;
+    bool codeImport = false;
+    bool markdownInclude = false;
+    bool codeGroups = false;
+    bool githubAlerts = false;
+    bool headingAnchors = false;
+    bool customHeadingIds = false;
+    bool fenceMetadata = false;
+    bool codeMarkers = false;
+    bool mdxSyntax = false;
+    // Profile presets populate these flags; custom allows manual selection.
+}
+```
+
+### Limits
+
+```d
+struct Limits
+{
+    uint maxNestingDepth = 128;
+    uint maxIncludeDepth = 8;
+    size_t maxInputBytes = 16 * 1024 * 1024;  // 16 MiB
+    uint maxTokenCount = 0;                    // 0 = unlimited
+}
+```
+
+### Parser Options
 
 ```d
 struct MarkdownOptions(Hook = void)
 {
-    Profile profile;
+    Profile profile = Profile.commonmark_strict;
+    FeatureFlags features;
     Hook hook;
-    bool sourcePos;
-    bool safeMode;
+    bool sourcePos = true;
+    bool safeMode = true;
     Limits limits;
 }
+```
 
-ParseResult parse(string input, MarkdownOptions!Hook opts = MarkdownOptions!void());
-string toHtml(ParseResult doc, RenderOptions opts = RenderOptions());
+### Parse Result
+
+```d
+struct ParseResult
+{
+    EventStream events;         // Primary output: flat event sequence
+    const(char)[] source;       // Reference to original input for string slices
+    SourceMap sourceMap;        // Byte offset → line/column mapping
+    DiagnosticList diagnostics; // Warnings and recoverable errors
+}
+```
+
+### Render Options
+
+```d
+struct RenderOptions
+{
+    bool unsafeHtml = false;    // Pass through raw HTML and dangerous URLs
+    bool sourcePos = false;     // Emit data-sourcepos attributes
+    bool softBreakAs = '\n';    // Soft break rendering: '\n', ' ', or "<br />"
+}
+```
+
+### Primary API
+
+```d
+/// Parse markdown input into an event stream.
+ParseResult parse(Hook = void)(
+    const(char)[] input,
+    MarkdownOptions!Hook opts = MarkdownOptions!void(),
+);
+
+/// Render events to HTML using an output range (Writer).
+ref Writer renderHtml(Writer, Hook = void)(
+    in ParseResult result,
+    return ref Writer writer,
+    in RenderOptions opts = RenderOptions(),
+);
+
+/// Convenience: render to allocated string.
+string toHtml(Hook = void)(
+    in ParseResult result,
+    in RenderOptions opts = RenderOptions(),
+);
+
+/// Build a tree-structured AST from the event stream (optional).
+AstNode buildAst(in ParseResult result);
 ```
 
 ## Verification and Benchmarking
@@ -240,10 +614,27 @@ At a high level:
 3. Benchmark bias across runtimes; mitigate with transparent adapters and separate in-process vs CLI metrics.
 4. Extension complexity regressing performance; mitigate with optional hooks and zero-cost disabled branches.
 
-## Open Questions
+## Decisions and Open Questions
 
-1. Should VitePress compatibility include Vue SFC/component interpolation semantics, or only markdown-stage behavior?
-2. Should math rendering be parser-owned (MathJax/KaTeX coupling) or token-only with downstream renderer hooks?
-3. Should default profile be strict CommonMark or VitePress-compatible for `libs/markdown` consumers?
-4. What minimum Rust/Node/Go toolchain versions should benchmark CI pin?
-5. When both VitePress and Nextra heading-id syntaxes are enabled, which one takes precedence in ambiguous headings?
+### Resolved
+
+1. **Vue component interpolation**: markdown-stage only. Full Vue SFC/component interpolation is a non-goal for the parser; it belongs to the VitePress build pipeline.
+2. **Math rendering**: token-only. The parser emits `MathInline` and `MathBlock` nodes with raw LaTeX content. Downstream renderers handle MathJax/KaTeX integration via `onRenderNode` hooks.
+3. **Default profile**: `commonmark_strict`. VitePress and Nextra features are opt-in via their respective profiles. This ensures the parser is safe and predictable by default.
+
+### Open
+
+1. What minimum Rust/Node/Go toolchain versions should benchmark CI pin?
+2. When both VitePress `{#id}` and Nextra `[#id]` heading ID syntaxes are enabled simultaneously, which precedence rule applies? Current candidate: VitePress syntax wins (it is more widely adopted), with a diagnostic warning when both are present on the same heading.
+
+## Glossary
+
+- **Event stream**: a flat sequence of typed events (e.g., `EnterParagraph`, `Text`, `ExitParagraph`) representing parsed document structure. Primary output of the parser; more cache-friendly than a tree.
+- **AST**: Abstract Syntax Tree — a tree-structured representation built from the event stream when consumers need parent/child navigation or tree transformations.
+- **Arena**: a bulk-allocation strategy where all allocations share a single memory region freed together, avoiding per-object deallocation overhead.
+- **Hook**: an optional capability provided by an extension type, discovered at compile time via DbI capability traits.
+- **Shell**: the parser core that provides baseline CommonMark behavior; hooks extend it without modifying its source.
+- **Profile**: a named feature configuration preset (`commonmark_strict`, `gfm`, `vitepress_compatible`, `nextra_compatible`, `custom`).
+- **Capability trait**: a compile-time predicate (e.g., `hasPreprocessDocument`) that detects whether a type provides a specific hook.
+- **Delimiter run**: a sequence of delimiter characters (`*`, `_`) used in the CommonMark emphasis algorithm; processed via a stack-based algorithm that guarantees O(n) complexity.
+- **Lazy continuation**: a CommonMark rule allowing paragraph text to continue inside containers (block quotes, list items) without repeating container markers on every line.
