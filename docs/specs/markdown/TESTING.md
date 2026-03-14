@@ -181,6 +181,29 @@ The parser uses a shell-with-hooks model; tests must validate optionality and pr
 1. `mity/md4c` for extension/pathology behavior signals.
 2. `yuin/goldmark` for robust CommonMark + extension coverage in Go.
 
+### Concrete Test Fixture Counts and Extraction Paths
+
+| Source          | Count (approx)  | Extraction Path        | Format         | Notes                                          |
+| --------------- | --------------- | ---------------------- | -------------- | ---------------------------------------------- |
+| commonmark-spec | 652             | `spec.txt` JSON export | example blocks | Normative; `npm:commonmark-spec` provides JSON |
+| cmark           | ~70             | `test/`                | CTest `.txt`   | Regression + pathological inputs               |
+| cmark-gfm       | ~80             | `test/extensions/`     | `.txt` pairs   | GFM extension behavior                         |
+| commonmark.js   | 652 + ~45       | `test/*.txt`           | spec format    | `regression.txt`, `smart_punct.txt`            |
+| markdown-it     | 652 + ~200      | `test/fixtures/*.txt`  | fixture format | Per-extension fixture files                    |
+| micromark       | 652 + ~1000     | `test/`                | JS test files  | Extremely high edge-case coverage              |
+| marked          | ~100            | `@markedjs/testutils`  | JSON objects   | Includes `shouldFail` flag                     |
+| pulldown-cmark  | 652+            | `specs/`               | spec format    | `gen-tests` feature flag for extraction        |
+| comrak          | 652 + GFM + ~30 | `src/tests/`           | Rust macros    | Includes pathological suite                    |
+| markdown-rs     | 652 + ~1000     | `tests/`               | test files     | High edge-case coverage, mirrors micromark     |
+| md4c            | 652 + ext       | `test/`                | CMake format   | Extension-specific behavior tests              |
+| goldmark        | CM + ext        | `*_test.go`            | Go tests       | Built-in fuzz corpus available                 |
+| nextra          | ~50             | `packages/*/test/`     | JS fixtures    | MDX authoring and component behavior           |
+| mdx-js          | ~100            | `test/fixtures`        | snapshot tests | ESM/JSX edge cases and error recovery          |
+
+Total estimated unique fixtures (after deduplication): **3,500–4,000**.
+
+Ingestion adapters (in `tests/adapters/`) handle source-specific extraction and normalize all fixtures into the common JSONL schema described in [Ingestion and Normalization Pipeline](#ingestion-and-normalization-pipeline).
+
 ### Update Cadence
 
 1. Scheduled refresh at least monthly for pinned fixtures.
@@ -337,13 +360,37 @@ The parser uses a shell-with-hooks model; tests must validate optionality and pr
 
 ## Adversarial and Fuzz Testing
 
-### Adversarial Families
+### Concrete Pathological Input Patterns
 
-1. Deep nesting (lists, blockquotes, delimiters).
-2. Emphasis/link delimiter ambiguity explosions.
-3. HTML block boundary edge cases.
-4. Container termination ambiguity.
-5. Include/snippet recursion and large-file stress.
+Each pattern below specifies the adversarial input structure, expected parser behavior, and upstream coverage notes.
+
+1. **Nested emphasis delimiter explosion**: input of `N` alternating `*` characters (e.g., `*a]` × 10,000). Parser must complete in O(n) by bounding delimiter stack scans. Covered by cmark and comrak pathological suites.
+
+2. **Deep blockquote nesting**: `> ` repeated 1,000+ times. Parser must enforce nesting depth limit and not stack-overflow. Covered by cmark regression tests.
+
+3. **Deep list nesting**: alternating `- ` with increasing indentation × 1,000 levels. Same depth limit enforcement. Covered by cmark and markdown-rs tests.
+
+4. **Link/image bracket bomb**: `[` × N followed by `](url)`. The bracket matching algorithm must not exhibit O(n²) behavior from rescanning. Covered by cmark pathological suite.
+
+5. **Backtick span scanning stress**: lines with varying backtick run lengths (e.g., `` ` ``, ` `` `, ` ``` `, ..., up to length N). Code span matching must be O(n). Covered by commonmark.js regression tests.
+
+6. **HTML block detection ambiguity**: crafted sequences of `<` characters near block boundaries that trigger repeated HTML block start condition checks. Parser must bound per-line classification cost.
+
+7. **Tight/loose list rapid transitions**: lists where every other item has a blank line, forcing repeated tight/loose recalculation. Must remain O(n). Covered by markdown-it fixtures.
+
+8. **Long lines without breaks**: a single line of 10 MiB+ with no whitespace. Parser must handle without excessive memory use or timeout. Input size limit enforced.
+
+9. **Entity reference exhaustion**: thousands of `&amp;` or `&#x27;` sequences in a single paragraph. Entity resolution must be bounded. Covered by marked REDoS regression suite.
+
+10. **Unicode edge cases**: ZWJ sequences, RTL marks (U+200F), and combining characters at delimiter positions. Ensures delimiter classification handles multi-byte boundaries correctly. Partially covered by markdown-rs.
+
+11. **Container close cascade**: 1,000+ open containers (nested block quotes and list items) followed by EOF. All containers must close gracefully in O(n). Covered by cmark regression tests.
+
+12. **Include self-recursion**: `<!--@include: ./self.md-->` where the file includes itself. Parser must enforce include depth limit and emit a diagnostic. Sparkles-specific test.
+
+13. **Interleaved emphasis openers**: patterns like `*a **b *c **d *e` that maximize delimiter stack depth without closing. Must not degrade to O(n²). Covered by cmark and comrak.
+
+14. **Link reference definition flood**: thousands of `[ref]: url` definitions. Reference map building must remain O(n). Covered by micromark stress tests.
 
 ### Fuzzing Modes
 
@@ -417,6 +464,43 @@ The parser uses a shell-with-hooks model; tests must validate optionality and pr
 3. md4c
 4. goldmark
 
+### Adapter Implementation Notes
+
+Each competitor requires a specific build and measurement strategy. All adapters conform to the CLI contract: `adapter < input.md > output.html`, exit 0 on success.
+
+#### C Parsers (cmark, cmark-gfm, md4c)
+
+- Primary mode: D `extern(C)` FFI binding for in-process measurement (eliminates startup overhead).
+- Secondary mode: CLI shell-out for independent verification.
+- Build: `-O2 -DNDEBUG`, linked as static library for FFI mode.
+- Both modes must produce identical output; measure FFI mode for primary results.
+
+#### JavaScript/TypeScript Parsers (commonmark.js, markdown-it, micromark, marked)
+
+- Adapter: Node.js scripts using `process.hrtime.bigint()` for nanosecond precision.
+- Node.js version pinned in Nix (`nix/shells/default.nix`).
+- Warm-up: 5 iterations within the Node.js process before measurement (avoids JIT noise).
+- Startup overhead: measured separately and reported but not subtracted from primary results (real-world usage includes startup).
+
+#### Rust Parsers (pulldown-cmark, comrak, markdown-rs)
+
+- Build: `--release` profile with LTO enabled.
+- Timing: `std::time::Instant` for wall-clock within the Rust binary.
+- Pin toolchain via `rust-toolchain.toml` in the benchmark directory.
+- Use `criterion`-style measurement when available; otherwise manual timing loop.
+
+#### Go Parser (goldmark)
+
+- Build: `go build -ldflags="-s -w"` for stripped release binary.
+- Timing: `time.Now()` with nanosecond precision within the Go binary.
+- Pin Go version via `go.mod` and Nix.
+
+#### Sparkles Parser (D)
+
+- In-process measurement using `core.time.MonoTime`.
+- Compiled with `dub build --build=release-nobounds` for benchmarks.
+- No startup overhead (measured directly in-process).
+
 ### Workloads
 
 1. Tiny (comments/short docs).
@@ -436,17 +520,103 @@ The parser uses a shell-with-hooks model; tests must validate optionality and pr
 
 ### Fairness Rules
 
-1. Pin versions and use release builds.
+1. Pin versions and use release builds for all competitors.
 2. Run in isolated, CPU-pinned environments.
-3. Warm-up plus repeated runs with summary statistics.
-4. Compare equivalent feature sets only.
-5. Publish full commands and raw outputs.
+3. Compare equivalent feature sets only.
+4. Publish full commands, raw outputs, and environment metadata.
+
+### Statistical Methodology
+
+#### Iteration Protocol
+
+- **Warm-up**: 5 discarded iterations before measurement begins.
+- **Measured iterations**: minimum N=30 per (parser, workload) pair.
+- **Timing**: wall-clock (`MonoTime` / `process.hrtime.bigint()` / `Instant`) and user+sys CPU time where available.
+
+#### Summary Statistics
+
+- Report: mean, median, standard deviation, and coefficient of variation (CV).
+- **Noise detection**: if CV > 5%, increase iteration count to N=100 and flag the result.
+- **Cross-parser comparisons**: use Welch's t-test (unequal variances) with α=0.05.
+
+#### Environment Control
+
+- Disable CPU turbo boost (`echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo` or equivalent).
+- Pin CPU frequency to base clock.
+- Use `taskset` for core pinning; document `isolcpus` kernel parameter when available.
+- Record: CPU model, clock speed, RAM, OS version, kernel version, and compiler/runtime versions.
+
+#### Regression Detection
+
+- Compute 95% confidence interval on relative performance change between runs.
+- Flag regression if the lower bound of the CI exceeds +2% (i.e., statistically significant slowdown).
+- Track trend lines across commits for parser hot-path changes.
+
+#### Workload Specifics
+
+| Size Class      | Content                                                                                         | Approximate Size      |
+| --------------- | ----------------------------------------------------------------------------------------------- | --------------------- |
+| Tiny            | CommonMark examples 1–50 concatenated                                                           | ~5 KiB                |
+| Medium          | A representative `README.md`                                                                    | ~10–50 KiB            |
+| Large           | Full `spec.txt` (CommonMark 0.31.2)                                                             | ~150 KiB              |
+| Extension-heavy | All VitePress/Nextra features exercised                                                         | ~30 KiB               |
+| Pathological    | Each pattern from [Concrete Pathological Input Patterns](#concrete-pathological-input-patterns) | Varies (1 KiB–10 MiB) |
+
+#### Performance Bug Discovery
+
+Consider using **MdPerfFuzz** or similar syntax-tree mutation strategies to discover performance edge cases not covered by hand-crafted pathological inputs. Mutate valid markdown ASTs to generate inputs that stress specific parser code paths.
 
 ### Benchmark-to-Test Coupling
 
 1. Use benchmark corpora as non-functional regression fixtures.
 2. Trigger benchmark smoke tests for parser hot-path changes.
 3. Record trend lines and alert on statistically significant regressions.
+
+### Cross-Language Benchmark Harness Design
+
+#### Orchestrator
+
+The benchmark harness is a D program (`bench/run_bench.d`) that:
+
+1. Builds all adapter binaries (invoking `dub`, `cargo`, `go build`, `npm install` as needed via Nix).
+2. Iterates over the workload matrix (size classes × parsers).
+3. Invokes each adapter N times per workload, collecting timing and memory metrics.
+4. Writes results to JSONL for post-processing.
+
+#### Result Schema
+
+Each measurement produces one JSONL record:
+
+```json
+{
+  "parser": "sparkles",
+  "workload": "large/spec.txt",
+  "iteration": 7,
+  "wall_ns": 1423000,
+  "user_ns": 1380000,
+  "sys_ns": 42000,
+  "peak_rss_bytes": 2457600,
+  "output_hash": "sha256:a1b2c3..."
+}
+```
+
+- `output_hash` confirms correctness: all parsers must produce the same hash for a given workload (modulo documented, acceptable divergences).
+- Divergent hashes trigger a warning and diff report.
+
+#### Measurement Modes
+
+- **In-process** (Sparkles parser): `MonoTime`-based timing, direct function calls, no process startup overhead.
+- **Out-of-process** (competitors): CLI invocation with wall-clock timing. Startup overhead is measured via empty-input baseline and reported separately.
+
+#### Nix Reproducibility
+
+All toolchains (D compiler, Rust, Node.js, Go, C compiler) are pinned in `nix/shells/default.nix`. The benchmark harness runs inside `nix develop` to ensure reproducible builds and consistent environments across CI and local runs.
+
+#### Reporting
+
+- Primary output: markdown table with per-parser, per-workload summary statistics.
+- Raw data: JSONL files in `bench/results/` for reprocessing and trend analysis.
+- CI integration: summary table posted as a PR comment for performance-sensitive changes.
 
 ## CI Execution Plan
 
