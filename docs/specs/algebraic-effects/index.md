@@ -2,4 +2,5 @@
 
 Specification documents for the Sparkles algebraic effect system project.
 
-1. [System Specification](./SPEC.md)
+1. [Introduction](./intro.md)
+2. [System Specification](./SPEC.md)
