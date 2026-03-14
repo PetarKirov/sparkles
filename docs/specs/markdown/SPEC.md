@@ -124,8 +124,8 @@ The engine exposes explicit profiles:
 ## High-Level Pipeline
 
 ```text
-bytes
-  -> decoding + newline normalization
+input range (ubyte[] or char[])
+  -> UTF-8 decoding (ubyte input only) + newline normalization
   -> preprocessors (optional: include, snippet import, frontmatter split)
   -> block parser (Markdown) / MDX parser (profile-dependent)
   -> inline parser
@@ -134,6 +134,8 @@ bytes
   -> post-parse transforms (anchors, toc, code metadata)
   -> renderer(s): HTML / XML / CommonMark / event sink
 ```
+
+Input may be a range of `ubyte` (raw bytes requiring UTF-8 decoding) or a range of `char` (assumed valid UTF-8). Slice inputs (`const(ubyte)[]`, `const(char)[]`) are a special case of ranges and avoid copying.
 
 ## CommonMark Parsing Algorithm
 
@@ -625,11 +627,15 @@ struct RenderOptions
 ### Primary API
 
 ```d
-/// Parse markdown input into an event stream.
-ParseResult parse(Hook = void)(
-    const(char)[] input,
+/// Parse markdown from any input range of char or ubyte.
+/// - `char` ranges are assumed valid UTF-8.
+/// - `ubyte` ranges are UTF-8 decoded (with replacement on error).
+/// - Slice inputs (const(char)[], const(ubyte)[]) work without copying.
+ParseResult parse(R, Hook = void)(
+    R input,
     MarkdownOptions!Hook opts = MarkdownOptions!void(),
-);
+)
+if (isInputRange!R && (is(ElementType!R : const(char)) || is(ElementType!R : const(ubyte))));
 
 /// Render events to HTML using an output range (Writer).
 ref Writer renderHtml(Writer, Hook = void)(
