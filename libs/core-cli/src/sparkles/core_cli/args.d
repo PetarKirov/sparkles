@@ -60,11 +60,11 @@ void parseCliArgs(CliOptions...)(
 )
 {
     import core.stdc.stdlib : exit;
-    import std.getopt : getopt;
+    import std.getopt : config, getopt;
     import std.stdio : writeln;
     import sparkles.core_cli.help_formatting : formatProgramManual;
 
-    auto getOptResult = argv.getopt(options);
+    auto getOptResult = argv.getopt(config.caseSensitive, options);
 
     if (getOptResult.helpWanted)
     {
