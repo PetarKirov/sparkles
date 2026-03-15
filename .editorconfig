@@ -25,6 +25,11 @@ indent_style = space
 [libs/core-cli/src/sparkles/core_cli/prettyprint.d]
 indent_size = unset
 
+# Disable indent checking for tree_view.d - contains multiline string literals
+# with tree guide characters that produce non-standard indentation
+[libs/core-cli/src/sparkles/core_cli/ui/tree_view.d]
+indent_size = unset
+
 # Test data files contain exact byte sequences — no trailing newline
 [libs/core-cli/test/data/**]
 insert_final_newline = unset
