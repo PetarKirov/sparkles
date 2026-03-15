@@ -13,6 +13,7 @@ builds on it with pretty-printing, UI components, CLI helpers, and process utili
 - [UI Components](#ui-components)
   - [Tables](#tables)
   - [Boxes](#boxes)
+  - [Recursive Tree Views](#recursive-tree-views)
   - [Headers](#headers)
   - [OSC 8 Hyperlinks](#osc-8-hyperlinks)
   - [Meters & Progress](#meters--progress)
@@ -350,6 +351,76 @@ void main()
 ╭──╼ Status ╾──────────────╮
 │ Processing...            │
 ╰──╼ Press Q to cancel ╾───╯
+```
+
+### Recursive Tree Views
+
+Render hierarchical data as indented text with Unicode guide characters. Any type with `.label` and `.children` works out of the box; hooks provide custom access for other types.
+
+```d
+import sparkles.ui.components.tree_draw : drawTree, TreeViewProps;
+
+struct FileNode
+{
+    string label;
+    const(FileNode)[] children;
+}
+
+// drawTree renders any type with .label and .children
+drawTree(FileNode("project/", [
+    FileNode("src/", [
+        FileNode("main.d"),
+        FileNode("util.d"),
+    ]),
+    FileNode("tests/", [
+        FileNode("test_main.d"),
+    ]),
+    FileNode("README.md"),
+]), TreeViewProps!void(useColors: false));
+```
+
+Output:
+
+```text
+project/
+├─┬ src/
+│   ├── main.d
+│   └── util.d
+├─┬ tests/
+│   └── test_main.d
+└── README.md
+```
+
+#### TreeViewProps
+
+| Option       | Default     | Description                                   |
+| ------------ | ----------- | --------------------------------------------- |
+| `guides`     | Unicode box | Guide character set (space/continue/fork/end) |
+| `maxDepth`   | 32          | Maximum recursion depth                       |
+| `useColors`  | true        | ANSI-styled guide characters                  |
+| `guideStyle` | `Style.dim` | Style applied to guide characters             |
+| `showRoot`   | true        | Show root node or only its children           |
+
+#### Heterogeneous Trees
+
+Children can be a different type than the parent — the template re-instantiates at each level:
+
+```d
+struct Dir  { string label; FileEntry[] children; }
+struct FileEntry { string label; }  // no .children → leaf
+```
+
+#### Hook-Based Customization
+
+Use a `Hook` type to provide `.label` or `.children` for types that don't have them:
+
+```d
+struct DepHook
+{
+    string label(in Dep d) const { return d.name ~ " " ~ d.ver; }
+}
+
+drawTree(roots, TreeViewProps!DepHook(useColors: false));
 ```
 
 ### Headers
@@ -780,6 +851,7 @@ Available examples:
 - `styled-template.d` - IES-based template styling
 - `table.d` - Table rendering gallery (spans, alignment, titles, streaming views)
 - `box.d` - Box layouts with nested content
+- `tree-draw.d` - Recursive (DbI) tree rendering with guide characters
 - `header.d` - Header styles
 - `osc-link.d` - OSC 8 terminal hyperlinks
 - `theme.d` - Border presets, status glyphs, semantic styles

@@ -896,6 +896,7 @@ dub run --single libs/core-cli/examples/table-leaderboard.d # animated, re-sorti
 dub run --single libs/core-cli/examples/table-bench-ticker.d # animated benchmark results
 dub run --single libs/core-cli/examples/box.d
 dub run --single libs/core-cli/examples/streaming-box.d     # animated
+dub run --single libs/core-cli/examples/tree-draw.d
 dub run --single libs/core-cli/examples/header.d
 dub run --single libs/core-cli/examples/osc-link.d
 dub run --single libs/core-cli/examples/color.d

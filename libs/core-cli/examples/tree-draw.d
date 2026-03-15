@@ -1,12 +1,20 @@
 #!/usr/bin/env dub
 /+ dub.sdl:
-    name "tree_view"
-    dependency "sparkles:core-cli" path="../../../"
+    name "tree_draw"
+    dependency "sparkles:core-cli" path="../../.."
     targetPath "build"
+    // Optimised, assertions live, `debug {}` blocks out — the build every nix
+    // artifact uses. Neither `debug` (which compiles those blocks in) nor
+    // `release` (which deletes assert *expressions*, side effects included).
+    buildType "checked" {
+        buildOptions "optimize" "inline" "debugInfo"
+    }
 +/
 
-import sparkles.core_cli.ui.demo : Section, runDemo;
-import sparkles.core_cli.ui.tree_view : drawTree, TreeViewProps;
+module tree_draw_example;
+
+import sparkles.ui.components.demo : Section, runDemo;
+import sparkles.ui.components.tree_draw : drawTree, TreeViewProps;
 
 struct FileNode
 {
