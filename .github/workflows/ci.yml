@@ -53,3 +53,6 @@ jobs:
 
       - name: Build and test with dub
         run: ./scripts/run-tests.sh
+
+      - name: Build and run examples
+        run: ./scripts/run-examples.sh
