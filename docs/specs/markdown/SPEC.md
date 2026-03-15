@@ -335,25 +335,30 @@ Nodes are plain structs composed via `std.sumtype.SumType` — no classes, no GC
 ```d
 import std.sumtype : SumType;
 
-struct SourceSpan { /* byte offsets, line/column — layout TBD */ }
+struct SourceSpan
+{
+    uint offset;
+    uint length;
+    // Line and column numbers are computed lazily on demand by querying the SourceMap
+}
 
 // --- Block node structs ---
 
-struct Document       { SourceSpan span; SmallBuffer!(AstNode*, 8) children; }
-struct BlockQuote     { SourceSpan span; SmallBuffer!(AstNode*, 4) children; }
-struct ListBlock      { SourceSpan span; bool ordered; uint start; bool tight; SmallBuffer!(AstNode*, 8) children; }
-struct ListItem       { SourceSpan span; TaskStatus taskStatus; SmallBuffer!(AstNode*, 4) children; }
-struct Paragraph      { SourceSpan span; SmallBuffer!(InlineNode, 8) inlines; }
-struct Heading        { SourceSpan span; ubyte level; const(char)[] customId; SmallBuffer!(InlineNode, 4) inlines; }
+struct Document       { SourceSpan span; AstNode*[] children; }
+struct BlockQuote     { SourceSpan span; AstNode*[] children; }
+struct ListBlock      { SourceSpan span; bool ordered; uint start; bool tight; AstNode*[] children; }
+struct ListItem       { SourceSpan span; TaskStatus taskStatus; AstNode*[] children; }
+struct Paragraph      { SourceSpan span; InlineNode[] inlines; }
+struct Heading        { SourceSpan span; ubyte level; const(char)[] customId; InlineNode[] inlines; }
 struct ThematicBreak  { SourceSpan span; }
 struct FencedCode     { SourceSpan span; const(char)[] infoString; CodeMeta metadata; const(char)[] literal; }
 struct IndentedCode   { SourceSpan span; const(char)[] literal; }
 struct HtmlBlock      { SourceSpan span; const(char)[] literal; }
-struct TableBlock     { SourceSpan span; SmallBuffer!(Alignment, 8) alignments; SmallBuffer!(AstNode*, 8) children; }
-struct TableRow       { SourceSpan span; bool isHeader; SmallBuffer!(AstNode*, 8) children; }
-struct TableCell      { SourceSpan span; Alignment alignment; SmallBuffer!(InlineNode, 4) inlines; }
-struct CustomContainer{ SourceSpan span; const(char)[] type; const(char)[] title; SmallBuffer!(AstNode*, 4) children; }
-struct CodeGroup      { SourceSpan span; SmallBuffer!(AstNode*, 4) children; }
+struct TableBlock     { SourceSpan span; Alignment[] alignments; AstNode*[] children; }
+struct TableRow       { SourceSpan span; bool isHeader; AstNode*[] children; }
+struct TableCell      { SourceSpan span; Alignment alignment; InlineNode[] inlines; }
+struct CustomContainer{ SourceSpan span; const(char)[] type; const(char)[] title; AstNode*[] children; }
+struct CodeGroup      { SourceSpan span; AstNode*[] children; }
 struct FrontmatterBlk { SourceSpan span; const(char)[] format; const(char)[] literal; }
 struct TocToken       { SourceSpan span; }
 struct MathBlock      { SourceSpan span; const(char)[] literal; }
@@ -364,20 +369,20 @@ struct Text           { SourceSpan span; const(char)[] literal; }
 struct SoftBreak      { SourceSpan span; }
 struct HardBreak      { SourceSpan span; }
 struct Code           { SourceSpan span; const(char)[] literal; const(char)[] languageHint; }
-struct Emphasis       { SourceSpan span; SmallBuffer!(InlineNode, 4) inlines; }
-struct Strong         { SourceSpan span; SmallBuffer!(InlineNode, 4) inlines; }
-struct Link           { SourceSpan span; const(char)[] destination; const(char)[] title; SmallBuffer!(InlineNode, 4) inlines; }
+struct Emphasis       { SourceSpan span; InlineNode[] inlines; }
+struct Strong         { SourceSpan span; InlineNode[] inlines; }
+struct Link           { SourceSpan span; const(char)[] destination; const(char)[] title; InlineNode[] inlines; }
 struct Image          { SourceSpan span; const(char)[] destination; const(char)[] title; const(char)[] alt; }
 struct HtmlInline     { SourceSpan span; const(char)[] literal; }
 struct Autolink       { SourceSpan span; const(char)[] destination; }
-struct Strikethrough  { SourceSpan span; SmallBuffer!(InlineNode, 4) inlines; }
+struct Strikethrough  { SourceSpan span; InlineNode[] inlines; }
 struct Emoji          { SourceSpan span; const(char)[] shortcode; }
 struct MathInline     { SourceSpan span; const(char)[] literal; }
 struct CodeMarker     { SourceSpan span; MarkerKind kind; uint line; }
 
 // --- MDX node structs ---
 
-struct MdxJsxElement  { SourceSpan span; const(char)[] name; bool selfClosing; SmallBuffer!(AstNode*, 4) children; }
+struct MdxJsxElement  { SourceSpan span; const(char)[] name; bool selfClosing; AstNode*[] children; }
 struct MdxEsmImport   { SourceSpan span; const(char)[] source; }
 struct MdxEsmExport   { SourceSpan span; const(char)[] declaration; }
 struct MdxExpression  { SourceSpan span; const(char)[] expression; }
@@ -407,6 +412,7 @@ alias AstNode = SumType!(InlineNode, BlockNode);
 2. No catastrophic backtracking; avoid regex-heavy critical paths.
 3. Low allocation strategy: arenas and reusable buffers.
 4. Separate parse and render passes to preserve composability.
+5. CTFE-compatible core fallback paths to allow compile-time parsing and HTML generation.
 
 ## Allocation Strategy and Determinism
 
@@ -711,13 +717,20 @@ struct MarkdownOptions(Hook = void, Alloc = void)
     bool sourcePos = true;
     bool safeMode = true;
     Limits limits;
-    BorrowPolicy borrowPolicy = BorrowPolicy.auto;
     Utf8ErrorMode utf8ErrorMode = Utf8ErrorMode.replace;
     HeadingIdSyntaxPreference headingIdPreference = HeadingIdSyntaxPreference.vitepressBraceFirst;
 
     // Optional allocator hook. `void` means use baseline allocation path.
     static if (!is(Alloc == void))
         Alloc allocator;
+
+    // Borrow policy is extracted at compile-time from the Hook, defaulting to auto.
+    enum BorrowPolicy borrowPolicy = () {
+        static if (__traits(compiles, Hook.borrowPolicy))
+            return Hook.borrowPolicy;
+        else
+            return BorrowPolicy.auto;
+    }();
 }
 ```
 
@@ -748,10 +761,22 @@ struct RenderOptions
 ### Primary API
 
 ```d
+/// Basic hook that forces requireBorrow policy at compile-time
+struct RequireBorrowHook
+{
+    enum borrowPolicy = BorrowPolicy.requireBorrow;
+}
+
+/// Basic hook that forces requireCopy policy at compile-time
+struct RequireCopyHook
+{
+    enum borrowPolicy = BorrowPolicy.requireCopy;
+}
+
 /// Parse markdown from any input range of char or ubyte.
 /// - `char` ranges are assumed valid UTF-8.
 /// - `ubyte` ranges are UTF-8 decoded according to `utf8ErrorMode`.
-/// - Ownership is controlled by BorrowPolicy (auto/requireBorrow/requireCopy).
+/// - Ownership is controlled by BorrowPolicy (auto by default unless overridden in Hook).
 ParseResult parse(R, Hook = void, Alloc = void)(
     R input,
     MarkdownOptions!(Hook, Alloc) opts = MarkdownOptions!(Hook, Alloc)(),
@@ -759,26 +784,24 @@ ParseResult parse(R, Hook = void, Alloc = void)(
 if (isInputRange!R && (is(ElementType!R : const(char)) || is(ElementType!R : const(ubyte))));
 
 /// Hard guarantee: no source copy and slice-only inputs.
-/// Statically rejects `BorrowPolicy.auto`; caller must request explicit borrow semantics.
-/// Implementation includes: `static assert(opts.borrowPolicy != BorrowPolicy.auto);`.
-ParseResult parseBorrowed(S, Hook = void)(
+/// Caller must request explicit borrow semantics either via `RequireBorrowHook` or their own Hook.
+ParseResult parseBorrowed(S, Hook = RequireBorrowHook)(
     S input,
-    MarkdownOptions!(Hook, void) opts = MarkdownOptions!(Hook, void)(
-        borrowPolicy: BorrowPolicy.requireBorrow,
-    ),
+    MarkdownOptions!(Hook, void) opts = MarkdownOptions!(Hook, void)()
 )
-if (is(S == const(char)[]) || is(S == immutable(char)[]) || is(S == const(ubyte)[]) || is(S == immutable(ubyte)[]));
+if ((is(S == const(char)[]) || is(S == immutable(char)[]) || is(S == const(ubyte)[]) || is(S == immutable(ubyte)[])) &&
+    opts.borrowPolicy == BorrowPolicy.requireBorrow);
 
 /// Hard guarantee: source is owned by ParseResult storage using provided allocator.
-ParseResult parseOwned(R, Hook = void, Alloc)(
+ParseResult parseOwned(R, Hook = RequireCopyHook, Alloc)(
     R input,
     ref Alloc allocator,
     MarkdownOptions!(Hook, Alloc) opts = MarkdownOptions!(Hook, Alloc)(
-        borrowPolicy: BorrowPolicy.requireCopy,
         allocator: allocator,
     ),
 )
-if (isInputRange!R && (is(ElementType!R : const(char)) || is(ElementType!R : const(ubyte))));
+if (isInputRange!R && (is(ElementType!R : const(char)) || is(ElementType!R : const(ubyte))) &&
+    opts.borrowPolicy == BorrowPolicy.requireCopy);
 
 /// Resolve a span into text; callers choose whether to keep borrowing or copy.
 const(char)[] sourceSlice(in ParseResult result, in SourceSpan span);
