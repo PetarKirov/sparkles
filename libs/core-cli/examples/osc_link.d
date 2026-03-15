@@ -2,7 +2,7 @@
 
 /+ dub.sdl:
 name "osc_link"
-dependency "sparkles:core-cli" version="*"
+dependency "sparkles:core-cli" path="../../../"
 targetPath "build"
 +/
 
