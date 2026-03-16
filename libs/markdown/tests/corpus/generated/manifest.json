@@ -1,0 +1,20 @@
+{
+  "fixtureCount": 10,
+  "fixtures": [
+    "commonmark-seed:fenced-code",
+    "commonmark-seed:heading",
+    "commonmark-seed:link",
+    "commonmark-seed:paragraph-emphasis",
+    "commonmark-seed:thematic-break",
+    "gfm-seed:strikethrough",
+    "nextra-seed:custom-heading-id",
+    "pathological-seed:long-inline",
+    "pathological-seed:tilde-run",
+    "vitepress-seed:custom-heading-id"
+  ],
+  "flakeLockPath": "..\/flake.lock",
+  "generatedAt": "2026-03-17T01:47:39.3927889",
+  "managedBy": "tests\/adapters\/ingest_all.d",
+  "schemaVersion": 1,
+  "sourcePinsFile": "..\/sources.json"
+}
