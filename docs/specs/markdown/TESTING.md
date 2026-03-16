@@ -226,9 +226,6 @@ Ingestion adapters (in `tests/adapters/`) handle source-specific extraction and 
 ```json
 {
   "id": "source:case",
-  "sourceRepo": "owner/repo",
-  "sourcePath": "path/to/file",
-  "sourceCommit": "abcdef123456",
   "sourceUrl": "https://...",
   "license": "BSD-2-Clause",
   "dialect": "commonmark|gfm|vitepress|nextra|mdx",
@@ -247,6 +244,8 @@ Ingestion adapters (in `tests/adapters/`) handle source-specific extraction and 
 }
 ```
 
+The fields relating to provenance (`sourceRepo`, `sourceCommit`, `sourcePath`) have been removed from the individual fixture schemas because they will be pinned via a nested `flake.nix` and `flake.lock` at the root of the test corpus directory. Individual fixture files will be mapped into the test suite using Nix `lib.fileset` at build time, ensuring bit-for-bit reproducibility.
+
 ### Determinism Requirements
 
 1. Stable fixture ordering by `id`.
@@ -256,11 +255,13 @@ Ingestion adapters (in `tests/adapters/`) handle source-specific extraction and 
 
 ## Provenance, Licensing, and Reproducibility
 
-1. Every fixture set must include source repository, path, commit SHA, and license identifier.
-2. Manifest files must include generation timestamp in UTC and generator version hash.
-3. Regeneration script output must be byte-stable for the same inputs.
-4. License policy must block ingestion from incompatible or unknown licenses.
-5. Fixtures requiring local transformations must preserve source mapping annotations.
+1. Corpus provenance (source repository, commit SHA, and exact version pinning) is fully managed via a nested `flake.nix` and `flake.lock` at the root of the test module.
+2. Individual test fixtures and corpora files are injected into the build/test environments natively via Nix `lib.fileset`, enabling precise path scoping without duplication.
+3. Every fixture block extracted must preserve a license identifier in the `JSONL`.
+4. Manifest files must include generation timestamp in UTC and generator version hash.
+5. Regeneration script output must be byte-stable for the same inputs.
+6. License policy must block ingestion from incompatible or unknown licenses.
+7. Fixtures requiring local transformations must preserve source mapping annotations.
 
 ## Output Comparison and Oracle Policy
 
