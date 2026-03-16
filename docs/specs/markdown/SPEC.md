@@ -199,7 +199,8 @@ Each input line is classified by testing (in order):
 7. **List item marker** — bullet (`-`, `*`, `+`) or ordered (`1.`, `1)`) followed by 1–3 spaces.
 8. **Indented code** — 4+ spaces of indentation (only when not in a paragraph continuation context).
 9. **Setext heading underline** — `=` or `-` characters (only when closing an open paragraph).
-10. **Continuation** — anything else continues the current open block.
+10. **Link reference definition** — parses definitions like `[label]: url "title"` from paragraph contexts, adding them to a reference map.
+11. **Continuation** — anything else continues the current open block.
 
 #### Open/Close State Machine
 
@@ -289,6 +290,7 @@ The following node types define the complete AST vocabulary. Each node carries a
 | `FrontmatterBlock` | format, literal                 | YAML `---` block                   |
 | `TocToken`         | —                               | `[[toc]]` placeholder              |
 | `MathBlock`        | literal                         | `$$...$$` display math             |
+| `LinkRefDef`       | label, destination, title       | `[label]: url "title"`             |
 
 ### Inline Nodes
 
@@ -362,6 +364,7 @@ struct CodeGroup      { SourceSpan span; AstNode*[] children; }
 struct FrontmatterBlk { SourceSpan span; const(char)[] format; const(char)[] literal; }
 struct TocToken       { SourceSpan span; }
 struct MathBlock      { SourceSpan span; const(char)[] literal; }
+struct LinkRefDef     { SourceSpan span; const(char)[] label; const(char)[] destination; const(char)[] title; }
 
 // --- Inline node structs ---
 
@@ -400,7 +403,7 @@ alias BlockNode = SumType!(
     Heading, ThematicBreak, FencedCode, IndentedCode,
     HtmlBlock, TableBlock, TableRow, TableCell,
     CustomContainer, CodeGroup, FrontmatterBlk, TocToken,
-    MathBlock, MdxJsxElement, MdxEsmImport, MdxEsmExport,
+    MathBlock, LinkRefDef, MdxJsxElement, MdxEsmImport, MdxEsmExport,
 );
 
 alias AstNode = SumType!(InlineNode, BlockNode);
@@ -737,9 +740,16 @@ struct MarkdownOptions(Hook = void, Alloc = void)
 ### Parse Result
 
 ```d
+struct ReferenceMap
+{
+    // Maps normalized link labels to destinations and titles.
+    // Implementation uses case-folding and whitespace normalization per CommonMark spec.
+}
+
 struct ParseResult
 {
     EventStream events;         // Primary output: flat event sequence
+    ReferenceMap referenceMap;  // Map of collected link reference definitions
     SourceStorage source;       // Borrowed/owned normalized source text (or rope view)
     RawByteStorage rawBytes;    // Preserved original input bytes
     SourceMap sourceMap;        // Byte offset → line/column mapping
