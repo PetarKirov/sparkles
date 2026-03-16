@@ -1,0 +1,10 @@
+{
+	"fileVersion": 1,
+	"versions": {
+		"core-cli": {"path":"../core-cli"},
+		"effects-direct": {"path":"../effects-direct"},
+		"effects-ts": {"path":"../effects-ts"},
+		"silly": "1.1.1",
+		"sparkles": "0.0.3"
+	}
+}
