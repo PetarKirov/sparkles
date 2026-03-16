@@ -1,12 +1,12 @@
-# Sparkles Algebraic Effect System Specification
+# Proposal A: Direct-Style Algebraic Effect System
 
 ## Status
 
-Draft v0.1
+Draft v0.1 (Proposal A)
 
 ## Goal
 
-Design a D-native algebraic effect system for Sparkles with:
+Design a D-native algebraic effect system for Sparkles using a direct-style architecture (passing a `Context` bundle explicitly) with:
 
 1. A production-friendly core that works as a library on current D compilers.
 2. Typed effect-set tracking at API boundaries.
