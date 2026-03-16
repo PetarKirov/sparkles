@@ -10,7 +10,7 @@ The short version is this:
 
 That sounds abstract, but the motivation is practical. [Effect systems][glossary-effect-system] are an answer to a problem that grows with program size: once a program does logging, time, configuration, state, filesystem access, [cancellation][glossary-cancellation], concurrency, and failure handling, those concerns start leaking everywhere. The code still compiles, but it becomes harder to test, harder to change, and harder to reason about locally.
 
-This tutorial explains why effect-oriented design exists, why production systems keep converging toward it, and how a D implementation could work today. For the concrete Sparkles design, see the [System Specification]. If a term looks unfamiliar, jump to the [Glossary](#glossary).
+This tutorial explains why effect-oriented design exists, why production systems keep converging toward it, and how a D implementation could work today. For the concrete Sparkles design proposals, see the [Direct-Style Proposal] and [Effect-TS Style Proposal]. If a term looks unfamiliar, jump to the [Glossary](#glossary).
 
 ## The Problem [Effect Systems][glossary-effect-system] Try to Solve
 
@@ -191,7 +191,7 @@ The same is true for:
 
 ## What This Could Look Like in D Today
 
-The Sparkles design in [System Specification] deliberately starts from D's strengths instead of pretending D is Haskell, Koka, or OCaml.
+The direct-style Sparkles design proposal in [Direct-Style Proposal] deliberately starts from D's strengths instead of pretending D is Haskell, Koka, or OCaml.
 
 Those strengths are:
 
@@ -714,7 +714,7 @@ This is great for clarity and experimentation, but often slower than direct runt
 
 ## Where to Go Next
 
-1. Read the [System Specification] for the concrete Sparkles design.
+1. Read the [Direct-Style Proposal] and [Effect-TS Style Proposal] for the concrete Sparkles design proposals.
 2. Use [Algebraic Effects Research] to compare ecosystems and terminology.
 3. Read [Theory and Compilation] for the runtime and performance intuition.
 4. Read [OCaml Eio], [effectful], [bluefin], and [Koka] for the most relevant reference points.
@@ -722,7 +722,9 @@ This is great for clarity and experimentation, but often slower than direct runt
 
 ## References
 
-- [System Specification]
+- [Direct-Style Proposal]
+- [Effect-TS Style Proposal]
+- [Comparison]
 - [Functional & Declarative Programming]
 - [DbI Intro]
 - [DbI Guidelines]
@@ -742,7 +744,9 @@ This is great for clarity and experimentation, but often slower than direct runt
 - [Value Semantics]
 - [Safety]
 
-[System Specification]: ./SPEC.md
+[Direct-Style Proposal]: ./proposal-direct-style.md
+[Effect-TS Style Proposal]: ./proposal-effect-ts-style.md
+[Comparison]: ./comparison.md
 [Functional & Declarative Programming]: ../../guidelines/functional-declarative-programming-guidelines.md
 [DbI Intro]: ../../guidelines/design-by-introspection-00-intro.md
 [DbI Guidelines]: ../../guidelines/design-by-introspection-01-guidelines.md

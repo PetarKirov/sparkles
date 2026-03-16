@@ -736,8 +736,16 @@
             "link": "/specs/algebraic-effects/intro"
           },
           {
-            "text": "System Spec",
-            "link": "/specs/algebraic-effects/SPEC"
+            "text": "Proposal A: Direct-Style",
+            "link": "/specs/algebraic-effects/proposal-direct-style"
+          },
+          {
+            "text": "Proposal B: Effect-TS Style",
+            "link": "/specs/algebraic-effects/proposal-effect-ts-style"
+          },
+          {
+            "text": "Comparison",
+            "link": "/specs/algebraic-effects/comparison"
           }
         ]
       },
