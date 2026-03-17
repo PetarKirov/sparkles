@@ -390,6 +390,29 @@ export default defineConfig({
               },
             ],
           },
+          {
+            text: 'Vulkan Bindings',
+            collapsed: true,
+            items: [
+              { text: 'Overview', link: '/research/vulkan/' },
+              {
+                text: 'Rust (vulkano)',
+                link: '/research/vulkan/rust-vulkano',
+              },
+              {
+                text: 'Haskell (vulkan)',
+                link: '/research/vulkan/haskell-vulkan',
+              },
+              {
+                text: 'C++ (Vulkan-Hpp)',
+                link: '/research/vulkan/cpp-vulkan-hpp',
+              },
+              {
+                text: 'OCaml (Olivine)',
+                link: '/research/vulkan/ocaml-olivine',
+              },
+            ],
+          },
         ],
       },
     ],
