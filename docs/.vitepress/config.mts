@@ -55,6 +55,16 @@ export default defineConfig({
               { text: 'Appendix: Official DStyle', link: '/guidelines/dstyle' },
             ],
           },
+          {
+            text: 'Idioms',
+            collapsed: true,
+            items: [
+              {
+                text: 'Forcing Named Arguments',
+                link: '/guidelines/idioms/forced-named-arguments/',
+              },
+            ],
+          },
         ],
       },
       {

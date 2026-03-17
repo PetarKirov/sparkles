@@ -173,6 +173,32 @@ auto result = createWidget(
 );
 ```
 
+### Forcing Named Arguments
+
+Force external callers to use named arguments by adding a `private`-typed
+sentinel with a default value as the first parameter. Callers outside the
+module cannot construct the private type, so positional calls fail at compile
+time while named calls skip past the sentinel via its default:
+
+```d
+private struct NamedOnly {}
+
+void draw(NamedOnly _ = NamedOnly.init, int x = 0, int y = 0, int width = 0, int height = 0)
+{
+    // ...
+}
+
+// From another module:
+draw(x: 10, y: 20, width: 100, height: 200); // ✅
+draw(10, 20, 100, 200);                       // ❌ compile error
+```
+
+The same technique applies to struct fields. For the function-parameter
+variant the sentinel is zero-cost — it produces identical assembly to a plain
+function. See [Forcing Named Arguments](idioms/forced-named-arguments/) for
+the full write-up including ABI analysis, struct caveats, and alternative
+techniques that were evaluated.
+
 ## Interpolated Expression Sequences ([DIP1036](https://github.com/dlang/DIPs/blob/master/DIPs/other/DIP1036.md))
 
 Use IES (`i"..."`) when interspersing string literals with expressions. Preference order:
