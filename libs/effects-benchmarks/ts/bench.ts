@@ -1,6 +1,6 @@
 import { Effect, Context } from 'effect';
+import { run, bench, group } from 'mitata';
 
-// 1. Define Native TS baseline
 const ITERS = 10_000_000;
 
 class NativeEnv {
@@ -19,7 +19,6 @@ function runNative(env: NativeEnv): number {
   return sum;
 }
 
-// 2. Define Effect-TS baseline
 class CapA extends Context.Tag('CapA')<CapA, { readonly v: number }>() {}
 class CapB extends Context.Tag('CapB')<CapB, { readonly v: number }>() {}
 class CapC extends Context.Tag('CapC')<CapC, { readonly v: number }>() {}
@@ -32,7 +31,6 @@ const compute = Effect.gen(function* () {
 });
 
 function runEffectTS(): number {
-  // Creating the runnable pipeline
   const program = Effect.loop(0, {
     step: i => i + 1,
     while: i => i < ITERS,
@@ -50,25 +48,24 @@ function runEffectTS(): number {
   );
 
   Effect.runSync(runnable);
-  return 0; // sum omitted to match TS effect loop behavior which discards
+  return 0;
 }
 
-const main = () => {
-  // Native
-  const startNative = performance.now();
-  runNative(new NativeEnv(1, 2, 3));
-  const endNative = performance.now();
-  console.log(
-    `TypeScript (Native),${ITERS},${Math.round(endNative - startNative)}`,
-  );
+group(`Effect System Overhead (${ITERS} iters)`, () => {
+  bench('TypeScript (Native)', () => {
+    runNative(new NativeEnv(1, 2, 3));
+  }).baseline();
 
-  // Effect-TS
-  const startEffect = performance.now();
-  runEffectTS();
-  const endEffect = performance.now();
-  console.log(
-    `TypeScript (Effect-TS),${ITERS},${Math.round(endEffect - startEffect)}`,
-  );
+  bench('TypeScript (Effect-TS)', () => {
+    runEffectTS();
+  });
+});
+
+const main = async () => {
+  await run({
+    colors: false,
+    format: 'mitata',
+  });
 };
 
 main();
