@@ -1142,6 +1142,10 @@
           {
             "text": "Testing Spec",
             "link": "/specs/markdown/TESTING"
+          },
+          {
+            "text": "Inspect Tree Example Plan",
+            "link": "/specs/markdown/examples/inspect_tree"
           }
         ]
       },
