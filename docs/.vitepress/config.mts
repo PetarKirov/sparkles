@@ -1,4 +1,5 @@
 import { defineConfig } from "vitepress";
+import { apiSidebar } from "./generated/api-sidebar.mjs";
 
 export default defineConfig({
   title: "Sparkles",
@@ -14,46 +15,52 @@ export default defineConfig({
       { text: "API", link: "/api/" },
     ],
 
-    sidebar: [
-      {
-        text: "Overview",
-        items: [{ text: "core-cli Package", link: "/overview" }],
-      },
-      {
-        text: "Guidelines",
-        items: [
-          {
-            text: "Functional & Declarative Programming",
-            link: "/guidelines/functional-declarative-programming-guidelines",
-          },
-          {
-            text: "Design by Introspection",
-            items: [
-              {
-                text: "Intro",
-                link: "/guidelines/design-by-introspection-00-intro",
-              },
-              {
-                text: "Guidelines",
-                link: "/guidelines/design-by-introspection-01-guidelines",
-              },
-            ],
-          },
-          {
-            text: "Interpolated Expression Sequences",
-            link: "/guidelines/interpolated-expression-sequences",
-          },
-          { text: "DDoc", link: "/guidelines/ddoc" },
-          {
-            text: "Code Style",
-            items: [
-              { text: "Overview", link: "/guidelines/code-style" },
-              { text: "Appendix: Official DStyle", link: "/guidelines/dstyle" },
-            ],
-          },
-        ],
-      },
-    ],
+    sidebar: {
+      "/api/": apiSidebar,
+      "/": [
+        {
+          text: "Overview",
+          items: [{ text: "core-cli Package", link: "/overview" }],
+        },
+        {
+          text: "Guidelines",
+          items: [
+            {
+              text: "Functional & Declarative Programming",
+              link: "/guidelines/functional-declarative-programming-guidelines",
+            },
+            {
+              text: "Design by Introspection",
+              items: [
+                {
+                  text: "Intro",
+                  link: "/guidelines/design-by-introspection-00-intro",
+                },
+                {
+                  text: "Guidelines",
+                  link: "/guidelines/design-by-introspection-01-guidelines",
+                },
+              ],
+            },
+            {
+              text: "Interpolated Expression Sequences",
+              link: "/guidelines/interpolated-expression-sequences",
+            },
+            { text: "DDoc", link: "/guidelines/ddoc" },
+            {
+              text: "Code Style",
+              items: [
+                { text: "Overview", link: "/guidelines/code-style" },
+                {
+                  text: "Appendix: Official DStyle",
+                  link: "/guidelines/dstyle",
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
 
     socialLinks: [
       { icon: "github", link: "https://github.com/PetarKirov/sparkles" },

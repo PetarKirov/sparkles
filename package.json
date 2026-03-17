@@ -3,7 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "docs:dev": "vitepress dev docs",
+    "docs:api": "node docs/.vitepress/scripts/build-api.mjs",
+    "docs:api:data": "node docs/.vitepress/scripts/api-data.mjs",
+    "docs:api:pages": "node docs/.vitepress/scripts/generate-api-pages.mjs",
+    "predocs:dev": "npm run docs:api",
+    "docs:dev": "vitepress dev docs --host",
+    "predocs:build": "npm run docs:api",
     "docs:build": "vitepress build docs",
     "docs:preview": "vitepress preview docs"
   },

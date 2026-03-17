@@ -41,3 +41,4 @@ __dummy.html
 node_modules/
 docs/.vitepress/dist/
 docs/.vitepress/cache/
+docs/.vitepress/data/api

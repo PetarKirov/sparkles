@@ -1,0 +1,12 @@
+{
+  "sourcePath": "libs/core-cli/src",
+  "generated": "2026-02-18T17:47:13.351Z",
+  "parserGenerated": "2026-02-18T17:47:10.0157652Z",
+  "moduleCount": 20,
+  "symbolCount": 266,
+  "typeNodeCount": 257,
+  "typeEdgeCount": 164,
+  "routesGenerated": 273,
+  "symbolRouteCollisions": 3,
+  "generatedPagesAt": "2026-02-18T17:47:13.482Z"
+}
