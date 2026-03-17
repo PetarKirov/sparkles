@@ -1,0 +1,25 @@
+name "math"
+description "Math primitives for games and graphics"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+
+dflags "-preview=in" "-preview=dip1000"
+
+configuration "library" {
+    targetType "library"
+    excludedSourceFiles "src/app.d"
+}
+
+configuration "unittest" {
+    excludedSourceFiles "src/app.d"
+
+    dependency "silly" version="~>1.1.1"
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}

@@ -8,3 +8,4 @@ targetPath "build"
 
 subPackage "libs/core-cli"
 subPackage "libs/test-utils"
+subPackage "libs/math"
