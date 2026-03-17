@@ -3,8 +3,6 @@ module sparkles.effects_benchmarks.app;
 import std.datetime.stopwatch : StopWatch, Duration;
 import std.stdio : writeln;
 import std.conv : to;
-import std.process : executeShell;
-import std.string : split, strip;
 import std.datetime.systime : Clock;
 import core.volatile : volatileLoad, volatileStore;
 import sparkles.core_cli.ui.table : drawTable;
@@ -87,23 +85,7 @@ void main() {
     sw.stop();
     results ~= ["D Effect-TS Builder", ITERS.to!string, sw.peek.total!"msecs".to!string];
 
-    // 4. TS benchmarks
-    writeln("Running TypeScript benchmarks... (this might take a few seconds)");
-    auto tsRes = executeShell("cd ts && npx tsx bench.ts");
-    if (tsRes.status == 0) {
-        foreach (line; tsRes.output.split("\n")) {
-            line = line.strip();
-            if (line.length > 0) {
-                auto parts = line.split(",");
-                if (parts.length == 3) {
-                    results ~= parts;
-                }
-            }
-        }
-    } else {
-        writeln("Warning: failed to run TS benchmarks: ", tsRes.output);
-    }
-
-    writeln("\nBenchmark Results:");
+    writeln("\nBenchmark Results (D Implementations):");
     writeln(drawTable(results));
+    writeln("\nRun `cd ts && npx tsx bench.ts` to see TypeScript Mitata benchmarks.");
 }
