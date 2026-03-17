@@ -1,0 +1,28 @@
+name "build-primitives"
+description "Build-system and VCS primitives"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+
+importPaths "src"
+
+dflags "-preview=in" "-preview=dip1000"
+
+configuration "library" {
+    targetType "library"
+    excludedSourceFiles "src/app.d"
+}
+
+configuration "unittest" {
+    excludedSourceFiles "src/app.d"
+
+    dependency "sparkles:test-runner" path="../.."
+    dependency "sparkles:base" path="../.."
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
