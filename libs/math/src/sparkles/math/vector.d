@@ -13,6 +13,71 @@ import std.traits : CommonType, isNumeric;
 
 private enum baseFieldNames = ["x", "y", "z", "w"];
 
+private bool hasDuplicateIndices(scope const size_t[] indices)
+@safe pure nothrow @nogc
+{
+    foreach (i; 0 .. indices.length)
+    {
+        foreach (j; i + 1 .. indices.length)
+        {
+            if (indices[i] == indices[j])
+                return true;
+        }
+    }
+
+    return false;
+}
+
+private enum bool hasSingleCharFieldNames(string[] fieldNames) = (()
+{
+    foreach (name; fieldNames)
+    {
+        if (name.length != 1)
+            return false;
+    }
+
+    return true;
+})();
+
+private template fieldIndexForSwizzleChar(string[] fieldNames, char c, size_t i = 0)
+{
+    static if (i >= fieldNames.length)
+    {
+        static assert(
+            0,
+            "Invalid swizzle component `" ~ c ~ "` for this vector"
+        );
+    }
+    else static if (fieldNames[i][0] == c)
+    {
+        enum fieldIndexForSwizzleChar = i;
+    }
+    else
+    {
+        enum fieldIndexForSwizzleChar = fieldIndexForSwizzleChar!(
+            fieldNames,
+            c,
+            i + 1
+        );
+    }
+}
+
+private template swizzleIndices(string[] fieldNames, string swizzle)
+{
+    static assert(
+        hasSingleCharFieldNames!fieldNames,
+        "Swizzling requires vectors with single-character field names"
+    );
+
+    enum size_t[swizzle.length] swizzleIndices = ()
+    {
+        size_t[swizzle.length] result = void;
+        static foreach (i, c; swizzle)
+            result[i] = fieldIndexForSwizzleChar!(fieldNames, c);
+        return result;
+    }();
+}
+
 private string[] makeDefaultFieldNames(size_t N)()
 {
     static if (N <= baseFieldNames.length)
@@ -23,10 +88,11 @@ private string[] makeDefaultFieldNames(size_t N)()
     {
         import std.conv : to;
 
-        string[N] generated = void;
+        string[] generated;
+        generated.length = N;
         static foreach (i; 0 .. N)
             generated[i] = "v" ~ i.to!string;
-        return generated[];
+        return generated;
     }
 }
 
@@ -115,6 +181,34 @@ if (isNumeric!T && N > 0)
         foreach (i; 0 .. N)
             result += cast(CommonType!(T, U)) data[i] * rhs.data[i];
         return result;
+    }
+
+    /// Swizzle read access (`v.xzy`, `v.xyyzzx`, etc.).
+    @property Vector!(T, swizzle.length) opDispatch(string swizzle)() const
+    {
+        enum indices = swizzleIndices!(fieldNames, swizzle);
+
+        Vector!(T, swizzle.length) result;
+        static foreach (i; 0 .. swizzle.length)
+            result.data[i] = data[indices[i]];
+
+        return result;
+    }
+
+    /// Swizzle write access (`v.xy = ...`) with duplicate-write protection.
+    @property void opDispatch(string swizzle, U, size_t M, string[] rhsFieldNames)(
+        in Vector!(U, M, rhsFieldNames) rhs
+    )
+    if (isNumeric!U && M == swizzle.length)
+    {
+        enum indices = swizzleIndices!(fieldNames, swizzle);
+        static assert(
+            !hasDuplicateIndices(indices),
+            "Swizzle assignment requires unique destination components"
+        );
+
+        static foreach (i; 0 .. M)
+            data[indices[i]] = cast(T) rhs.data[i];
     }
 
     /// Writes the vector as `(name0: value0, name1: value1, ...)`.
@@ -239,6 +333,44 @@ unittest
     auto buf = appender!string();
     Vec3f(1, 2, 3).toString(buf);
     assert(buf[] == "(x: 1, y: 2, z: 3)");
+}
+
+/// Swizzle read access supports arbitrary ordering and duplication.
+@("Vector.swizzle.read")
+@safe pure nothrow @nogc
+unittest
+{
+    auto v = Vec3f(1, 2, 3);
+
+    assert(v.xyyzzx == Vector!(float, 6)(1, 2, 2, 3, 3, 1));
+    assert(v.zxy == Vec3f(3, 1, 2));
+    assert(v.xyz.yx == Vec2f(2, 1));
+}
+
+/// Swizzle write access updates selected components in order.
+@("Vector.swizzle.write")
+@safe pure nothrow @nogc
+unittest
+{
+    Vec3f v = Vec3f(1, 2, 3);
+
+    v.xy = Vec2f(9, 8);
+    assert(v == Vec3f(9, 8, 3));
+
+    v.yz = Vector!(int, 2)(7, 6);
+    assert(v == Vec3f(9, 7, 6));
+}
+
+/// Duplicate destination indices are rejected for swizzle assignments.
+@("Vector.swizzle.writeDuplicateReject")
+@safe pure nothrow @nogc
+unittest
+{
+    static assert(!__traits(compiles,
+    {
+        Vec3f v = Vec3f(1, 2, 3);
+        v.xx = Vec2f(4, 5);
+    }));
 }
 
 /// Floating-point vectors expose an infinity constant.
