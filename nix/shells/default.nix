@@ -19,6 +19,10 @@ pkgs.mkShell {
     pkgs.dtools
     pkgs.dub
 
+    # Profiling
+    pkgs.tracy
+    pkgs.capstone
+
     pkgs.mold
 
     # Documentation site
