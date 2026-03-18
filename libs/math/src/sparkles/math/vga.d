@@ -26,8 +26,31 @@ public enum bladeCount(size_t dimensions) =
 public enum bool hasNoBitsOutsideDimensions(size_t mask, size_t dimensions) =
     (mask >> dimensions) == 0;
 
-public enum choose(size_t n, size_t k) = ()
-{
+/// Number of bits needed to encode one blade mask for `R^dimensions`.
+///
+/// `R^0` still needs one bit to encode the scalar blade `0b0`.
+public enum bladeMaskBitWidth(size_t dimensions) =
+    dimensions == 0 ? cast(size_t) 1 : dimensions;
+
+/// Number of blade masks packed into one machine word.
+///
+/// We pack into `size_t` words rather than narrower integers because the goal
+/// here is compile-time throughput: fewer template-value words means smaller
+/// type signatures and less template churn.
+public enum packedBladeMasksPerWord(size_t dimensions) =
+    size_t.sizeof * 8 / bladeMaskBitWidth!dimensions;
+
+/// Number of packed words required to store `maskCount` blade masks.
+public enum packedBladeMaskWordCount(size_t dimensions, size_t maskCount) =
+    maskCount == 0 ? cast(size_t) 0 :
+        (maskCount + packedBladeMasksPerWord!dimensions - 1) /
+        packedBladeMasksPerWord!dimensions;
+
+/// Low-bit mask for one packed blade-mask field.
+public enum bladeMaskFieldMask(size_t dimensions) =
+    ((cast(size_t) 1) << bladeMaskBitWidth!dimensions) - 1;
+
+public enum choose(size_t n, size_t k) = {
     if (k > n)
         return cast(size_t) 0;
 
@@ -62,6 +85,123 @@ in (dimensions <= maxSupportedBasisVectors)
 public enum size_t[] allBladeMasks(size_t dimensions) =
     makeAllBladeMasks!dimensions();
 
+/// Dense mask-to-index table for the full blade support of `R^dimensions`.
+public ptrdiff_t[bladeCount!dimensions] makeAllBladeMaskIndexTable(
+    size_t dimensions,
+)()
+in (dimensions <= maxSupportedBasisVectors)
+{
+    ptrdiff_t[bladeCount!dimensions] result = void;
+
+    foreach (i; 0 .. result.length)
+        result[i] = cast(ptrdiff_t) i;
+
+    return result;
+}
+
+/// Dense mask-to-index table for a support set.
+///
+/// Entries are coefficient indices in support order, or `-1` when the blade
+/// is absent from the support.
+public ptrdiff_t[bladeCount!dimensions] makeBladeMaskIndexTable(
+    size_t dimensions,
+    size_t[] masks,
+)()
+in (dimensions <= maxSupportedBasisVectors)
+{
+    ptrdiff_t[bladeCount!dimensions] result;
+    result[] = -1;
+
+    foreach (i, mask; masks)
+        result[mask] = cast(ptrdiff_t) i;
+
+    return result;
+}
+
+/// Dense mask-to-index table recovered from a support list.
+public enum bladeMaskIndexTable(size_t dimensions, size_t[] masks) =
+    makeBladeMaskIndexTable!(dimensions, masks)();
+
+/// Dense mask-to-index table for the full blade support of `R^dimensions`.
+public enum allBladeMaskIndexTable(size_t dimensions) =
+    makeAllBladeMaskIndexTable!dimensions();
+
+@safe pure nothrow:
+
+/// Packs an ascending blade-mask list into dense `size_t` words.
+///
+/// Masks are stored in ascending support order, low field to high field. For
+/// example, in `R^3`, `[0b001, 0b010, 0b100]` becomes one packed word
+/// `0b100_010_001`.
+public size_t[packedBladeMaskWordCount!(dimensions, masks.length)] makePackedBladeMasks(
+    size_t dimensions,
+    size_t[] masks,
+)()
+in (dimensions <= maxSupportedBasisVectors)
+{
+    static foreach (mask; masks)
+    {
+        static assert(
+            hasNoBitsOutsideDimensions!(mask, dimensions),
+            "blade mask has bits set outside the algebra dimensions"
+        );
+    }
+
+    enum bitWidth = bladeMaskBitWidth!dimensions;
+    enum masksPerWord = packedBladeMasksPerWord!dimensions;
+
+    size_t[packedBladeMaskWordCount!(dimensions, masks.length)] result = 0;
+
+    foreach (i, mask; masks)
+    {
+        immutable wordIndex = i / masksPerWord;
+        immutable shift = (i % masksPerWord) * bitWidth;
+        result[wordIndex] |= mask << shift;
+    }
+
+    return result;
+}
+
+/// Packed `size_t`-word representation of a blade-mask support list.
+public enum size_t[] packBladeMasks(size_t dimensions, size_t[] masks) =
+    makePackedBladeMasks!(dimensions, masks)();
+
+/// Unpacks dense `size_t` words back into one blade-mask list.
+public size_t[maskCount] makeUnpackedBladeMasks(
+    size_t dimensions,
+    size_t maskCount,
+    size_t[] packedMasks,
+)()
+in (
+    dimensions <= maxSupportedBasisVectors &&
+    packedMasks.length == packedBladeMaskWordCount!(dimensions, maskCount)
+)
+{
+    enum bitWidth = bladeMaskBitWidth!dimensions;
+    enum masksPerWord = packedBladeMasksPerWord!dimensions;
+    enum fieldMask = bladeMaskFieldMask!dimensions;
+
+    size_t[maskCount] result = 0;
+
+    static foreach (i; 0 .. maskCount)
+    {{
+        enum wordIndex = i / masksPerWord;
+        enum shift = (i % masksPerWord) * bitWidth;
+        result[i] = (packedMasks[wordIndex] >> shift) & fieldMask;
+    }}
+
+    return result;
+}
+
+/// Unpacked blade-mask list recovered from [packBladeMasks].
+public enum size_t[] unpackBladeMasks(
+    size_t dimensions,
+    size_t maskCount,
+    size_t[] packedMasks,
+) = makeUnpackedBladeMasks!(dimensions, maskCount, packedMasks)();
+
+@safe pure nothrow @nogc:
+
 public size_t bladeGrade(size_t mask)
     => cast(size_t) popcnt(mask);
 
@@ -92,6 +232,20 @@ public enum bool allMasksHaveParity(size_t[] masks, bool wantEven) = ()
     foreach (mask; masks)
     {
         if ((bladeGrade(mask) % 2 == 0) != wantEven)
+            return false;
+    }
+
+    return true;
+}();
+
+public enum bool sameBladeMasks(size_t[] lhsMasks, size_t[] rhsMasks) = ()
+{
+    if (lhsMasks.length != rhsMasks.length)
+        return false;
+
+    foreach (i, lhsMask; lhsMasks)
+    {
+        if (lhsMask != rhsMasks[i])
             return false;
     }
 
@@ -546,8 +700,11 @@ if (isNumeric!T && N <= maxSupportedBasisVectors && isBasisWord!(name, N))
     return result;
 }
 
+private alias FullSupportMultivector(T, size_t N) =
+    MultivectorImpl!(T, N, allBladeMasks!N.length, packBladeMasks!(N, allBladeMasks!N));
+
 /// Runtime-index counterpart to [basisWord], used by the widened `.e[...]` proxy.
-public FullMultivector!(T, N) fullBasisWordFromIndices(T, size_t N)(
+public FullSupportMultivector!(T, N) fullBasisWordFromIndices(T, size_t N)(
     scope const size_t[] indices,
 )
 if (isNumeric!T && N <= maxSupportedBasisVectors)
@@ -568,7 +725,7 @@ if (isNumeric!T && N <= maxSupportedBasisVectors)
         applyBasisIndex(spec, oneBasedIndex, N);
     }
 
-    FullMultivector!(T, N) result;
+    FullSupportMultivector!(T, N) result;
     result.coeffs[spec.mask] = cast(T) spec.sign;
     return result;
 }
@@ -592,16 +749,20 @@ struct BasisProxy(T, size_t N)
 if (isNumeric!T && N <= maxSupportedBasisVectors)
 {
     /// Returns a widened full multivector for basis indices like `.e[10, 2]`.
-    FullMultivector!(T, N) opIndex(size_t[] indices...) const
+    FullSupportMultivector!(T, N) opIndex(size_t[] indices...) const
         => fullBasisWordFromIndices!(T, N)(indices);
 
     /// Callable form for stored proxies, e.g. `auto e = Basis!(T, N).e; e(10, 2)`.
-    FullMultivector!(T, N) opCall(size_t[] indices...) const
+    FullSupportMultivector!(T, N) opCall(size_t[] indices...) const
         => fullBasisWordFromIndices!(T, N)(indices);
 }
 
-/// Generic multivector over an `N`-dimensional Euclidean vector space.
-struct Multivector(T, size_t N, size_t[] bladeMasks)
+/// Public multivector spelling with an unpacked support list.
+///
+/// The implementation type stores the support list in packed machine words to
+/// keep template argument payloads compact. Use `.support` when you need the
+/// unpacked blade masks and `.packedSupport` when you want the compressed form.
+template Multivector(T, size_t N, size_t[] bladeMasks)
 if (isNumeric!T && N <= maxSupportedBasisVectors)
 {
     static assert(
@@ -617,10 +778,60 @@ if (isNumeric!T && N <= maxSupportedBasisVectors)
         );
     }
 
-    /// Coefficients ordered by ascending blade mask.
-    T[bladeMasks.length] coeffs = 0;
+    alias Multivector = MultivectorImpl!(
+        T,
+        N,
+        bladeMasks.length,
+        packBladeMasks!(N, bladeMasks)
+    );
+}
 
-    enum size_t[] support = bladeMasks;
+/// Generic multivector over an `N`-dimensional Euclidean vector space.
+struct MultivectorImpl(
+    T,
+    size_t N,
+    size_t maskCount,
+    size_t[] packedBladeMasks,
+)
+if (isNumeric!T && N <= maxSupportedBasisVectors)
+{
+    static assert(
+        packedBladeMasks.length == packedBladeMaskWordCount!(N, maskCount),
+        "packed support word count does not match the declared support length"
+    );
+
+    alias Self = MultivectorImpl!(T, N, maskCount, packedBladeMasks);
+    alias CoefficientType = T;
+
+    enum size_t dimensions = N;
+    enum size_t supportCount = maskCount;
+    enum size_t[] packedSupport = packedBladeMasks;
+    enum size_t[] support = unpackBladeMasks!(N, maskCount, packedBladeMasks);
+    enum bool hasFullSupport = maskCount == bladeCount!N;
+    enum ptrdiff_t[bladeCount!N] supportIndexByMask = hasFullSupport ?
+        allBladeMaskIndexTable!N :
+        bladeMaskIndexTable!(N, support);
+
+    static assert(
+        areStrictlyAscending(support),
+        "decoded blade masks must be strictly ascending and unique"
+    );
+
+    static foreach (mask; support)
+    {
+        static assert(
+            hasNoBitsOutsideDimensions!(mask, N),
+            "decoded blade mask has bits set outside the algebra dimensions"
+        );
+    }
+
+    static assert(
+        makePackedBladeMasks!(N, support) == packedBladeMasks,
+        "packed blade-mask words must be canonical"
+    );
+
+    /// Coefficients ordered by ascending blade mask.
+    T[maskCount] coeffs = 0;
 
     public alias CommonScalar(U) = CommonType!(T, U);
 
@@ -655,7 +866,7 @@ if (isNumeric!T && N <= maxSupportedBasisVectors)
         return basisWord!(T, N, name);
     }
 
-    static foreach (i; 1 .. bladeMasks.length + 1)
+    static foreach (i; 1 .. maskCount + 1)
     {
         /// Initializes the first `i` coefficients in blade-mask order.
         this(T[i] values...)
@@ -671,15 +882,22 @@ if (isNumeric!T && N <= maxSupportedBasisVectors)
     CommonScalar!U coefficient(size_t mask, U = T)() const
     if (mask < bladeCount!N)
     {
-        enum index = indexOfMask(support, mask);
-
-        static if (index >= 0)
+        static if (hasFullSupport)
         {
-            return cast(CommonScalar!U) coeffs[index];
+            return cast(CommonScalar!U) coeffs[mask];
         }
         else
         {
-            return cast(CommonScalar!U) 0;
+            enum index = supportIndexByMask[mask];
+
+            static if (index >= 0)
+            {
+                return cast(CommonScalar!U) coeffs[index];
+            }
+            else
+            {
+                return cast(CommonScalar!U) 0;
+            }
         }
     }
 
@@ -691,15 +909,18 @@ if (isNumeric!T && N <= maxSupportedBasisVectors)
     {
         assert(mask < bladeCount!N, "Blade mask outside the algebra dimensions");
 
-        immutable index = indexOfMask(support, mask);
+        static if (hasFullSupport)
+            return coeffs[mask];
+
+        immutable index = supportIndexByMask[mask];
         return index >= 0 ? coeffs[cast(size_t) index] : 0;
     }
 
     /// Unary plus and minus preserve support and negate coefficients when needed.
-    Multivector opUnary(string op)() const
+    Self opUnary(string op)() const
     if (op == "+" || op == "-")
     {
-        Multivector result;
+        Self result;
 
         static if (op == "+")
         {
@@ -715,32 +936,38 @@ if (isNumeric!T && N <= maxSupportedBasisVectors)
     }
 
     /// Adds or subtracts multivectors and returns the smallest union support.
-    auto opBinary(string op, U, size_t[] rhsMasks)(
-        in Multivector!(U, N, rhsMasks) rhs
+    auto opBinary(string op, Rhs)(
+        in Rhs rhs
     ) const
-    if ((op == "+" || op == "-") && isNumeric!U)
+    if (
+        (op == "+" || op == "-") &&
+        isMultivector!Rhs &&
+        multivectorDimensions!Rhs == N &&
+        isNumeric!(MultivectorCoefficient!Rhs)
+    )
     {
+        alias RhsScalar = MultivectorCoefficient!Rhs;
         alias Result = Multivector!(
-            CommonScalar!U,
+            CommonScalar!RhsScalar,
             N,
-            unionBladeMasks!(N, support, rhsMasks)
+            unionBladeMasks!(N, support, multivectorSupport!Rhs)
         );
 
         Result result;
 
         static foreach (i, mask; Result.support)
         {{
-            enum lhsIndex = indexOfMask(support, mask);
-            enum rhsIndex = indexOfMask(rhsMasks, mask);
+            enum lhsIndex = supportIndexByMask[mask];
+            enum rhsIndex = multivectorSupportIndexByMask!Rhs[mask];
 
-            CommonScalar!U lhsValue = 0;
-            CommonScalar!U rhsValue = 0;
+            CommonScalar!RhsScalar lhsValue = 0;
+            CommonScalar!RhsScalar rhsValue = 0;
 
             static if (lhsIndex >= 0)
-                lhsValue = cast(CommonScalar!U) coeffs[lhsIndex];
+                lhsValue = cast(CommonScalar!RhsScalar) coeffs[lhsIndex];
 
             static if (rhsIndex >= 0)
-                rhsValue = cast(CommonScalar!U) rhs.coeffs[rhsIndex];
+                rhsValue = cast(CommonScalar!RhsScalar) rhs.coeffs[rhsIndex];
 
             result.coeffs[i] = mixin("lhsValue " ~ op ~ " rhsValue");
         }}
@@ -749,7 +976,7 @@ if (isNumeric!T && N <= maxSupportedBasisVectors)
     }
 
     /// In-place addition and subtraction for the same support set.
-    ref Multivector opOpAssign(string op)(in Multivector rhs)
+    ref Self opOpAssign(string op)(in Self rhs)
     if (op == "+" || op == "-")
     {
         foreach (i, ref coeff; coeffs)
@@ -762,7 +989,7 @@ if (isNumeric!T && N <= maxSupportedBasisVectors)
     auto opBinary(string op, U)(U rhs) const
     if ((op == "*" || op == "/") && isNumeric!U)
     {
-        alias Result = Multivector!(CommonScalar!U, N, bladeMasks);
+        alias Result = Multivector!(CommonScalar!U, N, support);
 
         Result result;
         foreach (i, ref coeff; result.coeffs)
@@ -777,32 +1004,38 @@ if (isNumeric!T && N <= maxSupportedBasisVectors)
         => this * lhs;
 
     /// Geometric product.
-    auto opBinary(string op, U, size_t[] rhsMasks)(
-        in Multivector!(U, N, rhsMasks) rhs
+    auto opBinary(string op, Rhs)(
+        in Rhs rhs
     ) const
-    if (op == "*" && isNumeric!U)
+    if (
+        op == "*" &&
+        isMultivector!Rhs &&
+        multivectorDimensions!Rhs == N &&
+        isNumeric!(MultivectorCoefficient!Rhs)
+    )
     {
+        alias RhsScalar = MultivectorCoefficient!Rhs;
         alias Result = Multivector!(
-            CommonScalar!U,
+            CommonScalar!RhsScalar,
             N,
-            geometricProductMasks!(N, support, rhsMasks)
+            geometricProductMasks!(N, support, multivectorSupport!Rhs)
         );
 
         Result result;
 
         static foreach (lhsIndex, lhsMask; support)
         {{
-            static foreach (rhsIndex, rhsMask; rhsMasks)
+            static foreach (rhsIndex, rhsMask; multivectorSupport!Rhs)
             {{
                 enum resultMask = lhsMask ^ rhsMask;
-                enum resultIndex = indexOfMask(Result.support, resultMask);
+                enum resultIndex = Result.supportIndexByMask[resultMask];
                 enum sign = geometricProductSign(lhsMask, rhsMask, N);
 
                 static if (resultIndex >= 0)
                 {
                     result.coeffs[resultIndex] +=
-                        cast(CommonScalar!U) coeffs[lhsIndex] *
-                        cast(CommonScalar!U) rhs.coeffs[rhsIndex] *
+                        cast(CommonScalar!RhsScalar) coeffs[lhsIndex] *
+                        cast(CommonScalar!RhsScalar) rhs.coeffs[rhsIndex] *
                         sign;
                 }
             }}
@@ -812,34 +1045,40 @@ if (isNumeric!T && N <= maxSupportedBasisVectors)
     }
 
     /// Outer product.
-    auto opBinary(string op, U, size_t[] rhsMasks)(
-        in Multivector!(U, N, rhsMasks) rhs
+    auto opBinary(string op, Rhs)(
+        in Rhs rhs
     ) const
-    if (op == "^" && isNumeric!U)
+    if (
+        op == "^" &&
+        isMultivector!Rhs &&
+        multivectorDimensions!Rhs == N &&
+        isNumeric!(MultivectorCoefficient!Rhs)
+    )
     {
+        alias RhsScalar = MultivectorCoefficient!Rhs;
         alias Result = Multivector!(
-            CommonScalar!U,
+            CommonScalar!RhsScalar,
             N,
-            outerProductMasks!(N, support, rhsMasks)
+            outerProductMasks!(N, support, multivectorSupport!Rhs)
         );
 
         Result result;
 
         static foreach (lhsIndex, lhsMask; support)
         {{
-            static foreach (rhsIndex, rhsMask; rhsMasks)
+            static foreach (rhsIndex, rhsMask; multivectorSupport!Rhs)
             {{
                 static if ((lhsMask & rhsMask) == 0)
                 {
                     enum resultMask = lhsMask ^ rhsMask;
-                    enum resultIndex = indexOfMask(Result.support, resultMask);
+                    enum resultIndex = Result.supportIndexByMask[resultMask];
                     enum sign = geometricProductSign(lhsMask, rhsMask, N);
 
                     static if (resultIndex >= 0)
                     {
                         result.coeffs[resultIndex] +=
-                            cast(CommonScalar!U) coeffs[lhsIndex] *
-                            cast(CommonScalar!U) rhs.coeffs[rhsIndex] *
+                            cast(CommonScalar!RhsScalar) coeffs[lhsIndex] *
+                            cast(CommonScalar!RhsScalar) rhs.coeffs[rhsIndex] *
                             sign;
                     }
                 }
@@ -850,22 +1089,27 @@ if (isNumeric!T && N <= maxSupportedBasisVectors)
     }
 
     /// Scalar product, defined as the grade-0 part of the geometric product.
-    CommonScalar!U scalarProduct(U, size_t[] rhsMasks)(
-        in Multivector!(U, N, rhsMasks) rhs
+    CommonScalar!(MultivectorCoefficient!Rhs) scalarProduct(Rhs)(
+        in Rhs rhs
     ) const
-    if (isNumeric!U)
+    if (
+        isMultivector!Rhs &&
+        multivectorDimensions!Rhs == N &&
+        isNumeric!(MultivectorCoefficient!Rhs)
+    )
     {
-        CommonScalar!U result = 0;
+        alias RhsScalar = MultivectorCoefficient!Rhs;
+        CommonScalar!RhsScalar result = 0;
 
         static foreach (lhsIndex, lhsMask; support)
         {{
-            enum rhsIndex = indexOfMask(rhsMasks, lhsMask);
+            enum rhsIndex = multivectorSupportIndexByMask!Rhs[lhsMask];
 
             static if (rhsIndex >= 0)
             {
                 result +=
-                    cast(CommonScalar!U) coeffs[lhsIndex] *
-                    cast(CommonScalar!U) rhs.coeffs[rhsIndex] *
+                    cast(CommonScalar!RhsScalar) coeffs[lhsIndex] *
+                    cast(CommonScalar!RhsScalar) rhs.coeffs[rhsIndex] *
                     geometricProductSign(lhsMask, lhsMask, N);
             }
         }}
@@ -876,37 +1120,73 @@ if (isNumeric!T && N <= maxSupportedBasisVectors)
     /// Grade-0 coefficient if present.
     @property T scalarPart() const
     {
-        enum index = indexOfMask(support, 0b0);
-
-        static if (index >= 0)
+        static if (hasFullSupport)
         {
-            return coeffs[index];
+            return coeffs[0];
         }
         else
         {
-            return 0;
+            enum index = supportIndexByMask[0b0];
+
+            static if (index >= 0)
+            {
+                return coeffs[index];
+            }
+            else
+            {
+                return 0;
+            }
         }
     }
 
     /// Equality compares coefficients blade-by-blade, even across different support sets.
-    bool opEquals(U, size_t[] rhsMasks)(
-        in Multivector!(U, N, rhsMasks) rhs
+    bool opEquals(Rhs)(
+        in Rhs rhs
     ) const
-    if (isNumeric!U)
+    if (
+        isMultivector!Rhs &&
+        multivectorDimensions!Rhs == N &&
+        isNumeric!(MultivectorCoefficient!Rhs)
+    )
     {
-        static foreach (mask; unionBladeMasks!(N, support, rhsMasks))
+        alias RhsScalar = MultivectorCoefficient!Rhs;
+
+        static if (sameBladeMasks!(support, multivectorSupport!Rhs))
         {
-            if (coefficient!(mask, CommonScalar!U) != rhs.coefficient!(mask, CommonScalar!U))
-                return false;
+            foreach (i, lhsCoeff; coeffs)
+            {
+                if (cast(CommonScalar!RhsScalar) lhsCoeff != cast(CommonScalar!RhsScalar) rhs.coeffs[i])
+                    return false;
+            }
+        }
+        else
+        {
+            static foreach (mask; unionBladeMasks!(N, support, multivectorSupport!Rhs))
+            {{
+                enum lhsIndex = supportIndexByMask[mask];
+                enum rhsIndex = multivectorSupportIndexByMask!Rhs[mask];
+
+                CommonScalar!RhsScalar lhsValue = 0;
+                CommonScalar!RhsScalar rhsValue = 0;
+
+                static if (lhsIndex >= 0)
+                    lhsValue = cast(CommonScalar!RhsScalar) coeffs[lhsIndex];
+
+                static if (rhsIndex >= 0)
+                    rhsValue = cast(CommonScalar!RhsScalar) rhs.coeffs[rhsIndex];
+
+                if (lhsValue != rhsValue)
+                    return false;
+            }}
         }
 
         return true;
     }
 
     /// Reversion involution.
-    Multivector reverse() const
+    Self reverse() const
     {
-        Multivector result;
+        Self result;
 
         static foreach (i, mask; support)
         {{
@@ -919,9 +1199,9 @@ if (isNumeric!T && N <= maxSupportedBasisVectors)
     }
 
     /// Grade involution.
-    Multivector gradeInvolution() const
+    Self gradeInvolution() const
     {
-        Multivector result;
+        Self result;
 
         static foreach (i, mask; support)
         {{
@@ -933,7 +1213,7 @@ if (isNumeric!T && N <= maxSupportedBasisVectors)
     }
 
     /// Clifford conjugation.
-    Multivector cliffordConjugate() const
+    Self cliffordConjugate() const
         => gradeInvolution().reverse();
 
     /// Extracts the grade-`targetGrade` part into a grade-restricted type.
@@ -948,7 +1228,7 @@ if (isNumeric!T && N <= maxSupportedBasisVectors)
         {{
             static if (bladeGrade(mask) == targetGrade)
             {
-                enum resultIndex = indexOfMask(Result.support, mask);
+                enum resultIndex = Result.supportIndexByMask[mask];
                 static if (resultIndex >= 0)
                     result.coeffs[resultIndex] = coeffs[i];
             }
@@ -989,6 +1269,42 @@ if (isNumeric!T && N <= maxSupportedBasisVectors)
         if (!wroteTerm)
             put(writer, '0');
     }
+}
+
+/// Detects multivector implementation types produced by [Multivector].
+public enum bool isMultivector(T) =
+    __traits(compiles, T.dimensions) &&
+    __traits(compiles, T.support) &&
+    __traits(compiles, T.packedSupport) &&
+    __traits(compiles, T.CoefficientType) &&
+    __traits(compiles, T.init.coeffs);
+
+/// Coefficient scalar type of a multivector.
+template MultivectorCoefficient(T)
+if (isMultivector!T)
+{
+    alias MultivectorCoefficient = T.CoefficientType;
+}
+
+/// Vector-space dimension of a multivector.
+template multivectorDimensions(T)
+if (isMultivector!T)
+{
+    enum size_t multivectorDimensions = T.dimensions;
+}
+
+/// Unpacked blade-mask support list of a multivector.
+template multivectorSupport(T)
+if (isMultivector!T)
+{
+    enum size_t[] multivectorSupport = T.support;
+}
+
+/// Dense blade-mask lookup table of a multivector.
+template multivectorSupportIndexByMask(T)
+if (isMultivector!T)
+{
+    enum multivectorSupportIndexByMask = T.supportIndexByMask;
 }
 
 /// Serializes a blade mask like `0b101` as the index sequence `13`.
@@ -1089,18 +1405,30 @@ if (isNumeric!T)
     => cast(CommonType!(T, double)) angleDegrees * (cast(CommonType!(T, double)) PI / 180);
 
 /// Squared Euclidean norm of a grade-1 vector.
-auto normSquared(T, size_t N, size_t[] bladeMasks)(in Multivector!(T, N, bladeMasks) vector)
-if (isNumeric!T && allMasksHaveGrade!(bladeMasks, 1))
+auto normSquared(Mv)(in Mv vector)
+if (
+    isMultivector!Mv &&
+    isNumeric!(MultivectorCoefficient!Mv) &&
+    allMasksHaveGrade!(multivectorSupport!Mv, 1)
+)
     => vector.scalarProduct(vector);
 
 /// Euclidean norm of a grade-1 vector.
-auto norm(T, size_t N, size_t[] bladeMasks)(in Multivector!(T, N, bladeMasks) vector)
-if (isNumeric!T && allMasksHaveGrade!(bladeMasks, 1))
-    => sqrt(cast(CommonType!(T, double)) normSquared(vector));
+auto norm(Mv)(in Mv vector)
+if (
+    isMultivector!Mv &&
+    isNumeric!(MultivectorCoefficient!Mv) &&
+    allMasksHaveGrade!(multivectorSupport!Mv, 1)
+)
+    => sqrt(cast(CommonType!(MultivectorCoefficient!Mv, double)) normSquared(vector));
 
 /// Returns a unit vector in the same direction.
-auto normalized(T, size_t N, size_t[] bladeMasks)(in Multivector!(T, N, bladeMasks) vector)
-if (isNumeric!T && allMasksHaveGrade!(bladeMasks, 1))
+auto normalized(Mv)(in Mv vector)
+if (
+    isMultivector!Mv &&
+    isNumeric!(MultivectorCoefficient!Mv) &&
+    allMasksHaveGrade!(multivectorSupport!Mv, 1)
+)
 {
     immutable magnitude = norm(vector);
 
@@ -1133,15 +1461,20 @@ if (isNumeric!T && isNumeric!U && isNumeric!V)
 /// With the current `alias Rotor = EvenMultivector`, we cannot enforce this for
 /// every value of the carrier type. We can, however, check the values produced
 /// by rotor constructors and the values consumed by rotor-based APIs.
-public void debugAssertRotor(T, size_t N, size_t[] bladeMasks)(
-    in Multivector!(T, N, bladeMasks) rotor,
-    CommonType!(T, double) epsilon = cast(CommonType!(T, double)) 1e-12,
+public void debugAssertRotor(Mv)(
+    in Mv rotor,
+    CommonType!(MultivectorCoefficient!Mv, double) epsilon =
+        cast(CommonType!(MultivectorCoefficient!Mv, double)) 1e-12,
 )
-if (isNumeric!T && allMasksHaveParity!(bladeMasks, true))
+if (
+    isMultivector!Mv &&
+    isNumeric!(MultivectorCoefficient!Mv) &&
+    allMasksHaveParity!(multivectorSupport!Mv, true)
+)
 {
     debug
     {
-        alias ScalarType = CommonType!(T, double);
+        alias ScalarType = CommonType!(MultivectorCoefficient!Mv, double);
         immutable identity = rotor * rotor.reverse();
 
         static foreach (mask; typeof(identity).support)
@@ -1182,18 +1515,25 @@ if (isNumeric!T)
 /// Unit 2D rotor that maps `from` onto `to`.
 ///
 /// This normalizes both inputs first, so only direction matters.
-auto rotorFromTo(T, U, size_t[] fromMasks, size_t[] toMasks)(
-    in Multivector!(T, 2, fromMasks) from,
-    in Multivector!(U, 2, toMasks) to,
+auto rotorFromTo(From, To)(
+    in From from,
+    in To to,
 )
 if (
-    isNumeric!T &&
-    isNumeric!U &&
-    allMasksHaveGrade!(fromMasks, 1) &&
-    allMasksHaveGrade!(toMasks, 1)
+    isMultivector!From &&
+    isMultivector!To &&
+    multivectorDimensions!From == 2 &&
+    multivectorDimensions!To == 2 &&
+    isNumeric!(MultivectorCoefficient!From) &&
+    isNumeric!(MultivectorCoefficient!To) &&
+    allMasksHaveGrade!(multivectorSupport!From, 1) &&
+    allMasksHaveGrade!(multivectorSupport!To, 1)
 )
 {
-    alias ResultScalar = CommonType!(CommonType!(T, U), double);
+    alias ResultScalar = CommonType!(
+        CommonType!(MultivectorCoefficient!From, MultivectorCoefficient!To),
+        double
+    );
 
     immutable fromUnit = normalized(from);
     immutable toUnit = normalized(to);
@@ -1209,15 +1549,19 @@ if (
 }
 
 /// Rotates a 2D vector by a unit rotor through sandwiching.
-auto rotated(T, U, size_t[] vectorMasks, size_t[] rotorMasks)(
-    in Multivector!(T, 2, vectorMasks) vector,
-    in Multivector!(U, 2, rotorMasks) rotor,
+auto rotated(Vector, RotorMv)(
+    in Vector vector,
+    in RotorMv rotor,
 )
 if (
-    isNumeric!T &&
-    isNumeric!U &&
-    allMasksHaveGrade!(vectorMasks, 1) &&
-    allMasksHaveParity!(rotorMasks, true)
+    isMultivector!Vector &&
+    isMultivector!RotorMv &&
+    multivectorDimensions!Vector == 2 &&
+    multivectorDimensions!RotorMv == 2 &&
+    isNumeric!(MultivectorCoefficient!Vector) &&
+    isNumeric!(MultivectorCoefficient!RotorMv) &&
+    allMasksHaveGrade!(multivectorSupport!Vector, 1) &&
+    allMasksHaveParity!(multivectorSupport!RotorMv, true)
 )
 {
     debugAssertRotor(rotor);
@@ -1225,11 +1569,17 @@ if (
 }
 
 /// Rotates a 2D vector by an angle in radians.
-auto rotated(T, U, size_t[] vectorMasks)(
-    in Multivector!(T, 2, vectorMasks) vector,
+auto rotated(Vector, U)(
+    in Vector vector,
     U angleRadians,
 )
-if (isNumeric!T && isNumeric!U && allMasksHaveGrade!(vectorMasks, 1))
+if (
+    isMultivector!Vector &&
+    multivectorDimensions!Vector == 2 &&
+    isNumeric!(MultivectorCoefficient!Vector) &&
+    isNumeric!U &&
+    allMasksHaveGrade!(multivectorSupport!Vector, 1)
+)
     => rotated(vector, planarRotor(angleRadians));
 
 /// Basic blade-mask metadata and type aliases.
@@ -1242,6 +1592,16 @@ unittest
     static assert(gradeBladeMasks!(3, 2) == [0b011, 0b101, 0b110]);
     static assert(evenBladeMasks!3 == [0b000, 0b011, 0b101, 0b110]);
     static assert(oddBladeMasks!3 == [0b001, 0b010, 0b100, 0b111]);
+    static assert(bladeMaskBitWidth!3 == 3);
+    static assert(packedBladeMasksPerWord!4 == size_t.sizeof * 2);
+    static assert(
+        packBladeMasks!(3, [0b001, 0b010, 0b100]) ==
+        [cast(size_t) 0b100_010_001]
+    );
+    static assert(
+        unpackBladeMasks!(3, 3, [cast(size_t) 0b100_010_001]) ==
+        [0b001, 0b010, 0b100]
+    );
     assert(Basis!(int, 2).e1.gradePart!1 == GAVector!(int, 2)(1, 0));
     assert(Basis!(int, 2).e2.gradePart!1 == GAVector!(int, 2)(0, 1));
     assert(Basis!(int, 2).e12 == Bivector!(int, 2)(1));
@@ -1250,29 +1610,44 @@ unittest
     assert(Basis!(int, 2).e21 == Bivector!(int, 2)(-1));
     assert(Basis!(int, 2).e11 == Scalar!(int, 2)(1));
     assert(FullMultivector!(int, 2).e12 == Basis!(int, 2).e12);
-    assert(Basis!(int, 12).basis!"e(10,2)"() == Basis!(int, 12).e_10_2);
-    assert(Basis!(int, 12).basis!"e[10,2]"() == Basis!(int, 12).e_10_2);
-    assert(Basis!(int, 12).basis!"e(2,10)"() == Basis!(int, 12).e_2_10);
-    assert(Basis!(int, 12).e_2_10 == -Basis!(int, 12).e_10_2);
-    assert(FullMultivector!(int, 12).basis!"e[10,2]"() == Basis!(int, 12).e_10_2);
-
-    enum e10e2Mask = (cast(size_t) 1 << 9) ^ (cast(size_t) 1 << 1);
-
-    auto widened10_2 = Basis!(int, 12).e[10, 2];
-    assert(widened10_2.coefficient!e10e2Mask == -1);
-    assert(widened10_2.coeff!e10e2Mask == -1);
-    assert(widened10_2[e10e2Mask] == -1);
-    assert(FullMultivector!(int, 12).e[10, 2].coefficient!e10e2Mask == -1);
-
-    auto widened2_10 = Basis!(int, 12).e[2, 10];
-    assert(widened2_10[e10e2Mask] == 1);
-    assert(widened2_10 == -widened10_2);
-
-    auto e = Basis!(int, 12).e;
-    assert(e(10, 2) == widened10_2);
-
     static assert(GAVector!(float, 3).support == [0b001, 0b010, 0b100]);
+    static assert(GAVector!(float, 3).packedSupport == [cast(size_t) 0b100_010_001]);
     static assert(Rotor!(double, 3).support == [0b000, 0b011, 0b101, 0b110]);
+    static assert(Rotor!(double, 3).packedSupport == [cast(size_t) 0b110_101_011_000]);
+}
+
+version (VGAHeavyCompileTests)
+{
+    /// Compile-expensive higher-dimensional basis-word and proxy coverage.
+    ///
+    /// This stays behind `version (VGAHeavyCompileTests)` so the default math
+    /// unittest configuration avoids instantiating the 12D full-support cases.
+    /// Enable it with the dedicated `unittest-heavy` dub configuration.
+    @("VGA.heavy.aliasesAndMasks12D")
+    @safe pure nothrow @nogc
+    unittest
+    {
+        assert(Basis!(int, 12).basis!"e(10,2)"() == Basis!(int, 12).e_10_2);
+        assert(Basis!(int, 12).basis!"e[10,2]"() == Basis!(int, 12).e_10_2);
+        assert(Basis!(int, 12).basis!"e(2,10)"() == Basis!(int, 12).e_2_10);
+        assert(Basis!(int, 12).e_2_10 == -Basis!(int, 12).e_10_2);
+        assert(FullMultivector!(int, 12).basis!"e[10,2]"() == Basis!(int, 12).e_10_2);
+
+        enum e10e2Mask = (cast(size_t) 1 << 9) ^ (cast(size_t) 1 << 1);
+
+        auto widened10_2 = Basis!(int, 12).e[10, 2];
+        assert(widened10_2.coefficient!e10e2Mask == -1);
+        assert(widened10_2.coeff!e10e2Mask == -1);
+        assert(widened10_2[e10e2Mask] == -1);
+        assert(FullMultivector!(int, 12).e[10, 2].coefficient!e10e2Mask == -1);
+
+        auto widened2_10 = Basis!(int, 12).e[2, 10];
+        assert(widened2_10[e10e2Mask] == 1);
+        assert(widened2_10 == -widened10_2);
+
+        auto e = Basis!(int, 12).e;
+        assert(e(10, 2) == widened10_2);
+    }
 }
 
 /// Basis vectors generate the Euclidean algebra relations.
@@ -1363,7 +1738,7 @@ unittest
 unittest
 {
     import sparkles.core_cli.smallbuffer : SmallBuffer;
-    // import sparkles.core_cli.text_writers : hasNogcOutputRangeToString, writeValue;
+    import sparkles.core_cli.text_writers : writeValue;
 
     SmallBuffer!(char, 64) buf;
 
