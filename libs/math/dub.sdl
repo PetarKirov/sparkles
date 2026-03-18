@@ -16,10 +16,30 @@ configuration "library" {
     excludedSourceFiles "src/app.d"
 }
 
+configuration "library-heavy" {
+    targetType "library"
+    excludedSourceFiles "src/app.d"
+
+    versions "VGAHeavyCompileTests"
+}
+
 configuration "unittest" {
     excludedSourceFiles "src/app.d"
 
     dependency "silly" version="~>1.1.1"
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+
+configuration "unittest-heavy" {
+    excludedSourceFiles "src/app.d"
+
+    dependency "silly" version="~>1.1.1"
+
+    versions "VGAHeavyCompileTests"
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
