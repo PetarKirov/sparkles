@@ -9,6 +9,8 @@ targetPath "build"
 dflags "-preview=in" "-preview=dip1000"
 dflags "-ftime-trace" "-ftime-trace-file=$PACKAGE_DIR/build/trace.json" "--ftime-trace-granularity=0" platform="ldc"
 
+dependency "sparkles:core-cli" version="*"
+
 configuration "library" {
     targetType "library"
     excludedSourceFiles "src/app.d"
