@@ -27,6 +27,12 @@ enum hasSlicing(R) =
     is(typeof(checkDirectSlicing!R)) ||
     is(typeof(checkDataSlicing!R));
 
+/// True if `R` supports direct slicing via `r[i .. j]` with `size_t` length.
+enum hasDirectSlice(R) = is(typeof(checkDirectSlicing!R));
+
+/// True if `R` supports data-property slicing via `r.data[i .. j]` with `size_t` length.
+enum hasDataSlice(R) = is(typeof(checkDataSlicing!R));
+
 /// Dynamic arrays satisfy `hasSlicing`, including narrow strings
 /// that Phobos rejects due to auto-decoding.
 @("hasSlicing.dynamicArrays")
@@ -221,4 +227,57 @@ unittest
     static assert(hasNogcOutputRangeToString!NogcOutputRangeType);
     static assert(hasOutputRangeToString!NogcOutputRangeType);
     static assert(hasNogcToString!NogcOutputRangeType);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Leaf Value Trait
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// True if `T` is a leaf value type that can be rendered directly as text:
+/// `null`, enums, booleans, characters, strings, integrals, or floats.
+template isLeafValue(T)
+{
+    import std.traits : isSomeChar, isSomeString;
+
+    enum isLeafValue =
+        is(T == typeof(null)) ||
+        is(T == enum) ||
+        is(T == bool) ||
+        isSomeChar!T ||
+        isSomeString!T ||
+        __traits(isIntegral, T) ||
+        __traits(isFloating, T);
+}
+
+/// Primitive types are leaf values.
+@("isLeafValue.primitives")
+@safe pure nothrow @nogc
+unittest
+{
+    static assert(isLeafValue!int);
+    static assert(isLeafValue!double);
+    static assert(isLeafValue!bool);
+    static assert(isLeafValue!char);
+    static assert(isLeafValue!string);
+    static assert(isLeafValue!(typeof(null)));
+}
+
+/// Enums are leaf values.
+@("isLeafValue.enums")
+@safe pure nothrow @nogc
+unittest
+{
+    enum Color { red, green, blue }
+    static assert(isLeafValue!Color);
+}
+
+/// Compound types are not leaf values.
+@("isLeafValue.negative")
+@safe pure nothrow @nogc
+unittest
+{
+    struct Point { int x, y; }
+    static assert(!isLeafValue!Point);
+    static assert(!isLeafValue!(int[]));
+    static assert(!isLeafValue!(int[string]));
 }
