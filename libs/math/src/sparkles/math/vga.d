@@ -318,6 +318,31 @@ public enum unionBladeMasks(
     size_t[] rhsMasks,
 ) = makeUnionBladeMasks!(dimensions, lhsMasks, rhsMasks)();
 
+/// Advances `mask` to the next larger bit pattern with the same popcount.
+///
+/// This is Gosper's hack. Starting from the lowest canonical `k`-blade mask
+/// such as `0b00111`, it moves the rightmost movable `1` bit left, then packs
+/// the remaining trailing `1`s back to the far right:
+/// `0b00111 -> 0b01011 -> 0b01101 -> ...`.
+///
+/// Returns `false` when there is no larger same-popcount mask left in the
+/// current machine word.
+bool advanceFixedPopcountMask(ref size_t mask)
+{
+    if (mask == 0)
+        return false;
+
+    immutable smallest = mask & (~mask + 1);
+    immutable ripple = mask + smallest;
+
+    if (ripple == 0)
+        return false;
+
+    immutable ones = ((mask ^ ripple) >> 2) / smallest;
+    mask = ripple | ones;
+    return true;
+}
+
 public size_t[choose!(dimensions, targetGrade)] makeGradeBladeMasks(
     size_t dimensions,
     size_t targetGrade,
@@ -325,13 +350,28 @@ public size_t[choose!(dimensions, targetGrade)] makeGradeBladeMasks(
 in (dimensions <= maxSupportedBasisVectors)
 {
     size_t[choose!(dimensions, targetGrade)] result = void;
-    size_t index;
+    static if (targetGrade > dimensions)
+        return result;
 
-    foreach (mask; 0 .. bladeCount!dimensions)
+    static if (targetGrade == 0)
     {
-        if (bladeGrade(mask) == targetGrade)
-            result[index++] = mask;
+        result[0] = 0;
+        return result;
     }
+
+    size_t index = 0;
+    size_t mask = (cast(size_t) 1 << targetGrade) - 1;
+    immutable limit = cast(size_t) 1 << dimensions;
+
+    while (mask < limit)
+    {
+        result[index++] = mask;
+
+        if (!advanceFixedPopcountMask(mask))
+            break;
+    }
+
+    assert(index == result.length);
 
     return result;
 }
@@ -1590,6 +1630,7 @@ unittest
     static assert(allBladeMasks!3 == [0b000, 0b001, 0b010, 0b011, 0b100, 0b101, 0b110, 0b111]);
     static assert(gradeBladeMasks!(3, 1) == [0b001, 0b010, 0b100]);
     static assert(gradeBladeMasks!(3, 2) == [0b011, 0b101, 0b110]);
+    static assert(gradeBladeMasks!(4, 2) == [0b0011, 0b0101, 0b0110, 0b1001, 0b1010, 0b1100]);
     static assert(evenBladeMasks!3 == [0b000, 0b011, 0b101, 0b110]);
     static assert(oddBladeMasks!3 == [0b001, 0b010, 0b100, 0b111]);
     static assert(bladeMaskBitWidth!3 == 3);
