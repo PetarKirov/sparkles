@@ -34,7 +34,19 @@ export default defineConfig({
               },
             ],
           },
-          { text: 'markdown', link: '/libs/markdown/' },
+          {
+            text: 'markdown',
+            collapsed: true,
+            items: [
+              { text: 'Overview', link: '/libs/markdown/' },
+              { text: 'API And Types', link: '/libs/markdown/api-and-types' },
+              {
+                text: 'Implementation Status',
+                link: '/libs/markdown/implementation-status',
+              },
+              { text: 'Testing Helpers', link: '/libs/markdown/testing' },
+            ],
+          },
           { text: 'math', link: '/libs/math/' },
           { text: 'test-utils', link: '/libs/test-utils/' },
         ],
