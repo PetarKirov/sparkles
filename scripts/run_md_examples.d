@@ -12,7 +12,7 @@ dub single-file programs, executes them, and reports results.
 
 Usage:
 ---
-./run_md_examples.d [--verify|--update] [--glob=PATTERN] <markdown-file...>
+./run_md_examples.d [--verify|--update] [--fail-fast] [--glob=PATTERN] <markdown-file...>
 ./run_md_examples.d [--dedup-reference-links|--fix-reference-links] [--glob=PATTERN] [markdown-file...]
 ---
 
@@ -21,7 +21,8 @@ Modes:
 $(LIST
     $(ITEM Default — run examples and display results in boxes)
     $(ITEM `--verify` — compare output against expected output blocks, report mismatches)
-    $(ITEM `--update` — rewrite the markdown file with actual output (golden snapshot update))
+    $(ITEM `--update` — rewrite the markdown file with actual example output (golden snapshot update))
+    $(ITEM `--fail-fast` — stop on the first failing example and replay its output at the end)
     $(ITEM `--dedup-reference-links` — report duplicate markdown reference definitions by URL)
     $(ITEM `--fix-reference-links` — rewrite duplicates to a canonical label)
 )
@@ -84,6 +85,9 @@ struct CliParams
     @CliOption(`u|update`, "Rewrite the markdown file with actual example output.")
     bool update;
 
+    @CliOption(`F|fail-fast`, "Stop on the first failing example and replay its output at the end.")
+    bool failFast;
+
     @CliOption(`g|glob`, "Glob pattern to find markdown files (e.g. '*.md' or '**/*.md').")
     string glob;
 
@@ -120,6 +124,13 @@ struct ExampleResult
     bool success;
     string programOutput; // ANSI-stripped
     string rawOutput;     // with ANSI codes for display
+}
+
+struct FailureReplay
+{
+    string header;
+    string[] outputLines;
+    string footer;
 }
 
 struct ReferenceDef
@@ -176,7 +187,7 @@ int main(string[] args)
         if (isReferenceMode(mode))
             styledWritelnErr(i"{bold Usage:} $(args[0].baseName) [--dedup-reference-links|--fix-reference-links] [--glob=PATTERN] [markdown-file...]");
         else
-            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) [--verify|--update] [--glob=PATTERN] [markdown-file...]");
+            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) [--verify|--update] [--fail-fast] [--glob=PATTERN] [markdown-file...]");
         return 1;
     }
 
@@ -186,7 +197,7 @@ int main(string[] args)
     if (mode == ProgramMode.fixReferenceLinks)
         return runReferenceLinkMode(mdFiles, true);
 
-    return runExamplesForFiles(mdFiles, mode);
+    return runExamplesForFiles(mdFiles, mode, cli.failFast);
 }
 
 private string validateCliMode(in CliParams cli)
@@ -277,7 +288,7 @@ private string[] collectMarkdownFiles(
         .array;
 }
 
-private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode)
+private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool failFast)
 {
     int totalFailures = 0;
 
@@ -303,13 +314,13 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode)
         final switch (mode)
         {
             case ProgramMode.runExamples:
-                rc = runDefaultMode(examples, mdFile);
+                rc = runDefaultMode(examples, mdFile, failFast);
                 break;
             case ProgramMode.verifyExamples:
-                rc = runVerifyMode(examples, mdFile);
+                rc = runVerifyMode(examples, mdFile, failFast);
                 break;
             case ProgramMode.updateExamples:
-                rc = runUpdateMode(examples, mdFile);
+                rc = runUpdateMode(examples, mdFile, failFast);
                 break;
             case ProgramMode.checkReferenceLinks:
             case ProgramMode.fixReferenceLinks:
@@ -318,7 +329,11 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode)
         }
 
         if (rc != 0)
+        {
             totalFailures++;
+            if (failFast)
+                return 1;
+        }
     }
 
     return totalFailures > 0 ? 1 : 0;
@@ -509,13 +524,16 @@ ExampleResult executeExample(in Example example)
 // === Modes ===
 
 /// Default mode: run examples and display output in boxes.
-int runDefaultMode(Example[] examples, string mdFile)
+int runDefaultMode(Example[] examples, string mdFile, bool failFast)
 {
     i"Running $(examples.length) example(s) from $(mdFile)".text
         .drawHeader(HeaderProps(style: HeaderStyle.banner, width: 60))
         .writeln("\n");
 
     int failures = 0;
+    size_t processed = 0;
+    FailureReplay failureReplay;
+    bool stoppedEarly = false;
     foreach (i, example; examples)
     {
         auto progress = i"[$(i + 1)/$(examples.length)]".text;
@@ -528,22 +546,42 @@ int runDefaultMode(Example[] examples, string mdFile)
         displayResultBox(outputLines, header, result.success);
 
         if (!result.success)
+        {
             failures++;
+            if (failFast)
+            {
+                failureReplay = FailureReplay(
+                    header: header,
+                    outputLines: outputLines.formatOutputLines.array,
+                    footer: styledText(i"{red ✗ FAILED}"),
+                );
+                processed = i + 1;
+                stoppedEarly = true;
+                writeln();
+                break;
+            }
+        }
+        processed = i + 1;
         writeln();
     }
 
-    displaySummary(examples.length, failures);
+    displaySummary(stoppedEarly ? processed : examples.length, failures);
+    if (stoppedEarly)
+        displayFailureReplay(failureReplay);
     return failures > 0 ? 1 : 0;
 }
 
 /// Verify mode: run examples, display output, and compare against expected output blocks.
-int runVerifyMode(Example[] examples, string mdFile)
+int runVerifyMode(Example[] examples, string mdFile, bool failFast)
 {
     i"Verifying $(examples.length) example(s) from $(mdFile)".text
         .drawHeader(HeaderProps(style: HeaderStyle.banner, width: 60))
         .writeln("\n");
 
     int failures = 0;
+    size_t processed = 0;
+    FailureReplay failureReplay;
+    bool stoppedEarly = false;
     foreach (i, example; examples)
     {
         auto progress = i"[$(i + 1)/$(examples.length)]".text;
@@ -556,11 +594,25 @@ int runVerifyMode(Example[] examples, string mdFile)
         if (!result.success)
         {
             failures++;
-            outputLines
+            auto failureLines = outputLines
                 .formatOutputLines(12)
+                .array;
+            failureLines
                 .drawBox(header, BoxProps(footer: styledText(i"{red ✗ build failed}")))
                 .writeln;
             writeln();
+            if (failFast)
+            {
+                failureReplay = FailureReplay(
+                    header: header,
+                    outputLines: failureLines,
+                    footer: styledText(i"{red ✗ build failed}"),
+                );
+                processed = i + 1;
+                stoppedEarly = true;
+                break;
+            }
+            processed = i + 1;
             continue;
         }
 
@@ -577,6 +629,7 @@ int runVerifyMode(Example[] examples, string mdFile)
                 .drawBox(header, BoxProps(footer: styledText(i"{green ✓ ran} {dim │} {yellow ⚠ no expected output}")))
                 .writeln;
             writeln();
+            processed = i + 1;
             continue;
         }
 
@@ -596,21 +649,38 @@ int runVerifyMode(Example[] examples, string mdFile)
             outputLines ~= "";
             outputLines ~= styledText(i"{dim ─── expected ───}");
             outputLines ~= expected.lineSplitter.map!(l => l.to!string).array;
-            outputLines
+            auto failureLines = outputLines
                 .formatOutputLines(24)
+                .array;
+            failureLines
                 .drawBox(header, BoxProps(footer: styledText(i"{green ✓ ran} {dim │} {red ✗ output mismatch}")))
                 .writeln;
+            if (failFast)
+            {
+                failureReplay = FailureReplay(
+                    header: header,
+                    outputLines: failureLines,
+                    footer: styledText(i"{green ✓ ran} {dim │} {red ✗ output mismatch}"),
+                );
+                processed = i + 1;
+                stoppedEarly = true;
+                writeln();
+                break;
+            }
         }
+        processed = i + 1;
         writeln();
     }
 
-    displaySummary(examples.length, failures);
+    displaySummary(stoppedEarly ? processed : examples.length, failures);
+    if (stoppedEarly)
+        displayFailureReplay(failureReplay);
     return failures > 0 ? 1 : 0;
 }
 
 /// Update mode: rewrite the markdown file with actual output.
 /// Processes examples in reverse order so line indices remain valid.
-int runUpdateMode(Example[] examples, string mdFile)
+int runUpdateMode(Example[] examples, string mdFile, bool failFast)
 {
     i"Updating $(examples.length) example(s) in $(mdFile)".text
         .drawHeader(HeaderProps(style: HeaderStyle.banner, width: 60))
@@ -619,6 +689,9 @@ int runUpdateMode(Example[] examples, string mdFile)
     auto lines = mdFile.readText.lineSplitter.array;
     int failures = 0;
     int updated = 0;
+    size_t processed = 0;
+    FailureReplay failureReplay;
+    bool stoppedEarly = false;
 
     foreach_reverse (i, example; examples)
     {
@@ -628,6 +701,24 @@ int runUpdateMode(Example[] examples, string mdFile)
         {
             failures++;
             styledWriteln(i"  {red ✗} {cyan $(example.name)} — build failed, skipping");
+            if (failFast)
+            {
+                const progress = i"[$(examples.length - i)/$(examples.length)]".text;
+                failureReplay = FailureReplay(
+                    header: formatExampleHeader(example, progress),
+                    outputLines: result.rawOutput
+                        .lineSplitter
+                        .map!(l => l.to!string)
+                        .array
+                        .formatOutputLines(12)
+                        .array,
+                    footer: styledText(i"{red ✗ build failed}"),
+                );
+                processed = examples.length - i;
+                stoppedEarly = true;
+                break;
+            }
+            processed = examples.length - i;
             continue;
         }
 
@@ -636,6 +727,7 @@ int runUpdateMode(Example[] examples, string mdFile)
         if (example.expectedOutput !is null && actualOutput == example.expectedOutput.strip)
         {
             styledWriteln(i"  {green ✓} {cyan $(example.name)} — output unchanged");
+            processed = examples.length - i;
             continue;
         }
 
@@ -663,23 +755,30 @@ int runUpdateMode(Example[] examples, string mdFile)
             updated++;
             styledWriteln(i"  {yellow +} {cyan $(example.name)} — output block inserted");
         }
+        processed = examples.length - i;
     }
 
-    if (updated > 0)
+    if (updated > 0 && !stoppedEarly)
         mdFile.write(lines.join("\n") ~ "\n");
 
     writeln();
-    if (updated > 0)
+    if (updated > 0 && !stoppedEarly)
         styledWriteln(i"{green ✓} Updated $(updated) output block(s) in $(mdFile)");
+    else if (updated > 0)
+        styledWriteln(i"{yellow ⚠} Stopped before writing $(updated) pending output block update(s) in $(mdFile)");
     else
         styledWriteln(i"{green ✓} All output blocks already up to date");
 
     if (failures > 0)
     {
         styledWriteln(i"{red ✗} $(failures) example(s) failed to build");
+        displaySummary(stoppedEarly ? processed : examples.length, failures);
+        if (stoppedEarly)
+            displayFailureReplay(failureReplay);
         return 1;
     }
 
+    displaySummary(examples.length, 0);
     return 0;
 }
 
@@ -1123,6 +1222,15 @@ private void displayResultBox(string[] outputLines, string header, bool success)
     outputLines
         .formatOutputLines
         .drawBox(header, BoxProps(footer: footer))
+        .writeln;
+}
+
+private void displayFailureReplay(FailureReplay replay)
+{
+    writeln();
+    styledWriteln(i"{red Fail-fast:} replaying first failing case");
+    replay.outputLines
+        .drawBox(replay.header, BoxProps(footer: replay.footer))
         .writeln;
 }
 
