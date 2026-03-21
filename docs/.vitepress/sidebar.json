@@ -715,7 +715,22 @@
       },
       {
         "text": "markdown",
-        "link": "/libs/markdown/"
+        "link": "/libs/markdown/",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "API And Types",
+            "link": "/libs/markdown/api-and-types"
+          },
+          {
+            "text": "Implementation Status",
+            "link": "/libs/markdown/implementation-status"
+          },
+          {
+            "text": "Testing Helpers",
+            "link": "/libs/markdown/testing"
+          }
+        ]
       },
       {
         "text": "math",
