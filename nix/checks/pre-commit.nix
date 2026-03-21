@@ -90,7 +90,10 @@ in
               require_serial = false;
               pass_filenames = true;
               entry = lib.getExe config.packages.run_md_examples;
-              args = [ "--verify" ];
+              args = [
+                "--verify"
+                "--fail-fast"
+              ];
             };
 
             lychee = {
