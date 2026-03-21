@@ -1,4 +1,4 @@
-# core-cli Package Overview
+# core-cli
 
 A D library providing utilities for building CLI applications with terminal styling, pretty-printing, UI components, and @nogc support.
 
