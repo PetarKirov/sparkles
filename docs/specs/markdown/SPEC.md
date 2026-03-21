@@ -40,8 +40,8 @@ This design follows Sparkles engineering guidance from [Code Style][code-style-g
 
 ## CommonMark
 
-1. Target spec: **CommonMark 0.31.2**.
-2. Requirement: 100% pass on official CommonMark examples.
+1. Target spec: **[CommonMark 0.31.2][commonmark-spec]**.
+2. Requirement: 100% pass on [official CommonMark examples][commonmark-spec].
 3. Requirement: linear-time behavior on known pathological families.
 
 ## GFM and Adjacent Extensions
@@ -180,7 +180,7 @@ Preprocessors (especially include/snippet expansion) may produce documents that 
 
 ## CommonMark Parsing Algorithm
 
-The parser follows the two-phase strategy described in the CommonMark spec appendix "A parsing strategy." This section summarizes the algorithm to guide implementation.
+The parser follows the two-phase strategy described in the CommonMark appendix ["A parsing strategy"][commonmark-parsing-strategy]. This section summarizes the algorithm to guide implementation.
 
 ### Phase 1: Block Structure
 
@@ -191,15 +191,15 @@ Block structure is determined by a line-by-line scan of the input. The parser ma
 Each input line is classified by testing (in order):
 
 1. **Blank line** — empty or whitespace-only.
-2. **Thematic break** — three or more `*`, `-`, or `_` (optionally space-separated).
-3. **ATX heading** — 1–6 `#` characters followed by space or end of line.
-4. **Fenced code open/close** — three or more backticks or tildes; close must match open fence character and be at least as long.
-5. **HTML block start** — one of the seven HTML block start conditions (CommonMark §4.6).
-6. **Block quote marker** — `>` optionally followed by a space.
-7. **List item marker** — bullet (`-`, `*`, `+`) or ordered (`1.`, `1)`) followed by 1–3 spaces.
-8. **Indented code** — 4+ spaces of indentation (only when not in a paragraph continuation context).
-9. **Setext heading underline** — `=` or `-` characters (only when closing an open paragraph).
-10. **Link reference definition** — parses definitions like `[label]: url "title"` from paragraph contexts, adding them to a reference map.
+2. **[Thematic break][commonmark-thematic-breaks]** — three or more `*`, `-`, or `_` (optionally space-separated).
+3. **[ATX heading][commonmark-atx-headings]** — 1–6 `#` characters followed by space or end of line.
+4. **[Fenced code open/close][commonmark-fenced-code-blocks]** — three or more backticks or tildes; close must match open fence character and be at least as long.
+5. **[HTML block start][commonmark-html-blocks]** — one of the seven HTML block start conditions.
+6. **[Block quote marker][commonmark-block-quotes]** — `>` optionally followed by a space.
+7. **[List item marker][commonmark-list-items]** — bullet (`-`, `*`, `+`) or ordered (`1.`, `1)`) followed by 1–3 spaces.
+8. **[Indented code][commonmark-indented-code-blocks]** — 4+ spaces of indentation (only when not in a paragraph continuation context).
+9. **[Setext heading underline][commonmark-setext-headings]** — `=` or `-` characters (only when closing an open paragraph).
+10. **[Link reference definition][commonmark-link-reference-definitions]** — parses definitions like `[label]: url "title"` from paragraph contexts, adding them to a reference map.
 11. **Continuation** — anything else continues the current open block.
 
 #### Open/Close State Machine
@@ -207,7 +207,7 @@ Each input line is classified by testing (in order):
 - New blocks are pushed onto the open block stack when their start condition matches.
 - On each line, the parser walks the open block stack from root to tip, checking whether each open block accepts the line as a continuation.
 - A block that does not accept continuation is **closed** (finalized and removed from the stack).
-- **Lazy continuation**: paragraph lines can continue inside block quotes and list items without repeating the container markers.
+- **[Lazy continuation][commonmark-phase-1-block-structure]**: paragraph lines can continue inside block quotes and list items without repeating the container markers.
 
 #### Rule Precedence
 
@@ -220,11 +220,11 @@ When multiple block starts could match, the following precedence applies:
 
 ### Phase 2: Inline Parsing
 
-After block structure is finalized, the contents of leaf blocks (paragraphs, headings, etc.) are parsed for inline content.
+After [phase 2 inline structure][commonmark-phase-2-inline-structure] begins, the contents of leaf blocks (paragraphs, headings, etc.) are parsed for inline content.
 
 #### Delimiter Run Algorithm
 
-Emphasis and links use the delimiter run algorithm (CommonMark §6.2):
+Emphasis and links use the [delimiter run algorithm][commonmark-emphasis-and-strong-emphasis]:
 
 1. Scan text left-to-right, pushing potential openers (`*`, `_`, `[`) onto a delimiter stack.
 2. When a potential closer is found, search the stack for a matching opener.
@@ -242,11 +242,11 @@ Links and images use a separate bracket stack:
 
 #### Inline Precedence
 
-1. Code spans (backtick matching) — highest, contents are literal.
-2. Autolinks and raw HTML — next, detected before delimiter processing.
-3. Links/images — bracket matching with deactivation.
-4. Emphasis/strong — delimiter run algorithm.
-5. Hard/soft line breaks — lowest.
+1. [Code spans][commonmark-code-spans] (backtick matching) — highest, contents are literal.
+2. [Autolinks][commonmark-autolinks] and [raw HTML][commonmark-raw-html] — next, detected before delimiter processing.
+3. [Links][commonmark-links]/[images][commonmark-images] — bracket matching with deactivation.
+4. [Emphasis/strong][commonmark-emphasis-and-strong-emphasis] — delimiter run algorithm.
+5. [Hard line breaks][commonmark-hard-line-breaks] / [soft line breaks][commonmark-soft-line-breaks] — lowest.
 
 ### Backtrack Avoidance and O(n) Guarantee
 
@@ -743,7 +743,7 @@ struct MarkdownOptions(Hook = void, Alloc = void)
 struct ReferenceMap
 {
     // Maps normalized link labels to destinations and titles.
-    // Implementation uses case-folding and whitespace normalization per CommonMark spec.
+    // Implementation uses CommonMark-compatible case-folding and whitespace normalization.
 }
 
 struct ParseResult
@@ -906,8 +906,8 @@ At a high level:
 - **Shell**: the parser core that provides baseline CommonMark behavior; hooks extend it without modifying its source.
 - **Profile**: a named feature configuration preset (`commonmark_strict`, `gfm`, `vitepress_compatible`, `nextra_compatible`, `custom`).
 - **Capability trait**: a compile-time predicate (e.g., `hasPreprocessDocument`) that detects whether a type provides a specific hook.
-- **Delimiter run**: a sequence of delimiter characters (`*`, `_`) used in the CommonMark emphasis algorithm; processed via a stack-based algorithm that guarantees O(n) complexity.
-- **Lazy continuation**: a CommonMark rule allowing paragraph text to continue inside containers (block quotes, list items) without repeating container markers on every line.
+- **Delimiter run**: a sequence of delimiter characters (`*`, `_`) used in the [CommonMark emphasis algorithm][commonmark-emphasis-and-strong-emphasis]; processed via a stack-based algorithm that guarantees O(n) complexity.
+- **Lazy continuation**: a [CommonMark phase 1 parsing rule][commonmark-phase-1-block-structure] allowing paragraph text to continue inside containers (block quotes, list items) without repeating container markers on every line.
 
 ## Reference Links
 
@@ -919,3 +919,24 @@ At a high level:
 [sean-parent-index]: ../../research/sean-parent/index.md
 [sean-local-reasoning]: ../../research/sean-parent/local-reasoning.md
 [sean-contracts]: ../../research/sean-parent/contracts.md
+[commonmark-spec]: https://spec.commonmark.org/0.31.2/
+[commonmark-parsing-strategy]: https://spec.commonmark.org/0.31.2/#appendix-a-parsing-strategy
+[commonmark-phase-1-block-structure]: https://spec.commonmark.org/0.31.2/#phase-1-block-structure
+[commonmark-phase-2-inline-structure]: https://spec.commonmark.org/0.31.2/#phase-2-inline-structure
+[commonmark-thematic-breaks]: https://spec.commonmark.org/0.31.2/#thematic-breaks
+[commonmark-atx-headings]: https://spec.commonmark.org/0.31.2/#atx-headings
+[commonmark-setext-headings]: https://spec.commonmark.org/0.31.2/#setext-headings
+[commonmark-indented-code-blocks]: https://spec.commonmark.org/0.31.2/#indented-code-blocks
+[commonmark-fenced-code-blocks]: https://spec.commonmark.org/0.31.2/#fenced-code-blocks
+[commonmark-html-blocks]: https://spec.commonmark.org/0.31.2/#html-blocks
+[commonmark-link-reference-definitions]: https://spec.commonmark.org/0.31.2/#link-reference-definitions
+[commonmark-block-quotes]: https://spec.commonmark.org/0.31.2/#block-quotes
+[commonmark-list-items]: https://spec.commonmark.org/0.31.2/#list-items
+[commonmark-code-spans]: https://spec.commonmark.org/0.31.2/#code-spans
+[commonmark-emphasis-and-strong-emphasis]: https://spec.commonmark.org/0.31.2/#emphasis-and-strong-emphasis
+[commonmark-links]: https://spec.commonmark.org/0.31.2/#links
+[commonmark-images]: https://spec.commonmark.org/0.31.2/#images
+[commonmark-autolinks]: https://spec.commonmark.org/0.31.2/#autolinks
+[commonmark-raw-html]: https://spec.commonmark.org/0.31.2/#raw-html
+[commonmark-hard-line-breaks]: https://spec.commonmark.org/0.31.2/#hard-line-breaks
+[commonmark-soft-line-breaks]: https://spec.commonmark.org/0.31.2/#soft-line-breaks
