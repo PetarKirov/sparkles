@@ -40,3 +40,17 @@ jobs:
         run: nix develop --accept-flake-config .#pre-commit -c prek run --all-files --show-diff-on-failure --color always
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          SKIP: verify-md-examples
+
+      - name: Verify markdown runnable examples
+        run: |
+          nix build .#run_md_examples
+
+          markdown_files=$(rg -l '#!/usr/bin/env dub' --glob '*.md' . | sort)
+
+          if [ -z "$markdown_files" ]; then
+            echo "No markdown files with runnable dub examples found."
+            exit 0
+          fi
+
+          ./result/bin/run_md_examples --verify $markdown_files
