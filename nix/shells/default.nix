@@ -2,6 +2,11 @@
 let
   inherit (pkgs) lib;
   inherit (pkgs.stdenv.hostPlatform) system;
+  dToolchain = import ../d-toolchain.nix { inherit pkgs; };
+
+  envExports = lib.concatStringsSep "\n" (
+    lib.mapAttrsToList (name: value: "export ${name}=${lib.escapeShellArg value}") dToolchain.env
+  );
 in
 pkgs.mkShell {
   packages = [
@@ -15,7 +20,6 @@ pkgs.mkShell {
     pkgs.delta
 
     # D toolchain
-    pkgs.ldc
     pkgs.dtools
     pkgs.dub
 
@@ -28,11 +32,13 @@ pkgs.mkShell {
     # Documentation site
     pkgs.nodejs
   ]
+  ++ [ dToolchain.ldc ]
   ++ lib.optionals (system == "x86_64-linux") [
     pkgs.dmd
   ];
 
   shellHook = ''
+    ${envExports}
     export GITHUB_TOKEN="$(gh auth token)"
     figlet 'sparkles : *'
   ''
