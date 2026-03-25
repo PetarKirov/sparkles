@@ -14,6 +14,8 @@ import sparkles.core_cli.ui.table : drawTable;
 import sparkles.core_cli.ui.header : drawHeader;
 import sparkles.core_cli.styled_template : styledText, styledWriteln;
 
+import sparkles.sysinfo : SystemInfo, gatherSystemInfo;
+
 import argparse : Command, Default, Description, NamedArgument, CLI;
 
 // ─── Common Types ────────────────────────────────────────────────────────────
@@ -124,6 +126,9 @@ int run(FormatArgs args)
 
 int cmdWipe(WipeArgs args)
 {
+    showSystemInfo();
+    writeln();
+
     auto devices = listNvmeDevices();
     if (devices.length == 0)
     {
@@ -256,6 +261,9 @@ int cmdWipe(WipeArgs args)
 
 int cmdList()
 {
+    showSystemInfo();
+    writeln();
+
     auto devices = listNvmeDevices();
     if (devices.length == 0)
     {
@@ -392,6 +400,105 @@ int cmdFormat(FormatArgs args)
         }
     }
     return 0;
+}
+
+// ─── System Info Display ─────────────────────────────────────────────────────
+
+void showSystemInfo()
+{
+    import sparkles.sysinfo.memory : formatMemoryTotal;
+
+    auto result = gatherSystemInfo();
+    if (result.hasError)
+        return;
+
+    auto info = result.value;
+    string[] lines;
+
+    // Host
+    if (info.board.sysVendor != "unknown" || info.board.productName != "unknown")
+        lines ~= styledText(i"{bold Host}     $(info.board.sysVendor) $(info.board.productName)");
+
+    // Board
+    if (info.board.boardVendor != "unknown" || info.board.boardName != "unknown")
+        lines ~= styledText(i"{bold Board}    $(info.board.boardVendor) $(info.board.boardName)");
+
+    // CPU
+    if (info.cpu.modelName.length > 0)
+    {
+        string cpuFreq = info.cpu.maxMhz > 0 ? format!" @ %.0f MHz"(info.cpu.maxMhz) : "";
+        lines ~= styledText(
+            i"{bold CPU}      $(info.cpu.modelName) ($(info.cpu.cores)C/$(info.cpu.threads)T)$(cpuFreq)"
+        );
+    }
+
+    // RAM
+    if (info.memory.totalKB > 0)
+    {
+        string memTotal = formatMemoryTotal(info.memory.totalKB);
+        string memDetail;
+        if (info.memory.hasDimmDetails && info.memory.dimms.length > 0)
+        {
+            auto dimms = info.memory.dimms;
+            // Summarize: count × size type @ speed
+            memDetail = format!"%d×%d GB %s @ %d MT/s"(
+                dimms.length,
+                dimms[0].sizeMB / 1024,
+                dimms[0].memoryType,
+                dimms[0].speedMTs,
+            );
+            memDetail = " (" ~ memDetail ~ ")";
+        }
+        else
+        {
+            memDetail = " (run as root for DIMM details)";
+        }
+        lines ~= styledText(i"{bold RAM}      $(memTotal)$(memDetail)");
+    }
+
+    // GPUs
+    foreach (i, gpu; info.gpus)
+    {
+        string label = info.gpus.length == 1 ? "GPU" : format!"GPU #%d"(i + 1);
+        string vram = !gpu.vramBytes.isNull
+            ? format!" (%.1f GB VRAM)"(cast(double) gpu.vramBytes.get / 1_073_741_824)
+            : "";
+        lines ~= styledText(
+            i"{bold $(label)}    $(gpu.vendorName) $(gpu.deviceName) [$(gpu.vendorId):$(gpu.deviceId)]$(vram)"
+        );
+    }
+
+    // Storage devices
+    uint nvmeIdx, otherIdx;
+    foreach (dev; info.storage)
+    {
+        string label;
+        string sizeStr = formatSize(cast(long) dev.sizeBytes);
+        if (dev.isNvme)
+        {
+            nvmeIdx++;
+            label = info.storage.length == 1 ? "NVMe" : format!"NVMe #%d"(nvmeIdx);
+            string fw = dev.firmwareRev.length > 0 ? format!" [FW: %s]"(dev.firmwareRev) : "";
+            lines ~= styledText(i"{bold $(label)}   $(dev.model) ($(sizeStr))$(fw)");
+        }
+        else
+        {
+            otherIdx++;
+            label = dev.transport == "USB" ? "USB" : format!"Disk #%d"(otherIdx);
+            lines ~= styledText(i"{bold $(label)}      $(dev.model) ($(sizeStr))");
+        }
+    }
+
+    // BIOS
+    if (info.board.biosVendor != "unknown")
+    {
+        lines ~= styledText(
+            i"{bold BIOS}     $(info.board.biosVendor) $(info.board.biosVersion) ($(info.board.biosDate))"
+        );
+    }
+
+    if (lines.length > 0)
+        writeln(lines.drawBox("System Info"));
 }
 
 // ─── NVMe Device Discovery ──────────────────────────────────────────────────

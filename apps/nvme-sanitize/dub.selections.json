@@ -2,6 +2,7 @@
 	"fileVersion": 1,
 	"versions": {
 		"argparse": "2.0.2",
+		"expected": "0.4.0",
 		"silly": "1.1.1"
 	}
 }

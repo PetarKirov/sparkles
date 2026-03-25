@@ -16,6 +16,7 @@
       nvmeSanitizeDeps = with pkgs; [
         nvme-cli
         util-linux
+        hwdata
       ];
     in
     {
@@ -88,7 +89,8 @@
         dontStrip = true;
         postFixup = ''
           wrapProgram $out/bin/${pname} \
-            --prefix PATH : "${lib.makeBinPath nvmeSanitizeDeps}"
+            --prefix PATH : "${lib.makeBinPath nvmeSanitizeDeps}" \
+            --set HWDATA_PATH "${pkgs.hwdata}/share/hwdata"
         '';
         meta = {
           description = "Sanitize and format NVMe SSDs";
