@@ -1,0 +1,39 @@
+name "nvme-sanitize"
+description "Sanitize and format NVMe SSDs"
+authors "Petar Kirov"
+license "BSL-1.0"
+
+targetType "executable"
+targetName "nvme-sanitize"
+targetPath "build"
+
+dflags "-preview=in" "-preview=dip1000"
+
+dependency "sparkles:core-cli" path="../.."
+dependency "argparse" version="~>2.0.2"
+
+configuration "application" {
+    targetType "executable"
+}
+
+configuration "unittest" {
+    # dub mechanics, not runner-specific: an *executable* configuration named
+    # `unittest` is treated as a custom test runner and never gets a generated
+    # `dub_test_root`. `src/app.d` stays in (excluding it leaves no sources and
+    # dub falls back to running the application); its argparse `main` is
+    # compiled out under `version (unittest)` instead.
+    targetType "library"
+
+    dependency "sparkles:test-runner" path="../.."
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+// Optimised, assertions live, `debug {}` blocks out — the build every nix
+// artifact uses. Neither `debug` (which compiles those blocks in) nor
+// `release` (which deletes assert *expressions*, side effects included).
+buildType "checked" {
+    buildOptions "optimize" "inline" "debugInfo"
+}
