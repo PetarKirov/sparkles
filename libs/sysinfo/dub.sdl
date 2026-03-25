@@ -1,30 +1,25 @@
-name "nvme-sanitize"
-description "Sanitize and format NVMe SSDs"
+name "sysinfo"
+description "System hardware information library"
 authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
 license "BSL-1.0"
 
-targetType "executable"
-targetName "nvme-sanitize"
+targetType "library"
 targetPath "build"
+
+importPaths "src"
 
 dflags "-preview=in" "-preview=dip1000"
 
-dependency "sparkles:core-cli" path="../.."
-dependency "sparkles:sysinfo" path="../.."
-dependency "argparse" version="~>2.0.2"
+dependency "expected" version="~>0.4.1"
 
-configuration "application" {
-    targetType "executable"
+configuration "library" {
+    targetType "library"
 }
 
 configuration "unittest" {
-    # dub mechanics, not runner-specific: an *executable* configuration named
-    # `unittest` is treated as a custom test runner and never gets a generated
-    # `dub_test_root`. `src/app.d` stays in (excluding it leaves no sources and
-    # dub falls back to running the application); its argparse `main` is
-    # compiled out under `version (unittest)` instead.
-    targetType "library"
-
+    // Fast path: depend on the runner shim (pulls the prebuilt impl library),
+    // so `dub test` recompiles only this package, not the runner sources.
     dependency "sparkles:test-runner" path="../.."
 
     dflags "-checkaction=context" "-allinst"

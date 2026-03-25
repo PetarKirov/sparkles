@@ -1,6 +1,8 @@
 # Sanitizes and formats NVMe SSDs — meant for NixOS USB installer images. It
 # drives `nvme` (nvme-cli) as a child process, so the wrapper puts nvme-cli
-# and util-linux on PATH rather than trusting the ambient environment.
+# and util-linux on PATH rather than trusting the ambient environment. Its
+# system-info box (`sparkles:sysinfo`) resolves PCI vendor/device names from
+# hwdata's `pci.ids`, located through `HWDATA_PATH`.
 #
 # Linux only: nvme-cli (and the NVMe ioctls it wraps) exist nowhere else, so
 # on other systems the output is simply absent — which also keeps it out of
@@ -21,7 +23,8 @@
                 pkgs.nvme-cli
                 pkgs.util-linux
               ]
-            }
+            } \
+            --set HWDATA_PATH ${pkgs.hwdata}/share/hwdata
         '';
 
         meta = {
