@@ -1,0 +1,14 @@
+name "nvme-sanitize"
+description "Sanitize and format NVMe SSDs"
+authors "Petar Kirov"
+license "BSL-1.0"
+targetName "nvme-sanitize"
+targetPath "build"
+
+dependency "sparkles:core-cli" version="*"
+dependency "argparse" version="~>2.0.2"
+
+dflags "-preview=in" "-preview=dip1000"
+
+dflags "-defaultlib=libphobos2.so" platform="dmd"
+lflags "-fuse-ld=gold" platform="dmd"
