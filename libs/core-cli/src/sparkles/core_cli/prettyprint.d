@@ -54,7 +54,10 @@ private void prettyPrintImpl(T, Writer, Hook)(
 
     // Check depth limit
     if (depth > opt.maxDepth)
-        return writeStylized(w, "...", opt.useColors ? Style.red : Style.none);
+    {
+        writeStylized(w, "...", opt.useColors ? Style.red : Style.none);
+        return;
+    }
 
     enum isNullable = __traits(compiles, T.init is null) && !is(T == U[], U);
 
@@ -62,7 +65,10 @@ private void prettyPrintImpl(T, Writer, Hook)(
     static if (isNullable)
     {
         if (value is null)
-            return writeStylized(w, "null", opt.useColors ? Style.yellow : Style.none);
+        {
+            writeStylized(w, "null", opt.useColors ? Style.yellow : Style.none);
+            return;
+        }
     }
 
     // 2. Enums
@@ -558,35 +564,21 @@ private void writeTypeName(T, Writer, Hook)(ref Writer w, in PrettyPrintOptions!
 
 version (unittest)
 {
-    import core.exception : AssertError;
     import std.string : outdent;
     import std.typecons : tuple;
 
-    /// @nogc-compatible check helper using SmallBuffer
-    void check(T, Hook = void)(in T value, const(char)[] expected,
-            in PrettyPrintOptions!Hook opts = PrettyPrintOptions!Hook(useColors: false),
-            string file = __FILE__, size_t line = __LINE__) @trusted
+    import sparkles.core_cli.text_writers.expect_written : expectWritten, WriterBuf;
+
+    void check(T, Hook = void)(
+        in T value, const(char)[] expected,
+        in PrettyPrintOptions!Hook opts = PrettyPrintOptions!Hook(useColors: false),
+        string file = __FILE__, size_t line = __LINE__
+    )
     {
-        import sparkles.core_cli.lifetime : recycledErrorInstance;
-        import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-        SmallBuffer!(char, 16 * 1024) buf;
-        prettyPrint(value, buf, opts);
-        const(char)[] actual = buf[];
-
-        if (actual != expected)
-        {
-            // Build error message in a separate buffer
-            SmallBuffer!(char, 4 * 1024) errBuf;
-            errBuf.put("prettyPrint mismatch:\nExpected:\n");
-            errBuf.put(expected);
-            errBuf.put("\nActual:\n");
-            errBuf.put(actual);
-
-            throw recycledErrorInstance!AssertError(
-                cast(string) errBuf[],
-                file, line);
-        }
+        expectWritten(
+            write: (ref WriterBuf buf) @trusted { prettyPrint(value, buf, opts); },
+            expected: expected, file: file, line: line,
+        );
     }
 }
 

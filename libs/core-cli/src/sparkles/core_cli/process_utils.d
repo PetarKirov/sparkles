@@ -1,6 +1,6 @@
 module sparkles.core_cli.process_utils;
 
-void enforceExitStatus(int status, string command)
+void enforceExitStatus(int status, in char[] command)
 {
     import std.format : format;
     import std.exception : enforce;
@@ -9,7 +9,7 @@ void enforceExitStatus(int status, string command)
     );
 }
 
-string executeShell(in string command)
+string executeShell(in char[] command)
 {
     import std.process : executeShell;
     const result = command.executeShell;

@@ -6,18 +6,32 @@
  */
 module sparkles.core_cli.text_writers;
 
+import std.datetime.date : TimeOfDay;
+import std.range.primitives : isOutputRange;
+
 import sparkles.core_cli.term_style : Style;
+
+public import sparkles.core_cli.text_writers.outputspan :
+    copySpan, OutputSpan, OutputSpanWriter;
+public import sparkles.core_cli.text_writers.traits :
+    hasNogcOutputRangeToString, hasNogcSinkToString, hasNogcStringCast,
+    hasNogcStringToString, hasNogcToString, hasOutputRangeToString,
+    hasSinkToString, isContiguousOutputRange, isLeafValue;
+
+version (unittest) public import sparkles.core_cli.text_writers.expect_written :
+    expectWritten, WriterBuf;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Integer Writing
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Writes an integer (signed or unsigned) to an output range. @nogc-compatible.
-void writeInteger(Writer, T)(ref Writer w, const T val) @trusted
+OutputSpan writeInteger(Writer, T)(scope ref Writer w, const T val) @trusted
 if (__traits(isIntegral, T))
 {
-    import std.range.primitives : put;
     import std.traits : Unsigned, isSigned;
+
+    auto writer = OutputSpanWriter!Writer(w);
 
     static if (isSigned!T)
     {
@@ -25,26 +39,28 @@ if (__traits(isIntegral, T))
 
         if (val < 0)
         {
-            put(w, '-');
+            writer.put('-');
             // Handle T.min correctly by using unsigned arithmetic
             U value = cast(U)(0 - cast(U) val);
-            writeUnsignedImpl(w, value);
+            writeUnsignedImpl(writer, value);
         }
         else
         {
-            writeUnsignedImpl(w, cast(U) val);
+            writeUnsignedImpl(writer, cast(U) val);
         }
     }
     else
     {
-        writeUnsignedImpl(w, val);
+        writeUnsignedImpl(writer, val);
     }
+
+    return writer.release();
 }
 
-private void writeUnsignedImpl(Writer, T)(ref Writer w, const T val) @trusted
+private OutputSpan writeUnsignedImpl(Writer, T)(scope ref Writer w, const T val) @trusted
 if (__traits(isUnsigned, T))
 {
-    import std.range.primitives : put;
+    auto writer = OutputSpanWriter!Writer(w);
 
     T value = val;  // Local mutable copy
     char[sizeForUnsignedNumberBuffer!T] buf = void;
@@ -55,7 +71,8 @@ if (__traits(isUnsigned, T))
         value /= 10;
     }
     buf[i] = cast(char)('0' + value);
-    put(w, buf[i .. $]);
+    writer.put(buf[i .. $]);
+    return writer.release();
 }
 
 private template sizeForUnsignedNumberBuffer(T)
@@ -69,44 +86,56 @@ if (__traits(isUnsigned, T))
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-    writeInteger(buf, 42);
-    assert(buf[] == "42");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeInteger(buf, 42); },
+        expected: "42",
+    );
 }
 
 @("writeInteger.negative")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-    writeInteger(buf, -123);
-    assert(buf[] == "-123");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeInteger(buf, -123); },
+        expected: "-123",
+    );
 }
 
 @("writeInteger.zero")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-    writeInteger(buf, 0);
-    assert(buf[] == "0");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeInteger(buf, 0); },
+        expected: "0",
+    );
 }
 
 @("writeInteger.unsigned")
 @safe pure nothrow @nogc
 unittest
 {
+    expectWritten(
+        write: (ref WriterBuf buf) { writeInteger(buf, 0uL); },
+        expected: "0",
+    );
+}
+
+@("writeInteger.spans")
+@safe pure nothrow @nogc
+unittest
+{
     import sparkles.core_cli.smallbuffer : SmallBuffer;
 
     SmallBuffer!(char, 32) buf;
-    writeInteger(buf, 0uL);
-    assert(buf[] == "0");
+    auto first = writeInteger(buf, 42);
+    auto second = writeInteger(buf, -7);
+
+    assert(first.length == 2);
+    assert(first[buf] == "42");
+    assert(second[buf] == "-7");
+    assert(second.offset == first.offset + first.length);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -115,36 +144,37 @@ unittest
 
 /// Writes a floating-point value to an output range. @nogc-compatible.
 /// Handles NaN, infinity, negative zero, and uses scientific notation for extreme values.
-void writeFloat(Writer, T)(ref Writer w, const T val) @trusted
+OutputSpan writeFloat(Writer, T)(scope ref Writer w, const T val) @trusted
 if (__traits(isFloating, T))
 {
     import std.math.traits : isNaN, isInfinity, signbit;
-    import std.range.primitives : put;
+
+    auto writer = OutputSpanWriter!Writer(w);
 
     // Handle special values first
     if (isNaN(val))
     {
         if (signbit(val))
-            put(w, "-nan");
+            writer.put("-nan");
         else
-            put(w, "nan");
-        return;
+            writer.put("nan");
+        return writer.release();
     }
 
     if (isInfinity(val))
     {
         if (signbit(val))
-            put(w, "-inf");
+            writer.put("-inf");
         else
-            put(w, "inf");
-        return;
+            writer.put("inf");
+        return writer.release();
     }
 
     // Handle sign (including -0.0)
     T value = val;
     if (signbit(val))
     {
-        put(w, '-');
+        writer.put('-');
         value = -value;
     }
 
@@ -155,29 +185,30 @@ if (__traits(isFloating, T))
 
     if (value != 0 && (value < sciLow || value >= sciHigh))
     {
-        writeFloatScientific(w, value);
-        return;
+        writeFloatScientific(writer, value);
+        return writer.release();
     }
 
     // Decimal format for normal range
-    writeFloatDecimal(w, value);
+    writeFloatDecimal(writer, value);
+    return writer.release();
 }
 
 /// Writes a floating-point value in decimal format. @nogc-compatible.
-private void writeFloatDecimal(Writer, T)(ref Writer w, T value) @trusted
+private OutputSpan writeFloatDecimal(Writer, T)(scope ref Writer w, T value) @trusted
 if (__traits(isFloating, T))
 {
-    import std.range.primitives : put;
+    auto writer = OutputSpanWriter!Writer(w);
 
     // Integer part
     ulong intPart = cast(ulong) value;
-    writeInteger(w, intPart);
+    writeInteger(writer, intPart);
 
     // Fractional part using fixed-point conversion
     T frac = value - cast(T) intPart;
     if (frac > 0)
     {
-        put(w, '.');
+        writer.put('.');
 
         // Convert to fixed-point integer (more accurate than repeated multiply)
         // Use T.dig digits (6 for float, 15 for double)
@@ -198,15 +229,16 @@ if (__traits(isFloating, T))
         while (fracLen > 1 && fracBuf[fracLen - 1] == '0')
             fracLen--;
 
-        put(w, fracBuf[0 .. fracLen]);
+        writer.put(fracBuf[0 .. fracLen]);
     }
+    return writer.release();
 }
 
 /// Writes a floating-point value in scientific notation. @nogc-compatible.
-private void writeFloatScientific(Writer, T)(ref Writer w, T value) @trusted
+private OutputSpan writeFloatScientific(Writer, T)(scope ref Writer w, T value) @trusted
 if (__traits(isFloating, T))
 {
-    import std.range.primitives : put;
+    auto writer = OutputSpanWriter!Writer(w);
 
     // Normalize to [1, 10) range and calculate exponent
     int exp = 0;
@@ -217,84 +249,78 @@ if (__traits(isFloating, T))
     }
 
     // Write mantissa
-    writeFloatDecimal(w, value);
+    writeFloatDecimal(writer, value);
 
     // Write exponent: e+XX or e-XX
-    put(w, 'e');
+    writer.put('e');
     if (exp >= 0)
-        put(w, '+');
-    writeInteger(w, exp);
+        writer.put('+');
+    writeInteger(writer, exp);
+    return writer.release();
 }
 
 @("writeFloat.basic")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-    writeFloat(buf, 3.14);
-    assert(buf[] == "3.14");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeFloat(buf, 3.14); },
+        expected: "3.14",
+    );
 }
 
 @("writeFloat.specialValues")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-
-    writeFloat(buf, double.nan);
-    assert(buf[] == "nan");
-
-    buf.clear();
-    writeFloat(buf, -double.nan);
-    assert(buf[] == "-nan");
-
-    buf.clear();
-    writeFloat(buf, double.infinity);
-    assert(buf[] == "inf");
-
-    buf.clear();
-    writeFloat(buf, -double.infinity);
-    assert(buf[] == "-inf");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeFloat(buf, double.nan); },
+        expected: "nan",
+    );
+    expectWritten(
+        write: (ref WriterBuf buf) { writeFloat(buf, -double.nan); },
+        expected: "-nan",
+    );
+    expectWritten(
+        write: (ref WriterBuf buf) { writeFloat(buf, double.infinity); },
+        expected: "inf",
+    );
+    expectWritten(
+        write: (ref WriterBuf buf) { writeFloat(buf, -double.infinity); },
+        expected: "-inf",
+    );
 }
 
 @("writeFloat.zero")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-
-    writeFloat(buf, 0.0);
-    assert(buf[] == "0");
-
-    buf.clear();
-    writeFloat(buf, -0.0);
-    assert(buf[] == "-0");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeFloat(buf, 0.0); },
+        expected: "0",
+    );
+    expectWritten(
+        write: (ref WriterBuf buf) { writeFloat(buf, -0.0); },
+        expected: "-0",
+    );
 }
 
 @("writeFloat.common")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-
-    writeFloat(buf, 10.0);
-    assert(buf[] == "10");
-
-    buf.clear();
-    writeFloat(buf, -10.0);
-    assert(buf[] == "-10");
-
-    buf.clear();
-    writeFloat(buf, 0.1);
-    assert(buf[] == "0.1");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeFloat(buf, 10.0); },
+        expected: "10",
+    );
+    expectWritten(
+        write: (ref WriterBuf buf) { writeFloat(buf, -10.0); },
+        expected: "-10",
+    );
+    expectWritten(
+        write: (ref WriterBuf buf) { writeFloat(buf, 0.1); },
+        expected: "0.1",
+    );
 }
 
 @("writeFloat.scientific")
@@ -318,201 +344,142 @@ unittest
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Time Writing
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Writes a [TimeOfDay] as `HH:MM:SS` to an output range.
+OutputSpan writeTimeHms(Writer)(scope ref Writer w, in TimeOfDay time) @safe
+{
+    auto writer = OutputSpanWriter!Writer(w);
+    writePadded2(writer, time.hour);
+    writer.put(':');
+    writePadded2(writer, time.minute);
+    writer.put(':');
+    writePadded2(writer, time.second);
+    return writer.release();
+}
+
+private OutputSpan writePadded2(Writer)(scope ref Writer w, int value) @safe
+{
+    auto writer = OutputSpanWriter!Writer(w);
+    if (value < 10) writer.put('0');
+    writeInteger(writer, value);
+    return writer.release();
+}
+
+///
+@("writeTimeHms.basic")
+@safe pure nothrow @nogc
+unittest
+{
+    static immutable t = TimeOfDay(9, 5, 3);
+    expectWritten(
+        write: (ref WriterBuf buf) { writeTimeHms(buf, t); },
+        expected: "09:05:03",
+    );
+}
+
+///
+@("writeTimeHms.midnight")
+@safe pure nothrow @nogc
+unittest
+{
+    static immutable t = TimeOfDay(0, 0, 0);
+    expectWritten(
+        write: (ref WriterBuf buf) { writeTimeHms(buf, t); },
+        expected: "00:00:00",
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Escaped Character/String Writing
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Writes an escaped character to an output range (without quotes). @nogc-compatible.
-void writeEscapedChar(Writer)(ref Writer w, char c) @trusted
+OutputSpan writeEscapedChar(Writer)(scope ref Writer w, char c) @trusted
 {
-    import std.range.primitives : put;
+    auto writer = OutputSpanWriter!Writer(w);
 
     switch (c)
     {
-        case '\n': put(w, `\n`); return;
-        case '\t': put(w, `\t`); return;
-        case '\r': put(w, `\r`); return;
-        case '\0': put(w, `\0`); return;
-        case '\\': put(w, `\\`); return;
-        case '\"': put(w, `\"`); return;
-        case '\'': put(w, `\'`); return;
+        case '\n': writer.put(`\n`); return writer.release();
+        case '\t': writer.put(`\t`); return writer.release();
+        case '\r': writer.put(`\r`); return writer.release();
+        case '\0': writer.put(`\0`); return writer.release();
+        case '\\': writer.put(`\\`); return writer.release();
+        case '\"': writer.put(`\"`); return writer.release();
+        case '\'': writer.put(`\'`); return writer.release();
         default:
             if (c >= 0x20 && c < 0x7F)
-                put(w, c);
+                writer.put(c);
             else
             {
                 // Hex escape for non-printable
-                put(w, `\x`);
+                writer.put(`\x`);
                 static immutable hexDigits = "0123456789ABCDEF";
-                put(w, hexDigits[(c >> 4) & 0xF]);
-                put(w, hexDigits[c & 0xF]);
+                writer.put(hexDigits[(c >> 4) & 0xF]);
+                writer.put(hexDigits[c & 0xF]);
             }
     }
+    return writer.release();
 }
 
 @("writeEscapedChar.newline")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-    writeEscapedChar(buf, '\n');
-    assert(buf[] == `\n`);
+    expectWritten(
+        write: (ref WriterBuf buf) { writeEscapedChar(buf, '\n'); },
+        expected: `\n`,
+    );
 }
 
 /// Writes an escaped string to an output range (with double quotes). @nogc-compatible.
-void writeEscapedString(Writer)(ref Writer w, const(char)[] s) @trusted
+OutputSpan writeEscapedString(Writer)(scope ref Writer w, const(char)[] s) @trusted
 {
-    import std.range.primitives : put;
+    auto writer = OutputSpanWriter!Writer(w);
 
-    put(w, '"');
+    writer.put('"');
     foreach (c; s)
-        writeEscapedChar(w, c);
-    put(w, '"');
+        writeEscapedChar(writer, c);
+    writer.put('"');
+    return writer.release();
 }
 
 @("writeEscapedString.basic")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 64) buf;
-    writeEscapedString(buf, "hello\nworld");
-    assert(buf[] == `"hello\nworld"`);
+    expectWritten(
+        write: (ref WriterBuf buf) { writeEscapedString(buf, "hello\nworld"); },
+        expected: `"hello\nworld"`,
+    );
 }
 
 /// Writes an escaped character literal to an output range (with single quotes). @nogc-compatible.
-void writeEscapedCharLiteral(Writer)(ref Writer w, char c) @trusted
+OutputSpan writeEscapedCharLiteral(Writer)(scope ref Writer w, char c) @trusted
 {
-    import std.range.primitives : put;
+    auto writer = OutputSpanWriter!Writer(w);
 
-    put(w, '\'');
-    writeEscapedChar(w, c);
-    put(w, '\'');
+    writer.put('\'');
+    writeEscapedChar(writer, c);
+    writer.put('\'');
+    return writer.release();
 }
 
 @("writeEscapedCharLiteral.basic")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-    writeEscapedCharLiteral(buf, '\t');
-    assert(buf[] == `'\t'`);
+    expectWritten(
+        write: (ref WriterBuf buf) { writeEscapedCharLiteral(buf, '\t'); },
+        expected: `'\t'`,
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Value Writing / @nogc Conversion Traits
+// Value Writing
 // ─────────────────────────────────────────────────────────────────────────────
-
-/// True if `T` has a `toString` overload that accepts an output range writer,
-/// i.g. `void toString(W)(ref W writer)`.
-template hasOutputRangeToString(T)
-{
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    enum hasOutputRangeToString = __traits(compiles, () {
-        T t = T.init;
-        SmallBuffer!(char, 128) buf;
-        t.toString(buf);
-    }());
-}
-
-/// True if `T` has a @nogc-compatible `toString` overload that accepts an
-/// output range writer.
-template hasNogcOutputRangeToString(T)
-{
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    enum hasNogcOutputRangeToString = __traits(compiles, () @nogc {
-        T t = T.init;
-        SmallBuffer!(char, 128) buf;
-        t.toString(buf);
-    }());
-}
-
-/// True if `T` has a `toString` that takes a `scope void delegate(const(char)[])` sink.
-template hasSinkToString(T)
-{
-    enum hasSinkToString = __traits(compiles, () {
-        T t = T.init;
-        static void sink(const(char)[]) {}
-        t.toString(&sink);
-    }());
-}
-
-/// True if `T` has a @nogc `toString` that takes a @nogc sink delegate.
-template hasNogcSinkToString(T)
-{
-    enum hasNogcSinkToString = __traits(compiles, () @nogc {
-        T t = T.init;
-        static void sink(const(char)[]) @nogc {}
-        t.toString(&sink);
-    }());
-}
-
-/// True if `T` has a `toString()` that returns `string` and is callable from @nogc.
-template hasNogcStringToString(T)
-{
-    enum hasNogcStringToString = __traits(compiles, () @nogc {
-        T t = T.init;
-        string s = t.toString();
-    }());
-}
-
-/// True if `T` supports `cast(string)` and the cast is @nogc.
-template hasNogcStringCast(T)
-{
-    enum hasNogcStringCast = __traits(compiles, () @nogc {
-        T t = T.init;
-        string s = cast(string) t;
-    }());
-}
-
-/// True if `T` has any @nogc-compatible string conversion mechanism.
-template hasNogcToString(T)
-{
-    enum hasNogcToString =
-        hasNogcOutputRangeToString!T ||
-        hasNogcSinkToString!T ||
-        hasNogcStringToString!T ||
-        hasNogcStringCast!T;
-}
-
-// Test struct with @nogc output range toString
-private struct NogcOutputRangeType
-{
-    int value;
-
-    void toString(Writer)(ref Writer w) const @nogc
-    {
-        import std.range.primitives : put;
-        put(w, "NogcOR");
-    }
-}
-
-@("nogcTraits.builtinTypes")
-@safe pure nothrow @nogc
-unittest
-{
-    // Built-in types don't have toString, so traits should be false
-    static assert(!hasNogcOutputRangeToString!int);
-    static assert(!hasNogcSinkToString!int);
-    static assert(!hasNogcStringToString!int);
-    static assert(!hasNogcStringCast!int);
-    static assert(!hasNogcToString!int);
-}
-
-@("nogcTraits.outputRangeToString")
-@safe pure nothrow @nogc
-unittest
-{
-    static assert(hasNogcOutputRangeToString!NogcOutputRangeType);
-    static assert(hasOutputRangeToString!NogcOutputRangeType);
-    static assert(hasNogcToString!NogcOutputRangeType);
-}
 
 /// Writes any value to an output range using best-effort @nogc conversion.
 ///
@@ -527,129 +494,137 @@ unittest
 /// 8. User types with @nogc `toString()` returning `string` — writes the result
 /// 9. User types with @nogc `string` cast — writes `cast(string) t`
 /// 10. Fallback — uses `std.conv.to!string` (GC-allocating)
-void writeValue(Writer, T)(ref Writer w, auto ref const T val) @trusted
+OutputSpan writeValue(Writer, T)(scope ref Writer w, auto ref const T val) @trusted
 {
-    import std.range.primitives : put;
     import std.traits : isSomeChar, isSomeString;
+
+    auto writer = OutputSpanWriter!Writer(w);
 
     static if (is(T == bool))
     {
-        put(w, val ? "true" : "false");
+        writer.put(val ? "true" : "false");
     }
     else static if (isSomeChar!T)
     {
-        put(w, (&val)[0 .. 1]);
+        writer.put((&val)[0 .. 1]);
     }
     else static if (__traits(isIntegral, T))
     {
-        writeInteger(w, val);
+        writeInteger(writer, val);
     }
     else static if (__traits(isFloating, T))
     {
-        writeFloat(w, val);
+        writeFloat(writer, val);
     }
     else static if (isSomeString!T || is(T : const(char)[]))
     {
-        put(w, val);
+        writer.put(val);
     }
     else static if (hasNogcOutputRangeToString!T)
     {
         // Best: direct output range — no allocation, no delegate
-        val.toString(w);
+        val.toString(writer);
     }
     else static if (hasNogcSinkToString!T)
     {
         // Good: sink delegate — no allocation
-        val.toString((const(char)[] chunk) @nogc { put(w, chunk); });
+        val.toString((const(char)[] chunk) @nogc { writer.put(chunk); });
     }
     else static if (hasNogcStringToString!T)
     {
-        put(w, val.toString());
+        writer.put(val.toString());
     }
     else static if (hasNogcStringCast!T)
     {
-        put(w, cast(string) val);
+        writer.put(cast(string) val);
     }
     else
     {
         // GC fallback
         import std.conv : to;
-        put(w, val.to!string);
+        writer.put(val.to!string);
     }
+
+    return writer.release();
 }
 
 @("writeValue.bool")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-    writeValue(buf, true);
-    assert(buf[] == "true");
-
-    buf.clear();
-    writeValue(buf, false);
-    assert(buf[] == "false");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeValue(buf, true); },
+        expected: "true",
+    );
+    expectWritten(
+        write: (ref WriterBuf buf) { writeValue(buf, false); },
+        expected: "false",
+    );
 }
 
 @("writeValue.integer")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-    writeValue(buf, 42);
-    assert(buf[] == "42");
-
-    buf.clear();
-    writeValue(buf, -7);
-    assert(buf[] == "-7");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeValue(buf, 42); },
+        expected: "42",
+    );
+    expectWritten(
+        write: (ref WriterBuf buf) { writeValue(buf, -7); },
+        expected: "-7",
+    );
 }
 
 @("writeValue.float")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-    writeValue(buf, 3.14);
-    assert(buf[] == "3.14");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeValue(buf, 3.14); },
+        expected: "3.14",
+    );
 }
 
 @("writeValue.char")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-    writeValue(buf, 'A');
-    assert(buf[] == "A");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeValue(buf, 'A'); },
+        expected: "A",
+    );
 }
 
 @("writeValue.string")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 64) buf;
-    writeValue(buf, "hello world");
-    assert(buf[] == "hello world");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeValue(buf, "hello world"); },
+        expected: "hello world",
+    );
 }
 
 @("writeValue.nogcOutputRangeType")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
+    struct NogcOR
+    {
+        int value;
 
-    SmallBuffer!(char, 32) buf;
-    writeValue(buf, NogcOutputRangeType(42));
-    assert(buf[] == "NogcOR");
+        void toString(Writer)(ref Writer w) const @nogc
+        {
+            import std.range.primitives : put;
+            put(w, "NogcOR");
+        }
+    }
+
+    expectWritten(
+        write: (ref WriterBuf buf) { writeValue(buf, NogcOR(42)); },
+        expected: "NogcOR",
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -657,74 +632,72 @@ unittest
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Writes ANSI escape sequence to an output range. @nogc-compatible.
-void writeEscapeSeq(Writer)(ref Writer w, uint code) @trusted
+OutputSpan writeEscapeSeq(Writer)(scope ref Writer w, uint code) @trusted
 {
-    import std.range.primitives : put;
+    auto writer = OutputSpanWriter!Writer(w);
 
-    put(w, "\x1b[");
-    writeInteger(w, code);
-    put(w, 'm');
+    writer.put("\x1b[");
+    writeInteger(writer, code);
+    writer.put('m');
+    return writer.release();
 }
 
 @("writeEscapeSeq.basic")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-    writeEscapeSeq(buf, 34);
-    assert(buf[] == "\x1b[34m");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeEscapeSeq(buf, 34); },
+        expected: "\x1b[34m",
+    );
 }
 
 /// Writes styled text to an output range. @nogc-compatible.
-void writeStylized(Writer)(ref Writer w, const(char)[] text, Style style, bool resetAfter = true) @trusted
+OutputSpan writeStylized(Writer)(scope ref Writer w, const(char)[] text, Style style, bool resetAfter = true) @trusted
 {
-    import std.range.primitives : put;
+    auto writer = OutputSpanWriter!Writer(w);
 
     if (style == Style.none)
     {
-        put(w, text);
-        return;
+        writer.put(text);
+        return writer.release();
     }
 
-    writeEscapeSeq(w, style[0]);
-    put(w, text);
+    writeEscapeSeq(writer, style[0]);
+    writer.put(text);
     if (resetAfter)
-        writeEscapeSeq(w, style[1]);
+        writeEscapeSeq(writer, style[1]);
+    return writer.release();
 }
 
 @("writeStylized.withColor")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 64) buf;
-    writeStylized(buf, "hello", Style.blue);
-    assert(buf[] == "\x1b[34mhello\x1b[39m");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeStylized(buf, "hello", Style.blue); },
+        expected: "\x1b[34mhello\x1b[39m",
+    );
 }
 
 @("writeStylized.noReset")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 64) buf;
-    writeStylized(buf, "hello", Style.blue, false);
-    assert(buf[] == "\x1b[34mhello");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeStylized(buf, "hello", Style.blue, false); },
+        expected: "\x1b[34mhello",
+    );
 }
 
 @("writeStylized.noStyle")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
-    SmallBuffer!(char, 32) buf;
-    writeStylized(buf, "hello", Style.none);
-    assert(buf[] == "hello");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeStylized(buf, "hello", Style.none); },
+        expected: "hello",
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -736,11 +709,12 @@ unittest
 /// Uses `static foreach` over `__traits(allMembers, E)` for a compile-time
 /// generated lookup. Falls back to writing the underlying integer value
 /// if no member matches (e.g., combined bit flags).
-void writeEnumMemberName(E, Writer)(ref Writer w, const E val) @trusted
+OutputSpan writeEnumMemberName(E, Writer)(scope ref Writer w, const E val) @trusted
 if (is(E == enum))
 {
-    import std.range.primitives : put;
     import std.traits : OriginalType;
+
+    auto writer = OutputSpanWriter!Writer(w);
 
     bool matched = false;
 
@@ -748,39 +722,36 @@ if (is(E == enum))
     {{
         if (!matched && val == __traits(getMember, E, member))
         {
-            put(w, member);
+            writer.put(member);
             matched = true;
         }
     }}
 
     if (!matched)
-        writeInteger(w, cast(OriginalType!E) val);
+        writeInteger(writer, cast(OriginalType!E) val);
+    return writer.release();
 }
 
 @("writeEnumMemberName.basic")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
     enum Color { red, green, blue }
-
-    SmallBuffer!(char, 32) buf;
-    writeEnumMemberName(buf, Color.green);
-    assert(buf[] == "green");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeEnumMemberName(buf, Color.green); },
+        expected: "green",
+    );
 }
 
 @("writeEnumMemberName.fallback")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
     enum Flags : ubyte { a = 1, b = 2 }
-
-    SmallBuffer!(char, 32) buf;
-    writeEnumMemberName(buf, cast(Flags) 3);
-    assert(buf[] == "3");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeEnumMemberName(buf, cast(Flags) 3); },
+        expected: "3",
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -792,49 +763,6 @@ enum EnumRender
 {
     underlying, /// Write as underlying integer (default for `writeValue`)
     memberName, /// Write the member name string (e.g., `"green"`)
-}
-
-/// True if `T` is a leaf type that can be written by `writeStyledValue`
-/// without requiring recursive pretty-printing.
-///
-/// Leaf types: `null`, `bool`, integrals, floating-point, `char`, `string`, `enum`.
-template isLeafValue(T)
-{
-    import std.traits : isSomeChar, isSomeString;
-
-    enum isLeafValue =
-        is(T == typeof(null)) ||
-        is(T == bool) ||
-        is(T == enum) ||
-        __traits(isIntegral, T) ||
-        __traits(isFloating, T) ||
-        isSomeChar!T ||
-        isSomeString!T;
-}
-
-@("isLeafValue.builtinTypes")
-@safe pure nothrow @nogc
-unittest
-{
-    static assert(isLeafValue!bool);
-    static assert(isLeafValue!int);
-    static assert(isLeafValue!double);
-    static assert(isLeafValue!char);
-    static assert(isLeafValue!string);
-    static assert(isLeafValue!(typeof(null)));
-
-    enum Color { red }
-    static assert(isLeafValue!Color);
-}
-
-@("isLeafValue.nonLeafTypes")
-@safe pure nothrow @nogc
-unittest
-{
-    struct S { int x; }
-    static assert(!isLeafValue!S);
-    static assert(!isLeafValue!(int[]));
-    static assert(!isLeafValue!(int[string]));
 }
 
 /// Writes a leaf value to an output range with optional ANSI styling.
@@ -849,10 +777,11 @@ unittest
 ///
 /// All hook primitives are optional (DbI §5). When absent, defaults apply:
 /// no styling, raw strings/chars, enums as underlying integers.
-void writeStyledValue(Hook, Writer, T)(ref Writer w, in T value, in Hook hook, bool useColors) @trusted
+OutputSpan writeStyledValue(Hook, Writer, T)(scope ref Writer w, in T value, in Hook hook, bool useColors) @trusted
 {
-    import std.range.primitives : put;
     import std.traits : isSomeChar, isSomeString;
+
+    auto writer = OutputSpanWriter!Writer(w);
 
     // 1. Compute style from hook (optional primitive)
     Style style = Style.none;
@@ -864,12 +793,12 @@ void writeStyledValue(Hook, Writer, T)(ref Writer w, in T value, in Hook hook, b
 
     // 2. Open style
     if (style != Style.none)
-        writeEscapeSeq(w, style[0]);
+        writeEscapeSeq(writer, style[0]);
 
     // 3. Dispatch by type
     static if (is(T == typeof(null)))
     {
-        put(w, "null");
+        writer.put("null");
     }
     else static if (is(T == enum))
     {
@@ -882,16 +811,16 @@ void writeStyledValue(Hook, Writer, T)(ref Writer w, in T value, in Hook hook, b
         }();
 
         static if (render == EnumRender.memberName)
-            writeEnumMemberName(w, value);
+            writeEnumMemberName(writer, value);
         else
         {
             import std.traits : OriginalType;
-            writeInteger(w, cast(OriginalType!T) value);
+            writeInteger(writer, cast(OriginalType!T) value);
         }
     }
     else static if (is(T == bool))
     {
-        put(w, value ? "true" : "false");
+        writer.put(value ? "true" : "false");
     }
     else static if (isSomeChar!T)
     {
@@ -903,9 +832,9 @@ void writeStyledValue(Hook, Writer, T)(ref Writer w, in T value, in Hook hook, b
         }();
 
         static if (esc)
-            writeEscapedCharLiteral(w, value);
+            writeEscapedCharLiteral(writer, value);
         else
-            put(w, (&value)[0 .. 1]);
+            writer.put((&value)[0 .. 1]);
     }
     else static if (isSomeString!T)
     {
@@ -917,27 +846,28 @@ void writeStyledValue(Hook, Writer, T)(ref Writer w, in T value, in Hook hook, b
         }();
 
         static if (esc)
-            writeEscapedString(w, value);
+            writeEscapedString(writer, value);
         else
-            put(w, value);
+            writer.put(value);
     }
     else static if (__traits(isIntegral, T))
     {
-        writeInteger(w, value);
+        writeInteger(writer, value);
     }
     else static if (__traits(isFloating, T))
     {
-        writeFloat(w, value);
+        writeFloat(writer, value);
     }
     else
     {
         // Non-leaf fallback: delegate to plain writeValue
-        writeValue(w, value);
+        writeValue(writer, value);
     }
 
     // 4. Close style
     if (style != Style.none)
-        writeEscapeSeq(w, style[1]);
+        writeEscapeSeq(writer, style[1]);
+    return writer.release();
 }
 
 /// Default hook: no styling, no escaping, enums as integers.
@@ -945,17 +875,15 @@ void writeStyledValue(Hook, Writer, T)(ref Writer w, in T value, in Hook hook, b
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
     struct NoHook {}
-
-    SmallBuffer!(char, 64) buf;
-    writeStyledValue(buf, 42, NoHook(), false);
-    assert(buf[] == "42");
-
-    buf.clear();
-    writeStyledValue(buf, "hello", NoHook(), false);
-    assert(buf[] == "hello");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeStyledValue(buf, 42, NoHook(), false); },
+        expected: "42",
+    );
+    expectWritten(
+        write: (ref WriterBuf buf) { writeStyledValue(buf, "hello", NoHook(), false); },
+        expected: "hello",
+    );
 }
 
 /// Hook with styling: values get ANSI color codes.
@@ -963,8 +891,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
     struct BlueInts
     {
         Style styleOf(T)(in T) const @safe pure nothrow @nogc
@@ -976,9 +902,10 @@ unittest
         }
     }
 
-    SmallBuffer!(char, 64) buf;
-    writeStyledValue(buf, 42, BlueInts(), true);
-    assert(buf[] == "\x1b[34m42\x1b[39m");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeStyledValue(buf, 42, BlueInts(), true); },
+        expected: "\x1b[34m42\x1b[39m",
+    );
 }
 
 /// Hook with string escaping: strings get quotes and escape sequences.
@@ -986,21 +913,20 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
     struct EscHook
     {
         enum escapeStrings = true;
         enum escapeChars = true;
     }
 
-    SmallBuffer!(char, 64) buf;
-    writeStyledValue(buf, "hi\nthere", EscHook(), false);
-    assert(buf[] == `"hi\nthere"`);
-
-    buf.clear();
-    writeStyledValue(buf, '\t', EscHook(), false);
-    assert(buf[] == `'\t'`);
+    expectWritten(
+        write: (ref WriterBuf buf) { writeStyledValue(buf, "hi\nthere", EscHook(), false); },
+        expected: `"hi\nthere"`,
+    );
+    expectWritten(
+        write: (ref WriterBuf buf) { writeStyledValue(buf, '\t', EscHook(), false); },
+        expected: `'\t'`,
+    );
 }
 
 /// Hook with enum member name rendering.
@@ -1008,8 +934,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
     enum Dir { north, south, east, west }
 
     struct EnumHook
@@ -1017,9 +941,10 @@ unittest
         enum enumRender = EnumRender.memberName;
     }
 
-    SmallBuffer!(char, 32) buf;
-    writeStyledValue(buf, Dir.south, EnumHook(), false);
-    assert(buf[] == "south");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeStyledValue(buf, Dir.south, EnumHook(), false); },
+        expected: "south",
+    );
 }
 
 /// Hook with styling disabled (useColors=false): no escape codes emitted.
@@ -1027,16 +952,15 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
     struct AlwaysBlue
     {
         Style styleOf(T)(in T) const @safe pure nothrow @nogc => Style.blue;
     }
 
-    SmallBuffer!(char, 64) buf;
-    writeStyledValue(buf, 42, AlwaysBlue(), false);
-    assert(buf[] == "42");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeStyledValue(buf, 42, AlwaysBlue(), false); },
+        expected: "42",
+    );
 }
 
 /// Null value rendering.
@@ -1044,16 +968,15 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
     struct YellowNull
     {
         Style styleOf(T)(in T) const @safe pure nothrow @nogc => Style.yellow;
     }
 
-    SmallBuffer!(char, 64) buf;
-    writeStyledValue(buf, null, YellowNull(), true);
-    assert(buf[] == "\x1b[33mnull\x1b[39m");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeStyledValue(buf, null, YellowNull(), true); },
+        expected: "\x1b[33mnull\x1b[39m",
+    );
 }
 
 /// Bool value rendering with styling.
@@ -1061,8 +984,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
     struct YellowBool
     {
         Style styleOf(T)(in T) const @safe pure nothrow @nogc
@@ -1074,9 +995,10 @@ unittest
         }
     }
 
-    SmallBuffer!(char, 64) buf;
-    writeStyledValue(buf, true, YellowBool(), true);
-    assert(buf[] == "\x1b[33mtrue\x1b[39m");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeStyledValue(buf, true, YellowBool(), true); },
+        expected: "\x1b[33mtrue\x1b[39m",
+    );
 }
 
 /// Float special values with per-value styling.
@@ -1084,9 +1006,6 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import std.math.traits : isNaN;
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
     struct FloatHook
     {
         Style styleOf(T)(in T val) const @safe pure nothrow @nogc
@@ -1103,11 +1022,40 @@ unittest
         }
     }
 
-    SmallBuffer!(char, 64) buf;
-    writeStyledValue(buf, double.nan, FloatHook(), true);
-    assert(buf[] == "\x1b[31mnan\x1b[39m");
+    expectWritten(
+        write: (ref WriterBuf buf) { writeStyledValue(buf, double.nan, FloatHook(), true); },
+        expected: "\x1b[31mnan\x1b[39m",
+    );
+    expectWritten(
+        write: (ref WriterBuf buf) { writeStyledValue(buf, 3.14, FloatHook(), true); },
+        expected: "\x1b[34m3.14\x1b[39m",
+    );
+}
 
-    buf.clear();
-    writeStyledValue(buf, 3.14, FloatHook(), true);
-    assert(buf[] == "\x1b[34m3.14\x1b[39m");
+// ─────────────────────────────────────────────────────────────────────────────
+// Test Assertion Helper Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+@("expectWritten.pass")
+@safe pure nothrow @nogc
+unittest
+{
+    expectWritten(
+        write: (ref WriterBuf buf) { writeInteger(buf, 42); },
+        expected: "41",
+    );
+}
+
+@("expectWritten.multipleWrites")
+@safe pure nothrow @nogc
+unittest
+{
+    expectWritten(
+        write: (ref WriterBuf buf) {
+            writeInteger(buf, 1);
+            buf.put(", ");
+            writeInteger(buf, 2);
+        },
+        expected: "1, 2",
+    );
 }

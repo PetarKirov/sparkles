@@ -5,6 +5,13 @@
 /// Introspection to let callers plug in custom URI writers.
 module sparkles.core_cli.source_uri;
 
+import std.conv : text;
+
+import sparkles.core_cli.text_writers : OutputSpan;
+
+version (unittest)
+    import sparkles.core_cli.text_writers.expect_written : expectWritten, WriterBuf;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Path Resolution
 // ─────────────────────────────────────────────────────────────────────────────
@@ -15,7 +22,7 @@ module sparkles.core_cli.source_uri;
 /// the compiler's working directory, then resolves `path` against it.
 /// Works at compile time (CTFE) and at runtime.
 string resolveSourcePath(
-    string path,
+    in char[] path,
     string fullPath = __FILE_FULL_PATH__,
     string relPath = __FILE__,
 ) @safe pure
@@ -24,11 +31,11 @@ string resolveSourcePath(
 
     // Already absolute — return as-is
     if (path.length > 0 && path[0] == '/')
-        return path;
+        return path.idup;
 
     // Derive compiler working directory: strip relative suffix from full path
     string base = fullPath[0 .. $ - relPath.length];
-    return absolutePath(path, base);
+    return absolutePath(path.idup, base);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -38,70 +45,45 @@ string resolveSourcePath(
 struct EditorScheme
 {
     string name;
-    string function(string, size_t, size_t) pure uriFun;
+    string function(string, size_t, size_t) pure @safe uriFun;
     immutable(string)[] aliases;
 }
 
 // ── URI format functions (IES-based, CTFE-evaluable) ────────────────────
 
-private string fileUri(string path, size_t line, size_t col) pure
+private @safe pure
 {
-    import std.conv : text;
-    return i"file://$(path)#L$(line)".text;
-}
 
-private string vsCodeUri(string path, size_t line, size_t col) pure
-{
-    import std.conv : text;
-    return i"vscode://file$(path):$(line):$(col)".text;
-}
+string fileUri(string path, size_t line, size_t col) =>
+    i"file://$(path)#L$(line)".text;
 
-private string vsCodeInsidersUri(string path, size_t line, size_t col) pure
-{
-    import std.conv : text;
-    return i"vscode-insiders://file$(path):$(line):$(col)".text;
-}
+string vsCodeUri(string path, size_t line, size_t col) =>
+    i"vscode://file$(path):$(line):$(col)".text;
 
-private string cursorUri(string path, size_t line, size_t col) pure
-{
-    import std.conv : text;
-    return i"cursor://file$(path):$(line):$(col)".text;
-}
+string vsCodeInsidersUri(string path, size_t line, size_t col) =>
+    i"vscode-insiders://file$(path):$(line):$(col)".text;
 
-private string zedUri(string path, size_t line, size_t col) pure
-{
-    import std.conv : text;
-    return i"zed://file$(path):$(line):$(col)".text;
-}
+string cursorUri(string path, size_t line, size_t col) =>
+    i"cursor://file$(path):$(line):$(col)".text;
 
-private string jetBrainsUri(string path, size_t line, size_t col) pure
-{
-    import std.conv : text;
-    return i"jetbrains://open?file=$(path)&line=$(line)&column=$(col)".text;
-}
+string zedUri(string path, size_t line, size_t col) =>
+    i"zed://file$(path):$(line):$(col)".text;
 
-private string sublimeUri(string path, size_t line, size_t col) pure
-{
-    import std.conv : text;
-    return i"subl://open?url=file://$(path)&line=$(line)&column=$(col)".text;
-}
+string jetBrainsUri(string path, size_t line, size_t col) =>
+    i"jetbrains://open?file=$(path)&line=$(line)&column=$(col)".text;
 
-private string emacsUri(string path, size_t line, size_t col) pure
-{
-    import std.conv : text;
-    return i"org-protocol://open-file?url=file://$(path)&line=$(line)&column=$(col)".text;
-}
+string sublimeUri(string path, size_t line, size_t col) =>
+    i"subl://open?url=file://$(path)&line=$(line)&column=$(col)".text;
 
-private string atomUri(string path, size_t line, size_t col) pure
-{
-    import std.conv : text;
-    return i"atom://core/open/file?filename=$(path)&line=$(line)&column=$(col)".text;
-}
+string emacsUri(string path, size_t line, size_t col) =>
+    i"org-protocol://open-file?url=file://$(path)&line=$(line)&column=$(col)".text;
 
-private string lapceUri(string path, size_t line, size_t col) pure
-{
-    import std.conv : text;
-    return i"lapce://open?path=$(path)&line=$(line)&column=$(col)".text;
+string atomUri(string path, size_t line, size_t col) =>
+    i"atom://core/open/file?filename=$(path)&line=$(line)&column=$(col)".text;
+
+string lapceUri(string path, size_t line, size_t col) =>
+    i"lapce://open?path=$(path)&line=$(line)&column=$(col)".text;
+
 }
 
 // ── Declarative scheme table ────────────────────────────────────────────
@@ -129,6 +111,74 @@ enum editorSchemes = [
     EditorScheme("micro",            &fileUri,            ["micro"]),
     EditorScheme("Kakoune",          &fileUri,            ["kak"]),
 ];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Runtime Editor Detection
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Returns the detected editor command name from `$VISUAL` / `$EDITOR`.
+///
+/// The result is the `baseName` of the first non-empty variable, cached
+/// in a thread-local slot after the first call.
+@safe
+string getEditor()
+{
+    // Thread-local lazy cache
+    static string cached = null;
+    if (cached is null)
+    {
+        import std.path : baseName;
+        import std.process : environment;
+        cached = environment.get("VISUAL", environment.get("EDITOR", "")).baseName;
+    }
+    return cached;
+}
+
+/// Writes an editor-appropriate source URI for runtime path/line/col values.
+///
+/// Looks up `editor` in [editorSchemes] and calls the matching `uriFun`.
+/// Falls back to a `file://` URI when no scheme matches.
+@safe
+OutputSpan writeEditorUri(Writer)(ref Writer w, in char[] editor, string path, size_t line, size_t col)
+{
+    import sparkles.core_cli.text_writers : OutputSpanWriter;
+
+    auto writer = OutputSpanWriter!Writer(w);
+
+    foreach (scheme; editorSchemes)
+        foreach (a; scheme.aliases)
+            if (a == editor)
+            {
+                writer.put(scheme.uriFun(path, line, col));
+                return writer.release();
+            }
+
+    // Default: file:// URI
+    writer.put(fileUri(path, line, col));
+    return writer.release();
+}
+
+/// Writes a `file://` URI when no editor is specified.
+@("sourceUri.writeEditorUri.fallback")
+@safe
+unittest
+{
+    expectWritten(
+        write: (ref WriterBuf buf) { writeEditorUri(buf, "", "/src/main.d", 10, 1); },
+        expected: "file:///src/main.d#L10",
+    );
+}
+
+/// Writes a vscode URI when editor is "code".
+@("sourceUri.writeEditorUri.vscode")
+@safe
+unittest
+{
+    expectWritten(
+        write: (ref WriterBuf buf) { writeEditorUri(buf, "code", "/src/main.d", 10, 3); },
+        expected: "vscode://file/src/main.d:10:3",
+    );
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Hook Interface and Capability Trait
@@ -188,7 +238,7 @@ struct EditorDetectHook
     {
         import std.range.primitives : put;
 
-        immutable editor = editorName();  // runtime: lazy-cached
+        immutable editor = getEditor();  // runtime: lazy-cached
 
         // Generated from declarative table — each URI is CTFE-computed
         switch (editor)
@@ -210,19 +260,6 @@ struct EditorDetectHook
                 return;
             }
         }
-    }
-
-    private static string editorName()
-    {
-        // Thread-local lazy cache
-        static string cached = null;
-        if (cached is null)
-        {
-            import std.path : baseName;
-            import std.process : environment;
-            cached = environment.get("VISUAL", environment.get("EDITOR", "")).baseName;
-        }
-        return cached;
     }
 }
 
@@ -282,10 +319,12 @@ unittest
 @safe pure
 unittest
 {
-    import std.array : appender;
-    auto w = appender!string;
-    FileUriHook.writeSourceUri!("/home/user/project/main.d", size_t(42), size_t(5))(w);
-    assert(w[] == "file:///home/user/project/main.d#L42");
+    expectWritten(
+        write: (ref WriterBuf buf) {
+            FileUriHook.writeSourceUri!("/home/user/project/main.d", size_t(42), size_t(5))(buf);
+        },
+        expected: "file:///home/user/project/main.d#L42",
+    );
 }
 
 /// SchemeHook!"code" produces vscode:// URIs.
@@ -293,10 +332,12 @@ unittest
 @safe pure
 unittest
 {
-    import std.array : appender;
-    auto w = appender!string;
-    SchemeHook!"code".writeSourceUri!("/home/user/project/main.d", size_t(10), size_t(3))(w);
-    assert(w[] == "vscode://file/home/user/project/main.d:10:3");
+    expectWritten(
+        write: (ref WriterBuf buf) {
+            SchemeHook!"code".writeSourceUri!("/home/user/project/main.d", size_t(10), size_t(3))(buf);
+        },
+        expected: "vscode://file/home/user/project/main.d:10:3",
+    );
 }
 
 /// CTFE evaluation of uriFun from the table.
