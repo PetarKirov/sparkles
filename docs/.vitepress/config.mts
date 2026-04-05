@@ -65,6 +65,36 @@ export default defineConfig({
               },
             ],
           },
+          {
+            text: 'Writing Docs',
+            collapsed: true,
+            items: [
+              {
+                text: 'Overview',
+                link: '/guidelines/writing-docs-in-sparkles/',
+              },
+              {
+                text: 'Markdown Style',
+                link: '/guidelines/writing-docs-in-sparkles/markdown-style',
+              },
+              {
+                text: 'VitePress',
+                link: '/guidelines/writing-docs-in-sparkles/vitepress',
+              },
+              {
+                text: 'Lychee',
+                link: '/guidelines/writing-docs-in-sparkles/lychee',
+              },
+              {
+                text: 'Sparkles MD Tooling',
+                link: '/guidelines/writing-docs-in-sparkles/sparkles-md-tooling',
+              },
+              {
+                text: 'Conventions',
+                link: '/guidelines/writing-docs-in-sparkles/conventions',
+              },
+            ],
+          },
         ],
       },
       {
