@@ -4,6 +4,7 @@ export default defineConfig({
   title: 'Sparkles',
   description: 'D library for building CLI applications',
   base: '/',
+  cleanUrls: true,
 
   // Ignore links to .d source files referenced from docs
   ignoreDeadLinks: [/\.d$/],
