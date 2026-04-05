@@ -1,10 +1,10 @@
 # Lychee
 
-Link checking with [lychee][] ensures all URLs in documentation are reachable.
+Link checking with [lychee][] ensures all URLs in documentation are reachable. See the [lychee configuration reference][lychee-config] for all available options.
 
 ## Configuration
 
-- Config file: `lychee.toml`
+- Config file: `lychee.toml` (see [configuration docs][lychee-config])
 - Shared exclusions: `lychee.exclude` (always applied)
 - CI-only exclusions: `lychee.ci.exclude` (flaky endpoints in GitHub Actions)
 - `fallback_extensions = ["md", "html"]` — links without extensions resolve to `.md` or `.html`
@@ -39,3 +39,4 @@ lychee docs/path/to/file.md
 ```
 
 [lychee]: https://lychee.cli.rs/
+[lychee-config]: https://lychee.cli.rs/guides/config/

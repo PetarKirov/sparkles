@@ -11,12 +11,18 @@ Guidelines for writing, organizing, and validating documentation in the Sparkles
 
 Every docs change must satisfy **all** of these before committing:
 
-1. New page added to sidebar in `docs/.vitepress/config.mts` — see [VitePress][]
-2. All links are **reference-style** — see [Markdown Style][]
-3. `lychee` link check passes — see [Lychee][]
-4. `prettier` formatting passes — see [Markdown Style][]
-5. If the page contains runnable D code examples, `verify-md-examples` passes — see [Sparkles MD Tooling][]
-6. Cross-references to/from related pages are added (index pages, sibling docs)
+### Manual
+
+1. If a related page already exists in docs, **cross-reference it** (index pages, sibling docs, and back-links)
+2. Link to relevant **upstream resources** (specs, papers, official docs) — prefer deep-links to the most specific section
+3. New page added to sidebar in `docs/.vitepress/config.mts` — see [VitePress][]
+
+### Auto-enforced by pre-commit hooks
+
+4. All links are **reference-style** — see [Markdown Style][]
+5. `prettier` formatting passes — see [Markdown Style][]
+6. `lychee` link check passes — see [Lychee][]
+7. If the page contains runnable D code examples, `verify-md-examples` passes — see [Sparkles MD Tooling][]
 
 ---
 

@@ -2,6 +2,8 @@
 
 ## Conventional Commits for Docs
 
+Follow the [Conventional Commits][] format:
+
 ```
 docs(<scope>): <description>
 ```
@@ -32,3 +34,5 @@ ln -s ../../docs/specs/markdown/SPEC.md libs/markdown/SPEC.md
 ```
 
 This keeps docs browsable from both the library root and the VitePress site.
+
+[Conventional Commits]: https://www.conventionalcommits.org/
