@@ -1,15 +1,17 @@
 # Sparkles MD Tooling
 
+This project uses custom tooling built on [pre-commit][] and the `run_md_examples.d` script to validate documentation.
+
 ## Pre-commit Hooks (docs-related)
 
-| Hook                           | Purpose                                    | Files  |
-| ------------------------------ | ------------------------------------------ | ------ |
-| `editorconfig-checker`         | Whitespace / indentation consistency       | All    |
-| `end-of-file-fixer`            | Ensure trailing newline                    | Text   |
-| `fix-markdown-reference-links` | Convert inline links → reference-style     | `*.md` |
-| `prettier`                     | Format markdown, tables, spacing           | Text   |
-| `lychee`                       | Validate all URLs (internal + external)    | `*.md` |
-| `verify-md-examples`           | Compile/run D code blocks and check output | `*.md` |
+| Hook                           | Purpose                                                   | Files  |
+| ------------------------------ | --------------------------------------------------------- | ------ |
+| `editorconfig-checker`         | Whitespace / indentation consistency ([EditorConfig][])   | All    |
+| `end-of-file-fixer`            | Ensure trailing newline                                   | Text   |
+| `fix-markdown-reference-links` | Convert inline links → reference-style                    | `*.md` |
+| `prettier`                     | Format markdown, tables, spacing ([Prettier][])           | Text   |
+| `lychee`                       | Validate all URLs (internal + external) ([lychee docs][]) | `*.md` |
+| `verify-md-examples`           | Compile/run D code blocks and check output                | `*.md` |
 
 All hooks run automatically on `git commit`. To run manually:
 
@@ -93,3 +95,8 @@ When output contains dynamic values (timestamps, paths, durations), add an HTML 
 # Find and verify all markdown files
 ./scripts/run_md_examples.d --verify --glob='**/*.md'
 ```
+
+[pre-commit]: https://pre-commit.com/
+[EditorConfig]: https://editorconfig.org/
+[Prettier]: https://prettier.io/docs/en/
+[lychee docs]: https://lychee.cli.rs/

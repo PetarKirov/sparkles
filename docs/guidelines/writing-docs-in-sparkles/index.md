@@ -17,6 +17,7 @@ Every docs change must satisfy **all** of these before committing:
 4. `prettier` formatting passes — see [Markdown Style][]
 5. If the page contains runnable D code examples, `verify-md-examples` passes — see [Sparkles MD Tooling][]
 6. Cross-references to/from related pages are added (index pages, sibling docs)
+7. Link to relevant **upstream documentation** where possible (e.g., VitePress feature docs, lychee config reference, language specs)
 
 ---
 

@@ -2,7 +2,7 @@
 
 ## Link Style: Reference-Style Links Only
 
-**Never use inline links.** Always use reference-style links with definitions at the bottom of the file.
+**Never use inline links.** Always use [reference-style links][md-ref-links] with definitions at the bottom of the file.
 
 ### ✅ Correct
 
@@ -32,8 +32,8 @@ See the [effectful](haskell-effectful.md) library.
 
 ## Formatting Rules
 
-- **Prettier** enforces markdown formatting — do not fight it
-- **EditorConfig**: Markdown uses `indent_size = unset` (code blocks may have intentional spacing)
+- [Prettier][] enforces markdown formatting — do not fight it
+- [EditorConfig][]: Markdown uses `indent_size = unset` (code blocks may have intentional spacing)
 - Line endings: LF only (`end_of_line = lf`)
 - Files must end with a newline
 - Use GFM-style tables for comparisons and metadata
@@ -149,3 +149,7 @@ What lessons apply to this project's D codebase.
 
 [Source 1]: https://...
 ```
+
+[md-ref-links]: https://www.markdownguide.org/basic-syntax/#reference-style-links
+[Prettier]: https://prettier.io/docs/en/
+[EditorConfig]: https://editorconfig.org/
