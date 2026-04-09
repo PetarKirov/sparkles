@@ -265,7 +265,7 @@ Built-in concurrent data structures:
 [Cats Effect]: scala-cats-effect.md
 [ZIO documentation]: https://zio.dev
 [ZIO GitHub repository]: https://github.com/zio/zio
-[ZIO in 2025]: https://www.ziverge.com/post/zio-in-2025
+[ZIO in 2025]: https://web.archive.org/web/20250215132923/https://www.ziverge.com/post/zio-in-2025
 [ZIO core reference]: https://zio.dev/reference/core/zio/
 [Getting Started with DI in ZIO]: https://zio.dev/reference/di/dependency-injection-in-zio/
 [The Tri-Z Architecture]: https://blog.pierre-ricadat.com/the-tri-z-architecture-a-pattern-for-layering-zio-applications-in-scala
