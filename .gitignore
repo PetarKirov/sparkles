@@ -7,7 +7,7 @@ result-*
 .direnv/
 .env
 
-# Pre Commit
+# Pre Commit / Prek
 .pre-commit-config.yaml
 .lycheecache
 

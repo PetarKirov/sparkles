@@ -1153,6 +1153,10 @@
           "mcl-nixos-modules",
           "flake-parts"
         ],
+        "git-hooks-nix": [
+          "mcl-nixos-modules",
+          "git-hooks-nix"
+        ],
         "mcl-nixos-modules": "mcl-nixos-modules",
         "nixpkgs": [
           "mcl-nixos-modules",
