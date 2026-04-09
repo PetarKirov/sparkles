@@ -1160,7 +1160,7 @@
         "mcl-nixos-modules": "mcl-nixos-modules",
         "nixpkgs": [
           "mcl-nixos-modules",
-          "nixpkgs"
+          "nixpkgs-unstable"
         ]
       }
     },

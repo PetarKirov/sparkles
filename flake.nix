@@ -2,7 +2,7 @@
   inputs = {
     mcl-nixos-modules.url = "github:metacraft-labs/nixos-modules";
 
-    nixpkgs.follows = "mcl-nixos-modules/nixpkgs";
+    nixpkgs.follows = "mcl-nixos-modules/nixpkgs-unstable";
     flake-parts.follows = "mcl-nixos-modules/flake-parts";
 
     git-hooks-nix.follows = "mcl-nixos-modules/git-hooks-nix";
