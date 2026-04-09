@@ -3,13 +3,56 @@
   perSystem =
     { config, pkgs, ... }:
     {
-      pre-commit = {
-        settings = {
-          hooks = {
-            rustfmt.enable = lib.mkForce false;
+      devShells.pre-commit =
+        let
+          inherit (config.pre-commit.settings) enabledPackages package configFile;
+        in
+        pkgs.mkShell {
+          packages = enabledPackages ++ [ package ];
+          shellHook = ''
+            ln -fvs ${configFile} .pre-commit-config.yaml
+            echo "Running Pre-commit checks"
+            echo "========================="
+          '';
+        };
 
-            # Test data files contain exact byte sequences — no trailing newline
-            end-of-file-fixer.excludes = [ "^libs/core-cli/test/data/" ];
+      # impl: https://github.com/cachix/git-hooks.nix/blob/master/flake-module.nix
+      pre-commit = {
+        # Disable `checks` flake output
+        check.enable = false;
+
+        # Enable commonly used formatters
+        settings = {
+          # Use Rust-based alternative to pre-commit:
+          # * https://github.com/j178/prek
+          # * https://prek.j178.dev/
+          package = pkgs.prek;
+
+          excludes = [ "^.*\.age$" ];
+
+          hooks = {
+            # Basic whitespace formatting
+            end-of-file-fixer = {
+              enable = true;
+              # Test data files contain exact byte sequences — no trailing newline
+              excludes = [ "^libs/core-cli/test/data/" ];
+            };
+            editorconfig-checker.enable = true;
+
+            # *.nix formatting
+            nixfmt.enable = true;
+
+            # *.{js,jsx,ts,tsx,css,html,md,json} formatting
+            prettier = {
+              enable = true;
+              args = [
+                "--check"
+                "--list-different=false"
+                "--log-level=warn"
+                "--ignore-unknown"
+                "--write"
+              ];
+            };
 
             fix-markdown-reference-links = {
               enable = true;
