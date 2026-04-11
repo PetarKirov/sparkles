@@ -60,11 +60,11 @@ void parseCliArgs(CliOptions...)(
 )
 {
     import core.stdc.stdlib : exit;
-    import std.getopt : getopt;
+    import std.getopt : getopt, config;
     import std.stdio : writeln;
     import sparkles.core_cli.help_formatting : formatProgramManual;
 
-    auto getOptResult = argv.getopt(options);
+    auto getOptResult = argv.getopt(config.caseSensitive, options);
 
     if (getOptResult.helpWanted)
     {
@@ -77,12 +77,19 @@ void parseCliArgs(CliOptions...)(
 
 private template helpTextViaImport(string file, string optionAliases)
 {
+    import std.ascii : isUpper;
     import std.path : baseName, buildPath;
     import std.string : split;
 
     enum programName = file.baseName[0..$-2];
     enum shortOptionName = optionAliases.split("|")[0];
-    enum path = programName.buildPath("options", shortOptionName  ~ ".txt");
+    static assert(shortOptionName.length == 1);
+
+    // Append "_" to uppercase single-char options to avoid case-insensitive FS conflicts (e.g. x.txt vs X_.txt)
+    enum safeName = shortOptionName[0].isUpper
+        ? shortOptionName ~ "_"
+        : shortOptionName;
+    enum path = programName.buildPath("options", safeName ~ ".txt");
 
     enum helpTextViaImport = tryImport!path;
 }
