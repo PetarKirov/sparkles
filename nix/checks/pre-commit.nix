@@ -59,7 +59,8 @@
               files = "\\.md$";
               language = "system";
               name = "fix-markdown-reference-links";
-              require_serial = true;
+              require_serial = false;
+              pass_filenames = true;
               entry = lib.getExe config.packages.run_md_examples;
               args = [ "--fix-reference-links" ];
             };
@@ -69,7 +70,8 @@
               files = "\\.md$";
               language = "system";
               name = "verify-md-examples";
-              require_serial = true;
+              require_serial = false;
+              pass_filenames = true;
               entry = lib.getExe config.packages.run_md_examples;
               args = [ "--verify" ];
             };
@@ -77,6 +79,7 @@
             lychee = {
               enable = true;
               files = "\\.md$";
+              pass_filenames = true;
               entry = lib.mkForce (
                 toString (
                   pkgs.writeShellScript "lychee-with-auth" ''
