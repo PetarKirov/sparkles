@@ -2,7 +2,7 @@
 
 /+ dub.sdl:
 name "header"
-dependency "sparkles:core-cli" version="*"
+dependency "sparkles:core-cli" path="../../.."
 targetPath "build"
 +/
 

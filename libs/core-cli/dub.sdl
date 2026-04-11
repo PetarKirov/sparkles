@@ -18,7 +18,7 @@ configuration "unittest" {
     excludedSourceFiles "src/app.d"
 
     dependency "silly" version="~>1.1.1"
-    dependency "sparkles:test-utils" version="*"
+    dependency "sparkles:test-utils" path="../.."
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
