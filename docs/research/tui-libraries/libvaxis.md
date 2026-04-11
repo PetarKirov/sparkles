@@ -1175,7 +1175,7 @@ zero-cost C FFI.
 
 - **GitHub Repository:** <https://github.com/rockorager/libvaxis>
 - **API Documentation:** <https://rockorager.github.io/libvaxis/>
-- **Zig Package Registry (Zigistry):** <https://zigistry.dev/programs/github/rockorager/libvaxis/>
+- **Zig Package Registry (Zigistry):** <https://zigistry.dev/packages/github/rockorager/libvaxis>
 - **Ziggit Community Discussion:** <https://ziggit.dev/t/libvaxis-a-modern-tui-library/4380>
 - **IRC Channel:** `#vaxis` on libera.chat
 - **Key Source Files:**
