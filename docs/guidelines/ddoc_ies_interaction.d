@@ -1,7 +1,7 @@
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "ddoc-ies-interaction"
-    dependency "sparkles:core-cli" version="*"
+    dependency "sparkles:core-cli" path="../.."
     dflags "-preview=in" "-preview=dip1000"
 +/
 

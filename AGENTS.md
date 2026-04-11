@@ -421,6 +421,31 @@ When an example produces dynamic output (timestamps, file paths, durations, etc.
 
 The HTML comment is invisible in rendered markdown, so readers see the nice hardcoded values. The `--verify` mode uses the wildcard pattern instead of the literal block for comparison.
 
+## Dub Dependency Paths
+
+Internal files that live inside the repository must reference sibling sub-packages with a
+**relative `path`** to the repo root instead of `version="*"`:
+
+```sdl
+dependency "sparkles:core-cli" path="../../.."
+```
+
+The exact `path` value depends on the file's location relative to the repo root (where the
+root `dub.sdl` lives). For example:
+
+| File location                | `path` value |
+| ---------------------------- | ------------ |
+| `libs/core-cli/dub.sdl`      | `../..`      |
+| `libs/core-cli/examples/*.d` | `../../..`   |
+| `docs/guidelines/*.d`        | `../..`      |
+
+This applies to **all** in-repo files: `dub.sdl` configs, single-file example scripts, and
+guideline runnable snippets.
+
+**Exception — public documentation (`README.md`):** README examples are intended to be
+copy-pasted by end-users who don't have the repo layout, so they must keep
+`version="*"`.
+
 ## Dependencies
 
 - `silly` - Test runner (dev dependency)

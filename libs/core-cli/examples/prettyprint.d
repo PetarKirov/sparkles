@@ -1,7 +1,7 @@
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "prettyprint"
-    dependency "sparkles:core-cli" version="*"
+    dependency "sparkles:core-cli" path="../../.."
 +/
 
 import std.stdio : writeln;

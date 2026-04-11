@@ -1,7 +1,7 @@
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "styled_template"
-    dependency "sparkles:core-cli" version="*"
+    dependency "sparkles:core-cli" path="../../.."
     targetPath "build"
 +/
 
