@@ -31,12 +31,6 @@
           excludes = [ "^.*\.age$" ];
 
           hooks = {
-            # Basic whitespace formatting
-            end-of-file-fixer = {
-              enable = true;
-              # Test data files contain exact byte sequences — no trailing newline
-              excludes = [ "^libs/core-cli/test/data/" ];
-            };
             editorconfig-checker.enable = true;
 
             # *.nix formatting
@@ -132,6 +126,45 @@
               );
             };
           };
+
+          # Prek built-in hooks:
+          # https://prek.j178.dev/builtin/#supported-hooks_1
+          rawConfig.repos = [
+            {
+              repo = "builtin";
+              hooks = [
+                { id = "trailing-whitespace"; }
+                { id = "check-added-large-files"; }
+                { id = "check-case-conflict"; }
+                { id = "check-illegal-windows-names"; }
+                {
+                  id = "end-of-file-fixer";
+                  # Test data files contain exact byte sequences — no trailing newline
+                  exclude = "^libs/core-cli/test/data/";
+                }
+                { id = "file-contents-sorter"; }
+                { id = "fix-byte-order-marker"; }
+                { id = "check-json"; }
+                { id = "check-json5"; }
+                { id = "pretty-format-json"; }
+                { id = "check-toml"; }
+                { id = "check-vcs-permalinks"; }
+                { id = "check-yaml"; }
+                { id = "check-xml"; }
+                {
+                  id = "mixed-line-ending";
+                  args = [ "--fix=lf" ];
+                }
+                { id = "check-symlinks"; }
+                { id = "destroyed-symlinks"; }
+                { id = "check-merge-conflict"; }
+                { id = "detect-private-key"; }
+                { id = "no-commit-to-branch"; }
+                { id = "check-shebang-scripts-are-executable"; }
+                { id = "check-executables-have-shebangs"; }
+              ];
+            }
+          ];
         };
       };
     };
