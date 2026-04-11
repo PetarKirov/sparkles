@@ -1,4 +1,26 @@
 { lib, ... }:
+let
+  generatedJsonFiles = [
+    # Nix Flake lock file
+    "flake.lock"
+
+    # Dub lock file
+    "dub.selections.json"
+
+    # NPM / Yarn lock files
+    "package-lock.json"
+    "yarn.lock"
+  ];
+
+  yarnPnPFiles = [
+    ".pnp.cjs"
+    ".pnp.loader.mjs"
+    ".pnp.data.json"
+  ];
+
+  filesToExcludeRegex =
+    files: lib.concatMapStringsSep "|" (entry: "(${lib.escapeRegex entry})") files;
+in
 {
   perSystem =
     { config, pkgs, ... }:
@@ -46,6 +68,7 @@
                 "--ignore-unknown"
                 "--write"
               ];
+              excludes = builtins.map lib.escapeRegex (generatedJsonFiles ++ yarnPnPFiles);
             };
 
             fix-markdown-reference-links = {
@@ -146,7 +169,10 @@
                 { id = "fix-byte-order-marker"; }
                 { id = "check-json"; }
                 { id = "check-json5"; }
-                { id = "pretty-format-json"; }
+                {
+                  id = "pretty-format-json";
+                  exclude = filesToExcludeRegex ([ "package.json" ] ++ generatedJsonFiles);
+                }
                 { id = "check-toml"; }
                 { id = "check-vcs-permalinks"; }
                 { id = "check-yaml"; }
