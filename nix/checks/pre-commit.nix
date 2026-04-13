@@ -78,8 +78,11 @@ in
               name = "fix-markdown-reference-links";
               require_serial = false;
               pass_filenames = true;
-              entry = lib.getExe config.packages.run_md_examples;
-              args = [ "--fix-reference-links" ];
+              entry = lib.getExe config.packages.ci;
+              args = [
+                "--fix-reference-links"
+                "--files"
+              ];
             };
 
             verify-md-examples = {
@@ -89,10 +92,11 @@ in
               name = "verify-md-examples";
               require_serial = false;
               pass_filenames = true;
-              entry = lib.getExe config.packages.run_md_examples;
+              entry = lib.getExe config.packages.ci;
               args = [
                 "--verify"
                 "--fail-fast"
+                "--files"
               ];
             };
 

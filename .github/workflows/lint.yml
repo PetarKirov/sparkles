@@ -44,13 +44,4 @@ jobs:
 
       - name: Verify markdown runnable examples
         run: |
-          nix build .#run_md_examples
-
-          markdown_files=$(rg -l '#!/usr/bin/env dub' --glob '*.md' . | sort)
-
-          if [ -z "$markdown_files" ]; then
-            echo "No markdown files with runnable dub examples found."
-            exit 0
-          fi
-
-          ./result/bin/run_md_examples --verify $markdown_files
+          nix run .#ci -- --verify --files '**.md'
