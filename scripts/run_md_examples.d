@@ -5,14 +5,22 @@
 +/
 
 /++
-Extracts and runs dub single-file examples from markdown files.
+Runs runnable dub examples from markdown files and standalone `.d` files.
 
-This script parses markdown files to find code blocks that represent
-dub single-file programs, executes them, and reports results.
+This script can parse markdown files to find code blocks that represent
+dub single-file programs, execute them, and report results. It can also
+smoke-test tracked standalone example files such as `libs/core-cli/examples/*.d`.
+
+Standalone example files can declare that they should be compiled but not
+executed by placing a header comment after the `dub.sdl` block:
+---d
+// run_md_examples: build-only
+---
 
 Usage:
 ---
 ./run_md_examples.d [--verify|--update] [--fail-fast] [--files GLOB|FILE...]
+./run_md_examples.d --example-files [--fail-fast] [--files GLOB|FILE...]
 ./run_md_examples.d [--dedup-reference-links|--fix-reference-links] [--files GLOB|FILE...]
 ---
 
@@ -22,7 +30,8 @@ $(LIST
     $(ITEM Default — run examples and display results in boxes)
     $(ITEM `--verify` — compare output against expected output blocks, report mismatches)
     $(ITEM `--update` — rewrite the markdown file with actual example output (golden snapshot update))
-    $(ITEM `--files` — select explicit files or git-style globs; when omitted, reference-link modes use tracked markdown files)
+    $(ITEM `--example-files` — build/run standalone example `.d` files, defaulting to `libs/core-cli/examples/*.d`)
+    $(ITEM `--files` — select explicit files or git-style globs; when omitted, each mode uses its tracked defaults)
     $(ITEM `--fail-fast` — stop on the first failing example and replay its output at the end)
     $(ITEM `--dedup-reference-links` — report duplicate markdown reference definitions by URL)
     $(ITEM `--fix-reference-links` — rewrite duplicates to a canonical label)
@@ -86,6 +95,9 @@ struct CliParams
     @CliOption(`u|update`, "Rewrite the markdown file with actual example output.")
     bool update;
 
+    @CliOption(`x|example-files`, "Run standalone example .d files instead of markdown examples. With no files, defaults to libs/core-cli/examples/*.d.")
+    bool exampleFiles;
+
     @CliOption(`F|fail-fast`, "Stop on the first failing example and replay its output at the end.")
     bool failFast;
 
@@ -104,6 +116,7 @@ enum ProgramMode
     runExamples,
     verifyExamples,
     updateExamples,
+    runExampleFiles,
     checkReferenceLinks,
     fixReferenceLinks,
 }
@@ -120,11 +133,17 @@ struct Example
     size_t outputBlockEnd;
 }
 
-struct ExampleResult
+struct ExecutionResult
 {
     bool success;
     string programOutput; // ANSI-stripped
     string rawOutput;     // with ANSI codes for display
+}
+
+enum StandaloneExampleMode
+{
+    run,
+    buildOnly,
 }
 
 struct FailureReplay
@@ -177,7 +196,7 @@ int main(string[] args)
     auto cli = parseArgs.parseCliArgs!CliParams(
         HelpInfo(
             "run_md_examples",
-            "Extract and run dub single-file examples from markdown files",
+            "Run dub single-file examples from markdown files and standalone example files",
         ),
     );
     cli.files = fileSelection.selectors.dup;
@@ -193,9 +212,9 @@ int main(string[] args)
     }
 
     const mode = resolveProgramMode(cli);
-    auto mdFiles = collectMarkdownFiles(cli, mode);
+    auto inputFiles = collectInputFiles(cli, mode);
 
-    if (mdFiles.length == 0)
+    if (inputFiles.length == 0)
     {
         if (cli.files.length > 0)
         {
@@ -205,18 +224,23 @@ int main(string[] args)
 
         if (isReferenceMode(mode))
             styledWritelnErr(i"{bold Usage:} $(args[0].baseName) [--dedup-reference-links|--fix-reference-links] [--files GLOB|FILE...]");
+        else if (mode == ProgramMode.runExampleFiles)
+            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) --example-files [--fail-fast] [--files GLOB|FILE...]");
         else
             styledWritelnErr(i"{bold Usage:} $(args[0].baseName) [--verify|--update] [--fail-fast] [--files GLOB|FILE...]");
         return 1;
     }
 
+    if (mode == ProgramMode.runExampleFiles)
+        return runExampleFilesMode(inputFiles, cli.failFast);
+
     if (mode == ProgramMode.checkReferenceLinks)
-        return runReferenceLinkMode(mdFiles, false);
+        return runReferenceLinkMode(inputFiles, false);
 
     if (mode == ProgramMode.fixReferenceLinks)
-        return runReferenceLinkMode(mdFiles, true);
+        return runReferenceLinkMode(inputFiles, true);
 
-    return runExamplesForFiles(mdFiles, mode, cli.failFast);
+    return runExamplesForFiles(inputFiles, mode, cli.failFast);
 }
 
 private string validateCliMode(
@@ -228,11 +252,17 @@ private string validateCliMode(
     if (cli.verify && cli.update)
         return "--verify and --update are mutually exclusive";
 
+    if (cli.exampleFiles && (cli.verify || cli.update))
+        return "--example-files cannot be combined with --verify or --update";
+
     if ((cli.verify || cli.update)
         && (cli.dedupReferenceLinks || cli.fixReferenceLinks))
     {
         return "example modes (--verify/--update) cannot be combined with reference deduplication modes (--dedup-reference-links/--fix-reference-links)";
     }
+
+    if (cli.exampleFiles && (cli.dedupReferenceLinks || cli.fixReferenceLinks))
+        return "--example-files cannot be combined with reference deduplication modes (--dedup-reference-links/--fix-reference-links)";
 
     if (positionalArgs.length > 0)
         return "Positional file arguments are no longer supported; use --files";
@@ -245,6 +275,9 @@ private string validateCliMode(
 
 private ProgramMode resolveProgramMode(in CliParams cli)
 {
+    if (cli.exampleFiles)
+        return ProgramMode.runExampleFiles;
+
     if (cli.fixReferenceLinks)
         return ProgramMode.fixReferenceLinks;
 
@@ -272,6 +305,22 @@ private string[] trackedMarkdownFiles()
     if (result.status != 0)
     {
         styledWritelnErr(i"{red Error:} Failed to enumerate markdown files with git ls-files");
+        return [];
+    }
+
+    return result.output
+        .lineSplitter
+        .filter!(line => line.length != 0)
+        .map!(line => line.idup)
+        .array;
+}
+
+private string[] trackedStandaloneExampleFiles()
+{
+    const result = execute(["git", "ls-files", "--", "libs/core-cli/examples/*.d"]);
+    if (result.status != 0)
+    {
+        styledWritelnErr(i"{red Error:} Failed to enumerate standalone example files with git ls-files");
         return [];
     }
 
@@ -353,14 +402,14 @@ private string[] trackedFilesMatching(string pattern)
         .array;
 }
 
-private string[] collectMarkdownFiles(
+private string[] collectInputFiles(
     in CliParams cli,
     in ProgramMode mode,
 )
 {
     const hasExplicitSelection = cli.files.length > 0;
 
-    string[] mdFiles;
+    string[] inputFiles;
 
     foreach (selector; cli.files)
     {
@@ -368,17 +417,24 @@ private string[] collectMarkdownFiles(
             continue;
 
         if (isGlobSelector(selector))
-            mdFiles ~= trackedFilesMatching(selector);
+            inputFiles ~= trackedFilesMatching(selector);
         else
-            mdFiles ~= selector.idup;
+            inputFiles ~= selector.idup;
     }
 
-    if (mdFiles.length == 0 && isReferenceMode(mode) && !hasExplicitSelection)
-        mdFiles = trackedMarkdownFiles();
+    if (inputFiles.length == 0 && !hasExplicitSelection)
+    {
+        if (isReferenceMode(mode))
+            inputFiles = trackedMarkdownFiles();
+        else if (mode == ProgramMode.runExampleFiles)
+            inputFiles = trackedStandaloneExampleFiles();
+    }
 
-    return mdFiles
+    const requiredSuffix = mode == ProgramMode.runExampleFiles ? ".d" : ".md";
+
+    return inputFiles
         .filter!(path => path.length > 0)
-        .filter!(path => path.endsWith(".md"))
+        .filter!(path => path.endsWith(requiredSuffix))
         .map!(path => path.idup)
         .array;
 }
@@ -416,6 +472,9 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
                 break;
             case ProgramMode.updateExamples:
                 rc = runUpdateMode(examples, mdFile, failFast);
+                break;
+            case ProgramMode.runExampleFiles:
+                rc = 1;
                 break;
             case ProgramMode.checkReferenceLinks:
             case ProgramMode.fixReferenceLinks:
@@ -591,7 +650,7 @@ Example[] extractExamples(string content)
 }
 
 /// Runs a single example and returns its result.
-ExampleResult executeExample(in Example example)
+ExecutionResult executeExample(in Example example)
 {
     auto tmpDir = buildPath(tempDir, "md-examples");
     mkdirRecurse(tmpDir);
@@ -600,7 +659,7 @@ ExampleResult executeExample(in Example example)
     tmpFile.write(example.code);
     scope(exit) if (tmpFile.exists) tmpFile.remove();
 
-    auto result = execute(["dub", "run", "--quiet", "--single", tmpFile]);
+    auto result = execute(dubSingleFileCommand("run", tmpFile, detectRepoRoot()));
 
     // Strip ANSI codes, then trim trailing whitespace from each line
     // so output matches what pre-commit hooks produce in markdown files.
@@ -609,7 +668,105 @@ ExampleResult executeExample(in Example example)
         .map!(l => l.stripRight)
         .join("\n");
 
-    return ExampleResult(
+    return ExecutionResult(
+        success: result.status == 0,
+        programOutput: cleaned,
+        rawOutput: result.output,
+    );
+}
+
+private int runExampleFilesMode(string[] exampleFiles, bool failFast)
+{
+    i"Checking $(exampleFiles.length) standalone example file(s)".text
+        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: 60))
+        .writeln("\n");
+
+    const repoRoot = detectRepoRoot();
+
+    int failures = 0;
+    size_t processed = 0;
+    FailureReplay failureReplay;
+    bool stoppedEarly = false;
+
+    foreach (i, exampleFile; exampleFiles)
+    {
+        if (!exampleFile.exists)
+        {
+            styledWritelnErr(i"{red Error:} File not found: $(exampleFile)");
+            failures++;
+            processed = i + 1;
+            if (failFast)
+            {
+                failureReplay = FailureReplay(
+                    header: formatExampleFileHeader(exampleFile, i"[$(i + 1)/$(exampleFiles.length)]".text, "run"),
+                    outputLines: [styledText(i"{red File not found:} $(exampleFile)")],
+                    footer: styledText(i"{red ✗ missing file}"),
+                );
+                stoppedEarly = true;
+                break;
+            }
+            continue;
+        }
+
+        const mode = detectStandaloneExampleMode(exampleFile);
+        const action = standaloneExampleAction(mode);
+        const verb = standaloneExampleVerb(mode);
+        const progress = i"[$(i + 1)/$(exampleFiles.length)]".text;
+        const header = formatExampleFileHeader(exampleFile, progress, action);
+        auto result = executeStandaloneExampleFile(exampleFile, repoRoot, mode);
+
+        if (result.success)
+        {
+            styledWriteln(i"{green ✓} {cyan $(exampleFile.baseName)} — $(verb)");
+        }
+        else
+        {
+            failures++;
+            auto failureLines = result.rawOutput.lineSplitter
+                .map!(l => l.to!string)
+                .array
+                .formatOutputLines(24)
+                .array;
+            failureLines
+                .drawBox(header, BoxProps(footer: styledText(i"{red ✗ $(action) failed}")))
+                .writeln;
+
+            if (failFast)
+            {
+                failureReplay = FailureReplay(
+                    header: header,
+                    outputLines: failureLines,
+                    footer: styledText(i"{red ✗ $(action) failed}"),
+                );
+                stoppedEarly = true;
+                processed = i + 1;
+                writeln();
+                break;
+            }
+        }
+
+        processed = i + 1;
+    }
+
+    displaySummary(stoppedEarly ? processed : exampleFiles.length, failures);
+    if (stoppedEarly)
+        displayFailureReplay(failureReplay);
+    return failures > 0 ? 1 : 0;
+}
+
+private ExecutionResult executeStandaloneExampleFile(
+    string exampleFile,
+    string repoRoot,
+    StandaloneExampleMode mode,
+)
+{
+    auto result = execute(dubSingleFileCommand(standaloneExampleAction(mode), exampleFile, repoRoot));
+    auto cleaned = result.output.unstyle
+        .lineSplitter
+        .map!(l => l.stripRight)
+        .join("\n");
+
+    return ExecutionResult(
         success: result.status == 0,
         programOutput: cleaned,
         rawOutput: result.output,
@@ -1288,10 +1445,97 @@ in (line.length > 0, "Line cannot be empty")
     return rest[0 .. end].idup;
 }
 
+private string detectRepoRoot()
+{
+    const result = execute(["git", "rev-parse", "--show-toplevel"]);
+    return result.status == 0
+        ? result.output.strip
+        : null;
+}
+
+private string[] dubSingleFileCommand(string action, string filePath, string repoRoot)
+in (action == "run" || action == "build", "action must be dub run or dub build")
+{
+    auto command = ["dub", action, "--quiet"];
+
+    if (repoRoot !is null)
+        command ~= ["--root", repoRoot];
+
+    command ~= ["--single", filePath];
+    return command;
+}
+
+private StandaloneExampleMode detectStandaloneExampleMode(string filePath)
+{
+    return parseStandaloneExampleMode(filePath.readText.lineSplitter.array);
+}
+
+@safe pure
+private StandaloneExampleMode parseStandaloneExampleMode(const(char[])[] lines)
+{
+    enum metadataPrefix = "// run_md_examples:";
+
+    bool insideDubSdl = false;
+
+    foreach (line; lines)
+    {
+        const stripped = line.strip;
+
+        if (stripped.length == 0)
+            continue;
+
+        if (stripped.startsWith("#!"))
+            continue;
+
+        if (insideDubSdl)
+        {
+            if (stripped.startsWith("+/"))
+                insideDubSdl = false;
+            continue;
+        }
+
+        if (stripped.startsWith("/+ dub.sdl:"))
+        {
+            insideDubSdl = true;
+            continue;
+        }
+
+        if (stripped.startsWith(metadataPrefix))
+        {
+            const value = stripped[metadataPrefix.length .. $].strip.toLower;
+            if (value == "build-only")
+                return StandaloneExampleMode.buildOnly;
+            if (value == "run")
+                return StandaloneExampleMode.run;
+            return StandaloneExampleMode.run;
+        }
+
+        if (!stripped.startsWith("//"))
+            break;
+    }
+
+    return StandaloneExampleMode.run;
+}
+
+private string standaloneExampleAction(StandaloneExampleMode mode)
+{
+    return mode == StandaloneExampleMode.buildOnly ? "build" : "run";
+}
+
+private string standaloneExampleVerb(StandaloneExampleMode mode)
+{
+    return mode == StandaloneExampleMode.buildOnly ? "built" : "ran";
+}
+
 /// Formats the header line for an example run.
 private string formatExampleHeader(in Example example, string progress)
 {
     return styledText(i"{dim $(progress)} {cyan $(example.name)} {dim › dub run --single $(example.name).d}");
+}
+
+private string formatExampleFileHeader(string exampleFile, string progress, string action)
+{
+    return styledText(i"{dim $(progress)} {cyan $(exampleFile.baseName)} {dim › dub $(action) --single $(exampleFile)}");
 }
 
 /// Formats output lines for display, truncating if necessary.
