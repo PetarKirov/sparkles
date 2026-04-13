@@ -571,7 +571,7 @@ Consumer-side examples:
 - [`libs/core-cli/examples/styled_template.d`][example-styled-template] — comprehensive demo of style syntax (colors, bold, nesting, negation)
 - [`libs/core-cli/examples/box.d`][example-box] — box drawing with styled IES content
 - [`libs/core-cli/examples/table.d`][example-table] — table rendering with styled headers
-- [`scripts/run_md_examples.d`][run-md-examples] — CLI status and progress output using IES
+- [`scripts/ci.d`][ci-script] — CLI status and progress output using IES
 
 ---
 
@@ -791,4 +791,4 @@ auto nested = i"outer $(i"inner $(value)") end";
 [example-styled-template]: ../../libs/core-cli/examples/styled_template.d
 [example-box]: ../../libs/core-cli/examples/box.d
 [example-table]: ../../libs/core-cli/examples/table.d
-[run-md-examples]: ../../scripts/run_md_examples.d
+[ci-script]: ../../scripts/ci.d

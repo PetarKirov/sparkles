@@ -392,17 +392,17 @@ Expected output here
 
 ### Verifying README Examples
 
-Use `./scripts/run_md_examples.d` to verify that all README examples compile and produce correct output:
+Use `nix run .#ci -- ...` to verify that runnable markdown examples compile and produce correct output:
 
 ```bash
 # Verify all examples match their expected output
-./scripts/run_md_examples.d --verify README.md
+nix run .#ci -- --verify --files README.md
 
 # Update output blocks with actual output (golden snapshot update)
-./scripts/run_md_examples.d --update README.md
+nix run .#ci -- --update --files README.md
 
 # Just run examples and display results
-./scripts/run_md_examples.d README.md
+nix run .#ci -- --files README.md
 ```
 
 ### Dynamic Output with `<!-- md-example-expected -->`

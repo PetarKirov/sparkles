@@ -1,11 +1,12 @@
 #!/usr/bin/env dub
 /+ dub.sdl:
-    name "run_md_examples"
+    name "ci"
     dependency "sparkles:core-cli" version="*"
 +/
 
 /++
-Runs runnable dub examples from markdown files and standalone `.d` files.
+Repository CI helper for runnable markdown examples, standalone `.d` files,
+and markdown reference maintenance.
 
 This script can parse markdown files to find code blocks that represent
 dub single-file programs, execute them, and report results. It can also
@@ -14,14 +15,14 @@ smoke-test tracked standalone example files such as `libs/core-cli/examples/*.d`
 Standalone example files can declare that they should be compiled but not
 executed by placing a header comment after the `dub.sdl` block:
 ---d
-// run_md_examples: build-only
+// ci: build-only
 ---
 
 Usage:
 ---
-./run_md_examples.d [--verify|--update] [--fail-fast] [--files GLOB|FILE...]
-./run_md_examples.d --example-files [--fail-fast] [--files GLOB|FILE...]
-./run_md_examples.d [--dedup-reference-links|--fix-reference-links] [--files GLOB|FILE...]
+nix run .#ci -- [--verify|--update] [--fail-fast] [--files GLOB|FILE...]
+nix run .#ci -- --example-files [--fail-fast] [--files GLOB|FILE...]
+nix run .#ci -- [--dedup-reference-links|--fix-reference-links] [--files GLOB|FILE...]
 ---
 
 Modes:
@@ -195,8 +196,8 @@ int main(string[] args)
     const fileSelection = extractFilesOption(parseArgs);
     auto cli = parseArgs.parseCliArgs!CliParams(
         HelpInfo(
-            "run_md_examples",
-            "Run dub single-file examples from markdown files and standalone example files",
+            "ci",
+            "Run repository CI helpers for markdown examples, standalone example files, and markdown reference maintenance",
         ),
     );
     cli.files = fileSelection.selectors.dup;
@@ -1473,7 +1474,7 @@ private StandaloneExampleMode detectStandaloneExampleMode(string filePath)
 @safe pure
 private StandaloneExampleMode parseStandaloneExampleMode(const(char[])[] lines)
 {
-    enum metadataPrefix = "// run_md_examples:";
+    enum metadataPrefixes = ["// ci:", "// run_md_examples:"];
 
     bool insideDubSdl = false;
 
@@ -1500,8 +1501,11 @@ private StandaloneExampleMode parseStandaloneExampleMode(const(char[])[] lines)
             continue;
         }
 
-        if (stripped.startsWith(metadataPrefix))
+        foreach (metadataPrefix; metadataPrefixes)
         {
+            if (!stripped.startsWith(metadataPrefix))
+                continue;
+
             const value = stripped[metadataPrefix.length .. $].strip.toLower;
             if (value == "build-only")
                 return StandaloneExampleMode.buildOnly;

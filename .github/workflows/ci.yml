@@ -55,4 +55,4 @@ jobs:
         run: ./scripts/run-tests.sh
 
       - name: Build and run examples
-        run: ./scripts/run_md_examples.d --example-files --fail-fast
+        run: nix run .#ci -- --example-files --fail-fast

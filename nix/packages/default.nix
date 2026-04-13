@@ -1,7 +1,7 @@
 { lib, ... }:
 {
   perSystem =
-    { pkgs, ... }:
+    { config, pkgs, ... }:
     let
       root = ../..;
       fs = lib.fileset;
@@ -10,7 +10,7 @@
       src = fs.toSource {
         inherit root;
         fileset = fs.unions [
-          ../../scripts/run_md_examples.d
+          ../../scripts/ci.d
           ../../libs/core-cli/src
         ];
       };
@@ -20,8 +20,8 @@
       );
     in
     {
-      packages.run_md_examples = pkgs.stdenv.mkDerivation (final: {
-        pname = "run_md_examples";
+      packages.ci = pkgs.stdenv.mkDerivation (final: {
+        pname = "ci";
         version = "0.1.0";
 
         inherit src;
@@ -40,7 +40,7 @@
             -I libs/core-cli/src \
             -J libs/core-cli/src \
             -of=${final.pname} \
-            scripts/run_md_examples.d \
+            scripts/${final.pname}.d \
             $srcs
         '';
 
@@ -60,10 +60,15 @@
         '';
 
         meta = {
-          description = "Extract and run dub single-file examples from markdown files";
+          description = "Repository CI helper for markdown examples, standalone examples, and markdown link maintenance";
           mainProgram = final.pname;
         };
       });
+
+      apps.ci = {
+        type = "app";
+        program = lib.getExe config.packages.ci;
+      };
 
     };
 }
