@@ -12,8 +12,8 @@ dub single-file programs, executes them, and reports results.
 
 Usage:
 ---
-./run_md_examples.d [--verify|--update] [--fail-fast] [--glob=PATTERN] <markdown-file...>
-./run_md_examples.d [--dedup-reference-links|--fix-reference-links] [--glob=PATTERN] [markdown-file...]
+./run_md_examples.d [--verify|--update] [--fail-fast] [--files GLOB|FILE...]
+./run_md_examples.d [--dedup-reference-links|--fix-reference-links] [--files GLOB|FILE...]
 ---
 
 Modes:
@@ -22,6 +22,7 @@ $(LIST
     $(ITEM Default — run examples and display results in boxes)
     $(ITEM `--verify` — compare output against expected output blocks, report mismatches)
     $(ITEM `--update` — rewrite the markdown file with actual example output (golden snapshot update))
+    $(ITEM `--files` — select explicit files or git-style globs; when omitted, reference-link modes use tracked markdown files)
     $(ITEM `--fail-fast` — stop on the first failing example and replay its output at the end)
     $(ITEM `--dedup-reference-links` — report duplicate markdown reference definitions by URL)
     $(ITEM `--fix-reference-links` — rewrite duplicates to a canonical label)
@@ -88,8 +89,8 @@ struct CliParams
     @CliOption(`F|fail-fast`, "Stop on the first failing example and replay its output at the end.")
     bool failFast;
 
-    @CliOption(`g|glob`, "Glob pattern to find markdown files (e.g. '*.md' or '**/*.md').")
-    string glob;
+    @CliOption(`files`, "Explicit file paths or git-style globs to include. Pass one or more selectors immediately after --files.")
+    string[] files;
 
     @CliOption(`d|dedup-reference-links`, "Report duplicate markdown reference definitions that point to the same URL.")
     bool dedupReferenceLinks;
@@ -133,6 +134,12 @@ struct FailureReplay
     string footer;
 }
 
+struct FileSelection
+{
+    bool specified;
+    string[] selectors;
+}
+
 struct ReferenceDef
 {
     size_t lineIndex;
@@ -165,14 +172,20 @@ private __gshared immutable refDefRegex = ctRegex!(r"^\[([^\]]+)\]:\s+(https?://
 
 int main(string[] args)
 {
-    const cli = args.parseCliArgs!CliParams(
+    auto parseArgs = args.dup;
+    const fileSelection = extractFilesOption(parseArgs);
+    auto cli = parseArgs.parseCliArgs!CliParams(
         HelpInfo(
             "run_md_examples",
             "Extract and run dub single-file examples from markdown files",
         ),
     );
+    cli.files = fileSelection.selectors.dup;
 
-    const modeError = validateCliMode(cli);
+    const positionalArgs = parseArgs[1 .. $]
+        .map!(arg => arg.idup)
+        .array;
+    const modeError = validateCliMode(cli, positionalArgs, fileSelection);
     if (modeError !is null)
     {
         styledWritelnErr(i"{red Error:} $(modeError)");
@@ -180,14 +193,20 @@ int main(string[] args)
     }
 
     const mode = resolveProgramMode(cli);
-    auto mdFiles = collectMarkdownFiles(cli, args[1 .. $], mode);
+    auto mdFiles = collectMarkdownFiles(cli, mode);
 
     if (mdFiles.length == 0)
     {
+        if (cli.files.length > 0)
+        {
+            styledWritelnErr(i"{red Error:} --files did not match any supported input files for this mode");
+            return 1;
+        }
+
         if (isReferenceMode(mode))
-            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) [--dedup-reference-links|--fix-reference-links] [--glob=PATTERN] [markdown-file...]");
+            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) [--dedup-reference-links|--fix-reference-links] [--files GLOB|FILE...]");
         else
-            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) [--verify|--update] [--fail-fast] [--glob=PATTERN] [markdown-file...]");
+            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) [--verify|--update] [--fail-fast] [--files GLOB|FILE...]");
         return 1;
     }
 
@@ -200,7 +219,11 @@ int main(string[] args)
     return runExamplesForFiles(mdFiles, mode, cli.failFast);
 }
 
-private string validateCliMode(in CliParams cli)
+private string validateCliMode(
+    in CliParams cli,
+    in string[] positionalArgs,
+    in FileSelection fileSelection,
+)
 {
     if (cli.verify && cli.update)
         return "--verify and --update are mutually exclusive";
@@ -210,6 +233,12 @@ private string validateCliMode(in CliParams cli)
     {
         return "example modes (--verify/--update) cannot be combined with reference deduplication modes (--dedup-reference-links/--fix-reference-links)";
     }
+
+    if (positionalArgs.length > 0)
+        return "Positional file arguments are no longer supported; use --files";
+
+    if (fileSelection.specified && cli.files.length == 0)
+        return "--files requires at least one file path or git-style glob";
 
     return null;
 }
@@ -253,30 +282,96 @@ private string[] trackedMarkdownFiles()
         .array;
 }
 
+private FileSelection extractFilesOption(ref string[] argv)
+{
+    FileSelection selection;
+    string[] filteredArgs;
+
+    if (argv.length == 0)
+        return selection;
+
+    filteredArgs ~= argv[0];
+
+    size_t idx = 1;
+    while (idx < argv.length)
+    {
+        const arg = argv[idx];
+
+        if (arg == "--files")
+        {
+            selection.specified = true;
+            idx++;
+
+            while (idx < argv.length && !argv[idx].startsWith("-"))
+            {
+                selection.selectors ~= argv[idx].idup;
+                idx++;
+            }
+
+            continue;
+        }
+
+        if (arg.startsWith("--files="))
+        {
+            selection.specified = true;
+            const selector = arg["--files=".length .. $].strip;
+            if (selector.length > 0)
+                selection.selectors ~= selector.idup;
+            idx++;
+            continue;
+        }
+
+        filteredArgs ~= arg;
+        idx++;
+    }
+
+    argv = filteredArgs;
+    return selection;
+}
+
+@safe pure nothrow @nogc
+private bool isGlobSelector(string selector)
+{
+    return selector.canFind("*")
+        || selector.canFind("?")
+        || selector.canFind("[");
+}
+
+private string[] trackedFilesMatching(string pattern)
+{
+    const result = execute(["git", "ls-files", "--", pattern]);
+    if (result.status != 0)
+    {
+        styledWritelnErr(i"{red Error:} Failed to enumerate tracked files matching $(pattern)");
+        return [];
+    }
+
+    return result.output
+        .lineSplitter
+        .filter!(line => line.length != 0)
+        .map!(line => line.idup)
+        .array;
+}
+
 private string[] collectMarkdownFiles(
     in CliParams cli,
-    string[] positionalArgs,
     in ProgramMode mode,
 )
 {
-    const hasExplicitSelection = cli.glob.length > 0 || positionalArgs.length > 0;
+    const hasExplicitSelection = cli.files.length > 0;
 
     string[] mdFiles;
 
-    if (cli.glob.length > 0)
+    foreach (selector; cli.files)
     {
-        auto result = execute(["git", "ls-files", "--", cli.glob]);
-        if (result.status == 0)
-        {
-            mdFiles ~= result.output.lineSplitter
-                .filter!(line => line.length > 0)
-                .map!(line => line.idup)
-                .array;
-        }
-    }
+        if (selector.length == 0)
+            continue;
 
-    if (positionalArgs.length > 0)
-        mdFiles ~= positionalArgs;
+        if (isGlobSelector(selector))
+            mdFiles ~= trackedFilesMatching(selector);
+        else
+            mdFiles ~= selector.idup;
+    }
 
     if (mdFiles.length == 0 && isReferenceMode(mode) && !hasExplicitSelection)
         mdFiles = trackedMarkdownFiles();
