@@ -55,4 +55,4 @@ jobs:
         run: ./scripts/run-tests.sh
 
       - name: Build and run examples
-        run: ./scripts/run-examples.sh
+        run: ./scripts/run_md_examples.d --example-files --fail-fast
