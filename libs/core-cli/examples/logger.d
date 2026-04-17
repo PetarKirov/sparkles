@@ -5,22 +5,23 @@
     targetPath "build"
 +/
 
-import std.logger : log, logf, LogLevel;
-
-import sparkles.core_cli.logger : initLogger;
+import sparkles.core_cli.logger : initLogger, info, warning, error, critical, log, trace, LogLevel;
 
 void main()
 {
     initLogger(LogLevel.trace);
 
-    log(LogLevel.trace, "Application starting up");
-    log(LogLevel.info, "Listening on port 8080");
-    log(LogLevel.warning, "Disk usage above 80%");
-    log(LogLevel.error, "Connection to database lost");
-    log(LogLevel.critical, "Out of memory");
+    trace(i"Application starting up");
+    info(i"Listening on port {green 8080}");
+    warning(i"Disk usage above {yellow 80%}");
+    error(i"Connection to {red database} lost");
+    critical(i"{bold.red Out of memory}");
 
-    // Works with logf too
+    // Styled IES with interpolated values
     immutable host = "db-01.prod";
     immutable port = 5432;
-    logf(LogLevel.info, "Reconnected to %s:%d", host, port);
+    info(i"Reconnected to {green $(host)}:{cyan $(port)}");
+
+    // Explicit log level with styled IES
+    log(LogLevel.warning, i"Latency spike: {yellow.bold 230ms} on {dim $(host)}");
 }
