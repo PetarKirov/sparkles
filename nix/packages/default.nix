@@ -29,8 +29,8 @@
 
         nativeBuildInputs = [
           pkgs.makeWrapper
-        ]
-        ++ [ dToolchain.ldc ];
+          dToolchain.ldc
+        ];
 
         buildPhase = ''
           srcs=$(find libs/core-cli/src -name '*.d' ! -name 'app.d' ! -name 'test_utils.d')
@@ -49,11 +49,11 @@
 
           wrapProgram $out/bin/${final.pname} \
             --prefix PATH : ${
-              lib.makeBinPath ([
-                pkgs.dub
+              lib.makeBinPath [
                 pkgs.git
+                dToolchain.dub
                 dToolchain.ldc
-              ])
+              ]
             } \
             ${wrapEnvArgs} \
             --run 'ulimit -n ${toString dToolchain.nofileLimit} 2>/dev/null || true'
