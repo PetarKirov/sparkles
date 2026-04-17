@@ -31,6 +31,8 @@ pkgs.mkShell {
 
     # Documentation site
     pkgs.nodejs
+    # CI helper (markdown examples, standalone examples, link maintenance)
+    config.packages.ci
   ]
   ++ [ dToolchain.ldc ]
   ++ lib.optionals (system == "x86_64-linux") [
