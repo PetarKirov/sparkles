@@ -1,7 +1,7 @@
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "ci"
-    dependency "sparkles:core-cli" version="*"
+    dependency "sparkles:core-cli" path=".."
 +/
 
 /++
@@ -25,6 +25,7 @@ nix run .#ci -- [--verify|--update] [--fail-fast] [--files GLOB|FILE...]
 nix run .#ci -- --example-files [--fail-fast] [--files GLOB|FILE...]
 nix run .#ci -- --test [--fail-fast]
 nix run .#ci -- [--dedup-reference-links|--fix-reference-links] [--files GLOB|FILE...]
+nix run .#ci -- [--log-level trace|info|warning|error]
 ---
 
 Modes:
@@ -84,7 +85,8 @@ import std.string : endsWith, indexOf, lineSplitter, replace, strip, stripRight,
 
 // sparkles packages
 import sparkles.core_cli.args : CliOption, HelpInfo, parseCliArgs;
-import sparkles.core_cli.styled_template : styledText, styledWriteln, styledWritelnErr;
+import sparkles.core_cli.logger : error, info, initLogger, LogLevel, trace, warning;
+import sparkles.core_cli.styled_template : styledText, styledWritelnErr;
 import sparkles.core_cli.term_unstyle : unstyle;
 import sparkles.core_cli.ui.box : BoxProps, drawBox;
 import sparkles.core_cli.ui.header : drawHeader, HeaderProps, HeaderStyle;
@@ -116,6 +118,9 @@ struct CliParams
 
     @CliOption(`f|fix-reference-links`, "Rewrite duplicate markdown references to one canonical label per URL.")
     bool fixReferenceLinks;
+
+    @CliOption(`L|log-level`, "Set the log level (trace, info, warning, error). Default: info.")
+    LogLevel logLevel = LogLevel.info;
 }
 
 enum ProgramMode
@@ -208,6 +213,7 @@ int main(string[] args)
         ),
     );
     cli.files = fileSelection.selectors.dup;
+    initLogger(cli.logLevel);
 
     const positionalArgs = parseArgs[1 .. $]
         .map!(arg => arg.idup)
@@ -215,7 +221,7 @@ int main(string[] args)
     const modeError = validateCliMode(cli, positionalArgs, fileSelection);
     if (modeError !is null)
     {
-        styledWritelnErr(i"{red Error:} $(modeError)");
+        error(i"$(modeError)");
         return 1;
     }
 
@@ -230,7 +236,7 @@ int main(string[] args)
     {
         if (cli.files.length > 0)
         {
-            styledWritelnErr(i"{red Error:} --files did not match any supported input files for this mode");
+            error(i"--files did not match any supported input files for this mode");
             return 1;
         }
 
@@ -328,7 +334,7 @@ private string[] trackedMarkdownFiles()
     const result = execute(["git", "ls-files", "--", "*.md"]);
     if (result.status != 0)
     {
-        styledWritelnErr(i"{red Error:} Failed to enumerate markdown files with git ls-files");
+        error(i"Failed to enumerate markdown files with git ls-files");
         return [];
     }
 
@@ -344,7 +350,7 @@ private string[] trackedStandaloneExampleFiles()
     const result = execute(["git", "ls-files", "--", "libs/core-cli/examples/*.d"]);
     if (result.status != 0)
     {
-        styledWritelnErr(i"{red Error:} Failed to enumerate standalone example files with git ls-files");
+        error(i"Failed to enumerate standalone example files with git ls-files");
         return [];
     }
 
@@ -415,7 +421,7 @@ private string[] trackedFilesMatching(string pattern)
     const result = execute(["git", "ls-files", "--", pattern]);
     if (result.status != 0)
     {
-        styledWritelnErr(i"{red Error:} Failed to enumerate tracked files matching $(pattern)");
+        error(i"Failed to enumerate tracked files matching $(pattern)");
         return [];
     }
 
@@ -471,7 +477,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
     {
         if (!mdFile.exists)
         {
-            styledWritelnErr(i"{red Error:} File not found: $(mdFile)");
+            error(i"File not found: $(mdFile)");
             totalFailures++;
             continue;
         }
@@ -481,7 +487,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
 
         if (examples.length == 0)
         {
-            styledWriteln(i"{yellow No runnable examples found in $(mdFile).}");
+            trace(i"No runnable examples found in $(mdFile).");
             continue;
         }
 
@@ -533,7 +539,7 @@ private int runReferenceLinkMode(string[] mdFiles, bool fix)
     {
         if (!filePath.exists)
         {
-            styledWritelnErr(i"{red Error:} File not found: $(filePath)");
+            error(i"File not found: $(filePath)");
             missingFiles++;
             continue;
         }
@@ -543,7 +549,7 @@ private int runReferenceLinkMode(string[] mdFiles, bool fix)
     auto duplicateGroups = collectDuplicateGroups(existingFiles);
     if (duplicateGroups.length == 0)
     {
-        styledWriteln(i"{green ✓} No duplicate markdown reference URLs found.");
+        info(i"{green ✓} No duplicate markdown reference URLs found.");
         return missingFiles > 0 ? 1 : 0;
     }
 
@@ -555,7 +561,7 @@ private int runReferenceLinkMode(string[] mdFiles, bool fix)
     auto changedFiles = fixDuplicateGroups(existingFiles, duplicateGroups);
 
     writeln();
-    styledWriteln(i"{green ✓} Updated $(changedFiles.length) file(s).");
+    info(i"{green ✓} Updated $(changedFiles.length) file(s).");
     foreach (filePath; changedFiles)
         writeln("  ", filePath);
 
@@ -717,7 +723,7 @@ private int runExampleFilesMode(string[] exampleFiles, bool failFast)
     {
         if (!exampleFile.exists)
         {
-            styledWritelnErr(i"{red Error:} File not found: $(exampleFile)");
+            error(i"File not found: $(exampleFile)");
             failures++;
             processed = i + 1;
             if (failFast)
@@ -742,7 +748,7 @@ private int runExampleFilesMode(string[] exampleFiles, bool failFast)
 
         if (result.success)
         {
-            styledWriteln(i"{green ✓} {cyan $(exampleFile.baseName)} — $(verb)");
+            info(i"{green ✓} {cyan $(exampleFile.baseName)} — $(verb)");
         }
         else
         {
@@ -803,14 +809,14 @@ private int runDubTestsMode(bool failFast)
     const repoRoot = detectRepoRoot();
     if (repoRoot is null)
     {
-        styledWritelnErr(i"{red Error:} Could not detect repository root");
+        error(i"Could not detect repository root");
         return 1;
     }
 
     auto subPackages = parseSubPackages(repoRoot);
     if (subPackages.length == 0)
     {
-        styledWritelnErr(i"{red Error:} No sub-packages found in dub.sdl");
+        error(i"No sub-packages found in dub.sdl");
         return 1;
     }
 
@@ -1066,7 +1072,7 @@ int runUpdateMode(Example[] examples, string mdFile, bool failFast)
         if (!result.success)
         {
             failures++;
-            styledWriteln(i"  {red ✗} {cyan $(example.name)} — build failed, skipping");
+            error(i"  {red ✗} {cyan $(example.name)} — build failed, skipping");
             if (failFast)
             {
                 const progress = i"[$(examples.length - i)/$(examples.length)]".text;
@@ -1092,7 +1098,7 @@ int runUpdateMode(Example[] examples, string mdFile, bool failFast)
 
         if (example.expectedOutput !is null && actualOutput == example.expectedOutput.strip)
         {
-            styledWriteln(i"  {green ✓} {cyan $(example.name)} — output unchanged");
+            info(i"  {green ✓} {cyan $(example.name)} — output unchanged");
             processed = examples.length - i;
             continue;
         }
@@ -1108,7 +1114,7 @@ int runUpdateMode(Example[] examples, string mdFile, bool failFast)
                 ~ newOutputLines.map!(l => l.idup).array
                 ~ lines[example.outputBlockEnd + 1 .. $];
             updated++;
-            styledWriteln(i"  {yellow ↻} {cyan $(example.name)} — output block updated");
+            info(i"  {yellow ↻} {cyan $(example.name)} — output block updated");
         }
         else
         {
@@ -1119,7 +1125,7 @@ int runUpdateMode(Example[] examples, string mdFile, bool failFast)
                 ~ insertLines.map!(l => l.idup).array
                 ~ lines[insertPos .. $];
             updated++;
-            styledWriteln(i"  {yellow +} {cyan $(example.name)} — output block inserted");
+            info(i"  {yellow +} {cyan $(example.name)} — output block inserted");
         }
         processed = examples.length - i;
     }
@@ -1129,15 +1135,15 @@ int runUpdateMode(Example[] examples, string mdFile, bool failFast)
 
     writeln();
     if (updated > 0 && !stoppedEarly)
-        styledWriteln(i"{green ✓} Updated $(updated) output block(s) in $(mdFile)");
+        info(i"{green ✓} Updated $(updated) output block(s) in $(mdFile)");
     else if (updated > 0)
-        styledWriteln(i"{yellow ⚠} Stopped before writing $(updated) pending output block update(s) in $(mdFile)");
+        warning(i"{yellow ⚠} Stopped before writing $(updated) pending output block update(s) in $(mdFile)");
     else
-        styledWriteln(i"{green ✓} All output blocks already up to date");
+        info(i"{green ✓} All output blocks already up to date");
 
     if (failures > 0)
     {
-        styledWriteln(i"{red ✗} $(failures) example(s) failed to build");
+        error(i"{red ✗} $(failures) example(s) failed to build");
         displaySummary(stoppedEarly ? processed : examples.length, failures);
         if (stoppedEarly)
             displayFailureReplay(failureReplay);
@@ -1275,12 +1281,12 @@ private bool isUrlishLabel(string label)
 
 private void printDuplicateGroups(DuplicateGroup[] groups)
 {
-    styledWriteln(i"{yellow Duplicate markdown reference URLs found:}");
+    warning(i"{yellow Duplicate markdown reference URLs found:}");
 
     foreach (group; groups)
     {
         writeln();
-        styledWriteln(i"{cyan $(group.filePath)}:");
+        info(i"{cyan $(group.filePath)}:");
         writeln("  canonical: [", group.canonicalLabel, "]");
         writeln("  url: ", group.url);
 
@@ -1684,7 +1690,7 @@ private void displayResultBox(string[] outputLines, string header, bool success)
 private void displayFailureReplay(FailureReplay replay)
 {
     writeln();
-    styledWriteln(i"{red Fail-fast:} replaying first failing case");
+    warning(i"{red Fail-fast:} replaying first failing case");
     replay.outputLines
         .drawBox(replay.header, BoxProps(footer: replay.footer))
         .writeln;
