@@ -6,11 +6,12 @@
 
 /++
 Repository CI helper for runnable markdown examples, standalone `.d` files,
-and markdown reference maintenance.
+dub package tests, and markdown reference maintenance.
 
 This script can parse markdown files to find code blocks that represent
 dub single-file programs, execute them, and report results. It can also
-smoke-test tracked standalone example files such as `libs/core-cli/examples/*.d`.
+smoke-test tracked standalone example files such as `libs/core-cli/examples/*.d`,
+or run `dub test` for each sub-package defined in the root `dub.sdl`.
 
 Standalone example files can declare that they should be compiled but not
 executed by placing a header comment after the `dub.sdl` block:
@@ -22,6 +23,7 @@ Usage:
 ---
 nix run .#ci -- [--verify|--update] [--fail-fast] [--files GLOB|FILE...]
 nix run .#ci -- --example-files [--fail-fast] [--files GLOB|FILE...]
+nix run .#ci -- --test [--fail-fast]
 nix run .#ci -- [--dedup-reference-links|--fix-reference-links] [--files GLOB|FILE...]
 ---
 
@@ -32,6 +34,7 @@ $(LIST
     $(ITEM `--verify` — compare output against expected output blocks, report mismatches)
     $(ITEM `--update` — rewrite the markdown file with actual example output (golden snapshot update))
     $(ITEM `--example-files` — build/run standalone example `.d` files, defaulting to `libs/core-cli/examples/*.d`)
+    $(ITEM `--test` — run `dub test` for each sub-package defined in the root `dub.sdl`)
     $(ITEM `--files` — select explicit files or git-style globs; when omitted, each mode uses its tracked defaults)
     $(ITEM `--fail-fast` — stop on the first failing example and replay its output at the end)
     $(ITEM `--dedup-reference-links` — report duplicate markdown reference definitions by URL)
@@ -99,6 +102,9 @@ struct CliParams
     @CliOption(`x|example-files`, "Run standalone example .d files instead of markdown examples. With no files, defaults to libs/core-cli/examples/*.d.")
     bool exampleFiles;
 
+    @CliOption(`t|test`, "Run dub test for each sub-package defined in the root dub.sdl.")
+    bool test;
+
     @CliOption(`F|fail-fast`, "Stop on the first failing example and replay its output at the end.")
     bool failFast;
 
@@ -118,6 +124,7 @@ enum ProgramMode
     verifyExamples,
     updateExamples,
     runExampleFiles,
+    runDubTests,
     checkReferenceLinks,
     fixReferenceLinks,
 }
@@ -213,6 +220,10 @@ int main(string[] args)
     }
 
     const mode = resolveProgramMode(cli);
+
+    if (mode == ProgramMode.runDubTests)
+        return runDubTestsMode(cli.failFast);
+
     auto inputFiles = collectInputFiles(cli, mode);
 
     if (inputFiles.length == 0)
@@ -256,6 +267,12 @@ private string validateCliMode(
     if (cli.exampleFiles && (cli.verify || cli.update))
         return "--example-files cannot be combined with --verify or --update";
 
+    if (cli.test && (cli.verify || cli.update))
+        return "--test cannot be combined with --verify or --update";
+
+    if (cli.test && cli.exampleFiles)
+        return "--test cannot be combined with --example-files";
+
     if ((cli.verify || cli.update)
         && (cli.dedupReferenceLinks || cli.fixReferenceLinks))
     {
@@ -264,6 +281,9 @@ private string validateCliMode(
 
     if (cli.exampleFiles && (cli.dedupReferenceLinks || cli.fixReferenceLinks))
         return "--example-files cannot be combined with reference deduplication modes (--dedup-reference-links/--fix-reference-links)";
+
+    if (cli.test && (cli.dedupReferenceLinks || cli.fixReferenceLinks))
+        return "--test cannot be combined with reference deduplication modes (--dedup-reference-links/--fix-reference-links)";
 
     if (positionalArgs.length > 0)
         return "Positional file arguments are no longer supported; use --files";
@@ -278,6 +298,9 @@ private ProgramMode resolveProgramMode(in CliParams cli)
 {
     if (cli.exampleFiles)
         return ProgramMode.runExampleFiles;
+
+    if (cli.test)
+        return ProgramMode.runDubTests;
 
     if (cli.fixReferenceLinks)
         return ProgramMode.fixReferenceLinks;
@@ -475,6 +498,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
                 rc = runUpdateMode(examples, mdFile, failFast);
                 break;
             case ProgramMode.runExampleFiles:
+            case ProgramMode.runDubTests:
                 rc = 1;
                 break;
             case ProgramMode.checkReferenceLinks:
@@ -772,6 +796,95 @@ private ExecutionResult executeStandaloneExampleFile(
         programOutput: cleaned,
         rawOutput: result.output,
     );
+}
+
+private int runDubTestsMode(bool failFast)
+{
+    const repoRoot = detectRepoRoot();
+    if (repoRoot is null)
+    {
+        styledWritelnErr(i"{red Error:} Could not detect repository root");
+        return 1;
+    }
+
+    auto subPackages = parseSubPackages(repoRoot);
+    if (subPackages.length == 0)
+    {
+        styledWritelnErr(i"{red Error:} No sub-packages found in dub.sdl");
+        return 1;
+    }
+
+    i"Testing $(subPackages.length) sub-package(s)".text
+        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: 60))
+        .writeln("\n");
+
+    int failures = 0;
+    size_t processed = 0;
+    FailureReplay failureReplay;
+    bool stoppedEarly = false;
+
+    foreach (i, pkg; subPackages)
+    {
+        const pkgName = pkg.baseName;
+        const progress = i"[$(i + 1)/$(subPackages.length)]".text;
+        const header = styledText(i"{dim $(progress)} {cyan $(pkgName)} {dim › dub test :$(pkgName)}");
+
+        mkdirRecurse(buildPath(repoRoot, pkg, "build"));
+        auto result = execute(["dub", "--root", repoRoot, "test", ":" ~ pkgName]);
+
+        auto outputLines = result.output.lineSplitter
+            .map!(l => l.to!string)
+            .array;
+
+        displayResultBox(outputLines, header, result.status == 0);
+
+        if (result.status != 0)
+        {
+            failures++;
+            if (failFast)
+            {
+                failureReplay = FailureReplay(
+                    header: header,
+                    outputLines: outputLines.formatOutputLines(24).array,
+                    footer: styledText(i"{red ✗ FAILED}"),
+                );
+                stoppedEarly = true;
+                processed = i + 1;
+                writeln();
+                break;
+            }
+        }
+
+        processed = i + 1;
+        writeln();
+    }
+
+    displaySummary(stoppedEarly ? processed : subPackages.length, failures);
+    if (stoppedEarly)
+        displayFailureReplay(failureReplay);
+    return failures > 0 ? 1 : 0;
+}
+
+/// Parses sub-package paths from the root `dub.sdl`.
+private string[] parseSubPackages(string repoRoot)
+{
+    const dubSdlPath = buildPath(repoRoot, "dub.sdl");
+    if (!dubSdlPath.exists)
+        return [];
+
+    return dubSdlPath.readText
+        .lineSplitter
+        .map!((line) {
+            auto stripped = line.strip;
+            enum prefix = `subPackage "`;
+            if (!stripped.startsWith(prefix))
+                return null;
+            auto rest = stripped[prefix.length .. $];
+            auto end = rest.indexOf('"');
+            return end > 0 ? rest[0 .. end].idup : null;
+        })
+        .filter!(pkg => pkg !is null)
+        .array;
 }
 
 // === Modes ===
