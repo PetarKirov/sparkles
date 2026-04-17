@@ -2,6 +2,7 @@
 let
   inherit (pkgs) lib;
   isDarwin = pkgs.stdenv.isDarwin;
+  isLinux = pkgs.stdenv.isLinux;
 
   cleanLdcConfig = lib.pipe "${pkgs.ldc}/etc/ldc2.conf" [
     builtins.readFile
@@ -19,10 +20,25 @@ let
     else
       pkgs.ldc;
 
+  # DMD 2.110's ImportC cannot parse GCC 15's stddef.h (`nullptr` is a
+  # C23 keyword unknown to the D parser).  Only needed when stdenv is
+  # GCC-based; on macOS stdenv already uses clang.
+  dmd = if pkgs.stdenv.cc.isGNU then pkgs.dmd.override { stdenv = pkgs.gcc14Stdenv; } else pkgs.dmd;
+
   clangUnwrapped = pkgs.clangStdenv.cc.cc;
 in
 {
-  inherit ldc;
+  inherit ldc dmd;
+  inherit (pkgs) dub dtools;
+
+  packages = [
+    ldc
+    pkgs.dub
+    pkgs.dtools
+  ]
+  ++ lib.optionals isLinux [
+    dmd
+  ];
 
   env = lib.optionalAttrs isDarwin {
     CC = "${clangUnwrapped}/bin/clang";
