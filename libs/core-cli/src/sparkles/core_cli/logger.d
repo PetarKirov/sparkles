@@ -9,10 +9,12 @@ it as the global logger.
 module sparkles.core_cli.logger;
 
 import core.atomic : MemoryOrder, atomicExchange, atomicStore;
+import core.interpolation : InterpolationFooter, InterpolationHeader;
 import core.time : Duration, MonoTime, convClockFreq, dur;
 
 import std.datetime : DateTime;
-import std.logger : Logger, LogLevel;
+public import std.logger : LogLevel;
+import std.logger : Logger;
 
 /// Thread-safe delta-time logger.
 ///
@@ -74,6 +76,120 @@ void initLogger(LogLevel level) @safe
     // @trusted: std.logger expects shared(Logger); DeltaTimeLogger manages its
     // own synchronization via atomics and does not expose mutable shared state.
     sharedLog = () @trusted { return cast(shared) new DeltaTimeLogger(level); }();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Styled IES Log Wrappers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Logs a styled IES message at the given log level.
+///
+/// Accepts the same `{style content}` IES syntax as
+/// [writeStyled](sparkles.core_cli.styled_template.writeStyled), but routes
+/// the rendered message through `std.logger` so that [DeltaTimeLogger] adds
+/// its timestamp/delta prefix.
+///
+/// ---
+/// log(LogLevel.info, i"Connected to {green $(host)}");
+/// ---
+void log(int line = __LINE__, string file = __FILE__,
+    string funcName = __FUNCTION__, string prettyFuncName = __PRETTY_FUNCTION__,
+    string moduleName = __MODULE__, Args...)(
+    LogLevel level,
+    InterpolationHeader header, Args args, InterpolationFooter footer,
+)
+{
+    import sparkles.core_cli.styled_template : styledText;
+    import std.logger : sharedLog;
+
+    () @trusted {
+        (cast() sharedLog).log!string(level, styledText(header, args, footer),
+            line, file, funcName, prettyFuncName, moduleName);
+    }();
+}
+
+/// Logs a styled IES message at [LogLevel.trace].
+///
+/// ---
+/// trace(i"Entering {dim $(funcName)}");
+/// ---
+void trace(int line = __LINE__, string file = __FILE__,
+    string funcName = __FUNCTION__, string prettyFuncName = __PRETTY_FUNCTION__,
+    string moduleName = __MODULE__, Args...)(
+    InterpolationHeader header, Args args, InterpolationFooter footer,
+)
+{
+    log!(line, file, funcName, prettyFuncName, moduleName)(LogLevel.trace, header, args, footer);
+}
+
+/// Logs a styled IES message at [LogLevel.info].
+///
+/// ---
+/// info(i"Listening on port {green $(port)}");
+/// ---
+void info(int line = __LINE__, string file = __FILE__,
+    string funcName = __FUNCTION__, string prettyFuncName = __PRETTY_FUNCTION__,
+    string moduleName = __MODULE__, Args...)(
+    InterpolationHeader header, Args args, InterpolationFooter footer,
+)
+{
+    log!(line, file, funcName, prettyFuncName, moduleName)(LogLevel.info, header, args, footer);
+}
+
+/// Logs a styled IES message at [LogLevel.warning].
+///
+/// ---
+/// warning(i"Disk usage above {yellow $(pct)%}");
+/// ---
+void warning(int line = __LINE__, string file = __FILE__,
+    string funcName = __FUNCTION__, string prettyFuncName = __PRETTY_FUNCTION__,
+    string moduleName = __MODULE__, Args...)(
+    InterpolationHeader header, Args args, InterpolationFooter footer,
+)
+{
+    log!(line, file, funcName, prettyFuncName, moduleName)(LogLevel.warning, header, args, footer);
+}
+
+/// Logs a styled IES message at [LogLevel.error].
+///
+/// ---
+/// error(i"Connection to {red $(host)} lost");
+/// ---
+void error(int line = __LINE__, string file = __FILE__,
+    string funcName = __FUNCTION__, string prettyFuncName = __PRETTY_FUNCTION__,
+    string moduleName = __MODULE__, Args...)(
+    InterpolationHeader header, Args args, InterpolationFooter footer,
+)
+{
+    log!(line, file, funcName, prettyFuncName, moduleName)(LogLevel.error, header, args, footer);
+}
+
+/// Logs a styled IES message at [LogLevel.critical].
+///
+/// ---
+/// critical(i"{bold.red Out of memory:} $(details)");
+/// ---
+void critical(int line = __LINE__, string file = __FILE__,
+    string funcName = __FUNCTION__, string prettyFuncName = __PRETTY_FUNCTION__,
+    string moduleName = __MODULE__, Args...)(
+    InterpolationHeader header, Args args, InterpolationFooter footer,
+)
+{
+    log!(line, file, funcName, prettyFuncName, moduleName)(LogLevel.critical, header, args, footer);
+}
+
+/// Logs a styled IES message at [LogLevel.fatal].
+///
+/// ---
+/// fatal(i"{bold.red Unrecoverable:} $(reason)");
+/// ---
+void fatal(int line = __LINE__, string file = __FILE__,
+    string funcName = __FUNCTION__, string prettyFuncName = __PRETTY_FUNCTION__,
+    string moduleName = __MODULE__, Args...)(
+    InterpolationHeader header, Args args, InterpolationFooter footer,
+)
+{
+    log!(line, file, funcName, prettyFuncName, moduleName)(LogLevel.fatal, header, args, footer);
 }
 
 private:
