@@ -26,7 +26,7 @@ Detailed guidelines are in `docs/guidelines/`:
 dub build :core-cli
 
 # Run all tests
-./scripts/run-tests.sh
+ci --test
 
 # Test specific sub-package
 dub test :core-cli
@@ -241,7 +241,7 @@ sparkles/
 │       │   └── ...
 │       └── dub.sdl
 ├── scripts/
-│   └── run-tests.sh               # Test runner script
+│   └── ci.d                        # CI helper (tests, examples, link maintenance)
 ├── nix/
 │   └── shells/default.nix         # Nix dev shell
 ├── .github/workflows/
@@ -257,7 +257,7 @@ Run commands within the devshell:
 
 ```bash
 nix develop -c dub build :core-cli
-nix develop -c ./scripts/run-tests.sh
+nix develop -c ci --test
 ```
 
 ## CI/CD
@@ -266,7 +266,7 @@ nix develop -c ./scripts/run-tests.sh
 
 1. Lint checks via reusable workflow
 2. `nix flake check` for Nix validation
-3. `./scripts/run-tests.sh` to test all sub-packages
+3. `ci --test --fail-fast` to test all sub-packages
 
 ## Commit Message Convention
 

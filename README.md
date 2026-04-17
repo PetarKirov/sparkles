@@ -425,7 +425,7 @@ dub run --single libs/core-cli/examples/color.d
 dub build :core-cli
 
 # Run all tests
-./scripts/run-tests.sh
+ci --test
 
 # Test a specific sub-package
 dub test :core-cli
@@ -441,7 +441,7 @@ The project uses a **Nix development shell** for reproducible builds:
 
 ```bash
 nix develop -c dub build :core-cli
-nix develop -c ./scripts/run-tests.sh
+nix develop -c ci --test
 ```
 
 ## Documentation
