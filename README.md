@@ -28,7 +28,7 @@
 
 - **Styled Templates** -- Apply ANSI styles using D's Interpolated Expression Sequences (IES) with a concise `{style text}` syntax
 - **Pretty Printing** -- Colorized, type-aware formatting for any D type via compile-time introspection
-- **UI Components** -- Tables, boxes, headers, and OSC 8 hyperlinks
+- **UI Components** -- Tables, boxes, tree views, headers, and OSC 8 hyperlinks
 - **Terminal Styling** -- ANSI color and text attribute support with a fluent builder API
 - **Logger** -- Delta-time-prefixed logger with wall-clock time, elapsed-since-start, and per-entry delta timestamps
 - **SmallBuffer** -- A `@nogc` dynamic buffer with small buffer optimization (SBO)
@@ -265,6 +265,42 @@ void main()
 ╰──╼ Success ╾──────────────╯
 ```
 
+#### Tree Views
+
+Render hierarchical data with Unicode guide characters. Supports any node type via Design by Introspection.
+
+```d
+import sparkles.core_cli.ui.tree_view;
+
+struct FileNode
+{
+    string label;
+    const(FileNode)[] children;
+}
+
+// drawTree renders any type with .label and .children
+drawTree(FileNode("project/", [
+    FileNode("src/", [
+        FileNode("main.d"),
+        FileNode("util.d"),
+    ]),
+    FileNode("tests/", [
+        FileNode("test_main.d"),
+    ]),
+    FileNode("README.md"),
+]));
+```
+
+```
+project/
+├─┬ src/
+│   ├── main.d
+│   └── util.d
+├─┬ tests/
+│   └── test_main.d
+└── README.md
+```
+
 #### Headers
 
 ```d
@@ -412,6 +448,7 @@ dub run --single libs/core-cli/examples/styled_template.d
 dub run --single libs/core-cli/examples/prettyprint.d
 dub run --single libs/core-cli/examples/table.d
 dub run --single libs/core-cli/examples/box.d
+dub run --single libs/core-cli/examples/tree_view.d
 dub run --single libs/core-cli/examples/header.d
 dub run --single libs/core-cli/examples/osc_link.d
 dub run --single libs/core-cli/examples/logger.d

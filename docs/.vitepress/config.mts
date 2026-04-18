@@ -10,15 +10,46 @@ export default defineConfig({
 
   themeConfig: {
     nav: [
-      { text: 'Docs', link: '/overview' },
+      { text: 'Libraries', link: '/libs/' },
+      { text: 'Apps', link: '/apps/' },
       { text: 'API', link: '/api/' },
     ],
 
     sidebar: [
       {
-        text: 'Overview',
+        text: 'Libraries',
         collapsed: false,
-        items: [{ text: 'core-cli Package', link: '/overview' }],
+        items: [
+          {
+            text: 'All Libraries',
+            link: '/libs/',
+          },
+          {
+            text: 'core-cli',
+            collapsed: true,
+            items: [
+              {
+                text: 'Overview',
+                link: '/libs/core-cli/',
+              },
+            ],
+          },
+          {
+            text: 'markdown',
+            collapsed: true,
+            items: [
+              { text: 'Overview', link: '/libs/markdown/' },
+              { text: 'API And Types', link: '/libs/markdown/api-and-types' },
+              {
+                text: 'Implementation Status',
+                link: '/libs/markdown/implementation-status',
+              },
+              { text: 'Testing Helpers', link: '/libs/markdown/testing' },
+            ],
+          },
+          { text: 'math', link: '/libs/math/' },
+          { text: 'test-utils', link: '/libs/test-utils/' },
+        ],
       },
       {
         text: 'Guidelines',
@@ -63,6 +94,32 @@ export default defineConfig({
                 text: 'Forcing Named Arguments',
                 link: '/guidelines/idioms/forced-named-arguments/',
               },
+            ],
+          },
+        ],
+      },
+      {
+        text: 'Apps',
+        collapsed: true,
+        items: [
+          { text: 'All Apps', link: '/apps/' },
+          { text: 'run-examples', link: '/apps/run-examples/' },
+          { text: 'run-tests', link: '/apps/run-tests/' },
+          { text: 'run-md-examples', link: '/apps/run-md-examples/' },
+        ],
+      },
+      {
+        text: 'Specs',
+        collapsed: true,
+        items: [
+          { text: 'All Specs', link: '/specs/' },
+          {
+            text: 'Markdown',
+            collapsed: true,
+            items: [
+              { text: 'Overview', link: '/specs/markdown/' },
+              { text: 'Parser Spec', link: '/specs/markdown/SPEC' },
+              { text: 'Testing Spec', link: '/specs/markdown/TESTING' },
             ],
           },
         ],

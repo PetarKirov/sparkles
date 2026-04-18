@@ -687,10 +687,18 @@ ExecutionResult executeExample(in Example example)
     mkdirRecurse(tmpDir);
     auto tmpFile = buildPath(tmpDir, example.name ~ ".d");
 
-    tmpFile.write(example.code);
+    // Public docs (README, docs/) use version="*" for copy-paste friendliness,
+    // but the local repo may have subpackages not yet published to the registry.
+    // Rewrite to a path dependency so dub resolves against the local repo.
+    auto repoRoot = detectRepoRoot();
+    auto code = repoRoot !is null
+        ? example.code.replace(`version="*"`, `path="` ~ repoRoot ~ `"`)
+        : example.code;
+
+    tmpFile.write(code);
     scope(exit) if (tmpFile.exists) tmpFile.remove();
 
-    auto result = execute(dubSingleFileCommand("run", tmpFile, detectRepoRoot()));
+    auto result = execute(dubSingleFileCommand("run", tmpFile, repoRoot));
 
     // Strip ANSI codes, then trim trailing whitespace from each line
     // so output matches what pre-commit hooks produce in markdown files.

@@ -179,6 +179,7 @@ in
                 {
                   id = "pretty-format-json";
                   exclude = filesToExcludeRegex ([ "package.json" ] ++ generatedJsonFiles);
+                  args = [ "--autofix" ];
                 }
                 { id = "check-toml"; }
                 { id = "check-vcs-permalinks"; }
