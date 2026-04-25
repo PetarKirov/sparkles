@@ -19,17 +19,20 @@ import sparkles.core_cli.term_style : sty = stylizedTextBuilder;
 
 struct Command
 {
-    string aliases;
+    string name;
+    string[] aliases;
     string description;
     string shortDescription;
     string usage;
     string epilog;
+    Sections sections;
     bool hidden;
     bool default_;
 
-    this(string aliases) @safe
+    this(string name, string[] aliases...) @safe
     {
-        this.aliases = aliases;
+        this.name = name;
+        this.aliases = aliases.dup;
     }
 
     Command Description(string text) @safe
@@ -57,6 +60,13 @@ struct Command
     {
         auto result = this;
         result.epilog = text;
+        return result;
+    }
+
+    Command HelpSections(Sections value) @safe
+    {
+        auto result = this;
+        result.sections = value;
         return result;
     }
 
@@ -200,10 +210,12 @@ struct CliError
 
 alias CliExpected(T) = Expected!(T, CliError);
 
-Sections importSections(string[] sections, string file = __FILE__)()
+Sections importSections(string subPath = null, string[] sections, string file = __FILE__)()
 {
     Sections result;
-    enum dir = file.baseName.stripExtension;
+    enum dir = subPath.length
+        ? buildPath(file.baseName.stripExtension, subPath)
+        : file.baseName.stripExtension;
     static foreach (section; sections)
     {{
         enum text = tryImport!(buildPath(dir, "sections", section ~ ".txt"));
@@ -211,6 +223,11 @@ Sections importSections(string[] sections, string file = __FILE__)()
             result[section] = text.split("\n\n");
     }}
     return result;
+}
+
+Sections importSections(string[] sections, string file = __FILE__)()
+{
+    return importSections!(null, sections, file);
 }
 
 template tryImport(string path)
@@ -224,9 +241,14 @@ template tryImport(string path)
     }
 }
 
+template option(string subPath, string aliases, string file = __FILE__)
+{
+    enum option = Option(aliases, helpTextViaImport!(file, aliases, subPath));
+}
+
 template option(string aliases, string file = __FILE__)
 {
-    enum option = Option(aliases, helpTextViaImport!(file, aliases));
+    enum option = Option(aliases, helpTextViaImport!(file, aliases, null));
 }
 
 CliExpected!Cli parseCli(Cli)(
@@ -305,7 +327,7 @@ int runParsedCli(Cli)(ref Cli cli)
         return callRun(cli);
 }
 
-private template helpTextViaImport(string file, string optionAliases)
+private template helpTextViaImport(string file, string optionAliases, string subPath = null)
 {
     import std.ascii : isUpper;
 
@@ -316,7 +338,10 @@ private template helpTextViaImport(string file, string optionAliases)
     enum safeName = shortOptionName[0].isUpper
         ? shortOptionName ~ "_"
         : shortOptionName;
-    enum path = programName.buildPath("options", safeName ~ ".txt");
+
+    enum path = subPath.length
+        ? buildPath(programName, subPath, "options", safeName ~ ".txt")
+        : buildPath(programName, "options", safeName ~ ".txt");
 
     enum helpTextViaImport = tryImport!path;
 }
@@ -346,28 +371,34 @@ private CliExpected!(string[]) parseCommand(Cli)(
         }
 
         if (!namedArgsEnded && isHelpToken(arg))
+        {
             return err!(string[])(CliError(
                 kind: CliErrorKind.help,
                 help: formatHelp!Cli(helpInfo),
                 exitCode: 0,
             ));
+        }
 
         static if (hasSubcommands!Cli)
         {
             if (!namedArgsEnded && !arg.startsWith("-"))
             {
                 enum field = subcommandsFieldName!Cli;
+                auto subArgs = args[index + 1 .. $];
                 auto selected = parseSubcommand(
                     __traits(getMember, receiver, field),
                     arg,
-                    args[index + 1 .. $],
+                    subArgs,
                     helpInfo,
                     keepUnknown,
                 );
                 if (selected)
+                {
+                    args = args[0 .. index + 1] ~ subArgs;
                     return selected;
+                }
 
-                if (selected.error.message.length)
+                if (selected.error.isHelp || selected.error.message.length)
                     return err!(string[])(selected.error);
             }
         }
@@ -377,19 +408,23 @@ private CliExpected!(string[]) parseCommand(Cli)(
             auto parsed = parseNamedOption(receiver, args, index, seen);
             if (parsed)
             {
-                if (!parsed.value)
+                if (parsed.value)
+                    continue;
+
+                if (keepUnknown)
+                {
                     unknown ~= arg;
-                continue;
-            }
+                    index++;
+                    continue;
+                }
 
-            if (keepUnknown)
-            {
-                unknown ~= arg;
-                index++;
-                continue;
+                return err!(string[])(CliError(
+                    kind: CliErrorKind.parse,
+                    message: "Unknown option " ~ arg,
+                ));
             }
-
-            return err!(string[])(parsed.error);
+            else
+                return err!(string[])(parsed.error);
         }
 
         positionals ~= arg;
@@ -419,7 +454,7 @@ private CliExpected!(string[]) parseCommand(Cli)(
 private CliExpected!(string[]) parseSubcommand(Sub)(
     ref Sub destination,
     string name,
-    string[] args,
+    ref string[] args,
     HelpInfo parentHelp,
     bool keepUnknown,
 )
@@ -453,7 +488,7 @@ if (isSumType!Sub)
 
 private CliExpected!bool parseNamedOption(Cli)(
     ref Cli receiver,
-    string[] args,
+    ref string[] args,
     ref size_t index,
     ref bool[string] seen,
 )
@@ -489,7 +524,40 @@ private CliExpected!bool parseNamedOption(Cli)(
             hasInlineValue = true;
         }
         else
+        {
             name = body;
+            // Support bundling if first char matches an option but length > 1
+            if (name.length > 1)
+            {
+                bool matchesFirst;
+                static foreach (field; FieldNameTuple!Cli)
+                {{
+                    alias symbol = __traits(getMember, Cli, field);
+                    enum options = getUDAs!(symbol, Option);
+                    static if (options.length)
+                    {{
+                        enum optionInfo = options[0];
+                        foreach (candidate; optionNames(optionInfo, field))
+                        {
+                            if (candidate == name[0 .. 1])
+                                matchesFirst = true;
+                        }
+                    }}
+                }}
+
+                if (matchesFirst)
+                {
+                    // Split bundled options: -abc -> -a -b -c
+                    string[] bundled;
+                    foreach (c; name)
+                        bundled ~= "-" ~ c;
+
+                    args = args[0 .. index] ~ bundled ~ args[index + 1 .. $];
+                    // Retry with the first split option
+                    return parseNamedOption(receiver, args, index, seen);
+                }
+            }
+        }
     }
 
     static foreach (field; FieldNameTuple!Cli)
@@ -566,10 +634,15 @@ private CliExpected!void applyOption(T)(
 
         foreach (value; values)
         {
-            auto parsed = parseValue!Element(value, optionInfo);
-            if (!parsed)
-                return err(parsed.error);
-            target ~= parsed.value;
+            static if (is(Element == string))
+                target ~= value;
+            else
+            {
+                auto parsed = parseValue!Element(value, optionInfo);
+                if (!parsed)
+                    return err(parsed.error);
+                target ~= parsed.value;
+            }
         }
 
         return ok!CliError();
@@ -675,15 +748,36 @@ private CliExpected!void assignPositionals(Cli)(
             }
             else
             {
-                auto parsed = parseValue!(typeof(__traits(getMember, receiver, field)))(
-                    values[valueIndex],
-                    Option.init,
-                );
-                if (!parsed)
-                    return err(parsed.error);
-                __traits(getMember, receiver, field) = parsed.value;
+                alias FieldType = typeof(__traits(getMember, receiver, field));
+                static if (isDynamicArray!FieldType && !isSomeString!FieldType)
+                {
+                    alias Element = typeof(FieldType.init[0]);
+                    foreach (v; values[valueIndex .. $])
+                    {
+                        static if (is(Element == string))
+                            __traits(getMember, receiver, field) ~= v;
+                        else
+                        {
+                            auto parsed = parseValue!Element(v, Option.init);
+                            if (!parsed)
+                                return err(parsed.error);
+                            __traits(getMember, receiver, field) ~= parsed.value;
+                        }
+                    }
+                    valueIndex = values.length;
+                }
+                else
+                {
+                    auto parsed = parseValue!FieldType(
+                        values[valueIndex],
+                        Option.init,
+                    );
+                    if (!parsed)
+                        return err(parsed.error);
+                    __traits(getMember, receiver, field) = parsed.value;
+                    valueIndex++;
+                }
                 seen[field] = true;
-                valueIndex++;
             }
         }}
     }}
@@ -793,7 +887,7 @@ private HelpInfo childHelpInfo(Cli)(HelpInfo parent)
     parent.shortDescription = command.description.length
         ? command.description
         : command.shortDescription;
-    parent.sections = null;
+    parent.sections = command.sections;
     return parent;
 }
 
@@ -1035,7 +1129,7 @@ private string findSubcommandsFieldName(T)()
     static foreach (field; FieldNameTuple!T)
     {{
         alias symbol = __traits(getMember, T, field);
-        enum subcommands = getUDAs!(symbol, Subcommands);
+        alias subcommands = getUDAs!(symbol, Subcommands);
         static if (subcommands.length)
             return field;
     }}
@@ -1055,14 +1149,12 @@ private Command commandInfo(T)()
 private string[] commandNames(T)()
 {
     auto info = commandInfo!T;
-    return info.aliases.length
-        ? info.aliases.split("|")
-        : [T.stringof];
+    return [info.name] ~ info.aliases;
 }
 
 private string commandPrimaryName(T)()
 {
-    return commandNames!T[0];
+    return commandInfo!T.name;
 }
 
 private int callRun(T)(ref T value)
@@ -1133,7 +1225,7 @@ unittest
         int run() => force ? 7 : 3;
     }
 
-    @(Command("build|b"))
+    @(Command("build", "b"))
     static struct Build
     {
         @(Option("release"))
