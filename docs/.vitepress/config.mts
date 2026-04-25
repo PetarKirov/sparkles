@@ -4,6 +4,7 @@ export default defineConfig({
   title: 'Sparkles',
   description: 'D library for building CLI applications',
   base: '/',
+  cleanUrls: true,
 
   // Ignore links to .d source files referenced from docs
   ignoreDeadLinks: [/\.d$/],
@@ -62,6 +63,36 @@ export default defineConfig({
               {
                 text: 'Forcing Named Arguments',
                 link: '/guidelines/idioms/forced-named-arguments/',
+              },
+            ],
+          },
+          {
+            text: 'Writing Docs',
+            collapsed: true,
+            items: [
+              {
+                text: 'Overview',
+                link: '/guidelines/writing-docs-in-sparkles/',
+              },
+              {
+                text: 'Markdown Style',
+                link: '/guidelines/writing-docs-in-sparkles/markdown-style',
+              },
+              {
+                text: 'VitePress',
+                link: '/guidelines/writing-docs-in-sparkles/vitepress',
+              },
+              {
+                text: 'Lychee',
+                link: '/guidelines/writing-docs-in-sparkles/lychee',
+              },
+              {
+                text: 'Sparkles MD Tooling',
+                link: '/guidelines/writing-docs-in-sparkles/sparkles-md-tooling',
+              },
+              {
+                text: 'Conventions',
+                link: '/guidelines/writing-docs-in-sparkles/conventions',
               },
             ],
           },
