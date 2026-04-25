@@ -1,10 +1,12 @@
 #!/usr/bin/env dub
 
 /+ dub.sdl:
-name "osc_link"
+name "osc-link"
 dependency "sparkles:core-cli" path="../../.."
 targetPath "build"
 +/
+
+module osc_link_example;
 
 import std.stdio : writeln;
 

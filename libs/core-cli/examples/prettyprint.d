@@ -2,6 +2,7 @@
 /+ dub.sdl:
     name "prettyprint"
     dependency "sparkles:core-cli" path="../../.."
+    targetPath "build"
 +/
 
 import std.stdio : writeln;
