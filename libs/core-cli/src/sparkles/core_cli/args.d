@@ -1,8 +1,8 @@
 module sparkles.core_cli.args;
 
-public import sparkles.core_cli.help_formatting : HelpInfo, Sections;
+public import sparkles.core_cli.help_formatting : HelpInfo, Sections, formatParagraph;
 
-import std.algorithm : among, canFind, countUntil, map, startsWith;
+import std.algorithm : among, canFind, countUntil, map, splitter, startsWith;
 import std.array : array, join, split;
 import std.conv : to;
 import std.format : format;
@@ -888,6 +888,11 @@ private HelpInfo normalizeHelpInfo(Cli)(string[] argv, HelpInfo helpInfo)
     if (command.description.length && helpInfo.shortDescription.length == 0)
         helpInfo.shortDescription = command.description;
 
+    // Merge command sections into helpInfo
+    foreach (key, value; command.sections)
+        if (key !in helpInfo.sections)
+            helpInfo.sections[key] = value;
+
     return helpInfo;
 }
 
@@ -920,11 +925,11 @@ private string formatHelp(Cli)(HelpInfo info)
 
     auto positionals = formatPositionals!Cli;
     if (positionals.length)
-        sections ~= formatSection("arguments", positionals, 0);
+        sections ~= formatSection("arguments", positionals, 0, "", "\n");
 
     auto options = formatOptions!Cli;
     if (options.length)
-        sections ~= formatSection("options", options, 0);
+        sections ~= formatSection("options", options, 0, "", "\n");
 
     static if (hasSubcommands!Cli)
     {
@@ -932,7 +937,7 @@ private string formatHelp(Cli)(HelpInfo info)
         alias Sub = typeof(__traits(getMember, Cli.init, field));
         auto commands = formatSubcommands!Sub;
         if (commands.length)
-            sections ~= formatSection("commands", commands, 0);
+            sections ~= formatSection("commands", commands, 0, "", "\n");
     }
 
     foreach (name, text; info.sections)
@@ -1060,13 +1065,17 @@ private string formatSection(
     string[] text,
     uint wrapColumn = 80,
     string indent = "\t",
+    string paragraphSeparator = "\n\n",
 )
 {
-    return !text ? null : "%s\n%-(%s\n%)".format(
-        name.toUpper.sty.bold,
-        text.map!(t => wrapColumn ? t.wrap(wrapColumn, indent, indent) : t),
-    );
+    if (!text)
+        return null;
+    auto formatted = text.map!(t => formatParagraph(t, wrapColumn, indent)).array;
+    auto sep = (paragraphSeparator == "\n") ? "\n" : "\n\n";
+    return name.toUpper.sty.bold ~ "\n" ~ formatted.join(sep);
 }
+
+
 
 private bool matchesOption(Option optionInfo, string field, string name, bool isLong)
 {
