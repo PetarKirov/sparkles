@@ -1,9 +1,3 @@
-#!/usr/bin/env dub
-/+ dub.sdl:
-    name "ci"
-    dependency "sparkles:core-cli" path=".."
-+/
-
 /++
 Repository CI helper for runnable markdown examples, standalone `.d` files,
 dub package tests, and markdown reference maintenance.
