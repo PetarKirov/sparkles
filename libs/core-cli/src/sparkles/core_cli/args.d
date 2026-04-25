@@ -26,6 +26,8 @@ struct Command
     string usage;
     string epilog;
     Sections sections;
+    string[] sectionsToImport;
+    string sectionsImportFile;
     bool hidden;
     bool default_;
 
@@ -67,6 +69,15 @@ struct Command
     {
         auto result = this;
         result.sections = value;
+        result.sectionsToImport = null;
+        return result;
+    }
+
+    Command HelpSections(sections...)(string file = __FILE__) @safe
+    {
+        auto result = this;
+        result.sectionsToImport = [sections];
+        result.sectionsImportFile = file;
         return result;
     }
 
@@ -1139,11 +1150,22 @@ private string findSubcommandsFieldName(T)()
 
 private Command commandInfo(T)()
 {
-    enum commands = getUDAs!(T, Command);
-    static if (commands.length)
-        return commands[0];
-    else
+    enum udas = getUDAs!(T, Command);
+    static if (udas.length == 0)
         return Command(T.stringof);
+    else
+    {
+        enum cmd = udas[0];
+        static if (cmd.sectionsToImport.length > 0)
+        {
+            auto result = cmd;
+            result.sections = importSections!(cmd.name, cmd.sectionsToImport, cmd.sectionsImportFile)();
+            result.sectionsToImport = null;
+            return result;
+        }
+        else
+            return cmd;
+    }
 }
 
 private string[] commandNames(T)()
