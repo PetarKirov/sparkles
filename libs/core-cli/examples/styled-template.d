@@ -1,9 +1,11 @@
 #!/usr/bin/env dub
 /+ dub.sdl:
-    name "styled_template"
+    name "styled-template"
     dependency "sparkles:core-cli" path="../../.."
     targetPath "build"
 +/
+
+module styled_template_example;
 
 import sparkles.core_cli.styled_template;
 import sparkles.core_cli.ui.box : drawBox;
