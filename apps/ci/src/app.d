@@ -78,7 +78,7 @@ import std.stdio : writeln;
 import std.string : endsWith, indexOf, lineSplitter, replace, strip, stripRight, toLower;
 
 // sparkles packages
-import sparkles.core_cli.args : CliOption, HelpInfo, parseCliArgs;
+import sparkles.core_cli.args : CliError, HelpInfo, Option, parseCli;
 import sparkles.core_cli.logger : error, info, initLogger, LogLevel, trace, warning;
 import sparkles.core_cli.styled_template : styledText, styledWritelnErr;
 import sparkles.core_cli.term_unstyle : unstyle;
@@ -89,31 +89,31 @@ import sparkles.core_cli.ui.header : drawHeader, HeaderProps, HeaderStyle;
 
 struct CliParams
 {
-    @CliOption(`V|verify`, "Compare example output against expected output blocks in the markdown.")
+    @(Option(`V|verify`, "Compare example output against expected output blocks in the markdown."))
     bool verify;
 
-    @CliOption(`u|update`, "Rewrite the markdown file with actual example output.")
+    @(Option(`u|update`, "Rewrite the markdown file with actual example output."))
     bool update;
 
-    @CliOption(`x|example-files`, "Run standalone example .d files instead of markdown examples. With no files, defaults to libs/core-cli/examples/*.d.")
+    @(Option(`x|example-files`, "Run standalone example .d files instead of markdown examples. With no files, defaults to libs/core-cli/examples/*.d."))
     bool exampleFiles;
 
-    @CliOption(`t|test`, "Run dub test for each sub-package defined in the root dub.sdl.")
+    @(Option(`t|test`, "Run dub test for each sub-package defined in the root dub.sdl."))
     bool test;
 
-    @CliOption(`F|fail-fast`, "Stop on the first failing example and replay its output at the end.")
+    @(Option(`F|fail-fast`, "Stop on the first failing example and replay its output at the end."))
     bool failFast;
 
-    @CliOption(`files`, "Explicit file paths or git-style globs to include. Pass one or more selectors immediately after --files.")
+    @(Option(`files`, "Explicit file paths or git-style globs to include. Pass one or more selectors immediately after --files."))
     string[] files;
 
-    @CliOption(`d|dedup-reference-links`, "Report duplicate markdown reference definitions that point to the same URL.")
+    @(Option(`d|dedup-reference-links`, "Report duplicate markdown reference definitions that point to the same URL."))
     bool dedupReferenceLinks;
 
-    @CliOption(`f|fix-reference-links`, "Rewrite duplicate markdown references to one canonical label per URL.")
+    @(Option(`f|fix-reference-links`, "Rewrite duplicate markdown references to one canonical label per URL."))
     bool fixReferenceLinks;
 
-    @CliOption(`L|log-level`, "Set the log level (trace, info, warning, error). Default: info.")
+    @(Option(`L|log-level`, "Set the log level (trace, info, warning, error). Default: info."))
     LogLevel logLevel = LogLevel.info;
 }
 
@@ -160,12 +160,6 @@ struct FailureReplay
     string footer;
 }
 
-struct FileSelection
-{
-    bool specified;
-    string[] selectors;
-}
-
 struct ReferenceDef
 {
     size_t lineIndex;
@@ -199,20 +193,20 @@ private __gshared immutable refDefRegex = ctRegex!(r"^\[([^\]]+)\]:\s+(https?://
 int main(string[] args)
 {
     auto parseArgs = args.dup;
-    const fileSelection = extractFilesOption(parseArgs);
-    auto cli = parseArgs.parseCliArgs!CliParams(
+    auto parsedCli = parseCli!CliParams(
+        parseArgs,
         HelpInfo(
             "ci",
             "Run repository CI helpers for markdown examples, standalone example files, and markdown reference maintenance",
         ),
     );
-    cli.files = fileSelection.selectors.dup;
+    if (!parsedCli)
+        return reportCliError(parsedCli.error);
+
+    auto cli = parsedCli.value;
     initLogger(cli.logLevel);
 
-    const positionalArgs = parseArgs[1 .. $]
-        .map!(arg => arg.idup)
-        .array;
-    const modeError = validateCliMode(cli, positionalArgs, fileSelection);
+    const modeError = validateCliMode(cli);
     if (modeError !is null)
     {
         error(i"$(modeError)");
@@ -255,10 +249,19 @@ int main(string[] args)
     return runExamplesForFiles(inputFiles, mode, cli.failFast);
 }
 
+private int reportCliError(in CliError cliError)
+{
+    import std.stdio : stderr, writeln;
+
+    if (cliError.help.length)
+        writeln(cliError.help);
+    else if (cliError.message.length)
+        stderr.writeln("Error: ", cliError.message);
+    return cliError.exitCode;
+}
+
 private string validateCliMode(
     in CliParams cli,
-    in string[] positionalArgs,
-    in FileSelection fileSelection,
 )
 {
     if (cli.verify && cli.update)
@@ -284,12 +287,6 @@ private string validateCliMode(
 
     if (cli.test && (cli.dedupReferenceLinks || cli.fixReferenceLinks))
         return "--test cannot be combined with reference deduplication modes (--dedup-reference-links/--fix-reference-links)";
-
-    if (positionalArgs.length > 0)
-        return "Positional file arguments are no longer supported; use --files";
-
-    if (fileSelection.specified && cli.files.length == 0)
-        return "--files requires at least one file path or git-style glob";
 
     return null;
 }
@@ -353,53 +350,6 @@ private string[] trackedStandaloneExampleFiles()
         .filter!(line => line.length != 0)
         .map!(line => line.idup)
         .array;
-}
-
-private FileSelection extractFilesOption(ref string[] argv)
-{
-    FileSelection selection;
-    string[] filteredArgs;
-
-    if (argv.length == 0)
-        return selection;
-
-    filteredArgs ~= argv[0];
-
-    size_t idx = 1;
-    while (idx < argv.length)
-    {
-        const arg = argv[idx];
-
-        if (arg == "--files")
-        {
-            selection.specified = true;
-            idx++;
-
-            while (idx < argv.length && !argv[idx].startsWith("-"))
-            {
-                selection.selectors ~= argv[idx].idup;
-                idx++;
-            }
-
-            continue;
-        }
-
-        if (arg.startsWith("--files="))
-        {
-            selection.specified = true;
-            const selector = arg["--files=".length .. $].strip;
-            if (selector.length > 0)
-                selection.selectors ~= selector.idup;
-            idx++;
-            continue;
-        }
-
-        filteredArgs ~= arg;
-        idx++;
-    }
-
-    argv = filteredArgs;
-    return selection;
 }
 
 @safe pure nothrow @nogc

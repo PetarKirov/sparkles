@@ -1,6 +1,7 @@
 {
 	"fileVersion": 1,
 	"versions": {
+		"expected": "0.4.0",
 		"silly": "1.1.1"
 	}
 }
