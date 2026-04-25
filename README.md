@@ -408,12 +408,12 @@ import sparkles.core_cli.lifetime;
 Runnable examples are in [`libs/core-cli/examples/`](libs/core-cli/examples/):
 
 ```bash
-dub run --single libs/core-cli/examples/styled_template.d
+dub run --single libs/core-cli/examples/styled-template.d
 dub run --single libs/core-cli/examples/prettyprint.d
 dub run --single libs/core-cli/examples/table.d
 dub run --single libs/core-cli/examples/box.d
 dub run --single libs/core-cli/examples/header.d
-dub run --single libs/core-cli/examples/osc_link.d
+dub run --single libs/core-cli/examples/osc-link.d
 dub run --single libs/core-cli/examples/logger.d
 dub run --single libs/core-cli/examples/color.d
 ```
