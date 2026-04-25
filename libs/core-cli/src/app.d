@@ -9,23 +9,40 @@ enum Network
     kovan = 42,
 }
 
+struct CliParams
+{
+    @(Option("c|count", "How many contracts to verify"))
+    uint count = uint.max;
+
+    @(Option("s|skip", "How many contracts to skip verifying from the list. Default is 0."))
+    uint skipContractsCount;
+
+    @(Option("n|network", "Network id identifying the 'networks/<id>[_args].json' file to use"))
+    Network network = Network.kovan;
+
+    @(Option("p|parallel", "Enable parallel verification"))
+    bool parallel;
+}
+
 void main(string[] args)
 {
-    uint count = uint.max;
-    uint skipContractsCount = 0;
-    Network network = Network.kovan;
-    bool parallel = false;
-
-    args.parseCliArgs(
+    auto parsed = parseCli!CliParams(
+        args,
         HelpInfo(
             "verify-contracts",
             "verifies contracts on Etherscan, based on 'networks/<id>[_args].json' files",
         ),
-        "c|count", "How many contracts to verify", &count,
-        "s|skip", "How many contracts to skip verifying from the list. Default is 0.", &skipContractsCount,
-        "n|network", "Network id identifying the 'networks/<id>[_args].json' file to use", &network,
-        "p|parallel", "Enable parallel verification", &parallel,
     );
+    if (!parsed)
+    {
+        import std.stdio : stderr, writeln;
+
+        if (parsed.error.help.length)
+            writeln(parsed.error.help);
+        else
+            stderr.writeln("Error: ", parsed.error.message);
+        return;
+    }
 
     import sparkles.core_cli.term_size : setTermWindowSizeHandler;
     setTermWindowSizeHandler((ushort width, ushort height) {

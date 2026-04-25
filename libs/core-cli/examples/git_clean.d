@@ -10,35 +10,35 @@ import sparkles.core_cli.args;
 
 struct CliParams
 {
-    @cliOption!`d`
+    @(option!`d`)
     bool deleteDirectories;
 
-    @cliOption!`f|force`
+    @(option!`f|force`)
     bool force;
 
-    @cliOption!`i|interactive`
+    @(option!`i|interactive`)
     bool interactive;
 
-    @CliOption(`n|dry-run`, "Don’t actually remove anything, just show what would be done.")
+    @(Option(`n|dry-run`, "Don’t actually remove anything, just show what would be done."))
     bool dryRun;
 
-    @cliOption!`q|quiet`
+    @(option!`q|quiet`)
     bool quiet;
 
-    @cliOption!`e|exclude`
+    @(option!`e|exclude`)
     string excludePattern;
 
-    @cliOption!`x`
+    @(option!`x`)
     bool deleteUntracked;
 
-    @cliOption!`X`
+    @(option!`X`)
     bool deleteIgnored;
 }
 
 void main(string[] args)
 {
-    import std.string : split, stripRight;
-    const cli = args.parseCliArgs!CliParams(
+    const parsed = parseCli!CliParams(
+        args,
         HelpInfo(
             "git clean",
             "Remove untracked files from the working tree",
@@ -48,7 +48,18 @@ void main(string[] args)
             ])
         ),
     );
+    if (!parsed)
+    {
+        import std.stdio : stderr, writeln;
+
+        if (parsed.error.help.length)
+            writeln(parsed.error.help);
+        else
+            stderr.writeln("Error: ", parsed.error.message);
+        return;
+    }
 
     import std.stdio : writeln;
+    const cli = parsed.value;
     cli.writeln;
 }
