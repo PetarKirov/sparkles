@@ -1,5 +1,9 @@
 { lib, ... }:
 {
+  imports = [
+    ./examples.nix
+  ];
+
   perSystem =
     { config, pkgs, ... }:
     let
