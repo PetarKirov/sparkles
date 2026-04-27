@@ -1,0 +1,1 @@
+Update the index just where it already has an entry matching <pathspec>.
