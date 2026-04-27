@@ -1,5 +1,9 @@
 { lib, ... }:
 {
+  imports = [
+    ./examples.nix
+  ];
+
   perSystem =
     { config, pkgs, ... }:
     let
@@ -14,7 +18,6 @@
         builtins.elem file.name [
           "dub.sdl"
           "dub.selections.json"
-          "dub-lock.json"
         ];
 
       src = fs.toSource {
@@ -42,7 +45,11 @@
         inherit src;
         sourceRoot = "${finalAttrs.src.name}/apps/${finalAttrs.pname}";
 
-        dubLock = fromRoot "apps/${finalAttrs.pname}/dub-lock.json";
+        # The Nix-format lockfile is shared with the standalone example
+        # derivations (see ./examples.nix); keeping it under `nix/` keeps
+        # that sharing explicit instead of having `examples.nix` reach
+        # into a sibling sub-package's dir to grab the file.
+        dubLock = fromRoot "nix/dub-lock.json";
         compiler = dToolchain.ldc;
 
         nativeBuildInputs = [
