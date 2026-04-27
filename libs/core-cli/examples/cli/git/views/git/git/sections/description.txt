@@ -1,0 +1,5 @@
+Git is a fast, scalable, distributed revision control system, originally written by Linus Torvalds in 2005 to manage the development of the Linux kernel.
+
+Unlike centralized systems, every Git working directory is a full-fledged repository with complete history and version-tracking capabilities, independent of network access or a central server. Branches are cheap, merges are tracked, and the integrity of every object is guaranteed by SHA-1 hashing.
+
+The name "git" is British slang for "an unpleasant person"; Linus joked that he names all his projects after himself.

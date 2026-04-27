@@ -1,0 +1,5 @@
+Record changes to the repository.
+
+This command creates a new commit, which is a snapshot of the changes you have staged in the index. Each commit contains a complete record of the state of the repository at that point in time, along with an author, date, and log message describing the changes.
+
+Before you run commit, you must first stage your changes using "git add". The commit command takes the staged content from the index and creates a new commit. You must provide a commit message describing what changes you made.

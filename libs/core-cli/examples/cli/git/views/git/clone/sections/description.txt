@@ -1,0 +1,5 @@
+Clone a repository into a new directory.
+
+This command is used to create a copy of an existing repository. It downloads the entire project history from a remote repository and creates a complete local copy of the repository, including all branches and commit history.
+
+The clone command automatically sets up the origin remote to track the repository you cloned from, and checks out the default branch (usually main or master). This is typically the first command you run when you want to work with an existing project.

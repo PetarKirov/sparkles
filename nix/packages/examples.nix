@@ -34,6 +34,13 @@
 
       # Decompose an absolute example path into the metadata needed for the
       # derivation (lib name, file basename, attribute name, sub-paths).
+      #
+      # Examples can live either directly under `libs/<lib>/examples/` (a
+      # single `.d` file) or one or more directories deeper for self-contained
+      # multi-file examples that ship their own `views/` (e.g.
+      # `libs/<lib>/examples/cli/git/git.d`). The dub-package source root is
+      # always the parent directory of the `.d` file so that single-file
+      # builds resolve `views/` next to the script.
       exampleInfo =
         examplePath:
         let
@@ -41,9 +48,16 @@
           parts = lib.splitString "/" (lib.removePrefix "./" subpath);
           libName = builtins.elemAt parts 1;
           fileBase = lib.removeSuffix ".d" (lib.last parts);
+          parentDirRel = lib.concatStringsSep "/" (lib.init parts);
+          examplePathRel = lib.concatStringsSep "/" parts;
         in
         {
-          inherit libName fileBase;
+          inherit
+            libName
+            fileBase
+            parentDirRel
+            examplePathRel
+            ;
           examplesRel = "libs/${libName}/examples";
           librarySrcRel = "libs/${libName}/src";
         };
@@ -74,7 +88,7 @@
           version = "0.1.0";
 
           inherit src;
-          sourceRoot = "${finalAttrs.src.name}/${info.examplesRel}";
+          sourceRoot = "${finalAttrs.src.name}/${info.parentDirRel}";
 
           # The example only depends (transitively) on packages already pinned
           # by the ci helper, so we share the same lockfile instead of
@@ -110,7 +124,7 @@
           '';
 
           meta = {
-            description = "Standalone example: ${info.libName}/examples/${info.fileBase}.d";
+            description = "Standalone example: ${info.examplePathRel}";
             mainProgram = info.fileBase;
           };
         });

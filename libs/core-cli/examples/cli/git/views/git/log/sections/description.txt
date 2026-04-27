@@ -1,0 +1,5 @@
+Show commit logs.
+
+This command displays the commit history of your repository. By default, it lists commits in reverse chronological order, showing the commit hash, author, date, and log message for each commit.
+
+Log is used to review the history of changes made to the repository. You can use various options to customize what information is displayed and how it is formatted. For example, you can use --oneline for a condensed view, --graph to visualize the branch structure, or -p to show the changes introduced by each commit.

@@ -1,0 +1,5 @@
+Update remote refs along with associated objects.
+
+This command is used to upload your local changes to a remote repository. It takes the commits you have made locally and sends them to the remote repository so that others can see your changes.
+
+Push is typically used to share your work with other developers. By default, it pushes the current branch to its remote tracking branch. You can also push to a different branch or push specific commits. If the remote repository has changes that you don't have locally, the push will fail and you'll need to pull first to integrate the remote changes.
