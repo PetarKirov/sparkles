@@ -216,7 +216,7 @@ struct CliError
     string help;
     int exitCode = 1;
 
-    bool isHelp() const => kind == CliErrorKind.help;
+    bool isHelp() const @safe pure nothrow @nogc => kind == CliErrorKind.help;
 }
 
 alias CliExpected(T) = Expected!(T, CliError);
@@ -260,6 +260,14 @@ template tryImport(string path)
     }
 }
 
+// `parseCli` and `parseKnownCli` are NOT marked `@safe`: although the
+// pure parsing logic itself is safe, the user-supplied `Cli` struct may
+// hold a `SumType` whose `opAssign` is `@system` (it becomes `@system`
+// whenever any variant has a destructor that touches `@system` state).
+// That `opAssign` is reached transitively from `parseSubcommand`, so
+// the inferred attribute set of `parseCli!Cli` is keyed on `Cli`. We
+// therefore leave the attributes inferred per instantiation rather
+// than locking the public surface to `@safe`.
 CliExpected!Cli parseCli(Cli)(
     string[] argv,
     HelpInfo helpInfo = HelpInfo.init,
@@ -302,6 +310,12 @@ CliExpected!Cli parseKnownCli(Cli)(
     return ok!CliError(receiver);
 }
 
+// `runCli` and `runParsedCli` ultimately dispatch to user-supplied
+// `run()` methods on leaf command structs. Those methods may be
+// `@system` (e.g. shelling out, touching the filesystem, etc.), so the
+// dispatcher itself can't claim `@safe` — its safety follows from the
+// leaves it eventually calls. The pure parsing path (`parseCli`,
+// `parseKnownCli`) is `@safe` because it never crosses that boundary.
 int runCli(Cli)(
     string[] argv,
     HelpInfo helpInfo = HelpInfo.init,
@@ -360,7 +374,7 @@ private template viewsRootFor(Root)
 /// By contract, each leaf type appears at most once in the subcommand
 /// tree of a given root — when multiple paths exist, the first one
 /// encountered (in `SumType.Types` order) wins.
-private string[] subcommandPath(Root, Leaf)()
+private string[] subcommandPath(Root, Leaf)() @safe
 {
     static if (is(Root == Leaf))
         return [];
@@ -422,7 +436,7 @@ private bool isUpperShortFlag(string flag) @safe pure nothrow @nogc
 /// Resolve the deferred section list declared by `Cli`'s @Command.helpSections
 /// builder, looking each section up at
 /// `views/<root>/<chain>/sections/<name>.txt`.
-private Sections sectionsForCommand(Root, Cli)()
+private Sections sectionsForCommand(Root, Cli)() @safe
 {
     Sections result;
     enum cmd = commandInfoRaw!Cli();
@@ -812,7 +826,7 @@ private string[] collectValues(
     string inlineValue,
     bool hasInlineValue,
     bool variadic,
-)
+) @safe
 {
     if (hasInlineValue)
     {
@@ -837,7 +851,7 @@ private string[] collectValues(
     return result;
 }
 
-private bool isNextValueMissing(string[] args, size_t index)
+private bool isNextValueMissing(string[] args, size_t index) @safe
 {
     return index + 1 >= args.length || args[index + 1].startsWith("-");
 }
@@ -966,7 +980,7 @@ private CliExpected!T parseValue(T)(string value, Option optionInfo)
     }
 }
 
-private CliExpected!bool parseBool(string value)
+private CliExpected!bool parseBool(string value) @safe
 {
     switch (value.toLower)
     {
@@ -1175,7 +1189,7 @@ private string formatOptionLine(T)(Option optionInfo, string field, string descr
     );
 }
 
-private bool matchesOption(Option optionInfo, string field, string name, bool isLong)
+private bool matchesOption(Option optionInfo, string field, string name, bool isLong) @safe
 {
     foreach (candidate; optionNames(optionInfo, field))
     {
@@ -1193,19 +1207,19 @@ private bool matchesOption(Option optionInfo, string field, string name, bool is
     return false;
 }
 
-private string[] optionNames(Option optionInfo, string field)
+private string[] optionNames(Option optionInfo, string field) @safe
 {
     return optionInfo.aliases.length
         ? optionInfo.aliases.split("|")
         : [field];
 }
 
-private string displayOption(Option optionInfo, string field)
+private string displayOption(Option optionInfo, string field) @safe
 {
     return optionDisplayName(optionNames(optionInfo, field)[$ - 1]);
 }
 
-private string optionDisplayName(string name)
+private string optionDisplayName(string name) @safe pure nothrow
 {
     return name.length == 1 ? "-" ~ name : "--" ~ name;
 }
@@ -1223,12 +1237,12 @@ private string valuePlaceholder(T)(Option optionInfo, string field)
     }
 }
 
-private string positionalName(string field, Argument argumentInfo)
+private string positionalName(string field, Argument argumentInfo) @safe
 {
     return argumentInfo.placeholder_.length ? argumentInfo.placeholder_ : field.toUpper;
 }
 
-private bool isHelpToken(string arg)
+private bool isHelpToken(string arg) @safe pure nothrow @nogc
 {
     return arg.among("-h", "--help") != 0;
 }
@@ -1257,7 +1271,7 @@ private string findSubcommandsFieldName(T)()
 
 /// Read the raw `@Command` UDA from `T`, with no section resolution.
 /// Falls back to a default-named `Command` when `T` lacks a UDA.
-private Command commandInfoRaw(T)()
+private Command commandInfoRaw(T)() @safe
 {
     enum udas = getUDAs!(T, Command);
     static if (udas.length == 0)
@@ -1269,7 +1283,7 @@ private Command commandInfoRaw(T)()
 /// Read the `@Command` UDA from `Cli` and resolve any deferred
 /// `helpSections!()` import list, using `Root`'s views root and the
 /// subcommand chain `Root → … → Cli` to compute import paths.
-private Command commandInfo(Root, Cli)()
+private Command commandInfo(Root, Cli)() @safe
 {
     auto result = commandInfoRaw!Cli();
     if (result.sectionsToImport_.length > 0)
@@ -1280,13 +1294,13 @@ private Command commandInfo(Root, Cli)()
     return result;
 }
 
-private string[] commandNames(T)()
+private string[] commandNames(T)() @safe
 {
     enum info = commandInfoRaw!T();
     return [info.name] ~ info.aliases;
 }
 
-private string commandPrimaryName(T)()
+private string commandPrimaryName(T)() @safe
 {
     return commandInfoRaw!T().name;
 }
