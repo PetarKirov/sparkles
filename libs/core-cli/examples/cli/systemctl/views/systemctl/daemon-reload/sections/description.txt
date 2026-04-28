@@ -1,0 +1,3 @@
+Reload the systemd manager configuration.
+
+This re-runs all generators, reloads all unit files, and recreates the entire dependency tree. While daemon-reload is in progress, all sockets systemd listens on continue to be accessible. Run this after editing or installing new unit files.

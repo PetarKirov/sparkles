@@ -1,0 +1,3 @@
+Show key=value-formatted properties of one or more units, jobs, or the manager itself.
+
+Without arguments, shows properties of the manager itself. Use `--property=NAME` (repeatable) to limit the listing to specific properties, and `--value` to print only the values without the property names — useful in shell pipelines.

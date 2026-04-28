@@ -1,0 +1,1 @@
+Show unit logs while executing operations. Pass repeatedly (e.g. `-vv`) to increase verbosity.

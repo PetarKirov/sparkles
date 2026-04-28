@@ -1,0 +1,3 @@
+Stop (deactivate) one or more units.
+
+Stopping a service unit terminates its main process and any followers. Stopping a socket unit closes its listening file descriptors but leaves any active connections that have already been accepted alone. Stopping a timer unit cancels future activations but does not interrupt the currently running activation, if any.

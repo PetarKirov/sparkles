@@ -1,0 +1,1 @@
+Restrict the signal to a subset of the unit's processes. `main` targets only the main service process, `control` only the control processes (e.g. ExecStop=), and `all` (default) targets every process in the unit's control group.
