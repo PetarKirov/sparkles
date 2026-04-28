@@ -13,6 +13,10 @@ result-*
 
 # build artifact dir
 build/
+# …but allow `views/**/build/` subtrees that document a `build`
+# subcommand inside an example's view tree.
+!**/views/**/build/
+!**/views/**/build/**
 
 # Compiled Object files
 *.o

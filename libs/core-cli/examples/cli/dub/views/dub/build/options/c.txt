@@ -1,0 +1,1 @@
+Selects a build configuration declared in the package recipe. May be specified multiple times to compose configurations.

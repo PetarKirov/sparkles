@@ -1,0 +1,3 @@
+Prints a JSON description of the package and its full transitive dependency tree on stdout.
+
+The `--data` option selects which fields to include — common values are `target-name`, `target-path`, `import-paths`, `string-import-paths`, `versions`, `debug-versions`, `linker-files`, and `source-files`. Pass `--data` repeatedly to combine multiple categories. `--data-list` prints each value on its own line, which is convenient for shell pipelines.

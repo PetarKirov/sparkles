@@ -1,0 +1,1 @@
+Build type for the binary that will be executed. The `unittest` build types are not allowed here; use `dub test` instead.

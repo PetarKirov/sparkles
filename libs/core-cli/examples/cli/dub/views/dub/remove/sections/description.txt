@@ -1,0 +1,3 @@
+Removes a package that is cached on the local system.
+
+By default `remove` interactively prompts for which version to delete when more than one is available. Pass `--non-interactive` together with the `package@version-spec` argument to script the deletion. Use `package@*` to remove every cached version of the package at once.

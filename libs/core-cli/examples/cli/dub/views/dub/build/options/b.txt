@@ -1,0 +1,1 @@
+Selects a build type. Defaults to `debug`. The build type controls compiler optimization, debug-info, and contract-checking flags.

@@ -1,0 +1,1 @@
+Controls how aggressively the resolver short-circuits the registry round trip. `none` always queries, `all` never queries, `standard` and `configured` are the in-between cases.
