@@ -1,0 +1,3 @@
+Show how much disk space is currently used by Docker objects (images, containers, local volumes, build cache).
+
+Without `--verbose`, only the totals per object kind are shown. With `--verbose`, every individual image, container, and volume is listed alongside its individual footprint, sortable in your favorite spreadsheet.

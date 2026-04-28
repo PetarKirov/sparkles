@@ -1,0 +1,3 @@
+Run a new command inside an already-running container.
+
+Most commonly used to drop into a shell for inspection (`docker exec -it CONTAINER bash`), but works for any executable available inside the container. The new command runs as PID 2+ alongside the container's main entrypoint; it does not replace it.

@@ -1,0 +1,3 @@
+Build a Docker image from a `Dockerfile` and a build context.
+
+The build context (`PATH`) is the directory whose contents are sent to the daemon and become available to `COPY`/`ADD` instructions. The Dockerfile is read from `PATH/Dockerfile` by default; override its location with `--file`. Pass `-t name:tag` (repeatable) to apply tags to the resulting image, and `--platform` for cross-architecture builds.

@@ -1,0 +1,3 @@
+List images stored locally.
+
+This is the top-level shortcut for `docker image ls`; both forms behave identically.
