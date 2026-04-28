@@ -332,7 +332,11 @@ int runParsedCli(Cli)(ref Cli cli)
     {
         enum field = subcommandsFieldName!Cli;
         return __traits(getMember, cli, field).match!((ref command) {
-            return callRun(command);
+            // Recurse so nested subcommand trees (root → group → leaf)
+            // are fully unwrapped before dispatching to `run()`. A group
+            // struct typically has no `run()` of its own — only the leaf
+            // does.
+            return runParsedCli(command);
         });
     }
     else
@@ -1054,14 +1058,17 @@ private string formatUsage(Cli)(string programName)
         static if (options.length)
         {{
             enum optionInfo = options[0];
-            static if (optionInfo.required_)
-                parts ~= displayOption(optionInfo, field) ~ valuePlaceholder!(typeof(__traits(getMember, Cli.init, field)))(optionInfo, field);
-            else
-                parts ~= "[" ~ displayOption(optionInfo, field) ~ valuePlaceholder!(typeof(__traits(getMember, Cli.init, field)))(optionInfo, field) ~ "]";
+            static if (!optionInfo.hidden_)
+            {
+                static if (optionInfo.required_)
+                    parts ~= displayOption(optionInfo, field) ~ valuePlaceholder!(typeof(__traits(getMember, Cli.init, field)))(optionInfo, field);
+                else
+                    parts ~= "[" ~ displayOption(optionInfo, field) ~ valuePlaceholder!(typeof(__traits(getMember, Cli.init, field)))(optionInfo, field) ~ "]";
+            }
         }}
 
         enum args = getUDAs!(symbol, Argument);
-        static if (args.length)
+        static if (args.length && !args[0].hidden_)
         {{
             enum name = positionalName(field, args[0]);
             static if (args[0].optional_)
@@ -1508,4 +1515,56 @@ unittest
     static struct Docker {}
 
     static assert(viewsRootFor!Docker == "custom-views");
+}
+
+@("args.runParsedCli.nestedSubcommandsUnwrapToLeaf")
+@system
+unittest
+{
+    @(Command("create"))
+    static struct PrCreate
+    {
+        int run() => 17;
+    }
+
+    @(Command("pr"))
+    static struct Pr
+    {
+        @Subcommands
+        SumType!PrCreate command;
+    }
+
+    @(Command("gh"))
+    struct Gh
+    {
+        @Subcommands
+        SumType!Pr command;
+    }
+
+    auto parsed = parseCli!Gh(["gh", "pr", "create"]);
+    assert(parsed);
+    assert(runParsedCli(parsed.value) == 17);
+}
+
+@("args.formatHelp.hiddenOptionAbsentFromSynopsis")
+@system
+unittest
+{
+    @(Command("tool"))
+    struct Cli
+    {
+        @(Option("visible"))
+        bool visible;
+
+        @(Option("secret").hidden())
+        bool secret;
+    }
+
+    auto parsed = parseCli!Cli(["tool", "--help"]);
+    assert(!parsed);
+    assert(parsed.error.isHelp);
+    auto help = parsed.error.help;
+    assert(help.canFind("--visible"));
+    // The synopsis line and the OPTIONS section both omit --secret.
+    assert(!help.canFind("--secret"));
 }

@@ -1,0 +1,3 @@
+Authenticate `gh` and `git` against a GitHub host.
+
+The default host is `github.com`. Use `--hostname` to log into a self-hosted GitHub Enterprise instance. By default, gh launches an OAuth device flow in your default browser; pass `--with-token` to read a personal access token from standard input instead, which is convenient for CI and remote shells.

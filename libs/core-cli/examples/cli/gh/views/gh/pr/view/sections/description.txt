@@ -1,0 +1,3 @@
+Display the title, body, status checks, and reviewer requests of a pull request.
+
+If no number is given, gh views the PR associated with the current branch (if any). Use `--comments` to also include the conversation thread, or `--web` to open the PR in a browser.

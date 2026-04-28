@@ -1,0 +1,3 @@
+Close an issue.
+
+Pick a `--reason` to record why: `completed` means the work is done, `not planned` means the issue was rejected (won't fix / off-roadmap). Optionally leave a closing comment.

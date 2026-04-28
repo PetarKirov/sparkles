@@ -1,0 +1,3 @@
+Create a fork of a repository under your account or a chosen organization.
+
+When run inside a clone of the upstream repository, gh additionally rewrites the `origin` remote to point at the new fork, leaving the upstream URL accessible as the `upstream` remote.

@@ -1,0 +1,3 @@
+View the title, body, labels, assignees, and reactions of an issue.
+
+Use `--comments` to also fetch the conversation thread, or `--web` to open the issue in a browser instead.

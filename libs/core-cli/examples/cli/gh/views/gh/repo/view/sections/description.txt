@@ -1,0 +1,3 @@
+Display the README and metadata of a repository.
+
+If no repository is specified, gh shows the repository in the current working directory. Use `--web` to open the repository's GitHub page in your default browser instead.
