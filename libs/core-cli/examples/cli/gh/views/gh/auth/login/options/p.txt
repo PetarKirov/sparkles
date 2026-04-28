@@ -1,0 +1,1 @@
+Default git protocol for cloning and pushing on this host. `https` uses the gh credential helper to inject the token; `ssh` uses your SSH agent or key.
