@@ -497,9 +497,9 @@ Available examples:
 
 - `color.d` - Style and color palette showcase
 - `prettyprint.d` - Type formatting demonstration
-- `styled_template.d` - IES-based template styling
+- `styled-template.d` - IES-based template styling
 - `table.d` - Table rendering variations
 - `box.d` - Box layouts with nested content
 - `header.d` - Header styles
-- `osc_link.d` - OSC 8 terminal hyperlinks
+- `osc-link.d` - OSC 8 terminal hyperlinks
 - `logger.d` - Delta-time-prefixed logging

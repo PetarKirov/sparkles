@@ -1,0 +1,1 @@
+Where to store the fetched package. `local` writes into `./dub-packages/`, `user` (default) into the user's home directory, and `system` into a shared system directory.

@@ -1,0 +1,1 @@
+Recipe-file format. `json` (default) produces a `dub.json`, `sdl` produces a `dub.sdl`.

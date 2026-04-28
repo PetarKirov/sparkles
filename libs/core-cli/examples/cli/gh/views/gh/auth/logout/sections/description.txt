@@ -1,0 +1,3 @@
+Log out of a GitHub host, removing the stored credentials for the matching account.
+
+If you are signed into multiple accounts on the same host, pass `--user` to specify which one to log out of.

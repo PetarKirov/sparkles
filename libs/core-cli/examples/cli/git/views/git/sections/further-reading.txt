@@ -1,0 +1,16 @@
+If you want to learn more:
+
+Pro Git
+    https://git-scm.com/book - the canonical book, free to read online.
+
+Reference manual
+    https://git-scm.com/docs - exhaustive documentation for every command.
+
+Git from the inside out
+    https://maryrosecook.com/blog/post/git-from-the-inside-out - a wonderful tour of git's internal data model.
+
+Oh Shit, Git!?!
+    https://ohshitgit.com - plain-language recipes for getting out of trouble.
+
+Think Like (a) Git
+    http://think-like-a-git.net - graph theory for understanding rebase, merge and reset.

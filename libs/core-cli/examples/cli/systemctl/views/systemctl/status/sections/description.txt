@@ -1,0 +1,3 @@
+Show terse runtime status information about one or more units, followed by their most recent log data from the journal.
+
+When called without arguments, shows the status of the system as a whole. The output is paged through `$PAGER` (defaulting to `less`); pass `--no-pager` to dump everything to standard output instead.

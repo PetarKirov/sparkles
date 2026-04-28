@@ -1,0 +1,1 @@
+Use the given <msg> as the commit message.

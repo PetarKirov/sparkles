@@ -1,6 +1,6 @@
 module sparkles.core_cli.help_formatting;
 
-import std.algorithm : filter, map, joiner;
+import std.algorithm : canFind, filter, map, joiner;
 import std.array : array, byPair;
 import std.conv : to;
 import std.format : format;
@@ -58,12 +58,91 @@ string formatSection(
     string[] text,
     uint wrapColumn = 80,
     string indent = "\t",
-    )
+    string paragraphSeparator = "\n\n",
+) @safe
 {
-    return !text ? null : "%s\n%-(%s\n%)".format(
-        name.toUpper.sty.bold,
-        text.map!(t => wrapColumn ? t.wrap(wrapColumn, indent, indent) : t)
-    );
+    if (!text)
+        return null;
+    auto formatted = text.map!(t => formatParagraph(t, wrapColumn, indent));
+    return name.toUpper.sty.bold ~ "\n" ~ formatted.join(paragraphSeparator);
+}
+
+package(sparkles.core_cli) string formatParagraph(string text, uint wrapColumn, string indent) @safe
+{
+    // If text contains newlines, preserve the structure and just add indent
+    // Otherwise, wrap the text normally
+    if (text.canFind('\n'))
+    {
+        import std.algorithm : splitter;
+        import std.array : join;
+        return text.splitter('\n').map!(line => indent ~ line).join('\n');
+    }
+    else
+    {
+        return wrapColumn ? text.wrap(wrapColumn, indent, indent) : text;
+    }
+}
+
+///
+@("help_formatting.formatParagraph.multiline.preservesNewlines")
+@system
+unittest
+{
+    string text = "add\n    Add file contents to the index.";
+    string result = formatParagraph(text, 80, "\t");
+    assert(result == "\tadd\n\t    Add file contents to the index.");
+}
+
+///
+@("help_formatting.formatParagraph.multiline.emptyLines")
+@system
+unittest
+{
+    string text = "title\n\ndescription";
+    string result = formatParagraph(text, 80, "\t");
+    assert(result == "\ttitle\n\t\n\tdescription");
+}
+
+///
+@("help_formatting.formatParagraph.singleline.wrapping")
+@system
+unittest
+{
+    string text = "This is a long single line that should be wrapped at 20 characters";
+    string result = formatParagraph(text, 20, "\t");
+    // Should wrap but include the tab indent
+    assert(result.canFind('\n'));
+    assert(result.canFind('\t'));
+}
+
+///
+@("help_formatting.formatSection.withStructuredText")
+@system
+unittest
+{
+    string[] text = [
+        "add\n    Add files to the index.",
+        "commit\n    Record changes."
+    ];
+    string result = formatSection("commands", text, 80, "\t");
+    assert(result.canFind("COMMANDS"));
+    assert(result.canFind("\tadd"));
+    assert(result.canFind("\t    Add files"));
+    assert(result.canFind("\tcommit"));
+}
+
+///
+@("help_formatting.formatSection.separatesParagraphsWithBlankLines")
+@system
+unittest
+{
+    string[] text = [
+        "clean\n    Start cleaning.",
+        "filter by pattern\n    Show options."
+    ];
+    string result = formatSection("commands", text, 80, "\t");
+    // Should have blank line between paragraphs (double newline)
+    assert(result.canFind("\n\n\tfilter"));
 }
 
 auto wrap2(bool dbg = false, S)(S input, in size_t maxColumns = 80, S indent = null, in size_t tabsize = 8)

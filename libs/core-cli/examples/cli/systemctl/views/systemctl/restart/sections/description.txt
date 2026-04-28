@@ -1,0 +1,3 @@
+Start or restart one or more units.
+
+If a unit is already running, it is stopped and started again. If it is not running, it is simply started. For services that have a `Type=notify` notify-style ready protocol, `restart` waits until the new process signals readiness before returning.

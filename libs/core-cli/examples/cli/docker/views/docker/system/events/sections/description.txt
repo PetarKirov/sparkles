@@ -1,0 +1,3 @@
+Stream the daemon's real-time event log to stdout.
+
+Events include container lifecycle transitions (`create`, `start`, `die`, `destroy`), image and volume operations, network attachments, and so on. Combine with `--filter` to subscribe only to specific event types or specific objects.

@@ -1,0 +1,3 @@
+Remove one or more stopped containers.
+
+This is the top-level shortcut for `docker container rm`; both forms behave identically. Note that `docker rmi` is the corresponding shortcut for `docker image rm` — `rm` always means "remove a container".

@@ -1,0 +1,3 @@
+Manage user-defined virtual networks that connect containers.
+
+A network is created with one of several drivers — `bridge` (the default, single-host), `overlay` (multi-host swarm), `host` (use the host's networking stack directly), `macvlan` (assign a MAC address per container), or `none` (no networking at all). Containers are attached to a network at run-time with `docker run --network NAME` or after the fact with `docker network connect`.

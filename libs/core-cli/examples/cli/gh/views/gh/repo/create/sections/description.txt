@@ -1,0 +1,3 @@
+Create a new GitHub repository.
+
+If no name is given, gh prompts interactively. Exactly one of `--public`, `--private`, or `--internal` must be in effect (gh defaults to prompting if none is given). Pass `--clone` to immediately clone the new repository to your current directory.

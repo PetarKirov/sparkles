@@ -1,0 +1,3 @@
+Manage Docker-managed persistent storage volumes.
+
+Volumes outlive any single container and are the recommended way to persist data — they are managed by Docker, can be backed by remote filesystems through volume drivers (`local`, `nfs`, `tmpfs`, …), and are easy to back up and restore independently of the containers that consume them.

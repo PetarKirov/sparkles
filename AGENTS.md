@@ -221,17 +221,24 @@ dub test :core-cli -- -t 1
 
 ```
 sparkles/
+├── .github/workflows/
+│   └── ci.yml                     # GitHub Actions CI
+├── apps/
+│   └── ci/                         # CI helper sub-package (tests, examples, link maintenance)
+│       ├── src/app.d
+│       ├── dub.sdl
+│       └── dub.selections.json     # Local dub-resolved versions
 ├── libs/
 │   ├── core-cli/
 │   │   ├── src/sparkles/core_cli/
-│   │   │   ├── smallbuffer.d      # @nogc dynamic buffer
-│   │   │   ├── prettyprint.d      # Colorized pretty-printing
-│   │   │   ├── text_writers.d     # @nogc text writing utilities
-│   │   │   ├── styled_template.d  # IES-based styled text processing
 │   │   │   ├── logger.d           # Delta-time-prefixed logger
-│   │   │   ├── term_style.d       # Terminal styling/colors
-│   │   │   ├── term_size.d        # Terminal size detection
+│   │   │   ├── prettyprint.d      # Colorized pretty-printing
 │   │   │   ├── process_utils.d    # Process execution
+│   │   │   ├── smallbuffer.d      # @nogc dynamic buffer
+│   │   │   ├── styled_template.d  # IES-based styled text processing
+│   │   │   ├── term_size.d        # Terminal size detection
+│   │   │   ├── term_style.d       # Terminal styling/colors
+│   │   │   ├── text_writers.d     # @nogc text writing utilities
 │   │   │   └── ...
 │   │   └── dub.sdl
 │   └── test-utils/
@@ -240,12 +247,9 @@ sparkles/
 │       │   ├── tmpfs.d            # Temp filesystem helpers
 │       │   └── ...
 │       └── dub.sdl
-├── scripts/
-│   └── ci.d                        # CI helper (tests, examples, link maintenance)
 ├── nix/
+│   ├── dub-lock.json              # Nix-format lockfile shared by `ci` + examples (buildDubPackage)
 │   └── shells/default.nix         # Nix dev shell
-├── .github/workflows/
-│   └── ci.yml                     # GitHub Actions CI
 └── dub.sdl                        # Root package config
 ```
 

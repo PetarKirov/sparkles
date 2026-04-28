@@ -1,0 +1,1 @@
+Output format for the report. `default` is human-readable, `checkstyle` produces XML compatible with most CI dashboards, `github` produces `::warning::`-style annotations consumed by GitHub Actions.

@@ -1,0 +1,3 @@
+Edit one or more unit files using `$SYSTEMD_EDITOR` (falling back to `$EDITOR`, then `$VISUAL`).
+
+By default, `edit` creates a drop-in override file under `/etc/systemd/system/<unit>.d/override.conf` so the vendor-supplied unit file is left untouched. Pass `--full` to edit a full copy of the unit file instead.

@@ -1,0 +1,1 @@
+Suppress progress messages but still print warnings and errors.

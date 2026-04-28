@@ -1,0 +1,5 @@
+Initializes an empty package skeleton in the given directory (or the current directory if no argument is given).
+
+The `--type` option selects a starter template — `minimal` for a tiny "Hello, world", `vibe.d` for a vibe.d-based web service, `deimos` for a C-binding library, or `custom` to walk through every prompt manually.
+
+Recipe files can be written in either `dub.sdl` (default) or `dub.json` format; choose with `--format`.

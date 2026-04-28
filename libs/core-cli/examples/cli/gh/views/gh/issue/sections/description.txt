@@ -1,0 +1,3 @@
+Work with GitHub issues — create new ones, browse the list, view details and comments on a specific issue, and close issues you've resolved.
+
+Most subcommands accept either an issue number or URL.

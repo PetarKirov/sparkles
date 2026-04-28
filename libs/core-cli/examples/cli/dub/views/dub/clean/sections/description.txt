@@ -1,0 +1,3 @@
+Removes intermediate build files (`.dub/`, `bin/`, generated `*.lst` coverage files) and clears the build cache for the selected package.
+
+By default only the current package is cleaned. Pass `--all-packages` to also clean every cached version of every package known to the local installation — useful when a corrupt cache entry needs to be evicted.

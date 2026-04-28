@@ -1,0 +1,3 @@
+Create a new user-defined network.
+
+Pick a driver with `--driver`. For `bridge` networks (the most common), you can additionally specify the subnet and gateway via `--subnet`/`--gateway` to override Docker's automatic IPAM. Pass `--internal` for an isolated network with no external connectivity.

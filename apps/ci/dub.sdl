@@ -1,0 +1,14 @@
+name "ci"
+description "Repository CI helper for markdown examples, standalone examples, and markdown link maintenance"
+authors "Petar Kirov"
+copyright "Copyright © 2025, Petar Kirov"
+license "BSL-1.0"
+
+targetType "executable"
+targetName "ci"
+targetPath "build"
+mainSourceFile "src/app.d"
+
+dflags "-preview=in" "-preview=dip1000"
+
+dependency "sparkles:core-cli" path="../.."

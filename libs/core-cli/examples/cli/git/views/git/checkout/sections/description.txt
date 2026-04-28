@@ -1,0 +1,9 @@
+Switch branches or restore working tree files.
+
+This command has two main uses:
+
+1. Switch to a different branch: "git checkout <branch>" switches the working tree to the specified branch.
+
+2. Restore working tree files: "git checkout <paths>" restores the file contents from the index or a specified revision.
+
+If a branch is not found locally but a remote branch exists with the same name, Git will create a local tracking branch that follows the remote branch.

@@ -1,0 +1,3 @@
+Remove one or more user-defined networks.
+
+A network must not have any containers attached to it; disconnect them first or stop them. The built-in `bridge`, `host`, and `none` networks cannot be removed.

@@ -1,0 +1,1 @@
+Controls how dub invokes the compiler. `separate` compiles each module on its own (default), `allAtOnce` issues a single compiler call, and `singleFile` is equivalent to using `rdmd` semantics.

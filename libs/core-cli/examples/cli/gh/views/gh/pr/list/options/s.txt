@@ -1,0 +1,1 @@
+Filter pull requests by state. Defaults to `open`; pass `merged` to inspect already-landed work, or `all` to retrieve every state in one call.

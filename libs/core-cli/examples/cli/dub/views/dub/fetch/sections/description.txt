@@ -1,0 +1,5 @@
+Explicitly retrieves a package and stores it in the local cache without adding it as a dependency. The package version is encoded directly into the argument as `package@version-spec` (e.g. `vibe-d@1.5.0`).
+
+The cache location is selected by `--cache`: `local` writes into `./dub-packages/` next to the current package, `user` (the default) writes into your home directory, and `system` writes into a shared system directory and usually requires elevated privileges.
+
+Note that `build`, `run`, and any other command that needs packages will automatically perform a fetch, so it is not generally necessary to run this command directly.

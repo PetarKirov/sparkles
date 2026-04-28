@@ -1,0 +1,24 @@
+Common workflows:
+
+Start, stop and restart a system service:
+    systemctl start nginx.service
+    systemctl restart nginx.service
+    systemctl stop nginx.service
+
+Enable a service so it starts on every boot, and start it right away:
+    systemctl enable --now docker.service
+
+Check the status of one or more units:
+    systemctl status nginx.service postgresql.service
+
+List every active timer on the system:
+    systemctl list-units --type=timer
+
+Show only failed units:
+    systemctl --state=failed list-units
+
+Reload a unit file after editing it:
+    systemctl daemon-reload
+
+Manage your user services (per-login):
+    systemctl --user start syncthing.service

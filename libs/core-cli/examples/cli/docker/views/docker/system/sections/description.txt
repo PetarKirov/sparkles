@@ -1,0 +1,1 @@
+Inspect and clean up Docker daemon state — show disk usage by object kind, prune unused containers/images/networks/volumes in one go, fetch system-wide diagnostics, and tail the live event stream.
