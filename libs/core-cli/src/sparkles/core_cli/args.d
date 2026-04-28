@@ -590,6 +590,27 @@ if (isSumType!Sub)
     return err!(string[])(CliError.init);
 }
 
+/// Split `<name>[=<value>]` at the first `=`, populating the three output
+/// parameters. Shared by the long-option (`--foo=bar`) and short-option
+/// (`-x=2`) branches of `parseNamedOption`.
+private void splitOptionToken(
+    string token,
+    out string name,
+    out string inlineValue,
+    out bool hasInlineValue,
+) @safe pure
+{
+    auto equals = token.countUntil("=");
+    if (equals >= 0)
+    {
+        name = token[0 .. equals];
+        inlineValue = token[equals + 1 .. $];
+        hasInlineValue = true;
+    }
+    else
+        name = token;
+}
+
 private CliExpected!bool parseNamedOption(Cli)(
     ref Cli receiver,
     ref string[] args,
@@ -606,30 +627,13 @@ private CliExpected!bool parseNamedOption(Cli)(
     if (arg.startsWith("--"))
     {
         isLong = true;
-        auto rest = arg[2 .. $];
-        auto equals = rest.countUntil("=");
-        if (equals >= 0)
-        {
-            name = rest[0 .. equals];
-            inlineValue = rest[equals + 1 .. $];
-            hasInlineValue = true;
-        }
-        else
-            name = rest;
+        splitOptionToken(arg[2 .. $], name, inlineValue, hasInlineValue);
     }
     else if (arg.startsWith("-"))
     {
-        auto rest = arg[1 .. $];
-        auto equals = rest.countUntil("=");
-        if (equals >= 0)
+        splitOptionToken(arg[1 .. $], name, inlineValue, hasInlineValue);
+        if (!hasInlineValue)
         {
-            name = rest[0 .. equals];
-            inlineValue = rest[equals + 1 .. $];
-            hasInlineValue = true;
-        }
-        else
-        {
-            name = rest;
             // Support bundling if first char matches an option but length > 1
             if (name.length > 1)
             {
