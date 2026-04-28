@@ -1,0 +1,3 @@
+List units currently known to the manager.
+
+By default, only units that are loaded and either active or have a job pending are shown. Pass `--all` to also include inactive but loaded units. The listing can be filtered by unit type with the root-level `--type` and by load/sub/active state with `--state`.
