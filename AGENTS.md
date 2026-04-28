@@ -226,7 +226,6 @@ sparkles/
 ├── apps/
 │   └── ci/                         # CI helper sub-package (tests, examples, link maintenance)
 │       ├── src/app.d
-│       ├── dub-lock.json           # Nix-format lockfile (for buildDubPackage)
 │       ├── dub.sdl
 │       └── dub.selections.json     # Local dub-resolved versions
 ├── libs/
@@ -249,6 +248,7 @@ sparkles/
 │       │   └── ...
 │       └── dub.sdl
 ├── nix/
+│   ├── dub-lock.json              # Nix-format lockfile shared by `ci` + examples (buildDubPackage)
 │   └── shells/default.nix         # Nix dev shell
 └── dub.sdl                        # Root package config
 ```

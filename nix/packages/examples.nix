@@ -14,7 +14,6 @@
         builtins.elem file.name [
           "dub.sdl"
           "dub.selections.json"
-          "dub-lock.json"
         ];
 
       # Enumerate every standalone `.d` example across all libs as a flat
@@ -90,10 +89,13 @@
           inherit src;
           sourceRoot = "${finalAttrs.src.name}/${info.parentDirRel}";
 
-          # The example only depends (transitively) on packages already pinned
-          # by the ci helper, so we share the same lockfile instead of
-          # generating one per example.
-          dubLock = fromRoot "apps/ci/dub-lock.json";
+          # The examples currently depend on the same set of packages as
+          # the `ci` helper, so we share a single Nix-format lockfile
+          # under `nix/dub-lock.json` instead of generating (and
+          # regenerating) one per example. If a future example pulls in
+          # an additional dependency, that dep needs to be added to the
+          # shared lockfile or split out into its own.
+          dubLock = fromRoot "nix/dub-lock.json";
           compiler = dToolchain.ldc;
 
           # The unpacked source is read-only by default; dub needs to write
