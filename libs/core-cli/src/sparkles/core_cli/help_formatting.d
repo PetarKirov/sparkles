@@ -59,7 +59,7 @@ string formatSection(
     uint wrapColumn = 80,
     string indent = "\t",
     string paragraphSeparator = "\n\n",
-)
+) @safe
 {
     if (!text)
         return null;
@@ -67,7 +67,7 @@ string formatSection(
     return name.toUpper.sty.bold ~ "\n" ~ formatted.join(paragraphSeparator);
 }
 
-package(sparkles.core_cli) string formatParagraph(string text, uint wrapColumn, string indent)
+package(sparkles.core_cli) string formatParagraph(string text, uint wrapColumn, string indent) @safe
 {
     // If text contains newlines, preserve the structure and just add indent
     // Otherwise, wrap the text normally
