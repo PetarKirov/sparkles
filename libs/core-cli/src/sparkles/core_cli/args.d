@@ -21,15 +21,14 @@ struct Command
 {
     string name;
     string[] aliases;
-    string description;
-    string shortDescription;
-    string usage;
-    string epilog;
-    Sections sections;
-    string[] sectionsToImport;
-    string sectionsImportFile;
-    bool hidden;
-    bool default_;
+    string description_;
+    string shortDescription_;
+    string usage_;
+    string epilog_;
+    Sections sections_;
+    string[] sectionsToImport_;
+    bool hidden_;
+    string viewsRoot_;
 
     this(string name, string[] aliases...) @safe
     {
@@ -37,61 +36,62 @@ struct Command
         this.aliases = aliases.dup;
     }
 
-    Command Description(string text) @safe
+    Command description(string text) @safe
     {
         auto result = this;
-        result.description = text;
+        result.description_ = text;
         return result;
     }
 
-    Command ShortDescription(string text) @safe
+    Command shortDescription(string text) @safe
     {
         auto result = this;
-        result.shortDescription = text;
+        result.shortDescription_ = text;
         return result;
     }
 
-    Command Usage(string text) @safe
+    Command usage(string text) @safe
     {
         auto result = this;
-        result.usage = text;
+        result.usage_ = text;
         return result;
     }
 
-    Command Epilog(string text) @safe
+    Command epilog(string text) @safe
     {
         auto result = this;
-        result.epilog = text;
+        result.epilog_ = text;
         return result;
     }
 
-    Command HelpSections(Sections value) @safe
+    Command helpSections(Sections value) @safe
     {
         auto result = this;
-        result.sections = value;
-        result.sectionsToImport = null;
+        result.sections_ = value;
+        result.sectionsToImport_ = null;
         return result;
     }
 
-    Command HelpSections(sections...)(string file = __FILE__) @safe
+    Command helpSections(sections...)() @safe
     {
         auto result = this;
-        result.sectionsToImport = [sections];
-        result.sectionsImportFile = file;
+        result.sectionsToImport_ = [sections];
         return result;
     }
 
-    Command Hidden(bool value = true) @safe
+    Command hidden(bool value = true) @safe
     {
         auto result = this;
-        result.hidden = value;
+        result.hidden_ = value;
         return result;
     }
 
-    Command Default(bool value = true) @safe
+    /// Override the views root used to resolve string-imported help texts
+    /// (defaults to the root command's `name`).
+    Command viewsRoot(string root) @safe
     {
         auto result = this;
-        result.default_ = value;
+        result.viewsRoot_ = root;
         return result;
     }
 }
@@ -99,12 +99,12 @@ struct Command
 struct Option
 {
     string aliases;
-    string description;
-    string placeholder;
-    bool required;
-    bool hidden;
-    bool counter;
-    string[] allowedValues;
+    string description_;
+    string placeholder_;
+    bool required_;
+    bool hidden_;
+    bool counter_;
+    string[] allowedValues_;
 
     this(string aliases) @safe
     {
@@ -114,48 +114,48 @@ struct Option
     this(string aliases, string description) @safe
     {
         this.aliases = aliases;
-        this.description = description;
+        this.description_ = description;
     }
 
-    Option Description(string text) @safe
+    Option description(string text) @safe
     {
         auto result = this;
-        result.description = text;
+        result.description_ = text;
         return result;
     }
 
-    Option Placeholder(string text) @safe
+    Option placeholder(string text) @safe
     {
         auto result = this;
-        result.placeholder = text;
+        result.placeholder_ = text;
         return result;
     }
 
-    Option Required(bool value = true) @safe
+    Option required(bool value = true) @safe
     {
         auto result = this;
-        result.required = value;
+        result.required_ = value;
         return result;
     }
 
-    Option Hidden(bool value = true) @safe
+    Option hidden(bool value = true) @safe
     {
         auto result = this;
-        result.hidden = value;
+        result.hidden_ = value;
         return result;
     }
 
-    Option Counter(bool value = true) @safe
+    Option counter(bool value = true) @safe
     {
         auto result = this;
-        result.counter = value;
+        result.counter_ = value;
         return result;
     }
 
-    Option AllowedValues(string[] values...) @safe
+    Option allowedValues(string[] values...) @safe
     {
         auto result = this;
-        result.allowedValues = values.dup;
+        result.allowedValues_ = values.dup;
         return result;
     }
 }
@@ -163,40 +163,40 @@ struct Option
 struct Argument
 {
     size_t position = size_t.max;
-    string placeholder;
-    string description;
-    bool optional;
-    bool hidden;
+    string placeholder_;
+    string description_;
+    bool optional_;
+    bool hidden_;
 
     this(string placeholder) @safe
     {
-        this.placeholder = placeholder;
+        this.placeholder_ = placeholder;
     }
 
     this(size_t position, string placeholder = null) @safe
     {
         this.position = position;
-        this.placeholder = placeholder;
+        this.placeholder_ = placeholder;
     }
 
-    Argument Description(string text) @safe
+    Argument description(string text) @safe
     {
         auto result = this;
-        result.description = text;
+        result.description_ = text;
         return result;
     }
 
-    Argument Optional(bool value = true) @safe
+    Argument optional(bool value = true) @safe
     {
         auto result = this;
-        result.optional = value;
+        result.optional_ = value;
         return result;
     }
 
-    Argument Hidden(bool value = true) @safe
+    Argument hidden(bool value = true) @safe
     {
         auto result = this;
-        result.hidden = value;
+        result.hidden_ = value;
         return result;
     }
 }
@@ -221,6 +221,14 @@ struct CliError
 
 alias CliExpected(T) = Expected!(T, CliError);
 
+/// Build a `Sections` map by string-importing a list of section files.
+///
+/// `subPath` is joined under the views root; pass an empty/null `subPath`
+/// for sections that live directly under the views root. The views root is
+/// taken from the source file's basename, mirroring the legacy default —
+/// callers that want the root-`@Command(name)`-driven default should let
+/// the framework resolve sections via `@Command(...).helpSections!(...)`
+/// instead of building a `Sections` map by hand.
 Sections importSections(string subPath = null, string[] sections, string file = __FILE__)()
 {
     Sections result;
@@ -252,16 +260,6 @@ template tryImport(string path)
     }
 }
 
-template option(string subPath, string aliases, string file = __FILE__)
-{
-    enum option = Option(aliases, helpTextViaImport!(file, aliases, subPath));
-}
-
-template option(string aliases, string file = __FILE__)
-{
-    enum option = Option(aliases, helpTextViaImport!(file, aliases, null));
-}
-
 CliExpected!Cli parseCli(Cli)(
     string[] argv,
     HelpInfo helpInfo = HelpInfo.init,
@@ -279,7 +277,7 @@ CliExpected!Cli parseCli(Cli)(
 {
     auto info = normalizeHelpInfo!Cli(argv, helpInfo);
     auto args = argv.length > 0 ? argv[1 .. $] : argv;
-    auto parsed = parseCommand(receiver, args, info);
+    auto parsed = parseCommand!(Cli, Cli)(receiver, args, info);
     if (!parsed)
         return err!Cli(parsed.error);
 
@@ -294,7 +292,7 @@ CliExpected!Cli parseKnownCli(Cli)(
 {
     auto info = normalizeHelpInfo!Cli(argv, helpInfo);
     auto args = argv.length > 0 ? argv[1 .. $] : argv;
-    auto parsed = parseCommand(receiver, args, info, true);
+    auto parsed = parseCommand!(Cli, Cli)(receiver, args, info, true);
     if (!parsed)
         return err!Cli(parsed.error);
 
@@ -314,10 +312,13 @@ int runCli(Cli)(
     {
         import std.stdio : stderr, writeln;
 
+        // Pure help requests carry no error message; everything else
+        // surfaces the diagnostic before any accompanying help text so
+        // the cause stays visible even when help is verbose.
+        if (parsed.error.message.length && !parsed.error.isHelp)
+            stderr.writeln("Error: ", parsed.error.message);
         if (parsed.error.help.length)
             writeln(parsed.error.help);
-        else if (parsed.error.message.length)
-            stderr.writeln("Error: ", parsed.error.message);
         return parsed.error.exitCode;
     }
 
@@ -338,26 +339,105 @@ int runParsedCli(Cli)(ref Cli cli)
         return callRun(cli);
 }
 
-private template helpTextViaImport(string file, string optionAliases, string subPath = null)
+/// Resolve the views-tree root (a directory under the dub package's string
+/// import path) used when looking up help text for `Root` and its
+/// descendants. Defaults to the root command's `name`; can be overridden
+/// per-program with `Command(...).viewsRoot("...")`.
+private template viewsRootFor(Root)
 {
-    import std.ascii : isUpper;
-
-    enum programName = file.baseName[0 .. $ - 2];
-    enum shortOptionName = optionAliases.split("|")[0];
-    static assert(shortOptionName.length == 1);
-
-    enum safeName = shortOptionName[0].isUpper
-        ? shortOptionName ~ "_"
-        : shortOptionName;
-
-    enum path = subPath.length
-        ? buildPath(programName, subPath, "options", safeName ~ ".txt")
-        : buildPath(programName, "options", safeName ~ ".txt");
-
-    enum helpTextViaImport = tryImport!path;
+    enum cmd = commandInfoRaw!Root();
+    enum viewsRootFor = cmd.viewsRoot_.length ? cmd.viewsRoot_ : cmd.name;
 }
 
-private CliExpected!(string[]) parseCommand(Cli)(
+/// Compute the chain of `@Command` names from `Root`'s direct children
+/// down to `Leaf`, walking `@Subcommands` SumTypes. Returns `[]` when
+/// `Root == Leaf`, and `null` when `Leaf` is not reachable from `Root`.
+///
+/// By contract, each leaf type appears at most once in the subcommand
+/// tree of a given root — when multiple paths exist, the first one
+/// encountered (in `SumType.Types` order) wins.
+private string[] subcommandPath(Root, Leaf)()
+{
+    static if (is(Root == Leaf))
+        return [];
+    else static if (hasSubcommands!Root)
+    {
+        enum field = subcommandsFieldName!Root;
+        alias Sub = typeof(__traits(getMember, Root.init, field));
+        static foreach (Variant; Sub.Types)
+        {{
+            static if (is(Variant == Leaf))
+                return [commandPrimaryName!Variant];
+            else static if (hasSubcommands!Variant)
+            {{
+                enum inner = subcommandPath!(Variant, Leaf);
+                static if (inner.length > 0)
+                    return [commandPrimaryName!Variant] ~ inner;
+            }}
+        }}
+        return null;
+    }
+    else
+        return null;
+}
+
+/// Resolve the help text for the option declared on `Cli.<field>` within
+/// the program rooted at `Root`. Inline descriptions on the `@Option` UDA
+/// take precedence; when the description is empty the framework falls
+/// back to a string-import lookup at
+/// `views/<root>/<chain>/options/<short>.txt`, where `<short>` is the
+/// option's first alias (uppercase short flags get a trailing underscore
+/// in the filename to avoid collisions on case-insensitive filesystems).
+private template optionHelpText(Root, Cli, string field)
+{
+    alias symbol = __traits(getMember, Cli, field);
+    enum opt = getUDAs!(symbol, Option)[0];
+    static if (opt.description_.length)
+        enum optionHelpText = opt.description_;
+    else
+    {
+        enum chain = subcommandPath!(Root, Cli);
+        enum subPath = chain.length ? chain.join("/") : "";
+        enum viewsRoot = viewsRootFor!Root;
+        enum aliasShort = opt.aliases.split("|")[0];
+        enum safeName = isUpperShortFlag(aliasShort)
+            ? aliasShort ~ "_"
+            : aliasShort;
+        enum path = subPath.length
+            ? buildPath(viewsRoot, subPath, "options", safeName ~ ".txt")
+            : buildPath(viewsRoot, "options", safeName ~ ".txt");
+        enum optionHelpText = tryImport!path;
+    }
+}
+
+private bool isUpperShortFlag(string flag) @safe pure nothrow @nogc
+{
+    return flag.length == 1 && flag[0] >= 'A' && flag[0] <= 'Z';
+}
+
+/// Resolve the deferred section list declared by `Cli`'s @Command.helpSections
+/// builder, looking each section up at
+/// `views/<root>/<chain>/sections/<name>.txt`.
+private Sections sectionsForCommand(Root, Cli)()
+{
+    Sections result;
+    enum cmd = commandInfoRaw!Cli();
+    enum chain = subcommandPath!(Root, Cli);
+    enum subPath = chain.length ? chain.join("/") : "";
+    enum viewsRoot = viewsRootFor!Root;
+    static foreach (section; cmd.sectionsToImport_)
+    {{
+        enum path = subPath.length
+            ? buildPath(viewsRoot, subPath, "sections", section ~ ".txt")
+            : buildPath(viewsRoot, "sections", section ~ ".txt");
+        enum text = tryImport!path;
+        static if (text.length)
+            result[section] = text.split("\n\n");
+    }}
+    return result;
+}
+
+private CliExpected!(string[]) parseCommand(Root, Cli)(
     ref Cli receiver,
     string[] args,
     HelpInfo helpInfo,
@@ -385,7 +465,7 @@ private CliExpected!(string[]) parseCommand(Cli)(
         {
             return err!(string[])(CliError(
                 kind: CliErrorKind.help,
-                help: formatHelp!Cli(helpInfo),
+                help: formatHelp!(Root, Cli)(helpInfo),
                 exitCode: 0,
             ));
         }
@@ -396,7 +476,7 @@ private CliExpected!(string[]) parseCommand(Cli)(
             {
                 enum field = subcommandsFieldName!Cli;
                 auto subArgs = args[index + 1 .. $];
-                auto selected = parseSubcommand(
+                auto selected = parseSubcommand!Root(
                     __traits(getMember, receiver, field),
                     arg,
                     subArgs,
@@ -411,6 +491,15 @@ private CliExpected!(string[]) parseCommand(Cli)(
 
                 if (selected.error.isHelp || selected.error.message.length)
                     return err!(string[])(selected.error);
+
+                // No variant matched the given subcommand name. In a
+                // subcommand-bearing context this is an unknown command,
+                // not a stray positional argument.
+                return err!(string[])(CliError(
+                    kind: CliErrorKind.parse,
+                    message: "Unknown command: " ~ arg,
+                    help: formatHelp!(Root, Cli)(helpInfo),
+                ));
             }
         }
 
@@ -455,14 +544,14 @@ private CliExpected!(string[]) parseCommand(Cli)(
         return err!(string[])(CliError(
             kind: CliErrorKind.parse,
             message: "Missing subcommand",
-            help: formatHelp!Cli(helpInfo),
+            help: formatHelp!(Root, Cli)(helpInfo),
         ));
     }
     else
         return ok!CliError(unknown);
 }
 
-private CliExpected!(string[]) parseSubcommand(Sub)(
+private CliExpected!(string[]) parseSubcommand(Root, Sub)(
     ref Sub destination,
     string name,
     ref string[] args,
@@ -477,8 +566,8 @@ if (isSumType!Sub)
         if (commandNames!CommandType.canFind(name))
         {
             CommandType command;
-            auto info = childHelpInfo!CommandType(parentHelp);
-            auto parsed = parseCommand(command, args, info, keepUnknown);
+            auto info = childHelpInfo!(Root, CommandType)(parentHelp);
+            auto parsed = parseCommand!(Root, CommandType)(command, args, info, keepUnknown);
             if (!parsed)
                 return parsed;
 
@@ -490,7 +579,7 @@ if (isSumType!Sub)
     if (isHelpToken(name))
         return err!(string[])(CliError(
             kind: CliErrorKind.help,
-            help: formatSubcommandsHelp!Sub(parentHelp),
+            help: formatSubcommandsHelp!(Root, Sub)(parentHelp),
             exitCode: 0,
         ));
 
@@ -660,7 +749,7 @@ private CliExpected!void applyOption(T)(
     }
     else static if (isIntegral!T && !is(T == enum) && !is(T == bool))
     {
-        if (optionInfo.counter && !hasInlineValue && isNextValueMissing(args, index))
+        if (optionInfo.counter_ && !hasInlineValue && isNextValueMissing(args, index))
         {
             target++;
             index++;
@@ -749,7 +838,7 @@ private CliExpected!void assignPositionals(Cli)(
             enum argumentInfo = args[0];
             if (valueIndex >= values.length)
             {
-                static if (!argumentInfo.optional)
+                static if (!argumentInfo.optional_)
                 {
                     return err(CliError(
                         kind: CliErrorKind.parse,
@@ -808,7 +897,7 @@ private CliExpected!void validateRequired(Cli)(bool[string] seen)
     {{
         alias symbol = __traits(getMember, Cli, field);
         enum options = getUDAs!(symbol, Option);
-        static if (options.length && options[0].required)
+        static if (options.length && options[0].required_)
         {{
             if (!seen.get(field, false))
                 return err(CliError(
@@ -823,10 +912,10 @@ private CliExpected!void validateRequired(Cli)(bool[string] seen)
 
 private CliExpected!T parseValue(T)(string value, Option optionInfo)
 {
-    if (optionInfo.allowedValues.length && !optionInfo.allowedValues.canFind(value))
+    if (optionInfo.allowedValues_.length && !optionInfo.allowedValues_.canFind(value))
         return err!T(CliError(
             kind: CliErrorKind.parse,
-            message: "Invalid value `" ~ value ~ "`; expected one of: " ~ optionInfo.allowedValues.join(", "),
+            message: "Invalid value `" ~ value ~ "`; expected one of: " ~ optionInfo.allowedValues_.join(", "),
         ));
 
     static if (is(T == string))
@@ -884,41 +973,41 @@ private HelpInfo normalizeHelpInfo(Cli)(string[] argv, HelpInfo helpInfo)
     if (helpInfo.programName.length == 0)
         helpInfo.programName = argv.length > 0 ? argv[0].baseName : commandPrimaryName!Cli;
 
-    auto command = commandInfo!Cli;
-    if (command.description.length && helpInfo.shortDescription.length == 0)
-        helpInfo.shortDescription = command.description;
+    auto command = commandInfo!(Cli, Cli);
+    if (command.description_.length && helpInfo.shortDescription.length == 0)
+        helpInfo.shortDescription = command.description_;
 
     // Merge command sections into helpInfo
-    foreach (key, value; command.sections)
+    foreach (key, value; command.sections_)
         if (key !in helpInfo.sections)
             helpInfo.sections[key] = value;
 
     return helpInfo;
 }
 
-private HelpInfo childHelpInfo(Cli)(HelpInfo parent)
+private HelpInfo childHelpInfo(Root, Cli)(HelpInfo parent)
 {
-    auto command = commandInfo!Cli;
+    auto command = commandInfo!(Root, Cli);
     parent.programName = parent.programName ~ " " ~ commandPrimaryName!Cli;
-    parent.shortDescription = command.description.length
-        ? command.description
-        : command.shortDescription;
-    parent.sections = command.sections;
+    parent.shortDescription = command.description_.length
+        ? command.description_
+        : command.shortDescription_;
+    parent.sections = command.sections_;
     return parent;
 }
 
-private string formatHelp(Cli)(HelpInfo info)
+private string formatHelp(Root, Cli)(HelpInfo info)
 {
-    auto command = commandInfo!Cli;
-    auto description = command.description.length
-        ? command.description
+    auto command = commandInfo!(Root, Cli);
+    auto description = command.description_.length
+        ? command.description_
         : info.shortDescription;
 
     string[] sections;
     sections ~= formatSection("name", [
         info.programName.sty.bold ~ (description.length ? " - " ~ description : null),
     ]);
-    sections ~= formatSection("synopsis", [command.usage.length ? command.usage : formatUsage!Cli(info.programName)]);
+    sections ~= formatSection("synopsis", [command.usage_.length ? command.usage_ : formatUsage!Cli(info.programName)]);
 
     if (info.sections.get("description", null).length)
         sections ~= formatSection("description", info.sections["description"]);
@@ -927,7 +1016,7 @@ private string formatHelp(Cli)(HelpInfo info)
     if (positionals.length)
         sections ~= formatSection("arguments", positionals, 0, "", "\n");
 
-    auto options = formatOptions!Cli;
+    auto options = formatOptions!(Root, Cli);
     if (options.length)
         sections ~= formatSection("options", options, 0, "", "\n");
 
@@ -935,7 +1024,7 @@ private string formatHelp(Cli)(HelpInfo info)
     {
         enum field = subcommandsFieldName!Cli;
         alias Sub = typeof(__traits(getMember, Cli.init, field));
-        auto commands = formatSubcommands!Sub;
+        auto commands = formatSubcommands!(Root, Sub);
         if (commands.length)
             sections ~= formatSection("commands", commands, 0, "", "\n");
     }
@@ -944,15 +1033,15 @@ private string formatHelp(Cli)(HelpInfo info)
         if (name != "description")
             sections ~= formatSection(name, text);
 
-    if (command.epilog.length)
-        sections ~= command.epilog;
+    if (command.epilog_.length)
+        sections ~= command.epilog_;
 
     return sections.join("\n");
 }
 
-private string formatSubcommandsHelp(Sub)(HelpInfo info)
+private string formatSubcommandsHelp(Root, Sub)(HelpInfo info)
 {
-    return formatSection("commands", formatSubcommands!Sub, 0);
+    return formatSection("commands", formatSubcommands!(Root, Sub), 0);
 }
 
 private string formatUsage(Cli)(string programName)
@@ -965,7 +1054,7 @@ private string formatUsage(Cli)(string programName)
         static if (options.length)
         {{
             enum optionInfo = options[0];
-            static if (optionInfo.required)
+            static if (optionInfo.required_)
                 parts ~= displayOption(optionInfo, field) ~ valuePlaceholder!(typeof(__traits(getMember, Cli.init, field)))(optionInfo, field);
             else
                 parts ~= "[" ~ displayOption(optionInfo, field) ~ valuePlaceholder!(typeof(__traits(getMember, Cli.init, field)))(optionInfo, field) ~ "]";
@@ -975,7 +1064,7 @@ private string formatUsage(Cli)(string programName)
         static if (args.length)
         {{
             enum name = positionalName(field, args[0]);
-            static if (args[0].optional)
+            static if (args[0].optional_)
                 parts ~= "[" ~ name ~ "]";
             else
                 parts ~= name;
@@ -988,7 +1077,7 @@ private string formatUsage(Cli)(string programName)
     return parts.join(" ");
 }
 
-private string[] formatOptions(Cli)()
+private string[] formatOptions(Root, Cli)()
 {
     string[] lines;
     lines ~= "\t%s, %s\n%s".format("-h".sty.bold, "--help".sty.bold, "Show this help text.".wrap(80, "\t    ", "\t    "));
@@ -1000,8 +1089,11 @@ private string[] formatOptions(Cli)()
         static if (options.length)
         {{
             enum optionInfo = options[0];
-            static if (!optionInfo.hidden)
-                lines ~= formatOptionLine!(typeof(__traits(getMember, Cli.init, field)))(optionInfo, field);
+            static if (!optionInfo.hidden_)
+            {
+                enum description = optionHelpText!(Root, Cli, field);
+                lines ~= formatOptionLine!(typeof(__traits(getMember, Cli.init, field)))(optionInfo, field, description);
+            }
         }}
     }}
 
@@ -1015,29 +1107,29 @@ private string[] formatPositionals(Cli)()
     {{
         alias symbol = __traits(getMember, Cli, field);
         enum args = getUDAs!(symbol, Argument);
-        static if (args.length && !args[0].hidden)
+        static if (args.length && !args[0].hidden_)
             lines ~= "\t%s\n%s".format(
                 positionalName(field, args[0]).sty.bold,
-                args[0].description.wrap(80, "\t    ", "\t    "),
+                args[0].description_.wrap(80, "\t    ", "\t    "),
             );
     }}
 
     return lines;
 }
 
-private string[] formatSubcommands(Sub)()
+private string[] formatSubcommands(Root, Sub)()
 if (isSumType!Sub)
 {
     string[] lines;
     static foreach (CommandType; Sub.Types)
     {{
-        enum command = commandInfo!CommandType;
-        static if (!command.hidden)
+        enum command = commandInfo!(Root, CommandType);
+        static if (!command.hidden_)
         {{
             enum names = commandNames!CommandType.join(", ");
-            enum description = command.shortDescription.length
-                ? command.shortDescription
-                : command.description;
+            enum description = command.shortDescription_.length
+                ? command.shortDescription_
+                : command.description_;
             lines ~= "\t%s\n%s".format(
                 names.sty.bold,
                 description.wrap(80, "\t    ", "\t    "),
@@ -1047,7 +1139,7 @@ if (isSumType!Sub)
     return lines;
 }
 
-private string formatOptionLine(T)(Option optionInfo, string field)
+private string formatOptionLine(T)(Option optionInfo, string field, string description)
 {
     auto names = optionNames(optionInfo, field)
         .map!(name => "%s".format(optionDisplayName(name).sty.bold))
@@ -1056,7 +1148,7 @@ private string formatOptionLine(T)(Option optionInfo, string field)
     return "\t%s%s\n%s".format(
         names,
         valuePlaceholder!T(optionInfo, field),
-        optionInfo.description.wrap(80, "\t    ", "\t    "),
+        description.wrap(80, "\t    ", "\t    "),
     );
 }
 
@@ -1118,8 +1210,8 @@ private string valuePlaceholder(T)(Option optionInfo, string field)
         return null;
     else
     {
-        auto placeholder = optionInfo.placeholder.length
-            ? optionInfo.placeholder
+        auto placeholder = optionInfo.placeholder_.length
+            ? optionInfo.placeholder_
             : field.toUpper;
         return " " ~ placeholder;
     }
@@ -1127,7 +1219,7 @@ private string valuePlaceholder(T)(Option optionInfo, string field)
 
 private string positionalName(string field, Argument argumentInfo)
 {
-    return argumentInfo.placeholder.length ? argumentInfo.placeholder : field.toUpper;
+    return argumentInfo.placeholder_.length ? argumentInfo.placeholder_ : field.toUpper;
 }
 
 private bool isHelpToken(string arg)
@@ -1157,35 +1249,40 @@ private string findSubcommandsFieldName(T)()
     return null;
 }
 
-private Command commandInfo(T)()
+/// Read the raw `@Command` UDA from `T`, with no section resolution.
+/// Falls back to a default-named `Command` when `T` lacks a UDA.
+private Command commandInfoRaw(T)()
 {
     enum udas = getUDAs!(T, Command);
     static if (udas.length == 0)
         return Command(T.stringof);
     else
+        return udas[0];
+}
+
+/// Read the `@Command` UDA from `Cli` and resolve any deferred
+/// `helpSections!()` import list, using `Root`'s views root and the
+/// subcommand chain `Root → … → Cli` to compute import paths.
+private Command commandInfo(Root, Cli)()
+{
+    auto result = commandInfoRaw!Cli();
+    if (result.sectionsToImport_.length > 0)
     {
-        enum cmd = udas[0];
-        static if (cmd.sectionsToImport.length > 0)
-        {
-            auto result = cmd;
-            result.sections = importSections!(cmd.name, cmd.sectionsToImport, cmd.sectionsImportFile)();
-            result.sectionsToImport = null;
-            return result;
-        }
-        else
-            return cmd;
+        result.sections_ = sectionsForCommand!(Root, Cli)();
+        result.sectionsToImport_ = null;
     }
+    return result;
 }
 
 private string[] commandNames(T)()
 {
-    auto info = commandInfo!T;
+    enum info = commandInfoRaw!T();
     return [info.name] ~ info.aliases;
 }
 
 private string commandPrimaryName(T)()
 {
-    return commandInfo!T.name;
+    return commandInfoRaw!T().name;
 }
 
 private int callRun(T)(ref T value)
@@ -1211,7 +1308,7 @@ unittest
 {
     struct Cli
     {
-        @(Option("v|verbose").Counter())
+        @(Option("v|verbose").counter())
         uint verbose;
 
         @(Option("n|name"))
@@ -1247,7 +1344,7 @@ unittest
 @system
 unittest
 {
-    @(Command("init").ShortDescription("Create files"))
+    @(Command("init").shortDescription("Create files"))
     static struct Init
     {
         @(Option("force"))
@@ -1278,10 +1375,10 @@ unittest
 @system
 unittest
 {
-    @(Command("tool").Description("Example tool"))
+    @(Command("tool").description("Example tool"))
     struct Cli
     {
-        @(Option("v|verbose").Description("Increase verbosity."))
+        @(Option("v|verbose").description("Increase verbosity."))
         bool verbose;
     }
 
@@ -1324,4 +1421,91 @@ unittest
     auto parsed = parseCli!Cli(["tool", "--files"]);
     assert(!parsed);
     assert(parsed.error.message == "Missing value for --files");
+}
+
+@("args.parseCli.unknownCommand")
+@system
+unittest
+{
+    @(Command("init"))
+    static struct Init {}
+
+    @(Command("tool"))
+    struct Cli
+    {
+        @Subcommands()
+        SumType!Init command;
+    }
+
+    auto parsed = parseCli!Cli(["tool", "frob"]);
+    assert(!parsed);
+    assert(parsed.error.message == "Unknown command: frob");
+}
+
+@("args.subcommandPath.flat")
+@safe
+unittest
+{
+    @(Command("init")) static struct Init {}
+    @(Command("build")) static struct Build {}
+
+    @(Command("tool"))
+    static struct Tool
+    {
+        @Subcommands()
+        SumType!(Init, Build) command;
+    }
+
+    static assert(subcommandPath!(Tool, Tool) == []);
+    static assert(subcommandPath!(Tool, Init) == ["init"]);
+    static assert(subcommandPath!(Tool, Build) == ["build"]);
+}
+
+@("args.subcommandPath.nested")
+@safe
+unittest
+{
+    @(Command("create")) static struct PrCreate {}
+    @(Command("list")) static struct PrList {}
+
+    @(Command("pr"))
+    static struct Pr
+    {
+        @Subcommands()
+        SumType!(PrCreate, PrList) command;
+    }
+
+    @(Command("auth")) static struct Auth {}
+
+    @(Command("gh"))
+    static struct Gh
+    {
+        @Subcommands()
+        SumType!(Auth, Pr) command;
+    }
+
+    static assert(subcommandPath!(Gh, Gh) == []);
+    static assert(subcommandPath!(Gh, Pr) == ["pr"]);
+    static assert(subcommandPath!(Gh, PrCreate) == ["pr", "create"]);
+    static assert(subcommandPath!(Gh, Auth) == ["auth"]);
+}
+
+@("args.viewsRootFor.defaultsToCommandName")
+@safe
+unittest
+{
+    @(Command("docker"))
+    static struct Docker {}
+
+    static assert(viewsRootFor!Docker == "docker");
+}
+
+@("args.viewsRootFor.respectsOverride")
+@safe
+unittest
+{
+    @(Command("docker").viewsRoot("custom-views"))
+    static struct Docker {}
+
+    static assert(viewsRootFor!Docker == "custom-views");
 }

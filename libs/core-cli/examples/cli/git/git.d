@@ -4,29 +4,30 @@ name "git"
 dependency "sparkles:core-cli" path="../../../../.."
 targetPath "build"
 +/
+// ci: build-only
 
 import sparkles.core_cli.args;
 import sparkles.core_cli.prettyprint : prettyPrint;
 import std.sumtype;
 
 @(Command("add")
-    .ShortDescription("Add file contents to the index")
-    .HelpSections!("description")())
+    .shortDescription("Add file contents to the index")
+    .helpSections!("description")())
 struct Add
 {
-    @(option!("add", `A|all`, __FILE__))
+    @(Option(`A|all`))
     bool all;
 
-    @(option!("add", `u|update`, __FILE__))
+    @(Option(`u|update`))
     bool update;
 
-    @(option!("add", `p|patch`, __FILE__))
+    @(Option(`p|patch`))
     bool patch;
 
-    @(option!("add", `n|dry-run`, __FILE__))
+    @(Option(`n|dry-run`))
     bool dryRun;
 
-    @(Argument("pathspec").Optional())
+    @(Argument("pathspec").optional())
     string[] pathspecs;
 
     void run()
@@ -38,17 +39,17 @@ struct Add
 }
 
 @(Command("commit")
-    .ShortDescription("Record changes to the repository")
-    .HelpSections!("description")())
+    .shortDescription("Record changes to the repository")
+    .helpSections!("description")())
 struct Commit
 {
-    @(option!("commit", `m|message`, __FILE__))
+    @(Option(`m|message`))
     string message;
 
-    @(option!("commit", `a|all`, __FILE__))
+    @(Option(`a|all`))
     bool all;
 
-    @(option!("commit", `v|verbose`, __FILE__))
+    @(Option(`v|verbose`))
     bool verbose;
 
     @(Option("amend", "Amend the last commit"))
@@ -63,23 +64,23 @@ struct Commit
 }
 
 @(Command("push")
-    .ShortDescription("Update remote refs along with associated objects")
-    .HelpSections!("description")())
+    .shortDescription("Update remote refs along with associated objects")
+    .helpSections!("description")())
 struct Push
 {
-    @(option!("push", `u|set-upstream`, __FILE__))
+    @(Option(`u|set-upstream`))
     bool setUpstream;
 
-    @(option!("push", `f|force`, __FILE__))
+    @(Option(`f|force`))
     bool force;
 
     @(Option("tags", "Push all tags"))
     bool tags;
 
-    @(Argument("repository").Optional())
+    @(Argument("repository").optional())
     string repository;
 
-    @(Argument("refspec").Optional())
+    @(Argument("refspec").optional())
     string[] refspecs;
 
     void run()
@@ -91,17 +92,17 @@ struct Push
 }
 
 @(Command("pull")
-    .ShortDescription("Fetch from and integrate with another repository or a local branch")
-    .HelpSections!("description")())
+    .shortDescription("Fetch from and integrate with another repository or a local branch")
+    .helpSections!("description")())
 struct Pull
 {
     @(Option("rebase", "Fetch from and integrate with another repository or a local branch"))
     bool rebase;
 
-    @(Argument("repository").Optional())
+    @(Argument("repository").optional())
     string repository;
 
-    @(Argument("refspec").Optional())
+    @(Argument("refspec").optional())
     string[] refspecs;
 
     void run()
@@ -113,14 +114,14 @@ struct Pull
 }
 
 @(Command("status")
-    .ShortDescription("Show the working tree status")
-    .HelpSections!("description")())
+    .shortDescription("Show the working tree status")
+    .helpSections!("description")())
 struct Status
 {
-    @(option!("status", `s|short`, __FILE__))
+    @(Option(`s|short`))
     bool short_;
 
-    @(option!("status", `b|branch`, __FILE__))
+    @(Option(`b|branch`))
     bool branch;
 
     void run()
@@ -132,11 +133,11 @@ struct Status
 }
 
 @(Command("log")
-    .ShortDescription("Show commit logs")
-    .HelpSections!("description")())
+    .shortDescription("Show commit logs")
+    .helpSections!("description")())
 struct Log
 {
-    @(option!("log", `n|max-count`, __FILE__))
+    @(Option(`n|max-count`))
     int maxCount = -1;
 
     @(Option("oneline", "Shorten commit hash and show only the first line of the commit message"))
@@ -145,10 +146,10 @@ struct Log
     @(Option("graph", "Show an ASCII graph of the commit history"))
     bool graph;
 
-    @(option!("log", `p|patch`, __FILE__))
+    @(Option(`p|patch`))
     bool patch;
 
-    @(Argument("revision-range").Optional())
+    @(Argument("revision-range").optional())
     string revisionRange;
 
     void run()
@@ -160,26 +161,26 @@ struct Log
 }
 
 @(Command("branch")
-    .ShortDescription("List, create, or delete branches")
-    .HelpSections!("description")())
+    .shortDescription("List, create, or delete branches")
+    .helpSections!("description")())
 struct Branch
 {
-    @(option!("branch", `a|all`, __FILE__))
+    @(Option(`a|all`))
     bool all;
 
-    @(option!("branch", `d|delete`, __FILE__))
+    @(Option(`d|delete`))
     bool delete_;
 
-    @(option!("branch", `D`, __FILE__))
+    @(Option(`D`))
     bool forceDelete;
 
-    @(option!("branch", `m|move`, __FILE__))
+    @(Option(`m|move`))
     bool move;
 
-    @(option!("branch", `r|remotes`, __FILE__))
+    @(Option(`r|remotes`))
     bool remotes;
 
-    @(Argument("branchname").Optional())
+    @(Argument("branchname").optional())
     string branchName;
 
     void run()
@@ -191,17 +192,17 @@ struct Branch
 }
 
 @(Command("checkout")
-    .ShortDescription("Switch branches or restore working tree files")
-    .HelpSections!("description")())
+    .shortDescription("Switch branches or restore working tree files")
+    .helpSections!("description")())
 struct Checkout
 {
-    @(option!("checkout", `b`, __FILE__))
+    @(Option(`b`))
     string newBranch;
 
-    @(option!("checkout", `f|force`, __FILE__))
+    @(Option(`f|force`))
     bool force;
 
-    @(Argument("branch-or-commit").Optional())
+    @(Argument("branch-or-commit").optional())
     string target;
 
     void run()
@@ -213,8 +214,8 @@ struct Checkout
 }
 
 @(Command("diff")
-    .ShortDescription("Show changes between commits, commit and working tree, etc")
-    .HelpSections!("description")())
+    .shortDescription("Show changes between commits, commit and working tree, etc")
+    .helpSections!("description")())
 struct Diff
 {
     @(Option("cached", "Show differences between index and last commit"))
@@ -223,7 +224,7 @@ struct Diff
     @(Option("staged", "Alias for --cached"))
     bool staged;
 
-    @(Argument("pathspec").Optional())
+    @(Argument("pathspec").optional())
     string[] pathspecs;
 
     void run()
@@ -235,14 +236,14 @@ struct Diff
 }
 
 @(Command("init")
-    .ShortDescription("Create an empty Git repository or reinitialize an existing one")
-    .HelpSections!("description")())
+    .shortDescription("Create an empty Git repository or reinitialize an existing one")
+    .helpSections!("description")())
 struct Init
 {
     @(Option("bare", "Create a bare repository"))
     bool bare;
 
-    @(Argument("directory").Optional())
+    @(Argument("directory").optional())
     string directory;
 
     void run()
@@ -254,8 +255,8 @@ struct Init
 }
 
 @(Command("clone")
-    .ShortDescription("Clone a repository into a new directory")
-    .HelpSections!("description")())
+    .shortDescription("Clone a repository into a new directory")
+    .helpSections!("description")())
 struct Clone
 {
     @(Option("depth", "Create a shallow clone with a history truncated to the specified number of commits"))
@@ -264,13 +265,13 @@ struct Clone
     @(Option("recursive", "After the clone is created, initialize all submodules within"))
     bool recursive;
 
-    @(option!("clone", `b`, __FILE__))
+    @(Option(`b`))
     string branch;
 
     @(Argument("repository"))
     string repository;
 
-    @(Argument("directory").Optional())
+    @(Argument("directory").optional())
     string directory;
 
     void run()
@@ -282,32 +283,32 @@ struct Clone
 }
 
 @(Command("clean")
-    .ShortDescription("Remove untracked files from the working tree")
-    .HelpSections!("description", "interactive mode")())
+    .shortDescription("Remove untracked files from the working tree")
+    .helpSections!("description", "interactive mode")())
 struct Clean
 {
-    @(option!("clean", `d`, __FILE__))
+    @(Option(`d`))
     bool deleteDirectories;
 
-    @(option!("clean", `f|force`, __FILE__))
+    @(Option(`f|force`))
     bool force;
 
-    @(option!("clean", `i|interactive`, __FILE__))
+    @(Option(`i|interactive`))
     bool interactive;
 
-    @(option!("clean", `n|dry-run`, __FILE__))
+    @(Option(`n|dry-run`))
     bool dryRun;
 
-    @(option!("clean", `q|quiet`, __FILE__))
+    @(Option(`q|quiet`))
     bool quiet;
 
-    @(option!("clean", `e|exclude`, __FILE__))
+    @(Option(`e|exclude`))
     string excludePattern;
 
-    @(option!("clean", `x`, __FILE__))
+    @(Option(`x`))
     bool deleteUntracked;
 
-    @(option!("clean", `X`, __FILE__))
+    @(Option(`X`))
     bool deleteIgnored;
 
     void run()
@@ -319,8 +320,8 @@ struct Clean
 }
 
 @(Command("git")
-    .ShortDescription("Distributed version control system")
-    .HelpSections!("description", "examples", "environment", "further-reading")())
+    .shortDescription("Distributed version control system")
+    .helpSections!("description", "examples", "environment", "further-reading")())
 struct Git
 {
     @Subcommands
