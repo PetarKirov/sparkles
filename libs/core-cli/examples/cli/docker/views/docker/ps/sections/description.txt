@@ -1,0 +1,3 @@
+List containers known to the daemon.
+
+This is the top-level shortcut for `docker container ls`; both forms behave identically.

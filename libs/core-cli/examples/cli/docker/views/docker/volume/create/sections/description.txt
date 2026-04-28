@@ -1,0 +1,3 @@
+Create a new named volume.
+
+Without a driver, the volume is backed by the daemon's local filesystem. Use `--opt` (repeatable) to pass driver-specific options, e.g. `--driver=nfs --opt=device=:/exports/data --opt=o=addr=10.0.0.1`.

@@ -1,0 +1,24 @@
+Common workflows:
+
+Run a one-shot container that auto-deletes when it exits:
+    docker run --rm -it ubuntu:22.04 bash
+
+Run nginx in the background, exposing port 8080 → 80:
+    docker run -d -p 8080:80 --name web --restart unless-stopped nginx
+
+List running containers:
+    docker ps
+
+Build an image from the current directory:
+    docker build -t myorg/myapp:1.0 .
+
+Pull and push an image to/from a registry:
+    docker pull alpine:latest
+    docker push myorg/myapp:1.0
+
+Remove all stopped containers and unused images:
+    docker system prune -a
+
+Inspect a custom user-defined network:
+    docker network create --driver bridge mynet
+    docker network inspect mynet

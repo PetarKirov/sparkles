@@ -1,0 +1,3 @@
+Manage Docker images — build new ones from `Dockerfile` recipes, list local ones, pull and push them to/from registries, and prune stale ones.
+
+Images are referenced as `[REGISTRY/]NAMESPACE/REPOSITORY[:TAG]`, e.g. `nginx:alpine` or `ghcr.io/myorg/api:1.0`. When a tag is omitted, `latest` is assumed.

@@ -1,0 +1,1 @@
+Volume driver. `local` (default) stores data on the daemon host's filesystem, `nfs` mounts a remote NFS share, `tmpfs` allocates an in-memory volume that is cleared when the container stops.

@@ -1,0 +1,3 @@
+List containers known to the daemon.
+
+By default only running containers are shown; pass `--all` to also include stopped and exited ones. Use `--filter` to narrow the listing on attributes like status, label, or name. The output can be piped through `--format` for scripting.

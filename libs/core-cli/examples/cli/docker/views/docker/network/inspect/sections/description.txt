@@ -1,0 +1,1 @@
+Display detailed information about one or more networks, including the connected containers, IPAM configuration, and driver-specific options. Output is JSON by default; use `--format` to pluck specific fields with a Go template.
