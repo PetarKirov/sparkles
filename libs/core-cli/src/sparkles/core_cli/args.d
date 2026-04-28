@@ -1293,18 +1293,20 @@ private string commandPrimaryName(T)()
 
 private int callRun(T)(ref T value)
 {
-    static if (__traits(compiles, value.run()))
-    {
-        static if (is(typeof(value.run()) == int))
-            return value.run();
-        else
-        {
-            value.run();
-            return 0;
-        }
-    }
+    static assert(__traits(compiles, value.run()),
+        "Terminal CLI struct `" ~ T.stringof ~ "` is missing a zero-arg "
+        ~ "`run()` method. `runParsedCli` only descends into nested "
+        ~ "@Subcommands SumTypes — every leaf command struct must "
+        ~ "define `int run()` or `void run()` so the dispatcher has "
+        ~ "something to call.");
+
+    static if (is(typeof(value.run()) == int))
+        return value.run();
     else
+    {
+        value.run();
         return 0;
+    }
 }
 
 ///
@@ -1364,6 +1366,8 @@ unittest
     {
         @(Option("release"))
         bool release_;
+
+        int run() => 0;
     }
 
     struct Cli
@@ -1446,6 +1450,28 @@ unittest
     auto parsed = parseCli!Cli(["tool", "frob"]);
     assert(!parsed);
     assert(parsed.error.message == "Unknown command: frob");
+}
+
+@("args.callRun.staticAssertsOnMissingRun")
+@safe
+unittest
+{
+    @(Command("leaf"))
+    static struct Leaf
+    {
+        // intentionally no `run()` method
+    }
+
+    @(Command("tool"))
+    static struct Tool
+    {
+        @Subcommands
+        SumType!Leaf command;
+    }
+
+    Tool tool;
+    static assert(!__traits(compiles, runParsedCli(tool)),
+        "runParsedCli should fail to compile when a leaf lacks run()");
 }
 
 @("args.parseCli.shortOptionBundleSplitsOnlyWhenAllCharsAreKnownFlags")
