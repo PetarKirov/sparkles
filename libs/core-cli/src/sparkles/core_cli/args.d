@@ -590,6 +590,35 @@ if (isSumType!Sub)
     return err!(string[])(CliError.init);
 }
 
+/// True iff every character in `name` corresponds to a single-character
+/// short option defined on `Cli`. Used as the gating condition for
+/// splitting `-abc` into `-a -b -c`: when even one char isn't a known
+/// short flag the token is left intact so the caller can report a
+/// single "Unknown option" diagnostic instead of mid-bundle confusion.
+private bool isShortOptionBundle(Cli)(string name)
+{
+    foreach (c; name)
+    {
+        bool matched;
+        immutable single = [c];
+        static foreach (field; FieldNameTuple!Cli)
+        {{
+            alias symbol = __traits(getMember, Cli, field);
+            enum options = getUDAs!(symbol, Option);
+            static if (options.length)
+            {{
+                enum optionInfo = options[0];
+                foreach (candidate; optionNames(optionInfo, field))
+                    if (candidate == single)
+                        matched = true;
+            }}
+        }}
+        if (!matched)
+            return false;
+    }
+    return true;
+}
+
 /// Split `<name>[=<value>]` at the first `=`, populating the three output
 /// parameters. Shared by the long-option (`--foo=bar`) and short-option
 /// (`-x=2`) branches of `parseNamedOption`.
@@ -632,39 +661,22 @@ private CliExpected!bool parseNamedOption(Cli)(
     else if (arg.startsWith("-"))
     {
         splitOptionToken(arg[1 .. $], name, inlineValue, hasInlineValue);
-        if (!hasInlineValue)
+        // Bundle splitting (e.g. `-abc` -> `-a -b -c`) is only safe when
+        // every character in `name` is itself a defined short option;
+        // otherwise tokens like `-help` (against a struct exposing `-h`)
+        // would splat into `-h -e -l -p` and produce a confusing
+        // mid-bundle error. When at least one char doesn't match, leave
+        // `name` intact so the lookup below produces a single
+        // "Unknown option -help" diagnostic for the whole token.
+        if (!hasInlineValue && name.length > 1 && isShortOptionBundle!Cli(name))
         {
-            // Support bundling if first char matches an option but length > 1
-            if (name.length > 1)
-            {
-                bool matchesFirst;
-                static foreach (field; FieldNameTuple!Cli)
-                {{
-                    alias symbol = __traits(getMember, Cli, field);
-                    enum options = getUDAs!(symbol, Option);
-                    static if (options.length)
-                    {{
-                        enum optionInfo = options[0];
-                        foreach (candidate; optionNames(optionInfo, field))
-                        {
-                            if (candidate == name[0 .. 1])
-                                matchesFirst = true;
-                        }
-                    }}
-                }}
+            string[] bundled;
+            foreach (c; name)
+                bundled ~= "-" ~ c;
 
-                if (matchesFirst)
-                {
-                    // Split bundled options: -abc -> -a -b -c
-                    string[] bundled;
-                    foreach (c; name)
-                        bundled ~= "-" ~ c;
-
-                    args = args[0 .. index] ~ bundled ~ args[index + 1 .. $];
-                    // Retry with the first split option
-                    return parseNamedOption(receiver, args, index, seen);
-                }
-            }
+            args = args[0 .. index] ~ bundled ~ args[index + 1 .. $];
+            // Retry with the first split option
+            return parseNamedOption(receiver, args, index, seen);
         }
     }
 
@@ -1451,6 +1463,45 @@ unittest
     auto parsed = parseCli!Cli(["tool", "frob"]);
     assert(!parsed);
     assert(parsed.error.message == "Unknown command: frob");
+}
+
+@("args.parseCli.shortOptionBundleSplitsOnlyWhenAllCharsAreKnownFlags")
+@system
+unittest
+{
+    struct Cli
+    {
+        @(Option("h|host"))
+        bool host;
+    }
+
+    // `-help` is NOT a valid bundle (`-e`, `-l`, `-p` aren't defined)
+    // so it must surface as a single "Unknown option" rather than
+    // splatting into `-h -e -l -p` and confusing mid-bundle.
+    auto parsed = parseCli!Cli(["tool", "-help"]);
+    assert(!parsed);
+    assert(parsed.error.message == "Unknown option -help");
+}
+
+@("args.parseCli.shortOptionBundleSplitsWhenAllCharsKnown")
+@system
+unittest
+{
+    struct Cli
+    {
+        @(Option("a"))
+        bool a;
+        @(Option("b"))
+        bool b;
+        @(Option("c"))
+        bool c;
+    }
+
+    auto parsed = parseCli!Cli(["tool", "-abc"]);
+    assert(parsed);
+    assert(parsed.value.a);
+    assert(parsed.value.b);
+    assert(parsed.value.c);
 }
 
 @("args.subcommandPath.flat")
