@@ -606,30 +606,30 @@ private CliExpected!bool parseNamedOption(Cli)(
     if (arg.startsWith("--"))
     {
         isLong = true;
-        auto body = arg[2 .. $];
-        auto equals = body.countUntil("=");
+        auto rest = arg[2 .. $];
+        auto equals = rest.countUntil("=");
         if (equals >= 0)
         {
-            name = body[0 .. equals];
-            inlineValue = body[equals + 1 .. $];
+            name = rest[0 .. equals];
+            inlineValue = rest[equals + 1 .. $];
             hasInlineValue = true;
         }
         else
-            name = body;
+            name = rest;
     }
     else if (arg.startsWith("-"))
     {
-        auto body = arg[1 .. $];
-        auto equals = body.countUntil("=");
+        auto rest = arg[1 .. $];
+        auto equals = rest.countUntil("=");
         if (equals >= 0)
         {
-            name = body[0 .. equals];
-            inlineValue = body[equals + 1 .. $];
+            name = rest[0 .. equals];
+            inlineValue = rest[equals + 1 .. $];
             hasInlineValue = true;
         }
         else
         {
-            name = body;
+            name = rest;
             // Support bundling if first char matches an option but length > 1
             if (name.length > 1)
             {
