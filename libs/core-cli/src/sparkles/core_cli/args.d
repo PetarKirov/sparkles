@@ -1,6 +1,6 @@
 module sparkles.core_cli.args;
 
-public import sparkles.core_cli.help_formatting : HelpInfo, Sections, formatParagraph;
+public import sparkles.core_cli.help_formatting : HelpInfo, Sections, formatParagraph, formatSection;
 
 import std.algorithm : among, canFind, countUntil, map, splitter, startsWith;
 import std.array : array, join, split;
@@ -1174,23 +1174,6 @@ private string formatOptionLine(T)(Option optionInfo, string field, string descr
         description.wrap(80, "\t    ", "\t    "),
     );
 }
-
-private string formatSection(
-    string name,
-    string[] text,
-    uint wrapColumn = 80,
-    string indent = "\t",
-    string paragraphSeparator = "\n\n",
-)
-{
-    if (!text)
-        return null;
-    auto formatted = text.map!(t => formatParagraph(t, wrapColumn, indent)).array;
-    auto sep = (paragraphSeparator == "\n") ? "\n" : "\n\n";
-    return name.toUpper.sty.bold ~ "\n" ~ formatted.join(sep);
-}
-
-
 
 private bool matchesOption(Option optionInfo, string field, string name, bool isLong)
 {

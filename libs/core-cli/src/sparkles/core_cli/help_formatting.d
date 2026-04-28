@@ -58,12 +58,13 @@ string formatSection(
     string[] text,
     uint wrapColumn = 80,
     string indent = "\t",
-    )
+    string paragraphSeparator = "\n\n",
+)
 {
-    return !text ? null : "%s\n%-(%s\n\n%)".format(
-        name.toUpper.sty.bold,
-        text.map!(t => formatParagraph(t, wrapColumn, indent))
-    );
+    if (!text)
+        return null;
+    auto formatted = text.map!(t => formatParagraph(t, wrapColumn, indent));
+    return name.toUpper.sty.bold ~ "\n" ~ formatted.join(paragraphSeparator);
 }
 
 package(sparkles.core_cli) string formatParagraph(string text, uint wrapColumn, string indent)
