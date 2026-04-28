@@ -4,323 +4,292 @@ name "git"
 dependency "sparkles:core-cli" path="../../../../.."
 targetPath "build"
 +/
+// ci: build-only
 
 import sparkles.core_cli.args;
 import sparkles.core_cli.prettyprint : prettyPrint;
+import sparkles.core_cli.styled_template : styledWriteln;
 import std.sumtype;
 
-@(Command("add")
-    .ShortDescription("Add file contents to the index")
-    .HelpSections!("description")())
+int main(string[] args) => runCli!Git(args);
+
+@(Command("add",
+    shortDescription: "Add file contents to the index",
+    helpSections: ["description"],
+))
 struct Add
 {
-    @(option!("add", `A|all`, __FILE__))
+    @(Option(`A|all`))
     bool all;
 
-    @(option!("add", `u|update`, __FILE__))
+    @(Option(`u|update`))
     bool update;
 
-    @(option!("add", `p|patch`, __FILE__))
+    @(Option(`p|patch`))
     bool patch;
 
-    @(option!("add", `n|dry-run`, __FILE__))
+    @(Option(`n|dry-run`))
     bool dryRun;
 
-    @(Argument("pathspec").Optional())
+    @(Argument("pathspec", optional: true))
     string[] pathspecs;
 
-    void run()
-    {
-        import std.stdio : writeln;
-        writeln("Running git add with params:");
-        writeln(prettyPrint(this));
-    }
+    void run() =>
+        styledWriteln(i"Running {bold git add} with params:\n$(prettyPrint(this))");
 }
 
-@(Command("commit")
-    .ShortDescription("Record changes to the repository")
-    .HelpSections!("description")())
+@(Command("commit",
+    shortDescription: "Record changes to the repository",
+    helpSections: ["description"],
+))
 struct Commit
 {
-    @(option!("commit", `m|message`, __FILE__))
+    @(Option(`m|message`))
     string message;
 
-    @(option!("commit", `a|all`, __FILE__))
+    @(Option(`a|all`))
     bool all;
 
-    @(option!("commit", `v|verbose`, __FILE__))
+    @(Option(`v|verbose`))
     bool verbose;
 
-    @(Option("amend", "Amend the last commit"))
+    @(Option("amend", description: "Amend the last commit"))
     bool amend;
 
-    void run()
-    {
-        import std.stdio : writeln;
-        writeln("Running git commit with params:");
-        writeln(prettyPrint(this));
-    }
+    void run() =>
+        styledWriteln(i"Running {bold git commit} with params:\n$(prettyPrint(this))");
 }
 
-@(Command("push")
-    .ShortDescription("Update remote refs along with associated objects")
-    .HelpSections!("description")())
+@(Command("push",
+    shortDescription: "Update remote refs along with associated objects",
+    helpSections: ["description"],
+))
 struct Push
 {
-    @(option!("push", `u|set-upstream`, __FILE__))
+    @(Option(`u|set-upstream`))
     bool setUpstream;
 
-    @(option!("push", `f|force`, __FILE__))
+    @(Option(`f|force`))
     bool force;
 
-    @(Option("tags", "Push all tags"))
+    @(Option("tags", description: "Push all tags"))
     bool tags;
 
-    @(Argument("repository").Optional())
+    @(Argument("repository", optional: true))
     string repository;
 
-    @(Argument("refspec").Optional())
+    @(Argument("refspec", optional: true))
     string[] refspecs;
 
-    void run()
-    {
-        import std.stdio : writeln;
-        writeln("Running git push with params:");
-        writeln(prettyPrint(this));
-    }
+    void run() =>
+        styledWriteln(i"Running {bold git push} with params:\n$(prettyPrint(this))");
 }
 
-@(Command("pull")
-    .ShortDescription("Fetch from and integrate with another repository or a local branch")
-    .HelpSections!("description")())
+@(Command("pull",
+    shortDescription: "Fetch from and integrate with another repository or a local branch",
+    helpSections: ["description"],
+))
 struct Pull
 {
-    @(Option("rebase", "Fetch from and integrate with another repository or a local branch"))
+    @(Option("rebase", description: "Fetch from and integrate with another repository or a local branch"))
     bool rebase;
 
-    @(Argument("repository").Optional())
+    @(Argument("repository", optional: true))
     string repository;
 
-    @(Argument("refspec").Optional())
+    @(Argument("refspec", optional: true))
     string[] refspecs;
 
-    void run()
-    {
-        import std.stdio : writeln;
-        writeln("Running git pull with params:");
-        writeln(prettyPrint(this));
-    }
+    void run() =>
+        styledWriteln(i"Running {bold git pull} with params:\n$(prettyPrint(this))");
 }
 
-@(Command("status")
-    .ShortDescription("Show the working tree status")
-    .HelpSections!("description")())
+@(Command("status",
+    shortDescription: "Show the working tree status",
+    helpSections: ["description"],
+))
 struct Status
 {
-    @(option!("status", `s|short`, __FILE__))
+    @(Option(`s|short`))
     bool short_;
 
-    @(option!("status", `b|branch`, __FILE__))
+    @(Option(`b|branch`))
     bool branch;
 
-    void run()
-    {
-        import std.stdio : writeln;
-        writeln("Running git status with params:");
-        writeln(prettyPrint(this));
-    }
+    void run() =>
+        styledWriteln(i"Running {bold git status} with params:\n$(prettyPrint(this))");
 }
 
-@(Command("log")
-    .ShortDescription("Show commit logs")
-    .HelpSections!("description")())
+@(Command("log",
+    shortDescription: "Show commit logs",
+    helpSections: ["description"],
+))
 struct Log
 {
-    @(option!("log", `n|max-count`, __FILE__))
+    @(Option(`n|max-count`))
     int maxCount = -1;
 
-    @(Option("oneline", "Shorten commit hash and show only the first line of the commit message"))
+    @(Option("oneline", description: "Shorten commit hash and show only the first line of the commit message"))
     bool oneline;
 
-    @(Option("graph", "Show an ASCII graph of the commit history"))
+    @(Option("graph", description: "Show an ASCII graph of the commit history"))
     bool graph;
 
-    @(option!("log", `p|patch`, __FILE__))
+    @(Option(`p|patch`))
     bool patch;
 
-    @(Argument("revision-range").Optional())
+    @(Argument("revision-range", optional: true))
     string revisionRange;
 
-    void run()
-    {
-        import std.stdio : writeln;
-        writeln("Running git log with params:");
-        writeln(prettyPrint(this));
-    }
+    void run() =>
+        styledWriteln(i"Running {bold git log} with params:\n$(prettyPrint(this))");
 }
 
-@(Command("branch")
-    .ShortDescription("List, create, or delete branches")
-    .HelpSections!("description")())
+@(Command("branch",
+    shortDescription: "List, create, or delete branches",
+    helpSections: ["description"],
+))
 struct Branch
 {
-    @(option!("branch", `a|all`, __FILE__))
+    @(Option(`a|all`))
     bool all;
 
-    @(option!("branch", `d|delete`, __FILE__))
+    @(Option(`d|delete`))
     bool delete_;
 
-    @(option!("branch", `D`, __FILE__))
+    @(Option(`D`))
     bool forceDelete;
 
-    @(option!("branch", `m|move`, __FILE__))
+    @(Option(`m|move`))
     bool move;
 
-    @(option!("branch", `r|remotes`, __FILE__))
+    @(Option(`r|remotes`))
     bool remotes;
 
-    @(Argument("branchname").Optional())
+    @(Argument("branchname", optional: true))
     string branchName;
 
-    void run()
-    {
-        import std.stdio : writeln;
-        writeln("Running git branch with params:");
-        writeln(prettyPrint(this));
-    }
+    void run() =>
+        styledWriteln(i"Running {bold git branch} with params:\n$(prettyPrint(this))");
 }
 
-@(Command("checkout")
-    .ShortDescription("Switch branches or restore working tree files")
-    .HelpSections!("description")())
+@(Command("checkout",
+    shortDescription: "Switch branches or restore working tree files",
+    helpSections: ["description"],
+))
 struct Checkout
 {
-    @(option!("checkout", `b`, __FILE__))
+    @(Option(`b`))
     string newBranch;
 
-    @(option!("checkout", `f|force`, __FILE__))
+    @(Option(`f|force`))
     bool force;
 
-    @(Argument("branch-or-commit").Optional())
+    @(Argument("branch-or-commit", optional: true))
     string target;
 
-    void run()
-    {
-        import std.stdio : writeln;
-        writeln("Running git checkout with params:");
-        writeln(prettyPrint(this));
-    }
+    void run() =>
+        styledWriteln(i"Running {bold git checkout} with params:\n$(prettyPrint(this))");
 }
 
-@(Command("diff")
-    .ShortDescription("Show changes between commits, commit and working tree, etc")
-    .HelpSections!("description")())
+@(Command("diff",
+    shortDescription: "Show changes between commits, commit and working tree, etc",
+    helpSections: ["description"],
+))
 struct Diff
 {
-    @(Option("cached", "Show differences between index and last commit"))
+    @(Option("cached", description: "Show differences between index and last commit"))
     bool cached;
 
-    @(Option("staged", "Alias for --cached"))
+    @(Option("staged", description: "Alias for --cached"))
     bool staged;
 
-    @(Argument("pathspec").Optional())
+    @(Argument("pathspec", optional: true))
     string[] pathspecs;
 
-    void run()
-    {
-        import std.stdio : writeln;
-        writeln("Running git diff with params:");
-        writeln(prettyPrint(this));
-    }
+    void run() =>
+        styledWriteln(i"Running {bold git diff} with params:\n$(prettyPrint(this))");
 }
 
-@(Command("init")
-    .ShortDescription("Create an empty Git repository or reinitialize an existing one")
-    .HelpSections!("description")())
+@(Command("init",
+    shortDescription: "Create an empty Git repository or reinitialize an existing one",
+    helpSections: ["description"],
+))
 struct Init
 {
-    @(Option("bare", "Create a bare repository"))
+    @(Option("bare", description: "Create a bare repository"))
     bool bare;
 
-    @(Argument("directory").Optional())
+    @(Argument("directory", optional: true))
     string directory;
 
-    void run()
-    {
-        import std.stdio : writeln;
-        writeln("Running git init with params:");
-        writeln(prettyPrint(this));
-    }
+    void run() =>
+        styledWriteln(i"Running {bold git init} with params:\n$(prettyPrint(this))");
 }
 
-@(Command("clone")
-    .ShortDescription("Clone a repository into a new directory")
-    .HelpSections!("description")())
+@(Command("clone",
+    shortDescription: "Clone a repository into a new directory",
+    helpSections: ["description"],
+))
 struct Clone
 {
-    @(Option("depth", "Create a shallow clone with a history truncated to the specified number of commits"))
+    @(Option("depth", description: "Create a shallow clone with a history truncated to the specified number of commits"))
     int depth;
 
-    @(Option("recursive", "After the clone is created, initialize all submodules within"))
+    @(Option("recursive", description: "After the clone is created, initialize all submodules within"))
     bool recursive;
 
-    @(option!("clone", `b`, __FILE__))
+    @(Option(`b`))
     string branch;
 
     @(Argument("repository"))
     string repository;
 
-    @(Argument("directory").Optional())
+    @(Argument("directory", optional: true))
     string directory;
 
-    void run()
-    {
-        import std.stdio : writeln;
-        writeln("Running git clone with params:");
-        writeln(prettyPrint(this));
-    }
+    void run() =>
+        styledWriteln(i"Running {bold git clone} with params:\n$(prettyPrint(this))");
 }
 
-@(Command("clean")
-    .ShortDescription("Remove untracked files from the working tree")
-    .HelpSections!("description", "interactive mode")())
+@(Command("clean",
+    shortDescription: "Remove untracked files from the working tree",
+    helpSections: ["description", "interactive mode"],
+))
 struct Clean
 {
-    @(option!("clean", `d`, __FILE__))
+    @(Option(`d`))
     bool deleteDirectories;
 
-    @(option!("clean", `f|force`, __FILE__))
+    @(Option(`f|force`))
     bool force;
 
-    @(option!("clean", `i|interactive`, __FILE__))
+    @(Option(`i|interactive`))
     bool interactive;
 
-    @(option!("clean", `n|dry-run`, __FILE__))
+    @(Option(`n|dry-run`))
     bool dryRun;
 
-    @(option!("clean", `q|quiet`, __FILE__))
+    @(Option(`q|quiet`))
     bool quiet;
 
-    @(option!("clean", `e|exclude`, __FILE__))
+    @(Option(`e|exclude`))
     string excludePattern;
 
-    @(option!("clean", `x`, __FILE__))
+    @(Option(`x`))
     bool deleteUntracked;
 
-    @(option!("clean", `X`, __FILE__))
+    @(Option(`X`))
     bool deleteIgnored;
 
-    void run()
-    {
-        import std.stdio : writeln;
-        writeln("Running git clean with params:");
-        writeln(prettyPrint(this));
-    }
+    void run() =>
+        styledWriteln(i"Running {bold git clean} with params:\n$(prettyPrint(this))");
 }
 
-@(Command("git")
-    .ShortDescription("Distributed version control system")
-    .HelpSections!("description", "examples", "environment", "further-reading")())
+@(Command("git",
+    shortDescription: "Distributed version control system",
+    helpSections: ["description", "examples", "environment", "further-reading"]
+))
 struct Git
 {
     @Subcommands
@@ -338,9 +307,4 @@ struct Git
         Push,
         Status
     ) command;
-}
-
-int main(string[] args)
-{
-    return runCli!Git(args, HelpInfo("git", "Distributed version control system"));
 }

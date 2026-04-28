@@ -11,16 +11,16 @@ enum Network
 
 struct CliParams
 {
-    @(Option("c|count", "How many contracts to verify"))
+    @(Option("c|count", description: "How many contracts to verify"))
     uint count = uint.max;
 
-    @(Option("s|skip", "How many contracts to skip verifying from the list. Default is 0."))
+    @(Option("s|skip", description: "How many contracts to skip verifying from the list. Default is 0."))
     uint skipContractsCount;
 
-    @(Option("n|network", "Network id identifying the 'networks/<id>[_args].json' file to use"))
+    @(Option("n|network", description: "Network id identifying the 'networks/<id>[_args].json' file to use"))
     Network network = Network.kovan;
 
-    @(Option("p|parallel", "Enable parallel verification"))
+    @(Option("p|parallel", description: "Enable parallel verification"))
     bool parallel;
 }
 
