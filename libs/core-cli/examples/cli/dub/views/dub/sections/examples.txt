@@ -1,0 +1,21 @@
+Common workflows:
+
+Initialize a new package and start hacking:
+    dub init --type minimal hello-world
+    cd hello-world
+    dub run
+
+Build the current package in release mode with LDC:
+    dub build --build=release --compiler=ldc2
+
+Run the test suite with code coverage:
+    dub test --coverage
+
+Add a dependency at the latest version:
+    dub add vibe-d
+
+Search for a package on the registry:
+    dub search "json parser"
+
+Upgrade all dependencies, including pre-releases:
+    dub upgrade --prerelease

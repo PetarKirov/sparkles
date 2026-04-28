@@ -1,0 +1,1 @@
+Enables D-scanner's style warnings on top of the default correctness checks.

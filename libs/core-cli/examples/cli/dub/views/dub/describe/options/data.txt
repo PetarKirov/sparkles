@@ -1,0 +1,1 @@
+Restricts the output to the given fields. Common values: `target-name`, `target-path`, `import-paths`, `string-import-paths`, `versions`, `debug-versions`, `linker-files`, `source-files`. Pass repeatedly to combine.

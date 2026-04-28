@@ -1,0 +1,1 @@
+Targets the given CPU architecture, e.g. `x86_64`, `x86`, `arm64`. The list of supported values depends on the chosen compiler.
