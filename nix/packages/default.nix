@@ -78,7 +78,7 @@
             wrapProgram $out/bin/${finalAttrs.pname} \
               --prefix PATH : ${path} \
               ${setEnv} \
-              --run 'ulimit -n ${toString dToolchain.nofileLimit}'
+              --run 'ulimit -n ${toString dToolchain.nofileLimit} 2>/dev/null || true'
           '';
 
         meta = {
