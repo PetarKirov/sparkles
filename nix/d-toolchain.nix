@@ -1,8 +1,7 @@
 { pkgs }:
 let
   inherit (pkgs) lib;
-  isDarwin = pkgs.stdenv.isDarwin;
-  isLinux = pkgs.stdenv.isLinux;
+  inherit (pkgs.stdenv) isDarwin isx86_64;
 
   cleanLdcConfig = lib.pipe "${pkgs.ldc}/etc/ldc2.conf" [
     builtins.readFile
@@ -36,7 +35,7 @@ in
     pkgs.dub
     pkgs.dtools
   ]
-  ++ lib.optionals isLinux [
+  ++ lib.optionals (isx86_64) [
     dmd
   ];
 
