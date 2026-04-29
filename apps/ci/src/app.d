@@ -1624,6 +1624,9 @@ private StandaloneExampleMode parseStandaloneExampleMode(const(char[])[] lines)
             continue;
         }
 
+        if (stripped.startsWith("module ") && stripped.endsWith(";"))
+            continue;
+
         foreach (metadataPrefix; metadataPrefixes)
         {
             if (!stripped.startsWith(metadataPrefix))

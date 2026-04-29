@@ -6,9 +6,9 @@ dependency "sparkles:core-cli" path="../../.."
 targetPath "build"
 +/
 
-module term_size_example;
-
 // ci: build-only
+
+module term_size_example;
 
 import sparkles.core_cli.term_size : setTermWindowSizeHandler;
 import core.stdc.stdio : fflush, printf, stdout;
