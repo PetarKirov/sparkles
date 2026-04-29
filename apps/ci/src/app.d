@@ -15,25 +15,27 @@ executed by placing a header comment after the `dub.sdl` block:
 
 Usage:
 ---
-nix run .#ci -- [--verify|--update] [--fail-fast] [--files GLOB|FILE...]
-nix run .#ci -- --example-files [--fail-fast] [--files GLOB|FILE...]
-nix run .#ci -- --test [--fail-fast]
-nix run .#ci -- [--dedup-reference-links|--fix-reference-links] [--files GLOB|FILE...]
-nix run .#ci -- [--log-level trace|info|warning|error]
+nix run .#ci -- [--log-level trace|info|warning|error] test [--fail-fast]
+nix run .#ci -- [--log-level trace|info|warning|error] examples [--files GLOB|FILE...] [--fail-fast]
+nix run .#ci -- [--log-level trace|info|warning|error] docs run --files GLOB|FILE... [--fail-fast]
+nix run .#ci -- [--log-level trace|info|warning|error] docs verify --files GLOB|FILE... [--fail-fast]
+nix run .#ci -- [--log-level trace|info|warning|error] docs update --files GLOB|FILE... [--fail-fast]
+nix run .#ci -- [--log-level trace|info|warning|error] docs links check [--files GLOB|FILE...]
+nix run .#ci -- [--log-level trace|info|warning|error] docs links fix [--files GLOB|FILE...]
 ---
 
-Modes:
+Commands:
 
 $(LIST
-    $(ITEM Default — run examples and display results in boxes)
-    $(ITEM `--verify` — compare output against expected output blocks, report mismatches)
-    $(ITEM `--update` — rewrite the markdown file with actual example output (golden snapshot update))
-    $(ITEM `--example-files` — build/run standalone example `.d` files, defaulting to `libs/core-cli/examples/*.d`)
-    $(ITEM `--test` — run `dub test` for each sub-package defined in the root `dub.sdl`)
-    $(ITEM `--files` — select explicit files or git-style globs; when omitted, each mode uses its tracked defaults)
+    $(ITEM `test` — run `dub test` for each sub-package defined in the root `dub.sdl`)
+    $(ITEM `examples` — build/run standalone example `.d` files, defaulting to `libs/core-cli/examples/*.d`)
+    $(ITEM `docs run` — run markdown examples and display results in boxes)
+    $(ITEM `docs verify` — compare output against expected output blocks, report mismatches)
+    $(ITEM `docs update` — rewrite the markdown file with actual example output (golden snapshot update))
+    $(ITEM `docs links check` — report duplicate markdown reference definitions by URL)
+    $(ITEM `docs links fix` — rewrite duplicates to a canonical label)
+    $(ITEM `--files` — select explicit files or git-style globs; required for `docs run|verify|update`, optional for `examples` and `docs links` commands)
     $(ITEM `--fail-fast` — stop on the first failing example and replay its output at the end)
-    $(ITEM `--dedup-reference-links` — report duplicate markdown reference definitions by URL)
-    $(ITEM `--fix-reference-links` — rewrite duplicates to a canonical label)
 )
 
 The script looks for D code blocks starting with:
@@ -50,7 +52,7 @@ follows a runnable code block, it is treated as the expected output for that exa
 For examples with dynamic output (timestamps, file locations, etc.), place a
 `<!-- md-example-expected -->` HTML comment directive between the code block
 and the output block. The directive contains a wildcard pattern used for
-`--verify` instead of the literal output block. Use `{{_}}` as a wildcard
+`docs verify` instead of the literal output block. Use `{{_}}` as a wildcard
 that matches any non-empty text:
 
 ---html
@@ -76,45 +78,179 @@ import std.process : execute;
 import std.regex : ctRegex, matchFirst;
 import std.stdio : writeln;
 import std.string : endsWith, indexOf, lineSplitter, replace, strip, stripRight, toLower;
+import std.sumtype : SumType;
 
 // sparkles packages
-import sparkles.core_cli.args : CliError, HelpInfo, Option, parseCli;
+import sparkles.core_cli.args : CliError, Command, HelpInfo, Option, Subcommands, parseCli, runParsedCli;
 import sparkles.core_cli.logger : error, info, initLogger, LogLevel, trace, warning;
-import sparkles.core_cli.styled_template : styledText, styledWritelnErr;
+import sparkles.core_cli.styled_template : styledText;
 import sparkles.core_cli.term_unstyle : unstyle;
 import sparkles.core_cli.ui.box : BoxProps, drawBox;
 import sparkles.core_cli.ui.header : drawHeader, HeaderProps, HeaderStyle;
 
 // === Types ===
 
-struct CliParams
+@(Command("ci",
+    shortDescription: "Run repository CI helpers",
+    description:
+        "Run repository CI helpers for markdown examples, standalone example files, dub tests, and markdown reference maintenance.",
+))
+struct Ci
 {
-    @(Option(`V|verify`, "Compare example output against expected output blocks in the markdown."))
-    bool verify;
+    @(Option(
+        `L|log-level`,
+        description: "Set the log level (trace, info, warning, error). Default: info.",
+    ))
+    LogLevel logLevel = LogLevel.info;
 
-    @(Option(`u|update`, "Rewrite the markdown file with actual example output."))
-    bool update;
+    @Subcommands
+    SumType!(Test, Examples, Docs) command;
+}
 
-    @(Option(`x|example-files`, "Run standalone example .d files instead of markdown examples. With no files, defaults to libs/core-cli/examples/*.d."))
-    bool exampleFiles;
-
-    @(Option(`t|test`, "Run dub test for each sub-package defined in the root dub.sdl."))
-    bool test;
-
-    @(Option(`F|fail-fast`, "Stop on the first failing example and replay its output at the end."))
+@(Command("test", shortDescription: "Run package tests"))
+struct Test
+{
+    @(Option(
+        `F|fail-fast`,
+        description: "Stop on the first failing package and replay its output at the end.",
+    ))
     bool failFast;
 
-    @(Option(`files`, "Explicit file paths or git-style globs to include. Pass one or more selectors immediately after --files."))
+    int run()
+    {
+        return runDubTestsMode(failFast);
+    }
+}
+
+@(Command("examples", shortDescription: "Build and run standalone D example files"))
+struct Examples
+{
+    @(Option(
+        `files`,
+        description: "Explicit .d file paths or git-style globs to include. Defaults to libs/core-cli/examples/*.d.",
+    ))
     string[] files;
 
-    @(Option(`d|dedup-reference-links`, "Report duplicate markdown reference definitions that point to the same URL."))
-    bool dedupReferenceLinks;
+    @(Option(
+        `F|fail-fast`,
+        description: "Stop on the first failing example and replay its output at the end.",
+    ))
+    bool failFast;
 
-    @(Option(`f|fix-reference-links`, "Rewrite duplicate markdown references to one canonical label per URL."))
-    bool fixReferenceLinks;
+    int run()
+    {
+        return runSelectedFiles(files, ProgramMode.runExampleFiles, failFast);
+    }
+}
 
-    @(Option(`L|log-level`, "Set the log level (trace, info, warning, error). Default: info."))
-    LogLevel logLevel = LogLevel.info;
+@(Command("docs", shortDescription: "Run and maintain documentation examples and links"))
+struct Docs
+{
+    @Subcommands
+    SumType!(DocsRun, DocsVerify, DocsUpdate, DocsLinks) command;
+}
+
+@(Command("run", shortDescription: "Run markdown examples and display their output"))
+struct DocsRun
+{
+    @(Option(
+        `files`,
+        description: "Explicit markdown file paths or git-style globs to include.",
+        required: true,
+    ))
+    string[] files;
+
+    @(Option(
+        `F|fail-fast`,
+        description: "Stop on the first failing example and replay its output at the end.",
+    ))
+    bool failFast;
+
+    int run()
+    {
+        return runSelectedFiles(files, ProgramMode.runExamples, failFast);
+    }
+}
+
+@(Command("verify", shortDescription: "Compare markdown example output against expected blocks"))
+struct DocsVerify
+{
+    @(Option(
+        `files`,
+        description: "Explicit markdown file paths or git-style globs to include.",
+        required: true,
+    ))
+    string[] files;
+
+    @(Option(
+        `F|fail-fast`,
+        description: "Stop on the first failing example and replay its output at the end.",
+    ))
+    bool failFast;
+
+    int run()
+    {
+        return runSelectedFiles(files, ProgramMode.verifyExamples, failFast);
+    }
+}
+
+@(Command("update", shortDescription: "Rewrite markdown expected-output blocks from actual output"))
+struct DocsUpdate
+{
+    @(Option(
+        `files`,
+        description: "Explicit markdown file paths or git-style globs to include.",
+        required: true,
+    ))
+    string[] files;
+
+    @(Option(
+        `F|fail-fast`,
+        description: "Stop on the first failing example and replay its output at the end.",
+    ))
+    bool failFast;
+
+    int run()
+    {
+        return runSelectedFiles(files, ProgramMode.updateExamples, failFast);
+    }
+}
+
+@(Command("links", shortDescription: "Check and maintain markdown reference links"))
+struct DocsLinks
+{
+    @Subcommands
+    SumType!(DocsLinksCheck, DocsLinksFix) command;
+}
+
+@(Command("check", shortDescription: "Report duplicate markdown reference definitions by URL"))
+struct DocsLinksCheck
+{
+    @(Option(
+        `files`,
+        description: "Explicit markdown file paths or git-style globs to include. Defaults to tracked markdown files.",
+    ))
+    string[] files;
+
+    int run()
+    {
+        return runSelectedFiles(files, ProgramMode.checkReferenceLinks, false);
+    }
+}
+
+@(Command("fix", shortDescription: "Rewrite duplicate markdown references to canonical labels"))
+struct DocsLinksFix
+{
+    @(Option(
+        `files`,
+        description: "Explicit markdown file paths or git-style globs to include. Defaults to tracked markdown files.",
+    ))
+    string[] files;
+
+    int run()
+    {
+        return runSelectedFiles(files, ProgramMode.fixReferenceLinks, false);
+    }
 }
 
 enum ProgramMode
@@ -123,7 +259,6 @@ enum ProgramMode
     verifyExamples,
     updateExamples,
     runExampleFiles,
-    runDubTests,
     checkReferenceLinks,
     fixReferenceLinks,
 }
@@ -192,9 +327,7 @@ private __gshared immutable refDefRegex = ctRegex!(r"^\[([^\]]+)\]:\s+(https?://
 
 int main(string[] args)
 {
-    auto parseArgs = args.dup;
-    auto parsedCli = parseCli!CliParams(
-        parseArgs,
+    auto parsedCli = args.parseCli!Ci(
         HelpInfo(
             "ci",
             "Run repository CI helpers for markdown examples, standalone example files, and markdown reference maintenance",
@@ -205,48 +338,7 @@ int main(string[] args)
 
     auto cli = parsedCli.value;
     initLogger(cli.logLevel);
-
-    const modeError = validateCliMode(cli);
-    if (modeError !is null)
-    {
-        error(i"$(modeError)");
-        return 1;
-    }
-
-    const mode = resolveProgramMode(cli);
-
-    if (mode == ProgramMode.runDubTests)
-        return runDubTestsMode(cli.failFast);
-
-    auto inputFiles = collectInputFiles(cli, mode);
-
-    if (inputFiles.length == 0)
-    {
-        if (cli.files.length > 0)
-        {
-            error(i"--files did not match any supported input files for this mode");
-            return 1;
-        }
-
-        if (isReferenceMode(mode))
-            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) [--dedup-reference-links|--fix-reference-links] [--files GLOB|FILE...]");
-        else if (mode == ProgramMode.runExampleFiles)
-            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) --example-files [--fail-fast] [--files GLOB|FILE...]");
-        else
-            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) [--verify|--update] [--fail-fast] [--files GLOB|FILE...]");
-        return 1;
-    }
-
-    if (mode == ProgramMode.runExampleFiles)
-        return runExampleFilesMode(inputFiles, cli.failFast);
-
-    if (mode == ProgramMode.checkReferenceLinks)
-        return runReferenceLinkMode(inputFiles, false);
-
-    if (mode == ProgramMode.fixReferenceLinks)
-        return runReferenceLinkMode(inputFiles, true);
-
-    return runExamplesForFiles(inputFiles, mode, cli.failFast);
+    return runParsedCli(cli);
 }
 
 private int reportCliError(in CliError cliError)
@@ -258,60 +350,6 @@ private int reportCliError(in CliError cliError)
     else if (cliError.message.length)
         stderr.writeln("Error: ", cliError.message);
     return cliError.exitCode;
-}
-
-private string validateCliMode(
-    in CliParams cli,
-)
-{
-    if (cli.verify && cli.update)
-        return "--verify and --update are mutually exclusive";
-
-    if (cli.exampleFiles && (cli.verify || cli.update))
-        return "--example-files cannot be combined with --verify or --update";
-
-    if (cli.test && (cli.verify || cli.update))
-        return "--test cannot be combined with --verify or --update";
-
-    if (cli.test && cli.exampleFiles)
-        return "--test cannot be combined with --example-files";
-
-    if ((cli.verify || cli.update)
-        && (cli.dedupReferenceLinks || cli.fixReferenceLinks))
-    {
-        return "example modes (--verify/--update) cannot be combined with reference deduplication modes (--dedup-reference-links/--fix-reference-links)";
-    }
-
-    if (cli.exampleFiles && (cli.dedupReferenceLinks || cli.fixReferenceLinks))
-        return "--example-files cannot be combined with reference deduplication modes (--dedup-reference-links/--fix-reference-links)";
-
-    if (cli.test && (cli.dedupReferenceLinks || cli.fixReferenceLinks))
-        return "--test cannot be combined with reference deduplication modes (--dedup-reference-links/--fix-reference-links)";
-
-    return null;
-}
-
-private ProgramMode resolveProgramMode(in CliParams cli)
-{
-    if (cli.exampleFiles)
-        return ProgramMode.runExampleFiles;
-
-    if (cli.test)
-        return ProgramMode.runDubTests;
-
-    if (cli.fixReferenceLinks)
-        return ProgramMode.fixReferenceLinks;
-
-    if (cli.dedupReferenceLinks)
-        return ProgramMode.checkReferenceLinks;
-
-    if (cli.update)
-        return ProgramMode.updateExamples;
-
-    if (cli.verify)
-        return ProgramMode.verifyExamples;
-
-    return ProgramMode.runExamples;
 }
 
 private bool isReferenceMode(in ProgramMode mode)
@@ -377,15 +415,15 @@ private string[] trackedFilesMatching(string pattern)
 }
 
 private string[] collectInputFiles(
-    in CliParams cli,
+    string[] selectors,
     in ProgramMode mode,
 )
 {
-    const hasExplicitSelection = cli.files.length > 0;
+    const hasExplicitSelection = selectors.length > 0;
 
     string[] inputFiles;
 
-    foreach (selector; cli.files)
+    foreach (selector; selectors)
     {
         if (selector.length == 0)
             continue;
@@ -411,6 +449,31 @@ private string[] collectInputFiles(
         .filter!(path => path.endsWith(requiredSuffix))
         .map!(path => path.idup)
         .array;
+}
+
+private int runSelectedFiles(string[] selectors, in ProgramMode mode, bool failFast)
+{
+    auto inputFiles = collectInputFiles(selectors, mode);
+
+    if (inputFiles.length == 0)
+    {
+        if (selectors.length > 0)
+            error(i"--files did not match any supported input files for this mode");
+        else
+            error(i"No supported input files found for this mode");
+        return 1;
+    }
+
+    if (mode == ProgramMode.runExampleFiles)
+        return runExampleFilesMode(inputFiles, failFast);
+
+    if (mode == ProgramMode.checkReferenceLinks)
+        return runReferenceLinkMode(inputFiles, false);
+
+    if (mode == ProgramMode.fixReferenceLinks)
+        return runReferenceLinkMode(inputFiles, true);
+
+    return runExamplesForFiles(inputFiles, mode, failFast);
 }
 
 private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool failFast)
@@ -448,9 +511,6 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
                 rc = runUpdateMode(examples, mdFile, failFast);
                 break;
             case ProgramMode.runExampleFiles:
-            case ProgramMode.runDubTests:
-                rc = 1;
-                break;
             case ProgramMode.checkReferenceLinks:
             case ProgramMode.fixReferenceLinks:
                 rc = 1;

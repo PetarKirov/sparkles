@@ -44,4 +44,4 @@ jobs:
 
       - name: Verify markdown runnable examples
         run: |
-          nix run .#ci -- --verify --files '**.md'
+          nix run .#ci -- docs verify --files '**.md'
