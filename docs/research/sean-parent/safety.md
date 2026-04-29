@@ -242,7 +242,7 @@ clang++ -fsanitize=address,undefined -g program.cpp
 #### 4. Safe Coding Guidelines
 
 - [C++ Core Guidelines](https://isocpp.github.io/CppCoreGuidelines/)
-- [SEI CERT C++ Coding Standard](https://wiki.sei.cmu.edu/confluence/display/cplusplus)
+- [SEI CERT C++ Coding Standard](https://cmu-sei.github.io/secure-coding-standards/sei-cert-cpp-coding-standard/)
 - [MISRA C++](https://www.misra.org.uk/)
 
 ## Guidelines for Safe Code
