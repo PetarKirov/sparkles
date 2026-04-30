@@ -4,14 +4,94 @@ name "git"
 dependency "sparkles:core-cli" path="../../../../.."
 targetPath "build"
 +/
-// ci: build-only
 
 import sparkles.core_cli.args;
 import sparkles.core_cli.prettyprint : prettyPrint;
 import sparkles.core_cli.styled_template : styledWriteln;
-import std.sumtype;
 
 int main(string[] args) => runCli!Git(args);
+
+@(Command("git",
+    shortDescription: "Distributed version control system",
+    helpSections: ["description", "examples", "environment", "further-reading"],
+))
+struct Git
+{
+    mixin addSubCommand!Add;
+    mixin addSubCommand!Branch;
+    mixin addSubCommand!Checkout;
+    mixin addSubCommand!Clean;
+    mixin addSubCommand!Clone;
+    mixin addSubCommand!Commit;
+    mixin addSubCommand!Diff;
+    mixin addSubCommand!Init;
+    mixin addSubCommand!Log;
+    mixin addSubCommand!Pull;
+    mixin addSubCommand!Push;
+    mixin addSubCommand!Status;
+
+    @(Command("worktree",
+        shortDescription: "Manage multiple working trees",
+        helpSections: ["description"],
+    ))
+    struct Worktree
+    {
+        @(Command("add",
+            shortDescription: "Create a working tree",
+            helpSections: ["description"],
+        ))
+        struct Add
+        {
+            @(Option(`b`))
+            string newBranch;
+
+            @(Option("detach", description: "Detach HEAD at the new working tree"))
+            bool detach;
+
+            @(Argument("path"))
+            string path;
+
+            @(Argument("commit-ish", optional: true))
+            string commitish;
+
+            void run() =>
+                styledWriteln(i"Running {bold git worktree add} with params:\n$(prettyPrint(this))");
+        }
+
+        @(Command("list",
+            shortDescription: "List working tree details",
+            helpSections: ["description"],
+        ))
+        struct List
+        {
+            @(Option("porcelain", description: "Machine-readable output"))
+            bool porcelain;
+
+            @(Option(`z`, description: "Terminate records with NUL instead of newline"))
+            bool nulTerminate;
+
+            void run() =>
+                styledWriteln(i"Running {bold git worktree list} with params:\n$(prettyPrint(this))");
+        }
+
+        @(Command("remove",
+            shortDescription: "Remove a working tree",
+            helpSections: ["description"],
+        ))
+        struct Remove
+        {
+            @(Option(`f|force`))
+            bool force;
+
+            @(Argument("worktree"))
+            string worktree;
+
+            void run() =>
+                styledWriteln(i"Running {bold git worktree remove} with params:\n$(prettyPrint(this))");
+        }
+    }
+}
+
 
 @(Command("add",
     shortDescription: "Add file contents to the index",
@@ -284,27 +364,4 @@ struct Clean
 
     void run() =>
         styledWriteln(i"Running {bold git clean} with params:\n$(prettyPrint(this))");
-}
-
-@(Command("git",
-    shortDescription: "Distributed version control system",
-    helpSections: ["description", "examples", "environment", "further-reading"]
-))
-struct Git
-{
-    @Subcommands
-    SumType!(
-        Add,
-        Branch,
-        Checkout,
-        Clean,
-        Clone,
-        Commit,
-        Diff,
-        Init,
-        Log,
-        Pull,
-        Push,
-        Status
-    ) command;
 }

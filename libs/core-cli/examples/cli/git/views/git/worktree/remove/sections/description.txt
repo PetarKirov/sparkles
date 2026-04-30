@@ -1,0 +1,1 @@
+Remove a working tree from the repository metadata and delete its files.

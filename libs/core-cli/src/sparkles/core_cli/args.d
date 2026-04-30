@@ -6,7 +6,7 @@ import std.algorithm : among, canFind, countUntil, map, splitter, startsWith;
 import std.array : array, join, split;
 import std.conv : to;
 import std.format : format;
-import std.meta : AliasSeq;
+import std.meta : AliasSeq, staticMap;
 import std.path : baseName, buildPath, stripExtension;
 import std.range : empty;
 import std.string : stripRight, toLower, toUpper, wrap;
@@ -347,6 +347,74 @@ unittest
 
 struct Subcommands {}
 
+struct SubCommandRegistration(T)
+{
+    alias command = T;
+}
+
+struct SubCommandRegistrationWithHandler(T, alias handler_)
+{
+    alias command = T;
+    alias handler = handler_;
+}
+
+string identifierSafe(string value) @safe pure nothrow
+{
+    string result;
+    foreach (c; value)
+    {
+        immutable isLower = c >= 'a' && c <= 'z';
+        immutable isUpper = c >= 'A' && c <= 'Z';
+        immutable isDigit = c >= '0' && c <= '9';
+        result ~= (isLower || isUpper || isDigit) ? c : '_';
+    }
+    return result;
+}
+
+mixin template addSubCommand(T)
+{
+    import sparkles.core_cli.args : identifierSafe;
+
+    enum fieldName = "__sparklesSubCommand_" ~ identifierSafe(T.mangleof);
+    mixin("private import sparkles.core_cli.args : SubCommandRegistration; "
+        ~ "private SubCommandRegistration!T "
+        ~ fieldName
+        ~ ";");
+}
+
+mixin template addSubCommand(T, alias handler)
+{
+    import sparkles.core_cli.args : identifierSafe;
+
+    enum fieldName = "__sparklesSubCommand_" ~ identifierSafe(T.mangleof);
+    mixin("private import sparkles.core_cli.args : SubCommandRegistrationWithHandler; "
+        ~ "private SubCommandRegistrationWithHandler!(T, handler) "
+        ~ fieldName
+        ~ ";");
+}
+
+struct CommandNode(Command_)
+{
+    alias Command = Command_;
+    enum __sparklesCommandNodeMarker = true;
+
+    Command value;
+
+    static if (hasCommandChildren!Command)
+    {
+        SumType!(staticMap!(CommandNode, commandChildren!Command)) command;
+        bool commandSelected;
+    }
+}
+
+template ParsedCommand(Command)
+{
+    static if (usesSynthesizedSubcommands!Command)
+        alias ParsedCommand = CommandNode!Command;
+    else
+        alias ParsedCommand = Command;
+}
+
 enum CliErrorKind
 {
     parse,
@@ -371,7 +439,7 @@ alias CliExpected(T) = Expected!(T, CliError);
 /// for sections that live directly under the views root. The views root is
 /// taken from the source file's basename, mirroring the legacy default —
 /// callers that want the root-`@Command(name)`-driven default should let
-/// the framework resolve sections via `@Command(...).helpSections!(...)`
+/// the framework resolve sections via `@Command(...).helpSections(...)`
 /// instead of building a `Sections` map by hand.
 Sections importSections(string subPath = null, string[] sections, string file = __FILE__)()
 {
@@ -412,41 +480,47 @@ template tryImport(string path)
 // the inferred attribute set of `parseCli!Cli` is keyed on `Cli`. We
 // therefore leave the attributes inferred per instantiation rather
 // than locking the public surface to `@safe`.
-CliExpected!Cli parseCli(Cli)(
+CliExpected!(ParsedCommand!Cli) parseCli(Cli)(
     string[] argv,
     HelpInfo helpInfo = HelpInfo.init,
 )
 {
-    Cli result;
-    return parseCli(argv, result, helpInfo);
+    ParsedCommand!Cli result;
+    return parseCli!Cli(argv, result, helpInfo);
 }
 
-CliExpected!Cli parseCli(Cli)(
+CliExpected!(ParsedCommand!Cli) parseCli(Cli)(
     string[] argv,
-    ref Cli receiver,
+    ref ParsedCommand!Cli receiver,
     HelpInfo helpInfo = HelpInfo.init,
 )
 {
     auto info = normalizeHelpInfo!Cli(argv, helpInfo);
     auto args = argv.length > 0 ? argv[1 .. $] : argv;
-    auto parsed = parseCommand!(Cli, Cli)(receiver, args, info);
+    static if (usesSynthesizedSubcommands!Cli)
+        auto parsed = parseCommandNode!(Cli, Cli)(receiver, args, info);
+    else
+        auto parsed = parseCommand!(Cli, Cli)(receiver, args, info);
     if (!parsed)
-        return err!Cli(parsed.error);
+        return err!(ParsedCommand!Cli)(parsed.error);
 
     return ok!CliError(receiver);
 }
 
-CliExpected!Cli parseKnownCli(Cli)(
+CliExpected!(ParsedCommand!Cli) parseKnownCli(Cli)(
     ref string[] argv,
-    ref Cli receiver,
+    ref ParsedCommand!Cli receiver,
     HelpInfo helpInfo = HelpInfo.init,
 )
 {
     auto info = normalizeHelpInfo!Cli(argv, helpInfo);
     auto args = argv.length > 0 ? argv[1 .. $] : argv;
-    auto parsed = parseCommand!(Cli, Cli)(receiver, args, info, true);
+    static if (usesSynthesizedSubcommands!Cli)
+        auto parsed = parseCommandNode!(Cli, Cli)(receiver, args, info, true);
+    else
+        auto parsed = parseCommand!(Cli, Cli)(receiver, args, info, true);
     if (!parsed)
-        return err!Cli(parsed.error);
+        return err!(ParsedCommand!Cli)(parsed.error);
 
     argv = argv.length > 0
         ? argv[0 .. 1] ~ parsed.value
@@ -462,10 +536,9 @@ CliExpected!Cli parseKnownCli(Cli)(
 // `parseKnownCli`) is `@safe` because it never crosses that boundary.
 int runCli(Cli)(
     string[] argv,
-    HelpInfo helpInfo = HelpInfo.init,
 )
 {
-    auto parsed = parseCli!Cli(argv, helpInfo);
+    auto parsed = parseCli!Cli(argv);
     if (!parsed)
     {
         import std.stdio : stderr, writeln;
@@ -486,7 +559,30 @@ int runCli(Cli)(
 
 int runParsedCli(Cli)(ref Cli cli)
 {
-    static if (hasSubcommands!Cli)
+    return runParsedCliImpl!(void, Cli, Cli)(cli, cli);
+}
+
+private int runParsedCliImpl(Parent, Cli, Program)(ref Cli cli, ref Program program)
+{
+    static if (isCommandNode!Cli)
+    {
+        alias CommandType = Cli.Command;
+        static if (hasCommandChildren!CommandType)
+        {
+            if (cli.commandSelected)
+                return cli.command.match!((ref command) {
+                    return runParsedCliImpl!(CommandType, typeof(command), Program)(command, program);
+                });
+        }
+
+        static if (hasCommandChildren!CommandType && !commandInfoRaw!CommandType().isDefault_)
+        {
+            assert(false, "Command group reached dispatch without a selected subcommand.");
+        }
+        else
+            return callRun!(Parent, CommandType, Program)(cli.value, program);
+    }
+    else static if (hasSubcommands!Cli)
     {
         enum field = subcommandsFieldName!Cli;
         return __traits(getMember, cli, field).match!((ref command) {
@@ -494,11 +590,11 @@ int runParsedCli(Cli)(ref Cli cli)
             // are fully unwrapped before dispatching to `run()`. A group
             // struct typically has no `run()` of its own — only the leaf
             // does.
-            return runParsedCli(command);
+            return runParsedCliImpl!(Cli, typeof(command), Program)(command, program);
         });
     }
     else
-        return callRun(cli);
+        return callRun!(Parent, Cli, Program)(cli, program);
 }
 
 /// Resolve the views-tree root (a directory under the dub package's string
@@ -531,6 +627,21 @@ private string[] subcommandPath(Root, Leaf)() @safe
             static if (is(Variant == Leaf))
                 return [commandPrimaryName!Variant];
             else static if (hasSubcommands!Variant)
+            {{
+                enum inner = subcommandPath!(Variant, Leaf);
+                static if (inner.length > 0)
+                    return [commandPrimaryName!Variant] ~ inner;
+            }}
+        }}
+        return null;
+    }
+    else static if (hasCommandChildren!Root)
+    {
+        static foreach (Variant; commandChildren!Root)
+        {{
+            static if (is(Variant == Leaf))
+                return [commandPrimaryName!Variant];
+            else static if (hasCommandChildren!Variant || hasSubcommands!Variant)
             {{
                 enum inner = subcommandPath!(Variant, Leaf);
                 static if (inner.length > 0)
@@ -597,6 +708,156 @@ private Sections sectionsForCommand(Root, Cli)() @safe
             result[section] = text.split("\n\n");
     }}
     return result;
+}
+
+private CliExpected!(string[]) parseCommandNode(Root, Cli)(
+    ref CommandNode!Cli receiver,
+    string[] args,
+    HelpInfo helpInfo,
+    bool keepUnknown = false,
+)
+{
+    bool[string] seen;
+    string[] unknown;
+    string[] positionals;
+    bool namedArgsEnded;
+
+    size_t index;
+    while (index < args.length)
+    {
+        auto arg = args[index];
+
+        if (!namedArgsEnded && arg == "--")
+        {
+            namedArgsEnded = true;
+            index++;
+            continue;
+        }
+
+        if (!namedArgsEnded && isHelpToken(arg))
+        {
+            return err!(string[])(CliError(
+                kind: CliErrorKind.help,
+                help: formatHelp!(Root, Cli)(helpInfo),
+                exitCode: 0,
+            ));
+        }
+
+        static if (hasCommandChildren!Cli)
+        {
+            if (!namedArgsEnded && !arg.startsWith("-"))
+            {
+                auto subArgs = args[index + 1 .. $];
+                auto selected = parseCommandChild!(Root, Cli)(
+                    receiver.command,
+                    receiver.commandSelected,
+                    arg,
+                    subArgs,
+                    helpInfo,
+                    keepUnknown,
+                );
+                if (selected)
+                {
+                    args = args[0 .. index + 1] ~ subArgs;
+                    return selected;
+                }
+
+                if (selected.error.isHelp || selected.error.message.length)
+                    return err!(string[])(selected.error);
+
+                return err!(string[])(CliError(
+                    kind: CliErrorKind.parse,
+                    message: "Unknown command: " ~ arg,
+                    help: formatHelp!(Root, Cli)(helpInfo),
+                ));
+            }
+        }
+
+        if (!namedArgsEnded && arg.startsWith("-") && arg.length > 1)
+        {
+            auto parsed = parseNamedOption(receiver.value, args, index, seen);
+            if (parsed)
+            {
+                if (parsed.value)
+                    continue;
+
+                if (keepUnknown)
+                {
+                    unknown ~= arg;
+                    index++;
+                    continue;
+                }
+
+                return err!(string[])(CliError(
+                    kind: CliErrorKind.parse,
+                    message: "Unknown option " ~ arg,
+                ));
+            }
+            else
+                return err!(string[])(parsed.error);
+        }
+
+        positionals ~= arg;
+        index++;
+    }
+
+    auto assignedPositionals = assignPositionals(receiver.value, positionals, seen);
+    if (!assignedPositionals)
+        return err!(string[])(assignedPositionals.error);
+
+    auto required = validateRequired!Cli(seen);
+    if (!required)
+        return err!(string[])(required.error);
+
+    static if (hasCommandChildren!Cli)
+    {
+        enum command = commandInfoRaw!Cli();
+        static if (command.isDefault_)
+            return ok!CliError(unknown);
+        else
+            return err!(string[])(CliError(
+                kind: CliErrorKind.parse,
+                message: "Missing subcommand",
+                help: formatHelp!(Root, Cli)(helpInfo),
+            ));
+    }
+    else
+        return ok!CliError(unknown);
+}
+
+private CliExpected!(string[]) parseCommandChild(Root, Parent)(
+    ref SumType!(staticMap!(CommandNode, commandChildren!Parent)) destination,
+    ref bool commandSelected,
+    string name,
+    ref string[] args,
+    HelpInfo parentHelp,
+    bool keepUnknown,
+)
+{
+    static foreach (CommandType; commandChildren!Parent)
+    {{
+        if (commandNames!CommandType.canFind(name))
+        {
+            CommandNode!CommandType command;
+            auto info = childHelpInfo!(Root, CommandType)(parentHelp);
+            auto parsed = parseCommandNode!(Root, CommandType)(command, args, info, keepUnknown);
+            if (!parsed)
+                return parsed;
+
+            destination = command;
+            commandSelected = true;
+            return parsed;
+        }
+    }}
+
+    if (isHelpToken(name))
+        return err!(string[])(CliError(
+            kind: CliErrorKind.help,
+            help: formatSubcommandsHelp!(Root, Parent)(parentHelp),
+            exitCode: 0,
+        ));
+
+    return err!(string[])(CliError.init);
 }
 
 private CliExpected!(string[]) parseCommand(Root, Cli)(
@@ -1152,8 +1413,13 @@ private HelpInfo normalizeHelpInfo(Cli)(string[] argv, HelpInfo helpInfo)
         helpInfo.programName = argv.length > 0 ? argv[0].baseName : commandPrimaryName!Cli;
 
     auto command = commandInfo!(Cli, Cli);
-    if (command.description_.length && helpInfo.shortDescription.length == 0)
-        helpInfo.shortDescription = command.description_;
+    if (helpInfo.shortDescription.length == 0)
+    {
+        if (command.description_.length)
+            helpInfo.shortDescription = command.description_;
+        else
+            helpInfo.shortDescription = command.shortDescription_;
+    }
 
     // Merge command sections into helpInfo
     foreach (key, value; command.sections_)
@@ -1206,6 +1472,12 @@ private string formatHelp(Root, Cli)(HelpInfo info)
         if (commands.length)
             sections ~= formatSection("commands", commands, 0, "", "\n");
     }
+    else static if (hasCommandChildren!Cli)
+    {
+        auto commands = formatSubcommands!(Root, Cli);
+        if (commands.length)
+            sections ~= formatSection("commands", commands, 0, "", "\n");
+    }
 
     foreach (name, text; info.sections)
         if (name != "description")
@@ -1252,7 +1524,7 @@ private string formatUsage(Cli)(string programName)
         }}
     }}
 
-    static if (hasSubcommands!Cli)
+    static if (hasSubcommands!Cli || hasCommandChildren!Cli)
         parts ~= "<command>";
 
     return parts.join(" ");
@@ -1303,6 +1575,28 @@ if (isSumType!Sub)
 {
     string[] lines;
     static foreach (CommandType; Sub.Types)
+    {{
+        enum command = commandInfo!(Root, CommandType);
+        static if (!command.hidden_)
+        {{
+            enum names = commandNames!CommandType.join(", ");
+            enum description = command.shortDescription_.length
+                ? command.shortDescription_
+                : command.description_;
+            lines ~= "\t%s\n%s".format(
+                names.sty.bold,
+                description.wrap(80, "\t    ", "\t    "),
+            );
+        }}
+    }}
+    return lines;
+}
+
+private string[] formatSubcommands(Root, Parent)()
+if (!isSumType!Parent)
+{
+    string[] lines;
+    static foreach (CommandType; commandChildren!Parent)
     {{
         enum command = commandInfo!(Root, CommandType);
         static if (!command.hidden_)
@@ -1393,7 +1687,13 @@ private bool isHelpToken(string arg) @safe pure nothrow @nogc
 
 private enum isSumType(T) = __traits(compiles, AliasSeq!(T.Types));
 
+private enum isCommandNode(T) = __traits(hasMember, T, "__sparklesCommandNodeMarker");
+
 private enum hasSubcommands(T) = subcommandsFieldName!T.length != 0;
+
+private enum hasCommandChildren(T) = commandChildren!T.length != 0;
+
+private enum usesSynthesizedSubcommands(T) = !hasSubcommands!T && hasCommandChildren!T;
 
 private template subcommandsFieldName(T)
 {
@@ -1413,6 +1713,130 @@ private string findSubcommandsFieldName(T)()
     return null;
 }
 
+template commandChildren(T)
+{
+    alias children = commandChildrenImpl!(T, __traits(allMembers, T));
+    static assert(!hasDuplicateCommandTypes!children,
+        "Duplicate subcommand type registered under `" ~ T.stringof ~ "`.");
+    static assert(!hasDuplicateCommandNames!children,
+        "Duplicate subcommand name registered under `" ~ T.stringof ~ "`.");
+    alias commandChildren = children;
+}
+
+private template commandChildrenImpl(T, names...)
+{
+    static if (names.length == 0)
+        alias commandChildrenImpl = AliasSeq!();
+    else
+        alias commandChildrenImpl = AliasSeq!(
+            commandChildForMember!(T, names[0]),
+            commandChildrenImpl!(T, names[1 .. $]),
+        );
+}
+
+private template commandChildForMember(T, string name)
+{
+    static if (!__traits(compiles, __traits(getMember, T, name)))
+        alias commandChildForMember = AliasSeq!();
+    else
+    {
+        alias symbol = __traits(getMember, T, name);
+        static if (__traits(compiles, typeof(symbol)))
+        {
+            alias MemberType = typeof(symbol);
+            static if (is(MemberType == SubCommandRegistration!CommandType, CommandType))
+                alias commandChildForMember = AliasSeq!CommandType;
+            else static if (is(MemberType == SubCommandRegistrationWithHandler!(CommandType, handler), CommandType, alias handler))
+                alias commandChildForMember = AliasSeq!CommandType;
+            else
+                alias commandChildForMember = AliasSeq!();
+        }
+        else static if (__traits(compiles, getUDAs!(symbol, Command))
+            && getUDAs!(symbol, Command).length)
+        {
+            alias commandChildForMember = AliasSeq!symbol;
+        }
+        else
+            alias commandChildForMember = AliasSeq!();
+    }
+}
+
+private template registeredHandler(Parent, Child)
+{
+    static if (is(Parent == void))
+        static assert(false, "No parent command is available for handler lookup.");
+    else
+        alias registeredHandler = registeredHandlerImpl!(Parent, Child, __traits(allMembers, Parent));
+}
+
+private template registeredHandlerImpl(Parent, Child, names...)
+{
+    static if (names.length == 0)
+    {
+        static assert(false, "No registered handler found.");
+    }
+    else static if (!__traits(compiles, __traits(getMember, Parent, names[0])))
+    {
+        alias registeredHandlerImpl = registeredHandlerImpl!(Parent, Child, names[1 .. $]);
+    }
+    else
+    {
+        alias symbol = __traits(getMember, Parent, names[0]);
+        static if (__traits(compiles, typeof(symbol)))
+        {
+            alias MemberType = typeof(symbol);
+            static if (is(MemberType == SubCommandRegistrationWithHandler!(CommandType, handler), CommandType, alias handler)
+                && is(CommandType == Child))
+            {
+                alias registeredHandlerImpl = handler;
+            }
+            else
+                alias registeredHandlerImpl = registeredHandlerImpl!(Parent, Child, names[1 .. $]);
+        }
+        else
+            alias registeredHandlerImpl = registeredHandlerImpl!(Parent, Child, names[1 .. $]);
+    }
+}
+
+private enum hasRegisteredHandler(Parent, Child) = !is(Parent == void)
+    && __traits(compiles, registeredHandler!(Parent, Child));
+
+private template hasDuplicateCommandTypes(commands...)
+{
+    static if (commands.length < 2)
+        enum hasDuplicateCommandTypes = false;
+    else
+        enum hasDuplicateCommandTypes = commandTypeIn!(commands[0], commands[1 .. $])
+            || hasDuplicateCommandTypes!(commands[1 .. $]);
+}
+
+private template commandTypeIn(Command, commands...)
+{
+    static if (commands.length == 0)
+        enum commandTypeIn = false;
+    else
+        enum commandTypeIn = is(Command == commands[0])
+            || commandTypeIn!(Command, commands[1 .. $]);
+}
+
+private template hasDuplicateCommandNames(commands...)
+{
+    static if (commands.length < 2)
+        enum hasDuplicateCommandNames = false;
+    else
+        enum hasDuplicateCommandNames = commandNameIn!(commandPrimaryName!(commands[0]), commands[1 .. $])
+            || hasDuplicateCommandNames!(commands[1 .. $]);
+}
+
+private template commandNameIn(string name, commands...)
+{
+    static if (commands.length == 0)
+        enum commandNameIn = false;
+    else
+        enum commandNameIn = commandPrimaryName!(commands[0]) == name
+            || commandNameIn!(name, commands[1 .. $]);
+}
+
 /// Read the raw `@Command` UDA from `T`, with no section resolution.
 /// Falls back to a default-named `Command` when `T` lacks a UDA.
 private Command commandInfoRaw(T)() @safe
@@ -1425,7 +1849,7 @@ private Command commandInfoRaw(T)() @safe
 }
 
 /// Read the `@Command` UDA from `Cli` and resolve any deferred
-/// `helpSections!()` import list, using `Root`'s views root and the
+/// `helpSections(...)` import list, using `Root`'s views root and the
 /// subcommand chain `Root → … → Cli` to compute import paths.
 private Command commandInfo(Root, Cli)() @safe
 {
@@ -1449,22 +1873,132 @@ private string commandPrimaryName(T)() @safe
     return commandInfoRaw!T().name;
 }
 
-private int callRun(T)(ref T value)
+private int callRun(Parent, T, Program)(ref T value, ref Program program)
 {
-    static assert(__traits(compiles, value.run()),
-        "Terminal CLI struct `" ~ T.stringof ~ "` is missing a zero-arg "
-        ~ "`run()` method. `runParsedCli` only descends into nested "
-        ~ "@Subcommands SumTypes — every leaf command struct must "
-        ~ "define `int run()` or `void run()` so the dispatcher has "
-        ~ "something to call.");
-
-    static if (is(typeof(value.run()) == int))
-        return value.run();
+    static if (hasRegisteredHandler!(Parent, T))
+        return callHandler!(registeredHandler!(Parent, T), T, Program)(value, program);
+    else static if (__traits(compiles, T.run!Program(program)))
+    {
+        static if (is(typeof(T.run!Program(program)) == int))
+            return T.run!Program(program);
+        else
+        {
+            T.run!Program(program);
+            return 0;
+        }
+    }
+    else static if (__traits(compiles, T.run(program)))
+    {
+        static if (is(typeof(T.run(program)) == int))
+            return T.run(program);
+        else
+        {
+            T.run(program);
+            return 0;
+        }
+    }
+    else static if (__traits(compiles, value.run()))
+    {
+        static if (is(typeof(value.run()) == int))
+            return value.run();
+        else
+        {
+            value.run();
+            return 0;
+        }
+    }
     else
     {
-        value.run();
-        return 0;
+        static assert(false,
+            "Terminal CLI struct `" ~ T.stringof ~ "` is missing a runnable "
+            ~ "handler. Expected a registered handler, "
+            ~ "`static int run(Program)(in Program program)`, "
+            ~ "`static void run(Program)(in Program program)`, "
+            ~ "`int run()`, or `void run()`.");
     }
+}
+
+private int callHandler(alias handler, T, Program)(ref T value, ref Program program)
+{
+    static if (__traits(compiles, handler!Program(program)))
+    {
+        static if (is(typeof(handler!Program(program)) == int))
+            return handler!Program(program);
+        else
+        {
+            handler!Program(program);
+            return 0;
+        }
+    }
+    else static if (__traits(compiles, handler(program)))
+    {
+        static if (is(typeof(handler(program)) == int))
+            return handler(program);
+        else
+        {
+            handler(program);
+            return 0;
+        }
+    }
+    else static if (__traits(compiles, handler()))
+    {
+        static if (is(typeof(handler()) == int))
+            return handler();
+        else
+        {
+            handler();
+            return 0;
+        }
+    }
+    else
+    {
+        static assert(false,
+            "Registered handler for `" ~ T.stringof ~ "` has an unsupported "
+            ~ "signature. Expected the same callable shapes as `run`.");
+    }
+}
+
+///
+@("args.Command.helpSections.repeatedCallsAppend")
+@safe
+unittest
+{
+    @(Command("tool")
+        .helpSections("description", "examples")
+        .helpSections("environment"))
+    static struct Cli {}
+
+    enum command = commandInfoRaw!Cli();
+    assert(command.sectionsToImport_ == [
+        "description",
+        "examples",
+        "environment",
+    ]);
+}
+
+///
+@("args.parseCli.namedArguments")
+@system
+unittest
+{
+    @(Command("tool", shortDescription: "Example tool"))
+    struct Cli
+    {
+        @(Option("v|verbose", counter: true))
+        uint verbose;
+
+        @(Option("mode", allowedValues: ["fast", "slow"]))
+        string mode;
+
+        @(Argument("path", optional: true))
+        string path;
+    }
+
+    auto parsed = parseCli!Cli(["tool", "-v", "-v", "--mode", "fast", "README.md"]);
+    assert(parsed);
+    assert(parsed.value.verbose == 2);
+    assert(parsed.value.mode == "fast");
+    assert(parsed.value.path == "README.md");
 }
 
 ///
@@ -1768,6 +2302,149 @@ unittest
     assert(runParsedCli(parsed.value) == 17);
 }
 
+@("args.parseCli.nestedCommandStructs")
+@system
+unittest
+{
+    @(Command("git"))
+    static struct Git
+    {
+        @(Option(`C`))
+        string directory;
+
+        @(Command("worktree"))
+        static struct Worktree
+        {
+            @(Option("verbose"))
+            bool verbose;
+
+            @(Command("list"))
+            static struct List
+            {
+                @(Option("porcelain"))
+                bool porcelain;
+
+                static int run(Program)(in Program program)
+                {
+                    return program.value.directory == "repo" ? 19 : 3;
+                }
+            }
+        }
+    }
+
+    auto parsed = parseCli!Git(["git", "-C", "repo", "worktree", "--verbose", "list", "--porcelain"]);
+    assert(parsed);
+    assert(parsed.value.value.directory == "repo");
+    parsed.value.command.match!((ref worktree) {
+        assert(worktree.value.verbose);
+        worktree.command.match!((ref list) {
+            assert(list.value.porcelain);
+            return 0;
+        });
+        return 0;
+    });
+    assert(runParsedCli(parsed.value) == 19);
+}
+
+@("args.parseCli.mixedNestedAndExternalSubcommands")
+@system
+unittest
+{
+    @(Command("status"))
+    static struct Status
+    {
+        @(Option(`s|short`))
+        bool short_;
+    }
+
+    static int statusHandler(Program)(in Program program)
+    {
+        return 41;
+    }
+
+    @(Command("git"))
+    static struct Git
+    {
+        mixin addSubCommand!(Status, statusHandler);
+
+        @(Command("worktree"))
+        static struct Worktree
+        {
+            static int run(Program)(in Program program)
+            {
+                return 5;
+            }
+        }
+    }
+
+    static assert(commandChildren!Git.length == 2);
+
+    auto parsed = parseCli!Git(["git", "status", "--short"]);
+    assert(parsed);
+    parsed.value.command.match!((ref command) {
+        static if (is(typeof(command.value) == Status))
+            assert(command.value.short_);
+        return 0;
+    });
+    assert(runParsedCli(parsed.value) == 41);
+}
+
+@("args.parseCli.defaultCommandGroup")
+@system
+unittest
+{
+    @(Command("git"))
+    static struct Git
+    {
+        @(Command("worktree", isDefault: true))
+        static struct Worktree
+        {
+            @(Option("verbose"))
+            bool verbose;
+
+            static int run(Program)(in Program program)
+            {
+                return 23;
+            }
+
+            @(Command("list"))
+            static struct List
+            {
+                int run() => 7;
+            }
+        }
+    }
+
+    auto parsed = parseCli!Git(["git", "worktree", "--verbose"]);
+    assert(parsed);
+    assert(runParsedCli(parsed.value) == 23);
+}
+
+@("args.parseCli.commandGroupRequiresSubcommandWithoutDefault")
+@system
+unittest
+{
+    @(Command("git"))
+    static struct Git
+    {
+        @(Command("worktree"))
+        static struct Worktree
+        {
+            @(Command("list"))
+            static struct List
+            {
+                int run() => 7;
+            }
+        }
+    }
+
+    auto parsed = parseCli!Git(["git", "worktree"]);
+    assert(!parsed);
+    assert(parsed.error.message == "Missing subcommand");
+    assert(parsed.error.help.canFind("git worktree"));
+    assert(parsed.error.help.canFind("list"));
+}
+
 @("args.formatHelp.hiddenOptionAbsentFromSynopsis")
 @system
 unittest
@@ -1778,7 +2455,7 @@ unittest
         @(Option("visible"))
         bool visible;
 
-        @(Option("secret").hidden())
+        @(Option("secret", hidden: true))
         bool secret;
     }
 
