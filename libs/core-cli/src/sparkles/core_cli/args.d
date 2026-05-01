@@ -2,7 +2,7 @@ module sparkles.core_cli.args;
 
 public import sparkles.core_cli.help_formatting : HelpInfo, Sections, formatParagraph, formatSection;
 
-import std.algorithm : among, canFind, countUntil, map, splitter, startsWith;
+import std.algorithm : among, canFind, countUntil, map, sort, splitter, startsWith;
 import std.array : array, join, split;
 import std.conv : to;
 import std.format : format;
@@ -1484,9 +1484,11 @@ private string formatHelp(Root, Cli)(HelpInfo info)
             sections ~= formatSection("commands", commands, 0, "", "\n");
     }
 
-    foreach (name, text; info.sections)
+    // Iterate sorted by key so help output is deterministic across runs;
+    // associative-array iteration order is otherwise unspecified.
+    foreach (name; info.sections.keys.sort)
         if (name != "description")
-            sections ~= formatSection(name, text);
+            sections ~= formatSection(name, info.sections[name]);
 
     if (command.epilog_.length)
         sections ~= command.epilog_;
