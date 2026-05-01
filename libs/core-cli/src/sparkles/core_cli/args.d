@@ -1587,33 +1587,22 @@ private string[] formatPositionals(Cli)()
     return lines;
 }
 
-private string[] formatSubcommands(Root, Sub)()
-if (isSumType!Sub)
+/// Subcommand types directly under `Container`. Resolves to either the
+/// `SumType` variants (legacy `@Subcommands SumType!(...)` model) or the
+/// `commandChildren!Container` graph (nested `@(Command)` structs and
+/// `mixin addSubCommand!T` registrations).
+private template subcommandChildTypes(Container)
 {
-    string[] lines;
-    static foreach (CommandType; Sub.Types)
-    {{
-        enum command = commandInfo!(Root, CommandType);
-        static if (!command.hidden_)
-        {{
-            enum names = commandNames!CommandType.join(", ");
-            enum description = command.shortDescription_.length
-                ? command.shortDescription_
-                : command.description_;
-            lines ~= "\t%s\n%s".format(
-                names.sty.bold,
-                description.wrap(80, "\t    ", "\t    "),
-            );
-        }}
-    }}
-    return lines;
+    static if (isSumType!Container)
+        alias subcommandChildTypes = Container.Types;
+    else
+        alias subcommandChildTypes = commandChildren!Container;
 }
 
-private string[] formatSubcommands(Root, Parent)()
-if (!isSumType!Parent)
+private string[] formatSubcommands(Root, Container)()
 {
     string[] lines;
-    static foreach (CommandType; commandChildren!Parent)
+    static foreach (CommandType; subcommandChildTypes!Container)
     {{
         enum command = commandInfo!(Root, CommandType);
         static if (!command.hidden_)
