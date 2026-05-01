@@ -964,6 +964,22 @@ private CliExpected!(string[]) parseCommand(Root, Cli)(
 
     static if (hasSubcommands!Cli)
     {
+        // The legacy `@Subcommands SumType!(...)` storage model has no way
+        // to represent "no variant selected" at runtime — `std.sumtype`
+        // default-initialises to its first variant, indistinguishable from
+        // an explicit selection. Surfacing that ambiguity at the
+        // `makeDefault()` declaration site is clearer than silently
+        // dispatching to the first variant when the user omits a
+        // subcommand. Migrate to the graph-based model (nested
+        // `@(Command)` structs or `mixin addSubCommand!T`) for default
+        // command groups.
+        enum command = commandInfoRaw!Cli();
+        static assert(!command.isDefault_,
+            "`makeDefault()` is not supported on `" ~ Cli.stringof
+            ~ "` because it uses the legacy `@Subcommands SumType!(...)` "
+            ~ "storage model. Use the graph-based subcommand model "
+            ~ "(nested `@(Command)` structs or `mixin addSubCommand!T`) "
+            ~ "to opt into default command groups.");
         return err!(string[])(CliError(
             kind: CliErrorKind.parse,
             message: "Missing subcommand",
@@ -2448,6 +2464,29 @@ unittest
     auto parsed = parseCli!Git(["git", "worktree", "--verbose"]);
     assert(parsed);
     assert(runParsedCli(parsed.value) == 23);
+}
+
+@("args.parseCli.makeDefaultRejectedOnLegacySumTypeModel")
+@safe
+unittest
+{
+    @(Command("init"))
+    static struct Init
+    {
+        int run() => 0;
+    }
+
+    @(Command("tool", isDefault: true))
+    static struct Tool
+    {
+        @Subcommands
+        SumType!Init command;
+    }
+
+    // `makeDefault()` cannot be honored under the legacy
+    // `@Subcommands SumType` model — instantiating `parseCli` should fail
+    // at compile time with a clear diagnostic.
+    static assert(!__traits(compiles, parseCli!Tool([])));
 }
 
 @("args.parseCli.commandGroupRequiresSubcommandWithoutDefault")
