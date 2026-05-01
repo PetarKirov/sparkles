@@ -4,6 +4,7 @@ name "git"
 dependency "sparkles:core-cli" path="../../../../.."
 targetPath "build"
 +/
+// ci: run --help
 
 import sparkles.core_cli.args;
 import sparkles.core_cli.prettyprint : prettyPrint;

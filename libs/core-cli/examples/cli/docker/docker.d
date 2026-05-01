@@ -4,7 +4,7 @@
     dependency "sparkles:core-cli" path="../../../../.."
     targetPath "build"
 +/
-// ci: build-only
+// ci: run --help
 
 import sparkles.core_cli.args;
 import sparkles.core_cli.prettyprint : prettyPrint;

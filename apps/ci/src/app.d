@@ -13,6 +13,12 @@ executed by placing a header comment after the `dub.sdl` block:
 // ci: build-only
 ---
 
+They can also pass arguments to the program when it is run by appending
+them after the `run` keyword:
+---d
+// ci: run --help
+---
+
 Usage:
 ---
 nix run .#ci -- [--log-level trace|info|warning|error] test [--fail-fast]
@@ -77,7 +83,7 @@ import std.path : baseName, buildPath;
 import std.process : execute;
 import std.regex : ctRegex, matchFirst;
 import std.stdio : writeln;
-import std.string : endsWith, indexOf, lineSplitter, replace, strip, stripRight, toLower;
+import std.string : endsWith, indexOf, lineSplitter, replace, split, strip, stripRight, toLower;
 import std.sumtype : SumType;
 
 // sparkles packages
@@ -286,6 +292,12 @@ enum StandaloneExampleMode
 {
     run,
     buildOnly,
+}
+
+struct StandaloneExampleSpec
+{
+    StandaloneExampleMode mode;
+    string[] runArgs;
 }
 
 struct FailureReplay
@@ -743,12 +755,12 @@ private int runExampleFilesMode(string[] exampleFiles, bool failFast)
             continue;
         }
 
-        const mode = detectStandaloneExampleMode(exampleFile);
-        const action = standaloneExampleAction(mode);
-        const verb = standaloneExampleVerb(mode);
+        auto spec = detectStandaloneExampleSpec(exampleFile);
+        const action = standaloneExampleAction(spec.mode);
+        const verb = standaloneExampleVerb(spec.mode);
         const progress = i"[$(i + 1)/$(exampleFiles.length)]".text;
-        const header = formatExampleFileHeader(exampleFile, progress, action);
-        auto result = executeStandaloneExampleFile(exampleFile, repoRoot, mode);
+        const header = formatExampleFileHeader(exampleFile, progress, action, spec.runArgs);
+        auto result = executeStandaloneExampleFile(exampleFile, repoRoot, spec);
 
         if (result.success)
         {
@@ -792,10 +804,12 @@ private int runExampleFilesMode(string[] exampleFiles, bool failFast)
 private ExecutionResult executeStandaloneExampleFile(
     string exampleFile,
     string repoRoot,
-    StandaloneExampleMode mode,
+    StandaloneExampleSpec spec,
 )
 {
-    auto result = execute(dubSingleFileCommand(standaloneExampleAction(mode), exampleFile, repoRoot));
+    const action = standaloneExampleAction(spec.mode);
+    auto runArgs = spec.mode == StandaloneExampleMode.run ? spec.runArgs : null;
+    auto result = execute(dubSingleFileCommand(action, exampleFile, repoRoot, runArgs));
     auto cleaned = result.output.unstyle
         .lineSplitter
         .map!(l => l.stripRight)
@@ -1577,7 +1591,12 @@ private string detectRepoRoot()
         : null;
 }
 
-private string[] dubSingleFileCommand(string action, string filePath, string repoRoot)
+private string[] dubSingleFileCommand(
+    string action,
+    string filePath,
+    string repoRoot,
+    string[] runArgs = null,
+)
 in (action == "run" || action == "build", "action must be dub run or dub build")
 {
     auto command = ["dub", action, "--quiet"];
@@ -1586,16 +1605,20 @@ in (action == "run" || action == "build", "action must be dub run or dub build")
         command ~= ["--root", repoRoot];
 
     command ~= ["--single", filePath];
+
+    if (runArgs.length > 0)
+        command ~= ["--"] ~ runArgs;
+
     return command;
 }
 
-private StandaloneExampleMode detectStandaloneExampleMode(string filePath)
+private StandaloneExampleSpec detectStandaloneExampleSpec(string filePath)
 {
-    return parseStandaloneExampleMode(filePath.readText.lineSplitter.array);
+    return parseStandaloneExampleSpec(filePath.readText.lineSplitter.array);
 }
 
 @safe pure
-private StandaloneExampleMode parseStandaloneExampleMode(const(char[])[] lines)
+private StandaloneExampleSpec parseStandaloneExampleSpec(const(char[])[] lines)
 {
     enum metadataPrefixes = ["// ci:", "// run_md_examples:"];
 
@@ -1632,19 +1655,25 @@ private StandaloneExampleMode parseStandaloneExampleMode(const(char[])[] lines)
             if (!stripped.startsWith(metadataPrefix))
                 continue;
 
-            const value = stripped[metadataPrefix.length .. $].strip.toLower;
-            if (value == "build-only")
-                return StandaloneExampleMode.buildOnly;
-            if (value == "run")
-                return StandaloneExampleMode.run;
-            return StandaloneExampleMode.run;
+            const value = stripped[metadataPrefix.length .. $].strip;
+            const spaceIdx = value.indexOf(' ');
+            const modeWord = (spaceIdx < 0 ? value : value[0 .. spaceIdx]).toLower;
+            const argsPart = spaceIdx < 0 ? "" : value[spaceIdx + 1 .. $].strip;
+
+            if (modeWord == "build-only")
+                return StandaloneExampleSpec(StandaloneExampleMode.buildOnly, []);
+
+            string[] runArgs;
+            if (argsPart.length > 0)
+                runArgs = argsPart.split.map!(a => a.idup).array;
+            return StandaloneExampleSpec(StandaloneExampleMode.run, runArgs);
         }
 
         if (!stripped.startsWith("//"))
             break;
     }
 
-    return StandaloneExampleMode.run;
+    return StandaloneExampleSpec(StandaloneExampleMode.run, []);
 }
 
 private string standaloneExampleAction(StandaloneExampleMode mode)
@@ -1663,9 +1692,10 @@ private string formatExampleHeader(in Example example, string progress)
     return styledText(i"{dim $(progress)} {cyan $(example.name)} {dim › dub run --single $(example.name).d}");
 }
 
-private string formatExampleFileHeader(string exampleFile, string progress, string action)
+private string formatExampleFileHeader(string exampleFile, string progress, string action, string[] runArgs = null)
 {
-    return styledText(i"{dim $(progress)} {cyan $(exampleFile.baseName)} {dim › dub $(action) --single $(exampleFile)}");
+    const argsSuffix = runArgs.length > 0 ? " -- " ~ runArgs.join(" ") : "";
+    return styledText(i"{dim $(progress)} {cyan $(exampleFile.baseName)} {dim › dub $(action) --single $(exampleFile)$(argsSuffix)}");
 }
 
 /// Formats output lines for display, truncating if necessary.
