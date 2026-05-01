@@ -1106,11 +1106,16 @@ private CliExpected!bool parseNamedOption(Cli)(
         static if (options.length)
         {{
             enum optionInfo = options[0];
-            if (matchesOption(optionInfo, field, name, isLong))
+            const match = matchesOption(optionInfo, field, name, isLong);
+            if (match != OptionMatch.none)
             {
                 auto effectiveInlineValue = inlineValue;
                 auto effectiveHasInlineValue = hasInlineValue;
-                if (isLong && name.startsWith("no-"))
+                // Only apply the boolean-negation override when we matched the
+                // `no-`-stripped alias. A user-defined option literally named
+                // `no-color` matches `OptionMatch.direct`, and must not be
+                // silently coerced to `false`.
+                if (match == OptionMatch.negated)
                 {
                     effectiveInlineValue = "false";
                     effectiveHasInlineValue = true;
@@ -1627,22 +1632,27 @@ private string formatOptionLine(T)(Option optionInfo, string field, string descr
     );
 }
 
-private bool matchesOption(Option optionInfo, string field, string name, bool isLong) @safe
+private enum OptionMatch
+{
+    none,
+    direct,
+    negated,
+}
+
+private OptionMatch matchesOption(Option optionInfo, string field, string name, bool isLong) @safe
 {
     foreach (candidate; optionNames(optionInfo, field))
-    {
         if (candidate == name)
-            return true;
-    }
+            return OptionMatch.direct;
 
     if (isLong && name.startsWith("no-"))
     {
         foreach (candidate; optionNames(optionInfo, field))
             if (candidate == name["no-".length .. $])
-                return true;
+                return OptionMatch.negated;
     }
 
-    return false;
+    return OptionMatch.none;
 }
 
 private string[] optionNames(Option optionInfo, string field) @safe
@@ -2089,6 +2099,24 @@ unittest
     assert(parsed.error.isHelp);
     assert(parsed.error.help.canFind("NAME"));
     assert(parsed.error.help.canFind("--verbose"));
+}
+
+@("args.parseCli.explicitNoPrefixedOptionWins")
+@system
+unittest
+{
+    // `--no-color` here is an explicit user-defined option, not a negation
+    // of `--color`. The matcher must take the direct alias and leave the
+    // value alone instead of silently coercing it to "false".
+    struct Cli
+    {
+        @(Option("no-color"))
+        bool noColor;
+    }
+
+    auto parsed = parseCli!Cli(["tool", "--no-color"]);
+    assert(parsed);
+    assert(parsed.value.noColor);
 }
 
 @("args.parseCli.arraysAndBoolNegation")
