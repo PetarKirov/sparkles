@@ -56,11 +56,16 @@ private void prettyPrintImpl(T, Writer, Hook)(
     if (depth > opt.maxDepth)
         return writeStylized(w, "...", opt.useColors ? Style.red : Style.none);
 
-    enum isNullable = __traits(compiles, T.init is null) && !is(T == U[], U);
+    enum isNullable = __traits(compiles, T.init is null);
 
-    // 1. Null
+    // 1. Null — covers class refs, pointers, and slices
     static if (isNullable)
     {
+        // For slices, `is null` checks `ptr == null && length == 0`; a null-ptr/nonzero-length
+        // slice is unreachable in `@safe` code, so this is equivalent to checking `ptr == null`.
+        // A non-null empty slice (`ptr != null && length == 0`) falls through to:
+        // * branch 3 (strings → `""`) or
+        // * branch 8 (other slices → `[]`).
         if (value is null)
             return writeStylized(w, "null", opt.useColors ? Style.yellow : Style.none);
     }
@@ -638,6 +643,9 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
+    string nullStr;
+    check(nullStr, "null");
+    check("", `""`);
     check("hello", `"hello"`);
     check("line1\nline2", `"line1\nline2"`);
     check("tab\there", `"tab\there"`);
@@ -655,6 +663,14 @@ unittest
 unittest
 {
     const opts = PrettyPrintOptions!void(softMaxWidth: 0, useColors: false);
+
+    int[] nullSlice;
+    check(nullSlice, "null", opts);
+
+    int[1] backing;
+    int[] emptyNonNull = backing[0 .. 0]; // non-null ptr, zero length
+    check(emptyNonNull, "[]", opts);
+
     int[] arr = [1, 2, 3];
     check(arr, outdent(`
         [
@@ -662,9 +678,6 @@ unittest
           2,
           3
         ]`)[1..$], opts);
-
-    int[] empty;
-    check(empty, "[]", opts);
 }
 
 @("prettyPrint.staticArray")
