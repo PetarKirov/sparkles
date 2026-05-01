@@ -907,10 +907,7 @@ private CliExpected!(string[]) parseCommand(Root, Cli)(
                     keepUnknown,
                 );
                 if (selected)
-                {
-                    args = args[0 .. index + 1] ~ subArgs;
                     return selected;
-                }
 
                 if (selected.error.isHelp || selected.error.message.length)
                     return err!(string[])(selected.error);
