@@ -497,10 +497,7 @@ CliExpected!(ParsedCommand!Cli) parseCli(Cli)(
 {
     auto info = normalizeHelpInfo!Cli(argv, helpInfo);
     auto args = argv.length > 0 ? argv[1 .. $] : argv;
-    static if (usesSynthesizedSubcommands!Cli)
-        auto parsed = parseCommandNode!(Cli, Cli)(receiver, args, info);
-    else
-        auto parsed = parseCommand!(Cli, Cli)(receiver, args, info);
+    auto parsed = parseCommandImpl!(Cli, Cli)(receiver, args, info);
     if (!parsed)
         return err!(ParsedCommand!Cli)(parsed.error);
 
@@ -515,10 +512,7 @@ CliExpected!(ParsedCommand!Cli) parseKnownCli(Cli)(
 {
     auto info = normalizeHelpInfo!Cli(argv, helpInfo);
     auto args = argv.length > 0 ? argv[1 .. $] : argv;
-    static if (usesSynthesizedSubcommands!Cli)
-        auto parsed = parseCommandNode!(Cli, Cli)(receiver, args, info, true);
-    else
-        auto parsed = parseCommand!(Cli, Cli)(receiver, args, info, true);
+    auto parsed = parseCommandImpl!(Cli, Cli)(receiver, args, info, true);
     if (!parsed)
         return err!(ParsedCommand!Cli)(parsed.error);
 
@@ -710,13 +704,34 @@ private Sections sectionsForCommand(Root, Cli)() @safe
     return result;
 }
 
-private CliExpected!(string[]) parseCommandNode(Root, Cli)(
-    ref CommandNode!Cli receiver,
+/// Shared parser for a single command level. Handles both the legacy
+/// `@Subcommands SumType!(...)` storage model and the graph-based
+/// `CommandNode!Cli` model — the receiver type drives the differences via
+/// `static if`. The two outer entry points (`parseCli` for the root and
+/// `parseChildCommand` for nested levels) are thin enough that there is
+/// no benefit to additional wrappers.
+private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
+    ref Receiver receiver,
     string[] args,
     HelpInfo helpInfo,
     bool keepUnknown = false,
 )
 {
+    enum isNode = isCommandNode!Receiver;
+    static if (isNode)
+        enum hasChildren = hasCommandChildren!Cli;
+    else
+        enum hasChildren = hasSubcommands!Cli;
+
+    // Field-storage receiver: the user-defined struct holding `@Option`
+    // and `@Argument` fields. For graph-based parsing the user struct is
+    // wrapped in a `CommandNode`; for the legacy model it *is* the
+    // receiver.
+    static if (isNode)
+        ref valueOf() return @trusted => receiver.value;
+    else
+        ref valueOf() return @trusted => receiver;
+
     bool[string] seen;
     string[] unknown;
     string[] positionals;
@@ -743,166 +758,28 @@ private CliExpected!(string[]) parseCommandNode(Root, Cli)(
             ));
         }
 
-        static if (hasCommandChildren!Cli)
+        static if (hasChildren)
         {
             if (!namedArgsEnded && !arg.startsWith("-"))
             {
                 auto subArgs = args[index + 1 .. $];
-                auto selected = parseCommandChild!(Root, Cli)(
-                    receiver.command,
-                    receiver.commandSelected,
-                    arg,
-                    subArgs,
-                    helpInfo,
-                    keepUnknown,
-                );
-                if (selected)
-                    return selected;
-
-                if (selected.error.isHelp || selected.error.message.length)
-                    return err!(string[])(selected.error);
-
-                return err!(string[])(CliError(
-                    kind: CliErrorKind.parse,
-                    message: "Unknown command: " ~ arg,
-                    help: formatHelp!(Root, Cli)(helpInfo),
-                ));
-            }
-        }
-
-        if (!namedArgsEnded && arg.startsWith("-") && arg.length > 1)
-        {
-            auto parsed = parseNamedOption(receiver.value, args, index, seen);
-            if (parsed)
-            {
-                if (parsed.value)
-                    continue;
-
-                if (keepUnknown)
+                static if (isNode)
                 {
-                    unknown ~= arg;
-                    index++;
-                    continue;
+                    auto selected = dispatchChild!(Root, Cli)(
+                        receiver.command,
+                        receiver.commandSelected,
+                        arg, subArgs, helpInfo, keepUnknown,
+                    );
+                }
+                else
+                {
+                    enum field = subcommandsFieldName!Cli;
+                    auto selected = dispatchSubcommand!Root(
+                        __traits(getMember, receiver, field),
+                        arg, subArgs, helpInfo, keepUnknown,
+                    );
                 }
 
-                return err!(string[])(CliError(
-                    kind: CliErrorKind.parse,
-                    message: "Unknown option " ~ arg,
-                ));
-            }
-            else
-                return err!(string[])(parsed.error);
-        }
-
-        positionals ~= arg;
-        index++;
-    }
-
-    auto assignedPositionals = assignPositionals(receiver.value, positionals, seen);
-    if (!assignedPositionals)
-        return err!(string[])(assignedPositionals.error);
-
-    auto required = validateRequired!Cli(seen);
-    if (!required)
-        return err!(string[])(required.error);
-
-    static if (hasCommandChildren!Cli)
-    {
-        enum command = commandInfoRaw!Cli();
-        static if (command.isDefault_)
-            return ok!CliError(unknown);
-        else
-            return err!(string[])(CliError(
-                kind: CliErrorKind.parse,
-                message: "Missing subcommand",
-                help: formatHelp!(Root, Cli)(helpInfo),
-            ));
-    }
-    else
-        return ok!CliError(unknown);
-}
-
-private CliExpected!(string[]) parseCommandChild(Root, Parent)(
-    ref SumType!(staticMap!(CommandNode, commandChildren!Parent)) destination,
-    ref bool commandSelected,
-    string name,
-    ref string[] args,
-    HelpInfo parentHelp,
-    bool keepUnknown,
-)
-{
-    static foreach (CommandType; commandChildren!Parent)
-    {{
-        if (commandNames!CommandType.canFind(name))
-        {
-            CommandNode!CommandType command;
-            auto info = childHelpInfo!(Root, CommandType)(parentHelp);
-            auto parsed = parseCommandNode!(Root, CommandType)(command, args, info, keepUnknown);
-            if (!parsed)
-                return parsed;
-
-            destination = command;
-            commandSelected = true;
-            return parsed;
-        }
-    }}
-
-    if (isHelpToken(name))
-        return err!(string[])(CliError(
-            kind: CliErrorKind.help,
-            help: formatSubcommandsHelp!(Root, Parent)(parentHelp),
-            exitCode: 0,
-        ));
-
-    return err!(string[])(CliError.init);
-}
-
-private CliExpected!(string[]) parseCommand(Root, Cli)(
-    ref Cli receiver,
-    string[] args,
-    HelpInfo helpInfo,
-    bool keepUnknown = false,
-)
-{
-    bool[string] seen;
-    string[] unknown;
-    string[] positionals;
-    bool namedArgsEnded;
-
-    size_t index;
-    while (index < args.length)
-    {
-        auto arg = args[index];
-
-        if (!namedArgsEnded && arg == "--")
-        {
-            namedArgsEnded = true;
-            index++;
-            continue;
-        }
-
-        if (!namedArgsEnded && isHelpToken(arg))
-        {
-            return err!(string[])(CliError(
-                kind: CliErrorKind.help,
-                help: formatHelp!(Root, Cli)(helpInfo),
-                exitCode: 0,
-            ));
-        }
-
-        static if (hasSubcommands!Cli)
-        {
-            if (!namedArgsEnded && !arg.startsWith("-"))
-            {
-                enum field = subcommandsFieldName!Cli;
-                auto subArgs = args[index + 1 .. $];
-                auto selected = parseSubcommand!Root(
-                    __traits(getMember, receiver, field),
-                    arg,
-                    subArgs,
-                    helpInfo,
-                    keepUnknown,
-                );
                 if (selected)
                     return selected;
 
@@ -922,7 +799,7 @@ private CliExpected!(string[]) parseCommand(Root, Cli)(
 
         if (!namedArgsEnded && arg.startsWith("-") && arg.length > 1)
         {
-            auto parsed = parseNamedOption(receiver, args, index, seen);
+            auto parsed = parseNamedOption(valueOf(), args, index, seen);
             if (parsed)
             {
                 if (parsed.value)
@@ -948,7 +825,7 @@ private CliExpected!(string[]) parseCommand(Root, Cli)(
         index++;
     }
 
-    auto assignedPositionals = assignPositionals(receiver, positionals, seen);
+    auto assignedPositionals = assignPositionals(valueOf(), positionals, seen);
     if (!assignedPositionals)
         return err!(string[])(assignedPositionals.error);
 
@@ -956,35 +833,84 @@ private CliExpected!(string[]) parseCommand(Root, Cli)(
     if (!required)
         return err!(string[])(required.error);
 
-    static if (hasSubcommands!Cli)
+    static if (hasChildren)
     {
-        // The legacy `@Subcommands SumType!(...)` storage model has no way
-        // to represent "no variant selected" at runtime — `std.sumtype`
-        // default-initialises to its first variant, indistinguishable from
-        // an explicit selection. Surfacing that ambiguity at the
-        // `makeDefault()` declaration site is clearer than silently
-        // dispatching to the first variant when the user omits a
-        // subcommand. Migrate to the graph-based model (nested
-        // `@(Command)` structs or `mixin addSubCommand!T`) for default
-        // command groups.
         enum command = commandInfoRaw!Cli();
-        static assert(!command.isDefault_,
-            "`makeDefault()` is not supported on `" ~ Cli.stringof
-            ~ "` because it uses the legacy `@Subcommands SumType!(...)` "
-            ~ "storage model. Use the graph-based subcommand model "
-            ~ "(nested `@(Command)` structs or `mixin addSubCommand!T`) "
-            ~ "to opt into default command groups.");
-        return err!(string[])(CliError(
-            kind: CliErrorKind.parse,
-            message: "Missing subcommand",
-            help: formatHelp!(Root, Cli)(helpInfo),
-        ));
+        static if (isNode)
+        {
+            // Graph-based model: `isDefault_` means the parent itself can
+            // run when no subcommand is selected. Dispatch picks that up
+            // by inspecting `commandSelected` in `runParsedCliImpl`.
+            static if (command.isDefault_)
+                return ok!CliError(unknown);
+            else
+                return err!(string[])(CliError(
+                    kind: CliErrorKind.parse,
+                    message: "Missing subcommand",
+                    help: formatHelp!(Root, Cli)(helpInfo),
+                ));
+        }
+        else
+        {
+            // Legacy `@Subcommands SumType!(...)` storage cannot represent
+            // "no variant selected" at runtime — `std.sumtype` default-
+            // initialises to its first variant, indistinguishable from an
+            // explicit selection. Reject `makeDefault()` here so the
+            // limitation surfaces at the declaration site instead of
+            // silently dispatching to the first variant.
+            static assert(!command.isDefault_,
+                "`makeDefault()` is not supported on `" ~ Cli.stringof
+                ~ "` because it uses the legacy `@Subcommands SumType!(...)` "
+                ~ "storage model. Use the graph-based subcommand model "
+                ~ "(nested `@(Command)` structs or `mixin addSubCommand!T`) "
+                ~ "to opt into default command groups.");
+            return err!(string[])(CliError(
+                kind: CliErrorKind.parse,
+                message: "Missing subcommand",
+                help: formatHelp!(Root, Cli)(helpInfo),
+            ));
+        }
     }
     else
         return ok!CliError(unknown);
 }
 
-private CliExpected!(string[]) parseSubcommand(Root, Sub)(
+private CliExpected!(string[]) dispatchChild(Root, Parent)(
+    ref SumType!(staticMap!(CommandNode, commandChildren!Parent)) destination,
+    ref bool commandSelected,
+    string name,
+    ref string[] args,
+    HelpInfo parentHelp,
+    bool keepUnknown,
+)
+{
+    static foreach (CommandType; commandChildren!Parent)
+    {{
+        if (commandNames!CommandType.canFind(name))
+        {
+            CommandNode!CommandType command;
+            auto info = childHelpInfo!(Root, CommandType)(parentHelp);
+            auto parsed = parseCommandImpl!(Root, CommandType)(command, args, info, keepUnknown);
+            if (!parsed)
+                return parsed;
+
+            destination = command;
+            commandSelected = true;
+            return parsed;
+        }
+    }}
+
+    if (isHelpToken(name))
+        return err!(string[])(CliError(
+            kind: CliErrorKind.help,
+            help: formatSubcommandsHelp!(Root, Parent)(parentHelp),
+            exitCode: 0,
+        ));
+
+    return err!(string[])(CliError.init);
+}
+
+private CliExpected!(string[]) dispatchSubcommand(Root, Sub)(
     ref Sub destination,
     string name,
     ref string[] args,
@@ -993,14 +919,13 @@ private CliExpected!(string[]) parseSubcommand(Root, Sub)(
 )
 if (isSumType!Sub)
 {
-    alias Commands = Sub.Types;
-    static foreach (CommandType; Commands)
+    static foreach (CommandType; Sub.Types)
     {{
         if (commandNames!CommandType.canFind(name))
         {
             CommandType command;
             auto info = childHelpInfo!(Root, CommandType)(parentHelp);
-            auto parsed = parseCommand!(Root, CommandType)(command, args, info, keepUnknown);
+            auto parsed = parseCommandImpl!(Root, CommandType)(command, args, info, keepUnknown);
             if (!parsed)
                 return parsed;
 
