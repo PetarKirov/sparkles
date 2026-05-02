@@ -561,6 +561,7 @@ private CliExpected!void applyOption(T)(
 )
 {
     auto originalArg = args[index];
+
     static if (is(T == bool))
     {
         if (hasInlineValue)
@@ -576,66 +577,50 @@ private CliExpected!void applyOption(T)(
         index++;
         return ok();
     }
-    else static if (isDynamicArray!T && !isSomeString!T)
+    else
     {
-        alias Element = typeof(T.init[0]);
-        auto values = collectValues(args, index, inlineValue, hasInlineValue, true);
-        if (values.empty)
-            return error(CliError(
-                kind: CliError.Kind.parse,
-                message: "Missing value for " ~ originalArg,
-            ));
-
-        foreach (value; values)
+        static if (isIntegral!T && !is(T == enum))
         {
-            static if (is(Element == string))
-                target ~= value;
-            else
+            if (optionInfo.counter_ && !hasInlineValue && isNextValueMissing(args, index))
             {
-                auto parsed = parseValue!Element(value, optionInfo);
-                if (!parsed)
-                    return error(parsed.error);
-                target ~= parsed.value;
+                target++;
+                index++;
+                return ok();
             }
         }
 
-        return ok();
-    }
-    else static if (isIntegral!T && !is(T == enum) && !is(T == bool))
-    {
-        if (optionInfo.counter_ && !hasInlineValue && isNextValueMissing(args, index))
+        enum isVariadic = isDynamicArray!T && !isSomeString!T;
+        auto values = collectValues(args, index, inlineValue, hasInlineValue, isVariadic);
+        if (values.empty)
+            return error(CliError(
+                kind: CliError.Kind.parse,
+                message: "Missing value for " ~ originalArg,
+            ));
+
+        static if (isVariadic)
         {
-            target++;
-            index++;
-            return ok();
+            alias Element = typeof(T.init[0]);
+            foreach (value; values)
+            {
+                static if (is(Element == string))
+                    target ~= value;
+                else
+                {
+                    auto parsed = parseValue!Element(value, optionInfo);
+                    if (!parsed)
+                        return error(parsed.error);
+                    target ~= parsed.value;
+                }
+            }
+        }
+        else
+        {
+            auto parsed = parseValue!T(values[0], optionInfo);
+            if (!parsed)
+                return error(parsed.error);
+            target = parsed.value;
         }
 
-        auto values = collectValues(args, index, inlineValue, hasInlineValue, false);
-        if (values.empty)
-            return error(CliError(
-                kind: CliError.Kind.parse,
-                message: "Missing value for " ~ originalArg,
-            ));
-
-        auto parsed = parseValue!T(values[0], optionInfo);
-        if (!parsed)
-            return error(parsed.error);
-        target = parsed.value;
-        return ok();
-    }
-    else
-    {
-        auto values = collectValues(args, index, inlineValue, hasInlineValue, false);
-        if (values.empty)
-            return error(CliError(
-                kind: CliError.Kind.parse,
-                message: "Missing value for " ~ originalArg,
-            ));
-
-        auto parsed = parseValue!T(values[0], optionInfo);
-        if (!parsed)
-            return error(parsed.error);
-        target = parsed.value;
         return ok();
     }
 }
