@@ -3,7 +3,7 @@ module sparkles.core_cli.args.internal;
 import std.algorithm : among, canFind, countUntil, splitter, startsWith;
 import std.array : join, split;
 import std.conv : to;
-import std.meta : AliasSeq, staticMap;
+import std.meta : AliasSeq, NoDuplicates, staticMap;
 import std.path : baseName;
 import std.range : empty;
 import std.string : toLower;
@@ -880,23 +880,17 @@ private string findSubcommandsFieldName(T)()
 
 template commandChildren(T)
 {
-    alias children = commandChildrenImpl!(T, __traits(allMembers, T));
-    static assert(!hasDuplicateCommandTypes!children,
+    private alias children = staticMap!(commandChildOf!T, AliasSeq!(__traits(allMembers, T)));
+    static assert(NoDuplicates!children.length == children.length,
         "Duplicate subcommand type registered under `" ~ T.stringof ~ "`.");
     static assert(!hasDuplicateCommandNames!children,
         "Duplicate subcommand name registered under `" ~ T.stringof ~ "`.");
     alias commandChildren = children;
 }
 
-private template commandChildrenImpl(T, names...)
+private template commandChildOf(T)
 {
-    static if (names.length == 0)
-        alias commandChildrenImpl = AliasSeq!();
-    else
-        alias commandChildrenImpl = AliasSeq!(
-            commandChildForMember!(T, names[0]),
-            commandChildrenImpl!(T, names[1 .. $]),
-        );
+    alias commandChildOf(string name) = commandChildForMember!(T, name);
 }
 
 private template commandChildForMember(T, string name)
@@ -966,40 +960,15 @@ private template registeredHandlerImpl(Parent, Child, names...)
 private enum hasRegisteredHandler(Parent, Child) = !is(Parent == void)
     && __traits(compiles, registeredHandler!(Parent, Child));
 
-private template hasDuplicateCommandTypes(commands...)
-{
-    static if (commands.length < 2)
-        enum hasDuplicateCommandTypes = false;
-    else
-        enum hasDuplicateCommandTypes = commandTypeIn!(commands[0], commands[1 .. $])
-            || hasDuplicateCommandTypes!(commands[1 .. $]);
-}
+private enum primaryNameOf(T) = commandInfoRaw!T().name;
 
-private template commandTypeIn(Command, commands...)
+private bool hasDuplicateCommandNames(commands...)()
 {
-    static if (commands.length == 0)
-        enum commandTypeIn = false;
-    else
-        enum commandTypeIn = is(Command == commands[0])
-            || commandTypeIn!(Command, commands[1 .. $]);
-}
-
-private template hasDuplicateCommandNames(commands...)
-{
-    static if (commands.length < 2)
-        enum hasDuplicateCommandNames = false;
-    else
-        enum hasDuplicateCommandNames = commandNameIn!(commandPrimaryName!(commands[0]), commands[1 .. $])
-            || hasDuplicateCommandNames!(commands[1 .. $]);
-}
-
-private template commandNameIn(string name, commands...)
-{
-    static if (commands.length == 0)
-        enum commandNameIn = false;
-    else
-        enum commandNameIn = commandPrimaryName!(commands[0]) == name
-            || commandNameIn!(name, commands[1 .. $]);
+    string[] names = [staticMap!(primaryNameOf, commands)];
+    foreach (i, n; names)
+        foreach (m; names[i + 1 .. $])
+            if (n == m) return true;
+    return false;
 }
 
 /// Read the raw `@Command` UDA from `T`, with no section resolution.
