@@ -2,7 +2,6 @@ module sparkles.core_cli.args;
 
 public import sparkles.core_cli.args.error :
     CliError,
-    CliErrorKind,
     CliExpected,
     Expected,
     error,

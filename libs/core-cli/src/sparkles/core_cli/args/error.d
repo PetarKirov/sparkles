@@ -4,20 +4,20 @@ static import expected;
 
 public import expected : Expected;
 
-enum CliErrorKind
-{
-    parse,
-    help,
-}
-
 struct CliError
 {
-    CliErrorKind kind;
+    enum Kind
+    {
+        parse,
+        help,
+    }
+
+    Kind kind;
     string message;
     string help;
     int exitCode = 1;
 
-    bool isHelp() const @safe pure nothrow @nogc => kind == CliErrorKind.help;
+    bool isHelp() const @safe pure nothrow @nogc => kind == Kind.help;
 }
 
 alias CliExpected(T) = Expected!(T, CliError);
