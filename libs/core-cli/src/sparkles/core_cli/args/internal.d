@@ -1,5 +1,6 @@
 module sparkles.core_cli.args.internal;
 
+public import sparkles.core_cli.args.error;
 public import sparkles.core_cli.args.uda;
 public import sparkles.core_cli.help_formatting : HelpInfo, Sections, formatParagraph, formatSection;
 
@@ -13,8 +14,6 @@ import std.range : empty;
 import std.string : stripRight, toLower, toUpper, wrap;
 import std.sumtype : match, SumType;
 import std.traits : FieldNameTuple, getUDAs, isDynamicArray, isIntegral, isSomeString;
-
-import expected : Expected, err, ok;
 
 import sparkles.core_cli.term_style : sty = stylizedTextBuilder;
 
@@ -39,24 +38,6 @@ template ParsedCommand(Command)
     else
         alias ParsedCommand = Command;
 }
-
-enum CliErrorKind
-{
-    parse,
-    help,
-}
-
-struct CliError
-{
-    CliErrorKind kind;
-    string message;
-    string help;
-    int exitCode = 1;
-
-    bool isHelp() const @safe pure nothrow @nogc => kind == CliErrorKind.help;
-}
-
-alias CliExpected(T) = Expected!(T, CliError);
 
 /// Build a `Sections` map by string-importing a list of section files.
 ///
@@ -124,9 +105,9 @@ CliExpected!(ParsedCommand!Cli) parseCli(Cli)(
     auto args = argv.length > 0 ? argv[1 .. $] : argv;
     auto parsed = parseCommandImpl!(Cli, Cli)(receiver, args, info);
     if (!parsed)
-        return err!(ParsedCommand!Cli)(parsed.error);
+        return error!(ParsedCommand!Cli)(parsed.error);
 
-    return ok!CliError(receiver);
+    return ok(receiver);
 }
 
 CliExpected!(ParsedCommand!Cli) parseKnownCli(Cli)(
@@ -139,12 +120,12 @@ CliExpected!(ParsedCommand!Cli) parseKnownCli(Cli)(
     auto args = argv.length > 0 ? argv[1 .. $] : argv;
     auto parsed = parseCommandImpl!(Cli, Cli)(receiver, args, info, true);
     if (!parsed)
-        return err!(ParsedCommand!Cli)(parsed.error);
+        return error!(ParsedCommand!Cli)(parsed.error);
 
     argv = argv.length > 0
         ? argv[0 .. 1] ~ parsed.value
         : parsed.value;
-    return ok!CliError(receiver);
+    return ok(receiver);
 }
 
 // `runCli` and `runParsedCli` ultimately dispatch to user-supplied
@@ -376,7 +357,7 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
 
         if (!namedArgsEnded && isHelpToken(arg))
         {
-            return err!(string[])(CliError(
+            return error!(string[])(CliError(
                 kind: CliErrorKind.help,
                 help: formatHelp!(Root, Cli)(helpInfo),
                 exitCode: 0,
@@ -409,12 +390,12 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
                     return selected;
 
                 if (selected.error.isHelp || selected.error.message.length)
-                    return err!(string[])(selected.error);
+                    return error!(string[])(selected.error);
 
                 // No variant matched the given subcommand name. In a
                 // subcommand-bearing context this is an unknown command,
                 // not a stray positional argument.
-                return err!(string[])(CliError(
+                return error!(string[])(CliError(
                     kind: CliErrorKind.parse,
                     message: "Unknown command: " ~ arg,
                     help: formatHelp!(Root, Cli)(helpInfo),
@@ -437,13 +418,13 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
                     continue;
                 }
 
-                return err!(string[])(CliError(
+                return error!(string[])(CliError(
                     kind: CliErrorKind.parse,
                     message: "Unknown option " ~ arg,
                 ));
             }
             else
-                return err!(string[])(parsed.error);
+                return error!(string[])(parsed.error);
         }
 
         positionals ~= arg;
@@ -452,11 +433,11 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
 
     auto assignedPositionals = assignPositionals(valueOf(), positionals, seen);
     if (!assignedPositionals)
-        return err!(string[])(assignedPositionals.error);
+        return error!(string[])(assignedPositionals.error);
 
     auto required = validateRequired!Cli(seen);
     if (!required)
-        return err!(string[])(required.error);
+        return error!(string[])(required.error);
 
     static if (hasChildren)
     {
@@ -467,9 +448,9 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
             // run when no subcommand is selected. Dispatch picks that up
             // by inspecting `commandSelected` in `runParsedCliImpl`.
             static if (command.isDefault_)
-                return ok!CliError(unknown);
+                return ok(unknown);
             else
-                return err!(string[])(CliError(
+                return error!(string[])(CliError(
                     kind: CliErrorKind.parse,
                     message: "Missing subcommand",
                     help: formatHelp!(Root, Cli)(helpInfo),
@@ -489,7 +470,7 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
                 ~ "storage model. Use the graph-based subcommand model "
                 ~ "(nested `@(Command)` structs or `mixin addSubCommand!T`) "
                 ~ "to opt into default command groups.");
-            return err!(string[])(CliError(
+            return error!(string[])(CliError(
                 kind: CliErrorKind.parse,
                 message: "Missing subcommand",
                 help: formatHelp!(Root, Cli)(helpInfo),
@@ -497,7 +478,7 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
         }
     }
     else
-        return ok!CliError(unknown);
+        return ok(unknown);
 }
 
 private CliExpected!(string[]) dispatchChild(Root, Parent)(
@@ -526,13 +507,13 @@ private CliExpected!(string[]) dispatchChild(Root, Parent)(
     }}
 
     if (isHelpToken(name))
-        return err!(string[])(CliError(
+        return error!(string[])(CliError(
             kind: CliErrorKind.help,
             help: formatSubcommandsHelp!(Root, Parent)(parentHelp),
             exitCode: 0,
         ));
 
-    return err!(string[])(CliError.init);
+    return error!(string[])(CliError.init);
 }
 
 private CliExpected!(string[]) dispatchSubcommand(Root, Sub)(
@@ -560,13 +541,13 @@ if (isSumType!Sub)
     }}
 
     if (isHelpToken(name))
-        return err!(string[])(CliError(
+        return error!(string[])(CliError(
             kind: CliErrorKind.help,
             help: formatSubcommandsHelp!(Root, Sub)(parentHelp),
             exitCode: 0,
         ));
 
-    return err!(string[])(CliError.init);
+    return error!(string[])(CliError.init);
 }
 
 /// True iff every character in `name` corresponds to a single-character
@@ -690,15 +671,15 @@ private CliExpected!bool parseNamedOption(Cli)(
                     effectiveHasInlineValue,
                 );
                 if (!parsed)
-                    return err!bool(parsed.error);
+                    return error!bool(parsed.error);
 
                 seen[field] = true;
-                return ok!CliError(true);
+                return ok(true);
             }
         }}
     }}
 
-    return ok!CliError(false);
+    return ok(false);
 }
 
 private CliExpected!void applyOption(T)(
@@ -717,21 +698,21 @@ private CliExpected!void applyOption(T)(
         {
             auto parsed = parseBool(inlineValue);
             if (!parsed)
-                return err(parsed.error);
+                return error(parsed.error);
             target = parsed.value;
         }
         else
             target = true;
 
         index++;
-        return ok!CliError();
+        return ok();
     }
     else static if (isDynamicArray!T && !isSomeString!T)
     {
         alias Element = typeof(T.init[0]);
         auto values = collectValues(args, index, inlineValue, hasInlineValue, true);
         if (values.empty)
-            return err(CliError(
+            return error(CliError(
                 kind: CliErrorKind.parse,
                 message: "Missing value for " ~ originalArg,
             ));
@@ -744,12 +725,12 @@ private CliExpected!void applyOption(T)(
             {
                 auto parsed = parseValue!Element(value, optionInfo);
                 if (!parsed)
-                    return err(parsed.error);
+                    return error(parsed.error);
                 target ~= parsed.value;
             }
         }
 
-        return ok!CliError();
+        return ok();
     }
     else static if (isIntegral!T && !is(T == enum) && !is(T == bool))
     {
@@ -757,36 +738,36 @@ private CliExpected!void applyOption(T)(
         {
             target++;
             index++;
-            return ok!CliError();
+            return ok();
         }
 
         auto values = collectValues(args, index, inlineValue, hasInlineValue, false);
         if (values.empty)
-            return err(CliError(
+            return error(CliError(
                 kind: CliErrorKind.parse,
                 message: "Missing value for " ~ originalArg,
             ));
 
         auto parsed = parseValue!T(values[0], optionInfo);
         if (!parsed)
-            return err(parsed.error);
+            return error(parsed.error);
         target = parsed.value;
-        return ok!CliError();
+        return ok();
     }
     else
     {
         auto values = collectValues(args, index, inlineValue, hasInlineValue, false);
         if (values.empty)
-            return err(CliError(
+            return error(CliError(
                 kind: CliErrorKind.parse,
                 message: "Missing value for " ~ originalArg,
             ));
 
         auto parsed = parseValue!T(values[0], optionInfo);
         if (!parsed)
-            return err(parsed.error);
+            return error(parsed.error);
         target = parsed.value;
-        return ok!CliError();
+        return ok();
     }
 }
 
@@ -844,7 +825,7 @@ private CliExpected!void assignPositionals(Cli)(
             {
                 static if (!argumentInfo.optional_)
                 {
-                    return err(CliError(
+                    return error(CliError(
                         kind: CliErrorKind.parse,
                         message: "Missing positional argument " ~ positionalName(field, argumentInfo),
                     ));
@@ -864,7 +845,7 @@ private CliExpected!void assignPositionals(Cli)(
                         {
                             auto parsed = parseValue!Element(v, Option.init);
                             if (!parsed)
-                                return err(parsed.error);
+                                return error(parsed.error);
                             __traits(getMember, receiver, field) ~= parsed.value;
                         }
                     }
@@ -877,7 +858,7 @@ private CliExpected!void assignPositionals(Cli)(
                         Option.init,
                     );
                     if (!parsed)
-                        return err(parsed.error);
+                        return error(parsed.error);
                     __traits(getMember, receiver, field) = parsed.value;
                     valueIndex++;
                 }
@@ -887,12 +868,12 @@ private CliExpected!void assignPositionals(Cli)(
     }}
 
     if (valueIndex < values.length)
-        return err(CliError(
+        return error(CliError(
             kind: CliErrorKind.parse,
             message: "Unexpected positional argument " ~ values[valueIndex],
         ));
 
-    return ok!CliError();
+    return ok();
 }
 
 private CliExpected!void validateRequired(Cli)(bool[string] seen)
@@ -904,33 +885,33 @@ private CliExpected!void validateRequired(Cli)(bool[string] seen)
         static if (options.length && options[0].required_)
         {{
             if (!seen.get(field, false))
-                return err(CliError(
+                return error(CliError(
                     kind: CliErrorKind.parse,
                     message: "Missing required option " ~ displayOption(options[0], field),
                 ));
         }}
     }}
 
-    return ok!CliError();
+    return ok();
 }
 
 private CliExpected!T parseValue(T)(string value, Option optionInfo)
 {
     if (optionInfo.allowedValues_.length && !optionInfo.allowedValues_.canFind(value))
-        return err!T(CliError(
+        return error!T(CliError(
             kind: CliErrorKind.parse,
             message: "Invalid value `" ~ value ~ "`; expected one of: " ~ optionInfo.allowedValues_.join(", "),
         ));
 
     static if (is(T == string))
-        return ok!CliError(value);
+        return ok(value);
     else static if (is(T == enum))
     {
         try
-            return ok!CliError(value.to!T);
+            return ok(value.to!T);
         catch (Exception)
         {
-            return err!T(CliError(
+            return error!T(CliError(
                 kind: CliErrorKind.parse,
                 message: "Invalid value `" ~ value ~ "` for " ~ T.stringof,
             ));
@@ -939,10 +920,10 @@ private CliExpected!T parseValue(T)(string value, Option optionInfo)
     else
     {
         try
-            return ok!CliError(value.to!T);
+            return ok(value.to!T);
         catch (Exception)
         {
-            return err!T(CliError(
+            return error!T(CliError(
                 kind: CliErrorKind.parse,
                 message: "Invalid value `" ~ value ~ "` for " ~ T.stringof,
             ));
@@ -958,14 +939,14 @@ private CliExpected!bool parseBool(string value) @safe
         case "yes":
         case "y":
         case "1":
-            return ok!CliError(true);
+            return ok(true);
         case "false":
         case "no":
         case "n":
         case "0":
-            return ok!CliError(false);
+            return ok(false);
         default:
-            return err!bool(CliError(
+            return error!bool(CliError(
                 kind: CliErrorKind.parse,
                 message: "Invalid boolean value `" ~ value ~ "`",
             ));
