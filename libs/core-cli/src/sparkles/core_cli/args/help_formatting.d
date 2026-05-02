@@ -82,30 +82,13 @@ package string[] subcommandPath(Root, Leaf)() @safe
 {
     static if (is(Root == Leaf))
         return [];
-    else static if (hasSubcommands!Root)
+    else static if (hasSubcommands!Root || hasCommandChildren!Root)
     {
-        enum field = subcommandsFieldName!Root;
-        alias Sub = typeof(__traits(getMember, Root.init, field));
-        static foreach (Variant; Sub.Types)
+        static foreach (Variant; subcommandChildTypes!Root)
         {{
             static if (is(Variant == Leaf))
                 return [commandPrimaryName!Variant];
-            else static if (hasSubcommands!Variant)
-            {{
-                enum inner = subcommandPath!(Variant, Leaf);
-                static if (inner.length > 0)
-                    return [commandPrimaryName!Variant] ~ inner;
-            }}
-        }}
-        return null;
-    }
-    else static if (hasCommandChildren!Root)
-    {
-        static foreach (Variant; commandChildren!Root)
-        {{
-            static if (is(Variant == Leaf))
-                return [commandPrimaryName!Variant];
-            else static if (hasCommandChildren!Variant || hasSubcommands!Variant)
+            else static if (hasSubcommands!Variant || hasCommandChildren!Variant)
             {{
                 enum inner = subcommandPath!(Variant, Leaf);
                 static if (inner.length > 0)
@@ -231,15 +214,7 @@ package string formatHelp(Root, Cli)(HelpInfo info)
     if (options.length)
         sections ~= formatSection("options", options, 0, "", "\n");
 
-    static if (hasSubcommands!Cli)
-    {
-        enum field = subcommandsFieldName!Cli;
-        alias Sub = typeof(__traits(getMember, Cli.init, field));
-        auto commands = formatSubcommands!(Root, Sub);
-        if (commands.length)
-            sections ~= formatSection("commands", commands, 0, "", "\n");
-    }
-    else static if (hasCommandChildren!Cli)
+    static if (hasSubcommands!Cli || hasCommandChildren!Cli)
     {
         auto commands = formatSubcommands!(Root, Cli);
         if (commands.length)
@@ -339,14 +314,21 @@ private string[] formatPositionals(Cli)()
     return lines;
 }
 
-/// Subcommand types directly under `Container`. Resolves to either the
-/// `SumType` variants (legacy `@Subcommands SumType!(...)` model) or the
-/// `commandChildren!Container` graph (nested `@(Command)` structs and
-/// `mixin addSubCommand!T` registrations).
+/// Subcommand types directly under `Container`. Resolves to:
+/// - the `SumType` variants when `Container` is itself a `SumType`,
+/// - the `SumType` variants of `Container`'s `@Subcommands` field
+///   (legacy storage model), or
+/// - `commandChildren!Container` (nested `@(Command)` structs and
+///   `mixin addSubCommand!T` registrations).
 package template subcommandChildTypes(Container)
 {
     static if (isSumType!Container)
         alias subcommandChildTypes = Container.Types;
+    else static if (hasSubcommands!Container)
+    {
+        enum field = subcommandsFieldName!Container;
+        alias subcommandChildTypes = typeof(__traits(getMember, Container.init, field)).Types;
+    }
     else
         alias subcommandChildTypes = commandChildren!Container;
 }
