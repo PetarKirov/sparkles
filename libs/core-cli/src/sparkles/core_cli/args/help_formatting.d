@@ -101,6 +101,17 @@ package string[] subcommandPath(Root, Leaf)() @safe
         return null;
 }
 
+/// Build the string-import path used to look up help text under
+/// `<viewsRoot>/<subcommand-chain>/<kind>/<name>.txt`.
+private template viewsPath(Root, Cli, string kind, string name)
+{
+    private enum chain = subcommandPath!(Root, Cli);
+    private enum head = chain.length
+        ? buildPath(viewsRootFor!Root, chain.join("/"))
+        : viewsRootFor!Root;
+    enum viewsPath = buildPath(head, kind, name ~ ".txt");
+}
+
 /// Resolve the help text for the option declared on `Cli.<field>` within
 /// the program rooted at `Root`. Inline descriptions on the `@Option` UDA
 /// take precedence; when the description is empty the framework falls
@@ -116,17 +127,9 @@ package template optionHelpText(Root, Cli, string field)
         enum optionHelpText = opt.description_;
     else
     {
-        enum chain = subcommandPath!(Root, Cli);
-        enum subPath = chain.length ? chain.join("/") : "";
-        enum viewsRoot = viewsRootFor!Root;
         enum aliasShort = opt.aliases.split("|")[0];
-        enum safeName = isUpperShortFlag(aliasShort)
-            ? aliasShort ~ "_"
-            : aliasShort;
-        enum path = subPath.length
-            ? buildPath(viewsRoot, subPath, "options", safeName ~ ".txt")
-            : buildPath(viewsRoot, "options", safeName ~ ".txt");
-        enum optionHelpText = tryImport!path;
+        enum safeName = isUpperShortFlag(aliasShort) ? aliasShort ~ "_" : aliasShort;
+        enum optionHelpText = tryImport!(viewsPath!(Root, Cli, "options", safeName));
     }
 }
 
@@ -142,19 +145,18 @@ package Sections sectionsForCommand(Root, Cli)() @safe
 {
     Sections result;
     enum cmd = commandInfoRaw!Cli();
-    enum chain = subcommandPath!(Root, Cli);
-    enum subPath = chain.length ? chain.join("/") : "";
-    enum viewsRoot = viewsRootFor!Root;
     static foreach (section; cmd.sectionsToImport_)
     {{
-        enum path = subPath.length
-            ? buildPath(viewsRoot, subPath, "sections", section ~ ".txt")
-            : buildPath(viewsRoot, "sections", section ~ ".txt");
-        enum text = tryImport!path;
+        enum text = tryImport!(viewsPath!(Root, Cli, "sections", section));
         static if (text.length)
             result[section] = text.split("\n\n");
     }}
     return result;
+}
+
+private string preferredDescription(Command command) @safe
+{
+    return command.description_.length ? command.description_ : command.shortDescription_;
 }
 
 package HelpInfo normalizeHelpInfo(Cli)(string[] argv, HelpInfo helpInfo)
@@ -164,14 +166,8 @@ package HelpInfo normalizeHelpInfo(Cli)(string[] argv, HelpInfo helpInfo)
 
     auto command = commandInfo!(Cli, Cli);
     if (helpInfo.shortDescription.length == 0)
-    {
-        if (command.description_.length)
-            helpInfo.shortDescription = command.description_;
-        else
-            helpInfo.shortDescription = command.shortDescription_;
-    }
+        helpInfo.shortDescription = preferredDescription(command);
 
-    // Merge command sections into helpInfo
     foreach (key, value; command.sections_)
         if (key !in helpInfo.sections)
             helpInfo.sections[key] = value;
@@ -183,9 +179,7 @@ package HelpInfo childHelpInfo(Root, Cli)(HelpInfo parent)
 {
     auto command = commandInfo!(Root, Cli);
     parent.programName = parent.programName ~ " " ~ commandPrimaryName!Cli;
-    parent.shortDescription = command.description_.length
-        ? command.description_
-        : command.shortDescription_;
+    parent.shortDescription = preferredDescription(command);
     parent.sections = command.sections_;
     return parent;
 }
