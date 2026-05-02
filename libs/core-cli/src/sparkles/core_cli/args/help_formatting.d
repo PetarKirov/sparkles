@@ -238,6 +238,16 @@ package string formatSubcommandsHelp(Root, Sub)(HelpInfo info)
     return formatSection("commands", formatSubcommands!(Root, Sub), 0);
 }
 
+private enum helpWrapColumn = 80;
+private enum helpBodyIndent = "\t    ";
+
+/// Help-section row: a tab-indented head line followed by the body
+/// wrapped to `helpWrapColumn` and indented to align under the head.
+private string helpRow(string head, string body_) @safe
+{
+    return "\t" ~ head ~ "\n" ~ body_.wrap(helpWrapColumn, helpBodyIndent, helpBodyIndent);
+}
+
 private string formatUsage(Cli)(string programName)
 {
     string[] parts = [programName];
@@ -245,26 +255,18 @@ private string formatUsage(Cli)(string programName)
     {{
         alias symbol = __traits(getMember, Cli, field);
         enum options = getUDAs!(symbol, Option);
-        static if (options.length)
+        static if (options.length && !options[0].hidden_)
         {{
-            enum optionInfo = options[0];
-            static if (!optionInfo.hidden_)
-            {
-                static if (optionInfo.required_)
-                    parts ~= displayOption(optionInfo, field) ~ valuePlaceholder!(typeof(__traits(getMember, Cli.init, field)))(optionInfo, field);
-                else
-                    parts ~= "[" ~ displayOption(optionInfo, field) ~ valuePlaceholder!(typeof(__traits(getMember, Cli.init, field)))(optionInfo, field) ~ "]";
-            }
+            enum o = options[0];
+            alias FT = typeof(__traits(getMember, Cli.init, field));
+            enum body_ = displayOption(o, field) ~ valuePlaceholder!FT(o, field);
+            parts ~= o.required_ ? body_ : "[" ~ body_ ~ "]";
         }}
-
         enum args = getUDAs!(symbol, Argument);
         static if (args.length && !args[0].hidden_)
         {{
             enum name = positionalName(field, args[0]);
-            static if (args[0].optional_)
-                parts ~= "[" ~ name ~ "]";
-            else
-                parts ~= name;
+            parts ~= args[0].optional_ ? "[" ~ name ~ "]" : name;
         }}
     }}
 
@@ -276,24 +278,15 @@ private string formatUsage(Cli)(string programName)
 
 private string[] formatOptions(Root, Cli)()
 {
-    string[] lines;
-    lines ~= "\t%s, %s\n%s".format("-h".sty.bold, "--help".sty.bold, "Show this help text.".wrap(80, "\t    ", "\t    "));
-
+    string[] lines = [helpRow("-h".sty.bold ~ ", " ~ "--help".sty.bold, "Show this help text.")];
     static foreach (field; FieldNameTuple!Cli)
     {{
         alias symbol = __traits(getMember, Cli, field);
         enum options = getUDAs!(symbol, Option);
-        static if (options.length)
-        {{
-            enum optionInfo = options[0];
-            static if (!optionInfo.hidden_)
-            {
-                enum description = optionHelpText!(Root, Cli, field);
-                lines ~= formatOptionLine!(typeof(__traits(getMember, Cli.init, field)))(optionInfo, field, description);
-            }
-        }}
+        static if (options.length && !options[0].hidden_)
+            lines ~= formatOptionLine!(typeof(__traits(getMember, Cli.init, field)))(
+                options[0], field, optionHelpText!(Root, Cli, field));
     }}
-
     return lines;
 }
 
@@ -305,12 +298,8 @@ private string[] formatPositionals(Cli)()
         alias symbol = __traits(getMember, Cli, field);
         enum args = getUDAs!(symbol, Argument);
         static if (args.length && !args[0].hidden_)
-            lines ~= "\t%s\n%s".format(
-                positionalName(field, args[0]).sty.bold,
-                args[0].description_.wrap(80, "\t    ", "\t    "),
-            );
+            lines ~= helpRow(positionalName(field, args[0]).sty.bold, args[0].description_);
     }}
-
     return lines;
 }
 
@@ -345,10 +334,7 @@ private string[] formatSubcommands(Root, Container)()
             enum description = command.shortDescription_.length
                 ? command.shortDescription_
                 : command.description_;
-            lines ~= "\t%s\n%s".format(
-                names.sty.bold,
-                description.wrap(80, "\t    ", "\t    "),
-            );
+            lines ~= helpRow(names.sty.bold, description);
         }}
     }}
     return lines;
@@ -360,11 +346,7 @@ private string formatOptionLine(T)(Option optionInfo, string field, string descr
         .map!(name => "%s".format(optionDisplayName(name).sty.bold))
         .array
         .join(", ");
-    return "\t%s%s\n%s".format(
-        names,
-        valuePlaceholder!T(optionInfo, field),
-        description.wrap(80, "\t    ", "\t    "),
-    );
+    return helpRow(names ~ valuePlaceholder!T(optionInfo, field), description);
 }
 
 package string[] optionNames(Option optionInfo, string field) @safe
