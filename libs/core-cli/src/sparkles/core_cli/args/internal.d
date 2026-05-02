@@ -1041,85 +1041,43 @@ package string commandPrimaryName(T)() @safe
 private int callRun(Parent, T, Program)(ref T value, ref Program program)
 {
     static if (hasRegisteredHandler!(Parent, T))
-        return callHandler!(registeredHandler!(Parent, T), T, Program)(value, program);
+    {
+        alias h = registeredHandler!(Parent, T);
+        static if (__traits(compiles, h!Program(program)))
+            return invokeReturning0!(() => h!Program(program));
+        else static if (__traits(compiles, h(program)))
+            return invokeReturning0!(() => h(program));
+        else static if (__traits(compiles, h()))
+            return invokeReturning0!(() => h());
+        else
+            static assert(false,
+                "Registered handler for `" ~ T.stringof ~ "` has an unsupported "
+                ~ "signature. Expected the same callable shapes as `run`.");
+    }
     else static if (__traits(compiles, T.run!Program(program)))
-    {
-        static if (is(typeof(T.run!Program(program)) == int))
-            return T.run!Program(program);
-        else
-        {
-            T.run!Program(program);
-            return 0;
-        }
-    }
+        return invokeReturning0!(() => T.run!Program(program));
     else static if (__traits(compiles, T.run(program)))
-    {
-        static if (is(typeof(T.run(program)) == int))
-            return T.run(program);
-        else
-        {
-            T.run(program);
-            return 0;
-        }
-    }
+        return invokeReturning0!(() => T.run(program));
     else static if (__traits(compiles, value.run()))
-    {
-        static if (is(typeof(value.run()) == int))
-            return value.run();
-        else
-        {
-            value.run();
-            return 0;
-        }
-    }
+        return invokeReturning0!(() => value.run());
     else
-    {
         static assert(false,
             "Terminal CLI struct `" ~ T.stringof ~ "` is missing a runnable "
             ~ "handler. Expected a registered handler, "
             ~ "`static int run(Program)(in Program program)`, "
             ~ "`static void run(Program)(in Program program)`, "
             ~ "`int run()`, or `void run()`.");
-    }
 }
 
-private int callHandler(alias handler, T, Program)(ref T value, ref Program program)
+/// Invoke `call()`, normalising a `void` return to `0`.
+private int invokeReturning0(alias call)()
 {
-    static if (__traits(compiles, handler!Program(program)))
-    {
-        static if (is(typeof(handler!Program(program)) == int))
-            return handler!Program(program);
-        else
-        {
-            handler!Program(program);
-            return 0;
-        }
-    }
-    else static if (__traits(compiles, handler(program)))
-    {
-        static if (is(typeof(handler(program)) == int))
-            return handler(program);
-        else
-        {
-            handler(program);
-            return 0;
-        }
-    }
-    else static if (__traits(compiles, handler()))
-    {
-        static if (is(typeof(handler()) == int))
-            return handler();
-        else
-        {
-            handler();
-            return 0;
-        }
-    }
+    static if (is(typeof(call()) == int))
+        return call();
     else
     {
-        static assert(false,
-            "Registered handler for `" ~ T.stringof ~ "` has an unsupported "
-            ~ "signature. Expected the same callable shapes as `run`.");
+        call();
+        return 0;
     }
 }
 
