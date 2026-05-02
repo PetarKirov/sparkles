@@ -12,15 +12,12 @@ import sparkles.core_cli.term_style : sty = stylizedTextBuilder;
 
 import sparkles.core_cli.args.uda;
 import sparkles.core_cli.args.internal :
-    commandChildren,
+    allChildren,
     commandInfo,
     commandInfoRaw,
     commandNames,
     commandPrimaryName,
-    hasCommandChildren,
-    hasSubcommands,
-    isSumType,
-    subcommandsFieldName;
+    isSumType;
 
 /// Build a `Sections` map by string-importing a list of section files.
 ///
@@ -82,13 +79,13 @@ package string[] subcommandPath(Root, Leaf)() @safe
 {
     static if (is(Root == Leaf))
         return [];
-    else static if (hasSubcommands!Root || hasCommandChildren!Root)
+    else static if (allChildren!Root.length > 0)
     {
-        static foreach (Variant; subcommandChildTypes!Root)
+        static foreach (Variant; allChildren!Root)
         {{
             static if (is(Variant == Leaf))
                 return [commandPrimaryName!Variant];
-            else static if (hasSubcommands!Variant || hasCommandChildren!Variant)
+            else static if (allChildren!Variant.length > 0)
             {{
                 enum inner = subcommandPath!(Variant, Leaf);
                 static if (inner.length > 0)
@@ -208,7 +205,7 @@ package string formatHelp(Root, Cli)(HelpInfo info)
     if (options.length)
         sections ~= formatSection("options", options, 0, "", "\n");
 
-    static if (hasSubcommands!Cli || hasCommandChildren!Cli)
+    static if (allChildren!Cli.length > 0)
     {
         auto commands = formatSubcommands!(Root, Cli);
         if (commands.length)
@@ -264,7 +261,7 @@ private string formatUsage(Cli)(string programName)
         }}
     }}
 
-    static if (hasSubcommands!Cli || hasCommandChildren!Cli)
+    static if (allChildren!Cli.length > 0)
         parts ~= "<command>";
 
     return parts.join(" ");
@@ -297,23 +294,16 @@ private string[] formatPositionals(Cli)()
     return lines;
 }
 
-/// Subcommand types directly under `Container`. Resolves to:
-/// - the `SumType` variants when `Container` is itself a `SumType`,
-/// - the `SumType` variants of `Container`'s `@Subcommands` field
-///   (legacy storage model), or
-/// - `commandChildren!Container` (nested `@(Command)` structs and
-///   `mixin addSubCommand!T` registrations).
+/// Subcommand types directly under `Container`. Mirrors `allChildren`,
+/// with one extra case: when `Container` is itself a `SumType`, expand
+/// to its variants directly (used by callers that already hold the
+/// SumType rather than the wrapping struct).
 package template subcommandChildTypes(Container)
 {
     static if (isSumType!Container)
         alias subcommandChildTypes = Container.Types;
-    else static if (hasSubcommands!Container)
-    {
-        enum field = subcommandsFieldName!Container;
-        alias subcommandChildTypes = typeof(__traits(getMember, Container.init, field)).Types;
-    }
     else
-        alias subcommandChildTypes = commandChildren!Container;
+        alias subcommandChildTypes = allChildren!Container;
 }
 
 private string[] formatSubcommands(Root, Container)()

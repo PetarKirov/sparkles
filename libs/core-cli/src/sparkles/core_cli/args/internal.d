@@ -42,17 +42,18 @@ struct CommandNode(Command_)
     enum __sparklesCommandNodeMarker = true;
 
     Command value;
+    alias value this;
 
-    static if (hasCommandChildren!Command)
+    static if (allChildren!Command.length > 0)
     {
-        SumType!(staticMap!(CommandNode, commandChildren!Command)) command;
+        SumType!(staticMap!(CommandNode, allChildren!Command)) command;
         bool commandSelected;
     }
 }
 
 template ParsedCommand(Command)
 {
-    static if (usesSynthesizedSubcommands!Command)
+    static if (allChildren!Command.length > 0)
         alias ParsedCommand = CommandNode!Command;
     else
         alias ParsedCommand = Command;
@@ -148,43 +149,29 @@ private int runParsedCliImpl(Parent, Cli, Program)(ref Cli cli, ref Program prog
     static if (isCommandNode!Cli)
     {
         alias CommandType = Cli.Command;
-        static if (hasCommandChildren!CommandType)
+        static if (allChildren!CommandType.length > 0)
         {
             if (cli.commandSelected)
                 return cli.command.match!((ref command) {
                     return runParsedCliImpl!(CommandType, typeof(command), Program)(command, program);
                 });
-        }
 
-        static if (hasCommandChildren!CommandType && !commandInfoRaw!CommandType().isDefault_)
-        {
-            assert(false, "Command group reached dispatch without a selected subcommand.");
+            static if (!commandInfoRaw!CommandType().isDefault_)
+                assert(false, "Command group reached dispatch without a selected subcommand.");
+            else
+                return callRun!(Parent, CommandType, Program)(cli.value, program);
         }
         else
             return callRun!(Parent, CommandType, Program)(cli.value, program);
-    }
-    else static if (hasSubcommands!Cli)
-    {
-        enum field = subcommandsFieldName!Cli;
-        return __traits(getMember, cli, field).match!((ref command) {
-            // Recurse so nested subcommand trees (root → group → leaf)
-            // are fully unwrapped before dispatching to `run()`. A group
-            // struct typically has no `run()` of its own — only the leaf
-            // does.
-            return runParsedCliImpl!(Cli, typeof(command), Program)(command, program);
-        });
     }
     else
         return callRun!(Parent, Cli, Program)(cli, program);
 }
 
 
-/// Shared parser for a single command level. Handles both the legacy
-/// `@Subcommands SumType!(...)` storage model and the graph-based
-/// `CommandNode!Cli` model — the receiver type drives the differences via
-/// `static if`. The two outer entry points (`parseCli` for the root and
-/// `parseChildCommand` for nested levels) are thin enough that there is
-/// no benefit to additional wrappers.
+/// Shared parser for a single command level. The receiver is either the
+/// raw user struct (when `Cli` has no subcommand children) or a
+/// `CommandNode!Cli` wrapper (when it has children of either kind).
 private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
     ref Receiver receiver,
     string[] args,
@@ -192,17 +179,9 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
     bool keepUnknown = false,
 )
 {
-    enum isNode = isCommandNode!Receiver;
-    static if (isNode)
-        enum hasChildren = hasCommandChildren!Cli;
-    else
-        enum hasChildren = hasSubcommands!Cli;
+    enum hasChildren = allChildren!Cli.length > 0;
 
-    // Field-storage receiver: the user-defined struct holding `@Option`
-    // and `@Argument` fields. For graph-based parsing the user struct is
-    // wrapped in a `CommandNode`; for the legacy model it *is* the
-    // receiver.
-    static if (isNode)
+    static if (isCommandNode!Receiver)
         ref valueOf() return @trusted => receiver.value;
     else
         ref valueOf() return @trusted => receiver;
@@ -238,22 +217,11 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
             if (!namedArgsEnded && !arg.startsWith("-"))
             {
                 auto subArgs = args[index + 1 .. $];
-                static if (isNode)
-                {
-                    auto selected = dispatchChild!(Root, Cli)(
-                        receiver.command,
-                        receiver.commandSelected,
-                        arg, subArgs, helpInfo, keepUnknown,
-                    );
-                }
-                else
-                {
-                    enum field = subcommandsFieldName!Cli;
-                    auto selected = dispatchSubcommand!Root(
-                        __traits(getMember, receiver, field),
-                        arg, subArgs, helpInfo, keepUnknown,
-                    );
-                }
+                auto selected = dispatchChild!(Root, Cli)(
+                    receiver.command,
+                    receiver.commandSelected,
+                    arg, subArgs, helpInfo, keepUnknown,
+                );
 
                 if (selected)
                     return selected;
@@ -310,48 +278,24 @@ private CliExpected!(string[]) parseCommandImpl(Root, Cli, Receiver)(
 
     static if (hasChildren)
     {
-        enum command = commandInfoRaw!Cli();
-        static if (isNode)
-        {
-            // Graph-based model: `isDefault_` means the parent itself can
-            // run when no subcommand is selected. Dispatch picks that up
-            // by inspecting `commandSelected` in `runParsedCliImpl`.
-            static if (command.isDefault_)
-                return ok(unknown);
-            else
-                return error!(string[])(CliError(
-                    kind: CliError.Kind.parse,
-                    message: "Missing subcommand",
-                    help: formatHelp!(Root, Cli)(helpInfo),
-                ));
-        }
+        // `isDefault_` means the parent itself can run when no subcommand
+        // is selected. Dispatch picks that up via `commandSelected` in
+        // `runParsedCliImpl`.
+        static if (commandInfoRaw!Cli().isDefault_)
+            return ok(unknown);
         else
-        {
-            // Legacy `@Subcommands SumType!(...)` storage cannot represent
-            // "no variant selected" at runtime — `std.sumtype` default-
-            // initialises to its first variant, indistinguishable from an
-            // explicit selection. Reject `makeDefault()` here so the
-            // limitation surfaces at the declaration site instead of
-            // silently dispatching to the first variant.
-            static assert(!command.isDefault_,
-                "`makeDefault()` is not supported on `" ~ Cli.stringof
-                ~ "` because it uses the legacy `@Subcommands SumType!(...)` "
-                ~ "storage model. Use the graph-based subcommand model "
-                ~ "(nested `@(Command)` structs or `mixin addSubCommand!T`) "
-                ~ "to opt into default command groups.");
             return error!(string[])(CliError(
                 kind: CliError.Kind.parse,
                 message: "Missing subcommand",
                 help: formatHelp!(Root, Cli)(helpInfo),
             ));
-        }
     }
     else
         return ok(unknown);
 }
 
 private CliExpected!(string[]) dispatchChild(Root, Parent)(
-    ref SumType!(staticMap!(CommandNode, commandChildren!Parent)) destination,
+    ref SumType!(staticMap!(CommandNode, allChildren!Parent)) destination,
     ref bool commandSelected,
     string name,
     ref string[] args,
@@ -359,7 +303,7 @@ private CliExpected!(string[]) dispatchChild(Root, Parent)(
     bool keepUnknown,
 )
 {
-    static foreach (CommandType; commandChildren!Parent)
+    static foreach (CommandType; allChildren!Parent)
     {{
         if (commandNames!CommandType.canFind(name))
         {
@@ -379,40 +323,6 @@ private CliExpected!(string[]) dispatchChild(Root, Parent)(
         return error!(string[])(CliError(
             kind: CliError.Kind.help,
             help: formatSubcommandsHelp!(Root, Parent)(parentHelp),
-            exitCode: 0,
-        ));
-
-    return error!(string[])(CliError.init);
-}
-
-private CliExpected!(string[]) dispatchSubcommand(Root, Sub)(
-    ref Sub destination,
-    string name,
-    ref string[] args,
-    HelpInfo parentHelp,
-    bool keepUnknown,
-)
-if (isSumType!Sub)
-{
-    static foreach (CommandType; Sub.Types)
-    {{
-        if (commandNames!CommandType.canFind(name))
-        {
-            CommandType command;
-            auto info = childHelpInfo!(Root, CommandType)(parentHelp);
-            auto parsed = parseCommandImpl!(Root, CommandType)(command, args, info, keepUnknown);
-            if (!parsed)
-                return parsed;
-
-            destination = command;
-            return parsed;
-        }
-    }}
-
-    if (isHelpToken(name))
-        return error!(string[])(CliError(
-            kind: CliError.Kind.help,
-            help: formatSubcommandsHelp!(Root, Sub)(parentHelp),
             exitCode: 0,
         ));
 
@@ -843,7 +753,20 @@ package enum hasSubcommands(T) = subcommandsFieldName!T.length != 0;
 
 package enum hasCommandChildren(T) = commandChildren!T.length != 0;
 
-private enum usesSynthesizedSubcommands(T) = !hasSubcommands!T && hasCommandChildren!T;
+/// All subcommand children of `T` regardless of declaration style.
+/// For structs with a `@Subcommands SumType!(...)` field, expands to the
+/// SumType variants. Otherwise, returns the graph children declared via
+/// nested `@(Command)` structs and `mixin addSubCommand!T`.
+package template allChildren(T)
+{
+    static if (hasSubcommands!T)
+    {
+        private enum field = subcommandsFieldName!T;
+        alias allChildren = typeof(__traits(getMember, T.init, field)).Types;
+    }
+    else
+        alias allChildren = commandChildren!T;
+}
 
 package template subcommandsFieldName(T)
 {
@@ -1513,29 +1436,6 @@ unittest
     auto parsed = parseCli!Git(["git", "worktree", "--verbose"]);
     assert(parsed);
     assert(runParsedCli(parsed.value) == 23);
-}
-
-@("args.parseCli.makeDefaultRejectedOnLegacySumTypeModel")
-@safe
-unittest
-{
-    @(Command("init"))
-    static struct Init
-    {
-        int run() => 0;
-    }
-
-    @(Command("tool", isDefault: true))
-    static struct Tool
-    {
-        @Subcommands
-        SumType!Init command;
-    }
-
-    // `makeDefault()` cannot be honored under the legacy
-    // `@Subcommands SumType` model — instantiating `parseCli` should fail
-    // at compile time with a clear diagnostic.
-    static assert(!__traits(compiles, parseCli!Tool([])));
 }
 
 @("args.parseCli.commandGroupRequiresSubcommandWithoutDefault")
