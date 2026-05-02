@@ -1,10 +1,5 @@
 module sparkles.core_cli.args.internal;
 
-public import sparkles.core_cli.args.error;
-public import sparkles.core_cli.args.help_formatting : importSections, tryImport;
-public import sparkles.core_cli.args.uda;
-public import sparkles.core_cli.help_formatting : HelpInfo, Sections, formatParagraph, formatSection;
-
 import std.algorithm : among, canFind, countUntil, splitter, startsWith;
 import std.array : join, split;
 import std.conv : to;
@@ -15,6 +10,12 @@ import std.string : toLower;
 import std.sumtype : match, SumType;
 import std.traits : FieldNameTuple, getUDAs, isDynamicArray, isIntegral, isSomeString;
 
+import sparkles.core_cli.args.error :
+    CliError,
+    CliErrorKind,
+    CliExpected,
+    error,
+    ok;
 import sparkles.core_cli.args.help_formatting :
     childHelpInfo,
     displayOption,
@@ -26,6 +27,15 @@ import sparkles.core_cli.args.help_formatting :
     sectionsForCommand,
     subcommandPath,
     viewsRootFor;
+import sparkles.core_cli.args.uda :
+    Argument,
+    Command,
+    Option,
+    SubCommandRegistration,
+    SubCommandRegistrationWithHandler,
+    Subcommands,
+    addSubCommand;
+import sparkles.core_cli.help_formatting : HelpInfo;
 
 struct CommandNode(Command_)
 {
