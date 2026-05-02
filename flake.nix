@@ -6,6 +6,8 @@
     flake-parts.follows = "mcl-nixos-modules/flake-parts";
 
     git-hooks-nix.follows = "mcl-nixos-modules/git-hooks-nix";
+
+    systems.url = "github:nix-systems/triplet";
   };
 
   outputs =
@@ -17,10 +19,7 @@
         ./nix/packages/default.nix
         ./nix/checks/pre-commit.nix
       ];
-      systems = [
-        "x86_64-linux"
-        "aarch64-darwin"
-      ];
+      systems = import inputs.systems;
       perSystem =
         { config, pkgs, ... }:
         {

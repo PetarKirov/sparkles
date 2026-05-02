@@ -1,0 +1,5 @@
+Add file contents to the index.
+
+This command updates the index using the current content found in the working tree, to prepare the content staged for the next commit. It typically adds the current content of existing paths as a whole, but with some options it can be used to also modify the index to record only part of a change made in the working tree file.
+
+The "index" holds a snapshot of the content of the working tree, and it is this snapshot that is taken as the contents of the next commit. Thus after making any changes to the working tree, and before running the commit command, you must use the add command to stage the changes you want to be part of the commit.

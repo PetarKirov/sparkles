@@ -1,0 +1,1 @@
+When checking out paths from the index, do not fail if there are unmerged entries; instead, unmerged entries are ignored.

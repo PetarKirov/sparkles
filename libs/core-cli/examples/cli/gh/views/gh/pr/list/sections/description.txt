@@ -1,0 +1,3 @@
+List pull requests in a repository.
+
+Without filters, only open PRs are shown. Combine `--state`, `--author`, `--assignee`, and `--label` to narrow the listing.

@@ -1,0 +1,3 @@
+Mask one or more units, linking their unit files to `/dev/null` so they cannot be started by any means until unmasked.
+
+Masking is the strongest way to disable a unit — it prevents not only direct activation but also activation as a dependency of other units.

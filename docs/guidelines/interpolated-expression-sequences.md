@@ -568,10 +568,10 @@ The three-branch `static if` dispatch — literal, expression metadata, runtime 
 
 Consumer-side examples:
 
-- [`libs/core-cli/examples/styled_template.d`][example-styled-template] — comprehensive demo of style syntax (colors, bold, nesting, negation)
+- [`libs/core-cli/examples/styled-template.d`][example-styled-template] — comprehensive demo of style syntax (colors, bold, nesting, negation)
 - [`libs/core-cli/examples/box.d`][example-box] — box drawing with styled IES content
 - [`libs/core-cli/examples/table.d`][example-table] — table rendering with styled headers
-- [`scripts/ci.d`][ci-script] — CLI status and progress output using IES
+- [`apps/ci/src/app.d`][ci-script] — CLI status and progress output using IES
 
 ---
 
@@ -788,7 +788,7 @@ auto nested = i"outer $(i"inner $(value)") end";
 <!-- Sparkles source files -->
 
 [styled-template-src]: ../../libs/core-cli/src/sparkles/core_cli/styled_template.d
-[example-styled-template]: ../../libs/core-cli/examples/styled_template.d
+[example-styled-template]: ../../libs/core-cli/examples/styled-template.d
 [example-box]: ../../libs/core-cli/examples/box.d
 [example-table]: ../../libs/core-cli/examples/table.d
-[ci-script]: ../../scripts/ci.d
+[ci-script]: ../../apps/ci/src/app.d

@@ -1,0 +1,3 @@
+Send a Unix signal to the processes of one or more units.
+
+By default `SIGTERM` is sent to all processes of the unit; pass `--signal` to choose a different signal, and `--kill-whom` to restrict the targets to just the main or control processes.

@@ -1,0 +1,5 @@
+Upgrades all dependencies of the package by querying the package registries for newer versions, then updates the resolved versions stored in `dub.selections.json`.
+
+If one or more package names are specified, only those dependencies will be upgraded. Otherwise all direct and indirect dependencies of the root package will get upgraded.
+
+By default only stable versions are considered. Pass `--prerelease` to also pick up release candidates and beta versions, and `--dry-run` to preview the changes without writing them back.

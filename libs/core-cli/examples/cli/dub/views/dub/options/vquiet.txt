@@ -1,0 +1,1 @@
+Suppress everything including warnings; only errors are still printed.

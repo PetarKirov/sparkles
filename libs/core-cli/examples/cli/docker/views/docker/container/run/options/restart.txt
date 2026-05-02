@@ -1,0 +1,1 @@
+Restart policy for the container. `no` (default) never restarts, `on-failure` restarts only on non-zero exit codes, `always` restarts unconditionally including after `docker stop`, and `unless-stopped` restarts on every event except an explicit `docker stop`.

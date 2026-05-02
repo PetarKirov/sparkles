@@ -1,0 +1,1 @@
+Remove the working tree even if it contains local changes.

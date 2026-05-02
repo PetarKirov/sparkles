@@ -1,0 +1,3 @@
+List issues in a repository.
+
+Without filters, only open issues are shown. Combine `--state`, `--author`, `--assignee`, and `--label` to narrow the listing. Use `--limit` to fetch more than the default 30 entries.

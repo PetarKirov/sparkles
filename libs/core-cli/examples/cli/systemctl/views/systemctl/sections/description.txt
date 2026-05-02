@@ -1,0 +1,5 @@
+systemctl is the primary command-line interface to systemd, the system and service manager used by most modern Linux distributions.
+
+It can introspect, start, stop, enable, disable, mask, unmask, and otherwise manipulate "units" — the abstract resources systemd manages, including services, sockets, timers, mounts, devices, and slices. Units are addressed by name (for example `nginx.service`) or by glob pattern (`*.timer`).
+
+By default systemctl talks to the system-wide manager. Pass `--user` to talk to the per-user manager, or `--global` to operate on the global default unit configuration.

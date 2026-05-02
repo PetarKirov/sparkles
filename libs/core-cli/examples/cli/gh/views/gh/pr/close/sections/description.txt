@@ -1,0 +1,3 @@
+Close a pull request without merging it.
+
+Optionally leave a closing comment with `--comment`, and clean up with `--delete-branch` to also remove the local and remote head branches.

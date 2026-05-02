@@ -1,0 +1,3 @@
+List installed unit files along with their enablement state.
+
+Unlike `list-units`, this command shows every unit file present on disk, even those that are not currently loaded into memory. Use `--type` to restrict the listing to a particular unit type.

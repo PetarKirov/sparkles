@@ -1,0 +1,3 @@
+Start (activate) one or more units.
+
+Each argument is a unit name; the type suffix (`.service`, `.socket`, `.timer`, ...) may be omitted, in which case `.service` is assumed. Wildcards in the file name component are not allowed for `start` — use `enable --now` if you want to activate every matching unit.

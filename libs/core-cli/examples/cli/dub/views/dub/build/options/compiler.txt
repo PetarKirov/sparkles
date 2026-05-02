@@ -1,0 +1,1 @@
+Specifies the compiler binary to use. When omitted, dub picks up the compiler defined by the `DC` environment variable, falling back to whichever D compiler is on `$PATH`.

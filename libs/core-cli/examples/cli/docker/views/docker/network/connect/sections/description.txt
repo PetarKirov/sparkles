@@ -1,0 +1,3 @@
+Attach a running container to an additional network.
+
+By default Docker assigns the container an IP from the network's IPAM pool; use `--ip` to pin a specific address. Pass `--alias` (repeatable) to add additional names by which other containers on the same network can address it.

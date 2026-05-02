@@ -1,0 +1,1 @@
+Network driver to use. `bridge` (default) creates a single-host bridge, `overlay` creates a multi-host swarm-aware overlay, `host` shares the host's networking stack, `macvlan` assigns each container its own MAC address, and `none` provides no networking at all.

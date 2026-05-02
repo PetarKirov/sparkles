@@ -1,0 +1,3 @@
+Merge a pull request.
+
+Pick the merge strategy with `--merge-method`: `merge` keeps both branches' history, `squash` collapses commits into one, and `rebase` replays the PR's commits onto the base branch. Pass `--auto` to enqueue the merge once required checks pass instead of attempting it immediately.

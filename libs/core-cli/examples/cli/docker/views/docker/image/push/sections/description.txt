@@ -1,0 +1,3 @@
+Upload an image to a registry.
+
+The image must already be tagged with the registry's hostname (e.g. `ghcr.io/myorg/api:1.0`). Use `docker tag` first if your local image isn't named correctly. Authentication uses the credentials stored by `docker login`.

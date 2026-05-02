@@ -1,0 +1,1 @@
+Restrict the listing to repositories of a single visibility level. Without this flag, repositories of all visibilities are shown.

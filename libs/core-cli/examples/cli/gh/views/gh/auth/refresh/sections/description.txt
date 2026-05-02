@@ -1,0 +1,3 @@
+Refresh the stored OAuth credentials for a host, optionally requesting additional scopes.
+
+Use this when a gh subcommand fails because your token is missing a required scope, e.g. `gh repo create` complaining about the missing `repo` scope.

@@ -1,0 +1,1 @@
+Restrict listings to units of the given type. Most useful with `list-units` and `list-unit-files`. Comma-separated lists are accepted (e.g. `--type=service,timer`).

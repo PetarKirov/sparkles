@@ -1,67 +1,95 @@
 { lib, ... }:
 {
+  imports = [
+    ./examples.nix
+  ];
+
   perSystem =
     { config, pkgs, ... }:
     let
-      root = ../..;
-      fs = lib.fileset;
       dToolchain = import ../d-toolchain.nix { inherit pkgs; };
+
+      fs = lib.fileset;
+      root = ../..;
+      fromRoot = lib.path.append root;
+
+      isDubManifest =
+        file:
+        builtins.elem file.name [
+          "dub.sdl"
+          "dub.selections.json"
+        ];
 
       src = fs.toSource {
         inherit root;
-        fileset = fs.unions [
-          ../../scripts/ci.d
-          ../../libs/core-cli/src
-        ];
+        fileset = fs.unions (
+          [
+            # Dub validates that all sub-packages declared in the root dub.sdl
+            # exist on disk even when only building :ci, so the sibling manifests
+            # must be present too.
+            (fs.fileFilter isDubManifest root)
+          ]
+          # D source files for the ci app and its only direct dependency.
+          ++ map (path: fs.fileFilter (file: file.hasExt "d") (fromRoot path)) [
+            "apps/ci/src"
+            "libs/core-cli/src"
+          ]
+        );
       };
-
-      wrapEnvArgs = lib.concatStringsSep " \\\n        " (
-        lib.mapAttrsToList (name: value: "--set ${name} ${lib.escapeShellArg value}") dToolchain.env
-      );
     in
     {
-      packages.ci = pkgs.stdenv.mkDerivation (final: {
+      packages.ci = pkgs.buildDubPackage (finalAttrs: {
         pname = "ci";
         version = "0.1.0";
 
         inherit src;
-        strictDeps = true;
+        sourceRoot = "${finalAttrs.src.name}/apps/${finalAttrs.pname}";
+
+        # The Nix-format lockfile is shared with the standalone example
+        # derivations (see ./examples.nix); keeping it under `nix/` keeps
+        # that sharing explicit instead of having `examples.nix` reach
+        # into a sibling sub-package's dir to grab the file.
+        dubLock = fromRoot "nix/dub-lock.json";
+        compiler = dToolchain.ldc;
 
         nativeBuildInputs = [
           pkgs.makeWrapper
-          dToolchain.ldc
         ];
 
-        buildPhase = ''
-          srcs=$(find libs/core-cli/src -name '*.d' ! -name 'app.d' ! -name 'test_utils.d')
+        # The unpacked source is read-only by default; dub needs to write
+        # build artifacts into each package's `targetPath "build"` directory.
+        preBuild = ''chmod -R u+w "$NIX_BUILD_TOP"'';
 
-          ldc2 \
-            -preview=in -preview=dip1000 \
-            -I libs/core-cli/src \
-            -J libs/core-cli/src \
-            -of=${final.pname} \
-            scripts/${final.pname}.d \
-            $srcs
-        '';
+        installPhase =
+          let
+            path = lib.makeBinPath [
+              pkgs.git
+              dToolchain.dub
+              dToolchain.ldc
+            ];
+            setEnv = lib.cli.toGNUCommandLineShell {
+              mkOption = name: value: [
+                "--set"
+                name
+                value
+              ];
+            } dToolchain.env;
+          in
+          ''
+            install -Dm755 build/${finalAttrs.pname} $out/bin/${finalAttrs.pname}
 
-        installPhase = ''
-          install -Dm755 ${final.pname} $out/bin/${final.pname}
-
-          wrapProgram $out/bin/${final.pname} \
-            --prefix PATH : ${
-              lib.makeBinPath [
-                pkgs.git
-                dToolchain.dub
-                dToolchain.ldc
-              ]
-            } \
-            ${wrapEnvArgs} \
-            --run 'ulimit -n ${toString dToolchain.nofileLimit} 2>/dev/null || true'
-        '';
+            wrapProgram $out/bin/${finalAttrs.pname} \
+              --prefix PATH : ${path} \
+              ${setEnv} \
+              --run 'ulimit -n ${toString dToolchain.nofileLimit} 2>/dev/null || true'
+          '';
 
         meta = {
-          description = "Repository CI helper for markdown examples, standalone examples, and markdown link maintenance";
-          mainProgram = final.pname;
+          description = ''
+            Repository CI helper for markdown examples, standalone examples, and
+            markdown link maintenance
+          '';
+          mainProgram = finalAttrs.pname;
         };
       });
 
@@ -69,6 +97,5 @@
         type = "app";
         program = lib.getExe config.packages.ci;
       };
-
     };
 }

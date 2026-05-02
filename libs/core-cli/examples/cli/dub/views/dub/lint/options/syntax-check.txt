@@ -1,0 +1,1 @@
+Runs only the cheap syntax-only pass. No static-analysis warnings are produced.

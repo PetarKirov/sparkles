@@ -1,0 +1,3 @@
+Remove one or more images from the local daemon.
+
+By default `rm` refuses to remove an image that is still in use by a running or stopped container, or that has multiple tags pointing to it. Pass `--force` to override both checks. Use `--no-prune` if you want to keep the orphaned parent layers behind, e.g. to inspect them.

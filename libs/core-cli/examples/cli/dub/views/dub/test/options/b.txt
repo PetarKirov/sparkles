@@ -1,0 +1,1 @@
+Build type for the test target. Defaults to `unittest`, which links D's built-in test runner. `unittest-cov` additionally enables coverage instrumentation.

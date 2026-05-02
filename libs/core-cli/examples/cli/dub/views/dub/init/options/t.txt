@@ -1,0 +1,1 @@
+Selects a starter template. `minimal` produces a tiny "Hello, world", `vibe.d` scaffolds a vibe.d-based web service, `deimos` produces a stub for a C-binding library, and `custom` walks through every prompt manually.

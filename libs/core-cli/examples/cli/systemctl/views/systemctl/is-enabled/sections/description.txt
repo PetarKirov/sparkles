@@ -1,0 +1,3 @@
+Check whether the specified unit files are enabled. Returns 0 when the unit is enabled (or static, or alias of an enabled unit), non-zero otherwise.
+
+The enablement state — `enabled`, `enabled-runtime`, `linked`, `linked-runtime`, `masked`, `masked-runtime`, `static`, `disabled`, or `bad` — is printed to standard output unless `--quiet` is passed.

@@ -21,6 +21,16 @@ export default defineConfig({
         items: [{ text: 'core-cli Package', link: '/overview' }],
       },
       {
+        text: 'Specs',
+        collapsed: true,
+        items: [
+          {
+            text: 'core-cli args subcommands',
+            link: '/specs/core-cli/SPEC',
+          },
+        ],
+      },
+      {
         text: 'Guidelines',
         collapsed: true,
         items: [

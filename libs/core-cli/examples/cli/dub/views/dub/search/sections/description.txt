@@ -1,0 +1,3 @@
+Searches the configured registry for packages whose name or description matches the query.
+
+Multiple registries can be configured via `dub.settings.json`; pass `--registry=URL` to override them with a single ad-hoc URL. `--skip-registry` controls how aggressively the local resolver short-circuits the registry round trip — use `none` to always query, `all` to never query, and the others for the in-between cases.

@@ -1,0 +1,1 @@
+Skips all interactive prompts and accepts the default for every value that wasn't supplied on the command line.

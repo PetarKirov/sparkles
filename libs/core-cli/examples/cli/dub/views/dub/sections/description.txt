@@ -1,0 +1,5 @@
+Dub is the official package manager and build tool for the D programming language.
+
+It manages dependencies, fetches packages from the central registry at code.dlang.org, integrates with the available D compilers (DMD, LDC, GDC), and supports a rich set of build configurations through `dub.sdl` or `dub.json` recipes.
+
+A typical workflow is to declare dependencies in your recipe, run `dub build` to compile the project, and `dub run` to compile and execute it. Tests are first-class citizens via `dub test`, which compiles the project with the unittest build type.

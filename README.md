@@ -408,12 +408,12 @@ import sparkles.core_cli.lifetime;
 Runnable examples are in [`libs/core-cli/examples/`](libs/core-cli/examples/):
 
 ```bash
-dub run --single libs/core-cli/examples/styled_template.d
+dub run --single libs/core-cli/examples/styled-template.d
 dub run --single libs/core-cli/examples/prettyprint.d
 dub run --single libs/core-cli/examples/table.d
 dub run --single libs/core-cli/examples/box.d
 dub run --single libs/core-cli/examples/header.d
-dub run --single libs/core-cli/examples/osc_link.d
+dub run --single libs/core-cli/examples/osc-link.d
 dub run --single libs/core-cli/examples/logger.d
 dub run --single libs/core-cli/examples/color.d
 ```
@@ -425,7 +425,7 @@ dub run --single libs/core-cli/examples/color.d
 dub build :core-cli
 
 # Run all tests
-ci --test
+ci test
 
 # Test a specific sub-package
 dub test :core-cli
@@ -441,7 +441,7 @@ The project uses a **Nix development shell** for reproducible builds:
 
 ```bash
 nix develop -c dub build :core-cli
-nix develop -c ci --test
+nix develop -c ci test
 ```
 
 ## Documentation

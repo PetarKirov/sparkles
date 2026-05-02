@@ -1,0 +1,3 @@
+List images stored locally by the daemon.
+
+By default, only top-level images are shown. Pass `--all` to additionally list intermediate-build-cache layers. Use `--digests` to expose the immutable digest used for content-addressed pulls.

@@ -1,0 +1,1 @@
+Selects a build configuration declared in the package recipe. Configurations marked `targetType "library"` are skipped automatically.

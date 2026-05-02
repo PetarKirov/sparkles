@@ -1,0 +1,3 @@
+Create and start a new container from an image.
+
+This is the most common Docker entry point — it pulls the image (if missing), creates a container, attaches the requested networks and volumes, and starts the entrypoint process. Use `-d` to detach (run in background), `-it` to attach an interactive TTY, `--rm` to auto-cleanup on exit, and `-p HOST:CONTAINER` to forward TCP/UDP ports.

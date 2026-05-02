@@ -1,0 +1,5 @@
+Builds the package with the unittest configuration and runs the resulting test binary.
+
+By default the build type is `unittest`, which links D's built-in test runner. Pass `--coverage` to also link in coverage instrumentation; reports are written next to each source file as `*.lst`. Use `--coverage-ctfe` to additionally cover code that runs at compile time.
+
+The boolean `--test` option (default `true`) controls whether the test binary is executed after a successful build. Pass `--no-test` to compile-without-running, which is convenient for cross-compilation and CI pipelines that ship the binary to a separate sandbox before executing it.

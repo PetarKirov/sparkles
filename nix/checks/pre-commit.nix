@@ -80,7 +80,9 @@ in
               pass_filenames = true;
               entry = lib.getExe config.packages.ci;
               args = [
-                "--fix-reference-links"
+                "docs"
+                "links"
+                "fix"
                 "--files"
               ];
             };
@@ -94,7 +96,8 @@ in
               pass_filenames = true;
               entry = lib.getExe config.packages.ci;
               args = [
-                "--verify"
+                "docs"
+                "verify"
                 "--fail-fast"
                 "--files"
               ];

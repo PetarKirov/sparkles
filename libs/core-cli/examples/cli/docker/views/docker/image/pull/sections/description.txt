@@ -1,0 +1,3 @@
+Download an image from a registry.
+
+Without a tag, `latest` is assumed. Pass `--all-tags` to fetch every tagged version of the repository. Authentication uses the credentials stored by `docker login`.

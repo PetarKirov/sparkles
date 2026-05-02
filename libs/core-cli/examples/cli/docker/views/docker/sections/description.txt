@@ -1,0 +1,5 @@
+Docker is a platform for developing, shipping, and running applications inside containers.
+
+Containers package an application together with its dependencies and run them in an isolated, reproducible environment that behaves the same on a developer laptop, a CI runner, and a production server. Docker manages the full lifecycle: building images from `Dockerfile` recipes, distributing them through registries, and running them as containers connected by virtual networks and persistent volumes.
+
+The CLI is organized into "management commands" — `container`, `image`, `network`, `volume`, `system` — each holding a handful of focused subcommands. The most frequently-used operations also have short top-level aliases (`run`, `ps`, `images`, `rm`, `rmi`).
