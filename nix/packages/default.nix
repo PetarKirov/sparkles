@@ -56,11 +56,29 @@
           pkgs.makeWrapper
         ];
 
+        # `ci` shells out to `dub run --single` / `dub build --single` at
+        # runtime, so the wrapped binary genuinely needs `ldc2` and `dub`
+        # on its PATH. By default `buildDubPackage` declares the compiler
+        # as a `disallowedReference` and runs `remove-references-to` in
+        # `preFixup`, which would scrub the compiler path out of our
+        # wrapper script (turning `…ldc-1.41.0/bin` into the placeholder
+        # `…eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-ldc-1.41.0/bin`). Clearing
+        # `disallowedReferences` keeps the runtime closure honest.
+        disallowedReferences = [ ];
+
         # The unpacked source is read-only by default; dub needs to write
         # build artifacts into each package's `targetPath "build"` directory.
         preBuild = ''chmod -R u+w "$NIX_BUILD_TOP"'';
 
-        installPhase =
+        installPhase = ''
+          install -Dm755 build/${finalAttrs.pname} $out/bin/${finalAttrs.pname}
+        '';
+
+        # Wrap in `postFixup` rather than `installPhase` so we run *after*
+        # `buildDubPackage`'s `preFixup`, which strips references to the
+        # compiler. Wrapping there would otherwise leave the placeholder
+        # path in PATH and break `dub run --single`.
+        postFixup =
           let
             path = lib.makeBinPath [
               pkgs.git
