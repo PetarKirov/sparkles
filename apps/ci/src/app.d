@@ -85,6 +85,9 @@ import sparkles.core_cli.term_unstyle : unstyle;
 import sparkles.core_cli.ui.box : BoxProps, drawBox;
 import sparkles.core_cli.ui.header : drawHeader, HeaderProps, HeaderStyle;
 
+// in-app modules
+import dub_deps : parseSubPackages, rewriteInTreeDeps;
+
 // === Types ===
 
 struct CliParams
@@ -681,10 +684,14 @@ ExecutionResult executeExample(in Example example)
     mkdirRecurse(tmpDir);
     auto tmpFile = buildPath(tmpDir, example.name ~ ".d");
 
-    tmpFile.write(example.code);
+    auto repoRoot = detectRepoRoot();
+    auto code = repoRoot.length
+        ? rewriteInTreeDeps(example.code, repoRoot, tmpDir)
+        : example.code;
+    tmpFile.write(code);
     scope(exit) if (tmpFile.exists) tmpFile.remove();
 
-    auto result = execute(dubSingleFileCommand("run", tmpFile, detectRepoRoot()));
+    auto result = execute(dubSingleFileCommand("run", tmpFile, repoRoot));
 
     // Strip ANSI codes, then trim trailing whitespace from each line
     // so output matches what pre-commit hooks produce in markdown files.
@@ -863,28 +870,6 @@ private int runDubTestsMode(bool failFast)
     if (stoppedEarly)
         displayFailureReplay(failureReplay);
     return failures > 0 ? 1 : 0;
-}
-
-/// Parses sub-package paths from the root `dub.sdl`.
-private string[] parseSubPackages(string repoRoot)
-{
-    const dubSdlPath = buildPath(repoRoot, "dub.sdl");
-    if (!dubSdlPath.exists)
-        return [];
-
-    return dubSdlPath.readText
-        .lineSplitter
-        .map!((line) {
-            auto stripped = line.strip;
-            enum prefix = `subPackage "`;
-            if (!stripped.startsWith(prefix))
-                return null;
-            auto rest = stripped[prefix.length .. $];
-            auto end = rest.indexOf('"');
-            return end > 0 ? rest[0 .. end].idup : null;
-        })
-        .filter!(pkg => pkg !is null)
-        .array;
 }
 
 // === Modes ===
