@@ -400,6 +400,157 @@ export default defineConfig({
               },
             ],
           },
+          {
+            text: 'UI Layout',
+            collapsed: true,
+            items: [
+              { text: 'Catalog', link: '/research/ui-layout/' },
+              {
+                text: 'Constraint Systems',
+                collapsed: false,
+                items: [
+                  {
+                    text: 'Android ConstraintLayout',
+                    link: '/research/ui-layout/android-constraintlayout',
+                  },
+                  {
+                    text: 'Auto Layout (Apple)',
+                    link: '/research/ui-layout/auto-layout',
+                  },
+                ],
+              },
+              {
+                text: 'CSS Layout Specs',
+                collapsed: false,
+                items: [
+                  {
+                    text: 'CSS Flexbox',
+                    link: '/research/ui-layout/css-flexbox',
+                  },
+                  {
+                    text: 'CSS Grid',
+                    link: '/research/ui-layout/css-grid',
+                  },
+                  {
+                    text: 'CSS Normal Flow',
+                    link: '/research/ui-layout/css-normal-flow',
+                  },
+                ],
+              },
+              {
+                text: 'Declarative App Frameworks',
+                collapsed: false,
+                items: [
+                  {
+                    text: 'Flutter (Dart)',
+                    link: '/research/ui-layout/flutter',
+                  },
+                  {
+                    text: 'Jetpack Compose (Kotlin)',
+                    link: '/research/ui-layout/jetpack-compose',
+                  },
+                  {
+                    text: 'SwiftUI (Swift)',
+                    link: '/research/ui-layout/swiftui',
+                  },
+                ],
+              },
+              {
+                text: 'Desktop GUI Toolkits',
+                collapsed: false,
+                items: [
+                  {
+                    text: 'GTK 4 (C)',
+                    link: '/research/ui-layout/gtk',
+                  },
+                  {
+                    text: 'Qt Layouts (C++)',
+                    link: '/research/ui-layout/qt-layouts',
+                  },
+                  {
+                    text: 'Swing / MiG Layout (Java)',
+                    link: '/research/ui-layout/swing-mig',
+                  },
+                  {
+                    text: 'Tk Geometry Managers',
+                    link: '/research/ui-layout/tk',
+                  },
+                  {
+                    text: 'WPF / XAML (.NET)',
+                    link: '/research/ui-layout/wpf-xaml',
+                  },
+                ],
+              },
+              {
+                text: 'Foundational Algorithms',
+                collapsed: false,
+                items: [
+                  {
+                    text: 'Cassowary (algorithm)',
+                    link: '/research/ui-layout/cassowary',
+                  },
+                  {
+                    text: 'TeX / Knuth-Plass',
+                    link: '/research/ui-layout/tex-knuth-plass',
+                  },
+                ],
+              },
+              {
+                text: 'Immediate-Mode Layout',
+                collapsed: false,
+                items: [
+                  {
+                    text: 'Dear ImGui (C++)',
+                    link: '/research/ui-layout/dear-imgui',
+                  },
+                  {
+                    text: 'egui (Rust)',
+                    link: '/research/ui-layout/egui',
+                  },
+                ],
+              },
+              {
+                text: 'Renderer-Agnostic Libraries',
+                collapsed: false,
+                items: [
+                  {
+                    text: 'Clay (C)',
+                    link: '/research/ui-layout/clay',
+                  },
+                  {
+                    text: 'Kiwi (C++ / Python)',
+                    link: '/research/ui-layout/kiwi',
+                  },
+                  {
+                    text: 'Stretch (Rust)',
+                    link: '/research/ui-layout/stretch',
+                  },
+                  {
+                    text: 'Taffy (Rust)',
+                    link: '/research/ui-layout/taffy',
+                  },
+                  {
+                    text: 'Yoga (C++)',
+                    link: '/research/ui-layout/yoga',
+                  },
+                ],
+              },
+              {
+                text: 'Tiling / Structural Layout',
+                collapsed: false,
+                items: [
+                  {
+                    text: 'i3 / sway',
+                    link: '/research/ui-layout/i3-sway',
+                  },
+                  {
+                    text: 'xmonad (Haskell)',
+                    link: '/research/ui-layout/xmonad',
+                  },
+                ],
+              },
+            ],
+          },
         ],
       },
     ],
