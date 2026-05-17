@@ -14,3 +14,16 @@
 ^https://developers\.redhat\.com/articles/
 ^https://zigistry\.dev/
 ^https://en.cppreference.com
+# UI-layout catalog: hosts that reject lychee's UA or have broken TLS/DNS
+^https?://en\.wikipedia\.org/
+^https?://developer\.mozilla\.org/
+^https?://www\.npmjs\.com/
+^https?://www\.youtube\.com/
+^https?://awards\.acm\.org/
+^https?://android\.googlesource\.com/
+^https?://developer\.android\.com/reference/kotlin/
+^https?://www\.miglayout\.com
+^https?://overconstrained\.io/
+^https?://www\.eprg\.org/
+^https?://www\.tcl-lang\.org/man/
+^https?://www\.luatex\.org/svn/
