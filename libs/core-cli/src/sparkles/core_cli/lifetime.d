@@ -265,6 +265,11 @@ unittest
  * This is a convenience wrapper around `recycledInstance` with attributes
  * appropriate for error handling: `@system pure nothrow @nogc`.
  *
+ * It explicitly takes the error message as the first argument and copies it
+ * into a stable thread-local buffer. This ensures that the message outlives
+ * the call, even if it was originally a stack-allocated slice (common in
+ * `@nogc` unit tests).
+ *
  * The function is marked `@system` because `pure` is technically a lie -
  * the implementation uses thread-local state. However, this is acceptable
  * for error throwing because:
@@ -282,16 +287,23 @@ unittest
  * }
  * ---
  */
-T recycledErrorInstance(T, Args...)(auto ref Args args) @system pure nothrow @nogc
+T recycledErrorInstance(T, Args...)(in char[] message, auto ref Args args) @system pure nothrow @nogc
 if (is(T == class) && is(T : Error))
 {
-    return (cast(T function(Args) @system pure nothrow @nogc) &recycledErrorInstanceImpl!(T, Args))(args);
+    return (cast(T function(in char[], Args) @system pure nothrow @nogc) &recycledErrorInstanceImpl!(T, Args))(message, args);
 }
 
-private T recycledErrorInstanceImpl(T, Args...)(Args args) @nogc nothrow
+private T recycledErrorInstanceImpl(T, Args...)(in char[] message, Args args) @nogc nothrow
 if (is(T == class) && is(T : Error))
 {
-    return recycledInstance!T(args);
+    // Copy the message to a stable thread-local buffer so it survives
+    // after the caller's scope (e.g. if message was a stack slice).
+    static char[16 * 1024] messageBuffer;
+    const len = message.length < messageBuffer.length ? message.length : messageBuffer.length;
+    messageBuffer[0 .. len] = message[0 .. len];
+    string stableMessage = cast(string) messageBuffer[0 .. len];
+
+    return recycledInstance!T(stableMessage, args);
 }
 
 @("recycledErrorInstance.reinitialization")
@@ -528,14 +540,14 @@ unittest
     static class NotAnError {}
 
     // Verify constraint rejects non-Error classes
-    static assert(!__traits(compiles, recycledErrorInstance!NotAnError()));
+    static assert(!__traits(compiles, recycledErrorInstance!NotAnError("msg")));
 
     // Verify constraint rejects structs
     static struct SomeStruct { int x; }
-    static assert(!__traits(compiles, recycledErrorInstance!SomeStruct(1)));
+    static assert(!__traits(compiles, recycledErrorInstance!SomeStruct("msg", 1)));
 
     // Verify constraint rejects primitives
-    static assert(!__traits(compiles, recycledErrorInstance!int(42)));
+    static assert(!__traits(compiles, recycledErrorInstance!int("msg", 42)));
 
     // Verify it accepts Error subclasses
     static class CustomError : Error
