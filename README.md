@@ -32,6 +32,7 @@
 - **Terminal Styling** -- ANSI color and text attribute support with a fluent builder API
 - **Logger** -- Delta-time-prefixed logger with wall-clock time, elapsed-since-start, and per-entry delta timestamps
 - **SmallBuffer** -- A `@nogc` dynamic buffer with small buffer optimization (SBO)
+- **Semantic Versioning** -- SemVer parsing, normalization, and precedence comparison
 - **@nogc Utilities** -- `recycledInstance`, text writers, and output range interfaces
 
 ## Quick Start
@@ -51,6 +52,38 @@ Or `dub.json`:
 ```
 
 ## Modules
+
+### Semantic Versioning
+
+Parse and compare SemVer versions, including loose compatibility inputs such as `v1.2.3`.
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "readme_semver"
+    dependency "sparkles:semver" version="*"
++/
+
+import std.stdio : writeln;
+
+import sparkles.semver;
+
+void main()
+{
+    auto current = SemVer("v1.2.3");
+    auto next = SemVer("1.3.0-beta.1");
+
+    writeln(current);
+    writeln(next > current);
+    writeln(SemVer.parse("1.0", SemVerParseMode.strict).hasError);
+}
+```
+
+```
+1.2.3
+true
+true
+```
 
 ### Styled Templates
 
