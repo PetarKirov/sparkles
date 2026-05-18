@@ -678,32 +678,55 @@ Example[] extractExamples(string content)
 }
 
 /// Runs a single example and returns its result.
+///
+/// Build and run are split into separate commands so compile-time
+/// diagnostics (deprecation warnings, etc.) don't pollute the captured
+/// program output that gets diffed against the markdown's expected block.
 ExecutionResult executeExample(in Example example)
 {
     auto tmpDir = buildPath(tempDir, "md-examples");
     mkdirRecurse(tmpDir);
     auto tmpFile = buildPath(tmpDir, example.name ~ ".d");
+    auto binaryPath = buildPath(tmpDir, example.name);
 
     auto repoRoot = detectRepoRoot();
     auto code = repoRoot.length
         ? rewriteInTreeDeps(example.code, repoRoot, tmpDir)
         : example.code;
     tmpFile.write(code);
-    scope(exit) if (tmpFile.exists) tmpFile.remove();
+    scope(exit)
+    {
+        if (tmpFile.exists) tmpFile.remove();
+        if (binaryPath.exists) binaryPath.remove();
+    }
 
-    auto result = execute(dubSingleFileCommand("run", tmpFile, repoRoot));
+    auto buildResult = execute(dubSingleFileCommand("build", tmpFile, repoRoot));
+    if (buildResult.status != 0)
+    {
+        auto cleanedBuild = buildResult.output.unstyle
+            .lineSplitter
+            .map!(l => l.stripRight)
+            .join("\n");
+        return ExecutionResult(
+            success: false,
+            programOutput: cleanedBuild,
+            rawOutput: buildResult.output,
+        );
+    }
+
+    auto runResult = execute([binaryPath]);
 
     // Strip ANSI codes, then trim trailing whitespace from each line
     // so output matches what pre-commit hooks produce in markdown files.
-    auto cleaned = result.output.unstyle
+    auto cleaned = runResult.output.unstyle
         .lineSplitter
         .map!(l => l.stripRight)
         .join("\n");
 
     return ExecutionResult(
-        success: result.status == 0,
+        success: runResult.status == 0,
         programOutput: cleaned,
-        rawOutput: result.output,
+        rawOutput: runResult.output,
     );
 }
 
