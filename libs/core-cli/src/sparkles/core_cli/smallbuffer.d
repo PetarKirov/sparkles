@@ -223,6 +223,55 @@ private:
     }
 }
 
+/**
+Checks an output-range `toString` implementation against expected text.
+
+This helper is intended for unit tests of types that expose
+`void toString(Writer)(ref Writer w)`. It renders into a $(LREF SmallBuffer)
+so passing tests can run without GC allocation.
+
+Params:
+    value    = Value whose `toString` overload is tested.
+    expected = Expected rendered text.
+    file     = Source file for assertion reporting.
+    line     = Source line for assertion reporting.
+
+Throws: `AssertError` if the rendered text does not match `expected`.
+*/
+void checkToString(T, size_t outputBufferSize = 16 * 1024, size_t errorBufferSize = 4 * 1024)(
+    auto ref T value,
+    const(char)[] expected,
+    string file = __FILE__,
+    size_t line = __LINE__,
+)
+{
+    import core.exception : AssertError;
+    import sparkles.core_cli.lifetime : recycledErrorInstance;
+
+    SmallBuffer!(char, outputBufferSize) buf;
+    value.toString(buf);
+    const(char)[] actual = buf[];
+
+    if (actual != expected)
+    {
+        SmallBuffer!(char, errorBufferSize) errBuf;
+        errBuf.put("toString mismatch:\nExpected:\n");
+        errBuf.put(expected);
+        errBuf.put("\nActual:\n");
+        errBuf.put(actual);
+
+        // Only this part needs to be @trusted because recycledErrorInstance
+        // is @system (due to its use of a global/static buffer for the Error object).
+        () @trusted {
+            throw recycledErrorInstance!AssertError(
+                errBuf[],
+                file,
+                line,
+            );
+        }();
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Unit Tests
 // ─────────────────────────────────────────────────────────────────────────────
@@ -236,6 +285,52 @@ unittest
     assert(buf.empty);
     assert(buf.capacity == 4);
     assert(!buf.onHeap);
+}
+
+@("checkToString.outputRangeToString")
+@safe pure nothrow @nogc
+unittest
+{
+    struct Example
+    {
+        int value;
+
+        void toString(Writer)(ref Writer w) const
+        {
+            w.put("Example(");
+            if (value == 42)
+                w.put("42");
+            else
+                w.put("?");
+            w.put(")");
+        }
+    }
+
+    checkToString(Example(42), "Example(42)");
+}
+
+@("checkToString.mismatchMessage")
+@system
+unittest
+{
+    import core.exception : AssertError;
+    import std.exception : assertThrown, collectException;
+
+    struct Example
+    {
+        void toString(Writer)(ref Writer w) const
+        {
+            w.put("actual");
+        }
+    }
+
+    assertThrown!AssertError(checkToString(Example(), "expected"));
+
+    auto error = collectException!AssertError(
+        checkToString(Example(), "expected")
+    );
+    assert(error !is null);
+    assert(error.msg == "toString mismatch:\nExpected:\nexpected\nActual:\nactual");
 }
 
 @("SmallBuffer.put.singleElement")

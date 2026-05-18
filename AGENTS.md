@@ -178,6 +178,25 @@ unittest
 }
 ```
 
+### Testing Output-Range `toString` Methods
+
+For types that expose `void toString(Writer)(ref Writer w)`, prefer
+`checkToString` from `sparkles.core_cli.smallbuffer` over hand-rolling a
+`SmallBuffer` + `recycledErrorInstance` dance. It renders into a `SmallBuffer`
+so the test stays `@safe pure nothrow @nogc`, and reports the expected/actual
+diff via a recycled `AssertError` on mismatch.
+
+```d
+@("MyType.toString.basic")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.core_cli.smallbuffer : checkToString;
+
+    checkToString(MyType(42), "MyType(42)");
+}
+```
+
 ### Silly Test Runner
 
 This project uses the `silly` test runner. Use UDA-based test names:
