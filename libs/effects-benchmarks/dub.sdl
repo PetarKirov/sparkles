@@ -1,0 +1,10 @@
+name "effects-benchmarks"
+description "Benchmarks for algebraic effect system proposals"
+authors "Sparkles"
+copyright "Copyright © 2026, Sparkles"
+license "MIT"
+targetType "executable"
+
+dependency "effects-direct" path="../effects-direct"
+dependency "effects-ts" path="../effects-ts"
+dependency "core-cli" path="../core-cli"
