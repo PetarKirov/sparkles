@@ -3,6 +3,7 @@
     {
       config,
       pkgs,
+      inputs',
       ...
     }:
     let
@@ -28,6 +29,11 @@
             pkgs.nodejs
             # CI helper (markdown examples, standalone examples, link maintenance)
             config.packages.ci
+
+            # ghostty
+            pkgs.pkg-config
+            inputs'.ghostty.packages.libghostty-vt
+            inputs'.ghostty.packages.libghostty-vt.dev
           ]
           ++ lib.optional greeting pkgs.figlet
           ++ d-toolchain.packages;
