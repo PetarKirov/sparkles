@@ -21,21 +21,15 @@
       };
     };
   };
-
   outputs =
-    inputs@{ flake-parts, mcl-nixos-modules, ... }:
+    inputs@{ flake-parts, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
       imports = [
         inputs.git-hooks-nix.flakeModule
-
         ./nix/packages/default.nix
         ./nix/checks/pre-commit.nix
+        ./nix/shells/default.nix
       ];
       systems = import inputs.systems;
-      perSystem =
-        { config, pkgs, ... }:
-        {
-          devShells.default = import ./nix/shells/default.nix { inherit config pkgs; };
-        };
     };
 }
