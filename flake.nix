@@ -20,6 +20,14 @@
         git-hooks-nix.follows = "git-hooks-nix";
       };
     };
+
+    ghostty = {
+      url = "github:ghostty-org/ghostty";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.systems.follows = "systems";
+      inputs.flake-compat.follows = "mcl-nixos-modules/flake-compat";
+      inputs.home-manager.follows = "mcl-nixos-modules/home-manager";
+    };
   };
   outputs =
     inputs@{ flake-parts, ... }:
