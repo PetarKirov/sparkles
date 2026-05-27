@@ -239,13 +239,13 @@ table for all 50 entries in the source-material catalogue (§8):
 | 38  | Perl (Legacy)      | `5.004_05`          | confirmed          |                                      | metacpan.org perl history                                                   |
 | 39  | Debian Packages    | `1:1.2.3-4+deb12u1` | confirmed (format) |                                      | Debian Policy 5.6.12                                                        |
 | 40  | RPM Packages       | `1.0-1.el9.x86_64`  | confirmed (format) |                                      | Fedora packaging guidelines                                                 |
-| 41  | Unreal Engine      | `5.3.2-27405482`    | confirmed          |                                      | issues.unrealengine.com (UE5-Release-5.3-CL-27405482)                       |
+| 41  | Unreal Engine      | `5.3.2-27405482`    | confirmed          |                                      | issues.unrealengine.com (`UE5-Release-5.3-CL-27405482`)                     |
 | 42  | Eclipse IDE        | `2024-03`           | confirmed          |                                      | eclipse.org/downloads/packages                                              |
-| 43  | JetBrains IntelliJ | `IU-241.14494.240`  | confirmed          |                                      | intellij-support.jetbrains.com (2024.1, Mar 28 2024)                        |
+| 43  | JetBrains IntelliJ | `IU-241.14494.240`  | confirmed          |                                      | intellij-support.jetbrains.com (`2024.1`, Mar 28 2024)                      |
 | 44  | X11                | `X11R6.8.2`         | confirmed          |                                      | x.org/releases (Feb 2005)                                                   |
 | 45  | Apple iOS Builds   | `21F79`             | confirmed          |                                      | developer.apple.com/news/releases (iOS 17.5)                                |
 | 46  | macOS Builds       | `23F79`             | confirmed          |                                      | ipsw.dev/build/23F79 (macOS 14.5)                                           |
-| 47  | Android Builds     | `UP1A.231005.007`   | confirmed          |                                      | source.android.com (android-14.0.0_r1)                                      |
+| 47  | Android Builds     | `UP1A.231005.007`   | confirmed          |                                      | source.android.com (`android-14.0.0_r1`)                                    |
 | 48  | OpenZFS            | `2.2.3-1`           | plausible          |                                      | github.com/openzfs/zfs/releases/tag/zfs-2.2.3 (upstream tag is `zfs-2.2.3`) |
 | 49  | AutoDesk Maya      | `2025`              | confirmed          |                                      | autodesk.com/products/maya                                                  |
 | 50  | Safari             | `17.4.1.1`          | wrong-format       | `17.4.1`                             | support.apple.com/en-us/120888                                              |
