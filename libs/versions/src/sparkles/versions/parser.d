@@ -18,51 +18,15 @@ module sparkles.versions.parser;
 import expected : Expected, err, ok;
 import sparkles.versions.engine;
 
+// ParseMode, ParseError, ParseErrorCode, ParseExpected, ParseExpectedHook
+// are defined in sparkles.versions.engine so that the engine's StringSlot
+// validator alias can reference ParseExpected without a circular import.
+// Re-export them here so callers that import only sparkles.versions.parser
+// still see them.
+public import sparkles.versions.engine :
+    ParseError, ParseErrorCode, ParseExpected, ParseMode;
+
 @safe:
-
-// ---------------------------------------------------------------------------
-// Public API surface
-// ---------------------------------------------------------------------------
-
-/// Parsing mode for $(LREF parse).
-enum ParseMode
-{
-    /// Accept only Semantic Versioning 2.0.0 syntax.
-    strict,
-
-    /// Accept common compatibility forms such as `v1.2.3`, `1`, and `1.2`.
-    loose,
-}
-
-/// Machine-readable parse error code.
-enum ParseErrorCode
-{
-    emptyInput,
-    unexpectedCharacter,
-    unexpectedEnd,
-    leadingZero,
-    emptyIdentifier,
-    invalidIdentifier,
-    duplicateBuildMetadata,
-    numericOverflow,
-    widthMismatch,
-}
-
-/// Structured parse error.
-struct ParseError
-{
-    ParseErrorCode code; /// Error kind.
-    size_t index;              /// Byte offset where parsing failed.
-}
-
-package struct ParseExpectedHook
-{
-    static immutable bool enableDefaultConstructor = false;
-}
-
-package alias ParseExpected(T) = Expected!(
-    T, ParseError, ParseExpectedHook,
-);
 
 /// Expected result of $(LREF parse) for a given layout.
 template ParseResult(Layout)
@@ -147,71 +111,71 @@ package ParseResult!Layout parseGeneric(Layout)(string s, ParseMode mode)
         }
     }}
 
-    // Default: stable (no prerelease). Cleared if a `-` segment follows.
+    // Default: every $(LREF InternalFlag) bit (e.g. SemVer's stableFlag)
+    // starts set. It is cleared below when an ordering-relevant slot is
+    // consumed.
     static if (Layout.descriptor.internalFlag.name.length > 0)
         __traits(getMember, result.core, Layout.descriptor.internalFlag.name)
             = true;
 
-    // Prerelease parsing (only if the layout has the slot).
-    static if (hasPrerelease!Layout)
-    {
-        if (i < s.length && s[i] == '-')
+    // Walk the layout's declared StringSlots in declared order. Each slot
+    // is recognised by its `prefix` character; its content is everything
+    // up to the prefix character of a later-declared slot (or end of
+    // input). The engine has no built-in knowledge of which slot any of
+    // them represents — it only knows the slot's prefix and validator.
+    enum slots = layoutStringSlots!Layout();
+    static foreach (slotIdx, slot; slots)
+    {{
+        // Precompute the prefix characters of slots declared AFTER this
+        // one. The current slot's own prefix is allowed inside its
+        // content (e.g. SemVer accepts `alpha-beta` inside a prerelease).
+        enum char[] laterPrefixes = () {
+            char[] r;
+            foreach (j; slotIdx + 1 .. slots.length)
+                r ~= slots[j].prefix;
+            return r;
+        }();
+
+        if (i < s.length && s[i] == slot.prefix)
         {
             const start = ++i;
-            while (i < s.length && s[i] != '+')
+            while (i < s.length)
+            {
+                bool stop = false;
+                static foreach (p; laterPrefixes)
+                    if (s[i] == p) stop = true;
+                if (stop) break;
                 i++;
-            if (i == start)
+            }
+            const segment = s[start .. i];
+
+            // Layout-supplied validation (e.g. SemVer identifier rules)
+            // OR engine default: non-empty.
+            static if (slot.validate !is null)
+            {
+                auto check = slot.validate(segment, start);
+                if (check.hasError)
+                    return parseErr!Layout(check.error);
+            }
+            else if (segment.length == 0)
                 return parseErr!Layout(
                     ParseErrorCode.emptyIdentifier, start);
-            auto check = validateIdentifierList(
-                s[start .. i], start, IdentifierKind.prerelease);
-            if (check.hasError)
-                return parseErr!Layout(check.error);
-            result.prerelease = s[start .. i];
 
-            // Mark as prerelease (clear stable flag if present).
-            static if (Layout.descriptor.internalFlag.name.length > 0)
+            __traits(getMember, result, slot.name) = segment;
+
+            static if (slot.includeInOrdering
+                && Layout.descriptor.internalFlag.name.length > 0)
                 __traits(getMember, result.core,
                     Layout.descriptor.internalFlag.name) = false;
         }
-    }
-
-    // Build-metadata parsing (only if the layout has the slot).
-    static if (hasBuild!Layout)
-    {
-        if (i < s.length && s[i] == '+')
-        {
-            import std.algorithm.searching : countUntil;
-            import std.utf : byCodeUnit;
-
-            const start = ++i;
-            auto slice = s[start .. $];
-            if (slice.length == 0)
-                return parseErr!Layout(
-                    ParseErrorCode.emptyIdentifier, start);
-            const dupPlus = slice.byCodeUnit.countUntil('+');
-            if (dupPlus >= 0)
-                return parseErr!Layout(
-                    ParseErrorCode.duplicateBuildMetadata,
-                    start + dupPlus);
-            auto check = validateIdentifierList(
-                slice, start, IdentifierKind.build);
-            if (check.hasError)
-                return parseErr!Layout(check.error);
-            result.build = slice;
-            i = s.length;
-        }
-    }
+    }}
 
     if (mode == ParseMode.loose)
         skipHorizontalSpace(s, i);
 
     if (i != s.length)
         return parseErr!Layout(
-            s[i] == '+'
-                ? ParseErrorCode.duplicateBuildMetadata
-                : ParseErrorCode.unexpectedCharacter,
-            i);
+            ParseErrorCode.unexpectedCharacter, i);
 
     return ok!(ParseError, ParseExpectedHook)(result);
 }
@@ -275,55 +239,9 @@ package ValidationResult parseNumericComponent(
     return ok!(ParseError, ParseExpectedHook)();
 }
 
-// ---------------------------------------------------------------------------
-// Identifier validation (prerelease / build)
-// ---------------------------------------------------------------------------
-
-package enum IdentifierKind { prerelease, build }
-
-package ValidationResult validateIdentifierList(
-    in string list, size_t listOffset, IdentifierKind kind,
-) @safe pure nothrow @nogc
-{
-    import std.algorithm.searching : all;
-    import std.ascii : isAlphaNum, isDigit;
-    import std.utf : byCodeUnit;
-
-    if (list.length == 0)
-        return ok!(ParseError, ParseExpectedHook)();
-
-    size_t segStart;
-    while (true)
-    {
-        size_t segEnd = segStart;
-        while (segEnd < list.length && list[segEnd] != '.')
-            segEnd++;
-
-        const seg = list[segStart .. segEnd];
-        const segOff = listOffset + segStart;
-
-        if (seg.length == 0)
-            return parseErrV(ParseErrorCode.emptyIdentifier, segOff);
-
-        foreach (idx, c; seg)
-        {
-            if (!(c.isAlphaNum || c == '-'))
-                return parseErrV(
-                    ParseErrorCode.invalidIdentifier, segOff + idx);
-        }
-
-        if (kind == IdentifierKind.prerelease
-            && seg.length > 1
-            && seg[0] == '0'
-            && seg.byCodeUnit.all!isDigit)
-            return parseErrV(ParseErrorCode.leadingZero, segOff);
-
-        if (segEnd == list.length) break;
-        segStart = segEnd + 1;
-    }
-
-    return ok!(ParseError, ParseExpectedHook)();
-}
+// SemVer identifier validation and prerelease comparison live in
+// `sparkles.versions.semver_rules` — they are layout-supplied, not
+// engine-baked, so the parser sees only opaque SlotValidator hooks.
 
 // ---------------------------------------------------------------------------
 // Loose-mode utilities

@@ -16,6 +16,7 @@ See `docs/specs/versions/SPEC.md` §7 for the per-layout specification.
 module sparkles.versions.layouts;
 
 import sparkles.versions.engine;
+import sparkles.versions.semver_rules : semVerBuildSlot, semVerPrereleaseSlot;
 
 @safe:
 
@@ -32,15 +33,17 @@ build metadata are stored as plain GC `string` slots.
 */
 struct SemVerLayout
 {
-    enum hasPrerelease = true;
-    enum hasBuild = true;
-
     mixin layoutBody!(
         InternalFlag,             bool,  "stableFlag", 1,
         Component(printOrder: 2), ulong, "patch",     24,
         Component(printOrder: 1), ulong, "minor",     24,
         Component(printOrder: 0), ulong, "major",     15,
     );
+
+    static immutable StringSlot[] stringSlots = [
+        semVerPrereleaseSlot,
+        semVerBuildSlot,
+    ];
 }
 
 /// Standard SemVer 2.0.0 version type.
@@ -59,15 +62,17 @@ are unpadded. Matches real DMD versioning across eras (`2.079.0`,
 */
 struct DmdLayout
 {
-    enum hasPrerelease = true;
-    enum hasBuild = true;
-
     mixin layoutBody!(
         InternalFlag,                              bool,  "stableFlag", 1,
         Component(printOrder: 2),                  ulong, "patch",     24,
         Component(printOrder: 1, printWidth: 3),   ulong, "minor",     24,
         Component(printOrder: 0),                  ulong, "major",     15,
     );
+
+    static immutable StringSlot[] stringSlots = [
+        semVerPrereleaseSlot,
+        semVerBuildSlot,
+    ];
 }
 
 /// DMD-style version type with 3-digit zero-padded minor.
@@ -105,8 +110,8 @@ integer comparison yields `2.111.0-beta.N < 2.111.0-rc.M < 2.111.0`.
 */
 struct DmdOptimized
 {
-    enum hasPrerelease = false;
-    enum hasBuild = false;
+    // No `stringSlots` declared — this layout encodes prerelease as
+    // bitfield (phase, num) entirely within its 32-bit packed core.
 
     /// Phase values participating in ordering. Values are monotone:
     /// stable > rc > beta.
@@ -197,6 +202,34 @@ unittest
     assert(d.components[2].name == "patch");
     assert(d.totalBitWidth == 64);
     assert(d.internalFlag.name == "stableFlag");
+}
+
+@("layouts.SemVerLayout.precedenceChain")
+@safe pure nothrow @nogc
+unittest
+{
+    // SemVer §11.4 precedence chain via the SemVer prerelease comparator
+    // (numeric < alphanumeric at same position; numeric segments compare
+    // numerically). The engine treats this as opaque — SemVerLayout's
+    // semVerPrereleaseSlot supplies the comparator.
+    import sparkles.versions.parser : parse, ParseMode;
+    static immutable chain = [
+        "1.0.0-alpha",
+        "1.0.0-alpha.1",
+        "1.0.0-alpha.beta",
+        "1.0.0-beta",
+        "1.0.0-beta.2",
+        "1.0.0-beta.11",
+        "1.0.0-rc.1",
+        "1.0.0",
+    ];
+
+    foreach (i; 0 .. chain.length - 1)
+    {
+        auto lhs = parse!SemVerLayout(chain[i], ParseMode.strict).value;
+        auto rhs = parse!SemVerLayout(chain[i + 1], ParseMode.strict).value;
+        assert(lhs < rhs);
+    }
 }
 
 @("layouts.SemVerLayout.size")

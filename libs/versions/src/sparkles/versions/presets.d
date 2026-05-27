@@ -18,6 +18,7 @@ module sparkles.versions.presets;
 
 import sparkles.versions.engine;
 import sparkles.versions.layouts : SemVerLayout, DmdLayout;
+import sparkles.versions.semver_rules : semVerBuildSlot, semVerPrereleaseSlot;
 public import sparkles.versions.layouts : SemVerLayout, DmdLayout, SemVer, DmdVer;
 
 @safe:
@@ -32,15 +33,17 @@ Validates with Ubuntu `24.04.1`.
 */
 struct CalVerYYMMLayout
 {
-    enum hasPrerelease = true;
-    enum hasBuild = true;
-
     mixin layoutBody!(
         InternalFlag,                            bool,  "stableFlag", 1,
         Component(printOrder: 2),                ulong, "patch",     24,
         Component(printOrder: 1, printWidth: 2), ulong, "minor",     24,
         Component(printOrder: 0),                ulong, "major",     15,
     );
+
+    static immutable StringSlot[] stringSlots = [
+        semVerPrereleaseSlot,
+        semVerBuildSlot,
+    ];
 }
 
 /// Ubuntu-style calendar version.
@@ -57,15 +60,17 @@ fits within 15 bits (≤ 32767).
 */
 struct CalVerYYYYMMDDLayout
 {
-    enum hasPrerelease = true;
-    enum hasBuild = true;
-
     mixin layoutBody!(
         InternalFlag,                            bool,  "stableFlag", 1,
         Component(printOrder: 2, printWidth: 2), ulong, "patch",     24,
         Component(printOrder: 1, printWidth: 2), ulong, "minor",     24,
         Component(printOrder: 0),                ulong, "major",     15,
     );
+
+    static immutable StringSlot[] stringSlots = [
+        semVerPrereleaseSlot,
+        semVerBuildSlot,
+    ];
 }
 
 /// Arch-style calendar version.
@@ -82,15 +87,17 @@ are unpadded.
 */
 struct VimLayout
 {
-    enum hasPrerelease = true;
-    enum hasBuild = true;
-
     mixin layoutBody!(
         InternalFlag,                            bool,  "stableFlag", 1,
         Component(printOrder: 2, printWidth: 4), ulong, "patch",     24,
         Component(printOrder: 1),                ulong, "minor",     24,
         Component(printOrder: 0),                ulong, "major",     15,
     );
+
+    static immutable StringSlot[] stringSlots = [
+        semVerPrereleaseSlot,
+        semVerBuildSlot,
+    ];
 }
 
 /// Vim-style version.
