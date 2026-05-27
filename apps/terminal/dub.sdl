@@ -1,0 +1,32 @@
+name "terminal"
+description "A minimal terminal emulator using libghostty-vt"
+authors "Petar Kirov"
+license "BSL-1.0"
+
+targetType "executable"
+targetPath "build"
+
+dflags "-preview=in" "-preview=dip1000"
+
+dependency "raylib-d" version="~>6.0.1"
+
+dependency "sparkles:core-cli" path="../.."
+dependency "sparkles:ghostty" path="../.."
+
+libs "raylib"
+
+configuration "application" {
+    targetType "executable"
+}
+
+configuration "unittest" {
+    targetType "library"
+    excludedSourceFiles "src/app.d"
+
+    dependency "silly" version="~>1.1.1"
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
