@@ -104,9 +104,9 @@ package ParseResult!Layout parseGeneric(Layout)(string s, ParseMode mode)
                     componentMaxValue(comp.bitWidth), value);
                 if (numResult.hasError)
                     return parseErr!Layout(numResult.error);
-                __traits(getMember, result.core, comp.name) =
-                    cast(typeof(__traits(getMember, result.core, comp.name)))
-                        value;
+                __traits(getMember, result.payload, comp.name) =
+                    cast(typeof(__traits(getMember, result.payload,
+                            comp.name))) value;
             }
         }
     }}
@@ -115,24 +115,29 @@ package ParseResult!Layout parseGeneric(Layout)(string s, ParseMode mode)
     // starts set. It is cleared below when an ordering-relevant slot is
     // consumed.
     static if (Layout.descriptor.internalFlag.name.length > 0)
-        __traits(getMember, result.core, Layout.descriptor.internalFlag.name)
-            = true;
+        __traits(getMember, result.payload,
+            Layout.descriptor.internalFlag.name) = true;
 
-    // Walk the layout's declared StringSlots in declared order. Each slot
-    // is recognised by its `prefix` character; its content is everything
-    // up to the prefix character of a later-declared slot (or end of
-    // input). The engine has no built-in knowledge of which slot any of
-    // them represents — it only knows the slot's prefix and validator.
-    enum slots = layoutStringSlots!Layout();
-    static foreach (slotIdx, slot; slots)
+    // Walk the layout's @StringSlot-tagged string fields in declaration
+    // order. Each slot is recognised by its `prefix` character; its
+    // content is everything up to the prefix character of a later-
+    // declared slot (or end of input). The engine has no built-in
+    // knowledge of which slot any of them represents — it only knows
+    // the slot's prefix and validator.
+    enum names = slotFieldNames!Layout();
+    static foreach (slotIdx, slotName; names)
     {{
+        enum StringSlot slot = slotUDA!(Layout, slotName)();
         // Precompute the prefix characters of slots declared AFTER this
         // one. The current slot's own prefix is allowed inside its
         // content (e.g. SemVer accepts `alpha-beta` inside a prerelease).
+        // Use `static foreach` + `static if` so each `names[j]` is a
+        // compile-time constant suitable as a template argument.
         enum char[] laterPrefixes = () {
             char[] r;
-            foreach (j; slotIdx + 1 .. slots.length)
-                r ~= slots[j].prefix;
+            static foreach (j; 0 .. names.length)
+                static if (j > slotIdx)
+                    r ~= slotUDA!(Layout, names[j])().prefix;
             return r;
         }();
 
@@ -161,11 +166,11 @@ package ParseResult!Layout parseGeneric(Layout)(string s, ParseMode mode)
                 return parseErr!Layout(
                     ParseErrorCode.emptyIdentifier, start);
 
-            __traits(getMember, result, slot.name) = segment;
+            __traits(getMember, result.payload, slotName) = segment;
 
             static if (slot.includeInOrdering
                 && Layout.descriptor.internalFlag.name.length > 0)
-                __traits(getMember, result.core,
+                __traits(getMember, result.payload,
                     Layout.descriptor.internalFlag.name) = false;
         }
     }}

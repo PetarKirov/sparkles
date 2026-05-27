@@ -40,10 +40,8 @@ struct SemVerLayout
         Component(printOrder: 0), ulong, "major",     15,
     );
 
-    static immutable StringSlot[] stringSlots = [
-        semVerPrereleaseSlot,
-        semVerBuildSlot,
-    ];
+    @semVerPrereleaseSlot string prerelease;
+    @semVerBuildSlot       string build;
 }
 
 /// Standard SemVer 2.0.0 version type.
@@ -69,10 +67,8 @@ struct DmdLayout
         Component(printOrder: 0),                  ulong, "major",     15,
     );
 
-    static immutable StringSlot[] stringSlots = [
-        semVerPrereleaseSlot,
-        semVerBuildSlot,
-    ];
+    @semVerPrereleaseSlot string prerelease;
+    @semVerBuildSlot       string build;
 }
 
 /// DMD-style version type with 3-digit zero-padded minor.
@@ -236,7 +232,9 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    static assert(SemVerLayout.sizeof == 8);
+    // Bit-packed core fits in 8 bytes; the layout struct itself is
+    // larger because it also carries the prerelease/build string slots.
+    static assert(SemVerLayout.descriptor.totalBitWidth == 64);
     static assert(is(Version!SemVerLayout.CoreType == ulong));
 }
 
@@ -247,16 +245,16 @@ unittest
     import sparkles.core_cli.smallbuffer : checkToString;
 
     DmdVer v;
-    v.core.stableFlag = true;
-    v.core.major = 2;
-    v.core.minor = 79;
-    v.core.patch = 0;
+    v.stableFlag = true;
+    v.major = 2;
+    v.minor = 79;
+    v.patch = 0;
     checkToString(v, "2.079.0");
 
-    v.core.minor = 111;
+    v.minor = 111;
     checkToString(v, "2.111.0");
 
-    v.core.minor = 9;
+    v.minor = 9;
     checkToString(v, "2.009.0");
 }
 
@@ -285,28 +283,28 @@ unittest
     // 2.111.0-beta.N < 2.111.0-rc.M < 2.111.0 for all N, M ≤ 63.
     Version!DmdOptimized beta2, rc1, stable;
 
-    beta2.core.major = 2; beta2.core.minor = 111; beta2.core.patch = 0;
-    beta2.core.prereleasePhase = DmdOptimized.Phase.beta;
-    beta2.core.prereleaseNum = 2;
+    beta2.major = 2; beta2.minor = 111; beta2.patch = 0;
+    beta2.prereleasePhase = DmdOptimized.Phase.beta;
+    beta2.prereleaseNum = 2;
 
-    rc1.core.major = 2; rc1.core.minor = 111; rc1.core.patch = 0;
-    rc1.core.prereleasePhase = DmdOptimized.Phase.rc;
-    rc1.core.prereleaseNum = 1;
+    rc1.major = 2; rc1.minor = 111; rc1.patch = 0;
+    rc1.prereleasePhase = DmdOptimized.Phase.rc;
+    rc1.prereleaseNum = 1;
 
-    stable.core.major = 2; stable.core.minor = 111; stable.core.patch = 0;
-    stable.core.prereleasePhase = DmdOptimized.Phase.stable;
-    stable.core.prereleaseNum = 0;
+    stable.major = 2; stable.minor = 111; stable.patch = 0;
+    stable.prereleasePhase = DmdOptimized.Phase.stable;
+    stable.prereleaseNum = 0;
 
     assert(beta2 < rc1);
     assert(rc1 < stable);
 
     // Cross-major: 3.0.0-beta.1 > 2.999.0
     Version!DmdOptimized newer, older;
-    newer.core.major = 3;
-    newer.core.prereleasePhase = DmdOptimized.Phase.beta;
-    newer.core.prereleaseNum = 1;
-    older.core.major = 2; older.core.minor = 999;
-    older.core.prereleasePhase = DmdOptimized.Phase.stable;
+    newer.major = 3;
+    newer.prereleasePhase = DmdOptimized.Phase.beta;
+    newer.prereleaseNum = 1;
+    older.major = 2; older.minor = 999;
+    older.prereleasePhase = DmdOptimized.Phase.stable;
     assert(newer > older);
 }
 
@@ -317,22 +315,22 @@ unittest
     import sparkles.core_cli.smallbuffer : checkToString;
 
     Version!DmdOptimized v;
-    v.core.major = 2; v.core.minor = 111; v.core.patch = 0;
-    v.core.prereleasePhase = DmdOptimized.Phase.stable;
+    v.major = 2; v.minor = 111; v.patch = 0;
+    v.prereleasePhase = DmdOptimized.Phase.stable;
     checkToString(v, "2.111.0");
 
-    v.core.prereleasePhase = DmdOptimized.Phase.beta;
-    v.core.prereleaseNum = 2;
+    v.prereleasePhase = DmdOptimized.Phase.beta;
+    v.prereleaseNum = 2;
     checkToString(v, "2.111.0-beta.2");
 
-    v.core.prereleasePhase = DmdOptimized.Phase.rc;
-    v.core.prereleaseNum = 3;
+    v.prereleasePhase = DmdOptimized.Phase.rc;
+    v.prereleaseNum = 3;
     checkToString(v, "2.111.0-rc.3");
 
     // Zero-padded minor (printWidth: 3).
-    v.core.minor = 79;
-    v.core.prereleasePhase = DmdOptimized.Phase.stable;
-    v.core.prereleaseNum = 0;
+    v.minor = 79;
+    v.prereleasePhase = DmdOptimized.Phase.stable;
+    v.prereleaseNum = 0;
     checkToString(v, "2.079.0");
 }
 
@@ -348,6 +346,6 @@ unittest
     static assert(TinyLayout.descriptor.internalFlag.name == "");
 
     TinyVer v;
-    v.core.major = 7; v.core.minor = 8; v.core.patch = 9;
+    v.major = 7; v.minor = 8; v.patch = 9;
     checkToString(v, "7.8.9");
 }

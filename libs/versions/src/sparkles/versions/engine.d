@@ -81,12 +81,13 @@ alias SlotComparator = int function(
     in string lhs, in string rhs) @safe pure nothrow @nogc;
 
 /**
-Describes an auxiliary string slot a layout exposes alongside its bit-packed
-core. The engine knows nothing about SemVer's `prerelease` or `build`
-specifically — those are just two slots SemVer-style layouts declare.
+UDA value attached to a string field of a layout to mark it as an auxiliary
+ordering/formatting slot. The engine introspects each layout's fields via
+`__traits(getAttributes, Layout, "fieldName")`, picks up the slots, and
+operates on them generically. The field's name doubles as the slot's
+name; declaration order doubles as parse / format order.
 
 $(UL
-    $(LI `name` — field name generated on $(LREF Version)`!Layout`.)
     $(LI `prefix` — single character separating this slot from the
         preceding content in the canonical string form (e.g. `'-'` for
         SemVer prerelease, `'+'` for SemVer build).)
@@ -97,10 +98,13 @@ $(UL
     $(LI `compare` — optional layout-specific comparator. `null` falls back
         to `std.algorithm.cmp`. Only consulted when `includeInOrdering`.)
 )
+
+The engine knows nothing about SemVer's `prerelease` or `build`
+specifically — those are just two `string` fields that SemVer-style
+layouts happen to declare with appropriate UDAs.
 */
 struct StringSlot
 {
-    string name;
     char prefix;
     bool includeInOrdering;
     SlotValidator validate;
@@ -169,9 +173,6 @@ struct LayoutDescriptor
     /// Total bit budget the layout consumes.
     int totalBitWidth;
 
-    /// Auxiliary string slots declared by the layout (in declared order).
-    /// Empty for layouts with only a bit-packed core.
-    immutable(StringSlot)[] stringSlots;
 }
 
 // ---------------------------------------------------------------------------
@@ -212,8 +213,10 @@ struct SemVerLayout
         Component(printOrder: 0),              ulong, "major",     15,
     );
 
-    string prerelease;
-    string build;
+    // Auxiliary string slots tagged with @StringSlot UDAs are picked
+    // up by the engine via __traits introspection.
+    @semVerPrereleaseSlot string prerelease;
+    @semVerBuildSlot       string build;
 }
 ---
 */
@@ -357,31 +360,70 @@ template GetCoreType(size_t bytes)
 }
 
 // ---------------------------------------------------------------------------
-// Layout traits
+// Layout traits — slot introspection
 // ---------------------------------------------------------------------------
 
 /**
-Returns the layout's declared $(LREF StringSlot) list, or an empty array
-if the layout has no auxiliary slots.
+Returns the names of the layout's auxiliary string slots in declaration
+order. A field qualifies as a slot when:
 
-The layout opts into slots by declaring
-`static immutable StringSlot[] stringSlots = [...];` (or `enum`).
+$(UL
+    $(LI it is a regular (non-bitfield) data field of `Layout`, and)
+    $(LI it carries a $(LREF StringSlot) value as a UDA.)
+)
+
+The field type is expected to support `length` and indexed read (plain
+GC `string` is the only supported type today).
 */
-package immutable(StringSlot)[] layoutStringSlots(Layout)()
+package string[] slotFieldNames(Layout)()
 {
-    static if (__traits(hasMember, Layout, "stringSlots"))
-        return Layout.stringSlots;
-    else
-        return [];
+    string[] result;
+    static foreach (m; __traits(allMembers, Layout))
+    {
+        static if (isSlotField!(Layout, m))
+            result ~= m;
+    }
+    return result;
 }
 
-/// True if any of the layout's declared slots participates in ordering.
-package bool layoutHasOrderingSlots(Layout)()
+/// Returns the $(LREF StringSlot) UDA value attached to `Layout.fieldName`.
+package StringSlot slotUDA(Layout, string fieldName)()
 {
-    foreach (slot; layoutStringSlots!Layout())
-        if (slot.includeInOrdering)
-            return true;
-    return false;
+    import std.traits : Unqual;
+
+    static foreach (uda; __traits(getAttributes,
+            __traits(getMember, Layout, fieldName)))
+    {
+        static if (is(Unqual!(typeof(uda)) == StringSlot))
+            return cast(StringSlot) uda;
+    }
+    assert(false, "slotUDA: no @StringSlot UDA on field");
+}
+
+/// True if `Layout.fieldName` is a `@StringSlot`-tagged string field.
+private template isSlotField(Layout, string fieldName)
+{
+    static if (!__traits(hasMember, Layout, fieldName))
+        enum isSlotField = false;
+    else static if (!is(typeof(__traits(getMember, Layout.init, fieldName))
+            == string))
+        enum isSlotField = false;
+    else
+        enum isSlotField = hasStringSlotUDA!(
+            __traits(getAttributes,
+                __traits(getMember, Layout, fieldName)));
+}
+
+private template hasStringSlotUDA(udas...)
+{
+    import std.traits : Unqual;
+
+    static if (udas.length == 0)
+        enum hasStringSlotUDA = false;
+    else static if (is(Unqual!(typeof(udas[0])) == StringSlot))
+        enum hasStringSlotUDA = true;
+    else
+        enum hasStringSlotUDA = hasStringSlotUDA!(udas[1 .. $]);
 }
 
 // ---------------------------------------------------------------------------
@@ -391,34 +433,30 @@ package bool layoutHasOrderingSlots(Layout)()
 /**
 DbI versioning value parameterised by a layout type.
 
-`Layout` must be a struct that mixes in $(LREF layoutBody) and exposes a
-`descriptor` of type $(LREF LayoutDescriptor). The engine reinterprets
-the layout's bits as a single unsigned integer for hardware-fast
-comparison.
+`Layout` must be a struct that mixes in $(LREF layoutBody) (as its first
+declaration, so the bit-packed core sits at offset 0) and exposes a
+`descriptor` of type $(LREF LayoutDescriptor). Auxiliary text fields
+(prerelease, build metadata, …) live as `string` members of `Layout`
+tagged with `@StringSlot(...)` UDAs; the engine introspects them
+generically.
 
 See `docs/specs/versions/SPEC.md` §4 for the validation rules.
 */
 struct Version(Layout)
 {
-    static assert(Layout.sizeof == 1 || Layout.sizeof == 2
-            || Layout.sizeof == 4 || Layout.sizeof == 8,
-        "sparkles.versions.Version!" ~ Layout.stringof
-        ~ ": Layout.sizeof must be 1, 2, 4, or 8.");
-
     static assert(__traits(hasMember, Layout, "descriptor"),
         "sparkles.versions.Version!" ~ Layout.stringof
         ~ ": Layout must declare a `descriptor` static member "
         ~ "(use `mixin layoutBody!(...)`).");
 
-    /// Unsigned integer used for packed reinterpretation.
-    alias CoreType = GetCoreType!(Layout.sizeof);
-
     /// Compile-time layout descriptor.
-    enum LayoutDescriptor descriptor = () {
-        auto d = Layout.descriptor;
-        d.stringSlots = layoutStringSlots!Layout();
-        return d;
-    }();
+    enum LayoutDescriptor descriptor = Layout.descriptor;
+
+    /// Unsigned integer used for packed reinterpretation. Sized from
+    /// the layout's declared bit width (rounded up to a power of two),
+    /// not from `Layout.sizeof` — the layout may carry additional
+    /// `@StringSlot` text fields after the bit-packed core.
+    alias CoreType = GetCoreType!(packedBytes!Layout());
 
     static assert(descriptor.components.length >= 1,
         "sparkles.versions.Version!" ~ Layout.stringof
@@ -428,17 +466,26 @@ struct Version(Layout)
         "sparkles.versions.Version!" ~ Layout.stringof
         ~ ": declared bit widths exceed the layout's container size.");
 
-    union
+    /// Wrapped layout value. `alias payload this` forwards member
+    /// access (`v.major`, `v.prerelease`, …) directly to the layout.
+    Layout payload;
+    alias payload this;
+
+    /**
+    The bit-packed core reinterpreted as an unsigned integer. The
+    `layoutBody` mixin guarantees the bitfield storage occupies the
+    first `CoreType.sizeof` bytes of `payload`.
+    */
+    @property CoreType packed() const @trusted pure nothrow @nogc
     {
-        /// Direct layout access.
-        Layout core;
-        /// Packed integer view (for `opCmp` and `truncateTo`).
-        CoreType packed;
+        return *cast(const(CoreType)*) cast(const(void)*) &payload;
     }
 
-    // Generate one `string <name>;` member per declared StringSlot.
-    static foreach (slot; descriptor.stringSlots)
-        mixin("string " ~ slot.name ~ ";");
+    /// ditto
+    @property void packed(CoreType value) @trusted pure nothrow @nogc
+    {
+        *cast(CoreType*) cast(void*) &payload = value;
+    }
 
     // ------------------------------------------------------------------
     // Operations
@@ -447,18 +494,20 @@ struct Version(Layout)
     /**
     Compares versions by their packed-core ordering, with each
     `includeInOrdering` $(LREF StringSlot) consulted as a tiebreak
-    (in declared order). Slots with `includeInOrdering: false` (e.g.
+    (in declaration order). Slots with `includeInOrdering: false` (e.g.
     SemVer build metadata) never affect ordering.
     */
     int opCmp(in typeof(this) other) const @safe pure nothrow @nogc
     {
         if (packed != other.packed)
             return packed < other.packed ? -1 : 1;
-        static foreach (slot; descriptor.stringSlots)
+        static foreach (name; slotFieldNames!Layout())
+        {{
+            enum slot = slotUDA!(Layout, name)();
             static if (slot.includeInOrdering)
-            {{
-                const lhs = __traits(getMember, this, slot.name);
-                const rhs = __traits(getMember, other, slot.name);
+            {
+                const lhs = __traits(getMember, payload, name);
+                const rhs = __traits(getMember, other.payload, name);
                 int c;
                 if (slot.compare !is null)
                     c = slot.compare(lhs, rhs);
@@ -468,7 +517,8 @@ struct Version(Layout)
                     c = cmp(lhs, rhs);
                 }
                 if (c != 0) return c;
-            }}
+            }
+        }}
         return 0;
     }
 
@@ -481,9 +531,12 @@ struct Version(Layout)
     {
         import core.internal.hash : hashOf;
         auto h = hashOf(packed);
-        static foreach (slot; descriptor.stringSlots)
+        static foreach (name; slotFieldNames!Layout())
+        {{
+            enum slot = slotUDA!(Layout, name)();
             static if (slot.includeInOrdering)
-                h = hashOf(__traits(getMember, this, slot.name), h);
+                h = hashOf(__traits(getMember, payload, name), h);
+        }}
         return h;
     }
 
@@ -493,15 +546,15 @@ struct Version(Layout)
     The default implementation walks the layout's `@Component` members
     in `printOrder` (emitting each as a decimal integer with optional
     zero-padding per `printWidth`), then walks the layout's
-    $(LREF StringSlot) declarations and emits any non-empty slot
-    preceded by its prefix character. If the layout defines its own
+    `@StringSlot` fields and emits any non-empty slot preceded by its
+    prefix character. If the layout defines its own
     `customToString(Writer)(ref Writer w) const` member, the engine
     defers to it entirely.
     */
     void toString(Writer)(ref Writer w) const
     {
         static if (__traits(hasMember, Layout, "customToString"))
-            core.customToString(w);
+            payload.customToString(w);
         else
             defaultToString(w);
     }
@@ -513,13 +566,14 @@ struct Version(Layout)
         static foreach (i, comp; descriptor.components)
         {{
             static if (i > 0) put(w, '.');
-            const value = __traits(getMember, core, comp.name);
+            const value = __traits(getMember, payload, comp.name);
             putPaddedNumber(w, value, comp.component.printWidth);
         }}
 
-        static foreach (slot; descriptor.stringSlots)
+        static foreach (name; slotFieldNames!Layout())
         {{
-            const value = __traits(getMember, this, slot.name);
+            enum slot = slotUDA!(Layout, name)();
+            const value = __traits(getMember, payload, name);
             if (value.length != 0)
             {
                 put(w, slot.prefix);
@@ -531,9 +585,8 @@ struct Version(Layout)
     /**
     Returns a copy of this version with every bit below the named
     component zeroed. Useful for grouping (e.g.
-    `v.truncateTo!"minor"` buckets versions by `major.minor`).
-
-    Prerelease and build slots are cleared in the result.
+    `v.truncateTo!"minor"` buckets versions by `major.minor`). Slot
+    fields are cleared in the result.
     */
     Version truncateTo(string name)() const @safe pure nothrow @nogc
     {
@@ -556,6 +609,17 @@ struct Version(Layout)
                 return cast(long) i;
         return -1;
     }
+}
+
+/// Number of bytes the bit-packed core occupies, rounded up to a power
+/// of two so $(LREF GetCoreType) accepts it.
+private size_t packedBytes(Layout)()
+{
+    const bits = Layout.descriptor.totalBitWidth;
+    if (bits <= 8)  return 1;
+    if (bits <= 16) return 2;
+    if (bits <= 32) return 4;
+    return 8;
 }
 
 // ---------------------------------------------------------------------------
@@ -603,10 +667,8 @@ version (unittest)
         // without any SemVer-specific validation or comparison. The
         // ordering-irrelevant slot is named "tag" rather than "build" to
         // emphasise this is a generic mechanism.
-        static immutable StringSlot[] stringSlots = [
-            StringSlot(name: "prerelease", prefix: '-', includeInOrdering: true),
-            StringSlot(name: "tag",        prefix: '+', includeInOrdering: false),
-        ];
+        @StringSlot(prefix: '-', includeInOrdering: true) string prerelease;
+        @StringSlot(prefix: '+', includeInOrdering: false) string tag;
     }
 
     private struct TinyDemo
@@ -656,14 +718,14 @@ unittest
 unittest
 {
     Version!DemoLayout v;
-    v.core.major = 1;
-    v.core.minor = 2;
-    v.core.patch = 3;
-    v.core.stableFlag = true;
-    assert(v.core.major == 1);
-    assert(v.core.minor == 2);
-    assert(v.core.patch == 3);
-    assert(v.core.stableFlag == true);
+    v.major = 1;
+    v.minor = 2;
+    v.patch = 3;
+    v.stableFlag = true;
+    assert(v.major == 1);
+    assert(v.minor == 2);
+    assert(v.patch == 3);
+    assert(v.stableFlag == true);
 }
 
 @("Version.engine.packed-overlay")
@@ -673,19 +735,19 @@ unittest
     // The union overlay exposes the packed integer view. We verify
     // that field bit positions match the descriptor.
     Version!DemoLayout v;
-    v.core.stableFlag = true;
+    v.stableFlag = true;
     assert(v.packed == 1, "stableFlag at LSB");
 
     v = Version!DemoLayout.init;
-    v.core.major = 1;
+    v.major = 1;
     assert(v.packed == (1UL << 49), "major at bit 49");
 
     v = Version!DemoLayout.init;
-    v.core.minor = 1;
+    v.minor = 1;
     assert(v.packed == (1UL << 25), "minor at bit 25");
 
     v = Version!DemoLayout.init;
-    v.core.patch = 1;
+    v.patch = 1;
     assert(v.packed == (1UL << 1), "patch at bit 1");
 }
 
@@ -699,7 +761,7 @@ unittest
     static assert(d.components.length == 3);
 
     Version!TinyDemo v;
-    v.core.major = 7;
+    v.major = 7;
     assert(v.packed == (7U << 16));
 }
 
@@ -708,13 +770,13 @@ unittest
 unittest
 {
     Version!DemoLayout a, b;
-    a.core.stableFlag = true; a.core.major = 1; a.core.minor = 2; a.core.patch = 3;
-    b.core.stableFlag = true; b.core.major = 1; b.core.minor = 2; b.core.patch = 4;
+    a.stableFlag = true; a.major = 1; a.minor = 2; a.patch = 3;
+    b.stableFlag = true; b.major = 1; b.minor = 2; b.patch = 4;
     assert(a < b);
     assert(b > a);
     assert(a != b);
 
-    b.core.patch = 3;
+    b.patch = 3;
     assert(a == b);
     assert(a.toHash == b.toHash);
 }
@@ -724,10 +786,10 @@ unittest
 unittest
 {
     Version!DemoLayout stable, pre;
-    stable.core.stableFlag = true;
-    stable.core.major = 1;
-    pre.core.stableFlag = false;
-    pre.core.major = 1;
+    stable.stableFlag = true;
+    stable.major = 1;
+    pre.stableFlag = false;
+    pre.major = 1;
     pre.prerelease = "alpha";
     assert(stable > pre);
 }
@@ -738,12 +800,12 @@ unittest
 {
     // SemVer §11: 2.0.0-alpha > 1.999.999 stable (major dominates).
     Version!DemoLayout earlier, later;
-    earlier.core.stableFlag = true;
-    earlier.core.major = 1;
-    earlier.core.minor = 0xFFFFFF;
-    earlier.core.patch = 0xFFFFFF;
-    later.core.stableFlag = false;
-    later.core.major = 2;
+    earlier.stableFlag = true;
+    earlier.major = 1;
+    earlier.minor = 0xFFFFFF;
+    earlier.patch = 0xFFFFFF;
+    later.stableFlag = false;
+    later.major = 2;
     later.prerelease = "alpha";
     assert(later > earlier);
 }
@@ -756,8 +818,8 @@ unittest
     // compare, verify the tiebreak fires when the packed core ties and
     // that the non-ordering slot ("tag") is ignored.
     Version!DemoLayout a, b;
-    a.core.major = 1; a.core.stableFlag = false; a.prerelease = "alpha";
-    b.core.major = 1; b.core.stableFlag = false; b.prerelease = "beta";
+    a.major = 1; a.stableFlag = false; a.prerelease = "alpha";
+    b.major = 1; b.stableFlag = false; b.prerelease = "beta";
     assert(a < b);
 
     // Ordering-irrelevant slot must not affect compare even when set.
@@ -778,13 +840,13 @@ unittest
     import sparkles.core_cli.smallbuffer : checkToString;
 
     Version!DemoLayout v;
-    v.core.stableFlag = true;
-    v.core.major = 1; v.core.minor = 2; v.core.patch = 3;
+    v.stableFlag = true;
+    v.major = 1; v.minor = 2; v.patch = 3;
     checkToString(v, "1.2.3");
 
     v.prerelease = "alpha.1";
     v.tag = "build.5";
-    v.core.stableFlag = false;
+    v.stableFlag = false;
     // DemoLayout's slot prefixes are '-' (prerelease) and '+' (tag),
     // matching SemVer's punctuation by convention not by hardcoding.
     checkToString(v, "1.2.3-alpha.1+build.5");
@@ -795,19 +857,19 @@ unittest
 unittest
 {
     Version!DemoLayout v;
-    v.core.stableFlag = true;
-    v.core.major = 1; v.core.minor = 2; v.core.patch = 3;
+    v.stableFlag = true;
+    v.major = 1; v.minor = 2; v.patch = 3;
     v.prerelease = "alpha";
 
     auto truncMinor = v.truncateTo!"minor"();
-    assert(truncMinor.core.major == 1);
-    assert(truncMinor.core.minor == 2);
-    assert(truncMinor.core.patch == 0);
-    assert(truncMinor.core.stableFlag == false);
+    assert(truncMinor.major == 1);
+    assert(truncMinor.minor == 2);
+    assert(truncMinor.patch == 0);
+    assert(truncMinor.stableFlag == false);
     assert(truncMinor.prerelease == "");
 
     auto truncMajor = v.truncateTo!"major"();
-    assert(truncMajor.core.major == 1);
-    assert(truncMajor.core.minor == 0);
-    assert(truncMajor.core.patch == 0);
+    assert(truncMajor.major == 1);
+    assert(truncMajor.minor == 0);
+    assert(truncMajor.patch == 0);
 }
