@@ -97,6 +97,85 @@ struct VimLayout
 alias VimVer = Version!VimLayout;
 
 // ---------------------------------------------------------------------------
+// Test helpers
+// ---------------------------------------------------------------------------
+
+version (unittest)
+{
+    import sparkles.core_cli.lifetime : recycledErrorInstance;
+    import sparkles.core_cli.smallbuffer : checkToString;
+    import sparkles.versions.parser : parse, ParseMode;
+    import core.exception : AssertError;
+
+    /// Throws a recycled AssertError with a fixed message. The body is
+    /// `@trusted` because `recycledErrorInstance` is `@system`
+    /// (it parks the Error object in a static buffer).
+    private void throwAssert(in char[] msg, string file, size_t line)
+        @trusted pure nothrow @nogc
+    {
+        throw recycledErrorInstance!AssertError(msg, file, line);
+    }
+
+    /// Parses `s` for `Layout`; throws a recycled `AssertError` on parse
+    /// failure so the caller stays `@safe pure nothrow @nogc`. The
+    /// `file`/`line` defaults capture the call site of the helper.
+    /// Takes `s` non-`scope` because the returned value may alias the
+    /// input via the prerelease/build slots; tests pass immutable
+    /// globals so this is safe in practice.
+    Version!Layout checkParse(Layout)(
+        string s,
+        ParseMode mode = ParseMode.strict,
+        string file = __FILE__, size_t line = __LINE__,
+    ) @safe pure nothrow @nogc
+    {
+        auto result = parse!Layout(s, mode);
+        if (result.hasError)
+            throwAssert("parse failed", file, line);
+        return result.value;
+    }
+
+    /// Parses `s` and asserts `toString` reproduces `expected` (or `s`
+    /// itself when `expected` is null).
+    void checkRoundTrip(Layout)(
+        string s,
+        string expected = null,
+        ParseMode mode = ParseMode.strict,
+        string file = __FILE__, size_t line = __LINE__,
+    ) @safe pure nothrow @nogc
+    {
+        auto v = checkParse!Layout(s, mode, file, line);
+        checkToString(v, expected.length ? expected : s, file, line);
+    }
+
+    /// Asserts that `s` is rejected by `Layout`'s parser in `mode`.
+    void checkRejects(Layout)(
+        string s,
+        ParseMode mode = ParseMode.strict,
+        string file = __FILE__, size_t line = __LINE__,
+    ) @safe pure nothrow @nogc
+    {
+        if (parse!Layout(s, mode).hasValue)
+            throwAssert("expected rejection", file, line);
+    }
+
+    /// Parses each string and asserts the resulting versions form a
+    /// strictly ascending chain. Uses a typesafe variadic so callers
+    /// write `checkAscending!Layout("a", "b", "c")` without an
+    /// intermediate array literal.
+    void checkAscending(Layout)(string[] series...)
+        @safe pure nothrow @nogc
+    {
+        foreach (i; 1 .. series.length)
+        {
+            const lhs = checkParse!Layout(series[i - 1]);
+            const rhs = checkParse!Layout(series[i]);
+            if (!(lhs < rhs))
+                throwAssert("ascending order violated", __FILE__, __LINE__);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -104,9 +183,6 @@ alias VimVer = Version!VimLayout;
 @safe pure
 unittest
 {
-    import sparkles.versions.parser : parse, ParseMode;
-    import sparkles.core_cli.smallbuffer : checkToString;
-
     // 18 strict-SemVer products from PRESETS.md §2 round-trip through
     // SemVerLayout in strict mode. Each version is associated with its
     // product so a failure points back to the catalogue entry.
@@ -143,157 +219,99 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.versions.parser : parse, ParseMode;
-    import sparkles.core_cli.smallbuffer : checkToString;
-
-    // PostgreSQL ships 2-part versions (16.3). Loose mode infills patch=0.
-    auto v = parse!SemVerLayout("16.3", ParseMode.loose);
-    assert(v.hasValue);
-    checkToString(v.value, "16.3.0");
-    assert(v.value.core.major == 16);
-    assert(v.value.core.minor == 3);
-    assert(v.value.core.patch == 0);
+    // PostgreSQL ships 2-part versions (16.3); loose mode infills patch=0.
+    auto v = checkParse!SemVerLayout("16.3", ParseMode.loose);
+    checkToString(v, "16.3.0");
+    assert(v.core.major == 16);
+    assert(v.core.minor == 3);
+    assert(v.core.patch == 0);
 }
 
 @("presets.Dmd.parsesDlangHistoricalAndCurrent")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.versions.parser : parse, ParseMode;
-    import sparkles.core_cli.smallbuffer : checkToString;
-
-    // Real Dlang/DMD versions across eras.
-    static immutable cases = [
-        ["2.079.0",  "2.079.0"],   // historical (zero-padded minor)
-        ["2.111.0",  "2.111.0"],   // current
-        ["1.075.0",  "1.075.0"],   // very old
-    ];
-
-    foreach (testCase; cases)
-    {
-        auto v = parse!DmdLayout(testCase[0], ParseMode.strict);
-        assert(v.hasValue, testCase[0]);
-        checkToString(v.value, testCase[1]);
-    }
+    // Real Dlang/DMD versions across eras: historical (zero-padded minor),
+    // current, and very old.
+    checkRoundTrip!DmdLayout("2.079.0");
+    checkRoundTrip!DmdLayout("2.111.0");
+    checkRoundTrip!DmdLayout("1.075.0");
 }
 
 @("presets.Dmd.ordering")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.versions.parser : parse, ParseMode;
-
-    auto v079 = parse!DmdLayout("2.079.0", ParseMode.strict).value;
-    auto v111 = parse!DmdLayout("2.111.0", ParseMode.strict).value;
-    assert(v079 < v111);
+    checkAscending!DmdLayout("2.079.0", "2.111.0");
 }
 
 @("presets.CalVerYYMM.ubuntu")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.versions.parser : parse, ParseMode;
-    import sparkles.core_cli.smallbuffer : checkToString;
-
     // Ubuntu 24.04.1 LTS (real release, Aug 2024).
-    auto v = parse!CalVerYYMMLayout("24.04.1", ParseMode.strict);
-    assert(v.hasValue);
-    checkToString(v.value, "24.04.1");
-    assert(v.value.core.major == 24);
-    assert(v.value.core.minor == 4);
-    assert(v.value.core.patch == 1);
+    auto v = checkParse!CalVerYYMMLayout("24.04.1");
+    checkToString(v, "24.04.1");
+    assert(v.core.major == 24);
+    assert(v.core.minor == 4);
+    assert(v.core.patch == 1);
 
-    // Unpadded month should be rejected.
-    assert(parse!CalVerYYMMLayout("24.4.1", ParseMode.strict).hasError);
+    // Unpadded month is rejected.
+    checkRejects!CalVerYYMMLayout("24.4.1");
 }
 
 @("presets.CalVerYYMM.ordering")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.versions.parser : parse, ParseMode;
-
-    auto early = parse!CalVerYYMMLayout("24.04.1", ParseMode.strict).value;
-    auto later = parse!CalVerYYMMLayout("24.04.2", ParseMode.strict).value;
-    auto next  = parse!CalVerYYMMLayout("24.10.1", ParseMode.strict).value;
-    auto major = parse!CalVerYYMMLayout("25.04.1", ParseMode.strict).value;
-    assert(early < later);
-    assert(later < next);
-    assert(next < major);
+    checkAscending!CalVerYYMMLayout(
+        "24.04.1", "24.04.2", "24.10.1", "25.04.1");
 }
 
 @("presets.CalVerYYYYMMDD.arch")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.versions.parser : parse, ParseMode;
-    import sparkles.core_cli.smallbuffer : checkToString;
-
     // Arch Linux 2024.05.01 (real release).
-    auto v = parse!CalVerYYYYMMDDLayout("2024.05.01", ParseMode.strict);
-    assert(v.hasValue);
-    checkToString(v.value, "2024.05.01");
-    assert(v.value.core.major == 2024);
-    assert(v.value.core.minor == 5);
-    assert(v.value.core.patch == 1);
+    auto v = checkParse!CalVerYYYYMMDDLayout("2024.05.01");
+    checkToString(v, "2024.05.01");
+    assert(v.core.major == 2024);
+    assert(v.core.minor == 5);
+    assert(v.core.patch == 1);
 
     // Day must be 2 digits.
-    assert(parse!CalVerYYYYMMDDLayout("2024.05.1", ParseMode.strict)
-        .hasError);
+    checkRejects!CalVerYYYYMMDDLayout("2024.05.1");
 }
 
 @("presets.CalVerYYYYMMDD.ordering")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.versions.parser : parse, ParseMode;
-
-    auto d1 = parse!CalVerYYYYMMDDLayout("2024.05.01", ParseMode.strict)
-        .value;
-    auto d2 = parse!CalVerYYYYMMDDLayout("2024.05.02", ParseMode.strict)
-        .value;
-    auto d3 = parse!CalVerYYYYMMDDLayout("2024.06.01", ParseMode.strict)
-        .value;
-    auto d4 = parse!CalVerYYYYMMDDLayout("2025.01.01", ParseMode.strict)
-        .value;
-    assert(d1 < d2);
-    assert(d2 < d3);
-    assert(d3 < d4);
+    checkAscending!CalVerYYYYMMDDLayout(
+        "2024.05.01", "2024.05.02", "2024.06.01", "2025.01.01");
 }
 
 @("presets.Vim.fourDigitPatch")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.versions.parser : parse, ParseMode;
-    import sparkles.core_cli.smallbuffer : checkToString;
-
     // Vim 9.1.0400 (real patch from github.com/vim/vim).
-    auto v = parse!VimLayout("9.1.0400", ParseMode.strict);
-    assert(v.hasValue);
-    checkToString(v.value, "9.1.0400");
-    assert(v.value.core.major == 9);
-    assert(v.value.core.minor == 1);
-    assert(v.value.core.patch == 400);
+    auto v = checkParse!VimLayout("9.1.0400");
+    checkToString(v, "9.1.0400");
+    assert(v.core.major == 9);
+    assert(v.core.minor == 1);
+    assert(v.core.patch == 400);
 
     // 3-digit patch rejected by width rule.
-    assert(parse!VimLayout("9.1.400", ParseMode.strict).hasError);
+    checkRejects!VimLayout("9.1.400");
 
     // Higher patch comes through unpadded since natural width > 4.
-    auto big = parse!VimLayout("9.1.10000", ParseMode.strict);
-    assert(big.hasValue);
-    checkToString(big.value, "9.1.10000");
+    checkRoundTrip!VimLayout("9.1.10000");
 }
 
 @("presets.Vim.ordering")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.versions.parser : parse, ParseMode;
-
-    auto a = parse!VimLayout("9.1.0399", ParseMode.strict).value;
-    auto b = parse!VimLayout("9.1.0400", ParseMode.strict).value;
-    auto c = parse!VimLayout("9.2.0001", ParseMode.strict).value;
-    assert(a < b);
-    assert(b < c);
+    checkAscending!VimLayout("9.1.0399", "9.1.0400", "9.2.0001");
 }
