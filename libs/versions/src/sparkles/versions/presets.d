@@ -104,7 +104,7 @@ alias VimVer = Version!VimLayout;
 @safe pure
 unittest
 {
-    import sparkles.versions.parser : parse, SemVerParseMode;
+    import sparkles.versions.parser : parse, ParseMode;
     import sparkles.core_cli.smallbuffer : checkToString;
 
     // 18 strict-SemVer products from PRESETS.md §2 round-trip through
@@ -133,7 +133,7 @@ unittest
 
     foreach (product, s; cases)
     {
-        auto v = parse!SemVerLayout(s, SemVerParseMode.strict);
+        auto v = parse!SemVerLayout(s, ParseMode.strict);
         assert(v.hasValue, product);
         checkToString(v.value, s);
     }
@@ -143,11 +143,11 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.versions.parser : parse, SemVerParseMode;
+    import sparkles.versions.parser : parse, ParseMode;
     import sparkles.core_cli.smallbuffer : checkToString;
 
     // PostgreSQL ships 2-part versions (16.3). Loose mode infills patch=0.
-    auto v = parse!SemVerLayout("16.3", SemVerParseMode.loose);
+    auto v = parse!SemVerLayout("16.3", ParseMode.loose);
     assert(v.hasValue);
     checkToString(v.value, "16.3.0");
     assert(v.value.core.major == 16);
@@ -159,7 +159,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.versions.parser : parse, SemVerParseMode;
+    import sparkles.versions.parser : parse, ParseMode;
     import sparkles.core_cli.smallbuffer : checkToString;
 
     // Real Dlang/DMD versions across eras.
@@ -171,7 +171,7 @@ unittest
 
     foreach (testCase; cases)
     {
-        auto v = parse!DmdLayout(testCase[0], SemVerParseMode.strict);
+        auto v = parse!DmdLayout(testCase[0], ParseMode.strict);
         assert(v.hasValue, testCase[0]);
         checkToString(v.value, testCase[1]);
     }
@@ -181,10 +181,10 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.versions.parser : parse, SemVerParseMode;
+    import sparkles.versions.parser : parse, ParseMode;
 
-    auto v079 = parse!DmdLayout("2.079.0", SemVerParseMode.strict).value;
-    auto v111 = parse!DmdLayout("2.111.0", SemVerParseMode.strict).value;
+    auto v079 = parse!DmdLayout("2.079.0", ParseMode.strict).value;
+    auto v111 = parse!DmdLayout("2.111.0", ParseMode.strict).value;
     assert(v079 < v111);
 }
 
@@ -192,11 +192,11 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.versions.parser : parse, SemVerParseMode;
+    import sparkles.versions.parser : parse, ParseMode;
     import sparkles.core_cli.smallbuffer : checkToString;
 
     // Ubuntu 24.04.1 LTS (real release, Aug 2024).
-    auto v = parse!CalVerYYMMLayout("24.04.1", SemVerParseMode.strict);
+    auto v = parse!CalVerYYMMLayout("24.04.1", ParseMode.strict);
     assert(v.hasValue);
     checkToString(v.value, "24.04.1");
     assert(v.value.core.major == 24);
@@ -204,19 +204,19 @@ unittest
     assert(v.value.core.patch == 1);
 
     // Unpadded month should be rejected.
-    assert(parse!CalVerYYMMLayout("24.4.1", SemVerParseMode.strict).hasError);
+    assert(parse!CalVerYYMMLayout("24.4.1", ParseMode.strict).hasError);
 }
 
 @("presets.CalVerYYMM.ordering")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.versions.parser : parse, SemVerParseMode;
+    import sparkles.versions.parser : parse, ParseMode;
 
-    auto early = parse!CalVerYYMMLayout("24.04.1", SemVerParseMode.strict).value;
-    auto later = parse!CalVerYYMMLayout("24.04.2", SemVerParseMode.strict).value;
-    auto next  = parse!CalVerYYMMLayout("24.10.1", SemVerParseMode.strict).value;
-    auto major = parse!CalVerYYMMLayout("25.04.1", SemVerParseMode.strict).value;
+    auto early = parse!CalVerYYMMLayout("24.04.1", ParseMode.strict).value;
+    auto later = parse!CalVerYYMMLayout("24.04.2", ParseMode.strict).value;
+    auto next  = parse!CalVerYYMMLayout("24.10.1", ParseMode.strict).value;
+    auto major = parse!CalVerYYMMLayout("25.04.1", ParseMode.strict).value;
     assert(early < later);
     assert(later < next);
     assert(next < major);
@@ -226,11 +226,11 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.versions.parser : parse, SemVerParseMode;
+    import sparkles.versions.parser : parse, ParseMode;
     import sparkles.core_cli.smallbuffer : checkToString;
 
     // Arch Linux 2024.05.01 (real release).
-    auto v = parse!CalVerYYYYMMDDLayout("2024.05.01", SemVerParseMode.strict);
+    auto v = parse!CalVerYYYYMMDDLayout("2024.05.01", ParseMode.strict);
     assert(v.hasValue);
     checkToString(v.value, "2024.05.01");
     assert(v.value.core.major == 2024);
@@ -238,7 +238,7 @@ unittest
     assert(v.value.core.patch == 1);
 
     // Day must be 2 digits.
-    assert(parse!CalVerYYYYMMDDLayout("2024.05.1", SemVerParseMode.strict)
+    assert(parse!CalVerYYYYMMDDLayout("2024.05.1", ParseMode.strict)
         .hasError);
 }
 
@@ -246,15 +246,15 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.versions.parser : parse, SemVerParseMode;
+    import sparkles.versions.parser : parse, ParseMode;
 
-    auto d1 = parse!CalVerYYYYMMDDLayout("2024.05.01", SemVerParseMode.strict)
+    auto d1 = parse!CalVerYYYYMMDDLayout("2024.05.01", ParseMode.strict)
         .value;
-    auto d2 = parse!CalVerYYYYMMDDLayout("2024.05.02", SemVerParseMode.strict)
+    auto d2 = parse!CalVerYYYYMMDDLayout("2024.05.02", ParseMode.strict)
         .value;
-    auto d3 = parse!CalVerYYYYMMDDLayout("2024.06.01", SemVerParseMode.strict)
+    auto d3 = parse!CalVerYYYYMMDDLayout("2024.06.01", ParseMode.strict)
         .value;
-    auto d4 = parse!CalVerYYYYMMDDLayout("2025.01.01", SemVerParseMode.strict)
+    auto d4 = parse!CalVerYYYYMMDDLayout("2025.01.01", ParseMode.strict)
         .value;
     assert(d1 < d2);
     assert(d2 < d3);
@@ -265,11 +265,11 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.versions.parser : parse, SemVerParseMode;
+    import sparkles.versions.parser : parse, ParseMode;
     import sparkles.core_cli.smallbuffer : checkToString;
 
     // Vim 9.1.0400 (real patch from github.com/vim/vim).
-    auto v = parse!VimLayout("9.1.0400", SemVerParseMode.strict);
+    auto v = parse!VimLayout("9.1.0400", ParseMode.strict);
     assert(v.hasValue);
     checkToString(v.value, "9.1.0400");
     assert(v.value.core.major == 9);
@@ -277,10 +277,10 @@ unittest
     assert(v.value.core.patch == 400);
 
     // 3-digit patch rejected by width rule.
-    assert(parse!VimLayout("9.1.400", SemVerParseMode.strict).hasError);
+    assert(parse!VimLayout("9.1.400", ParseMode.strict).hasError);
 
     // Higher patch comes through unpadded since natural width > 4.
-    auto big = parse!VimLayout("9.1.10000", SemVerParseMode.strict);
+    auto big = parse!VimLayout("9.1.10000", ParseMode.strict);
     assert(big.hasValue);
     checkToString(big.value, "9.1.10000");
 }
@@ -289,11 +289,11 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.versions.parser : parse, SemVerParseMode;
+    import sparkles.versions.parser : parse, ParseMode;
 
-    auto a = parse!VimLayout("9.1.0399", SemVerParseMode.strict).value;
-    auto b = parse!VimLayout("9.1.0400", SemVerParseMode.strict).value;
-    auto c = parse!VimLayout("9.2.0001", SemVerParseMode.strict).value;
+    auto a = parse!VimLayout("9.1.0399", ParseMode.strict).value;
+    auto b = parse!VimLayout("9.1.0400", ParseMode.strict).value;
+    auto c = parse!VimLayout("9.2.0001", ParseMode.strict).value;
     assert(a < b);
     assert(b < c);
 }
