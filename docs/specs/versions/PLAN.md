@@ -81,10 +81,41 @@ documented per [AGENTS.md](../../../AGENTS.md).
      _Dependencies:_ all earlier milestones whose surface area the
      tests cover (typically 1–5).
 
+8. **Real-world preset layouts.**
+   Implement `sparkles.versions.presets` covering the part-1
+   catalogue of real-world versioning schemes. Adds three new
+   layouts (`CalVerYYMMLayout`, `CalVerYYYYMMDDLayout`, `VimLayout`)
+   and re-uses `SemVerLayout` + `DmdLayout` for the rest. Includes
+   unit tests that parse each catalogued example string (Node.js
+   `20.13.1`, Ubuntu `24.04.1`, Vim `9.1.0400`, Dlang `2.079.0`,
+   …) and exercise `opCmp`, `toString`, `truncateTo` per layout.
+   The per-product mapping, provenance record, and the raw analyst
+   source-material catalogue are all in [PRESETS.md](./PRESETS.md).
+   Delivers [SPEC §7.5](./SPEC.md#75-real-world-preset-layouts).
+   _Dependencies:_ milestones 3, 4. _Optional in the engineering
+   sense:_ may ship after milestone 7, since it does not block the
+   engine's correctness.
+
 ## Out-of-scope deferrals
 
 - **`core.int128.Cent` support.** No 16-byte layouts in the first
-  release. Reintroduce when a concrete consumer needs it.
+  release. Reintroduce when a concrete consumer needs it. Several
+  part-2 catalogue schemes (Windows, Chrome, .NET Assemblies, Java,
+  Office, Safari, Unreal) would need this — see
+  [PRESETS.md §5](./PRESETS.md#5-deferred-from-this-module).
+- **Pseudo-SemVer with hyphenless prerelease.** Go (`go1.22rc1`),
+  Python (`3.13.0a1`), Unity (`2023.2.1f1`), OpenSSL legacy
+  (`1.1.1w`), OpenSSH (`9.7p1`) all need layout-supplied custom
+  tokenisers for the numeric→alphanumeric boundary. Tracked as a
+  follow-up milestone in
+  [PRESETS.md §5](./PRESETS.md#5-deferred-from-this-module).
+- **Part-2 catalogue schemes** (entries 26–50). Beyond `Cent` and
+  hyphenless-prerelease, these schemes need non-power-of-two
+  layouts (Eclipse `2024-03`, Maya `2025`), pure-alphanumeric
+  fallback (iOS `21F79`, macOS `23F79`, Android `UP1A.231005.007`),
+  and epoch-prefix UDAs (Debian `1:1.2.3-4+deb12u1`). Each is its
+  own structural decision; see
+  [RATIONALE §5](./RATIONALE.md#5-open-questions).
 - **`SsoString` for a second consumer.** If `core_cli` or another
   sub-package gains a use case, lift `SsoString` out of
   `sparkles.versions` into `sparkles.core_cli`. Defer until then.

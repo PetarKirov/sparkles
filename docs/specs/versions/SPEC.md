@@ -198,8 +198,8 @@ they fit `GetCoreType` cleanly.
 | Layout         | Size | Bitfields (LSB → MSB)                                            | Component widths (major / minor / patch) | String slots          |
 | -------------- | ---- | ---------------------------------------------------------------- | ---------------------------------------- | --------------------- |
 | `SemVerLayout` | 8 B  | `stableFlag:1, patch:24, minor:24, major:15`                     | unpadded / unpadded / unpadded           | `prerelease`, `build` |
-| `DmdLayout`    | 8 B  | `stableFlag:1, patch:24, minor:24, major:15`                     | unpadded / **2-digit** / **2-digit**     | `prerelease`, `build` |
-| `DmdOptimized` | 4 B  | `prereleaseNum:6, prereleasePhase:2, patch:6, minor:10, major:8` | unpadded / unpadded / unpadded           | **none**              |
+| `DmdLayout`    | 8 B  | `stableFlag:1, patch:24, minor:24, major:15`                     | unpadded / **3-digit** / unpadded        | `prerelease`, `build` |
+| `DmdOptimized` | 4 B  | `prereleaseNum:6, prereleasePhase:2, patch:6, minor:10, major:8` | unpadded / **3-digit** / unpadded        | **none**              |
 | `TinyLayout`   | 4 B  | `patch:8, minor:8, major:16`                                     | unpadded / unpadded / unpadded           | none                  |
 
 The total declared bit widths reach exactly the container size in
@@ -213,18 +213,25 @@ string slots (§9). Comparison follows SemVer §11.
 
 ### 7.2 `DmdLayout`
 
-Same bitfield shape as `SemVerLayout`, but minor and patch each carry
-`printWidth = 2`. `toString` always emits e.g. `1.02.03`; the parser
-requires that form and accepts zero-padded inputs that strict SemVer
-would reject as leading-zero errors.
+Same bitfield shape as `SemVerLayout`, but the `minor` component
+carries `printWidth = 3`. `toString` emits minor as at least 3
+digits, padding with leading zeroes when needed; major and patch are
+unpadded. The parser requires minor to be at least 3 digits.
 
-`SemVerLayout` and `DmdLayout` share storage and differ only in static
-format hooks. This is the DbI design's headline demonstration: same
-bits, different behaviour via UDAs.
+This matches real DMD / Dlang versioning across eras: minor=79 from
+the `2.079.0` era prints `079` (padded), minor=111 from the current
+`2.111.0` era prints `111` (no padding needed because it is already
+3 digits), and minor=999 prints `999`. Minor values ≥ 1000 are
+emitted at their natural width (e.g. `1234`), which is forward-
+compatible should DMD ever overflow 3 digits.
+
+`SemVerLayout` and `DmdLayout` share storage and differ only in
+static format hooks. This is the DbI design's headline
+demonstration: same bits, different behaviour via UDAs.
 
 Zero-padded round-tripping is a **layout-level** property, not
-per-instance. `DmdLayout` cannot round-trip `1.2.3` back to `1.2.3`
-— it always prints `1.02.03`.
+per-instance. `DmdLayout` cannot round-trip `2.79.0` back to
+`2.79.0` — it always emits `2.079.0`.
 
 ### 7.3 `DmdOptimized`
 
@@ -268,6 +275,33 @@ A 4-byte layout with neither prerelease nor build metadata, and no
 storage-sensitive internal use. Validates the DbI "void-hook"
 baseline (§4).
 
+### 7.5 Real-world preset layouts
+
+The four layouts above prove the engine's design. A companion module,
+`sparkles.versions.presets`, ships additional layouts mapped to
+versioning schemes used by widely-deployed software, with unit tests
+that parse real example strings (Node.js `20.13.1`, Ubuntu `24.04.1`,
+Vim `9.1.0400`, …) and exercise the engine's operations end-to-end.
+The presets all share the SemVer bitfield shape and differ only via
+static `@Component.printWidth` hooks — they are direct evidence that
+the DbI design scales to real-world schemes without engine changes.
+
+| Layout                 | Widths (major/minor/patch)    | Representative example  |
+| ---------------------- | ----------------------------- | ----------------------- |
+| `CalVerYYMMLayout`     | unpadded / 2-digit / unpadded | Ubuntu `24.04.1`        |
+| `CalVerYYYYMMDDLayout` | unpadded / 2-digit / 2-digit  | Arch Linux `2024.05.01` |
+| `VimLayout`            | unpadded / unpadded / 4-digit | Vim `9.1.0400`          |
+
+Most strict-SemVer products (Rust, Kubernetes, Linux Kernel, Git,
+PHP, etc.) parse with `SemVerLayout` directly; 2-part versions like
+PostgreSQL `16.3` use `SemVerLayout.parse(s, SemVerParseMode.loose)`;
+the historical Dlang scheme (`2.079.0`) is covered by `DmdLayout`.
+
+The full per-product coverage table, parse mode per entry, and the
+provenance record (each example fact-checked against project
+releases / git tags / official changelogs) live in
+[PRESETS.md](./PRESETS.md).
+
 ## 8. Parser
 
 `Version!Layout.parse(string, SemVerParseMode)` returns a non-throwing
@@ -281,7 +315,8 @@ The parser is generic over the layout:
    computed from the layout at compile time.
 2. Each `@Component.printWidth` is enforced at parse time. Components
    with `printWidth > 0` require inputs of exactly that width (e.g.
-   `DmdLayout` rejects `1.2.3`) and accept zero-padded inputs that
+   `DmdLayout` rejects `1.2.3` because minor must be at least 3
+   digits) and accept zero-padded inputs that
    strict SemVer's leading-zero rule would normally reject. Components
    with `printWidth == 0` keep the strict SemVer rule.
 3. Prerelease / build text writes into the layout's declared string
