@@ -101,39 +101,40 @@ alias VimVer = Version!VimLayout;
 // ---------------------------------------------------------------------------
 
 @("presets.SemVer.realWorldVersions")
-@safe pure nothrow @nogc
+@safe pure
 unittest
 {
     import sparkles.versions.parser : parse, SemVerParseMode;
     import sparkles.core_cli.smallbuffer : checkToString;
 
-    // 17 strict-SemVer products from PRESETS.md §2 round-trip through
-    // SemVerLayout in strict mode.
-    static immutable cases = [
-        "20.13.1",  // Node.js
-        "1.78.0",   // Rust
-        "1.30.0",   // Kubernetes
-        "17.3.0",   // Angular
-        "18.3.1",   // React
-        "6.8.9",    // Linux Kernel
-        "26.1.1",   // Docker
-        "2.45.1",   // Git
-        "8.3.7",    // PHP
-        "3.3.1",    // Ruby
-        "1.26.0",   // Nginx
-        "2.4.59",   // Apache HTTP
-        "7.2.4",    // Redis
-        "7.0.8",    // MongoDB
-        "3.45.3",   // SQLite
-        "8.7.1",    // cURL
-        "7.0.1",    // FFmpeg
-        "14.5.1",   // macOS
+    // 18 strict-SemVer products from PRESETS.md §2 round-trip through
+    // SemVerLayout in strict mode. Each version is associated with its
+    // product so a failure points back to the catalogue entry.
+    static immutable string[string] cases = [
+        "Node.js":      "20.13.1",
+        "Rust":         "1.78.0",
+        "Kubernetes":   "1.30.0",
+        "Angular":      "17.3.0",
+        "React":        "18.3.1",
+        "Linux Kernel": "6.8.9",
+        "Docker":       "26.1.1",
+        "Git":          "2.45.1",
+        "PHP":          "8.3.7",
+        "Ruby":         "3.3.1",
+        "Nginx":        "1.26.0",
+        "Apache HTTP":  "2.4.59",
+        "Redis":        "7.2.4",
+        "MongoDB":      "7.0.8",
+        "SQLite":       "3.45.3",
+        "cURL":         "8.7.1",
+        "FFmpeg":       "7.0.1",
+        "macOS":        "14.5.1",
     ];
 
-    foreach (s; cases)
+    foreach (product, s; cases)
     {
         auto v = parse!SemVerLayout(s, SemVerParseMode.strict);
-        assert(v.hasValue, s);
+        assert(v.hasValue, product);
         checkToString(v.value, s);
     }
 }
