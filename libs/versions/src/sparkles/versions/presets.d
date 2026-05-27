@@ -40,10 +40,8 @@ struct CalVerYYMMLayout
         Component(printOrder: 0),                ulong, "major",     15,
     );
 
-    static immutable StringSlot[] stringSlots = [
-        semVerPrereleaseSlot,
-        semVerBuildSlot,
-    ];
+    @semVerPrereleaseSlot string prerelease;
+    @semVerBuildSlot       string build;
 }
 
 /// Ubuntu-style calendar version.
@@ -67,10 +65,8 @@ struct CalVerYYYYMMDDLayout
         Component(printOrder: 0),                ulong, "major",     15,
     );
 
-    static immutable StringSlot[] stringSlots = [
-        semVerPrereleaseSlot,
-        semVerBuildSlot,
-    ];
+    @semVerPrereleaseSlot string prerelease;
+    @semVerBuildSlot       string build;
 }
 
 /// Arch-style calendar version.
@@ -94,10 +90,8 @@ struct VimLayout
         Component(printOrder: 0),                ulong, "major",     15,
     );
 
-    static immutable StringSlot[] stringSlots = [
-        semVerPrereleaseSlot,
-        semVerBuildSlot,
-    ];
+    @semVerPrereleaseSlot string prerelease;
+    @semVerBuildSlot       string build;
 }
 
 /// Vim-style version.
@@ -229,9 +223,9 @@ unittest
     // PostgreSQL ships 2-part versions (16.3); loose mode infills patch=0.
     auto v = checkParse!SemVerLayout("16.3", ParseMode.loose);
     checkToString(v, "16.3.0");
-    assert(v.core.major == 16);
-    assert(v.core.minor == 3);
-    assert(v.core.patch == 0);
+    assert(v.major == 16);
+    assert(v.minor == 3);
+    assert(v.patch == 0);
 }
 
 @("presets.Dmd.parsesDlangHistoricalAndCurrent")
@@ -259,9 +253,9 @@ unittest
     // Ubuntu 24.04.1 LTS (real release, Aug 2024).
     auto v = checkParse!CalVerYYMMLayout("24.04.1");
     checkToString(v, "24.04.1");
-    assert(v.core.major == 24);
-    assert(v.core.minor == 4);
-    assert(v.core.patch == 1);
+    assert(v.major == 24);
+    assert(v.minor == 4);
+    assert(v.patch == 1);
 
     // Unpadded month is rejected.
     checkRejects!CalVerYYMMLayout("24.4.1");
@@ -282,9 +276,9 @@ unittest
     // Arch Linux 2024.05.01 (real release).
     auto v = checkParse!CalVerYYYYMMDDLayout("2024.05.01");
     checkToString(v, "2024.05.01");
-    assert(v.core.major == 2024);
-    assert(v.core.minor == 5);
-    assert(v.core.patch == 1);
+    assert(v.major == 2024);
+    assert(v.minor == 5);
+    assert(v.patch == 1);
 
     // Day must be 2 digits.
     checkRejects!CalVerYYYYMMDDLayout("2024.05.1");
@@ -305,9 +299,9 @@ unittest
     // Vim 9.1.0400 (real patch from github.com/vim/vim).
     auto v = checkParse!VimLayout("9.1.0400");
     checkToString(v, "9.1.0400");
-    assert(v.core.major == 9);
-    assert(v.core.minor == 1);
-    assert(v.core.patch == 400);
+    assert(v.major == 9);
+    assert(v.minor == 1);
+    assert(v.patch == 400);
 
     // 3-digit patch rejected by width rule.
     checkRejects!VimLayout("9.1.400");

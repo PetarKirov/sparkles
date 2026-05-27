@@ -165,8 +165,8 @@ private bool isNumericIdentifier(in string value)
 
 /// SemVer prerelease slot: prefixed by `-`, participates in ordering,
 /// validates identifiers per SemVer §9, compares per SemVer §11.4.
+/// Used as a UDA on a layout's `string prerelease;` field.
 immutable StringSlot semVerPrereleaseSlot = StringSlot(
-    name: "prerelease",
     prefix: '-',
     includeInOrdering: true,
     validate: &validateSemVerPrerelease,
@@ -174,9 +174,9 @@ immutable StringSlot semVerPrereleaseSlot = StringSlot(
 );
 
 /// SemVer build-metadata slot: prefixed by `+`, excluded from ordering,
-/// validates identifiers per SemVer §10.
+/// validates identifiers per SemVer §10. Used as a UDA on a layout's
+/// `string build;` field.
 immutable StringSlot semVerBuildSlot = StringSlot(
-    name: "build",
     prefix: '+',
     includeInOrdering: false,
     validate: &validateSemVerBuild,
