@@ -16,8 +16,15 @@ public import sparkles.versions.engine :
     InternalFlag,
     InternalFlagDesc,
     LayoutDescriptor,
+    SlotComparator,
+    SlotValidator,
+    StringSlot,
     Version,
     layoutBody;
+
+public import sparkles.versions.semver_rules :
+    semVerBuildSlot,
+    semVerPrereleaseSlot;
 
 public import sparkles.versions.layouts :
     DmdLayout,

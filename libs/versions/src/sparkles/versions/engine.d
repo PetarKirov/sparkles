@@ -10,10 +10,102 @@ See `docs/specs/versions/SPEC.md` for the full specification.
 */
 module sparkles.versions.engine;
 
+import expected : Expected;
 import std.bitmanip : bitfields;
 import std.traits : isIntegral, isUnsigned;
 
 @safe:
+
+// ---------------------------------------------------------------------------
+// Parse-types (shared by engine + parser)
+// ---------------------------------------------------------------------------
+
+/// Parsing mode shared by the generic parser and layout `customParse` hooks.
+enum ParseMode
+{
+    /// Accept only the layout's canonical syntax.
+    strict,
+
+    /// Accept common compatibility forms (v-prefix, missing trailing
+    /// components, leading zeroes where the layout would otherwise reject
+    /// them).
+    loose,
+}
+
+/// Machine-readable parse error code.
+enum ParseErrorCode
+{
+    emptyInput,
+    unexpectedCharacter,
+    unexpectedEnd,
+    leadingZero,
+    emptyIdentifier,
+    invalidIdentifier,
+    duplicateSlotPrefix,
+    numericOverflow,
+    widthMismatch,
+}
+
+/// Structured parse error.
+struct ParseError
+{
+    ParseErrorCode code; /// Error kind.
+    size_t index;        /// Byte offset where parsing failed.
+}
+
+package struct ParseExpectedHook
+{
+    static immutable bool enableDefaultConstructor = false;
+}
+
+/// `Expected!` instance specialised for $(LREF ParseError).
+alias ParseExpected(T) = Expected!(T, ParseError, ParseExpectedHook,);
+
+// ---------------------------------------------------------------------------
+// String-slot vocabulary
+// ---------------------------------------------------------------------------
+
+/// Validates an already-extracted string-slot segment. Receives the segment
+/// without its leading prefix character and the byte offset at which the
+/// segment starts in the original input (for error reporting). Returns an
+/// empty `ParseExpected!void` on success or one carrying a $(LREF ParseError)
+/// on failure.
+alias SlotValidator = ParseExpected!void function(
+    in string segment, size_t segmentOffset) @safe pure nothrow @nogc;
+
+/// Compares two same-slot strings lexicographically; non-null implementation
+/// overrides the engine's default `std.algorithm.cmp`. Used by the engine to
+/// implement layout-specific tiebreak rules (e.g. SemVer §11 prerelease
+/// precedence).
+alias SlotComparator = int function(
+    in string lhs, in string rhs) @safe pure nothrow @nogc;
+
+/**
+Describes an auxiliary string slot a layout exposes alongside its bit-packed
+core. The engine knows nothing about SemVer's `prerelease` or `build`
+specifically — those are just two slots SemVer-style layouts declare.
+
+$(UL
+    $(LI `name` — field name generated on $(LREF Version)`!Layout`.)
+    $(LI `prefix` — single character separating this slot from the
+        preceding content in the canonical string form (e.g. `'-'` for
+        SemVer prerelease, `'+'` for SemVer build).)
+    $(LI `includeInOrdering` — when `true`, $(LREF Version.opCmp)
+        tiebreaks on this slot after the packed-core compare ties.)
+    $(LI `validate` — optional per-segment validator. `null` accepts any
+        non-empty content.)
+    $(LI `compare` — optional layout-specific comparator. `null` falls back
+        to `std.algorithm.cmp`. Only consulted when `includeInOrdering`.)
+)
+*/
+struct StringSlot
+{
+    string name;
+    char prefix;
+    bool includeInOrdering;
+    SlotValidator validate;
+    SlotComparator compare;
+}
 
 // ---------------------------------------------------------------------------
 // DbI vocabulary
@@ -76,6 +168,10 @@ struct LayoutDescriptor
 
     /// Total bit budget the layout consumes.
     int totalBitWidth;
+
+    /// Auxiliary string slots declared by the layout (in declared order).
+    /// Empty for layouts with only a bit-packed core.
+    immutable(StringSlot)[] stringSlots;
 }
 
 // ---------------------------------------------------------------------------
@@ -265,29 +361,27 @@ template GetCoreType(size_t bytes)
 // ---------------------------------------------------------------------------
 
 /**
-True if `Layout` opts into a prerelease slot via
-`enum hasPrerelease = true;`. The engine adds a `string prerelease;`
-member to $(LREF Version) when this is set.
+Returns the layout's declared $(LREF StringSlot) list, or an empty array
+if the layout has no auxiliary slots.
+
+The layout opts into slots by declaring
+`static immutable StringSlot[] stringSlots = [...];` (or `enum`).
 */
-package template hasPrerelease(Layout)
+package immutable(StringSlot)[] layoutStringSlots(Layout)()
 {
-    static if (__traits(hasMember, Layout, "hasPrerelease"))
-        enum hasPrerelease = Layout.hasPrerelease;
+    static if (__traits(hasMember, Layout, "stringSlots"))
+        return Layout.stringSlots;
     else
-        enum hasPrerelease = false;
+        return [];
 }
 
-/**
-True if `Layout` opts into a build-metadata slot via
-`enum hasBuild = true;`. The engine adds a `string build;` member to
-$(LREF Version) when this is set.
-*/
-package template hasBuild(Layout)
+/// True if any of the layout's declared slots participates in ordering.
+package bool layoutHasOrderingSlots(Layout)()
 {
-    static if (__traits(hasMember, Layout, "hasBuild"))
-        enum hasBuild = Layout.hasBuild;
-    else
-        enum hasBuild = false;
+    foreach (slot; layoutStringSlots!Layout())
+        if (slot.includeInOrdering)
+            return true;
+    return false;
 }
 
 // ---------------------------------------------------------------------------
@@ -320,7 +414,11 @@ struct Version(Layout)
     alias CoreType = GetCoreType!(Layout.sizeof);
 
     /// Compile-time layout descriptor.
-    enum LayoutDescriptor descriptor = Layout.descriptor;
+    enum LayoutDescriptor descriptor = () {
+        auto d = Layout.descriptor;
+        d.stringSlots = layoutStringSlots!Layout();
+        return d;
+    }();
 
     static assert(descriptor.components.length >= 1,
         "sparkles.versions.Version!" ~ Layout.stringof
@@ -338,46 +436,43 @@ struct Version(Layout)
         CoreType packed;
     }
 
-    static if (hasPrerelease!Layout)
-    {
-        /// Optional prerelease string slot (precedence-relevant).
-        string prerelease;
-    }
-
-    static if (hasBuild!Layout)
-    {
-        /// Optional build-metadata string slot (precedence-irrelevant).
-        string build;
-    }
+    // Generate one `string <name>;` member per declared StringSlot.
+    static foreach (slot; descriptor.stringSlots)
+        mixin("string " ~ slot.name ~ ";");
 
     // ------------------------------------------------------------------
     // Operations
     // ------------------------------------------------------------------
 
     /**
-    Compares versions by SemVer §11 precedence:
-
-    $(OL
-        $(LI The packed core (major, minor, patch, internal flag) is
-            compared as a single unsigned integer.)
-        $(LI On a tie, if the layout declares a prerelease slot, the
-            prerelease identifier lists are compared lexicographically
-            per SemVer §11.)
-    )
-
-    Build metadata is ignored.
+    Compares versions by their packed-core ordering, with each
+    `includeInOrdering` $(LREF StringSlot) consulted as a tiebreak
+    (in declared order). Slots with `includeInOrdering: false` (e.g.
+    SemVer build metadata) never affect ordering.
     */
     int opCmp(in typeof(this) other) const @safe pure nothrow @nogc
     {
         if (packed != other.packed)
             return packed < other.packed ? -1 : 1;
-        static if (hasPrerelease!Layout)
-            return comparePrereleaseLists(prerelease, other.prerelease);
-        else
-            return 0;
+        static foreach (slot; descriptor.stringSlots)
+            static if (slot.includeInOrdering)
+            {{
+                const lhs = __traits(getMember, this, slot.name);
+                const rhs = __traits(getMember, other, slot.name);
+                int c;
+                if (slot.compare !is null)
+                    c = slot.compare(lhs, rhs);
+                else
+                {
+                    import std.algorithm.comparison : cmp;
+                    c = cmp(lhs, rhs);
+                }
+                if (c != 0) return c;
+            }}
+        return 0;
     }
 
-    /// Equality by SemVer precedence (ignores build metadata).
+    /// Equality consistent with $(LREF opCmp).
     bool opEquals(in typeof(this) other) const @safe pure nothrow @nogc
         => opCmp(other) == 0;
 
@@ -386,8 +481,9 @@ struct Version(Layout)
     {
         import core.internal.hash : hashOf;
         auto h = hashOf(packed);
-        static if (hasPrerelease!Layout)
-            h = hashOf(prerelease, h);
+        static foreach (slot; descriptor.stringSlots)
+            static if (slot.includeInOrdering)
+                h = hashOf(__traits(getMember, this, slot.name), h);
         return h;
     }
 
@@ -395,8 +491,10 @@ struct Version(Layout)
     Writes the formatted version to an output range.
 
     The default implementation walks the layout's `@Component` members
-    in `printOrder` and emits each as a decimal integer with optional
-    zero-padding per `printWidth`. If the layout defines its own
+    in `printOrder` (emitting each as a decimal integer with optional
+    zero-padding per `printWidth`), then walks the layout's
+    $(LREF StringSlot) declarations and emits any non-empty slot
+    preceded by its prefix character. If the layout defines its own
     `customToString(Writer)(ref Writer w) const` member, the engine
     defers to it entirely.
     */
@@ -419,23 +517,15 @@ struct Version(Layout)
             putPaddedNumber(w, value, comp.component.printWidth);
         }}
 
-        static if (hasPrerelease!Layout)
-        {
-            if (prerelease.length != 0)
+        static foreach (slot; descriptor.stringSlots)
+        {{
+            const value = __traits(getMember, this, slot.name);
+            if (value.length != 0)
             {
-                put(w, '-');
-                put(w, prerelease);
+                put(w, slot.prefix);
+                put(w, value);
             }
-        }
-
-        static if (hasBuild!Layout)
-        {
-            if (build.length != 0)
-            {
-                put(w, '+');
-                put(w, build);
-            }
-        }
+        }}
     }
 
     /**
@@ -490,63 +580,9 @@ if (isIntegral!T && isUnsigned!T)
     put(w, toChars(value));
 }
 
-/// Compares two prerelease identifier lists per SemVer §11.
-/// Empty (`""`) ranks higher than any non-empty list.
-package int comparePrereleaseLists(in string lhs, in string rhs)
-    @safe pure nothrow @nogc
-{
-    if (lhs.length == 0) return rhs.length == 0 ? 0 : 1;
-    if (rhs.length == 0) return -1;
-
-    size_t li, ri;
-    while (li < lhs.length || ri < rhs.length)
-    {
-        if (li >= lhs.length) return -1;
-        if (ri >= rhs.length) return 1;
-
-        size_t lEnd = li;
-        while (lEnd < lhs.length && lhs[lEnd] != '.') lEnd++;
-        size_t rEnd = ri;
-        while (rEnd < rhs.length && rhs[rEnd] != '.') rEnd++;
-
-        if (auto c = comparePrereleaseSegment(lhs[li .. lEnd], rhs[ri .. rEnd]))
-            return c;
-
-        li = lEnd < lhs.length ? lEnd + 1 : lEnd;
-        ri = rEnd < rhs.length ? rEnd + 1 : rEnd;
-    }
-    return 0;
-}
-
-private int comparePrereleaseSegment(in string lhs, in string rhs)
-    @safe pure nothrow @nogc
-{
-    import std.algorithm.comparison : cmp;
-
-    const lhsNumeric = isNumericIdentifier(lhs);
-    const rhsNumeric = isNumericIdentifier(rhs);
-
-    if (lhsNumeric && rhsNumeric)
-    {
-        if (lhs.length != rhs.length)
-            return lhs.length < rhs.length ? -1 : 1;
-        return cmp(lhs, rhs);
-    }
-
-    if (lhsNumeric) return -1;
-    if (rhsNumeric) return 1;
-
-    return cmp(lhs, rhs);
-}
-
-package bool isNumericIdentifier(in string value) @safe pure nothrow @nogc
-{
-    import std.algorithm.searching : all;
-    import std.ascii : isDigit;
-    import std.utf : byCodeUnit;
-
-    return value.length > 0 && value.byCodeUnit.all!isDigit;
-}
+// SemVer-specific identifier rules (validation + comparison) live in
+// `sparkles.versions.layouts` since they apply only to SemVer-style
+// layouts. The engine itself is unaware of identifier grammars.
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -556,14 +592,21 @@ version (unittest)
 {
     private struct DemoLayout
     {
-        enum hasPrerelease = true;
-        enum hasBuild = true;
         mixin layoutBody!(
             InternalFlag,             bool,  "stableFlag", 1,
             Component(printOrder: 2), ulong, "patch",     24,
             Component(printOrder: 1), ulong, "minor",     24,
             Component(printOrder: 0), ulong, "major",     15,
         );
+
+        // Two minimal string slots exercising the engine's slot machinery
+        // without any SemVer-specific validation or comparison. The
+        // ordering-irrelevant slot is named "tag" rather than "build" to
+        // emphasise this is a generic mechanism.
+        static immutable StringSlot[] stringSlots = [
+            StringSlot(name: "prerelease", prefix: '-', includeInOrdering: true),
+            StringSlot(name: "tag",        prefix: '+', includeInOrdering: false),
+        ];
     }
 
     private struct TinyDemo
@@ -705,40 +748,27 @@ unittest
     assert(later > earlier);
 }
 
-@("Version.engine.opCmp.prereleaseChain")
-@safe pure
+@("Version.engine.opCmp.slotTiebreak")
+@safe pure nothrow @nogc
 unittest
 {
-    import std.algorithm.iteration : map;
-    import std.algorithm.sorting : isSorted;
+    // With DemoLayout's prerelease slot using default lexicographic
+    // compare, verify the tiebreak fires when the packed core ties and
+    // that the non-ordering slot ("tag") is ignored.
+    Version!DemoLayout a, b;
+    a.core.major = 1; a.core.stableFlag = false; a.prerelease = "alpha";
+    b.core.major = 1; b.core.stableFlag = false; b.prerelease = "beta";
+    assert(a < b);
 
-    // SemVer §11.4 precedence chain via prerelease lexicographic compare.
-    static immutable preReleases = [
-        "alpha",
-        "alpha.1",
-        "alpha.beta",
-        "beta",
-        "beta.2",
-        "beta.11",
-        "rc.1",
-    ];
+    // Ordering-irrelevant slot must not affect compare even when set.
+    a.tag = "zzz";
+    b.tag = "aaa";
+    assert(a < b);
+    a.tag = ""; b.tag = "";
 
-    Version!DemoLayout[7] versions;
-    foreach (i, ref v; versions)
-    {
-        v.core.stableFlag = false;
-        v.core.major = 1;
-        v.prerelease = preReleases[i];
-    }
-
-    Version!DemoLayout stable;
-    stable.core.stableFlag = true;
-    stable.core.major = 1;
-
-    // versions are in ascending order; stable goes last.
-    foreach (i; 0 .. versions.length - 1)
-        assert(versions[i] < versions[i + 1]);
-    assert(versions[$ - 1] < stable);
+    // Identical packed core + identical ordering slot ⇒ equal.
+    b.prerelease = "alpha";
+    assert(a == b);
 }
 
 @("Version.engine.toString.basic")
@@ -753,8 +783,10 @@ unittest
     checkToString(v, "1.2.3");
 
     v.prerelease = "alpha.1";
-    v.build = "build.5";
+    v.tag = "build.5";
     v.core.stableFlag = false;
+    // DemoLayout's slot prefixes are '-' (prerelease) and '+' (tag),
+    // matching SemVer's punctuation by convention not by hardcoding.
     checkToString(v, "1.2.3-alpha.1+build.5");
 }
 
