@@ -19,7 +19,6 @@ extern(C) void effect_write_pty(GhosttyTerminal terminal, void* userdata, const(
     write(pty_fd, data, len);
 }
 
-
 int[] getRequiredCodepoints() {
     int[] cps;
     cps.reserve(10000);
@@ -139,7 +138,23 @@ void main(string[] args)
     {
         import core.sys.posix.stdlib : setenv;
         setenv("TERM", "xterm-256color", 1);
-        string shell = environment.get("SHELL", "/bin/sh");
+        string shell = environment.get("SHELL", null);
+        if (shell.length == 0)
+        {
+            import core.sys.posix.pwd : getpwuid, passwd;
+            import core.sys.posix.unistd : getuid;
+            import std.string : fromStringz;
+
+            passwd* pw = getpwuid(getuid());
+            if (pw && pw.pw_shell)
+            {
+                shell = fromStringz(pw.pw_shell).idup;
+            }
+            if (shell.length == 0)
+            {
+                shell = "/bin/sh";
+            }
+        }
 
         import core.stdc.string : strrchr;
         const(char)* shell_ptr = shell.toStringz();
