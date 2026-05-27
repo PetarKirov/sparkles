@@ -114,34 +114,7 @@ enum InternalFlag;
 template GetCoreType(size_t bytes) { /* … */ }
 ```
 
-## Phase 2 — Optional SSO string (POD-preserving)
-
-A 24-byte struct (on 64-bit) overlaying:
-
-- a 23-byte inline `char[23]` plus a 1-byte length, **OR**
-- a standard GC-managed `string` slice (16 bytes on 64-bit, plus the length
-  tag bit pattern that distinguishes the two modes).
-
-Because the heap path stores a GC `string`, the struct has no destructor,
-no postblit, and no manual `opAssign` — it stays POD-trivially-copyable.
-We deliberately do not switch to manual `pureMalloc` here; the complexity
-cost (ownership, exception safety, losing trivial copyability) is not
-justified for any current consumer.
-
-SemVer 2.0.0 has **two** strings — prerelease and build metadata — with
-asymmetric precedence rules:
-
-- Prerelease participates in ordering (`1.0.0-alpha < 1.0.0`).
-- Build metadata is ignored for precedence.
-
-The engine must treat these as separate optional capabilities, not a single
-"hasSsoString" bit. We expose them as two independent UDAs / fields on the
-layout, e.g. `@Component(3) SsoString prerelease;` and
-`@Component(4) @InternalFlag SsoString build;` (where `@InternalFlag` on
-the build field signals "do not include in opCmp"; we will likely refine
-this name — see _Open questions_).
-
-## Phase 3 — Engine core: `Version(Layout)`
+## Phase 2 — Engine core: `Version(Layout)`
 
 ```d
 struct Version(Layout)
@@ -153,7 +126,9 @@ struct Version(Layout)
     // CTFE validation runs at instantiation:
     //   - Layout.sizeof ∈ {1, 2, 4, 8} (Phase 5 decision)
     //   - Every member is a real bitfield (where the compiler supports the
-    //     trait) OR a recognised side-band slot (e.g. SsoString)
+    //     trait) OR a recognised side-band slot (a string-shaped slot
+    //     for prerelease/build — plain `string` in the baseline,
+    //     swappable for `SsoString` per Phase 7)
     //   - Every @Component.printOrder is unique
     //   - Exactly one @InternalFlag of width 1 at offset 0 (LSB) for
     //     layouts that need a precedence tiebreaker; zero allowed for
@@ -169,7 +144,7 @@ with default `printWidth`, no `@InternalFlag`, no SSO strings is a valid
 input. It produces a `Version` that compares as a single integer and prints
 as a single number. That is the DbI "void-hook" baseline.
 
-## Phase 4 — Operations
+## Phase 3 — Operations
 
 ### `opCmp`
 
@@ -182,9 +157,11 @@ Two-stage compare:
    boundary using the layout's static `printWidth`, not by storing widths
    in the value.
 
-2. If the integers tie _and_ the layout declares a prerelease SSO field,
-   compare the prerelease lexicographically per SemVer §11. Build metadata
-   is never consulted.
+2. If the integers tie _and_ the layout declares a prerelease string
+   slot, compare the prerelease lexicographically per SemVer §11. Build
+   metadata is never consulted. The slot may be a plain GC `string`
+   (baseline) or an `SsoString` (Phase 7); the engine only requires it
+   to expose `length` and indexed read.
 
 For `CoreType.sizeof <= 8`, stage 1 is a single CPU compare. We are
 **not** adopting `core.int128.Cent` in the first cut: it complicates the
@@ -216,17 +193,22 @@ of the same type, with the lower components zeroed. Useful for "group by
 major.minor"-style operations and cheap to provide once the bit map
 exists.
 
-## Phase 5 — Concrete layouts
+## Phase 4 — Concrete layouts
 
 We ship four layouts initially. All sized at a power-of-two number of
 bytes so they fit the `GetCoreType` selector cleanly.
 
-| Layout         | Size | Bitfields (LSB → MSB)                                            | Component widths (major / minor / patch) | SSO                   |
+| Layout         | Size | Bitfields (LSB → MSB)                                            | Component widths (major / minor / patch) | String slots          |
 | -------------- | ---- | ---------------------------------------------------------------- | ---------------------------------------- | --------------------- |
 | `SemVerLayout` | 8 B  | `stableFlag:1, patch:24, minor:24, major:15`                     | unpadded / unpadded / unpadded           | `prerelease`, `build` |
 | `DmdLayout`    | 8 B  | `stableFlag:1, patch:24, minor:24, major:15`                     | unpadded / **2-digit** / **2-digit**     | `prerelease`, `build` |
 | `DmdOptimized` | 4 B  | `prereleaseNum:6, prereleasePhase:2, patch:6, minor:10, major:8` | unpadded / unpadded / unpadded           | **none**              |
 | `TinyLayout`   | 4 B  | `patch:8, minor:8, major:16`                                     | unpadded / unpadded / unpadded           | none                  |
+
+The "String slots" column lists `prerelease` and `build` members
+declared as plain GC `string` in the baseline. Phase 7 swaps them for
+`SsoString` to elide GC allocations for short payloads; the layouts
+themselves are otherwise unchanged.
 
 Notes:
 
@@ -279,7 +261,7 @@ Notes:
 The total declared bit widths reach exactly the container size in each
 layout. The engine asserts this.
 
-## Phase 6 — Parser
+## Phase 5 — Parser
 
 The current parser is comprehensive (836 lines including tests) and uses
 the `expected`-based non-throwing API. We keep that API shape and rewire
@@ -299,13 +281,15 @@ the storage:
    digits) and accept zero-padded inputs that strict SemVer would
    normally reject for having leading zeroes. Components with
    `printWidth == 0` retain the strict SemVer leading-zero rule.
-4. **Parse prerelease / build into `SsoString`** without touching the heap
-   when the content fits in 23 bytes. Beyond 23 bytes we allocate a GC
-   string (keeps POD).
+4. **Parse prerelease / build into the layout's declared string slot.**
+   In the baseline this is a plain GC `string`. Phase 7 swaps the slot
+   for `SsoString` to skip the GC allocation when the content fits in
+   23 bytes; the parser code is the same in both modes (writes through
+   the slot's output-range/assignment interface).
 5. **Loose mode** stays exactly as today: accept `v1.2.3`, `1`, `1.2`,
    etc. The engine fills missing fields with zero.
 
-## Phase 7 — Migration
+## Phase 6 — Migration
 
 The public API moves from `sparkles.semver` to `sparkles.versions`. The
 consumer-facing surface area is small and stays the same in shape:
@@ -324,6 +308,52 @@ Plan:
 3. The old `sparkles:semver` sub-package is removed outright (no
    compatibility shim). Downstream callers update their `dependency` and
    their `import` lines in one step.
+
+## Phase 7 — Optional SSO string (POD-preserving)
+
+The SSO string is an **optional optimization** layered on top of the
+core engine. Phases 1–6 deliver a working library with plain GC-managed
+`string` slots for prerelease and build metadata; this phase replaces
+those slots with a 24-byte small-string-optimised struct.
+
+The optimisation is meaningful for layouts whose bit-packed core fits
+in 8 bytes but whose prerelease/build text is the dominant per-instance
+allocation. For inputs that fit inline (the overwhelming majority of
+real-world prereleases — `alpha`, `beta.1`, `rc.3` are all ≤ 7 bytes)
+this removes one or two GC allocations per parsed `SemVer`.
+
+Design:
+
+- A 24-byte struct (on 64-bit) overlaying:
+  - a 23-byte inline `char[23]` plus a 1-byte length, **OR**
+  - a standard GC-managed `string` slice (16 bytes on 64-bit, plus the
+    length tag bit pattern that distinguishes the two modes).
+- Because the heap path stores a GC `string`, the struct has no
+  destructor, no postblit, and no manual `opAssign` — it stays POD,
+  trivially copyable, and a drop-in replacement for the plain
+  `string` slot used by Phases 1–6.
+- We deliberately do not switch to manual `pureMalloc` here; the
+  complexity cost (ownership, exception safety, losing trivial
+  copyability) is not justified by the savings.
+
+Integration with the engine:
+
+- The change is local to the layout: swap `string prerelease;` for
+  `SsoString prerelease;` (and likewise for `build`). The engine's
+  `opCmp`, `toString`, and parser see a slot that exposes `length` and
+  random-access read; both `string` and `SsoString` satisfy that.
+- Layouts that opt out of SSO keep their plain `string` slots and pay
+  no compile-time or runtime cost.
+- SemVer 2.0.0's asymmetric precedence (`prerelease` participates in
+  ordering, `build` does not) is encoded at the layout level via the
+  same UDA mechanism as everywhere else — likely
+  `@OrderingTiebreaker` on the prerelease slot and
+  `@ExcludeFromOrdering` on the build slot (see _Open questions_).
+
+This phase is **optional in the engineering sense**: Phase 8 (tests)
+can ship before this phase lands. The intent is to keep SSO from
+constraining the engine's design — if the SSO struct turns out to be
+the wrong abstraction we drop it without disturbing Phases 1–6.
 
 ## Phase 8 — Tests and docs
 
