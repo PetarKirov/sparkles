@@ -29,12 +29,11 @@ public import sparkles.versions.layouts :
     TinyVer;
 
 public import sparkles.versions.parser :
-    ParseResult,
     parse,
-    SemVerException,
-    SemVerParseError,
-    SemVerParseErrorCode,
-    SemVerParseMode;
+    ParseError,
+    ParseErrorCode,
+    ParseMode,
+    ParseResult;
 
 public import sparkles.versions.presets :
     CalVerYYMM,

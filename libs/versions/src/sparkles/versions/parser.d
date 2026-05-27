@@ -1,14 +1,14 @@
 /**
 Generic parser for $(LREF Version) layouts.
 
-Supports strict SemVer 2.0.0 syntax and a $(LREF SemVerParseMode.loose)
+Supports strict SemVer 2.0.0 syntax and a $(LREF ParseMode.loose)
 mode that accepts common compatibility forms (`v1.2.3`, `1`, `1.2`).
 The parser is generic over the layout — component count, per-component
 `printWidth`, and bitfield bounds are all derived from
 `Layout.descriptor` at compile time.
 
 A layout may opt out of the generic parser by providing a static
-`customParse(string s, SemVerParseMode mode)` member; the engine
+`customParse(string s, ParseMode mode)` member; the engine
 defers to it entirely.
 
 See `docs/specs/versions/SPEC.md` §8.
@@ -25,7 +25,7 @@ import sparkles.versions.engine;
 // ---------------------------------------------------------------------------
 
 /// Parsing mode for $(LREF parse).
-enum SemVerParseMode
+enum ParseMode
 {
     /// Accept only Semantic Versioning 2.0.0 syntax.
     strict,
@@ -35,7 +35,7 @@ enum SemVerParseMode
 }
 
 /// Machine-readable parse error code.
-enum SemVerParseErrorCode
+enum ParseErrorCode
 {
     emptyInput,
     unexpectedCharacter,
@@ -49,41 +49,25 @@ enum SemVerParseErrorCode
 }
 
 /// Structured parse error.
-struct SemVerParseError
+struct ParseError
 {
-    SemVerParseErrorCode code; /// Error kind.
+    ParseErrorCode code; /// Error kind.
     size_t index;              /// Byte offset where parsing failed.
 }
 
-/**
-Exception thrown by convenience constructors that prefer throwing over
-the $(LREF Expected)-based API.
-*/
-class SemVerException : Exception
-{
-    SemVerParseError error; /// Structured parse failure.
-
-    this(in SemVerParseError error,
-        string file = __FILE__, size_t line = __LINE__) pure nothrow
-    {
-        this.error = error;
-        super("Invalid version", file, line);
-    }
-}
-
-package struct SemVerExpectedHook
+package struct ParseExpectedHook
 {
     static immutable bool enableDefaultConstructor = false;
 }
 
-package alias SemVerExpected(T) = Expected!(
-    T, SemVerParseError, SemVerExpectedHook,
+package alias ParseExpected(T) = Expected!(
+    T, ParseError, ParseExpectedHook,
 );
 
 /// Expected result of $(LREF parse) for a given layout.
 template ParseResult(Layout)
 {
-    alias ParseResult = SemVerExpected!(Version!Layout);
+    alias ParseResult = ParseExpected!(Version!Layout);
 }
 
 // ---------------------------------------------------------------------------
@@ -92,11 +76,11 @@ template ParseResult(Layout)
 
 /**
 Parses `s` into a `Version!Layout` value. If `Layout` declares a
-`customParse(string, SemVerParseMode)` static member the engine
+`customParse(string, ParseMode)` static member the engine
 delegates to it; otherwise the generic numeric-component parser is
 used.
 */
-ParseResult!Layout parse(Layout)(string s, SemVerParseMode mode)
+ParseResult!Layout parse(Layout)(string s, ParseMode mode)
     @safe pure nothrow @nogc
 {
     static if (__traits(hasMember, Layout, "customParse"))
@@ -109,23 +93,23 @@ ParseResult!Layout parse(Layout)(string s, SemVerParseMode mode)
 // Generic numeric-component parser
 // ---------------------------------------------------------------------------
 
-package ParseResult!Layout parseGeneric(Layout)(string s, SemVerParseMode mode)
+package ParseResult!Layout parseGeneric(Layout)(string s, ParseMode mode)
     @safe pure nothrow @nogc
 {
     Version!Layout result;
     size_t i;
 
-    if (mode == SemVerParseMode.loose)
+    if (mode == ParseMode.loose)
         skipHorizontalSpace(s, i);
 
     if (i >= s.length)
-        return parseErr!Layout(SemVerParseErrorCode.emptyInput, i);
+        return parseErr!Layout(ParseErrorCode.emptyInput, i);
 
-    if (mode == SemVerParseMode.loose)
+    if (mode == ParseMode.loose)
         skipLoosePrefix(s, i);
 
     if (i >= s.length)
-        return parseErr!Layout(SemVerParseErrorCode.emptyInput, i);
+        return parseErr!Layout(ParseErrorCode.emptyInput, i);
 
     bool stopComponents = false;
     static foreach (idx, comp; Layout.descriptor.components)
@@ -136,11 +120,11 @@ package ParseResult!Layout parseGeneric(Layout)(string s, SemVerParseMode mode)
             {
                 if (i >= s.length || s[i] != '.')
                 {
-                    if (mode == SemVerParseMode.strict)
+                    if (mode == ParseMode.strict)
                         return parseErr!Layout(
                             i >= s.length
-                                ? SemVerParseErrorCode.unexpectedEnd
-                                : SemVerParseErrorCode.unexpectedCharacter,
+                                ? ParseErrorCode.unexpectedEnd
+                                : ParseErrorCode.unexpectedCharacter,
                             i);
                     stopComponents = true;
                 }
@@ -178,7 +162,7 @@ package ParseResult!Layout parseGeneric(Layout)(string s, SemVerParseMode mode)
                 i++;
             if (i == start)
                 return parseErr!Layout(
-                    SemVerParseErrorCode.emptyIdentifier, start);
+                    ParseErrorCode.emptyIdentifier, start);
             auto check = validateIdentifierList(
                 s[start .. i], start, IdentifierKind.prerelease);
             if (check.hasError)
@@ -204,11 +188,11 @@ package ParseResult!Layout parseGeneric(Layout)(string s, SemVerParseMode mode)
             auto slice = s[start .. $];
             if (slice.length == 0)
                 return parseErr!Layout(
-                    SemVerParseErrorCode.emptyIdentifier, start);
+                    ParseErrorCode.emptyIdentifier, start);
             const dupPlus = slice.byCodeUnit.countUntil('+');
             if (dupPlus >= 0)
                 return parseErr!Layout(
-                    SemVerParseErrorCode.duplicateBuildMetadata,
+                    ParseErrorCode.duplicateBuildMetadata,
                     start + dupPlus);
             auto check = validateIdentifierList(
                 slice, start, IdentifierKind.build);
@@ -219,17 +203,17 @@ package ParseResult!Layout parseGeneric(Layout)(string s, SemVerParseMode mode)
         }
     }
 
-    if (mode == SemVerParseMode.loose)
+    if (mode == ParseMode.loose)
         skipHorizontalSpace(s, i);
 
     if (i != s.length)
         return parseErr!Layout(
             s[i] == '+'
-                ? SemVerParseErrorCode.duplicateBuildMetadata
-                : SemVerParseErrorCode.unexpectedCharacter,
+                ? ParseErrorCode.duplicateBuildMetadata
+                : ParseErrorCode.unexpectedCharacter,
             i);
 
-    return ok!(SemVerParseError, SemVerExpectedHook)(result);
+    return ok!(ParseError, ParseExpectedHook)(result);
 }
 
 // ---------------------------------------------------------------------------
@@ -241,12 +225,12 @@ private ulong componentMaxValue(int bitWidth) pure nothrow @nogc @safe
     return bitWidth >= 64 ? ulong.max : ((1UL << bitWidth) - 1);
 }
 
-private alias ValidationResult = SemVerExpected!void;
+private alias ValidationResult = ParseExpected!void;
 
 package ValidationResult parseNumericComponent(
     in string s,
     ref size_t i,
-    SemVerParseMode mode,
+    ParseMode mode,
     int printWidth,
     ulong maxValue,
     out ulong value,
@@ -256,22 +240,22 @@ package ValidationResult parseNumericComponent(
 
     const start = i;
     if (i >= s.length)
-        return parseErrV(SemVerParseErrorCode.unexpectedEnd, i);
+        return parseErrV(ParseErrorCode.unexpectedEnd, i);
     if (!s[i].isDigit)
-        return parseErrV(SemVerParseErrorCode.unexpectedCharacter, i);
+        return parseErrV(ParseErrorCode.unexpectedCharacter, i);
 
     value = 0;
     while (i < s.length && s[i].isDigit)
     {
         const digit = cast(ulong)(s[i] - '0');
         if (value > (ulong.max - digit) / 10)
-            return parseErrV(SemVerParseErrorCode.numericOverflow, i);
+            return parseErrV(ParseErrorCode.numericOverflow, i);
         value = value * 10 + digit;
         i++;
     }
 
     if (value > maxValue)
-        return parseErrV(SemVerParseErrorCode.numericOverflow, start);
+        return parseErrV(ParseErrorCode.numericOverflow, start);
 
     const len = i - start;
 
@@ -280,15 +264,15 @@ package ValidationResult parseNumericComponent(
         // Width-constrained component: input must be at least `printWidth`
         // digits. Leading zeros are part of the format and accepted.
         if (len < cast(size_t) printWidth)
-            return parseErrV(SemVerParseErrorCode.widthMismatch, start);
+            return parseErrV(ParseErrorCode.widthMismatch, start);
     }
-    else if (mode == SemVerParseMode.strict && len > 1 && s[start] == '0')
+    else if (mode == ParseMode.strict && len > 1 && s[start] == '0')
     {
         // Strict SemVer rejects leading zeros on unpadded numeric components.
-        return parseErrV(SemVerParseErrorCode.leadingZero, start);
+        return parseErrV(ParseErrorCode.leadingZero, start);
     }
 
-    return ok!(SemVerParseError, SemVerExpectedHook)();
+    return ok!(ParseError, ParseExpectedHook)();
 }
 
 // ---------------------------------------------------------------------------
@@ -306,7 +290,7 @@ package ValidationResult validateIdentifierList(
     import std.utf : byCodeUnit;
 
     if (list.length == 0)
-        return ok!(SemVerParseError, SemVerExpectedHook)();
+        return ok!(ParseError, ParseExpectedHook)();
 
     size_t segStart;
     while (true)
@@ -319,26 +303,26 @@ package ValidationResult validateIdentifierList(
         const segOff = listOffset + segStart;
 
         if (seg.length == 0)
-            return parseErrV(SemVerParseErrorCode.emptyIdentifier, segOff);
+            return parseErrV(ParseErrorCode.emptyIdentifier, segOff);
 
         foreach (idx, c; seg)
         {
             if (!(c.isAlphaNum || c == '-'))
                 return parseErrV(
-                    SemVerParseErrorCode.invalidIdentifier, segOff + idx);
+                    ParseErrorCode.invalidIdentifier, segOff + idx);
         }
 
         if (kind == IdentifierKind.prerelease
             && seg.length > 1
             && seg[0] == '0'
             && seg.byCodeUnit.all!isDigit)
-            return parseErrV(SemVerParseErrorCode.leadingZero, segOff);
+            return parseErrV(ParseErrorCode.leadingZero, segOff);
 
         if (segEnd == list.length) break;
         segStart = segEnd + 1;
     }
 
-    return ok!(SemVerParseError, SemVerExpectedHook)();
+    return ok!(ParseError, ParseExpectedHook)();
 }
 
 // ---------------------------------------------------------------------------
@@ -373,32 +357,32 @@ private void skipLoosePrefix(in string s, ref size_t i)
 // Error constructors
 // ---------------------------------------------------------------------------
 
-package SemVerExpected!(Version!Layout) parseErr(Layout)(
-    SemVerParseErrorCode code, size_t index,
+package ParseExpected!(Version!Layout) parseErr(Layout)(
+    ParseErrorCode code, size_t index,
 ) @safe pure nothrow @nogc
 {
-    return err!(Version!Layout, SemVerExpectedHook)(
-        SemVerParseError(code: code, index: index));
+    return err!(Version!Layout, ParseExpectedHook)(
+        ParseError(code: code, index: index));
 }
 
-package SemVerExpected!(Version!Layout) parseErr(Layout)(
-    SemVerParseError error,
+package ParseExpected!(Version!Layout) parseErr(Layout)(
+    ParseError error,
 ) @safe pure nothrow @nogc
 {
-    return err!(Version!Layout, SemVerExpectedHook)(error);
+    return err!(Version!Layout, ParseExpectedHook)(error);
 }
 
-private ValidationResult parseErrV(SemVerParseErrorCode code, size_t index)
+private ValidationResult parseErrV(ParseErrorCode code, size_t index)
     @safe pure nothrow @nogc
 {
-    return err!(void, SemVerExpectedHook)(
-        SemVerParseError(code: code, index: index));
+    return err!(void, ParseExpectedHook)(
+        ParseError(code: code, index: index));
 }
 
-private ValidationResult parseErrV(SemVerParseError error)
+private ValidationResult parseErrV(ParseError error)
     @safe pure nothrow @nogc
 {
-    return err!(void, SemVerExpectedHook)(error);
+    return err!(void, ParseExpectedHook)(error);
 }
 
 // ---------------------------------------------------------------------------
@@ -431,7 +415,7 @@ unittest
     ];
 
     foreach (ver; cases)
-        assert(parse!SemVerLayout(ver, SemVerParseMode.strict).hasValue, ver);
+        assert(parse!SemVerLayout(ver, ParseMode.strict).hasValue, ver);
 }
 
 @("parser.SemVer.looseNormalisation")
@@ -452,7 +436,7 @@ unittest
 
     foreach (testCase; cases)
     {
-        auto parsed = parse!SemVerLayout(testCase[0], SemVerParseMode.loose);
+        auto parsed = parse!SemVerLayout(testCase[0], ParseMode.loose);
         assert(parsed.hasValue, testCase[0]);
         checkToString(parsed.value, testCase[1]);
     }
@@ -490,7 +474,7 @@ unittest
     ];
 
     foreach (ver; strictInvalid)
-        assert(parse!SemVerLayout(ver, SemVerParseMode.strict).hasError, ver);
+        assert(parse!SemVerLayout(ver, ParseMode.strict).hasError, ver);
 }
 
 @("parser.SemVer.overflow")
@@ -498,12 +482,12 @@ unittest
 unittest
 {
     // 15-bit major: max 32767.
-    assert(parse!SemVerLayout("32767.0.0", SemVerParseMode.strict).hasValue);
-    assert(parse!SemVerLayout("32768.0.0", SemVerParseMode.strict).hasError);
+    assert(parse!SemVerLayout("32767.0.0", ParseMode.strict).hasValue);
+    assert(parse!SemVerLayout("32768.0.0", ParseMode.strict).hasError);
 
     // 24-bit minor/patch: max 16777215.
-    assert(parse!SemVerLayout("0.16777215.0", SemVerParseMode.strict).hasValue);
-    assert(parse!SemVerLayout("0.16777216.0", SemVerParseMode.strict).hasError);
+    assert(parse!SemVerLayout("0.16777215.0", ParseMode.strict).hasValue);
+    assert(parse!SemVerLayout("0.16777216.0", ParseMode.strict).hasError);
 }
 
 @("parser.DmdLayout.requires3DigitMinor")
@@ -513,16 +497,16 @@ unittest
     import sparkles.core_cli.smallbuffer : checkToString;
 
     // Real Dlang versions across eras.
-    auto v079 = parse!DmdLayout("2.079.0", SemVerParseMode.strict);
+    auto v079 = parse!DmdLayout("2.079.0", ParseMode.strict);
     assert(v079.hasValue);
     checkToString(v079.value, "2.079.0");
 
-    auto v111 = parse!DmdLayout("2.111.0", SemVerParseMode.strict);
+    auto v111 = parse!DmdLayout("2.111.0", ParseMode.strict);
     assert(v111.hasValue);
     checkToString(v111.value, "2.111.0");
 
     // 2.79.0 is a leading-zero violation under the printWidth=3 rule.
-    assert(parse!DmdLayout("2.79.0", SemVerParseMode.strict).hasError);
+    assert(parse!DmdLayout("2.79.0", ParseMode.strict).hasError);
 }
 
 @("parser.TinyLayout.parse")
@@ -531,7 +515,7 @@ unittest
 {
     import sparkles.core_cli.smallbuffer : checkToString;
 
-    auto v = parse!TinyLayout("100.50.25", SemVerParseMode.strict);
+    auto v = parse!TinyLayout("100.50.25", ParseMode.strict);
     assert(v.hasValue);
     checkToString(v.value, "100.50.25");
 }
