@@ -140,9 +140,10 @@ We dropped it for two reasons:
 
 The replacement: width is a **static property of the layout** via
 `@Component(printOrder, printWidth)`. `DmdLayout` declares
-`printWidth: 2` on minor and patch, and **always** prints / parses
-them as 2-digit. Per-instance width preservation is not supported;
-no current consumer needs it.
+`printWidth: 3` on minor and **always** emits minor as at least 3
+digits (padding `79` → `079`, leaving `111` unchanged) — see
+[SPEC §7.2](./SPEC.md#72-dmdlayout). Per-instance width
+preservation is not supported; no current consumer needs it.
 
 ### 4.2 `core.int128.Cent` dropped from the first release
 
