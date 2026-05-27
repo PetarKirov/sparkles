@@ -30,8 +30,8 @@ the storage compaction is a welcome side-effect.
 
 ## 2. Compiler-spike findings
 
-Four short spikes ran against **DMD 2.110.0** and **LDC 1.41.0**
-(carrying roughly the DMD 2.111 frontend). The programs were not
+Four short spikes ran against **DMD `2.110.0`** and **LDC `1.41.0`**
+(carrying roughly the DMD `2.111` frontend). The programs were not
 checked in; the findings below shaped the design.
 
 ### 2.1 `std.bitmanip.bitfields` attribute profile
@@ -47,7 +47,7 @@ packed core. We do not need a custom UDA-based bitfield generator
 
 ### 2.2 Built-in C-style bitfields
 
-Built-in bitfields require `-preview=bitfields` on DMD 2.110. Reading
+Built-in bitfields require `-preview=bitfields` on DMD `2.110`. Reading
 them through a union of two overlapping fields raises a `@safe`
 deprecation: _"cannot access overlapped field with unsafe bit patterns
 in `@safe` code"_. Reinterpretation therefore requires a small
@@ -58,10 +58,10 @@ Built-in bitfields enable `__traits(isBitfield)` and (on LDC)
 
 ### 2.3 `__traits(getBitfieldOffset/Width)` portability
 
-| Compiler  | `__traits(isBitfield)` | `__traits(getBitfieldOffset)` |
-| --------- | ---------------------- | ----------------------------- |
-| DMD 2.110 | ✅                     | ❌                            |
-| LDC 1.41  | ✅                     | ✅                            |
+| Compiler    | `__traits(isBitfield)` | `__traits(getBitfieldOffset)` |
+| ----------- | ---------------------- | ----------------------------- |
+| DMD `2.110` | ✅                     | ❌                            |
+| LDC `1.41`  | ✅                     | ✅                            |
 
 **Implication:** the engine cannot rely on
 `__traits(getBitfieldOffset)`. It computes field offsets and widths
@@ -230,7 +230,7 @@ These are unresolved and may inform later work; they do not block any
 current milestone.
 
 - **Trait portability strategy.** The engine computes bitfield
-  offsets manually for portability across DMD 2.110 and LDC 1.41. We
+  offsets manually for portability across DMD `2.110` and LDC `1.41`. We
   could instead require a minimum DMD that supports
   `__traits(getBitfieldOffset)`, simplifying the engine. Decision
   deferred until we know which compilers `sparkles` officially
