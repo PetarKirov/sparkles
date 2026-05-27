@@ -19,6 +19,16 @@ extern(C) void effect_write_pty(GhosttyTerminal terminal, void* userdata, const(
     write(pty_fd, data, len);
 }
 
+bool fontHasGlyph(ref Font font, int codepoint) {
+    if (font.glyphs == null) return false;
+    for (int i = 0; i < font.glyphCount; i++) {
+        if (font.glyphs[i].value == codepoint) {
+            return true;
+        }
+    }
+    return false;
+}
+
 int[] getRequiredCodepoints() {
     int[] cps;
     cps.reserve(10000);
@@ -101,20 +111,34 @@ void main(string[] args)
         return;
     }
 
-    Font fallbackFont;
-    bool hasFallback = false;
-    string fallbackPathStr = "";
+    Font regularFallback;
+    bool hasRegularFallback = false;
+    string regularFallbackPathStr = "";
+
+    Font nerdFallback;
+    bool hasNerdFallback = false;
+    string nerdFallbackPathStr = "";
+
     auto fbRes = execute(["fc-match", "-f", "%{file}\\n", "monospace", "-s"]);
     if (fbRes.status == 0) {
         import std.algorithm : canFind;
         import std.string : splitLines;
         foreach (line; fbRes.output.splitLines()) {
-            if (line.canFind("NerdFont") || line.canFind("Nerd Font")) {
-                fallbackPathStr = line.strip().idup;
-                fallbackFont = LoadFontEx(fallbackPathStr.toStringz, fontSize, loadedCodepoints.ptr, cast(int)loadedCodepoints.length);
-                if (fallbackFont.texture.id != 0) hasFallback = true;
-                break;
+            string path = line.strip().idup;
+            if (path.length == 0 || path == fontPath) continue;
+
+            bool isNerd = path.canFind("NerdFont") || path.canFind("Nerd Font");
+            if (isNerd && !hasNerdFallback) {
+                nerdFallbackPathStr = path;
+                nerdFallback = LoadFontEx(nerdFallbackPathStr.toStringz, fontSize, loadedCodepoints.ptr, cast(int)loadedCodepoints.length);
+                if (nerdFallback.texture.id != 0) hasNerdFallback = true;
+            } else if (!isNerd && !hasRegularFallback && (path.canFind("DejaVu") || path.canFind("FreeMono") || path.canFind("LiberationMono"))) {
+                regularFallbackPathStr = path;
+                regularFallback = LoadFontEx(regularFallbackPathStr.toStringz, fontSize, loadedCodepoints.ptr, cast(int)loadedCodepoints.length);
+                if (regularFallback.texture.id != 0) hasRegularFallback = true;
             }
+
+            if (hasNerdFallback && hasRegularFallback) break;
         }
     }
 
@@ -243,9 +267,13 @@ void main(string[] args)
         if (fontChanged) {
             UnloadFont(font);
             font = LoadFontEx(fontPath.toStringz, fontSize, loadedCodepoints.ptr, cast(int)loadedCodepoints.length);
-            if (hasFallback) {
-                UnloadFont(fallbackFont);
-                fallbackFont = LoadFontEx(fallbackPathStr.toStringz, fontSize, loadedCodepoints.ptr, cast(int)loadedCodepoints.length);
+            if (hasRegularFallback) {
+                UnloadFont(regularFallback);
+                regularFallback = LoadFontEx(regularFallbackPathStr.toStringz, fontSize, loadedCodepoints.ptr, cast(int)loadedCodepoints.length);
+            }
+            if (hasNerdFallback) {
+                UnloadFont(nerdFallback);
+                nerdFallback = LoadFontEx(nerdFallbackPathStr.toStringz, fontSize, loadedCodepoints.ptr, cast(int)loadedCodepoints.length);
             }
             mSize = MeasureTextEx(font, "M", fontSize, 0);
             cellWidth = cast(int)mSize.x;
@@ -356,10 +384,13 @@ void main(string[] args)
                     DrawRectangle(x, y, cellWidth, cellHeight, bg_col);
 
                     Font activeFont = font;
-                    if (hasFallback) {
-                        bool isSymbol = (codepoints[0] >= 0x2000 && codepoints[0] <= 0x2BFF) || (codepoints[0] >= 0xE000);
-                        if (isSymbol) {
-                            activeFont = fallbackFont;
+                    if (codepoints[0] >= 128) {
+                        if (!fontHasGlyph(font, codepoints[0])) {
+                            if (hasRegularFallback && fontHasGlyph(regularFallback, codepoints[0])) {
+                                activeFont = regularFallback;
+                            } else if (hasNerdFallback && fontHasGlyph(nerdFallback, codepoints[0])) {
+                                activeFont = nerdFallback;
+                            }
                         }
                     }
 
@@ -461,7 +492,8 @@ void main(string[] args)
     }
 
     UnloadFont(font);
-    if (hasFallback) UnloadFont(fallbackFont);
+    if (hasRegularFallback) UnloadFont(regularFallback);
+    if (hasNerdFallback) UnloadFont(nerdFallback);
     ghostty_render_state_row_cells_free(cells);
     ghostty_render_state_row_iterator_free(row_iter);
     ghostty_render_state_free(render_state);
