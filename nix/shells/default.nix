@@ -34,6 +34,9 @@
             pkgs.pkg-config
             inputs'.ghostty.packages.libghostty-vt
             inputs'.ghostty.packages.libghostty-vt.dev
+
+            # rendering
+            pkgs.raylib
           ]
           ++ lib.optional greeting pkgs.figlet
           ++ d-toolchain.packages;
