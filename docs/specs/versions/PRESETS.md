@@ -13,9 +13,9 @@ order, see [PLAN.md](./PLAN.md); for design history, see
 ```d
 import sparkles.versions.presets;
 
-auto ubuntu = CalVerYYMM.parse("24.04.1", SemVerParseMode.strict).value;
-auto vim    = Vim       .parse("9.1.0400", SemVerParseMode.strict).value;
-auto rust   = SemVer    .parse("1.78.0",   SemVerParseMode.strict).value;
+auto ubuntu = CalVerYYMM.parse("24.04.1", ParseMode.strict).value;
+auto vim    = Vim       .parse("9.1.0400", ParseMode.strict).value;
+auto rust   = SemVer    .parse("1.78.0",   ParseMode.strict).value;
 ```
 
 The module ships layouts mapped to versioning schemes used by 25+
@@ -68,24 +68,28 @@ All three share the SemVer bitfield shape — `stableFlag:1, patch:24,
 minor:24, major:15` — and the engine's `opCmp` / `toString` /
 `truncateTo`. They differ only in static `@Component.printWidth`.
 
+All three presets re-use `semVerPrereleaseSlot` and `semVerBuildSlot`
+from `sparkles.versions.semver_rules` — they happen to follow SemVer's
+prerelease/build conventions, so the same SlotValidator and
+SlotComparator function pointers apply.
+
 ### 3.1 `CalVerYYMMLayout`
 
 ```d
 struct CalVerYYMMLayout
 {
-    mixin(bitfields!(
-        bool,  "stableFlag", 1,
-        ulong, "patch",     24,
-        ulong, "minor",     24,
-        ulong, "major",     15,
-    ));
-    string prerelease;
-    string build;
-}
+    mixin layoutBody!(
+        InternalFlag,                            bool,  "stableFlag", 1,
+        Component(printOrder: 2),                ulong, "patch",     24,
+        Component(printOrder: 1, printWidth: 2), ulong, "minor",     24,
+        Component(printOrder: 0),                ulong, "major",     15,
+    );
 
-@Component(printOrder: 0, printWidth: 0) major;   // YY, unpadded
-@Component(printOrder: 1, printWidth: 2) minor;   // MM, zero-padded
-@Component(printOrder: 2, printWidth: 0) patch;   // unpadded
+    static immutable StringSlot[] stringSlots = [
+        semVerPrereleaseSlot,
+        semVerBuildSlot,
+    ];
+}
 ```
 
 Validates with Ubuntu `24.04.1` (year=24, month=04, patch=1). Year
@@ -94,10 +98,15 @@ ever reused.
 
 ### 3.2 `CalVerYYYYMMDDLayout`
 
+Same shape as 3.1 but with `printWidth: 2` on both minor and patch:
+
 ```d
-@Component(printOrder: 0, printWidth: 0) major;   // YYYY, unpadded
-@Component(printOrder: 1, printWidth: 2) minor;   // MM, zero-padded
-@Component(printOrder: 2, printWidth: 2) patch;   // DD, zero-padded
+mixin layoutBody!(
+    InternalFlag,                            bool,  "stableFlag", 1,
+    Component(printOrder: 2, printWidth: 2), ulong, "patch",     24,
+    Component(printOrder: 1, printWidth: 2), ulong, "minor",     24,
+    Component(printOrder: 0),                ulong, "major",     15,
+);
 ```
 
 Validates with Arch Linux `2024.05.01`. Year ≤ 32767 covers
@@ -105,10 +114,15 @@ calendar use until year 32767.
 
 ### 3.3 `VimLayout`
 
+Same shape but with `printWidth: 4` on patch:
+
 ```d
-@Component(printOrder: 0, printWidth: 0) major;
-@Component(printOrder: 1, printWidth: 0) minor;
-@Component(printOrder: 2, printWidth: 4) patch;
+mixin layoutBody!(
+    InternalFlag,                            bool,  "stableFlag", 1,
+    Component(printOrder: 2, printWidth: 4), ulong, "patch",     24,
+    Component(printOrder: 1),                ulong, "minor",     24,
+    Component(printOrder: 0),                ulong, "major",     15,
+);
 ```
 
 Validates with Vim `9.1.0400`. Patch fits well within 24 bits (max
@@ -119,7 +133,7 @@ hundreds, with millennia of headroom.
 
 - **`SemVerLayout`** — strict SemVer 2.0.0. Covers 19 part-1
   entries directly (entries 1–5, 10, 12–22, 25) plus PostgreSQL
-  (entry 11) via `SemVerParseMode.loose` for the missing patch.
+  (entry 11) via `ParseMode.loose` for the missing patch.
 - **`DmdLayout`** (with `printWidth: 3` on minor per SPEC §7.2) —
   covers Dlang `2.079.0` (entry 24). The same layout handles
   contemporary DMD versions like `2.111.0` without padding.

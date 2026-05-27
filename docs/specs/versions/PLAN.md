@@ -41,7 +41,7 @@ documented per [AGENTS.md](../../../AGENTS.md).
    _Dependencies:_ milestones 1, 2.
 
 4. **Parser.**
-   Generic `Version!Layout.parse(string, SemVerParseMode)` with width-
+   Generic `Version!Layout.parse(string, ParseMode)` with width-
    aware numeric reading, layout-supplied custom parsers, and the
    existing `Expected`-based error API.
    Delivers [SPEC §8](./SPEC.md#8-parser).

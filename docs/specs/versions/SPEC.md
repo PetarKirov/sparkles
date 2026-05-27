@@ -42,9 +42,9 @@ layout offers and adapts accordingly.
 Consumer imports:
 
 ```d
-import sparkles.versions : SemVer, SemVerParseMode;
+import sparkles.versions : SemVer, ParseMode;
 
-auto v = SemVer.parse("1.2.3-rc.1", SemVerParseMode.loose).value;
+auto v = SemVer.parse("1.2.3-rc.1", ParseMode.loose).value;
 ```
 
 The folder uses the plural name `versions/` because `version` is a
@@ -52,12 +52,17 @@ D keyword.
 
 ## 3. DbI vocabulary
 
-Three names form the engine's contract with layout types.
+The engine exposes five names that form its contract with layout types.
+The engine itself knows nothing about specific versioning schemes
+(SemVer's prerelease/build conventions, identifier grammars, ordering
+rules); those are layout-supplied via the vocabulary below.
 
-### `@Component(printOrder, printWidth = 0)`
+### `Component(printOrder, printWidth = 0)`
 
-Tags a layout member as a semantic component that participates in the
-version's printed form and (by default) in comparison.
+UDA value attached to a layout's bit-packed component via the
+`layoutBody` mixin (see below). Tags the member as a semantic component
+that participates in the version's printed form and (by default) in
+comparison.
 
 - `printOrder` — formatting sequence; smaller values print first.
 - `printWidth` — minimum number of digits emitted by `toString` and
@@ -65,11 +70,66 @@ version's printed form and (by default) in comparison.
   and is the natural default. Width is a **static** property of the
   layout, not a per-instance value.
 
-### `@InternalFlag`
+### `InternalFlag`
 
-Tags a 1-bit layout member that participates in ordering but is not
-printed. Conventional use: the "has-no-prerelease" tiebreaker. Must
-sit at the LSB of the packed core (see §5).
+Marker UDA attached to a 1-bit layout member via the `layoutBody`
+mixin. Participates in ordering but is not printed. Conventional use:
+the "has-no-prerelease" tiebreaker. Must sit at the LSB of the packed
+core (see §5).
+
+### `StringSlot { name, prefix, includeInOrdering, validate, compare }`
+
+Describes an auxiliary string slot a layout exposes alongside its
+bit-packed core. The engine generates one `string <name>;` member on
+`Version!Layout` per declared slot, and walks the slots generically in
+`opCmp`, `toString`, and the parser. The engine has no built-in
+knowledge of SemVer's `prerelease` or `build` slots — those are just
+two slots SemVer-style layouts happen to declare.
+
+- `name` — field name generated on `Version!Layout`.
+- `prefix` — single character separating this slot from the preceding
+  content in the canonical string form (e.g. `'-'` for SemVer
+  prerelease, `'+'` for SemVer build).
+- `includeInOrdering` — when `true`, `opCmp` tiebreaks on this slot
+  after the packed-core compare ties.
+- `validate` — optional `SlotValidator` function pointer; `null`
+  accepts any non-empty content.
+- `compare` — optional `SlotComparator` function pointer; `null` falls
+  back to `std.algorithm.cmp` lexicographic compare.
+
+`SlotValidator` and `SlotComparator` are function-pointer aliases:
+
+```d
+alias SlotValidator = ParseExpected!void function(
+    in string segment, size_t segmentOffset) @safe pure nothrow @nogc;
+
+alias SlotComparator = int function(
+    in string lhs, in string rhs) @safe pure nothrow @nogc;
+```
+
+A layout declares its slots as a `static immutable StringSlot[]
+stringSlots` member; the engine reads it on `Version!Layout`
+instantiation.
+
+### `layoutBody!(spec...)`
+
+Mixin template that emits both the bit-packed storage (via
+`std.bitmanip.bitfields`) and a `LayoutDescriptor` describing every
+component, the optional internal flag, and the layout's total bit
+width. The `spec` tuple groups its arguments in (UDA, type, name,
+width) quadruples, declared from LSB to MSB:
+
+```d
+mixin layoutBody!(
+    InternalFlag,             bool,  "stableFlag", 1,
+    Component(printOrder: 2), ulong, "patch",     24,
+    Component(printOrder: 1), ulong, "minor",     24,
+    Component(printOrder: 0), ulong, "major",     15,
+);
+```
+
+The UDA position accepts `Component(...)`, `InternalFlag`, or `void`
+(padding).
 
 ### `GetCoreType!(size_t bytes)`
 
@@ -90,20 +150,34 @@ Other sizes are not supported in the current library.
 ```d
 struct Version(Layout)
 {
-    private alias CoreType = GetCoreType!(Layout.sizeof);
+    alias CoreType = GetCoreType!(Layout.sizeof);
+    enum LayoutDescriptor descriptor = /* derived from Layout */;
+
     union { Layout core; CoreType packed; }
+
+    // One `string <slot.name>;` member generated per slot declared in
+    // Layout.stringSlots (see §9).
+    static foreach (slot; descriptor.stringSlots)
+        mixin("string " ~ slot.name ~ ";");
 
     // operations from §6, composed by introspection over Layout
 }
 ```
 
+The `descriptor` is a `LayoutDescriptor` aggregating:
+
+- `ComponentDesc[] components` — sorted by `printOrder`.
+- `InternalFlagDesc internalFlag` — name and offset of the LSB
+  tiebreaker bit, or `name == ""` if the layout has none.
+- `int totalBitWidth` — sum of declared bitfield widths.
+- `immutable(StringSlot)[] stringSlots` — auxiliary slots from the
+  layout's `stringSlots` static member.
+
 At instantiation the engine performs CTFE validation on `Layout`:
 
 1. `Layout.sizeof` is one of {1, 2, 4, 8}.
-2. Every bitfield member is a real bitfield (verified via
-   `__traits(isBitfield)` where the compiler supports it; otherwise
-   verified structurally) or a recognised side-band slot — a
-   string-shaped slot for `prerelease` / `build` (see §9).
+2. Every bitfield member is generated by the `layoutBody` mixin (which
+   uses `std.bitmanip.bitfields` underneath).
 3. Every `@Component.printOrder` is unique.
 4. At most one `@InternalFlag` member, of width 1, at bit offset 0
    (LSB).
@@ -124,15 +198,23 @@ A layout therefore lists its components from **lowest-precedence (LSB)
 to highest-precedence (MSB)**. For SemVer:
 
 ```d
+import sparkles.versions;
+import sparkles.versions.semver_rules : semVerBuildSlot,
+    semVerPrereleaseSlot;
+
 struct SemVerLayout
 {
-    mixin(bitfields!(
-        bool,  "stableFlag", 1,   // LSB — precedence tiebreaker
-        ulong, "patch",     24,
-        ulong, "minor",     24,
-        ulong, "major",     15,   // MSB — dominates ordering
-    ));
-    // string slots from §9 follow
+    mixin layoutBody!(
+        InternalFlag,             bool,  "stableFlag", 1, // LSB
+        Component(printOrder: 2), ulong, "patch",     24,
+        Component(printOrder: 1), ulong, "minor",     24,
+        Component(printOrder: 0), ulong, "major",     15, // MSB
+    );
+
+    static immutable StringSlot[] stringSlots = [
+        semVerPrereleaseSlot,  // {name:"prerelease", prefix:'-', …}
+        semVerBuildSlot,       // {name:"build",      prefix:'+', …}
+    ];
 }
 ```
 
@@ -158,9 +240,12 @@ Two-stage compare:
 1. Compare `lhs.packed` against `rhs.packed` as a single unsigned
    integer. Every bit in the packed core is semantically meaningful —
    no masking step.
-2. If the integers tie **and** the layout declares a prerelease string
-   slot, compare the prerelease lexicographically per SemVer §11.
-   Build metadata is never consulted.
+2. If the integers tie, walk each `StringSlot` declared by the layout
+   in declared order. For each slot with `includeInOrdering == true`,
+   call its `compare` function (or fall back to lexicographic compare
+   when `compare == null`). The first non-zero result wins. Slots with
+   `includeInOrdering == false` (e.g. SemVer build metadata) are never
+   consulted.
 
 For `CoreType.sizeof <= 8` stage 1 is a single CPU compare.
 
@@ -171,12 +256,12 @@ CTFE-driven from the layout:
 1. Collect every `@Component` member, sorted by `printOrder`.
 2. For each, format with `"%0*d"` and the component's static
    `printWidth` when `printWidth > 0`, else `"%d"`.
-3. Emit punctuation between components per a per-layout hook (default
-   `.`). Layout-specific punctuation (e.g. `-` before prerelease, `+`
-   before build) is encoded as a per-component "prefix" UDA, not
-   hardcoded in the engine.
-4. If the layout supplies its own `toString(Writer)(ref Writer w)`
-   member, the engine defers to it. This is how layouts with
+3. Emit each `StringSlot` whose value is non-empty, prefixed by its
+   `prefix` character (e.g. SemVer prerelease prepends `-`, build
+   prepends `+`). The prefix is a property of the slot, not hardcoded
+   in the engine.
+4. If the layout supplies its own `customToString(Writer)(ref Writer w)
+const` member, the engine defers to it. This is how layouts with
    non-numeric components (e.g. `DmdOptimized`'s `prereleasePhase`)
    produce their textual form.
 
@@ -294,7 +379,7 @@ the DbI design scales to real-world schemes without engine changes.
 
 Most strict-SemVer products (Rust, Kubernetes, Linux Kernel, Git,
 PHP, etc.) parse with `SemVerLayout` directly; 2-part versions like
-PostgreSQL `16.3` use `SemVerLayout.parse(s, SemVerParseMode.loose)`;
+PostgreSQL `16.3` use `SemVerLayout.parse(s, ParseMode.loose)`;
 the historical Dlang scheme (`2.079.0`) is covered by `DmdLayout`.
 
 The full per-product coverage table, parse mode per entry, and the
@@ -304,78 +389,89 @@ releases / git tags / official changelogs) live in
 
 ## 8. Parser
 
-`Version!Layout.parse(string, SemVerParseMode)` returns a non-throwing
-`Expected`-based result. Errors carry a structured
-`SemVerParseError { SemVerParseErrorCode code; size_t index; }`.
+`parse!Layout(string, ParseMode)` (from `sparkles.versions.parser`)
+returns a non-throwing `Expected`-based result. Errors carry a
+structured `ParseError { ParseErrorCode code; size_t index; }`.
 
 The parser is generic over the layout:
 
 1. Numeric components reject values that do not fit in their declared
-   bit width via `SemVerParseErrorCode.numericOverflow`. Bounds are
-   computed from the layout at compile time.
+   bit width via `ParseErrorCode.numericOverflow`. Bounds are computed
+   from the layout's `descriptor.components[i].bitWidth` at compile
+   time.
 2. Each `@Component.printWidth` is enforced at parse time. Components
-   with `printWidth > 0` require inputs of exactly that width (e.g.
-   `DmdLayout` rejects `1.2.3` because minor must be at least 3
-   digits) and accept zero-padded inputs that
-   strict SemVer's leading-zero rule would normally reject. Components
-   with `printWidth == 0` keep the strict SemVer rule.
-3. Prerelease / build text writes into the layout's declared string
-   slot (§9).
-4. **Strict mode** follows SemVer 2.0.0 exactly.
+   with `printWidth > 0` require inputs of at least that width
+   (e.g. `DmdLayout` rejects `2.79.0` because minor must be at least 3
+   digits) and accept zero-padded inputs that strict SemVer's leading-
+   zero rule would normally reject. Components with `printWidth == 0`
+   keep the strict SemVer rule.
+3. After parsing numeric components, the parser walks the layout's
+   `StringSlot` declarations in declared order. Each slot is
+   recognised by its `prefix` character; its content is read up to
+   the prefix of a later-declared slot (or end of input) and passed
+   to the slot's `validate` function (or, if `null`, validated only
+   for non-emptiness). Slots whose `includeInOrdering` is true also
+   clear the layout's `@InternalFlag` bit when populated, encoding
+   "this is no longer a stable release".
+4. **Strict mode** follows the layout's canonical syntax exactly.
 5. **Loose mode** additionally accepts `v1.2.3`, `1`, `1.2`, etc. The
    engine fills missing fields with zero.
 6. Layouts that supply a `parse(string, …)` member override the
    generic path entirely. `DmdOptimized` uses this hook to map
    `beta` / `rc` to its `prereleasePhase` field.
 
-`SemVerParseMode` and the error-code enum stay the same names that
-`sparkles:semver` 0.2 exposed, so the consumer-facing surface
-matches existing call sites:
+Typical call shape:
 
 ```d
-auto parsed = SemVer.parse(s, SemVerParseMode.loose);
+import sparkles.versions : parse, SemVerLayout, ParseMode;
+
+auto parsed = parse!SemVerLayout(s, ParseMode.loose);
 if (parsed.hasError)
     handle(parsed.error);
 else
     use(parsed.value);
 ```
 
-## 9. Optional SSO string
+## 9. String slots and the (deferred) SSO optimisation
 
-Layouts that need prerelease and/or build metadata declare them as
-string slots on the layout struct:
+Auxiliary string data (SemVer's prerelease and build metadata,
+distribution suffixes, etc.) lives in fields generated on
+`Version!Layout` from the layout's declared `StringSlot` list (§3).
+
+For SemVer-style layouts the library ships pre-built slot constants:
 
 ```d
+import sparkles.versions.semver_rules :
+    semVerPrereleaseSlot, semVerBuildSlot;
+
 struct SemVerLayout
 {
-    // bitfield core …
-    string prerelease;
-    string build;
+    mixin layoutBody!(/* … bit-packed core … */);
+
+    static immutable StringSlot[] stringSlots = [
+        semVerPrereleaseSlot,  // -prefix, ordering, SemVer §9/§11 rules
+        semVerBuildSlot,       // +prefix, no ordering, SemVer §10 rules
+    ];
 }
 ```
 
-The engine only requires that the slot type expose `length` and
-indexed read. Two concrete slot types are supported as drop-in
-choices:
-
-- **Plain GC `string`** — the baseline. One allocation per non-empty
-  parse, comparison via direct slice access.
-- **`SsoString`** — a 24-byte struct (on 64-bit) overlaying a 23-byte
-  inline `char[23]` + 1-byte length with a standard GC `string`
-  slice. Content ≤ 23 bytes lives inline (no allocation); longer
-  content falls back to a GC `string`. Because the heap path stores a
-  GC slice, `SsoString` has no destructor, no postblit, and no manual
-  `opAssign` — it stays POD and trivially copyable.
-
-A layout swaps `string prerelease` for `SsoString prerelease` to opt
-in. `opCmp`, `toString`, and the parser see the same slot interface
-in both cases.
-
 SemVer 2.0.0's asymmetric precedence (`prerelease` participates in
-ordering, `build` does not) is encoded at the layout level via UDAs:
-`@OrderingTiebreaker` on the prerelease slot, `@ExcludeFromOrdering`
-on the build slot. (Final names tracked in
-[RATIONALE.md](./RATIONALE.md).)
+ordering, `build` does not) is encoded by each slot's
+`includeInOrdering` boolean. SemVer's identifier grammar and §11.4
+comparison rules are encoded by the slot's `validate` and `compare`
+function pointers — defined in `sparkles.versions.semver_rules`, not
+in the engine.
+
+**Storage** — slot fields are plain GC `string`s. A future,
+deliberately deferred optimisation will introduce an `SsoString` type
+(23-byte inline `char[23]` + length, falling back to a GC `string`
+slice past 23 bytes) and let the engine accept either as the slot
+storage type. The engine already requires of slot values only that
+they expose `length` and indexed read, so the swap will be local to
+the field types and need no API change. The motivation is to elide
+the GC allocation for the common short content (`alpha`, `beta.1`,
+`rc.3` all ≤ 7 bytes); the cost is the inline-vs-heap tag bit.
+Tracked as the final milestone in [PLAN.md](./PLAN.md).
 
 ## 10. Public API surface
 
@@ -383,22 +479,36 @@ Consumers reach the library via a single import:
 
 ```d
 import sparkles.versions :
-    SemVer,                  // alias for Version!SemVerLayout
-    SemVerParseMode,         // strict | loose
-    SemVerParseError,        // { code, index }
-    SemVerParseErrorCode,    // emptyInput, unexpectedCharacter, …
-    SemVerParseResult,       // Expected!(SemVer, SemVerParseError, …)
-    SemVerException;         // thrown by the convenience ctor
+    SemVer,           // alias for Version!SemVerLayout
+    parse,            // parse!Layout(string, ParseMode) → ParseResult
+    ParseMode,        // strict | loose
+    ParseError,       // { code, index }
+    ParseErrorCode,   // emptyInput, unexpectedCharacter, …
+    ParseResult;      // ParseExpected!(Version!Layout)
 ```
 
 Layout-authoring consumers additionally import:
 
 ```d
 import sparkles.versions :
-    Version,                 // the generic engine template
-    Component,               // UDA
-    InternalFlag,            // UDA
-    GetCoreType;             // size → unsigned-int selector
+    Version,          // the generic engine template
+    Component,        // UDA value attached via layoutBody
+    InternalFlag,     // marker UDA attached via layoutBody
+    GetCoreType,      // size → unsigned-int selector
+    LayoutDescriptor, // descriptor type
+    StringSlot,       // auxiliary-slot descriptor
+    SlotValidator,    // function-pointer alias
+    SlotComparator,   // function-pointer alias
+    layoutBody;       // mixin template
+```
+
+SemVer-style layout authors typically also pull the pre-built slot
+constants:
+
+```d
+import sparkles.versions :
+    semVerPrereleaseSlot,
+    semVerBuildSlot;
 ```
 
 The `Version!OtherLayout` instantiation produces all the names above

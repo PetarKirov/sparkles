@@ -225,6 +225,39 @@ ordering via a normal `@Component` instead.
 The reserved phase code (`11`) gives the layout a forward-compatible
 slot for adding `alpha` if DMD ever ships such a release.
 
+### 4.7 No SemVer knowledge inside the engine (the `StringSlot` abstraction)
+
+An earlier iteration of the engine used `static enum hasPrerelease =
+true;` / `static enum hasBuild = true;` flags on the layout to opt
+into named `prerelease` / `build` `string` fields on
+`Version!Layout`. The engine read those flags directly and the parser
+hardcoded `-` and `+` as the prerelease/build separators. This worked
+for SemVer-style layouts but baked SemVer's data model into the DbI
+engine — the very thing DbI is supposed to abstract over.
+
+The shipped design replaces the flags with a generic abstraction:
+
+- Each layout declares a `static immutable StringSlot[] stringSlots`
+  list. Each `StringSlot` carries `(name, prefix, includeInOrdering,
+validate, compare)` — function pointers for the last two.
+- The engine generates one `string <name>;` field per slot on
+  `Version!Layout` and walks the slot list in `opCmp`, `toString`,
+  and the parser without knowing what any specific slot represents.
+- SemVer-specific behaviour (the `-`/`+` separators, the identifier
+  grammar from SemVer §9–§10, the prerelease comparison rule from
+  SemVer §11.4) lives in `sparkles.versions.semver_rules`, behind two
+  pre-built `StringSlot` constants — `semVerPrereleaseSlot` and
+  `semVerBuildSlot` — that SemVer-style layouts (SemVerLayout,
+  DmdLayout, CalVerYYMMLayout, …) reference in their `stringSlots`.
+
+A hypothetical layout for, say, Debian's `1:1.2.3-4+deb12u1` can
+declare entirely different slots (epoch prefix `:`, distribution
+suffix, etc.) without engine changes; conversely, a layout that
+needs no auxiliary text at all (TinyLayout, DmdOptimized) declares
+no slots and pays no cost. The engine's contract with its layouts is
+genuinely about the _mechanism_ of auxiliary string slots, not about
+SemVer's specific use of them.
+
 ## 5. Open questions
 
 These are unresolved and may inform later work; they do not block any
@@ -236,12 +269,13 @@ current milestone.
   `__traits(getBitfieldOffset)`, simplifying the engine. Decision
   deferred until we know which compilers `sparkles` officially
   supports.
-- **Final UDA names for the build-metadata semantics.** The current
-  design uses `@InternalFlag` for the LSB tiebreaker bit. The build-
-  metadata slot needs a separate UDA meaning "exclude from
-  ordering". Likely split into `@OrderingTiebreaker` (the LSB bit)
-  and `@ExcludeFromOrdering` (the build slot), but the names are not
-  final.
+- ~~**Final UDA names for the build-metadata semantics.**~~
+  **Resolved.** The shipped design uses `@InternalFlag` for the LSB
+  tiebreaker bit and a `StringSlot.includeInOrdering` boolean on each
+  declared slot for the "this slot tiebreaks, that one doesn't"
+  distinction (rather than two separate UDAs as originally
+  speculated). SemVer prerelease is `includeInOrdering: true`; build
+  metadata is `includeInOrdering: false`. See SPEC §3.
 - **`Cent` resurrection.** Dropped from the first release per §4.2.
   If a 128-bit layout appears, reintroduce `GetCoreType!16` plus a
   small `cmp128` helper. Localised; not a structural change.
