@@ -7,6 +7,7 @@ license "BSL-1.0"
 targetPath "build"
 
 subPackage "apps/ci"
+subPackage "apps/terminal"
 subPackage "libs/core-cli"
 subPackage "libs/ghostty"
 subPackage "libs/math"
