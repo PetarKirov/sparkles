@@ -1,46 +1,42 @@
 # `sparkles:versions` — Specification
 
-_Audience: first-time readers and library consumers. This document is
-self-contained — read it on its own to understand what the library
-provides. See [PLAN.md](./PLAN.md) for the delivery schedule and
-[RATIONALE.md](./RATIONALE.md) for design history, prior-art findings,
-and open questions. The full per-scheme catalogue — capability matrix,
-real-world examples, edge cases, and how to add a scheme — lives in
-[PRESETS.md](./PRESETS.md)._
+_Audience: developers and coding agents building against the library.
+This document is normative and self-contained — it states what the
+library provides, not why. For design history, prior-art, and the
+reasoning behind each decision, see [RATIONALE.md](./RATIONALE.md); for
+the delivery plan, see [PLAN.md](./PLAN.md); for the per-scheme catalogue
+(real-world examples, edge cases, provenance, and how to add a scheme),
+see [PRESETS.md](./PRESETS.md)._
 
 ## 1. Overview
 
-`sparkles:versions` is a multi-ecosystem version-and-range library for
-D. It parses, compares, and constrains the version strings of many
-package ecosystems — Semantic Versioning, PEP 440 (PyPI), Maven,
+`sparkles:versions` parses, compares, and constrains the version strings
+of many package ecosystems — Semantic Versioning, PEP 440 (PyPI), Maven,
 Debian, CalVer, and several internal schemes — and interoperates with
-the [pURL](https://github.com/package-url/purl-spec) (Package URL) and
-[VERS](https://github.com/package-url/vers-spec) (version-range URI)
-specifications.
+[pURL](https://github.com/package-url/purl-spec) (Package URL) and
+[VERS](https://github.com/package-url/vers-spec) (version-range URI).
 
-The design philosophy is **hand-written per-ecosystem structs
-conforming to compile-time concepts**. Each ecosystem is a small,
-purpose-built struct (`SemVer`, `PypiVersion`, `DebianVersion`, …) that
-conforms to a minimal **required** concept, [`isVersion!T`](#3-the-version-concept).
-On top of the required surface sits an orthogonal **optional capability
-vocabulary** — `hasOrderKey`, `supportsPrerelease`, `hasComponents`,
-`hasBuildMetadata` — that each struct opts into where it makes sense.
-Generic algorithms ([`Ranges!V`](#4-the-range-concept),
-[`satisfies`](#5-operations), [`sort`](#5-operations)) are
-fallback/fast-path shells written over those capabilities.
+Each ecosystem is one hand-written struct (`SemVer`, `PypiVersion`,
+`DebianVersion`, …) that conforms to the compile-time concept
+[`isVersion!T`](#3-the-version-concept) and, where it parses an
+ecosystem's strings, [`isVersionScheme!S`](#6-the-scheme-concept).
+Generic algorithms — [`Ranges!V`](#4-the-range-concept),
+[`satisfies`](#5-operations), [`sort`](#5-operations) — operate over any
+conforming type.
 
-This is the _concept_ flavour of Design by Introspection (DbI) — the
-`std.range` / `isInputRange!R` idiom — rather than the
-shell-with-hooks flavour. The version structs are concrete; the generic
-code over them is what introspects. A scheme is just a struct conforming
-to the concepts, plus a `static assert(isVersion!S && isVersionScheme!S);`.
-For the DbI paradigm itself, see
-[`docs/guidelines/design-by-introspection-01-guidelines.md`](../../guidelines/design-by-introspection-01-guidelines.md);
-for why this concept flavour replaced the earlier version-generating
-engine, see [RATIONALE §1.2](./RATIONALE.md#12-why-the-engine-over-built).
+Core rules:
 
-A consumer who only needs SemVer imports one type and ignores
-everything else:
+- A scheme is a plain struct plus
+  `static assert(isVersion!S && isVersionScheme!S);`. There is no base
+  class, no registration step, and no code generation.
+- Optional capabilities (§3.2) are opt-in per struct. Their absence is
+  never an error; a generic algorithm falls back to the required surface.
+- Cross-scheme comparison does not compile: `SemVer` and `PypiVersion`
+  are distinct nominal types with no shared `opCmp`. Hold mixed-scheme
+  values in [`AnyVersion`](#11-anyversion--anyrange) and compare them
+  with the partial `compareAny`.
+
+A consumer who needs only SemVer imports one type:
 
 ```d
 import sparkles.versions.schemes.semver : SemVer;
@@ -50,12 +46,6 @@ auto b = SemVer.parse("1.2.3").value;
 assert(a < b);                       // prerelease precedes its release
 assert(a.toString == "1.2.3-rc.1");
 ```
-
-Cross-scheme comparison **does not compile**: there is no
-`opCmp(SemVer, PypiVersion)`, because they are distinct nominal types.
-Callers that must hold a version of statically-unknown scheme use the
-[`AnyVersion`](#11-anyversion--anyrange) sum type and the
-explicitly-partial `compareAny`.
 
 ## 2. Package and module layout
 
@@ -73,7 +63,7 @@ keyword.
 | `sparkles.versions`                         | Public re-exports (`package.d`)                                                     |
 | `sparkles.versions.traits`                  | `isVersion!T`, `isVersionRange!R`, `isVersionScheme!S` + optional-capability traits |
 | `sparkles.versions.parse_error`             | `ParseMode`, `ParseError`, `ParseErrorCode`, `ParseExpected!T`                      |
-| `sparkles.versions.ranges`                  | `Ranges!V` (pubgrub-style sorted disjoint intervals)                                |
+| `sparkles.versions.ranges`                  | `Ranges!V` (sorted disjoint intervals)                                              |
 | `sparkles.versions.vers`                    | VERS URI parser/emitter + compile-time scheme registry                              |
 | `sparkles.versions.purl`                    | Package URL parser + purl-type → scheme mapping                                     |
 | `sparkles.versions.any`                     | `AnyVersion` / `AnyRange` sum types, `compareAny`                                   |
@@ -88,26 +78,24 @@ keyword.
 | `sparkles.versions.schemes.pypi`            | `PypiVersion` (PEP 440)                                                             |
 | `sparkles.versions.schemes.maven`           | `MavenVersion` (qualifier order)                                                    |
 | `sparkles.versions.schemes.deb`             | `DebianVersion` (epoch/upstream/revision)                                           |
-| `sparkles.versions.schemes.generic`         | `Generic` (opaque lexicographic — the `void`-hook baseline)                         |
+| `sparkles.versions.schemes.generic`         | `Generic` (opaque lexicographic baseline)                                           |
 | `sparkles.versions._internal.*`             | Shared private helpers (not part of the public surface)                             |
 
 `_internal` holds `identifier_rules` (SemVer identifier grammar),
 `compare_semver` (`compareSemVerPrerelease`), `format`
-(`putPaddedNumber`), and `test_helpers` (`checkParse`,
-`checkRoundTrip`, `checkRejects`, `checkAscending`).
+(`putPaddedNumber`), and `test_helpers` (`checkParse`, `checkRoundTrip`,
+`checkRejects`, `checkAscending`).
 
 ## 3. The Version concept
 
-A version is the **only** required abstraction: a value that is totally
-ordered and renders to text. Nothing else is mandatory. (For why the
-required surface is this small, see
-[RATIONALE §2](./RATIONALE.md#2-prior-art-survey).)
+A version is totally ordered and renders to text. That is the entire
+required surface; everything else is optional (§3.2).
 
 ### 3.1 Required surface — `isVersion!T`
 
-`isVersion!T` (from `sparkles.versions.traits`) detects two required
-primitives: a three-way `opCmp` and an output-range `toString`. Named
-sub-checks report _which_ half failed:
+`isVersion!T` (in `sparkles.versions.traits`) requires a three-way
+`opCmp` and an output-range `toString`. Named sub-checks report which
+half is missing:
 
 ```d
 template isVersion(T)
@@ -121,36 +109,32 @@ template isVersion(T)
 }
 ```
 
-A conforming struct therefore provides:
+A conforming struct provides:
 
 ```d
-int  opCmp(in T other) const @safe pure nothrow @nogc;  // SemVer-style three-way
+int  opCmp(in T other) const @safe pure nothrow @nogc;  // three-way total order
 void toString(W)(ref W sink) const;                      // writes into an output range
 ```
 
-`opCmp` defines the type's total order; `opEquals` and `toHash` are
-provided alongside it so versions work as keys and in `==` (a type with
-`opCmp` but no matching `opEquals` would compare equal yet hash
-inconsistently). `toString` writes into an output range, following the
-`sparkles.core_cli` conventions in
-[`AGENTS.md`](../../guidelines/AGENTS.md#output-ranges).
+- Provide `opEquals` and `toHash` consistent with `opCmp` so versions
+  work as associative-array keys and in `==`.
+- `toString` writes into an output range, per the `sparkles.core_cli`
+  conventions in [`AGENTS.md`](../../guidelines/AGENTS.md#output-ranges).
 
 ### 3.2 Optional capability vocabulary
 
-Each optional capability is an orthogonal, individually-detectable
-primitive. A struct that provides one enables a fast path or an extra
-feature; absence is never an error — the generic algorithm falls back
-to a path that needs only the required surface. Detection is
-centralised in `sparkles.versions.traits` (DbI §4.3: detection MUST NOT
-be scattered through business logic).
+Each capability is an independently-detectable trait in
+`sparkles.versions.traits`. A type that provides one enables a fast path
+or an extra feature; a type that omits one still works through the
+required surface.
 
-| Capability              | Detection rule                                   | Behavioural impact                                                        |
-| ----------------------- | ------------------------------------------------ | ------------------------------------------------------------------------- |
-| `hasOrderKey!T`         | `.orderKey` → any unsigned int (`ubyte`…`ulong`) | radix `sort`, compact `Ranges!T` bounds, fast `opCmp` pre-check           |
-| `supportsPrerelease!T`  | `.isPrerelease` → `bool`                         | node-semver prerelease-in-range rule (gates [`satisfies`](#5-operations)) |
-| `hasComponents!T`       | `enum string[] components` of named uint fields  | generic component iteration/compare, `truncateTo`                         |
-| `hasSemVerComponents!T` | `components` begins `["major","minor","patch"]`  | caret `^` / tilde `~` range operators                                     |
-| `hasBuildMetadata!T`    | `.build` → `const(char)[]`                       | build-aware compare (SemVer §10)                                          |
+| Capability              | Detection rule                                   | Behavioural impact                                              |
+| ----------------------- | ------------------------------------------------ | --------------------------------------------------------------- |
+| `hasOrderKey!T`         | `.orderKey` → any unsigned int (`ubyte`…`ulong`) | radix `sort`, compact `Ranges!T` bounds, fast `opCmp` pre-check |
+| `supportsPrerelease!T`  | `.isPrerelease` → `bool`                         | prerelease-in-range rule (gates [`satisfies`](#5-operations))   |
+| `hasComponents!T`       | `enum string[] components` of named uint fields  | generic component iteration/compare, `truncateTo`               |
+| `hasSemVerComponents!T` | `components` begins `["major","minor","patch"]`  | caret `^` / tilde `~` range operators                           |
+| `hasBuildMetadata!T`    | `.build` → `const(char)[]`                       | build-aware compare                                             |
 
 ```d
 import std.traits : isUnsigned;
@@ -208,51 +192,43 @@ enum hasSemVerComponents(T) =
 enum hasBuildMetadata(T) = is(typeof((const T v) => v.build) : const(char)[]);
 ```
 
-The component list drives two generic helpers (in
-`sparkles.versions.traits`) that a scheme may reuse and that generic
-algorithms call: `compareComponents(a, b)` walks the list
-most-significant-first for the numeric part of `opCmp`, and
-`componentAt(v, i)` reads the `i`-th component as a `ulong`.
-`componentCount!T` is `T.components.length`. The list carries names and
-order only — per-component zero-pad **width** stays in each scheme's own
-`toString`.
+The component list drives three generic helpers (in
+`sparkles.versions.traits`) that schemes reuse and generic algorithms
+call:
 
-Two normative rules govern optional capabilities (the full DbI standard
-is in
-[`design-by-introspection-01-guidelines.md`](../../guidelines/design-by-introspection-01-guidelines.md);
-these are not re-litigated here):
+- `compareComponents(a, b)` — walks the list most-significant-first for
+  the numeric part of `opCmp`.
+- `componentAt(v, i)` — reads the `i`-th component as a `ulong`.
+- `componentCount!T` — `T.components.length`.
 
-- **All-or-nothing.** A type MUST NOT provide an optional primitive that
-  only works sometimes — either it works for every value or the type
-  omits it (DbI §6.2). `hasOrderKey` is the sharp case: a scheme whose
-  components can overflow its chosen key width MUST NOT expose `orderKey`
-  at all, rather than expose a key that loses ordering at the high end. A
-  scheme that wants a wider safety margin simply returns a wider unsigned
-  type.
-- **Equivalence-tested.** Where a capability enables a fast path, that
-  fast path MUST be behaviourally equivalent to the required-surface
-  fallback. `orderKey` is tested against the `opCmp` reference across a
-  representative corpus (DbI §9.2): for all sampled `a`, `b`,
-  `sign(a.orderKey <=> b.orderKey)` agrees with `sign(a.opCmp(b))`
-  whenever the keys differ.
+The list carries names and order only. Per-component zero-pad width
+stays in each scheme's own `toString`.
 
-The mandated `void`-hook baseline (DbI §7.3 / §9.4) is the
-[`Generic`](#8-shipped-schemes) scheme: an opaque, lexicographically
-compared version that exposes **zero** optional capabilities. Every
-generic algorithm's fallback path is exercised through `Generic`.
+Two rules govern optional capabilities:
+
+- **All-or-nothing.** Expose a capability only when it holds for every
+  value of the type — never one that works sometimes. A scheme whose
+  components can overflow its chosen `orderKey` width omits `orderKey`
+  entirely; to gain headroom, it returns a wider unsigned type.
+- **Equivalence.** A capability's fast path produces the same result as
+  the required-surface fallback. `orderKey` satisfies
+  `sign(a.orderKey <=> b.orderKey) == sign(a.opCmp(b))` whenever the keys
+  differ, and the test suite asserts this across each scheme's corpus.
+
+`Generic` (§8) is the baseline scheme: an opaque, lexicographically
+compared version with zero optional capabilities. Every generic
+algorithm's fallback path runs against it.
 
 ## 4. The Range concept
 
-A version range is a set of versions, expressed as set algebra. The
-range concept is pubgrub's `VersionSet` trait ported to D, and
-`Ranges!V` is the single concrete implementation (a port of pubgrub's
-`Ranges<V>`).
+A version range is a set of versions, expressed as set algebra.
+`Ranges!V` is the single concrete implementation.
 
 ### 4.1 Required surface — `isVersionRange!R`
 
-Only five members are **required** — the minimal set-algebra basis.
-`full`, `union_`, `isDisjoint`, and `subsetOf` are **defaulted via De
-Morgan** and need not be hand-written:
+Five members are required — the minimal set-algebra basis. `full`,
+`union_`, `isDisjoint`, and `subsetOf` are derived by default and need
+not be hand-written:
 
 ```d
 template isVersionRange(R)
@@ -281,18 +257,18 @@ template isVersionRange(R)
 
 ### 4.2 The concrete type — `Ranges!V`
 
-`Ranges!V` (from `sparkles.versions.ranges`) is the **only** generic
-data structure in the library. It stores a sorted, disjoint sequence of
-intervals — the same shape as pubgrub's `Ranges<V>` — and maintains
-those invariants on every operation: segments are kept sorted, no
-segment is empty, and adjacent mergeable intervals are coalesced.
+`Ranges!V` (in `sparkles.versions.ranges`) is the only generic data
+structure in the library. It stores a sorted, disjoint sequence of
+intervals and maintains those invariants on every operation: segments
+stay sorted, no segment is empty, and adjacent mergeable intervals
+coalesce.
 
 ```d
 struct Ranges(V) if (isVersion!V)
 {
     alias Version = V;
 
-    // --- pubgrub VersionSet required methods ---
+    // --- required set-algebra basis ---
     static Ranges empty();
     static Ranges singleton(V v);
     Ranges complement() const;
@@ -319,31 +295,31 @@ struct Ranges(V) if (isVersion!V)
 }
 ```
 
-There is **no** per-scheme range hierarchy — no `NpmRange`,
-`PypiRange`, or `DebianRange`. Each scheme's `Range` alias is just
-`Ranges!SemVer`, `Ranges!PypiVersion`, and so on. What differs across
-schemes is the _native range grammar_ (`^1.2.0` for npm, `[1.0,2.0)`
-for Maven, `>=1.2.4` for PEP 440) and the canonical constraint syntax
-inside a `vers:` URI — both are static methods on the scheme struct
-(§6, §9), not on the range type.
+Rules:
 
-`opEquals` compares the canonical (sorted, merged) interval sequences,
-so two ranges built from different but equivalent expressions compare
-equal. `toString` emits VERS constraint syntax (§9), giving every range
-a scheme-agnostic textual form.
+- There is no per-scheme range type — no `NpmRange`, `PypiRange`, or
+  `DebianRange`. Each scheme's `Range` alias is `Ranges!ThatVersion`.
+- The native range grammar (`^1.2.0` for npm, `[1.0,2.0)` for Maven,
+  `>=1.2.4` for PEP 440) and the `vers:` constraint syntax are static
+  methods on the scheme struct (§6, §9), not on `Ranges`.
+- `opEquals` compares canonical (sorted, merged) interval sequences, so
+  two ranges built from different but equivalent expressions compare
+  equal.
+- `toString` emits VERS constraint syntax (§9), giving every range a
+  scheme-agnostic textual form.
 
 ## 5. Operations
 
 Generic operations live in `sparkles.versions.ranges` and
-`sparkles.versions.traits`. Each follows the DbI fast-path/fallback
-pattern: a baseline that needs only the required surface, plus an
-opt-in fast path gated on an optional capability.
+`sparkles.versions.traits`. Each pairs a baseline that needs only the
+required surface with an opt-in fast path gated on an optional
+capability.
 
 ### 5.1 `order` — fast-path / fallback compare
 
 `order(a, b)` returns the same three-way result as `a.opCmp(b)` for any
-`isVersion!T`. When `T` provides `hasOrderKey`, it first compares the
-`ulong` keys and only falls through to `opCmp` when the keys tie:
+`isVersion!T`. When `T` provides `hasOrderKey`, compare the keys first
+and fall through to `opCmp` only on a key tie:
 
 ```d
 int order(T)(in T a, in T b) @safe pure nothrow @nogc
@@ -359,48 +335,44 @@ if (isVersion!T)
 }
 ```
 
-The fast path is equivalence-tested against the fallback (§3.2). The
-`Generic` scheme, lacking `orderKey`, always takes the fallback branch.
+`Generic`, lacking `orderKey`, always takes the fallback branch.
 
 ### 5.2 `satisfies` — version-in-range, prerelease-gated
 
-`satisfies(v, range)` answers whether a version is admitted by a range.
-The simple part is `range.contains(v)`. The subtle part is the
-**prerelease-in-range rule**, gated on `supportsPrerelease!T`:
+`satisfies(v, range)` reports whether a version is admitted by a range.
+The base case is `range.contains(v)`. When `T` provides
+`supportsPrerelease`, apply the **prerelease-in-range rule**:
 
-> A prerelease version satisfies a range **only when at least one
+> A prerelease version satisfies a range only when at least one
 > comparator in the range names a prerelease of the same
-> `(major, minor, patch)` triple.** (This is the node-semver
-> convention.)
+> `(major, minor, patch)` triple.
 
-For example, given the range `>=1.2.0`:
+Given the range `>=1.2.0`:
 
 - `1.3.0` satisfies it (a stable release ≥ the bound).
-- `1.3.0-beta.1` does **not** satisfy it — even though `1.3.0-beta.1`
-  is numerically inside `[1.2.0, +∞)` — because no comparator in
-  `>=1.2.0` named a prerelease of the `1.3.0` triple.
-- `1.2.0-beta.1` _does_ satisfy `>=1.2.0-alpha`, because that comparator
-  names a prerelease of the same `1.2.0` triple.
+- `1.3.0-beta.1` does **not** satisfy it — even though it is numerically
+  inside `[1.2.0, +∞)` — because no comparator in `>=1.2.0` names a
+  prerelease of the `1.3.0` triple.
+- `1.2.0-beta.1` satisfies `>=1.2.0-alpha`, because that comparator names
+  a prerelease of the same `1.2.0` triple.
 
-When `T` does **not** provide `supportsPrerelease` (e.g. `Tiny`,
-`Generic`), there are no prereleases to special-case and `satisfies`
-reduces to plain `contains`. The prerelease policy is therefore
-statically inert for schemes that do not model prereleases.
+When `T` does not provide `supportsPrerelease` (e.g. `Tiny`, `Generic`),
+`satisfies` reduces to `contains` — the rule is statically inert for
+schemes that do not model prereleases.
 
 ### 5.3 Caret / tilde — gated on `hasSemVerComponents`
 
 The npm-style operators desugar to `Ranges!V` intervals using the
 `(major, minor, patch)` triple, so they require `hasSemVerComponents!T`
-(the list begins with that triple) — not merely `hasComponents`, since
-`^`/`~` are undefined for a 4-component or calendar scheme:
+(not merely `hasComponents`, since `^`/`~` are undefined for a
+4-component or calendar scheme):
 
 - `^1.2.3` → `[1.2.3, 2.0.0)` (compatible within the major).
 - `~1.2.3` → `[1.2.3, 1.3.0)` (compatible within the minor).
 
-They are exposed as scheme-level static helpers (e.g. `SemVer.caret(v)`,
-`SemVer.tilde(v)`). Invoking one on a scheme without the SemVer triple
-(a calendar or 4-component scheme) is a compile-time error with a
-targeted diagnostic:
+They are scheme-level static helpers (`SemVer.caret(v)`,
+`SemVer.tilde(v)`). Calling one on a scheme without the SemVer triple is
+a compile-time error:
 
 ```d
 static assert(hasSemVerComponents!V,
@@ -412,9 +384,8 @@ static assert(hasSemVerComponents!V,
 ### 5.4 `sort`
 
 `sort(versions)` orders a slice of `isVersion!T`. With `hasOrderKey` it
-may radix-sort on the `ulong` keys (resolving key ties with `opCmp`);
-without it, it comparison-sorts via `opCmp`. Both paths produce the same
-ordering (§3.2).
+may radix-sort on the keys (resolving key ties with `opCmp`); without it
+it comparison-sorts via `opCmp`. Both paths produce the same ordering.
 
 ### 5.5 `truncateTo`
 
@@ -422,17 +393,15 @@ ordering (§3.2).
 component below the named one (in `components` order) zeroed — useful for
 bucketing (group SemVer by `major.minor`, group a CalVer by `"month"`).
 The name must appear in `T.components`, so it requires `hasComponents!T`
-(any arity, not just the SemVer triple) and is a compile-time error
-otherwise, with the same diagnostic shape as §5.3.
+(any arity) and is a compile-time error otherwise, with the same
+diagnostic shape as §5.3.
 
 ## 6. The Scheme concept
 
-A _scheme_ is the handle through which the library parses an ecosystem's
-version strings and discovers its pURL identity. The key structural
-decision: **the struct is both the version value and the scheme
-handle.** `SemVer` is the version type _and_ carries the static `parse`,
-`purlType`, and range helpers; there is no `SemVerScheme`-the-singleton.
-(For why value and scheme live on one D type, see
+A scheme is the handle the library parses through and identifies by pURL
+type. The struct is both the version value and the scheme handle: `SemVer`
+is the version type _and_ carries the static `parse`, `purlType`, and
+range helpers — there is no separate scheme singleton. (Background:
 [RATIONALE §5.2](./RATIONALE.md#52-the-struct-is-both-value-and-scheme-handle).)
 
 ### 6.1 Required surface — `isVersionScheme!S`
@@ -447,7 +416,7 @@ template isVersionScheme(S)
 }
 ```
 
-A conforming scheme therefore provides:
+A conforming scheme provides:
 
 ```d
 alias Version = S;                          // usually the struct itself
@@ -481,11 +450,10 @@ static assert(isVersion!SemVer && isVersionScheme!SemVer);
 
 ### 6.3 Cross-scheme incomparability
 
-Cross-scheme comparison **does not compile**. There is no
+Cross-scheme comparison does not compile. There is no
 `opCmp(SemVer, PypiVersion)` because `SemVer` and `PypiVersion` are
-distinct nominal types — D's type system enforces univers's
-"no cross-scheme order" policy statically rather than at runtime. A
-caller that genuinely needs to hold versions of mixed schemes uses
+distinct nominal types — the type system rules out a cross-scheme order
+at compile time. A caller that must hold versions of mixed schemes uses
 [`AnyVersion`](#11-anyversion--anyrange) and the partial `compareAny`,
 which returns `null` across schemes.
 
@@ -513,7 +481,7 @@ alias ParseExpected(T) = Expected!(T, ParseError, ParseExpectedHook);
 ```
 
 `ParseExpected!T` carries either a parsed `T` or a structured
-`ParseError`. Callers branch on `result.hasValue` / `result.error`:
+`ParseError`. Branch on `result.hasValue` / `result.error`:
 
 ```d
 auto r = SemVer.parse("1.2.x");
@@ -532,31 +500,30 @@ The parsing surface across the three concepts:
 | `S.parseNativeRange(s)` | `supportsNativeRange!S` | optional  | the ecosystem's native range grammar → `ParseExpected!(S.Range)`        |
 
 `ParseMode` is the strict/loose selector for schemes that route both
-behaviours through a single entry point; the dedicated `parseLoose`
-helper is the discoverable, capability-gated form. Each scheme's exact
-grammar and its native range grammar are documented per-scheme in
-[PRESETS.md](./PRESETS.md).
+behaviours through one entry point; `parseLoose` is the discoverable,
+capability-gated form. Each scheme's exact grammar and native range
+grammar are documented in [PRESETS.md](./PRESETS.md).
 
 ## 8. Shipped schemes
 
 Eleven schemes ship in the first release. The capability matrix below is
 the at-a-glance summary; the full per-scheme catalogue (real-world
-example strings, edge cases, prerelease policy, provenance, and the
+examples, edge cases, prerelease policy, provenance, and the
 how-to-add-a-scheme guide) is in [PRESETS.md](./PRESETS.md).
 
-| Scheme           | pURL type | Description                                     |
-| ---------------- | --------- | ----------------------------------------------- |
-| `SemVer`         | `semver`  | Strict SemVer 2.0.0 (also npm/cargo/gem)        |
-| `Dmd`            | —         | DMD: 3-digit zero-padded minor (`2.079.0`)      |
-| `DmdCompact`     | —         | 4-byte bitfield-encoded DMD prerelease          |
-| `Tiny`           | —         | 4-byte, no prerelease                           |
-| `CalVerYYMM`     | —         | Ubuntu-style `24.04.1`                          |
-| `CalVerYYYYMMDD` | —         | Arch-style `2024.05.01`                         |
-| `VimVer`         | —         | Vim-style 4-digit patch (`9.1.0400`)            |
-| `PypiVersion`    | `pypi`    | PEP 440: epoch, pre/post/dev, local             |
-| `MavenVersion`   | `maven`   | Maven qualifier order                           |
-| `DebianVersion`  | `deb`     | Epoch + upstream + revision (`dpkg` rules)      |
-| `Generic`        | `generic` | Opaque lexicographic — the `void`-hook baseline |
+| Scheme           | pURL type | Description                                |
+| ---------------- | --------- | ------------------------------------------ |
+| `SemVer`         | `semver`  | Strict SemVer 2.0.0 (also npm/cargo/gem)   |
+| `Dmd`            | —         | DMD: 3-digit zero-padded minor (`2.079.0`) |
+| `DmdCompact`     | —         | 4-byte bitfield-encoded DMD prerelease     |
+| `Tiny`           | —         | 4-byte, no prerelease                      |
+| `CalVerYYMM`     | —         | Ubuntu-style `24.04.1`                     |
+| `CalVerYYYYMMDD` | —         | Arch-style `2024.05.01`                    |
+| `VimVer`         | —         | Vim-style 4-digit patch (`9.1.0400`)       |
+| `PypiVersion`    | `pypi`    | PEP 440: epoch, pre/post/dev, local        |
+| `MavenVersion`   | `maven`   | Maven qualifier order                      |
+| `DebianVersion`  | `deb`     | Epoch + upstream + revision (`dpkg` rules) |
+| `Generic`        | `generic` | Opaque lexicographic baseline              |
 
 Capability matrix (✅ = provides the optional capability):
 
@@ -574,24 +541,23 @@ Capability matrix (✅ = provides the optional capability):
 | `DebianVersion`  |       —       |          —           |        —        |         —          |          ✅           |          —           |
 | `Generic`        |       —       |          —           |        —        |         —          |           —           |          —           |
 
-`Generic` is intentionally all-dashes: it is the baseline against which
-every generic algorithm's fallback path is verified. The `hasComponents`
-column is the generalised, arity-free capability (§3.2); the
-SemVer-shaped schemes (`SemVer`, `Dmd`, `DmdCompact`, `Tiny`, `VimVer`)
-declare `["major","minor","patch"]` and so additionally satisfy
-`hasSemVerComponents` (they get caret/tilde), whereas the CalVer schemes
-declare `["year","month","day"]` — `hasComponents` yes, but no caret. See
-[PRESETS.md](./PRESETS.md) for the per-scheme rationale behind each cell
-(e.g. why `MavenVersion` lacks `hasComponents`, why `PypiVersion` lacks
+The `hasComponents` column is the arity-free capability (§3.2). Only the
+schemes whose list begins `["major","minor","patch"]` (`SemVer`, `Dmd`,
+`DmdCompact`, `Tiny`, `VimVer`) also satisfy `hasSemVerComponents` and get
+caret/tilde; the CalVer schemes declare `["year","month","day"]` —
+`hasComponents` yes, caret/tilde no. `Generic` is all-dashes by design:
+it verifies every generic algorithm's fallback path. See
+[PRESETS.md](./PRESETS.md) for the per-cell rationale (e.g. why
+`MavenVersion` omits `hasComponents`, why `PypiVersion` omits
 `hasOrderKey`).
 
 ## 9. VERS interop
 
 [VERS](https://github.com/package-url/vers-spec) is a URI scheme for
 version-range expressions:
-`vers:<scheme>/<constraint>|<constraint>|…`. The
-`sparkles.versions.vers` module parses and emits the URI surface;
-per-scheme constraint translation lives on each scheme struct.
+`vers:<scheme>/<constraint>|<constraint>|…`. The `sparkles.versions.vers`
+module parses and emits the URI surface; per-scheme constraint
+translation lives on each scheme struct.
 
 ```d
 struct VersUri
@@ -604,18 +570,18 @@ ParseExpected!VersUri parseVersUri(string s);
 void formatVersUri(W)(ref W w, in VersUri v);
 ```
 
-`parseVersUri` handles only the URI surface (scheme extraction,
-`|`-splitting, ASCII/lowercase normalisation). Turning a constraint
-segment into a typed `Ranges!V`, and back, is per-scheme:
+`parseVersUri` handles only the URI surface: scheme extraction,
+`|`-splitting, and ASCII/lowercase normalisation. Translating a
+constraint segment to a typed `Ranges!V` and back is per-scheme:
 
 ```d
 static ParseExpected!Range fromVersConstraint(string segment);  // segment → Range
 static void toVersConstraint(W)(ref W w, in Range r);           // Range → segment
 ```
 
-The **scheme registry** is built at compile time: a CTFE walk over the
-`sparkles.versions.schemes.*` modules associates each scheme's
-`purlType` with its struct. The registry drives two dispatch forms:
+The scheme registry is built at compile time: a CTFE walk over the
+`sparkles.versions.schemes.*` modules maps each scheme's `purlType` to
+its struct. The registry drives two dispatch forms:
 
 ```d
 /// Static dispatch when the caller knows the scheme at compile time.
@@ -630,9 +596,9 @@ ParseExpected!AnyRange parseVersAny(string versUri);
 ```
 
 **Round-trip law.** For every scheme `S` and every native range
-expression `e` that `S.parseNativeRange(e)` accepts, the round trip
-`parseNativeRange(e)` → `toVersConstraint` → `fromVersConstraint`
-yields a `Ranges!(S.Version)` equal to the original. This law is tested
+expression `e` that `S.parseNativeRange(e)` accepts,
+`parseNativeRange(e)` → `toVersConstraint` → `fromVersConstraint` yields
+a `Ranges!(S.Version)` equal to the original. The test suite asserts this
 per scheme.
 
 ## 10. pURL interop
@@ -640,8 +606,8 @@ per scheme.
 [pURL](https://github.com/package-url/purl-spec) (Package URL) names a
 package across ecosystems:
 `pkg:<type>/<namespace>/<name>@<version>?<qualifiers>#<subpath>`. The
-`sparkles.versions.purl` module **consumes** purls (it parses, it does
-not generate them):
+`sparkles.versions.purl` module consumes purls — it parses, it does not
+generate them:
 
 ```d
 struct PackageUrl
@@ -691,8 +657,8 @@ alias AnyVersion = SumType!(SemVer, Dmd, DmdCompact, Tiny,
 alias AnyRange = SumType!(Ranges!SemVer, Ranges!Dmd, /* … one per scheme */);
 ```
 
-Because there is no universal total order across schemes (§6.3),
-cross-scheme comparison is **partial**:
+Because there is no universal order across schemes (§6.3), cross-scheme
+comparison is partial:
 
 ```d
 /// Three-way compare wrapped in a Nullable!int.
@@ -701,9 +667,9 @@ cross-scheme comparison is **partial**:
 Nullable!int compareAny(in AnyVersion a, in AnyVersion b);
 ```
 
-`compareAny` returning `null` is the deliberate, documented contract —
-not a failure mode. It is the same policy univers and the VERS spec
-adopt; see [RATIONALE §5.3](./RATIONALE.md#53-no-cross-scheme-total-order).
+`compareAny` returning `null` is the defined contract, not a failure
+mode. (Background:
+[RATIONALE §5.3](./RATIONALE.md#53-no-cross-scheme-total-order).)
 
 ## 12. Public API surface
 
@@ -714,9 +680,9 @@ import sparkles.versions.schemes.semver : SemVer;
 import sparkles.versions.parse_error : ParseMode, ParseError, ParseErrorCode;
 ```
 
-A polyglot consumer (purl/VERS-driven) imports the package module,
-which re-exports the concepts, the parse types, `Ranges`, the sum
-types, the interop entry points, and every shipped scheme:
+A polyglot consumer (purl/VERS-driven) imports the package module, which
+re-exports the concepts, the parse types, `Ranges`, the sum types, the
+interop entry points, and every shipped scheme:
 
 ```d
 import sparkles.versions;   // SemVer, PypiVersion, …, AnyVersion,
@@ -740,9 +706,9 @@ static assert(isVersion!MyScheme && isVersionScheme!MyScheme);
 
 Any struct conforming to `isVersion!T` participates in every generic
 algorithm; conforming additionally to `isVersionScheme!S` plugs into the
-VERS and pURL layers. No registration step is required for static use —
-the registry (§9) discovers built-in schemes at compile time, and a
-user-defined scheme is used directly through its own type.
+VERS and pURL layers. Static use needs no registration — the registry
+(§9) discovers built-in schemes at compile time, and a user-defined
+scheme is used directly through its own type.
 
 ---
 
