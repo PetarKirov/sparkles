@@ -1,369 +1,541 @@
-# `sparkles.versions.presets` — Real-World Layout Catalogue
+# `sparkles:versions` — Scheme Catalogue and Provenance
 
-_Audience: contributors using or extending the preset layouts.
-This document maps real-world versioning schemes to the `Layout`
-type that handles each, names the new layouts the module
-introduces, and records the provenance of every example string.
-For the engine specification, see [SPEC.md](./SPEC.md); for delivery
-order, see [PLAN.md](./PLAN.md); for design history, see
-[RATIONALE.md](./RATIONALE.md)._
+_Audience: contributors using or extending the shipped version schemes.
+This document is the per-scheme catalogue: it records each scheme's
+declared capabilities, real-world example strings, ordering rules and
+edge cases, native-range grammar, and the authoritative source every
+example was checked against. For the desired-state specification of the
+traits and generic algorithms, see [SPEC.md](./SPEC.md); for delivery
+order, see [PLAN.md](./PLAN.md); for design history and prior-art
+justification, see [RATIONALE.md](./RATIONALE.md)._
 
 ## 1. Overview
 
-```d
-import sparkles.versions.presets;
-
-auto ubuntu = CalVerYYMM.parse("24.04.1", ParseMode.strict).value;
-auto vim    = Vim       .parse("9.1.0400", ParseMode.strict).value;
-auto rust   = SemVer    .parse("1.78.0",   ParseMode.strict).value;
-```
-
-The module ships layouts mapped to versioning schemes used by 25+
-widely-deployed projects. Most are aliases or near-aliases of the
-engine's core `SemVerLayout`; three introduce new static
-`@Component.printWidth` configurations. None require engine changes
-— they are direct evidence that the DbI design admits real-world
-schemes through layout authoring alone.
-
-Source material — the raw analyst catalogue of 50 products and the
-engine capabilities each scheme exercises — is inlined as an
-appendix in [§8](#8-source-material-appendix). Part 1 (items 1–25)
-is the 64-bit fast-path compatible subset covered by this module;
-part 2 (items 26–50) is deferred (see §5).
-
-## 2. Coverage table
-
-The 23 in-scope entries from part 1. Two more (Go, Python) are
-deferred; see §5.
-
-| #   | Product      | Example      | Layout                 | Mode      | Notes                                                     |
-| --- | ------------ | ------------ | ---------------------- | --------- | --------------------------------------------------------- |
-| 1   | Node.js      | `20.13.1`    | `SemVerLayout`         | strict    |                                                           |
-| 2   | Rust         | `1.78.0`     | `SemVerLayout`         | strict    |                                                           |
-| 3   | Kubernetes   | `1.30.0`     | `SemVerLayout`         | strict    |                                                           |
-| 4   | Angular      | `17.3.0`     | `SemVerLayout`         | strict    |                                                           |
-| 5   | React        | `18.3.1`     | `SemVerLayout`         | strict    |                                                           |
-| 8   | Ubuntu       | `24.04.1`    | `CalVerYYMMLayout`     | strict    | `printWidth: 2` on minor                                  |
-| 9   | Arch Linux   | `2024.05.01` | `CalVerYYYYMMDDLayout` | strict    | `printWidth: 2` on minor and patch; year ≤ 32767          |
-| 10  | Linux Kernel | `6.8.9`      | `SemVerLayout`         | strict    |                                                           |
-| 11  | PostgreSQL   | `16.3`       | `SemVerLayout`         | **loose** | loose mode infills patch = 0                              |
-| 12  | Docker       | `26.1.1`     | `SemVerLayout`         | strict    | classified as CalVer in §8.1 but minor = 1 unpadded       |
-| 13  | Git          | `2.45.1`     | `SemVerLayout`         | strict    |                                                           |
-| 14  | PHP          | `8.3.7`      | `SemVerLayout`         | strict    |                                                           |
-| 15  | Ruby         | `3.3.1`      | `SemVerLayout`         | strict    |                                                           |
-| 16  | Nginx        | `1.26.0`     | `SemVerLayout`         | strict    | even/odd minor convention is policy, not format           |
-| 17  | Apache HTTP  | `2.4.59`     | `SemVerLayout`         | strict    |                                                           |
-| 18  | Redis        | `7.2.4`      | `SemVerLayout`         | strict    |                                                           |
-| 19  | MongoDB      | `7.0.8`      | `SemVerLayout`         | strict    |                                                           |
-| 20  | SQLite       | `3.45.3`     | `SemVerLayout`         | strict    |                                                           |
-| 21  | cURL         | `8.7.1`      | `SemVerLayout`         | strict    |                                                           |
-| 22  | FFmpeg       | `7.0.1`      | `SemVerLayout`         | strict    |                                                           |
-| 23  | Vim          | `9.1.0400`   | `VimLayout`            | strict    | `printWidth: 4` on patch                                  |
-| 24  | Dlang (DMD)  | `2.079.0`    | `DmdLayout`            | strict    | `printWidth: 3` on minor (per SPEC §7.2)                  |
-| 25  | macOS        | `14.5.1`     | `SemVerLayout`         | strict    | consumer-facing version, not the internal build (`23F79`) |
-
-## 3. New layouts introduced by this module
-
-All three share the SemVer bitfield shape — `stableFlag:1, patch:24,
-minor:24, major:15` — and the engine's `opCmp` / `toString` /
-`truncateTo`. They differ only in static `@Component.printWidth`.
-
-All three presets re-use `semVerPrereleaseSlot` and `semVerBuildSlot`
-from `sparkles.versions.semver_rules` — they happen to follow SemVer's
-prerelease/build conventions, so the same SlotValidator and
-SlotComparator function pointers apply.
-
-### 3.1 `CalVerYYMMLayout`
+A **scheme** is a hand-written struct conforming to the compile-time
+concept [`isVersionScheme!S`](./SPEC.md#6-the-scheme-concept):
+it is simultaneously the version _value_ (it satisfies
+[`isVersion!T`](./SPEC.md#3-the-version-concept) — `opCmp` +
+`toString`) and the scheme _handle_ (`Version`, `purlType`, `parse`).
+Each scheme lives in its own module under
+`sparkles.versions.schemes.*` and declares only the
+[optional capabilities](./SPEC.md#32-optional-capability-vocabulary)
+its ecosystem actually has. Generic algorithms
+(`Ranges!V`, `sort`, `satisfies`, the VERS/purl layers) introspect
+those capabilities and fall back when a capability is absent.
 
 ```d
-struct CalVerYYMMLayout
-{
-    mixin layoutBody!(
-        InternalFlag,                            bool,  "stableFlag", 1,
-        Component(printOrder: 2),                ulong, "patch",     24,
-        Component(printOrder: 1, printWidth: 2), ulong, "minor",     24,
-        Component(printOrder: 0),                ulong, "major",     15,
-    );
+import sparkles.versions.schemes.semver : SemVer;
+import sparkles.versions.schemes.pypi   : PypiVersion;
+import sparkles.versions.schemes.deb    : DebianVersion;
+import sparkles.versions.parse_error    : ParseMode;
 
-    static immutable StringSlot[] stringSlots = [
-        semVerPrereleaseSlot,
-        semVerBuildSlot,
-    ];
-}
+auto rust   = SemVer      .parse("1.78.0").value;
+auto python = PypiVersion .parse("3.13.0a1").value;
+auto apt    = DebianVersion.parse("2:4.13.1-0ubuntu0.16.04.1.1~").value;
 ```
 
-Validates with Ubuntu `24.04.1` (year=24, month=04, patch=1). Year
-fits well within 15 bits; the layout works through year 32767 if
-ever reused.
+The catalogue ships **eleven** schemes. The `Generic` scheme is the
+mandated void-hook baseline (opaque string compare, zero optional
+capabilities) that proves every generic algorithm has a working
+fallback path. The other ten map real ecosystems: one (`semver`) is the
+SemVer 2.0.0 reference that drives most package managers at the value
+level; six are D-internal compact encodings; and three (`pypi`,
+`maven`, `deb`) are _structural_ schemes whose comparison cannot be
+reduced to an integer key.
 
-### 3.2 `CalVerYYYYMMDDLayout`
+## 2. Capability matrix
 
-Same shape as 3.1 but with `printWidth: 2` on both minor and patch:
+The headline that justifies the DbI capability vocabulary: no scheme
+provides every capability, and the structural schemes (`pypi`, `maven`,
+`deb`) deliberately omit `orderKey` because their ordering is not
+integer-packable. `yes`/`no` are read against the traits in
+[SPEC §3.2](./SPEC.md#32-optional-capability-vocabulary).
 
-```d
-mixin layoutBody!(
-    InternalFlag,                            bool,  "stableFlag", 1,
-    Component(printOrder: 2, printWidth: 2), ulong, "patch",     24,
-    Component(printOrder: 1, printWidth: 2), ulong, "minor",     24,
-    Component(printOrder: 0),                ulong, "major",     15,
-);
-```
+| Scheme            | `orderKey` | `prerelease` | `components` | `build` | `nativeRange` | `loose` |
+| ----------------- | :--------: | :----------: | :----------: | :-----: | :-----------: | :-----: |
+| `semver`          |    yes     |     yes      |     yes      |   yes   |      yes      |   yes   |
+| `dmd`             |    yes     |     yes      |     yes      |   no    |      yes      |   yes   |
+| `dmd_compact`     |    yes     |     yes      |     yes      |   no    |      yes      |   no    |
+| `tiny`            |    yes     |      no      |     yes      |   no    |      yes      |   yes   |
+| `calver_yymm`     |    yes     |      no      |     yes      |   no    |      yes      |   yes   |
+| `calver_yyyymmdd` |    yes     |      no      |     yes      |   no    |      yes      |   yes   |
+| `vim`             |    yes     |      no      |     yes      |   no    |      yes      |   yes   |
+| `pypi`            |   **no**   |     yes      |     yes      |   no    |      yes      |   yes   |
+| `maven`           |   **no**   |     yes      |      no      |   no    |      yes      |   no    |
+| `deb`             |   **no**   |      no      |      no      |   no    |      yes      |   no    |
+| `generic`         |     no     |      no      |      no      |   no    |      no       |   no    |
 
-Validates with Arch Linux `2024.05.01`. Year ≤ 32767 covers
-calendar use until year 32767.
+Reading the matrix:
 
-### 3.3 `VimLayout`
+- **`orderKey: yes`** means the scheme exposes a monotonic
+  `orderKey()` returning **any unsigned integer type** whose unsigned
+  compare agrees with `opCmp` whenever the keys differ (the contract in
+  [SPEC §3.2](./SPEC.md#32-optional-capability-vocabulary)). The scheme
+  picks the narrowest width that fits its components — the 4-byte
+  schemes (`tiny`, `dmd_compact`) return a `uint`; the 8-byte
+  SemVer-shaped schemes (`semver`, `dmd`, `calver_*`, `vim`) return a
+  `ulong` — and generic code reads the width back through
+  `OrderKeyType!T`. Generic algorithms use the key for radix sort,
+  compact `Ranges!V` bounds (stored in the scheme's own narrow key
+  type), and a fast `opCmp` pre-check. The three structural schemes
+  cannot satisfy this contract for any width (see §3.8–§3.10) so they
+  omit it; their `opCmp` does the full structural walk.
+- **`components: yes`** means the scheme declares an
+  `enum string[] components` naming its numeric fields, most-significant
+  first ([SPEC §3.2](./SPEC.md#32-optional-capability-vocabulary)). Arity
+  is free — the SemVer-shaped schemes declare `["major","minor","patch"]`
+  and the calendar schemes declare `["year","month","day"]`. Only the
+  former additionally satisfy `hasSemVerComponents`, so only they get the
+  caret `^` / tilde `~` operators; the calendar schemes still get generic
+  iteration, compare, and `truncateTo` by component name. `maven` and
+  `deb` declare no list (their token models have no fixed ordered
+  components), and `generic` is opaque.
+- **`build: yes`** appears on `semver` alone — it is the only shipped
+  scheme that carries SemVer §10 build metadata excluded from ordering.
+  PyPI local versions (`+local`) _do_ participate in ordering, so they
+  are modelled as part of the version proper, not as `hasBuildMetadata`
+  (see §3.8).
+- **`nativeRange`/`loose`** are _scheme_ capabilities
+  ([SPEC §6.2](./SPEC.md#62-optional-scheme-capabilities)): a scheme that
+  only parses exact versions is still a valid `isVersionScheme!S`. The
+  six SemVer-shaped internal schemes inherit the SemVer/npm range
+  grammar for `nativeRange`.
 
-Same shape but with `printWidth: 4` on patch:
+## 3. Per-scheme catalogue
 
-```d
-mixin layoutBody!(
-    InternalFlag,                            bool,  "stableFlag", 1,
-    Component(printOrder: 2, printWidth: 4), ulong, "patch",     24,
-    Component(printOrder: 1),                ulong, "minor",     24,
-    Component(printOrder: 0),                ulong, "major",     15,
-);
-```
+Each subsection records: the purl `type` string, real-world example
+strings, ordering rules and edge cases, the declared capabilities (and,
+for structural schemes, _why_ `orderKey` is omitted), parse modes, the
+native-range grammar where applicable, and provenance.
 
-Validates with Vim `9.1.0400`. Patch fits well within 24 bits (max
-16,777,215) — Vim's running patch counter is currently in the
-hundreds, with millennia of headroom.
+### 3.1 `semver` — `SemVer` (Semantic Versioning 2.0.0)
 
-## 4. Existing layouts re-used by presets
+- **purl type:** `semver`. The same value grammar drives `npm`,
+  `cargo`, `gem`, `composer`, `golang`, `hex`, `conan`, `nginx`,
+  `mozilla`, and `github` — those purl types map to this scheme via the
+  [purl→scheme table](./SPEC.md#10-purl-interop) while keeping their
+  own native-range dialects.
+- **Examples:** `20.13.1` (Node.js), `1.78.0` (Rust), `1.30.0`
+  (Kubernetes), `17.3.0` (Angular), `18.3.1` (React), `6.8.9` (Linux),
+  `2.45.1` (Git), `8.3.7` (PHP), `3.3.1` (Ruby), `1.26.0` (Nginx),
+  `2.4.59` (Apache httpd), `7.2.4` (Redis), `7.0.8` (MongoDB), `3.45.3`
+  (SQLite), `8.7.1` (cURL), `7.0.1` (FFmpeg), `14.5.1` (macOS), `26.1.1`
+  (Docker). With prerelease/build: `1.0.0-rc.1`, `1.0.0-alpha.1+build.5`.
+- **Ordering (SemVer §11):** compare `major`, then `minor`, then
+  `patch` numerically; a version _with_ a prerelease has **lower**
+  precedence than the same `major.minor.patch` without one
+  (`1.0.0-alpha < 1.0.0`); prerelease identifiers compare per SemVer
+  §11.4 (numeric identifiers numerically, alphanumeric lexically,
+  numeric < alphanumeric, more fields wins on a shared prefix); build
+  metadata (`+…`) is **ignored** in ordering (SemVer §10).
+- **Edge cases:** `major` dominates everything —
+  `2.0.0-alpha > 1.999.999`. Leading zeroes in numeric identifiers are
+  rejected in strict mode.
+- **Capabilities:** `orderKey` yes — the
+  `major:minor:patch:has-no-prerelease` shape packs into a `ulong`
+  with the stable-flag at the LSB, so unsigned compare reproduces SemVer
+  precedence up to the prerelease-identifier tiebreak (equal keys fall
+  through to the full `opCmp`). `prerelease` yes, `components` yes,
+  `build` yes. `nativeRange` yes (node-semver grammar). `loose` yes.
+- **Parse modes:** _strict_ follows SemVer 2.0.0 exactly. _loose_
+  additionally accepts a leading `v` (`v1.2.3`) and partial versions
+  (`1`, `1.2`), infilling missing components with `0` — this is how
+  PostgreSQL `16.3` round-trips.
+- **Native range grammar (node-semver subset):** caret `^1.2.0`, tilde
+  `~1.2.0`, wildcard `1.2.x` / `1.*`, hyphen `1.2.0 - 1.5.0`, union
+  `||`, AND-by-space `>=1.2.0 <2.0.0`, plain comparators
+  `>` `>=` `<` `<=` `=`. Prerelease-in-range follows the node-semver
+  rule (a prerelease satisfies a comparator only when some comparator in
+  the same set names a prerelease of the same `major.minor.patch`).
+- **Provenance:** [semver.org 2.0.0](https://semver.org/spec/v2.0.0.html);
+  node-semver grammar at
+  [github.com/npm/node-semver](https://github.com/npm/node-semver).
+  Example strings checked against upstream releases
+  (nodejs/node, rust-lang, kubernetes, git, php, etc.).
 
-- **`SemVerLayout`** — strict SemVer 2.0.0. Covers 19 part-1
-  entries directly (entries 1–5, 10, 12–22, 25) plus PostgreSQL
-  (entry 11) via `ParseMode.loose` for the missing patch.
-- **`DmdLayout`** (with `printWidth: 3` on minor per SPEC §7.2) —
-  covers Dlang `2.079.0` (entry 24). The same layout handles
-  contemporary DMD versions like `2.111.0` without padding.
+### 3.2 `dmd` — `Dmd` (D compiler internal)
 
-## 5. Deferred from this module
+- **purl type:** none (D-internal; not published to a package registry).
+- **Examples:** `2.111.0`, `2.079.0`. The minor field is printed
+  zero-padded to **3 digits** (`079`), while values ≥ 100 print at their
+  natural width (`111`).
+- **Ordering:** standard 3-component numeric compare with SemVer-style
+  prerelease tiebreak; the zero-padding is a _formatting_ property only
+  and does not affect ordering (`2.079.0` and a hypothetical `2.79.0`
+  would compare equal numerically — but the parser only admits the
+  3-digit form).
+- **Capabilities:** `orderKey` yes, `prerelease` yes, `components` yes.
+  `build` **no** (DMD releases carry no build metadata). `nativeRange`
+  yes — SemVer-shaped, so it inherits the SemVer/npm range grammar.
+  `loose` yes.
+- **Parse modes:** _strict_ requires the 3-digit minor; _loose_ relaxes
+  the leading-`v` and partial-version rules as for `semver`.
+- **Provenance:** [dlang.org/changelog](https://dlang.org/changelog/)
+  (`2.079.0` and `2.111.0` release notes).
 
-### 5.1 Bucket F — pseudo-SemVer with hyphenless prerelease
+### 3.3 `dmd_compact` — `DmdCompact` (4-byte bitfield encoding)
 
-Catalogued entries 6 (Go) and 7 (Python) both feature alphanumeric
-prerelease segments without the SemVer `-` separator. Both
-catalogued example strings are **wrong-format** as written, per
-provenance check (§6); the corrected forms are:
+- **purl type:** none (D-internal compact storage).
+- **Examples:** `2.111.0`, `2.111.0-beta.2`, `2.111.0-rc.3`.
+- **Encoding:** a 4-byte packed integer. The prerelease is encoded as a
+  2-bit _phase_ (`beta` < `rc` < stable) plus a small number, exploiting
+  the fact that DMD prereleases follow the constrained grammar `beta.N`
+  / `rc.N`. Because the `(phase, num)` pair sits just below the stable
+  marker in the packed integer, a single unsigned compare yields
+  `2.111.0-beta.N < 2.111.0-rc.M < 2.111.0`.
+- **Ordering:** entirely via the packed integer; the phase encoding is
+  monotone by construction.
+- **Capabilities:** `orderKey` yes — the 4-byte packed integer _is_ the
+  order key, so `OrderKeyType!DmdCompact` is `uint`. `prerelease` yes,
+  `components` yes. `build` **no**. `nativeRange` yes (SemVer-shaped).
+  `loose` **no** — the compact encoding admits only the exact canonical
+  forms it can represent, so there is no lenient parse.
+- **Edge cases:** the reserved 4th phase code is rejected by the parser;
+  prerelease numbers beyond the encodable range are a parse error rather
+  than a silent truncation.
+- **Provenance:** DMD prerelease tags on
+  [github.com/dlang/dmd/releases](https://github.com/dlang/dmd/releases)
+  (`v2.111.0-beta.1`, `v2.111.0-rc.1`, …).
 
-| #   | Product        | Catalogued (wrong) | Real-world form           |
-| --- | -------------- | ------------------ | ------------------------- |
-| 6   | Go             | `1.22.3rc1`        | `go1.22rc1` or `go1.22.3` |
-| 7   | Python         | `3.12.3a1`         | `3.13.0a1`                |
-| 35  | OpenSSL legacy | `1.1.1w`           | `1.1.1w` (real)           |
-| 36  | OpenSSH        | `9.7p1`            | `9.7p1` (real)            |
-| 37  | Unity          | `2023.2.1f1`       | `2023.2.1f1` (real)       |
+### 3.4 `tiny` — `Tiny` (4-byte, no prerelease)
 
-Supporting these requires the parser to invoke a layout-supplied
-custom tokeniser at the numeric→alphanumeric boundary (a per-layout
-`parse` hook, already a documented engine extension point — see
-SPEC §8 item 6). The implementation is its own design problem and
-will land as a follow-up milestone using the corrected example
-strings above for tests.
+- **purl type:** none (internal storage-sensitive use).
+- **Examples:** `7.8.9`.
+- **Ordering:** three numeric components packed into 4 bytes; plain
+  unsigned compare.
+- **Capabilities:** `orderKey` yes — the three components pack into 4
+  bytes, so `OrderKeyType!Tiny` is `uint`. `components` yes. `prerelease`
+  **no**, `build` **no**. `nativeRange` yes (SemVer-shaped grammar over
+  the three components). `loose` yes (partial versions infill with `0`).
+- **Provenance:** internal; no external ecosystem. The example exercises
+  the no-prerelease, no-build packed path.
 
-### 5.2 Part 2 — capabilities beyond the 64-bit fast path
+### 3.5 `calver_yymm` — `CalVerYYMM` (Ubuntu-style CalVer)
 
-The 25 entries in [§8.2](#82-part-2--deferred-schemes)
-require one or more of:
+- **purl type:** none (calendar scheme; Ubuntu does not publish a purl
+  type for the distro version itself).
+- **Examples:** `24.04.1` (Ubuntu 24.04.1 LTS). The month is printed
+  zero-padded to **2 digits** (`04`).
+- **Ordering:** numeric compare on `(year, month, patch)` — chronological
+  because the fields are most-significant-first.
+- **Capabilities:** `orderKey` yes. `components` yes — declared honestly
+  as `["year","month","patch"]`, so `hasComponents` holds (it gets
+  generic compare and `truncateTo!"month"`) but `hasSemVerComponents` does
+  **not** (a calendar version has no caret/tilde). `prerelease` **no**,
+  `build` **no**. `nativeRange` yes. `loose` yes.
+- **Edge cases:** the 2-digit month is a formatting width, not a range
+  constraint — `24.4.1` is not accepted in strict mode because the
+  canonical form pads the month.
+- **Provenance:** [ubuntu.com](https://ubuntu.com/) point-release
+  announcements (24.04.1 LTS, August 2024).
 
-- **128-bit core (`Cent`)** for 4-part versions: Windows
-  `10.0.19045.3324`, Chrome `125.0.6422.60`, .NET Assemblies
-  `8.0.0.0`, MS Office `16.0.14326.20404`, Visual Studio
-  `17.8.34309.116`. (RATIONALE §4.2 dropped `Cent` from the first
-  release.)
-- **Non-power-of-two layout sizes**: Eclipse IDE `2024-03`
-  (2 components), Maya `2025` (1 component). (RATIONALE §4.5
-  restricts layouts to 1/2/4/8 bytes.)
-- **Pure-alphanumeric fallback** — versions that bypass the
-  bit-packed core entirely: iOS `21F79`, macOS internal `23F79`,
-  Android `UP1A.231005.007`.
-- **Epoch / dist-tag prefixes**: Debian `1:1.2.3-4+deb12u1`,
-  RPM `1.0-1.el9.x86_64`. Would need a new UDA for an epoch
-  component above major.
-- **Prefix stripping**: JetBrains `IU-241.14494.240`, X11
-  `X11R6.8.2`.
+### 3.6 `calver_yyyymmdd` — `CalVerYYYYMMDD` (Arch-style CalVer)
 
-Each is a structural decision tracked in
-[RATIONALE §5](./RATIONALE.md#5-open-questions). The
-catalogue is retained for reference and as the test corpus for any
-future milestone that admits these schemes.
+- **purl type:** none (calendar scheme).
+- **Examples:** `2024.05.01` (Arch Linux monthly ISO). Both month and
+  day print zero-padded to **2 digits**.
+- **Ordering:** numeric compare on `(year, month, day)`.
+- **Capabilities:** `orderKey` yes. `components` yes — declared as
+  `["year","month","day"]`; `hasComponents` holds, `hasSemVerComponents`
+  does **not** (no caret/tilde for a date version). `prerelease` **no**,
+  `build` **no**. `nativeRange` yes. `loose` yes.
+- **Provenance:**
+  [archlinux.org/releng/releases](https://archlinux.org/releng/releases/)
+  (monthly ISO snapshots).
 
-Two part-2 entries are themselves wrong-format as catalogued:
+### 3.7 `vim` — `VimVer` (4-digit zero-padded patch)
 
-- Entry 29 Java `21.0.1.2` — modern Java uses 3-part + build
-  (`21.0.1+12`).
-- Entry 50 Safari `17.4.1.1` — ships as `17.4.1` (optionally with
-  a WebKit suffix `(19618.x.x.x)`).
+- **purl type:** none (Vim's patch scheme is project-specific).
+- **Examples:** `9.1.0400` (Vim patch 9.1.0400). The patch field prints
+  zero-padded to **4 digits**.
+- **Ordering:** numeric compare on `(major, minor, patch)`.
+- **Capabilities:** `orderKey` yes, `components` yes. `prerelease`
+  **no**, `build` **no**. `nativeRange` yes. `loose` yes.
+- **Edge cases:** the 4-digit patch is a formatting width; Vim's running
+  patch counter has millennia of headroom in the packed field.
+- **Provenance:** [github.com/vim/vim](https://github.com/vim/vim)
+  release tags (patch `9.1.0400`).
 
-Two more are _plausible but not exact_:
+### 3.8 `pypi` — `PypiVersion` (PEP 440) — structural, no `orderKey`
 
-- Entry 27 Visual Studio `17.8.34309.116` — format matches the
-  scheme but the exact build number was not confirmed against a
-  primary source.
-- Entry 48 OpenZFS `2.2.3-1` — the upstream git tag is
-  `zfs-2.2.3`; the `-1` is distro-packaging suffix.
+- **purl type:** `pypi`.
+- **Examples:** `3.13.0a1` (alpha), `1.0.0.post1` (post-release),
+  `2.0.0.dev1` (dev-release), `1.0.0+local` (local version label),
+  `1!2.0.0` (explicit epoch 1).
+- **Ordering (PEP 440):** compare lexicographically by **structured
+  segments** in this order: `epoch`, the `release` tuple (numeric,
+  zero-padded to equal length), then the pre/post/dev ranking, then the
+  local version. Within a release, the segment classes sort:
 
-## 6. Provenance
+  ```
+  1.dev0 < 1.0.dev456 < 1.0a1 < 1.0a2.dev456 < 1.0a12 < 1.0b1
+        < 1.0b2 < 1.0rc1 < 1.0 < 1.0.post456 < 1.0.15 < 1.1.dev1
+  ```
 
-Every catalogued example was fact-checked against an authoritative
-source (project releases / git tags / official changelogs / OCI
-registries) before being baked into this catalogue. The verdict
-table for all 50 entries in the source-material catalogue (§8):
+  Key facts: a **dev** release sorts _before_ a pre-release of the same
+  version; a **post** release sorts _after_ the final release; a
+  **local** version (`+local`) sorts _after_ the same public version,
+  and a numeric local segment outranks a lexicographic one. An explicit
+  **epoch** dominates everything (`1!1.0 > 1.0`).
 
-| #   | Product            | Claimed example     | Verdict            | Authoritative example (if different) | Source                                                                      |
-| --- | ------------------ | ------------------- | ------------------ | ------------------------------------ | --------------------------------------------------------------------------- |
-| 1   | Node.js            | `20.13.1`           | confirmed          |                                      | github.com/nodejs/node releases                                             |
-| 2   | Rust               | `1.78.0`            | confirmed          |                                      | blog.rust-lang.org 2024-05-02                                               |
-| 3   | Kubernetes         | `1.30.0`            | confirmed          |                                      | github.com/kubernetes/kubernetes                                            |
-| 4   | Angular            | `17.3.0`            | confirmed          |                                      | github.com/angular/angular releases                                         |
-| 5   | React              | `18.3.1`            | confirmed          |                                      | github.com/facebook/react releases                                          |
-| 6   | Go                 | `1.22.3rc1`         | wrong-format       | `go1.22rc1` or `go1.22.3`            | go.dev/dl                                                                   |
-| 7   | Python             | `3.12.3a1`          | wrong-format       | `3.13.0a1`                           | python.org/downloads                                                        |
-| 8   | Ubuntu             | `24.04.1`           | confirmed          |                                      | ubuntu.com 24.04.1 LTS Aug 2024                                             |
-| 9   | Arch Linux         | `2024.05.01`        | confirmed          |                                      | archlinux.org/releng/releases                                               |
-| 10  | Linux Kernel       | `6.8.9`             | confirmed          |                                      | kernel.org                                                                  |
-| 11  | PostgreSQL         | `16.3`              | confirmed          |                                      | postgresql.org release notes                                                |
-| 12  | Docker             | `26.1.1`            | confirmed          |                                      | github.com/moby/moby releases                                               |
-| 13  | Git                | `2.45.1`            | confirmed          |                                      | github.com/git/git tags                                                     |
-| 14  | PHP                | `8.3.7`             | confirmed          |                                      | php.net/downloads                                                           |
-| 15  | Ruby               | `3.3.1`             | confirmed          |                                      | ruby-lang.org news                                                          |
-| 16  | Nginx              | `1.26.0`            | confirmed          |                                      | nginx.org/en/CHANGES                                                        |
-| 17  | Apache HTTP        | `2.4.59`            | confirmed          |                                      | httpd.apache.org                                                            |
-| 18  | Redis              | `7.2.4`             | confirmed          |                                      | github.com/redis/redis releases                                             |
-| 19  | MongoDB            | `7.0.8`             | confirmed          |                                      | github.com/mongodb/mongo                                                    |
-| 20  | SQLite             | `3.45.3`            | confirmed          |                                      | sqlite.org/changes.html                                                     |
-| 21  | cURL               | `8.7.1`             | confirmed          |                                      | curl.se/changes.html                                                        |
-| 22  | FFmpeg             | `7.0.1`             | confirmed          |                                      | ffmpeg.org/download                                                         |
-| 23  | Vim                | `9.1.0400`          | confirmed          |                                      | github.com/vim/vim (patch 9.1.0400, GUI test CI fix)                        |
-| 24  | Dlang (DMD)        | `2.079.0`           | confirmed          |                                      | dlang.org/changelog/2.079.0                                                 |
-| 25  | macOS              | `14.5.1`            | confirmed          |                                      | support.apple.com                                                           |
-| 26  | Windows            | `10.0.19045.3324`   | confirmed          |                                      | KB5029244, Aug 2023                                                         |
-| 27  | Visual Studio      | `17.8.34309.116`    | plausible          |                                      | learn.microsoft.com VS2022 history                                          |
-| 28  | Google Chrome      | `125.0.6422.60`     | confirmed          |                                      | chromereleases.google                                                       |
-| 29  | Java (Modern)      | `21.0.1.2`          | wrong-format       | `21.0.1+12` (3-part + build)         | openjdk.org/projects/jdk/21                                                 |
-| 30  | Microsoft Office   | `16.0.14326.20404`  | confirmed          |                                      | learn.microsoft.com officeupdates (v2108)                                   |
-| 31  | .NET Assemblies    | `8.0.0.0`           | confirmed          |                                      | learn.microsoft.com .NET 8                                                  |
-| 32  | MuseScore          | `4.2.1-240230937`   | confirmed          |                                      | github.com/musescore/MuseScore releases                                     |
-| 33  | TeX                | `3.14159265`        | confirmed          |                                      | tug.org (Knuth π-convergent)                                                |
-| 34  | Metafont           | `2.7182818`         | confirmed          |                                      | tug.org (Knuth e-convergent)                                                |
-| 35  | OpenSSL            | `1.1.1w`            | confirmed          |                                      | openssl.org/news Sep 2023                                                   |
-| 36  | OpenSSH            | `9.7p1`             | confirmed          |                                      | openssh.com/releasenotes                                                    |
-| 37  | Unity              | `2023.2.1f1`        | confirmed          |                                      | unity.com/releases/editor/whats-new/2023.2.1f1                              |
-| 38  | Perl (Legacy)      | `5.004_05`          | confirmed          |                                      | metacpan.org perl history                                                   |
-| 39  | Debian Packages    | `1:1.2.3-4+deb12u1` | confirmed (format) |                                      | Debian Policy 5.6.12                                                        |
-| 40  | RPM Packages       | `1.0-1.el9.x86_64`  | confirmed (format) |                                      | Fedora packaging guidelines                                                 |
-| 41  | Unreal Engine      | `5.3.2-27405482`    | confirmed          |                                      | issues.unrealengine.com (`UE5-Release-5.3-CL-27405482`)                     |
-| 42  | Eclipse IDE        | `2024-03`           | confirmed          |                                      | eclipse.org/downloads/packages                                              |
-| 43  | JetBrains IntelliJ | `IU-241.14494.240`  | confirmed          |                                      | intellij-support.jetbrains.com (`2024.1`, Mar 28 2024)                      |
-| 44  | X11                | `X11R6.8.2`         | confirmed          |                                      | x.org/releases (Feb 2005)                                                   |
-| 45  | Apple iOS Builds   | `21F79`             | confirmed          |                                      | developer.apple.com/news/releases (iOS 17.5)                                |
-| 46  | macOS Builds       | `23F79`             | confirmed          |                                      | ipsw.dev/build/23F79 (macOS 14.5)                                           |
-| 47  | Android Builds     | `UP1A.231005.007`   | confirmed          |                                      | source.android.com (`android-14.0.0_r1`)                                    |
-| 48  | OpenZFS            | `2.2.3-1`           | plausible          |                                      | github.com/openzfs/zfs/releases/tag/zfs-2.2.3 (upstream tag is `zfs-2.2.3`) |
-| 49  | AutoDesk Maya      | `2025`              | confirmed          |                                      | autodesk.com/products/maya                                                  |
-| 50  | Safari             | `17.4.1.1`          | wrong-format       | `17.4.1`                             | support.apple.com/en-us/120888                                              |
+- **Why `orderKey` is omitted:** the comparison is genuinely
+  _structural_. The release tuple is unbounded in length, the
+  pre/post/dev ranking is a small enum _crossed with_ an unbounded
+  number, and the local version is an arbitrary dot-separated mix of
+  numeric and lexicographic segments. There is no fixed-width integer
+  whose unsigned compare reproduces this order, so `pypi` declares no
+  `hasOrderKey` primitive and its `opCmp` walks the structure. Generic
+  `sort` and `Ranges!PypiVersion` therefore use the comparison-based
+  fallback path — exactly the contract the DbI design guarantees.
+- **Capabilities:** `prerelease` yes (`isPrerelease` true for
+  `aN`/`bN`/`rcN`/`.devN`), `components` yes (the `release` tuple
+  exposes `major`/`minor`/`patch`). `build` **no** — the local version
+  participates in ordering, so it is _not_ SemVer-style build metadata.
+  `orderKey` **no**. `nativeRange` yes. `loose` yes (PEP 440
+  normalisation: case-folding, `v`-prefix stripping, separator
+  canonicalisation `1.0-a1` → `1.0a1`).
+- **Native range grammar (PEP 440 specifier set):** comma-separated AND
+  of clauses using `==`, `!=`, `<`, `<=`, `>`, `>=`, `~=` (compatible
+  release), and `===` (arbitrary equality). `~=1.4.5` means
+  `>=1.4.5, ==1.4.*`. Trailing `.*` wildcards are supported on `==`/`!=`.
+- **Provenance:**
+  [PEP 440 / packaging.python.org version specifiers](https://packaging.python.org/en/latest/specifications/version-specifiers/)
+  (canonical ordering example verified verbatim). Example strings
+  checked against [python.org/downloads](https://www.python.org/downloads/)
+  (CPython `3.13.0a1`).
 
-In summary: 23/25 part-1 entries are exact confirmations; 23/25
-part-2 entries are exact or format-confirmations. Four part-2
-entries (#27, #29, #48, #50) are _plausible_ or _wrong-format_;
-they affect deferred work only.
+### 3.9 `maven` — `MavenVersion` (ComparableVersion) — structural, no `orderKey`
 
-## 7. Adding a new preset
+- **purl type:** `maven`.
+- **Examples:** `1.0`, `1.0-SNAPSHOT`, `1.0-alpha-1`, `1.0-rc1`,
+  `1.0-1`.
+- **Ordering (Maven `ComparableVersion`):** the string is tokenised at
+  `.`, `-`, `_`, and digit↔letter transitions; trailing "null" tokens
+  (`0`, empty, `final`, `ga`, `release`) are trimmed so that
+  `1.0.0 == 1`. Numeric tokens compare numerically; qualifier tokens
+  compare by the fixed rank:
 
-To add a layout for a new versioning scheme:
+  ```
+  alpha < beta < milestone < rc (= cr) < snapshot < ""(= ga = final = release) < sp
+  ```
 
-1. Define the `Layout` struct in
-   `libs/versions/src/sparkles/versions/presets.d` per SPEC §3
-   (bitfields, `@Component` UDAs, optional `@InternalFlag`,
-   optional string slots).
-2. Public-import it from the module.
-3. Add a `@("presets.<LayoutName>.<scenario>") @safe pure nothrow
-@nogc unittest` block parsing the real-world example string and
-   asserting `parsed.toString` either round-trips verbatim or
-   emits a documented normalised form.
-4. Update §2 (coverage table) and §6 (provenance) of this document
-   with the new entry and an authoritative source link.
+  Hence `1.0-alpha-1 < 1.0-beta-1 < 1.0-milestone-1 < 1.0-rc1 <
+1.0-SNAPSHOT < 1.0 < 1.0-sp1`. Comparison is **case-insensitive**
+  (`1.0-RC1 == 1.0-rc1`), and `alpha`/`beta`/`milestone` may be
+  abbreviated `a`/`b`/`m` when directly followed by a number.
 
-## 8. Source-material appendix
+- **Why `orderKey` is omitted:** like PyPI, the order is structural —
+  an unbounded alternation of numeric and qualifier tokens with the "ga
+  beats snapshot beats pre-release" rule and trailing-null trimming. No
+  fixed-width integer key reproduces it, so `maven` declares no
+  `hasOrderKey` and `opCmp` compares token lists.
+- **Capabilities:** `prerelease` yes (the qualifier rank below the
+  empty/`ga` release). `components` **no** — `MavenVersion` declares no
+  `components` list because its token model has no fixed ordered set of
+  numeric fields (the token count and kinds vary per value), and the
+  trait is all-or-nothing so a sometimes-available prefix does not
+  qualify. `build` **no**, `orderKey` **no**. `nativeRange` yes
+  (interval notation, below). `loose` **no** — `ComparableVersion`
+  already accepts essentially anything, so there is no separate lenient
+  mode.
+- **Native range grammar (Maven version requirements):** bracket
+  interval notation — `[1.0]` (exactly), `(,1.0]` (≤), `[1.2,1.3]`
+  (closed), `[1.0,2.0)` (half-open), `[1.5,)` (≥), and unions via
+  comma-separated intervals `(,1.0],[1.2,)`. Caveat preserved from the
+  spec: because `2.0-rc1 < 2.0`, `[1.0,2.0)` _includes_ `2.0-rc1`.
+- **Provenance:**
+  [maven.apache.org POM version order specification](https://maven.apache.org/pom.html#version-order-specification)
+  and the `maven-artifact` `ComparableVersion` test corpus.
 
-The raw analyst catalogue, inlined verbatim. The notes column is
-the analyst's commentary about what each entry would exercise in
-the DbI engine — it predates several design decisions (e.g.
-references to `@WidthTracker` and `SEMANTIC_MASK`, both of which we
-dropped per [RATIONALE §4.1](./RATIONALE.md#41-static-componentprintwidth-instead-of-runtime-width-tracker-bits)).
-Treat the notes as historical context, not as current engine
-vocabulary; the canonical mapping is §2 above and the verdicts in
-§6.
+### 3.10 `deb` — `DebianVersion` (dpkg) — structural, no `orderKey`
 
-### 8.1 Part 1 — 64-bit fast-path compatible
+- **purl type:** `deb`.
+- **Examples:** `1.2.3-4` (upstream `1.2.3`, Debian revision `4`),
+  `2:4.13.1-0ubuntu0.16.04.1.1~` (epoch 2, upstream `4.13.1`, an Ubuntu
+  security revision ending in `~`).
+- **Structure:** `[epoch:]upstream_version[-debian_revision]`. The epoch
+  is an optional unsigned integer (default `0`) compared first; then the
+  upstream version; then the Debian revision.
+- **Ordering (dpkg algorithm):** epoch numerically first; then upstream
+  and revision are each compared left-to-right by alternating
+  _non-digit_ and _digit_ runs. In a non-digit run, all letters sort
+  before all non-letters, and the **tilde `~` sorts before everything —
+  even the end of the string**, so `1.0~beta1 < 1.0` and
+  `~~ < ~~a < ~ < "" < a`. In a digit run, leading zeroes are ignored
+  and an empty run counts as `0`.
+- **Why `orderKey` is omitted:** the dpkg algorithm is the canonical
+  example of a _non-packable_ order — the `~`-before-empty rule alone
+  defeats any fixed-width integer key (a shorter string can sort _after_
+  a longer one that ends in `~`). `deb` declares no `hasOrderKey`; its
+  `opCmp` implements the dpkg two-phase walk directly.
+- **Capabilities:** `nativeRange` yes (dpkg relations). `prerelease`
+  **no** (the `~` mechanism subsumes it but is not exposed as an
+  `isPrerelease` boolean), `components` **no** (the upstream version is
+  free-form, not a guaranteed triple), `build` **no**, `orderKey`
+  **no**, `loose` **no** (dpkg parsing is already permissive; there is
+  no stricter mode to relax from).
+- **Native range grammar (dpkg relations):** the comparison relations
+  `>=`, `<=`, `<<` (strictly less), `>>` (strictly greater), `=`, each
+  followed by a version, as used in `dpkg --compare-versions` and
+  `Depends:` fields (e.g. `>= 2.0`, `<< 3.0`).
+- **Provenance:**
+  [Debian Policy §5.6.12 (version)](https://www.debian.org/doc/debian-policy/ch-controlfields.html#version)
+  and the `dpkg --compare-versions` algorithm (`~`-ordering example
+  verified verbatim).
 
-<!-- prettier-ignore-start -->
+### 3.11 `generic` — `Generic` (void-hook baseline)
 
-| #   | Product            | Scheme Type            | Example         | Analyst notes                                                                                            |
-| --- | ------------------ | ---------------------- | --------------- | -------------------------------------------------------------------------------------------------------- |
-| 1   | Node.js            | Strict SemVer          | `20.13.1`       | Baseline: validates standard 15/24/24 bitpacking and strict equality.                                    |
-| 2   | Rust               | Strict SemVer          | `1.78.0`        | Baseline: validates standard 3-part layout.                                                              |
-| 3   | Kubernetes         | Strict SemVer          | `1.30.0`        | Baseline: validates standard 3-part layout.                                                              |
-| 4   | Angular            | Strict SemVer          | `17.3.0`        | Baseline: validates standard 3-part layout.                                                              |
-| 5   | React              | Strict SemVer          | `18.3.1`        | Baseline: validates standard 3-part layout.                                                              |
-| 6   | Go                 | Pseudo-SemVer          | `1.22.3rc1`     | Parser test: lacks standard hyphen. Parser must detect `rc1`, push to string slot, set stable bit.       |
-| 7   | Python             | PEP 440                | `3.12.3a1`      | Parser test: lacks standard hyphen. Parser must split `a1` into the string slot.                         |
-| 8   | Ubuntu             | CalVer (YY.MM.Patch)   | `24.04.1`       | Width test: validates `@Component(printWidth: 2)` on minor to preserve the `04`.                         |
-| 9   | Arch Linux         | CalVer (YYYY.MM.DD)    | `2024.05.01`    | Width test: 2024 fits 15-bit major; preserves leading zeroes on minor and patch.                         |
-| 10  | Linux Kernel       | Strict 3-Part          | `6.8.9`         | Baseline: validates standard layout.                                                                     |
-| 11  | PostgreSQL         | 2-Part                 | `16.3`          | Truncation test: parser implicitly sets patch = 0 in loose mode. Validates `truncateTo!"minor"`.         |
-| 12  | Docker             | CalVer (YY.MM.Patch)   | `26.1.1`        | Baseline: validates standard layout (minor not zero-padded in this example).                             |
-| 13  | Git                | Strict 3-Part          | `2.45.1`        | Baseline: validates standard layout.                                                                     |
-| 14  | PHP                | Strict 3-Part          | `8.3.7`         | Baseline: validates standard layout.                                                                     |
-| 15  | Ruby               | Strict 3-Part          | `3.3.1`         | Baseline: validates standard layout.                                                                     |
-| 16  | Nginx              | Even/Odd Minor         | `1.26.0`        | Baseline: validates standard layout. (Stable/dev distinguished by minor parity — policy, not format.)    |
-| 17  | Apache HTTP        | Strict 3-Part          | `2.4.59`        | Baseline: validates standard layout.                                                                     |
-| 18  | Redis              | Strict SemVer          | `7.2.4`         | Baseline: validates standard layout.                                                                     |
-| 19  | MongoDB            | Strict 3-Part          | `7.0.8`         | Baseline: validates standard layout.                                                                     |
-| 20  | SQLite             | Strict 3-Part          | `3.45.3`        | Baseline: validates standard layout.                                                                     |
-| 21  | cURL               | Strict 3-Part          | `8.7.1`         | Baseline: validates standard layout.                                                                     |
-| 22  | FFmpeg             | Strict 3-Part          | `7.0.1`         | Baseline: validates standard layout.                                                                     |
-| 23  | Vim                | 3-Part Zero-Padded     | `9.1.0400`      | Width test: validates 4-digit zero-padded patch via `@Component(printWidth: 4)`.                         |
-| 24  | Dlang (DMD)        | Zero-Padded Minor      | `2.079.0`       | Width test: 3-digit zero-padded minor via `@Component(printWidth: 3)`. `2.079.0` and `2.111.0` coexist.  |
-| 25  | macOS              | Strict 3-Part          | `14.5.1`        | Baseline: validates standard layout (consumer-facing version).                                           |
+- **purl type:** `generic`.
+- **Examples:** any opaque string — `"build-2024-05-30"`,
+  `"r1234"`, `"snapshot-xyz"`.
+- **Ordering:** plain lexicographic (code-point) comparison of the raw
+  string. No structure is parsed.
+- **Capabilities:** **none.** `orderKey` no, `prerelease` no,
+  `components` no, `build` no, `nativeRange` no, `loose` no. This is the
+  mandated [void-hook baseline](./SPEC.md#8-shipped-schemes):
+  it provides only the required `isVersion!T` surface (`opCmp` +
+  `toString`) and therefore exercises every generic algorithm's
+  fallback path — comparison-based `sort`, comparison-based
+  `Ranges!Generic`, and the "no native range, exact versions only"
+  branch of the VERS/purl layers.
+- **Parse:** `parse` always succeeds (any string is a valid `Generic`);
+  there is no `parseLoose` or `parseNativeRange`.
+- **Provenance:** none required — it is a structural baseline, not an
+  ecosystem mapping.
 
-<!-- prettier-ignore-end -->
+## 4. Adding a new scheme
 
-### 8.2 Part 2 — deferred schemes
+A scheme is just a struct conforming to
+[`isVersionScheme!S`](./SPEC.md#6-the-scheme-concept).
+To add one:
 
-These 25 schemes require engine capabilities not currently shipped
-(see [§5.2](#52-part-2--capabilities-beyond-the-64-bit-fast-path)).
-Retained for reference and as the future test corpus.
+1. **Create the module** `schemes/<purl_type>.d` (the file/module name
+   is the purl `type` where one exists, else a descriptive `snake_case`
+   name) and write the struct. Implement the _required_ surface:
 
-<!-- prettier-ignore-start -->
+   ```d
+   struct MyScheme
+   {
+       // --- isVersion!MyScheme (required) ---
+       int  opCmp(in MyScheme other) const @safe pure nothrow @nogc;
+       bool opEquals(in MyScheme other) const @safe pure nothrow @nogc;
+       size_t toHash() const @safe pure nothrow @nogc;
+       void toString(W)(ref W sink) const;
 
-| #   | Product            | Scheme Type            | Example                    | Analyst notes                                                                                              |
-| --- | ------------------ | ---------------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| 26  | Windows            | 4-Part Heavyweight     | `10.0.19045.3324`          | 128-bit test: requires `Cent` layout. Validates `core.int128.ult` / `ugt` intrinsic comparisons.           |
-| 27  | Visual Studio      | 4-Part Heavyweight     | `17.8.34309.116`           | 128-bit test: requires `Cent`. Validates parsing 4 distinct integers.                                      |
-| 28  | Google Chrome      | 4-Part Heavyweight     | `125.0.6422.60`            | 128-bit test: requires `Cent`.                                                                             |
-| 29  | Java (Modern)      | 4-Part Semantic        | `21.0.1.2`                 | 128-bit test: requires `Cent`. Maps to Feature.Interim.Update.Patch. (Actual modern form: `21.0.1+12`.)    |
-| 30  | Microsoft Office   | 4-Part Heavyweight     | `16.0.14326.20404`         | 128-bit test: requires `Cent`.                                                                             |
-| 31  | .NET Assemblies    | 4-Part Heavyweight     | `8.0.0.0`                  | 128-bit test: requires `Cent`. Maps to Major.Minor.Build.Revision.                                         |
-| 32  | MuseScore          | Massive Build Int      | `4.2.1-240230937`          | Bit-width test: the build number exceeds a 24-bit limit. Requires allocating 32 bits to the 4th component. |
-| 33  | TeX                | Infinite Precision     | `3.14159265`               | Bit-width test: minor component exceeds 20 bits. Requires bumping the minor bitfield to `uint:32` in Cent. |
-| 34  | Metafont           | Infinite Precision     | `2.7182818`                | Bit-width test: same as TeX. Validates massive single-component bitfields.                                 |
-| 35  | OpenSSL (Legacy)   | Alphanumeric Patch     | `1.1.1w`                   | String-slot parser test: fails integer parsing. Parser must strip `w`, push to slot, set stable flag.      |
-| 36  | OpenSSH            | Portable Suffix        | `9.7p1`                    | String-slot parser test: `p1` acts as a pre-release without a hyphen. Validates parser fallback.           |
-| 37  | Unity              | Alphanumeric Glue      | `2023.2.1f1`               | String-slot parser test: `f1` denotes a final release. Validates custom string-splitting before bitpack.   |
-| 38  | Perl (Legacy)      | Underscore Delimit     | `5.004_05`                 | Delimiter test: validates parser capability to accept `_` as a valid component boundary.                   |
-| 39  | Debian Packages    | Epoch Prefix           | `1:1.2.3-4+deb12u1`        | Epoch test: requires a 4th leading bitfield for epoch. Validates 128-bit layout where epoch is MSB.        |
-| 40  | RPM Packages       | Dist Tags              | `1.0-1.el9.x86_64`         | SSO capacity test: validates dual 24-byte string slots holding `el9.x86_64` inline.                        |
-| 41  | Unreal Engine      | Internal 5-Part        | `5.3.2-27405482`           | 128-bit test: 4-part layout where the 4th component is a massive build integer.                            |
-| 42  | Eclipse IDE        | Date Only              | `2024-03`                  | Layout override test: requires a 2-component layout (Major.Minor). Engine must not mandate Patch.          |
-| 43  | JetBrains IntelliJ | Prefix Alphanumeric    | `IU-241.14494.240`         | Prefix-stripping test: parser discards non-semantic `IU-` before passing to the DbI engine.                |
-| 44  | X11                | Prefix Alphanumeric    | `X11R6.8.2`                | Prefix-stripping test: parser must strip `X11R` before processing standard integers.                       |
-| 45  | Apple iOS Builds   | Pure Alphanumeric      | `21F79`                    | Non-numeric test: fails standard DbI. Validates bypass of bit-packed core; entirely string-stored.         |
-| 46  | macOS Builds       | Pure Alphanumeric      | `23F79`                    | Non-numeric test: fails standard DbI. Falls back to string-only storage.                                   |
-| 47  | Android Builds     | Pure Alphanumeric      | `UP1A.231005.007`          | Non-numeric test: fails standard DbI. Falls back to string-only storage.                                   |
-| 48  | OpenZFS            | Release Suffix         | `2.2.3-1`                  | Ambiguity test: looks like a SemVer prerelease but is a stable release iteration. Needs custom UDA.        |
-| 49  | AutoDesk Maya      | Year Only              | `2025`                     | Layout override test: requires a 1-component layout (Major). Engine scales down to `ubyte` or `ushort`.    |
-| 50  | Safari             | 4-Part Mac Schema      | `17.4.1.1`                 | 128-bit test: requires `Cent`. Validates Apple's occasional 4th-component security updates.                |
+       // --- isVersionScheme!MyScheme (required) ---
+       enum string purlType = "myscheme";
+       alias Version = MyScheme;
+       static ParseExpected!MyScheme parse(string s) @safe pure nothrow @nogc;
+   }
+   ```
 
-<!-- prettier-ignore-end -->
+2. **Declare only the optional primitives the ecosystem actually has.**
+   Add an `orderKey()` returning any unsigned integer type (pick the
+   narrowest that fits — `uint` for a 4-byte scheme, `ulong` for a
+   wider one) _only_ if the order is integer-packable and you can prove
+   `sign(a.orderKey <=> b.orderKey) == sign(a <=> b)`
+   whenever the keys differ — structural schemes like the three above
+   must **not** declare it. Add `enum string[] components` (naming the
+   numeric fields, most-significant first — e.g.
+   `["major","minor","patch"]`, or `["major","minor","build","revision"]`
+   for a 4-part scheme, or `["year","month","day"]` for CalVer) to get
+   generic compare / `truncateTo` / iteration; the leading
+   `["major","minor","patch"]` triple additionally unlocks caret/tilde
+   via `hasSemVerComponents`. Add `isPrerelease`, `build`, `parseLoose`,
+   and/or `parseNativeRange` as the scheme supports them. Absence is
+   never an error; the generic algorithms fall back.
+
+3. **Assert conformance at module scope:**
+
+   ```d
+   static assert(isVersion!MyScheme && isVersionScheme!MyScheme);
+   ```
+
+   Any regression in the required surface becomes a compile-time
+   failure.
+
+4. **Register the scheme.** Public-import it from
+   `schemes/package.d`, add it to the
+   [`AnyVersion`/`AnyRange`](./SPEC.md#11-anyversion--anyrange)
+   sum types, and — when the purl `type` differs from the scheme name —
+   add the mapping to the
+   [purl→scheme table](./SPEC.md#10-purl-interop).
+
+5. **Add tests.** A round-trip test per real-world example
+   (`parse(s).value.toString == s`, or the documented normalised form),
+   an ascending-order test asserting the ordering edge cases, and — if
+   the scheme declares `orderKey` — an equivalence test cross-checking
+   `orderKey` against the `opCmp` reference. Update §2 (capability
+   matrix) and §3 (per-scheme section) of this document, with the
+   authoritative source.
+
+## 5. Deferred schemes
+
+These are catalogued for the test corpus but **not shipped**. The
+corrected real-world example strings are recorded here so future
+implementers do not copy the wrong forms (several appeared mangled in
+the original analyst catalogue).
+
+### 5.1 Bucket F — hyphenless pseudo-SemVer
+
+Versions whose alphanumeric prerelease segment lacks the SemVer `-`
+separator. Supporting them needs a per-scheme custom tokeniser at the
+numeric→alphanumeric boundary, which is its own design problem.
+
+| Ecosystem      | Wrong form (do not use) | Correct real-world form   | Note                                             |
+| -------------- | ----------------------- | ------------------------- | ------------------------------------------------ |
+| Go             | `1.22.3rc1`             | `go1.22rc1` or `go1.22.3` | `go` prefix; prerelease glued without a hyphen   |
+| Python (alt)   | `3.12.3a1`              | `3.13.0a1`                | covered by `pypi`; listed here as the glued form |
+| OpenSSL legacy | —                       | `1.1.1w`                  | single-letter patch suffix                       |
+| OpenSSH        | —                       | `9.7p1`                   | `pN` portable suffix, no hyphen                  |
+| Unity          | —                       | `2023.2.1f1`              | `fN` "final" glue suffix                         |
+
+### 5.2 Part-2 heavyweight schemes
+
+Schemes needing wider cores, 4+ components, or pure-alphanumeric
+fallback. Tracked in
+[RATIONALE — open questions](./RATIONALE.md#6-open-questions).
+
+**Note — 4-component arity is no longer a design blocker.** With the
+list-based [`components`](./SPEC.md#32-optional-capability-vocabulary)
+capability, the 4-part schemes below (.NET, Windows, Chrome) are now
+directly _expressible_ — each declares
+`["major","minor","build","revision"]` and packs into a `ulong`
+`orderKey`. They remain unshipped only on implementation bandwidth
+(parser + native-range grammar per ecosystem), not on a missing
+abstraction. Java's `21.0.1+12` and Android's pure-alphanumeric
+`UP1A.231005.007` still need, respectively, build-metadata-aware parsing
+and a no-numeric-core fallback.
+
+| Ecosystem       | Correct real-world form | Note                                          |
+| --------------- | ----------------------- | --------------------------------------------- |
+| Java (modern)   | `21.0.1+12`             | 3-part + build; **not** the 4-part `21.0.1.2` |
+| .NET assemblies | `8.0.0.0`               | 4-part `Major.Minor.Build.Revision`           |
+| Windows         | `10.0.19045.3324`       | 4-part heavyweight                            |
+| Google Chrome   | `125.0.6422.60`         | 4-part heavyweight                            |
+| Android builds  | `UP1A.231005.007`       | pure-alphanumeric; bypasses any numeric core  |
+
+## 6. Provenance appendix
+
+Every example string baked into this catalogue was checked against an
+authoritative source before inclusion. The structural-ordering rules
+for the three non-packable schemes were verified verbatim against their
+canonical specifications.
+
+| Scheme                | What was verified                                 | Source                                                                                                                                                                |
+| --------------------- | ------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `semver`              | 2.0.0 grammar + §11 ordering; npm range grammar   | [semver.org/spec/v2.0.0](https://semver.org/spec/v2.0.0.html); [node-semver](https://github.com/npm/node-semver)                                                      |
+| `dmd` / `dmd_compact` | `2.079.0`, `2.111.0`, beta/rc prerelease tags     | [dlang.org/changelog](https://dlang.org/changelog/); [dlang/dmd releases](https://github.com/dlang/dmd/releases)                                                      |
+| `tiny`                | packed no-prerelease path                         | internal                                                                                                                                                              |
+| `calver_yymm`         | Ubuntu `24.04.1` LTS point release                | [ubuntu.com](https://ubuntu.com/)                                                                                                                                     |
+| `calver_yyyymmdd`     | Arch `2024.05.01` monthly ISO                     | [archlinux.org/releng/releases](https://archlinux.org/releng/releases/)                                                                                               |
+| `vim`                 | patch `9.1.0400`                                  | [github.com/vim/vim](https://github.com/vim/vim)                                                                                                                      |
+| `pypi`                | PEP 440 ordering example (verbatim); `3.13.0a1`   | [packaging.python.org version specifiers](https://packaging.python.org/en/latest/specifications/version-specifiers/); [python.org](https://www.python.org/downloads/) |
+| `maven`               | qualifier order + interval notation (verbatim)    | [maven.apache.org POM version order](https://maven.apache.org/pom.html#version-order-specification)                                                                   |
+| `deb`                 | dpkg `~`-ordering rule (verbatim); epoch/revision | [Debian Policy §5.6.12](https://www.debian.org/doc/debian-policy/ch-controlfields.html#version)                                                                       |
+| `generic`             | structural baseline; no ecosystem                 | n/a                                                                                                                                                                   |
+
+---
+
+→ [SPEC.md](./SPEC.md) — desired-state specification (traits, `Ranges!V`, VERS, purl)
+→ [PLAN.md](./PLAN.md) — delivery milestones
