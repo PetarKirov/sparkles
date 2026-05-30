@@ -3,518 +3,749 @@
 _Audience: first-time readers and library consumers. This document is
 self-contained — read it on its own to understand what the library
 provides. See [PLAN.md](./PLAN.md) for the delivery schedule and
-[RATIONALE.md](./RATIONALE.md) for design history and open questions._
+[RATIONALE.md](./RATIONALE.md) for design history, prior-art findings,
+and open questions. The full per-scheme catalogue — capability matrix,
+real-world examples, edge cases, and how to add a scheme — lives in
+[PRESETS.md](./PRESETS.md)._
 
 ## 1. Overview
 
-`sparkles:versions` is a Design-by-Introspection (DbI) versioning
-library for D. A single engine — the `Version(Layout)` template — is
-parameterised by a **layout type** that names the version's
-components, their bit widths, and their formatting. From a single
-implementation, the library supports:
+`sparkles:versions` is a multi-ecosystem version-and-range library for
+D. It parses, compares, and constrains the version strings of many
+package ecosystems — Semantic Versioning, PEP 440 (PyPI), Maven,
+Debian, CalVer, and several internal schemes — and interoperates with
+the [pURL](https://github.com/package-url/purl-spec) (Package URL) and
+[VERS](https://github.com/package-url/vers-spec) (version-range URI)
+specifications.
 
-- strict Semantic Versioning 2.0.0,
-- DMD-style versions with zero-padded minor/patch and constrained
-  prerelease grammar,
-- compact internal layouts for storage-sensitive use,
-- and future schemes (PEP 440, CalVer, …) without engine changes.
+The design philosophy is **hand-written per-ecosystem structs
+conforming to compile-time concepts**. Each ecosystem is a small,
+purpose-built struct (`SemVer`, `PypiVersion`, `DebianVersion`, …) that
+conforms to a minimal **required** concept, [`isVersion!T`](#3-the-version-concept).
+On top of the required surface sits an orthogonal **optional capability
+vocabulary** — `hasOrderKey`, `supportsPrerelease`, `hasComponents`,
+`hasBuildMetadata` — that each struct opts into where it makes sense.
+Generic algorithms ([`Ranges!V`](#4-the-range-concept),
+[`satisfies`](#5-operations), [`sort`](#5-operations)) are
+fallback/fast-path shells written over those capabilities.
 
-Consumers who only need standard SemVer use the pre-built
-`SemVer` alias and ignore the DbI machinery entirely. Layout authors
-follow the protocol in §3–§5 to add new versioning schemes.
-
+This is the _concept_ flavour of Design by Introspection (DbI) — the
+`std.range` / `isInputRange!R` idiom — rather than the
+shell-with-hooks flavour. The version structs are concrete; the generic
+code over them is what introspects. A scheme is just a struct conforming
+to the concepts, plus a `static assert(isVersion!S && isVersionScheme!S);`.
 For the DbI paradigm itself, see
-[`docs/guidelines/design-by-introspection-00-intro.md`](../../guidelines/design-by-introspection-00-intro.md).
-The engine is a **shell with hooks**: the layout supplies optional UDAs
-and optional members; the engine introspects to discover what each
-layout offers and adapts accordingly.
+[`docs/guidelines/design-by-introspection-01-guidelines.md`](../../guidelines/design-by-introspection-01-guidelines.md);
+for why this concept flavour replaced the earlier version-generating
+engine, see [RATIONALE §1.2](./RATIONALE.md#12-why-the-engine-over-built).
+
+A consumer who only needs SemVer imports one type and ignores
+everything else:
+
+```d
+import sparkles.versions.schemes.semver : SemVer;
+
+auto a = SemVer.parse("1.2.3-rc.1").value;
+auto b = SemVer.parse("1.2.3").value;
+assert(a < b);                       // prerelease precedes its release
+assert(a.toString == "1.2.3-rc.1");
+```
+
+Cross-scheme comparison **does not compile**: there is no
+`opCmp(SemVer, PypiVersion)`, because they are distinct nominal types.
+Callers that must hold a version of statically-unknown scheme use the
+[`AnyVersion`](#11-anyversion--anyrange) sum type and the
+explicitly-partial `compareAny`.
 
 ## 2. Package and module layout
 
-| Identifier              | Value                                  |
-| ----------------------- | -------------------------------------- |
-| Dub sub-package         | `sparkles:versions`                    |
-| Source root             | `libs/versions/src/sparkles/versions/` |
-| Primary module          | `sparkles.versions`                    |
-| Engine template (D FQN) | `sparkles.versions.Version`            |
-| Standard SemVer alias   | `sparkles.versions.SemVer`             |
+| Identifier      | Value                                  |
+| --------------- | -------------------------------------- |
+| Dub sub-package | `sparkles:versions`                    |
+| Source root     | `libs/versions/src/sparkles/versions/` |
+| Package module  | `sparkles.versions`                    |
 
-Consumer imports:
+The folder uses the plural name `versions/` because `version` is a D
+keyword.
 
-```d
-import sparkles.versions : SemVer, ParseMode;
+| Module                                      | Contents                                                                            |
+| ------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `sparkles.versions`                         | Public re-exports (`package.d`)                                                     |
+| `sparkles.versions.traits`                  | `isVersion!T`, `isVersionRange!R`, `isVersionScheme!S` + optional-capability traits |
+| `sparkles.versions.parse_error`             | `ParseMode`, `ParseError`, `ParseErrorCode`, `ParseExpected!T`                      |
+| `sparkles.versions.ranges`                  | `Ranges!V` (pubgrub-style sorted disjoint intervals)                                |
+| `sparkles.versions.vers`                    | VERS URI parser/emitter + compile-time scheme registry                              |
+| `sparkles.versions.purl`                    | Package URL parser + purl-type → scheme mapping                                     |
+| `sparkles.versions.any`                     | `AnyVersion` / `AnyRange` sum types, `compareAny`                                   |
+| `sparkles.versions.schemes`                 | Re-exports every scheme module + registry hook                                      |
+| `sparkles.versions.schemes.semver`          | `SemVer` (strict SemVer 2.0.0)                                                      |
+| `sparkles.versions.schemes.dmd`             | `Dmd` (3-digit zero-padded minor)                                                   |
+| `sparkles.versions.schemes.dmd_compact`     | `DmdCompact` (4-byte bitfield-encoded prerelease)                                   |
+| `sparkles.versions.schemes.tiny`            | `Tiny` (4-byte, no prerelease)                                                      |
+| `sparkles.versions.schemes.calver_yymm`     | `CalVerYYMM` (Ubuntu `24.04.1`)                                                     |
+| `sparkles.versions.schemes.calver_yyyymmdd` | `CalVerYYYYMMDD` (Arch `2024.05.01`)                                                |
+| `sparkles.versions.schemes.vim`             | `VimVer` (4-digit patch)                                                            |
+| `sparkles.versions.schemes.pypi`            | `PypiVersion` (PEP 440)                                                             |
+| `sparkles.versions.schemes.maven`           | `MavenVersion` (qualifier order)                                                    |
+| `sparkles.versions.schemes.deb`             | `DebianVersion` (epoch/upstream/revision)                                           |
+| `sparkles.versions.schemes.generic`         | `Generic` (opaque lexicographic — the `void`-hook baseline)                         |
+| `sparkles.versions._internal.*`             | Shared private helpers (not part of the public surface)                             |
 
-auto v = SemVer.parse("1.2.3-rc.1", ParseMode.loose).value;
-```
+`_internal` holds `identifier_rules` (SemVer identifier grammar),
+`compare_semver` (`compareSemVerPrerelease`), `format`
+(`putPaddedNumber`), and `test_helpers` (`checkParse`,
+`checkRoundTrip`, `checkRejects`, `checkAscending`).
 
-The folder uses the plural name `versions/` because `version` is a
-D keyword.
+## 3. The Version concept
 
-## 3. DbI vocabulary
+A version is the **only** required abstraction: a value that is totally
+ordered and renders to text. Nothing else is mandatory. (For why the
+required surface is this small, see
+[RATIONALE §2](./RATIONALE.md#2-prior-art-survey).)
 
-The engine exposes five names that form its contract with layout types.
-The engine itself knows nothing about specific versioning schemes
-(SemVer's prerelease/build conventions, identifier grammars, ordering
-rules); those are layout-supplied via the vocabulary below.
+### 3.1 Required surface — `isVersion!T`
 
-### `Component(printOrder, printWidth = 0)`
-
-UDA value attached to a layout's bit-packed component via the
-`layoutBody` mixin (see below). Tags the member as a semantic component
-that participates in the version's printed form and (by default) in
-comparison.
-
-- `printOrder` — formatting sequence; smaller values print first.
-- `printWidth` — minimum number of digits emitted by `toString` and
-  required by the parser. `0` means "no padding, no width constraint"
-  and is the natural default. Width is a **static** property of the
-  layout, not a per-instance value.
-
-### `InternalFlag`
-
-Marker UDA attached to a 1-bit layout member via the `layoutBody`
-mixin. Participates in ordering but is not printed. Conventional use:
-the "has-no-prerelease" tiebreaker. Must sit at the LSB of the packed
-core (see §5).
-
-### `StringSlot { name, prefix, includeInOrdering, validate, compare }`
-
-Describes an auxiliary string slot a layout exposes alongside its
-bit-packed core. The engine generates one `string <name>;` member on
-`Version!Layout` per declared slot, and walks the slots generically in
-`opCmp`, `toString`, and the parser. The engine has no built-in
-knowledge of SemVer's `prerelease` or `build` slots — those are just
-two slots SemVer-style layouts happen to declare.
-
-- `name` — field name generated on `Version!Layout`.
-- `prefix` — single character separating this slot from the preceding
-  content in the canonical string form (e.g. `'-'` for SemVer
-  prerelease, `'+'` for SemVer build).
-- `includeInOrdering` — when `true`, `opCmp` tiebreaks on this slot
-  after the packed-core compare ties.
-- `validate` — optional `SlotValidator` function pointer; `null`
-  accepts any non-empty content.
-- `compare` — optional `SlotComparator` function pointer; `null` falls
-  back to `std.algorithm.cmp` lexicographic compare.
-
-`SlotValidator` and `SlotComparator` are function-pointer aliases:
+`isVersion!T` (from `sparkles.versions.traits`) detects two required
+primitives: a three-way `opCmp` and an output-range `toString`. Named
+sub-checks report _which_ half failed:
 
 ```d
-alias SlotValidator = ParseExpected!void function(
-    in string segment, size_t segmentOffset) @safe pure nothrow @nogc;
-
-alias SlotComparator = int function(
-    in string lhs, in string rhs) @safe pure nothrow @nogc;
-```
-
-A layout declares its slots as a `static immutable StringSlot[]
-stringSlots` member; the engine reads it on `Version!Layout`
-instantiation.
-
-### `layoutBody!(spec...)`
-
-Mixin template that emits both the bit-packed storage (via
-`std.bitmanip.bitfields`) and a `LayoutDescriptor` describing every
-component, the optional internal flag, and the layout's total bit
-width. The `spec` tuple groups its arguments in (UDA, type, name,
-width) quadruples, declared from LSB to MSB:
-
-```d
-mixin layoutBody!(
-    InternalFlag,             bool,  "stableFlag", 1,
-    Component(printOrder: 2), ulong, "patch",     24,
-    Component(printOrder: 1), ulong, "minor",     24,
-    Component(printOrder: 0), ulong, "major",     15,
-);
-```
-
-The UDA position accepts `Component(...)`, `InternalFlag`, or `void`
-(padding).
-
-### `GetCoreType!(size_t bytes)`
-
-Compile-time map from a layout's byte size to the unsigned integer
-used for packed reinterpretation:
-
-| `Layout.sizeof` | `CoreType` |
-| --------------- | ---------- |
-| 1               | `ubyte`    |
-| 2               | `ushort`   |
-| 4               | `uint`     |
-| 8               | `ulong`    |
-
-Other sizes are not supported in the current library.
-
-## 4. The `Version(Layout)` engine
-
-```d
-struct Version(Layout)
+template isVersion(T)
 {
-    alias CoreType = GetCoreType!(Layout.sizeof);
-    enum LayoutDescriptor descriptor = /* derived from Layout */;
-
-    union { Layout core; CoreType packed; }
-
-    // One `string <slot.name>;` member generated per slot declared in
-    // Layout.stringSlots (see §9).
-    static foreach (slot; descriptor.stringSlots)
-        mixin("string " ~ slot.name ~ ";");
-
-    // operations from §6, composed by introspection over Layout
+    enum hasOpCmp    = is(typeof((const T a, const T b) => a.opCmp(b)) : int);
+    enum hasToString = __traits(compiles, (const T v) {
+        void delegate(scope const(char)[]) @safe sink;
+        v.toString(sink);                 // exact output-range call
+    });
+    enum isVersion = hasOpCmp && hasToString;
 }
 ```
 
-The `descriptor` is a `LayoutDescriptor` aggregating:
-
-- `ComponentDesc[] components` — sorted by `printOrder`.
-- `InternalFlagDesc internalFlag` — name and offset of the LSB
-  tiebreaker bit, or `name == ""` if the layout has none.
-- `int totalBitWidth` — sum of declared bitfield widths.
-- `immutable(StringSlot)[] stringSlots` — auxiliary slots from the
-  layout's `stringSlots` static member.
-
-At instantiation the engine performs CTFE validation on `Layout`:
-
-1. `Layout.sizeof` is one of {1, 2, 4, 8}.
-2. Every bitfield member is generated by the `layoutBody` mixin (which
-   uses `std.bitmanip.bitfields` underneath).
-3. Every `@Component.printOrder` is unique.
-4. At most one `@InternalFlag` member, of width 1, at bit offset 0
-   (LSB).
-5. Total declared bit width ≤ `sizeof(CoreType) * 8`.
-
-A layout that declares only a single `@Component`, with default
-`printWidth` and no `@InternalFlag` or string slots, is a valid input.
-It produces a `Version` that compares as a single integer and prints
-as a single number — the DbI "void-hook" baseline.
-
-## 5. Bit-allocation contract
-
-Layout fields map to the packed integer **LSB-first in declaration
-order**. The first declared field occupies the lowest bits; the last
-declared field occupies the highest bits.
-
-A layout therefore lists its components from **lowest-precedence (LSB)
-to highest-precedence (MSB)**. For SemVer:
+A conforming struct therefore provides:
 
 ```d
-import sparkles.versions;
-import sparkles.versions.semver_rules : semVerBuildSlot,
-    semVerPrereleaseSlot;
-
-struct SemVerLayout
-{
-    mixin layoutBody!(
-        InternalFlag,             bool,  "stableFlag", 1, // LSB
-        Component(printOrder: 2), ulong, "patch",     24,
-        Component(printOrder: 1), ulong, "minor",     24,
-        Component(printOrder: 0), ulong, "major",     15, // MSB
-    );
-
-    static immutable StringSlot[] stringSlots = [
-        semVerPrereleaseSlot,  // {name:"prerelease", prefix:'-', …}
-        semVerBuildSlot,       // {name:"build",      prefix:'+', …}
-    ];
-}
+int  opCmp(in T other) const @safe pure nothrow @nogc;  // SemVer-style three-way
+void toString(W)(ref W sink) const;                      // writes into an output range
 ```
 
-Reinterpreting via the `union { Layout core; ulong packed; }` overlay
-yields `(major << 49) | (minor << 25) | (patch << 1) | stableFlag`.
-Single-integer unsigned comparison of `packed` produces SemVer §11
-precedence directly.
-
-The `@InternalFlag` lives at the **LSB**, not the MSB. A bit at the
-MSB would dominate `major` and make every stable version compare
-greater than every prerelease — violating
-`2.0.0-alpha > 1.999.999`. The LSB position makes the flag a
-tiebreaker that only matters when the printed components are equal.
-Encoding: `1` = stable (no prerelease), `0` = has prerelease, so
-`1.0.0 > 1.0.0-alpha` falls out of integer compare.
-
-## 6. Operations
-
-### 6.1 `opCmp`
-
-Two-stage compare:
-
-1. Compare `lhs.packed` against `rhs.packed` as a single unsigned
-   integer. Every bit in the packed core is semantically meaningful —
-   no masking step.
-2. If the integers tie, walk each `StringSlot` declared by the layout
-   in declared order. For each slot with `includeInOrdering == true`,
-   call its `compare` function (or fall back to lexicographic compare
-   when `compare == null`). The first non-zero result wins. Slots with
-   `includeInOrdering == false` (e.g. SemVer build metadata) are never
-   consulted.
-
-For `CoreType.sizeof <= 8` stage 1 is a single CPU compare.
-
-### 6.2 `toString`
-
-CTFE-driven from the layout:
-
-1. Collect every `@Component` member, sorted by `printOrder`.
-2. For each, format with `"%0*d"` and the component's static
-   `printWidth` when `printWidth > 0`, else `"%d"`.
-3. Emit each `StringSlot` whose value is non-empty, prefixed by its
-   `prefix` character (e.g. SemVer prerelease prepends `-`, build
-   prepends `+`). The prefix is a property of the slot, not hardcoded
-   in the engine.
-4. If the layout supplies its own `customToString(Writer)(ref Writer w)
-const` member, the engine defers to it. This is how layouts with
-   non-numeric components (e.g. `DmdOptimized`'s `prereleasePhase`)
-   produce their textual form.
-
-`toString` writes into an output range, following the
+`opCmp` defines the type's total order; `opEquals` and `toHash` are
+provided alongside it so versions work as keys and in `==` (a type with
+`opCmp` but no matching `opEquals` would compare equal yet hash
+inconsistently). `toString` writes into an output range, following the
 `sparkles.core_cli` conventions in
-[`AGENTS.md`](../../../AGENTS.md#output-ranges).
+[`AGENTS.md`](../../guidelines/AGENTS.md#output-ranges).
 
-### 6.3 `truncateTo!"name"()`
+### 3.2 Optional capability vocabulary
 
-CTFE function returning a new `Version` of the same type with every
-bit below the named component zeroed. Useful for grouping
-(`v.truncateTo!"minor"` to bucket by `major.minor`).
+Each optional capability is an orthogonal, individually-detectable
+primitive. A struct that provides one enables a fast path or an extra
+feature; absence is never an error — the generic algorithm falls back
+to a path that needs only the required surface. Detection is
+centralised in `sparkles.versions.traits` (DbI §4.3: detection MUST NOT
+be scattered through business logic).
 
-## 7. Concrete layouts
+| Capability              | Detection rule                                   | Behavioural impact                                                        |
+| ----------------------- | ------------------------------------------------ | ------------------------------------------------------------------------- |
+| `hasOrderKey!T`         | `.orderKey` → any unsigned int (`ubyte`…`ulong`) | radix `sort`, compact `Ranges!T` bounds, fast `opCmp` pre-check           |
+| `supportsPrerelease!T`  | `.isPrerelease` → `bool`                         | node-semver prerelease-in-range rule (gates [`satisfies`](#5-operations)) |
+| `hasComponents!T`       | `enum string[] components` of named uint fields  | generic component iteration/compare, `truncateTo`                         |
+| `hasSemVerComponents!T` | `components` begins `["major","minor","patch"]`  | caret `^` / tilde `~` range operators                                     |
+| `hasBuildMetadata!T`    | `.build` → `const(char)[]`                       | build-aware compare (SemVer §10)                                          |
 
-The library ships four layouts. All have power-of-two byte sizes so
-they fit `GetCoreType` cleanly.
+```d
+import std.traits : isUnsigned;
 
-| Layout         | Size | Bitfields (LSB → MSB)                                            | Component widths (major / minor / patch) | String slots          |
-| -------------- | ---- | ---------------------------------------------------------------- | ---------------------------------------- | --------------------- |
-| `SemVerLayout` | 8 B  | `stableFlag:1, patch:24, minor:24, major:15`                     | unpadded / unpadded / unpadded           | `prerelease`, `build` |
-| `DmdLayout`    | 8 B  | `stableFlag:1, patch:24, minor:24, major:15`                     | unpadded / **3-digit** / unpadded        | `prerelease`, `build` |
-| `DmdOptimized` | 4 B  | `prereleaseNum:6, prereleasePhase:2, patch:6, minor:10, major:8` | unpadded / **3-digit** / unpadded        | **none**              |
-| `TinyLayout`   | 4 B  | `patch:8, minor:8, major:16`                                     | unpadded / unpadded / unpadded           | none                  |
+/// Monotonic unsigned-integer key of any width (`ubyte` … `ulong`): the
+/// scheme picks the narrowest type that fits its components, so a compact
+/// scheme can expose a `uint` (or smaller) key for narrower comparisons
+/// and tighter `Ranges!T` bound storage. Where present,
+/// `sign(a.orderKey <=> b.orderKey) == sign(a <=> b)` whenever the keys
+/// differ; equal keys fall through to `opCmp`. (`isUnsigned` excludes
+/// `bool` and the character types, so a stray `bool`/`char` member does
+/// not accidentally qualify.)
+enum hasOrderKey(T) = isUnsigned!(typeof(T.init.orderKey));
 
-The total declared bit widths reach exactly the container size in
-each layout; the engine asserts this.
+/// The unsigned integer type a scheme's `orderKey` returns — `uint` for a
+/// 4-byte scheme, `ulong` for SemVer. Only valid when `hasOrderKey!T`;
+/// generic code uses it to size compact key storage.
+alias OrderKeyType(T) = typeof(T.init.orderKey);
 
-### 7.1 `SemVerLayout`
+enum supportsPrerelease(T) = is(typeof((const T v) => v.isPrerelease) : bool);
 
-Strict Semantic Versioning 2.0.0. Major fits up to 32767; minor and
-patch each up to 16,777,215. Prerelease and build metadata stored as
-string slots (§9). Comparison follows SemVer §11.
+/// A version exposing an ordered list of named numeric components.
+/// `T.components` is a compile-time `string[]` of readable unsigned-int
+/// member names, most-significant first (the order `opCmp` compares and
+/// `toString` prints them in). Arity is free: 3 for SemVer, 4 for .NET /
+/// Windows, `["year","month","day"]` for CalVer. Generic code iterates
+/// the list to compare, truncate, and bucket without hardcoding names.
+template hasComponents(T)
+{
+    static if (is(typeof(T.components) : const(string)[]))
+        enum hasComponents = T.components.length >= 1 && allComponentsUnsigned!T;
+    else
+        enum hasComponents = false;
+}
 
-### 7.2 `DmdLayout`
+private enum bool allComponentsUnsigned(T) = () {
+    bool ok = true;
+    static foreach (name; T.components)
+        static if (!__traits(hasMember, T, name)
+                || !isUnsigned!(typeof(__traits(getMember, T.init, name))))
+            ok = false;
+    return ok;
+}();
 
-Same bitfield shape as `SemVerLayout`, but the `minor` component
-carries `printWidth = 3`. `toString` emits minor as at least 3
-digits, padding with leading zeroes when needed; major and patch are
-unpadded. The parser requires minor to be at least 3 digits.
+/// True when the list begins with the SemVer triple, so caret `^` / tilde
+/// `~` have their conventional "compatible within major/minor" meaning. A
+/// 4-component or calendar scheme has `hasComponents` but not this, so it
+/// correctly gets no caret operator.
+enum hasSemVerComponents(T) =
+    hasComponents!T && T.components.length >= 3
+    && T.components[0] == "major"
+    && T.components[1] == "minor"
+    && T.components[2] == "patch";
 
-This matches real DMD / Dlang versioning across eras: minor=79 from
-the `2.079.0` era prints `079` (padded), minor=111 from the current
-`2.111.0` era prints `111` (no padding needed because it is already
-3 digits), and minor=999 prints `999`. Minor values ≥ 1000 are
-emitted at their natural width (e.g. `1234`), which is forward-
-compatible should DMD ever overflow 3 digits.
+enum hasBuildMetadata(T) = is(typeof((const T v) => v.build) : const(char)[]);
+```
 
-`SemVerLayout` and `DmdLayout` share storage and differ only in
-static format hooks. This is the DbI design's headline
-demonstration: same bits, different behaviour via UDAs.
+The component list drives two generic helpers (in
+`sparkles.versions.traits`) that a scheme may reuse and that generic
+algorithms call: `compareComponents(a, b)` walks the list
+most-significant-first for the numeric part of `opCmp`, and
+`componentAt(v, i)` reads the `i`-th component as a `ulong`.
+`componentCount!T` is `T.components.length`. The list carries names and
+order only — per-component zero-pad **width** stays in each scheme's own
+`toString`.
 
-Zero-padded round-tripping is a **layout-level** property, not
-per-instance. `DmdLayout` cannot round-trip `2.79.0` back to
-`2.79.0` — it always emits `2.079.0`.
+Two normative rules govern optional capabilities (the full DbI standard
+is in
+[`design-by-introspection-01-guidelines.md`](../../guidelines/design-by-introspection-01-guidelines.md);
+these are not re-litigated here):
 
-### 7.3 `DmdOptimized`
+- **All-or-nothing.** A type MUST NOT provide an optional primitive that
+  only works sometimes — either it works for every value or the type
+  omits it (DbI §6.2). `hasOrderKey` is the sharp case: a scheme whose
+  components can overflow its chosen key width MUST NOT expose `orderKey`
+  at all, rather than expose a key that loses ordering at the high end. A
+  scheme that wants a wider safety margin simply returns a wider unsigned
+  type.
+- **Equivalence-tested.** Where a capability enables a fast path, that
+  fast path MUST be behaviourally equivalent to the required-surface
+  fallback. `orderKey` is tested against the `opCmp` reference across a
+  representative corpus (DbI §9.2): for all sampled `a`, `b`,
+  `sign(a.orderKey <=> b.orderKey)` agrees with `sign(a.opCmp(b))`
+  whenever the keys differ.
 
-A 4-byte layout that exploits two facts about DMD's actual versioning
-to fit a fully ordered, fully formatted version into 32 bits with
-**zero string allocations**:
+The mandated `void`-hook baseline (DbI §7.3 / §9.4) is the
+[`Generic`](#8-shipped-schemes) scheme: an opaque, lexicographically
+compared version that exposes **zero** optional capabilities. Every
+generic algorithm's fallback path is exercised through `Generic`.
 
-1. DMD releases carry no build metadata; the `build` slot is omitted.
-2. DMD prereleases follow the constrained grammar `beta.N` or `rc.N`
-   (e.g. `2.111.0-beta.2`, `2.111.0-rc.3`), so the prerelease is
-   encoded as a 2-bit phase plus a 6-bit number rather than a general
-   string.
+## 4. The Range concept
 
-Phase encoding (the values must be monotone for ordering to work):
+A version range is a set of versions, expressed as set algebra. The
+range concept is pubgrub's `VersionSet` trait ported to D, and
+`Ranges!V` is the single concrete implementation (a port of pubgrub's
+`Ranges<V>`).
 
-| `prereleasePhase` | Meaning  | Canonical `prereleaseNum` |
-| ----------------- | -------- | ------------------------- |
-| `00`              | beta     | 1–63                      |
-| `01`              | rc       | 1–63                      |
-| `10`              | stable   | 0                         |
-| `11`              | reserved | parser rejects            |
+### 4.1 Required surface — `isVersionRange!R`
 
-Because `prereleasePhase` sits just above `prereleaseNum` in the
-packed integer, single-integer comparison yields
-`2.111.0-beta.N < 2.111.0-rc.M < 2.111.0` for all N, M ≤ 63.
+Only five members are **required** — the minimal set-algebra basis.
+`full`, `union_`, `isDisjoint`, and `subsetOf` are **defaulted via De
+Morgan** and need not be hand-written:
 
-Bit budget: major ≤ 255, minor ≤ 1023, patch ≤ 63 — comfortably ahead
-of where DMD is realistically headed; prerelease numbers up to 63
-cover every DMD release in history.
+```d
+template isVersionRange(R)
+{
+    enum isVersionRange =
+        is(R.Version) && isVersion!(R.Version) &&
+        is(typeof(R.empty()) == R) &&
+        is(typeof(R.singleton(R.Version.init)) == R) &&
+        is(typeof((const R r) => r.complement()) : R) &&
+        is(typeof((const R a, const R b) => a.intersection(b)) : R) &&
+        is(typeof((const R r, const R.Version v) => r.contains(v)) : bool);
+}
+```
 
-`DmdOptimized` does **not** use an LSB `stableFlag` because the
-`(phase, num)` pair already encodes the stable-beats-every-prerelease
-relation. `prereleasePhase` is also not a numeric `@Component` (it
-formats as `beta`/`rc`/`""`, not digits), so the layout supplies its
-own `toString` / `parse` hooks per §6.2 / §8.
+| Method                     | Status    | Meaning                                                      |
+| -------------------------- | --------- | ------------------------------------------------------------ |
+| `static empty()`           | required  | the empty set                                                |
+| `static singleton(V v)`    | required  | the set `{v}`                                                |
+| `complement()`             | required  | set complement                                               |
+| `intersection(in R other)` | required  | set intersection                                             |
+| `contains(in V v)`         | required  | membership test                                              |
+| `static full()`            | defaulted | `empty().complement()`                                       |
+| `union_(in R other)`       | defaulted | `complement().intersection(other.complement()).complement()` |
+| `isDisjoint(in R other)`   | defaulted | `intersection(other) == empty()`                             |
+| `subsetOf(in R other)`     | defaulted | `this == intersection(other)`                                |
 
-### 7.4 `TinyLayout`
+### 4.2 The concrete type — `Ranges!V`
 
-A 4-byte layout with neither prerelease nor build metadata, and no
-`stableFlag`. Major ≤ 65535, minor ≤ 255, patch ≤ 255. Useful for
-storage-sensitive internal use. Validates the DbI "void-hook"
-baseline (§4).
+`Ranges!V` (from `sparkles.versions.ranges`) is the **only** generic
+data structure in the library. It stores a sorted, disjoint sequence of
+intervals — the same shape as pubgrub's `Ranges<V>` — and maintains
+those invariants on every operation: segments are kept sorted, no
+segment is empty, and adjacent mergeable intervals are coalesced.
 
-### 7.5 Real-world preset layouts
+```d
+struct Ranges(V) if (isVersion!V)
+{
+    alias Version = V;
 
-The four layouts above prove the engine's design. A companion module,
-`sparkles.versions.presets`, ships additional layouts mapped to
-versioning schemes used by widely-deployed software, with unit tests
-that parse real example strings (Node.js `20.13.1`, Ubuntu `24.04.1`,
-Vim `9.1.0400`, …) and exercise the engine's operations end-to-end.
-The presets all share the SemVer bitfield shape and differ only via
-static `@Component.printWidth` hooks — they are direct evidence that
-the DbI design scales to real-world schemes without engine changes.
+    // --- pubgrub VersionSet required methods ---
+    static Ranges empty();
+    static Ranges singleton(V v);
+    Ranges complement() const;
+    Ranges intersection(in Ranges other) const;
+    bool contains(in V v) const;
 
-| Layout                 | Widths (major/minor/patch)    | Representative example  |
-| ---------------------- | ----------------------------- | ----------------------- |
-| `CalVerYYMMLayout`     | unpadded / 2-digit / unpadded | Ubuntu `24.04.1`        |
-| `CalVerYYYYMMDDLayout` | unpadded / 2-digit / 2-digit  | Arch Linux `2024.05.01` |
-| `VimLayout`            | unpadded / unpadded / 4-digit | Vim `9.1.0400`          |
+    // --- defaulted via De Morgan ---
+    static Ranges full() => empty().complement();
+    Ranges union_(in Ranges other) const
+        => complement().intersection(other.complement()).complement();
+    bool isDisjoint(in Ranges other) const => intersection(other) == empty();
+    bool subsetOf(in Ranges other) const => this == intersection(other);
 
-Most strict-SemVer products (Rust, Kubernetes, Linux Kernel, Git,
-PHP, etc.) parse with `SemVerLayout` directly; 2-part versions like
-PostgreSQL `16.3` use `SemVerLayout.parse(s, ParseMode.loose)`;
-the historical Dlang scheme (`2.079.0`) is covered by `DmdLayout`.
+    // --- interval conveniences ---
+    static Ranges higherThan(V v);          // [v, +∞)
+    static Ranges strictlyHigherThan(V v);  // (v, +∞)
+    static Ranges lowerThan(V v);           // (-∞, v]
+    static Ranges strictlyLowerThan(V v);   // (-∞, v)
+    static Ranges between(V lo, V hi);      // [lo, hi)
 
-The full per-product coverage table, parse mode per entry, and the
-provenance record (each example fact-checked against project
-releases / git tags / official changelogs) live in
+    // --- equality / formatting ---
+    bool opEquals(in Ranges other) const;
+    void toString(W)(ref W w) const;        // emits VERS constraint syntax
+}
+```
+
+There is **no** per-scheme range hierarchy — no `NpmRange`,
+`PypiRange`, or `DebianRange`. Each scheme's `Range` alias is just
+`Ranges!SemVer`, `Ranges!PypiVersion`, and so on. What differs across
+schemes is the _native range grammar_ (`^1.2.0` for npm, `[1.0,2.0)`
+for Maven, `>=1.2.4` for PEP 440) and the canonical constraint syntax
+inside a `vers:` URI — both are static methods on the scheme struct
+(§6, §9), not on the range type.
+
+`opEquals` compares the canonical (sorted, merged) interval sequences,
+so two ranges built from different but equivalent expressions compare
+equal. `toString` emits VERS constraint syntax (§9), giving every range
+a scheme-agnostic textual form.
+
+## 5. Operations
+
+Generic operations live in `sparkles.versions.ranges` and
+`sparkles.versions.traits`. Each follows the DbI fast-path/fallback
+pattern: a baseline that needs only the required surface, plus an
+opt-in fast path gated on an optional capability.
+
+### 5.1 `order` — fast-path / fallback compare
+
+`order(a, b)` returns the same three-way result as `a.opCmp(b)` for any
+`isVersion!T`. When `T` provides `hasOrderKey`, it first compares the
+`ulong` keys and only falls through to `opCmp` when the keys tie:
+
+```d
+int order(T)(in T a, in T b) @safe pure nothrow @nogc
+if (isVersion!T)
+{
+    static if (hasOrderKey!T)
+    {
+        const ka = a.orderKey, kb = b.orderKey;
+        if (ka != kb)
+            return ka < kb ? -1 : 1;   // keys differ → decisive
+    }
+    return a.opCmp(b);                  // fallback / tie-break
+}
+```
+
+The fast path is equivalence-tested against the fallback (§3.2). The
+`Generic` scheme, lacking `orderKey`, always takes the fallback branch.
+
+### 5.2 `satisfies` — version-in-range, prerelease-gated
+
+`satisfies(v, range)` answers whether a version is admitted by a range.
+The simple part is `range.contains(v)`. The subtle part is the
+**prerelease-in-range rule**, gated on `supportsPrerelease!T`:
+
+> A prerelease version satisfies a range **only when at least one
+> comparator in the range names a prerelease of the same
+> `(major, minor, patch)` triple.** (This is the node-semver
+> convention.)
+
+For example, given the range `>=1.2.0`:
+
+- `1.3.0` satisfies it (a stable release ≥ the bound).
+- `1.3.0-beta.1` does **not** satisfy it — even though `1.3.0-beta.1`
+  is numerically inside `[1.2.0, +∞)` — because no comparator in
+  `>=1.2.0` named a prerelease of the `1.3.0` triple.
+- `1.2.0-beta.1` _does_ satisfy `>=1.2.0-alpha`, because that comparator
+  names a prerelease of the same `1.2.0` triple.
+
+When `T` does **not** provide `supportsPrerelease` (e.g. `Tiny`,
+`Generic`), there are no prereleases to special-case and `satisfies`
+reduces to plain `contains`. The prerelease policy is therefore
+statically inert for schemes that do not model prereleases.
+
+### 5.3 Caret / tilde — gated on `hasSemVerComponents`
+
+The npm-style operators desugar to `Ranges!V` intervals using the
+`(major, minor, patch)` triple, so they require `hasSemVerComponents!T`
+(the list begins with that triple) — not merely `hasComponents`, since
+`^`/`~` are undefined for a 4-component or calendar scheme:
+
+- `^1.2.3` → `[1.2.3, 2.0.0)` (compatible within the major).
+- `~1.2.3` → `[1.2.3, 1.3.0)` (compatible within the minor).
+
+They are exposed as scheme-level static helpers (e.g. `SemVer.caret(v)`,
+`SemVer.tilde(v)`). Invoking one on a scheme without the SemVer triple
+(a calendar or 4-component scheme) is a compile-time error with a
+targeted diagnostic:
+
+```d
+static assert(hasSemVerComponents!V,
+    "caret/tilde require components beginning [\"major\",\"minor\",\"patch\"] "
+    ~ "(hasSemVerComponents!V). " ~ V.stringof
+    ~ " has no SemVer triple; build the range explicitly instead.");
+```
+
+### 5.4 `sort`
+
+`sort(versions)` orders a slice of `isVersion!T`. With `hasOrderKey` it
+may radix-sort on the `ulong` keys (resolving key ties with `opCmp`);
+without it, it comparison-sorts via `opCmp`. Both paths produce the same
+ordering (§3.2).
+
+### 5.5 `truncateTo`
+
+`truncateTo!"name"(v)` returns a version of the same type with every
+component below the named one (in `components` order) zeroed — useful for
+bucketing (group SemVer by `major.minor`, group a CalVer by `"month"`).
+The name must appear in `T.components`, so it requires `hasComponents!T`
+(any arity, not just the SemVer triple) and is a compile-time error
+otherwise, with the same diagnostic shape as §5.3.
+
+## 6. The Scheme concept
+
+A _scheme_ is the handle through which the library parses an ecosystem's
+version strings and discovers its pURL identity. The key structural
+decision: **the struct is both the version value and the scheme
+handle.** `SemVer` is the version type _and_ carries the static `parse`,
+`purlType`, and range helpers; there is no `SemVerScheme`-the-singleton.
+(For why value and scheme live on one D type, see
+[RATIONALE §5.2](./RATIONALE.md#52-the-struct-is-both-value-and-scheme-handle).)
+
+### 6.1 Required surface — `isVersionScheme!S`
+
+```d
+template isVersionScheme(S)
+{
+    enum isVersionScheme =
+        is(S.Version) && isVersion!(S.Version) &&
+        is(typeof(S.purlType) : string) && S.purlType.length > 0 &&
+        is(typeof(S.parse("")) : ParseExpected!(S.Version));
+}
+```
+
+A conforming scheme therefore provides:
+
+```d
+alias Version = S;                          // usually the struct itself
+alias Range   = Ranges!S;
+enum string purlType = "semver";            // non-empty pURL type string
+static ParseExpected!S parse(string s);     // exact-syntax parser (§7)
+```
+
+### 6.2 Optional scheme capabilities
+
+| Capability              | Detection rule                                                 | Behavioural impact                         |
+| ----------------------- | -------------------------------------------------------------- | ------------------------------------------ |
+| `supportsNativeRange!S` | `.parseNativeRange("")` → `ParseExpected!(Ranges!(S.Version))` | parse the ecosystem's native range grammar |
+| `supportsLooseParse!S`  | `.parseLoose("")` → `ParseExpected!(S.Version)`                | accept compatibility forms (`v1.2`, `1`)   |
+
+```d
+enum supportsNativeRange(S) =
+    is(typeof(S.parseNativeRange("")) : ParseExpected!(Ranges!(S.Version)));
+enum supportsLooseParse(S) =
+    is(typeof(S.parseLoose("")) : ParseExpected!(S.Version));
+```
+
+A scheme that only parses exact versions is still a valid
+`isVersionScheme`; the VERS and pURL layers `static if` on these
+capabilities. Each shipped scheme module ends with a compile-time
+conformance assertion:
+
+```d
+static assert(isVersion!SemVer && isVersionScheme!SemVer);
+```
+
+### 6.3 Cross-scheme incomparability
+
+Cross-scheme comparison **does not compile**. There is no
+`opCmp(SemVer, PypiVersion)` because `SemVer` and `PypiVersion` are
+distinct nominal types — D's type system enforces univers's
+"no cross-scheme order" policy statically rather than at runtime. A
+caller that genuinely needs to hold versions of mixed schemes uses
+[`AnyVersion`](#11-anyversion--anyrange) and the partial `compareAny`,
+which returns `null` across schemes.
+
+## 7. Parsing
+
+Parsing is non-throwing and `Expected`-based; the parse types live in
+`sparkles.versions.parse_error`.
+
+```d
+enum ParseMode { strict, loose }
+
+enum ParseErrorCode
+{
+    emptyInput, unexpectedCharacter, unexpectedEnd, leadingZero,
+    emptyIdentifier, invalidIdentifier, numericOverflow, /* … */
+}
+
+struct ParseError
+{
+    ParseErrorCode code;  /// what went wrong
+    size_t index;         /// byte offset where parsing failed
+}
+
+alias ParseExpected(T) = Expected!(T, ParseError, ParseExpectedHook);
+```
+
+`ParseExpected!T` carries either a parsed `T` or a structured
+`ParseError`. Callers branch on `result.hasValue` / `result.error`:
+
+```d
+auto r = SemVer.parse("1.2.x");
+if (r.hasValue)
+    use(r.value);
+else
+    report(r.error.code, r.error.index);   // unexpectedCharacter @ 4
+```
+
+The parsing surface across the three concepts:
+
+| Function                | Concept                 | Required? | Behaviour                                                               |
+| ----------------------- | ----------------------- | --------- | ----------------------------------------------------------------------- |
+| `S.parse(s)`            | `isVersionScheme!S`     | required  | exact canonical syntax → `ParseExpected!(S.Version)`                    |
+| `S.parseLoose(s)`       | `supportsLooseParse!S`  | optional  | additionally accept `v`-prefix, missing trailing components (zero-fill) |
+| `S.parseNativeRange(s)` | `supportsNativeRange!S` | optional  | the ecosystem's native range grammar → `ParseExpected!(S.Range)`        |
+
+`ParseMode` is the strict/loose selector for schemes that route both
+behaviours through a single entry point; the dedicated `parseLoose`
+helper is the discoverable, capability-gated form. Each scheme's exact
+grammar and its native range grammar are documented per-scheme in
 [PRESETS.md](./PRESETS.md).
 
-## 8. Parser
+## 8. Shipped schemes
 
-`parse!Layout(string, ParseMode)` (from `sparkles.versions.parser`)
-returns a non-throwing `Expected`-based result. Errors carry a
-structured `ParseError { ParseErrorCode code; size_t index; }`.
+Eleven schemes ship in the first release. The capability matrix below is
+the at-a-glance summary; the full per-scheme catalogue (real-world
+example strings, edge cases, prerelease policy, provenance, and the
+how-to-add-a-scheme guide) is in [PRESETS.md](./PRESETS.md).
 
-The parser is generic over the layout:
+| Scheme           | pURL type | Description                                     |
+| ---------------- | --------- | ----------------------------------------------- |
+| `SemVer`         | `semver`  | Strict SemVer 2.0.0 (also npm/cargo/gem)        |
+| `Dmd`            | —         | DMD: 3-digit zero-padded minor (`2.079.0`)      |
+| `DmdCompact`     | —         | 4-byte bitfield-encoded DMD prerelease          |
+| `Tiny`           | —         | 4-byte, no prerelease                           |
+| `CalVerYYMM`     | —         | Ubuntu-style `24.04.1`                          |
+| `CalVerYYYYMMDD` | —         | Arch-style `2024.05.01`                         |
+| `VimVer`         | —         | Vim-style 4-digit patch (`9.1.0400`)            |
+| `PypiVersion`    | `pypi`    | PEP 440: epoch, pre/post/dev, local             |
+| `MavenVersion`   | `maven`   | Maven qualifier order                           |
+| `DebianVersion`  | `deb`     | Epoch + upstream + revision (`dpkg` rules)      |
+| `Generic`        | `generic` | Opaque lexicographic — the `void`-hook baseline |
 
-1. Numeric components reject values that do not fit in their declared
-   bit width via `ParseErrorCode.numericOverflow`. Bounds are computed
-   from the layout's `descriptor.components[i].bitWidth` at compile
-   time.
-2. Each `@Component.printWidth` is enforced at parse time. Components
-   with `printWidth > 0` require inputs of at least that width
-   (e.g. `DmdLayout` rejects `2.79.0` because minor must be at least 3
-   digits) and accept zero-padded inputs that strict SemVer's leading-
-   zero rule would normally reject. Components with `printWidth == 0`
-   keep the strict SemVer rule.
-3. After parsing numeric components, the parser walks the layout's
-   `StringSlot` declarations in declared order. Each slot is
-   recognised by its `prefix` character; its content is read up to
-   the prefix of a later-declared slot (or end of input) and passed
-   to the slot's `validate` function (or, if `null`, validated only
-   for non-emptiness). Slots whose `includeInOrdering` is true also
-   clear the layout's `@InternalFlag` bit when populated, encoding
-   "this is no longer a stable release".
-4. **Strict mode** follows the layout's canonical syntax exactly.
-5. **Loose mode** additionally accepts `v1.2.3`, `1`, `1.2`, etc. The
-   engine fills missing fields with zero.
-6. Layouts that supply a `parse(string, …)` member override the
-   generic path entirely. `DmdOptimized` uses this hook to map
-   `beta` / `rc` to its `prereleasePhase` field.
+Capability matrix (✅ = provides the optional capability):
 
-Typical call shape:
+| Scheme           | `hasOrderKey` | `supportsPrerelease` | `hasComponents` | `hasBuildMetadata` | `supportsNativeRange` | `supportsLooseParse` |
+| ---------------- | :-----------: | :------------------: | :-------------: | :----------------: | :-------------------: | :------------------: |
+| `SemVer`         |      ✅       |          ✅          |       ✅        |         ✅         |          ✅           |          ✅          |
+| `Dmd`            |      ✅       |          ✅          |       ✅        |         ✅         |          ✅           |          ✅          |
+| `DmdCompact`     |      ✅       |          ✅          |       ✅        |         —          |          ✅           |          —           |
+| `Tiny`           |      ✅       |          —           |       ✅        |         —          |          ✅           |          ✅          |
+| `CalVerYYMM`     |      ✅       |          —           |       ✅        |         —          |          ✅           |          ✅          |
+| `CalVerYYYYMMDD` |      ✅       |          —           |       ✅        |         —          |          ✅           |          ✅          |
+| `VimVer`         |      ✅       |          —           |       ✅        |         —          |          ✅           |          ✅          |
+| `PypiVersion`    |       —       |          ✅          |       ✅        |         —          |          ✅           |          ✅          |
+| `MavenVersion`   |       —       |          ✅          |        —        |         —          |          ✅           |          ✅          |
+| `DebianVersion`  |       —       |          —           |        —        |         —          |          ✅           |          —           |
+| `Generic`        |       —       |          —           |        —        |         —          |           —           |          —           |
+
+`Generic` is intentionally all-dashes: it is the baseline against which
+every generic algorithm's fallback path is verified. The `hasComponents`
+column is the generalised, arity-free capability (§3.2); the
+SemVer-shaped schemes (`SemVer`, `Dmd`, `DmdCompact`, `Tiny`, `VimVer`)
+declare `["major","minor","patch"]` and so additionally satisfy
+`hasSemVerComponents` (they get caret/tilde), whereas the CalVer schemes
+declare `["year","month","day"]` — `hasComponents` yes, but no caret. See
+[PRESETS.md](./PRESETS.md) for the per-scheme rationale behind each cell
+(e.g. why `MavenVersion` lacks `hasComponents`, why `PypiVersion` lacks
+`hasOrderKey`).
+
+## 9. VERS interop
+
+[VERS](https://github.com/package-url/vers-spec) is a URI scheme for
+version-range expressions:
+`vers:<scheme>/<constraint>|<constraint>|…`. The
+`sparkles.versions.vers` module parses and emits the URI surface;
+per-scheme constraint translation lives on each scheme struct.
 
 ```d
-import sparkles.versions : parse, SemVerLayout, ParseMode;
-
-auto parsed = parse!SemVerLayout(s, ParseMode.loose);
-if (parsed.hasError)
-    handle(parsed.error);
-else
-    use(parsed.value);
-```
-
-## 9. String slots and the (deferred) SSO optimisation
-
-Auxiliary string data (SemVer's prerelease and build metadata,
-distribution suffixes, etc.) lives in fields generated on
-`Version!Layout` from the layout's declared `StringSlot` list (§3).
-
-For SemVer-style layouts the library ships pre-built slot constants:
-
-```d
-import sparkles.versions.semver_rules :
-    semVerPrereleaseSlot, semVerBuildSlot;
-
-struct SemVerLayout
+struct VersUri
 {
-    mixin layoutBody!(/* … bit-packed core … */);
-
-    static immutable StringSlot[] stringSlots = [
-        semVerPrereleaseSlot,  // -prefix, ordering, SemVer §9/§11 rules
-        semVerBuildSlot,       // +prefix, no ordering, SemVer §10 rules
-    ];
+    string scheme;        // "npm", "pypi", "deb", "semver", …
+    string[] constraints; // pre-split on '|', not yet typed
 }
+
+ParseExpected!VersUri parseVersUri(string s);
+void formatVersUri(W)(ref W w, in VersUri v);
 ```
 
-SemVer 2.0.0's asymmetric precedence (`prerelease` participates in
-ordering, `build` does not) is encoded by each slot's
-`includeInOrdering` boolean. SemVer's identifier grammar and §11.4
-comparison rules are encoded by the slot's `validate` and `compare`
-function pointers — defined in `sparkles.versions.semver_rules`, not
-in the engine.
-
-**Storage** — slot fields are plain GC `string`s. A future,
-deliberately deferred optimisation will introduce an `SsoString` type
-(23-byte inline `char[23]` + length, falling back to a GC `string`
-slice past 23 bytes) and let the engine accept either as the slot
-storage type. The engine already requires of slot values only that
-they expose `length` and indexed read, so the swap will be local to
-the field types and need no API change. The motivation is to elide
-the GC allocation for the common short content (`alpha`, `beta.1`,
-`rc.3` all ≤ 7 bytes); the cost is the inline-vs-heap tag bit.
-Tracked as the final milestone in [PLAN.md](./PLAN.md).
-
-## 10. Public API surface
-
-Consumers reach the library via a single import:
+`parseVersUri` handles only the URI surface (scheme extraction,
+`|`-splitting, ASCII/lowercase normalisation). Turning a constraint
+segment into a typed `Ranges!V`, and back, is per-scheme:
 
 ```d
-import sparkles.versions :
-    SemVer,           // alias for Version!SemVerLayout
-    parse,            // parse!Layout(string, ParseMode) → ParseResult
-    ParseMode,        // strict | loose
-    ParseError,       // { code, index }
-    ParseErrorCode,   // emptyInput, unexpectedCharacter, …
-    ParseResult;      // ParseExpected!(Version!Layout)
+static ParseExpected!Range fromVersConstraint(string segment);  // segment → Range
+static void toVersConstraint(W)(ref W w, in Range r);           // Range → segment
 ```
 
-Layout-authoring consumers additionally import:
+The **scheme registry** is built at compile time: a CTFE walk over the
+`sparkles.versions.schemes.*` modules associates each scheme's
+`purlType` with its struct. The registry drives two dispatch forms:
 
 ```d
-import sparkles.versions :
-    Version,          // the generic engine template
-    Component,        // UDA value attached via layoutBody
-    InternalFlag,     // marker UDA attached via layoutBody
-    GetCoreType,      // size → unsigned-int selector
-    LayoutDescriptor, // descriptor type
-    StringSlot,       // auxiliary-slot descriptor
-    SlotValidator,    // function-pointer alias
-    SlotComparator,   // function-pointer alias
-    layoutBody;       // mixin template
+/// Static dispatch when the caller knows the scheme at compile time.
+template parseVersAs(SchemeStruct)
+    if (isVersionScheme!SchemeStruct)
+{
+    ParseExpected!(SchemeStruct.Range) parseVersAs(string versUri);
+}
+
+/// Runtime dispatch on the URI's `scheme` field → AnyRange (§11).
+ParseExpected!AnyRange parseVersAny(string versUri);
 ```
 
-SemVer-style layout authors typically also pull the pre-built slot
-constants:
+**Round-trip law.** For every scheme `S` and every native range
+expression `e` that `S.parseNativeRange(e)` accepts, the round trip
+`parseNativeRange(e)` → `toVersConstraint` → `fromVersConstraint`
+yields a `Ranges!(S.Version)` equal to the original. This law is tested
+per scheme.
+
+## 10. pURL interop
+
+[pURL](https://github.com/package-url/purl-spec) (Package URL) names a
+package across ecosystems:
+`pkg:<type>/<namespace>/<name>@<version>?<qualifiers>#<subpath>`. The
+`sparkles.versions.purl` module **consumes** purls (it parses, it does
+not generate them):
 
 ```d
-import sparkles.versions :
-    semVerPrereleaseSlot,
-    semVerBuildSlot;
+struct PackageUrl
+{
+    string type;                 // "pypi", "npm", "deb", "maven", …
+    string namespace;            // optional, may contain '/'
+    string name;
+    string ver;                  // raw version string; not yet parsed
+    string[string] qualifiers;
+    string subpath;
+}
+
+ParseExpected!PackageUrl parsePurl(string s);
 ```
 
-The `Version!OtherLayout` instantiation produces all the names above
-(parametrically). `SemVer` is just the most common instantiation.
+The purl `type` does not always equal the VERS scheme verbatim (e.g.
+`pkg:packagist/…` maps to the `composer` scheme), so dispatch goes
+through a mapping table rather than identity. Two dispatch forms mirror
+§9:
+
+```d
+/// Compile-time: resolve a purl type to its scheme struct, or fail to
+/// compile when no built-in scheme matches.
+template schemeForPurlType(string purlType) { /* … */ }
+
+/// Runtime: parse a purl and return an AnyVersion (§11).
+ParseExpected!AnyVersion parsePurlVersion(string purlUri);
+```
+
+`parsePurlVersion` parses the URI, resolves `type` → scheme through the
+mapping table, hands the raw `ver` string to that scheme's `parse`, and
+wraps the result in `AnyVersion`.
+
+## 11. `AnyVersion` / `AnyRange`
+
+Callers that handle versions of statically-unknown scheme (purl-driven
+workflows, SBOM ingestion, vulnerability matching) use the sum types in
+`sparkles.versions.any`:
+
+```d
+import std.sumtype : SumType;
+
+alias AnyVersion = SumType!(SemVer, Dmd, DmdCompact, Tiny,
+    CalVerYYMM, CalVerYYYYMMDD, VimVer,
+    PypiVersion, MavenVersion, DebianVersion, Generic);
+
+alias AnyRange = SumType!(Ranges!SemVer, Ranges!Dmd, /* … one per scheme */);
+```
+
+Because there is no universal total order across schemes (§6.3),
+cross-scheme comparison is **partial**:
+
+```d
+/// Three-way compare wrapped in a Nullable!int.
+/// Same scheme        → Nullable(a.opCmp(b)).
+/// Differing schemes  → null (no cross-scheme order exists).
+Nullable!int compareAny(in AnyVersion a, in AnyVersion b);
+```
+
+`compareAny` returning `null` is the deliberate, documented contract —
+not a failure mode. It is the same policy univers and the VERS spec
+adopt; see [RATIONALE §5.3](./RATIONALE.md#53-no-cross-scheme-total-order).
+
+## 12. Public API surface
+
+A consumer who needs a single ecosystem imports just that scheme:
+
+```d
+import sparkles.versions.schemes.semver : SemVer;
+import sparkles.versions.parse_error : ParseMode, ParseError, ParseErrorCode;
+```
+
+A polyglot consumer (purl/VERS-driven) imports the package module,
+which re-exports the concepts, the parse types, `Ranges`, the sum
+types, the interop entry points, and every shipped scheme:
+
+```d
+import sparkles.versions;   // SemVer, PypiVersion, …, AnyVersion,
+                            // Ranges, parseVersUri, parsePurl, compareAny, …
+```
+
+A scheme author — writing a new ecosystem struct in their own code —
+imports the concepts and the generic range type, then asserts
+conformance:
+
+```d
+import sparkles.versions.traits : isVersion, isVersionScheme,
+    hasOrderKey, supportsPrerelease, hasComponents, hasSemVerComponents,
+    hasBuildMetadata;
+import sparkles.versions.ranges : Ranges;
+import sparkles.versions.parse_error : ParseExpected, ParseError, ParseErrorCode;
+
+struct MyScheme { /* … */ }
+static assert(isVersion!MyScheme && isVersionScheme!MyScheme);
+```
+
+Any struct conforming to `isVersion!T` participates in every generic
+algorithm; conforming additionally to `isVersionScheme!S` plugs into the
+VERS and pURL layers. No registration step is required for static use —
+the registry (§9) discovers built-in schemes at compile time, and a
+user-defined scheme is used directly through its own type.
 
 ---
 
-→ [PLAN.md](./PLAN.md) — delivery milestones
-→ [RATIONALE.md](./RATIONALE.md) — design history, decisions, open questions
+→ [PLAN.md](./PLAN.md) — delivery milestones and workflow orchestration
+→ [RATIONALE.md](./RATIONALE.md) — design history, prior-art, decisions, open questions
+→ [PRESETS.md](./PRESETS.md) — per-scheme catalogue, examples, provenance, how-to-add-a-scheme

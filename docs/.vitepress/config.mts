@@ -72,6 +72,28 @@ export default defineConfig({
         ],
       },
       {
+        text: 'Specs',
+        collapsed: true,
+        items: [
+          {
+            text: 'Versions',
+            collapsed: false,
+            items: [
+              { text: 'Specification', link: '/specs/versions/SPEC' },
+              {
+                text: 'Scheme Catalogue & Provenance',
+                link: '/specs/versions/PRESETS',
+              },
+              {
+                text: 'Rationale and History',
+                link: '/specs/versions/RATIONALE',
+              },
+              { text: 'Delivery Plan', link: '/specs/versions/PLAN' },
+            ],
+          },
+        ],
+      },
+      {
         text: 'Research',
         collapsed: true,
         items: [

@@ -1,127 +1,392 @@
 # `sparkles:versions` — Delivery Plan
 
-_Audience: contributors implementing the library. This is a milestone
-outline; for the desired-state specification, see
-[SPEC.md](./SPEC.md). For design history and open questions, see
-[RATIONALE.md](./RATIONALE.md)._
+_Audience: contributors implementing the library. This document is
+execution-only — milestones, the dynamic-workflow orchestration that
+builds them, verification, and deferrals. For the desired-state
+specification, read [SPEC.md](./SPEC.md); for design history and
+prior-art justification, read [RATIONALE.md](./RATIONALE.md); for the
+per-scheme catalogue, read [PRESETS.md](./PRESETS.md)._
 
-## Context
+The library is a set of hand-written, per-ecosystem version **structs**
+conforming to compile-time concepts — a required `isVersion!T` plus an
+orthogonal optional capability vocabulary — with generic algorithms
+(`Ranges!V`, VERS interop, purl dispatch) layered as fallback/fast-path
+shells over those capabilities. The milestones below build that surface
+bottom-up; each one is realised as a single dynamic-workflow invocation.
 
-`sparkles:versions` is a DbI versioning library replacing the existing
-`sparkles:semver` sub-package. The redesign is driven by the need to
-support multiple versioning schemes from a single engine; the bit-
-packed core is a derived efficiency, not the primary motivator. See
-[SPEC §1](./SPEC.md#1-overview) for the library's identity and
-[RATIONALE §1](./RATIONALE.md#1-why-this-redesign) for the motivation
-in full.
+## 1. Milestone overview
 
-## Milestones
+| #      | Deliverable                                                                                                                 | Depends on |
+| ------ | --------------------------------------------------------------------------------------------------------------------------- | ---------- |
+| **M1** | Foundation (traits, parse-error types, salvaged internals) + ten version schemes including the `Generic` void-hook baseline | —          |
+| **M2** | `Ranges!V` set-algebra + per-scheme native range parsers + prerelease-in-range policy                                       | M1         |
+| **M3** | VERS URI interop (`parseVersUri`/`formatVersUri`) + per-scheme constraint mapping + compile-time scheme registry            | M1, M2     |
+| **M4** | purl parser + `schemeForPurlType` / `parsePurlVersion` dispatch + non-identity purl→scheme table                            | M1         |
+| **M5** | `AnyVersion`/`AnyRange` sum types + `compareAny` + README rewrite + DDoc polish                                             | M1–M4      |
+| **M6** | Documentation rewrite (SPEC, RATIONALE, PRESETS, PLAN)                                                                      | M1–M5      |
 
-Numbered for sequencing only; each milestone's _outcome_ is the
-relevant SPEC sections compiling, passing their unit tests, and
-documented per [AGENTS.md](../../../AGENTS.md).
+M1 is the bulk of the work. M2/M4 are independent of each other (both
+depend only on M1); M3 layers on top of M2; M5 integrates everything; M6
+documents the shipped state.
 
-1. **DbI vocabulary + engine scaffolding.**
-   Implement `Component`, `InternalFlag`, `GetCoreType`, and the
-   `Version(Layout)` engine struct with its CTFE validation.
-   Delivers [SPEC §3](./SPEC.md#3-dbi-vocabulary) and
-   [SPEC §4](./SPEC.md#4-the-versionlayout-engine).
-   _Dependencies:_ none.
+## 2. Per-milestone detail
 
-2. **Operations.**
-   `opCmp`, `toString`, `truncateTo!"name"()`. Engine-only at this
-   stage; concrete layouts arrive in milestone 3.
-   Delivers [SPEC §6](./SPEC.md#6-operations).
-   _Dependencies:_ milestone 1.
+Each milestone's _outcome_ is the relevant SPEC sections compiling,
+passing their unit tests, and documented per
+[AGENTS.md](../../guidelines/AGENTS.md). The detail below is execution-focused —
+which files ship and in what dependency order — and does not re-specify
+the API; follow the linked SPEC sections for behaviour.
 
-3. **Concrete layouts.**
-   `SemVerLayout`, `DmdLayout`, `DmdOptimized`, `TinyLayout` with the
-   per-layout `toString` / `parse` hooks the engine requires.
-   Delivers [SPEC §7](./SPEC.md#7-concrete-layouts).
-   _Dependencies:_ milestones 1, 2.
+### M1 — Foundation + ten schemes
 
-4. **Parser.**
-   Generic `Version!Layout.parse(string, ParseMode)` with width-
-   aware numeric reading, layout-supplied custom parsers, and the
-   existing `Expected`-based error API.
-   Delivers [SPEC §8](./SPEC.md#8-parser).
-   _Dependencies:_ milestones 1, 3.
+Replaces the deleted DbI engine (`engine.d`, `parser.d`, `layouts.d`,
+`presets.d`, `semver_rules.d` — `Version!Layout`, `layoutBody`,
+`LayoutDescriptor`, `@Component`/`@InternalFlag`/`@StringSlot`, and the
+descriptor-walking parser) with the concept-based surface from
+[SPEC §3 (The Version concept)](./SPEC.md#3-the-version-concept),
+[SPEC §4 (The Range concept)](./SPEC.md#4-the-range-concept), and
+[SPEC §6 (The Scheme concept)](./SPEC.md#6-the-scheme-concept).
 
-5. **Migration from `sparkles:semver`.**
-   Move source from `libs/semver/src/sparkles/semver/` to
-   `libs/versions/src/sparkles/versions/`. Update sub-package SDL,
-   bump dub version to `0.3.0`. Remove the old `sparkles:semver`
-   sub-package outright; downstream callers update `dependency` and
-   `import` lines in a single step.
-   Delivers [SPEC §2](./SPEC.md#2-package-and-module-layout) and
-   [SPEC §10](./SPEC.md#10-public-api-surface).
-   _Dependencies:_ milestones 1–4.
+**Salvage** (move, do not rewrite):
 
-6. **(Optional) SSO string optimisation.**
-   Add `SsoString` and swap the baseline `string` slots on
-   `SemVerLayout` and `DmdLayout` for it. The engine, parser, and
-   `opCmp` are unchanged — the slot interface is satisfied by both
-   `string` and `SsoString`.
-   Delivers [SPEC §9](./SPEC.md#9-optional-sso-string).
-   _Dependencies:_ milestones 3, 4.
-   _Optional in the engineering sense:_ may ship after milestone 7.
+- `ParseMode`, `ParseError`, `ParseErrorCode`, `ParseExpected`,
+  `ParseExpectedHook` → `parse_error.d`.
+- `compareSemVerPrerelease` → `_internal/compare_semver.d`.
+- `validateIdentifierList`, `IdentifierKind` → `_internal/identifier_rules.d`.
+- `putPaddedNumber` → `_internal/format.d`.
+- `checkParse`/`checkRoundTrip`/`checkRejects`/`checkAscending`
+  → `_internal/test_helpers.d`.
 
-7. **Tests and docs.**
-   - Per-public-function `@(name) @safe pure nothrow @nogc` unit
-     tests per AGENTS.md.
-   - Layout-coverage tests: `TinyLayout` exercising the void-hook
-     path; `SemVerLayout` vs `DmdLayout` proving the
-     same-storage-different-format DbI demonstration; `DmdOptimized`
-     round-tripping `2.111.0` / `beta.N` / `rc.M` and rejecting
-     `alpha.1` (reserved phase code); a one-component `EvilLayout`
-     proving the degenerate baseline.
-   - `README.md` runnable examples per layout, verified by
-     `nix run .#ci -- --verify`.
-   - DDoc per `docs/guidelines/ddoc.md`.
-     _Dependencies:_ all earlier milestones whose surface area the
-     tests cover (typically 1–5).
+**Write:**
 
-8. **Real-world preset layouts.**
-   Implement `sparkles.versions.presets` covering the part-1
-   catalogue of real-world versioning schemes. Adds three new
-   layouts (`CalVerYYMMLayout`, `CalVerYYYYMMDDLayout`, `VimLayout`)
-   and re-uses `SemVerLayout` + `DmdLayout` for the rest. Includes
-   unit tests that parse each catalogued example string (Node.js
-   `20.13.1`, Ubuntu `24.04.1`, Vim `9.1.0400`, Dlang `2.079.0`,
-   …) and exercise `opCmp`, `toString`, `truncateTo` per layout.
-   The per-product mapping, provenance record, and the raw analyst
-   source-material catalogue are all in [PRESETS.md](./PRESETS.md).
-   Delivers [SPEC §7.5](./SPEC.md#75-real-world-preset-layouts).
-   _Dependencies:_ milestones 3, 4. _Optional in the engineering
-   sense:_ may ship after milestone 7, since it does not block the
-   engine's correctness.
+- `traits.d` — `isVersion!T`, `isVersionRange!R`, `isVersionScheme!S`,
+  and the optional capability vocabulary (`hasOrderKey`,
+  `supportsPrerelease`, `hasComponents`, `hasBuildMetadata`,
+  `supportsNativeRange`, `supportsLooseParse`), with unit tests asserting
+  conformance against every shipped scheme.
+- The ten scheme structs under `schemes/`:
 
-## Out-of-scope deferrals
+  | Module                    | Struct           | purl type      | Capabilities beyond `isVersion`         |
+  | ------------------------- | ---------------- | -------------- | --------------------------------------- |
+  | `schemes.generic`         | `Generic`        | `generic`      | **none** (void-hook baseline)           |
+  | `schemes.semver`          | `SemVer`         | `semver`       | orderKey, prerelease, components, build |
+  | `schemes.dmd`             | `Dmd`            | _(D-internal)_ | orderKey, prerelease, components        |
+  | `schemes.dmd_compact`     | `DmdCompact`     | _(D-internal)_ | orderKey, prerelease, components        |
+  | `schemes.tiny`            | `Tiny`           | _(internal)_   | orderKey, components                    |
+  | `schemes.calver_yymm`     | `CalVerYYMM`     | _(internal)_   | orderKey, components                    |
+  | `schemes.calver_yyyymmdd` | `CalVerYYYYMMDD` | _(internal)_   | orderKey, components                    |
+  | `schemes.vim`             | `VimVer`         | _(internal)_   | orderKey, components                    |
+  | `schemes.pypi`            | `PypiVersion`    | `pypi`         | prerelease, components                  |
+  | `schemes.maven`           | `MavenVersion`   | `maven`        | prerelease                              |
+  | `schemes.deb`             | `DebianVersion`  | `deb`          | prerelease                              |
 
-- **`core.int128.Cent` support.** No 16-byte layouts in the first
-  release. Reintroduce when a concrete consumer needs it. Several
-  part-2 catalogue schemes (Windows, Chrome, .NET Assemblies, Java,
-  Office, Safari, Unreal) would need this — see
-  [PRESETS.md §5](./PRESETS.md#5-deferred-from-this-module).
-- **Pseudo-SemVer with hyphenless prerelease.** Go (`go1.22rc1`),
-  Python (`3.13.0a1`), Unity (`2023.2.1f1`), OpenSSL legacy
-  (`1.1.1w`), OpenSSH (`9.7p1`) all need layout-supplied custom
-  tokenisers for the numeric→alphanumeric boundary. Tracked as a
-  follow-up milestone in
-  [PRESETS.md §5](./PRESETS.md#5-deferred-from-this-module).
-- **Part-2 catalogue schemes** (entries 26–50). Beyond `Cent` and
-  hyphenless-prerelease, these schemes need non-power-of-two
-  layouts (Eclipse `2024-03`, Maya `2025`), pure-alphanumeric
-  fallback (iOS `21F79`, macOS `23F79`, Android `UP1A.231005.007`),
-  and epoch-prefix UDAs (Debian `1:1.2.3-4+deb12u1`). Each is its
-  own structural decision; see
-  [RATIONALE §5](./RATIONALE.md#5-open-questions).
-- **`SsoString` for a second consumer.** If `core_cli` or another
-  sub-package gains a use case, lift `SsoString` out of
-  `sparkles.versions` into `sparkles.core_cli`. Defer until then.
-- **Branch rename.** The git branch stays `feat/version` (singular)
-  through this work; renaming a checked-out branch mid-stream is
-  needless churn.
+  SemVer is the reference scheme, written first. Dmd / DmdCompact / Tiny
+  / CalVer\* / Vim port their compare-and-format logic directly from the
+  old layout structs (no generation). PyPI / Maven / Debian are new:
+  each implements `opCmp`, `toString`, `parse`, a stubbed
+  `parseNativeRange` (filled in M2), and a real-world fixture test.
 
-See [RATIONALE §5](./RATIONALE.md#5-open-questions) for unresolved
-design questions that may inform later milestones.
+- `schemes/package.d` + root `package.d` re-exports; `dub.sdl` source
+  paths updated.
+
+Each scheme module ends with
+`static assert(isVersion!ThisStruct && isVersionScheme!ThisStruct);`, so
+any conformance regression is a compile error. The `Generic` scheme is
+an opaque lexicographic string compare declaring **zero** optional
+capabilities — it exists to exercise every generic algorithm's fallback
+path.
+
+**Key files:** `traits.d`, `parse_error.d`, all ten `schemes/*.d`,
+`schemes/package.d`, `package.d`, `_internal/*.d`.
+
+### M2 — `Ranges!V` + native range parsers
+
+Implements the [Range concept](./SPEC.md#4-the-range-concept) and the
+generic [operations](./SPEC.md#5-operations) over it, plus the per-scheme
+native range grammars.
+
+- `ranges.d` — `Ranges!V`, the concrete sorted, disjoint interval set
+  per [SPEC §4.2](./SPEC.md#4-the-range-concept). Implements the full
+  method surface and bound representation specified there; no API is
+  re-listed here.
+- `parseNativeRange` additions per non-trivial scheme, implementing each
+  ecosystem's grammar as catalogued in [PRESETS §3](./PRESETS.md). The
+  six SemVer-shaped internal schemes inherit the SemVer grammar.
+- Prerelease-in-range policy encoded and tested per scheme, gated on the
+  `supportsPrerelease` capability (the node-semver convention specified
+  in [SPEC §5.2](./SPEC.md#5-operations)).
+
+**Key files:** `ranges.d`, the `parseNativeRange` additions to each
+scheme, a `Ranges!V` property-test module.
+
+### M3 — VERS URI interop
+
+Implements [SPEC §9 (VERS interop)](./SPEC.md#9-vers-interop).
+
+- `vers.d` — `VersUri`, `parseVersUri`, `formatVersUri` handling the URI
+  surface only (ASCII-only, lowercase scheme, sort + dedupe
+  constraints), plus the static-dispatch `parseVersAs!Scheme` template
+  and runtime `parseVersAny` over `AnyRange`.
+- Per scheme: `fromVersConstraint` (segment → `Range`) and
+  `toVersConstraint` (`Range` → segment), with the native-operator →
+  VERS-operator map as per-scheme static data, gated on
+  `supportsNativeRange`.
+- `schemes/package.d` gains the CTFE registry keyed by `purlType`.
+
+**Key files:** `vers.d`, the constraint methods on each scheme, the
+registry in `schemes/package.d`.
+
+### M4 — purl parser + scheme dispatch
+
+Implements [SPEC §10 (pURL interop)](./SPEC.md#10-purl-interop).
+Independent of M2/M3 — depends only on the M1 schemes.
+
+- `purl.d` — `PackageUrl`, `parsePurl` (parse only; we consume purls, we
+  do not mint them).
+- `schemeForPurlType` template-alias dispatch and the runtime
+  `parsePurlVersion` returning `AnyVersion`.
+- The non-identity purl→scheme mapping table for cases where the purl
+  `type` differs from the VERS scheme name.
+
+**Key files:** `purl.d`, the mapping table (co-located with the registry
+in `schemes/package.d`).
+
+### M5 — `AnyVersion`/`AnyRange` + README + DDoc
+
+Implements [SPEC §11 (`AnyVersion` / `AnyRange`)](./SPEC.md#11-anyversion--anyrange)
+and brings the public surface to release quality.
+
+- `any.d` — `AnyVersion`/`AnyRange` `SumType`s over all eleven built-in
+  schemes (including the `Generic` void-hook baseline, since
+  `parsePurlVersion` can yield `pkg:generic/...`) and `compareAny`
+  returning `Nullable!int` (null when schemes differ).
+- README rewrite from "DbI engine" to "ecosystem-aware version library",
+  with three runnable examples: per-ecosystem parse-and-compare; parse a
+  `vers:` URI and test satisfaction; parse a purl, dispatch on type,
+  parse the version, check against a range.
+- DDoc on every public symbol per
+  [`docs/guidelines/ddoc.md`](../../guidelines/ddoc.md).
+
+**Key files:** `any.d`, `README.md`, DDoc across all public modules.
+
+### M6 — Documentation rewrite
+
+Rewrites all four docs to the shipped design (this is one of them).
+SPEC is rebuilt around the three concepts, the per-scheme module
+convention, `Ranges!V`, VERS, and purl; RATIONALE replaces the
+DbI-engine narrative with the pubgrub/univers/Aether prior-art findings;
+PRESETS retargets to per-scheme notes (capabilities, edge cases,
+provenance, how to add a scheme); PLAN becomes this M1–M6 outline. The
+`source-material/` catalogues are inputs and stay untouched.
+
+**Key files:** `docs/specs/versions/{SPEC,RATIONALE,PRESETS,PLAN}.md`.
+
+## 3. Execution via dynamic workflows
+
+Each milestone is implemented as **one `Workflow` invocation**, run in
+sequence so the result of one informs the next. Within a milestone,
+agents fan out over independent units of work — one module each — and
+converge through a serial build-and-fix loop.
+
+### Cross-cutting conventions (all milestones)
+
+- **No worktree isolation.** Fan-out agents write _disjoint_ files (one
+  module each), so parallel writes never conflict. The only serialised
+  work is the build/test loop, which runs the compiler and must be a
+  single agent at a time.
+- **Schema-validated agent output.** Every agent that yields structured
+  data — file manifests, build-error reports, conformance verdicts,
+  review findings — returns a JSON-schema-validated object, so the
+  orchestrator branches on data, not prose.
+- **Serial build-fix convergence loop.** After each fan-out, a `while`
+  loop spawns one build agent per turn that runs
+  `nix develop -c dub test :versions`, captures the first error cluster
+  into a schema, fixes it, and repeats until green or the iteration cap
+  is hit (then it reports residual errors back to the orchestrator).
+  Schemes share one dub build and cannot compile in isolation, so the
+  write-phase agents do **not** build — this loop is the single compile
+  authority after the fan-out barrier.
+- **Adversarial verification on the hard schemes.** PyPI (PEP 440),
+  Maven (qualifier order), and Debian (epoch/upstream/revision) each get
+  an independent skeptic that tries to _refute_ the comparison logic
+  against authoritative test vectors (PEP 440 spec examples,
+  `dpkg --compare-versions` rules, Maven `ComparableVersion` ordering)
+  before the scheme is accepted. The seven SemVer-shaped schemes get a
+  single-vote review.
+- **Completeness critic.** M1 and M6 end with an agent asking "what's
+  missing — a scheme without a conformance assert, a public symbol
+  without DDoc, a doc with a stale `layoutBody` reference?" and feeds the
+  answer into a final fix round.
+
+### WF-M1 — `foundation-and-schemes`
+
+```
+phase('Foundation')          // parallel barrier — disjoint files
+  ├─ delete the DbI engine surface; salvage parse_error.d
+  ├─ salvage _internal/{identifier_rules,compare_semver,format,test_helpers}.d
+  ├─ write traits.d (isVersion / isVersionRange / isVersionScheme + capabilities)
+  └─ write ranges.d skeleton (type + isVersion-satisfying surface)
+phase('Schemes')             // pipeline over the 10 scheme modules
+  stage 1 write:   one agent per scheme → schemes/<purlType>.d + conformance
+                   static assert + real-world round-trip tests
+  stage 2 review:  adversarial correctness review (3 hard schemes get the
+                   refute-skeptic; 7 SemVer-shaped + Generic get 1 vote)
+phase('Integrate')           // single agent
+  └─ schemes/package.d + root package.d re-exports + dub.sdl source paths
+phase('Build & fix')         // serial while-loop, single build agent per turn
+phase('Completeness')        // single critic agent
+```
+
+### WF-M2 — `ranges-and-native-parsers`
+
+```
+phase('Ranges')        complete Ranges!V set-algebra + property tests
+                       (De Morgan, idempotence, absorption, subset/disjoint)
+phase('Native parsers') pipeline over {semver/npm, maven, pypi, deb}:
+                       write parseNativeRange → review. The 6 internal
+                       SemVer-shaped schemes inherit the SemVer grammar.
+phase('Prerelease policy') encode + test the node-semver
+                       prerelease-in-range rule per scheme
+phase('Build & fix')   serial loop
+phase('Verify laws')   adversarial: confirm property tests are not vacuous
+```
+
+### WF-M3 — `vers-interop`
+
+```
+phase('VERS URI')      vers.d parser + emitter (ASCII/lowercase/sort/dedupe)
+phase('Constraints')   pipeline per scheme: from/toVersConstraint + operator map
+phase('Registry')      CTFE purlType→module registry in schemes/package.d
+phase('Fixtures')      extract round-trip corpus from
+                       /home/petar/code/repos/univers/tests/data
+phase('Build & fix')   serial loop
+phase('Round-trip')    adversarial: native → Range → VERS → Range equality
+```
+
+### WF-M4 — `purl-dispatch`
+
+```
+phase('purl parser')   purl.d (type/namespace/name/version/qualifiers/subpath)
+phase('Dispatch')      schemeForPurlType template + parsePurlVersion → AnyVersion
+                       + non-identity purl→scheme mapping table
+phase('Conformance')   official purl-spec test suite if vendored, else curated
+phase('Build & fix')   serial loop
+```
+
+### WF-M5 — `any-and-polish`
+
+```
+phase('Sum types')     any.d (AnyVersion/AnyRange + compareAny → Nullable!int)
+phase('README')        rewrite README with 3 runnable examples
+phase('DDoc')          parallel: one agent per public module adds DDoc
+phase('Verify')        serial loop: nix run .#ci -- --verify --files README.md
+```
+
+### WF-M6 — `docs-rewrite`
+
+```
+phase('Rewrite')       parallel barrier — 4 disjoint files:
+                       SPEC.md, RATIONALE.md, PRESETS.md, PLAN.md
+phase('Consistency')   critic: zero remaining references to layoutBody /
+                       LayoutDescriptor / Version!Layout / StringSlot in any
+                       .md or .d under docs/specs/versions or libs/versions
+```
+
+## 4. Verification
+
+Per milestone:
+
+1. **M1.** `nix develop -c dub test :versions` exits 0. Each scheme
+   module carries `static assert(isVersion!ThisStruct &&
+isVersionScheme!ThisStruct);`, so any conformance regression is a
+   compile-time failure. Each scheme has at least one parse-and-round-trip
+   test (`checkRoundTrip!Scheme("real-world-string")`). The real-world
+   catalogue from [PRESETS.md](./PRESETS.md) — Python `3.13.0a1`, Maven
+   `1.0-SNAPSHOT`, Debian `2:4.13.1-0ubuntu0.16.04.1.1~`, and the rest —
+   is exercised end-to-end.
+
+2. **M2.** A property-test module asserts the set-algebra laws for
+   `Ranges!V` over hand-constructed intervals: De Morgan, idempotence,
+   absorption, and the `subsetOf`/`isDisjoint` consistency laws. Each
+   scheme's `parseNativeRange` round-trips a small real-world corpus
+   (npm `^1.2.0`, Maven `[1.0,2.0)`, PEP 440 `>=1.2.4,<2`, Debian
+   `>= 2.0, << 3.0`). The prerelease-in-range rule is tested for each
+   `supportsPrerelease` scheme.
+
+3. **M3.** Round-trip property test per scheme:
+   `parseNativeRange(s) ⟶ toVersConstraint ⟶ fromVersConstraint`
+   produces an equal `Range`. The VERS URI parser round-trips a corpus
+   pulled from univers's `tests/data/` (verbatim where semantics match).
+
+4. **M4.** A test parses `pkg:pypi/[email protected]`,
+   `pkg:npm/[email protected]`, `pkg:deb/debian/[email protected]`, and
+   `pkg:maven/org.apache.commons/[email protected]`, and checks that
+   each version is parsed by the dispatched scheme. The official
+   purl-spec test suite (vendored or fetched at CI time) runs end-to-end
+   if available; otherwise a curated subset.
+
+5. **M5.** `nix run .#ci -- --verify --files README.md` passes for the
+   three runnable examples. `dub build :versions` succeeds in release
+   configuration and the documented public API matches the produced
+   symbol surface (verified via a `-Xf=docs.json` introspection check).
+
+6. **M6.** All four docs rewritten; no remaining references to
+   `layoutBody`, `LayoutDescriptor`, `Version!Layout`, or `StringSlot`
+   in any `.md` or `.d` file under `docs/specs/versions/` or
+   `libs/versions/`.
+
+### Capability-matrix coverage
+
+Beyond the per-milestone checks, the test suite verifies each optional
+primitive **individually**:
+
+- `hasOrderKey` — present on SemVer-shaped schemes, absent on `Generic`,
+  PyPI, Maven, Debian; covered by static `static assert` checks both
+  ways. Where present, an **orderKey-vs-opCmp equivalence test** asserts
+  `sign(a.orderKey <=> b.orderKey) == sign(a <=> b)` whenever the keys
+  differ, across the scheme's example corpus.
+- `supportsPrerelease` — exercised by the prerelease-in-range tests and a
+  direct `isPrerelease` assertion per scheme that provides it.
+- `hasComponents` — exercised by the caret/tilde operator tests in M2.
+- `hasBuildMetadata` — exercised by a build-aware compare test on SemVer.
+- `supportsNativeRange` / `supportsLooseParse` — the VERS and loose-parse
+  paths static-if on these, and tests cover both the present and absent
+  branches (the `Generic` baseline provides neither and must still
+  compile through every generic algorithm).
+
+## 5. Out-of-scope deferrals
+
+- **Dependency solving.** The library ships `Ranges!V` and the
+  set-algebra; it does not ship a pubgrub-style solver. A resolver would
+  import `sparkles.versions` and define its own `DependencyProvider` —
+  that is a separate library.
+- **Mutation helpers.** `bump(releaseType)`, `inc`, "next prerelease",
+  `with` builders. The library survey found these rare (3 of 13
+  libraries) and not part of the abstract `Version` contract. Deferred
+  until a real consumer needs them.
+- **Cross-scheme total order.** `compareAny` returns `Nullable!int`;
+  there is no universal total order across schemes (Repology's
+  `libversion` is the only precedent and is explicitly best-effort).
+  Same policy as univers and the VERS spec.
+- **Runtime scheme registration.** All built-in schemes are
+  compile-time-known. A user can add their own scheme by writing a struct
+  conforming to `isVersionScheme!T`, but the registry does not accept
+  runtime-installed plugins.
+- **SSO strings.** The `string`-backed prerelease/build slots stay plain
+  GC `string`s. A small-string-optimised `SsoString` drop-in is deferred
+  until a measured allocation cost justifies it.
+- **Bucket-F pseudo-SemVer.** Hyphenless-prerelease schemes (Go
+  `go1.22rc1`, Unity `2023.2.1f1`, OpenSSL `1.1.1w`, OpenSSH `9.7p1`)
+  need bespoke numeric→alphanumeric tokenisers; they are not in the M1
+  ten. PyPI's `3.13.0a1` is the one such form that ships, handled by the
+  dedicated `PypiVersion` parser rather than a generic tokeniser.
+- **Part-2 heavyweight schemes.** The part-2 catalogue (entries 26–50:
+  Eclipse `2024-03`, Maya `2025`, iOS `21F79`, Android
+  `UP1A.231005.007`, …) needs non-power-of-two encodings and
+  pure-alphanumeric fallbacks. Each is its own structural decision and is
+  out of scope for this rewrite.
+
+---
+
+→ [SPEC.md](./SPEC.md) — desired-state specification
+→ [RATIONALE.md](./RATIONALE.md) — design history, prior art, open questions
