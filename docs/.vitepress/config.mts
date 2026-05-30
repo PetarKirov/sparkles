@@ -25,6 +25,10 @@ export default defineConfig({
         collapsed: true,
         items: [
           {
+            text: 'Agent Guidelines',
+            link: '/guidelines/AGENTS',
+          },
+          {
             text: 'Functional & Declarative Programming',
             link: '/guidelines/functional-declarative-programming-guidelines',
           },
