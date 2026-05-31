@@ -62,7 +62,7 @@ keyword.
 | ------------------------------------------- | ----------------------------------------------------------------------------------- |
 | `sparkles.versions`                         | Public re-exports (`package.d`)                                                     |
 | `sparkles.versions.traits`                  | `isVersion!T`, `isVersionRange!R`, `isVersionScheme!S` + optional-capability traits |
-| `sparkles.versions.parse_error`             | `ParseMode`, `ParseError`, `ParseErrorCode`, `ParseExpected!T`                      |
+| `sparkles.versions.parsing`                 | `ParseMode`; re-exports the parse types from `core_cli.parse_error`                 |
 | `sparkles.versions.ranges`                  | `Ranges!V` (sorted disjoint intervals)                                              |
 | `sparkles.versions.vers`                    | VERS URI parser/emitter + compile-time scheme registry                              |
 | `sparkles.versions.purl`                    | Package URL parser + purl-type → scheme mapping                                     |
@@ -79,12 +79,21 @@ keyword.
 | `sparkles.versions.schemes.maven`           | `MavenVersion` (qualifier order)                                                    |
 | `sparkles.versions.schemes.deb`             | `DebianVersion` (epoch/upstream/revision)                                           |
 | `sparkles.versions.schemes.generic`         | `Generic` (opaque lexicographic baseline)                                           |
-| `sparkles.versions._internal.*`             | Shared private helpers (not part of the public surface)                             |
+| `sparkles.versions.testing`                 | `version(unittest)` test helpers (`checkParse`, `checkRoundTrip`, …)                |
 
-`_internal` holds `identifier_rules` (SemVer identifier grammar),
-`compare_semver` (`compareSemVerPrerelease`), `format`
-(`putPaddedNumber`), and `test_helpers` (`checkParse`, `checkRoundTrip`,
-`checkRejects`, `checkAscending`).
+The library has no `_internal` package: shared low-level primitives live
+in `sparkles.core_cli`, and the SemVer identifier grammar
+(`compareSemVerPrerelease`, identifier validation) lives `package`-scoped
+in `schemes/semver.d`, reused by the other SemVer-shaped schemes.
+
+**Foundation in `sparkles.core_cli`** — the parsing/formatting primitives
+are generic and live in core_cli, not in `versions`:
+
+| Module                           | Provides                                                                       |
+| -------------------------------- | ------------------------------------------------------------------------------ |
+| `sparkles.core_cli.parse_error`  | `ParseError {code, offset}`, `ParseErrorCode`, `ParseExpected!T` (generic)     |
+| `sparkles.core_cli.text_readers` | `readInteger`, `skipWhile`, `tryConsume`, `readUntil` (slice-advance, `@nogc`) |
+| `sparkles.core_cli.text_writers` | `writeIntegerPadded` (alongside the existing `writeInteger`)                   |
 
 ## 3. The Version concept
 
@@ -459,25 +468,29 @@ which returns `null` across schemes.
 
 ## 7. Parsing
 
-Parsing is non-throwing and `Expected`-based; the parse types live in
-`sparkles.versions.parse_error`.
+Parsing is non-throwing and `Expected`-based. The error vocabulary is
+generic and lives in `sparkles.core_cli.parse_error` (reused by every
+core_cli text parser, not just versions); `ParseMode` is a versions enum
+in `sparkles.versions.parsing`.
 
 ```d
-enum ParseMode { strict, loose }
-
+// sparkles.core_cli.parse_error (generic, @nogc)
 enum ParseErrorCode
 {
     emptyInput, unexpectedCharacter, unexpectedEnd, leadingZero,
-    emptyIdentifier, invalidIdentifier, numericOverflow, /* … */
+    numericOverflow, invalidIdentifier, widthMismatch, /* … */
 }
 
 struct ParseError
 {
     ParseErrorCode code;  /// what went wrong
-    size_t index;         /// byte offset where parsing failed
+    size_t offset;        /// byte offset (within the parsed input) of the failure
 }
 
-alias ParseExpected(T) = Expected!(T, ParseError, ParseExpectedHook);
+alias ParseExpected(T) = Expected!(T, ParseError, NoGcHook);
+
+// sparkles.versions.parsing
+enum ParseMode { strict, loose }
 ```
 
 `ParseExpected!T` carries either a parsed `T` or a structured
@@ -488,7 +501,7 @@ auto r = SemVer.parse("1.2.x");
 if (r.hasValue)
     use(r.value);
 else
-    report(r.error.code, r.error.index);   // unexpectedCharacter @ 4
+    report(r.error.code, r.error.offset);  // unexpectedCharacter @ 4
 ```
 
 The parsing surface across the three concepts:
@@ -661,7 +674,8 @@ A consumer who needs a single ecosystem imports just that scheme:
 
 ```d
 import sparkles.versions.schemes.semver : SemVer;
-import sparkles.versions.parse_error : ParseMode, ParseError, ParseErrorCode;
+import sparkles.versions.parsing : ParseMode;
+import sparkles.core_cli.parse_error : ParseError, ParseErrorCode;
 ```
 
 A polyglot consumer (purl/VERS-driven) imports the package module, which
@@ -682,7 +696,7 @@ import sparkles.versions.traits : isVersion, isVersionScheme,
     hasOrderKey, supportsPrerelease, hasComponents, hasSemVerComponents,
     hasBuildMetadata;
 import sparkles.versions.ranges : Ranges;
-import sparkles.versions.parse_error : ParseExpected, ParseError, ParseErrorCode;
+import sparkles.core_cli.parse_error : ParseExpected, ParseError, ParseErrorCode;
 
 struct MyScheme { /* … */ }
 static assert(isVersion!MyScheme && isVersionScheme!MyScheme);

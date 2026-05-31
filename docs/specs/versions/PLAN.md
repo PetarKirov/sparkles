@@ -47,15 +47,31 @@ descriptor-walking parser) with the concept-based surface from
 [SPEC §4 (The Range concept)](./SPEC.md#4-the-range-concept), and
 [SPEC §6 (The Scheme concept)](./SPEC.md#6-the-scheme-concept).
 
-**Salvage** (move, do not rewrite):
+**core_cli prelude** (foundation primitives are generic — they live in
+`sparkles.core_cli`, not in a `versions/_internal`):
 
-- `ParseMode`, `ParseError`, `ParseErrorCode`, `ParseExpected`,
-  `ParseExpectedHook` → `parse_error.d`.
-- `compareSemVerPrerelease` → `_internal/compare_semver.d`.
-- `validateIdentifierList`, `IdentifierKind` → `_internal/identifier_rules.d`.
-- `putPaddedNumber` → `_internal/format.d`.
+- Add `writeIntegerPadded(w, val, minDigits)` to
+  `core_cli.text_writers`, and refactor `logger.writePadded2` onto it
+  (it already hand-rolls the same logic).
+- Create `core_cli.text_readers` with `readInteger`, `skipWhile`,
+  `tryConsume`/`tryConsumeAny`, `readUntil` — slice-advance
+  (`ref scope const(char)[]`), `@safe pure nothrow @nogc`. `readInteger`
+  returns `ParseExpected!T` and is constrained `if (isUnsigned!T)`.
+- Create `core_cli.parse_error` with the **generic** `ParseError {code,
+offset}`, `ParseErrorCode`, `ParseExpected!T = Expected!(T, ParseError,
+NoGcHook)`. Add the `expected` dependency to `core-cli`'s `dub.sdl`.
+
+**Salvage into versions** (move, do not rewrite):
+
+- `ParseMode` → `sparkles.versions.parsing` (re-exports the core_cli
+  parse types). The old `ParseError`/`ParseErrorCode`/`ParseExpected` are
+  superseded by the generic core_cli versions above — not salvaged.
+- `compareSemVerPrerelease`, `validateIdentifierList`, `IdentifierKind`
+  → `package`-scoped in `schemes/semver.d`, reused by `schemes/dmd.d`
+  (and any other SemVer-shaped scheme).
+- `putPaddedNumber` → superseded by `core_cli.text_writers.writeIntegerPadded`.
 - `checkParse`/`checkRoundTrip`/`checkRejects`/`checkAscending`
-  → `_internal/test_helpers.d`.
+  → `sparkles.versions.testing` (`version(unittest)`).
 
 **Write:**
 
@@ -96,8 +112,9 @@ an opaque lexicographic string compare declaring **zero** optional
 capabilities — it exists to exercise every generic algorithm's fallback
 path.
 
-**Key files:** `traits.d`, `parse_error.d`, all ten `schemes/*.d`,
-`schemes/package.d`, `package.d`, `_internal/*.d`.
+**Key files:** core_cli `text_readers.d` / `parse_error.d` /
+`text_writers.d`; versions `traits.d`, `parsing.d`, all eleven
+`schemes/*.d`, `schemes/package.d`, `package.d`, `testing.d`.
 
 ### M2 — `Ranges!V` + native range parsers
 
