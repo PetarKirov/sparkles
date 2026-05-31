@@ -197,7 +197,7 @@ private:
 @safe
 void writeDuration(Writer)(ref Writer w, Duration d)
 {
-    import sparkles.core_cli.text_writers : writeInteger;
+    import sparkles.core_cli.text.writers : writeInteger;
     import std.range.primitives : put;
 
     long ms = d.total!"msecs";
@@ -282,7 +282,7 @@ unittest
 @safe
 void writeTenths(Writer)(ref Writer w, long ms, long unitTenths, char suffix)
 {
-    import sparkles.core_cli.text_writers : writeInteger;
+    import sparkles.core_cli.text.writers : writeInteger;
     import std.range.primitives : put;
 
     auto tenths = (ms + unitTenths / 2) / unitTenths;
@@ -299,7 +299,7 @@ Duration durationFromTicks(long ticks) =>
 @safe
 void writeTimeHms(Writer)(ref Writer w, int hour, int minute, int second)
 {
-    import sparkles.core_cli.text_writers : writeInteger;
+    import sparkles.core_cli.text.writers : writeInteger;
     import std.range.primitives : put;
 
     writePadded2(w, hour);
@@ -312,7 +312,7 @@ void writeTimeHms(Writer)(ref Writer w, int hour, int minute, int second)
 @safe
 void writePadded2(Writer)(ref Writer w, int value)
 {
-    import sparkles.core_cli.text_writers : writeInteger;
+    import sparkles.core_cli.text.writers : writeInteger;
     import std.range.primitives : put;
 
     if (value < 10)
