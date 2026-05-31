@@ -11,95 +11,42 @@ justification, see [RATIONALE.md](./RATIONALE.md)._
 
 ## 1. Overview
 
-A **scheme** is a hand-written struct conforming to the compile-time
-concept [`isVersionScheme!S`](./SPEC.md#6-the-scheme-concept):
-it is simultaneously the version _value_ (it satisfies
-[`isVersion!T`](./SPEC.md#3-the-version-concept) — `opCmp` +
-`toString`) and the scheme _handle_ (`Version`, `purlType`, `parse`).
-Each scheme lives in its own module under
-`sparkles.versions.schemes.*` and declares only the
-[optional capabilities](./SPEC.md#32-optional-capability-vocabulary)
-its ecosystem actually has. Generic algorithms
-(`Ranges!V`, `sort`, `satisfies`, the VERS/purl layers) introspect
-those capabilities and fall back when a capability is absent.
+This catalogue documents each shipped scheme: its purl `type`,
+real-world example strings, ordering rules and edge cases, native-range
+grammar, the capabilities it declares, and the authoritative source
+every example was checked against. For the concepts these schemes
+conform to ([`isVersion!T`](./SPEC.md#3-the-version-concept),
+[`isVersionScheme!S`](./SPEC.md#6-the-scheme-concept)) and the capability
+traits, see [SPEC.md](./SPEC.md).
 
 ```d
 import sparkles.versions.schemes.semver : SemVer;
 import sparkles.versions.schemes.pypi   : PypiVersion;
 import sparkles.versions.schemes.deb    : DebianVersion;
-import sparkles.versions.parse_error    : ParseMode;
 
 auto rust   = SemVer      .parse("1.78.0").value;
 auto python = PypiVersion .parse("3.13.0a1").value;
 auto apt    = DebianVersion.parse("2:4.13.1-0ubuntu0.16.04.1.1~").value;
 ```
 
-The catalogue ships **eleven** schemes. The `Generic` scheme is the
-mandated void-hook baseline (opaque string compare, zero optional
-capabilities) that proves every generic algorithm has a working
-fallback path. The other ten map real ecosystems: one (`semver`) is the
-SemVer 2.0.0 reference that drives most package managers at the value
-level; six are D-internal compact encodings; and three (`pypi`,
-`maven`, `deb`) are _structural_ schemes whose comparison cannot be
-reduced to an integer key.
+Eleven schemes ship: `semver` is the SemVer 2.0.0 reference (it also
+drives most package managers at the value level); six are D-internal
+compact encodings; three (`pypi`, `maven`, `deb`) are _structural_ —
+their ordering cannot be reduced to an integer key; and `generic` is the
+opaque baseline.
 
-## 2. Capability matrix
+## 2. Capabilities
 
-The headline that justifies the DbI capability vocabulary: no scheme
-provides every capability, and the structural schemes (`pypi`, `maven`,
-`deb`) deliberately omit `orderKey` because their ordering is not
-integer-packable. `yes`/`no` are read against the traits in
-[SPEC §3.2](./SPEC.md#32-optional-capability-vocabulary).
-
-| Scheme            | `orderKey` | `prerelease` | `components` | `build` | `nativeRange` | `loose` |
-| ----------------- | :--------: | :----------: | :----------: | :-----: | :-----------: | :-----: |
-| `semver`          |    yes     |     yes      |     yes      |   yes   |      yes      |   yes   |
-| `dmd`             |    yes     |     yes      |     yes      |   no    |      yes      |   yes   |
-| `dmd_compact`     |    yes     |     yes      |     yes      |   no    |      yes      |   no    |
-| `tiny`            |    yes     |      no      |     yes      |   no    |      yes      |   yes   |
-| `calver_yymm`     |    yes     |      no      |     yes      |   no    |      yes      |   yes   |
-| `calver_yyyymmdd` |    yes     |      no      |     yes      |   no    |      yes      |   yes   |
-| `vim`             |    yes     |      no      |     yes      |   no    |      yes      |   yes   |
-| `pypi`            |   **no**   |     yes      |     yes      |   no    |      yes      |   yes   |
-| `maven`           |   **no**   |     yes      |      no      |   no    |      yes      |   no    |
-| `deb`             |   **no**   |      no      |      no      |   no    |      yes      |   no    |
-| `generic`         |     no     |      no      |      no      |   no    |      no       |   no    |
-
-Reading the matrix:
-
-- **`orderKey: yes`** means the scheme exposes a monotonic
-  `orderKey()` returning **any unsigned integer type** whose unsigned
-  compare agrees with `opCmp` whenever the keys differ (the contract in
-  [SPEC §3.2](./SPEC.md#32-optional-capability-vocabulary)). The scheme
-  picks the narrowest width that fits its components — the 4-byte
-  schemes (`tiny`, `dmd_compact`) return a `uint`; the 8-byte
-  SemVer-shaped schemes (`semver`, `dmd`, `calver_*`, `vim`) return a
-  `ulong` — and generic code reads the width back through
-  `OrderKeyType!T`. Generic algorithms use the key for radix sort,
-  compact `Ranges!V` bounds (stored in the scheme's own narrow key
-  type), and a fast `opCmp` pre-check. The three structural schemes
-  cannot satisfy this contract for any width (see §3.8–§3.10) so they
-  omit it; their `opCmp` does the full structural walk.
-- **`components: yes`** means the scheme declares an
-  `enum string[] components` naming its numeric fields, most-significant
-  first ([SPEC §3.2](./SPEC.md#32-optional-capability-vocabulary)). Arity
-  is free — the SemVer-shaped schemes declare `["major","minor","patch"]`
-  and the calendar schemes declare `["year","month","day"]`. Only the
-  former additionally satisfy `hasSemVerComponents`, so only they get the
-  caret `^` / tilde `~` operators; the calendar schemes still get generic
-  iteration, compare, and `truncateTo` by component name. `maven` and
-  `deb` declare no list (their token models have no fixed ordered
-  components), and `generic` is opaque.
-- **`build: yes`** appears on `semver` alone — it is the only shipped
-  scheme that carries SemVer §10 build metadata excluded from ordering.
-  PyPI local versions (`+local`) _do_ participate in ordering, so they
-  are modelled as part of the version proper, not as `hasBuildMetadata`
-  (see §3.8).
-- **`nativeRange`/`loose`** are _scheme_ capabilities
-  ([SPEC §6.2](./SPEC.md#62-optional-scheme-capabilities)): a scheme that
-  only parses exact versions is still a valid `isVersionScheme!S`. The
-  six SemVer-shaped internal schemes inherit the SemVer/npm range
-  grammar for `nativeRange`.
+The at-a-glance capability matrix — which scheme provides `hasOrderKey`,
+`supportsPrerelease`, `hasComponents`, `hasBuildMetadata`,
+`supportsNativeRange`, and `supportsLooseParse` — is in
+[SPEC §8](./SPEC.md#8-shipped-schemes); the trait semantics are in
+[SPEC §3.2](./SPEC.md#32-optional-capability-vocabulary) and
+[§6.2](./SPEC.md#62-optional-scheme-capabilities). This catalogue records
+the per-scheme detail behind each cell (§3) — in particular, why the
+three structural schemes (`pypi`, `maven`, `deb`) omit `orderKey`, and
+why the calendar schemes have `hasComponents` but not the
+caret/tilde-enabling `hasSemVerComponents`.
 
 ## 3. Per-scheme catalogue
 
@@ -409,41 +356,22 @@ A scheme is just a struct conforming to
 [`isVersionScheme!S`](./SPEC.md#6-the-scheme-concept).
 To add one:
 
-1. **Create the module** `schemes/<purl_type>.d` (the file/module name
-   is the purl `type` where one exists, else a descriptive `snake_case`
-   name) and write the struct. Implement the _required_ surface:
+1. **Create the module** `schemes/<purl_type>.d` (named for the purl
+   `type` where one exists, else a descriptive `snake_case` name) and
+   write the required surface — `opCmp`, `opEquals`, `toHash`,
+   `toString`, plus `purlType`, `alias Version`, and `static parse`. The
+   exact signatures are in
+   [SPEC §3.1](./SPEC.md#31-required-surface--isversiont) and
+   [§6.1](./SPEC.md#61-required-surface--isversionschemes).
 
-   ```d
-   struct MyScheme
-   {
-       // --- isVersion!MyScheme (required) ---
-       int  opCmp(in MyScheme other) const @safe pure nothrow @nogc;
-       bool opEquals(in MyScheme other) const @safe pure nothrow @nogc;
-       size_t toHash() const @safe pure nothrow @nogc;
-       void toString(W)(ref W sink) const;
-
-       // --- isVersionScheme!MyScheme (required) ---
-       enum string purlType = "myscheme";
-       alias Version = MyScheme;
-       static ParseExpected!MyScheme parse(string s) @safe pure nothrow @nogc;
-   }
-   ```
-
-2. **Declare only the optional primitives the ecosystem actually has.**
-   Add an `orderKey()` returning any unsigned integer type (pick the
-   narrowest that fits — `uint` for a 4-byte scheme, `ulong` for a
-   wider one) _only_ if the order is integer-packable and you can prove
-   `sign(a.orderKey <=> b.orderKey) == sign(a <=> b)`
-   whenever the keys differ — structural schemes like the three above
-   must **not** declare it. Add `enum string[] components` (naming the
-   numeric fields, most-significant first — e.g.
-   `["major","minor","patch"]`, or `["major","minor","build","revision"]`
-   for a 4-part scheme, or `["year","month","day"]` for CalVer) to get
-   generic compare / `truncateTo` / iteration; the leading
-   `["major","minor","patch"]` triple additionally unlocks caret/tilde
-   via `hasSemVerComponents`. Add `isPrerelease`, `build`, `parseLoose`,
-   and/or `parseNativeRange` as the scheme supports them. Absence is
-   never an error; the generic algorithms fall back.
+2. **Declare only the optional capabilities the ecosystem has** — any of
+   `orderKey`, `components`, `isPrerelease`, `build`, `parseLoose`,
+   `parseNativeRange` (semantics in
+   [SPEC §3.2](./SPEC.md#32-optional-capability-vocabulary) /
+   [§6.2](./SPEC.md#62-optional-scheme-capabilities)). Expose `orderKey`
+   only when the order packs monotonically into an unsigned integer;
+   structural schemes like `pypi`/`maven`/`deb` must not. Absence is
+   never an error — the generic algorithms fall back.
 
 3. **Assert conformance at module scope:**
 
@@ -465,9 +393,9 @@ To add one:
    (`parse(s).value.toString == s`, or the documented normalised form),
    an ascending-order test asserting the ordering edge cases, and — if
    the scheme declares `orderKey` — an equivalence test cross-checking
-   `orderKey` against the `opCmp` reference. Update §2 (capability
-   matrix) and §3 (per-scheme section) of this document, with the
-   authoritative source.
+   `orderKey` against the `opCmp` reference. Add the new row to the
+   capability matrix in [SPEC §8](./SPEC.md#8-shipped-schemes) and a §3
+   per-scheme section here, citing the authoritative source.
 
 ## 5. Deferred schemes
 
