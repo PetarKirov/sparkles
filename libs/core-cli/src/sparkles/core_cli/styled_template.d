@@ -47,7 +47,7 @@ void writeStyled(bool colored = true, Writer, Args...)(
     InterpolationFooter
 )
 {
-    import sparkles.core_cli.text_writers : writeValue;
+    import sparkles.core_cli.text.writers : writeValue;
 
     ParserContext ctx;
 
@@ -463,7 +463,7 @@ private struct StyleState
     /// Emit escape sequences for transition FROM parent TO this state
     void emitOpenDiff(Writer)(ref Writer w, in StyleState parent) const
     {
-        import sparkles.core_cli.text_writers : writeEscapeSeq;
+        import sparkles.core_cli.text.writers : writeEscapeSeq;
 
         // Close styles that were in parent but removed in this (negation)
         foreach_reverse (i; 0 .. parent.count)
@@ -479,7 +479,7 @@ private struct StyleState
     /// Emit escape sequences for transition FROM this state back TO parent
     void emitCloseDiff(Writer)(ref Writer w, in StyleState parent) const
     {
-        import sparkles.core_cli.text_writers : writeEscapeSeq;
+        import sparkles.core_cli.text.writers : writeEscapeSeq;
 
         // Close styles that were added in this (not in parent)
         foreach_reverse (i; 0 .. count)

@@ -4,7 +4,7 @@
  * Provides functions for writing integers, floats, escaped characters/strings,
  * and ANSI escape sequences to output ranges without GC allocation.
  */
-module sparkles.core_cli.text_writers;
+module sparkles.core_cli.text.writers;
 
 import sparkles.core_cli.term_style : Style;
 

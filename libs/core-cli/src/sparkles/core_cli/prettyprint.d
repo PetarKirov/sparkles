@@ -3,7 +3,7 @@ module sparkles.core_cli.prettyprint;
 import std.typecons : Tuple;
 
 import sparkles.core_cli.term_style : Style;
-import sparkles.core_cli.text_writers : EnumRender, writeEscapeSeq, writeStylized, writeStyledValue;
+import sparkles.core_cli.text.writers : EnumRender, writeEscapeSeq, writeStylized, writeStyledValue;
 
 struct PrettyPrintOptions(SourceUriHook = void)
 {
@@ -154,7 +154,7 @@ private void prettyPrintAA(T, Writer, Hook)(
     import std.range.primitives : put;
     import std.traits : KeyType, ValueType;
 
-    import sparkles.core_cli.text_writers : writeInteger;
+    import sparkles.core_cli.text.writers : writeInteger;
 
     if (aa.length == 0)
     {
@@ -305,7 +305,7 @@ private void prettyPrintRange(R, Writer, Hook)(
     import std.range : repeat;
     import std.range.primitives : put, empty, front, popFront, hasLength;
 
-    import sparkles.core_cli.text_writers : writeInteger;
+    import sparkles.core_cli.text.writers : writeInteger;
 
     static if (hasLength!R)
     {
