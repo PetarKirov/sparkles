@@ -35,18 +35,40 @@ compact encodings; three (`pypi`, `maven`, `deb`) are _structural_ —
 their ordering cannot be reduced to an integer key; and `generic` is the
 opaque baseline.
 
-## 2. Capabilities
+## 2. Capability matrix
 
-The at-a-glance capability matrix — which scheme provides `hasOrderKey`,
-`supportsPrerelease`, `hasComponents`, `hasBuildMetadata`,
-`supportsNativeRange`, and `supportsLooseParse` — is in
-[SPEC §8](./SPEC.md#8-shipped-schemes); the trait semantics are in
-[SPEC §3.2](./SPEC.md#32-optional-capability-vocabulary) and
-[§6.2](./SPEC.md#62-optional-scheme-capabilities). This catalogue records
-the per-scheme detail behind each cell (§3) — in particular, why the
-three structural schemes (`pypi`, `maven`, `deb`) omit `orderKey`, and
-why the calendar schemes have `hasComponents` but not the
-caret/tilde-enabling `hasSemVerComponents`.
+This is the canonical capability matrix for the shipped schemes; adding a
+scheme adds a row here. Every scheme provides the required `isVersion!T`
+surface (`opCmp` + `toString`) and differs only in the optional
+capabilities below. Each `yes`/`no` is read against the traits in
+[SPEC §3.2](./SPEC.md#32-optional-capability-vocabulary) (version
+capabilities) and [SPEC §6.2](./SPEC.md#62-optional-scheme-capabilities)
+(scheme capabilities); the rationale behind each cell is in the
+per-scheme sections (§3).
+
+| Scheme            | `orderKey` | `prerelease` | `components` | `build` | `nativeRange` | `loose` |
+| ----------------- | :--------: | :----------: | :----------: | :-----: | :-----------: | :-----: |
+| `semver`          |    yes     |     yes      |     yes      |   yes   |      yes      |   yes   |
+| `dmd`             |    yes     |     yes      |     yes      |   no    |      yes      |   yes   |
+| `dmd_compact`     |    yes     |     yes      |     yes      |   no    |      yes      |   no    |
+| `tiny`            |    yes     |      no      |     yes      |   no    |      yes      |   yes   |
+| `calver_yymm`     |    yes     |      no      |     yes      |   no    |      yes      |   yes   |
+| `calver_yyyymmdd` |    yes     |      no      |     yes      |   no    |      yes      |   yes   |
+| `vim`             |    yes     |      no      |     yes      |   no    |      yes      |   yes   |
+| `pypi`            |   **no**   |     yes      |     yes      |   no    |      yes      |   yes   |
+| `maven`           |   **no**   |     yes      |      no      |   no    |      yes      |   no    |
+| `deb`             |   **no**   |      no      |      no      |   no    |      yes      |   no    |
+| `generic`         |     no     |      no      |      no      |   no    |      no       |   no    |
+
+Two cross-cutting rules explain most of the table:
+
+- The structural schemes (`pypi`, `maven`, `deb`) omit `orderKey` — their
+  ordering does not pack into an unsigned integer of any width (see
+  §3.8–§3.10), so their `opCmp` does the full structural walk.
+- `components` is arity-free; only schemes whose list begins
+  `["major","minor","patch"]` also satisfy `hasSemVerComponents` and get
+  caret `^` / tilde `~`. The calendar schemes declare
+  `["year","month","day"]` — `components` yes, caret/tilde no.
 
 ## 3. Per-scheme catalogue
 
@@ -393,9 +415,10 @@ To add one:
    (`parse(s).value.toString == s`, or the documented normalised form),
    an ascending-order test asserting the ordering edge cases, and — if
    the scheme declares `orderKey` — an equivalence test cross-checking
-   `orderKey` against the `opCmp` reference. Add the new row to the
-   capability matrix in [SPEC §8](./SPEC.md#8-shipped-schemes) and a §3
-   per-scheme section here, citing the authoritative source.
+   `orderKey` against the `opCmp` reference. Add the new row to the §2
+   capability matrix and a §3 per-scheme section here, citing the
+   authoritative source. (Only this document changes; SPEC.md is not
+   touched when a preset is added.)
 
 ## 5. Deferred schemes
 

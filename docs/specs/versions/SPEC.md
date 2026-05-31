@@ -506,50 +506,34 @@ grammar are documented in [PRESETS.md](./PRESETS.md).
 
 ## 8. Shipped schemes
 
-Eleven schemes ship in the first release. The capability matrix below is
-the at-a-glance summary; the full per-scheme catalogue (real-world
-examples, edge cases, prerelease policy, provenance, and the
-how-to-add-a-scheme guide) is in [PRESETS.md](./PRESETS.md).
+The library ships a set of preset schemes that span the capability space
+— from `SemVer` (every optional capability) to `Generic` (none). The full
+list, the complete capability matrix, and the per-scheme detail
+(real-world examples, ordering rules, native-range grammar, edge cases,
+provenance) live in [PRESETS.md](./PRESETS.md) — adding a preset touches
+only that document.
 
-| Scheme           | pURL type | Description                                |
-| ---------------- | --------- | ------------------------------------------ |
-| `SemVer`         | `semver`  | Strict SemVer 2.0.0 (also npm/cargo/gem)   |
-| `Dmd`            | —         | DMD: 3-digit zero-padded minor (`2.079.0`) |
-| `DmdCompact`     | —         | 4-byte bitfield-encoded DMD prerelease     |
-| `Tiny`           | —         | 4-byte, no prerelease                      |
-| `CalVerYYMM`     | —         | Ubuntu-style `24.04.1`                     |
-| `CalVerYYYYMMDD` | —         | Arch-style `2024.05.01`                    |
-| `VimVer`         | —         | Vim-style 4-digit patch (`9.1.0400`)       |
-| `PypiVersion`    | `pypi`    | PEP 440: epoch, pre/post/dev, local        |
-| `MavenVersion`   | `maven`   | Maven qualifier order                      |
-| `DebianVersion`  | `deb`     | Epoch + upstream + revision (`dpkg` rules) |
-| `Generic`        | `generic` | Opaque lexicographic baseline              |
+Every scheme provides the required `isVersion!T` surface (`opCmp` +
+`toString`). An illustrative slice shows how the **optional** capabilities
+vary across schemes:
 
-Capability matrix (✅ = provides the optional capability):
+| Scheme        | `hasOrderKey` | `supportsPrerelease` | `hasComponents` | `hasBuildMetadata` |
+| ------------- | :-----------: | :------------------: | :-------------: | :----------------: |
+| `SemVer`      |      ✅       |          ✅          |       ✅        |         ✅         |
+| `CalVerYYMM`  |      ✅       |          —           |       ✅        |         —          |
+| `PypiVersion` |       —       |          ✅          |       ✅        |         —          |
+| `Generic`     |       —       |          —           |        —        |         —          |
 
-| Scheme           | `hasOrderKey` | `supportsPrerelease` | `hasComponents` | `hasBuildMetadata` | `supportsNativeRange` | `supportsLooseParse` |
-| ---------------- | :-----------: | :------------------: | :-------------: | :----------------: | :-------------------: | :------------------: |
-| `SemVer`         |      ✅       |          ✅          |       ✅        |         ✅         |          ✅           |          ✅          |
-| `Dmd`            |      ✅       |          ✅          |       ✅        |         ✅         |          ✅           |          ✅          |
-| `DmdCompact`     |      ✅       |          ✅          |       ✅        |         —          |          ✅           |          —           |
-| `Tiny`           |      ✅       |          —           |       ✅        |         —          |          ✅           |          ✅          |
-| `CalVerYYMM`     |      ✅       |          —           |       ✅        |         —          |          ✅           |          ✅          |
-| `CalVerYYYYMMDD` |      ✅       |          —           |       ✅        |         —          |          ✅           |          ✅          |
-| `VimVer`         |      ✅       |          —           |       ✅        |         —          |          ✅           |          ✅          |
-| `PypiVersion`    |       —       |          ✅          |       ✅        |         —          |          ✅           |          ✅          |
-| `MavenVersion`   |       —       |          ✅          |        —        |         —          |          ✅           |          ✅          |
-| `DebianVersion`  |       —       |          —           |        —        |         —          |          ✅           |          —           |
-| `Generic`        |       —       |          —           |        —        |         —          |           —           |          —           |
-
-The `hasComponents` column is the arity-free capability (§3.2). Only the
-schemes whose list begins `["major","minor","patch"]` (`SemVer`, `Dmd`,
-`DmdCompact`, `Tiny`, `VimVer`) also satisfy `hasSemVerComponents` and get
-caret/tilde; the CalVer schemes declare `["year","month","day"]` —
-`hasComponents` yes, caret/tilde no. `Generic` is all-dashes by design:
-it verifies every generic algorithm's fallback path. See
-[PRESETS.md](./PRESETS.md) for the per-cell rationale (e.g. why
-`MavenVersion` omits `hasComponents`, why `PypiVersion` omits
-`hasOrderKey`).
+- `SemVer` packs into an `orderKey` and carries the full SemVer triple
+  (so it also gets caret/tilde via `hasSemVerComponents`).
+- `CalVerYYMM` is numeric-only — no prereleases, and its
+  `["year","month","day"]` list gives `hasComponents` but not the
+  caret/tilde-enabling `hasSemVerComponents`.
+- `PypiVersion` is _structural_: its ordering does not pack into an
+  integer, so it omits `orderKey`, yet it still has prereleases and
+  components.
+- `Generic` is the opaque baseline with no optional capabilities — it
+  exercises every generic algorithm's fallback path.
 
 ## 9. VERS interop
 
