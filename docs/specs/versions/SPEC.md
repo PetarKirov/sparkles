@@ -62,7 +62,7 @@ keyword.
 | ------------------------------------------- | ----------------------------------------------------------------------------------- |
 | `sparkles.versions`                         | Public re-exports (`package.d`)                                                     |
 | `sparkles.versions.traits`                  | `isVersion!T`, `isVersionRange!R`, `isVersionScheme!S` + optional-capability traits |
-| `sparkles.versions.parsing`                 | `ParseMode`; re-exports the parse types from `core_cli.parse_error`                 |
+| `sparkles.versions.parsing`                 | `ParseMode`; re-exports the parse types from `core_cli.text.errors`                 |
 | `sparkles.versions.ranges`                  | `Ranges!V` (sorted disjoint intervals)                                              |
 | `sparkles.versions.vers`                    | VERS URI parser/emitter + compile-time scheme registry                              |
 | `sparkles.versions.purl`                    | Package URL parser + purl-type → scheme mapping                                     |
@@ -91,9 +91,9 @@ are generic and live in core_cli, not in `versions`:
 
 | Module                           | Provides                                                                       |
 | -------------------------------- | ------------------------------------------------------------------------------ |
-| `sparkles.core_cli.parse_error`  | `ParseError {code, offset}`, `ParseErrorCode`, `ParseExpected!T` (generic)     |
-| `sparkles.core_cli.text_readers` | `readInteger`, `skipWhile`, `tryConsume`, `readUntil` (slice-advance, `@nogc`) |
-| `sparkles.core_cli.text_writers` | `writeIntegerPadded` (alongside the existing `writeInteger`)                   |
+| `sparkles.core_cli.text.errors`  | `ParseError {code, offset}`, `ParseErrorCode`, `ParseExpected!T` (generic)     |
+| `sparkles.core_cli.text.readers` | `readInteger`, `skipWhile`, `tryConsume`, `readUntil` (slice-advance, `@nogc`) |
+| `sparkles.core_cli.text.writers` | `writeIntegerPadded` (alongside the existing `writeInteger`)                   |
 
 ## 3. The Version concept
 
@@ -469,12 +469,12 @@ which returns `null` across schemes.
 ## 7. Parsing
 
 Parsing is non-throwing and `Expected`-based. The error vocabulary is
-generic and lives in `sparkles.core_cli.parse_error` (reused by every
+generic and lives in `sparkles.core_cli.text.errors` (reused by every
 core_cli text parser, not just versions); `ParseMode` is a versions enum
 in `sparkles.versions.parsing`.
 
 ```d
-// sparkles.core_cli.parse_error (generic, @nogc)
+// sparkles.core_cli.text.errors (generic, @nogc)
 enum ParseErrorCode
 {
     emptyInput, unexpectedCharacter, unexpectedEnd, leadingZero,
@@ -675,7 +675,7 @@ A consumer who needs a single ecosystem imports just that scheme:
 ```d
 import sparkles.versions.schemes.semver : SemVer;
 import sparkles.versions.parsing : ParseMode;
-import sparkles.core_cli.parse_error : ParseError, ParseErrorCode;
+import sparkles.core_cli.text.errors : ParseError, ParseErrorCode;
 ```
 
 A polyglot consumer (purl/VERS-driven) imports the package module, which
@@ -696,7 +696,7 @@ import sparkles.versions.traits : isVersion, isVersionScheme,
     hasOrderKey, supportsPrerelease, hasComponents, hasSemVerComponents,
     hasBuildMetadata;
 import sparkles.versions.ranges : Ranges;
-import sparkles.core_cli.parse_error : ParseExpected, ParseError, ParseErrorCode;
+import sparkles.core_cli.text.errors : ParseExpected, ParseError, ParseErrorCode;
 
 struct MyScheme { /* … */ }
 static assert(isVersion!MyScheme && isVersionScheme!MyScheme);
