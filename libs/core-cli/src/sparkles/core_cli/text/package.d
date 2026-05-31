@@ -7,6 +7,8 @@ errors on text without committing to any higher-level format:
 $(UL
     $(LI `sparkles.core_cli.text.writers` — integer / float / escaped
         output-range writers.)
+    $(LI `sparkles.core_cli.text.errors` — the `Expected`-based parse
+        error vocabulary.)
 )
 
 Importing `sparkles.core_cli.text` pulls in the whole package.
@@ -14,3 +16,4 @@ Importing `sparkles.core_cli.text` pulls in the whole package.
 module sparkles.core_cli.text;
 
 public import sparkles.core_cli.text.writers;
+public import sparkles.core_cli.text.errors;
