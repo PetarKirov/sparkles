@@ -23,6 +23,8 @@ public import sparkles.versions.parsing;
 public import sparkles.versions.ranges;
 public import sparkles.versions.operations;
 public import sparkles.versions.vers;
+public import sparkles.versions.purl;
+public import sparkles.versions.any;
 public import sparkles.versions.schemes;
 
 version (unittest)
