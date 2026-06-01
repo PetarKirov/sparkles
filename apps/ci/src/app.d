@@ -70,6 +70,7 @@ wildcard pattern handles verification against the actual (dynamic) output.
 import std.algorithm : any, canFind, countUntil, filter, map, sort, startsWith;
 import std.array : array, join;
 import std.conv : text, to;
+import core.time : msecs;
 import std.file : exists, mkdirRecurse, readText, remove, tempDir, write;
 import std.path : baseName, buildPath;
 import std.process : execute;
@@ -80,6 +81,8 @@ import std.string : endsWith, indexOf, lineSplitter, replace, strip, stripRight,
 // sparkles packages
 import sparkles.core_cli.args : CliOption, HelpInfo, parseCliArgs;
 import sparkles.core_cli.logger : error, info, initLogger, LogLevel, trace, warning;
+import sparkles.core_cli.process_utils :
+    executeMonitored, MonitoredResult, ResourceUsage, selfRssBytes;
 import sparkles.core_cli.styled_template : styledText, styledWritelnErr;
 import sparkles.core_cli.term_unstyle : unstyle;
 import sparkles.core_cli.ui.box : BoxProps, drawBox;
@@ -700,7 +703,8 @@ ExecutionResult executeExample(in Example example)
         if (binaryPath.exists) binaryPath.remove();
     }
 
-    auto buildResult = execute(dubSingleFileCommand("build", tmpFile, repoRoot));
+    auto buildResult = executeLogged(
+        dubSingleFileCommand("build", tmpFile, repoRoot), "build " ~ example.name);
     if (buildResult.status != 0)
     {
         auto cleanedBuild = buildResult.output.unstyle
@@ -714,7 +718,7 @@ ExecutionResult executeExample(in Example example)
         );
     }
 
-    auto runResult = execute([binaryPath]);
+    auto runResult = executeLogged([binaryPath], "run " ~ example.name);
 
     // Strip ANSI codes, then trim trailing whitespace from each line
     // so output matches what pre-commit hooks produce in markdown files.
@@ -728,6 +732,59 @@ ExecutionResult executeExample(in Example example)
         programOutput: cleaned,
         rawOutput: runResult.output,
     );
+}
+
+/**
+Runs `args` like `std.process.execute`, returning a `MonitoredResult` (same
+`status`/`output` fields the callers read). At `--log-level trace` it routes
+through $(REF executeMonitored, sparkles,core_cli,process_utils), emitting the
+process tree's resident-set size as it climbs plus a per-command summary — the
+instrumentation for troubleshooting OOM during a build. At coarser levels it is
+a plain `execute` with no sampling overhead.
+*/
+private MonitoredResult executeLogged(const(string)[] args, string label)
+{
+    import std.array : join;
+    import std.logger : globalLogLevel;
+    import sparkles.core_cli.smallbuffer : SmallBuffer;
+    import sparkles.core_cli.text.writers : writeBytes, writeDuration;
+
+    if (globalLogLevel > LogLevel.trace)
+    {
+        auto r = execute(args);
+        return MonitoredResult(r.status, r.output);
+    }
+
+    const cmd = args.join(" ");
+    trace(i"{dim ▸ $(label):} {dim $(cmd)}");
+
+    // Log only when the peak climbs by a notable step, so a long compile does
+    // not flood the trace with flat-line samples.
+    enum size_t logStep = 256UL << 20;   // 256 MiB
+    size_t lastLogged;
+    auto res = executeMonitored(args, 500.msecs, (in ResourceUsage u) @safe {
+        if (u.peakRssBytes >= lastLogged + logStep)
+        {
+            lastLogged = u.peakRssBytes;
+            SmallBuffer!(char, 24) rss, cpu;
+            writeBytes(rss, u.peakRssBytes);
+            writeDuration(cpu, u.cpuTime);
+            trace(i"{dim   $(label)} rss=$(rss[]) cpu=$(cpu[])");
+        }
+    });
+
+    if (res.usage.sampled)
+    {
+        SmallBuffer!(char, 24) peak, cpu, ciRss;
+        writeBytes(peak, res.usage.peakRssBytes);
+        writeDuration(cpu, res.usage.cpuTime);
+        writeBytes(ciRss, selfRssBytes());
+        trace(i"{dim ◂ $(label):} peak_rss=$(peak[]) cpu=$(cpu[]) exit=$(res.status) (ci_rss=$(ciRss[]))");
+    }
+    else
+        trace(i"{dim ◂ $(label):} exit=$(res.status) (resource sampling unavailable here)");
+
+    return res;
 }
 
 private int runExampleFilesMode(string[] exampleFiles, bool failFast)
@@ -815,7 +872,9 @@ private ExecutionResult executeStandaloneExampleFile(
     StandaloneExampleMode mode,
 )
 {
-    auto result = execute(dubSingleFileCommand(standaloneExampleAction(mode), exampleFile, repoRoot));
+    auto result = executeLogged(
+        dubSingleFileCommand(standaloneExampleAction(mode), exampleFile, repoRoot),
+        standaloneExampleAction(mode) ~ " " ~ exampleFile.baseName);
     auto cleaned = result.output.unstyle
         .lineSplitter
         .map!(l => l.stripRight)
@@ -860,7 +919,8 @@ private int runDubTestsMode(bool failFast)
         const header = styledText(i"{dim $(progress)} {cyan $(pkgName)} {dim › dub test :$(pkgName)}");
 
         mkdirRecurse(buildPath(repoRoot, pkg, "build"));
-        auto result = execute(["dub", "--root", repoRoot, "test", ":" ~ pkgName]);
+        auto result = executeLogged(
+            ["dub", "--root", repoRoot, "test", ":" ~ pkgName], "test " ~ pkgName);
 
         auto outputLines = result.output.lineSplitter
             .map!(l => l.to!string)
