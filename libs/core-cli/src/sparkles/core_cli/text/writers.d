@@ -239,36 +239,22 @@ if (__traits(isFloating, T))
 {
     import std.range.primitives : put;
 
-    // Integer part
+    // Integer part.
     ulong intPart = cast(ulong) value;
     writeInteger(w, intPart);
 
-    // Fractional part using fixed-point conversion
+    // Fractional part: a fixed-point integer of T.dig digits (6 for float, 15
+    // for double — more accurate than a repeated multiply), trailing zeros
+    // dropped. The integer/fraction split keeps `frac * scale` within a `ulong`
+    // and within double precision.
     T frac = value - cast(T) intPart;
     if (frac > 0)
     {
         put(w, '.');
-
-        // Convert to fixed-point integer (more accurate than repeated multiply)
-        // Use T.dig digits (6 for float, 15 for double)
         enum int numDigits = T.dig;
         enum ulong scale = 10UL ^^ numDigits;
-        ulong fracInt = cast(ulong)(frac * scale + cast(T) 0.5);
-
-        // Write digits to buffer (right-to-left)
-        char[numDigits] fracBuf = void;
-        foreach_reverse (i; 0 .. numDigits)
-        {
-            fracBuf[i] = cast(char)('0' + fracInt % 10);
-            fracInt /= 10;
-        }
-
-        // Strip trailing zeros
-        int fracLen = numDigits;
-        while (fracLen > 1 && fracBuf[fracLen - 1] == '0')
-            fracLen--;
-
-        put(w, fracBuf[0 .. fracLen]);
+        const ulong fracInt = cast(ulong)(frac * scale + cast(T) 0.5);
+        writeFractionDigits(w, fracInt, numDigits, stripTrailing: true);
     }
 }
 
@@ -1183,4 +1169,103 @@ unittest
     buf.clear();
     writeStyledValue(buf, 3.14, FloatHook(), true);
     assert(buf[] == "\x1b[34m3.14\x1b[39m");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Byte / Duration Formatting
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Writes `number` as a fixed-point value with `radixPoint` fractional digits
+/// in base `radix` (2 ≤ `radix` ≤ 16) — i.e. the value `number /
+/// radix^^radixPoint`. The integer part is written first, then (when
+/// `radixPoint > 0`) a `.` and exactly `radixPoint` zero-padded fractional
+/// digits. `radix^^radixPoint` must fit in a `ulong`. @nogc-compatible.
+///
+/// Examples: `writeFixedPoint(w, 15, 1)` → `1.5`;
+/// `writeFixedPoint(w, 1234, 2)` → `12.34`; `writeFixedPoint!16(w, 255, 2)` →
+/// `0.ff`.
+void writeFixedPoint(uint radix = 10, Writer)(
+    ref Writer w, ulong number, uint radixPoint)
+if (radix >= 2 && radix <= 16)
+in (radixPoint <= 64, "radixPoint must be <= 64")
+{
+    import std.range.primitives : put;
+
+    ulong divisor = 1;
+    foreach (_; 0 .. radixPoint)
+        divisor *= radix;
+
+    // Integer part. Base 10 reuses the optimized writeInteger; other bases use
+    // a most-significant-first digit walk.
+    const ulong intPart = number / divisor;
+    static if (radix == 10)
+        writeInteger(w, intPart);
+    else
+    {
+        char[64] buf = void;              // ≤ 64 digits for a ulong in base 2
+        size_t start = buf.length;
+        ulong v = intPart;
+        do
+        {
+            buf[--start] = hexDigit(cast(uint)(v % radix));
+            v /= radix;
+        }
+        while (v);
+        put(w, buf[start .. $]);
+    }
+
+    if (radixPoint > 0)
+    {
+        put(w, '.');
+        writeFractionDigits!radix(w, number % divisor, radixPoint);
+    }
+}
+
+/// Writes the low `digits` base-`radix` digits of `value`, most-significant
+/// first, zero-padded — a fixed-point fractional part, with no leading `.`.
+/// When `stripTrailing`, trailing `'0'` digits are dropped (keeping at least
+/// one). @nogc-compatible.
+private void writeFractionDigits(uint radix = 10, Writer)(
+    ref Writer w, ulong value, uint digits, bool stripTrailing = false)
+{
+    import std.range.primitives : put;
+
+    char[64] buf = void;
+    foreach_reverse (i; 0 .. digits)
+    {
+        buf[i] = hexDigit(cast(uint)(value % radix));
+        value /= radix;
+    }
+    uint len = digits;
+    if (stripTrailing)
+        while (len > 1 && buf[len - 1] == '0')
+            len--;
+    put(w, buf[0 .. len]);
+}
+
+/// Maps a digit value `0 … 15` to its lower-case character (`0-9`, `a-f`).
+private char hexDigit(uint d) @safe pure nothrow @nogc
+    => cast(char)(d < 10 ? '0' + d : 'a' + (d - 10));
+
+@("writeFixedPoint.basic")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.core_cli.smallbuffer : SmallBuffer;
+
+    SmallBuffer!(char, 32) buf;
+    void check(alias call)(string expected)
+    {
+        buf.clear();
+        call(buf);
+        assert(buf[] == expected);
+    }
+
+    check!((ref b) => writeFixedPoint(b, 15, 1))("1.5");
+    check!((ref b) => writeFixedPoint(b, 160, 1))("16.0");        // carries
+    check!((ref b) => writeFixedPoint(b, 1234, 2))("12.34");
+    check!((ref b) => writeFixedPoint(b, 1000, 3))("1.000");      // zero-padded
+    check!((ref b) => writeFixedPoint(b, 842, 0))("842");         // no point
+    check!((ref b) => writeFixedPoint!16(b, 255, 2))("0.ff");     // base 16
+    check!((ref b) => writeFixedPoint!16(b, 0xABC0, 1))("abc.0"); // base 16 int part
 }
