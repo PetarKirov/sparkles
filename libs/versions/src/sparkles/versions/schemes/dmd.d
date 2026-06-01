@@ -17,7 +17,8 @@ import sparkles.versions.parsing :
     NoGcHook, ParseError, ParseErrorCode, ParseExpected, ParseMode;
 import sparkles.versions.ranges : Ranges;
 import sparkles.versions.schemes.semver :
-    compareSemVerPrerelease, minorBits, noWidths, patchBits, parseSemVerShaped;
+    compareSemVerPrerelease, minorBits, noWidths, patchBits, parseNpmRange,
+    parseSemVerShaped;
 import sparkles.versions.traits :
     compareComponents, hasComponents, hasOrderKey, hasSemVerComponents,
     isVersion, isVersionScheme, supportsPrerelease;
@@ -108,10 +109,8 @@ struct Dmd
     static ParseExpected!Dmd parseLoose(string s) @safe pure nothrow @nogc
         => parseSemVerShaped!Dmd(s, ParseMode.loose, noWidths);
 
-    static ParseExpected!Range parseNativeRange(string s)
-        @safe pure nothrow @nogc
-        => parseErr!(Range)(
-            ParseError(ParseErrorCode.unexpectedCharacter, 0));
+    static ParseExpected!Range parseNativeRange(string s) @safe
+        => parseNpmRange!Dmd(s);
 }
 
 /// Per-component minimum widths: 3-digit minor, unpadded major/patch.

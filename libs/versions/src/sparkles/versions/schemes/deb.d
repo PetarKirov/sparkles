@@ -127,10 +127,88 @@ struct DebianVersion
         return parseOk(result);
     }
 
-    /// Native dpkg-relations range grammar. Stubbed in M1; filled in M2.
+    /**
+    Native dpkg-relations range grammar (PRESETS §3.10).
+
+    A single comparison relation — `>=`, `<=`, `<<` (strictly less),
+    `>>` (strictly greater), or `=` — followed by a version, as used in
+    `dpkg --compare-versions` and `Depends:` fields (e.g. `>= 2.0`,
+    `<< 3.0`). The relation desugars to a `Ranges!DebianVersion`:
+
+    $(UL
+        $(LI `>= v` → `[v, +∞)`)
+        $(LI `>> v` → `(v, +∞)`)
+        $(LI `<= v` → `(-∞, v]`)
+        $(LI `<< v` → `(-∞, v)`)
+        $(LI `=  v` → the singleton `{v}`)
+    )
+    */
     static ParseExpected!Range parseNativeRange(string s) @safe pure nothrow
-        => parseErr!(Range)(
-            ParseError(ParseErrorCode.unexpectedCharacter, 0));
+    {
+        import sparkles.core_cli.text.readers : skipSpaces, tryConsume;
+
+        const(char)[] rest = s;
+        if (rest.length == 0)
+            return parseErr!(Range)(
+                ParseError(ParseErrorCode.emptyInput, 0));
+
+        // ----- relation operator -----
+        // Distinguish the two-character `<<`/`>>` from the two-character
+        // `<=`/`>=` and the single-character `=`.
+        enum Rel { ge, le, lt, gt, eq }
+        Rel rel;
+        skipSpaces(rest);
+        if (tryConsume(rest, '>'))
+        {
+            if (tryConsume(rest, '>'))
+                rel = Rel.gt;            // `>>` strictly greater
+            else if (tryConsume(rest, '='))
+                rel = Rel.ge;            // `>=`
+            else
+                return parseErr!(Range)(ParseError(
+                    ParseErrorCode.unexpectedCharacter, s.length - rest.length));
+        }
+        else if (tryConsume(rest, '<'))
+        {
+            if (tryConsume(rest, '<'))
+                rel = Rel.lt;            // `<<` strictly less
+            else if (tryConsume(rest, '='))
+                rel = Rel.le;            // `<=`
+            else
+                return parseErr!(Range)(ParseError(
+                    ParseErrorCode.unexpectedCharacter, s.length - rest.length));
+        }
+        else if (tryConsume(rest, '='))
+            rel = Rel.eq;                // `=`
+        else
+            return parseErr!(Range)(ParseError(
+                ParseErrorCode.unexpectedCharacter, s.length - rest.length));
+
+        // ----- version operand -----
+        skipSpaces(rest);
+        if (rest.length == 0)
+            return parseErr!(Range)(
+                ParseError(ParseErrorCode.emptyInput, s.length));
+
+        auto ver = DebianVersion.parse(cast(string) rest.idup);
+        if (!ver.hasValue)
+            return parseErr!(Range)(ver.error);
+        const v = ver.value;
+
+        final switch (rel)
+        {
+        case Rel.ge:
+            return parseOk(Range.higherThan(v));
+        case Rel.gt:
+            return parseOk(Range.strictlyHigherThan(v));
+        case Rel.le:
+            return parseOk(Range.lowerThan(v));
+        case Rel.lt:
+            return parseOk(Range.strictlyLowerThan(v));
+        case Rel.eq:
+            return parseOk(Range.singleton(v));
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -263,4 +341,101 @@ unittest
     auto a = DebianVersion.parse("1.007").value;
     auto b = DebianVersion.parse("1.7").value;
     assert(a == b);
+}
+
+// ---------------------------------------------------------------------------
+// Native range parsing (dpkg relations)
+// ---------------------------------------------------------------------------
+
+version (unittest)
+{
+    private DebianVersion debVer(string s) @safe pure nothrow
+        => DebianVersion.parse(s).value;
+}
+
+@("deb.nativeRange.greaterEqual")
+@safe pure
+unittest
+{
+    auto r = DebianVersion.parseNativeRange(">= 2.0");
+    assert(r.hasValue);
+    auto rng = r.value;
+    assert(rng == DebianVersion.Range.higherThan(debVer("2.0")));
+    assert(rng.contains(debVer("2.0")));
+    assert(rng.contains(debVer("2.1")));
+    assert(!rng.contains(debVer("1.9")));
+}
+
+@("deb.nativeRange.strictlyGreater")
+@safe pure
+unittest
+{
+    auto r = DebianVersion.parseNativeRange(">> 2.0");
+    assert(r.hasValue);
+    auto rng = r.value;
+    assert(rng == DebianVersion.Range.strictlyHigherThan(debVer("2.0")));
+    assert(!rng.contains(debVer("2.0")));
+    assert(rng.contains(debVer("2.1")));
+}
+
+@("deb.nativeRange.lessEqual")
+@safe pure
+unittest
+{
+    auto r = DebianVersion.parseNativeRange("<= 3.0");
+    assert(r.hasValue);
+    auto rng = r.value;
+    assert(rng == DebianVersion.Range.lowerThan(debVer("3.0")));
+    assert(rng.contains(debVer("3.0")));
+    assert(rng.contains(debVer("2.9")));
+    assert(!rng.contains(debVer("3.1")));
+}
+
+@("deb.nativeRange.strictlyLess")
+@safe pure
+unittest
+{
+    auto r = DebianVersion.parseNativeRange("<< 3.0");
+    assert(r.hasValue);
+    auto rng = r.value;
+    assert(rng == DebianVersion.Range.strictlyLowerThan(debVer("3.0")));
+    assert(!rng.contains(debVer("3.0")));
+    assert(rng.contains(debVer("2.9")));
+}
+
+@("deb.nativeRange.equals")
+@safe pure
+unittest
+{
+    auto r = DebianVersion.parseNativeRange("= 1.2.3-4");
+    assert(r.hasValue);
+    auto rng = r.value;
+    assert(rng == DebianVersion.Range.singleton(debVer("1.2.3-4")));
+    assert(rng.contains(debVer("1.2.3-4")));
+    assert(!rng.contains(debVer("1.2.3-5")));
+}
+
+@("deb.nativeRange.epochAndRevision")
+@safe pure
+unittest
+{
+    // A relation operand carries the full `[epoch:]upstream[-revision]` shape.
+    auto r = DebianVersion.parseNativeRange(">= 2:4.13.1-0ubuntu0.16.04.1.1~");
+    assert(r.hasValue);
+    auto v = debVer("2:4.13.1-0ubuntu0.16.04.1.1~");
+    assert(r.value == DebianVersion.Range.higherThan(v));
+    assert(r.value.contains(v));
+}
+
+@("deb.nativeRange.rejectsMissingOperator")
+@safe pure
+unittest
+{
+    // A bare version with no relation is not a dpkg relation.
+    assert(!DebianVersion.parseNativeRange("2.0").hasValue);
+    // A lone operator with no version operand.
+    assert(!DebianVersion.parseNativeRange(">=").hasValue);
+    assert(!DebianVersion.parseNativeRange(">= ").hasValue);
+    // Empty input.
+    assert(!DebianVersion.parseNativeRange("").hasValue);
 }

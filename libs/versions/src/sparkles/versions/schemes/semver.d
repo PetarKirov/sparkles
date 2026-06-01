@@ -153,11 +153,535 @@ struct SemVer
     static ParseExpected!SemVer parseLoose(string s) @safe pure nothrow @nogc
         => parseSemVerShaped!SemVer(s, ParseMode.loose, noWidths);
 
-    /// Native node-semver range grammar. Stubbed in M1; filled in M2.
-    static ParseExpected!Range parseNativeRange(string s)
-        @safe pure nothrow @nogc
-        => parseErr!(Range)(
-            ParseError(ParseErrorCode.unexpectedCharacter, 0));
+    /// Native node-semver range grammar (caret/tilde, x-ranges, hyphen
+    /// ranges, `||` unions, AND-by-space, and the `=`/`<`/`<=`/`>`/`>=`
+    /// comparators). Desugars to a $(LREF Range) via $(REF parseNpmRange,
+    /// sparkles,versions,schemes,semver).
+    static ParseExpected!Range parseNativeRange(string s) @safe
+        => parseNpmRange!SemVer(s);
+}
+
+// ---------------------------------------------------------------------------
+// Generic node-semver range parser (shared by every SemVer-shaped scheme)
+// ---------------------------------------------------------------------------
+
+/**
+Parses an npm/node-semver-style range expression into a `Ranges!S` for any
+SemVer-shaped scheme `S` (`hasSemVerComponents!S`, i.e. a `components` list
+beginning `["major","minor","patch"]`).
+
+The grammar (a practical subset of node-semver, PRESETS §3.1):
+
+$(UL
+    $(LI `||` separates alternatives — their union.)
+    $(LI Whitespace inside one alternative is AND (intersection):
+        `>=1.2.0 <2.0.0`.)
+    $(LI A hyphen range `a - b` is the inclusive interval `[a, b]`.)
+    $(LI Comparators `=` `<` `<=` `>` `>=` prefix a (possibly partial)
+        version.)
+    $(LI Caret `^` and tilde `~` desugar via $(REF caret,
+        sparkles,versions,operations) / $(REF tilde,
+        sparkles,versions,operations) — only available when
+        `hasSemVerComponents!S`, which the template constraint requires.)
+    $(LI `x` / `X` / `*` wildcards and missing trailing components form
+        x-ranges: `1.2.x` → `[1.2.0, 1.3.0)`, `1` → `[1.0.0, 2.0.0)`,
+        `*` → the full set.)
+)
+
+The caret/tilde operators are gated by the `hasSemVerComponents!S`
+constraint, so a calendar scheme (`["year","month","day"]`) can route its
+`parseNativeRange` here for the comparator/x-range forms while a `^`/`~`
+token is rejected as `unexpectedCharacter`.
+*/
+package ParseExpected!(Ranges!S) parseNpmRange(S)(string input) @safe
+if (hasComponents!S && S.components.length >= 3)
+{
+    import sparkles.core_cli.text.readers : skipSpaces;
+
+    alias R = Ranges!S;
+
+    // Split on `||` into alternatives; the whole range is their union. An
+    // empty input (or all-blank) is the full set, matching node-semver.
+    R acc = R.empty();
+    bool any = false;
+
+    scope const(char)[] s = input;
+    size_t base = 0; // byte offset of `s[0]` within `input`, for errors
+
+    void advance(size_t n) @safe { s = s[n .. $]; base += n; }
+
+    while (true)
+    {
+        // Find the next `||` (or end) — that bounds one alternative.
+        size_t cut = 0;
+        while (cut + 1 < s.length && !(s[cut] == '|' && s[cut + 1] == '|'))
+            cut++;
+        const bool atEnd = !(cut + 1 < s.length);
+        const size_t altLen = atEnd ? s.length : cut;
+
+        auto alt = parseNpmAlternative!S(s[0 .. altLen], base);
+        if (!alt.hasValue)
+            return parseErr!R(alt.error);
+
+        acc = any ? acc.union_(alt.value) : alt.value;
+        any = true;
+
+        if (atEnd)
+            break;
+        advance(altLen + 2); // skip the alternative and the `||`
+    }
+
+    if (!any)
+        return parseOk(R.full());
+    return parseOk(acc);
+}
+
+/// Parses one `||`-free alternative: whitespace-separated comparators
+/// AND-ed together, with hyphen-range desugaring. `offset` is the byte
+/// offset of `text` within the original input (for error reporting).
+private ParseExpected!(Ranges!S) parseNpmAlternative(S)(
+    scope const(char)[] text, size_t offset,
+) @safe
+if (hasComponents!S && S.components.length >= 3)
+{
+    import sparkles.core_cli.text.readers : skipSpaces;
+
+    alias R = Ranges!S;
+
+    scope const(char)[] s = text;
+    size_t base = offset;
+
+    void advance(size_t n) @safe { s = s[n .. $]; base += n; }
+    void skipWs() @safe { advance(skipSpacesCount(s)); }
+
+    skipWs();
+    if (s.length == 0)
+        return parseOk(R.full()); // blank alternative ⇒ everything
+
+    // Gather the space-separated tokens of this alternative so a hyphen
+    // range `a - b` (three tokens) can be recognised. Tokens are slices of
+    // `s`; their offsets are tracked for errors.
+    R result = R.full();
+    bool first = true;
+
+    while (s.length)
+    {
+        // Read one token (up to the next run of spaces).
+        const tokOff = base;
+        size_t i = 0;
+        while (i < s.length && s[i] != ' ' && s[i] != '\t')
+            i++;
+        scope const(char)[] tok = s[0 .. i];
+        advance(i);
+        skipWs();
+
+        // Hyphen range: `tok - upper`. A bare `-` token joins two versions.
+        if (tok == "-")
+            return parseErr!R(
+                ParseError(ParseErrorCode.unexpectedCharacter, tokOff));
+
+        // Look ahead for an infix `-` (next token is exactly `-`).
+        if (s.length && s[0] == '-'
+            && (s.length == 1 || s[1] == ' ' || s[1] == '\t'))
+        {
+            advance(1);          // consume `-`
+            skipWs();
+            // Read the upper token.
+            const upOff = base;
+            size_t j = 0;
+            while (j < s.length && s[j] != ' ' && s[j] != '\t')
+                j++;
+            scope const(char)[] upTok = s[0 .. j];
+            advance(j);
+            skipWs();
+
+            auto hr = hyphenRange!S(tok, tokOff, upTok, upOff);
+            if (!hr.hasValue)
+                return parseErr!R(hr.error);
+            result = first ? hr.value : result.intersection(hr.value);
+            first = false;
+            continue;
+        }
+
+        auto cmp = parseComparator!S(tok, tokOff);
+        if (!cmp.hasValue)
+            return parseErr!R(cmp.error);
+        result = first ? cmp.value : result.intersection(cmp.value);
+        first = false;
+    }
+
+    return parseOk(result);
+}
+
+/// `skipSpaces` count without mutating a `ref` cursor in the caller's frame
+/// (so the alternative parser keeps its own `base` offset in sync).
+private size_t skipSpacesCount(scope const(char)[] s) @safe pure nothrow @nogc
+{
+    size_t i = 0;
+    while (i < s.length && (s[i] == ' ' || s[i] == '\t'))
+        i++;
+    return i;
+}
+
+/// A parsed partial version: the SemVer triple, how many components were
+/// explicitly given (a wildcard or a missing tail caps this), and the
+/// optional prerelease text.
+private struct PartialVersion
+{
+    uint[3] core;
+    size_t specified;     // 0..3 concrete leading components
+    string prerelease;    // without the leading '-'
+    bool hasPrerelease;
+}
+
+/// Parses a partial/wildcard version token (`1.2.3`, `1.2.x`, `1`, `*`,
+/// `1.2.3-rc.1`) into a $(LREF PartialVersion). `offset` is the byte offset
+/// of `text` for error reporting.
+private ParseExpected!PartialVersion parsePartial(
+    scope const(char)[] text, size_t offset,
+) @safe
+{
+    import std.ascii : isDigit;
+
+    PartialVersion pv;
+    scope const(char)[] s = text;
+    size_t base = offset;
+
+    void advance(size_t n) @safe { s = s[n .. $]; base += n; }
+
+    // Optional leading `v`/`=` (loose-friendly).
+    if (s.length && (s[0] == 'v' || s[0] == 'V'))
+        advance(1);
+
+    size_t comp = 0;
+    bool wildcardSeen = false;
+    while (comp < 3)
+    {
+        if (s.length == 0)
+            break;
+        if (s[0] == 'x' || s[0] == 'X' || s[0] == '*')
+        {
+            advance(1);
+            wildcardSeen = true;
+            // A wildcard caps the specified count at the current component.
+            if (s.length && s[0] == '.')
+                advance(1);
+            break;
+        }
+        if (!s[0].isDigit)
+            break;
+
+        uint value = 0;
+        size_t len = 0;
+        while (s.length && s[0].isDigit)
+        {
+            const d = cast(uint)(s[0] - '0');
+            if (value > (uint.max - d) / 10)
+                return parseErr!PartialVersion(
+                    ParseError(ParseErrorCode.numericOverflow, base));
+            value = value * 10 + d;
+            advance(1);
+            len++;
+        }
+        pv.core[comp] = value;
+        comp++;
+
+        if (s.length && s[0] == '.')
+        {
+            advance(1);
+            continue;
+        }
+        break;
+    }
+
+    pv.specified = wildcardSeen ? comp : comp;
+
+    // Prerelease tail (only meaningful when all three are concrete).
+    if (s.length && s[0] == '-')
+    {
+        advance(1);
+        size_t k = 0;
+        while (k < s.length && s[k] != '+')
+            k++;
+        pv.prerelease = cast(string) s[0 .. k].idup;
+        pv.hasPrerelease = pv.prerelease.length != 0;
+        advance(s.length); // consume the rest (build metadata ignored here)
+    }
+
+    if (s.length != 0)
+        return parseErr!PartialVersion(
+            ParseError(ParseErrorCode.unexpectedCharacter, base));
+
+    return parseOk(pv);
+}
+
+/// Builds a concrete `S` version from a SemVer triple plus optional
+/// prerelease.
+///
+/// The numeric core is assigned structurally to the first three
+/// `S.components` (so per-component print widths — Dmd's 3-digit minor,
+/// CalVer's 2-digit month — never trip a parser, since no string is
+/// re-parsed) with bounds-checking against the scheme's field maxes. A
+/// prerelease is only meaningful for schemes carrying a `string prerelease`
+/// member; for a scheme whose prerelease is encoded differently
+/// (`DmdCompact`), the `-tag` is routed through `S.parse` of the canonical
+/// form so its bespoke encoder runs. Returns a `numericOverflow` error at
+/// `offset` when a component exceeds the scheme's field width.
+private ParseExpected!S mkVersion(S)(
+    in uint[3] core, string prerelease, size_t offset,
+) @safe
+if (hasComponents!S && S.components.length >= 3)
+{
+    import sparkles.versions.traits : componentAt;
+
+    // A non-string prerelease encoding (DmdCompact) needs its own parser to
+    // map `-beta.N` / `-rc.N` onto the packed phase; reconstruct and parse.
+    static if (!__traits(hasMember, S, "prerelease"))
+    {
+        if (prerelease.length)
+        {
+            import std.array : appender;
+            import sparkles.core_cli.text.writers : writeInteger;
+
+            auto w = appender!string;
+            writeInteger(w, core[0]);
+            w.put('.');
+            writeInteger(w, core[1]);
+            w.put('.');
+            writeInteger(w, core[2]);
+            w.put('-');
+            w.put(prerelease);
+            auto r = S.parse(w[]);
+            if (!r.hasValue)
+                return parseErr!S(ParseError(r.error.code, offset));
+            return parseOk(r.value);
+        }
+    }
+
+    S result;
+    static foreach (i; 0 .. 3)
+    {{
+        alias FieldT = typeof(__traits(getMember, result, S.components[i]));
+        // Bounds-check against the scheme's natural field width.
+        if (core[i] > cast(uint) FieldT.max)
+            return parseErr!S(ParseError(ParseErrorCode.numericOverflow, offset));
+        __traits(getMember, result, S.components[i]) = cast(FieldT) core[i];
+    }}
+
+    static if (__traits(hasMember, S, "prerelease"))
+        if (prerelease.length)
+            __traits(getMember, result, "prerelease") = prerelease;
+
+    return parseOk(result);
+}
+
+/// Desugars a single comparator token (`^1.2.0`, `~1.2`, `>=1.2.0`, `1.2.x`,
+/// `*`, …) into a `Ranges!S`.
+private ParseExpected!(Ranges!S) parseComparator(S)(
+    scope const(char)[] tok, size_t offset,
+) @safe
+if (hasComponents!S && S.components.length >= 3)
+{
+    import sparkles.versions.operations : caret, tilde;
+
+    alias R = Ranges!S;
+
+    if (tok.length == 0)
+        return parseOk(R.full());
+
+    // Operator prefix.
+    enum Op { eq, lt, lte, gt, gte, caretOp, tildeOp }
+    Op op = Op.eq;
+    size_t skip = 0;
+
+    switch (tok[0])
+    {
+        case '^':
+            op = Op.caretOp;
+            skip = 1;
+            break;
+        case '~':
+            op = Op.tildeOp;
+            skip = 1;
+            break;
+        case '=':
+            op = Op.eq;
+            skip = 1;
+            break;
+        case '<':
+            if (tok.length > 1 && tok[1] == '=')
+            {
+                op = Op.lte;
+                skip = 2;
+            }
+            else
+            {
+                op = Op.lt;
+                skip = 1;
+            }
+            break;
+        case '>':
+            if (tok.length > 1 && tok[1] == '=')
+            {
+                op = Op.gte;
+                skip = 2;
+            }
+            else
+            {
+                op = Op.gt;
+                skip = 1;
+            }
+            break;
+        default:
+            op = Op.eq;
+            skip = 0;
+            break;
+    }
+
+    // Caret/tilde need the SemVer triple; reject on a non-SemVer scheme.
+    static if (!hasSemVerComponents!S)
+    {
+        if (op == Op.caretOp || op == Op.tildeOp)
+            return parseErr!R(
+                ParseError(ParseErrorCode.unexpectedCharacter, offset));
+    }
+
+    auto pp = parsePartial(tok[skip .. $], offset + skip);
+    if (!pp.hasValue)
+        return parseErr!R(pp.error);
+    const pv = pp.value;
+
+    // A bare `*` / `x` (zero specified components, no operator) is the full
+    // set; with a comparator it is an x-range over the missing tail.
+    static if (hasSemVerComponents!S)
+    {
+        if (op == Op.caretOp || op == Op.tildeOp)
+        {
+            auto lo = mkVersion!S(pv.core,
+                pv.hasPrerelease ? pv.prerelease : null, offset);
+            if (!lo.hasValue)
+                return parseErr!R(lo.error);
+            return parseOk(op == Op.caretOp ? caret(lo.value) : tilde(lo.value));
+        }
+    }
+
+    // Equality / x-range: zero specified components → full set.
+    if (op == Op.eq && pv.specified == 0)
+        return parseOk(R.full());
+
+    // Build the named version at the specified prefix (missing tail zeroed).
+    auto vr = mkVersion!S(pv.core,
+        pv.hasPrerelease ? pv.prerelease : null, offset);
+    if (!vr.hasValue)
+        return parseErr!R(vr.error);
+    const v = vr.value;
+
+    final switch (op)
+    {
+        case Op.gt:
+            return parseOk(R.strictlyHigherThan(v));
+        case Op.gte:
+            return parseOk(R.higherThan(v));
+        case Op.lt:
+            return parseOk(R.strictlyLowerThan(v));
+        case Op.lte:
+            return parseOk(R.lowerThan(v));
+        case Op.eq:
+            // Fully specified ⇒ a singleton; a partial prefix ⇒ an x-range
+            // `[prefix.0, bumped)`.
+            if (pv.specified >= 3)
+                return parseOk(R.singleton(v));
+            return xRange!S(pv, offset);
+        case Op.caretOp:
+        case Op.tildeOp:
+            // Handled above for SemVer schemes; unreachable otherwise.
+            return parseErr!R(
+                ParseError(ParseErrorCode.unexpectedCharacter, offset));
+    }
+}
+
+/// Desugars an x-range partial (`1.2.x`, `1`) into `[lower, upper)`, where
+/// `upper` bumps the last specified component. `specified == 0` is the full
+/// set (a bare `*`).
+private ParseExpected!(Ranges!S) xRange(S)(
+    in PartialVersion pv, size_t offset,
+) @safe
+if (hasComponents!S && S.components.length >= 3)
+{
+    alias R = Ranges!S;
+
+    if (pv.specified == 0)
+        return parseOk(R.full());
+
+    auto lo = mkVersion!S(pv.core, null, offset);
+    if (!lo.hasValue)
+        return parseErr!R(lo.error);
+
+    // Bump the (specified-1)-th component, zeroing the lower ones.
+    uint[3] hi = pv.core;
+    const idx = pv.specified - 1;
+    hi[idx] = hi[idx] + 1;
+    foreach (k; idx + 1 .. 3)
+        hi[k] = 0;
+
+    auto up = mkVersion!S(hi, null, offset);
+    if (!up.hasValue)
+        return parseErr!R(up.error);
+
+    return parseOk(R.between(lo.value, up.value));
+}
+
+/// Desugars a hyphen range `lower - upper` into the inclusive interval
+/// `[lower, upper]`. A partial upper bound widens to the end of its tail
+/// (`1.2.0 - 1.5` ⇒ `< 1.6.0`), matching node-semver.
+private ParseExpected!(Ranges!S) hyphenRange(S)(
+    scope const(char)[] loTok, size_t loOff,
+    scope const(char)[] upTok, size_t upOff,
+) @safe
+if (hasComponents!S && S.components.length >= 3)
+{
+    alias R = Ranges!S;
+
+    auto lp = parsePartial(loTok, loOff);
+    if (!lp.hasValue)
+        return parseErr!R(lp.error);
+    auto up = parsePartial(upTok, upOff);
+    if (!up.hasValue)
+        return parseErr!R(up.error);
+
+    const lpv = lp.value;
+    const upv = up.value;
+
+    auto lo = mkVersion!S(lpv.core,
+        lpv.hasPrerelease ? lpv.prerelease : null, loOff);
+    if (!lo.hasValue)
+        return parseErr!R(lo.error);
+
+    // A fully-specified upper bound is inclusive; a partial one becomes an
+    // exclusive bump of its last specified component.
+    if (upv.specified >= 3)
+    {
+        auto hi = mkVersion!S(upv.core,
+            upv.hasPrerelease ? upv.prerelease : null, upOff);
+        if (!hi.hasValue)
+            return parseErr!R(hi.error);
+        // [lo, hi] = [lo, hi') with hi' the successor — model inclusive via
+        // higherThan ∩ lowerThan.
+        return parseOk(
+            R.higherThan(lo.value).intersection(R.lowerThan(hi.value)));
+    }
+
+    uint[3] hiCore = upv.core;
+    const idx = upv.specified == 0 ? 0 : upv.specified - 1;
+    if (upv.specified == 0)
+        return parseOk(R.higherThan(lo.value)); // `a - *`
+    hiCore[idx] = hiCore[idx] + 1;
+    foreach (k; idx + 1 .. 3)
+        hiCore[k] = 0;
+    auto hi = mkVersion!S(hiCore, null, upOff);
+    if (!hi.hasValue)
+        return parseErr!R(hi.error);
+    return parseOk(R.between(lo.value, hi.value));
 }
 
 // ---------------------------------------------------------------------------
@@ -652,4 +1176,144 @@ unittest
     ];
     foreach (s; bad)
         checkRejects!SemVer(s);
+}
+
+// ---------------------------------------------------------------------------
+// Native range parser tests
+// ---------------------------------------------------------------------------
+
+version (unittest)
+{
+    import sparkles.versions.operations : caret, tilde;
+
+    private SemVer sv(string s) @safe
+    {
+        auto r = SemVer.parse(s);
+        assert(r.hasValue, s);
+        return r.value;
+    }
+
+    private Ranges!SemVer nr(string s) @safe
+    {
+        auto r = SemVer.parseNativeRange(s);
+        assert(r.hasValue, s);
+        return r.value;
+    }
+}
+
+@("semver.nativeRange.caretTilde")
+@safe
+unittest
+{
+    // ^1.2.0 → [1.2.0, 2.0.0); ~1.2.0 → [1.2.0, 1.3.0).
+    assert(nr("^1.2.0") == caret(sv("1.2.0")));
+    assert(nr("~1.2.0") == tilde(sv("1.2.0")));
+    assert(nr("^1.2.0") == Ranges!SemVer.between(sv("1.2.0"), sv("2.0.0")));
+    assert(nr("~1.2.0") == Ranges!SemVer.between(sv("1.2.0"), sv("1.3.0")));
+}
+
+@("semver.nativeRange.comparators")
+@safe
+unittest
+{
+    import sparkles.versions.operations : satisfies;
+
+    // >=1.2.0 <2.0.0 is the AND of two comparators.
+    auto r = nr(">=1.2.0 <2.0.0");
+    assert(r == Ranges!SemVer.between(sv("1.2.0"), sv("2.0.0")));
+    assert(satisfies(sv("1.5.0"), r));
+    assert(!satisfies(sv("2.0.0"), r));
+
+    assert(nr(">1.2.0") == Ranges!SemVer.strictlyHigherThan(sv("1.2.0")));
+    assert(nr("<=1.2.0") == Ranges!SemVer.lowerThan(sv("1.2.0")));
+    assert(nr("=1.2.0") == Ranges!SemVer.singleton(sv("1.2.0")));
+    assert(nr("1.2.0") == Ranges!SemVer.singleton(sv("1.2.0")));
+}
+
+@("semver.nativeRange.xRanges")
+@safe
+unittest
+{
+    // 1.2.x → [1.2.0, 1.3.0); 1.x → [1.0.0, 2.0.0); * → full.
+    assert(nr("1.2.x") == Ranges!SemVer.between(sv("1.2.0"), sv("1.3.0")));
+    assert(nr("1.*") == Ranges!SemVer.between(sv("1.0.0"), sv("2.0.0")));
+    assert(nr("1") == Ranges!SemVer.between(sv("1.0.0"), sv("2.0.0")));
+    assert(nr("1.2") == Ranges!SemVer.between(sv("1.2.0"), sv("1.3.0")));
+    assert(nr("*") == Ranges!SemVer.full());
+    assert(nr("") == Ranges!SemVer.full());
+}
+
+@("semver.nativeRange.hyphen")
+@safe
+unittest
+{
+    // 1.2.0 - 1.5.0 is the inclusive interval [1.2.0, 1.5.0].
+    auto r = nr("1.2.0 - 1.5.0");
+    assert(r.contains(sv("1.2.0")));
+    assert(r.contains(sv("1.5.0")));
+    assert(!r.contains(sv("1.5.1")));
+    assert(!r.contains(sv("1.1.9")));
+
+    // A partial upper bound widens: 1.2.0 - 1.5 ⇒ < 1.6.0.
+    auto p = nr("1.2.0 - 1.5");
+    assert(p.contains(sv("1.5.9")));
+    assert(!p.contains(sv("1.6.0")));
+}
+
+@("semver.nativeRange.union")
+@safe
+unittest
+{
+    // ^1.2.0 || ^2.0.0 is the union of the two carets.
+    auto r = nr("^1.2.0 || ^2.0.0");
+    assert(r == caret(sv("1.2.0")).union_(caret(sv("2.0.0"))));
+    assert(r.contains(sv("1.5.0")));
+    assert(r.contains(sv("2.3.0")));
+    assert(!r.contains(sv("3.0.0")));
+
+    // Comparator union with explicit AND in one alternative.
+    auto r2 = nr(">=1.0.0 <1.5.0 || >=2.0.0");
+    assert(r2.contains(sv("1.2.0")));
+    assert(!r2.contains(sv("1.5.0")));
+    assert(r2.contains(sv("2.1.0")));
+}
+
+@("semver.nativeRange.roundTripThroughVers")
+@safe
+unittest
+{
+    import sparkles.core_cli.smallbuffer : checkToString;
+
+    // The VERS textual form of a few ranges (SPEC §9).
+    checkToString(nr("^1.2.0"), ">=1.2.0,<2.0.0");
+    checkToString(nr("~1.2.0"), ">=1.2.0,<1.3.0");
+    checkToString(nr(">=1.2.0 <2.0.0"), ">=1.2.0,<2.0.0");
+    checkToString(nr("1.2.0"), "1.2.0");
+}
+
+@("semver.nativeRange.rejects")
+@safe
+unittest
+{
+    assert(!SemVer.parseNativeRange("^1.2.x.y").hasValue);
+    assert(!SemVer.parseNativeRange(">=abc").hasValue);
+}
+
+// CalVer schemes route through parseNpmRange too: comparators and x-ranges
+// work, but caret/tilde are rejected (no SemVer triple).
+@("semver.nativeRange.calVerNoCaret")
+@safe
+unittest
+{
+    import sparkles.versions.schemes.calver_yymm : CalVerYYMM;
+
+    // Comparators work on a calendar scheme.
+    auto ge = CalVerYYMM.parseNativeRange(">=24.04.1");
+    assert(ge.hasValue);
+    auto v = CalVerYYMM.parse("24.04.1").value;
+    assert(ge.value == Ranges!CalVerYYMM.higherThan(v));
+
+    // Caret/tilde are rejected — no SemVer triple.
+    assert(!CalVerYYMM.parseNativeRange("^24.04.1").hasValue);
+    assert(!CalVerYYMM.parseNativeRange("~24.04.1").hasValue);
 }

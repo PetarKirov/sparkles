@@ -25,6 +25,7 @@ import sparkles.versions.parsing : parseOk, parseErr;
 import sparkles.versions.parsing :
     NoGcHook, ParseError, ParseErrorCode, ParseExpected;
 import sparkles.versions.ranges : Ranges;
+import sparkles.versions.schemes.semver : parseNpmRange;
 import sparkles.versions.traits :
     hasComponents, hasOrderKey, hasSemVerComponents,
     isVersion, isVersionScheme, supportsPrerelease;
@@ -205,11 +206,9 @@ struct DmdCompact
         return parseOk(result);
     }
 
-    /// Native SemVer-shaped range grammar. Stubbed in M1; filled in M2.
-    static ParseExpected!Range parseNativeRange(string s)
-        @safe pure nothrow @nogc
-        => parseErr!(Range)(
-            ParseError(ParseErrorCode.unexpectedCharacter, 0));
+    /// Native SemVer-shaped range grammar.
+    static ParseExpected!Range parseNativeRange(string s) @safe
+        => parseNpmRange!DmdCompact(s);
 }
 
 /// Consumes `word` from the front of `cur` (advancing `off`) when it

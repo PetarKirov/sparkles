@@ -15,7 +15,7 @@ import sparkles.versions.parsing : parseOk, parseErr;
 import sparkles.versions.parsing :
     NoGcHook, ParseError, ParseErrorCode, ParseExpected, ParseMode;
 import sparkles.versions.ranges : Ranges;
-import sparkles.versions.schemes.semver : parseSemVerShaped;
+import sparkles.versions.schemes.semver : parseNpmRange, parseSemVerShaped;
 import sparkles.versions.traits :
     compareComponents, hasComponents, hasOrderKey, hasSemVerComponents,
     isVersion, isVersionScheme, supportsPrerelease;
@@ -75,10 +75,8 @@ struct Tiny
     static ParseExpected!Tiny parseLoose(string s) @safe pure nothrow @nogc
         => parseSemVerShaped!Tiny(s, ParseMode.loose, [0, 0, 0]);
 
-    static ParseExpected!Range parseNativeRange(string s)
-        @safe pure nothrow @nogc
-        => parseErr!(Range)(
-            ParseError(ParseErrorCode.unexpectedCharacter, 0));
+    static ParseExpected!Range parseNativeRange(string s) @safe
+        => parseNpmRange!Tiny(s);
 }
 
 static assert(isVersion!Tiny && isVersionScheme!Tiny);
