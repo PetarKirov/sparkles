@@ -12,6 +12,7 @@ dependency "expected" version="~>0.4.0"
 
 configuration "library" {
     targetType "library"
+    dependency "sparkles:core-cli" path="../.."
 }
 
 configuration "unittest" {

@@ -1,51 +1,27 @@
 /**
-Design-by-Introspection versioning library.
+`sparkles:versions` — an ecosystem-aware version library.
 
-This package provides $(LREF Version), a generic engine for SemVer 2.0.0
-and other versioning schemes (DMD, CalVer, …), plus pre-built layouts
-and a parser.
+Parses, compares, and constrains the version strings of many package
+ecosystems. Each ecosystem is a hand-written struct (`SemVer`,
+`PypiVersion`, `DebianVersion`, …) conforming to the compile-time concepts
+$(REF isVersion, sparkles,versions,traits) and
+$(REF isVersionScheme, sparkles,versions,traits); generic algorithms
+(`Ranges!V`, the optional-capability fast paths) operate over any conforming
+type.
+
+This package module publicly re-exports the concepts and capability
+vocabulary, the parse types, the generic `Ranges!V` type, and every shipped
+scheme. A consumer who needs a single ecosystem can instead import just that
+scheme module (e.g. `sparkles.versions.schemes.semver`).
 
 See `docs/specs/versions/SPEC.md` for the full specification.
 */
 module sparkles.versions;
 
-public import sparkles.versions.engine :
-    Component,
-    ComponentDesc,
-    GetCoreType,
-    InternalFlag,
-    InternalFlagDesc,
-    LayoutDescriptor,
-    SlotComparator,
-    SlotValidator,
-    StringSlot,
-    Version,
-    layoutBody;
+public import sparkles.versions.traits;
+public import sparkles.versions.parsing;
+public import sparkles.versions.ranges;
+public import sparkles.versions.schemes;
 
-public import sparkles.versions.semver_rules :
-    semVerBuildSlot,
-    semVerPrereleaseSlot;
-
-public import sparkles.versions.layouts :
-    DmdLayout,
-    DmdOptimized,
-    DmdVer,
-    SemVer,
-    SemVerLayout,
-    TinyLayout,
-    TinyVer;
-
-public import sparkles.versions.parser :
-    parse,
-    ParseError,
-    ParseErrorCode,
-    ParseMode,
-    ParseResult;
-
-public import sparkles.versions.presets :
-    CalVerYYMM,
-    CalVerYYMMLayout,
-    CalVerYYYYMMDD,
-    CalVerYYYYMMDDLayout,
-    VimLayout,
-    VimVer;
+version (unittest)
+    public import sparkles.versions.testing;
