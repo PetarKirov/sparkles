@@ -3,10 +3,11 @@
 _Audience: developers and coding agents building against the library.
 This document is normative and self-contained — it states what the
 library provides, not why. For design history, prior-art, and the
-reasoning behind each decision, see [RATIONALE.md](./RATIONALE.md); for
-the delivery plan, see [PLAN.md](./PLAN.md); for the per-scheme catalogue
+reasoning behind each decision, see the
+[explanation guides](../../libs/versions/explanation/design.md); for the
+delivery plan, see [PLAN.md](./PLAN.md); for the per-scheme catalogue
 (real-world examples, edge cases, provenance, and how to add a scheme),
-see [PRESETS.md](./PRESETS.md)._
+see the [scheme catalogue](../../libs/versions/reference/schemes.md)._
 
 ## 1. Overview
 
@@ -418,7 +419,7 @@ A scheme is the handle the library parses through and identifies by pURL
 type. The struct is both the version value and the scheme handle: `SemVer`
 is the version type _and_ carries the static `parse`, `purlType`, and
 range helpers — there is no separate scheme singleton. (Background:
-[RATIONALE §5.2](./RATIONALE.md#52-the-struct-is-both-value-and-scheme-handle).)
+[the design](../../libs/versions/explanation/design.md).)
 
 ### 6.1 Required surface — `isVersionScheme!S`
 
@@ -531,7 +532,8 @@ The parsing surface across the three concepts:
 `ParseMode` is the strict/loose selector for schemes that route both
 behaviours through one entry point; `parseLoose` is the discoverable,
 capability-gated form. Each scheme's exact grammar and native range
-grammar are documented in [PRESETS.md](./PRESETS.md).
+grammar are documented in the
+[scheme catalogue](../../libs/versions/reference/schemes.md).
 
 ## 8. Shipped schemes
 
@@ -539,8 +541,9 @@ The library ships a set of preset schemes that span the capability space
 — from `SemVer` (every optional capability) to `Generic` (none). The full
 list, the complete capability matrix, and the per-scheme detail
 (real-world examples, ordering rules, native-range grammar, edge cases,
-provenance) live in [PRESETS.md](./PRESETS.md) — adding a preset touches
-only that document.
+provenance) live in the
+[scheme catalogue](../../libs/versions/reference/schemes.md) — adding a
+preset touches only that document.
 
 Every scheme provides the required `isVersion!T` surface (`opCmp` +
 `toString`). An illustrative slice shows how the **optional** capabilities
@@ -695,7 +698,7 @@ Nullable!int compareAny(in AnyVersion a, in AnyVersion b);
 
 `compareAny` returning `null` is the defined contract, not a failure
 mode. (Background:
-[RATIONALE §5.3](./RATIONALE.md#53-no-cross-scheme-total-order).)
+[no cross-scheme order](../../libs/versions/explanation/cross-scheme-policy.md).)
 
 ## 12. Public API surface
 
@@ -740,5 +743,5 @@ scheme is used directly through its own type.
 ---
 
 → [PLAN.md](./PLAN.md) — delivery milestones and workflow orchestration
-→ [RATIONALE.md](./RATIONALE.md) — design history, prior-art, decisions, open questions
-→ [PRESETS.md](./PRESETS.md) — per-scheme catalogue, examples, provenance, how-to-add-a-scheme
+→ [Explanation guides](../../libs/versions/explanation/design.md) — design history, prior-art, decisions
+→ [Scheme catalogue](../../libs/versions/reference/schemes.md) — per-scheme examples, provenance, how-to-add-a-scheme

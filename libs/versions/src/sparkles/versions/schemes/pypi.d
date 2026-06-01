@@ -16,7 +16,7 @@ Canonical ordering (PEP 440, verbatim):
     < 1.0b2 < 1.0rc1 < 1.0 < 1.0.post456 < 1.0.15 < 1.1.dev1
 ```
 
-See `docs/specs/versions/PRESETS.md` §3.8.
+See `docs/libs/versions/reference/schemes.md` §3.8.
 */
 module sparkles.versions.schemes.pypi;
 

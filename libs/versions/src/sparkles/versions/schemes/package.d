@@ -6,7 +6,7 @@ a hand-written struct conforming to
 $(REF isVersion, sparkles,versions,traits) and
 $(REF isVersionScheme, sparkles,versions,traits); the per-scheme catalogue
 (capabilities, examples, ordering rules, provenance) is in
-`docs/specs/versions/PRESETS.md`.
+`docs/libs/versions/reference/schemes.md`.
 
 Eleven schemes ship: `SemVer` is the reference; `Dmd`/`DmdCompact`/`Tiny` and
 the calendar/`VimVer` schemes are SemVer-shaped compact encodings; `pypi`,

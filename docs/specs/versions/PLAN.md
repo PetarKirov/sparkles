@@ -4,8 +4,10 @@ _Audience: contributors implementing the library. This document is
 execution-only — milestones, the dynamic-workflow orchestration that
 builds them, verification, and deferrals. For the desired-state
 specification, read [SPEC.md](./SPEC.md); for design history and
-prior-art justification, read [RATIONALE.md](./RATIONALE.md); for the
-per-scheme catalogue, read [PRESETS.md](./PRESETS.md)._
+prior-art justification, read the
+[explanation guides](../../libs/versions/explanation/design.md); for the
+per-scheme catalogue, read the
+[scheme catalogue](../../libs/versions/reference/schemes.md)._
 
 The library is a set of hand-written, per-ecosystem version **structs**
 conforming to compile-time concepts — a required `isVersion!T` plus an
@@ -136,7 +138,8 @@ native range grammars.
   method surface and bound representation specified there; no API is
   re-listed here.
 - `parseNativeRange` additions per non-trivial scheme, implementing each
-  ecosystem's grammar as catalogued in [PRESETS §3](./PRESETS.md). The
+  ecosystem's grammar as catalogued in the
+  [scheme catalogue §3](../../libs/versions/reference/schemes.md). The
   six SemVer-shaped internal schemes inherit the SemVer grammar.
 - Prerelease-in-range policy encoded and tested per scheme, gated on the
   `supportsPrerelease` capability (the node-semver convention specified
@@ -329,7 +332,8 @@ Per milestone:
 isVersionScheme!ThisStruct);`, so any conformance regression is a
    compile-time failure. Each scheme has at least one parse-and-round-trip
    test (`checkRoundTrip!Scheme("real-world-string")`). The real-world
-   catalogue from [PRESETS.md](./PRESETS.md) — Python `3.13.0a1`, Maven
+   catalogue from the
+   [scheme catalogue](../../libs/versions/reference/schemes.md) — Python `3.13.0a1`, Maven
    `1.0-SNAPSHOT`, Debian `2:4.13.1-0ubuntu0.16.04.1.1~`, and the rest —
    is exercised end-to-end.
 
@@ -417,4 +421,4 @@ primitive **individually**:
 ---
 
 → [SPEC.md](./SPEC.md) — desired-state specification
-→ [RATIONALE.md](./RATIONALE.md) — design history, prior art, open questions
+→ [Explanation guides](../../libs/versions/explanation/design.md) — design history, prior art

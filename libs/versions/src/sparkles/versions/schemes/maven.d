@@ -16,7 +16,7 @@ abbreviated `a`/`b`/`m` when directly followed by a number. No fixed-width
 integer key reproduces this order, so `maven` declares **no** `orderKey` and
 `opCmp` compares token lists.
 
-See `docs/specs/versions/PRESETS.md` §3.9.
+See `docs/libs/versions/reference/schemes.md` §3.9.
 */
 module sparkles.versions.schemes.maven;
 
@@ -187,7 +187,7 @@ struct MavenVersion
     release (`2.0-rc1 < 2.0`), a half-open `[1.0,2.0)` _includes_ `2.0-rc1`:
     the bound is purely a `<` test against the parsed `2.0`.
 
-    See `docs/specs/versions/PRESETS.md` §3.9.
+    See `docs/libs/versions/reference/schemes.md` §3.9.
     */
     static ParseExpected!Range parseNativeRange(string s) @safe pure nothrow
     {
@@ -593,7 +593,7 @@ unittest
 unittest
 {
     // Because `2.0-rc1 < 2.0`, the half-open `[1.0,2.0)` *includes* the
-    // pre-release `2.0-rc1` (PRESETS §3.9 caveat).
+    // pre-release `2.0-rc1` (scheme catalogue §3.9 caveat).
     auto r = mvnRange("[1.0,2.0)");
     assert(mvn("2.0-rc1") < mvn("2.0"));
     assert(r.contains(mvn("2.0-rc1")));

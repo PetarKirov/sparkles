@@ -8,7 +8,7 @@ component list is declared honestly as `["year","month","patch"]`: it gets
 `hasSemVerComponents` — a calendar version has no caret/tilde. No prerelease,
 no build.
 
-See `docs/specs/versions/PRESETS.md` §3.5.
+See `docs/libs/versions/reference/schemes.md` §3.5.
 */
 module sparkles.versions.schemes.calver_yymm;
 

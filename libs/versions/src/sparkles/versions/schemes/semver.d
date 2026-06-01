@@ -10,7 +10,8 @@ This module also hosts the SemVer identifier grammar
 $(LREF IdentifierKind)) `package`-scoped, so the other SemVer-shaped schemes
 (`Dmd`, …) reuse it without re-importing the engine.
 
-See `docs/specs/versions/SPEC.md` §3 and `PRESETS.md` §3.1.
+See `docs/specs/versions/SPEC.md` §3 and
+`docs/libs/versions/reference/schemes.md` §3.1.
 */
 module sparkles.versions.schemes.semver;
 
@@ -170,7 +171,7 @@ Parses an npm/node-semver-style range expression into a `Ranges!S` for any
 SemVer-shaped scheme `S` (`hasSemVerComponents!S`, i.e. a `components` list
 beginning `["major","minor","patch"]`).
 
-The grammar (a practical subset of node-semver, PRESETS §3.1):
+The grammar (a practical subset of node-semver, scheme catalogue §3.1):
 
 $(UL
     $(LI `||` separates alternatives — their union.)

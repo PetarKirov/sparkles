@@ -12,7 +12,7 @@ the VERS/purl layers.
 
 `parse` always succeeds — any string is a valid `Generic`.
 
-See `docs/specs/versions/PRESETS.md` §3.11.
+See `docs/libs/versions/reference/schemes.md` §3.11.
 */
 module sparkles.versions.schemes.generic;
 

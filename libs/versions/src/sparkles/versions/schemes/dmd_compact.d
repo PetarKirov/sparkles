@@ -16,7 +16,7 @@ packed integer, a single unsigned compare yields
 `2.111.0-beta.N < 2.111.0-rc.M < 2.111.0`. The packed `uint` _is_ the
 `orderKey`. There is no loose parse.
 
-See `docs/specs/versions/PRESETS.md` §3.3.
+See `docs/libs/versions/reference/schemes.md` §3.3.
 */
 module sparkles.versions.schemes.dmd_compact;
 

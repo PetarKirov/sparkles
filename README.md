@@ -53,37 +53,51 @@ Or `dub.json`:
 
 ## Modules
 
-### Semantic Versioning
+### Versions
 
-Parse and compare SemVer versions, including loose compatibility inputs such as `v1.2.3`.
+`sparkles:versions` is an ecosystem-aware version library: it parses,
+compares, and constrains the version strings of many package ecosystems
+(SemVer, PEP 440/PyPI, Maven, Debian, CalVer, …) and interoperates with
+pURL and VERS. Each ecosystem is a hand-written struct conforming to a
+small compile-time concept; cross-scheme comparison does not compile.
 
 ```d
 #!/usr/bin/env dub
 /+ dub.sdl:
-    name "readme_semver"
-    dependency "sparkles:semver" version="*"
+    name "readme_versions"
+    dependency "sparkles:versions" version="*"
 +/
 
 import std.stdio : writeln;
-
-import sparkles.semver;
+import sparkles.versions.schemes.semver : SemVer;
+import sparkles.versions.operations : satisfies;
 
 void main()
 {
-    auto current = SemVer("v1.2.3");
-    auto next = SemVer("1.3.0-beta.1");
-
+    auto current = SemVer.parse("1.2.3").value;
+    auto next = SemVer.parse("1.3.0-beta.1").value;
     writeln(current);
     writeln(next > current);
-    writeln(SemVer.parse("1.0", SemVerParseMode.strict).hasError);
+
+    // Loose parsing accepts a leading `v` and partial versions.
+    writeln(SemVer.parseLoose("v1.2").value);
+
+    // Range membership.
+    auto range = SemVer.parseNativeRange("^1.2.0").value;
+    writeln(current.satisfies(range));
 }
 ```
 
 ```
 1.2.3
 true
+1.2.0
 true
 ```
+
+For the full tour — comparing and sorting, ranges, VERS/pURL interop, the
+eleven shipped schemes, and adding your own — see the
+[versions documentation](docs/libs/versions/index.md).
 
 ### Styled Templates
 
