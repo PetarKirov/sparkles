@@ -61,6 +61,12 @@ class DeltaTimeLogger : Logger
         );
         writeStyled(w, i"{bold $(payload.msg)}");
         put(w, '\n');
+
+        // Flush each line so logs appear immediately — in particular, the
+        // resource-monitoring trace lines must survive a process about to be
+        // OOM-killed, when stderr is redirected to a (block-buffered) file or
+        // pipe rather than a line-buffered tty.
+        () @trusted { stderr.flush(); }();
     }
 }
 
