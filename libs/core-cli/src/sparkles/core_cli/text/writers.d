@@ -1269,3 +1269,284 @@ unittest
     check!((ref b) => writeFixedPoint!16(b, 255, 2))("0.ff");     // base 16
     check!((ref b) => writeFixedPoint!16(b, 0xABC0, 1))("abc.0"); // base 16 int part
 }
+
+/// Writes a human-readable byte count using binary units — `B`, `KiB`, `MiB`,
+/// `GiB`, `TiB`, `PiB`, `EiB` — with one (rounded) decimal place at `KiB` and
+/// above (e.g. `512B`, `1.5KiB`, `532.3MiB`, `15.9GiB`, `4.0TiB`). `EiB` is the
+/// largest unit needed: `ulong.max` is just under `16 EiB`. @nogc-compatible.
+void writeBytes(Writer)(ref Writer w, ulong bytes)
+{
+    import std.range.primitives : put;
+
+    enum ulong kib = 1UL << 10, mib = 1UL << 20, gib = 1UL << 30,
+        tib = 1UL << 40, pib = 1UL << 50, eib = 1UL << 60;
+    if (bytes >= eib)
+        writeScaledBytes(w, bytes, eib, "EiB");
+    else if (bytes >= pib)
+        writeScaledBytes(w, bytes, pib, "PiB");
+    else if (bytes >= tib)
+        writeScaledBytes(w, bytes, tib, "TiB");
+    else if (bytes >= gib)
+        writeScaledBytes(w, bytes, gib, "GiB");
+    else if (bytes >= mib)
+        writeScaledBytes(w, bytes, mib, "MiB");
+    else if (bytes >= kib)
+        writeScaledBytes(w, bytes, kib, "KiB");
+    else
+    {
+        writeInteger(w, bytes);
+        put(w, 'B');
+    }
+}
+
+/// Writes `bytes / unit` to one (half-up rounded) decimal place, then `suffix`.
+private void writeScaledBytes(Writer)(
+    ref Writer w, ulong bytes, ulong unit, string suffix)
+{
+    import std.range.primitives : put;
+
+    const ulong whole = bytes / unit;
+    const ulong rem = bytes % unit;       // rem < unit, so rem*10 cannot overflow
+    // The value scaled to tenths, half-up rounded; a `rem` that rounds up to a
+    // full unit carries into `whole` (writeFixedPoint divides the total by 10).
+    writeFixedPoint(w, whole * 10 + (rem * 10 + unit / 2) / unit, 1);
+    put(w, suffix);
+}
+
+/**
+Writes a duration to `precision` decimal places (default `1`).
+
+With `units == "auto"` (the default) the largest fitting unit is chosen — `ns`,
+`µs`, `ms` below one second, then `s`, `m`, `h`, `d` — each rendered to
+`precision` decimals; so the default `writeDuration(w, d)` gives `500.0ns`,
+`1.5µs`, `5.5s`, `3.0d`, and `writeDuration(w, d, 0)` gives `500ns`, `2µs`,
+`5s`. A negative duration is prefixed with `-`.
+
+Any other `units` is a `core.time` unit name — `"nsecs"`, `"hnsecs"`,
+`"usecs"`, `"msecs"`, `"seconds"`, `"minutes"`, `"hours"`, `"days"`, `"weeks"`
+— and the whole duration is rendered in that single unit, e.g.
+`writeDuration!"seconds"(w, d, 3)` → `5.500s`.
+
+`units` is compile-time (it selects the scale and suffix); `precision` is a
+runtime value (it only feeds $(LREF writeFixedPoint)'s decimal count) and must
+be `<= 19` so `10^^precision` fits in a `ulong`.
+
+@nogc-compatible. (Uses `total!"nsecs"`, which only overflows past ~292 years —
+far beyond any duration this is meant to format.)
+*/
+void writeDuration(string units = "auto", Writer)(
+    ref Writer w, in Duration duration, uint precision = 1)
+in (precision <= 19, "precision must be <= 19 (10^^precision must fit in a ulong)")
+{
+    import std.range.primitives : put;
+
+    long ns = duration.total!"nsecs";
+    if (ns < 0)
+    {
+        put(w, '-');
+        ns = -ns;
+    }
+
+    static if (units == "auto")
+    {
+        if (ns < 1_000)
+            writeDurationIn!"nsecs"(w, ns, precision);
+        else if (ns < 1_000_000)
+            writeDurationIn!"usecs"(w, ns, precision);
+        else if (ns < 1_000_000_000)
+            writeDurationIn!"msecs"(w, ns, precision);
+        else if (ns < 60_000_000_000L)
+            writeDurationIn!"seconds"(w, ns, precision);
+        else if (ns < 3_600_000_000_000L)
+            writeDurationIn!"minutes"(w, ns, precision);
+        else if (ns < 86_400_000_000_000L)
+            writeDurationIn!"hours"(w, ns, precision);
+        else
+            writeDurationIn!"days"(w, ns, precision);
+    }
+    else
+        writeDurationIn!units(w, ns, precision);
+}
+
+/// Renders `ns` nanoseconds in a single `unit` to `precision` decimal places
+/// via $(LREF writeFixedPoint), followed by the unit's abbreviation.
+private void writeDurationIn(string unit, Writer)(ref Writer w, long ns, uint precision)
+{
+    import std.range.primitives : put;
+
+    enum long per = nsecsPerUnit!unit;    // nanoseconds in one `unit`
+    ulong pow = 1;                        // 10^^precision
+    foreach (_; 0 .. precision)
+        pow *= 10;
+
+    // The value `ns / per`, scaled by `pow` and half-up rounded, as the
+    // fixed-point integer writeFixedPoint expects. Dividing first when `per`
+    // is a multiple of `pow` avoids the intermediate overflow (the usual case
+    // for these units and small `precision`).
+    ulong number;
+    if (per % pow == 0)
+    {
+        const ulong step = per / pow;     // step >= 1 (per is a multiple of pow)
+        number = (cast(ulong) ns + step / 2) / step;
+    }
+    else
+        number = (cast(ulong) ns * pow + per / 2) / per;
+
+    writeFixedPoint(w, number, precision);
+    put(w, durationUnitAbbrev!unit);
+}
+
+/// Nanoseconds in one `core.time` time unit.
+private template nsecsPerUnit(string unit)
+{
+    static if (unit == "nsecs")        enum long nsecsPerUnit = 1L;
+    else static if (unit == "hnsecs")  enum long nsecsPerUnit = 100L;
+    else static if (unit == "usecs")   enum long nsecsPerUnit = 1_000L;
+    else static if (unit == "msecs")   enum long nsecsPerUnit = 1_000_000L;
+    else static if (unit == "seconds") enum long nsecsPerUnit = 1_000_000_000L;
+    else static if (unit == "minutes") enum long nsecsPerUnit = 60_000_000_000L;
+    else static if (unit == "hours")   enum long nsecsPerUnit = 3_600_000_000_000L;
+    else static if (unit == "days")    enum long nsecsPerUnit = 86_400_000_000_000L;
+    else static if (unit == "weeks")   enum long nsecsPerUnit = 604_800_000_000_000L;
+    else static assert(false, "unsupported duration unit: " ~ unit);
+}
+
+/// Short suffix for a `core.time` time unit.
+private template durationUnitAbbrev(string unit)
+{
+    static if (unit == "nsecs")        enum durationUnitAbbrev = "ns";
+    else static if (unit == "hnsecs")  enum durationUnitAbbrev = "hns";
+    else static if (unit == "usecs")   enum durationUnitAbbrev = "µs";
+    else static if (unit == "msecs")   enum durationUnitAbbrev = "ms";
+    else static if (unit == "seconds") enum durationUnitAbbrev = "s";
+    else static if (unit == "minutes") enum durationUnitAbbrev = "m";
+    else static if (unit == "hours")   enum durationUnitAbbrev = "h";
+    else static if (unit == "days")    enum durationUnitAbbrev = "d";
+    else static if (unit == "weeks")   enum durationUnitAbbrev = "w";
+    else static assert(false, "unsupported duration unit: " ~ unit);
+}
+
+/// Writes a duration via $(LREF writeDuration), then right-pads with spaces to
+/// at least `width` characters. @nogc-compatible.
+void writeDurationPadded(Writer)(
+    ref Writer w, in Duration duration, size_t width)
+{
+    import sparkles.core_cli.smallbuffer : SmallBuffer;
+    import std.range.primitives : put;
+
+    SmallBuffer!(char, 16) buf;
+    writeDuration(buf, duration);
+    const text = buf[];
+    put(w, text);
+    if (text.length < width)
+        foreach (_; 0 .. width - text.length)
+            put(w, ' ');
+}
+
+@("writeBytes.units")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.core_cli.smallbuffer : SmallBuffer;
+
+    SmallBuffer!(char, 32) buf;
+    void check(ulong bytes, string expected)
+    {
+        buf.clear();
+        writeBytes(buf, bytes);
+        assert(buf[] == expected);
+    }
+
+    check(0, "0B");
+    check(1023, "1023B");
+    check(1024, "1.0KiB");
+    check(1536, "1.5KiB");
+    check(2047, "2.0KiB");                // rounds up across the unit boundary
+    check(1UL << 20, "1.0MiB");
+    check(1UL << 30, "1.0GiB");
+    check((1UL << 40) * 4, "4.0TiB");
+    check(1UL << 50, "1.0PiB");
+    check((1UL << 60) * 2 + (1UL << 60) / 2, "2.5EiB");
+    check(ulong.max, "16.0EiB");          // ulong.max ≈ 15.999… EiB, rounds to 16.0
+}
+
+@("writeDuration.units")
+@safe pure nothrow @nogc
+unittest
+{
+    import core.time : dur;
+    import sparkles.core_cli.smallbuffer : SmallBuffer;
+
+    SmallBuffer!(char, 32) buf;
+    void check(Duration d, string expected)
+    {
+        buf.clear();
+        writeDuration(buf, d);
+        assert(buf[] == expected);
+    }
+
+    // Default precision is 1, applied uniformly across every tier.
+    check(dur!"nsecs"(0), "0.0ns");
+    check(dur!"nsecs"(500), "500.0ns");
+    check(dur!"nsecs"(1_500), "1.5µs");   // crosses into µs, one decimal
+    check(dur!"usecs"(750), "750.0µs");
+    check(dur!"usecs"(1_500), "1.5ms");
+    check(dur!"msecs"(42), "42.0ms");
+    check(dur!"msecs"(999), "999.0ms");
+    check(dur!"msecs"(1_000), "1.0s");
+    check(dur!"msecs"(5_500), "5.5s");
+    check(dur!"msecs"(60_000), "1.0m");
+    check(dur!"msecs"(90_000), "1.5m");
+    check(dur!"hours"(1), "1.0h");
+    check(dur!"hours"(24), "1.0d");
+    check(dur!"nsecs"(-500), "-500.0ns");  // negative is prefixed with '-'
+    check(dur!"msecs"(-1_500), "-1.5s");
+}
+
+@("writeDuration.explicitUnitAndPrecision")
+@safe pure nothrow @nogc
+unittest
+{
+    import core.time : dur;
+    import sparkles.core_cli.smallbuffer : SmallBuffer;
+
+    SmallBuffer!(char, 32) buf;
+
+    // `units` is compile-time, `precision` is a runtime argument.
+    buf.clear();
+    writeDuration!"seconds"(buf, dur!"msecs"(5_500), 3);
+    assert(buf[] == "5.500s");
+
+    buf.clear();
+    writeDuration!"msecs"(buf, dur!"usecs"(1_500), 0);     // 1.5ms rounds to 2
+    assert(buf[] == "2ms");
+
+    buf.clear();
+    writeDuration!"minutes"(buf, dur!"seconds"(90), 2);
+    assert(buf[] == "1.50m");
+
+    buf.clear();
+    writeDuration!"usecs"(buf, dur!"nsecs"(2_500), 0);     // 2.5µs rounds to 3
+    assert(buf[] == "3µs");
+
+    // Precision flows through "auto" to sub-second tiers too.
+    buf.clear();
+    writeDuration(buf, dur!"nsecs"(500), 2);
+    assert(buf[] == "500.00ns");
+
+    buf.clear();
+    writeDuration(buf, dur!"nsecs"(1_500), 0);             // auto, integer → rounds
+    assert(buf[] == "2µs");
+}
+
+@("writeDurationPadded.padsToWidth")
+@safe pure nothrow @nogc
+unittest
+{
+    import core.time : dur;
+    import sparkles.core_cli.smallbuffer : SmallBuffer;
+
+    SmallBuffer!(char, 32) buf;
+    writeDurationPadded(buf, dur!"msecs"(1_500), 6);
+    assert(buf[] == "1.5s  ");            // "1.5s" then padded to 6 chars
+}
