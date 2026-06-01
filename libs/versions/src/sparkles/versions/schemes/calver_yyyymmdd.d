@@ -16,7 +16,7 @@ import sparkles.versions.parsing : parseOk, parseErr;
 import sparkles.versions.parsing :
     NoGcHook, ParseError, ParseErrorCode, ParseExpected, ParseMode;
 import sparkles.versions.ranges : Ranges;
-import sparkles.versions.schemes.semver : parseSemVerShaped;
+import sparkles.versions.schemes.semver : parseNpmRange, parseSemVerShaped;
 import sparkles.versions.traits :
     compareComponents, hasComponents, hasOrderKey, hasSemVerComponents,
     isVersion, isVersionScheme, supportsPrerelease;
@@ -82,10 +82,8 @@ struct CalVerYYYYMMDD
         @safe pure nothrow @nogc
         => parseSemVerShaped!CalVerYYYYMMDD(s, ParseMode.loose, calWidths);
 
-    static ParseExpected!Range parseNativeRange(string s)
-        @safe pure nothrow @nogc
-        => parseErr!(Range)(
-            ParseError(ParseErrorCode.unexpectedCharacter, 0));
+    static ParseExpected!Range parseNativeRange(string s) @safe
+        => parseNpmRange!CalVerYYYYMMDD(s);
 }
 
 /// Per-component minimum widths: 2-digit month and day, unpadded year.

@@ -167,11 +167,154 @@ struct MavenVersion
         return parseOk(result);
     }
 
-    /// Native Maven interval-notation range grammar. Stubbed in M1; filled
-    /// in M2.
+    /**
+    Parses Maven interval-notation version requirements into a
+    [`Ranges!MavenVersion`](sparkles.versions.ranges).
+
+    A requirement is a comma-separated union of bracket intervals:
+
+    - `[1.0]` — exactly `1.0` (a singleton).
+    - `(,1.0]` — `<= 1.0` (open/unbounded lower, inclusive upper).
+    - `[1.2,1.3]` — closed `[1.2, 1.3]`.
+    - `[1.0,2.0)` — half-open `[1.0, 2.0)`.
+    - `[1.5,)` — `>= 1.5` (inclusive lower, unbounded upper).
+
+    Square brackets denote inclusive bounds, parentheses exclusive; an empty
+    endpoint is unbounded. Several intervals may be unioned by separating
+    them with commas at the top level, e.g. `(,1.0],[1.2,)`.
+
+    Because Maven's `ComparableVersion` order places a qualifier below its
+    release (`2.0-rc1 < 2.0`), a half-open `[1.0,2.0)` _includes_ `2.0-rc1`:
+    the bound is purely a `<` test against the parsed `2.0`.
+
+    See `docs/specs/versions/PRESETS.md` §3.9.
+    */
     static ParseExpected!Range parseNativeRange(string s) @safe pure nothrow
-        => parseErr!(Range)(
-            ParseError(ParseErrorCode.unexpectedCharacter, 0));
+    {
+        import sparkles.versions.parsing : ParseErrorCode;
+        import sparkles.core_cli.text.readers : tryConsume;
+
+        const(char)[] cur = s;
+        if (cur.length == 0)
+            return parseErr!Range(ParseErrorCode.emptyInput, 0);
+
+        // Union of the comma-separated intervals, accumulated left to right.
+        Range acc = Range.empty();
+        bool any = false;
+
+        while (cur.length)
+        {
+            const consumedSoFar = s.length - cur.length;
+            auto seg = parseInterval(cur, consumedSoFar);
+            if (!seg.hasValue)
+                return parseErr!Range(seg.error);
+            acc = any ? acc.union_(seg.value) : seg.value;
+            any = true;
+
+            // Top-level intervals are joined by a single comma.
+            if (cur.length == 0)
+                break;
+            const offset = s.length - cur.length;
+            if (!tryConsume(cur, ','))
+                return parseErr!Range(
+                    ParseError(ParseErrorCode.unexpectedCharacter, offset));
+            if (cur.length == 0)
+                return parseErr!Range(
+                    ParseError(ParseErrorCode.unexpectedEnd, s.length));
+        }
+        return parseOk(acc);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Interval-notation parsing
+// ---------------------------------------------------------------------------
+
+/// Parses one bracket interval from the front of `cur`, advancing past it.
+/// `base` is the byte offset of `cur[0]` within the original input, so
+/// reported error offsets are absolute.
+private ParseExpected!(Ranges!MavenVersion) parseInterval(
+    ref scope const(char)[] cur, size_t base) @safe pure nothrow
+{
+    import sparkles.core_cli.text.readers : readUntil, tryConsume;
+
+    alias Range = Ranges!MavenVersion;
+
+    const startLen = cur.length;
+    // Offset of the current cursor head within the original input.
+    size_t here() @safe pure nothrow => base + (startLen - cur.length);
+
+    // Opening bracket selects the lower-bound inclusivity.
+    bool lowerInclusive;
+    if (tryConsume(cur, '['))
+        lowerInclusive = true;
+    else if (tryConsume(cur, '('))
+        lowerInclusive = false;
+    else
+        return parseErr!Range(ParseErrorCode.unexpectedCharacter, base);
+
+    // Lower endpoint runs up to the inner comma or the closing bracket.
+    const lowerText = readUntil(cur, ",])");
+
+    // Exact form `[v]`: no inner comma, closes immediately.
+    if (cur.length && (cur[0] == ']' || cur[0] == ')'))
+    {
+        const closeOffset = here();
+        const inclusive = cur[0] == ']';
+        cur = cur[1 .. $];
+        // `[v]` is the singleton `v`; `(v)` is empty but ill-formed — Maven
+        // exact notation uses square brackets, so a paren-wrapped lone value
+        // is rejected.
+        if (!(lowerInclusive && inclusive))
+            return parseErr!Range(
+                ParseError(ParseErrorCode.unexpectedCharacter, closeOffset));
+        auto v = MavenVersion.parse(cast(string) lowerText.idup);
+        if (!v.hasValue)
+            return parseErr!Range(v.error);
+        return parseOk(Range.singleton(v.value));
+    }
+
+    // Two-endpoint form: consume the inner comma, then the upper endpoint.
+    if (!tryConsume(cur, ','))
+        return parseErr!Range(
+            ParseError(ParseErrorCode.unexpectedEnd, base));
+    const upperText = readUntil(cur, "])");
+
+    // Closing bracket selects the upper-bound inclusivity.
+    bool upperInclusive;
+    if (tryConsume(cur, ']'))
+        upperInclusive = true;
+    else if (tryConsume(cur, ')'))
+        upperInclusive = false;
+    else
+        return parseErr!Range(
+            ParseError(ParseErrorCode.unexpectedEnd, base));
+
+    // Build the interval as the intersection of a lower- and upper-bound
+    // half-line. An empty endpoint is unbounded on that side.
+    Range lower = Range.full();
+    if (lowerText.length)
+    {
+        auto lv = MavenVersion.parse(cast(string) lowerText.idup);
+        if (!lv.hasValue)
+            return parseErr!Range(lv.error);
+        lower = lowerInclusive
+            ? Range.higherThan(lv.value)
+            : Range.strictlyHigherThan(lv.value);
+    }
+
+    Range upper = Range.full();
+    if (upperText.length)
+    {
+        auto uv = MavenVersion.parse(cast(string) upperText.idup);
+        if (!uv.hasValue)
+            return parseErr!Range(uv.error);
+        upper = upperInclusive
+            ? Range.lowerThan(uv.value)
+            : Range.strictlyLowerThan(uv.value);
+    }
+
+    return parseOk(lower.intersection(upper));
 }
 
 // ---------------------------------------------------------------------------
@@ -368,4 +511,142 @@ unittest
     assert(MavenVersion.parse("1.0-alpha-1").value.isPrerelease);
     assert(!MavenVersion.parse("1.0").value.isPrerelease);
     assert(!MavenVersion.parse("1.0-sp1").value.isPrerelease);
+}
+
+// ---------------------------------------------------------------------------
+// Native range tests
+// ---------------------------------------------------------------------------
+
+version (unittest)
+{
+    // Parses a native interval requirement, asserting success via `.value`.
+    private Ranges!MavenVersion mvnRange(string s) @safe pure nothrow
+    {
+        auto r = MavenVersion.parseNativeRange(s);
+        assert(r.hasValue, "parseNativeRange failed");
+        return r.value;
+    }
+
+    private MavenVersion mvn(string s) @safe pure nothrow
+        => MavenVersion.parse(s).value;
+}
+
+@("maven.range.exact")
+@safe pure
+unittest
+{
+    import sparkles.core_cli.smallbuffer : checkToString;
+
+    // `[1.0]` is the singleton 1.0.
+    auto r = mvnRange("[1.0]");
+    assert(r.contains(mvn("1.0")));
+    assert(!r.contains(mvn("1.1")));
+    assert(!r.contains(mvn("0.9")));
+    checkToString(r, "1.0");
+}
+
+@("maven.range.atMost")
+@safe pure
+unittest
+{
+    import sparkles.core_cli.smallbuffer : checkToString;
+
+    // `(,1.0]` is `<= 1.0`.
+    auto r = mvnRange("(,1.0]");
+    assert(r.contains(mvn("1.0")));
+    assert(r.contains(mvn("0.5")));
+    assert(!r.contains(mvn("1.1")));
+    checkToString(r, "<=1.0");
+}
+
+@("maven.range.closed")
+@safe pure
+unittest
+{
+    import sparkles.core_cli.smallbuffer : checkToString;
+
+    // `[1.2,1.3]` — both endpoints inclusive.
+    auto r = mvnRange("[1.2,1.3]");
+    assert(!r.contains(mvn("1.1")));
+    assert(r.contains(mvn("1.2")));
+    assert(r.contains(mvn("1.3")));
+    assert(!r.contains(mvn("1.4")));
+    checkToString(r, ">=1.2,<=1.3");
+}
+
+@("maven.range.halfOpen")
+@safe pure
+unittest
+{
+    import sparkles.core_cli.smallbuffer : checkToString;
+
+    // `[1.0,2.0)` — inclusive lower, exclusive upper.
+    auto r = mvnRange("[1.0,2.0)");
+    assert(r.contains(mvn("1.0")));
+    assert(r.contains(mvn("1.9")));
+    assert(!r.contains(mvn("2.0")));
+    checkToString(r, ">=1.0,<2.0");
+}
+
+@("maven.range.prereleaseCaveat")
+@safe pure
+unittest
+{
+    // Because `2.0-rc1 < 2.0`, the half-open `[1.0,2.0)` *includes* the
+    // pre-release `2.0-rc1` (PRESETS §3.9 caveat).
+    auto r = mvnRange("[1.0,2.0)");
+    assert(mvn("2.0-rc1") < mvn("2.0"));
+    assert(r.contains(mvn("2.0-rc1")));
+}
+
+@("maven.range.atLeast")
+@safe pure
+unittest
+{
+    import sparkles.core_cli.smallbuffer : checkToString;
+
+    // `[1.5,)` is `>= 1.5`.
+    auto r = mvnRange("[1.5,)");
+    assert(!r.contains(mvn("1.4")));
+    assert(r.contains(mvn("1.5")));
+    assert(r.contains(mvn("9.9")));
+    checkToString(r, ">=1.5");
+}
+
+@("maven.range.union")
+@safe pure
+unittest
+{
+    import sparkles.core_cli.smallbuffer : checkToString;
+
+    // `(,1.0],[1.2,)` — everything up to 1.0, and everything from 1.2 on.
+    auto r = mvnRange("(,1.0],[1.2,)");
+    assert(r.contains(mvn("0.5")));
+    assert(r.contains(mvn("1.0")));
+    assert(!r.contains(mvn("1.1")));
+    assert(r.contains(mvn("1.2")));
+    assert(r.contains(mvn("2.0")));
+    checkToString(r, "<=1.0|>=1.2");
+}
+
+@("maven.range.exclusiveLower")
+@safe pure
+unittest
+{
+    // `(1.0,2.0)` — both endpoints exclusive.
+    auto r = mvnRange("(1.0,2.0)");
+    assert(!r.contains(mvn("1.0")));
+    assert(r.contains(mvn("1.5")));
+    assert(!r.contains(mvn("2.0")));
+}
+
+@("maven.range.rejectsMalformed")
+@safe pure nothrow
+unittest
+{
+    assert(!MavenVersion.parseNativeRange("").hasValue);       // empty
+    assert(!MavenVersion.parseNativeRange("1.0").hasValue);    // no bracket
+    assert(!MavenVersion.parseNativeRange("[1.0").hasValue);   // unterminated
+    assert(!MavenVersion.parseNativeRange("(1.0)").hasValue);  // paren exact
+    assert(!MavenVersion.parseNativeRange("[1.0],").hasValue); // dangling comma
 }

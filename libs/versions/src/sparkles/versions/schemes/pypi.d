@@ -65,14 +65,15 @@ struct PypiVersion
     uint[] release;
 
     /// SemVer-triple accessors over the release tuple (zero when absent), so
-    /// `hasComponents` holds.
-    uint major() const @safe pure nothrow @nogc
+    /// `hasComponents` holds. `scope`, so the generic component helpers can
+    /// read them off a `scope`/`in` version (e.g. inside `satisfies`).
+    uint major() const scope @safe pure nothrow @nogc
         => release.length > 0 ? release[0] : 0;
     /// ditto
-    uint minor() const @safe pure nothrow @nogc
+    uint minor() const scope @safe pure nothrow @nogc
         => release.length > 1 ? release[1] : 0;
     /// ditto
-    uint patch() const @safe pure nothrow @nogc
+    uint patch() const scope @safe pure nothrow @nogc
         => release.length > 2 ? release[2] : 0;
 
     /// Pre-release segment, if any.
@@ -208,10 +209,12 @@ struct PypiVersion
     static ParseExpected!PypiVersion parseLoose(string s) @safe pure nothrow
         => parsePypi(s, true);
 
-    /// Native PEP 440 specifier-set grammar. Stubbed in M1; filled in M2.
+    /// Native PEP 440 specifier-set grammar: a comma-separated AND of
+    /// clauses using `==`, `!=`, `<`, `<=`, `>`, `>=`, `~=` (compatible
+    /// release) and `===` (arbitrary equality), with trailing `.*`
+    /// wildcards on `==`/`!=`. `~=1.4.5` desugars to `>=1.4.5,==1.4.*`.
     static ParseExpected!Range parseNativeRange(string s) @safe pure nothrow
-        => parseErr!(Range)(
-            ParseError(ParseErrorCode.unexpectedCharacter, 0));
+        => parsePypiRange(s);
 
     // ----- private structural compare helpers -----
 
@@ -548,6 +551,183 @@ private bool startsWith(in char[] s, string prefix) @safe pure nothrow @nogc
 }
 
 // ---------------------------------------------------------------------------
+// Native range parser (PEP 440 specifier set)
+// ---------------------------------------------------------------------------
+
+/// Builds a `PypiVersion` whose public version is exactly the given release
+/// tuple (epoch 0, no pre/post/dev/local).
+private PypiVersion releaseVersion(in uint[] release) @safe pure nothrow
+{
+    PypiVersion v;
+    v.release = release.dup;
+    return v;
+}
+
+/// Parses a comma-separated PEP 440 specifier set into a `Ranges!PypiVersion`,
+/// intersecting every clause.
+private ParseExpected!(Ranges!PypiVersion) parsePypiRange(string input)
+    @safe pure nothrow
+{
+    alias R = Ranges!PypiVersion;
+
+    ParseExpected!R fail(size_t off)
+        => parseErr!R(ParseError(ParseErrorCode.unexpectedCharacter, off));
+
+    if (input.length == 0)
+        return parseErr!R(ParseError(ParseErrorCode.emptyInput, 0));
+
+    R acc = R.full();
+    size_t off = 0;
+
+    // Walk comma-separated clauses, intersecting each into `acc`.
+    while (off < input.length)
+    {
+        // Skip leading whitespace.
+        while (off < input.length
+            && (input[off] == ' ' || input[off] == '\t'))
+            off++;
+        if (off >= input.length)
+            return fail(off);
+
+        const clauseStart = off;
+        // A clause runs to the next comma.
+        size_t end = off;
+        while (end < input.length && input[end] != ',')
+            end++;
+        // Trim trailing whitespace.
+        size_t clauseEnd = end;
+        while (clauseEnd > clauseStart
+            && (input[clauseEnd - 1] == ' ' || input[clauseEnd - 1] == '\t'))
+            clauseEnd--;
+
+        auto clause = input[clauseStart .. clauseEnd];
+        auto sub = parsePypiClause(clause, clauseStart);
+        if (!sub.hasValue)
+            return sub;
+        acc = acc.intersection(sub.value);
+
+        off = end;
+        if (off < input.length && input[off] == ',')
+            off++; // consume the comma and continue
+    }
+
+    return parseOk(acc);
+}
+
+/// Parses one clause `<op><version>[.*]` into a `Ranges!PypiVersion`.
+/// `base` is the offset of the clause within the original input, used for
+/// error reporting.
+private ParseExpected!(Ranges!PypiVersion) parsePypiClause(
+    string clause, size_t base) @safe pure nothrow
+{
+    alias R = Ranges!PypiVersion;
+
+    ParseExpected!R fail(size_t off)
+        => parseErr!R(ParseError(ParseErrorCode.unexpectedCharacter, off));
+
+    if (clause.length == 0)
+        return fail(base);
+
+    // --- operator ---
+    enum Op { eq, ne, lt, le, gt, ge, compat, arbitrary }
+    Op op;
+    size_t i = 0;
+    if (clause.length >= 3 && clause[0 .. 3] == "===")
+    { op = Op.arbitrary; i = 3; }
+    else if (clause.length >= 2 && clause[0 .. 2] == "==")
+    { op = Op.eq; i = 2; }
+    else if (clause.length >= 2 && clause[0 .. 2] == "!=")
+    { op = Op.ne; i = 2; }
+    else if (clause.length >= 2 && clause[0 .. 2] == "<=")
+    { op = Op.le; i = 2; }
+    else if (clause.length >= 2 && clause[0 .. 2] == ">=")
+    { op = Op.ge; i = 2; }
+    else if (clause.length >= 2 && clause[0 .. 2] == "~=")
+    { op = Op.compat; i = 2; }
+    else if (clause[0] == '<')
+    { op = Op.lt; i = 1; }
+    else if (clause[0] == '>')
+    { op = Op.gt; i = 1; }
+    else
+        return fail(base);
+
+    // Skip whitespace between operator and version.
+    while (i < clause.length && (clause[i] == ' ' || clause[i] == '\t'))
+        i++;
+    if (i >= clause.length)
+        return fail(base + i);
+
+    auto verText = clause[i .. $];
+
+    // --- trailing `.*` wildcard (only legal on ==/!=) ---
+    bool wildcard = false;
+    if (verText.length >= 2 && verText[$ - 2 .. $] == ".*")
+    {
+        wildcard = true;
+        verText = verText[0 .. $ - 2];
+    }
+
+    if (wildcard && op != Op.eq && op != Op.ne)
+        return fail(base + i);
+
+    auto parsed = PypiVersion.parse(verText.idup);
+    if (!parsed.hasValue)
+        return fail(base + i + parsed.error.offset);
+    auto v = parsed.value;
+
+    if (wildcard)
+    {
+        // `==V.*` matches every version whose release has `V`'s release as a
+        // prefix: `[V_release, nextPrefix)` where `nextPrefix` bumps the last
+        // release component. `!=V.*` is the complement.
+        if (v.release.length == 0)
+            return fail(base + i);
+        auto lo = releaseVersion(v.release);
+        auto hi = releaseVersion(bumpLast(v.release));
+        auto prefix = R.between(lo, hi);
+        return parseOk(op == Op.eq ? prefix : prefix.complement());
+    }
+
+    final switch (op)
+    {
+        case Op.eq:
+            return parseOk(R.singleton(v));
+        case Op.ne:
+            return parseOk(R.singleton(v).complement());
+        case Op.arbitrary:
+            // Arbitrary equality is an exact string match in PEP 440; modelled
+            // here as the singleton of the parsed version.
+            return parseOk(R.singleton(v));
+        case Op.lt:
+            return parseOk(R.strictlyLowerThan(v));
+        case Op.le:
+            return parseOk(R.lowerThan(v));
+        case Op.gt:
+            return parseOk(R.strictlyHigherThan(v));
+        case Op.ge:
+            return parseOk(R.higherThan(v));
+        case Op.compat:
+            // `~=X.Y.Z` ≡ `>=X.Y.Z, ==X.Y.*`: at least two release segments,
+            // upper bound bumps the second-to-last component.
+            if (v.release.length < 2)
+                return fail(base + i);
+            auto lo = v;
+            auto hi = releaseVersion(bumpLast(v.release[0 .. $ - 1]));
+            return parseOk(R.between(lo, hi));
+    }
+}
+
+/// Returns a copy of `release` with its last component incremented (and any
+/// lower-significance components dropped already by the caller).
+private uint[] bumpLast(in uint[] release) @safe pure nothrow
+in (release.length > 0)
+{
+    auto next = release.dup;
+    next[$ - 1] += 1;
+    return next;
+}
+
+// ---------------------------------------------------------------------------
 // Conformance
 // ---------------------------------------------------------------------------
 
@@ -632,4 +812,145 @@ unittest
     auto b = PypiVersion.parseLoose("1.0-a1");
     assert(b.hasValue);
     checkToString(b.value, "1.0a1");
+}
+
+// ---------------------------------------------------------------------------
+// Native range tests (PEP 440 specifier set)
+// ---------------------------------------------------------------------------
+
+private PypiVersion pv(string s) @safe pure nothrow
+    => PypiVersion.parse(s).value;
+
+@("pypi.range.greaterEqual")
+@safe pure
+unittest
+{
+    auto r = PypiVersion.parseNativeRange(">=1.2.4");
+    assert(r.hasValue);
+    auto set = r.value;
+    assert(!set.contains(pv("1.2.3")));
+    assert(set.contains(pv("1.2.4")));
+    assert(set.contains(pv("2.0.0")));
+}
+
+@("pypi.range.greaterEqualAndLess")
+@safe pure
+unittest
+{
+    auto r = PypiVersion.parseNativeRange(">=1.2.4,<2");
+    assert(r.hasValue);
+    auto set = r.value;
+    assert(!set.contains(pv("1.2.3")));
+    assert(set.contains(pv("1.2.4")));
+    assert(set.contains(pv("1.9.9")));
+    assert(!set.contains(pv("2.0")));
+    assert(!set.contains(pv("2.1")));
+}
+
+@("pypi.range.compatibleRelease")
+@safe pure
+unittest
+{
+    // ~=1.4.5 ≡ >=1.4.5, ==1.4.* ≡ [1.4.5, 1.5)
+    auto r = PypiVersion.parseNativeRange("~=1.4.5");
+    assert(r.hasValue);
+    auto set = r.value;
+    assert(!set.contains(pv("1.4.4")));
+    assert(set.contains(pv("1.4.5")));
+    assert(set.contains(pv("1.4.99")));
+    assert(!set.contains(pv("1.5.0")));
+    assert(!set.contains(pv("2.0.0")));
+
+    // Equivalence with the desugared form.
+    auto desugared = PypiVersion.parseNativeRange(">=1.4.5,==1.4.*");
+    assert(desugared.hasValue);
+    assert(set == desugared.value);
+}
+
+@("pypi.range.equalsWildcard")
+@safe pure
+unittest
+{
+    // ==1.4.* ≡ [1.4, 1.5)
+    auto r = PypiVersion.parseNativeRange("==1.4.*");
+    assert(r.hasValue);
+    auto set = r.value;
+    assert(!set.contains(pv("1.3.9")));
+    assert(set.contains(pv("1.4")));
+    assert(set.contains(pv("1.4.0")));
+    assert(set.contains(pv("1.4.7")));
+    assert(!set.contains(pv("1.5")));
+}
+
+@("pypi.range.equalsAndNotEquals")
+@safe pure
+unittest
+{
+    auto eq = PypiVersion.parseNativeRange("==1.2.3");
+    assert(eq.hasValue);
+    assert(eq.value.contains(pv("1.2.3")));
+    assert(!eq.value.contains(pv("1.2.4")));
+
+    auto ne = PypiVersion.parseNativeRange("!=1.2.3");
+    assert(ne.hasValue);
+    assert(!ne.value.contains(pv("1.2.3")));
+    assert(ne.value.contains(pv("1.2.4")));
+
+    // !=1.4.* excludes the whole 1.4 series.
+    auto neWild = PypiVersion.parseNativeRange("!=1.4.*");
+    assert(neWild.hasValue);
+    assert(!neWild.value.contains(pv("1.4.0")));
+    assert(!neWild.value.contains(pv("1.4.9")));
+    assert(neWild.value.contains(pv("1.5.0")));
+    assert(neWild.value.contains(pv("1.3.0")));
+}
+
+@("pypi.range.strictComparators")
+@safe pure
+unittest
+{
+    auto lt = PypiVersion.parseNativeRange("<2.0").value;
+    assert(lt.contains(pv("1.9")));
+    assert(!lt.contains(pv("2.0")));
+
+    auto gt = PypiVersion.parseNativeRange(">1.0").value;
+    assert(!gt.contains(pv("1.0")));
+    assert(gt.contains(pv("1.0.1")));
+
+    auto le = PypiVersion.parseNativeRange("<=2.0").value;
+    assert(le.contains(pv("2.0")));
+    assert(!le.contains(pv("2.0.1")));
+}
+
+@("pypi.range.whitespaceAndRejects")
+@safe pure
+unittest
+{
+    // Whitespace around clauses and operators is tolerated.
+    auto r = PypiVersion.parseNativeRange(">= 1.2.4 , < 2.0");
+    assert(r.hasValue);
+    assert(r.value.contains(pv("1.5")));
+    assert(!r.value.contains(pv("2.0")));
+
+    // Empty input and a bare wildcard on an ordered operator are rejected.
+    assert(!PypiVersion.parseNativeRange("").hasValue);
+    assert(!PypiVersion.parseNativeRange(">=1.4.*").hasValue);
+    assert(!PypiVersion.parseNativeRange("@1.0").hasValue);
+}
+
+@("pypi.satisfies.prereleaseRule")
+@safe
+unittest
+{
+    import sparkles.versions.operations : satisfies;
+    import sparkles.versions.ranges : Ranges;
+
+    // `1.1a1` is a prerelease of the 1.1 triple; `>=1.0` names no prerelease
+    // of that triple, so PypiVersion (supportsPrerelease + hasSemVerComponents)
+    // excludes it via the prerelease-in-range rule.
+    assert(!satisfies(pv("1.1a1"), Ranges!PypiVersion.higherThan(pv("1.0"))));
+
+    // `1.0a2` satisfies `>=1.0a1`: the bound names a prerelease of the same
+    // `1.0.0` triple.
+    assert(satisfies(pv("1.0a2"), Ranges!PypiVersion.higherThan(pv("1.0a1"))));
 }
