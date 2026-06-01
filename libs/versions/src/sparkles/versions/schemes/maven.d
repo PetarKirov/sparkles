@@ -571,7 +571,7 @@ unittest
     assert(r.contains(mvn("1.2")));
     assert(r.contains(mvn("1.3")));
     assert(!r.contains(mvn("1.4")));
-    checkToString(r, ">=1.2,<=1.3");
+    checkToString(r, ">=1.2|<=1.3");
 }
 
 @("maven.range.halfOpen")
@@ -585,7 +585,7 @@ unittest
     assert(r.contains(mvn("1.0")));
     assert(r.contains(mvn("1.9")));
     assert(!r.contains(mvn("2.0")));
-    checkToString(r, ">=1.0,<2.0");
+    checkToString(r, ">=1.0|<2.0");
 }
 
 @("maven.range.prereleaseCaveat")

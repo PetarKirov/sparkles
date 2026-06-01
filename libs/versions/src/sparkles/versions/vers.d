@@ -199,10 +199,10 @@ disjoint interval list, so `toVersConstraint` — which walks those intervals �
 yields the version-ordered comparator sequence the vers-spec canonical form
 requires.
 
-Note `toVersConstraint` separates a single two-bound interval with `,` (e.g.
-`>=1.2.0,<2.0.0`) rather than the canonical `|`; `parseVersAs` re-folds either
-separator into the same intervals. Callers needing the strict `|`-only
-grammar can post-process the comma (see the round-trip test harness).
+A bounded interval `[lo, hi)` emits two `|`-joined comparators (`>=lo|<hi`) —
+the canonical VERS form, with no AND-comma. $(LREF parseVersAs) splits on `|`
+and re-folds the flat comparator list into the same intervals, so
+`formatVersAs` → `parseVersAs` round-trips.
 */
 void formatVersAs(Scheme, W)(ref W w, in Ranges!(Scheme.Version) r) @safe
 if (isVersionScheme!Scheme)
@@ -331,12 +331,13 @@ if (isVersionScheme!S)
 /**
 Emits the VERS constraint text for a `Ranges!S` into the output range `w`,
 reusing `Ranges.toString` (which already renders the VERS comparator syntax,
-SPEC §9): each interval as `>=`/`>`/`<=`/`<` (or a bare version for a
-singleton, `*` for the full set), intervals joined by `|`.
+SPEC §9): one `>=`/`>`/`<=`/`<` comparator per interval bound (or a bare
+version for a singleton, `*` for the full set), every comparator joined by
+`|`.
 
-Note `Ranges.toString` separates a two-bound interval with `,` (e.g.
-`>=1.2.0,<2.0.0`); the multi-bound `|`-pipe form is recovered on the
-$(LREF parseVersAs) round-trip, which re-folds bounds into intervals.
+A bounded interval `[lo, hi)` emits two `|`-joined comparators `>=lo|<hi` —
+VERS has no AND-comma. $(LREF parseVersAs) splits the URI on `|` and re-folds
+the flat comparator list back into intervals, so emit → parse round-trips.
 */
 void toVersConstraint(S, W)(ref W w, in Ranges!S r) @safe
 if (isVersionScheme!S)
@@ -814,11 +815,17 @@ unittest
     assert(r.hasValue);
     assert(toVersUriString(r.value) == "vers:semver/>=1.2.0|<2.0.0");
 
-    // The scheme-typed canonical path emits version-ordered constraints:
-    // `>=1.2.0|<2.0.0` → `>=1.2.0,<2.0.0` (the bounded interval [1.2.0,2.0.0)).
+    // The scheme-typed canonical path emits version-ordered constraints,
+    // every comparator `|`-joined: the bounded interval [1.2.0,2.0.0) round-trips
+    // as `>=1.2.0|<2.0.0`.
     auto typed = parseVersAs!SemVer("vers:semver/>=1.2.0|<2.0.0");
     assert(typed.hasValue);
-    assert(toVersUriStringAs!SemVer(typed.value) == "vers:semver/>=1.2.0,<2.0.0");
+    const canonical = toVersUriStringAs!SemVer(typed.value);
+    assert(canonical == "vers:semver/>=1.2.0|<2.0.0");
+    // …and that canonical text parses back to an equal range (URI round-trip).
+    auto reparsed = parseVersAs!SemVer(canonical);
+    assert(reparsed.hasValue);
+    assert(reparsed.value == typed.value);
 }
 
 @("vers.fromVersConstraint.eachOperator")
@@ -877,7 +884,7 @@ unittest
     SmallBuffer!(char, 64) buf;
     auto r = Ranges!SemVer.between(sv("1.2.0"), sv("2.0.0"));
     toVersConstraint!SemVer(buf, r);
-    assert(buf[] == ">=1.2.0,<2.0.0");
+    assert(buf[] == ">=1.2.0|<2.0.0");
 }
 
 @("vers.parseVersAs.boundedInterval")
@@ -967,14 +974,12 @@ unittest
 {
     // Round-trip law (SPEC §9): a native range → VERS text → parseVersAs
     // yields an equal Ranges.
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-
     auto native = SemVer.parseNativeRange("^1.2.0").value; // [1.2.0, 2.0.0)
 
-    SmallBuffer!(char, 64) buf;
-    toVersConstraint!SemVer(buf, native);
-    // buf is ">=1.2.0,<2.0.0"; rebuild the vers: URI with `|` separators.
-    auto uri = "vers:semver/>=1.2.0|<2.0.0";
+    // Emit the canonical URI and parse the *emitted* text back — a genuine
+    // round-trip, not a hand-rebuilt URI. The emit is `|`-joined VERS.
+    const uri = toVersUriStringAs!SemVer(native);
+    assert(uri == "vers:semver/>=1.2.0|<2.0.0");
     auto back = parseVersAs!SemVer(uri);
     assert(back.hasValue);
     assert(back.value == native);

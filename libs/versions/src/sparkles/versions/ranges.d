@@ -304,9 +304,12 @@ struct Ranges(V) if (isVersion!V)
     // ----- formatting -----
 
     /**
-    Emits VERS constraint syntax (SPEC §9): each interval as a `>=`/`>`/`<=`/`<`
-    comparator (or a bare version for a singleton, or `*` for `full`), with
-    intervals separated by `|`.
+    Emits VERS constraint syntax (SPEC §9): a `>=`/`>`/`<=`/`<` comparator per
+    interval bound (or a bare version for a singleton, or `*` for `full`), with
+    every comparator separated by `|`. A bounded interval `[lo, hi)` therefore
+    renders as two `|`-joined comparators `>=lo|<hi` — VERS has no AND-comma;
+    the sorted-constraint fold in $(REF parseVersAs, sparkles,versions,vers)
+    re-pairs the flat `|`-list back into intervals.
 
     The empty set has no satisfying version and so no comparator; it renders
     as the empty string. (VERS has no canonical literal for the empty
@@ -455,7 +458,7 @@ struct Ranges(V) if (isVersion!V)
         if (!hi.isUnbounded)
         {
             if (wroteLower)
-                put(w, ",");
+                put(w, "|");
             put(w, hi.kind == BoundKind.included ? "<=" : "<");
             hi.value.toString(w);
         }
@@ -633,12 +636,13 @@ unittest
     checkToString(Ranges!U3.strictlyHigherThan(U3(2)), ">2");
     checkToString(Ranges!U3.lowerThan(U3(5)), "<=5");
     checkToString(Ranges!U3.strictlyLowerThan(U3(5)), "<5");
-    checkToString(Ranges!U3.between(U3(2), U3(5)), ">=2,<5");
+    checkToString(Ranges!U3.between(U3(2), U3(5)), ">=2|<5");
 
-    // Disjoint union renders both segments separated by `|`.
+    // Disjoint union renders every comparator separated by `|` (VERS has no
+    // AND-comma); the bounds of each interval are `|`-joined too.
     auto u = Ranges!U3.between(U3(1), U3(3))
         .union_(Ranges!U3.between(U3(5), U3(7)));
-    checkToString(u, ">=1,<3|>=5,<7");
+    checkToString(u, ">=1|<3|>=5|<7");
 }
 
 // ---------------------------------------------------------------------------
