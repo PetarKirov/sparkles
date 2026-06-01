@@ -434,6 +434,15 @@ enum string purlType = "semver";            // non-empty pURL type string
 static ParseExpected!S parse(string s);     // exact-syntax parser (§7)
 ```
 
+`purlType` is required to be non-empty. A scheme that has **no published
+Package-URL type** (the D-internal schemes — `Dmd`, `Tiny`, the CalVer
+schemes, …) still declares a synthetic, scheme-named `purlType` (e.g.
+`"dmd"`) to satisfy the concept. Such synthetic identifiers are **not**
+published pURL types: the purl→scheme registry (§10) maps only real
+ecosystem types, so an incoming `pkg:dmd/...` is never resolved to an
+internal scheme. PRESETS.md marks these schemes "purl type: none" in that
+sense.
+
 ### 6.2 Optional scheme capabilities
 
 | Capability              | Detection rule                                                 | Behavioural impact                         |
