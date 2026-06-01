@@ -64,6 +64,7 @@ keyword.
 | `sparkles.versions.traits`                  | `isVersion!T`, `isVersionRange!R`, `isVersionScheme!S` + optional-capability traits |
 | `sparkles.versions.parsing`                 | `ParseMode`; re-exports the parse types from `core_cli.text.errors`                 |
 | `sparkles.versions.ranges`                  | `Ranges!V` (sorted disjoint intervals)                                              |
+| `sparkles.versions.operations`              | `order`, `sort`, `satisfies`, `caret`, `tilde`                                      |
 | `sparkles.versions.vers`                    | VERS URI parser/emitter + compile-time scheme registry                              |
 | `sparkles.versions.purl`                    | Package URL parser + purl-type → scheme mapping                                     |
 | `sparkles.versions.any`                     | `AnyVersion` / `AnyRange` sum types, `compareAny`                                   |
@@ -319,8 +320,9 @@ Rules:
 
 ## 5. Operations
 
-Generic operations live in `sparkles.versions.ranges` and
-`sparkles.versions.traits`. Each pairs a baseline that needs only the
+Generic operations live in `sparkles.versions.operations` (with the
+component helpers in `sparkles.versions.traits` and the range algebra in
+`sparkles.versions.ranges`). Each pairs a baseline that needs only the
 required surface with an opt-in fast path gated on an optional
 capability.
 
@@ -350,11 +352,16 @@ if (isVersion!T)
 
 `satisfies(v, range)` reports whether a version is admitted by a range.
 The base case is `range.contains(v)`. When `T` provides
-`supportsPrerelease`, apply the **prerelease-in-range rule**:
+`supportsPrerelease` **and** `hasSemVerComponents`, apply the
+**prerelease-in-range rule**:
 
 > A prerelease version satisfies a range only when at least one
 > comparator in the range names a prerelease of the same
 > `(major, minor, patch)` triple.
+
+The rule is defined over the `(major, minor, patch)` triple, so it
+requires `hasSemVerComponents` too: a prerelease-capable scheme that
+lacks that triple (`MavenVersion`) falls back to plain `contains`.
 
 Given the range `>=1.2.0`:
 
