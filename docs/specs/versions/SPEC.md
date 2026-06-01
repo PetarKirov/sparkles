@@ -580,21 +580,34 @@ struct VersUri
 }
 
 ParseExpected!VersUri parseVersUri(string s);
-void formatVersUri(W)(ref W w, in VersUri v);
+void formatVersUri(W)(ref W w, in VersUri v);   // textual: constraints in stored order
 ```
 
-`parseVersUri` handles only the URI surface: scheme extraction,
-`|`-splitting, and ASCII/lowercase normalisation. Translating a
-constraint segment to a typed `Ranges!V` and back is per-scheme:
+`parseVersUri` handles only the URI surface: prefix check, scheme
+extraction, `|`-splitting, and ASCII/lowercase normalisation.
+`formatVersUri` renders a `VersUri`'s constraints **in stored order** — it
+is scheme-agnostic and so cannot version-sort. Translating a constraint
+segment to a typed `Ranges!V` and back is done by generic functions
+parameterised by the scheme:
 
 ```d
-static ParseExpected!Range fromVersConstraint(string segment);  // segment → Range
-static void toVersConstraint(W)(ref W w, in Range r);           // Range → segment
+ParseExpected!(Ranges!S) fromVersConstraint(S)(string segment);  // segment → Range
+void toVersConstraint(S, W)(ref W w, in Ranges!S r);             // Range → segments
+
+// vers-spec CANONICAL emit: version-ordered (a `Ranges!S` is sorted).
+void   formatVersAs(Scheme, W)(ref W w, in Ranges!(Scheme.Version) r);
+string toVersUriStringAs(Scheme)(in Ranges!(Scheme.Version) r);
 ```
 
-The scheme registry is built at compile time: a CTFE walk over the
-`sparkles.versions.schemes.*` modules maps each scheme's `purlType` to
-its struct. The registry drives two dispatch forms:
+`formatVersAs!Scheme` is the canonical emitter: because a `Ranges!S` is a
+sorted, disjoint interval list, it emits constraints in version order
+(e.g. `10.0.0|9.0.0` canonicalises to `9.0.0|10.0.0`), matching the
+vers-spec — unlike the textual `formatVersUri`.
+
+The scheme registry (`sparkles.versions.schemes.registry`) is built at
+compile time: `schemeForPurlType!purlType` resolves a **published** pURL
+type to its scheme struct (the synthetic internal `purlType`s of §6.1 are
+excluded). It drives two dispatch forms:
 
 ```d
 /// Static dispatch when the caller knows the scheme at compile time.
@@ -605,6 +618,7 @@ template parseVersAs(SchemeStruct)
 }
 
 /// Runtime dispatch on the URI's `scheme` field → AnyRange (§11).
+/// Deferred to M5 (depends on the `AnyRange` sum type).
 ParseExpected!AnyRange parseVersAny(string versUri);
 ```
 
