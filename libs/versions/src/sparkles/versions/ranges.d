@@ -135,7 +135,12 @@ struct Ranges(V) if (isVersion!V)
         => Ranges.init;
 
     /// The set `{v}`, stored as the closed point `[v, v]`.
-    static Ranges singleton(V v) @safe pure nothrow
+    ///
+    /// `v` is taken as `const V` (like the underlying `Bound`) so a scheme
+    /// whose value carries mutable indirection (Maven's `Token[]`, PyPI's
+    /// `uint[] release`) can be used as a bound without an illegal
+    /// `const(V) -> V` copy.
+    static Ranges singleton(const V v) @safe pure nothrow
     {
         Ranges r;
         r._segs = [Seg(Bnd.included(v), Bnd.included(v))];
@@ -224,24 +229,25 @@ struct Ranges(V) if (isVersion!V)
 
     // ----- interval conveniences -----
 
-    /// `[v, +∞)` — every version `>= v`.
-    static Ranges higherThan(V v) @safe pure nothrow
+    /// `[v, +∞)` — every version `>= v`. Bounds are taken as `const V` (see
+    /// $(LREF singleton)) so schemes with mutable indirection work as bounds.
+    static Ranges higherThan(const V v) @safe pure nothrow
         => single(Bnd.included(v), Bnd.unbounded());
 
     /// `(v, +∞)` — every version `> v`.
-    static Ranges strictlyHigherThan(V v) @safe pure nothrow
+    static Ranges strictlyHigherThan(const V v) @safe pure nothrow
         => single(Bnd.excluded(v), Bnd.unbounded());
 
     /// `(-∞, v]` — every version `<= v`.
-    static Ranges lowerThan(V v) @safe pure nothrow
+    static Ranges lowerThan(const V v) @safe pure nothrow
         => single(Bnd.unbounded(), Bnd.included(v));
 
     /// `(-∞, v)` — every version `< v`.
-    static Ranges strictlyLowerThan(V v) @safe pure nothrow
+    static Ranges strictlyLowerThan(const V v) @safe pure nothrow
         => single(Bnd.unbounded(), Bnd.excluded(v));
 
     /// `[lo, hi)` — every version `>= lo` and `< hi`.
-    static Ranges between(V lo, V hi) @safe pure nothrow
+    static Ranges between(const V lo, const V hi) @safe pure nothrow
         => single(Bnd.included(lo), Bnd.excluded(hi));
 
     // ----- defaulted via De Morgan -----
