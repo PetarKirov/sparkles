@@ -194,53 +194,25 @@ void fatal(int line = __LINE__, string file = __FILE__,
 
 private:
 
-@safe
-void writeDuration(Writer)(ref Writer w, Duration d)
-{
-    import sparkles.core_cli.text.writers : writeInteger;
-    import std.range.primitives : put;
-
-    long ms = d.total!"msecs";
-    bool negative = ms < 0;
-    if (negative)
-    {
-        put(w, '-');
-        ms = -ms;
-    }
-
-    if (ms < 1_000)
-    {
-        writeInteger(w, ms);
-        put(w, 'm');
-        put(w, 's');
-        return;
-    }
-
-    if (ms < 60_000)
-        return writeTenths(w, ms, 100, 's');
-    if (ms < 3_600_000)
-        return writeTenths(w, ms, 6_000, 'm');
-    if (ms < 86_400_000)
-        return writeTenths(w, ms, 360_000, 'h');
-    return writeTenths(w, ms, 8_640_000, 'd');
-}
-
 string fmtDuration(Duration d) @safe
 {
     import sparkles.core_cli.smallbuffer : SmallBuffer;
+    import sparkles.core_cli.text.writers : writeDuration;
 
     SmallBuffer!(char, 32) buf;
     writeDuration(buf, d);
     return buf[].idup;
 }
 
-@("fmtDuration.formatsMilliseconds")
+@("fmtDuration.formatsSubSecond")
 @safe
 unittest
 {
-    assert(dur!"msecs"(0).fmtDuration == "0ms");
-    assert(dur!"msecs"(42).fmtDuration == "42ms");
-    assert(dur!"msecs"(999).fmtDuration == "999ms");
+    assert(dur!"nsecs"(0).fmtDuration == "0.0ns");
+    assert(dur!"nsecs"(500).fmtDuration == "500.0ns");
+    assert(dur!"usecs"(42).fmtDuration == "42.0µs");
+    assert(dur!"msecs"(42).fmtDuration == "42.0ms");
+    assert(dur!"msecs"(999).fmtDuration == "999.0ms");
 }
 
 @("fmtDuration.formatsSeconds")
@@ -279,19 +251,6 @@ unittest
     assert(dur!"hours"(72).fmtDuration == "3.0d");
 }
 
-@safe
-void writeTenths(Writer)(ref Writer w, long ms, long unitTenths, char suffix)
-{
-    import sparkles.core_cli.text.writers : writeInteger;
-    import std.range.primitives : put;
-
-    auto tenths = (ms + unitTenths / 2) / unitTenths;
-    writeInteger(w, tenths / 10);
-    put(w, '.');
-    put(w, cast(char)('0' + tenths % 10));
-    put(w, suffix);
-}
-
 @safe pure nothrow @nogc
 Duration durationFromTicks(long ticks) =>
     dur!"hnsecs"(convClockFreq(ticks, MonoTime.ticksPerSecond, 10_000_000L));
@@ -312,29 +271,9 @@ void writeTimeHms(Writer)(ref Writer w, int hour, int minute, int second)
 @safe
 void writePadded2(Writer)(ref Writer w, int value)
 {
-    import sparkles.core_cli.text.writers : writeInteger;
-    import std.range.primitives : put;
+    import sparkles.core_cli.text.writers : writeIntegerPadded;
 
-    if (value < 10)
-        put(w, '0');
-    writeInteger(w, value);
-}
-
-@safe
-void writeDurationPadded(Writer)(ref Writer w, Duration d, size_t width)
-{
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-    import std.range.primitives : put;
-
-    SmallBuffer!(char, 16) buf;
-    writeDuration(buf, d);
-    auto text = buf[];
-    put(w, text);
-    if (text.length < width)
-    {
-        foreach (_; 0 .. width - text.length)
-            put(w, ' ');
-    }
+    writeIntegerPadded(w, value, 2);
 }
 
 @safe
@@ -367,6 +306,7 @@ void writeLogPrefix(bool colored = false, Writer)(
 {
     import sparkles.core_cli.smallbuffer : SmallBuffer;
     import sparkles.core_cli.styled_template : writeStyled;
+    import sparkles.core_cli.text.writers : writeDurationPadded;
     import std.path : baseName;
 
     SmallBuffer!(char, 16) startBuf;
