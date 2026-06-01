@@ -86,14 +86,47 @@ unittest
     assert(result == "──── X ────");
 }
 
+/// A title wider than the requested width must not underflow the pad
+/// arithmetic (which previously tried to allocate a near-infinite line and
+/// exhausted memory). The banner widens to fit the title instead.
+@("header.drawBanner.titleWiderThanWidth")
+unittest
+{
+    import std.string : split;
+
+    const title = "a-very-long-title-that-exceeds-the-requested-banner-width";
+    const result = title.drawHeader(HeaderProps(style: HeaderStyle.banner, width: 20));
+    const lines = result.split('\n');
+    assert(lines.length == 3);
+    assert(lines[1] == title);                 // no padding, title verbatim
+    assert(lines[0].unstyledLength == title.unstyledLength); // rule fits title
+}
+
+/// The same guard for the divider style.
+@("header.drawDivider.titleWiderThanWidth")
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    const title = "a-very-long-title-that-exceeds-the-requested-divider-width";
+    const result = title.drawHeader(HeaderProps(width: 10));
+    // Must terminate and contain the title rather than allocate unboundedly.
+    assert(result.canFind(title));
+}
+
 private string drawDivider(string title, HeaderProps props)
 {
     const titleLen = title.unstyledLength;
     const padding = ' '.repeat(props.titlePadding).to!string;
 
     size_t totalWidth = props.width;
-    if (totalWidth == 0)
-        totalWidth = 4 + props.titlePadding * 2 + titleLen; // 2 chars each side minimum
+    // Never narrower than the title plus its padding (plus a line char each
+    // side): a requested width below that would underflow `remaining` (a
+    // `size_t`) and try to allocate a near-infinite line. `width == 0` (auto)
+    // and any too-narrow width both clamp to this minimum.
+    const minWidth = 2 + props.titlePadding * 2 + titleLen;
+    if (totalWidth < minWidth)
+        totalWidth = (props.width == 0) ? minWidth + 2 : minWidth;
 
     const remaining = totalWidth - titleLen - props.titlePadding * 2;
     const leftLen = remaining / 2;
@@ -107,7 +140,10 @@ private string drawDivider(string title, HeaderProps props)
 private string drawBanner(string title, HeaderProps props)
 {
     const titleLen = title.unstyledLength;
-    const totalWidth = props.width > 0 ? props.width : titleLen + 20;
+    const requested = props.width > 0 ? props.width : titleLen + 20;
+    // Never narrower than the title itself, or the pad arithmetic below
+    // underflows `size_t` and tries to allocate a near-infinite line.
+    const totalWidth = requested > titleLen ? requested : titleLen;
 
     const line = props.bannerLineChar.repeat(totalWidth).to!string;
     const leftPad = (totalWidth - titleLen) / 2;
