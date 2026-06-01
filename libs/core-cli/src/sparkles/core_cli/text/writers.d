@@ -13,7 +13,7 @@ import sparkles.core_cli.term_style : Style;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Writes an integer (signed or unsigned) to an output range. @nogc-compatible.
-void writeInteger(Writer, T)(ref Writer w, const T val) @trusted
+void writeInteger(Writer, T)(ref Writer w, const T val)
 if (__traits(isIntegral, T))
 {
     import std.range.primitives : put;
@@ -41,7 +41,7 @@ if (__traits(isIntegral, T))
     }
 }
 
-private void writeUnsignedImpl(Writer, T)(ref Writer w, const T val) @trusted
+private void writeUnsignedImpl(Writer, T)(ref Writer w, const T val)
 if (__traits(isUnsigned, T))
 {
     import std.range.primitives : put;
@@ -115,7 +115,7 @@ unittest
 
 /// Writes a floating-point value to an output range. @nogc-compatible.
 /// Handles NaN, infinity, negative zero, and uses scientific notation for extreme values.
-void writeFloat(Writer, T)(ref Writer w, const T val) @trusted
+void writeFloat(Writer, T)(ref Writer w, const T val)
 if (__traits(isFloating, T))
 {
     import std.math.traits : isNaN, isInfinity, signbit;
@@ -164,7 +164,7 @@ if (__traits(isFloating, T))
 }
 
 /// Writes a floating-point value in decimal format. @nogc-compatible.
-private void writeFloatDecimal(Writer, T)(ref Writer w, T value) @trusted
+private void writeFloatDecimal(Writer, T)(ref Writer w, T value)
 if (__traits(isFloating, T))
 {
     import std.range.primitives : put;
@@ -203,7 +203,7 @@ if (__traits(isFloating, T))
 }
 
 /// Writes a floating-point value in scientific notation. @nogc-compatible.
-private void writeFloatScientific(Writer, T)(ref Writer w, T value) @trusted
+private void writeFloatScientific(Writer, T)(ref Writer w, T value)
 if (__traits(isFloating, T))
 {
     import std.range.primitives : put;
@@ -322,7 +322,7 @@ unittest
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Writes an escaped character to an output range (without quotes). @nogc-compatible.
-void writeEscapedChar(Writer)(ref Writer w, char c) @trusted
+void writeEscapedChar(Writer)(ref Writer w, char c)
 {
     import std.range.primitives : put;
 
@@ -361,7 +361,7 @@ unittest
 }
 
 /// Writes an escaped string to an output range (with double quotes). @nogc-compatible.
-void writeEscapedString(Writer)(ref Writer w, const(char)[] s) @trusted
+void writeEscapedString(Writer)(ref Writer w, const(char)[] s)
 {
     import std.range.primitives : put;
 
@@ -383,7 +383,7 @@ unittest
 }
 
 /// Writes an escaped character literal to an output range (with single quotes). @nogc-compatible.
-void writeEscapedCharLiteral(Writer)(ref Writer w, char c) @trusted
+void writeEscapedCharLiteral(Writer)(ref Writer w, char c)
 {
     import std.range.primitives : put;
 
@@ -527,7 +527,7 @@ unittest
 /// 8. User types with @nogc `toString()` returning `string` — writes the result
 /// 9. User types with @nogc `string` cast — writes `cast(string) t`
 /// 10. Fallback — uses `std.conv.to!string` (GC-allocating)
-void writeValue(Writer, T)(ref Writer w, auto ref const T val) @trusted
+void writeValue(Writer, T)(ref Writer w, auto ref const T val)
 {
     import std.range.primitives : put;
     import std.traits : isSomeChar, isSomeString;
@@ -538,7 +538,10 @@ void writeValue(Writer, T)(ref Writer w, auto ref const T val) @trusted
     }
     else static if (isSomeChar!T)
     {
-        put(w, (&val)[0 .. 1]);
+        // Copy the char into a one-element stack array and write its slice;
+        // fully @safe, with no pointer aliasing of `val`.
+        T[1] arr = val;
+        put(w, arr[]);
     }
     else static if (__traits(isIntegral, T))
     {
@@ -657,7 +660,7 @@ unittest
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Writes ANSI escape sequence to an output range. @nogc-compatible.
-void writeEscapeSeq(Writer)(ref Writer w, uint code) @trusted
+void writeEscapeSeq(Writer)(ref Writer w, uint code)
 {
     import std.range.primitives : put;
 
@@ -678,7 +681,7 @@ unittest
 }
 
 /// Writes styled text to an output range. @nogc-compatible.
-void writeStylized(Writer)(ref Writer w, const(char)[] text, Style style, bool resetAfter = true) @trusted
+void writeStylized(Writer)(ref Writer w, const(char)[] text, Style style, bool resetAfter = true)
 {
     import std.range.primitives : put;
 
@@ -736,7 +739,7 @@ unittest
 /// Uses `static foreach` over `__traits(allMembers, E)` for a compile-time
 /// generated lookup. Falls back to writing the underlying integer value
 /// if no member matches (e.g., combined bit flags).
-void writeEnumMemberName(E, Writer)(ref Writer w, const E val) @trusted
+void writeEnumMemberName(E, Writer)(ref Writer w, const E val)
 if (is(E == enum))
 {
     import std.range.primitives : put;
@@ -849,7 +852,7 @@ unittest
 ///
 /// All hook primitives are optional (DbI §5). When absent, defaults apply:
 /// no styling, raw strings/chars, enums as underlying integers.
-void writeStyledValue(Hook, Writer, T)(ref Writer w, in T value, in Hook hook, bool useColors) @trusted
+void writeStyledValue(Hook, Writer, T)(ref Writer w, in T value, in Hook hook, bool useColors)
 {
     import std.range.primitives : put;
     import std.traits : isSomeChar, isSomeString;
