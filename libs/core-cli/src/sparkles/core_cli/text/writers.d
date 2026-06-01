@@ -67,6 +67,82 @@ if (__traits(isUnsigned, T))
     enum sizeForUnsignedNumberBuffer = T.max.numDigits;
 }
 
+/// Writes an integer with at least `minDigits` digits, left-padded with
+/// `'0'`. For a negative signed value the `'-'` is written first and only
+/// the digit count (not the sign) is padded. `minDigits == 0` behaves like
+/// $(LREF writeInteger).
+void writeIntegerPadded(Writer, T)(ref Writer w, const T val, size_t minDigits)
+if (__traits(isIntegral, T))
+{
+    import std.range.primitives : put;
+    import std.traits : Unsigned, isSigned;
+
+    static if (isSigned!T)
+    {
+        alias U = Unsigned!T;
+
+        if (val < 0)
+        {
+            put(w, '-');
+            // unsigned arithmetic handles T.min correctly
+            writeUnsignedPadded(w, cast(U)(0 - cast(U) val), minDigits);
+        }
+        else
+            writeUnsignedPadded(w, cast(U) val, minDigits);
+    }
+    else
+        writeUnsignedPadded(w, val, minDigits);
+}
+
+private void writeUnsignedPadded(Writer, T)(ref Writer w, const T val, size_t minDigits)
+if (__traits(isUnsigned, T))
+{
+    import std.range.primitives : put;
+
+    size_t digits = 1;
+    for (T v = val; v >= 10; v /= 10)
+        digits++;
+    for (size_t i = digits; i < minDigits; i++)
+        put(w, '0');
+    writeUnsignedImpl(w, val);
+}
+
+@("writeIntegerPadded.pads")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.core_cli.smallbuffer : checkWriter;
+
+    checkWriter!((ref b) => writeIntegerPadded(b, 7, 3))("007");
+}
+
+@("writeIntegerPadded.noPadWhenWideEnough")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.core_cli.smallbuffer : checkWriter;
+
+    checkWriter!((ref b) => writeIntegerPadded(b, 1234, 3))("1234");
+}
+
+@("writeIntegerPadded.zeroWidthLikeWriteInteger")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.core_cli.smallbuffer : checkWriter;
+
+    checkWriter!((ref b) => writeIntegerPadded(b, 42u, 0))("42");
+}
+
+@("writeIntegerPadded.negativeSignExcludedFromWidth")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.core_cli.smallbuffer : checkWriter;
+
+    checkWriter!((ref b) => writeIntegerPadded(b, -5, 3))("-005");
+}
+
 @("writeInteger.positive")
 @safe pure nothrow @nogc
 unittest
