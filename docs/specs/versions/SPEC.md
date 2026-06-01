@@ -618,7 +618,6 @@ template parseVersAs(SchemeStruct)
 }
 
 /// Runtime dispatch on the URI's `scheme` field → AnyRange (§11).
-/// Deferred to M5 (depends on the `AnyRange` sum type).
 ParseExpected!AnyRange parseVersAny(string versUri);
 ```
 
