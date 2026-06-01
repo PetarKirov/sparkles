@@ -38,6 +38,7 @@ See `docs/specs/versions/SPEC.md` §9 (VERS interop).
 */
 module sparkles.versions.vers;
 
+import sparkles.versions.any : AnyRange;
 import sparkles.versions.parsing :
     NoGcHook, ParseError, ParseErrorCode, ParseExpected, parseErr, parseOk;
 import sparkles.versions.ranges : Ranges;
@@ -537,6 +538,75 @@ in (op == VersOp.lt || op == VersOp.lte)
 }
 
 // ---------------------------------------------------------------------------
+// Runtime dispatch — parseVersAny → AnyRange
+// ---------------------------------------------------------------------------
+
+/**
+Parses a `vers:` URI of statically-unknown scheme and returns its range typed
+as an $(REF AnyRange, sparkles,versions,any) — the runtime VERS entry point
+(SPEC §9/§11). This closes the M3 deferral.
+
+The pipeline:
+
+$(UL
+    $(LI $(LREF parseVersUri) the URI surface (scheme label + constraint
+        segments).)
+    $(LI Map the scheme label through
+        $(REF purlTypeToSchemeName, sparkles,versions,purl) onto a built-in
+        scheme name (so `vers:npm/…` resolves to the `semver` scheme, matching
+        $(LREF parseVersAny)'s pURL counterpart).)
+    $(LI Resolve that name to a scheme struct via
+        $(LREF schemeForPurlType) and run $(LREF parseVersAs) for it, wrapping
+        the resulting `Ranges!Scheme` in `AnyRange`.)
+)
+
+Errors:
+
+$(UL
+    $(LI Any $(LREF parseVersUri) surface error is propagated verbatim.)
+    $(LI An unknown / unmapped scheme label (no built-in scheme) is
+        `unexpectedCharacter` at offset 0.)
+    $(LI A constraint that the resolved scheme rejects propagates that
+        scheme's $(LREF parseVersAs) error.)
+)
+*/
+ParseExpected!AnyRange parseVersAny(string versUri) @safe
+{
+    import sparkles.versions.purl : purlTypeToSchemeName;
+    import sparkles.versions.schemes.registry : publishedSchemeEntries;
+
+    auto uri = parseVersUri(versUri);
+    if (!uri.hasValue)
+        return parseErr!AnyRange(uri.error);
+
+    const schemeName = purlTypeToSchemeName(uri.value.scheme);
+    if (schemeName.length == 0)
+        return parseErr!AnyRange(
+            ParseError(ParseErrorCode.unexpectedCharacter, 0));
+
+    // Generate a runtime switch over the published scheme catalogue: each arm
+    // recovers the scheme struct statically and folds parseVersAs's result
+    // into AnyRange. The mapped `schemeName` is always a published purlType.
+    switch (schemeName)
+    {
+        static foreach (e; publishedSchemeEntries)
+        {
+        case e.purlType:
+            {
+                alias Scheme = schemeForPurlType!(e.purlType);
+                auto pr = parseVersAs!Scheme(versUri);
+                if (!pr.hasValue)
+                    return parseErr!AnyRange(pr.error);
+                return parseOk(AnyRange(pr.value));
+            }
+        }
+        default:
+            return parseErr!AnyRange(
+                ParseError(ParseErrorCode.unexpectedCharacter, 0));
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Compile-time scheme registry (purlType → scheme struct)
 // ---------------------------------------------------------------------------
 
@@ -923,4 +993,55 @@ unittest
 
     // An unknown / internal-only type does not resolve.
     static assert(!__traits(compiles, schemeForPurlType!"dmd"));
+}
+
+@("vers.parseVersAny.semverInterval")
+@safe
+unittest
+{
+    import sparkles.versions.any : AnyRange;
+    import std.sumtype : match;
+
+    // Runtime dispatch yields an AnyRange holding the SemVer interval.
+    auto r = parseVersAny("vers:semver/>=1.2.0|<2.0.0");
+    assert(r.hasValue);
+
+    const expected = Ranges!SemVer.between(sv("1.2.0"), sv("2.0.0"));
+    r.value.match!(
+        (Ranges!SemVer rng) => assert(rng == expected),
+        _ => assert(false, "expected Ranges!SemVer"),
+    );
+}
+
+@("vers.parseVersAny.npmFoldsToSemVer")
+@safe
+unittest
+{
+    import sparkles.versions.any : AnyRange;
+    import std.sumtype : match;
+
+    // A vers:npm/… label folds onto the semver scheme.
+    auto r = parseVersAny("vers:npm/>=1.0.0");
+    assert(r.hasValue);
+
+    const expected = Ranges!SemVer.higherThan(sv("1.0.0"));
+    r.value.match!(
+        (Ranges!SemVer rng) => assert(rng == expected),
+        _ => assert(false, "expected Ranges!SemVer"),
+    );
+}
+
+@("vers.parseVersAny.rejects")
+@safe
+unittest
+{
+    // Unknown / internal-only scheme → no built-in scheme.
+    assert(!parseVersAny("vers:dmd/1.0.0").hasValue);
+    assert(!parseVersAny("vers:nonexistent/1.0.0").hasValue);
+
+    // Surface error (no vers: prefix) is propagated.
+    assert(!parseVersAny("npm/1.0.0").hasValue);
+
+    // A constraint the scheme rejects propagates the parse error.
+    assert(!parseVersAny("vers:semver/>=not-a-version").hasValue);
 }
