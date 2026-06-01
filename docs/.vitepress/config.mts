@@ -72,6 +72,95 @@ export default defineConfig({
         ],
       },
       {
+        text: 'Libraries',
+        collapsed: false,
+        items: [
+          {
+            text: 'versions',
+            link: '/libs/versions/',
+            collapsed: false,
+            items: [
+              {
+                text: 'Tutorial',
+                collapsed: false,
+                items: [
+                  {
+                    text: 'Getting started',
+                    link: '/libs/versions/tutorial/getting-started',
+                  },
+                ],
+              },
+              {
+                text: 'How-to guides',
+                collapsed: true,
+                items: [
+                  {
+                    text: 'Compare and sort versions',
+                    link: '/libs/versions/how-to/compare-and-sort',
+                  },
+                  {
+                    text: 'Constrain with ranges',
+                    link: '/libs/versions/how-to/constrain-with-ranges',
+                  },
+                  {
+                    text: 'VERS and pURL interop',
+                    link: '/libs/versions/how-to/vers-and-purl-interop',
+                  },
+                  {
+                    text: 'Handle unknown schemes',
+                    link: '/libs/versions/how-to/handle-unknown-schemes',
+                  },
+                  {
+                    text: 'Add a new scheme',
+                    link: '/libs/versions/how-to/add-a-new-scheme',
+                  },
+                ],
+              },
+              {
+                text: 'Reference',
+                collapsed: true,
+                items: [
+                  {
+                    text: 'Concepts and API',
+                    link: '/libs/versions/reference/concepts',
+                  },
+                  {
+                    text: 'Scheme catalogue',
+                    link: '/libs/versions/reference/schemes',
+                  },
+                  {
+                    text: 'API index',
+                    link: '/libs/versions/reference/api',
+                  },
+                ],
+              },
+              {
+                text: 'Explanation',
+                collapsed: true,
+                items: [
+                  {
+                    text: 'The design',
+                    link: '/libs/versions/explanation/design',
+                  },
+                  {
+                    text: 'Prior art',
+                    link: '/libs/versions/explanation/prior-art',
+                  },
+                  {
+                    text: 'No cross-scheme order',
+                    link: '/libs/versions/explanation/cross-scheme-policy',
+                  },
+                  {
+                    text: 'Prerelease in ranges',
+                    link: '/libs/versions/explanation/prerelease-in-range',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      {
         text: 'Specs',
         collapsed: true,
         items: [
@@ -80,14 +169,6 @@ export default defineConfig({
             collapsed: false,
             items: [
               { text: 'Specification', link: '/specs/versions/SPEC' },
-              {
-                text: 'Scheme Catalogue & Provenance',
-                link: '/specs/versions/PRESETS',
-              },
-              {
-                text: 'Rationale and History',
-                link: '/specs/versions/RATIONALE',
-              },
               { text: 'Delivery Plan', link: '/specs/versions/PLAN' },
             ],
           },

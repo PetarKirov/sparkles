@@ -6,7 +6,7 @@ packed into a `uint`; plain unsigned compare. The storage-sensitive baseline
 for the packed path. Loose parse infills missing trailing components with
 `0`.
 
-See `docs/specs/versions/PRESETS.md` §3.4.
+See `docs/libs/versions/reference/schemes.md` §3.4.
 */
 module sparkles.versions.schemes.tiny;
 

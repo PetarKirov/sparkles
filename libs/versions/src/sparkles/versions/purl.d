@@ -37,7 +37,7 @@ The purl `type` does not always equal the scheme verbatim (e.g.
 `pkg:npm/…` is interpreted with the `semver` scheme), so dispatch routes
 through the mapping table rather than identity.
 
-See `docs/specs/versions/SPEC.md` §10 (pURL interop) and §3.1 / PRESETS §3.1
+See `docs/specs/versions/SPEC.md` §10 (pURL interop) and §3.1 / scheme catalogue §3.1
 (the SemVer-shaped ecosystem purl types).
 */
 module sparkles.versions.purl;
@@ -245,7 +245,7 @@ interprets its version strings, at compile time.
 The mapping is $(B not) identity: every SemVer-shaped ecosystem purl type —
 `npm`, `cargo`, `gem`, `composer`, `packagist`, `golang`, `hex`, `conan`,
 `nginx`, `mozilla`, `github`, and `semver` itself — folds onto the single
-`"semver"` scheme (SPEC §3.1 / PRESETS §3.1; `packagist` is Composer's
+`"semver"` scheme (SPEC §3.1 / scheme catalogue §3.1; `packagist` is Composer's
 historical purl type, so it shares the SemVer value grammar). The remaining published types map to their
 own scheme: `pypi`→`"pypi"`, `maven`→`"maven"`, `deb`→`"deb"`,
 `generic`→`"generic"`.
@@ -260,7 +260,7 @@ string purlTypeToSchemeName(string purlType) @safe pure nothrow @nogc
 {
     switch (purlType)
     {
-        // SemVer-shaped ecosystems (PRESETS §3.1).
+        // SemVer-shaped ecosystems (scheme catalogue §3.1).
         case "semver":
         case "npm":
         case "cargo":

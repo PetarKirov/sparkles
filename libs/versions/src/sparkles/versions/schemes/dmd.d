@@ -7,7 +7,7 @@ requires that width. DMD releases carry no build metadata, so `Dmd` omits
 `build`. The prerelease grammar and ordering reuse SemVer's
 package-scoped identifier rules.
 
-See `docs/specs/versions/PRESETS.md` §3.2.
+See `docs/libs/versions/reference/schemes.md` §3.2.
 */
 module sparkles.versions.schemes.dmd;
 

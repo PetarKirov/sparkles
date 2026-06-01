@@ -12,7 +12,7 @@ leading zeroes are ignored and an empty run counts as `0`.
 The `~`-before-empty rule defeats any fixed-width integer key, so `deb`
 declares **no** `orderKey`.
 
-See `docs/specs/versions/PRESETS.md` §3.10.
+See `docs/libs/versions/reference/schemes.md` §3.10.
 */
 module sparkles.versions.schemes.deb;
 
@@ -128,7 +128,7 @@ struct DebianVersion
     }
 
     /**
-    Native dpkg-relations range grammar (PRESETS §3.10).
+    Native dpkg-relations range grammar (scheme catalogue §3.10).
 
     A single comparison relation — `>=`, `<=`, `<<` (strictly less),
     `>>` (strictly greater), or `=` — followed by a version, as used in

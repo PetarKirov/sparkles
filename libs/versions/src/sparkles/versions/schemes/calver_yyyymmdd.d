@@ -7,7 +7,7 @@ The component list is `["year","month","day"]`: `hasComponents` holds,
 `hasSemVerComponents` does **not** (no caret/tilde for a date version). No
 prerelease, no build.
 
-See `docs/specs/versions/PRESETS.md` §3.6.
+See `docs/libs/versions/reference/schemes.md` §3.6.
 */
 module sparkles.versions.schemes.calver_yyyymmdd;
 

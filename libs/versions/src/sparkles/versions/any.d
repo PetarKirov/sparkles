@@ -11,7 +11,7 @@ interop entry points — `parsePurlVersion` (pURL, SPEC §10) and `parseVersAny`
 Because there is no universal order across schemes (SPEC §6.3), cross-scheme
 comparison is partial: $(LREF compareAny) returns a `Nullable!int` that is
 null whenever the two operands hold different active schemes. A null result is
-the defined contract, not a failure mode (RATIONALE §5.3).
+the defined contract, not a failure mode (see the cross-scheme-order explanation).
 
 The type lists are derived from
 $(REF allSchemes, sparkles,versions,schemes,registry) via `staticMap`, so a

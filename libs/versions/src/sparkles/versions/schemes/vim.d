@@ -6,7 +6,7 @@ field prints zero-padded to **4 digits** and the strict parser requires that
 width. Vim's running patch counter has millennia of headroom, so values whose
 natural width exceeds 4 print unpadded (`9.1.10000`). No prerelease, no build.
 
-See `docs/specs/versions/PRESETS.md` §3.7.
+See `docs/libs/versions/reference/schemes.md` §3.7.
 */
 module sparkles.versions.schemes.vim;
 

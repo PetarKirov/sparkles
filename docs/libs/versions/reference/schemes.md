@@ -1,13 +1,11 @@
 # `sparkles:versions` — Scheme Catalogue and Provenance
 
 _Audience: contributors using or extending the shipped version schemes.
-This document is the per-scheme catalogue: it records each scheme's
-declared capabilities, real-world example strings, ordering rules and
-edge cases, native-range grammar, and the authoritative source every
-example was checked against. For the desired-state specification of the
-traits and generic algorithms, see [SPEC.md](./SPEC.md); for delivery
-order, see [PLAN.md](./PLAN.md); for design history and prior-art
-justification, see [RATIONALE.md](./RATIONALE.md)._
+This page is the per-scheme catalogue: it records each scheme's declared
+capabilities, real-world example strings, ordering rules and edge cases,
+native-range grammar, and the authoritative source every example was
+checked against. For the desired-state specification of the traits and
+generic algorithms, see [SPEC.md](../../../specs/versions/SPEC.md)._
 
 ## 1. Overview
 
@@ -15,9 +13,9 @@ This catalogue documents each shipped scheme: its purl `type`,
 real-world example strings, ordering rules and edge cases, native-range
 grammar, the capabilities it declares, and the authoritative source
 every example was checked against. For the concepts these schemes
-conform to ([`isVersion!T`](./SPEC.md#3-the-version-concept),
-[`isVersionScheme!S`](./SPEC.md#6-the-scheme-concept)) and the capability
-traits, see [SPEC.md](./SPEC.md).
+conform to ([`isVersion!T`](../../../specs/versions/SPEC.md#3-the-version-concept),
+[`isVersionScheme!S`](../../../specs/versions/SPEC.md#6-the-scheme-concept)) and the capability
+traits, see [SPEC.md](../../../specs/versions/SPEC.md).
 
 ```d
 import sparkles.versions.schemes.semver : SemVer;
@@ -41,8 +39,8 @@ This is the canonical capability matrix for the shipped schemes; adding a
 scheme adds a row here. Every scheme provides the required `isVersion!T`
 surface (`opCmp` + `toString`) and differs only in the optional
 capabilities below. Each `yes`/`no` is read against the traits in
-[SPEC §3.2](./SPEC.md#32-optional-capability-vocabulary) (version
-capabilities) and [SPEC §6.2](./SPEC.md#62-optional-scheme-capabilities)
+[SPEC §3.2](../../../specs/versions/SPEC.md#32-optional-capability-vocabulary) (version
+capabilities) and [SPEC §6.2](../../../specs/versions/SPEC.md#62-optional-scheme-capabilities)
 (scheme capabilities); the rationale behind each cell is in the
 per-scheme sections (§3).
 
@@ -82,7 +80,7 @@ native-range grammar where applicable, and provenance.
 - **purl type:** `semver`. The same value grammar drives `npm`,
   `cargo`, `gem`, `composer`, `golang`, `hex`, `conan`, `nginx`,
   `mozilla`, and `github` — those purl types map to this scheme via the
-  [purl→scheme table](./SPEC.md#10-purl-interop) while keeping their
+  [purl→scheme table](../../../specs/versions/SPEC.md#10-purl-interop) while keeping their
   own native-range dialects.
 - **Examples:** `20.13.1` (Node.js), `1.78.0` (Rust), `1.30.0`
   (Kubernetes), `17.3.0` (Angular), `18.3.1` (React), `6.8.9` (Linux),
@@ -361,7 +359,7 @@ native-range grammar where applicable, and provenance.
   string. No structure is parsed.
 - **Capabilities:** **none.** `orderKey` no, `prerelease` no,
   `components` no, `build` no, `nativeRange` no, `loose` no. This is the
-  mandated [void-hook baseline](./SPEC.md#8-shipped-schemes):
+  mandated [void-hook baseline](../../../specs/versions/SPEC.md#8-shipped-schemes):
   it provides only the required `isVersion!T` surface (`opCmp` +
   `toString`) and therefore exercises every generic algorithm's
   fallback path — comparison-based `sort`, comparison-based
@@ -375,50 +373,10 @@ native-range grammar where applicable, and provenance.
 ## 4. Adding a new scheme
 
 A scheme is just a struct conforming to
-[`isVersionScheme!S`](./SPEC.md#6-the-scheme-concept).
-To add one:
-
-1. **Create the module** `schemes/<purl_type>.d` (named for the purl
-   `type` where one exists, else a descriptive `snake_case` name) and
-   write the required surface — `opCmp`, `opEquals`, `toHash`,
-   `toString`, plus `purlType`, `alias Version`, and `static parse`. The
-   exact signatures are in
-   [SPEC §3.1](./SPEC.md#31-required-surface--isversiont) and
-   [§6.1](./SPEC.md#61-required-surface--isversionschemes).
-
-2. **Declare only the optional capabilities the ecosystem has** — any of
-   `orderKey`, `components`, `isPrerelease`, `build`, `parseLoose`,
-   `parseNativeRange` (semantics in
-   [SPEC §3.2](./SPEC.md#32-optional-capability-vocabulary) /
-   [§6.2](./SPEC.md#62-optional-scheme-capabilities)). Expose `orderKey`
-   only when the order packs monotonically into an unsigned integer;
-   structural schemes like `pypi`/`maven`/`deb` must not. Absence is
-   never an error — the generic algorithms fall back.
-
-3. **Assert conformance at module scope:**
-
-   ```d
-   static assert(isVersion!MyScheme && isVersionScheme!MyScheme);
-   ```
-
-   Any regression in the required surface becomes a compile-time
-   failure.
-
-4. **Register the scheme.** Public-import it from
-   `schemes/package.d`, add it to the
-   [`AnyVersion`/`AnyRange`](./SPEC.md#11-anyversion--anyrange)
-   sum types, and — when the purl `type` differs from the scheme name —
-   add the mapping to the
-   [purl→scheme table](./SPEC.md#10-purl-interop).
-
-5. **Add tests.** A round-trip test per real-world example
-   (`parse(s).value.toString == s`, or the documented normalised form),
-   an ascending-order test asserting the ordering edge cases, and — if
-   the scheme declares `orderKey` — an equivalence test cross-checking
-   `orderKey` against the `opCmp` reference. Add the new row to the §2
-   capability matrix and a §3 per-scheme section here, citing the
-   authoritative source. (Only this document changes; SPEC.md is not
-   touched when a preset is added.)
+[`isVersionScheme!S`](../../../specs/versions/SPEC.md#6-the-scheme-concept). For the
+step-by-step recipe — required surface, capability declaration,
+conformance assertions, registration, and tests — see
+[Add a new scheme](../how-to/add-a-new-scheme.md).
 
 ## 5. Deferred schemes
 
@@ -445,10 +403,10 @@ numeric→alphanumeric boundary, which is its own design problem.
 
 Schemes needing wider cores, 4+ components, or pure-alphanumeric
 fallback. Tracked in
-[RATIONALE — open questions](./RATIONALE.md#6-open-questions).
+[the design notes — open questions](../explanation/design.md).
 
 **Note — 4-component arity is no longer a design blocker.** With the
-list-based [`components`](./SPEC.md#32-optional-capability-vocabulary)
+list-based [`components`](../../../specs/versions/SPEC.md#32-optional-capability-vocabulary)
 capability, the 4-part schemes below (.NET, Windows, Chrome) are now
 directly _expressible_ — each declares
 `["major","minor","build","revision"]` and packs into a `ulong`
@@ -488,5 +446,5 @@ canonical specifications.
 
 ---
 
-→ [SPEC.md](./SPEC.md) — desired-state specification (traits, `Ranges!V`, VERS, purl)
-→ [PLAN.md](./PLAN.md) — delivery milestones
+→ [SPEC.md](../../../specs/versions/SPEC.md) — desired-state specification (traits, `Ranges!V`, VERS, purl)
+→ [PLAN.md](../../../specs/versions/PLAN.md) — delivery milestones
