@@ -1443,6 +1443,85 @@ void writeDurationPadded(Writer)(
             put(w, ' ');
 }
 
+/**
+Writes `elapsed` as a human-readable relative-time phrase: the largest
+`maxUnits` (default `2`) non-zero units, joined Oxford-style and suffixed
+`ago` for a non-negative duration or prefixed `in ` for a negative one — e.g.
+`10 years and 3 months ago`, `in 2 days`, `5 seconds ago`, `500ms ago`.
+
+`Duration` is not calendar-aware, so the calendar is approximate: a year is
+365 days and a month is 30 days. Units descend years → months → days → hours
+→ minutes → seconds as spelled-out words, then the abbreviated sub-second
+units `ms` → `µs` → `ns`; zero units are skipped and a duration that rounds to
+nothing renders as `0ms`. @nogc-compatible.
+*/
+void writeRelativeTime(Writer)(ref Writer w, in Duration elapsed, uint maxUnits = 2)
+in (maxUnits >= 1, "maxUnits must be >= 1")
+{
+    import std.range.primitives : put;
+
+    Duration d = elapsed;
+    const past = !d.isNegative;
+    if (d.isNegative)
+        d = -d;
+
+    auto parts = d.split!("days", "hours", "minutes", "seconds", "msecs", "usecs", "nsecs")();
+    long days = parts.days;
+    const years = days / 365;
+    days %= 365;
+    const months = days / 30;
+    days %= 30;
+
+    // `abbrev` units render as a tight `42µs` suffix; the rest as spelled-out,
+    // pluralized words (`5 seconds`).
+    static struct Unit { long value; string name; bool abbrev; }
+    const Unit[9] units = [
+        Unit(years,         "year"),
+        Unit(months,        "month"),
+        Unit(days,          "day"),
+        Unit(parts.hours,   "hour"),
+        Unit(parts.minutes, "minute"),
+        Unit(parts.seconds, "second"),
+        Unit(parts.msecs,   "ms", true),
+        Unit(parts.usecs,   "µs", true),
+        Unit(parts.nsecs,   "ns", true),
+    ];
+    enum msIndex = 6;       // floor unit when everything rounds to zero
+
+    // The largest `maxUnits` non-zero units, in descending order.
+    size_t[9] pick = void;
+    size_t n = 0;
+    foreach (i, ref u; units)
+        if (u.value != 0 && n < maxUnits)
+            pick[n++] = i;
+    if (n == 0)             // everything rounded to zero → "0ms"
+    {
+        pick[0] = msIndex;
+        n = 1;
+    }
+
+    if (!past)
+        put(w, "in ");
+    foreach (k; 0 .. n)
+    {
+        if (k > 0)
+            put(w, k == n - 1 ? (n == 2 ? " and " : ", and ") : ", ");
+        const u = units[pick[k]];
+        writeInteger(w, u.value);
+        if (u.abbrev)
+            put(w, u.name);             // "500ms"
+        else
+        {
+            put(w, ' ');
+            put(w, u.name);             // "5 second"
+            if (u.value != 1)
+                put(w, 's');            // → "5 seconds"
+        }
+    }
+    if (past)
+        put(w, " ago");
+}
+
 @("writeBytes.units")
 @safe pure nothrow @nogc
 unittest
@@ -1549,4 +1628,39 @@ unittest
     SmallBuffer!(char, 32) buf;
     writeDurationPadded(buf, dur!"msecs"(1_500), 6);
     assert(buf[] == "1.5s  ");            // "1.5s" then padded to 6 chars
+}
+
+@("writeRelativeTime.phrases")
+@safe pure nothrow @nogc
+unittest
+{
+    import core.time : dur;
+    import sparkles.core_cli.smallbuffer : SmallBuffer;
+
+    SmallBuffer!(char, 64) buf;
+    void check(Duration d, uint maxUnits, string expected)
+    {
+        buf.clear();
+        writeRelativeTime(buf, d, maxUnits);
+        assert(buf[] == expected);
+    }
+
+    enum tenYrs = dur!"days"(365 * 10 + 30 * 3 + 10);   // ≈ 10y 3mo 10d
+    check(tenYrs, 3, "10 years, 3 months, and 10 days ago");
+    check(tenYrs, 2, "10 years and 3 months ago");
+    check(tenYrs, 1, "10 years ago");
+
+    check(dur!"minutes"(90), 2, "1 hour and 30 minutes ago");
+    check(dur!"seconds"(5), 2, "5 seconds ago");
+    check(dur!"days"(3), 2, "3 days ago");              // only one non-zero unit
+
+    // Sub-second units are abbreviated (no space, no plural).
+    check(dur!"msecs"(1_500), 2, "1 second and 500ms ago");
+    check(dur!"msecs"(500), 2, "500ms ago");
+    check(dur!"usecs"(42), 2, "42µs ago");
+    check(dur!"nsecs"(700), 2, "700ns ago");
+    check(dur!"msecs"(0), 2, "0ms ago");               // floors at ms, no special case
+
+    check(-dur!"days"(2), 2, "in 2 days");             // negative → future
+    check(-dur!"hours"(50), 2, "in 2 days and 2 hours");
 }
