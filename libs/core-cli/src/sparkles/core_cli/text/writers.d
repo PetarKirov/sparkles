@@ -6,6 +6,8 @@
  */
 module sparkles.core_cli.text.writers;
 
+import core.time : Duration;
+
 import sparkles.core_cli.term_style : Style;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -69,44 +71,36 @@ if (__traits(isUnsigned, T))
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
+    import sparkles.core_cli.smallbuffer : checkWriter;
 
-    SmallBuffer!(char, 32) buf;
-    writeInteger(buf, 42);
-    assert(buf[] == "42");
+    checkWriter!((ref b) => writeInteger(b, 42))("42");
 }
 
 @("writeInteger.negative")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
+    import sparkles.core_cli.smallbuffer : checkWriter;
 
-    SmallBuffer!(char, 32) buf;
-    writeInteger(buf, -123);
-    assert(buf[] == "-123");
+    checkWriter!((ref b) => writeInteger(b, -123))("-123");
 }
 
 @("writeInteger.zero")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
+    import sparkles.core_cli.smallbuffer : checkWriter;
 
-    SmallBuffer!(char, 32) buf;
-    writeInteger(buf, 0);
-    assert(buf[] == "0");
+    checkWriter!((ref b) => writeInteger(b, 0))("0");
 }
 
 @("writeInteger.unsigned")
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
+    import sparkles.core_cli.smallbuffer : checkWriter;
 
-    SmallBuffer!(char, 32) buf;
-    writeInteger(buf, 0uL);
-    assert(buf[] == "0");
+    checkWriter!((ref b) => writeInteger(b, 0uL))("0");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

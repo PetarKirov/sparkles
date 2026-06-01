@@ -245,31 +245,60 @@ void checkToString(T, size_t outputBufferSize = 16 * 1024, size_t errorBufferSiz
     size_t line = __LINE__,
 )
 {
+    SmallBuffer!(char, outputBufferSize) buf;
+    value.toString(buf);
+    assertRendered!errorBufferSize("toString mismatch", buf[], expected, file, line);
+}
+
+/// Like $(LREF checkToString), but for a free writer expression rather than
+/// a `toString` method. `render` is a callable taking
+/// `ref SmallBuffer!(char, outputBufferSize)`; its output is compared to
+/// `expected` with the same recycled-`AssertError` diff on mismatch (so the
+/// caller stays `@safe pure nothrow @nogc`):
+/// ---
+/// checkWriter!((ref b) => writeIntegerPadded(b, 7, 3))("007");
+/// ---
+void checkWriter(alias render, size_t outputBufferSize = 16 * 1024,
+    size_t errorBufferSize = 4 * 1024)(
+    const(char)[] expected,
+    string file = __FILE__,
+    size_t line = __LINE__,
+)
+{
+    SmallBuffer!(char, outputBufferSize) buf;
+    render(buf);
+    assertRendered!errorBufferSize("rendered output mismatch", buf[], expected, file, line);
+}
+
+/// Shared by $(LREF checkToString) and $(LREF checkWriter): compares the
+/// rendered bytes and, on mismatch, throws a recycled `AssertError`
+/// carrying an `<header>:\nExpected:\n…\nActual:\n…` diff.
+private void assertRendered(size_t errorBufferSize)(
+    const(char)[] header,
+    const(char)[] actual,
+    const(char)[] expected,
+    string file,
+    size_t line,
+)
+{
     import core.exception : AssertError;
     import sparkles.core_cli.lifetime : recycledErrorInstance;
 
-    SmallBuffer!(char, outputBufferSize) buf;
-    value.toString(buf);
-    const(char)[] actual = buf[];
+    if (actual == expected)
+        return;
 
-    if (actual != expected)
-    {
-        SmallBuffer!(char, errorBufferSize) errBuf;
-        errBuf.put("toString mismatch:\nExpected:\n");
-        errBuf.put(expected);
-        errBuf.put("\nActual:\n");
-        errBuf.put(actual);
+    SmallBuffer!(char, errorBufferSize) errBuf;
+    errBuf.put(header);
+    errBuf.put(":\nExpected:\n");
+    errBuf.put(expected);
+    errBuf.put("\nActual:\n");
+    errBuf.put(actual);
 
-        // Only this part needs to be @trusted because recycledErrorInstance
-        // is @system (due to its use of a global/static buffer for the Error object).
-        () @trusted {
-            throw recycledErrorInstance!AssertError(
-                errBuf[],
-                file,
-                line,
-            );
-        }();
-    }
+    // @trusted only here: recycledErrorInstance is @system (it parks the
+    // Error object in a static buffer).
+    () @trusted {
+        throw recycledErrorInstance!AssertError(errBuf[], file, line);
+    }();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -331,6 +360,13 @@ unittest
     );
     assert(error !is null);
     assert(error.msg == "toString mismatch:\nExpected:\nexpected\nActual:\nactual");
+}
+
+@("checkWriter.rendersLambda")
+@safe pure nothrow @nogc
+unittest
+{
+    checkWriter!((ref b) => b.put("hi"))("hi");
 }
 
 @("SmallBuffer.put.singleElement")
