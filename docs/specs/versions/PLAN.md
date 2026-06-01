@@ -162,30 +162,32 @@ Implements [SPEC §9 (VERS interop)](./SPEC.md#9-vers-interop).
 **Key files:** `vers.d`, the constraint methods on each scheme, the
 registry in `schemes/package.d`.
 
-### M4 — purl parser + scheme dispatch
+### M4 — pURL parser + `AnyVersion`/`AnyRange` + runtime dispatch
 
-Implements [SPEC §10 (pURL interop)](./SPEC.md#10-purl-interop).
-Independent of M2/M3 — depends only on the M1 schemes.
+Implements [SPEC §10 (pURL interop)](./SPEC.md#10-purl-interop) and
+[SPEC §11 (`AnyVersion` / `AnyRange`)](./SPEC.md#11-anyversion--anyrange).
+The sum types were pulled forward from M5 because the runtime dispatch
+entry points (`parsePurlVersion`, and the M3-deferred `parseVersAny`)
+return them — so M4 ships them rather than stubbing.
 
+- `any.d` — `AnyVersion`/`AnyRange` `SumType`s over all eleven schemes
+  (derived from the registry scheme list) and `compareAny` returning
+  `Nullable!int` (null when schemes differ).
 - `purl.d` — `PackageUrl`, `parsePurl` (parse only; we consume purls, we
-  do not mint them).
-- `schemeForPurlType` template-alias dispatch and the runtime
+  do not mint them); `purlTypeToSchemeName` (the non-identity
+  purl-type→scheme map, e.g. npm/cargo/.../`packagist` → `semver`); and
   `parsePurlVersion` returning `AnyVersion`.
-- The non-identity purl→scheme mapping table for cases where the purl
-  `type` differs from the VERS scheme name.
+- `parseVersAny` (in `vers.d`) — runtime VERS dispatch → `AnyRange`,
+  closing the M3 deferral.
 
-**Key files:** `purl.d`, the mapping table (co-located with the registry
-in `schemes/package.d`).
+**Key files:** `any.d`, `purl.d`, `parseVersAny` in `vers.d`,
+`schemes/registry.d`.
 
-### M5 — `AnyVersion`/`AnyRange` + README + DDoc
+### M5 — README + DDoc
 
-Implements [SPEC §11 (`AnyVersion` / `AnyRange`)](./SPEC.md#11-anyversion--anyrange)
-and brings the public surface to release quality.
+Brings the public surface to release quality (the `AnyVersion`/`AnyRange`
+sum types landed in M4).
 
-- `any.d` — `AnyVersion`/`AnyRange` `SumType`s over all eleven built-in
-  schemes (including the `Generic` void-hook baseline, since
-  `parsePurlVersion` can yield `pkg:generic/...`) and `compareAny`
-  returning `Nullable!int` (null when schemes differ).
 - README rewrite from "DbI engine" to "ecosystem-aware version library",
   with three runnable examples: per-ecosystem parse-and-compare; parse a
   `vers:` URI and test satisfaction; parse a purl, dispatch on type,
@@ -193,7 +195,7 @@ and brings the public surface to release quality.
 - DDoc on every public symbol per
   [`docs/guidelines/ddoc.md`](../../guidelines/ddoc.md).
 
-**Key files:** `any.d`, `README.md`, DDoc across all public modules.
+**Key files:** `README.md`, DDoc across all public modules.
 
 ### M6 — Documentation rewrite
 
