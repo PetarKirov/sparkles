@@ -9,8 +9,7 @@ expression `e` that `S.parseNativeRange(e)` accepts, the law is:
 
 ```
 parseNativeRange(e)               // a Ranges!(S.Version)
-    -> toVersConstraint           // VERS constraint text (Ranges.toString)
-    -> fold into a vers: URI      // join the interval bounds with `|`
+    -> toVersUriStringAs!S        // canonical vers: URI (every comparator `|`-joined)
     -> parseVersAs!S              // back to a Ranges!(S.Version)
 ```
 
@@ -19,18 +18,16 @@ compares the canonical (sorted, merged) interval representation, equality is
 the right notion: two ranges built from different but semantically-equivalent
 texts compare equal.
 
-$(B The comma/pipe bridge.) `Ranges.toString` (reused by `toVersConstraint`)
-renders a single two-bound interval with a `,` separator — `>=1.2.0,<2.0.0` —
-and joins disjoint intervals with `|`. A canonical `vers:` URI instead uses
-`|` between every comparator. $(LREF toVersUri) rewrites the `,` bounds to `|`
-so the emitted text is a well-formed `vers:` URI; `parseVersAs` then re-folds
-the `|`-separated comparators into the same contiguous intervals (SPEC §9
-multi-constraint semantics), closing the loop.
+`toVersUriStringAs` emits the canonical `vers:` grammar — `|` between every
+comparator, so a bounded interval `[lo, hi)` is `>=lo|<hi` — and `parseVersAs`
+re-folds the flat `|`-separated comparator list into the same contiguous
+intervals (SPEC §9 multi-constraint semantics), closing the loop.
 
-The corpus mirrors fixtures under
-`/home/petar/code/repos/univers/tests/data/schema/range/` (npm/pypi
-`*_range_from_native.json`) and the per-scheme native-range tests, restricted
-to expressions whose semantics match ours.
+The corpus mirrors fixtures from the
+[`univers`](https://github.com/aboutcode-org/univers) test suite
+(`tests/data/schema/range/` npm/pypi `*_range_from_native.json`) and the
+per-scheme native-range tests, restricted to expressions whose semantics
+match ours.
 
 See `docs/specs/versions/SPEC.md` §9 (VERS interop, the round-trip law).
 */
@@ -38,38 +35,16 @@ module sparkles.versions.vers_roundtrip_test;
 
 version (unittest):
 
-import sparkles.versions.ranges : Ranges;
 import sparkles.versions.traits : isVersionScheme, supportsNativeRange;
-import sparkles.versions.vers : parseVersAs, toVersConstraint;
+import sparkles.versions.vers : parseVersAs, toVersUriStringAs;
 
 // ---------------------------------------------------------------------------
 // Round-trip harness
 // ---------------------------------------------------------------------------
 
-/// Renders `r` to VERS constraint text and rewrites the intra-interval `,`
-/// separators to `|`, producing the body of a canonical `vers:` URI (where
-/// every comparator is `|`-separated). The empty set has no comparators and
-/// renders as the empty string.
-private string toVersUriBody(S)(in Ranges!S r) @safe
-{
-    import std.array : appender;
-
-    auto w = appender!string;
-    toVersConstraint!S(w, r);
-    string body_ = w[];
-
-    // `Ranges.toString` uses `,` between the two bounds of one interval and
-    // `|` between disjoint intervals. The canonical `vers:` grammar uses `|`
-    // everywhere, so flatten `,` to `|`.
-    auto out_ = appender!string;
-    foreach (char c; body_)
-        out_.put(c == ',' ? '|' : c);
-    return out_[];
-}
-
 /// Asserts the VERS round-trip law for one native range expression `e` of
-/// scheme `S`: `parseNativeRange(e)` survives a `toVersConstraint` →
-/// `vers:` URI → `parseVersAs!S` round-trip unchanged.
+/// scheme `S`: `parseNativeRange(e)` survives a `toVersUriStringAs` →
+/// `parseVersAs!S` round-trip unchanged.
 private void checkVersRoundTrip(S)(
     string e, string file = __FILE__, size_t line = __LINE__,
 ) @safe
@@ -89,11 +64,11 @@ if (isVersionScheme!S && supportsNativeRange!S)
 
     const original = native.value;
 
-    // The full set has no comparators (empty body); VERS spells it `*`. The
-    // empty set likewise has no canonical VERS literal. Both are exercised
-    // through their explicit forms elsewhere; the corpus avoids them.
-    const body_ = toVersUriBody!S(original);
-    const uri = "vers:" ~ S.purlType ~ "/" ~ body_;
+    // Emit the canonical `vers:` URI (every comparator `|`-joined) and parse
+    // the emitted text straight back. The full set spells `*`; the empty set
+    // has no canonical literal — both are exercised through their explicit
+    // forms elsewhere, so the corpus avoids them.
+    const uri = toVersUriStringAs!S(original);
 
     auto back = parseVersAs!S(uri);
     if (!back.hasValue)

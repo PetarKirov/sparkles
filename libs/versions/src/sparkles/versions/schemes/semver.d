@@ -1284,10 +1284,11 @@ unittest
 {
     import sparkles.core_cli.smallbuffer : checkToString;
 
-    // The VERS textual form of a few ranges (SPEC §9).
-    checkToString(nr("^1.2.0"), ">=1.2.0,<2.0.0");
-    checkToString(nr("~1.2.0"), ">=1.2.0,<1.3.0");
-    checkToString(nr(">=1.2.0 <2.0.0"), ">=1.2.0,<2.0.0");
+    // The VERS textual form of a few ranges (SPEC §9): every comparator
+    // `|`-joined, so a bounded interval is `>=lo|<hi`.
+    checkToString(nr("^1.2.0"), ">=1.2.0|<2.0.0");
+    checkToString(nr("~1.2.0"), ">=1.2.0|<1.3.0");
+    checkToString(nr(">=1.2.0 <2.0.0"), ">=1.2.0|<2.0.0");
     checkToString(nr("1.2.0"), "1.2.0");
 }
 

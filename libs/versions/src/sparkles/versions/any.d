@@ -207,5 +207,5 @@ unittest
     auto r = AnyRange(range);
     auto w = appender!string;
     toString(r, w);
-    assert(w[] == ">=1.2.0,<2.0.0");
+    assert(w[] == ">=1.2.0|<2.0.0");
 }
