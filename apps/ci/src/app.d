@@ -1592,7 +1592,17 @@ private bool isDubSingleFileBlock(const(char[])[] codeLines)
         return false;
     if (!codeLines[1].strip.startsWith("/+ dub.sdl:"))
         return false;
-    return true;
+
+    bool hasMain = false;
+    foreach (line; codeLines)
+    {
+        if (line.canFind("main"))
+        {
+            hasMain = true;
+            break;
+        }
+    }
+    return hasMain;
 }
 
 /// Extracts the example name from dub.sdl header lines.
