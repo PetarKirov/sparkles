@@ -41,12 +41,27 @@ jobs:
       - name: Setup Nix
         uses: metacraft-labs/nixos-modules/.github/setup-nix@main
         with:
-          push-to-cache: false
+          push-to-cache: true
           cachix-cache: ${{ vars.CACHIX_CACHE }}
           cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
           trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
           substituters: ${{ vars.SUBSTITUTERS }}
           devshell: default
+          use-nix-cache: true
+          nix-cache-key: nix-${{ runner.os }}-${{ matrix.DC }}-${{ hashFiles('**/flake.lock') }}
+          nix-cache-restore-prefixes: |
+            nix-${{ runner.os }}-${{ matrix.DC }}-
+            nix-${{ runner.os }}-
+
+      - name: Cache DUB packages
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.dub
+            ~/.local/share/dub
+          key: ${{ runner.os }}-dub-${{ hashFiles('**/dub.sdl', '**/dub.selections.json') }}
+          restore-keys: |
+            ${{ runner.os }}-dub-
 
       - name: Run flake checks
         run: nix flake check
