@@ -8,6 +8,19 @@ export default defineConfig({
   // Ignore links to .d source files referenced from docs
   ignoreDeadLinks: [/\.d$/],
 
+  markdown: {
+    languageAlias: {
+      sdl: 'd',
+      eff: 'ocaml',
+      frank: 'ocaml',
+      koka: 'typescript',
+      wat: 'wasm',
+      unison: 'haskell',
+      odin: 'go',
+      xaml: 'xml',
+    },
+  },
+
   themeConfig: {
     nav: [
       { text: 'Docs', link: '/overview' },
