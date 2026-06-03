@@ -88,7 +88,7 @@ void main()
 }
 ```
 
-```
+```[Output]
 1.2.3
 true
 1.2.0
@@ -122,7 +122,7 @@ void main()
 }
 ```
 
-```
+```[Output]
 CPU: 75% Status: OK
 ERROR: Connection refused
 Outer inner just cyan
@@ -184,7 +184,7 @@ void main()
 }
 ```
 
-```
+```[Output]
 Cluster(
   name: "Production",
   servers: [
@@ -237,7 +237,7 @@ void main()
 }
 ```
 
-```
+```[Output]
 Error: something went wrong
 Important
 ```
@@ -268,7 +268,7 @@ void main()
 }
 ```
 
-```
+```[Output]
 ╭────────┬────────┬──────╮
 │ Name   │ Status │ Load │
 │ web-01 │ UP     │ 23%  │
@@ -303,7 +303,7 @@ void main()
 }
 ```
 
-```
+```[Output]
 ╭──╼ Build Log ╾────────────╮
 │ Build started at 14:32:01 │
 │ Compiling 42 modules...   │
@@ -339,7 +339,7 @@ void main()
 }
 ```
 
-```
+```[Output]
 ── Section Title ──
 ════════════════════════════════════════
                Main Title
@@ -403,7 +403,7 @@ void main()
 [ {{_}} | Δt {{_}} | Δtᵢ {{_}} | ERR | {{_}} ]: Connection to database lost
 -->
 
-```
+```[Output]
 [ 14:32:01 | Δt 0ms   | Δtᵢ 0ms   | INF | app.d:17 ]: Listening on port 8080
 [ 14:32:01 | Δt 5ms   | Δtᵢ 5ms   | WRN | app.d:18 ]: Disk usage above 80%
 [ 14:32:01 | Δt 12ms  | Δtᵢ 7ms   | ERR | app.d:19 ]: Connection to database lost
