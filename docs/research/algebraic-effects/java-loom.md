@@ -221,7 +221,7 @@ Virtual threads reduce the need for reactive frameworks:
 - **Before Loom**: Libraries like Project Reactor and RxJava were necessary for scalable I/O because platform threads could not scale. These frameworks imposed a callback/stream-based programming model.
 - **After Loom**: Simple thread-per-request code achieves comparable scalability, making reactive frameworks unnecessary for many use cases. Frameworks like Spring Boot, Tomcat, and Jetty now support virtual threads natively.
 
-However, reactive frameworks still provide value for backpressure, stream processing, and complex event-driven architectures that go beyond simple request-response patterns.
+However, reactive frameworks still provide value for backpressure, stream processing, and complex event-driven architectures that go beyond simple request-response patterns. For the wider Java async I/O landscape (JUring, Netty, and how virtual threads sit atop OS event loops), see the [Async I/O Java survey] and [Effects and Event Loops].
 
 ---
 
@@ -272,6 +272,8 @@ However, reactive frameworks still provide value for backpressure, stream proces
 <!-- References -->
 
 [Scala's Ox]: scala-ox.md
+[Async I/O Java survey]: ../async-io/java.md
+[Effects and Event Loops]: ../async-io/effects-and-event-loops.md
 [github.com/openjdk/loom]: https://github.com/openjdk/loom
 [OpenJDK Project Loom]: https://openjdk.org/projects/loom/
 [JEP 444: Virtual Threads]: https://openjdk.org/jeps/444

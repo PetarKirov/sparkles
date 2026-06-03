@@ -186,7 +186,7 @@ Cats Effect fibers are roughly **3x smaller** than [ZIO] fibers in memory, since
 
 ### io_uring Integration (v3.6.0)
 
-The integrated runtime in CE 3.6.0 brought io_uring support, with observed **3.5x performance improvements** for HTTP microservices on http4s Ember.
+The integrated runtime in CE 3.6.0 brought io_uring support, with observed **3.5x performance improvements** for HTTP microservices on http4s Ember. For how this fiber runtime relates to OS event loops and io_uring, see [Effects and Event Loops] and the [Async I/O Runtime Comparison].
 
 ---
 
@@ -270,6 +270,8 @@ The tagless final approach means the same library code works with any compliant 
 <!-- References -->
 
 [ZIO]: scala-zio.md
+[Effects and Event Loops]: ../async-io/effects-and-event-loops.md
+[Async I/O Runtime Comparison]: ../async-io/comparison.md
 [Cats Effect documentation]: https://typelevel.org/cats-effect/
 [Cats Effect GitHub repository]: https://github.com/typelevel/cats-effect
 [Why Are Fibers Fast?]: https://typelevel.org/blog/2021/02/21/fibers-fast-mkay.html
