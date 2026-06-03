@@ -454,6 +454,99 @@ export default defineConfig({
             ],
           },
           {
+            text: 'Async I/O & Event Loops',
+            link: '/research/async-io/',
+            collapsed: true,
+            items: [
+              {
+                text: 'Concepts',
+                collapsed: true,
+                items: [
+                  {
+                    text: 'Primitives',
+                    link: '/research/async-io/primitives',
+                  },
+                  {
+                    text: 'Implementation Techniques',
+                    link: '/research/async-io/techniques',
+                  },
+                ],
+              },
+              {
+                text: 'io_uring Reference',
+                link: '/research/async-io/io-uring/',
+                collapsed: true,
+                items: [
+                  {
+                    text: 'Features by Area',
+                    link: '/research/async-io/io-uring/features',
+                  },
+                  {
+                    text: 'Timeline (v5.1–v7.1)',
+                    link: '/research/async-io/io-uring/timeline',
+                  },
+                  {
+                    text: 'Opcode & Flag Reference',
+                    link: '/research/async-io/io-uring/opcodes-reference',
+                  },
+                ],
+              },
+              {
+                text: 'Library Deep-Dives',
+                collapsed: true,
+                items: [
+                  { text: 'Tokio (Rust)', link: '/research/async-io/tokio' },
+                  {
+                    text: 'Glommio (Rust)',
+                    link: '/research/async-io/glommio',
+                  },
+                  { text: 'monoio (Rust)', link: '/research/async-io/monoio' },
+                  {
+                    text: 'Boost.Asio (C++)',
+                    link: '/research/async-io/boost-asio',
+                  },
+                  { text: 'Seastar (C++)', link: '/research/async-io/seastar' },
+                  { text: 'libuv (C)', link: '/research/async-io/libuv' },
+                  { text: 'Zig std.Io', link: '/research/async-io/zig-io' },
+                  { text: '.NET Runtime', link: '/research/async-io/dotnet' },
+                  { text: 'Java', link: '/research/async-io/java' },
+                  {
+                    text: 'Go Netpoller',
+                    link: '/research/async-io/go-netpoller',
+                  },
+                  {
+                    text: 'Python (asyncio / Trio)',
+                    link: '/research/async-io/python-async',
+                  },
+                  { text: 'Haskell', link: '/research/async-io/haskell' },
+                  { text: 'Lean 4', link: '/research/async-io/lean' },
+                  {
+                    text: 'OCaml Eio Backend',
+                    link: '/research/async-io/eio-backend',
+                  },
+                ],
+              },
+              {
+                text: 'Synthesis',
+                collapsed: true,
+                items: [
+                  {
+                    text: 'Effects & Event Loops',
+                    link: '/research/async-io/effects-and-event-loops',
+                  },
+                  {
+                    text: 'D Landscape',
+                    link: '/research/async-io/d-landscape',
+                  },
+                  {
+                    text: 'Comparison & Recommendations',
+                    link: '/research/async-io/comparison',
+                  },
+                ],
+              },
+            ],
+          },
+          {
             text: 'TUI Libraries',
             collapsed: true,
             items: [

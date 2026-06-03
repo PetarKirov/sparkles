@@ -4,7 +4,8 @@
 ^https://link\.springer\.com/
 ^https://rosettacode\.org/
 ^https://hnterm\.ggerganov\.com/
-^https://medium\.com/
+^https?://([^/]+\.)?medium\.com/
+^https?://lib\.rs/
 ^https://github\.com/sackosoft/zbox$
 ^https://github\.com/unvariant/tuile$
 ^https://github\.com/zhfkt/nice$
@@ -33,3 +34,4 @@
 ^https?://stateofwebtype\.com/
 ^https?://people\.cs\.kuleuven\.be/
 ^https?://invisible-island\.net/
+^https?://(www\.)?phoronix\.com/
