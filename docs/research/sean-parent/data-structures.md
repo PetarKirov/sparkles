@@ -103,7 +103,7 @@ public:
 | Container           | Use When                             | Sean's Take                                                                   |
 | ------------------- | ------------------------------------ | ----------------------------------------------------------------------------- |
 | `std::vector`       | Default choice; random access needed | **The standard.** Use it for almost everything.                               |
-| `std::deque`        | Need push_front and push_back        | A "failed" vector. Rarely the right choice unless you need very large chunks. |
+| `std::deque`        | Need `push_front` and `push_back`    | A "failed" vector. Rarely the right choice unless you need very large chunks. |
 | `std::list`         | Need stable iterators/pointers       | **Avoid.** Usually a sign of a bug or poor design. Cache-killer.              |
 | `std::forward_list` | Space-constrained, forward only      | Specialized; rarely used.                                                     |
 | `std::array`        | Size known at compile time           | Good for fixed-size buffers; zero overhead.                                   |

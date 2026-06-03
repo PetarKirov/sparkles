@@ -441,7 +441,7 @@ bool isPositive(int number)
 
 ```
 
-- Text in sections (e.g. Params:, Returns:, See_Also) should be indented by one level if it spans more than the line of the section.
+- Text in sections (e.g. Params:, Returns:, `See_Also`) should be indented by one level if it spans more than the line of the section.
 - Documentation comments should not use more than two stars `/**` or two pluses `/++` in the header line. Either Block comments (`/**`) or nesting block comments (`/++`) should be used except when the ddoc comment is a ditto comment such as `///`
 - Ditto Documentation comments should not have leading stars on each line.
 - Text example blocks should use three dashes (`---`) only.

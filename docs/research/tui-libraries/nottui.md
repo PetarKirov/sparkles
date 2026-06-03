@@ -680,14 +680,14 @@ let app () =
 
 Nottui exists within the broader Lwd ecosystem:
 
-| Package           | Purpose                                             |
-| ----------------- | --------------------------------------------------- |
-| **lwd**           | Core incremental computation library                |
-| **nottui**        | Terminal UI widgets and layout on Lwd               |
-| **nottui-lwt**    | Async/concurrent support via Lwt                    |
-| **nottui-pretty** | Interactive pretty-printer based on Pprint          |
-| **tyxml-lwd**     | Web DOM rendering via Js_of_ocaml (Lwd for the web) |
-| **brr-lwd**       | Browser integration layer                           |
+| Package           | Purpose                                               |
+| ----------------- | ----------------------------------------------------- |
+| **lwd**           | Core incremental computation library                  |
+| **nottui**        | Terminal UI widgets and layout on Lwd                 |
+| **nottui-lwt**    | Async/concurrent support via Lwt                      |
+| **nottui-pretty** | Interactive pretty-printer based on Pprint            |
+| **tyxml-lwd**     | Web DOM rendering via `Js_of_ocaml` (Lwd for the web) |
+| **brr-lwd**       | Browser integration layer                             |
 
 The Lwd core is backend-agnostic. The same incremental computation model that drives Nottui's terminal UI also drives `tyxml-lwd` for web UIs. This demonstrates the generality of the reactive document approach.
 
@@ -892,7 +892,7 @@ This mirrors Lwd's approach where `Lwd.get` implicitly registers dependencies du
 - **Lwd API (`.mli`)**: <https://github.com/let-def/lwd/blob/master/lib/lwd/lwd.mli>
 - **Nottui API (`.mli`)**: <https://github.com/let-def/lwd/blob/master/lib/nottui/nottui.mli>
 - **Nottui widgets API (`.mli`)**: <https://github.com/let-def/lwd/blob/master/lib/nottui/nottui_widgets.mli>
-- **Lwd_table API (`.mli`)**: <https://github.com/let-def/lwd/blob/master/lib/lwd/lwd_table.mli>
+- **`Lwd_table` API (`.mli`)**: <https://github.com/let-def/lwd/blob/master/lib/lwd/lwd_table.mli>
 - **Notty (terminal backend)**: <https://github.com/pqwy/notty>
 - **opam package**: <https://opam.ocaml.org/packages/nottui/>
 - **Frederic Bour (author)**: <https://github.com/let-def>

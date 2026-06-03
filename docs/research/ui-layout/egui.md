@@ -145,7 +145,7 @@ interaction. There are no event callbacks. A `Response` carries:
 
 The `Response` model means hit-testing is intrinsically coupled to layout: a widget
 _is_ at a known rectangle on this frame, so the click test is `if response.rect
-.contains(pointer_pos) && pointer_pressed { ... }`. Because every widget is
+.contains(`pointer_pos`) && `pointer_pressed` { ... }`. Because every widget is
 drawn-and-tested in one shot, there is no separate event-routing tree.
 
 ### The Layout struct

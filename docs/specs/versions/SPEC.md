@@ -89,7 +89,7 @@ in `sparkles.core_cli`, and the SemVer identifier grammar
 in `schemes/semver.d`, reused by the other SemVer-shaped schemes.
 
 **Foundation in `sparkles.core_cli`** — the parsing/formatting primitives
-are generic and live in core_cli, not in `versions`:
+are generic and live in `core_cli`, not in `versions`:
 
 | Module                           | Provides                                                                       |
 | -------------------------------- | ------------------------------------------------------------------------------ |
@@ -487,7 +487,7 @@ which returns `null` across schemes.
 
 Parsing is non-throwing and `Expected`-based. The error vocabulary is
 generic and lives in `sparkles.core_cli.text.errors` (reused by every
-core_cli text parser, not just versions); `ParseMode` is a versions enum
+`core_cli` text parser, not just versions); `ParseMode` is a versions enum
 in `sparkles.versions.parsing`.
 
 ```d

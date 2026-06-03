@@ -190,7 +190,7 @@ effc = fun (type a) (e : a Effect.t) : ((a, _) continuation -> _) option ->
 
 When a fiber performs `Suspend f`, the handler captures the one-shot continuation `k`, bundles it with the `fiber_context` into a `Suspended.t`, and calls `f` to register how the fiber gets resumed (typically by submitting an `io_uring` SQE and setting a cancel function). It then calls `schedule st` to pick the next runnable fiber. `Fork` is even more direct: the parent is pushed to the _head_ of the run queue and the child runs synchronously, which is exactly why `Fiber.fork`/`both`/`first` document that "`f` runs immediately, without switching to any other fiber first."
 
-The backend-specific I/O effects (`Enter`, `Await_readable`, `Await_writable`, `Run_in_systhread`, `Cancel`) and the io_uring submission/completion ring mechanics are covered in detail in the [Async I/O Eio backend deep-dive]; this doc treats them as the layer beneath `Suspend`.
+The backend-specific I/O effects (`Enter`, `Await_readable`, `Await_writable`, `Run_in_systhread`, `Cancel`) and the `io_uring` submission/completion ring mechanics are covered in detail in the [Async I/O Eio backend deep-dive]; this doc treats them as the layer beneath `Suspend`.
 
 ### Switches and structured concurrency
 
@@ -269,7 +269,7 @@ Cancel.Fiber_context.set_cancel_fn ctx (fun ex ->
 Cancellation lives entirely in `lib_eio/core/cancel.ml` and is _tree-structured per domain_. `Switch.fail` records the exception and calls `Cancel.cancel`, which:
 
 1. `cancel_internal` walks the context subtree marking each non-`protected` node `Cancelling (ex, bt)` and collecting every registered `fiber_context`. Because "modifying the cancellation tree can only be done from our domain, this is effectively an atomic operation."
-2. For each collected fiber it swaps `cancel_fn` for `ignore` (so it can't fire twice) and calls the old `cancel_fn cex`, which "encourages the current operation to finish" — e.g. submitting an io_uring cancel SQE for the in-flight job.
+2. For each collected fiber it swaps `cancel_fn` for `ignore` (so it can't fire twice) and calls the old `cancel_fn cex`, which "encourages the current operation to finish" — e.g. submitting an `io_uring` cancel SQE for the in-flight job.
 
 ```ocaml
 (* lib_eio/core/cancel.ml *)
@@ -291,7 +291,7 @@ and cancel_child ex t acc =
 
 ### Daemon fibers
 
-`Fiber.fork_daemon` forks via `Switch.with_daemon` (which increments both `fibers` and `daemon_fibers`). Its body must return `[`Stop_daemon]`, and it specifically tolerates the auto-cancellation when all real fibers finish:
+`Fiber.fork_daemon` forks via `Switch.with_daemon` (which increments both `fibers` and `daemon_fibers`). Its body must return ``[`Stop_daemon]``, and it specifically tolerates the auto-cancellation when all real fibers finish:
 
 ```ocaml
 (* lib_eio/core/fiber.ml — inside fork_daemon's body *)
@@ -316,13 +316,13 @@ Lwt and Async simulate concurrent stacks by allocating promise chains on the hea
 
 | Backend       | opam package  | Platform          | Mechanism                                                        |
 | ------------- | ------------- | ----------------- | ---------------------------------------------------------------- |
-| `eio_linux`   | `eio_linux`   | Linux             | io_uring via the `uring` library                                 |
+| `eio_linux`   | `eio_linux`   | Linux             | `io_uring` via the `uring` library                               |
 | `eio_posix`   | `eio_posix`   | macOS, BSD, POSIX | `kqueue` / `poll`-based readiness                                |
 | `eio_windows` | `eio_windows` | Windows           | Incomplete (help wanted)                                         |
 | `eio_js`      | `eio_js`      | Browser           | `js_of_ocaml` scheduler (separate `ocaml-multicore/eio_js` repo) |
 | `eio_main`    | `eio_main`    | Any               | Selects the appropriate backend at runtime                       |
 
-The Linux backend depends on the `uring` opam package (repo `ocaml-multicore/ocaml-uring`); Eio's dev `dune-project` pins `(uring (>= 2.7.0))`. The scheduler in `lib_eio_linux/sched.ml` keeps a lock-free run queue (`Lf_queue`), a timer wheel (`Zzz`), and a fixed io_uring submission/completion ring; its `schedule` loop drains ready fibers, fires due timers, harvests completions with `Uring.get_cqe_nonblocking`, and otherwise sleeps in `Uring.wait`, waking on an `eventfd` when another domain enqueues work. It even opts into recent kernel ring features:
+The Linux backend depends on the `uring` opam package (repo `ocaml-multicore/ocaml-uring`); Eio's dev `dune-project` pins `(uring (>= 2.7.0))`. The scheduler in `lib_eio_linux/sched.ml` keeps a lock-free run queue (`Lf_queue`), a timer wheel (`Zzz`), and a fixed `io_uring` submission/completion ring; its `schedule` loop drains ready fibers, fires due timers, harvests completions with `Uring.get_cqe_nonblocking`, and otherwise sleeps in `Uring.wait`, waking on an `eventfd` when another domain enqueues work. It even opts into recent kernel ring features:
 
 ```ocaml
 (* lib_eio_linux/sched.ml *)
@@ -360,7 +360,7 @@ The single root `env` is sub-divided into narrower capabilities as it flows down
 - **Structured concurrency** via `Switch` guarantees no orphaned fibers and LIFO resource cleanup; the switch's main function is itself counted, so it can't finish early.
 - **Capability-based security** makes I/O authority explicit, auditable, and mockable.
 - **Sandboxed filesystem** by default (`cwd` confined; symlink escapes rejected; optional Capsicum mode).
-- **Platform-optimised backends** including io_uring on Linux (with `single_issuer`/`defer_taskrun` on recent kernels).
+- **Platform-optimised backends** including `io_uring` on Linux (with `single_issuer`/`defer_taskrun` on recent kernels).
 - **Thread-safe promises and streams** usable across domains for shared-memory parallelism.
 - **Incremental migration** from Lwt via `Lwt_eio`.
 
@@ -377,17 +377,17 @@ The single root `env` is sub-divided into narrower capabilities as it flows down
 
 ## Key Design Decisions and Trade-offs
 
-| Decision                                               | Rationale                                                        | Trade-off                                                       |
-| ------------------------------------------------------ | ---------------------------------------------------------------- | --------------------------------------------------------------- |
-| Three private effects (`Fork`/`Suspend`/`Get_context`) | Minimal scheduler interface; everything else builds on them      | Backend must handle all three correctly; not user-extensible    |
-| One-shot continuations                                 | Matches OCaml 5 runtime; cheap resume                            | Must resume exactly once; cancel-vs-complete race handling      |
-| Direct style over monadic                              | Natural code; real backtraces; no bind overhead                  | Requires OCaml 5 effects                                        |
-| Capability passing from `env`                          | Explicit authority; auditable; testable; least authority         | Verbose signatures; threading required                          |
-| Structured concurrency via `Switch`                    | No orphaned fibers; LIFO cleanup; main counts as a fiber         | Less flexible than unstructured spawn                           |
-| Per-domain cancellation tree                           | Cancellation is a local, effectively-atomic tree walk            | Cross-domain resume needs atomic CAS in cancel functions        |
-| Daemon fibers cancelled when reals finish              | Background tasks (e.g. event-fd monitor) tear down automatically | Daemons must tolerate `Cancelled Exit`; return `[`Stop_daemon]` |
-| Path sandboxing by default                             | Prevents path traversal even via symlinks                        | Must opt in to full `fs` access                                 |
-| Multiple platform backends                             | Optimised I/O per platform (io_uring, kqueue, js)                | Subtle behavioural differences; Windows incomplete              |
+| Decision                                               | Rationale                                                        | Trade-off                                                         |
+| ------------------------------------------------------ | ---------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Three private effects (`Fork`/`Suspend`/`Get_context`) | Minimal scheduler interface; everything else builds on them      | Backend must handle all three correctly; not user-extensible      |
+| One-shot continuations                                 | Matches OCaml 5 runtime; cheap resume                            | Must resume exactly once; cancel-vs-complete race handling        |
+| Direct style over monadic                              | Natural code; real backtraces; no bind overhead                  | Requires OCaml 5 effects                                          |
+| Capability passing from `env`                          | Explicit authority; auditable; testable; least authority         | Verbose signatures; threading required                            |
+| Structured concurrency via `Switch`                    | No orphaned fibers; LIFO cleanup; main counts as a fiber         | Less flexible than unstructured spawn                             |
+| Per-domain cancellation tree                           | Cancellation is a local, effectively-atomic tree walk            | Cross-domain resume needs atomic CAS in cancel functions          |
+| Daemon fibers cancelled when reals finish              | Background tasks (e.g. event-fd monitor) tear down automatically | Daemons must tolerate `Cancelled Exit`; return ``[`Stop_daemon]`` |
+| Path sandboxing by default                             | Prevents path traversal even via symlinks                        | Must opt in to full `fs` access                                   |
+| Multiple platform backends                             | Optimised I/O per platform (`io_uring`, kqueue, js)              | Subtle behavioural differences; Windows incomplete                |
 
 ---
 

@@ -9,7 +9,7 @@ There are three import patterns:
 
 - **Single scheme.** Import just the scheme module and the parse types:
   `sparkles.versions.schemes.semver : SemVer`, `sparkles.versions.parsing
-: ParseMode`, `sparkles.core_cli.text.errors : ParseError`.
+: ParseMode`, `sparkles.`core_cli`.text.errors : ParseError`.
 - **Polyglot package import.** `import sparkles.versions;` re-exports the
   concepts, parse types, `Ranges`, the operations, the VERS/pURL interop,
   the sum types, and every shipped scheme.
@@ -166,7 +166,7 @@ Re-exported only under `version(unittest)`. Test helpers such as
 
 ## `sparkles.core_cli.text.errors`
 
-The generic, `@nogc` parse vocabulary reused by every core_cli text
+The generic, `@nogc` parse vocabulary reused by every `core_cli` text
 parser.
 
 | Symbol                                               | Description                                                                                                                                              |

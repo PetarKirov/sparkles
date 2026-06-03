@@ -189,7 +189,7 @@ state-driven views.
 
 #### BoxLayout
 
-Single-axis arrangement (X_AXIS, Y_AXIS, LINE_AXIS, PAGE_AXIS where the latter two
+Single-axis arrangement (`X_AXIS`, `Y_AXIS`, `LINE_AXIS`, `PAGE_AXIS` where the latter two
 respect text orientation). Each component is placed at its preferred size along the main
 axis; perpendicular axis is aligned according to `getAlignmentX/Y`. The Box class
 provides `glue` (expanding empty space) and `struts` (fixed-size spacers):

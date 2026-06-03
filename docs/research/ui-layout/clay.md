@@ -167,8 +167,8 @@ small helper struct.
 
 `childGap` is a single `uint16_t` that controls the spacing between
 adjacent siblings on the main axis. When `layoutDirection ==
-CLAY_LEFT_TO_RIGHT`, `childGap` is horizontal whitespace between children;
-when `layoutDirection == CLAY_TOP_TO_BOTTOM`, it is vertical whitespace.
+`CLAY_LEFT_TO_RIGHT``, `childGap`is horizontal whitespace between children;
+when`layoutDirection == CLAY_TOP_TO_BOTTOM`, it is vertical whitespace.
 There is no separate row-gap/column-gap concept because Clay does not wrap.
 
 `childAlignment` is a `Clay_ChildAlignment` with two axis values:
@@ -590,7 +590,7 @@ language's idioms.
 | C++      | Idiomatic dir | `bindings/cpp/`                      |
 
 The Odin bindings are particularly polished -- they ship with prebuilt
-static libraries for Linux, macOS (x86_64 and arm64), Windows, and
+static libraries for Linux, macOS (`x86_64` and arm64), Windows, and
 WebAssembly, and they include a full port of the Clay-website example.
 The Rust bindings (in a separate repo, `clay-ui-rs/clay`) wrap the C
 header via `bindgen` and expose an ergonomic builder API.

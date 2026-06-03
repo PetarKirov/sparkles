@@ -186,7 +186,7 @@ Cats Effect fibers are roughly **3x smaller** than [ZIO] fibers in memory, since
 
 ### io_uring Integration (v3.6.0)
 
-The integrated runtime in CE 3.6.0 brought io_uring support, with observed **3.5x performance improvements** for HTTP microservices on http4s Ember. For how this fiber runtime relates to OS event loops and io_uring, see [Effects and Event Loops] and the [Async I/O Runtime Comparison].
+The integrated runtime in CE 3.6.0 brought `io_uring` support, with observed **3.5x performance improvements** for HTTP microservices on http4s Ember. For how this fiber runtime relates to OS event loops and `io_uring`, see [Effects and Event Loops] and the [Async I/O Runtime Comparison].
 
 ---
 
@@ -230,7 +230,7 @@ The tagless final approach means the same library code works with any compliant 
 - **Rich ecosystem**: fs2, http4s, doobie, etc. -- the largest FP Scala library ecosystem
 - **Principled design**: Orthogonal typeclasses with laws; Discipline-based testing
 - **CE3 hierarchy**: Better effect reasoning than CE2 by pushing Sync/Async down
-- **io_uring support**: State-of-the-art I/O performance on Linux
+- **`io_uring` support**: State-of-the-art I/O performance on Linux
 
 ## Weaknesses
 
