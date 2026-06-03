@@ -1,97 +1,155 @@
 # Unison
 
-A statically-typed functional programming language with content-addressed code and an algebraic effect system called abilities, designed for distributed computing.
+A statically-typed functional language with content-addressed code and an algebraic-effect system called **abilities**, run by a Haskell-implemented **ANF bytecode abstract machine** that handles abilities by capturing delimited continuations on its own continuation stack and bridges all `IO`/concurrency to the **GHC runtime system** (`forkIO`/`MVar`/`threadDelay`/STM) — there is no event loop and no io_uring inside Unison.
 
-| Field         | Value                                                                                      |
-| ------------- | ------------------------------------------------------------------------------------------ |
-| Language      | Unison                                                                                     |
-| License       | MIT                                                                                        |
-| Repository    | [Unison GitHub repository]                                                                 |
-| Documentation | [Unison language documentation]                                                            |
-| Key Authors   | Paul Chiusano, Runar Bjarnason, Arya Irani                                                 |
-| Encoding      | Abilities (algebraic effects) with content-addressed code storage and ambient polymorphism |
+| Field         | Value                                                                                                                                     |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Language      | Unison (runtime + compiler written in Haskell)                                                                                            |
+| License       | MIT (Unison Computing, public benefit corp, 2013–2024)                                                                                    |
+| Repository    | [Unison GitHub repository] (`unison-runtime/` holds the abstract machine)                                                                 |
+| Documentation | [Unison language documentation] / [runtime design notes]                                                                                  |
+| Releases      | 1.0 (Nov 2025) through 1.3.0 (May 2026); analysis tracks `trunk` (commit `0452fca`, May 2026)                                             |
+| Key Authors   | Paul Chiusano, Rúnar Bjarnason, Arya Irani, Dan Doel (runtime), Chris Penner (runtime), Mitchell Rosen                                    |
+| Encoding      | Abilities (algebraic effects) as `Request` values; delimited continuations captured on the machine's `K` stack; IO bridged to the GHC RTS |
 
 ---
 
 ## Overview
 
-### What It Solves
+### What it solves
 
-Unison addresses several interconnected problems. First, it provides an effect system -- called _abilities_ -- that tracks computational effects in types without requiring monadic notation, enabling direct-style effectful programming. Second, it eliminates an entire class of software engineering problems (builds, dependency conflicts, serialization) through content-addressed code: every definition is identified by a hash of its syntax tree rather than by name. Third, it leverages these properties for distributed computing, where code can be transparently deployed and executed across nodes because functions are globally addressable by hash.
+Unison addresses three interlocking problems with one design.
 
-### Design Philosophy
+1. **Effects in types without monads.** _Abilities_ track computational effects in
+   function types and let you call effectful operations in direct style — no
+   do-notation, no transformer stacks. The runtime, not the type system alone, makes
+   this work: it manipulates continuations so a handler can resume, drop, or re-run the
+   rest of a computation.
+2. **Builds, dependency hell, serialization.** Every definition is identified by a hash
+   of its (ANF-normalized) syntax tree. Names are metadata over hashes, so renaming
+   never breaks anything, recompilation is perfectly incremental, and there is no link
+   step.
+3. **Distribution.** Because code is content-addressed and the runtime can hash,
+   serialize, deserialize, and decompile _any_ value (including functions and captured
+   continuations), code can be shipped to remote nodes by hash. The runtime design notes
+   ([`unison-runtime/src/Unison/Runtime/docs.markdown`][runtime design notes]) make this
+   an explicit design constraint: "_it needs to be possible to have functions like
+   `encode : forall a . a -> Bytes`_", and "_The runtime should support algebraic
+   effects, which requires being able to manipulate continuations of a running
+   program._"
 
-Unison's abilities system is directly inspired by the [Frank] language (Lindley, McBride, McLaughlin, 2017). Like [Frank], Unison uses ambient ability polymorphism where effects propagate inward through the typing context rather than accumulating outward. However, Unison diverges from [Frank] in two key ways: ability polymorphism is provided by ordinary polymorphic type variables rather than implicit ambient propagation, and ability handling uses an explicit `handle ... with` construct rather than overloading function application.
+### Design philosophy
 
-The content-addressed codebase is Unison's other foundational idea. Code is stored as hashed abstract syntax trees in a database (not as text files), managed by the Unison Codebase Manager (UCM). Names are metadata pointing to hashes, so renaming never breaks anything, there are no build steps, and dependency conflicts based on name collisions are eliminated. This design also enables Unison Cloud, where functions can be deployed to remote nodes by hash reference.
+Unison's abilities are based on [Frank] (Lindley, McBride, McLaughlin, _Do Be Do Be Do_,
+POPL 2017). Like Frank, abilities propagate through the typing context rather than being
+threaded explicitly; unlike Frank, ability polymorphism is carried by ordinary
+polymorphic type variables and handling uses an explicit `handle … with` form rather
+than overloaded application.
+
+The runtime philosophy is stated bluntly in the design notes: "_This first version of the
+Haskell runtime isn't aiming for extreme speed. It should be correct, simple, and easy
+for us to understand and maintain._" The architecture is deliberately **modular** — term
+→ let-rec-minimization → lambda-lifting → **A-normal form (ANF)** → **MCode** (a flat
+bytecode) → evaluation — so that the front end can later target a faster backend without
+rewriting everything. That faster backend is now in progress: a **JIT compiling to Chez
+Scheme** (see _Performance approach_), chosen precisely because LLVM "_doesn't provide
+any runtime services out of the box, such as a garbage collector, continuations and/or
+delimited continuations, lightweight threads, async I/O._"
+
+The crucial point for an effects/async survey: Unison does **not** own an event loop the
+way [Go's netpoller](../async-io/go-netpoller.md) or [Eio](../async-io/eio-backend.md)
+do. Unison's abstract machine owns only the **continuation stack and the ability
+dispatch**; everything that actually blocks on the kernel is a _foreign call_ into the
+GHC RTS, which owns the I/O manager and the M:N green-thread scheduler. Contrast this
+with [OCaml 5 + Eio](../async-io/effects-and-event-loops.md), where the _language_
+runtime suspends an effect and a _user-space_ scheduler drives io_uring.
 
 ---
 
-## Core Abstractions and Types
+## Core abstractions and types
 
-### Ability Requirements in Types
+### Ability requirements in types
 
-Abilities appear in function types as annotations in curly braces to the right of arrows:
+Abilities appear to the right of arrows in `{}`:
 
 ```unison
--- A pure function: no abilities required
-increment : Nat -> Nat
+increment : Nat -> Nat              -- pure, no abilities
 increment n = n + 1
 
--- A function requiring the IO ability
-readFile : Text ->{IO} Text
-
--- A function requiring multiple abilities
+readFile : Text ->{IO} Text         -- requires IO
 riskyRead : Text ->{IO, Exception} Text
-
--- A function with an empty ability set (explicitly pure)
-pureAdd : Nat -> Nat ->{} Nat
-pureAdd a b = a + b
+pureAdd : Nat -> Nat ->{} Nat       -- explicitly pure (empty ability set)
 ```
 
-The ability set `{IO, Exception}` means the function may perform IO operations and may raise exceptions. An empty set `{}` means the function is guaranteed pure. Omitting the braces entirely makes the function ability-polymorphic.
+Omitting the braces makes a function ability-polymorphic; the inferred type carries an
+ability variable (commonly written `g`).
 
-### The Request Type
+### The `Request` value (and how it is _represented_ at runtime)
 
-The built-in `Request` type is how Unison represents ability operations flowing to handlers:
+A handler conceptually receives values of the built-in `Request a r` type: if `e :
+{A} T` and `h : Request A T -> R`, then `handle e with h : R`. The runtime design notes
+describe the conceptual shape directly:
 
-```unison
--- If e has type {A} T and h has type Request A T -> R,
--- then (handle e with h) has type R
+```text
+-- from unison-runtime/src/Unison/Runtime/docs.markdown
+Request Reference CtorId [v]  IR
+--      ability   ctor   args continuation
 ```
 
-`Request` is a special type constructor provided by the runtime. Handlers pattern-match on `Request` values to intercept ability operations.
+In the _current_ machine there is no boxed `Request` constructor sitting around at all
+times. Instead, when an ability operation reaches a handler, the machine wraps the
+captured payload in a one-field data closure tagged with the special `effectRef`:
 
-### Structural vs Unique Types
+```haskell
+-- unison-runtime/src/Unison/Runtime/Machine.hs  (yield/leap)
+leap (Mark a ps cs k) | HEnv aenv0 denv0 <- henv0 = do
+  ...
+  v   <- peek stk
+  stk <- bump stk
+  bpoke stk $ Data1 Rf.effectRef (PackedTag 0) v   -- this *is* the Request value
+  ...
+  apply yld env henv activeThreads stk k False (VArg1 0) h  -- invoke handler h
+```
 
-Unison types (including abilities) can be `structural` or `unique`:
+A handler is compiled into a `MatchRequest` over this value; the machine's `RMatch`
+instruction inspects the tag, taking the _pure_ branch when the tag is `pureEffectTag`
+(`PackedTag 0`, defined in `Unison/Runtime/TypeTags.hs`) and otherwise unpacking the
+`(ability, constructor)` tag pair to select the right request branch:
+
+```haskell
+-- unison-runtime/src/Unison/Runtime/Machine.hs  (eval' for RMatch)
+(t, stk) <- dumpDataValNoTag stk =<< peekOff stk i
+if t == TT.pureEffectTag
+  then eval ... pu                       -- pure return case  { a }
+  else case ANF.unpackTags t of
+    (ANF.rawTag -> e, ANF.rawTag -> t)
+      | Just ebs <- EC.lookup e br -> eval ... (selectBranch t ebs)
+      | otherwise -> unhandledAbilityRequest
+```
+
+### Structural vs unique abilities
 
 ```unison
--- Structural: identified by structure alone
-structural ability Store a where
+structural ability Store a where        -- identified by structure
   Store.get : {Store a} a
   Store.put : a ->{Store a} ()
 
--- Unique: identified by name (the default for types)
-unique ability MyLogger where
+unique ability MyLogger where           -- identified by a fresh GUID
   MyLogger.log : Text ->{MyLogger} ()
 ```
 
-Structural types are considered equivalent when their constructors and parameters match structurally. Unique types are distinct even if structurally identical. Most abilities in the standard library are structural.
+Structural abilities are equal when their constructors line up; unique abilities are
+distinct even if structurally identical. Each constructor is compiled by ANF to a request
+former (`anfFunc (Request' (ConstructorReference r t)) = … FReq r t`, in
+`Unison/Runtime/ANF.hs`).
 
 ---
 
-## How Effects Are Declared
+## How effects are declared
 
-### Ability Declarations
-
-An ability is declared with the `structural ability` or `unique ability` keyword, followed by a name, optional type parameters, and a `where` block listing request constructors:
+### Ability declarations
 
 ```unison
-structural ability Store a where
-  Store.get : {Store a} a
-  Store.put : a ->{Store a} ()
-
 structural ability Abort where
   Abort.abort : {Abort} a
 
@@ -102,226 +160,372 @@ structural ability Ask a where
   Ask.ask : {Ask a} a
 ```
 
-Each request constructor is a function signature declaring the operation's arguments, required abilities, and return type. The ability name appears in the curly braces of its own constructors.
-
-### Using Abilities in Functions
-
-Functions declare ability requirements in their type signatures:
+### Using abilities
 
 ```unison
--- This function requires the Store ability
 counter : Nat ->{Store Nat} Nat
 counter times =
   current = Store.get
   Store.put (current + times)
   Store.get
-
--- This function requires both Abort and Stream
-filteredStream : [Nat] ->{Stream Nat, Abort} ()
-filteredStream items =
-  List.foreach items cases
-    0 -> Abort.abort
-    n -> Stream.emit n
 ```
 
-### Ability Polymorphism
+Calling `Store.get` is, at the bytecode level, a _reference into the dynamic environment_:
+`resolve` looks the ability up by its numeric tag in the handler environment and either
+finds an installed handler value (`denv`) or an affine-handler reference (`aenv`):
 
-Unison infers ability polymorphism using type variables. A function like `List.map` is ability-polymorphic -- it works whether or not the mapped function performs effects:
-
-```unison
--- The inferred type includes an ability variable g:
--- List.map : (a ->{g} b) -> [a] ->{g} [b]
--- This means map inherits whatever abilities its argument needs
+```haskell
+-- unison-runtime/src/Unison/Runtime/Machine.hs
+resolve env (HEnv aenv denv) _ (Dyn i)
+  | Just v       <- EC.lookup i denv = pure v
+  | Just (ARef r)<- EC.lookup i aenv = BoxedVal <$> readIORef r
+  | otherwise    = unhandledErr "resolve" env i      -- "unhandled ability request"
 ```
+
+### Ability polymorphism
+
+`List.map : (a ->{g} b) -> [a] ->{g} [b]` is ability-polymorphic via the type variable
+`g`: the inferred row inherits whatever abilities the mapped function needs.
 
 ---
 
-## How Handlers/Interpreters Work
+## How handlers / interpreters work
 
-### The handle ... with Construct
-
-Handlers use `handle ... with` to intercept ability operations from a computation:
+### Surface syntax: `handle … with`
 
 ```unison
 Abort.toOptional : '{g, Abort} a ->{g} Optional a
 Abort.toOptional f =
   handle !f with cases
-    { a }                 -> Some a
-    { Abort.abort -> _ }  -> None
-```
+    { a }                -> Some a              -- pure case
+    { Abort.abort -> _ } -> None                -- request case; continuation discarded
 
-The handler receives a `Request Abort a` and pattern-matches on two cases: the _pure case_ `{ a }` where the computation completed without aborting, and the _request case_ `{ Abort.abort -> _ }` where `abort` was called. The underscore discards the continuation since abort terminates execution.
-
-### Continuations and Resuming
-
-When a handler intercepts a request, it receives a _continuation_ representing the rest of the computation. The handler can call, ignore, or multiply-invoke this continuation:
-
-```unison
 Store.run : s -> '{g, Store s} a ->{g} a
 Store.run initial f =
   go state = cases
-    { a }                  -> a
-    { Store.get -> resume }    -> handle resume state with go state
-    { Store.put s -> resume }  -> handle resume () with go s
+    { a }                     -> a
+    { Store.get   -> resume } -> handle resume state with go state
+    { Store.put s -> resume } -> handle resume () with go s
   handle !f with go initial
 ```
 
-In `{ Store.get -> resume }`, the variable `resume` is the continuation. Calling `resume state` provides the value `state` as the return value of `Store.get` and continues execution. The recursive `handle resume ... with go ...` ensures subsequent ability operations are also handled.
+`resume` is the **delimited continuation** — the rest of the computation up to this
+handler. The handler may call it (resume), ignore it (abort), or call it more than once
+(non-determinism / generators).
 
-### Stateful Handlers
+### The continuation stack and marks (the real mechanism)
 
-Handlers can thread state by passing updated values through recursive calls:
+A `handle … with` compiles, through ANF's `AHnd`/`AShift` nodes
+(`Unison/Runtime/ANF.hs`), into two MCode instructions
+(`Unison/Runtime/MCode.hs`):
 
-```unison
-Stream.toList : '{g, Stream a} r ->{g} [a]
-Stream.toList f =
-  go acc = cases
-    { _ }                       -> List.reverse acc
-    { Stream.emit a -> resume } -> handle resume () with go (a +: acc)
-  handle !f with go []
+- **`Reset !(EnumSet Word64) !Int !(Maybe Int)`** — installs a handler for a set of
+  ability tags by pushing a **prompt marker** onto the continuation stack.
+- **`Capture !Word64`** — captures the continuation up to a given prompt tag, producing a
+  reusable continuation value.
+
+The continuation stack is the `K` type in `Unison/Runtime/Stack.hs`. Its relevant
+constructors are exactly the markers and frames the machine walks during ability dispatch:
+
+```haskell
+-- unison-runtime/src/Unison/Runtime/Stack.hs
+data K
+  = KE                                   -- empty continuation (bottom)
+  | CB Callback                          -- foreign/callback hook
+  | AMark !Int AEnv !AffineRef !K        -- affine prompt marker (see optimization below)
+  | Mark  !Int !(EnumSet Word64) DEnv !K -- prompt marker for a set of ability tags
+  | Push  !Int !Int !CombIx !Int !(RSection Val) !K   -- a frame to resume
+  | Local HEnv !Int !K                   -- saved env during an affine handler
+  | forall a. Keep !a !Int !K            -- GC anchor
 ```
 
-Each `emit` appends the emitted value to the accumulator, and the final pure case reverses the accumulated list.
+**Installing a handler.** `exec … (Reset ps nhi mah)` (in `Machine.hs`) unions the new
+handler into the dynamic environment `denv` and pushes a `Mark a ps clos k` frame that
+records which ability tags `ps` this handler intercepts and the previously-shadowed
+handlers `clos` (so they can be restored on the way out).
 
-### Nesting Handlers
+**Performing an operation → handing it to the handler.** When the active computation
+_yields_ a value past a `Mark`, `yield`'s inner `leap` (shown above) fires: it builds the
+`Data1 Rf.effectRef …` request value, looks up the handler `h` keyed by the prompt's
+minimum ability tag, restores the shadowed environment, and `apply`s `h` to the request.
 
-When a function requires multiple abilities, handlers are nested, each peeling off one ability:
+**Capturing the continuation.** `Capture p` calls `splitCont`, which **walks the `K`
+stack** accumulating how many data-stack cells lie above the matching prompt `p`, then
+grabs that slice into a `Captured` closure:
+
+```haskell
+-- unison-runtime/src/Unison/Runtime/Machine.hs  (splitCont)
+walk !denv !sz !ck (Mark a ps cs k)
+  | EC.member p ps = finish denv' sz a ck k          -- found our prompt: stop here
+  | otherwise      = walk denv' (sz + a) (Mark a ps cs' ck) k
+...
+finish !denv !sz !a !ck !k = do
+  (seg, stk) <- grabSeg stk sz
+  stk <- adjustArgs stk a
+  return (BoxedVal $ Captured ck asz seg, denv, stk, k)   -- a reusable continuation
+```
+
+The result is a `Captured` closure (`GCaptured !K !Int !Seg` in `Stack.hs`) holding the
+code continuation, the pending-argument size, and the captured data-stack segment.
+
+**Resuming.** Invoking a captured continuation routes through `jump`, which `repush`es the
+captured `K` frames back onto the live stack, threading the dynamic environment through
+each `Mark` it re-enters:
+
+```haskell
+-- unison-runtime/src/Unison/Runtime/Machine.hs  (repush)
+go !denv (Mark a ps cs sk) !k = go denv' sk $ Mark a ps cs' k
+  where denv' = cs <> EC.withoutKeys denv ps
+        cs'   = EC.restrictKeys denv ps
+```
+
+Because the captured segment is a copied stack slice, `resume` can be invoked zero, one,
+or many times — that is what makes Unison handlers full _multi-shot_ delimited
+continuations (and what the JIT effort calls out as the hard part to reimplement).
+
+### The affine-handler fast path (recent optimization)
+
+A large fraction of real handlers are _affine_: they either never resume (exception-like)
+or resume the continuation **in tail position with a handler for the same abilities**
+(the typical deep recursive handler, like `Store.run` above). For these, capturing and
+copying a continuation segment is pure overhead. The runtime now special-cases them
+(`Stack.hs` comment): "_The advantage of affine handlers is that they do not need to be
+implemented by continuation capture. Case 1 can be implemented by simply discarding the
+continuation … it is sufficient to simply keep track of the current state of each
+handler._"
+
+This adds a parallel mechanism: an `AMark` prompt holds a mutable `AffineRef` (an
+`IORef Closure`); the `GAffine` closure carries the handler's ability set and environment;
+`Discard` aborts an affine continuation (`abortCont`) without copying; `InLocal`/`Local`
+and `SetAff`/`AUpdate` let an affine handler update its own state in place. The
+`Reset` instruction picks the affine path when "_denv is null, and there's an affine
+handler_". This is the runtime's answer to the standard criticism that delimited-
+continuation effect handlers are slow: keep handlers affine and you pay no capture cost.
+(Affine handlers were merged in 2025; see `Stack.hs` `GAffine` and the
+`affine-handler` transcripts in the repo.)
+
+### Nesting handlers
 
 ```unison
-program : '{Store Nat, Stream Text, Abort} ()
-
 result : Optional [Text]
-result =
-  Abort.toOptional '(Stream.toList '(Store.run 0 program))
+result = Abort.toOptional '(Stream.toList '(Store.run 0 program))
 ```
 
-The order of nesting determines semantics -- for example, whether state resets on abort depends on which handler is outermost.
+Each `handle` peels one ability off the row; nesting order is semantically significant
+(e.g. whether `Store` state survives an `Abort`). Internally each is one more `Mark`
+frame on the `K` stack.
 
 ---
 
-## Performance Approach
+## Performance approach
 
-Unison's runtime has evolved through several iterations:
-
-- **Haskell-based interpreter**: The original UCM runtime interprets Unison code via the Haskell-based codebase manager
-- **Native runtime**: A newer runtime compiles Unison to native code for improved performance, with ongoing development
-- **Content-addressed caching**: Because definitions are identified by hash, compilation results are cached perfectly -- recompilation only occurs when the actual implementation changes, not when names or formatting change
-- **Incremental compilation**: The hash-based system provides perfect incremental compilation; changing one function only recompiles its dependents
-
-Ability handling uses continuation-based dispatch. Each ability operation allocates a continuation representing the rest of the computation, which the handler can then invoke. This is standard for algebraic effect implementations and incurs per-operation overhead compared to direct function calls.
-
-The distributed computing model (Unison Cloud) transmits function hashes rather than serialized code, with nodes fetching implementations on demand. This avoids traditional serialization overhead but introduces network latency for cold function lookups.
+- **ANF + flat bytecode.** Let-rec minimization arranges that "_`let` is the one place in
+  the runtime where we need to expect an ability request_", which "_makes it very easy to
+  construct the continuations which are passed to the ability handlers_" (design notes).
+  ANF is then lowered to **MCode** (`MCode.hs`), a flat instruction set
+  (`App`, `Call`, `Jump`, `Let`, `Match`, `Reset`, `Capture`, `ForeignCall`, …) executed
+  by `eval'`/`exec` in `Machine.hs`. The boxed/unboxed data stack lives in `Stack.hs`
+  with `BangPatterns`, `MagicHash`, and `UnboxedTuples` for speed.
+- **Affine-handler avoidance of capture** (above) removes the per-operation continuation
+  copy in the common case.
+- **Content-addressed caching.** Definitions are keyed by hash, so the `cacheAdd` path in
+  `Machine.hs` compiles each combinator once; recompilation only happens when an
+  _implementation_ changes, never on rename or reformat — perfect incremental
+  compilation.
+- **JIT to Chez Scheme (in progress).** The successor backend compiles Unison to **Chez
+  Scheme** rather than LLVM, for its tail calls, dynamic code loading, GC, and
+  _delimited continuations_ — exactly the runtime services abilities need. Early
+  arithmetic microbenchmarks reported ~470× over the interpreter; the open challenge is
+  reimplementing ability handlers via Scheme's delimited continuations. See
+  [JIT compilation is coming to Unison].
+- **No event loop.** The machine never polls; blocking is delegated to the GHC RTS (next
+  section). This is the opposite end of the spectrum from
+  [the netpoller](../async-io/go-netpoller.md), where the _language runtime_ integrates an
+  epoll/kqueue/IOCP loop with its scheduler.
 
 ---
 
-## Composability Model
+## How `IO` and concurrency work — the GHC-RTS bridge
 
-### Ability Composition
+There is **no io_uring, no epoll loop, and no user-space scheduler in Unison's runtime.**
+The built-in `IO` ability is handled by the machine evaluating it down to **foreign
+calls** that delegate straight to GHC's `base`/`concurrent` libraries; GHC's threaded
+RTS then provides green threads, the I/O manager, and the scheduler.
 
-Multiple abilities compose naturally in type signatures as comma-separated lists:
+- **Spawning threads.** The `IO.forkComp.v2` builtin compiles to the `FORK` primop
+  (`fork'comp` in `Builtin.hs`), whose `exec` case runs `forkEval`, which is literally
+  `UnliftIO.forkFinally` over `forkIO`:
+
+  ```haskell
+  -- unison-runtime/src/Unison/Runtime/Machine.hs
+  forkEval env activeThreads clo = do
+    threadId <- UnliftIO.forkFinally (apply1 err env activeThreads clo) (const cleanupThread)
+    trackThread threadId
+    pure threadId
+  ```
+
+  Spawned `ThreadId`s are recorded in an `ActiveThreads` `IORef` so the host can reap them.
+
+- **Sleeping.** `IO.delay` (`IO_delay_impl_v3`) is `threadDelay`, with a loop to handle
+  delays larger than `maxBound :: Int`:
+
+  ```haskell
+  -- unison-runtime/src/Unison/Runtime/Foreign/Function.hs
+  IO_delay_impl_v3 -> mkForeignIOF customDelay
+  ...
+  customDelay n
+    | n < mx    = threadDelay (fromIntegral n)
+    | otherwise = threadDelay maxBound >> customDelay (n - mx)
+  ```
+
+- **Killing threads.** `IO_kill_impl_v3 -> mkForeignIOF killThread`.
+
+- **Synchronization.** `MVar.*` map one-to-one onto `Control.Concurrent.MVar`
+  (`newMVar`, `takeMVar`, `putMVar`, `tryTakeMVar`, `readMVar`, …) over `MVar Val`.
+
+- **Transactions.** `STM.atomically` compiles to the `ATOM` primop, whose `exec`
+  case (`Atomically i`) runs the computation inside GHC STM via
+  `atomically . unsafeIOToSTM …`; `TVar.*` and `STM.retry` wrap
+  `Control.Concurrent.STM`.
+
+- **Sockets / files / processes** are GHC foreign calls too (`IO_serverSocket_impl_v3`,
+  `IO_socketAccept_impl_v3`, `runInteractiveProcess`, …). Blocking socket reads block a
+  green thread; the GHC I/O manager (epoll/kqueue on the platform) unblocks it. None of
+  this is visible to, or controlled by, the Unison machine.
+
+The imports at the top of `Foreign/Function.hs` make the dependency explicit:
+`import Control.Concurrent (ThreadId, forkIO)`, `import Control.Concurrent as SYS
+(killThread, threadDelay)`, `import Control.Concurrent.MVar as SYS`,
+`import Control.Concurrent.STM qualified as STM`.
+
+So Unison's async story is: **abilities give the suspension/structuring vocabulary;
+the GHC runtime is the event loop.** For a worked example of the _other_ arrangement —
+language effect + user-space `io_uring` scheduler — see
+[Effect systems & event loops](../async-io/effects-and-event-loops.md). For "runtime
+owns the readiness loop with no user-facing event loop," see
+[Go's netpoller](../async-io/go-netpoller.md); Unison is similar in that the _programmer_
+never sees a loop, but different in that the loop lives in GHC, not in Unison's own
+scheduler.
+
+---
+
+## Composability model
+
+### Ability composition
 
 ```unison
 complexProgram : Text ->{IO, Exception, Store Config, Stream LogEntry} Result
 ```
 
-Each ability is independent and handled separately. The type system ensures all abilities are handled before a computation can be executed at the top level (with the exception of `IO` and `Exception`, which the UCM runtime handles directly).
+Abilities compose as a comma-separated row; each is handled independently. The type system
+requires every ability to be handled before top-level execution, **except** `IO` and
+`Exception`, for which the runtime supplies default handling — `resolveExceptionHandler`
+in `Machine.hs` looks `Exception` up by `exceptionTag` in the handler environment, and an
+unhandled non-`IO`/`Exception` request reaches `unhandledAbilityRequest`.
 
-### Handler Composition via Nesting
+### Handler composition via nesting
 
-Handlers compose by nesting, with each handler removing one ability from the requirement set:
-
-```unison
--- Start: '{IO, Store Config, Stream LogEntry} Result
--- After Store.run: '{IO, Stream LogEntry} Result
--- After Stream.toList: '{IO} [LogEntry]
--- IO is handled by the runtime
+```text
+'{IO, Store Config, Stream LogEntry} Result
+  -- after Store.run   -> '{IO, Stream LogEntry} Result
+  -- after Stream.toList-> '{IO} [LogEntry]
+  -- IO handled by the runtime (GHC RTS)
 ```
 
-### Abilities and Distributed Computing
+### Abilities and distributed computing
 
-Abilities integrate with Unison's distributed computing model through the `Remote` ability, which enables forking computations to remote nodes:
+Because the runtime can serialize/deserialize/decompile any value (a stated design
+constraint) and code is content-addressed, computations — including captured
+continuations — can be shipped by hash. A `Remote` ability (in the Unison Cloud library —
+described as "_the I/O of the Cloud_") makes distribution explicit in types while
+keeping the call site looking local. The same `splitCont`/`Captured` machinery that
+implements local handlers is what makes a continuation a transmissible value.
 
-```unison
--- The Remote ability enables distributed execution
-distributedMap : (a ->{Remote} b) -> [a] ->{Remote} [b]
-```
+### Built-in abilities
 
-Because Unison code is content-addressed, functions can be transparently shipped to remote nodes -- the receiving node fetches the function implementation by hash. The `Remote` ability makes distribution explicit in the type system while keeping the programming model close to local function calls.
-
-A local handler (`Remote.pure.run`) enables testing distributed programs without deploying to actual infrastructure.
-
-### Built-in Abilities
-
-Unison provides several built-in abilities:
-
-| Ability     | Purpose                               |
-| ----------- | ------------------------------------- |
-| `IO`        | General input/output operations       |
-| `Exception` | Raising failures (typed as `Failure`) |
-| `STM`       | Software transactional memory         |
-| `Scope`     | Scoped mutable references             |
-
-`IO` and `Exception` are special: they can remain unhandled in the return type of `run` commands, with the UCM runtime providing default handlers.
+| Ability     | Purpose                                    | Runtime backing                        |
+| ----------- | ------------------------------------------ | -------------------------------------- |
+| `IO`        | General input/output                       | GHC foreign calls (`forkIO`, sockets…) |
+| `Exception` | Typed failures (`Failure`)                 | `resolveExceptionHandler` + GHC `try`  |
+| `STM`       | Software transactional memory              | GHC `Control.Concurrent.STM`           |
+| `Scope`     | Scoped mutable references / region cleanup | machine-managed scope + GHC `IORef`    |
 
 ---
 
 ## Strengths
 
-- **Content-addressed code** eliminates builds, dependency conflicts, and serialization problems; enables perfect incremental compilation and caching
-- **Direct-style effects** -- no monadic do-notation or transformer stacks; abilities look like ordinary function calls
-- **Distributed computing** is a natural extension of the content-addressed model; code deploys by hash reference
-- **Effect tracking in types** ensures all side effects are visible in function signatures; pure functions are guaranteed pure
-- **Handler swappability** makes testing straightforward -- swap a real IO handler for an in-memory mock with no code changes
-- **Rename safety** -- because code is identified by hash, renaming never breaks anything
-- **Growing ecosystem** via Unison Share, a platform for publishing and discovering Unison libraries
+- **Direct-style effects** with full multi-shot handlers, implemented by genuine
+  delimited-continuation capture on the machine's `K` stack — no monad transformers.
+- **Affine-handler fast path** removes continuation-copy overhead for the common
+  recursive/exception-like handlers, a concrete answer to "effect handlers are slow."
+- **Content-addressed code** → no builds, no dependency conflicts, perfect incremental
+  compilation and caching, rename safety.
+- **Serializable values & continuations** are a runtime design constraint, enabling
+  transparent distribution by hash.
+- **Effects visible in types**; pure functions are provably pure.
+- **Handler swappability** makes testing trivial (real `IO` ↔ in-memory mock).
 
 ## Weaknesses
 
-- **Unfamiliar workflow** -- code-as-database rather than text files requires learning new tooling (UCM) and abandoning file-based workflows
-- **Small ecosystem** compared to established languages; limited library availability
-- **No traditional text files** -- while UCM can render code as text for editing, the database-first model conflicts with standard version control, editors, and CI tooling
-- **Performance** is still maturing; the native runtime is under active development
-- **Learning curve** for abilities, especially understanding continuations and recursive handler patterns
-- **Limited IDE support** -- tooling beyond the UCM and basic editor integration is still developing
-- **Vendor coupling** for distributed features -- Unison Cloud is a commercial platform from Unison Computing
+- **Interpreter overhead.** The current machine is explicitly "_not aiming for extreme
+  speed_"; the Chez-Scheme JIT that closes this gap is still in progress and does not yet
+  handle ability handlers.
+- **Multi-shot continuations are expensive** when handlers are _not_ affine (full
+  `splitCont` segment copy per operation).
+- **Unfamiliar workflow** — code-as-database (UCM), not text files; clashes with git
+  diff, grep, and standard editors/CI.
+- **Small ecosystem**; base library hosting has migrated to Unison Share and the
+  in-repo `base/` is now a deprecated historical snapshot.
+- **IO is whatever GHC offers.** No io_uring, no pluggable scheduler; concurrency
+  characteristics are inherited from the GHC RTS rather than tunable by the program.
+- **Learning curve** for abilities, continuations, and recursive handler patterns.
+- **Vendor coupling** for the richest distributed features (Unison Cloud).
 
-## Key Design Decisions and Trade-offs
+## Key design decisions and trade-offs
 
-| Decision                                    | Rationale                                                                             | Trade-off                                                                                           |
-| ------------------------------------------- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| Content-addressed code                      | Eliminates builds, enables distributed deployment, perfect caching                    | Abandons text-file workflow; incompatible with traditional VCS and tooling                          |
-| Abilities over monads                       | Direct-style programming; effects as function properties, not value wrappers          | Less mature ecosystem than Haskell's monad transformer libraries                                    |
-| Explicit `handle ... with` (unlike [Frank]) | Clearer separation between using and handling effects                                 | More verbose than [Frank]'s implicit handler syntax                                                 |
-| Structural vs unique abilities              | Structural enables cross-library compatibility; unique prevents accidental conflation | Users must choose correctly; structural abilities can collide if structures match                   |
-| Ability polymorphism via type variables     | Integrates with standard parametric polymorphism                                      | More explicit than [Frank]'s invisible effect variables; ability variables appear in inferred types |
-| Database-backed codebase                    | Enables semantic versioning, type-indexed search, perfect dependency tracking         | Cannot use grep, git diff, or standard text tools directly on source code                           |
-| Unison Cloud as commercial platform         | Funds continued language development through public benefit corporation               | Creates vendor dependency for distributed computing features                                        |
+| Decision                                                                            | Rationale                                                                                     | Trade-off                                                                       |
+| ----------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| Handle abilities at `let` only, via ANF                                             | Makes continuation construction "_very easy_"; one place to deal with requests                | Requires a normalization pass and a flat bytecode (`MCode`) layer               |
+| Delimited continuations on a machine-owned `K` stack (`Mark`/`Capture`/`splitCont`) | Full multi-shot handlers; continuations are first-class, serializable values                  | Per-operation segment copy is costly unless avoided                             |
+| Affine-handler fast path (`AMark`/`GAffine`/`Discard`)                              | Most handlers never copy a continuation; in-place state update                                | Extra machine complexity; only applies while no non-affine handler is installed |
+| Bridge `IO`/concurrency to the GHC RTS                                              | Reuse a mature scheduler, I/O manager, STM, green threads — runtime stays "_correct, simple_" | No control over the event loop; no io_uring; perf tied to GHC                   |
+| Content-addressed code                                                              | Eliminates builds & dependency conflicts; perfect caching; enables distribution by hash       | Abandons text-file/VCS/grep workflow; needs UCM                                 |
+| Abilities over monads (Frank-inspired)                                              | Direct-style effectful code; effects as a type row                                            | Younger ecosystem than Haskell's transformer libraries                          |
+| Explicit `handle … with` (unlike [Frank])                                           | Clear separation of using vs handling effects                                                 | More verbose than Frank's implicit handling                                     |
+| JIT targets Chez Scheme, not LLVM                                                   | Need GC + delimited continuations + tail calls + green threads "_out of the box_"             | Another runtime to maintain; handlers not yet ported to the JIT                 |
 
 ---
 
 ## Sources
 
 - [Unison language documentation]
-- [Unison GitHub repository]
+- [Unison GitHub repository] — `unison-runtime/src/Unison/Runtime/{Machine,ANF,MCode,Stack,Builtin}.hs`, `Foreign/Function.hs`
+- [runtime design notes] (`unison-runtime/src/Unison/Runtime/docs.markdown`)
 - [Abilities and ability handlers (language reference)]
 - [Ability declaration (language reference)]
-- [Writing your own abilities]
+- [Abilities: a mental model]
+- [Announcing Unison 1.0]
+- [JIT compilation is coming to Unison]
 - [The big idea: content-addressed code]
 - [Unison Cloud documentation]
-- [Unison annotated bibliography]
 - [Do Be Do Be Do (Frank paper, POPL 2017)]
-- [About Unison Computing]
+- Related corpus docs: [Frank], [Koka], [Effect systems & event loops], [Go runtime netpoller], [Eio's io_uring backend]
 
 <!-- References -->
 
 [Frank]: frank.md
+[Koka]: koka.md
+[Effect systems & event loops]: ../async-io/effects-and-event-loops.md
+[Go runtime netpoller]: ../async-io/go-netpoller.md
+[Eio's io_uring backend]: ../async-io/eio-backend.md
 [Unison language documentation]: https://www.unison-lang.org/docs/
 [Unison GitHub repository]: https://github.com/unisonweb/unison
+[runtime design notes]: https://github.com/unisonweb/unison/blob/trunk/unison-runtime/src/Unison/Runtime/docs.markdown
 [Abilities and ability handlers (language reference)]: https://www.unison-lang.org/docs/language-reference/abilities-and-ability-handlers/
 [Ability declaration (language reference)]: https://www.unison-lang.org/docs/language-reference/ability-declaration/
-[Writing your own abilities]: https://www.unison-lang.org/docs/fundamentals/abilities/writing-abilities/
+[Abilities: a mental model]: https://www.unison-lang.org/docs/fundamentals/abilities/
+[Announcing Unison 1.0]: https://www.unison-lang.org/unison-1-0/
+[JIT compilation is coming to Unison]: https://www.unison-lang.org/whats-new/jit-announce/
 [The big idea: content-addressed code]: https://www.unison-lang.org/docs/the-big-idea/
 [Unison Cloud documentation]: https://www.unison.cloud/docs/core-concepts/
-[Unison annotated bibliography]: https://www.unison-lang.org/docs/usage-topics/bibliography/
 [Do Be Do Be Do (Frank paper, POPL 2017)]: https://arxiv.org/abs/1611.09259
-[About Unison Computing]: https://www.unison-lang.org/unison-computing/
