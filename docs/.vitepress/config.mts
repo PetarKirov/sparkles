@@ -65,6 +65,10 @@ export default defineConfig({
           },
           { text: 'DDoc', link: '/guidelines/ddoc' },
           {
+            text: 'Move Semantics & __rvalue',
+            link: '/guidelines/move-semantics/',
+          },
+          {
             text: 'Code Style',
             collapsed: true,
             items: [
