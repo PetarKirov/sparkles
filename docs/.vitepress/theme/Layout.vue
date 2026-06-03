@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue';
+import { ref, onMounted, onUnmounted, watch, nextTick, h, render } from 'vue';
+import Tooltip from './Tooltip.vue';
 
 import { useRoute } from 'vitepress';
 import DefaultTheme from 'vitepress/theme';
@@ -129,8 +130,9 @@ function setupExpandButtons() {
 
   const root = document.querySelector('.vp-doc') ?? document;
 
-  // Clean up old expand buttons
+  // Clean up old expand buttons & verified badges
   root.querySelectorAll(`.${EXPAND_BTN_CLS}`).forEach(b => b.remove());
+  root.querySelectorAll('.verified-badge-container').forEach(b => b.remove());
 
   // Add a delegated listener for all moved copy buttons (VitePress's default
   // listener uses a direct child selector which breaks when we wrap the button)
@@ -175,6 +177,31 @@ function setupExpandButtons() {
 
   // Code groups — actions bar on the group container, over the tabs
   for (const group of root.querySelectorAll('.vp-code-group')) {
+    // Add verified checkmark if D + Output are present
+    const labels = Array.from(group.querySelectorAll('.tabs label'));
+    const hasD = labels.some(l => l.textContent?.trim() === 'D');
+    const outputLabel = labels.find(l => l.textContent?.trim() === 'Output');
+    if (
+      hasD &&
+      outputLabel &&
+      !outputLabel.querySelector('.verified-badge-container')
+    ) {
+      const container = document.createElement('span');
+      container.className = 'verified-badge-container';
+
+      // Render Tooltip programmatically with checkmark child
+      const vnode = h(
+        Tooltip,
+        {
+          text: 'Verified: compiled, executed, and output validated to match by the sparkles CI.',
+        },
+        () => h('span', { class: 'verified-checkmark' }, '✓'),
+      );
+      render(vnode, container);
+
+      outputLabel.appendChild(container);
+    }
+
     if (group.querySelector(`.${CODE_ACTIONS_CLS}`)) continue;
     const actionsBar = document.createElement('div');
     actionsBar.className = CODE_ACTIONS_CLS;

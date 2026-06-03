@@ -573,3 +573,23 @@ div[class*='language-']:hover > .code-block-actions {
 .content-expand-body div[class*='language-'] {
   max-height: none;
 }
+
+/* ==========================================================================
+ * Verified Code Examples Badge
+ * ========================================================================== */
+
+.verified-badge-container {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  color: var(--vp-c-green-1, #10b981);
+  font-weight: bold;
+  cursor: help;
+  vertical-align: middle;
+}
+
+.verified-checkmark {
+  font-size: 13px;
+  display: inline-block;
+  line-height: 1;
+}
