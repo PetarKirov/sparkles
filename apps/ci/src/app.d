@@ -44,8 +44,13 @@ The script looks for D code blocks starting with:
 +/
 ---
 
-When an output block (a bare fenced code block with no language tag) immediately
-follows a runnable code block, it is treated as the expected output for that example.
+When a `[Output]`-labelled fenced block immediately follows a runnable code
+block, it is treated as the expected output for that example:
+---
+```[Output]
+expected output here
+```
+---
 
 For examples with dynamic output (timestamps, file locations, etc.), place a
 `<!-- md-example-expected -->` HTML comment directive between the code block
@@ -57,7 +62,7 @@ that matches any non-empty text:
 <!-- md-example-expected
 [ {{_}} | info ]: Listening on port 8080
 -->
-```
+```[Output]
 [ 14:32:01 | info ]: Listening on port 8080
 ```
 ---
@@ -575,6 +580,11 @@ private int runReferenceLinkMode(string[] mdFiles, bool fix)
 @safe pure
 Example[] extractExamples(string content)
 {
+    // Expected output uses the ```[Output] fence (a VitePress code-group
+    // label). Bare ``` and all other labelled fences (```d [D], ```rust
+    // [Rust], etc.) are code blocks, not output.
+    bool isOutputBlockLine(string s) => s.strip == "```[Output]";
+
     Example[] examples;
     auto lines = content.lineSplitter.array;
 
@@ -626,7 +636,7 @@ Example[] extractExamples(string content)
 
         auto name = extractExampleName(codeLines);
 
-        // Look for adjacent output block (bare ``` fence, no language tag),
+        // Look for adjacent output block (a ```[Output] fence),
         // optionally preceded by a <!-- md-example-expected ... --> directive.
         string expectedOutput = null;
         string verifyPattern = null;
@@ -650,7 +660,7 @@ Example[] extractExamples(string content)
                 searchStart++;
         }
 
-        if (searchStart < lines.length && lines[searchStart].strip == "```")
+        if (searchStart < lines.length && isOutputBlockLine(lines[searchStart]))
         {
             outputStart = searchStart;
             auto outEndIdx = lines[searchStart + 1 .. $]
@@ -1165,7 +1175,7 @@ int runUpdateMode(Example[] examples, string mdFile, bool failFast)
             continue;
         }
 
-        auto newOutputLines = ["```"]
+        auto newOutputLines = ["```[Output]"]
             ~ actualOutput.lineSplitter.map!(l => l.idup).array
             ~ ["```"];
 

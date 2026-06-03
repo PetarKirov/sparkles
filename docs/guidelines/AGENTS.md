@@ -405,13 +405,15 @@ void main()
 ```
 ````
 
-Follow the code block with a bare fenced output block (no language tag) showing the expected output:
+Follow the code block with a `[Output]`-labelled fenced block showing the expected output:
 
 ````markdown
-```
+```[Output]
 Expected output here
 ```
 ````
+
+The `[Output]` label is the required convention: `--verify` only treats `[Output]` fences as expected output (a bare ` ``` ` fence is ignored). It renders as a labelled "Output" panel under VitePress and as a plain block on GitHub.
 
 ### Verifying README Examples
 
@@ -439,7 +441,7 @@ When an example produces dynamic output (timestamps, file paths, durations, etc.
 [ {{_}} | info | {{_}} ]: Server started
 -->
 
-```
+```[Output]
 [ 14:32:01 | info | app.d:12 ]: Server started
 ```
 ````
