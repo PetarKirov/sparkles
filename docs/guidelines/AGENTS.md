@@ -377,6 +377,8 @@ if (__traits(isUnsigned, T))
 
 For complex capability detection patterns (traits, optional primitives, fallback paths), see [Design by Introspection Guidelines](./design-by-introspection-01-guidelines.md).
 
+For `@nogc nothrow` error handling, see the [Expected Error Handling Idioms](./idioms/expected/index.md) guide which provides patterns on transforming, chaining, and flattening expected values, alongside comparisons for developers coming from Rust.
+
 ## Debugging Tips
 
 1. **Use verbose test output**: `dub test :core-cli -- -v` shows full stack traces

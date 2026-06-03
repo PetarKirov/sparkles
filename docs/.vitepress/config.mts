@@ -80,6 +80,10 @@ export default defineConfig({
                 text: 'Forcing Named Arguments',
                 link: '/guidelines/idioms/forced-named-arguments/',
               },
+              {
+                text: 'Expected Error Handling',
+                link: '/guidelines/idioms/expected/',
+              },
             ],
           },
         ],

@@ -199,6 +199,12 @@ function. See [Forcing Named Arguments](idioms/forced-named-arguments/) for
 the full write-up including ABI analysis, struct caveats, and alternative
 techniques that were evaluated.
 
+### Expected Error Handling
+
+To support `@nogc nothrow` code paths, the project uses the [`github:tchaloupka/expected`][expected] library. This allows functions to return either a valid payload or a structured error, without allocating on the garbage collected heap.
+
+See [Expected Error Handling](idioms/expected/) for comprehensive guidelines on how to chain, transform, and flatten `Expected` values, with handy comparisons for developers coming from Rust.
+
 ## Interpolated Expression Sequences ([DIP1036](https://github.com/dlang/DIPs/blob/master/DIPs/other/DIP1036.md))
 
 Use IES (`i"..."`) when interspersing string literals with expressions. Preference order:
@@ -235,3 +241,5 @@ string bad = "Hello, " ~ name ~ "! Count: " ~ count.to!string;
 - For security-sensitive contexts (SQL, HTML, URLs), use dedicated IES-processing functions that escape interpolated values
 
 See [Interpolated Expression Sequences](interpolated-expression-sequences.md) for complete patterns including safe SQL queries, HTML templates, and structured logging.
+
+[expected]: https://github.com/tchaloupka/expected
