@@ -84,7 +84,7 @@ Note: systems marked as having "no effect tracking" (Rust implicit features, Jav
 
 ### Companion Surveys
 
-- [Async I/O & Event Loops] -- a companion survey on event loops, io_uring, and async runtimes
+- [Async I/O & Event Loops] -- a companion survey on event loops, `io_uring`, and async runtimes
 
 ### History and Synthesis
 

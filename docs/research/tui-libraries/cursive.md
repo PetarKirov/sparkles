@@ -1421,8 +1421,8 @@ efficiency, enabled by D's unique ability to straddle compile-time and runtime p
   - NamedView: <https://docs.rs/cursive/latest/cursive/views/struct.NamedView.html>
 - **Backends Wiki:** <https://github.com/gyscos/cursive/wiki/Backends>
 - **Ecosystem:**
-  - cursive_table_view: <https://github.com/BonsaiDen/cursive_table_view>
-  - cursive_tree_view: <https://github.com/BonsaiDen/cursive_tree_view>
+  - `cursive_table_view`: <https://github.com/BonsaiDen/cursive_table_view>
+  - `cursive_tree_view`: <https://github.com/BonsaiDen/cursive_tree_view>
   - cursive-tabs: <https://github.com/deinstapel/cursive-tabs>
   - cursive-aligned-view: <https://github.com/deinstapel/cursive-aligned-view>
 

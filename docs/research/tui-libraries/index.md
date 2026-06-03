@@ -186,7 +186,7 @@ The following libraries are analyzed in depth:
 
 See the **[Comparison][comparison]** for cross-library synthesis and design recommendations for Sparkles.
 
-See the **[Tree-View Case Study][tree-view-case-study]** for a focused analysis of tree-view implementations across 13 libraries, including detailed studies of [snacks.nvim][snacks-nvim], [ratatui][ratatui], [Textual][textual], Rich (Python), [broot][broot], cursive_tree_view (Rust), and stlab::forest (C++).
+See the **[Tree-View Case Study][tree-view-case-study]** for a focused analysis of tree-view implementations across 13 libraries, including detailed studies of [snacks.nvim][snacks-nvim], [ratatui][ratatui], [Textual][textual], Rich (Python), [broot][broot], `cursive_tree_view` (Rust), and stlab::forest (C++).
 
 ## References
 

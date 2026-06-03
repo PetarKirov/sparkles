@@ -1,6 +1,6 @@
 # Unison
 
-A statically-typed functional language with content-addressed code and an algebraic-effect system called **abilities**, run by a Haskell-implemented **ANF bytecode abstract machine** that handles abilities by capturing delimited continuations on its own continuation stack and bridges all `IO`/concurrency to the **GHC runtime system** (`forkIO`/`MVar`/`threadDelay`/STM) — there is no event loop and no io_uring inside Unison.
+A statically-typed functional language with content-addressed code and an algebraic-effect system called **abilities**, run by a Haskell-implemented **ANF bytecode abstract machine** that handles abilities by capturing delimited continuations on its own continuation stack and bridges all `IO`/concurrency to the **GHC runtime system** (`forkIO`/`MVar`/`threadDelay`/STM) — there is no event loop and no `io_uring` inside Unison.
 
 | Field         | Value                                                                                                                                     |
 | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
@@ -62,7 +62,7 @@ do. Unison's abstract machine owns only the **continuation stack and the ability
 dispatch**; everything that actually blocks on the kernel is a _foreign call_ into the
 GHC RTS, which owns the I/O manager and the M:N green-thread scheduler. Contrast this
 with [OCaml 5 + Eio](../async-io/effects-and-event-loops.md), where the _language_
-runtime suspends an effect and a _user-space_ scheduler drives io_uring.
+runtime suspends an effect and a _user-space_ scheduler drives `io_uring`.
 
 ---
 
@@ -347,7 +347,7 @@ frame on the `K` stack.
 
 ## How `IO` and concurrency work — the GHC-RTS bridge
 
-There is **no io_uring, no epoll loop, and no user-space scheduler in Unison's runtime.**
+There is **no `io_uring`, no epoll loop, and no user-space scheduler in Unison's runtime.**
 The built-in `IO` ability is handled by the machine evaluating it down to **foreign
 calls** that delegate straight to GHC's `base`/`concurrent` libraries; GHC's threaded
 RTS then provides green threads, the I/O manager, and the scheduler.
@@ -476,7 +476,7 @@ implements local handlers is what makes a continuation a transmissible value.
   diff, grep, and standard editors/CI.
 - **Small ecosystem**; base library hosting has migrated to Unison Share and the
   in-repo `base/` is now a deprecated historical snapshot.
-- **IO is whatever GHC offers.** No io_uring, no pluggable scheduler; concurrency
+- **IO is whatever GHC offers.** No `io_uring`, no pluggable scheduler; concurrency
   characteristics are inherited from the GHC RTS rather than tunable by the program.
 - **Learning curve** for abilities, continuations, and recursive handler patterns.
 - **Vendor coupling** for the richest distributed features (Unison Cloud).
@@ -488,7 +488,7 @@ implements local handlers is what makes a continuation a transmissible value.
 | Handle abilities at `let` only, via ANF                                             | Makes continuation construction "_very easy_"; one place to deal with requests                | Requires a normalization pass and a flat bytecode (`MCode`) layer               |
 | Delimited continuations on a machine-owned `K` stack (`Mark`/`Capture`/`splitCont`) | Full multi-shot handlers; continuations are first-class, serializable values                  | Per-operation segment copy is costly unless avoided                             |
 | Affine-handler fast path (`AMark`/`GAffine`/`Discard`)                              | Most handlers never copy a continuation; in-place state update                                | Extra machine complexity; only applies while no non-affine handler is installed |
-| Bridge `IO`/concurrency to the GHC RTS                                              | Reuse a mature scheduler, I/O manager, STM, green threads — runtime stays "_correct, simple_" | No control over the event loop; no io_uring; perf tied to GHC                   |
+| Bridge `IO`/concurrency to the GHC RTS                                              | Reuse a mature scheduler, I/O manager, STM, green threads — runtime stays "_correct, simple_" | No control over the event loop; no `io_uring`; perf tied to GHC                 |
 | Content-addressed code                                                              | Eliminates builds & dependency conflicts; perfect caching; enables distribution by hash       | Abandons text-file/VCS/grep workflow; needs UCM                                 |
 | Abilities over monads (Frank-inspired)                                              | Direct-style effectful code; effects as a type row                                            | Younger ecosystem than Haskell's transformer libraries                          |
 | Explicit `handle … with` (unlike [Frank])                                           | Clear separation of using vs handling effects                                                 | More verbose than Frank's implicit handling                                     |

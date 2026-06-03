@@ -571,7 +571,7 @@ The [`Dam`][broot-dam] parameter allows builds to be interrupted when the user t
 
 - **Broot's flat array is ephemeral.** It is rebuilt frequently and never persisted. Sparkles may need a stable tree identity across rebuilds (e.g., for animation or state preservation).
 
-- **Broot has no expand/collapse toggle.** Users control depth via max_depth, not per-node toggles. A Sparkles tree view may need both: broot-style pattern filtering AND traditional per-node expand/collapse for manual exploration.
+- **Broot has no expand/collapse toggle.** Users control depth via `max_depth`, not per-node toggles. A Sparkles tree view may need both: broot-style pattern filtering AND traditional per-node expand/collapse for manual exploration.
 
 ### Key Takeaway
 

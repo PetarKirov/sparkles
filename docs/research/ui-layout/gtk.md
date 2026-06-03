@@ -109,8 +109,8 @@ struct _GtkLayoutManagerClass {
 ```
 
 The two essential methods are `measure()` and `allocate()`. `measure()`
-returns four numbers — minimum, natural, minimum*baseline, natural_baseline —
-for a given orientation and a constraint along the \_other* orientation
+returns four numbers — minimum, natural, `minimum_baseline`, `natural_baseline` —
+for a given orientation and a constraint along the _other_ orientation
 (`for_size`). `allocate()` is called once the parent has decided on a final
 width/height; the manager walks its children and calls
 `gtk_widget_size_allocate` on each.
