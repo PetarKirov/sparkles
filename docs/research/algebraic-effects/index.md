@@ -82,6 +82,10 @@ Note: systems marked as having "no effect tracking" (Rust implicit features, Jav
 
 ## Quick Navigation
 
+### Companion Surveys
+
+- [Async I/O & Event Loops] -- a companion survey on event loops, io_uring, and async runtimes
+
 ### History and Synthesis
 
 - [Evolution of Effect Systems]
@@ -216,3 +220,4 @@ Note: systems marked as having "no effect tracking" (Rust implicit features, Jav
 [Key Papers]: papers.md
 [Parallelism]: parallelism.md
 [Eff Language]: eff-lang.md
+[Async I/O & Event Loops]: ../async-io/index.md
