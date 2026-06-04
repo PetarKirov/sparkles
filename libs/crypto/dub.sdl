@@ -1,0 +1,27 @@
+name "crypto"
+description "Backend-abstracted cryptographic and encoding primitives (libsodium via ImportC)"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+
+dflags "-preview=in" "-preview=dip1000" "-P-I$SODIUM_INCLUDE"
+
+libs "sodium"
+systemDependencies "libsodium"
+
+configuration "library" {
+    targetType "library"
+    dependency "sparkles:core-cli" path="../.."
+}
+
+configuration "unittest" {
+    dependency "silly" version="~>1.1.1"
+    dependency "sparkles:core-cli" path="../.."
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
