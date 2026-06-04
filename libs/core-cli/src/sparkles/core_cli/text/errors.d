@@ -21,6 +21,9 @@ enum ParseErrorCode
     numericOverflow,     /// a number exceeded the target type's range
     invalidIdentifier,   /// an identifier contained a disallowed character
     widthMismatch,       /// a fixed-width field did not meet its width
+    checksumMismatch,    /// a checksummed encoding (e.g. Bech32) failed its checksum
+    nonCanonicalEncoding,/// a value had a valid but non-canonical encoding (e.g. base64 trailing bits, mixed-case Bech32)
+    invalidPadding,      /// an encoding had unexpected or malformed padding (e.g. a `=` in unpadded base64)
 }
 
 /// Structured parse error: a $(LREF ParseErrorCode) plus the byte offset
