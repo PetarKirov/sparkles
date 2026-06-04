@@ -1,0 +1,4 @@
+# age testkit conformance vectors are byte-exact fixtures; some intentionally
+# contain trailing whitespace, CR bytes, or specific line endings. git must
+# never normalize them, and they diff as binary.
+libs/age/tests/testkit/** -text -diff
