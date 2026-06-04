@@ -743,6 +743,6 @@ patch at all.
 [llvm-internals]: ./llvm-coro-internals.md
 [d-design]: ./d-language-design.md
 [attributes]: ./attributes-and-memory.md
-[wasm]: ./wasm-and-wasmfx.md
+[wasm]: ../wasm-and-wasmfx.md
 [roadmap]: ./roadmap.md
-[wasmfx]: ../algebraic-effects/wasmfx.md
+[wasmfx]: ../../algebraic-effects/wasmfx.md

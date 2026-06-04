@@ -375,14 +375,14 @@ Four concrete gaps stand between the current state and a working D-coroutine-on-
 
 [index]: ./index.md
 [concepts]: ./concepts.md
-[llvm-coroutines]: ./llvm-coroutines.md
-[llvm-internals]: ./llvm-coro-internals.md
-[comparison]: ./comparison.md
-[d-fiber]: ./d-fiber-baseline.md
-[d-design]: ./d-language-design.md
-[ldc-codegen]: ./ldc-codegen.md
-[attributes]: ./attributes-and-memory.md
-[roadmap]: ./roadmap.md
+[llvm-coroutines]: ./stackless/llvm-coroutines.md
+[llvm-internals]: ./stackless/llvm-coro-internals.md
+[comparison]: ./stackless/comparison.md
+[d-fiber]: ./stackful/d-fiber.md
+[d-design]: ./stackless/d-language-design.md
+[ldc-codegen]: ./stackless/ldc-codegen.md
+[attributes]: ./stackless/attributes-and-memory.md
+[roadmap]: ./stackless/roadmap.md
 [wasmfx]: ../algebraic-effects/wasmfx.md
 [ae-index]: ../algebraic-effects/index.md
 [effects-event-loops]: ../async-io/effects-and-event-loops.md

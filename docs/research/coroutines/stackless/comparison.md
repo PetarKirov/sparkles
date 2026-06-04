@@ -579,9 +579,9 @@ introspection); LDC's coro path is an implementation detail behind it.
 [llvm-coroutines]: ./llvm-coroutines.md
 [llvm-internals]: ./llvm-coro-internals.md
 [attributes]: ./attributes-and-memory.md
-[d-fiber]: ./d-fiber-baseline.md
-[wasm]: ./wasm-and-wasmfx.md
+[d-fiber]: ../stackful/d-fiber.md
+[wasm]: ../wasm-and-wasmfx.md
 [roadmap]: ./roadmap.md
-[wasmfx]: ../algebraic-effects/wasmfx.md
-[effects-event-loops]: ../async-io/effects-and-event-loops.md
-[d-landscape]: ../async-io/d-landscape.md
+[wasmfx]: ../../algebraic-effects/wasmfx.md
+[effects-event-loops]: ../../async-io/effects-and-event-loops.md
+[d-landscape]: ../../async-io/d-landscape.md
