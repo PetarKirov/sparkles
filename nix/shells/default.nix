@@ -153,6 +153,11 @@
         pkgs.curl # libcurl, linked by its --ci-stats subcommand
         config.packages.ci
 
+        # libsodium C bindings for :crypto (ImportC). pkg-config locates the
+        # header dir; .dev carries the headers + libsodium.pc.
+        pkgs.libsodium
+        pkgs.libsodium.dev
+
         # ghostty — the slim repack (shared lib + headers + .pc), NOT the
         # upstream `.dev` output: its static archive embeds zig store
         # paths in debug info, dragging a 1.5 GiB toolchain closure into
@@ -351,6 +356,16 @@
         ulimit -n ${toString d-toolchain.nofileLimit} 2>/dev/null || true
 
         ${envExports}
+
+        # libsodium headers for sparkles:crypto's `-P-I$SODIUM_INCLUDE`
+        # ImportC dflag. The ci wrapper `--set-default`s the same path, so
+        # this export wins when dub runs inside the shell.
+        export SODIUM_INCLUDE="${pkgs.libsodium.dev}/include"
+
+        # ... and its library, so dub's `libs "sodium"` (`-lsodium`) links
+        # outside the ci wrapper (which `--prefix`es the same path).
+        export LIBRARY_PATH="${pkgs.libsodium}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
+        export LD_LIBRARY_PATH="${pkgs.libsodium}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
         # Raw flake-input store paths (`SPARKLES_FLAKE_INPUT_*` plus the
         # `$SPARKLES_ALL_FLAKE_INPUTS` JSON map). dmd-fmt corpus tests assert
