@@ -28,7 +28,7 @@ $(LIST
     $(ITEM Default — run examples and display results in boxes)
     $(ITEM `--verify` — compare output against expected output blocks, report mismatches)
     $(ITEM `--update` — rewrite the markdown file with actual example output (golden snapshot update))
-    $(ITEM `--example-files` — build/run standalone example `.d` files, defaulting to `libs/core-cli/examples/*.d`)
+    $(ITEM `--example-files` — build/run standalone example `.d` files, defaulting to `libs/core-cli/examples/*.d` and `docs/research/async-io/io-uring/examples/*.d`)
     $(ITEM `--test` — run `dub test` for each sub-package defined in the root `dub.sdl`)
     $(ITEM `--files` — select explicit files or git-style globs; when omitted, each mode uses its tracked defaults)
     $(ITEM `--fail-fast` — stop on the first failing example and replay its output at the end)
@@ -106,7 +106,7 @@ struct CliParams
     @CliOption(`u|update`, "Rewrite the markdown file with actual example output.")
     bool update;
 
-    @CliOption(`x|example-files`, "Run standalone example .d files instead of markdown examples. With no files, defaults to libs/core-cli/examples/*.d.")
+    @CliOption(`x|example-files`, "Run standalone example .d files instead of markdown examples. With no files, defaults to libs/core-cli/examples/*.d and docs/research/async-io/io-uring/examples/*.d.")
     bool exampleFiles;
 
     @CliOption(`t|test`, "Run dub test for each sub-package defined in the root dub.sdl.")
@@ -350,9 +350,22 @@ private string[] trackedMarkdownFiles()
         .array;
 }
 
+/// Git pathspecs for the repository's standalone example `.d` files — the
+/// defaults `--example-files` uses when no `--files` selection is given: the
+/// `core-cli` library demos plus the `io_uring` worked examples that accompany
+/// the async-I/O research docs (`docs/research/async-io/io-uring/`).
+@safe pure nothrow
+private string[] standaloneExampleGlobs()
+{
+    return [
+        "libs/core-cli/examples/*.d",
+        "docs/research/async-io/io-uring/examples/*.d",
+    ];
+}
+
 private string[] trackedStandaloneExampleFiles()
 {
-    const result = execute(["git", "ls-files", "--", "libs/core-cli/examples/*.d"]);
+    const result = execute(["git", "ls-files", "--"] ~ standaloneExampleGlobs());
     if (result.status != 0)
     {
         error(i"Failed to enumerate standalone example files with git ls-files");
