@@ -38,6 +38,8 @@ The kernel exposes a feature the moment its commit lands in a merge window; the 
 
 This is the foundation every surveyed library targets as its baseline (read/write/fsync + poll). See [Tokio's][doc-tokio] and Glommio's backends in the matrix below.
 
+> **Worked examples.** [`nop.d`][ex-nop] walks the minimal setup → submit → wait → CQE cycle; [`read-write-fixed.d`][ex-rwfixed] round-trips a payload through a registered (fixed) buffer; [`poll-add.d`][ex-poll] arms a one-shot `POLL_ADD`. All three are runnable `during` demos.
+
 ## 5.2 — Sync file range (July 2019)
 
 - `IORING_OP_SYNC_FILE_RANGE` — async `sync_file_range(2)`. (`io_uring_enter.2`: "Available since 5.2".)
@@ -49,11 +51,15 @@ This is the foundation every surveyed library targets as its baseline (read/writ
 - `IORING_OP_SENDMSG` / `IORING_OP_RECVMSG` — async `sendmsg(2)`/`recvmsg(2)`. (`io_uring_enter.2`: "Available since 5.3".)
 - Linked SQEs (`IOSQE_IO_LINK`): the ability to chain dependent SQEs so the next starts only after the previous succeeds; the man page records this submission-side feature "Available since 5.3".
 
+> **Worked example.** [`linked-sqes.d`][ex-linked] chains a write to an `fsync` on the same fd with `IOSQE_IO_LINK`, showing the kernel-guaranteed write-before-`fsync` ordering and the failure-propagation (`-ECANCELED`) semantics of linked SQEs.
+
 ## 5.4 — Timeouts and single mmap (November 2019)
 
 - `IORING_OP_TIMEOUT` — a timeout that completes after N completions or a wall-clock interval. (`io_uring_enter.2`: "Available since 5.4".)
 - `IORING_FEAT_SINGLE_MMAP` — SQ and CQ rings can share one `mmap`, cutting setup from three `mmap` calls to two. (`io_uring_setup.2`: "Available since kernel 5.4".)
 - A historical note in several `io_uring_prep_*` man pages: "Very early kernels (5.4 and earlier) required state to be stable" before submission — an early-era constraint relaxed by `IORING_FEAT_SUBMIT_STABLE` (5.5).
+
+> **Worked example.** [`timeout-link-timeout.d`][ex-timeout] fires a standalone relative `TIMEOUT` (completing with `-ETIME`) and then uses a `LINK_TIMEOUT` (5.5) to cancel a never-ready poll.
 
 ## 5.5 — Accept/connect, cancel, link-timeout (January 2020)
 
@@ -68,6 +74,8 @@ A pivotal release for networking and control flow:
 All five are marked "Available since 5.5" in `io_uring_enter.2`, matching the [LWN growth article][lwn-growth] inventory.
 
 **Features**: `IORING_FEAT_NODROP` (the kernel stops silently dropping CQEs on overflow; "since kernel 5.5"), `IORING_FEAT_SUBMIT_STABLE` (SQE data may be mutated immediately after submission; "since kernel 5.5"). (The `IORING_REGISTER_FILES_SKIP` skip-semantics for `IORING_REGISTER_FILES_UPDATE` arrive later — `io_uring_register.2` marks them "since 5.12", and the define is first present in the `v5.12` kernel; see 5.12 below.)
+
+> **Worked examples.** [`tcp-echo.d`][ex-tcp] drives a loopback `ACCEPT`+`CONNECT`+`SEND`+`RECV` round-trip through a single ring; [`async-cancel.d`][ex-cancel] cancels an in-flight poll by its `user_data` and observes the `-ECANCELED` completion.
 
 ## 5.6 — The filesystem/syscall expansion (March 2020)
 
@@ -85,6 +93,8 @@ The largest single-release opcode batch — `io_uring` stops being "just block I
 All marked "Available since 5.6" in `io_uring_enter.2`; the [LWN growth article][lwn-growth] enumerates the same set.
 
 **Features**: `IORING_FEAT_CUR_PERSONALITY` ("since kernel 5.6"). **Registration**: `IORING_REGISTER_PROBE` (runtime opcode capability probing — _the_ portable feature-detection mechanism, "since 5.6"), `IORING_REGISTER_PERSONALITY` / `IORING_UNREGISTER_PERSONALITY`, `IORING_REGISTER_EVENTFD_ASYNC` (all "since 5.6").
+
+> **Worked examples.** [`openat-statx-close.d`][ex-openat] chains `OPENAT`→`STATX`→`READ`→`CLOSE` asynchronously, feeding each op's result fd into the next; [`probe.d`][ex-probe] uses `IORING_REGISTER_PROBE` to print which opcodes the running kernel supports.
 
 ## 5.7 — Splice, provided buffers, fast poll (May 2020)
 
@@ -168,6 +178,8 @@ A second pivotal release (alongside 5.5 and 5.6) — it lands the modern high-th
 
 **Setup**: `IORING_SETUP_COOP_TASKRUN` (don't IPI the target task for completion task-work; "Available since 5.19"), `IORING_SETUP_TASKRUN_FLAG` (surface `IORING_SQ_TASKRUN` so userspace knows to reap; "since 5.19"), `IORING_SETUP_SQE128` (128-byte SQEs, required by some `URING_CMD` users like NVMe passthrough; "since 5.19"), `IORING_SETUP_CQE32` (32-byte CQEs; "since 5.19").
 
+> **Worked examples.** [`multishot-accept.d`][ex-msaccept] serves multiple loopback connections from a single armed accept SQE (each CQE carries `CQEFlags.MORE`); [`provided-buf-ring.d`][ex-pbufring] registers an `io_uring_buf` ring and issues a buffer-selecting `RECV`.
+
 ## 6.0 — Zero-copy send, single-issuer, sync cancel (October 2022)
 
 - `IORING_OP_SEND_ZC` — zero-copy `send`; the data is pinned and a second "notification" CQE (`IORING_CQE_F_NOTIF`) fires when the kernel is done with the buffer. (`io_uring_enter.2`: "Available since 6.0". Git: enum value first in `v6.0`.)
@@ -177,10 +189,14 @@ A second pivotal release (alongside 5.5 and 5.6) — it lands the modern high-th
 
 **Registration**: `IORING_REGISTER_SYNC_CANCEL` (synchronous cancel from userspace; "Available since 6.0"), `IORING_REGISTER_FILE_ALLOC_RANGE` (reserve a sub-range of the direct-descriptor table; "Available since 6.0").
 
+> **Worked example.** [`send-zc.d`][ex-sendzc] performs a zero-copy `SEND_ZC` over loopback and asserts the two-CQE pattern: a transfer-result CQE (`CQEFlags.MORE`) followed by a separate notification CQE (`CQEFlags.NOTIF`).
+
 ## 6.1 — Zero-copy sendmsg, deferred task-run (December 2022)
 
 - `IORING_OP_SENDMSG_ZC` — the `msghdr` form of zero-copy send. (`io_uring_enter.2`: "Available since 6.1". Git: enum value first in `v6.1`.)
 - `IORING_SETUP_DEFER_TASKRUN` — defer completion task-work until the app calls `io_uring_enter(2)` with `IORING_ENTER_GETEVENTS`; requires `SINGLE_ISSUER`. (`io_uring_setup.2`: "Available since 6.1".) Together with `COOP_TASKRUN` this is the latency/syscall-batching configuration most high-performance libraries adopt (see Glommio/monoio in the matrix).
+
+> **Worked example.** [`defer-taskrun.d`][ex-defer] sets up a ring with `SINGLE_ISSUER | DEFER_TASKRUN | COOP_TASKRUN` and reaps a `NOP` and a relative `TIMEOUT` through the `GETEVENTS`-driven deferred task-run path.
 
 ## 6.3 — Registered-ring registration (April 2023)
 
@@ -189,6 +205,8 @@ A second pivotal release (alongside 5.5 and 5.6) — it lands the modern high-th
 ## 6.4 — Multishot timeout (June 2023)
 
 - `IORING_TIMEOUT_MULTISHOT` (a `timeout_flags` bit on `IORING_OP_TIMEOUT`) — a repeating timer that posts a CQE per interval. (Git: the `IORING_TIMEOUT_MULTISHOT` define is first contained in tag `v6.4`.)
+
+> **Worked example.** [`multishot-timeout.d`][ex-mstimeout] arms one `MULTISHOT` timeout, collects three recurring `-ETIME` ticks (each with `CQEFlags.MORE`), then stops the repeats with an `ASYNC_CANCEL`.
 
 ## 6.5 — No-mmap setup (August 2023)
 
@@ -206,6 +224,8 @@ A second pivotal release (alongside 5.5 and 5.6) — it lands the modern high-th
 - `IORING_OP_WAITID` — async `waitid(2)`; a parent gets a CQE on child state change instead of blocking. (Git: enum first in `v6.7`; [LWN][lwn-waitid].) See the 6.5 discrepancy note above.
 - `IORING_OP_FUTEX_WAIT` / `IORING_OP_FUTEX_WAKE` / `IORING_OP_FUTEX_WAITV` — async `futex(2)` operations; `FUTEX_WAIT` mirrors `FUTEX_WAIT_BITSET`. (`io_uring_enter.2`: "Available since 6.7"; [LWN futex coverage][lwn-futex].)
 - `IORING_OP_READ_MULTISHOT` — repeatedly read from a pollable fd into ring-provided buffers, one CQE per chunk. (`io_uring_enter.2`: "Available since 6.7"; git: enum first in `v6.7`.)
+
+> **Worked example.** [`futex.d`][ex-futex] parks a ring on a 32-bit private futex with `IORING_OP_FUTEX_WAIT` and is woken by a helper thread issuing a legacy `futex(2)` wake on the same word.
 
 ## 6.8 — Fixed-fd install, pbuf status (March 2024)
 
@@ -256,6 +276,8 @@ A large networking/throughput release in this tree:
 ## 6.16 — Async pipe (≈ July 2025, per tree)
 
 - `IORING_OP_PIPE` — async `pipe2(2)`; can create normal _or_ direct (fixed) descriptor pairs, writing the read/write ends into a two-element array. (`io_uring_enter.2`: "Available since 6.16"; git: enum first in `v6.16`.)
+
+> **Worked example.** [`pipe.d`][ex-pipe] creates a pipe pair through the ring with `IORING_OP_PIPE`, then round-trips a byte through the new read/write ends.
 
 ## 6.18 — Mixed-size CQE (≈ November 2025, per tree)
 
@@ -346,6 +368,35 @@ Legend for libraries: **Tok**=Tokio (`tokio-uring`), **Glo**=Glommio, **Mon**=mo
 
 ---
 
+## Worked examples
+
+Each row links a runnable, standalone [`during`][during]-based D program in the `examples/`
+directory next to this file. Every example demonstrates its feature against the _live_ kernel
+and degrades to a `SKIP` (exit 0) on kernels that lack it, so the whole set stays green from
+the 5.1 baseline up to a bleeding-edge tree. Run them all with `ci --example-files`, or one at
+a time with `dub run --single <file>`.
+
+| Example                                | Since     | Demonstrates                                              |
+| -------------------------------------- | --------- | --------------------------------------------------------- |
+| [`nop.d`][ex-nop]                      | 5.1       | Minimal setup → submit → wait → CQE cycle                 |
+| [`read-write-fixed.d`][ex-rwfixed]     | 5.1       | Registered (fixed) buffers via `WRITE_FIXED`/`READ_FIXED` |
+| [`poll-add.d`][ex-poll]                | 5.1       | One-shot `POLL_ADD` readiness on a pipe                   |
+| [`linked-sqes.d`][ex-linked]           | 5.3       | `IOSQE_IO_LINK` write→`fsync` ordering                    |
+| [`timeout-link-timeout.d`][ex-timeout] | 5.4 / 5.5 | `TIMEOUT` (`-ETIME`) and `LINK_TIMEOUT` cancelling a poll |
+| [`tcp-echo.d`][ex-tcp]                 | 5.5 / 5.6 | Loopback `ACCEPT`+`CONNECT`+`SEND`+`RECV` on one ring     |
+| [`async-cancel.d`][ex-cancel]          | 5.5       | `ASYNC_CANCEL` of an in-flight poll by `user_data`        |
+| [`openat-statx-close.d`][ex-openat]    | 5.6       | Async `OPENAT`→`STATX`→`READ`→`CLOSE` chain               |
+| [`probe.d`][ex-probe]                  | 5.6       | `IORING_REGISTER_PROBE` per-opcode capability table       |
+| [`multishot-accept.d`][ex-msaccept]    | 5.19      | Multishot `ACCEPT` (`CQEFlags.MORE` keeps it armed)       |
+| [`provided-buf-ring.d`][ex-pbufring]   | 5.19      | Ring-provided buffers (`PBUF_RING`) selecting a `RECV`    |
+| [`send-zc.d`][ex-sendzc]               | 6.0       | Zero-copy `SEND_ZC` transfer-CQE → notification-CQE       |
+| [`defer-taskrun.d`][ex-defer]          | 6.1       | `SINGLE_ISSUER`+`DEFER_TASKRUN`+`COOP_TASKRUN` setup      |
+| [`multishot-timeout.d`][ex-mstimeout]  | 6.4       | `IORING_TIMEOUT_MULTISHOT` recurring timer                |
+| [`futex.d`][ex-futex]                  | 6.7       | Async `FUTEX_WAIT` woken by a legacy `futex(2)` wake      |
+| [`pipe.d`][ex-pipe]                    | 6.16      | `IORING_OP_PIPE` pipe-pair creation through the ring      |
+
+---
+
 ## Cross-references
 
 - Mechanics of each primitive: [io_uring features][doc-features].
@@ -387,3 +438,20 @@ Legend for libraries: **Tok**=Tokio (`tokio-uring`), **Glo**=Glommio, **Mon**=mo
 [doc-tokio]: ../tokio.md
 [doc-asio]: ../boost-asio.md
 [doc-eio]: ../../algebraic-effects/ocaml-eio.md
+[during]: ../d-landscape.md
+[ex-nop]: ./examples/nop.d
+[ex-rwfixed]: ./examples/read-write-fixed.d
+[ex-poll]: ./examples/poll-add.d
+[ex-linked]: ./examples/linked-sqes.d
+[ex-timeout]: ./examples/timeout-link-timeout.d
+[ex-tcp]: ./examples/tcp-echo.d
+[ex-cancel]: ./examples/async-cancel.d
+[ex-openat]: ./examples/openat-statx-close.d
+[ex-probe]: ./examples/probe.d
+[ex-msaccept]: ./examples/multishot-accept.d
+[ex-pbufring]: ./examples/provided-buf-ring.d
+[ex-sendzc]: ./examples/send-zc.d
+[ex-defer]: ./examples/defer-taskrun.d
+[ex-mstimeout]: ./examples/multishot-timeout.d
+[ex-futex]: ./examples/futex.d
+[ex-pipe]: ./examples/pipe.d
