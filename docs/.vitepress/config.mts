@@ -547,6 +547,75 @@ export default defineConfig({
             ],
           },
           {
+            text: 'Stackless Coroutines (LDC)',
+            link: '/research/stackless-coroutines/',
+            collapsed: true,
+            items: [
+              {
+                text: 'Concepts',
+                link: '/research/stackless-coroutines/concepts',
+              },
+              {
+                text: 'LLVM Coroutines',
+                collapsed: true,
+                items: [
+                  {
+                    text: 'Model & Intrinsics',
+                    link: '/research/stackless-coroutines/llvm-coroutines',
+                  },
+                  {
+                    text: 'Pass Internals',
+                    link: '/research/stackless-coroutines/llvm-coro-internals',
+                  },
+                ],
+              },
+              {
+                text: 'Prior Art',
+                collapsed: true,
+                items: [
+                  {
+                    text: 'C++20 Coroutines',
+                    link: '/research/stackless-coroutines/cpp-coroutines',
+                  },
+                  {
+                    text: 'Cross-Language Comparison',
+                    link: '/research/stackless-coroutines/comparison',
+                  },
+                ],
+              },
+              {
+                text: 'D & LDC Integration',
+                collapsed: true,
+                items: [
+                  {
+                    text: 'Stackful Fiber Baseline',
+                    link: '/research/stackless-coroutines/d-fiber-baseline',
+                  },
+                  {
+                    text: 'D Language Design',
+                    link: '/research/stackless-coroutines/d-language-design',
+                  },
+                  {
+                    text: 'LDC Code Generation',
+                    link: '/research/stackless-coroutines/ldc-codegen',
+                  },
+                  {
+                    text: 'Attributes & Memory',
+                    link: '/research/stackless-coroutines/attributes-and-memory',
+                  },
+                ],
+              },
+              {
+                text: 'WebAssembly & WasmFX',
+                link: '/research/stackless-coroutines/wasm-and-wasmfx',
+              },
+              {
+                text: 'Implementation Roadmap',
+                link: '/research/stackless-coroutines/roadmap',
+              },
+            ],
+          },
+          {
             text: 'TUI Libraries',
             collapsed: true,
             items: [
