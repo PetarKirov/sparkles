@@ -17,11 +17,14 @@ timeout = 30
 # Reduce concurrent requests in CI to avoid rate limits and connection resets
 max_concurrency = 16
 
-# Maximum number of retries per request
-max_retries = 2
+# Maximum number of retries per request. Checking the full docs corpus touches
+# 700+ external links; a few intermittently fail with transient connection
+# errors from CI runners (a different URL each run), so retry generously to
+# absorb the blips rather than fail the whole lint over one flaky endpoint.
+max_retries = 4
 
 # Wait time in seconds between retries (helps with rate-limited servers)
-retry_wait_time = 2
+retry_wait_time = 3
 
 # Resolve cross-referenced files that omit their extension
 fallback_extensions = ["md", "html"]
