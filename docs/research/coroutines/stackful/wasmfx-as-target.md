@@ -292,6 +292,12 @@ A working "druntime `Fiber` emits `cont.*` instead of asm" pipeline requires, in
 > druntime). Until then, a D stackful fiber on wasm must use Asyncify or fall back to
 > the stackless path.
 
+> [!NOTE]
+> A full, phased implementation plan for this port — the survives-vs-replaced
+> seam, the `Fiber`-op → `cont.*` encoding, the three gating problems (toolchain,
+> GC, exceptions), and an eight-phase roadmap with a dependency graph — is
+> developed in the companion [`Fiber` → WasmFX implementation plan][fiber-plan].
+
 ---
 
 ## Open questions
@@ -338,6 +344,7 @@ A working "druntime `Fiber` emits `cont.*` instead of asm" pipeline requires, in
 [wasm]: ../wasm-and-wasmfx.md
 [d-fiber]: ./d-fiber.md
 [roadmap]: ../stackless/roadmap.md
+[fiber-plan]: ./fiber-to-wasmfx-plan.md
 [wasmfx]: ../../algebraic-effects/wasmfx.md
 [ae-index]: ../../algebraic-effects/index.md
 [ocaml-effects]: ../../algebraic-effects/ocaml-effects.md
