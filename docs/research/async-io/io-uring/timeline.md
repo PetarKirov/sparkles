@@ -40,6 +40,8 @@ This is the foundation every surveyed library targets as its baseline (read/writ
 
 > **Worked examples.** [`nop.d`][ex-nop] walks the minimal setup → submit → wait → CQE cycle; [`read-write-fixed.d`][ex-rwfixed] round-trips a payload through a registered (fixed) buffer; [`poll-add.d`][ex-poll] arms a one-shot `POLL_ADD`. All three are runnable `during` demos.
 
+> **Worked examples.** [`registered-files.d`][ex-regfiles] reads a file by fixed-file table index with `IOSQE_FIXED_FILE`; [`sqpoll.d`][ex-sqpoll] submits a `NOP` with no `io_uring_enter` syscall via the `IORING_SETUP_SQPOLL` kernel thread.
+
 ## 5.2 — Sync file range (July 2019)
 
 - `IORING_OP_SYNC_FILE_RANGE` — async `sync_file_range(2)`. (`io_uring_enter.2`: "Available since 5.2".)
@@ -52,6 +54,8 @@ This is the foundation every surveyed library targets as its baseline (read/writ
 - Linked SQEs (`IOSQE_IO_LINK`): the ability to chain dependent SQEs so the next starts only after the previous succeeds; the man page records this submission-side feature "Available since 5.3".
 
 > **Worked example.** [`linked-sqes.d`][ex-linked] chains a write to an `fsync` on the same fd with `IOSQE_IO_LINK`, showing the kernel-guaranteed write-before-`fsync` ordering and the failure-propagation (`-ECANCELED`) semantics of linked SQEs.
+
+> **Worked example.** [`sendmsg-recvmsg.d`][ex-sendmsg] passes a file descriptor over a unix socket with `SCM_RIGHTS` via `SENDMSG`/`RECVMSG`.
 
 ## 5.4 — Timeouts and single mmap (November 2019)
 
@@ -102,6 +106,8 @@ All marked "Available since 5.6" in `io_uring_enter.2`; the [LWN growth article]
 - `IORING_OP_PROVIDE_BUFFERS` / `IORING_OP_REMOVE_BUFFERS` — the application hands the kernel a pool of buffers; recv-style ops pick one via `IOSQE_BUFFER_SELECT`. (Both "since 5.7".) This is the precursor to the far more efficient ring-provided buffers of 5.19.
 - `IORING_FEAT_FAST_POLL` — internally arms a poll and retries, so an op like `RECVMSG` on a socket no longer needs an async worker thread to block. (`io_uring_setup.2`: "Available since 5.7"; corroborated by [man7][man7-enter].) A major latency/scaling win that effectively makes `io_uring` a competitive readiness reactor as well as a completion proactor.
 
+> **Worked example.** [`splice-tee.d`][ex-splicetee] does a zero-copy `SPLICE` between pipes and a `TEE` duplication.
+
 ## 5.8 — Tee (August 2020)
 
 - `IORING_OP_TEE` — async `tee(2)`. (`io_uring_enter.2`: "Available since 5.8".)
@@ -117,6 +123,8 @@ All marked "Available since 5.6" in `io_uring_enter.2`; the [LWN growth article]
 - `IORING_REGISTER_RESTRICTIONS` — sandbox a ring by whitelisting which opcodes/registrations/SQE flags are permitted. (`io_uring_register.2`: "Available since 5.10".)
 - `IORING_FEAT_EXT_ARG` groundwork (finalized 5.11).
 
+> **Worked example.** [`restrictions.d`][ex-restrict] sandboxes a ring to a whitelist of opcodes via `IORING_REGISTER_RESTRICTIONS` + `IORING_SETUP_R_DISABLED`.
+
 ## 5.11 — Filesystem mutation ops, SQPOLL without root (February 2021)
 
 - `IORING_OP_SHUTDOWN` — async `shutdown(2)`.
@@ -126,6 +134,8 @@ All marked "Available since 5.6" in `io_uring_enter.2`; the [LWN growth article]
 All "Available since 5.11" (`io_uring_enter.2`).
 
 **Features**: `IORING_FEAT_EXT_ARG` — `io_uring_enter(2)` accepts an extended argument struct (a `timespec` timeout for `GETEVENTS`), "since kernel 5.11". **SQPOLL policy change**: the man pages note that _before 5.11_ SQPOLL required registered files and root; _in 5.11_ registration is no longer required and SQPOLL is usable as non-root with `CAP_SYS_NICE` (further relaxed in 5.13). Also `IORING_OP_ASYNC_CANCEL` gains `IORING_ASYNC_CANCEL_ALL`-style behavior ("since 5.11" in the cancel discussion).
+
+> **Worked example.** [`fs-mutations.d`][ex-fsmut] performs async `MKDIRAT`/`SYMLINKAT`/`LINKAT`/`RENAMEAT`/`UNLINKAT` directory mutations.
 
 ## 5.12 — Files-update by index, native workers (April 2021)
 
@@ -154,9 +164,13 @@ All "Available since 5.15" (`io_uring_enter.2`). `io_uring` **direct descriptors
 
 **Registration**: `IORING_REGISTER_IOWQ_MAX_WORKERS` — cap the number of bounded/unbounded async workers. (`io_uring_register.2`: "Available since 5.15".)
 
+> **Worked example.** [`direct-descriptors.d`][ex-directfd] opens into a fixed-file slot, uses it by index, then `FIXED_FD_INSTALL`s it back to a real fd.
+
 ## 5.17 — CQE skip, faster cancel (March 2022)
 
 - `IORING_FEAT_CQE_SKIP` — `IOSQE_CQE_SKIP_SUCCESS` lets a successful SQE produce _no_ CQE (errors still post one). (`io_uring_setup.2`: "Available since 5.17"; git: enum value lands in the 5.17 merge window.) A throughput win for fire-and-forget links.
+
+> **Worked example.** [`cqe-skip.d`][ex-cqeskip] suppresses a successful op's CQE in a link with `IOSQE_CQE_SKIP_SUCCESS`.
 
 ## 5.18 — Ring-fd registration, msg-ring, linked-file (May 2022)
 
@@ -164,6 +178,8 @@ All "Available since 5.15" (`io_uring_enter.2`). `io_uring` **direct descriptors
 - `IORING_SETUP_SUBMIT_ALL` — submit all SQEs even if one errors. (`io_uring_setup.2`: "since 5.18".)
 - `IORING_REGISTER_RING_FDS` / `IORING_UNREGISTER_RING_FDS` + `IORING_REGISTER_USE_REGISTERED_RING` — register the ring fd itself so `io_uring_enter(2)` need not pass a real fd. (`io_uring_register.2`: "Available since 5.18".)
 - `IORING_FEAT_LINKED_FILE` — defer file assignment in a link chain until the request actually runs. (`io_uring_setup.2`: "since" — git: enum value first in `v5.18`.)
+
+> **Worked examples.** [`msg-ring.d`][ex-msgring] posts a `u64` from one ring into another — the cross-core wakeup primitive; [`registered-ring-fd.d`][ex-regringfd] registers the ring fd so `io_uring_enter` skips per-call `fdget`/`fdput`.
 
 ## 5.19 — Buffer rings, zero-copy groundwork, big SQE/CQE (July 2022)
 
@@ -180,6 +196,8 @@ A second pivotal release (alongside 5.5 and 5.6) — it lands the modern high-th
 
 > **Worked examples.** [`multishot-accept.d`][ex-msaccept] serves multiple loopback connections from a single armed accept SQE (each CQE carries `CQEFlags.MORE`); [`provided-buf-ring.d`][ex-pbufring] registers an `io_uring_buf` ring and issues a buffer-selecting `RECV`.
 
+> **Worked example.** [`uring-cmd-socket.d`][ex-uringcmd] does socket `getsockopt`/`setsockopt` through the `URING_CMD` passthrough channel.
+
 ## 6.0 — Zero-copy send, single-issuer, sync cancel (October 2022)
 
 - `IORING_OP_SEND_ZC` — zero-copy `send`; the data is pinned and a second "notification" CQE (`IORING_CQE_F_NOTIF`) fires when the kernel is done with the buffer. (`io_uring_enter.2`: "Available since 6.0". Git: enum value first in `v6.0`.)
@@ -190,6 +208,8 @@ A second pivotal release (alongside 5.5 and 5.6) — it lands the modern high-th
 **Registration**: `IORING_REGISTER_SYNC_CANCEL` (synchronous cancel from userspace; "Available since 6.0"), `IORING_REGISTER_FILE_ALLOC_RANGE` (reserve a sub-range of the direct-descriptor table; "Available since 6.0").
 
 > **Worked example.** [`send-zc.d`][ex-sendzc] performs a zero-copy `SEND_ZC` over loopback and asserts the two-CQE pattern: a transfer-result CQE (`CQEFlags.MORE`) followed by a separate notification CQE (`CQEFlags.NOTIF`).
+
+> **Worked examples.** [`multishot-recv.d`][ex-msrecv] arms one `RECV` posting a CQE per segment into provided-ring buffers; [`sync-cancel.d`][ex-synccancel] cancels an in-flight poll synchronously with `IORING_REGISTER_SYNC_CANCEL`.
 
 ## 6.1 — Zero-copy sendmsg, deferred task-run (December 2022)
 
@@ -227,6 +247,8 @@ A second pivotal release (alongside 5.5 and 5.6) — it lands the modern high-th
 
 > **Worked example.** [`futex.d`][ex-futex] parks a ring on a 32-bit private futex with `IORING_OP_FUTEX_WAIT` and is woken by a helper thread issuing a legacy `futex(2)` wake on the same word.
 
+> **Worked examples.** [`waitid.d`][ex-waitid] asynchronously reaps a child process with `IORING_OP_WAITID`; [`read-multishot.d`][ex-readms] does repeated reads from a pipe into provided-ring buffers with `READ_MULTISHOT`; [`futex-waitv.d`][ex-futexv] waits on a vector of futexes with `FUTEX_WAITV`.
+
 ## 6.8 — Fixed-fd install, pbuf status (March 2024)
 
 - `IORING_OP_FIXED_FD_INSTALL` — convert a registered (direct) descriptor back into a normal process fd. (`io_uring_enter.2`: "Available since 6.8"; git: enum first in `v6.8`.)
@@ -237,6 +259,8 @@ A second pivotal release (alongside 5.5 and 5.6) — it lands the modern high-th
 - `IORING_OP_FTRUNCATE` — async `ftruncate(2)`. (`io_uring_enter.2`: "Available since 6.9"; git: enum first in `v6.9`.)
 - `IORING_REGISTER_NAPI` / `IORING_UNREGISTER_NAPI` — configure NAPI busy-polling for network completions, trading CPU for latency. (`io_uring_register.2`: "Available since 6.9".)
 
+> **Worked example.** [`napi.d`][ex-napi] configures NAPI busy-poll with `IORING_REGISTER_NAPI`.
+
 ## 6.10 — Send/recv bundles (July 2024)
 
 - `IORING_FEAT_RECVSEND_BUNDLE` — bundle multiple buffers into a single send/recv using provided-buffer rings (`io_uring_prep_send_bundle(3)` etc.). (Git: the `IORING_FEAT_RECVSEND_BUNDLE` define is first contained in tag `v6.10`.)
@@ -245,6 +269,8 @@ A second pivotal release (alongside 5.5 and 5.6) — it lands the modern high-th
 
 - `IORING_OP_BIND` — async `bind(2)`. (Git: enum first in `v6.11`; `io_uring_enter.2`: "Available since 6.11".)
 - `IORING_OP_LISTEN` — async `listen(2)`. (Git: enum first in `v6.11`; "Available since 6.11".)
+
+> **Worked example.** [`socket-bind-listen.d`][ex-socketbl] drives a full async `SOCKET` + `BIND` + `LISTEN` lifecycle through the ring.
 
 ## 6.12 — Clock source, buffer cloning, min-timeout (November 2024)
 
@@ -255,6 +281,8 @@ A second pivotal release (alongside 5.5 and 5.6) — it lands the modern high-th
 
 > **Forward-dated boundary.** Everything from here on (`6.13+`) carries 2025–2026 commit dates _in this checkout's git tree_. The markers are read directly from `liburing 2.15` man pages and `git tag --contains` in the v7.1-rc6 tree; treat them as "as observed here," since they post-date widely-distributed reference material.
 
+> **Worked example.** [`clock-min-timeout.d`][ex-clock] selects the wait clock with `IORING_REGISTER_CLOCK` and uses a min-timeout batched wait.
+
 ## 6.13 — Ring resize, mem regions, hybrid iopoll (≈ January 2025, per tree)
 
 - `IORING_REGISTER_RESIZE_RINGS` — grow/shrink the SQ/CQ rings of a live ring without tearing it down. (`io_uring_register.2`: "Available since kernel 6.13"; git: first in `v6.13`.)
@@ -262,6 +290,8 @@ A second pivotal release (alongside 5.5 and 5.6) — it lands the modern high-th
 - `IORING_REGISTER_SEND_MSG_RING` ("Available since kernel 6.13").
 - `IORING_SETUP_HYBRID_IOPOLL` — a hybrid of interrupt-driven and busy-poll completions, used with `IORING_SETUP_IOPOLL`. (Git: `IORING_SETUP_HYBRID_IOPOLL` first in `v6.13`.)
 - `IORING_REGISTER_CLONE_BUFFERS` gains offset/destination-range support ("6.13 added support for specifying the offsets…").
+
+> **Worked example.** [`resize-rings.d`][ex-resize] grows a live ring's SQ/CQ with `IORING_REGISTER_RESIZE_RINGS`.
 
 ## 6.15 — Zero-copy receive, epoll-wait, vectored fixed, query (≈ May 2025, per tree)
 
@@ -273,6 +303,8 @@ A large networking/throughput release in this tree:
 - `IORING_REGISTER_ZCRX_IFQ` — register the zero-copy RX interface queue that `RECV_ZC` consumes. (`io_uring_register.2`: "Available since kernel 6.15"; git: enum value first in `v6.15`.) A later `IORING_REGISTER_ZCRX_CTRL` control op is documented alongside it.
 - `IORING_REGISTER_QUERY` — a structured capability-query registration op (a successor/companion to `IORING_REGISTER_PROBE`). **Discrepancy flagged:** `liburing 2.15`'s `io_uring_register.2` marks it "Available since kernel 6.15", but in this tree the enum value `IORING_REGISTER_QUERY` is **not** present in `v6.15`; it is added by commit `c265ae75f900` ("`io_uring`: introduce `io_uring` querying", Sept 2025), whose first containing tag is **`v6.18`**. Treat the kernel availability as **6.18**, not 6.15.
 
+> **Worked examples.** [`epoll-wait.d`][ex-epollwait] folds a legacy epoll set into the ring with `IORING_OP_EPOLL_WAIT`; [`recv-zc.d`][ex-recvzc] does zero-copy receive via a registered ZCRX interface queue (SKIPs without a capable NIC).
+
 ## 6.16 — Async pipe (≈ July 2025, per tree)
 
 - `IORING_OP_PIPE` — async `pipe2(2)`; can create normal _or_ direct (fixed) descriptor pairs, writing the read/write ends into a two-element array. (`io_uring_enter.2`: "Available since 6.16"; git: enum first in `v6.16`.)
@@ -282,6 +314,8 @@ A large networking/throughput release in this tree:
 ## 6.18 — Mixed-size CQE (≈ November 2025, per tree)
 
 - `IORING_SETUP_CQE_MIXED` — a ring may carry a mix of 16-byte and 32-byte CQEs, transparently, instead of committing to `CQE32` for the whole ring. (`io_uring_setup.2`: "Available since 6.18"; git: `IORING_SETUP_CQE_MIXED` first in `v6.18`.)
+
+> **Worked example.** [`cqe-mixed.d`][ex-cqemixed] reaps mixed 16- and 32-byte CQEs from one ring with `IORING_SETUP_CQE_MIXED`.
 
 ## 6.19 — Mixed-size SQE and 128-byte opcodes (≈ February 2026, per tree)
 
@@ -293,9 +327,13 @@ A large networking/throughput release in this tree:
 
 > **Marker accuracy note.** The `liburing 2.15` `io_uring_enter.2` text labels `IORING_OP_NOP128` and `IORING_OP_URING_CMD128` "Available since 6.19". In this tree the `v6.19` tag does exist and contains the commit, so the man-page marker is internally consistent. There is no `6.x → 7.0` _skip_: the sequence is `… 6.18 → 6.19 → 7.0 → 7.1`. Anyone reading this against a _public_ kernel (≤ 6.13 as of early 2025) will not find these opcodes.
 
+> **Worked example.** [`sqe-mixed.d`][ex-sqemixed] issues mixed 64/128-byte SQEs + `NOP128` with `IORING_SETUP_SQE_MIXED` (needs ≥6.19).
+
 ## 7.0 — SQ rewind (≈ April 2026, per tree)
 
 - `IORING_SETUP_SQ_REWIND` — used with `IORING_SETUP_NO_SQARRAY`, allows the SQ tail to be rewound (re-submission of not-yet-consumed SQEs). (`io_uring_setup.2`: "Available since 7.0"; git: `IORING_SETUP_SQ_REWIND` first in `v7.0`.)
+
+> **Worked example.** [`sq-rewind.d`][ex-sqrewind] rewinds the SQ tail to re-submit unconsumed SQEs with `IORING_SETUP_SQ_REWIND` (needs ≥7.0).
 
 ## 7.1-rc6 — Current checkout (development, ≈ May 2026)
 
@@ -376,24 +414,49 @@ and degrades to a `SKIP` (exit 0) on kernels that lack it, so the whole set stay
 the 5.1 baseline up to a bleeding-edge tree. Run them all with `ci --example-files`, or one at
 a time with `dub run --single <file>`.
 
-| Example                                | Since     | Demonstrates                                              |
-| -------------------------------------- | --------- | --------------------------------------------------------- |
-| [`nop.d`][ex-nop]                      | 5.1       | Minimal setup → submit → wait → CQE cycle                 |
-| [`read-write-fixed.d`][ex-rwfixed]     | 5.1       | Registered (fixed) buffers via `WRITE_FIXED`/`READ_FIXED` |
-| [`poll-add.d`][ex-poll]                | 5.1       | One-shot `POLL_ADD` readiness on a pipe                   |
-| [`linked-sqes.d`][ex-linked]           | 5.3       | `IOSQE_IO_LINK` write→`fsync` ordering                    |
-| [`timeout-link-timeout.d`][ex-timeout] | 5.4 / 5.5 | `TIMEOUT` (`-ETIME`) and `LINK_TIMEOUT` cancelling a poll |
-| [`tcp-echo.d`][ex-tcp]                 | 5.5 / 5.6 | Loopback `ACCEPT`+`CONNECT`+`SEND`+`RECV` on one ring     |
-| [`async-cancel.d`][ex-cancel]          | 5.5       | `ASYNC_CANCEL` of an in-flight poll by `user_data`        |
-| [`openat-statx-close.d`][ex-openat]    | 5.6       | Async `OPENAT`→`STATX`→`READ`→`CLOSE` chain               |
-| [`probe.d`][ex-probe]                  | 5.6       | `IORING_REGISTER_PROBE` per-opcode capability table       |
-| [`multishot-accept.d`][ex-msaccept]    | 5.19      | Multishot `ACCEPT` (`CQEFlags.MORE` keeps it armed)       |
-| [`provided-buf-ring.d`][ex-pbufring]   | 5.19      | Ring-provided buffers (`PBUF_RING`) selecting a `RECV`    |
-| [`send-zc.d`][ex-sendzc]               | 6.0       | Zero-copy `SEND_ZC` transfer-CQE → notification-CQE       |
-| [`defer-taskrun.d`][ex-defer]          | 6.1       | `SINGLE_ISSUER`+`DEFER_TASKRUN`+`COOP_TASKRUN` setup      |
-| [`multishot-timeout.d`][ex-mstimeout]  | 6.4       | `IORING_TIMEOUT_MULTISHOT` recurring timer                |
-| [`futex.d`][ex-futex]                  | 6.7       | Async `FUTEX_WAIT` woken by a legacy `futex(2)` wake      |
-| [`pipe.d`][ex-pipe]                    | 6.16      | `IORING_OP_PIPE` pipe-pair creation through the ring      |
+| Example                                | Since     | Demonstrates                                                         |
+| -------------------------------------- | --------- | -------------------------------------------------------------------- |
+| [`nop.d`][ex-nop]                      | 5.1       | Minimal setup → submit → wait → CQE cycle                            |
+| [`read-write-fixed.d`][ex-rwfixed]     | 5.1       | Registered (fixed) buffers via `WRITE_FIXED`/`READ_FIXED`            |
+| [`poll-add.d`][ex-poll]                | 5.1       | One-shot `POLL_ADD` readiness on a pipe                              |
+| [`registered-files.d`][ex-regfiles]    | 5.1       | Read a file by fixed-file index with `IOSQE_FIXED_FILE`              |
+| [`sqpoll.d`][ex-sqpoll]                | 5.1       | `NOP` with no `io_uring_enter` via the `SQPOLL` kernel thread        |
+| [`linked-sqes.d`][ex-linked]           | 5.3       | `IOSQE_IO_LINK` write→`fsync` ordering                               |
+| [`sendmsg-recvmsg.d`][ex-sendmsg]      | 5.3       | Pass an fd over a unix socket (`SCM_RIGHTS`) via `SENDMSG`/`RECVMSG` |
+| [`timeout-link-timeout.d`][ex-timeout] | 5.4 / 5.5 | `TIMEOUT` (`-ETIME`) and `LINK_TIMEOUT` cancelling a poll            |
+| [`tcp-echo.d`][ex-tcp]                 | 5.5 / 5.6 | Loopback `ACCEPT`+`CONNECT`+`SEND`+`RECV` on one ring                |
+| [`async-cancel.d`][ex-cancel]          | 5.5       | `ASYNC_CANCEL` of an in-flight poll by `user_data`                   |
+| [`openat-statx-close.d`][ex-openat]    | 5.6       | Async `OPENAT`→`STATX`→`READ`→`CLOSE` chain                          |
+| [`probe.d`][ex-probe]                  | 5.6       | `IORING_REGISTER_PROBE` per-opcode capability table                  |
+| [`splice-tee.d`][ex-splicetee]         | 5.7       | Zero-copy `SPLICE` between pipes and `TEE` duplication               |
+| [`restrictions.d`][ex-restrict]        | 5.10      | Sandbox a ring via `REGISTER_RESTRICTIONS` + `R_DISABLED`            |
+| [`fs-mutations.d`][ex-fsmut]           | 5.11      | Async `MKDIRAT`/`SYMLINKAT`/`LINKAT`/`RENAMEAT`/`UNLINKAT`           |
+| [`direct-descriptors.d`][ex-directfd]  | 5.15      | Open into a fixed slot, then `FIXED_FD_INSTALL` back to a real fd    |
+| [`cqe-skip.d`][ex-cqeskip]             | 5.17      | Suppress a successful op's CQE with `IOSQE_CQE_SKIP_SUCCESS`         |
+| [`msg-ring.d`][ex-msgring]             | 5.18      | Post a `u64` from one ring into another (cross-core wakeup)          |
+| [`registered-ring-fd.d`][ex-regringfd] | 5.18      | Register the ring fd so `io_uring_enter` skips `fdget`/`fdput`       |
+| [`multishot-accept.d`][ex-msaccept]    | 5.19      | Multishot `ACCEPT` (`CQEFlags.MORE` keeps it armed)                  |
+| [`provided-buf-ring.d`][ex-pbufring]   | 5.19      | Ring-provided buffers (`PBUF_RING`) selecting a `RECV`               |
+| [`uring-cmd-socket.d`][ex-uringcmd]    | 5.19      | Socket `getsockopt`/`setsockopt` via `URING_CMD` passthrough         |
+| [`send-zc.d`][ex-sendzc]               | 6.0       | Zero-copy `SEND_ZC` transfer-CQE → notification-CQE                  |
+| [`multishot-recv.d`][ex-msrecv]        | 6.0       | Multishot `RECV` posting a CQE per segment into provided buffers     |
+| [`sync-cancel.d`][ex-synccancel]       | 6.0       | Synchronous cancel of a poll via `REGISTER_SYNC_CANCEL`              |
+| [`defer-taskrun.d`][ex-defer]          | 6.1       | `SINGLE_ISSUER`+`DEFER_TASKRUN`+`COOP_TASKRUN` setup                 |
+| [`multishot-timeout.d`][ex-mstimeout]  | 6.4       | `IORING_TIMEOUT_MULTISHOT` recurring timer                           |
+| [`futex.d`][ex-futex]                  | 6.7       | Async `FUTEX_WAIT` woken by a legacy `futex(2)` wake                 |
+| [`waitid.d`][ex-waitid]                | 6.7       | Async child-process reap with `IORING_OP_WAITID`                     |
+| [`read-multishot.d`][ex-readms]        | 6.7       | Repeated pipe reads into provided buffers via `READ_MULTISHOT`       |
+| [`futex-waitv.d`][ex-futexv]           | 6.7       | Wait on a vector of futexes with `FUTEX_WAITV`                       |
+| [`napi.d`][ex-napi]                    | 6.9       | Configure NAPI busy-poll with `REGISTER_NAPI`                        |
+| [`socket-bind-listen.d`][ex-socketbl]  | 6.11      | Async `SOCKET` + `BIND` + `LISTEN` lifecycle through the ring        |
+| [`clock-min-timeout.d`][ex-clock]      | 6.12      | Select the wait clock (`REGISTER_CLOCK`) + min-timeout wait          |
+| [`resize-rings.d`][ex-resize]          | 6.13      | Grow a live ring's SQ/CQ with `REGISTER_RESIZE_RINGS`                |
+| [`epoll-wait.d`][ex-epollwait]         | 6.15      | Fold a legacy epoll set into the ring with `EPOLL_WAIT`              |
+| [`recv-zc.d`][ex-recvzc]               | 6.15      | Zero-copy receive via a registered ZCRX interface queue              |
+| [`pipe.d`][ex-pipe]                    | 6.16      | `IORING_OP_PIPE` pipe-pair creation through the ring                 |
+| [`cqe-mixed.d`][ex-cqemixed]           | 6.18      | Reap mixed 16- and 32-byte CQEs with `SETUP_CQE_MIXED`               |
+| [`sqe-mixed.d`][ex-sqemixed]           | 6.19      | Mixed 64/128-byte SQEs + `NOP128` with `SETUP_SQE_MIXED`             |
+| [`sq-rewind.d`][ex-sqrewind]           | 7.0       | Rewind the SQ tail to re-submit SQEs with `SETUP_SQ_REWIND`          |
 
 ---
 
@@ -455,3 +518,28 @@ a time with `dub run --single <file>`.
 [ex-mstimeout]: ./examples/multishot-timeout.d
 [ex-futex]: ./examples/futex.d
 [ex-pipe]: ./examples/pipe.d
+[ex-regfiles]: ./examples/registered-files.d
+[ex-sqpoll]: ./examples/sqpoll.d
+[ex-sendmsg]: ./examples/sendmsg-recvmsg.d
+[ex-splicetee]: ./examples/splice-tee.d
+[ex-restrict]: ./examples/restrictions.d
+[ex-fsmut]: ./examples/fs-mutations.d
+[ex-directfd]: ./examples/direct-descriptors.d
+[ex-cqeskip]: ./examples/cqe-skip.d
+[ex-msgring]: ./examples/msg-ring.d
+[ex-regringfd]: ./examples/registered-ring-fd.d
+[ex-uringcmd]: ./examples/uring-cmd-socket.d
+[ex-msrecv]: ./examples/multishot-recv.d
+[ex-synccancel]: ./examples/sync-cancel.d
+[ex-waitid]: ./examples/waitid.d
+[ex-readms]: ./examples/read-multishot.d
+[ex-futexv]: ./examples/futex-waitv.d
+[ex-napi]: ./examples/napi.d
+[ex-socketbl]: ./examples/socket-bind-listen.d
+[ex-clock]: ./examples/clock-min-timeout.d
+[ex-resize]: ./examples/resize-rings.d
+[ex-epollwait]: ./examples/epoll-wait.d
+[ex-recvzc]: ./examples/recv-zc.d
+[ex-cqemixed]: ./examples/cqe-mixed.d
+[ex-sqemixed]: ./examples/sqe-mixed.d
+[ex-sqrewind]: ./examples/sq-rewind.d

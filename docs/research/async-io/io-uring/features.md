@@ -38,6 +38,8 @@ Per-request `fget`/`fput` reference counting and per-request page pinning (`get_
 
 A proactor that re-registers nothing pays `fget`/`fput` plus a GUP on every single op. Registering the listening/connected sockets and a slab of I/O buffers up front turns each subsequent SQE into a pointer-free index lookup. Resource _tags_ give the loop a safe-reclaim signal, and _sparse_ + _FILE_ALLOC_RANGE_ let `accept`/`open` return **direct descriptors** that never enter the process fd table at all — see [FIXED_FD_INSTALL](#fixed_fd_install) for moving a direct descriptor back into the regular table when an external API needs a real fd. Compare Glommio's and Tokio's buffer-pool strategies in [`../glommio.md`](../glommio.md) and [`../tokio.md`](../tokio.md).
 
+> **Worked examples.** [`read-write-fixed.d`][ex-rwfixed] round-trips a payload through a registered (fixed) buffer with `WRITE_FIXED`/`READ_FIXED`; [`registered-files.d`][ex-regfiles] reads a file by fixed-file table index with `IOSQE_FIXED_FILE`.
+
 ---
 
 ## Provided buffers and buffer rings
@@ -72,6 +74,8 @@ With `IOU_PBUF_RING_INC` (Linux 6.12), the app registers a few very large buffer
 
 Buffer rings are _the_ idiom for high-fan-in servers: combined with [multishot recv](#multishot-operations) the loop arms one SQE per socket and lets the kernel deliver data into freshly-picked buffers indefinitely, with no userspace round-trip to re-provide memory. Incremental consumption further cuts the buffer count for streaming reads. liburing's `proxy.c` example drives multishot recv off a buffer ring (`io_uring_buf_ring`). See [`liburing/examples/proxy.c`].
 
+> **Worked example.** [`provided-buf-ring.d`][ex-pbufring] registers an `io_uring_buf` ring and issues a buffer-selecting `RECV` against it.
+
 ---
 
 ## Multishot operations
@@ -101,6 +105,8 @@ A **multishot** SQE is armed once and produces _many_ CQEs over its lifetime, ea
 ### Why it matters
 
 Multishot is what turns `io_uring` from "batched syscalls" into a genuine **event source**. One armed `ACCEPT_MULTISHOT` SQE replaces an `accept` loop; one `RECV_MULTISHOT` + buffer ring replaces an epoll-`recv` dance. The loop's steady-state submission rate drops toward zero — it only re-arms when an op terminates. This is the closest `io_uring` gets to the green-thread "park until ready" model of Go's netpoller ([`../go-netpoller.md`](../go-netpoller.md)) or Loom ([`../../algebraic-effects/java-loom.md`](../../algebraic-effects/java-loom.md)), while staying completion-based. See [`liburing/man/io_uring_multishot.7`].
+
+> **Worked examples.** [`multishot-accept.d`][ex-msaccept] serves multiple loopback connections from a single armed `ACCEPT` (each CQE carries `CQEFlags.MORE`); [`multishot-recv.d`][ex-msrecv] arms one `RECV` posting a CQE per segment into provided-ring buffers; [`read-multishot.d`][ex-readms] does repeated reads from a pipe into provided-ring buffers with `READ_MULTISHOT`; [`multishot-timeout.d`][ex-mstimeout] arms one `TIMEOUT_MULTISHOT` recurring timer.
 
 ---
 
@@ -132,6 +138,8 @@ Four orthogonal polling strategies, each trading CPU for latency in a different 
 ### Why it matters
 
 SQPOLL is the headline "syscall-free" mode — at the cost of a dedicated, busy-spinning core. NAPI busy-poll is the network-latency analogue and is what lets an `io_uring` server beat a `recvmsg`-on-epoll server on p99 under load (see `napi-busy-poll-server.c`). Hybrid IOPOLL is the pragmatic default for NVMe-class storage where pure IOPOLL's spin cost is unjustified. An event-loop author must treat these as mutually-constrained: SQPOLL forbids `IORING_SETUP_SQ_REWIND`, and `DEFER_TASKRUN`-style single-issuer modes interact with how completions are delivered. See [`liburing/examples/napi-busy-poll-server.c`].
+
+> **Worked examples.** [`sqpoll.d`][ex-sqpoll] submits a `NOP` with no `io_uring_enter` syscall via the `IORING_SETUP_SQPOLL` kernel thread; [`napi.d`][ex-napi] configures NAPI busy-poll with `IORING_REGISTER_NAPI`.
 
 ---
 
@@ -171,6 +179,8 @@ The notification machinery is `struct io_notif_data` (`notif.c`), built atop the
 
 Zero-copy is where `io_uring` decisively diverges from epoll: epoll can tell you a socket is readable, but you still `recv` into a kernel buffer and copy. ZCRX cuts the copy entirely for line-rate ingest, and `SEND_ZC` does the same for egress — at the cost of a **two-phase completion model** the event loop must understand (a send "completes" twice). Designs that hide this (Tokio, Seastar — [`../seastar.md`](../seastar.md)) must keep the buffer alive until the `F_NOTIF` CQE. See [`liburing/examples/send-zerocopy.c`] and [`liburing/examples/zcrx.c`], and the kernel's [io_uring zero copy Rx][zcrx-doc] document.
 
+> **Worked examples.** [`send-zc.d`][ex-sendzc] performs a zero-copy `SEND_ZC` over loopback and asserts the transfer-CQE → notification-CQE pattern; [`recv-zc.d`][ex-recvzc] does zero-copy receive via a registered ZCRX interface queue (SKIPs without a capable NIC).
+
 ---
 
 ## Linked SQEs, drains, and link timeouts
@@ -196,6 +206,8 @@ Zero-copy is where `io_uring` decisively diverges from epoll: epoll can tell you
 ### Why it matters
 
 Links let the loop fuse `accept → recv`, `connect → send`, or `openat → read → close` into one submission, so a whole protocol step costs one `io_uring_enter`. Crucially, **a direct-descriptor `accept` linked to a `recv`** never surfaces the fd to userspace at all. The trade-off is rigidity: a link chain is a fixed DAG decided at submission time — it cannot branch on a result. Higher-level effect systems express the same dependency dynamically instead (see [`../../algebraic-effects/ocaml-eio.md`](../../algebraic-effects/ocaml-eio.md)). See [`liburing/man/io_uring_linked_requests.7`].
+
+> **Worked examples.** [`linked-sqes.d`][ex-linked] chains a write to an `fsync` with `IOSQE_IO_LINK`, showing write-before-`fsync` ordering and `-ECANCELED` failure propagation; [`timeout-link-timeout.d`][ex-timeout] uses a `LINK_TIMEOUT` to cancel a never-ready poll; [`cqe-skip.d`][ex-cqeskip] suppresses a successful op's CQE in a link with `IOSQE_CQE_SKIP_SUCCESS`.
 
 ---
 
@@ -225,6 +237,8 @@ Links let the loop fuse `accept → recv`, `connect → send`, or `openat → re
 
 `msg_ring` is `io_uring`'s answer to "how do N event loops talk to each other" — a work-stealing or sharded-acceptor design (think one acceptor thread fanning connections to worker rings) needs exactly this. Registered ring fds remove the per-`enter` file-table contention that otherwise dominates threaded programs. Glommio and Monoio ([`../glommio.md`](../glommio.md), [`../monoio.md`](../monoio.md)) build their thread-per-core models on these.
 
+> **Worked examples.** [`msg-ring.d`][ex-msgring] posts a `u64` from one ring into another — the cross-core wakeup primitive; [`registered-ring-fd.d`][ex-regringfd] registers the ring fd so `io_uring_enter` skips per-call `fdget`/`fdput`.
+
 ---
 
 ## Futex operations
@@ -249,6 +263,8 @@ Links let the loop fuse `accept → recv`, `connect → send`, or `openat → re
 ### Why it matters
 
 Futex-on-ring is the bridge between the I/O world and the _concurrency-primitive_ world. An event loop can now wait on a condition variable or an async mutex as just another SQE, so a fiber blocked on a lock and a fiber blocked on a socket sit in the same CQ. This is the building block several async runtimes use for cross-task signaling; cf. how effect-based runtimes model blocking ([`../effects-and-event-loops.md`](../effects-and-event-loops.md)). See LWN's [futex wait/wake][lwn-futex] writeup.
+
+> **Worked examples.** [`futex.d`][ex-futex] parks a ring on a 32-bit private futex with `IORING_OP_FUTEX_WAIT`, woken by a legacy `futex(2)` wake; [`futex-waitv.d`][ex-futexv] waits on a vector of futexes with `FUTEX_WAITV`.
 
 ---
 
@@ -277,6 +293,8 @@ Two cancellation surfaces. **Asynchronous** cancellation is an SQE (`IORING_OP_A
 ### Why it matters
 
 Structured concurrency (timeouts, "cancel the loser of a race", graceful shutdown) is only as good as the cancellation primitive underneath it. `CANCEL_FD` lets a loop tear down _all_ operations on a closing socket in one SQE; `CANCEL_OP` + `CANCEL_ALL` enables policy-level cancellation. The synchronous register variant is the clean way to drain a ring before freeing it. This is the low-level counterpart to the cancellation scopes in Eio and Loom ([`../../algebraic-effects/ocaml-eio.md`](../../algebraic-effects/ocaml-eio.md), [`../../algebraic-effects/java-loom.md`](../../algebraic-effects/java-loom.md)). See [`liburing/man/io_uring_cancelation.7`].
+
+> **Worked examples.** [`async-cancel.d`][ex-cancel] cancels an in-flight poll by its `user_data` and observes the `-ECANCELED` completion; [`sync-cancel.d`][ex-synccancel] cancels an in-flight poll synchronously with `IORING_REGISTER_SYNC_CANCEL`.
 
 ---
 
@@ -317,6 +335,8 @@ Plus `IORING_CQE_F_SOCK_NONEMPTY` (`io_uring.h:540`) — set on a recv CQE when 
 
 The networking ops are the reason `io_uring` exists for server authors. BUNDLE in particular is a throughput multiplier — one `recv` SQE can drain several buffers' worth of data, and one `send` SQE can flush a whole scatter list, cutting CQE count under bursty load. Compared to the readiness-only model exposed to Go's netpoller or libuv ([`../libuv.md`](../libuv.md)), these are _completion_ ops: the data is already moved when the CQE lands.
 
+> **Worked examples.** [`tcp-echo.d`][ex-tcp] drives a loopback `ACCEPT`+`CONNECT`+`SEND`+`RECV` round-trip through a single ring; [`sendmsg-recvmsg.d`][ex-sendmsg] passes a file descriptor over a unix socket with `SCM_RIGHTS` via `SENDMSG`/`RECVMSG`; [`socket-bind-listen.d`][ex-socketbl] drives a full async `SOCKET` + `BIND` + `LISTEN` lifecycle through the ring.
+
 ---
 
 ## File and filesystem operations
@@ -340,6 +360,8 @@ The networking ops are the reason `io_uring` exists for server authors. BUNDLE i
 ### Why it matters
 
 Having `statx`, `renameat`, and `unlinkat` on the ring means a tool like a build system can issue _thousands_ of filesystem ops in a batch with one syscall — the workload that motivates Glommio's storage focus. `READV_FIXED`/`WRITEV_FIXED` (see [registered buffers](#registered--fixed-files-and-buffers)) and `IOPOLL` together give the lowest-latency `O_DIRECT` path available on Linux. `PIPE` returning direct descriptors closes a loop: you can build a pipe, splice through it, and never touch the fd table.
+
+> **Worked examples.** [`openat-statx-close.d`][ex-openat] chains `OPENAT`→`STATX`→`READ`→`CLOSE` asynchronously; [`splice-tee.d`][ex-splicetee] does a zero-copy `SPLICE` between pipes and a `TEE` duplication; [`fs-mutations.d`][ex-fsmut] performs async `MKDIRAT`/`SYMLINKAT`/`LINKAT`/`RENAMEAT`/`UNLINKAT` directory mutations.
 
 ---
 
@@ -373,6 +395,8 @@ Ops: `IORING_OP_TIMEOUT`, `IORING_OP_TIMEOUT_REMOVE`, `IORING_OP_LINK_TIMEOUT`.
 
 Every event loop needs timers: I/O deadlines, periodic heartbeats, scheduler quanta. Doing them as SQEs keeps timers in the _same_ completion stream as I/O, so there is one wait point, not two. `min_timeout` is the subtle but high-value knob — it lets a latency-tolerant loop sleep just long enough to coalesce a batch of CQEs, trading a few microseconds of latency for far fewer wakeups. Link timeouts (above) reuse this machinery to bound any other op.
 
+> **Worked examples.** [`timeout-link-timeout.d`][ex-timeout] fires a standalone relative `TIMEOUT` (completing with `-ETIME`) and a `LINK_TIMEOUT`; [`multishot-timeout.d`][ex-mstimeout] arms one `TIMEOUT_MULTISHOT` recurring timer; [`clock-min-timeout.d`][ex-clock] selects the wait clock with `IORING_REGISTER_CLOCK` and uses a min-timeout batched wait.
+
 ---
 
 ## `uring_cmd` passthrough
@@ -402,6 +426,8 @@ Every event loop needs timers: I/O deadlines, periodic heartbeats, scheduler qua
 
 `uring_cmd` is what lets `io_uring` reach _outside_ the generic VFS/socket API — userspace NVMe drivers (SPDK-style) and fine-grained socket introspection (`SIOCINQ` to size the next recv, TX timestamps for latency measurement) all flow through it without bloating the opcode enum. For an event loop it means device- and protocol-specific fast paths can be added without a kernel ABI change. The socket-command path is exercised by liburing's test suite (`test/socket-io-cmd.c`, `test/socket-getsetsock-cmd.c`) rather than the `examples/` programs.
 
+> **Worked example.** [`uring-cmd-socket.d`][ex-uringcmd] does socket `getsockopt`/`setsockopt` through the `URING_CMD` passthrough channel.
+
 ---
 
 ## FIXED_FD_INSTALL {#fixed_fd_install}
@@ -418,6 +444,8 @@ Every event loop needs timers: I/O deadlines, periodic heartbeats, scheduler qua
 
 Direct descriptors are strictly faster (no fd-table lock), so a high-performance loop wants to live in that world. But some libraries demand a real `int fd`. `FIXED_FD_INSTALL` is the bridge that keeps the fast path fast while remaining interoperable — see the [registered files](#registered--fixed-files-and-buffers) discussion of direct descriptors.
 
+> **Worked example.** [`direct-descriptors.d`][ex-directfd] opens into a fixed-file slot, uses it by index, then `FIXED_FD_INSTALL`s it back to a real fd.
+
 ---
 
 ## epoll integration ops
@@ -432,6 +460,8 @@ Two ops let `io_uring` and epoll coexist during migration: `IORING_OP_EPOLL_CTL`
 ### Why it matters
 
 These are _bridging_ ops. A large codebase built around an epoll fd (or a library that exposes only an epoll fd) can be folded into an `io_uring` loop incrementally: register the epoll fd, arm `EPOLL_WAIT` as one SQE, and the epoll readiness stream merges into the CQ. It is the pragmatic on-ramp from a reactor design ([`../libuv.md`](../libuv.md)) to a proactor.
+
+> **Worked example.** [`epoll-wait.d`][ex-epollwait] folds a legacy epoll set into the ring with `IORING_OP_EPOLL_WAIT`.
 
 ---
 
@@ -461,6 +491,8 @@ The right pattern for portable code is `IORING_REGISTER_QUERY` (new) falling bac
 ### Why it matters
 
 `RESIZE_RINGS` means a loop can react to load without dropping connections; `MEM_REGION` enables the registered-wait-argument optimization (passing the wait timeout/sigmask by index instead of by copy each `enter`); `RESTRICTIONS` + `PERSONALITY` are the security story for letting an untrusted plugin submit on a shared ring. `QUERY`/`PROBE` are non-negotiable for any library that targets a range of kernels — the feature set above spans 5.6 → 7.x and **must** be detected, not assumed. See [`./timeline.md`](./timeline.md) for the version map.
+
+> **Worked examples.** [`probe.d`][ex-probe] uses `IORING_REGISTER_PROBE` to print which opcodes the running kernel supports; [`restrictions.d`][ex-restrict] sandboxes a ring to a whitelist of opcodes via `IORING_REGISTER_RESTRICTIONS` + `R_DISABLED`; [`resize-rings.d`][ex-resize] grows a live ring's SQ/CQ with `IORING_REGISTER_RESIZE_RINGS`; [`cqe-mixed.d`][ex-cqemixed] reaps mixed 16- and 32-byte CQEs with `IORING_SETUP_CQE_MIXED`; [`sqe-mixed.d`][ex-sqemixed] issues mixed 64/128-byte SQEs + `NOP128` with `IORING_SETUP_SQE_MIXED`; [`sq-rewind.d`][ex-sqrewind] rewinds the SQ tail to re-submit unconsumed SQEs with `IORING_SETUP_SQ_REWIND`.
 
 ---
 
@@ -531,3 +563,39 @@ For a multi-tenant or sandboxed deployment, BPF filtering lets the host express 
 [liburing/man/io_uring_multishot.7]: https://github.com/axboe/liburing/blob/master/man/io_uring_multishot.7
 [liburing/man/io_uring_linked_requests.7]: https://github.com/axboe/liburing/blob/master/man/io_uring_linked_requests.7
 [liburing/man/io_uring_cancelation.7]: https://github.com/axboe/liburing/blob/master/man/io_uring_cancelation.7
+[ex-rwfixed]: ./examples/read-write-fixed.d
+[ex-regfiles]: ./examples/registered-files.d
+[ex-pbufring]: ./examples/provided-buf-ring.d
+[ex-msaccept]: ./examples/multishot-accept.d
+[ex-msrecv]: ./examples/multishot-recv.d
+[ex-readms]: ./examples/read-multishot.d
+[ex-mstimeout]: ./examples/multishot-timeout.d
+[ex-sqpoll]: ./examples/sqpoll.d
+[ex-napi]: ./examples/napi.d
+[ex-sendzc]: ./examples/send-zc.d
+[ex-recvzc]: ./examples/recv-zc.d
+[ex-linked]: ./examples/linked-sqes.d
+[ex-timeout]: ./examples/timeout-link-timeout.d
+[ex-cqeskip]: ./examples/cqe-skip.d
+[ex-msgring]: ./examples/msg-ring.d
+[ex-regringfd]: ./examples/registered-ring-fd.d
+[ex-futex]: ./examples/futex.d
+[ex-futexv]: ./examples/futex-waitv.d
+[ex-cancel]: ./examples/async-cancel.d
+[ex-synccancel]: ./examples/sync-cancel.d
+[ex-tcp]: ./examples/tcp-echo.d
+[ex-sendmsg]: ./examples/sendmsg-recvmsg.d
+[ex-socketbl]: ./examples/socket-bind-listen.d
+[ex-openat]: ./examples/openat-statx-close.d
+[ex-splicetee]: ./examples/splice-tee.d
+[ex-fsmut]: ./examples/fs-mutations.d
+[ex-clock]: ./examples/clock-min-timeout.d
+[ex-uringcmd]: ./examples/uring-cmd-socket.d
+[ex-directfd]: ./examples/direct-descriptors.d
+[ex-epollwait]: ./examples/epoll-wait.d
+[ex-probe]: ./examples/probe.d
+[ex-restrict]: ./examples/restrictions.d
+[ex-resize]: ./examples/resize-rings.d
+[ex-cqemixed]: ./examples/cqe-mixed.d
+[ex-sqemixed]: ./examples/sqe-mixed.d
+[ex-sqrewind]: ./examples/sq-rewind.d
