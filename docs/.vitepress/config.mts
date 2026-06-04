@@ -624,6 +624,10 @@ export default defineConfig({
                     text: 'WasmFX as a Target',
                     link: '/research/coroutines/stackful/wasmfx-as-target',
                   },
+                  {
+                    text: 'Fiber → WasmFX Plan',
+                    link: '/research/coroutines/stackful/fiber-to-wasmfx-plan',
+                  },
                 ],
               },
             ],

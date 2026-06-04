@@ -94,13 +94,14 @@ The five deep-dives run from the D primitive, down to the raw machine mechanics,
 cross-language runtimes built on the same idea, across the stack-growth design space, and
 finally to the wasm lowering target.
 
-| Document                        | One-line                                                                                                                                                                                                           | Link                |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------- |
-| **D's `Fiber` baseline**        | `core.thread.Fiber` (stackful) + `std.concurrency.Generator`: stack sizing, the asm switch, GC scan coupling, the LDC TLS-migration hazard, WASI `assert(0)` — the cost model stackless improves on                | [d-fiber]           |
-| **Context-switching mechanics** | The switch _itself_: stack priming (the fake initial frame / trampolines), per-ABI callee-saved register save/restore, `sp`/IP transfer, and the POSIX `ucontext` / Windows-Fiber / Boost.Context reference points | [context-switching] |
-| **Green threads (M:N)**         | "Green thread = fiber + scheduler + I/O integration": Go's G-M-P, Java Loom, GHC, OCaml/Eio — work-stealing, park/unpark, and where D's `Fiber` sits                                                               | [green-threads]     |
-| **Stack management**            | The one cost knob: fixed-reserved vs segmented vs contiguous-growable stacks; why Go/OCaml grow-by-copy and D's conservative GC forces fixed `mmap` stacks                                                         | [stack-management]  |
-| **WasmFX as a target**          | The operation-by-operation mapping of D's `Fiber` API onto WasmFX's seven stack-switching instructions; one-shot↔reusable impedance; the druntime-backend roadmap                                                 | [wasmfx-target]     |
+| Document                        | One-line                                                                                                                                                                                                                               | Link                |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| **D's `Fiber` baseline**        | `core.thread.Fiber` (stackful) + `std.concurrency.Generator`: stack sizing, the asm switch, GC scan coupling, the LDC TLS-migration hazard, WASI `assert(0)` — the cost model stackless improves on                                    | [d-fiber]           |
+| **Context-switching mechanics** | The switch _itself_: stack priming (the fake initial frame / trampolines), per-ABI callee-saved register save/restore, `sp`/IP transfer, and the POSIX `ucontext` / Windows-Fiber / Boost.Context reference points                     | [context-switching] |
+| **Green threads (M:N)**         | "Green thread = fiber + scheduler + I/O integration": Go's G-M-P, Java Loom, GHC, OCaml/Eio — work-stealing, park/unpark, and where D's `Fiber` sits                                                                                   | [green-threads]     |
+| **Stack management**            | The one cost knob: fixed-reserved vs segmented vs contiguous-growable stacks; why Go/OCaml grow-by-copy and D's conservative GC forces fixed `mmap` stacks                                                                             | [stack-management]  |
+| **WasmFX as a target**          | The operation-by-operation mapping of D's `Fiber` API onto WasmFX's seven stack-switching instructions; one-shot↔reusable impedance; the druntime-backend roadmap                                                                     | [wasmfx-target]     |
+| **`Fiber` → WasmFX plan**       | A concrete, phased implementation plan to port `core.thread.Fiber` onto WasmFX `cont.*`: the survives-vs-replaced seam, the op→instruction encoding, the three gating problems (toolchain, GC, exceptions), and an eight-phase roadmap | [fiber-plan]        |
 
 > [!NOTE]
 > These leaves deliberately overlap at the seams and cite rather than restate each other.
@@ -170,6 +171,7 @@ index's synthesis are:
 [green-threads]: ./green-threads.md
 [stack-management]: ./stack-management.md
 [wasmfx-target]: ./wasmfx-as-target.md
+[fiber-plan]: ./fiber-to-wasmfx-plan.md
 
 <!-- Within-coroutines-tree -->
 
