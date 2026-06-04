@@ -885,4 +885,4 @@ Primary artifacts (LLVM 23.0.0git, `$REPOS/llvm-project`):
 [ldc-codegen]: ./ldc-codegen.md
 [roadmap]: ./roadmap.md
 [cpp]: ./cpp-coroutines.md
-[d-fiber]: ./d-fiber-baseline.md
+[d-fiber]: ../stackful/d-fiber.md

@@ -485,15 +485,15 @@ The constraints to carry forward: the IR contract is version-unstable (`Coroutin
 
 <!-- References -->
 
-[index]: ./index.md
-[concepts]: ./concepts.md
+[index]: ../index.md
+[concepts]: ../concepts.md
 [llvm-internals]: ./llvm-coro-internals.md
 [cpp]: ./cpp-coroutines.md
 [comparison]: ./comparison.md
-[d-fiber]: ./d-fiber-baseline.md
+[d-fiber]: ../stackful/d-fiber.md
 [d-design]: ./d-language-design.md
 [ldc-codegen]: ./ldc-codegen.md
-[wasm]: ./wasm-and-wasmfx.md
+[wasm]: ../wasm-and-wasmfx.md
 [roadmap]: ./roadmap.md
-[wasmfx]: ../algebraic-effects/wasmfx.md
-[effects-event-loops]: ../async-io/effects-and-event-loops.md
+[wasmfx]: ../../algebraic-effects/wasmfx.md
+[effects-event-loops]: ../../async-io/effects-and-event-loops.md

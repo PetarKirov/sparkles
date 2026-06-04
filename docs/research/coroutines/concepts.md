@@ -447,14 +447,14 @@ stackful `Fiber`, is mapped in [d-landscape].
 
 <!-- References -->
 
-[llvm-coroutines]: ./llvm-coroutines.md
-[llvm-internals]: ./llvm-coro-internals.md
-[cpp]: ./cpp-coroutines.md
-[comparison]: ./comparison.md
-[d-fiber]: ./d-fiber-baseline.md
-[attributes]: ./attributes-and-memory.md
+[llvm-coroutines]: ./stackless/llvm-coroutines.md
+[llvm-internals]: ./stackless/llvm-coro-internals.md
+[cpp]: ./stackless/cpp-coroutines.md
+[comparison]: ./stackless/comparison.md
+[d-fiber]: ./stackful/d-fiber.md
+[attributes]: ./stackless/attributes-and-memory.md
 [wasm]: ./wasm-and-wasmfx.md
-[roadmap]: ./roadmap.md
+[roadmap]: ./stackless/roadmap.md
 [wasmfx]: ../algebraic-effects/wasmfx.md
 [effects-event-loops]: ../async-io/effects-and-event-loops.md
 [async-io-index]: ../async-io/index.md

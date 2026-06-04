@@ -604,6 +604,6 @@ Primary artifacts consulted (all local paths on this machine):
 [llvm-coroutines]: ./llvm-coroutines.md
 [ldc-codegen]: ./ldc-codegen.md
 [attributes]: ./attributes-and-memory.md
-[d-fiber]: ./d-fiber-baseline.md
-[wasm]: ./wasm-and-wasmfx.md
+[d-fiber]: ../stackful/d-fiber.md
+[wasm]: ../wasm-and-wasmfx.md
 [roadmap]: ./roadmap.md

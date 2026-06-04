@@ -807,13 +807,13 @@ Primary artifacts used for this document:
 
 <!-- References -->
 
-[index]: ./index.md
-[concepts]: ./concepts.md
+[index]: ../index.md
+[concepts]: ../concepts.md
 [llvm-coroutines]: ./llvm-coroutines.md
 [llvm-internals]: ./llvm-coro-internals.md
 [comparison]: ./comparison.md
-[d-fiber]: ./d-fiber-baseline.md
+[d-fiber]: ../stackful/d-fiber.md
 [d-design]: ./d-language-design.md
 [attributes]: ./attributes-and-memory.md
-[wasm]: ./wasm-and-wasmfx.md
+[wasm]: ../wasm-and-wasmfx.md
 [roadmap]: ./roadmap.md

@@ -547,71 +547,83 @@ export default defineConfig({
             ],
           },
           {
-            text: 'Stackless Coroutines (LDC)',
-            link: '/research/stackless-coroutines/',
+            text: 'Coroutines (LDC)',
+            link: '/research/coroutines/',
             collapsed: true,
             items: [
               {
-                text: 'Concepts',
-                link: '/research/stackless-coroutines/concepts',
-              },
-              {
-                text: 'LLVM Coroutines',
-                collapsed: true,
-                items: [
-                  {
-                    text: 'Model & Intrinsics',
-                    link: '/research/stackless-coroutines/llvm-coroutines',
-                  },
-                  {
-                    text: 'Pass Internals',
-                    link: '/research/stackless-coroutines/llvm-coro-internals',
-                  },
-                ],
-              },
-              {
-                text: 'Prior Art',
-                collapsed: true,
-                items: [
-                  {
-                    text: 'C++20 Coroutines',
-                    link: '/research/stackless-coroutines/cpp-coroutines',
-                  },
-                  {
-                    text: 'Cross-Language Comparison',
-                    link: '/research/stackless-coroutines/comparison',
-                  },
-                ],
-              },
-              {
-                text: 'D & LDC Integration',
-                collapsed: true,
-                items: [
-                  {
-                    text: 'Stackful Fiber Baseline',
-                    link: '/research/stackless-coroutines/d-fiber-baseline',
-                  },
-                  {
-                    text: 'D Language Design',
-                    link: '/research/stackless-coroutines/d-language-design',
-                  },
-                  {
-                    text: 'LDC Code Generation',
-                    link: '/research/stackless-coroutines/ldc-codegen',
-                  },
-                  {
-                    text: 'Attributes & Memory',
-                    link: '/research/stackless-coroutines/attributes-and-memory',
-                  },
-                ],
+                text: 'Stackless vs Stackful',
+                link: '/research/coroutines/concepts',
               },
               {
                 text: 'WebAssembly & WasmFX',
-                link: '/research/stackless-coroutines/wasm-and-wasmfx',
+                link: '/research/coroutines/wasm-and-wasmfx',
               },
               {
-                text: 'Implementation Roadmap',
-                link: '/research/stackless-coroutines/roadmap',
+                text: 'Stackless',
+                link: '/research/coroutines/stackless/',
+                collapsed: true,
+                items: [
+                  {
+                    text: 'LLVM Model & Intrinsics',
+                    link: '/research/coroutines/stackless/llvm-coroutines',
+                  },
+                  {
+                    text: 'LLVM Pass Internals',
+                    link: '/research/coroutines/stackless/llvm-coro-internals',
+                  },
+                  {
+                    text: 'C++20 Coroutines',
+                    link: '/research/coroutines/stackless/cpp-coroutines',
+                  },
+                  {
+                    text: 'Cross-Language Comparison',
+                    link: '/research/coroutines/stackless/comparison',
+                  },
+                  {
+                    text: 'D Language Design',
+                    link: '/research/coroutines/stackless/d-language-design',
+                  },
+                  {
+                    text: 'LDC Code Generation',
+                    link: '/research/coroutines/stackless/ldc-codegen',
+                  },
+                  {
+                    text: 'Attributes & Memory',
+                    link: '/research/coroutines/stackless/attributes-and-memory',
+                  },
+                  {
+                    text: 'Implementation Roadmap',
+                    link: '/research/coroutines/stackless/roadmap',
+                  },
+                ],
+              },
+              {
+                text: 'Stackful',
+                link: '/research/coroutines/stackful/',
+                collapsed: true,
+                items: [
+                  {
+                    text: 'D Fiber',
+                    link: '/research/coroutines/stackful/d-fiber',
+                  },
+                  {
+                    text: 'Context Switching',
+                    link: '/research/coroutines/stackful/context-switching',
+                  },
+                  {
+                    text: 'Green Threads & Scheduling',
+                    link: '/research/coroutines/stackful/green-threads',
+                  },
+                  {
+                    text: 'Stack Management',
+                    link: '/research/coroutines/stackful/stack-management',
+                  },
+                  {
+                    text: 'WasmFX as a Target',
+                    link: '/research/coroutines/stackful/wasmfx-as-target',
+                  },
+                ],
               },
             ],
           },

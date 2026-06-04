@@ -290,6 +290,6 @@ Reading the table top-to-bottom is the migration path: the default GC frame is t
 [ldc-codegen]: ./ldc-codegen.md
 [cpp]: ./cpp-coroutines.md
 [llvm-coroutines]: ./llvm-coroutines.md
-[wasm]: ./wasm-and-wasmfx.md
-[d-fiber]: ./d-fiber-baseline.md
+[wasm]: ../wasm-and-wasmfx.md
+[d-fiber]: ../stackful/d-fiber.md
 [roadmap]: ./roadmap.md
