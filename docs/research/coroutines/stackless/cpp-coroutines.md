@@ -227,8 +227,8 @@ choose "suspend here" vs "run straight through".
 ### `co_yield` and `co_return` desugaring
 
 - **`co_yield e` ≡ `co_await p.yield_value(e)`** (`n4775:346-349`). N4134's identical
-  earlier rule: "yield <something>; is equivalent to (void)(await
-  <Promise>.yield_value(<something>))" (`n4134:745-746`). A generator's `yield_value`
+  earlier rule: `yield <something>;` is equivalent to
+  `(void)(await <Promise>.yield_value(<something>))` (`n4134:745-746`). A generator's `yield_value`
   stores the value into the promise and returns `suspend_always`.
 - **`co_return e`** desugars to `{ S; goto final_suspend; }` where `S` is
   `p.return_value(e)` (non-void) or `{ e; p.return_void(); }` (void) (`n4775:460-469`).

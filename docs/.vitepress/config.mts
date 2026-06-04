@@ -18,6 +18,7 @@ export default defineConfig({
       unison: 'haskell',
       odin: 'go',
       xaml: 'xml',
+      wast: 'wasm',
     },
   },
 
