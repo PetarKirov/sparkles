@@ -22,10 +22,12 @@
 
 ## Overview
 
-**sparkles:core-cli** is a collection of utilities for building command-line interfaces in D, with a focus on `@safe`, `@nogc`, `pure`, and `nothrow` compatibility.
+**sparkles:core-cli** is a collection of utilities for building command-line interfaces in D, with a focus on `@safe`, `@nogc`, `pure`, and `nothrow` compatibility. The library also ships **sparkles:age** (the [age-encryption.org/v1](https://c2sp.org/age) file-encryption format) and **sparkles:crypto** (its backend-abstracted cryptographic primitives).
 
 ### What's Inside
 
+- **age Encryption** -- A `@safe` D port of the [age](https://c2sp.org/age) format: X25519/scrypt/`ssh-ed25519` recipients, STREAM, and ASCII armor (`sparkles:age`)
+- **Cryptographic Primitives** -- Zeroizing secret memory, base64/bech32/hex encodings, and libsodium-backed hashes, AEAD, X25519, Ed25519, scrypt, and CSPRNG (`sparkles:crypto`)
 - **Styled Templates** -- Apply ANSI styles using D's Interpolated Expression Sequences (IES) with a concise `{style text}` syntax
 - **Pretty Printing** -- Colorized, type-aware formatting for any D type via compile-time introspection
 - **UI Components** -- Tables, boxes, headers, and OSC 8 hyperlinks
@@ -98,6 +100,148 @@ true
 For the full tour — comparing and sorting, ranges, VERS/pURL interop, the
 eleven shipped schemes, and adding your own — see the
 [versions documentation](docs/libs/versions/index.md).
+
+### age Encryption
+
+`sparkles:age` is a `@safe` D implementation of the
+[age-encryption.org/v1](https://c2sp.org/age) file-encryption format — a port
+of the Rust [`rage`](https://github.com/str4d/rage) implementation, conformant
+with all 114 official testkit vectors and interoperable with `rage` in both
+directions. It supports X25519 (public-key), scrypt (passphrase), and
+`ssh-ed25519` recipients/identities, STREAM payload encryption, and ASCII
+armor. Cryptography is provided by `sparkles:crypto` (libsodium).
+
+The one-shot [`sparkles.age.simple`](libs/age/src/sparkles/age/simple.d) API —
+`encrypt` / `encryptAndArmor` / `decrypt` — is the smallest surface for an
+in-memory round-trip.
+
+#### Passphrase (scrypt) round-trip
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "readme_age_passphrase"
+    dependency "sparkles:age" version="*"
++/
+
+import std.stdio : writeln;
+
+import sparkles.age.simple : encrypt, decrypt;
+import sparkles.age.recipients.scrypt : ScryptRecipient, ScryptIdentity;
+
+void main()
+{
+    enum string passphrase = "correct horse battery staple";
+    enum string message = "meet me at dawn";
+
+    // A small work factor (logN = 10) keeps the example fast; real use should
+    // keep the default (18). The recipient holds a non-copyable secret, so it
+    // is passed as an rvalue and moved into the encryptor.
+    auto ct = encrypt(ScryptRecipient(passphrase, 10), cast(const(ubyte)[]) message);
+    assert(ct.hasValue, "encryption to a passphrase recipient must succeed");
+
+    auto pt = decrypt(ScryptIdentity(passphrase), ct.value);
+    assert(pt.hasValue, "decryption with the passphrase must succeed");
+
+    writeln(cast(const(char)[]) pt.value);
+}
+```
+
+```
+meet me at dawn
+```
+
+#### X25519 keypair round-trip
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "readme_age_x25519"
+    dependency "sparkles:age" version="*"
++/
+
+import std.stdio : writeln;
+import std.algorithm.mutation : move;
+
+import sparkles.age.simple : encrypt, decrypt;
+import sparkles.age.recipients.x25519 : X25519Identity;
+
+void main()
+{
+    enum string message = "for your eyes only";
+
+    // Generate a fresh identity; its public recipient is an `age1…` key.
+    auto identity = X25519Identity.generate();
+    auto recipient = identity.toPublic();
+
+    auto ct = encrypt(recipient, cast(const(ubyte)[]) message);
+    assert(ct.hasValue, "encryption to the recipient must succeed");
+
+    // The identity is non-copyable (zeroizing secret scalar), so it is `move`d
+    // into the decryptor. The key and ciphertext are random per run; only the
+    // recovered plaintext is deterministic.
+    auto pt = decrypt(move(identity), ct.value);
+    assert(pt.hasValue, "decryption with the identity must succeed");
+
+    writeln(cast(const(char)[]) pt.value);
+}
+```
+
+```
+for your eyes only
+```
+
+For the full API — multi-recipient `Encryptor`/`Decryptor`, STREAM, armor,
+`ssh-ed25519` keys, key generation, and identity files — see the
+[age specification](docs/specs/age/SPEC.md).
+
+### Cryptographic Primitives
+
+`sparkles:crypto` is the backend-abstracted cryptography layer underneath
+`sparkles:age`: a secret-memory foundation (zeroizing `SecretArray` /
+`SecretString`, constant-time compare), encodings (base64, bech32, hex), and
+RFC/BIP KAT-verified primitives (SHA-256/512, HMAC, HKDF, ChaCha20-Poly1305,
+X25519, Ed25519↔X25519, scrypt, CSPRNG) backed by libsodium via ImportC.
+
+Secret types redact themselves: their `toString` never prints the bytes, so a
+key can't leak into a log line.
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "readme_crypto_secret"
+    dependency "sparkles:crypto" version="*"
++/
+
+import std.stdio : writeln;
+import std.array : appender;
+
+import sparkles.crypto.secret : SecretArray;
+import sparkles.crypto.encoding.base64 : encodeBase64;
+
+void main()
+{
+    // A 16-byte secret renders as a redacted placeholder, never its bytes.
+    // The secret is non-copyable (zeroizing, `@disable this(this)`), so it
+    // renders itself into an output range rather than being passed by value.
+    ubyte[16] raw = [0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
+                     0x88, 0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
+    auto secret = SecretArray!16.fromBytes(raw);
+    auto rendered = appender!string;
+    secret.toString(rendered);
+    writeln(rendered[]);
+
+    // Encodings are plain, deterministic transforms.
+    auto b64 = appender!string;
+    encodeBase64(cast(const(ubyte)[]) "foobar", b64);
+    writeln(b64[]);
+}
+```
+
+```
+SecretArray!16([REDACTED])
+Zm9vYmFy
+```
 
 ### Styled Templates
 
