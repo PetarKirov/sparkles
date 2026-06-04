@@ -1,0 +1,39 @@
+name "age-cli"
+description "Command-line tools for the age file encryption format (age + age-keygen)"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+
+dflags "-preview=in" "-preview=dip1000"
+
+configuration "age" {
+    targetType "executable"
+    targetName "age"
+    mainSourceFile "src/age.d"
+    excludedSourceFiles "src/age_keygen.d"
+    dependency "sparkles:core-cli" path="../.."
+    dependency "sparkles:age" path="../.."
+}
+
+configuration "age-keygen" {
+    targetType "executable"
+    targetName "age-keygen"
+    mainSourceFile "src/age_keygen.d"
+    excludedSourceFiles "src/age.d"
+    dependency "sparkles:core-cli" path="../.."
+    dependency "sparkles:age" path="../.."
+}
+
+configuration "unittest" {
+    excludedSourceFiles "src/age.d" "src/age_keygen.d"
+    dependency "silly" version="~>1.1.1"
+    dependency "sparkles:core-cli" path="../.."
+    dependency "sparkles:age" path="../.."
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
