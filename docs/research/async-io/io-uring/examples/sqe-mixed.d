@@ -2,6 +2,7 @@
 /+ dub.sdl:
     name "io_uring_sqe_mixed"
     dependency "during" version="~>0.5.0"
+    platforms "linux"
     targetPath "build"
 +/
 /**
