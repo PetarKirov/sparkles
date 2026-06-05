@@ -1,6 +1,9 @@
 {
   inputs = {
-    mcl-nixos-modules.url = "github:metacraft-labs/nixos-modules";
+    mcl-nixos-modules = {
+      url = "github:metacraft-labs/nixos-modules";
+      inputs.dlang-nix.follows = "dlang-nix";
+    };
 
     nixpkgs.follows = "mcl-nixos-modules/nixpkgs-unstable";
     flake-parts.follows = "mcl-nixos-modules/flake-parts";
@@ -8,6 +11,15 @@
     git-hooks-nix.follows = "mcl-nixos-modules/git-hooks-nix";
 
     systems.url = "github:nix-systems/triplet";
+
+    dlang-nix = {
+      url = "github:PetarKirov/dlang.nix";
+      inputs = {
+        flake-compat.follows = "mcl-nixos-modules/flake-compat";
+        flake-parts.follows = "flake-parts";
+        git-hooks-nix.follows = "git-hooks-nix";
+      };
+    };
   };
 
   outputs =
