@@ -445,8 +445,25 @@ int main(string[] args)
                         }
                     }
 
+                    // Encode the whole grapheme cluster (base codepoint plus any
+                    // combining marks, ZWJ joiners, variation selectors, …) into a
+                    // single UTF-8 string and draw it as one unit. Drawing only
+                    // codepoints[0] would drop accents and emoji modifiers.
+                    import std.utf : encode;
+                    import std.typecons : Yes;
+                    char[64] text = void;
+                    size_t text_len = 0;
+                    const cp_count = grapheme_len < 16 ? grapheme_len : 16;
+                    foreach (i; 0 .. cp_count) {
+                        char[4] u8;
+                        const u8n = encode!(Yes.useReplacementDchar)(u8, cast(dchar)codepoints[i]);
+                        if (text_len + u8n >= text.length) break;
+                        text[text_len .. text_len + u8n] = u8[0 .. u8n];
+                        text_len += u8n;
+                    }
+                    text[text_len] = '\0';
 
-                    DrawTextCodepoint(activeFont, codepoints[0], Vector2(cast(float)x, cast(float)y), fontSize, fg_col);
+                    DrawTextEx(activeFont, text.ptr, Vector2(cast(float)x, cast(float)y), fontSize, 0, fg_col);
 
                     GhosttyCell raw_cell;
                     bool has_hyperlink = false;
