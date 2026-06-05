@@ -503,6 +503,16 @@ int main(string[] args)
                         DrawRectangle(x, y + cellHeight - thickness, cellWidth, thickness, fg_col);
                     }
                 }
+                else
+                {
+                    // Empty cell with no text may still carry a background color
+                    // (e.g. an erase with a color set). BG_COLOR returns
+                    // INVALID_VALUE when the cell has no background.
+                    GhosttyColorRgb bg_rgb;
+                    if (ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &bg_rgb) == GHOSTTY_SUCCESS) {
+                        DrawRectangle(x, y, cellWidth, cellHeight, Color(bg_rgb.r, bg_rgb.g, bg_rgb.b, 255));
+                    }
+                }
 
                 x += cellWidth;
             }
