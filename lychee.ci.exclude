@@ -11,3 +11,5 @@
 ^https?://wiki\.dlang\.org/
 ^https?://blog\.cy\.md/
 ^https?://www\.cambridge\.org/
+# Hacker News rate-limits GitHub Actions' shared IPs (HTTP 429)
+^https?://news\.ycombinator\.com/
