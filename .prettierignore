@@ -1,0 +1,9 @@
+# Research sample-workspace JSON (tsconfig.json, nx.json, turbo.json,
+# project.json, …) is kept in the `pretty-format-json` pre-commit hook's
+# canonical form (sorted keys, one array element per line). Prettier formats
+# JSON arrays the opposite way (collapsed), so the two hooks would fight on
+# every commit. Exclude these sample JSON from Prettier and let
+# pretty-format-json own them. `package.json` is negated back in: the
+# pretty-format-json hook ignores it, so Prettier keeps managing it.
+docs/research/monorepo-tooling/*/sample/**/*.json
+!docs/research/monorepo-tooling/*/sample/**/package.json

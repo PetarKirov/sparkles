@@ -42,3 +42,18 @@ __dummy.html
 node_modules/
 docs/.vitepress/dist/
 docs/.vitepress/cache/
+
+# Research sample-workspace build artifacts / dependency stores
+# (docs/research/monorepo-tooling/<tool>/sample/ holds source-only example
+# workspaces; these are what each tool generates if someone actually runs it)
+target/
+dist/
+.gradle/
+.turbo/
+.nx/
+__pycache__/
+.venv/
+.pnp.*
+bazel-*
+.pants.d/
+.pdm-build/
