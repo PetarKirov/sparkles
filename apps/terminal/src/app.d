@@ -363,9 +363,13 @@ int main(string[] args)
 
     char[4096] pty_buf;
 
+    // Initialize from the actual window state to avoid a spurious focus event
+    // on the first frame.
+    bool prev_focused = IsWindowFocused();
+
     while (!WindowShouldClose())
     {
-        import input : handle_input, handle_mouse;
+        import input : handle_input, handle_mouse, pty_write;
 
         handle_input(pty_fd, key_encoder, key_event, terminal, selState);
         handle_mouse(pty_fd, mouse_encoder, mouse_event, terminal, cellWidth, cellHeight, selState, sbState, hoverState);
@@ -374,6 +378,23 @@ int main(string[] args)
             SetMouseCursor(MouseCursor.MOUSE_CURSOR_POINTING_HAND);
         } else {
             SetMouseCursor(MouseCursor.MOUSE_CURSOR_DEFAULT);
+        }
+
+        // Focus in/out reporting (DECSET 1004). Only emit when the application
+        // has enabled focus events, otherwise we'd inject stray CSI I / CSI O
+        // into shells that never asked for them. GHOSTTY_MODE_FOCUS_EVENT is
+        // ghostty_mode_new(1004, false), which for a DEC private mode is 1004.
+        bool focused = IsWindowFocused();
+        if (focused != prev_focused) {
+            bool focus_mode = false;
+            if (ghostty_terminal_mode_get(terminal, cast(GhosttyMode) 1004, &focus_mode) == GHOSTTY_SUCCESS && focus_mode) {
+                char[8] fbuf;
+                size_t fwritten = 0;
+                auto fev = focused ? GHOSTTY_FOCUS_GAINED : GHOSTTY_FOCUS_LOST;
+                if (ghostty_focus_encode(fev, fbuf.ptr, fbuf.length, &fwritten) == GHOSTTY_SUCCESS && fwritten > 0)
+                    pty_write(pty_fd, fbuf.ptr, fwritten);
+            }
+            prev_focused = focused;
         }
 
         // Drain all output currently available from the pty in one frame.
