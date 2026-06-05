@@ -7,21 +7,23 @@ includes it. Keep it accurate — a stale fact here propagates into every agent'
 ## Project Overview
 
 `sparkles` is a D monorepo of CLI/library utilities. The root `dub.sdl` declares
-five sub-packages:
+seven sub-packages:
 
 | Sub-package           | Path              | What it is                                                                                                                                                 |
 | --------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sparkles:core-cli`   | `libs/core-cli`   | Terminal styling, pretty-printing, UI components (table/box/header/OSC links), logger, `SmallBuffer`, text readers/writers, process utils, CLI arg parsing |
-| `sparkles:versions`   | `libs/versions`   | Design-by-Introspection versioning library (SemVer, DMD, CalVer, PyPI, Maven, Deb, …) with VERS/pURL interop                                               |
-| `sparkles:test-utils` | `libs/test-utils` | Testing helpers: diff tools, temp-filesystem helpers, string helpers                                                                                       |
-| `sparkles:math`       | `libs/math`       | Small math primitives for games/graphics (early stage)                                                                                                     |
 | `ci`                  | `apps/ci`         | Repository CI helper: runs/verifies markdown examples, standalone examples, sub-package tests, and markdown link maintenance                               |
+| `terminal`            | `apps/terminal`   | Minimal raylib-based terminal emulator built on `sparkles:ghostty`                                                                                         |
+| `sparkles:core-cli`   | `libs/core-cli`   | Terminal styling, pretty-printing, UI components (table/box/header/OSC links), logger, `SmallBuffer`, text readers/writers, process utils, CLI arg parsing |
+| `sparkles:ghostty`    | `libs/ghostty`    | D bindings + ImportC integration layer for `libghostty-vt` (Ghostty's terminal VT engine)                                                                  |
+| `sparkles:math`       | `libs/math`       | Small math primitives for games/graphics (early stage)                                                                                                     |
+| `sparkles:test-utils` | `libs/test-utils` | Testing helpers: diff tools, temp-filesystem helpers, string helpers                                                                                       |
+| `sparkles:versions`   | `libs/versions`   | Design-by-Introspection versioning library (SemVer, DMD, CalVer, PyPI, Maven, Deb, …) with VERS/pURL interop                                               |
 
 Each library **should** be documented under `docs/libs/<name>/` as a
 [Diátaxis](https://diataxis.fr/) tree (`tutorial/`, `how-to/`, `reference/`,
 `explanation/`). Today only `sparkles:versions` is fully documented
 ([`docs/libs/versions/`](../libs/versions/index.md)); `core-cli`, `test-utils`,
-and `math` do not yet have a `docs/libs/<name>/` tree. When you add or substantially
+`math`, and `ghostty` do not yet have a `docs/libs/<name>/` tree. When you add or substantially
 extend a library, add/extend its docs in that location.
 
 ## Detailed Guidelines
@@ -42,13 +44,16 @@ Cross-cutting guides live in `docs/guidelines/`:
 ```
 sparkles/
 ├── flake.nix                       # Nix flake (devshell, `ci` package, checks)
-├── dub.sdl                         # Root package; declares the 5 sub-packages
+├── dub.sdl                         # Root package; declares the 7 sub-packages
 ├── apps/
-│   └── ci/                         # `ci` helper (executable sub-package)
-│       ├── src/app.d               # Markdown example runner / verifier, link maintenance
-│       ├── src/dub_deps.d          # In-tree dependency rewriting helpers
-│       ├── dub.sdl
-│       └── dub.selections.json
+│   ├── ci/                         # `ci` helper (executable sub-package)
+│   │   ├── src/app.d               # Markdown example runner / verifier, link maintenance
+│   │   ├── src/dub_deps.d          # In-tree dependency rewriting helpers
+│   │   ├── dub.sdl
+│   │   └── dub.selections.json
+│   └── terminal/                   # raylib-based terminal emulator (executable)
+│       ├── src/app.d               # Window/render loop, font + PTY setup
+│       └── src/input.d             # Keyboard/mouse → libghostty-vt encoding
 ├── libs/
 │   ├── core-cli/src/sparkles/core_cli/
 │   │   ├── args.d                  # CLI argument parsing (@CliOption, parseCliArgs)
@@ -73,7 +78,10 @@ sparkles/
 │   │   └── testing.d               # checkRoundTrip / checkRejects / checkAscending
 │   ├── test-utils/src/sparkles/test_utils/
 │   │   └── diff_tools.d, tmpfs.d, string.d, package.d
-│   └── math/src/sparkles/math/     # vector.d, package.d
+│   ├── math/src/sparkles/math/     # vector.d, package.d
+│   └── ghostty/src/sparkles/ghostty/
+│       ├── c.c                     # ImportC shim: #include <ghostty/vt.h>
+│       └── package.d               # public import sparkles.ghostty.c
 ├── docs/
 │   ├── guidelines/                 # Cross-cutting agent/style guides (this file lives here)
 │   ├── libs/<name>/                # Per-library Diátaxis docs (currently: versions/)
@@ -513,8 +521,9 @@ have the repo layout, so they keep `version="*"`.
 
 Conventional commits: `<type>(<scope>): <description>` (lowercase description).
 
-- **Scope** = a sub-package (`core-cli`, `versions`, `math`, `test-utils`, `ci`) or
-  an area (`nix`, `dub`, `guidelines`, `gh-actions`, `docs`, `research`).
+- **Scope** = a sub-package (`core-cli`, `versions`, `math`, `test-utils`, `ghostty`,
+  `ci`, `terminal`) or an area (`nix`, `dub`, `guidelines`, `gh-actions`, `docs`,
+  `research`).
 - **Type** — one of the following (one example each):
 
 | Type       | Use for                                  | Example                                                               |
