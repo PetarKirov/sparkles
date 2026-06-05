@@ -37,6 +37,49 @@ void pty_write(int fd, scope const(void)* data, size_t len) @system @nogc nothro
     }
 }
 
+/// What the terminal does when the child process (the shell) exits.
+enum ExitBehavior
+{
+    /// Close the window immediately on any child exit (xterm / Ghostty default).
+    close,
+    /// Keep the window open with a status banner; close on the next keypress
+    /// (Ghostty's `wait-after-command = true`).
+    waitForKey,
+    /// Keep the window open with a status banner until the user closes it
+    /// (strict ghostling parity).
+    hold,
+    /// Close on a clean exit (status 0); hold with a banner on a non-zero or
+    /// signal exit (wezterm's "CloseOnCleanExit").
+    holdOnFailure,
+}
+
+/// Parse the `--exit-behavior` CLI value. Unknown values fall back to the
+/// default (`holdOnFailure`).
+ExitBehavior parseExitBehavior(scope const(char)[] s) @safe pure nothrow @nogc
+{
+    switch (s)
+    {
+        case "close":           return ExitBehavior.close;
+        case "wait-for-key":    return ExitBehavior.waitForKey;
+        case "hold":            return ExitBehavior.hold;
+        case "hold-on-failure": return ExitBehavior.holdOnFailure;
+        default:                return ExitBehavior.holdOnFailure;
+    }
+}
+
+@("input.parseExitBehavior")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(parseExitBehavior("close") == ExitBehavior.close);
+    assert(parseExitBehavior("wait-for-key") == ExitBehavior.waitForKey);
+    assert(parseExitBehavior("hold") == ExitBehavior.hold);
+    assert(parseExitBehavior("hold-on-failure") == ExitBehavior.holdOnFailure);
+    // Unknown values fall back to the default.
+    assert(parseExitBehavior("bogus") == ExitBehavior.holdOnFailure);
+    assert(parseExitBehavior("") == ExitBehavior.holdOnFailure);
+}
+
 GhosttyKey raylib_key_to_ghostty(int rl_key) @safe pure nothrow @nogc
 {
     if (rl_key >= KeyboardKey.KEY_A && rl_key <= KeyboardKey.KEY_Z)

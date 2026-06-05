@@ -303,16 +303,22 @@ int main(string[] args)
     import std.string : strip;
     import std.stdio : stderr, writeln;
 
+    import input : ExitBehavior, parseExitBehavior;
+
     string fontOpt = "monospace";
     int fontSize = 20;
     bool debugScreenshotAndExit = false;
+    string exitBehaviorOpt = "hold-on-failure";
 
     auto helpInfo = getopt(
         args,
         "font|f", "Font path or name (e.g. '/path/to/font.ttf' or 'Fira Code')", &fontOpt,
         "size|s", "Font size in pixels (default: 20)", &fontSize,
+        "exit-behavior", "On child exit: close | wait-for-key | hold | hold-on-failure (default)", &exitBehaviorOpt,
         "debug-take-screenshot-and-exit", "Takes a screenshot after 2 seconds and exits", &debugScreenshotAndExit
     );
+
+    ExitBehavior exitBehavior = parseExitBehavior(exitBehaviorOpt);
 
     if (helpInfo.helpWanted)
     {
@@ -541,12 +547,22 @@ int main(string[] args)
     // on the first frame.
     bool prev_focused = IsWindowFocused();
 
+    // Child-process lifecycle. childExited is set when the pty signals EOF/EIO;
+    // childReaped once waitpid() collects the exit status.
+    import core.sys.posix.sys.wait : waitpid, WNOHANG, WIFEXITED, WEXITSTATUS, WIFSIGNALED, WTERMSIG;
+    bool childExited = false;
+    bool childReaped = false;
+    int childStatus = -1;
+
     while (!WindowShouldClose())
     {
         import input : handle_input, handle_mouse, pty_write;
 
-        handle_input(pty_fd, key_encoder, key_event, terminal, selState);
-        handle_mouse(pty_fd, mouse_encoder, mouse_event, terminal, cellWidth, cellHeight, selState, sbState, hoverState);
+        // Forward keyboard/mouse only while the child is alive.
+        if (!childExited) {
+            handle_input(pty_fd, key_encoder, key_event, terminal, selState);
+            handle_mouse(pty_fd, mouse_encoder, mouse_event, terminal, cellWidth, cellHeight, selState, sbState, hoverState);
+        }
 
         if (hoverState.isHoveringUrl) {
             SetMouseCursor(MouseCursor.MOUSE_CURSOR_POINTING_HAND);
@@ -574,33 +590,72 @@ int main(string[] args)
         // Drain all output currently available from the pty in one frame.
         // The master fd is non-blocking, so we read in a loop until EAGAIN
         // (kernel buffer empty) instead of once per frame — a single read
-        // would cap throughput and make fast output (cat, yes) crawl.
-        bool eof = false;
-        while (true)
+        // would cap throughput and make fast output (cat, yes) crawl. Once the
+        // child has exited we stop reading; the fd may be closed.
+        if (!childExited)
         {
-            auto n = read(pty_fd, pty_buf.ptr, pty_buf.length);
-            if (n > 0)
+            while (true)
             {
-                ghostty_terminal_vt_write(terminal, cast(const(ubyte)*)pty_buf.ptr, cast(uint)n);
-            }
-            else if (n == 0)
-            {
-                eof = true; // Child closed its end of the pty (EOF).
-                break;
-            }
-            else
-            {
-                import core.stdc.errno : errno, EAGAIN, EWOULDBLOCK, EINTR;
-                if (errno == EAGAIN || errno == EWOULDBLOCK)
-                    break; // Nothing more available this frame.
-                if (errno == EINTR)
-                    continue; // Interrupted by a signal — retry the read.
-                eof = true; // EIO (slave closed on Linux) or a real error.
-                break;
+                auto n = read(pty_fd, pty_buf.ptr, pty_buf.length);
+                if (n > 0)
+                {
+                    ghostty_terminal_vt_write(terminal, cast(const(ubyte)*)pty_buf.ptr, cast(uint)n);
+                }
+                else if (n == 0)
+                {
+                    childExited = true; // Child closed its end of the pty (EOF).
+                    break;
+                }
+                else
+                {
+                    import core.stdc.errno : errno, EAGAIN, EWOULDBLOCK, EINTR;
+                    if (errno == EAGAIN || errno == EWOULDBLOCK)
+                        break; // Nothing more available this frame.
+                    if (errno == EINTR)
+                        continue; // Interrupted by a signal — retry the read.
+                    childExited = true; // EIO (slave closed on Linux) or error.
+                    break;
+                }
             }
         }
-        if (eof)
-            break;
+
+        // Reap the child once it has exited so we get its status and leave no
+        // zombie. The pty EOF can arrive before the child is waitable, so we
+        // retry each frame until WNOHANG succeeds.
+        if (childExited && !childReaped)
+        {
+            int wstatus;
+            if (waitpid(child, &wstatus, WNOHANG) == child)
+            {
+                childReaped = true;
+                if (WIFEXITED(wstatus))
+                    childStatus = WEXITSTATUS(wstatus);
+                else if (WIFSIGNALED(wstatus))
+                    childStatus = 128 + WTERMSIG(wstatus);
+            }
+        }
+
+        // Decide whether to close based on the configured exit behavior.
+        if (childExited)
+        {
+            bool closeNow = false;
+            final switch (exitBehavior)
+            {
+                case ExitBehavior.close:
+                    closeNow = true;
+                    break;
+                case ExitBehavior.holdOnFailure:
+                    closeNow = childReaped && childStatus == 0; // close on clean exit.
+                    break;
+                case ExitBehavior.hold:
+                    break; // Stay open until the window is closed.
+                case ExitBehavior.waitForKey:
+                    closeNow = GetKeyPressed() != 0; // any key closes.
+                    break;
+            }
+            if (closeNow)
+                break; // exits the main while loop.
+        }
 
         // Font size control
         bool fontChanged = false;
@@ -911,6 +966,24 @@ int main(string[] args)
         if (has_kitty)
             render_kitty_images(terminal, kitty_gfx, placement_iter, cellWidth, cellHeight, GHOSTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT);
 
+        // Banner shown once the child has exited, so the user knows the shell
+        // is gone (they can still scroll / inspect the final output).
+        if (childExited) {
+            import core.stdc.stdio : snprintf;
+            char[128] msg;
+            if (childReaped && childStatus >= 0)
+                snprintf(msg.ptr, msg.length, "[process exited with status %d]", childStatus);
+            else
+                snprintf(msg.ptr, msg.length, "[process exited]");
+
+            Vector2 msgSize = MeasureTextEx(font, msg.ptr, fontSize, 0);
+            int screenW = GetScreenWidth();
+            int screenH = GetScreenHeight();
+            int bannerH = cast(int) msgSize.y + 8;
+            DrawRectangle(0, screenH - bannerH, screenW, bannerH, Color(0, 0, 0, 180));
+            DrawTextEx(font, msg.ptr, Vector2((screenW - msgSize.x) / 2, screenH - bannerH + 4), fontSize, 0, Color(255, 255, 255, 255));
+        }
+
         // Visual bell: a brief translucent flash over the whole window.
         if (effects_ctx.bellFlashFrames > 0) {
             DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Color(255, 255, 255, 40));
@@ -933,6 +1006,21 @@ int main(string[] args)
                 break;
             }
         }
+    }
+
+    // Reap the child to avoid a zombie. If it's still alive (the user closed
+    // the window first), hang up its process group, then block until it exits.
+    if (child > 0 && !childReaped)
+    {
+        import core.sys.posix.signal : kill, SIGHUP;
+        import core.sys.posix.unistd : getpgid;
+        if (!childExited)
+        {
+            auto pgid = getpgid(child);
+            if (pgid <= 0) pgid = child;
+            kill(cast(pid_t)(-pgid), SIGHUP); // SIGHUP the whole foreground group.
+        }
+        waitpid(child, null, 0);
     }
 
     UnloadFont(font);
