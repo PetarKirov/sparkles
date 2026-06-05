@@ -320,6 +320,9 @@ int main(string[] args)
 
     auto helpInfo = getopt(
         args,
+        // Stop at the first non-option so a trailing command (and its own flags)
+        // is left untouched: `terminal --size 14 -- vim file -R`.
+        config.stopOnFirstNonOption,
         "font|f", "Font path or name (e.g. '/path/to/font.ttf' or 'Fira Code')", &fontOpt,
         "size|s", "Font size in pixels (default: 20)", &fontSize,
         "exit-behavior", "On child exit: close | wait-for-key | hold | hold-on-failure (default)", &exitBehaviorOpt,
@@ -330,9 +333,25 @@ int main(string[] args)
 
     if (helpInfo.helpWanted)
     {
-        defaultGetoptPrinter("A minimal terminal emulator using libghostty-vt", helpInfo.options);
+        defaultGetoptPrinter(
+            "A minimal terminal emulator using libghostty-vt.\n\n" ~
+            "Usage: terminal [options] [-- command [args...]]\n\n" ~
+            "With no command, the login shell runs interactively. With a command,\n" ~
+            "the shell runs it via `-c` and then exits (e.g. `terminal -- vim file`).",
+            helpInfo.options);
         return 0;
     }
+
+    // Any arguments left after the options are an optional command to run in the
+    // shell. A leading `--` separator is accepted and stripped. The command is
+    // joined and passed to the shell via `-c`, so builtins, aliases, PATH
+    // lookup, and pipes all work; the shell exits when the command finishes.
+    string[] command = args[1 .. $];
+    if (command.length && command[0] == "--")
+        command = command[1 .. $];
+
+    import std.array : join;
+    const(char)* shellCommand = command.length ? command.join(" ").toStringz : null;
 
     logBuildInfo();
 
@@ -473,7 +492,12 @@ int main(string[] args)
         const(char)* shell_name = strrchr(shell_ptr, '/');
         shell_name = shell_name ? shell_name + 1 : shell_ptr;
 
-        execl(shell_ptr, shell_name, null);
+        // With a command, run it via the shell (`sh -c "<command>"`) so it exits
+        // when the command finishes; otherwise start an interactive shell.
+        if (shellCommand !is null)
+            execl(shell_ptr, shell_name, "-c".ptr, shellCommand, null);
+        else
+            execl(shell_ptr, shell_name, null);
         _exit(127);
     }
 
