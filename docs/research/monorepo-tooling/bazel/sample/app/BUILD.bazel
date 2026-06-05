@@ -1,0 +1,10 @@
+load("@rules_cc//cc:defs.bzl", "cc_binary")
+
+# Member package #2: a binary that depends on member #1 LOCALLY, by label.
+# This single `deps` edge IS Bazel's cross-reference mechanism: no path=, no
+# version, no workspace: protocol - just the //mathlib label.
+cc_binary(
+  name = "app",
+  srcs = ["main.cpp"],
+  deps = ["//mathlib"],
+)

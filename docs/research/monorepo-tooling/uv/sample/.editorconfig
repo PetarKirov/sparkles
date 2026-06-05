@@ -1,0 +1,5 @@
+# Python idiom is 4-space indentation; override the repo's 2-space default
+# for this sample so editorconfig-checker accepts the .py files.
+[*.py]
+indent_style = space
+indent_size = 4

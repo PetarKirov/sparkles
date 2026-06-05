@@ -1,0 +1,23 @@
+# Workspace root. The presence of this `.moon/` directory marks the
+# repository root and defines the workspace boundary.
+#
+# `projects` enumerates members via globs; ids are derived from folder names,
+# so `apps/web` -> `web` and `packages/utils` -> `utils`.
+projects:
+  - 'apps/*'
+  - 'packages/*'
+
+vcs:
+  manager: 'git'
+  defaultBranch: 'master'
+
+# Hash inputs accurately and enumerate files via Git for speed.
+hasher:
+  optimization: 'accuracy'
+  walkStrategy: 'vcs'
+
+# Install native dependencies and sync project manifests as action-graph
+# nodes before tasks run.
+pipeline:
+  installDependencies: true
+  syncProjects: true

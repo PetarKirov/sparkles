@@ -1,0 +1,9 @@
+# A workspace-root package. The `hello` alias is the one "task" entry point:
+#   bazel run //:hello
+# It just re-exports the //app:app binary so the demo has a stable top-level
+# label independent of where the binary actually lives.
+alias(
+  name = "hello",
+  actual = "//app",
+  visibility = ["//visibility:public"],
+)

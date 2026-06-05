@@ -1,0 +1,7 @@
+packages:
+  - 'packages/*'
+
+# A default catalog: one source of truth for a shared dependency version.
+# Members reference it with the `catalog:` specifier instead of a literal range.
+catalog:
+  picocolors: ^1.1.1

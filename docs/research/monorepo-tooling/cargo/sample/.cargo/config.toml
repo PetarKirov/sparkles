@@ -1,0 +1,6 @@
+# A workspace-scoped task: `cargo ci` expands to the alias below and runs the
+# whole pipeline (test every member, then deny clippy warnings) in topological
+# order across the workspace.
+[alias]
+ci = ["test", "--workspace"]
+lint = ["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]

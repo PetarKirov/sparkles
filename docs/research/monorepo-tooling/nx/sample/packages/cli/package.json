@@ -1,0 +1,11 @@
+{
+  "name": "@sample/cli",
+  "version": "0.0.0",
+  "type": "module",
+  "bin": {
+    "sample-cli": "./dist/main.js"
+  },
+  "dependencies": {
+    "@sample/greeter": "*"
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "name": "@sample/cli",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "build": "node --check src/index.js",
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "@sample/greeter": "workspace:*"
+  }
+}

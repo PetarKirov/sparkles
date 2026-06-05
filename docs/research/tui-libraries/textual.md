@@ -25,7 +25,7 @@ Textual's core thesis is that web development patterns -- component hierarchies,
 
 ### History
 
-Textual was created by Will McGugan, a Python developer based in Edinburgh, Scotland. McGugan first built [Rich](https://github.com/Textualize/rich) in 2020 as a library for beautiful text formatting in the terminal (syntax highlighting, tables, progress bars, trees). Rich grew into a widely-used rendering engine, and in 2021 McGugan began building Textual on top of it as a full application framework. He founded [Textualize](https://www.textualize.io/) at the end of 2021 to develop both projects commercially. Between them, Rich and Textual have been downloaded over 3 billion times.
+Textual was created by Will McGugan, a Python developer based in Edinburgh, Scotland. McGugan first built [Rich](https://github.com/Textualize/rich) in 2020 as a library for beautiful text formatting in the terminal (syntax highlighting, tables, progress bars, trees). Rich grew into a widely-used rendering engine, and in 2021 McGugan began building Textual on top of it as a full application framework. He founded [Textualize](https://web.archive.org/web/20260510205650/https://www.textualize.io/) at the end of 2021 to develop both projects commercially. Between them, Rich and Textual have been downloaded over 3 billion times.
 
 ### Web Deployment
 

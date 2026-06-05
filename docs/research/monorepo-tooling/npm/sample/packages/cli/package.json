@@ -1,0 +1,17 @@
+{
+  "name": "@acme/cli",
+  "version": "1.0.0",
+  "description": "A CLI member that depends on the @acme/greeter workspace member.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "acme-greet": "index.js"
+  },
+  "dependencies": {
+    "@acme/greeter": "^1.0.0"
+  },
+  "scripts": {
+    "build": "node --check index.js",
+    "start": "node index.js"
+  }
+}

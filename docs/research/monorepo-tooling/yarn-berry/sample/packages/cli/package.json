@@ -1,0 +1,16 @@
+{
+  "name": "@acme/cli",
+  "version": "1.0.0",
+  "type": "module",
+  "bin": {
+    "acme-greet": "./src/main.js"
+  },
+  "dependencies": {
+    "@acme/greeter": "workspace:^"
+  },
+  "scripts": {
+    "build": "node -e \"console.log('cli: nothing to compile')\"",
+    "start": "node ./src/main.js",
+    "test": "node --test"
+  }
+}

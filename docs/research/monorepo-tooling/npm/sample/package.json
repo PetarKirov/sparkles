@@ -1,0 +1,16 @@
+{
+  "name": "@acme/monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Minimal npm workspace: a greeter library and a cli that depends on it locally.",
+  "license": "MIT",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "start": "npm run start -w @acme/cli"
+  },
+  "overrides": {}
+}

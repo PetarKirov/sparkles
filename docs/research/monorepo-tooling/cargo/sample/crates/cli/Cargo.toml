@@ -1,0 +1,16 @@
+[package]
+name = "cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "greet"
+path = "src/main.rs"
+
+[dependencies]
+# Local cross-reference to the sibling member, resolved by the central
+# `[workspace.dependencies]` table (which carries the `path = "..."`).
+greeter.workspace = true
+anyhow.workspace = true
