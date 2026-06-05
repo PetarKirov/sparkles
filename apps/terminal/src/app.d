@@ -395,6 +395,20 @@ int main(string[] args)
                     Color bg_col = Color(bg_rgb.r, bg_rgb.g, bg_rgb.b, 255);
                     Color fg_col = Color(fg_rgb.r, fg_rgb.g, fg_rgb.b, 255);
 
+                    // Read the cell style for SGR attribute flags. Colors are
+                    // already resolved above via the FG/BG_COLOR queries.
+                    GhosttyStyle style;
+                    style.size = GhosttyStyle.sizeof;
+                    ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE, &style);
+
+                    // Reverse video: swap fg/bg up front so the selection and
+                    // hovered-link swaps below compose on top of it correctly.
+                    if (style.inverse) {
+                        Color inv = bg_col;
+                        bg_col = fg_col;
+                        fg_col = inv;
+                    }
+
                     int cell_x = x / cellWidth;
                     int cell_y = y / cellHeight;
 
@@ -463,7 +477,20 @@ int main(string[] args)
                     }
                     text[text_len] = '\0';
 
-                    DrawTextEx(activeFont, text.ptr, Vector2(cast(float)x, cast(float)y), fontSize, 0, fg_col);
+                    // Italic: shift the glyph right by a fraction of the font
+                    // size (a crude slant; raylib can't shear a glyph).
+                    const italic_offset = style.italic ? (fontSize / 6) : 0;
+                    DrawTextEx(activeFont, text.ptr, Vector2(cast(float)(x + italic_offset), cast(float)y), fontSize, 0, fg_col);
+
+                    // Bold: redraw 1px to the right to thicken strokes (fake bold).
+                    if (style.bold)
+                        DrawTextEx(activeFont, text.ptr, Vector2(cast(float)(x + italic_offset + 1), cast(float)y), fontSize, 0, fg_col);
+
+                    // Underline (any SGR underline style) and strikethrough.
+                    if (style.underline != 0)
+                        DrawRectangle(x, y + cellHeight - 2, cellWidth, 1, fg_col);
+                    if (style.strikethrough)
+                        DrawRectangle(x, y + cellHeight / 2, cellWidth, 1, fg_col);
 
                     GhosttyCell raw_cell;
                     bool has_hyperlink = false;
