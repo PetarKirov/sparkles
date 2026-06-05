@@ -28,12 +28,19 @@ pkgs.mkShell {
     pkgs.nodejs
     # CI helper (markdown examples, standalone examples, link maintenance)
     config.packages.ci
+
+    # libsodium C bindings for :crypto (ImportC). pkg-config locates the
+    # header dir; .dev carries the headers + libsodium.pc.
+    pkgs.pkg-config
+    pkgs.libsodium
+    pkgs.libsodium.dev
   ]
   ++ dToolchain.packages;
 
   shellHook = ''
     ${envExports}
     export GITHUB_TOKEN="$(gh auth token)"
+    export SODIUM_INCLUDE="$(pkg-config --cflags-only-I libsodium | sed 's/-I//' | tr -d ' ')"
     figlet 'sparkles : *'
   ''
   + config.pre-commit.installationScript;

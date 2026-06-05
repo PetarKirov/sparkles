@@ -50,7 +50,14 @@ in
           # * https://prek.j178.dev/
           package = pkgs.prek;
 
-          excludes = [ "^.*\.age$" ];
+          excludes = [
+            "^.*\.age$"
+            # age testkit conformance vectors are byte-exact fixtures (some
+            # intentionally contain trailing whitespace, CR bytes, or specific
+            # line endings); keep every hook away from them so prek never
+            # rewrites them.
+            "^libs/age/tests/testkit/"
+          ];
 
           hooks = {
             editorconfig-checker.enable = true;
@@ -201,7 +208,21 @@ in
                 { id = "check-symlinks"; }
                 { id = "destroyed-symlinks"; }
                 { id = "check-merge-conflict"; }
-                { id = "detect-private-key"; }
+                {
+                  id = "detect-private-key";
+                  # The SSH recipient/identity parsers contain the OpenSSH PEM
+                  # private-key begin marker, and their DDoc and unit-test
+                  # fixtures embed throwaway example keys (as the upstream age
+                  # testdata does). These are not secrets; exempt the files that
+                  # legitimately reference the marker.
+                  exclude = filesToExcludeRegex [
+                    "docs/specs/age/SPEC.md"
+                    "apps/age/src/sparkles/age_cli/keygen_flow.d"
+                    "libs/age/src/sparkles/age/identity_file.d"
+                    "libs/age/src/sparkles/age/recipients/ssh_ed25519.d"
+                    "libs/age/src/sparkles/age/recipients/ssh_keys.d"
+                  ];
+                }
                 { id = "no-commit-to-branch"; }
                 { id = "check-shebang-scripts-are-executable"; }
                 { id = "check-executables-have-shebangs"; }

@@ -103,10 +103,20 @@
             # CI runners, restricted sandboxes) the wrapper does not abort
             # under makeWrapper --run's set -e semantics — we just fall
             # back to the inherited limit.
+            #
+            # `ci` builds the runnable README examples via `dub run --single`,
+            # and those include `sparkles:age` / `sparkles:crypto`, which bind
+            # libsodium through ImportC (`-P-I$SODIUM_INCLUDE` + `libs "sodium"`).
+            # Outside the dev shell that env var is unset, so provide the
+            # libsodium headers (SODIUM_INCLUDE, consumed by the `-P-I` dflag)
+            # and put its lib on LIBRARY_PATH so `-lsodium` links (and the Nix
+            # ld-wrapper rpaths the store path for runtime).
             ''
               wrapProgram $out/bin/${finalAttrs.pname} \
                 --prefix PATH : ${path} \
                 ${setEnv} \
+                --set-default SODIUM_INCLUDE ${pkgs.libsodium.dev}/include \
+                --prefix LIBRARY_PATH : ${pkgs.libsodium}/lib \
                 --run 'ulimit -n ${toString dToolchain.nofileLimit} 2>/dev/null || true'
             '';
 
