@@ -479,12 +479,17 @@ void handle_mouse(
                         if (buf) {
                             if (ghostty_formatter_format_buf(fmt, buf, len, &len) == GHOSTTY_SUCCESS) {
                                 string line = cast(string)buf[0..len];
-                                import std.regex : matchAll, regex;
-                                auto m = matchAll(line, regex(r"https?://[^\s]+"));
+                                import std.regex : matchAll, ctRegex;
+                                import std.utf : count;
+                                // Compiled at compile time, not rebuilt per frame.
+                                static urlRe = ctRegex!(r"https?://[^\s]+");
+                                auto m = matchAll(line, urlRe);
                                 foreach (c; m) {
-                                    // Hacky column mapping: assumes ASCII (1 byte per cell)
-                                    int start_col = cast(int)c.pre.length;
-                                    int end_col = start_col + cast(int)c.hit.length - 1;
+                                    // Map byte offsets to cell columns by code
+                                    // point count, not byte length, so multibyte
+                                    // text before/in the URL doesn't skew the span.
+                                    int start_col = cast(int)c.pre.count;
+                                    int end_col = start_col + cast(int)c.hit.count - 1;
                                     if (pt.value.coordinate.x >= start_col && pt.value.coordinate.x <= end_col) {
                                         hoverState.isHoveringUrl = true;
                                         hoverState.url = c.hit.idup;

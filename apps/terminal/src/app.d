@@ -244,14 +244,22 @@ private void render_kitty_images(GhosttyTerminal terminal, GhosttyKittyGraphics 
     }
 }
 
+// Per-font set of present codepoints, keyed by the font's GPU texture id, so
+// glyph lookups are O(1) instead of a linear scan of every glyph per cell per
+// frame. Cleared when fonts are reloaded (see the font-size change handler).
+private __gshared bool[int][uint] glyphCache;
+
 bool fontHasGlyph(ref Font font, int codepoint) {
     if (font.glyphs == null) return false;
-    for (int i = 0; i < font.glyphCount; i++) {
-        if (font.glyphs[i].value == codepoint) {
-            return true;
-        }
+    auto set = font.texture.id in glyphCache;
+    if (set is null) {
+        bool[int] built;
+        for (int i = 0; i < font.glyphCount; i++)
+            built[font.glyphs[i].value] = true;
+        glyphCache[font.texture.id] = built;
+        set = font.texture.id in glyphCache;
     }
-    return false;
+    return (codepoint in *set) !is null;
 }
 
 int[] getRequiredCodepoints() {
@@ -671,6 +679,9 @@ int main(string[] args)
         }
 
         if (fontChanged) {
+            // Reloading fonts invalidates the glyph cache (texture ids may be
+            // reused by the GPU after the old fonts are unloaded).
+            glyphCache.clear();
             UnloadFont(font);
             font = LoadFontEx(fontPath.toStringz, fontSize, loadedCodepoints.ptr, cast(int)loadedCodepoints.length);
             if (hasRegularFallback) {
