@@ -8,7 +8,7 @@ targetPath "build"
 
 dflags "-preview=in" "-preview=dip1000"
 
-dependency "expected" version="~>0.4.0"
+dependency "expected" version="~>0.4.1"
 
 configuration "library" {
     targetType "library"
