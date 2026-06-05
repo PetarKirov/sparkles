@@ -5,8 +5,9 @@ export default defineConfig({
   description: 'D library for building CLI applications',
   base: '/',
 
-  // Ignore links to .d source files referenced from docs
-  ignoreDeadLinks: [/\.d$/],
+  // Ignore links to .d source files and to sample/ workspace directories
+  // (source artifacts under research/monorepo-tooling/<tool>/sample/, not pages)
+  ignoreDeadLinks: [/\.d$/, /\/sample\//, /\/sample$/],
 
   markdown: {
     languageAlias: {
@@ -19,6 +20,11 @@ export default defineConfig({
       odin: 'go',
       xaml: 'xml',
       wast: 'wasm',
+      // Monorepo-tooling fences whose grammars ARE bundled under another name.
+      // (Unbundled ones — ninja, meson, just — are left to Shiki's graceful
+      // plain-text fallback; aliasing them to a non-grammar errors the build.)
+      starlark: 'python',
+      bzl: 'python',
     },
   },
 
@@ -627,6 +633,205 @@ export default defineConfig({
                   {
                     text: 'Fiber → WasmFX Plan',
                     link: '/research/coroutines/stackful/fiber-to-wasmfx-plan',
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            text: 'Monorepo & Workspace Tooling',
+            link: '/research/monorepo-tooling/',
+            collapsed: true,
+            items: [
+              { text: 'Concepts', link: '/research/monorepo-tooling/concepts' },
+              {
+                text: 'JS/TS Package Managers',
+                collapsed: true,
+                items: [
+                  { text: 'npm', link: '/research/monorepo-tooling/npm/' },
+                  {
+                    text: 'Yarn Berry',
+                    link: '/research/monorepo-tooling/yarn-berry/',
+                  },
+                  { text: 'pnpm', link: '/research/monorepo-tooling/pnpm/' },
+                  { text: 'Bun', link: '/research/monorepo-tooling/bun/' },
+                ],
+              },
+              {
+                text: 'Python Package Managers',
+                collapsed: true,
+                items: [
+                  { text: 'uv', link: '/research/monorepo-tooling/uv/' },
+                  {
+                    text: 'Poetry',
+                    link: '/research/monorepo-tooling/poetry/',
+                  },
+                  { text: 'Hatch', link: '/research/monorepo-tooling/hatch/' },
+                ],
+              },
+              {
+                text: 'Language Package Managers / Build Systems',
+                collapsed: true,
+                items: [
+                  {
+                    text: 'Cargo (Rust)',
+                    link: '/research/monorepo-tooling/cargo/',
+                  },
+                  {
+                    text: 'Go (go.work)',
+                    link: '/research/monorepo-tooling/go-work/',
+                  },
+                  {
+                    text: 'Gradle (JVM)',
+                    link: '/research/monorepo-tooling/gradle/',
+                  },
+                  {
+                    text: 'Maven (JVM)',
+                    link: '/research/monorepo-tooling/maven/',
+                  },
+                  {
+                    text: 'sbt (Scala)',
+                    link: '/research/monorepo-tooling/sbt/',
+                  },
+                  {
+                    text: 'Mill (Scala/JVM)',
+                    link: '/research/monorepo-tooling/mill/',
+                  },
+                  {
+                    text: 'Composer (PHP)',
+                    link: '/research/monorepo-tooling/composer/',
+                  },
+                ],
+              },
+              {
+                text: 'JS/TS Task Orchestrators',
+                collapsed: true,
+                items: [
+                  { text: 'Nx', link: '/research/monorepo-tooling/nx/' },
+                  {
+                    text: 'Turborepo',
+                    link: '/research/monorepo-tooling/turborepo/',
+                  },
+                  { text: 'Lerna', link: '/research/monorepo-tooling/lerna/' },
+                  { text: 'Rush', link: '/research/monorepo-tooling/rush/' },
+                  { text: 'Lage', link: '/research/monorepo-tooling/lage/' },
+                  {
+                    text: 'Wireit',
+                    link: '/research/monorepo-tooling/wireit/',
+                  },
+                ],
+              },
+              {
+                text: 'Polyglot Build Orchestrators',
+                collapsed: true,
+                items: [
+                  { text: 'Bazel', link: '/research/monorepo-tooling/bazel/' },
+                  { text: 'Buck2', link: '/research/monorepo-tooling/buck2/' },
+                  { text: 'Pants', link: '/research/monorepo-tooling/pants/' },
+                  {
+                    text: 'Please',
+                    link: '/research/monorepo-tooling/please/',
+                  },
+                  { text: 'moon', link: '/research/monorepo-tooling/moon/' },
+                  {
+                    text: 'GN + Ninja',
+                    link: '/research/monorepo-tooling/gn/',
+                  },
+                ],
+              },
+              {
+                text: 'Container / CI-Oriented',
+                collapsed: true,
+                items: [
+                  {
+                    text: 'Dagger',
+                    link: '/research/monorepo-tooling/dagger/',
+                  },
+                  {
+                    text: 'Earthly',
+                    link: '/research/monorepo-tooling/earthly/',
+                  },
+                  {
+                    text: 'Garden',
+                    link: '/research/monorepo-tooling/garden/',
+                  },
+                ],
+              },
+              {
+                text: 'Generic Task Runners',
+                collapsed: true,
+                items: [
+                  {
+                    text: 'Task (go-task)',
+                    link: '/research/monorepo-tooling/task/',
+                  },
+                  { text: 'Just', link: '/research/monorepo-tooling/just/' },
+                  { text: 'mise', link: '/research/monorepo-tooling/mise/' },
+                  { text: 'Make', link: '/research/monorepo-tooling/make/' },
+                ],
+              },
+              {
+                text: 'Native Build Systems',
+                collapsed: true,
+                items: [
+                  { text: 'Meson', link: '/research/monorepo-tooling/meson/' },
+                  { text: 'CMake', link: '/research/monorepo-tooling/cmake/' },
+                  { text: 'SCons', link: '/research/monorepo-tooling/scons/' },
+                  { text: 'Waf', link: '/research/monorepo-tooling/waf/' },
+                  { text: 'Ninja', link: '/research/monorepo-tooling/ninja/' },
+                ],
+              },
+              {
+                text: 'Remote Execution Backends',
+                collapsed: true,
+                items: [
+                  {
+                    text: 'BuildBuddy',
+                    link: '/research/monorepo-tooling/buildbuddy/',
+                  },
+                  {
+                    text: 'Buildbarn',
+                    link: '/research/monorepo-tooling/buildbarn/',
+                  },
+                  {
+                    text: 'NativeLink',
+                    link: '/research/monorepo-tooling/nativelink/',
+                  },
+                ],
+              },
+              {
+                text: 'Minimalist / Research',
+                collapsed: true,
+                items: [
+                  { text: 'redo', link: '/research/monorepo-tooling/redo/' },
+                  { text: 'tup', link: '/research/monorepo-tooling/tup/' },
+                ],
+              },
+              {
+                text: 'Polyglot Glue',
+                collapsed: true,
+                items: [
+                  {
+                    text: 'Nix (flakes)',
+                    link: '/research/monorepo-tooling/nix-flakes/',
+                  },
+                ],
+              },
+              {
+                text: 'Synthesis',
+                collapsed: true,
+                items: [
+                  {
+                    text: 'dub Baseline',
+                    link: '/research/monorepo-tooling/dub-baseline',
+                  },
+                  {
+                    text: 'Comparison & Recommendations',
+                    link: '/research/monorepo-tooling/comparison',
+                  },
+                  {
+                    text: 'dub Workspace Proposal',
+                    link: '/research/monorepo-tooling/dub-proposal',
                   },
                 ],
               },
