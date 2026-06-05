@@ -6,6 +6,37 @@ import raylib;
 
 import sparkles.ghostty.c;
 
+/// Best-effort write of all `len` bytes to the (non-blocking) pty master.
+///
+/// Because the fd is non-blocking, `write` may return short or fail with
+/// `EAGAIN`. We retry on `EINTR`, advance past partial writes, and silently
+/// drop the remainder if the kernel buffer is full — which is what terminal
+/// emulators do under back-pressure (mirrors ghostling's `pty_write`).
+void pty_write(int fd, scope const(void)* data, size_t len) @system @nogc nothrow
+{
+    import core.stdc.errno : errno, EINTR;
+
+    auto buf = cast(const(ubyte)*) data;
+    while (len > 0)
+    {
+        const n = write(fd, buf, len);
+        if (n > 0)
+        {
+            buf += n;
+            len -= cast(size_t) n;
+        }
+        else if (n < 0)
+        {
+            if (errno == EINTR) continue;
+            break; // EAGAIN or a real error — drop the remainder.
+        }
+        else
+        {
+            break; // n == 0: nothing written, avoid spinning.
+        }
+    }
+}
+
 GhosttyKey raylib_key_to_ghostty(int rl_key) @safe pure nothrow @nogc
 {
     if (rl_key >= KeyboardKey.KEY_A && rl_key <= KeyboardKey.KEY_Z)
@@ -176,7 +207,7 @@ void mouse_encode_and_write(int pty_fd, GhosttyMouseEncoder encoder, GhosttyMous
     size_t written = 0;
     GhosttyResult res = ghostty_mouse_encoder_encode(encoder, event, buf.ptr, buf.sizeof, &written);
     if (res == GHOSTTY_SUCCESS && written > 0)
-        write(pty_fd, buf.ptr, written);
+        pty_write(pty_fd, buf.ptr, written);
 }
 
 void handle_mouse(
@@ -600,7 +631,7 @@ void handle_input(int pty_fd, GhosttyKeyEncoder encoder, GhosttyKeyEvent event, 
             const(char)* clipboard = GetClipboardText();
             if (clipboard) {
                 import core.stdc.string : strlen;
-                write(pty_fd, clipboard, strlen(clipboard));
+                pty_write(pty_fd, clipboard, strlen(clipboard));
             }
             return; // consume event
         }
@@ -645,11 +676,11 @@ void handle_input(int pty_fd, GhosttyKeyEncoder encoder, GhosttyKeyEvent event, 
         size_t written = 0;
         GhosttyResult res = ghostty_key_encoder_encode(encoder, event, buf.ptr, buf.sizeof, &written);
         if (res == GHOSTTY_SUCCESS && written > 0) {
-            write(pty_fd, buf.ptr, written);
+            pty_write(pty_fd, buf.ptr, written);
             char_utf8_len = 0;
         }
     }
 
     if (char_utf8_len > 0)
-        write(pty_fd, char_utf8.ptr, char_utf8_len);
+        pty_write(pty_fd, char_utf8.ptr, char_utf8_len);
 }

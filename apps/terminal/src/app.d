@@ -13,10 +13,11 @@ import sparkles.ghostty.c;
 
 extern(C) int forkpty(int *amaster, char *name, const termios *termp, const winsize *winp);
 
-extern(C) void effect_write_pty(GhosttyTerminal terminal, void* userdata, const(ubyte)* data, size_t len)
+extern(C) void effect_write_pty(GhosttyTerminal terminal, void* userdata, const(ubyte)* data, size_t len) @nogc nothrow
 {
+    import input : pty_write;
     int pty_fd = *cast(int*)userdata;
-    write(pty_fd, data, len);
+    pty_write(pty_fd, data, len);
 }
 
 bool fontHasGlyph(ref Font font, int codepoint) {
