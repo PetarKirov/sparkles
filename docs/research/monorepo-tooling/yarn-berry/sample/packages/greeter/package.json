@@ -1,0 +1,11 @@
+{
+  "name": "@acme/greeter",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": "./src/index.js",
+  "scripts": {
+    "build": "node -e \"console.log('greeter: nothing to compile')\"",
+    "test": "node --test"
+  }
+}

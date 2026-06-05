@@ -1,0 +1,24 @@
+# Virtual workspace root: this manifest has no `[package]`, only `[workspace]`.
+# `cargo build` / `cargo test` from here operate on every member.
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+default-members = ["crates/cli"]
+
+# Fields members can inherit with `field.workspace = true`.
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["Sparkles Research <petar@blocksense.network>"]
+
+# Central dependency registry: members reference these with `dep.workspace = true`,
+# eliminating version drift across the workspace.
+[workspace.dependencies]
+anyhow = "1"
+greeter = { path = "crates/greeter" }
+
+# Shared, optimized release profile applied to every member.
+[profile.release]
+lto = "thin"
+codegen-units = 1

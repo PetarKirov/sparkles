@@ -35,3 +35,8 @@
 ^https?://people\.cs\.kuleuven\.be/
 ^https?://invisible-island\.net/
 ^https?://(www\.)?phoronix\.com/
+^https?://([^/]+\.)?please\.build/
+^https?://([^/]+\.)?gnu\.org/software/make/
+^https?://([^/]+\.)?googlesource\.com/
+^https?://([^/]+\.)?think-async\.com/
+^https?://([^/]+\.)?cs\.columbia\.edu/

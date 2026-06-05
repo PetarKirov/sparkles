@@ -1,0 +1,7 @@
+# uv-generated artifacts and Python build outputs — never committed.
+.venv/
+__pycache__/
+*.pyc
+dist/
+build/
+*.egg-info/

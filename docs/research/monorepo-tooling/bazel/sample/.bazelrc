@@ -1,0 +1,9 @@
+# Bzlmod is the default in Bazel 7+, but be explicit so this sample builds the
+# same way on any supported release line (8.x / 9.x).
+common --enable_bzlmod
+
+# Report every failing target instead of stopping at the first one.
+build --keep_going
+
+# Cap concurrency; "auto" derives the value from the host CPU count.
+build --jobs=auto

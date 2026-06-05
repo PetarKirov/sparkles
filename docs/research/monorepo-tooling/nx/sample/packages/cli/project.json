@@ -1,0 +1,34 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "cli",
+  "projectType": "application",
+  "sourceRoot": "packages/cli/src",
+  "tags": [
+    "scope:app"
+  ],
+  "targets": {
+    "build": {
+      "dependsOn": [
+        "^build"
+      ],
+      "executor": "@nx/js:tsc",
+      "options": {
+        "main": "packages/cli/src/main.ts",
+        "outputPath": "dist/packages/cli",
+        "tsConfig": "packages/cli/tsconfig.json"
+      },
+      "outputs": [
+        "{workspaceRoot}/dist/packages/cli"
+      ]
+    },
+    "serve": {
+      "dependsOn": [
+        "build"
+      ],
+      "executor": "nx:run-commands",
+      "options": {
+        "command": "node dist/packages/cli/main.js"
+      }
+    }
+  }
+}

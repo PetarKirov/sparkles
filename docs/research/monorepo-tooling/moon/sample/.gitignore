@@ -1,0 +1,12 @@
+# Dependency stores and build artifacts — never committed.
+node_modules/
+dist/
+*.tsbuildinfo
+
+# moon caches and proto local store.
+.moon/cache/
+.moon/docker/
+.proto/
+
+# pnpm lockfile is intentionally omitted from this illustrative sample.
+pnpm-lock.yaml

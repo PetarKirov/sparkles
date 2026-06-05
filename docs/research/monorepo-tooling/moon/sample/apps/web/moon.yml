@@ -1,0 +1,29 @@
+type: 'application'
+language: 'typescript'
+
+project:
+  title: 'web'
+  description: 'Front-end app that consumes the shared utils library.'
+
+# Explicit, language-agnostic edge to the upstream library. moon also
+# discovers this implicitly from the `workspace:*` reference in package.json,
+# but declaring it here annotates the production scope and documents intent.
+dependsOn:
+  - id: 'utils'
+    scope: 'production'
+
+tasks:
+  build:
+    command: 'tsc --build'
+    inputs:
+      - 'src/**/*'
+      - 'tsconfig.json'
+    outputs:
+      - 'dist/**/*'
+    # `^:build` runs `build` in every upstream project (here: utils) first,
+    # so the dependency is compiled before this app is.
+    deps:
+      - '^:build'
+    options:
+      cache: true
+      runInCI: true

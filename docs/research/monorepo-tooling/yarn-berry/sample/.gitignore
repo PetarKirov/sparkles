@@ -1,0 +1,11 @@
+# Yarn Berry install artifacts and dependency store
+node_modules/
+.pnp.*
+.yarn/cache/
+.yarn/install-state.gz
+.yarn/unplugged/
+yarn.lock
+
+# Build outputs
+dist/
+*.tsbuildinfo

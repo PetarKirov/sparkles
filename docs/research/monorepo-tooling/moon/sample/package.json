@@ -1,0 +1,6 @@
+{
+  "name": "moon-sample-workspace",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@9.12.0"
+}

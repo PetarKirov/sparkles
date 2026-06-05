@@ -1,0 +1,11 @@
+# Root module: this file is the workspace boundary marker. Its directory is the
+# workspace root, and every directory beneath it that has a BUILD.bazel file is a
+# package in this single workspace, addressed by a //-rooted label.
+module(
+  name = "bazel_sample",
+  version = "0.1.0",
+)
+
+# rules_cc provides cc_library / cc_binary. Pulled from the Bazel Central
+# Registry by name+version; transitive deps are resolved automatically.
+bazel_dep(name = "rules_cc", version = "0.2.11")

@@ -990,6 +990,6 @@ The combination of `pure`, `@nogc`, and `SmallBuffer` means UI tests run with ze
 - **Huh (forms)**: <https://github.com/charmbracelet/huh>
 - **Gum (shell scripting)**: <https://github.com/charmbracelet/gum>
 - **Charm homepage**: <https://charm.sh>
-- **"The Elm Architecture" (original)**: <https://guide.elm-lang.org/architecture/>
+- **"The Elm Architecture" (original)**: <https://web.archive.org/web/20260602090516/https://guide.elm-lang.org/architecture/>
 - **Charm blog**: <https://charm.sh/blog/>
 - **"Building a TUI with Bubble Tea" (talk)**: Various conference presentations by the Charm team

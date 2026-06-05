@@ -1,0 +1,13 @@
+{
+  "name": "@acme/greeter",
+  "version": "1.0.0",
+  "description": "A tiny greeting library, consumed locally by @acme/cli.",
+  "license": "MIT",
+  "type": "module",
+  "main": "index.js",
+  "exports": "./index.js",
+  "scripts": {
+    "build": "node --check index.js",
+    "test": "node --test"
+  }
+}

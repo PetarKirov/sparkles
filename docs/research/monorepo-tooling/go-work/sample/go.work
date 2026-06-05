@@ -1,0 +1,9 @@
+go 1.24
+
+// A virtual workspace root: two co-equal main modules, used together so that
+// `cli` imports `greeter` from local source — no replace directive, no version,
+// no publish step. Run `go build ./...` or `go test ./...` from this directory.
+use (
+	./cli
+	./greeter
+)

@@ -1,0 +1,10 @@
+load("@rules_cc//cc:defs.bzl", "cc_library")
+
+# Member package #1: a reusable library, addressed by the label //mathlib.
+# `visibility = public` lets sibling packages (e.g. //app) depend on it.
+cc_library(
+  name = "mathlib",
+  srcs = ["add.cpp"],
+  hdrs = ["add.h"],
+  visibility = ["//visibility:public"],
+)

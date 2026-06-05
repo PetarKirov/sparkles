@@ -1,0 +1,10 @@
+{
+  "name": "@sample/root",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "build": "pnpm -r run build",
+    "start": "pnpm --filter @sample/cli run start"
+  },
+  "packageManager": "pnpm@11.5.2"
+}

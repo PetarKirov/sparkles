@@ -1,0 +1,22 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "greeter",
+  "projectType": "library",
+  "sourceRoot": "packages/greeter/src",
+  "tags": [
+    "scope:shared"
+  ],
+  "targets": {
+    "build": {
+      "executor": "@nx/js:tsc",
+      "options": {
+        "main": "packages/greeter/src/index.ts",
+        "outputPath": "dist/packages/greeter",
+        "tsConfig": "packages/greeter/tsconfig.json"
+      },
+      "outputs": [
+        "{workspaceRoot}/dist/packages/greeter"
+      ]
+    }
+  }
+}
