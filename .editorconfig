@@ -33,3 +33,8 @@ insert_final_newline = unset
 # spacing for visual output examples
 [*.md]
 indent_size = unset
+
+# The Make deep-dive embeds real Makefile recipes in fenced code blocks, and
+# Make requires literal tabs — so disable indent-style checking for that file.
+[docs/research/monorepo-tooling/make/index.md]
+indent_style = unset
