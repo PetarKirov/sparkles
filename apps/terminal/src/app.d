@@ -146,6 +146,10 @@ int main(string[] args)
     Vector2 mSize = MeasureTextEx(font, "M", fontSize, 0);
     int cellWidth = cast(int)mSize.x;
     int cellHeight = cast(int)mSize.y;
+    // Guard against a zero-sized cell (degenerate font metrics): every grid
+    // computation below divides by these, so a 0 would mean division by zero.
+    if (cellWidth < 1) cellWidth = 1;
+    if (cellHeight < 1) cellHeight = 1;
     SetWindowSize(cols * cellWidth, rows * cellHeight);
 
     GhosttyTerminal terminal;
@@ -156,7 +160,12 @@ int main(string[] args)
     ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_USERDATA, cast(const(void)*)&pty_fd);
     ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_WRITE_PTY, cast(const(void)*)&effect_write_pty);
 
-    winsize ws = { ws_row: rows, ws_col: cols };
+    winsize ws = {
+        ws_row: rows,
+        ws_col: cols,
+        ws_xpixel: cast(ushort)(cols * cellWidth),
+        ws_ypixel: cast(ushort)(rows * cellHeight),
+    };
     pid_t child = forkpty(&pty_fd, null, null, &ws);
 
     if (child < 0)
@@ -299,6 +308,8 @@ int main(string[] args)
             mSize = MeasureTextEx(font, "M", fontSize, 0);
             cellWidth = cast(int)mSize.x;
             cellHeight = cast(int)mSize.y;
+            if (cellWidth < 1) cellWidth = 1;
+            if (cellHeight < 1) cellHeight = 1;
         }
 
         if (fontChanged || IsWindowResized()) {
@@ -308,7 +319,12 @@ int main(string[] args)
             if (rows == 0) rows = 1;
 
             ghostty_terminal_resize(terminal, cols, rows, cellWidth, cellHeight);
-            winsize new_ws = { ws_row: rows, ws_col: cols };
+            winsize new_ws = {
+                ws_row: rows,
+                ws_col: cols,
+                ws_xpixel: cast(ushort)(cols * cellWidth),
+                ws_ypixel: cast(ushort)(rows * cellHeight),
+            };
             ioctl(pty_fd, TIOCSWINSZ, &new_ws);
         }
 
