@@ -272,6 +272,29 @@ int[] getRequiredCodepoints() {
     return cps;
 }
 
+// Log compile-time build info from libghostty-vt so we can quickly tell whether
+// the library was built with SIMD and in which optimization mode.
+void logBuildInfo()
+{
+    bool simd = false;
+    ghostty_build_info(GHOSTTY_BUILD_INFO_SIMD, &simd);
+
+    GhosttyOptimizeMode opt = GHOSTTY_OPTIMIZE_DEBUG;
+    ghostty_build_info(GHOSTTY_BUILD_INFO_OPTIMIZE, &opt);
+
+    const(char)* opt_str;
+    switch (opt) {
+        case GHOSTTY_OPTIMIZE_DEBUG:         opt_str = "Debug".ptr;        break;
+        case GHOSTTY_OPTIMIZE_RELEASE_SAFE:  opt_str = "ReleaseSafe".ptr;  break;
+        case GHOSTTY_OPTIMIZE_RELEASE_SMALL: opt_str = "ReleaseSmall".ptr; break;
+        case GHOSTTY_OPTIMIZE_RELEASE_FAST:  opt_str = "ReleaseFast".ptr;  break;
+        default:                             opt_str = "Unknown".ptr;      break;
+    }
+
+    TraceLog(TraceLogLevel.LOG_INFO, "ghostty-vt: simd:     %s", simd ? "enabled".ptr : "disabled".ptr);
+    TraceLog(TraceLogLevel.LOG_INFO, "ghostty-vt: optimize: %s", opt_str);
+}
+
 int main(string[] args)
 {
     import std.getopt;
@@ -296,6 +319,8 @@ int main(string[] args)
         defaultGetoptPrinter("A minimal terminal emulator using libghostty-vt", helpInfo.options);
         return 0;
     }
+
+    logBuildInfo();
 
     string fontPath = fontOpt;
     if (!fontPath.exists)
