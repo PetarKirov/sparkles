@@ -249,7 +249,7 @@ int main(string[] args)
     ScrollbarState sbState;
     HoverState hoverState;
 
-    char[1024] pty_buf;
+    char[4096] pty_buf;
 
     while (!WindowShouldClose())
     {
@@ -264,23 +264,36 @@ int main(string[] args)
             SetMouseCursor(MouseCursor.MOUSE_CURSOR_DEFAULT);
         }
 
-        // Read from PTY
-        auto n = read(pty_fd, pty_buf.ptr, pty_buf.length);
-        if (n > 0)
+        // Drain all output currently available from the pty in one frame.
+        // The master fd is non-blocking, so we read in a loop until EAGAIN
+        // (kernel buffer empty) instead of once per frame — a single read
+        // would cap throughput and make fast output (cat, yes) crawl.
+        bool eof = false;
+        while (true)
         {
-            ghostty_terminal_vt_write(terminal, cast(const(ubyte)*)pty_buf.ptr, cast(uint)n);
-        }
-        else if (n == 0)
-        {
-            break; // Child exited (EOF)
-        }
-        else if (n < 0)
-        {
-            import core.stdc.errno : errno, EAGAIN, EWOULDBLOCK, EIO;
-            if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                break; // Child closed slave PTY (often results in EIO on Linux)
+            auto n = read(pty_fd, pty_buf.ptr, pty_buf.length);
+            if (n > 0)
+            {
+                ghostty_terminal_vt_write(terminal, cast(const(ubyte)*)pty_buf.ptr, cast(uint)n);
+            }
+            else if (n == 0)
+            {
+                eof = true; // Child closed its end of the pty (EOF).
+                break;
+            }
+            else
+            {
+                import core.stdc.errno : errno, EAGAIN, EWOULDBLOCK, EINTR;
+                if (errno == EAGAIN || errno == EWOULDBLOCK)
+                    break; // Nothing more available this frame.
+                if (errno == EINTR)
+                    continue; // Interrupted by a signal — retry the read.
+                eof = true; // EIO (slave closed on Linux) or a real error.
+                break;
             }
         }
+        if (eof)
+            break;
 
         // Font size control
         bool fontChanged = false;
