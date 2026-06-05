@@ -305,6 +305,6 @@ let test = handle(read_and_log(), handler!(FileRead(name) => {
 [effing-mad on crates.io]: https://crates.io/crates/effing-mad
 [effing-mad API documentation]: https://docs.rs/effing-mad/latest/effing_mad/
 [effing-mad basic example]: https://github.com/rosefromthedead/effing-mad/blob/main/examples/basic.rs
-[Effing-mad discussion on Hacker News]: https://news.ycombinator.com/item?id=35358336
+[Effing-mad discussion on Hacker News]: https://web.archive.org/web/20230718210643/https://news.ycombinator.com/item?id=35358336
 [Effing-mad discussion on Lobsters]: https://lobste.rs/s/blkfub/effing_mad_algebraic_effects_for_rust
 [Generators are dead, long live coroutines, generators are back -- Inside Rust Blog]: https://blog.rust-lang.org/inside-rust/2023/10/23/coroutines/

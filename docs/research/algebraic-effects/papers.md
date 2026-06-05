@@ -202,7 +202,7 @@ This line of work is central for systems that need both expressive scoped effect
 [Algebraic Operations and Generic Effects]: https://doi.org/10.1016/S1571-0661(04)80969-2
 [Handlers of Algebraic Effects]: https://doi.org/10.1007/978-3-642-00590-9_7
 [An Introduction to Algebraic Effects and Handlers]: https://doi.org/10.1016/j.entcs.2015.12.003
-[Effect Handlers in Scope]: https://www.cs.ox.ac.uk/people/nicolas.wu/papers/Scope.pdf
+[Effect Handlers in Scope]: https://web.archive.org/web/20251207192541/http://www.cs.ox.ac.uk/people/nicolas.wu/papers/Scope.pdf
 [Fusion for Free]: https://people.cs.kuleuven.be/~tom.schrijvers/Research/papers/mpc2015.pdf
 [Freer Monads, More Extensible Effects]: https://doi.org/10.1145/2804302.2804319
 [Algebraic Effects for Functional Programming]: https://www.microsoft.com/en-us/research/wp-content/uploads/2016/08/algeff-tr-2016-v2.pdf
