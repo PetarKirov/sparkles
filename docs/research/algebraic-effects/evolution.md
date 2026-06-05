@@ -214,7 +214,7 @@ Different ecosystems currently optimize different subsets of these properties.
 [Notions of Computation and Monads (1991)]: https://doi.org/10.1016/0890-5401(91)90052-4
 [Algebraic Operations and Generic Effects (2003)]: https://doi.org/10.1016/S1571-0661(04)80969-2
 [Handlers of Algebraic Effects (2009)]: https://doi.org/10.1007/978-3-642-00590-9_7
-[Effect Handlers in Scope (2014)]: https://www.cs.ox.ac.uk/people/nicolas.wu/papers/Scope.pdf
+[Effect Handlers in Scope (2014)]: https://web.archive.org/web/20251207192541/http://www.cs.ox.ac.uk/people/nicolas.wu/papers/Scope.pdf
 [Fusion for Free (2015)]: https://people.cs.kuleuven.be/~tom.schrijvers/Research/papers/mpc2015.pdf
 [Freer Monads, More Extensible Effects (2015)]: https://doi.org/10.1145/2804302.2804319
 [Algebraic Effects for Functional Programming (2016)]: https://www.microsoft.com/en-us/research/wp-content/uploads/2016/08/algeff-tr-2016-v2.pdf
