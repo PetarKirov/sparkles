@@ -47,7 +47,7 @@ int[] getRequiredCodepoints() {
     return cps;
 }
 
-void main(string[] args)
+int main(string[] args)
 {
     import std.getopt;
     import std.file : exists;
@@ -69,7 +69,7 @@ void main(string[] args)
     if (helpInfo.helpWanted)
     {
         defaultGetoptPrinter("A minimal terminal emulator using libghostty-vt", helpInfo.options);
-        return;
+        return 0;
     }
 
     string fontPath = fontOpt;
@@ -85,7 +85,7 @@ void main(string[] args)
     if (!fontPath.exists)
     {
         stderr.writeln("Error: Could not resolve font '", fontOpt, "'. Please provide a valid path or installed font name.");
-        return;
+        return 1;
     }
 
     ushort cols = 100;
@@ -108,7 +108,8 @@ void main(string[] args)
     if (font.texture.id == 0)
     {
         stderr.writeln("Error: Raylib failed to load font: ", fontPath);
-        return;
+        CloseWindow();
+        return 1;
     }
 
     Font regularFallback;
@@ -151,12 +152,23 @@ void main(string[] args)
     GhosttyTerminalOptions opts = { cols: cols, rows: rows, max_scrollback: 1000 };
     ghostty_terminal_new(null, &terminal, opts);
 
-    int pty_fd;
+    int pty_fd = -1;
     ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_USERDATA, cast(const(void)*)&pty_fd);
     ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_WRITE_PTY, cast(const(void)*)&effect_write_pty);
 
     winsize ws = { ws_row: rows, ws_col: cols };
     pid_t child = forkpty(&pty_fd, null, null, &ws);
+
+    if (child < 0)
+    {
+        stderr.writeln("Error: forkpty failed to spawn the shell.");
+        UnloadFont(font);
+        if (hasRegularFallback) UnloadFont(regularFallback);
+        if (hasNerdFallback) UnloadFont(nerdFallback);
+        ghostty_terminal_free(terminal);
+        CloseWindow();
+        return 1;
+    }
 
     if (child == 0)
     {
@@ -188,10 +200,19 @@ void main(string[] args)
         execl(shell_ptr, shell_name, null);
         _exit(127);
     }
-    else if (child > 0)
+
+    // Parent: make the master fd non-blocking so read() returns EAGAIN instead
+    // of stalling the render loop when there's no pending output.
+    int flags = fcntl(pty_fd, F_GETFL);
+    if (flags < 0 || fcntl(pty_fd, F_SETFL, flags | O_NONBLOCK) < 0)
     {
-        int flags = fcntl(pty_fd, F_GETFL);
-        fcntl(pty_fd, F_SETFL, flags | O_NONBLOCK);
+        stderr.writeln("Error: failed to set the pty master non-blocking.");
+        UnloadFont(font);
+        if (hasRegularFallback) UnloadFont(regularFallback);
+        if (hasNerdFallback) UnloadFont(nerdFallback);
+        ghostty_terminal_free(terminal);
+        CloseWindow();
+        return 1;
     }
 
     GhosttyRenderState render_state;
@@ -506,4 +527,5 @@ void main(string[] args)
     selState.free();
     ghostty_terminal_free(terminal);
     CloseWindow();
+    return 0;
 }
