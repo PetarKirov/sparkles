@@ -552,6 +552,7 @@ void handle_mouse(
 void handle_input(int pty_fd, GhosttyKeyEncoder encoder, GhosttyKeyEvent event, GhosttyTerminal terminal, ref SelectionState selState)
 {
     import std.utf : encode;
+    import std.typecons : Yes;
     ghostty_key_encoder_setopt_from_terminal(encoder, terminal);
 
     char[64] char_utf8;
@@ -559,7 +560,9 @@ void handle_input(int pty_fd, GhosttyKeyEncoder encoder, GhosttyKeyEvent event, 
     int ch;
     while ((ch = GetCharPressed()) != 0) {
         char[4] u8;
-        int n = cast(int)encode(u8, cast(dchar)ch);
+        // Substitute U+FFFD for an invalid codepoint instead of throwing — a
+        // bad value from GetCharPressed must not crash input handling.
+        int n = cast(int)encode!(Yes.useReplacementDchar)(u8, cast(dchar)ch);
         if (char_utf8_len + n < char_utf8.length) {
             char_utf8[char_utf8_len .. char_utf8_len + n] = u8[0 .. n];
             char_utf8_len += n;
