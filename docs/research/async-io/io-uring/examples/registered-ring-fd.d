@@ -2,6 +2,7 @@
 /+ dub.sdl:
     name "io_uring_registered_ring_fd"
     dependency "during" version="~>0.5.0"
+    platforms "linux"
     targetPath "build"
 +/
 /**

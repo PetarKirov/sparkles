@@ -2,6 +2,7 @@
 /+ dub.sdl:
     name "io_uring_multishot_timeout"
     dependency "during" version="~>0.5.0"
+    platforms "linux"
     targetPath "build"
 +/
 /**
