@@ -95,6 +95,7 @@ import sparkles.core_cli.ui.header : drawHeader, HeaderProps, HeaderStyle;
 
 // in-app modules
 import dub_deps : parseSubPackages, rewriteInTreeDeps;
+import example_manifest : exampleRunsOnHost;
 
 // === Types ===
 
@@ -810,8 +811,25 @@ private MonitoredResult executeLogged(const(string)[] args, string label)
     return res;
 }
 
-private int runExampleFilesMode(string[] exampleFiles, bool failFast)
+private int runExampleFilesMode(string[] allExampleFiles, bool failFast)
 {
+    // Honor each example's dub `platforms` declaration: skip (don't build) the
+    // ones this host can't satisfy — e.g. the Linux-only `io_uring` examples on
+    // a macOS runner. dub's `platforms` is advisory and won't stop the build, so
+    // the runner enforces it.
+    string[] exampleFiles;
+    string[] skippedFiles;
+    foreach (exampleFile; allExampleFiles)
+    {
+        if (exampleFile.exists && !exampleRunsOnHost(exampleFile.readText.lineSplitter.array))
+            skippedFiles ~= exampleFile;
+        else
+            exampleFiles ~= exampleFile;
+    }
+
+    foreach (skippedFile; skippedFiles)
+        info(i"{yellow ⊘} {cyan $(skippedFile.baseName)} — skipped (unsupported on this platform)");
+
     i"Checking $(exampleFiles.length) standalone example file(s)".text
         .drawHeader(HeaderProps(style: HeaderStyle.banner, width: 60))
         .writeln("\n");
