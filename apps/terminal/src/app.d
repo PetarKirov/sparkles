@@ -13,11 +13,104 @@ import sparkles.ghostty.c;
 
 extern(C) int forkpty(int *amaster, char *name, const termios *termp, const winsize *winp);
 
+// Context threaded to every terminal effect callback via the userdata pointer
+// so they can reach the pty and the current geometry without globals.
+struct EffectsContext
+{
+    int pty_fd = -1;
+    int cellWidth;
+    int cellHeight;
+    ushort cols;
+    ushort rows;
+    int bellFlashFrames; // > 0 flashes the screen for a visual bell.
+}
+
+// Device-attribute constants from <ghostty/vt/device.h>. They are C #defines,
+// which ImportC does not reliably expose, so we mirror the values here.
+private enum DA_CONFORMANCE_VT220 = 62;
+private enum DA_FEATURE_COLUMNS_132 = 1;
+private enum DA_FEATURE_SELECTIVE_ERASE = 6;
+private enum DA_FEATURE_ANSI_COLOR = 22;
+private enum DA_DEVICE_TYPE_VT220 = 1;
+
+// write_pty: the terminal calls this whenever a VT sequence needs a response
+// written back to the application (DSR, mode/DA queries, …). Without it,
+// programs like vim and tmux that probe terminal capabilities would hang.
 extern(C) void effect_write_pty(GhosttyTerminal terminal, void* userdata, const(ubyte)* data, size_t len) @nogc nothrow
 {
     import input : pty_write;
-    int pty_fd = *cast(int*)userdata;
-    pty_write(pty_fd, data, len);
+    auto ctx = cast(EffectsContext*) userdata;
+    pty_write(ctx.pty_fd, data, len);
+}
+
+// size: responds to XTWINOPS size queries (CSI 14/16/18 t).
+extern(C) bool effect_size(GhosttyTerminal terminal, void* userdata, GhosttySizeReportSize* out_size) @nogc nothrow
+{
+    auto ctx = cast(EffectsContext*) userdata;
+    out_size.rows = ctx.rows;
+    out_size.columns = ctx.cols;
+    out_size.cell_width = cast(uint) ctx.cellWidth;
+    out_size.cell_height = cast(uint) ctx.cellHeight;
+    return true;
+}
+
+// device_attributes: responds to DA1/DA2/DA3 so applications can identify the
+// terminal. We report VT220-level conformance with a modest feature set.
+extern(C) bool effect_device_attributes(GhosttyTerminal terminal, void* userdata, GhosttyDeviceAttributes* out_attrs) @nogc nothrow
+{
+    out_attrs.primary.conformance_level = DA_CONFORMANCE_VT220;
+    out_attrs.primary.features[0] = DA_FEATURE_COLUMNS_132;
+    out_attrs.primary.features[1] = DA_FEATURE_SELECTIVE_ERASE;
+    out_attrs.primary.features[2] = DA_FEATURE_ANSI_COLOR;
+    out_attrs.primary.num_features = 3;
+
+    out_attrs.secondary.device_type = DA_DEVICE_TYPE_VT220;
+    out_attrs.secondary.firmware_version = 1;
+    out_attrs.secondary.rom_cartridge = 0;
+
+    out_attrs.tertiary.unit_id = 0;
+    return true;
+}
+
+// xtversion: responds to CSI > q with our application name.
+extern(C) GhosttyString effect_xtversion(GhosttyTerminal terminal, void* userdata) @nogc nothrow
+{
+    static immutable name = "sparkles";
+    return GhosttyString(cast(const(ubyte)*) name.ptr, name.length);
+}
+
+// enquiry: answerback for the ENQ control (0x05). We send nothing.
+extern(C) GhosttyString effect_enquiry(GhosttyTerminal terminal, void* userdata) @nogc nothrow
+{
+    return GhosttyString(null, 0);
+}
+
+// title_changed: updates the window title on OSC 0 / OSC 2.
+extern(C) void effect_title_changed(GhosttyTerminal terminal, void* userdata) @nogc nothrow
+{
+    GhosttyString title;
+    if (ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_TITLE, &title) != GHOSTTY_SUCCESS)
+        return;
+
+    import core.stdc.string : memcpy;
+    char[256] buf;
+    size_t n = title.len < buf.length - 1 ? title.len : buf.length - 1;
+    if (n > 0) memcpy(buf.ptr, title.ptr, n);
+    buf[n] = '\0';
+    SetWindowTitle(buf.ptr);
+}
+
+// color_scheme: raylib can't query the OS scheme, so ignore the query.
+extern(C) bool effect_color_scheme(GhosttyTerminal terminal, void* userdata, GhosttyColorScheme* out_scheme) @nogc nothrow
+{
+    return false;
+}
+
+// bell: BEL (0x07) — trigger a brief screen flash as a visual bell.
+extern(C) void effect_bell(GhosttyTerminal terminal, void* userdata) @nogc nothrow
+{
+    auto ctx = cast(EffectsContext*) userdata;
+    ctx.bellFlashFrames = 4;
 }
 
 bool fontHasGlyph(ref Font font, int codepoint) {
@@ -158,8 +251,6 @@ int main(string[] args)
     ghostty_terminal_new(null, &terminal, opts);
 
     int pty_fd = -1;
-    ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_USERDATA, cast(const(void)*)&pty_fd);
-    ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_WRITE_PTY, cast(const(void)*)&effect_write_pty);
 
     winsize ws = {
         ws_row: rows,
@@ -224,6 +315,27 @@ int main(string[] args)
         CloseWindow();
         return 1;
     }
+
+    // Register effects so the terminal can respond to the VT queries that
+    // programs like vim, tmux, and htop send at startup (device attributes,
+    // size, xtversion, …). Without these, those queries are silently dropped
+    // and the programs may hang or fall back to degraded behavior.
+    EffectsContext effects_ctx = {
+        pty_fd: pty_fd,
+        cellWidth: cellWidth,
+        cellHeight: cellHeight,
+        cols: cols,
+        rows: rows,
+    };
+    ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_USERDATA, cast(const(void)*)&effects_ctx);
+    ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_WRITE_PTY, cast(const(void)*)&effect_write_pty);
+    ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_SIZE, cast(const(void)*)&effect_size);
+    ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_DEVICE_ATTRIBUTES, cast(const(void)*)&effect_device_attributes);
+    ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_XTVERSION, cast(const(void)*)&effect_xtversion);
+    ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_ENQUIRY, cast(const(void)*)&effect_enquiry);
+    ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_TITLE_CHANGED, cast(const(void)*)&effect_title_changed);
+    ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_COLOR_SCHEME, cast(const(void)*)&effect_color_scheme);
+    ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_BELL, cast(const(void)*)&effect_bell);
 
     GhosttyRenderState render_state;
     ghostty_render_state_new(null, &render_state);
@@ -333,6 +445,11 @@ int main(string[] args)
             if (rows == 0) rows = 1;
 
             ghostty_terminal_resize(terminal, cols, rows, cellWidth, cellHeight);
+            // Keep the effects context in sync so size/DA reports are accurate.
+            effects_ctx.cols = cols;
+            effects_ctx.rows = rows;
+            effects_ctx.cellWidth = cellWidth;
+            effects_ctx.cellHeight = cellHeight;
             winsize new_ws = {
                 ws_row: rows,
                 ws_col: cols,
@@ -580,6 +697,12 @@ int main(string[] args)
                 DrawRectangle(c_x, c_y + cellHeight - 2, cellWidth, 2, c_color);
             else if (cursor_style == 3) // Hollow block
                 DrawRectangleLines(c_x, c_y, cellWidth, cellHeight, c_color);
+        }
+
+        // Visual bell: a brief translucent flash over the whole window.
+        if (effects_ctx.bellFlashFrames > 0) {
+            DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Color(255, 255, 255, 40));
+            effects_ctx.bellFlashFrames--;
         }
 
         EndDrawing();
