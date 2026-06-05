@@ -6,7 +6,7 @@ license "BSL-1.0"
 
 dflags "-preview=in" "-preview=dip1000"
 
-dependency "expected" version="~>0.4.0"
+dependency "expected" version="~>0.4.1"
 
 targetType "library"
 targetPath "build"

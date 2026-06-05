@@ -1,8 +1,8 @@
 {
   "dependencies": {
     "expected": {
-      "sha256": "1iw81d3chpwg4xfhjkzn3xxckz6lwq27c2xygw865i17jkkmfnwa",
-      "version": "0.4.0"
+      "sha256": "1ahr7gbjl6dgw1qs9x5yzcwhbzfg7ygdlsm9gw4hgmm1xrfcpri0",
+      "version": "0.4.1"
     },
     "silly": {
       "sha256": "0fz7ib715sfk3w69i6xns5pwd4caahvfqjf32v13daxm1ms8xdzz",
