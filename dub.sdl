@@ -6,8 +6,8 @@ license "BSL-1.0"
 
 targetPath "build"
 
-subPackage "libs/core-cli"
-subPackage "libs/test-utils"
-subPackage "libs/math"
-subPackage "libs/versions"
 subPackage "apps/ci"
+subPackage "libs/core-cli"
+subPackage "libs/math"
+subPackage "libs/test-utils"
+subPackage "libs/versions"
