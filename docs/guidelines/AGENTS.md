@@ -34,6 +34,7 @@ Cross-cutting guides live in `docs/guidelines/`:
 - **[Design by Introspection — Intro](./design-by-introspection-00-intro.md)** & **[Guidelines](./design-by-introspection-01-guidelines.md)** — Capability traits, optional primitives, shell-with-hooks pattern
 - **[Interpolated Expression Sequences](./interpolated-expression-sequences.md)** — IES syntax, metadata processing, context-aware encoding
 - **[DDoc](./ddoc.md)** — Documentation comments, sections, macros, cross-referencing
+- **[Writing Research Docs](./research-docs.md)** — Research catalog layout, deep-dive & index skeletons, house style, VitePress gotchas, co-located runnable samples
 - **Idioms** — [Expected Error Handling](./idioms/expected/index.md), [Forcing Named Arguments](./idioms/forced-named-arguments/index.md)
 
 ## Repository Layout
@@ -403,7 +404,8 @@ unittest { /* ... */ }
 - Cross-cutting agent/style guides → `docs/guidelines/`.
 - Per-library docs → `docs/libs/<name>/` as a Diátaxis tree
   (`tutorial/`, `how-to/`, `reference/`, `explanation/`). Mirror `libs/<name>/`.
-- Background → `docs/research/`; design specs → `docs/specs/`.
+- Background research → `docs/research/<topic>/` as a cross-linked catalog; follow
+  [Writing Research Docs](./research-docs.md). Design specs → `docs/specs/`.
 
 ### Runnable README examples
 
