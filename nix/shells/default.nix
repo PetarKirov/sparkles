@@ -3,15 +3,14 @@
     {
       config,
       pkgs,
-      inputs',
       ...
     }:
     let
       inherit (pkgs) lib;
-      dToolchain = import ../d-toolchain.nix { inherit pkgs; };
+      inherit (config.legacyPackages) d-toolchain;
 
       envExports = lib.concatStringsSep "\n" (
-        lib.mapAttrsToList (name: value: "export ${name}=${lib.escapeShellArg value}") dToolchain.env
+        lib.mapAttrsToList (name: value: "export ${name}=${lib.escapeShellArg value}") d-toolchain.env
       );
       mkSparklesShell =
         greeting:
@@ -31,7 +30,7 @@
             config.packages.ci
           ]
           ++ lib.optional greeting pkgs.figlet
-          ++ dToolchain.packages;
+          ++ d-toolchain.packages;
           shellHook = ''
             ${envExports}
             export GITHUB_TOKEN="$(gh auth token)"

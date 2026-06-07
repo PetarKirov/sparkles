@@ -26,6 +26,7 @@
     flake-parts.lib.mkFlake { inherit inputs; } {
       imports = [
         inputs.git-hooks-nix.flakeModule
+        ./nix/d-toolchain.nix
         ./nix/packages/default.nix
         ./nix/checks/pre-commit.nix
         ./nix/shells/default.nix

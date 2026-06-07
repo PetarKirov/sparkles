@@ -3,8 +3,6 @@
   perSystem =
     { pkgs, ... }:
     let
-      dToolchain = import ../d-toolchain.nix { inherit pkgs; };
-
       fs = lib.fileset;
       root = ../..;
       fromRoot = lib.path.append root;
@@ -82,7 +80,7 @@
           # an additional dependency, that dep needs to be added to the
           # shared lockfile or split out into its own.
           dubLock = fromRoot "nix/dub-lock.json";
-          compiler = dToolchain.ldc;
+          compiler = pkgs.ldc;
 
           # The unpacked source is read-only by default; dub needs to write
           # build artifacts into the package's `targetPath "build"` directory.
@@ -97,7 +95,7 @@
 
             dub build \
               --single ${info.fileBase}.d \
-              --compiler=${lib.getExe dToolchain.ldc} \
+              --compiler=${lib.getExe pkgs.ldc} \
               --skip-registry=all \
               --build=release
 

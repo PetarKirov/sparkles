@@ -7,7 +7,7 @@
   perSystem =
     { config, pkgs, ... }:
     let
-      dToolchain = import ../d-toolchain.nix { inherit pkgs; };
+      inherit (config.legacyPackages) d-toolchain;
 
       fs = lib.fileset;
       root = ../..;
@@ -50,7 +50,7 @@
         # that sharing explicit instead of having `examples.nix` reach
         # into a sibling sub-package's dir to grab the file.
         dubLock = fromRoot "nix/dub-lock.json";
-        compiler = dToolchain.ldc;
+        compiler = pkgs.ldc;
 
         nativeBuildInputs = [
           pkgs.makeWrapper
@@ -82,8 +82,8 @@
           let
             path = lib.makeBinPath [
               pkgs.git
-              dToolchain.dub
-              dToolchain.ldc
+              pkgs.dub
+              pkgs.ldc
             ];
             setEnv = lib.cli.toGNUCommandLineShell {
               mkOption = name: value: [
@@ -91,7 +91,7 @@
                 name
                 value
               ];
-            } dToolchain.env;
+            } d-toolchain.env;
           in
           ''
             install -Dm755 build/${finalAttrs.pname} $out/bin/${finalAttrs.pname}
@@ -107,7 +107,7 @@
               wrapProgram $out/bin/${finalAttrs.pname} \
                 --prefix PATH : ${path} \
                 ${setEnv} \
-                --run 'ulimit -n ${toString dToolchain.nofileLimit} 2>/dev/null || true'
+                --run 'ulimit -n ${toString d-toolchain.nofileLimit} 2>/dev/null || true'
             '';
 
         meta = {
