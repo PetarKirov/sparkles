@@ -2,12 +2,13 @@
 #
 # For each system it:
 #
-#   1. Applies a nixpkgs overlay that replaces `ldc` and `dmd` with the
-#      platform-corrected variants (`_module.args.pkgs`), so *every* consumer
-#      — directly and through `buildDubPackage`, whose `compiler`/`dub` default
-#      to `pkgs.ldc`/`pkgs.dub` — resolves the same toolchain. That consistency
-#      is the whole point: the dev shell, the `ci` package and the example
-#      derivations can no longer drift onto a different `ldc` than each other.
+#   1. Applies a nixpkgs overlay that replaces `ldc`, `dmd` and `dub` with the
+#      project-pinned, platform-corrected variants (`_module.args.pkgs`), so
+#      *every* consumer — directly and through `buildDubPackage`, whose
+#      `dub`/`compiler` default to `pkgs.dub`/`pkgs.ldc` — resolves the same
+#      toolchain. That consistency is the whole point: the dev shell, the `ci`
+#      package and the example derivations can no longer drift onto a different
+#      `dub` or `ldc` than each other.
 #
 #   2. Derives the dev-shell/packaging metadata (package list, env vars, NOFILE
 #      cap) from the overlaid package set and exports it under
@@ -18,6 +19,7 @@
   perSystem =
     {
       system,
+      inputs',
       pkgs,
       ...
     }:
@@ -81,6 +83,8 @@
               # a C23 keyword unknown to the D parser).  Only needed when stdenv
               # is GCC-based; on macOS stdenv already uses clang.
               dmd = if prev.stdenv.cc.isGNU then prev.dmd.override { stdenv = prev.gcc14Stdenv; } else prev.dmd;
+
+              dub = inputs'.dlang-nix.packages.dub-1_43_0-alpha-5efed36;
             }
           )
         ];
