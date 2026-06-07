@@ -71,6 +71,7 @@ export default defineConfig({
             link: '/guidelines/interpolated-expression-sequences',
           },
           { text: 'DDoc', link: '/guidelines/ddoc' },
+          { text: 'Writing Research Docs', link: '/guidelines/research-docs' },
           {
             text: 'Move Semantics & __rvalue',
             link: '/guidelines/move-semantics/',
