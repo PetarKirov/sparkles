@@ -136,6 +136,13 @@
 
             # rendering
             pkgs.raylib
+
+            # terminal benchmarking: the harness plus the third-party tools it
+            # pairs with (see apps/terminal-benchmark/README.md)
+            config.packages.terminal-benchmark
+            config.packages.vtebench
+            config.packages.termbench
+            pkgs.cmatrix
           ]
           # OS-API research examples (docs/research/.../os-apis): the X11 and Wayland
           # ImportC examples are **Linux-only**, so gate these on Linux — `wayland`,
@@ -165,6 +172,8 @@
             # omits it to keep the .#ci closure small.
             pkgs.valgrind
           ]
+          # perf is Linux-only; the harness/profiling flow is too (reads /proc).
+          ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.perf ]
           ++ lib.optional greeting pkgs.figlet
           ++ d-toolchain.packages;
           shellHook = ''
