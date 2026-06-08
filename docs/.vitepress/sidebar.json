@@ -818,6 +818,14 @@
           {
             "text": "TUI components delivery plan",
             "link": "/specs/core-cli/tui-components/PLAN"
+          },
+          {
+            "text": "prettyPrint spec",
+            "link": "/specs/core-cli/pretty-print/SPEC"
+          },
+          {
+            "text": "prettyPrint delivery plan",
+            "link": "/specs/core-cli/pretty-print/PLAN"
           }
         ]
       },
