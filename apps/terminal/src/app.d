@@ -268,6 +268,8 @@ struct LoadedFont
     SmallBuffer!(int, 256) glyphValues;  // ascending codepoint values present
     SmallBuffer!(int, 256) glyphIndices; // font.glyphs index aligned with glyphValues
     int fallbackIndex;                   // index of the '?' glyph (value 63), or 0
+    Rectangle whiteSrc;                  // a solid-white texel in the atlas (U+2588 center)
+    bool hasWhite;                       // whether whiteSrc is valid (full-block glyph present)
     const(char)* pathZ;
     bool present;
 }
@@ -315,6 +317,20 @@ private void loadFontInto(ref LoadedFont lf, int fontSize, const(int)[] cps)
             while (j > 0 && gv[j - 1] > v) { gv[j] = gv[j - 1]; gi[j] = gi[j - 1]; j--; }
             gv[j] = v;
             gi[j] = vi;
+        }
+    }
+
+    // Locate a solid-white texel for drawing background/decoration quads from
+    // the glyph atlas (so they share the glyph texture and the whole grid
+    // batches). U+2588 FULL BLOCK is opaque white throughout; sample its centre.
+    lf.hasWhite = false;
+    if (lf.present && fontHasGlyph(lf, 0x2588))
+    {
+        const r = lf.font.recs[glyphIndexFor(lf, 0x2588)];
+        if (r.width >= 2 && r.height >= 2)
+        {
+            lf.whiteSrc = Rectangle(r.x + r.width * 0.5f, r.y + r.height * 0.5f, 1, 1);
+            lf.hasWhite = true;
         }
     }
 }
@@ -375,6 +391,23 @@ private void drawGrapheme(ref LoadedFont lf, scope const(uint)[] cps,
         const adv = font.glyphs[idx].advanceX;
         ox += adv == 0 ? rec.width * scale : adv * scale;
     }
+}
+
+// Draw a solid-color rectangle. When `white` has a known white atlas texel, the
+// rect is drawn as a textured quad from that atlas so it shares the glyph
+// texture: with backgrounds, underlines, the cursor and glyphs all sampling one
+// texture, raylib batches the entire cell grid into a handful of draw calls
+// instead of flushing on a texture switch every cell. Falls back to the
+// shapes-texture DrawRectangle when no white texel is available.
+@system nothrow @nogc
+private void drawSolid(ref LoadedFont white, int x, int y, int w, int h, Color c)
+{
+    if (white.hasWhite)
+        DrawTexturePro(white.font.texture, white.whiteSrc,
+            Rectangle(cast(float) x, cast(float) y, cast(float) w, cast(float) h),
+            Vector2(0, 0), 0.0f, c);
+    else
+        DrawRectangle(x, y, w, h, c);
 }
 
 // Codepoints requested from every font. Built once at compile time (CTFE) into
@@ -775,6 +808,12 @@ private void runCoreLoop(ref CoreState s)
     char[4096] pty_buf = void;
     int frameCount = 0;
 
+    // Benchmark hook: when set, redraw every frame regardless of dirty state, so
+    // the render path can be measured in isolation (a static screen otherwise
+    // skips, and a stream workload is parse-bound). See apps/terminal-benchmark.
+    import core.stdc.stdlib : getenv;
+    const forceRedraw = getenv("SPARKLES_BENCH_FORCE_REDRAW") !is null;
+
     // Dirty-frame skipping state. The terminal redraws the whole grid every
     // frame, so when nothing has changed we skip the (expensive) draw and just
     // pace + poll input, leaving the last frame on screen. `prevOverlayActive`
@@ -951,7 +990,8 @@ private void runCoreLoop(ref CoreState s)
             || s.sbState.currentWidth != s.sbState.targetWidth;
 
         const bool redraw =
-            dirty != GHOSTTY_RENDER_STATE_DIRTY_FALSE
+            forceRedraw
+            || dirty != GHOSTTY_RENDER_STATE_DIRTY_FALSE
             || overlayActive || prevOverlayActive
             || fontChanged || IsWindowResized()
             || s.childExited != prevChildExited
@@ -1010,8 +1050,6 @@ private void runCoreLoop(ref CoreState s)
         while (ghostty_render_state_row_iterator_next(s.row_iter))
         {
             ghostty_render_state_row_get(s.row_iter, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &s.cells);
-
-            BeginScissorMode(0, y, GetScreenWidth(), s.cellHeight);
 
             int x = 0;
             while (ghostty_render_state_row_cells_next(s.cells))
@@ -1093,7 +1131,7 @@ private void runCoreLoop(ref CoreState s)
                     }
 
                     if (has_bg)
-                        DrawRectangle(x, y, s.cellWidth, s.cellHeight, bg_col);
+                        drawSolid(s.font, x, y, s.cellWidth, s.cellHeight, bg_col);
 
                     LoadedFont* activeFont = &s.font;
                     if (codepoints[0] >= 128)
@@ -1126,9 +1164,9 @@ private void runCoreLoop(ref CoreState s)
 
                     // Underline (any SGR underline style) and strikethrough.
                     if (style.underline != 0)
-                        DrawRectangle(x, y + s.cellHeight - 2, s.cellWidth, 1, fg_col);
+                        drawSolid(s.font, x, y + s.cellHeight - 2, s.cellWidth, 1, fg_col);
                     if (style.strikethrough)
-                        DrawRectangle(x, y + s.cellHeight / 2, s.cellWidth, 1, fg_col);
+                        drawSolid(s.font, x, y + s.cellHeight / 2, s.cellWidth, 1, fg_col);
 
                     GhosttyCell raw_cell;
                     bool has_hyperlink = false;
@@ -1138,7 +1176,7 @@ private void runCoreLoop(ref CoreState s)
                     if (has_hyperlink || is_hovered_link)
                     {
                         int thickness = is_hovered_link ? 2 : 1;
-                        DrawRectangle(x, y + s.cellHeight - thickness, s.cellWidth, thickness, fg_col);
+                        drawSolid(s.font, x, y + s.cellHeight - thickness, s.cellWidth, thickness, fg_col);
                     }
                 }
                 else
@@ -1148,13 +1186,11 @@ private void runCoreLoop(ref CoreState s)
                     // INVALID_VALUE when the cell has no background.
                     GhosttyColorRgb bg_rgb;
                     if (ghostty_render_state_row_cells_get(s.cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &bg_rgb) == GHOSTTY_SUCCESS)
-                        DrawRectangle(x, y, s.cellWidth, s.cellHeight, Color(bg_rgb.r, bg_rgb.g, bg_rgb.b, 255));
+                        drawSolid(s.font, x, y, s.cellWidth, s.cellHeight, Color(bg_rgb.r, bg_rgb.g, bg_rgb.b, 255));
                 }
 
                 x += s.cellWidth;
             }
-
-            EndScissorMode();
 
             // Clear this row's dirty flag now that it has been drawn.
             bool rowClean = false;
@@ -1217,11 +1253,11 @@ private void runCoreLoop(ref CoreState s)
             Color c_color = Color(cur_rgb.r, cur_rgb.g, cur_rgb.b, 160);
 
             if (cursor_style == 0) // Bar
-                DrawRectangle(c_x, c_y, 2, s.cellHeight, c_color);
+                drawSolid(s.font, c_x, c_y, 2, s.cellHeight, c_color);
             else if (cursor_style == 1) // Block
-                DrawRectangle(c_x, c_y, s.cellWidth, s.cellHeight, c_color);
+                drawSolid(s.font, c_x, c_y, s.cellWidth, s.cellHeight, c_color);
             else if (cursor_style == 2) // Underline
-                DrawRectangle(c_x, c_y + s.cellHeight - 2, s.cellWidth, 2, c_color);
+                drawSolid(s.font, c_x, c_y + s.cellHeight - 2, s.cellWidth, 2, c_color);
             else if (cursor_style == 3) // Hollow block
                 DrawRectangleLines(c_x, c_y, s.cellWidth, s.cellHeight, c_color);
         }
