@@ -1,0 +1,7 @@
+name "win_x11"
+description "Minimal X11 (Xlib) window via ImportC — talks directly to libX11."
+targetType "executable"
+sourcePaths "."
+importPaths "."
+libs "x11"
+targetPath "build"
