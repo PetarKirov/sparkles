@@ -2,6 +2,7 @@
 {
   imports = [
     ./examples.nix
+    ./bench-tools.nix
   ];
 
   perSystem =
@@ -123,6 +124,20 @@
         };
       });
 
+      # CPU benchmark harness for the terminal. Pure D + core-cli (it only spawns
+      # terminal binaries handed to it and reads /proc), so no raylib/ghostty
+      # build inputs and no runtime wrapper are needed — just the default
+      # `buildSparklesApp` closure (core-cli → base, math, test-runner shim+impl).
+      packages.terminal-benchmark = config.legacyPackages.buildSparklesApp (finalAttrs: {
+        pname = "terminal-benchmark";
+        version = "0.1.0";
+
+        meta = {
+          description = "CPU/throughput benchmark harness for the sparkles terminal emulator";
+          mainProgram = finalAttrs.pname;
+        };
+      });
+
       apps.ci = {
         type = "app";
         program = lib.getExe config.packages.ci;
@@ -163,6 +178,11 @@
       apps.terminal = {
         type = "app";
         program = lib.getExe config.packages.terminal;
+      };
+
+      apps.terminal-benchmark = {
+        type = "app";
+        program = lib.getExe config.packages.terminal-benchmark;
       };
     };
 }
