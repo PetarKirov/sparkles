@@ -265,7 +265,9 @@ private void render_kitty_images(GhosttyTerminal terminal, GhosttyKittyGraphics 
 struct LoadedFont
 {
     Font font;
-    SmallBuffer!(int, 256) glyphValues; // ascending codepoint values present
+    SmallBuffer!(int, 256) glyphValues;  // ascending codepoint values present
+    SmallBuffer!(int, 256) glyphIndices; // font.glyphs index aligned with glyphValues
+    int fallbackIndex;                   // index of the '?' glyph (value 63), or 0
     const(char)* pathZ;
     bool present;
 }
@@ -286,21 +288,33 @@ private void loadFontInto(ref LoadedFont lf, int fontSize, const(int)[] cps)
     lf.font = LoadFontEx(lf.pathZ, fontSize, cps.ptr, cast(int) cps.length);
     lf.present = lf.font.texture.id != 0;
 
-    // Rebuild the sorted glyph-value set. raylib does not guarantee ascending
-    // glyph order, so copy then insertion-sort (done at most a few times: at
-    // startup and on each font-size change).
+    // Rebuild the sorted (codepoint -> glyph-index) map. raylib does not
+    // guarantee ascending glyph order, so copy the value/index pairs then
+    // insertion-sort by value, carrying the indices in parallel (done at most a
+    // few times: at startup and on each font-size change). The map lets the core
+    // loop look up a glyph in O(log n) instead of paying raylib's O(glyphCount)
+    // GetGlyphIndex linear scan per codepoint per cell per frame.
     lf.glyphValues.clear();
+    lf.glyphIndices.clear();
+    lf.fallbackIndex = 0;
     if (lf.present && lf.font.glyphs !is null)
     {
         foreach (i; 0 .. lf.font.glyphCount)
-            lf.glyphValues ~= lf.font.glyphs[i].value;
-        auto g = lf.glyphValues[];
-        foreach (i; 1 .. g.length)
         {
-            const v = g[i];
+            lf.glyphValues ~= lf.font.glyphs[i].value;
+            lf.glyphIndices ~= i;
+            if (lf.font.glyphs[i].value == 63) lf.fallbackIndex = i; // '?'
+        }
+        auto gv = lf.glyphValues[];
+        auto gi = lf.glyphIndices[];
+        foreach (i; 1 .. gv.length)
+        {
+            const v = gv[i];
+            const vi = gi[i];
             size_t j = i;
-            while (j > 0 && g[j - 1] > v) { g[j] = g[j - 1]; j--; }
-            g[j] = v;
+            while (j > 0 && gv[j - 1] > v) { gv[j] = gv[j - 1]; gi[j] = gi[j - 1]; j--; }
+            gv[j] = v;
+            gi[j] = vi;
         }
     }
 }
@@ -311,6 +325,56 @@ private bool fontHasGlyph(ref LoadedFont lf, int codepoint)
 {
     import std.range : assumeSorted;
     return lf.glyphValues[].assumeSorted.contains(codepoint);
+}
+
+// O(log n) codepoint -> glyph-index lookup over the sorted map, falling back to
+// the font's '?' glyph when the codepoint is absent (mirroring raylib's
+// GetGlyphIndex fallback). Replaces that function's O(glyphCount) linear scan.
+@safe pure nothrow @nogc
+private int glyphIndexFor(ref LoadedFont lf, int codepoint)
+{
+    import std.range : assumeSorted;
+    const lower = lf.glyphValues[].assumeSorted.lowerBound(codepoint).length;
+    if (lower < lf.glyphValues.length && lf.glyphValues[][lower] == codepoint)
+        return lf.glyphIndices[][lower];
+    return lf.fallbackIndex;
+}
+
+// Draw a grapheme cluster (base codepoint plus any combining marks) at (x, y),
+// glyph by glyph, using the O(log n) glyph-index map above. This is a drop-in
+// replacement for raylib's DrawTextEx (spacing 0): it reproduces the same
+// DrawTextCodepoint placement/advance math but avoids both GetGlyphIndex's
+// linear scan and DrawTextEx's per-call UTF-8 re-decode.
+@system nothrow @nogc
+private void drawGrapheme(ref LoadedFont lf, scope const(uint)[] cps,
+    float x, float y, int fontSize, Color tint)
+{
+    const font = lf.font;
+    const float scale = font.baseSize > 0 ? cast(float) fontSize / font.baseSize : 1.0f;
+    const float pad = cast(float) font.glyphPadding;
+
+    float ox = x;
+    foreach (cp; cps)
+    {
+        const idx = glyphIndexFor(lf, cast(int) cp);
+        const Rectangle rec = font.recs[idx];
+
+        // Whitespace and other zero-area glyphs draw nothing; just advance.
+        if (rec.width > 0 && rec.height > 0)
+        {
+            const Rectangle src = Rectangle(
+                rec.x - pad, rec.y - pad, rec.width + 2 * pad, rec.height + 2 * pad);
+            const Rectangle dst = Rectangle(
+                ox + font.glyphs[idx].offsetX * scale - pad * scale,
+                y + font.glyphs[idx].offsetY * scale - pad * scale,
+                (rec.width + 2 * pad) * scale,
+                (rec.height + 2 * pad) * scale);
+            DrawTexturePro(font.texture, src, dst, Vector2(0, 0), 0.0f, tint);
+        }
+
+        const adv = font.glyphs[idx].advanceX;
+        ox += adv == 0 ? rec.width * scale : adv * scale;
+    }
 }
 
 // Codepoints requested from every font. Built once at compile time (CTFE) into
@@ -996,33 +1060,22 @@ private void runCoreLoop(ref CoreState s)
                         }
                     }
 
-                    // Encode the whole grapheme cluster (base codepoint plus any
-                    // combining marks, ZWJ joiners, variation selectors, …) into a
-                    // single UTF-8 string and draw it as one unit. Drawing only
-                    // codepoints[0] would drop accents and emoji modifiers.
-                    import std.utf : encode;
-                    import std.typecons : Yes;
-                    char[64] text = void;
-                    size_t text_len = 0;
+                    // Draw the whole grapheme cluster (base codepoint plus any
+                    // combining marks, ZWJ joiners, variation selectors, …) as one
+                    // unit. Drawing only codepoints[0] would drop accents and emoji
+                    // modifiers.
                     const cp_count = grapheme_len < 16 ? grapheme_len : 16;
-                    foreach (i; 0 .. cp_count)
-                    {
-                        char[4] u8;
-                        const u8n = encode!(Yes.useReplacementDchar)(u8, cast(dchar)codepoints[i]);
-                        if (text_len + u8n >= text.length) break;
-                        text[text_len .. text_len + u8n] = u8[0 .. u8n];
-                        text_len += u8n;
-                    }
-                    text[text_len] = '\0';
 
                     // Italic: shift the glyph right by a fraction of the font
                     // size (a crude slant; raylib can't shear a glyph).
                     const italic_offset = style.italic ? (s.fontSize / 6) : 0;
-                    DrawTextEx(activeFont.font, text.ptr, Vector2(cast(float)(x + italic_offset), cast(float)y), s.fontSize, 0, fg_col);
+                    drawGrapheme(*activeFont, codepoints[0 .. cp_count],
+                        cast(float)(x + italic_offset), cast(float)y, s.fontSize, fg_col);
 
                     // Bold: redraw 1px to the right to thicken strokes (fake bold).
                     if (style.bold)
-                        DrawTextEx(activeFont.font, text.ptr, Vector2(cast(float)(x + italic_offset + 1), cast(float)y), s.fontSize, 0, fg_col);
+                        drawGrapheme(*activeFont, codepoints[0 .. cp_count],
+                            cast(float)(x + italic_offset + 1), cast(float)y, s.fontSize, fg_col);
 
                     // Underline (any SGR underline style) and strikethrough.
                     if (style.underline != 0)
