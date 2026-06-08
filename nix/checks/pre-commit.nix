@@ -6,6 +6,7 @@ let
 
     # Dub lock file
     "dub.selections.json"
+    "dub-lock.json"
 
     # NPM / Yarn lock files
     "package-lock.json"
