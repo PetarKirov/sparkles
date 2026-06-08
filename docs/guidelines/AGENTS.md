@@ -685,6 +685,21 @@ Append `!` after the scope for a breaking change (e.g. `feat(ci)!: …`).
 Wrap the commit message **body** at 80 columns (the subject line stays a single
 line). Use a blank line between the subject and the body.
 
+**Backtick `@`-prefixed code tokens (and other auto-linked text).** D attributes
+and UDAs — `@safe`, `@nogc`, `@trusted`, `@system`, `@property`, `@CliOption`,
+etc. — are inline code, but GitHub renders an un-backticked `@name` in a commit
+message, a PR/issue title or body, or any comment as a **mention**: it notifies
+(and on merge, permanently credits) whoever owns that handle. `@safe`, `@system`,
+and `@property` are all real GitHub accounts, so a bare `nothrow @nogc` pings
+strangers and litters the thread. Always wrap them: write `` `@nogc nothrow` ``,
+the `` `@safe pure nothrow @nogc` `` order, a `` `@trusted` `` block — never the
+bare form. The same applies to anything else GitHub auto-links out of context: a
+literal `` `#123` `` (so it isn't turned into an issue/PR reference) or a commit
+`` `sha` `` you don't want rendered as a cross-link. This is purely a
+commit-message / PR / issue / comment concern — `@`-tokens inside committed
+source or Markdown files are not mentions and need no special treatment beyond
+the usual code formatting.
+
 ### Git hygiene & atomic commits
 
 - **Confirm the current branch before any write/amend/rebase.** A misdirected
