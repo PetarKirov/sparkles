@@ -1082,6 +1082,20 @@
         ]
       },
       {
+        "text": "Nix",
+        "collapsed": true,
+        "items": [
+          {
+            "text": "Specification",
+            "link": "/specs/nix/SPEC"
+          },
+          {
+            "text": "Delivery Plan",
+            "link": "/specs/nix/PLAN"
+          }
+        ]
+      },
+      {
         "text": "Parsing (proposal)",
         "collapsed": true,
         "items": [
