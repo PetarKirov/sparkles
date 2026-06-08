@@ -198,6 +198,20 @@ export default defineConfig({
         collapsed: true,
         items: [
           {
+            text: 'core-cli: prettyPrint',
+            collapsed: false,
+            items: [
+              {
+                text: 'Specification',
+                link: '/specs/core-cli/pretty-print/SPEC',
+              },
+              {
+                text: 'Delivery Plan',
+                link: '/specs/core-cli/pretty-print/PLAN',
+              },
+            ],
+          },
+          {
             text: 'Versions',
             collapsed: false,
             items: [
