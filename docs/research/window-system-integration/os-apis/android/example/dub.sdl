@@ -1,0 +1,15 @@
+name "win_android"
+description "Minimal Android native-activity window handler via ImportC over the NDK."
+targetType "dynamicLibrary"
+sourcePaths "."
+targetPath "build"
+platforms "android"
+// Android is cross-built with the NDK, not a host `dub run` (see ../index.md):
+//   ldc-build-runtime --dFlags="-mtriple=aarch64-linux-android21" \
+//       CC=$NDK/.../aarch64-linux-android21-clang     # one-time: build D runtime
+//   ldc2 -mtriple=aarch64-linux-android21 -relocation-model=pic \
+//       -gcc=$NDK/.../aarch64-linux-android21-clang \
+//       app.d c.c $NDK/sources/android/native_app_glue/android_native_app_glue.c \
+//       -L-llog -L-landroid -shared -of=build/libwin_android.so
+// then packaged as an APK with a NativeActivity manifest and run on an emulator.
+// Not auto-verified in CI (mobile out of CI scope).
