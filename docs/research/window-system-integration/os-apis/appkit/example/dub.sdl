@@ -1,0 +1,7 @@
+name "win_appkit"
+description "Minimal macOS/AppKit window via objective-d + extern(Objective-C)."
+targetType "executable"
+sourcePaths "."
+targetPath "build"
+dependency "objective-d" version="~>1.1.2"
+lflags "-framework" "Cocoa"
