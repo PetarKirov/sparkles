@@ -775,6 +775,16 @@ private void runCoreLoop(ref CoreState s)
     char[4096] pty_buf = void;
     int frameCount = 0;
 
+    // Dirty-frame skipping state. The terminal redraws the whole grid every
+    // frame, so when nothing has changed we skip the (expensive) draw and just
+    // pace + poll input, leaving the last frame on screen. `prevOverlayActive`
+    // forces one extra redraw when an app-side overlay (selection, hover,
+    // scrollbar, bell) turns off so it gets cleared; `forceFirstFrames` paints
+    // the opening frames unconditionally.
+    bool prevOverlayActive = false;
+    bool prevChildExited = false;
+    int forceFirstFrames = 2;
+
     while (!WindowShouldClose())
     {
         // --- Font-size hotkeys (Ctrl +/-) and window/grid resize. Done first so
@@ -919,8 +929,45 @@ private void runCoreLoop(ref CoreState s)
         else
             SetMouseCursor(MouseCursor.MOUSE_CURSOR_DEFAULT);
 
-        // --- Snapshot the terminal into the render state, then draw. ---
+        // --- Snapshot the terminal into the render state. Always update so the
+        //     terminal's dirty state is consumed; the query below decides
+        //     whether this frame needs a redraw at all. ---
         ghostty_render_state_update(s.render_state, s.terminal);
+
+        // --- Dirty-frame skipping. When the terminal content is clean and no
+        //     app-side overlay/animation is active (or just ended), the last
+        //     fully-drawn frame is still on screen, so skip the whole-grid
+        //     redraw and only pace + poll input. This drops idle CPU to near
+        //     zero. We pace and poll manually (EndDrawing normally does both)
+        //     but deliberately do NOT swap buffers, keeping the last frame. ---
+        GhosttyRenderStateDirty dirty = GHOSTTY_RENDER_STATE_DIRTY_FULL;
+        ghostty_render_state_get(s.render_state, GHOSTTY_RENDER_STATE_DATA_DIRTY, &dirty);
+
+        const bool overlayActive =
+            s.effects_ctx.bellFlashFrames > 0
+            || s.selState.isSelecting
+            || s.hoverState.isHoveringUrl
+            || s.sbState.isHovered || s.sbState.isDragging
+            || s.sbState.currentWidth != s.sbState.targetWidth;
+
+        const bool redraw =
+            dirty != GHOSTTY_RENDER_STATE_DIRTY_FALSE
+            || overlayActive || prevOverlayActive
+            || fontChanged || IsWindowResized()
+            || s.childExited != prevChildExited
+            || forceFirstFrames > 0
+            || s.debugScreenshotAndExit; // debug path wants full-rate frames
+
+        prevOverlayActive = overlayActive;
+        prevChildExited = s.childExited;
+        if (forceFirstFrames > 0) forceFirstFrames--;
+
+        if (!redraw)
+        {
+            PollInputEvents();    // register input so next frame's keys/mouse are fresh
+            WaitTime(1.0 / 60.0); // pace to the 60 FPS target without a buffer swap
+            continue;
+        }
 
         // Resolved default colors (used for the window clear, default cell
         // colors, and the cursor) instead of hardcoded white-on-black.
