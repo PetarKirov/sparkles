@@ -37,7 +37,16 @@
 
             # rendering
             pkgs.raylib
+
+            # terminal benchmarking: the harness plus the third-party tools it
+            # pairs with (see apps/terminal-benchmark/README.md)
+            config.packages.terminal-benchmark
+            config.packages.vtebench
+            config.packages.termbench
+            pkgs.cmatrix
           ]
+          # perf is Linux-only; the harness/profiling flow is too (reads /proc).
+          ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.perf ]
           ++ lib.optional greeting pkgs.figlet
           ++ d-toolchain.packages;
           shellHook = ''

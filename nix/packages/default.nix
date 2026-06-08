@@ -2,6 +2,7 @@
 {
   imports = [
     ./examples.nix
+    ./bench-tools.nix
   ];
 
   perSystem =
@@ -184,6 +185,42 @@
         };
       });
 
+      # CPU benchmark harness for the terminal. Pure D + core-cli (it only spawns
+      # terminal binaries handed to it and reads /proc), so no raylib/ghostty
+      # build inputs and no runtime wrapper are needed.
+      packages.terminal-benchmark = pkgs.buildDubPackage (finalAttrs: {
+        pname = "terminal-benchmark";
+        version = "0.1.0";
+
+        src = fs.toSource {
+          inherit root;
+          fileset = fs.unions (
+            [
+              (fs.fileFilter isDubManifest root)
+            ]
+            ++ map (path: fs.fileFilter (file: file.hasExt "d") (fromRoot path)) [
+              "apps/terminal-benchmark/src"
+              "libs/core-cli/src"
+            ]
+          );
+        };
+        sourceRoot = "${finalAttrs.src.name}/apps/${finalAttrs.pname}";
+
+        dubLock = fromRoot "nix/dub-lock.json";
+        compiler = pkgs.ldc;
+
+        preBuild = ''chmod -R u+w "$NIX_BUILD_TOP"'';
+
+        installPhase = ''
+          install -Dm755 build/${finalAttrs.pname} $out/bin/${finalAttrs.pname}
+        '';
+
+        meta = {
+          description = "CPU/throughput benchmark harness for the sparkles terminal emulator";
+          mainProgram = finalAttrs.pname;
+        };
+      });
+
       apps.ci = {
         type = "app";
         program = lib.getExe config.packages.ci;
@@ -192,6 +229,11 @@
       apps.terminal = {
         type = "app";
         program = lib.getExe config.packages.terminal;
+      };
+
+      apps.terminal-benchmark = {
+        type = "app";
+        program = lib.getExe config.packages.terminal-benchmark;
       };
     };
 }
