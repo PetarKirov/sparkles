@@ -11,6 +11,35 @@
       inherit (pkgs) lib;
       inherit (config.legacyPackages) d-toolchain;
 
+      # LDC's ImportC cannot parse the C23 `[[deprecated(...)]]` attribute that
+      # `nix_api_value.h` / `nix_api_expr.h` put on the deprecated `Value`
+      # typedef (which `sparkles:nix` does not use). Strip it from a copy of
+      # `nix-expr-c`'s dev output and repoint the pkg-config includedir at the
+      # patched headers. Prepending this on PKG_CONFIG_PATH (below) makes it
+      # win over the unpatched copy that `nix-flake-c` propagates.
+      nix-expr-c-dev-patched = pkgs.runCommand "nix-expr-c-dev-patched" { } ''
+        cp -r ${inputs'.nix.packages.nix-expr-c.dev} $out
+        chmod -R u+w $out
+        sed -i -E 's/\[\[[^]]*\]\]//g' \
+          $out/include/nix_api_value.h \
+          $out/include/nix_api_expr.h
+        substituteInPlace $out/lib/pkgconfig/nix-expr-c.pc \
+          --replace-quiet ${inputs'.nix.packages.nix-expr-c.dev} $out
+      '';
+
+      # All Nix C API headers are supplied via pkg-config (PKG_CONFIG_PATH),
+      # NOT via buildInputs `.dev` outputs — otherwise the nix cc wrapper would
+      # inject the unpatched nix-expr-c include dir into NIX_CFLAGS_COMPILE and
+      # shadow nix-expr-c-dev-patched. The patched expr dev is listed first.
+      nixCApiPkgConfigPath = lib.makeSearchPath "lib/pkgconfig" [
+        nix-expr-c-dev-patched
+        inputs'.nix.packages.nix-util-c.dev
+        inputs'.nix.packages.nix-store-c.dev
+        inputs'.nix.packages.nix-fetchers-c.dev
+        inputs'.nix.packages.nix-flake-c.dev
+        inputs'.nix.packages.nix-main-c.dev
+      ];
+
       envExports = lib.concatStringsSep "\n" (
         lib.mapAttrsToList (name: value: "export ${name}=${lib.escapeShellArg value}") d-toolchain.env
       );
@@ -131,6 +160,19 @@
         # `libs "ghostty-vt"` in libs/ghostty/dub.sdl.
         pkgs.pkg-config
         config.packages.libghostty-vt
+
+        # Nix C API — bound by `sparkles:nix` via ImportC. Only the `out`
+        # outputs (the .so's) go here, for linking; headers come via
+        # PKG_CONFIG_PATH (see nixCApiPkgConfigPath above) so the patched
+        # nix-expr-c headers are used and the unpatched ones never reach
+        # NIX_CFLAGS_COMPILE. `ci --test` links `:nix`, so this is the CI
+        # floor, not the interactive tier.
+        inputs'.nix.packages.nix-util-c
+        inputs'.nix.packages.nix-store-c
+        inputs'.nix.packages.nix-expr-c
+        inputs'.nix.packages.nix-fetchers-c
+        inputs'.nix.packages.nix-flake-c
+        inputs'.nix.packages.nix-main-c
 
         # tree-sitter runtime for sparkles:tree-sitter / sparkles:syntax
         # (single-output: headers + .so + .pc all in `out`). Grammars come
@@ -314,6 +356,11 @@
         # `$SPARKLES_ALL_FLAKE_INPUTS` JSON map). dmd-fmt corpus tests assert
         # `$SPARKLES_FLAKE_INPUT_DMD_SRC` exists — dropping this fails them.
         ${flakeInputExports}
+
+        # Supply the Nix C API headers via pkg-config only (patched expr
+        # first); see nixCApiPkgConfigPath. Must live in the CI hook so
+        # `dub test :nix` ImportC sees the headers.
+        export PKG_CONFIG_PATH="${nixCApiPkgConfigPath}''${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
 
         # tree-sitter grammar bundle for sparkles:syntax (one dir per
         # language: parser + queries/). Tests skip when unset.
