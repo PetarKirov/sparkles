@@ -1,0 +1,7 @@
+name "win_wayland"
+description "Minimal Wayland client via ImportC — talks directly to libwayland-client."
+targetType "executable"
+sourcePaths "."
+importPaths "."
+libs "wayland-client"
+targetPath "build"
