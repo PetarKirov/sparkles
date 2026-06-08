@@ -117,6 +117,10 @@ export default withMermaid(
               link: '/guidelines/importc-c-libraries',
             },
             {
+              text: 'Benchmarking & Profiling',
+              link: '/guidelines/benchmarking-and-profiling',
+            },
+            {
               text: 'Cutting a Release',
               link: '/guidelines/release',
             },
