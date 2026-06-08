@@ -495,7 +495,7 @@ clean`, and `gn meta` (walk the metadata graph). `GN` _"has comprehensive built-
 [gn-ref]: https://gn.googlesource.com/gn/+/main/docs/reference.md
 [gn-quickstart]: https://gn.googlesource.com/gn/+/main/docs/quick_start.md
 [ninja-repo]: https://github.com/ninja-build/ninja
-[ninja-manual]: https://ninja-build.org/manual.html
+[ninja-manual]: https://web.archive.org/web/20260601210116/https://ninja-build.org/manual.html
 [fuchsia-intro]: https://fuchsia.dev/fuchsia-src/development/build/build_system/intro
 [chromium-build]: https://chromium.googlesource.com/chromium/src/+/main/docs/linux/build_instructions.md
 [siso-readme]: https://chromium.googlesource.com/infra/infra/+/main/go/src/infra/build/siso/README.md

@@ -506,8 +506,8 @@ path` ([manual § Evaluation and scoping][manual]):
 <!-- References -->
 
 [repo]: https://github.com/ninja-build/ninja
-[home]: https://ninja-build.org/
-[manual]: https://ninja-build.org/manual.html
+[home]: https://web.archive.org/web/20260602102537/https://ninja-build.org/
+[manual]: https://web.archive.org/web/20260601210116/https://ninja-build.org/manual.html
 [version]: https://github.com/ninja-build/ninja/blob/master/src/version.cc
 [graph]: https://github.com/ninja-build/ninja/blob/master/src/graph.cc
 [build]: https://github.com/ninja-build/ninja/blob/master/src/build.cc
