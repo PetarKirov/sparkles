@@ -5,7 +5,12 @@
   ];
 
   perSystem =
-    { config, pkgs, ... }:
+    {
+      config,
+      pkgs,
+      inputs',
+      ...
+    }:
     let
       inherit (config.legacyPackages) d-toolchain;
 
@@ -85,6 +90,39 @@
         };
       });
 
+      # `buildSparklesApp` derives the source closure from apps/terminal/dub.sdl
+      # (transitively: base, core-cli, ghostty, math, and the test-runner
+      # shim+impl) and supplies the shared dub plumbing, so only the raylib +
+      # libghostty-vt build inputs and the fontconfig runtime wrapper remain.
+      packages.terminal = config.legacyPackages.buildSparklesApp (finalAttrs: {
+        pname = "terminal";
+        version = "0.1.0";
+
+        nativeBuildInputs = [ pkgs.pkg-config ];
+
+        buildInputs = [
+          pkgs.raylib
+          inputs'.ghostty.packages.libghostty-vt
+          inputs'.ghostty.packages.libghostty-vt.dev
+        ];
+
+        env = d-toolchain.env;
+
+        # The terminal shells out to `fc-match` (fontconfig) at runtime to
+        # resolve fonts (see apps/terminal/src/app.d). Under `nix run` PATH is
+        # the ambient user environment, so wrap the binary to guarantee
+        # fontconfig is reachable instead of relying on the user's PATH.
+        postFixup = ''
+          wrapProgram $out/bin/${finalAttrs.pname} \
+            --prefix PATH : ${lib.makeBinPath [ pkgs.fontconfig ]}
+        '';
+
+        meta = {
+          description = "A minimal terminal emulator using libghostty-vt";
+          mainProgram = finalAttrs.pname;
+        };
+      });
+
       apps.ci = {
         type = "app";
         program = lib.getExe config.packages.ci;
@@ -121,6 +159,10 @@
       apps.release = {
         type = "app";
         program = lib.getExe config.packages.release;
+      };
+      apps.terminal = {
+        type = "app";
+        program = lib.getExe config.packages.terminal;
       };
     };
 }
