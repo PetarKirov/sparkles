@@ -1,0 +1,9 @@
+name "win_win32"
+description "Minimal Win32 window via druntime core.sys.windows (zero third-party)."
+targetType "executable"
+sourcePaths "."
+targetPath "build"
+platforms "windows"
+// The minimal window needs only druntime's built-in core.sys.windows bindings.
+// For full Windows SDK coverage (DirectX, COM, modern UI) use the windows-d
+// package (windows.win32.*) — see ../index.md.
