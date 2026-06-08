@@ -5,6 +5,9 @@
 ^https://rosettacode\.org/
 ^https://hnterm\.ggerganov\.com/
 ^https?://([^/]+\.)?medium\.com/
+# X/Twitter returns 403 to automated requests and has no web-archive snapshots
+^https?://([^/]+\.)?x\.com/
+^https?://([^/]+\.)?twitter\.com/
 ^https?://lib\.rs/
 ^https://github\.com/sackosoft/zbox$
 ^https://github\.com/unvariant/tuile$
