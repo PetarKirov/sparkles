@@ -1,0 +1,12 @@
+name "win_uikit"
+description "Minimal iOS/UIKit window via D's built-in extern(Objective-C)."
+targetType "executable"
+sourcePaths "."
+targetPath "build"
+platforms "ios"
+// iOS is cross-built, not a host `dub run`: see ../index.md. The canonical build
+// is `ldc2 -mtriple=arm64-apple-ios<ver>-simulator app.d -L-framework -LUIKit
+// -L-framework -LFoundation` with the official LDC (which bundles the iOS-sim
+// druntime). CI verification is a compile-for-target check (`ldc2 -c -mtriple=…`);
+// a full Simulator run is documented as manual (see the survey).
+lflags "-framework" "UIKit" "-framework" "Foundation"
