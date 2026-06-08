@@ -55,6 +55,16 @@
       flake = false;
     };
 
+    # Nix itself — provides the C API libraries (nix-{util,store,expr,
+    # fetchers,flake,main}-c) that `sparkles:nix` binds via ImportC. Pinned to
+    # the same revision nix-bindings-rust uses, so it is already in the store /
+    # binary cache (no source build) and matches the headers the bindings were
+    # written against.
+    nix = {
+      url = "github:NixOS/nix/1506565ef191621de91d71aaead8a5b66a26c0d4";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
+
     # --- third-party sources (flake = false; the locked rev is in flake.lock) ---
 
     glfw = {
