@@ -16,13 +16,16 @@ from `/proc/<pid>/stat` over a fixed window.
 
 ## Scenarios
 
-| Scenario | Workload                                    | What it isolates                                                                  |
-| -------- | ------------------------------------------- | --------------------------------------------------------------------------------- |
-| `idle`   | paint one dense full screen, then hold      | idle cost — should be near zero with dirty-frame skipping, frame-cap-high without |
-| `churn`  | repaint the entire grid as fast as accepted | the per-cell draw path (glyphs, backgrounds, batching) under sustained load       |
+| Scenario | Workload                                       | What it isolates                                                                     |
+| -------- | ---------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `idle`   | paint one dense full screen, then hold         | idle cost — should be near zero with dirty-frame skipping, frame-cap-high without    |
+| `render` | paint a dense screen, force a redraw per frame | the **render path** (glyphs, backgrounds, batching) — the metric renderer work moves |
+| `churn`  | repaint the entire grid as fast as accepted    | the whole stack; dominated by VT **parsing**, not rendering                          |
 
-Each cell in both workloads carries a bold+italic+underline glyph with a distinct
-256-color fg/bg — the heaviest per-cell draw the renderer supports.
+Each cell in the workloads carries a bold+italic+underline glyph with a distinct
+256-color fg/bg — the heaviest per-cell draw the renderer supports. `render` sets
+`SPARKLES_BENCH_FORCE_REDRAW` so the static screen is redrawn every frame instead
+of being skipped (a continuous stream would be parse-bound, not render-bound).
 
 ## Usage
 
@@ -45,8 +48,8 @@ Or without entering the shell:
 nix run .#terminal-benchmark -- /path/to/terminal_a /path/to/terminal_b
 ```
 
-Options: `--scenario idle|churn|all`, `--reps N`, `--warmup S`, `--window S`,
-`--cols N`, `--rows N`, `--keep-streams DIR`.
+Options: `--scenario idle|render|churn|all`, `--reps N`, `--warmup S`,
+`--window S`, `--cols N`, `--rows N`, `--keep-streams DIR`.
 
 ### Building before/after binaries to compare
 
@@ -62,9 +65,10 @@ terminal-benchmark /tmp/before /tmp/after
 ### Example output
 
 ```
-scenario \ binary         terminal_before terminal_dirtyskip
+scenario \ binary          terminal_before   terminal_batched
 idle (static screen)               31.5%              4.7%
-churn (full repaint)               96.4%             96.5%
+render (forced redraw)             32.2%             11.4%
+churn (full repaint)               96.1%             96.0%
 ```
 
 ## Companion tools (manual)
@@ -80,8 +84,9 @@ sparkles_terminal -- "vtebench --benchmarks ${VTEBENCH_BENCHMARKS:-$(dirname $(c
 # termbench — output sink GB/s (prints into the terminal)
 sparkles_terminal -- "termbench small"
 
-# perf — profile the render path (run the terminal, then attach by PID)
-sparkles_terminal --exit-behavior hold -- "cat fill.vt; sleep 60" &
+# perf — profile the render path. Generate a stream (terminal-benchmark
+# --keep-streams DIR writes fill.vt) and force a redraw every frame, then attach.
+SPARKLES_BENCH_FORCE_REDRAW=1 sparkles_terminal --exit-behavior hold -- "cat DIR/fill.vt; sleep 60" &
 perf record -g --call-graph=dwarf -F 999 -p $! -- sleep 8
 perf report --stdio -g none | head -40
 ```

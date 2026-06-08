@@ -8,12 +8,16 @@
 ///
 /// Two scenarios capture the two regimes found while profiling:
 ///
-///   - `idle`  — paint a dense full screen once, then hold. With dirty-frame
-///               skipping this should fall to near zero; without it the
-///               terminal keeps redrawing a static screen at the frame cap.
-///   - `churn` — repaint the entire grid as fast as the terminal will accept,
-///               exercising the per-cell draw path (glyphs, backgrounds,
-///               batching) under sustained load.
+///   - `idle`   — paint a dense full screen once, then hold. With dirty-frame
+///                skipping this should fall to near zero; without it the
+///                terminal keeps redrawing a static screen at the frame cap.
+///   - `render` — paint a dense full screen, then force a redraw every frame
+///                (via SPARKLES_BENCH_FORCE_REDRAW) without feeding new parse
+///                work. This isolates the *render* path — the metric the cell
+///                renderer moves. (A stream workload is parse-bound instead.)
+///   - `churn`  — repaint the entire grid as fast as the terminal will accept.
+///                Dominated by VT parsing, not rendering; kept as a whole-stack
+///                throughput check.
 ///
 /// It needs a real display (raylib opens a GL window); it is a local/interactive
 /// tool, not a headless CI check. vtebench/termbench (packaged in the flake) are
@@ -42,6 +46,7 @@ extern (C) long sysconf(int name) @nogc nothrow;
 enum Scenario
 {
     idle,
+    render,
     churn,
 }
 
@@ -117,7 +122,11 @@ private string workload(Scenario s, string streamDir)
     final switch (s)
     {
         case Scenario.idle:
-            // Paint once, then sit idle well past the measurement window.
+        case Scenario.render:
+            // Paint once, then sit idle well past the measurement window. The
+            // render scenario additionally forces a redraw every frame via the
+            // env var set in `measure`, so the same static screen exercises the
+            // full render path instead of being skipped.
             return format("cat %s; sleep 600", buildPath(streamDir, "fill.vt"));
         case Scenario.churn:
             // Repaint continuously for the whole run.
@@ -147,9 +156,15 @@ private Sample measure(ref const Config cfg, string binary, Scenario scenario, s
     auto devnull = File("/dev/null", "w");
     auto args = [binary, "--exit-behavior", "hold", "--", workload(scenario, streamDir)];
 
+    // The render scenario forces a full redraw every frame so the render path is
+    // measured in isolation rather than skipped on the static screen.
+    string[string] env = environment.toAA;
+    if (scenario == Scenario.render)
+        env["SPARKLES_BENCH_FORCE_REDRAW"] = "1";
+
     Pid pid;
     try
-        pid = spawnProcess(args, stdin, devnull, devnull);
+        pid = spawnProcess(args, stdin, devnull, devnull, env);
     catch (ProcessException e)
     {
         stderr.writeln("  ! failed to spawn ", binary, ": ", e.msg);
@@ -255,11 +270,12 @@ void main(string[] args)
 
     switch (scenarioOpt)
     {
-        case "idle":  cfg.scenarios = [Scenario.idle]; break;
-        case "churn": cfg.scenarios = [Scenario.churn]; break;
-        case "all":   cfg.scenarios = [Scenario.idle, Scenario.churn]; break;
+        case "idle":   cfg.scenarios = [Scenario.idle]; break;
+        case "render": cfg.scenarios = [Scenario.render]; break;
+        case "churn":  cfg.scenarios = [Scenario.churn]; break;
+        case "all":    cfg.scenarios = [Scenario.idle, Scenario.render, Scenario.churn]; break;
         default:
-            stderr.writeln("Unknown scenario: ", scenarioOpt, " (use idle | churn | all)");
+            stderr.writeln("Unknown scenario: ", scenarioOpt, " (use idle | render | churn | all)");
             return;
     }
 
@@ -312,8 +328,9 @@ private string scenarioName(Scenario s)
 {
     final switch (s)
     {
-        case Scenario.idle:  return "idle (static screen)";
-        case Scenario.churn: return "churn (full repaint)";
+        case Scenario.idle:   return "idle (static screen)";
+        case Scenario.render: return "render (forced redraw)";
+        case Scenario.churn:  return "churn (full repaint)";
     }
 }
 
