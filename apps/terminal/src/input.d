@@ -5,6 +5,41 @@ import core.sys.posix.unistd : write;
 import raylib;
 
 import sparkles.ghostty.c;
+import sparkles.base.smallbuffer : SmallBuffer;
+import posix_util : spawnDetached;
+
+// --- @nogc byte-string helpers (URL hover detection) ------------------------
+
+/// True if `s[at .. at+pfx.length]` equals `pfx` (bounds-checked).
+@safe pure nothrow @nogc
+private bool startsWithAt(scope const(char)[] s, size_t at, scope const(char)[] pfx)
+{
+    if (at + pfx.length > s.length) return false;
+    foreach (k; 0 .. pfx.length)
+        if (s[at + k] != pfx[k]) return false;
+    return true;
+}
+
+/// True if an `http://`/`https://` scheme starts at byte offset `at`.
+@safe pure nothrow @nogc
+private bool urlSchemeAt(scope const(char)[] s, size_t at)
+    => startsWithAt(s, at, "http://") || startsWithAt(s, at, "https://");
+
+/// A byte that terminates a URL run (whitespace or NUL).
+@safe pure nothrow @nogc
+private bool isUrlBoundary(char c)
+    => c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\0';
+
+/// Count cell columns spanned by UTF-8 bytes = number of code points = number
+/// of non-continuation bytes. Never throws (unlike `std.utf.count`).
+@safe pure nothrow @nogc
+private size_t utf8Cols(scope const(char)[] s)
+{
+    size_t n = 0;
+    foreach (c; s)
+        if ((c & 0xC0) != 0x80) n++;
+    return n;
+}
 
 /// Best-effort write of all `len` bytes to the (non-blocking) pty master.
 ///
@@ -12,7 +47,8 @@ import sparkles.ghostty.c;
 /// `EAGAIN`. We retry on `EINTR`, advance past partial writes, and silently
 /// drop the remainder if the kernel buffer is full — which is what terminal
 /// emulators do under back-pressure (mirrors ghostling's `pty_write`).
-void pty_write(int fd, scope const(void)* data, size_t len) @system @nogc nothrow
+@system nothrow @nogc
+void pty_write(int fd, scope const(void)* data, size_t len)
 {
     import core.stdc.errno : errno, EINTR;
 
@@ -55,7 +91,8 @@ enum ExitBehavior
 
 /// Parse the `--exit-behavior` CLI value. Unknown values fall back to the
 /// default (`holdOnFailure`).
-ExitBehavior parseExitBehavior(scope const(char)[] s) @safe pure nothrow @nogc
+@safe pure nothrow @nogc
+ExitBehavior parseExitBehavior(scope const(char)[] s)
 {
     switch (s)
     {
@@ -80,7 +117,8 @@ unittest
     assert(parseExitBehavior("") == ExitBehavior.holdOnFailure);
 }
 
-GhosttyKey raylib_key_to_ghostty(int rl_key) @safe pure nothrow @nogc
+@safe pure nothrow @nogc
+GhosttyKey raylib_key_to_ghostty(int rl_key)
 {
     if (rl_key >= KeyboardKey.KEY_A && rl_key <= KeyboardKey.KEY_Z)
         return cast(GhosttyKey)(GHOSTTY_KEY_A + (rl_key - KeyboardKey.KEY_A));
@@ -136,6 +174,7 @@ unittest
     assert(raylib_key_to_ghostty(KeyboardKey.KEY_LEFT_SHIFT) == GHOSTTY_KEY_UNIDENTIFIED);
 }
 
+@system nothrow @nogc
 GhosttyMods get_ghostty_mods()
 {
     GhosttyMods mods = 0;
@@ -150,7 +189,8 @@ GhosttyMods get_ghostty_mods()
     return mods;
 }
 
-uint raylib_key_unshifted_codepoint(int rl_key) @safe pure nothrow @nogc
+@safe pure nothrow @nogc
+uint raylib_key_unshifted_codepoint(int rl_key)
 {
     if (rl_key >= KeyboardKey.KEY_A && rl_key <= KeyboardKey.KEY_Z)
         return 'a' + cast(uint)(rl_key - KeyboardKey.KEY_A);
@@ -188,7 +228,8 @@ unittest
     assert(raylib_key_unshifted_codepoint(KeyboardKey.KEY_LEFT_SHIFT) == 0);
 }
 
-GhosttyMouseButton raylib_mouse_to_ghostty(int rl_button) @safe pure nothrow @nogc
+@safe pure nothrow @nogc
+GhosttyMouseButton raylib_mouse_to_ghostty(int rl_button)
 {
     switch (cast(MouseButton)rl_button) {
     case MouseButton.MOUSE_BUTTON_LEFT:    return GHOSTTY_MOUSE_BUTTON_LEFT;
@@ -219,6 +260,7 @@ struct SelectionState {
     GhosttyTrackedGridRef start = null;
     GhosttyTrackedGridRef end = null;
 
+    @system nothrow @nogc
     void free() {
         if (start) { ghostty_tracked_grid_ref_free(start); start = null; }
         if (end) { ghostty_tracked_grid_ref_free(end); end = null; }
@@ -238,12 +280,20 @@ struct ScrollbarState {
 
 struct HoverState {
     bool isHoveringUrl = false;
-    string url = "";
+    // Owned, NUL-terminated URL bytes (for Ctrl-click "open"). @nogc, grows via
+    // pureMalloc. SmallBuffer is non-copyable, so HoverState must be kept as a
+    // single stack-pinned instance and only passed by `ref`.
+    SmallBuffer!(char, 2048) url;
     int start_x = -1;
     int end_x = -1;
     int y = -1;
+    // Last hovered cell, so hover detection only re-runs when it changes (or
+    // the mouse moves) rather than every frame.
+    int lastCellX = int.min;
+    int lastCellY = int.min;
 }
 
+@system nothrow @nogc
 void mouse_encode_and_write(int pty_fd, GhosttyMouseEncoder encoder, GhosttyMouseEvent event)
 {
     char[128] buf;
@@ -253,6 +303,7 @@ void mouse_encode_and_write(int pty_fd, GhosttyMouseEncoder encoder, GhosttyMous
         pty_write(pty_fd, buf.ptr, written);
 }
 
+@system nothrow @nogc
 void handle_mouse(
     int pty_fd,
     GhosttyMouseEncoder encoder,
@@ -413,106 +464,125 @@ void handle_mouse(
             value: { coordinate: { x: cast(ushort)cx, y: cast(uint)cy } }
         };
 
-        hoverState.isHoveringUrl = false;
-        hoverState.url = "";
-        hoverState.start_x = -1;
-        hoverState.end_x = -1;
-        hoverState.y = -1;
+        // Recompute hover only when the mouse moved or the hovered cell
+        // changed. The previous version ran a formatter + malloc + URL scan
+        // every single frame, even with the pointer parked.
+        const md = GetMouseDelta();
+        if (md.x != 0.0f || md.y != 0.0f || cx != hoverState.lastCellX || cy != hoverState.lastCellY) {
+            hoverState.lastCellX = cx;
+            hoverState.lastCellY = cy;
 
-        GhosttyGridRef hoverRef;
-        if (ghostty_terminal_grid_ref(terminal, pt, &hoverRef) == GHOSTTY_SUCCESS) {
-            size_t uri_len = 0;
-            if (ghostty_grid_ref_hyperlink_uri(&hoverRef, null, 0, &uri_len) == GHOSTTY_OUT_OF_SPACE && uri_len > 0) {
-                import core.memory : pureMalloc, pureFree;
-                ubyte* buf = cast(ubyte*)pureMalloc(uri_len);
-                if (buf) {
-                    if (ghostty_grid_ref_hyperlink_uri(&hoverRef, buf, uri_len, &uri_len) == GHOSTTY_SUCCESS) {
-                        hoverState.isHoveringUrl = true;
-                        hoverState.url = cast(string)buf[0..uri_len].idup;
-                        hoverState.y = pt.value.coordinate.y;
+            hoverState.isHoveringUrl = false;
+            hoverState.url.clear();
+            hoverState.start_x = -1;
+            hoverState.end_x = -1;
+            hoverState.y = -1;
 
-                        // Scan left to find start of link
-                        int left_x = pt.value.coordinate.x;
-                        while (left_x > 0) {
-                            GhosttyPoint p = pt; p.value.coordinate.x = cast(ushort)(left_x - 1);
-                            GhosttyGridRef r; ghostty_terminal_grid_ref(terminal, p, &r);
-                            size_t l = 0; ghostty_grid_ref_hyperlink_uri(&r, null, 0, &l);
-                            if (l != uri_len) break;
-                            left_x--;
+            GhosttyGridRef hoverRef;
+            if (ghostty_terminal_grid_ref(terminal, pt, &hoverRef) == GHOSTTY_SUCCESS) {
+                size_t uri_len = 0;
+                if (ghostty_grid_ref_hyperlink_uri(&hoverRef, null, 0, &uri_len) == GHOSTTY_OUT_OF_SPACE && uri_len > 0) {
+                    import core.memory : pureMalloc, pureFree;
+                    ubyte* buf = cast(ubyte*)pureMalloc(uri_len);
+                    if (buf) {
+                        if (ghostty_grid_ref_hyperlink_uri(&hoverRef, buf, uri_len, &uri_len) == GHOSTTY_SUCCESS) {
+                            hoverState.isHoveringUrl = true;
+                            hoverState.url ~= cast(const(char)[])buf[0 .. uri_len];
+                            hoverState.url ~= '\0';
+                            hoverState.y = pt.value.coordinate.y;
+
+                            // Scan left to find start of link
+                            int left_x = pt.value.coordinate.x;
+                            while (left_x > 0) {
+                                GhosttyPoint p = pt; p.value.coordinate.x = cast(ushort)(left_x - 1);
+                                GhosttyGridRef r; ghostty_terminal_grid_ref(terminal, p, &r);
+                                size_t l = 0; ghostty_grid_ref_hyperlink_uri(&r, null, 0, &l);
+                                if (l != uri_len) break;
+                                left_x--;
+                            }
+
+                            // Scan right to find end of link
+                            int right_x = pt.value.coordinate.x;
+                            while (right_x < max_cols - 1) {
+                                GhosttyPoint p = pt; p.value.coordinate.x = cast(ushort)(right_x + 1);
+                                GhosttyGridRef r; ghostty_terminal_grid_ref(terminal, p, &r);
+                                size_t l = 0; ghostty_grid_ref_hyperlink_uri(&r, null, 0, &l);
+                                if (l != uri_len) break;
+                                right_x++;
+                            }
+
+                            hoverState.start_x = left_x;
+                            hoverState.end_x = right_x;
                         }
-
-                        // Scan right to find end of link
-                        int right_x = pt.value.coordinate.x;
-                        while (right_x < max_cols - 1) {
-                            GhosttyPoint p = pt; p.value.coordinate.x = cast(ushort)(right_x + 1);
-                            GhosttyGridRef r; ghostty_terminal_grid_ref(terminal, p, &r);
-                            size_t l = 0; ghostty_grid_ref_hyperlink_uri(&r, null, 0, &l);
-                            if (l != uri_len) break;
-                            right_x++;
-                        }
-
-                        hoverState.start_x = left_x;
-                        hoverState.end_x = right_x;
+                        pureFree(buf);
                     }
-                    pureFree(buf);
                 }
             }
-        }
 
-        if (!hoverState.isHoveringUrl) {
-            GhosttyPoint p1 = { tag: GHOSTTY_POINT_TAG_VIEWPORT, value: { coordinate: { x: 0, y: pt.value.coordinate.y } } };
-            GhosttyPoint p2 = { tag: GHOSTTY_POINT_TAG_VIEWPORT, value: { coordinate: { x: cast(ushort)(max_cols - 1), y: pt.value.coordinate.y } } };
-            GhosttyGridRef r1, r2;
-            if (ghostty_terminal_grid_ref(terminal, p1, &r1) == GHOSTTY_SUCCESS &&
-                ghostty_terminal_grid_ref(terminal, p2, &r2) == GHOSTTY_SUCCESS) {
+            if (!hoverState.isHoveringUrl) {
+                GhosttyPoint p1 = { tag: GHOSTTY_POINT_TAG_VIEWPORT, value: { coordinate: { x: 0, y: pt.value.coordinate.y } } };
+                GhosttyPoint p2 = { tag: GHOSTTY_POINT_TAG_VIEWPORT, value: { coordinate: { x: cast(ushort)(max_cols - 1), y: pt.value.coordinate.y } } };
+                GhosttyGridRef r1, r2;
+                if (ghostty_terminal_grid_ref(terminal, p1, &r1) == GHOSTTY_SUCCESS &&
+                    ghostty_terminal_grid_ref(terminal, p2, &r2) == GHOSTTY_SUCCESS) {
 
-                GhosttySelection sel = { start: r1, end: r2, rectangle: false };
-                GhosttyFormatterTerminalOptions fmt_opts;
-                fmt_opts.size = GhosttyFormatterTerminalOptions.sizeof;
-                fmt_opts.selection = &sel;
-                GhosttyFormatter fmt;
-                if (ghostty_formatter_terminal_new(null, &fmt, terminal, fmt_opts) == GHOSTTY_SUCCESS) {
-                    size_t len = 0;
-                    if (ghostty_formatter_format_buf(fmt, null, 0, &len) == GHOSTTY_OUT_OF_SPACE && len > 0) {
-                        import core.memory : pureMalloc, pureFree;
-                        ubyte* buf = cast(ubyte*)pureMalloc(len);
-                        if (buf) {
-                            if (ghostty_formatter_format_buf(fmt, buf, len, &len) == GHOSTTY_SUCCESS) {
-                                string line = cast(string)buf[0..len];
-                                import std.regex : matchAll, ctRegex;
-                                import std.utf : count;
-                                // Compiled at compile time, not rebuilt per frame.
-                                static urlRe = ctRegex!(r"https?://[^\s]+");
-                                auto m = matchAll(line, urlRe);
-                                foreach (c; m) {
-                                    // Map byte offsets to cell columns by code
-                                    // point count, not byte length, so multibyte
-                                    // text before/in the URL doesn't skew the span.
-                                    int start_col = cast(int)c.pre.count;
-                                    int end_col = start_col + cast(int)c.hit.count - 1;
-                                    if (pt.value.coordinate.x >= start_col && pt.value.coordinate.x <= end_col) {
-                                        hoverState.isHoveringUrl = true;
-                                        hoverState.url = c.hit.idup;
-                                        hoverState.start_x = start_col;
-                                        hoverState.end_x = end_col;
-                                        hoverState.y = pt.value.coordinate.y;
-                                        break;
+                    GhosttySelection sel = { start: r1, end: r2, rectangle: false };
+                    GhosttyFormatterTerminalOptions fmt_opts;
+                    fmt_opts.size = GhosttyFormatterTerminalOptions.sizeof;
+                    fmt_opts.selection = &sel;
+                    GhosttyFormatter fmt;
+                    if (ghostty_formatter_terminal_new(null, &fmt, terminal, fmt_opts) == GHOSTTY_SUCCESS) {
+                        size_t len = 0;
+                        if (ghostty_formatter_format_buf(fmt, null, 0, &len) == GHOSTTY_OUT_OF_SPACE && len > 0) {
+                            import core.memory : pureMalloc, pureFree;
+                            ubyte* buf = cast(ubyte*)pureMalloc(len);
+                            if (buf) {
+                                if (ghostty_formatter_format_buf(fmt, buf, len, &len) == GHOSTTY_SUCCESS) {
+                                    // Hand-rolled @nogc scan for an http(s) URL covering
+                                    // the hovered column. Replaces std.regex (which
+                                    // allocates and can throw on invalid UTF-8). Byte
+                                    // offsets map to columns by counting UTF-8 lead
+                                    // bytes, matching the old code-point-based mapping.
+                                    const(char)[] line = cast(const(char)[])buf[0 .. len];
+                                    const hovered = pt.value.coordinate.x;
+                                    size_t i = 0;
+                                    while (i < line.length) {
+                                        if (urlSchemeAt(line, i)) {
+                                            size_t j = i;
+                                            while (j < line.length && !isUrlBoundary(line[j])) j++;
+                                            const start_col = cast(int)utf8Cols(line[0 .. i]);
+                                            const end_col = start_col + cast(int)utf8Cols(line[i .. j]) - 1;
+                                            if (hovered >= start_col && hovered <= end_col) {
+                                                hoverState.isHoveringUrl = true;
+                                                hoverState.url ~= line[i .. j];
+                                                hoverState.url ~= '\0';
+                                                hoverState.start_x = start_col;
+                                                hoverState.end_x = end_col;
+                                                hoverState.y = hovered;
+                                                break;
+                                            }
+                                            i = j;
+                                        } else {
+                                            i++;
+                                        }
                                     }
                                 }
+                                pureFree(buf);
                             }
-                            pureFree(buf);
                         }
+                        ghostty_formatter_free(fmt);
                     }
-                    ghostty_formatter_free(fmt);
                 }
             }
         }
 
         if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT)) {
             if (IsKeyDown(KeyboardKey.KEY_LEFT_CONTROL) || IsKeyDown(KeyboardKey.KEY_RIGHT_CONTROL)) {
-                if (hoverState.isHoveringUrl) {
-                    import std.process : browse;
-                    browse(hoverState.url);
+                if (hoverState.isHoveringUrl && hoverState.url.length > 0) {
+                    // url is stored NUL-terminated; open it via a detached
+                    // xdg-open (best-effort; errors are ignored).
+                    const(char)*[2] argv = [hoverState.url[].ptr, null];
+                    cast(void) spawnDetached(argv[]);
                     return;
                 }
             }
@@ -597,6 +667,34 @@ void handle_mouse(
     }
 }
 
+// Special (non-letter, non-digit) keys polled each frame.
+private static immutable int[] specialKeys = [
+    KeyboardKey.KEY_SPACE, KeyboardKey.KEY_ENTER, KeyboardKey.KEY_TAB, KeyboardKey.KEY_BACKSPACE, KeyboardKey.KEY_DELETE,
+    KeyboardKey.KEY_ESCAPE, KeyboardKey.KEY_UP, KeyboardKey.KEY_DOWN, KeyboardKey.KEY_LEFT, KeyboardKey.KEY_RIGHT,
+    KeyboardKey.KEY_HOME, KeyboardKey.KEY_END, KeyboardKey.KEY_PAGE_UP, KeyboardKey.KEY_PAGE_DOWN, KeyboardKey.KEY_INSERT,
+    KeyboardKey.KEY_MINUS, KeyboardKey.KEY_EQUAL, KeyboardKey.KEY_LEFT_BRACKET, KeyboardKey.KEY_RIGHT_BRACKET,
+    KeyboardKey.KEY_BACKSLASH, KeyboardKey.KEY_SEMICOLON, KeyboardKey.KEY_APOSTROPHE, KeyboardKey.KEY_COMMA,
+    KeyboardKey.KEY_PERIOD, KeyboardKey.KEY_SLASH, KeyboardKey.KEY_GRAVE,
+    KeyboardKey.KEY_F1, KeyboardKey.KEY_F2, KeyboardKey.KEY_F3, KeyboardKey.KEY_F4, KeyboardKey.KEY_F5, KeyboardKey.KEY_F6,
+    KeyboardKey.KEY_F7, KeyboardKey.KEY_F8, KeyboardKey.KEY_F9, KeyboardKey.KEY_F10, KeyboardKey.KEY_F11, KeyboardKey.KEY_F12,
+];
+
+@safe pure nothrow
+private int[] buildKeysToCheck()
+{
+    int[] keys;
+    for (int k = KeyboardKey.KEY_A; k <= KeyboardKey.KEY_Z; k++) keys ~= k;
+    for (int k = KeyboardKey.KEY_ZERO; k <= KeyboardKey.KEY_NINE; k++) keys ~= k;
+    foreach (k; specialKeys) keys ~= k;
+    return keys;
+}
+
+/// All keys polled each frame (A–Z, 0–9, specials), built once at compile time
+/// (CTFE) into static data so the input path allocates nothing per frame — the
+/// old code rebuilt this list with a GC `appender` every frame.
+private static immutable int[] keysToCheck = buildKeysToCheck();
+
+@system nothrow @nogc
 void handle_input(int pty_fd, GhosttyKeyEncoder encoder, GhosttyKeyEvent event, GhosttyTerminal terminal, ref SelectionState selState)
 {
     import std.utf : encode;
@@ -617,29 +715,11 @@ void handle_input(int pty_fd, GhosttyKeyEncoder encoder, GhosttyKeyEvent event, 
         }
     }
 
-    static const int[] special_keys = [
-        KeyboardKey.KEY_SPACE, KeyboardKey.KEY_ENTER, KeyboardKey.KEY_TAB, KeyboardKey.KEY_BACKSPACE, KeyboardKey.KEY_DELETE,
-        KeyboardKey.KEY_ESCAPE, KeyboardKey.KEY_UP, KeyboardKey.KEY_DOWN, KeyboardKey.KEY_LEFT, KeyboardKey.KEY_RIGHT,
-        KeyboardKey.KEY_HOME, KeyboardKey.KEY_END, KeyboardKey.KEY_PAGE_UP, KeyboardKey.KEY_PAGE_DOWN, KeyboardKey.KEY_INSERT,
-        KeyboardKey.KEY_MINUS, KeyboardKey.KEY_EQUAL, KeyboardKey.KEY_LEFT_BRACKET, KeyboardKey.KEY_RIGHT_BRACKET,
-        KeyboardKey.KEY_BACKSLASH, KeyboardKey.KEY_SEMICOLON, KeyboardKey.KEY_APOSTROPHE, KeyboardKey.KEY_COMMA,
-        KeyboardKey.KEY_PERIOD, KeyboardKey.KEY_SLASH, KeyboardKey.KEY_GRAVE,
-        KeyboardKey.KEY_F1, KeyboardKey.KEY_F2, KeyboardKey.KEY_F3, KeyboardKey.KEY_F4, KeyboardKey.KEY_F5, KeyboardKey.KEY_F6,
-        KeyboardKey.KEY_F7, KeyboardKey.KEY_F8, KeyboardKey.KEY_F9, KeyboardKey.KEY_F10, KeyboardKey.KEY_F11, KeyboardKey.KEY_F12,
-    ];
-
-    import std.array : appender;
-    auto keys_to_check = appender!(int[]);
-    for (int k = KeyboardKey.KEY_A; k <= KeyboardKey.KEY_Z; k++) keys_to_check.put(k);
-    for (int k = KeyboardKey.KEY_ZERO; k <= KeyboardKey.KEY_NINE; k++) keys_to_check.put(k);
-    foreach (k; special_keys) keys_to_check.put(k);
-
     GhosttyMods mods = get_ghostty_mods();
 
     // Check Ctrl+Shift+C (Copy) and Ctrl+Shift+V (Paste)
     if (mods == (GHOSTTY_MODS_CTRL | GHOSTTY_MODS_SHIFT)) {
         if (IsKeyPressed(KeyboardKey.KEY_C) && selState.start && selState.end) {
-            GhosttyGridRef ref_start;
             GhosttyGridRef start_snapshot;
             GhosttyGridRef end_snapshot;
             if (ghostty_tracked_grid_ref_snapshot(selState.start, &start_snapshot) == GHOSTTY_SUCCESS &&
@@ -662,15 +742,14 @@ void handle_input(int pty_fd, GhosttyKeyEncoder encoder, GhosttyKeyEvent event, 
                     ubyte* out_ptr;
                     size_t out_len;
                     if (ghostty_formatter_format_alloc(formatter, null, &out_ptr, &out_len) == GHOSTTY_SUCCESS) {
-                        import std.string : fromStringz;
-                        // The string might not be null terminated by ghostty, so we manually do it or copy it
-                        char[] copiedText = new char[out_len + 1];
-                        copiedText[0 .. out_len] = cast(char[])out_ptr[0 .. out_len];
-                        copiedText[out_len] = '\0';
+                        // ghostty's buffer may not be NUL-terminated; copy it
+                        // plus a NUL into a @nogc SmallBuffer for SetClipboardText.
+                        SmallBuffer!(char, 4096) clip;
+                        clip ~= cast(const(char)[])out_ptr[0 .. out_len];
+                        clip ~= '\0';
+                        SetClipboardText(clip[].ptr);
 
-                        SetClipboardText(copiedText.ptr);
-
-                        // we need to free the memory ghostty allocated
+                        // Free the memory ghostty allocated.
                         ghostty_free(null, out_ptr, out_len);
                     }
                     ghostty_formatter_free(formatter);
@@ -688,7 +767,7 @@ void handle_input(int pty_fd, GhosttyKeyEncoder encoder, GhosttyKeyEvent event, 
         }
     }
 
-    foreach (rl_key; keys_to_check.data) {
+    foreach (rl_key; keysToCheck) {
         bool pressed  = IsKeyPressed(cast(KeyboardKey)rl_key);
         bool repeated = IsKeyPressedRepeat(cast(KeyboardKey)rl_key);
         bool released = IsKeyReleased(cast(KeyboardKey)rl_key);
