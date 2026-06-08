@@ -1,0 +1,4 @@
+# dub build artifacts for the per-platform example packages
+*/example/build/
+*/example/.dub/
+*/example/*.o
