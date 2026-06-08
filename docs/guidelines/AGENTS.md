@@ -7,17 +7,18 @@ includes it. Keep it accurate — a stale fact here propagates into every agent'
 ## Project Overview
 
 `sparkles` is a D monorepo of CLI/library utilities. The root `dub.sdl` declares
-seven sub-packages:
+eight sub-packages:
 
-| Sub-package           | Path              | What it is                                                                                                                                                 |
-| --------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ci`                  | `apps/ci`         | Repository CI helper: runs/verifies markdown examples, standalone examples, sub-package tests, and markdown link maintenance                               |
-| `terminal`            | `apps/terminal`   | Minimal raylib-based terminal emulator built on `sparkles:ghostty`                                                                                         |
-| `sparkles:core-cli`   | `libs/core-cli`   | Terminal styling, pretty-printing, UI components (table/box/header/OSC links), logger, `SmallBuffer`, text readers/writers, process utils, CLI arg parsing |
-| `sparkles:ghostty`    | `libs/ghostty`    | D bindings + ImportC integration layer for `libghostty-vt` (Ghostty's terminal VT engine)                                                                  |
-| `sparkles:math`       | `libs/math`       | Small math primitives for games/graphics (early stage)                                                                                                     |
-| `sparkles:test-utils` | `libs/test-utils` | Testing helpers: diff tools, temp-filesystem helpers, string helpers                                                                                       |
-| `sparkles:versions`   | `libs/versions`   | Design-by-Introspection versioning library (SemVer, DMD, CalVer, PyPI, Maven, Deb, …) with VERS/pURL interop                                               |
+| Sub-package           | Path                      | What it is                                                                                                                                                 |
+| --------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ci`                  | `apps/ci`                 | Repository CI helper: runs/verifies markdown examples, standalone examples, sub-package tests, and markdown link maintenance                               |
+| `terminal`            | `apps/terminal`           | Minimal raylib-based terminal emulator built on `sparkles:ghostty`                                                                                         |
+| `terminal-benchmark`  | `apps/terminal-benchmark` | Render-CPU benchmark harness for the `terminal` emulator (`/proc` CPU sampling; idle/render/churn scenarios)                                               |
+| `sparkles:core-cli`   | `libs/core-cli`           | Terminal styling, pretty-printing, UI components (table/box/header/OSC links), logger, `SmallBuffer`, text readers/writers, process utils, CLI arg parsing |
+| `sparkles:ghostty`    | `libs/ghostty`            | D bindings + ImportC integration layer for `libghostty-vt` (Ghostty's terminal VT engine)                                                                  |
+| `sparkles:math`       | `libs/math`               | Small math primitives for games/graphics (early stage)                                                                                                     |
+| `sparkles:test-utils` | `libs/test-utils`         | Testing helpers: diff tools, temp-filesystem helpers, string helpers                                                                                       |
+| `sparkles:versions`   | `libs/versions`           | Design-by-Introspection versioning library (SemVer, DMD, CalVer, PyPI, Maven, Deb, …) with VERS/pURL interop                                               |
 
 Each library **should** be documented under `docs/libs/<name>/` as a
 [Diátaxis](https://diataxis.fr/) tree (`tutorial/`, `how-to/`, `reference/`,
@@ -38,6 +39,7 @@ Cross-cutting guides live in `docs/guidelines/`:
 - **[DDoc](./ddoc.md)** — Documentation comments, sections, macros, cross-referencing
 - **[Writing Research Docs](./research-docs.md)** — Research catalog layout, deep-dive & index skeletons, house style, VitePress gotchas, co-located runnable samples
 - **[Integrating C Libraries (ImportC)](./importc-c-libraries.md)** — Adding a C dependency via ImportC + pkg-config + Nix + dub (`sourceLibrary` gotcha)
+- **[Benchmarking & Profiling](./benchmarking-and-profiling.md)** — Measuring the terminal renderer (`terminal-benchmark`, `perf`, `vtebench`/`termbench`); render- vs parse-bound; the measure→profile→fix loop
 - **Idioms** — [Expected Error Handling](./idioms/expected/index.md), [Forcing Named Arguments](./idioms/forced-named-arguments/index.md)
 
 ## Repository Layout
@@ -45,7 +47,7 @@ Cross-cutting guides live in `docs/guidelines/`:
 ```
 sparkles/
 ├── flake.nix                       # Nix flake (devshell, `ci` package, checks)
-├── dub.sdl                         # Root package; declares the 7 sub-packages
+├── dub.sdl                         # Root package; declares the 8 sub-packages
 ├── apps/
 │   ├── ci/                         # `ci` helper (executable sub-package)
 │   │   ├── src/app.d               # Markdown example runner / verifier, link maintenance
@@ -523,8 +525,8 @@ have the repo layout, so they keep `version="*"`.
 Conventional commits: `<type>(<scope>): <description>` (lowercase description).
 
 - **Scope** = a sub-package (`core-cli`, `versions`, `math`, `test-utils`, `ghostty`,
-  `ci`, `terminal`) or an area (`nix`, `dub`, `guidelines`, `gh-actions`, `docs`,
-  `research`).
+  `ci`, `terminal`, `terminal-benchmark`) or an area (`nix`, `dub`, `guidelines`,
+  `gh-actions`, `docs`, `research`).
 - **Type** — one of the following (one example each):
 
 | Type       | Use for                                  | Example                                                               |
