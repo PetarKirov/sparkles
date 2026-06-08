@@ -22,23 +22,24 @@ storage should never be shown; a Nix `Value` is a handle into an external
 evaluator; a `Money` is a `long` that should read `$5.00`; a secret should
 read `***`. For these, `prettyPrint` exposes a **Design-by-Introspection
 extension model** (§6): a value type renders itself (a `prettyPrintTo` method),
-or a caller-supplied **hook** on the options takes over rendering of chosen
-types — including overriding built-ins, carrying external state, and recursing
-back through the same hook.
+or a caller-supplied **hook** — carried on the renderer object — takes over
+rendering of chosen types, including overriding built-ins, carrying mutable
+session state, and recursing back through the same hook.
 
 Core rules:
 
-- **Backward compatibility is a contract.** With no hook (`Hook == void`) and
-  no `prettyPrintTo` primitive in play, output is **byte-identical** to the
+- **Backward compatibility is a contract.** With no hook (`NullHook`) and no
+  `prettyPrintTo` primitive in play, output is **byte-identical** to the
   type-static printer (the fallback). Every optional primitive is a
   compile-time-guarded `static if` that is dead code when absent (§6.4).
 - **Optionality and zero-cost when unused.** Customization is opt-in: each
   optional primitive is detected with a named capability trait (`hasRenderHook`,
   `hasPrettyPrintTo`, …) following the repo's `__traits(compiles, …)` idiom; an
   absent primitive is never an error, it just falls back.
-- **The shell owns layout; hooks own representation.** `prettyPrint` (the shell)
-  provides the options, recursion, depth/width/item bounding, colors, and OSC 8
-  links; a hook decides what a value of its chosen type _says_.
+- **The shell owns layout; hooks own representation.** The `PrettyPrinter` (the
+  shell) provides the config, recursion, depth/width/item bounding, colors, OSC 8
+  links, and any traversal scratch; a hook decides what a value of its chosen type
+  _says_.
 - **Attributes infer.** `prettyPrint` and every customization point are
   templates with inferred attributes. A pure/`@nogc`/`@safe` payload+hook stays
   `@safe pure nothrow @nogc`; an impure hook (e.g. Nix) infers impure **only**
@@ -50,7 +51,7 @@ A consumer who just wants to print a value touches one function:
 import sparkles.core_cli.prettyprint : prettyPrint;
 
 struct Point { int x, y; }
-assert(prettyPrint(Point(1, 2), PrettyPrintOptions!void(useColors: false))
+assert(prettyPrint(Point(1, 2), PrettyPrintOptions(useColors: false))
        == "Point(x: 1, y: 2)");
 ```
 
@@ -64,33 +65,56 @@ assert(prettyPrint(Point(1, 2), PrettyPrintOptions!void(useColors: false))
 
 | Public symbol                                                       | Role                                                                |
 | ------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `prettyPrint(value, ref writer, opt)`                               | Render into a caller-supplied output range; returns the writer      |
+| `prettyPrint(value, ref writer, [hook,] opt)`                       | Front-door free function; renders into an output range, returns it  |
 | `prettyPrint(value, opt) → string`                                  | Convenience overload returning a freshly-allocated string           |
-| `prettyPrintNested(value, ref w, opt, depth)`                       | Public depth-aware re-entry — hooks/methods recurse through this    |
-| `PrettyPrintOptions(Hook = void)`                                   | Rendering knobs + the stored hook instance (§3)                     |
+| `PrettyPrinter(Writer, Hook = NullHook)`                            | The renderer **object** (the shell, §6): `.print` / `.printNested`  |
+| `NullHook`                                                          | The default no-op hook — yields the built-in fallback               |
+| `PrettyPrintOptions`                                                | Formatting config — a plain value, no hook (§3)                     |
 | `SumTypeStyle`                                                      | `{ activeType, declaredType, valueOnly }` — sum-type rendering (§5) |
-| `CombineRenderHooks(Hooks...)`                                      | Compose several render-hooks, first-wins (§6.6)                     |
+| `CombineRenderHooks(Hooks...)`                                      | Compose several render hooks, first-wins (§6.6)                     |
 | `hasRenderHook`, `hasPrettyPrintTo`, `hasRenderField`, `hasOnEnter` | Capability traits for the optional primitives (§6.9)                |
 
-The two entry overloads:
+The renderer is a **stateful object**, `PrettyPrinter`, that owns the output
+range, the formatting config, and the hook (a **mutable field** — so a stateful
+hook mutates its session directly, with no `const` games; §6.5). The free
+`prettyPrint` functions are thin front doors that construct a `PrettyPrinter` and
+call `.print`:
 
 ```d
-ref Writer prettyPrint(T, Writer, Hook = void)(
-    in T value, return ref Writer writer,
-    in PrettyPrintOptions!Hook opt = PrettyPrintOptions!Hook());
+struct PrettyPrinter(Writer, Hook = NullHook)
+{
+    PrettyPrintOptions opt;   // formatting config (§3)
+    Hook               hook;  // the hook — a MUTABLE field; holds any session/traversal state
 
-string prettyPrint(T, Hook = void)(
-    in T value, in PrettyPrintOptions!Hook opt = PrettyPrintOptions!Hook());
+    void print(T)(in T value);                 // render `value` at depth 0
+    void printNested(T)(in T value, ushort d); // re-entry: hooks/`prettyPrintTo` recurse here
+    // PrettyPrinter is itself an output range (`put`) writing to the wrapped Writer.
+}
+
+// Front-door free functions. The hookless forms use NullHook (the built-in fallback).
+ref Writer prettyPrint(T, Writer)(
+    in T value, return ref Writer w, in PrettyPrintOptions opt = PrettyPrintOptions.init);
+
+string prettyPrint(T)(in T value, in PrettyPrintOptions opt = PrettyPrintOptions.init);
+
+// With an explicit hook (the stateful session lives in the printer it builds):
+ref Writer prettyPrint(T, Writer, Hook)(
+    in T value, return ref Writer w, auto ref Hook hook,
+    in PrettyPrintOptions opt = PrettyPrintOptions.init);
 ```
 
 `Writer` is any `std.range.primitives.put`-compatible output range
-(`Appender!string`, `SmallBuffer!(char, N)`, a file sink, …). The string
-overload allocates an `Appender!string`.
+(`Appender!string`, `SmallBuffer!(char, N)`, a file sink, …). The string overload
+allocates an `Appender!string`. Recursion uses `PrettyPrinter.printNested` (a
+method on the mutable object), not a free function — there is no `const` to fight.
 
 ## 3. `PrettyPrintOptions`
 
+`PrettyPrintOptions` is **formatting config only** — a plain value with no hook,
+genuinely read-only during a render (it is passed `in`):
+
 ```d
-struct PrettyPrintOptions(Hook = void)
+struct PrettyPrintOptions
 {
     ushort       indentStep   = 2;     // spaces per indent level
     ushort       maxDepth     = 8;     // recursion limit; deeper → "..."
@@ -99,20 +123,19 @@ struct PrettyPrintOptions(Hook = void)
     bool         useColors    = true;  // ANSI SGR styling
     bool         useOscLinks  = false; // OSC 8 hyperlinks on type names (§7)
     SumTypeStyle sumTypeStyle = SumTypeStyle.activeType; // §5
-
-    static if (!is(Hook == void))
-        Hook hook;                     // the extension hook instance (§6)
 }
 ```
 
-- The `Hook` type parameter selects the extension hook (§6). It defaults to
-  `void` (no hook). When non-`void`, the hook **instance** is stored in `hook`
-  and is available during rendering — this is what lets a hook carry external
-  state (a Nix `EvalState`, a redaction policy, a cycle visited-set).
-- One `Hook` type may provide several orthogonal capabilities at once: a render
-  hook (§6.1), a source-URI writer (§7), a field hook (§6.7), and/or an event
-  hook (§6.8). Each is detected independently.
-- A stateless hook is a zero-byte struct; the stored instance costs nothing.
+The render hook is **not** here — it lives on the `PrettyPrinter` (§2, §6) as a
+mutable field, because a stateful session (a Nix `EvalState`, a cycle visited-set,
+a label table) needs to mutate during the render while the config does not. This
+separation is deliberate: it is exactly what keeps the config `in`/const-clean and
+removes any need to launder `const` (contrast the earlier single-struct design,
+where a stateful hook embedded in const options could not mutate). A single `Hook`
+type may still provide several orthogonal capabilities at once — a render hook
+(§6.1), a source-URI writer (§7), a field-override hook (§6.7), and/or event hooks
+(§6.8) — each detected independently; a stateless hook (e.g. `NullHook`, a
+redaction hook) is a zero-byte field.
 
 ## 4. Built-in rendering (the default type dispatch)
 
@@ -190,12 +213,15 @@ scope for consumers that never use it.
 
 ## 6. The extension model
 
-`prettyPrint` (the shell) exposes its customization as **optional primitives** —
-some carried on a caller-supplied **hook** (a policy on the options), some on the
-**value's own type**. Each is detected by a capability trait (§6.9) and
-dispatched **before** the built-in fallback, so a hook can override even built-in
-types. Precedence follows the DbI full-override → fallback order:
-**render hook → `prettyPrintTo` primitive → built-in fallback** (§6.4).
+The shell is the **`PrettyPrinter` object** (§2): a mutable struct owning the
+output range, the config, and the hook. Customization is exposed as **optional
+primitives** — some on the printer's `hook` (a policy), some on the **value's own
+type**. Each is detected by a capability trait (§6.9) and consulted **before** the
+built-in fallback (so a hook can override even built-ins), in the DbI
+full-override → fallback order: **render hook → `prettyPrintTo` primitive →
+built-in fallback** (§6.4). Because the printer is a mutable object whose rendering
+methods are non-`const`, a stateful hook mutates its session directly — no `const`
+laundering (§6.5).
 
 ### 6.1 The render hook (`canRender` / `render`)
 
@@ -203,106 +229,108 @@ A `Hook` type may provide a **full-override** hook (DbI §5.4):
 
 ```d
 enum bool canRender(T) = /* compile-time: does this hook render type T? */;
-void render(T, Writer, Opt)(in T value, ref Writer w, in Opt opt, ushort depth) const;
+void render(T, Printer)(in T value, ref Printer p, ushort depth);  // non-const: may mutate this hook's session
 ```
 
-When `Hook.canRender!T` is `true`, `prettyPrint` calls `opt.hook.render(value, w,
-opt, depth)` in place of the built-in dispatch. The hook:
+When `Hook.canRender!T` is `true`, the printer calls `hook.render(value, this,
+depth)` in place of the built-in dispatch. Inside `render`, the hook:
 
+- Writes through the printer (`PrettyPrinter` is itself an output range:
+  `put(p, …)`).
+- Reads config via `p.opt`, and recurses into sub-values via
+  `p.printNested(child, depth + 1)` (§6.3) — which re-dispatches through the same
+  hook, so a runtime-tagged tree (Nix `Value`, `JSONValue`) renders fully.
+- Mutates its own session through `this` (the hook is the printer's mutable
+  `hook` field, §6.5).
 - May opt into **any** type, including built-ins (`canRender!string` → redact).
-- Recurses into sub-values via `prettyPrintNested` (§6.3), which re-dispatches
-  through the same hook — so a runtime-tagged tree (Nix `Value`, `JSONValue`)
-  renders fully.
-- Owns its own layout; the built-in inline/multi-line collapser is not applied
-  to hook-rendered values (§9).
-
-`render` is a `const` method (the options are passed `in`); a stateful hook
-reaches its mutable session through the idiom in §6.5.
+- Owns its own layout; the built-in inline/multi-line collapser is not applied to
+  hook-rendered values (§9).
 
 ### 6.2 The `prettyPrintTo` primitive
 
 A value type the author owns may render itself with an optional primitive on the
-type:
+type, taking the printer:
 
 ```d
 struct Money {
     long cents;
-    void prettyPrintTo(Writer, Hook)(ref Writer w, in PrettyPrintOptions!Hook opt, ushort depth) const
-    { import std.format : formattedWrite; formattedWrite(w, "$%d.%02d", cents/100, cents%100); }
+    void prettyPrintTo(Printer)(ref Printer p, ushort depth) const
+    { import std.format : formattedWrite; formattedWrite(p, "$%d.%02d", cents/100, cents%100); }
 }
 // prettyPrint(Money(500)) == "$5.00"
 ```
 
-Detected when the exact call `value.prettyPrintTo(w, opt, depth)` compiles. The
-method may itself call `prettyPrintNested` for nested fields. This primitive needs
-no hook (works with `Hook == void`).
+Detected when the exact call `value.prettyPrintTo(p, depth)` compiles. The method
+writes through the printer (an output range) and may recurse via
+`p.printNested(child, depth + 1)`. It needs no hook (works under `NullHook`).
 
-### 6.3 Recursion — `prettyPrintNested`
+### 6.3 Recursion — `PrettyPrinter.printNested`
 
 ```d
-void prettyPrintNested(T, Writer, Hook)(
-    in T value, ref Writer w, in PrettyPrintOptions!Hook opt, ushort depth);
+void printNested(T)(in T value, ushort depth);   // method on the mutable PrettyPrinter
 ```
 
-The public re-entry point. Hooks and `prettyPrintTo` methods recurse into
-children with `prettyPrintNested(child, w, opt, cast(ushort)(depth + 1))`,
-carrying the same options (hence the same hook). It is a **template**, not a
-`scope delegate`, so it stays generic over heterogeneous child types and
-preserves per-instantiation attribute inference. Callers increment `depth`
-themselves; the same `opt` must be passed unchanged.
+The re-entry point. Hooks and `prettyPrintTo` methods recurse into children with
+`p.printNested(child, cast(ushort)(depth + 1))`. Because it is a method on the
+mutable printer, the same `hook`, `opt`, and writer are reused automatically and
+there is no `const` to fight; recursion stays generic over heterogeneous child
+types (a template method, not a `scope delegate`) and preserves per-instantiation
+attribute inference. Callers increment `depth` themselves.
 
 ### 6.4 Dispatch precedence and the compatibility contract
 
-`prettyPrintImpl` dispatches:
+`PrettyPrinter.printImpl` dispatches:
 
 ```
 depth guard
-  → render hook       (hasRenderHook!(Hook, T, Writer))     // full override; can override built-ins
-  → prettyPrintTo     (hasPrettyPrintTo!(T, Writer, Hook))  // the type renders itself
+  → render hook       (hasRenderHook!(Hook, T, Printer))    // full override; can override built-ins
+  → prettyPrintTo     (hasPrettyPrintTo!(T, Printer))       // the type renders itself
   → built-in fallback (null/enum/leaf/pointer/Tuple/AA/array/struct|class)
   → static assert(false, "unsupported type")
 ```
 
-When `Hook == void` (or a hook lacks `canRender`) and the value's type has no
-`prettyPrintTo`, both capability traits are `false` and control falls through to
-the unchanged built-in fallback. The new branches are dead `static if` code →
-**the output is byte-identical to the pre-extension printer.** This contract is
-enforced by a regression test that renders a representative value with
-`Hook == void` and asserts the exact legacy output (the mandatory `void`-hook
-baseline test, DbI §9.4).
+When the printer's `Hook` is `NullHook` (no `canRender`) and the value's type has
+no `prettyPrintTo`, both capability traits are `false` and control falls through to
+the unchanged built-in fallback. The new branches are dead `static if` code → **the
+output is byte-identical to the pre-extension printer.** This contract is enforced
+by a regression test that renders a representative value under `NullHook` and
+asserts the exact legacy output (the mandatory `void`-hook baseline test, DbI
+§9.4).
 
-### 6.5 Stateful hooks and the transitive-const idiom
+### 6.5 Stateful hooks (no `const` laundering)
 
-`render` is called on `opt.hook` where `opt` is `in` (const), and D's `const`
-is transitive — a stored `EvalState`/visited-set would itself be `const`,
-unable to mutate (e.g. force a Nix thunk). A stateful hook therefore stores its
-mutable session **by address** and reconstructs a mutable pointer through a
-localized `@trusted` accessor:
+The printer is a **mutable object**; its rendering methods are **non-`const`**, so
+the `hook` field is mutable throughout the render. A stateful hook therefore stores
+its session as an **ordinary field** and mutates it directly — no `const`, no
+address-laundering, no `@trusted`:
 
 ```d
 struct NixRenderHook {
-    private size_t _es;                                       // address survives transitive const
-    this(ref EvalState es) @trusted { _es = cast(size_t) &es; }
-    private EvalState* es() const @trusted => cast(EvalState*) _es;
-    void render(T, W, O)(in T v, ref W w, in O opt, ushort d) const { es.valueType(v); /* … */ }
+    EvalState es;                                          // plain mutable field — the session
+    enum bool canRender(T) = is(immutable T == immutable Value);
+    void render(T, P)(in T v, ref P p, ushort depth) {    // non-const → es is mutable
+        final switch (es.valueType(v)) { /* … p.printNested(child, depth + 1) … */ }
+    }
 }
 ```
 
-This is sound provided the options value is not `immutable` (a stateful hook is
-never `immutable`) and the referenced session outlives the `prettyPrint` call.
-It is the standard pattern for any stateful render-hook (Nix evaluator, cycle
-visited-set, label table).
+The config (`opt`) stays `in`/const — only the session is mutable, which is the
+whole point of keeping them separate (§3). Traversal-scoped scratch that is **not**
+type-specific — a cycle visited-set, an indentation counter — is naturally a field
+of the `PrettyPrinter` itself (a built-in capability) rather than a hook; the event
+hooks (§6.8) build on that.
 
 ### 6.6 Composition — `CombineRenderHooks`
 
 ```d
-PrettyPrintOptions!(CombineRenderHooks!(NixRenderHook, RedactStringsHook))
+auto hook = CombineRenderHooks!(NixRenderHook, RedactStringsHook)(NixRenderHook(es), RedactStringsHook());
+prettyPrint(value, w, hook, opt);   // or PrettyPrinter!(Writer, typeof(hook))
 ```
 
-`CombineRenderHooks!(Hooks...)` stores each sub-hook; `canRender!T` is the OR
-over the sub-hooks; `render` dispatches to the **first** sub-hook whose
-`canRender!T` is `true` (documented first-wins precedence); and it forwards a
-`writeSourceUri` capability from the first sub-hook that provides one.
+`CombineRenderHooks!(Hooks...)` stores each sub-hook (mutably, as printer state);
+`canRender!T` is the OR over the sub-hooks; `render` dispatches to the **first**
+sub-hook whose `canRender!T` is `true` (documented first-wins precedence); and it
+forwards a `writeSourceUri` capability from the first sub-hook that provides one.
 
 ### 6.7 The field-override hook (advanced) — `canRenderField` / `renderField`
 
@@ -312,11 +340,11 @@ walker:
 
 ```d
 enum bool canRenderField(T, string member) = /* compile-time */;
-void renderField(T, string member, FT, W, O)(in FT value, ref W w, in O opt, ushort depth) const;
+void renderField(T, string member, FT, Printer)(in FT value, ref Printer p, ushort depth);
 ```
 
 When present for field `member` of aggregate `T`, the walker calls
-`opt.hook.renderField!(T, member)(field, …)` instead of recursing normally.
+`hook.renderField!(T, member)(field, p, …)` instead of recursing normally.
 Guarded → zero-cost when absent. Shipped wired (usable) but with no built-in
 consumer; **advanced/unstable**.
 
@@ -327,26 +355,29 @@ indentation tracing — a hook may provide **event hooks** (DbI §5.4: observe a
 critical point, then fall back):
 
 ```d
-bool onEnter(T)(in T value, ref Writer w, ushort depth);  // return true ⇒ "handled, stop"
+bool onEnter(T, Printer)(in T value, ref Printer p, ushort depth);  // return true ⇒ "handled, stop"
 void onLeave(T)(in T value);
 ```
 
 Consulted in the aggregate and pointer branches _before_ recursing: `onEnter`
 returning `true` (e.g. a back-reference `<cycle #1>`) short-circuits the
-built-in; otherwise the built-in proceeds and `onLeave` runs on exit. Guarded →
-zero-cost when absent. **Advanced/unstable.**
+built-in; otherwise the built-in proceeds and `onLeave` runs on exit. Because the
+hook is a mutable printer field, the cycle visited-set lives in the hook (or, for
+a built-in guard, directly on the printer). Guarded → zero-cost when absent.
+**Advanced/unstable.**
 
 ### 6.9 Capability traits
 
 The optional primitives are detected by public named capability traits mirroring
-`hasWriteSourceUri`, usable by consumers in `static assert`s:
+`hasWriteSourceUri`, usable by consumers in `static assert`s. The `Printer` type
+argument is the `PrettyPrinter!(Writer, Hook)` the call runs against:
 
-| Trait                                | True when…                                                  |
-| ------------------------------------ | ----------------------------------------------------------- |
-| `hasRenderHook!(Hook, T, Writer)`    | `Hook.canRender!T` and a matching `render` compile          |
-| `hasPrettyPrintTo!(T, Writer, Hook)` | `value.prettyPrintTo(w, opt, depth)` compiles               |
-| `hasRenderField!(Hook, T, member)`   | `Hook.canRenderField!(T, member)` and `renderField` compile |
-| `hasOnEnter!(Hook, T, Writer)`       | `Hook.onEnter(value, w, depth)` compiles                    |
+| Trait                              | True when…                                                  |
+| ---------------------------------- | ----------------------------------------------------------- |
+| `hasRenderHook!(Hook, T, Printer)` | `Hook.canRender!T` and a matching `render` compile          |
+| `hasPrettyPrintTo!(T, Printer)`    | `value.prettyPrintTo(p, depth)` compiles                    |
+| `hasRenderField!(Hook, T, member)` | `Hook.canRenderField!(T, member)` and `renderField` compile |
+| `hasOnEnter!(Hook, T, Printer)`    | `Hook.onEnter(value, p, depth)` compiles                    |
 
 `hasRenderHook` is **staged** (it checks `canRender!T` _before_ probing
 `render`) so `render`'s body is not semantically analyzed for types the hook
@@ -357,7 +388,8 @@ affecting unrelated instantiations.
 
 When `useOscLinks`, type names are wrapped in OSC 8 terminal hyperlinks to
 their definition site, obtained from `__traits(getLocation, T)`. The URI scheme
-is itself a DbI hook on the options (`sparkles.core_cli.source_uri`):
+is an optional **static** capability on the printer's `Hook`
+(`sparkles.core_cli.source_uri`):
 
 ```
 static void writeSourceUri(string path, size_t line, size_t col, Writer)(ref Writer w);
@@ -366,7 +398,9 @@ static void writeSourceUri(string path, size_t line, size_t col, Writer)(ref Wri
 - The fallback `FileUriHook` emits `file://path#Lline`. `SchemeHook!"code"`,
   `SchemeHook!"idea"`, etc. emit editor schemes (`vscode://…`,
   `jetbrains://…`); `EditorDetectHook` picks one from `$VISUAL`/`$EDITOR` at
-  runtime. The scheme table lives in `source_uri.d`.
+  runtime. The scheme table lives in `source_uri.d`. A URI-scheme-only hook
+  (e.g. `prettyPrint(v, w, SchemeHook!"code"(), opt)`) provides `writeSourceUri`
+  and nothing else.
 - The same `Hook` type may carry both `writeSourceUri` (a `static` method,
   CTFE — `path`/`line`/`col` are template arguments) and the render/field/event
   capabilities (instance methods). They are orthogonal.
@@ -388,11 +422,12 @@ in-tree tests; 8.3 ships in `sparkles:nix`; 8.4 is illustrative.
 ```d
 struct RedactStringsHook {
     enum bool canRender(T) = is(immutable T == immutable string);
-    void render(T, W, O)(in T, ref W w, in O, ushort) const { import std.range.primitives: put; put(w, "***"); }
+    void render(T, P)(in T, ref P p, ushort) const { import std.range.primitives: put; put(p, "***"); }
 }
 ```
 
-Proves the render hook precedes the built-in leaf branch.
+Proves the render hook precedes the built-in leaf branch. (A stateless hook like
+this carries no session — `render` may even be `const`.)
 
 ### 8.3 Nix values — `sparkles:nix` `NixRenderHook`
 
@@ -420,36 +455,37 @@ maxDepth` an unforced thunk renders `…` (never forced); a list/attr set forces
   attribute names and lambdas additionally link to their **definition site**
   via a runtime `file://path#Lline` URI (§7). On stock Nix this is absent.
 
-Convenience entries `prettyPrintNixValue(es, v, w, base)` and
-`toPrettyString(es, v, base)` build the hook'd options and call `prettyPrint`.
-This consumer is specified in full in `sparkles:nix`'s own docs.
+Convenience entries `prettyPrintNixValue(es, v, w, opt)` and
+`toPrettyString(es, v, opt)` build a printer with a `NixRenderHook(es)` and call
+`print`. This consumer is specified in full in `sparkles:nix`'s own docs.
 
 ### 8.4 `std.json.JSONValue` (illustrative)
 
-A stateless render-hook with `canRender!T = is(immutable T == immutable
+A stateless render hook with `canRender!T = is(immutable T == immutable
 JSONValue)` whose `render` switches on `JSONType` and recurses via
-`prettyPrintNested` — shows the mechanism handles a runtime-tagged tree with no
+`p.printNested` — shows the mechanism handles a runtime-tagged tree with no
 external context.
 
 ## 9. Safety attributes and conventions
 
-- **Inference, not annotation.** `prettyPrint`, `prettyPrintImpl`,
-  `prettyPrintNested`, and the capability traits are templates with inferred
-  attributes. Following the repo rule, no `@safe`/`@trusted` is forced on them.
-  A pure/`@nogc`/`@safe` payload+hook keeps the instantiation
-  `@safe pure nothrow @nogc`; an impure hook (Nix) infers impure for _that_
-  instantiation only.
+- **Inference, not annotation.** `PrettyPrinter` and its methods (`print`,
+  `printNested`, `printImpl`), the free `prettyPrint` functions, and the
+  capability traits are templates with inferred attributes. Following the repo
+  rule, no `@safe`/`@trusted` is forced on them. A pure/`@nogc`/`@safe`
+  payload+hook keeps the instantiation `@safe pure nothrow @nogc`; an impure hook
+  (Nix) infers impure for _that_ printer instantiation only.
 - **Probes don't leak attributes.** The capability traits are
   `__traits(compiles, …)` computations; merely adding them cannot drag an
   impure/`@system` path into the common case.
-- **The inline-layout guard.** The built-in single-line collapser builds a
-  `PrettyPrintOptions!void` and would erase a stateful hook. Aggregates/
-  collections therefore skip the inline attempt when any field/element type is
-  hook-rendered (a hook owns its own layout). For `Hook == void` this guard is
+- **The inline-layout guard.** The built-in single-line collapser measures with a
+  hookless (`NullHook`) sub-printer and would mis-handle hook-rendered children;
+  aggregates/collections therefore skip the inline attempt when any field/element
+  type is hook-rendered (a hook owns its own layout). For `NullHook` this guard is
   inert and the inline path is unchanged.
-- **`@trusted` is localized.** The only unsafe operation is the stateful-hook
-  address reconstruction (§6.5), wrapped in a `@trusted` accessor — never a
-  whole-function or whole-template `@trusted`.
+- **No `const` laundering.** Because the printer is a mutable object with
+  non-`const` methods, stateful hooks need no `@trusted` address tricks (contrast
+  the rejected single-const-struct design). Any residual `@trusted` is confined to
+  a genuinely unsafe primitive (never a whole function or template).
 
 ## 10. Non-goals (initial release)
 
