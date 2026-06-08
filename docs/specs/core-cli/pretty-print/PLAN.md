@@ -15,14 +15,14 @@ regression test added in M1.
 
 ## 1. Milestone overview
 
-| #      | Deliverable                                                                                  | Depends on |
-| ------ | -------------------------------------------------------------------------------------------- | ---------- |
-| **M0** | The SPEC + this PLAN — reviewed before any code                                              | —          |
-| **M1** | Core hooks: render hook + `prettyPrintTo` + `prettyPrintNested`, `hook` rename, inline guard | M0         |
-| **M2** | Composition (`CombineRenderHooks`) + advanced field-override + event hooks                   | M1         |
-| **M3** | Built-in `SumType`/`Algebraic`/`Variant`/`union` + `SumTypeStyle`                            | M0 (indep) |
-| **M4** | `sparkles:nix` `NixRenderHook` (lazy, error-tolerant) + path OSC8 links                      | M1         |
-| **M5** | Version-gated Nix source-location links + `nix-eval` demo rewire                             | M4         |
+| #      | Deliverable                                                                                             | Depends on |
+| ------ | ------------------------------------------------------------------------------------------------------- | ---------- |
+| **M0** | The SPEC + this PLAN — reviewed before any code                                                         | —          |
+| **M1** | `PrettyPrinter` object + render hook + `prettyPrintTo` + `printNested`, config detemplate, inline guard | M0         |
+| **M2** | Composition (`CombineRenderHooks`) + advanced field-override + event hooks                              | M1         |
+| **M3** | Built-in `SumType`/`Algebraic`/`Variant`/`union` + `SumTypeStyle`                                       | M0 (indep) |
+| **M4** | `sparkles:nix` `NixRenderHook` (lazy, error-tolerant) + path OSC8 links                                 | M1         |
+| **M5** | Version-gated Nix source-location links + `nix-eval` demo rewire                                        | M4         |
 
 M1 is the load-bearing milestone (the dispatch change + compatibility
 contract). M3 is independent of the hooks and may land in any order. M4–M5
@@ -36,36 +36,45 @@ Author `SPEC.md` (done) + this `PLAN.md`, matching the house style of
 `docs/specs/{versions,nix}/`. **Reviewed before implementation.** Register the
 new `docs/specs/core-cli/` area; no code yet.
 
-### M1 — Core hooks (the heart)
+### M1 — The PrettyPrinter object + core hooks (the heart)
 
 In `libs/core-cli/src/sparkles/core_cli/prettyprint.d`:
 
-1. **Capability traits.** Add public `template hasRenderHook(Hook, T, Writer)`
-   (staged: `void` → no `canRender` → `!canRender!T` → probe `render`) and
-   `template hasPrettyPrintTo(T, Writer, Hook)`, mirroring `hasWriteSourceUri`.
-2. **Dispatch.** Wrap the existing body of `prettyPrintImpl` in a trailing
-   `else`; prepend (after the depth guard) the render hook
-   (`hasRenderHook` → `callRenderHook`) then the `prettyPrintTo` primitive
-   (`hasPrettyPrintTo` → `value.prettyPrintTo`). `callRenderHook` calls
-   `opt.hook.render(...)`.
-3. **Re-entry.** Add public `prettyPrintNested` (one-line forwarder to
-   `prettyPrintImpl`).
-4. **Hook field.** Rename the template parameter `SourceUriHook` → `Hook` and
-   the stored field `sourceUriHook` → `hook` (grep-confirmed: zero external
-   readers). Update `writeTypeName`'s internal reference path.
-5. **Inline guard.** Add a `static if (!anyChildRenderedByHook!(T, Hook))`
-   gate around the single-line attempts in `prettyPrintAA`/`Range`/`Aggregate`
-   (a trait OR-ing `hasRenderHook` over field/element types). Inert for
-   `Hook == void`.
-6. **Stateful-hook idiom** is exercised by a test hook holding external state
-   by address (SPEC §6.5); document the constraint.
+1. **Reify the shell.** Turn the free-function renderer into a
+   `struct PrettyPrinter(Writer, Hook = NullHook)` owning the wrapped writer,
+   `PrettyPrintOptions opt`, and a **mutable `Hook hook` field**; make it an output
+   range (`put`); move the current dispatch body into a non-`const`
+   `printImpl(T)(in T, ushort depth)`; add `print` / `printNested` methods. The
+   free `prettyPrint(...)` functions become thin front doors that construct a
+   `PrettyPrinter` and call `.print` — preserving the hookless call sites.
+2. **Capability traits.** Add public `template hasRenderHook(Hook, T, Printer)`
+   (staged: no `canRender` → `!canRender!T` → probe `render`) and
+   `hasPrettyPrintTo(T, Printer)`, mirroring `hasWriteSourceUri`.
+3. **Dispatch.** Wrap the existing dispatch body in a trailing `else`; prepend
+   (after the depth guard) the render hook (`hasRenderHook` →
+   `hook.render(value, this, depth)`) then the `prettyPrintTo` primitive
+   (`hasPrettyPrintTo` → `value.prettyPrintTo(this, depth)`).
+4. **Detemplate the config.** Remove `PrettyPrintOptions`' `SourceUriHook` param;
+   move the URI-scheme capability onto the printer's `Hook` (`writeTypeName` reads
+   `Hook.writeSourceUri`). Migrate the ~25 `PrettyPrintOptions!void(...)` /
+   `PrettyPrintOptions!(SchemeHook!"…")(...)` call sites (incl. `examples/box.d` and
+   the OSC tests): `!void` → drop the arg; a scheme hook → pass it as the
+   printer/free-fn `hook`. **Output unchanged** (the byte-identical contract is
+   about output, not source).
+5. **Inline guard.** Gate the single-line attempts in
+   `printAA`/`printRange`/`printAggregate` with `static if (!anyChildRenderedByHook!(Hook, T))`
+   (the inline collapser measures with a hookless sub-printer; skip it when a child
+   type is hook-rendered). Inert for `NullHook`.
+6. **Stateful hooks need no tricks.** The mutable-printer model means a hook stores
+   its session as a plain field and `render` (non-`const`) mutates it directly
+   (SPEC §6.5) — exercised by a test hook holding external state.
 
 Tests (`@("prettyPrint.*")`, `version(unittest)` stand-in types):
 `prettyPrintTo.money`/`.color` (pure), `renderHook.stateful.tagged`,
 `renderHook.override.string.redaction` (pure), `embedding.hookFieldsInStruct`,
 `compile.detection` (positive/negative/signature-mismatch `static assert`s),
 `hook.coexist.sourceUriAndRender`, and the mandatory **`hook.void.baseline`**
-(pure) proving byte-identical legacy output. The pure ones carry
+(pure, `NullHook`) proving byte-identical legacy output. The pure ones carry
 `@safe pure nothrow @nogc`; impure-hook ones are plain `unittest`.
 
 ### M2 — Composition + advanced hooks
@@ -73,11 +82,11 @@ Tests (`@("prettyPrint.*")`, `version(unittest)` stand-in types):
 1. `CombineRenderHooks!(Hooks...)` — store each sub-hook; `canRender!T` = OR;
    `render` = first matching sub-hook (first-wins); forward `writeSourceUri`
    from the first provider. Test `combine.firstWins`.
-2. **Field-override hook.** In `prettyPrintAggregate`, per field, probe
-   `hasRenderField!(Hook, T, member)` → `opt.hook.renderField!(T, member)(…)`.
+2. **Field-override hook.** In `printAggregate`, per field, probe
+   `hasRenderField!(Hook, T, member)` → `hook.renderField!(T, member)(field, this, …)`.
    Test `field.redact`.
-3. **Event hooks.** In `prettyPrintAggregate` and the pointer branch, probe
-   `hasOnEnter` → `if (opt.hook.onEnter(...)) return; scope(exit) onLeave;`.
+3. **Event hooks.** In `printAggregate` and the pointer branch, probe `hasOnEnter`
+   → `if (hook.onEnter(value, this, depth)) return; scope(exit) hook.onLeave(value);`.
    Test `event.cycle`. Mark both advanced/unstable in DDoc.
 
 ### M3 — Built-in sum/union/variant (independent)
@@ -104,13 +113,14 @@ Tests `@("prettyPrint.{sumtype,variant,union}.*")` incl. **union-with-pointer**
 New `libs/nix/src/sparkles/nix/pretty.d`, re-exported from `package.d`
 (**`git add` before any flake build**):
 
-1. `NixRenderHook` (carries `EvalState` by address, SPEC §6.5);
-   `canRender!T = is(immutable T == immutable Value)`; `render` = the lazy,
-   error-tolerant, Nix-surface-syntax walk (SPEC §8.3), recursing via
-   `prettyPrintNested`. Helpers: `isNixIdentifier`, a Nix string escaper.
+1. `NixRenderHook` holding `EvalState` as a **plain mutable field** (no address
+   trick — SPEC §6.5); `canRender!T = is(immutable T == immutable Value)`;
+   non-`const` `render(T, P)(in T, ref P p, ushort)` = the lazy, error-tolerant,
+   Nix-surface-syntax walk (SPEC §8.3), recursing via `p.printNested`. Helpers:
+   `isNixIdentifier`, a Nix string escaper.
 2. Always-on path/store-path → `file://` OSC8 links (behind `useOscLinks`).
-3. Convenience `prettyPrintNixValue` / `toPrettyString` building the hook'd
-   options.
+3. Convenience `prettyPrintNixValue` / `toPrettyString` building a
+   `PrettyPrinter!(Writer, NixRenderHook)` and calling `print`.
 
 Tests `@("nix.pretty.*")` (`@system`, `dummy://` store, in the devshell):
 scalars + escaping, empty/nested collections, inline↔multiline, `maxItems`
@@ -158,25 +168,29 @@ built-in aggregate path).
 
 ## 4. Workflow orchestration
 
-M1's dispatch change is sequential and small — do it inline, tests first. M2's
-combinator and the two advanced hooks are independent and can be fanned out
-(one agent each) with a shared compatibility-regression gate. M3 is fully
-independent and parallelizable with M1/M2. M4's renderer is one cohesive unit;
-its many test cases can be authored in parallel once the hook compiles. Review
-each milestone's tests before stacking the next.
+M1's printer-object refactor + dispatch change is sequential — do it inline,
+tests first (it gates everything). M2's combinator and the two advanced hooks are
+independent and can be fanned out (one agent each) with a shared
+compatibility-regression gate. M3 is fully independent and parallelizable with
+M1/M2. M4's renderer is one cohesive unit; its many test cases can be authored in
+parallel once the hook compiles. Review each milestone's tests before stacking the
+next.
 
 ## 5. Risks & open decisions
 
-- **Backward-compatibility regression** — the dispatch reorder is the main risk.
-  Mitigated by the `hook.void.baseline` test and keeping the existing chain
-  verbatim inside the trailing `else`. Run the full `:core-cli` suite after M1.
+- **Backward-compatibility regression** — the main risk, now two-fold: the
+  free-function → `PrettyPrinter`-object refactor, and the `PrettyPrintOptions`
+  detemplate (migrating ~25 `!void`/`!(SchemeHook…)` call sites). Mitigated by the
+  `hook.void.baseline` test and keeping the dispatch chain verbatim inside the
+  trailing `else`. Run the full `:core-cli` suite after M1; the contract is
+  identical **output**, not identical source.
 - **`-allinst` + impure `render`** — an unstaged `hasRenderHook` would
   semantically analyze `render` for every type. Mitigated by staging the trait
   (check `canRender!T` before probing `render`).
-- **Inline-layout hook erasure** — the single-line collapser builds
-  `PrettyPrintOptions!void`. Mitigated by the `anyChildRenderedByHook` guard
-  (skip inline when a hook is involved). Verify no width-related diffs for
-  `Hook == void`.
+- **Inline-layout hook erasure** — the single-line collapser measures with a
+  hookless (`NullHook`) sub-printer. Mitigated by the `anyChildRenderedByHook`
+  guard (skip inline when a child type is hook-rendered). Verify no width-related
+  diffs under `NullHook`.
 - **`SumTypeStyle` default** — set to `activeType`; configurable. Revisit if the
   `int(42)` tag on scalar alternatives proves noisy in practice.
 - **Nix source-location API not yet upstream** — `version(NixSourceLocations)`
