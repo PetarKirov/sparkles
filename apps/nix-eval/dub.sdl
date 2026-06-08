@@ -1,0 +1,29 @@
+name "nix-eval"
+description "Evaluate Nix expressions and flake outputs via sparkles:nix"
+authors "Petar Kirov"
+license "BSL-1.0"
+
+targetType "executable"
+targetName "nix-eval"
+targetPath "build"
+mainSourceFile "src/app.d"
+
+dflags "-preview=in" "-preview=dip1000"
+
+dependency "sparkles:nix" path="../.."
+
+configuration "application" {
+    targetType "executable"
+}
+
+configuration "unittest" {
+    targetType "library"
+    excludedSourceFiles "src/app.d"
+
+    dependency "sparkles:test-runner" path="../.."
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
