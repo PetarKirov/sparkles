@@ -29,18 +29,18 @@ back through the same hook.
 Core rules:
 
 - **Backward compatibility is a contract.** With no hook (`Hook == void`) and
-  no `prettyPrintTo` method in play, output is **byte-identical** to the
-  type-static printer. Every extension seam is a compile-time-guarded
-  `static if` that is dead code when absent (§6.4).
-- **Extension is opt-in and zero-cost when unused.** Seams are detected with
-  named capability traits (`hasRenderHook`, `hasPrettyPrintTo`, …) following
-  the repo's `__traits(compiles, …)` idiom; an absent capability is never an
-  error.
-- **The shell owns layout; hooks own representation.** `prettyPrint` provides
-  the options, recursion, depth/width/item bounding, colors, and OSC 8 links;
-  a hook decides what a value of its chosen type _says_.
-- **Attributes infer.** `prettyPrint` and every seam are templates with
-  inferred attributes. A pure/`@nogc`/`@safe` payload+hook stays
+  no `prettyPrintTo` primitive in play, output is **byte-identical** to the
+  type-static printer (the fallback). Every optional primitive is a
+  compile-time-guarded `static if` that is dead code when absent (§6.4).
+- **Optionality and zero-cost when unused.** Customization is opt-in: each
+  optional primitive is detected with a named capability trait (`hasRenderHook`,
+  `hasPrettyPrintTo`, …) following the repo's `__traits(compiles, …)` idiom; an
+  absent primitive is never an error, it just falls back.
+- **The shell owns layout; hooks own representation.** `prettyPrint` (the shell)
+  provides the options, recursion, depth/width/item bounding, colors, and OSC 8
+  links; a hook decides what a value of its chosen type _says_.
+- **Attributes infer.** `prettyPrint` and every customization point are
+  templates with inferred attributes. A pure/`@nogc`/`@safe` payload+hook stays
   `@safe pure nothrow @nogc`; an impure hook (e.g. Nix) infers impure **only**
   for that instantiation (§9).
 
@@ -70,7 +70,7 @@ assert(prettyPrint(Point(1, 2), PrettyPrintOptions!void(useColors: false))
 | `PrettyPrintOptions(Hook = void)`                                   | Rendering knobs + the stored hook instance (§3)                     |
 | `SumTypeStyle`                                                      | `{ activeType, declaredType, valueOnly }` — sum-type rendering (§5) |
 | `CombineRenderHooks(Hooks...)`                                      | Compose several render-hooks, first-wins (§6.6)                     |
-| `hasRenderHook`, `hasPrettyPrintTo`, `hasRenderField`, `hasOnEnter` | Capability traits for the seams (§6.9)                              |
+| `hasRenderHook`, `hasPrettyPrintTo`, `hasRenderField`, `hasOnEnter` | Capability traits for the optional primitives (§6.9)                |
 
 The two entry overloads:
 
@@ -190,22 +190,24 @@ scope for consumers that never use it.
 
 ## 6. The extension model
 
-Two optional seams let a type or a caller override rendering. Both are detected
-at compile time and dispatched **before** the built-in type chain, so an
-extension can override even built-in types. Precedence is **render-hook →
-`prettyPrintTo` method → built-in** (§6.4).
+`prettyPrint` (the shell) exposes its customization as **optional primitives** —
+some carried on a caller-supplied **hook** (a policy on the options), some on the
+**value's own type**. Each is detected by a capability trait (§6.9) and
+dispatched **before** the built-in fallback, so a hook can override even built-in
+types. Precedence follows the DbI full-override → fallback order:
+**render hook → `prettyPrintTo` primitive → built-in fallback** (§6.4).
 
-### 6.1 Seam 1 — the options render-hook
+### 6.1 The render hook (`canRender` / `render`)
 
-A `Hook` type may provide:
+A `Hook` type may provide a **full-override** hook (DbI §5.4):
 
 ```d
 enum bool canRender(T) = /* compile-time: does this hook render type T? */;
 void render(T, Writer, Opt)(in T value, ref Writer w, in Opt opt, ushort depth) const;
 ```
 
-When `Hook.canRender!T` is `true`, `prettyPrint` calls `opt.hook.render(value,
-w, opt, depth)` instead of the built-in dispatch. The hook:
+When `Hook.canRender!T` is `true`, `prettyPrint` calls `opt.hook.render(value, w,
+opt, depth)` in place of the built-in dispatch. The hook:
 
 - May opt into **any** type, including built-ins (`canRender!string` → redact).
 - Recurses into sub-values via `prettyPrintNested` (§6.3), which re-dispatches
@@ -217,9 +219,10 @@ w, opt, depth)` instead of the built-in dispatch. The hook:
 `render` is a `const` method (the options are passed `in`); a stateful hook
 reaches its mutable session through the idiom in §6.5.
 
-### 6.2 Seam 2 — the type-intrinsic `prettyPrintTo` method
+### 6.2 The `prettyPrintTo` primitive
 
-A value type the author owns may render itself:
+A value type the author owns may render itself with an optional primitive on the
+type:
 
 ```d
 struct Money {
@@ -231,7 +234,7 @@ struct Money {
 ```
 
 Detected when the exact call `value.prettyPrintTo(w, opt, depth)` compiles. The
-method may itself call `prettyPrintNested` for nested fields. This seam needs
+method may itself call `prettyPrintNested` for nested fields. This primitive needs
 no hook (works with `Hook == void`).
 
 ### 6.3 Recursion — `prettyPrintNested`
@@ -254,18 +257,19 @@ themselves; the same `opt` must be passed unchanged.
 
 ```
 depth guard
-  → Seam 1 (hasRenderHook!(Hook, T, Writer))     // render-hook wins, can override built-ins
-  → Seam 2 (hasPrettyPrintTo!(T, Writer, Hook))  // type renders itself
-  → built-in chain (null/enum/leaf/pointer/Tuple/AA/array/struct|class)
+  → render hook       (hasRenderHook!(Hook, T, Writer))     // full override; can override built-ins
+  → prettyPrintTo     (hasPrettyPrintTo!(T, Writer, Hook))  // the type renders itself
+  → built-in fallback (null/enum/leaf/pointer/Tuple/AA/array/struct|class)
   → static assert(false, "unsupported type")
 ```
 
 When `Hook == void` (or a hook lacks `canRender`) and the value's type has no
-`prettyPrintTo`, both seam probes are `false` and control falls through to the
-unchanged built-in chain. The new branches are dead `static if` code → **the
-output is byte-identical to the pre-extension printer.** This contract is
+`prettyPrintTo`, both capability traits are `false` and control falls through to
+the unchanged built-in fallback. The new branches are dead `static if` code →
+**the output is byte-identical to the pre-extension printer.** This contract is
 enforced by a regression test that renders a representative value with
-`Hook == void` and asserts the exact legacy output.
+`Hook == void` and asserts the exact legacy output (the mandatory `void`-hook
+baseline test, DbI §9.4).
 
 ### 6.5 Stateful hooks and the transitive-const idiom
 
@@ -300,10 +304,11 @@ over the sub-hooks; `render` dispatches to the **first** sub-hook whose
 `canRender!T` is `true` (documented first-wins precedence); and it forwards a
 `writeSourceUri` capability from the first sub-hook that provides one.
 
-### 6.7 Field-level seam (advanced) — `canRenderField` / `renderField`
+### 6.7 The field-override hook (advanced) — `canRenderField` / `renderField`
 
 For per-field overrides (redact one field, format another as hex/units), a hook
-may provide a field-level capability consulted by the aggregate walker:
+may provide a field-granular full-override primitive consulted by the aggregate
+walker:
 
 ```d
 enum bool canRenderField(T, string member) = /* compile-time */;
@@ -315,10 +320,11 @@ When present for field `member` of aggregate `T`, the walker calls
 Guarded → zero-cost when absent. Shipped wired (usable) but with no built-in
 consumer; **advanced/unstable**.
 
-### 6.8 Event seam (advanced) — `onEnter` / `onLeave`
+### 6.8 Event hooks (advanced) — `onEnter` / `onLeave`
 
 For decorate-and-fall-through over many types — cycle-aware graph rendering,
-indentation tracing — a hook may provide:
+indentation tracing — a hook may provide **event hooks** (DbI §5.4: observe at a
+critical point, then fall back):
 
 ```d
 bool onEnter(T)(in T value, ref Writer w, ushort depth);  // return true ⇒ "handled, stop"
@@ -332,8 +338,8 @@ zero-cost when absent. **Advanced/unstable.**
 
 ### 6.9 Capability traits
 
-The seams are detected by public named traits mirroring `hasWriteSourceUri`,
-usable by consumers in `static assert`s:
+The optional primitives are detected by public named capability traits mirroring
+`hasWriteSourceUri`, usable by consumers in `static assert`s:
 
 | Trait                                | True when…                                                  |
 | ------------------------------------ | ----------------------------------------------------------- |
@@ -373,11 +379,11 @@ static void writeSourceUri(string path, size_t line, size_t col, Writer)(ref Wri
 The extension model is validated against these consumers. 8.1–8.2 ship as
 in-tree tests; 8.3 ships in `sparkles:nix`; 8.4 is illustrative.
 
-### 8.1 Owned value types (Seam 2)
+### 8.1 Owned value types (the `prettyPrintTo` primitive)
 
 `Money` → `$5.00`, `Color` → `#ff0000` via `prettyPrintTo` (§6.2). No hook.
 
-### 8.2 Redaction (Seam 1 overriding a built-in)
+### 8.2 Redaction (a render hook overriding a built-in)
 
 ```d
 struct RedactStringsHook {
@@ -386,7 +392,7 @@ struct RedactStringsHook {
 }
 ```
 
-Proves Seam 1 precedes the built-in leaf branch.
+Proves the render hook precedes the built-in leaf branch.
 
 ### 8.3 Nix values — `sparkles:nix` `NixRenderHook`
 
@@ -428,7 +434,7 @@ external context.
 ## 9. Safety attributes and conventions
 
 - **Inference, not annotation.** `prettyPrint`, `prettyPrintImpl`,
-  `prettyPrintNested`, and the seam traits are templates with inferred
+  `prettyPrintNested`, and the capability traits are templates with inferred
   attributes. Following the repo rule, no `@safe`/`@trusted` is forced on them.
   A pure/`@nogc`/`@safe` payload+hook keeps the instantiation
   `@safe pure nothrow @nogc`; an impure hook (Nix) infers impure for _that_
@@ -449,7 +455,7 @@ external context.
 
 - **Multi-render dispatch beyond first-wins.** `CombineRenderHooks` picks the
   first matching sub-hook; there is no priority negotiation or merging.
-- **A UDA policy engine.** The field-level seam is a mechanism; a declarative
+- **A UDA policy engine.** The field-override hook is a mechanism; a declarative
   "redact every `@sensitive` field" layer on top is out of scope.
 - **Built-in JSON/Nix consumers in core-cli.** core-cli ships the _mechanism_
   and in-tree validation hooks; `JSONValue`/Nix renderers live with their data

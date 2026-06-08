@@ -5,8 +5,8 @@ execution-only — milestones, verification, and risks. For the desired-state
 specification read [SPEC.md](./SPEC.md); for the extension idiom read the
 [Design by Introspection guidelines](../../../guidelines/design-by-introspection-01-guidelines.md)._
 
-The work generalizes `prettyPrint`'s latent `Hook` seam (today only a
-stateless source-URI writer) into a real DbI extension point, adds built-in
+The work generalizes `prettyPrint`'s latent `Hook` policy (today only a
+stateless source-URI writer) into a full DbI shell-with-hooks, adds built-in
 rendering for the standard tagged-union types, and lands Nix value rendering as
 the first non-trivial consumer. Each milestone ends green: it compiles,
 `dub test :core-cli` (and from M4, `dub test :nix` in the devshell) passes, and
@@ -18,14 +18,14 @@ regression test added in M1.
 | #      | Deliverable                                                                                  | Depends on |
 | ------ | -------------------------------------------------------------------------------------------- | ---------- |
 | **M0** | The SPEC + this PLAN — reviewed before any code                                              | —          |
-| **M1** | Core seams: render-hook + `prettyPrintTo` + `prettyPrintNested`, `hook` rename, inline guard | M0         |
-| **M2** | Composition (`CombineRenderHooks`) + advanced field/event seams                              | M1         |
+| **M1** | Core hooks: render hook + `prettyPrintTo` + `prettyPrintNested`, `hook` rename, inline guard | M0         |
+| **M2** | Composition (`CombineRenderHooks`) + advanced field-override + event hooks                   | M1         |
 | **M3** | Built-in `SumType`/`Algebraic`/`Variant`/`union` + `SumTypeStyle`                            | M0 (indep) |
 | **M4** | `sparkles:nix` `NixRenderHook` (lazy, error-tolerant) + path OSC8 links                      | M1         |
 | **M5** | Version-gated Nix source-location links + `nix-eval` demo rewire                             | M4         |
 
 M1 is the load-bearing milestone (the dispatch change + compatibility
-contract). M3 is independent of the seams and may land in any order. M4–M5
+contract). M3 is independent of the hooks and may land in any order. M4–M5
 consume M1 from `sparkles:nix`.
 
 ## 2. Per-milestone detail
@@ -36,16 +36,16 @@ Author `SPEC.md` (done) + this `PLAN.md`, matching the house style of
 `docs/specs/{versions,nix}/`. **Reviewed before implementation.** Register the
 new `docs/specs/core-cli/` area; no code yet.
 
-### M1 — Core seams (the heart)
+### M1 — Core hooks (the heart)
 
 In `libs/core-cli/src/sparkles/core_cli/prettyprint.d`:
 
-1. **Traits.** Add public `template hasRenderHook(Hook, T, Writer)` (staged:
-   `void` → no `canRender` → `!canRender!T` → probe `render`) and
+1. **Capability traits.** Add public `template hasRenderHook(Hook, T, Writer)`
+   (staged: `void` → no `canRender` → `!canRender!T` → probe `render`) and
    `template hasPrettyPrintTo(T, Writer, Hook)`, mirroring `hasWriteSourceUri`.
 2. **Dispatch.** Wrap the existing body of `prettyPrintImpl` in a trailing
-   `else`; prepend (after the depth guard) Seam 1
-   (`hasRenderHook` → `callRenderHook`) then Seam 2
+   `else`; prepend (after the depth guard) the render hook
+   (`hasRenderHook` → `callRenderHook`) then the `prettyPrintTo` primitive
    (`hasPrettyPrintTo` → `value.prettyPrintTo`). `callRenderHook` calls
    `opt.hook.render(...)`.
 3. **Re-entry.** Add public `prettyPrintNested` (one-line forwarder to
@@ -61,22 +61,22 @@ In `libs/core-cli/src/sparkles/core_cli/prettyprint.d`:
    by address (SPEC §6.5); document the constraint.
 
 Tests (`@("prettyPrint.*")`, `version(unittest)` stand-in types):
-`seam2.method.money`/`.color` (pure), `seam1.stateful.tagged`,
-`seam1.override.string.redaction` (pure), `embedding.hookFieldsInStruct`,
+`prettyPrintTo.money`/`.color` (pure), `renderHook.stateful.tagged`,
+`renderHook.override.string.redaction` (pure), `embedding.hookFieldsInStruct`,
 `compile.detection` (positive/negative/signature-mismatch `static assert`s),
 `hook.coexist.sourceUriAndRender`, and the mandatory **`hook.void.baseline`**
 (pure) proving byte-identical legacy output. The pure ones carry
 `@safe pure nothrow @nogc`; impure-hook ones are plain `unittest`.
 
-### M2 — Composition + advanced seams
+### M2 — Composition + advanced hooks
 
 1. `CombineRenderHooks!(Hooks...)` — store each sub-hook; `canRender!T` = OR;
    `render` = first matching sub-hook (first-wins); forward `writeSourceUri`
    from the first provider. Test `combine.firstWins`.
-2. **Field seam.** In `prettyPrintAggregate`, per field, probe
+2. **Field-override hook.** In `prettyPrintAggregate`, per field, probe
    `hasRenderField!(Hook, T, member)` → `opt.hook.renderField!(T, member)(…)`.
    Test `field.redact`.
-3. **Event seam.** In `prettyPrintAggregate` and the pointer branch, probe
+3. **Event hooks.** In `prettyPrintAggregate` and the pointer branch, probe
    `hasOnEnter` → `if (opt.hook.onEnter(...)) return; scope(exit) onLeave;`.
    Test `event.cycle`. Mark both advanced/unstable in DDoc.
 
@@ -159,7 +159,7 @@ built-in aggregate path).
 ## 4. Workflow orchestration
 
 M1's dispatch change is sequential and small — do it inline, tests first. M2's
-combinator and the two advanced seams are independent and can be fanned out
+combinator and the two advanced hooks are independent and can be fanned out
 (one agent each) with a shared compatibility-regression gate. M3 is fully
 independent and parallelizable with M1/M2. M4's renderer is one cohesive unit;
 its many test cases can be authored in parallel once the hook compiles. Review
