@@ -52,9 +52,25 @@
           parts = lib.splitString "/" (lib.removePrefix "./" subpath);
           libName = builtins.elemAt parts 1;
           fileBase = lib.removeSuffix ".d" (lib.last parts);
+
+          # The example's inline `dub.sdl` `name` determines the built binary
+          # (`build/<name>`), which can differ from the file's basename: a
+          # single-file D script's module name comes from the filename, so it
+          # must be a valid identifier (`git_clean.d`), while the dub package
+          # name may be kebab-case (`name "git-clean"`). Parse it, falling back
+          # to the basename when no `name` line is present.
+          nameRe = "[[:space:]]*name[[:space:]]+\"([^\"]+)\".*";
+          nameMatches = builtins.filter (l: builtins.match nameRe l != null) (
+            lib.splitString "\n" (builtins.readFile examplePath)
+          );
+          dubName =
+            if nameMatches == [ ] then
+              fileBase
+            else
+              builtins.head (builtins.match nameRe (builtins.head nameMatches));
         in
         {
-          inherit libName fileBase;
+          inherit libName fileBase dubName;
           examplesRel = "libs/${libName}/examples";
         };
 
@@ -145,16 +161,16 @@
             runHook postBuild
           '';
 
-          # Each example's inline `dub.sdl` declares both
-          # `name "<file-base>"` and `targetPath "build"`, so the produced
-          # binary is always `build/<fileBase>`.
+          # The inline `dub.sdl` sets `targetPath "build"`, so the binary is
+          # `build/<dubName>` — the dub package name, which may differ from the
+          # file's basename (see `dubName` in exampleInfo).
           installPhase = ''
-            install -Dm755 build/${info.fileBase} $out/bin/${info.fileBase}
+            install -Dm755 build/${info.dubName} $out/bin/${info.dubName}
           '';
 
           meta = {
             description = "Standalone example: ${info.libName}/examples/${info.fileBase}.d";
-            mainProgram = info.fileBase;
+            mainProgram = info.dubName;
           };
         });
 
