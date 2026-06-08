@@ -111,3 +111,40 @@ jobs:
 
       - name: Build & run the Win32 example
         run: dub run --compiler=ldc2 --root=docs/research/window-system-integration/os-apis/win32/example
+
+  # Build the Nix outputs and push them to the binary cache, once per system
+  # (the derivations are compiler-agnostic — they always build with ldc — so
+  # this is independent of the `test` job's DC matrix). `.#all` is the
+  # aggregate defined in nix/packages/all.nix: the full dev shell, every
+  # package, and every standalone example.
+  nix-build:
+    name: Nix build & push (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner:
+          - ubuntu-latest
+          - macos-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+        with:
+          push-to-cache: true
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          use-nix-cache: true
+          nix-cache-key: nix-${{ runner.os }}-nixbuild-${{ hashFiles('**/flake.lock') }}
+          nix-cache-restore-prefixes: |
+            nix-${{ runner.os }}-nixbuild-
+            nix-${{ runner.os }}-
+
+      # Built paths are pushed to the cache by the setup-nix action
+      # (push-to-cache: true).
+      - name: Build & push devShells.full, all packages, and all examples
+        run: nix build --print-build-logs .#all
