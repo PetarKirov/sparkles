@@ -104,4 +104,31 @@ struct Value
         // away — nix_get_type does not mutate the value.
         return toValueType(cast(int) nix_get_type(null, cast(nix_value*) _raw));
     }
+
+    /// Returns the raw pointer to the underlying Nix C++ `Value` object, or null
+    /// if this handle is null. Used for cycle detection and identity checks.
+    const(void)* internalPointer() const @trusted nothrow @nogc
+    {
+        if (_raw is null)
+            return null;
+        return *cast(const(void)**) _raw;
+    }
+}
+
+@("nix.value.internalPointer")
+@system
+unittest
+{
+    import sparkles.nix.store : Store;
+    import sparkles.nix.eval : EvalState;
+
+    auto store = Store.open("dummy://");
+    assert(!store.hasError);
+    auto es = EvalState.create(store.value).value;
+
+    auto v = es.eval("let x = { a = 1; }; in { x1 = x; x2 = x; }").value;
+    auto x1 = es.requireAttr(v, "x1").value;
+    auto x2 = es.requireAttr(v, "x2").value;
+    assert(x1.internalPointer() !is null);
+    assert(x1.internalPointer() == x2.internalPointer());
 }
