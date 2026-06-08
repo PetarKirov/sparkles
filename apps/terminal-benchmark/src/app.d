@@ -30,25 +30,18 @@ import std.process;
 import std.file; // write/readText/mkdirRecurse/rmdirRecurse/tempDir/FileException
 import std.path : baseName, buildPath;
 import std.format : format;
-import std.array : appender;
 import std.algorithm : min, max;
 import core.thread : Thread;
 import core.time : dur;
 
 import sparkles.core_cli.process_utils : parseCpuTicksFromStat, CpuTicks;
+import bench : Scenario, fillStream, denseStream, workload, scenarioName;
 
 // _SC_CLK_TCK is 2 on Linux; sysconf returns the scheduler tick rate (~100 Hz),
 // the unit of utime/stime in /proc/<pid>/stat.
 private enum _SC_CLK_TCK = 2;
 
 extern (C) long sysconf(int name) @nogc nothrow;
-
-enum Scenario
-{
-    idle,
-    render,
-    churn,
-}
 
 struct Config
 {
@@ -60,78 +53,6 @@ struct Config
     int cols = 100;
     int rows = 30;
     string keepStreams; // if set, write streams here and keep them
-}
-
-// --- Deterministic workload streams ----------------------------------------
-
-// A dense full screen: every cell carries a bold+italic+underline glyph with a
-// distinct 256-color fg/bg, the heaviest per-cell draw the renderer supports.
-// Painted once, with the cursor parked, so nothing changes afterwards (idle).
-private string fillStream(int cols, int rows)
-{
-    auto w = appender!string;
-    w ~= "\x1b[2J\x1b[H";
-    foreach (line; 1 .. rows + 1)
-    {
-        w ~= format("\x1b[%d;1H", line);
-        foreach (col; 1 .. cols + 1)
-        {
-            const index = line + col;
-            const fg = index % 156 + 100;
-            const bg = 255 - index % 156 + 100;
-            const ch = cast(char)('A' + (index % 26));
-            w ~= format("\x1b[38;5;%d;48;5;%d;1;3;4m%c", fg, bg, ch);
-        }
-    }
-    w ~= "\x1b[H";
-    return w[];
-}
-
-// vtebench-style `dense_cells`: repaint the entire grid `passes` times, cycling
-// the glyph and colors each pass so every frame the renderer draws is a full,
-// distinct repaint. Wrapped in the alternate screen.
-private string denseStream(int cols, int rows, int passes)
-{
-    auto w = appender!string;
-    w ~= "\x1b[?1049h";
-    int offset = 0;
-    foreach (_; 0 .. passes)
-    {
-        foreach (ch; "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-        {
-            w ~= "\x1b[H";
-            foreach (line; 1 .. rows + 1)
-                foreach (col; 1 .. cols + 1)
-                {
-                    const index = line + col + offset;
-                    const fg = index % 156 + 100;
-                    const bg = 255 - index % 156 + 100;
-                    w ~= format("\x1b[38;5;%d;48;5;%d;1;3;4m%c", fg, bg, ch);
-                }
-            offset++;
-        }
-    }
-    w ~= "\x1b[?1049l";
-    return w[];
-}
-
-// The shell command run inside the terminal for a scenario. The terminal joins
-// trailing args and runs them via `$SHELL -c`, so a single string is fine.
-private string workload(Scenario s, string streamDir)
-{
-    final switch (s)
-    {
-        case Scenario.idle:
-        case Scenario.render:
-            // Paint once, then sit idle well past the measurement window. The
-            // render scenario additionally forces a redraw every frame via the
-            // env var set in `measure`, so the same static screen exercises the
-            // full render path instead of being skipped.
-            return format("cat %s; sleep 600", buildPath(streamDir, "fill.vt"));
-        case Scenario.churn:
-            // Repaint continuously for the whole run.
-            return format("while :; do cat %s; done", buildPath(streamDir, "dense.vt"));
-    }
 }
 
 // --- Measurement ------------------------------------------------------------
@@ -322,16 +243,6 @@ void main(string[] args)
 
     writeln();
     writeln("# values are average % of one core over the window (lower is better)");
-}
-
-private string scenarioName(Scenario s)
-{
-    final switch (s)
-    {
-        case Scenario.idle:   return "idle (static screen)";
-        case Scenario.render: return "render (forced redraw)";
-        case Scenario.churn:  return "churn (full repaint)";
-    }
 }
 
 private string tempStreamDir()
