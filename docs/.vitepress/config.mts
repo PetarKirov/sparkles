@@ -73,6 +73,10 @@ export default defineConfig({
           { text: 'DDoc', link: '/guidelines/ddoc' },
           { text: 'Writing Research Docs', link: '/guidelines/research-docs' },
           {
+            text: 'Integrating C Libraries (ImportC)',
+            link: '/guidelines/importc-c-libraries',
+          },
+          {
             text: 'Move Semantics & __rvalue',
             link: '/guidelines/move-semantics/',
           },
