@@ -417,6 +417,10 @@ private int[] buildCodepoints()
 {
     int[] cps;
     for (int i = 32; i <= 0xFF; i++) cps ~= i;
+    // Latin Extended-A/B, IPA, spacing modifiers, combining diacritics.
+    for (int i = 0x100; i <= 0x36F; i++) cps ~= i;
+    // Greek and Coptic, Cyrillic, and Cyrillic Supplement.
+    for (int i = 0x370; i <= 0x52F; i++) cps ~= i;
     // General Punctuation up to Misc Symbols and Arrows
     for (int i = 0x2000; i <= 0x2BFF; i++) cps ~= i;
     for (int i = 0xE0A0; i <= 0xE0D4; i++) cps ~= i;
