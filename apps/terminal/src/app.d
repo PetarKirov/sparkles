@@ -356,20 +356,48 @@ private int glyphIndexFor(ref LoadedFont lf, int codepoint)
     return lf.fallbackIndex;
 }
 
-// True if the primary font FACE covers `cp`, per the ascending charset ranges
-// parsed from fc-query (see loadFaceCharset). O(log n) binary search over the
-// range starts. Used to decide whether a missing glyph is worth re-requesting
-// from the primary atlas (the face has it) or should be left to the fallbacks.
+// True if `cp` falls within the ascending, non-overlapping ranges given by
+// matching `lo`/`hi` bound arrays. O(log n) binary search for the last range
+// start <= cp, then a bounds check against its end. Manual search (rather than
+// assumeSorted) keeps the slices `scope`-clean under dip1000.
+@safe nothrow @nogc
+private bool rangesContain(scope const(int)[] lo, scope const(int)[] hi, int cp)
+{
+    if (lo.length == 0)
+        return false;
+    size_t left = 0, right = lo.length; // find first index whose start > cp
+    while (left < right)
+    {
+        const mid = (left + right) / 2;
+        if (lo[mid] <= cp) left = mid + 1;
+        else right = mid;
+    }
+    return left > 0 && cp <= hi[left - 1]; // cp is inside the last range starting <= cp
+}
+
+// True if the primary font FACE covers `cp`, per the charset ranges parsed from
+// fc-query (see loadFaceCharset). Used to decide whether a missing glyph is
+// worth re-requesting from the primary atlas (the face has it) or left to the
+// fallbacks.
 @safe nothrow @nogc
 private bool faceHasCodepoint(ref CoreState s, int cp)
 {
+    return rangesContain(s.faceLo[], s.faceHi[], cp);
+}
+
+// The font-codepoint-map face claiming `cp`, or null if none. The first
+// matching entry wins; mapped entries override the primary/styled faces.
+@system nothrow @nogc
+private LoadedFont* lookupCodepointMap(ref CoreState s, int cp)
+{
     import std.range : assumeSorted;
-    if (s.faceLo.length == 0)
-        return false;
-    const k = s.faceLo[].assumeSorted.lowerBound(cp).length; // # of range starts < cp
-    if (k < s.faceLo.length && s.faceLo[][k] == cp)
-        return true; // cp is itself a range start
-    return k > 0 && cp <= s.faceHi[][k - 1]; // cp falls inside the preceding range
+    foreach (i; 0 .. s.codepointMapCount)
+    {
+        auto m = &s.codepointMaps[i];
+        if (m.font.present && m.cps[].assumeSorted.contains(cp))
+            return &m.font;
+    }
+    return null;
 }
 
 // Queue `cp` for inclusion in the primary atlas on the next reload, de-duping
@@ -621,6 +649,17 @@ private int[] buildCodepoints()
 
 private static immutable int[] loadedCodepoints = buildCodepoints();
 
+// A `--font-codepoint-map` entry: a sorted set of codepoints rendered from a
+// specific font, overriding the primary/styled faces for those codepoints
+// (mirrors Ghostty's font-codepoint-map, e.g. Uiua glyphs → the Uiua386 font).
+struct CodepointMap
+{
+    SmallBuffer!(int, 256) cps;  // sorted codepoints this entry claims
+    LoadedFont font;             // the mapped face (loaded with exactly `cps`)
+}
+
+private enum MAX_CODEPOINT_MAPS = 8;
+
 // All per-run state the @nogc core loop touches. Holds non-copyable SmallBuffers
 // (font glyph sets, hover URL), so it lives as a single stack-pinned instance in
 // main() and is passed only by `ref`.
@@ -675,6 +714,10 @@ struct CoreState
     LoadedFont regularFallback;
     LoadedFont nerdFallback;
 
+    // font-codepoint-map entries (override the primary face for their codepoints).
+    CodepointMap[MAX_CODEPOINT_MAPS] codepointMaps;
+    int codepointMapCount;
+
     SelectionState selState;
     ScrollbarState sbState;
     HoverState hoverState;
@@ -695,6 +738,8 @@ private void freeFonts(ref CoreState s)
     if (s.fontBoldItalic.present) { UnloadFont(s.fontBoldItalic.font); s.fontBoldItalic.present = false; }
     if (s.regularFallback.present) { UnloadFont(s.regularFallback.font); s.regularFallback.present = false; }
     if (s.nerdFallback.present) { UnloadFont(s.nerdFallback.font); s.nerdFallback.present = false; }
+    foreach (i; 0 .. s.codepointMapCount)
+        if (s.codepointMaps[i].font.present) { UnloadFont(s.codepointMaps[i].font.font); s.codepointMaps[i].font.present = false; }
 }
 
 // Log compile-time build info from libghostty-vt so we can quickly tell whether
@@ -833,6 +878,93 @@ void loadStyleVariants(ref CoreState s, string fontPath)
     loadVariantFile(s.fontBoldItalic, boldItalicPath, s.fontSize, s.requestedCps[]);
 }
 
+// Parse `--font-codepoint-map` entries and load each mapped font, mirroring
+// Ghostty's font-codepoint-map. Each entry is `<ranges>=<family>`, where ranges
+// is a comma-separated list of `U+XXXX` or `U+XXXX-U+YYYY` (e.g.
+// "U+2295,U+2300-U+237F=Uiua386"). The family is resolved with fc-match and only
+// accepted when fontconfig actually has it (its resolved family must match) —
+// otherwise the entry is dropped so the codepoints fall through to the normal
+// primary/fallback path instead of silently rendering in a substitute font.
+// Must run after InitWindow (LoadFontEx needs the GL context).
+void parseCodepointMaps(ref CoreState s, string[] entries)
+{
+    import std.process : execute;
+    import std.string : strip, split, indexOf, lastIndexOf, startsWith, toLower, toStringz;
+    import std.conv : to;
+    import std.algorithm : sort, uniq, canFind;
+    import std.array : array;
+    import std.file : exists;
+
+    foreach (entry; entries)
+    {
+        if (s.codepointMapCount >= MAX_CODEPOINT_MAPS)
+            break;
+        const eq = entry.lastIndexOf('=');
+        if (eq <= 0)
+            continue;
+        const family = entry[eq + 1 .. $].strip;
+        if (family.length == 0)
+            continue;
+
+        // Expand the codepoint ranges (sorted, de-duped).
+        int[] cps;
+        foreach (rawTok; entry[0 .. eq].split(','))
+        {
+            auto tok = rawTok.strip;
+            if (!tok.startsWith("U+") && !tok.startsWith("u+"))
+                continue;
+            tok = tok[2 .. $];
+            const dash = tok.indexOf('-');
+            try
+            {
+                if (dash < 0)
+                    cps ~= tok.to!int(16);
+                else
+                {
+                    auto hiTok = tok[dash + 1 .. $].strip;
+                    if (hiTok.startsWith("U+") || hiTok.startsWith("u+"))
+                        hiTok = hiTok[2 .. $];
+                    immutable a = tok[0 .. dash].to!int(16);
+                    immutable b = hiTok.to!int(16);
+                    for (int c = a; c <= b; c++)
+                        cps ~= c;
+                }
+            }
+            catch (Exception) { /* skip malformed token */ }
+        }
+        if (cps.length == 0)
+            continue;
+        cps = cps.sort.uniq.array;
+
+        // Resolve the family and require fontconfig to actually have it (a
+        // fallback to an unrelated family means it isn't installed).
+        auto res = execute(["fc-match", "-f", "%{file}\t%{family}", family]);
+        if (res.status != 0)
+            continue;
+        auto fields = res.output.strip.split("\t");
+        if (fields.length < 2)
+            continue;
+        const path = fields[0];
+        if (path.length == 0 || !path.exists)
+            continue;
+        if (!fields[1].toLower.canFind(family.toLower))
+            continue; // fontconfig substituted a different family → not installed
+
+        auto m = &s.codepointMaps[s.codepointMapCount];
+        foreach (c; cps)
+            m.cps ~= c;
+        m.font.pathZ = path.idup.toStringz;
+        loadFontInto(m.font, s.fontSize, m.cps[]);
+        if (!m.font.present)
+        {
+            m.font.pathZ = null;
+            m.cps.clear();
+            continue;
+        }
+        s.codepointMapCount++;
+    }
+}
+
 // One-time setup (CLI, fonts, terminal, pty). GC and exceptions are fine here;
 // the steady-state work happens in the `nothrow @nogc` runCoreLoop below.
 int main(string[] args)
@@ -848,6 +980,7 @@ int main(string[] args)
     int fontSize = 20;
     bool debugScreenshotAndExit = false;
     string exitBehaviorOpt = "hold-on-failure";
+    string[] codepointMapOpt;
 
     auto helpInfo = getopt(
         args,
@@ -856,6 +989,7 @@ int main(string[] args)
         config.stopOnFirstNonOption,
         "font|f", "Font path or name (e.g. '/path/to/font.ttf' or 'Fira Code')", &fontOpt,
         "size|s", "Font size in pixels (default: 20)", &fontSize,
+        "font-codepoint-map", "Render codepoints from a specific font (repeatable): 'U+XXXX-U+YYYY,U+ZZZZ=Family'", &codepointMapOpt,
         "exit-behavior", "On child exit: close | wait-for-key | hold | hold-on-failure (default)", &exitBehaviorOpt,
         "debug-take-screenshot-and-exit", "Takes a screenshot after 2 seconds and exits", &debugScreenshotAndExit
     );
@@ -934,6 +1068,9 @@ int main(string[] args)
     // Load the bold / italic / bold-italic faces of the same family (if any) so
     // SGR bold and italic use the real styled glyphs instead of a faked slant.
     loadStyleVariants(s, fontPath);
+
+    // Load any --font-codepoint-map fonts (e.g. Uiua glyphs → the Uiua386 font).
+    parseCodepointMaps(s, codepointMapOpt);
 
     // Resolve fallback fonts via fc-match: the first Nerd Font and the first
     // common regular monospace, used when the primary lacks a glyph.
@@ -1187,6 +1324,8 @@ private void runCoreLoop(ref CoreState s)
             if (s.fontBoldItalic.pathZ !is null) loadFontInto(s.fontBoldItalic, s.fontSize, s.requestedCps[]);
             if (s.regularFallback.pathZ !is null) loadFontInto(s.regularFallback, s.fontSize, s.codepoints);
             if (s.nerdFallback.pathZ !is null) loadFontInto(s.nerdFallback, s.fontSize, s.codepoints);
+            foreach (i; 0 .. s.codepointMapCount)
+                loadFontInto(s.codepointMaps[i].font, s.fontSize, s.codepointMaps[i].cps[]);
             Vector2 mSize = MeasureTextEx(s.font.font, "M", s.fontSize, 0);
             s.cellWidth = cast(int) mSize.x;
             s.cellHeight = cast(int) mSize.y;
@@ -1430,14 +1569,30 @@ private void runCoreLoop(ref CoreState s)
 
                 if (rc.hasGrapheme)
                 {
-                    // Pick the real bold/italic face for this cell when one was
-                    // loaded; otherwise fall back to the regular face and fake
-                    // the missing axis (slant for italic, double-strike for bold).
-                    auto sf = pickStyledFace(s, rc.style.bold, rc.style.italic);
-                    LoadedFont* activeFont = sf.font;
-                    if (rc.codepoints[0] >= 128)
+                    LoadedFont* activeFont;
+                    bool fakeBold, fakeItalic;
+
+                    // font-codepoint-map overrides everything else for its
+                    // codepoints (mirrors Ghostty). Mapped fonts carry no styled
+                    // variants, so bold/italic on them is faked.
+                    LoadedFont* mapped = lookupCodepointMap(s, rc.codepoints[0]);
+                    if (mapped !is null)
                     {
-                        if (!fontHasGlyph(*activeFont, rc.codepoints[0]))
+                        activeFont = mapped;
+                        fakeBold = rc.style.bold;
+                        fakeItalic = rc.style.italic;
+                    }
+                    else
+                    {
+                        // Pick the real bold/italic face for this cell when one
+                        // was loaded; otherwise fall back to the regular face and
+                        // fake the missing axis (slant for italic, double-strike
+                        // for bold).
+                        auto sf = pickStyledFace(s, rc.style.bold, rc.style.italic);
+                        activeFont = sf.font;
+                        fakeBold = sf.fakeBold;
+                        fakeItalic = sf.fakeItalic;
+                        if (rc.codepoints[0] >= 128 && !fontHasGlyph(*activeFont, rc.codepoints[0]))
                         {
                             if (s.regularFallback.present && fontHasGlyph(s.regularFallback, rc.codepoints[0]))
                                 activeFont = &s.regularFallback;
@@ -1457,13 +1612,13 @@ private void runCoreLoop(ref CoreState s)
                     // Fake italic only when no real italic face is in use: shift
                     // the glyph right by a fraction of the font size (a crude
                     // slant; raylib can't shear a glyph).
-                    const italic_offset = sf.fakeItalic ? (s.fontSize / 6) : 0;
+                    const italic_offset = fakeItalic ? (s.fontSize / 6) : 0;
                     drawGrapheme(*activeFont, rc.codepoints[0 .. cp_count],
                         cast(float)(x + italic_offset), cast(float)y, s.fontSize, rc.fgCol);
 
                     // Fake bold only when no real bold face is in use: redraw 1px
                     // to the right to thicken strokes.
-                    if (sf.fakeBold)
+                    if (fakeBold)
                         drawGrapheme(*activeFont, rc.codepoints[0 .. cp_count],
                             cast(float)(x + italic_offset + 1), cast(float)y, s.fontSize, rc.fgCol);
 
