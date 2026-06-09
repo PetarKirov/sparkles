@@ -410,6 +410,128 @@ private void drawSolid(ref LoadedFont white, int x, int y, int w, int h, Color c
         DrawRectangle(x, y, w, h, c);
 }
 
+// Per-cell render data resolved by `resolveCell` and consumed by both passes of
+// the two-pass renderer (backgrounds first, then glyphs).
+struct ResolvedCell
+{
+    bool hasGrapheme;     // cell has a grapheme cluster to draw
+    uint graphemeLen;
+    uint[16] codepoints;
+    GhosttyStyle style;
+    Color fgCol;
+    Color bgCol;
+    bool hasBg;           // a background rect should be painted for this cell
+    bool isHoveredLink;   // cell is under a hovered OSC 8 link (drawn underlined)
+}
+
+// Resolve one cell's colors, style, and grapheme into a `ResolvedCell`. Both the
+// background pass and the glyph pass call this for the same cell so the
+// selection / hovered-link / reverse-video swaps are computed identically in
+// each — keeping the two passes from drifting out of sync. It re-queries the
+// cell rather than caching across passes; the queries are cheap relative to the
+// per-cell draw calls, and redraws only happen on dirty frames.
+@system nothrow @nogc
+private ResolvedCell resolveCell(
+    GhosttyRenderStateRowCells cells,
+    in GhosttyRenderStateColors colors,
+    int cellX, int cellY,
+    bool hasSelection,
+    in GhosttyPointCoordinate selStart,
+    in GhosttyPointCoordinate selEnd,
+    in SelectionState selState,
+    in HoverState hoverState)
+{
+    ResolvedCell r;
+
+    uint graphemeLen;
+    ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN, &graphemeLen);
+
+    if (graphemeLen == 0)
+    {
+        // Empty cell with no text may still carry a background color (e.g. an
+        // erase with a color set). BG_COLOR returns INVALID_VALUE otherwise.
+        GhosttyColorRgb bgRgb;
+        if (ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &bgRgb) == GHOSTTY_SUCCESS)
+        {
+            r.bgCol = Color(bgRgb.r, bgRgb.g, bgRgb.b, 255);
+            r.hasBg = true;
+        }
+        return r;
+    }
+
+    r.hasGrapheme = true;
+    r.graphemeLen = graphemeLen;
+    ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF, r.codepoints.ptr);
+
+    // Seed fg/bg from the terminal defaults; the per-cell queries overwrite them
+    // only when the cell has an explicit color and return INVALID_VALUE otherwise.
+    GhosttyColorRgb fgRgb = colors.foreground;
+    ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR, &fgRgb);
+
+    GhosttyColorRgb bgRgb = colors.background;
+    bool hasBg = ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &bgRgb) == GHOSTTY_SUCCESS;
+
+    Color bgCol = Color(bgRgb.r, bgRgb.g, bgRgb.b, 255);
+    Color fgCol = Color(fgRgb.r, fgRgb.g, fgRgb.b, 255);
+
+    // Read the cell style for SGR attribute flags. Colors are already resolved
+    // above via the FG/BG_COLOR queries.
+    r.style.size = GhosttyStyle.sizeof;
+    ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE, &r.style);
+
+    // Reverse video: swap fg/bg up front so the selection/hover swap below
+    // composes on top of it correctly.
+    if (r.style.inverse)
+    {
+        Color inv = bgCol;
+        bgCol = fgCol;
+        fgCol = inv;
+        hasBg = true;
+    }
+
+    bool isSelected = false;
+    if (hasSelection)
+    {
+        if (selState.isRectangular)
+        {
+            int minX = selStart.x < selEnd.x ? selStart.x : selEnd.x;
+            int maxX = selStart.x > selEnd.x ? selStart.x : selEnd.x;
+            if (cellY >= selStart.y && cellY <= selEnd.y && cellX >= minX && cellX <= maxX)
+                isSelected = true;
+        }
+        else
+        {
+            if (cellY > selStart.y && cellY < selEnd.y)
+                isSelected = true;
+            else if (cellY == selStart.y && cellY == selEnd.y)
+                isSelected = cellX >= selStart.x && cellX <= selEnd.x;
+            else if (cellY == selStart.y)
+                isSelected = cellX >= selStart.x;
+            else if (cellY == selEnd.y)
+                isSelected = cellX <= selEnd.x;
+        }
+    }
+
+    bool isHoveredLink = hoverState.isHoveringUrl && cellY == hoverState.y
+        && cellX >= hoverState.start_x && cellX <= hoverState.end_x;
+
+    // Selection and hovered-link both render as inverted. Swap once if either is
+    // set (swapping per-condition would cancel out when both are true).
+    if (isSelected || isHoveredLink)
+    {
+        Color tmp = bgCol;
+        bgCol = fgCol;
+        fgCol = tmp;
+        hasBg = true;
+    }
+
+    r.fgCol = fgCol;
+    r.bgCol = bgCol;
+    r.hasBg = hasBg;
+    r.isHoveredLink = isHoveredLink;
+    return r;
+}
+
 // Codepoints requested from every font. Built once at compile time (CTFE) into
 // static read-only data, so there is no startup GC allocation and no GC root.
 @safe pure nothrow
@@ -1048,8 +1170,37 @@ private void runCoreLoop(ref CoreState s)
             }
         }
 
-        ghostty_render_state_get(s.render_state, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &s.row_iter);
+        // Two-pass render: paint ALL cell backgrounds first, then ALL glyphs.
+        // Full-height glyphs (powerline separators, box-drawing, tall Nerd Font
+        // icons) can exceed the cell box. With a single interleaved pass the
+        // next row's background would overwrite the previous row's glyph
+        // overflow, clipping it ("cut in half"); separating the passes means
+        // every background lands before any glyph is drawn. Both passes resolve
+        // each cell via `resolveCell` so selection/hover/inverse stay identical.
 
+        // --- Pass 1: backgrounds. ---
+        ghostty_render_state_get(s.render_state, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &s.row_iter);
+        int bgY = 0;
+        while (ghostty_render_state_row_iterator_next(s.row_iter))
+        {
+            ghostty_render_state_row_get(s.row_iter, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &s.cells);
+
+            int bgX = 0;
+            while (ghostty_render_state_row_cells_next(s.cells))
+            {
+                const rc = resolveCell(s.cells, colors, bgX / s.cellWidth, bgY / s.cellHeight,
+                    has_selection, sel_start_pt, sel_end_pt, s.selState, s.hoverState);
+                if (rc.hasBg)
+                    drawSolid(s.font, bgX, bgY, s.cellWidth, s.cellHeight, rc.bgCol);
+                bgX += s.cellWidth;
+            }
+
+            bgY += s.cellHeight;
+        }
+
+        // --- Pass 2: glyphs and per-cell decorations. Re-fetching the row
+        //     iterator rewinds it to the first row. ---
+        ghostty_render_state_get(s.render_state, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &s.row_iter);
         int y = 0;
         while (ghostty_render_state_row_iterator_next(s.row_iter))
         {
@@ -1058,93 +1209,19 @@ private void runCoreLoop(ref CoreState s)
             int x = 0;
             while (ghostty_render_state_row_cells_next(s.cells))
             {
-                uint grapheme_len;
-                ghostty_render_state_row_cells_get(s.cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN, &grapheme_len);
+                const rc = resolveCell(s.cells, colors, x / s.cellWidth, y / s.cellHeight,
+                    has_selection, sel_start_pt, sel_end_pt, s.selState, s.hoverState);
 
-                if (grapheme_len > 0)
+                if (rc.hasGrapheme)
                 {
-                    uint[16] codepoints;
-                    ghostty_render_state_row_cells_get(s.cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF, codepoints.ptr);
-
-                    // Seed fg/bg from the terminal defaults; the per-cell queries
-                    // overwrite them only when the cell has an explicit color and
-                    // return INVALID_VALUE otherwise. The bg is painted only when
-                    // the cell actually has one (or a swap below forces it).
-                    GhosttyColorRgb fg_rgb = colors.foreground;
-                    ghostty_render_state_row_cells_get(s.cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR, &fg_rgb);
-
-                    GhosttyColorRgb bg_rgb = colors.background;
-                    bool has_bg = ghostty_render_state_row_cells_get(s.cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &bg_rgb) == GHOSTTY_SUCCESS;
-
-                    Color bg_col = Color(bg_rgb.r, bg_rgb.g, bg_rgb.b, 255);
-                    Color fg_col = Color(fg_rgb.r, fg_rgb.g, fg_rgb.b, 255);
-
-                    // Read the cell style for SGR attribute flags. Colors are
-                    // already resolved above via the FG/BG_COLOR queries.
-                    GhosttyStyle style;
-                    style.size = GhosttyStyle.sizeof;
-                    ghostty_render_state_row_cells_get(s.cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE, &style);
-
-                    // Reverse video: swap fg/bg up front so the selection/hover
-                    // swap below composes on top of it correctly.
-                    if (style.inverse)
-                    {
-                        Color inv = bg_col;
-                        bg_col = fg_col;
-                        fg_col = inv;
-                        has_bg = true;
-                    }
-
-                    int cell_x = x / s.cellWidth;
-                    int cell_y = y / s.cellHeight;
-
-                    bool is_selected = false;
-                    if (has_selection)
-                    {
-                        if (s.selState.isRectangular)
-                        {
-                            int min_x = sel_start_pt.x < sel_end_pt.x ? sel_start_pt.x : sel_end_pt.x;
-                            int max_x = sel_start_pt.x > sel_end_pt.x ? sel_start_pt.x : sel_end_pt.x;
-                            if (cell_y >= sel_start_pt.y && cell_y <= sel_end_pt.y && cell_x >= min_x && cell_x <= max_x)
-                                is_selected = true;
-                        }
-                        else
-                        {
-                            if (cell_y > sel_start_pt.y && cell_y < sel_end_pt.y)
-                                is_selected = true;
-                            else if (cell_y == sel_start_pt.y && cell_y == sel_end_pt.y)
-                                is_selected = cell_x >= sel_start_pt.x && cell_x <= sel_end_pt.x;
-                            else if (cell_y == sel_start_pt.y)
-                                is_selected = cell_x >= sel_start_pt.x;
-                            else if (cell_y == sel_end_pt.y)
-                                is_selected = cell_x <= sel_end_pt.x;
-                        }
-                    }
-
-                    bool is_hovered_link = s.hoverState.isHoveringUrl && cell_y == s.hoverState.y && cell_x >= s.hoverState.start_x && cell_x <= s.hoverState.end_x;
-
-                    // Selection and hovered-link both render as inverted. Swap
-                    // once if either is set (swapping per-condition would cancel
-                    // out when both are true).
-                    if (is_selected || is_hovered_link)
-                    {
-                        Color tmp = bg_col;
-                        bg_col = fg_col;
-                        fg_col = tmp;
-                        has_bg = true;
-                    }
-
-                    if (has_bg)
-                        drawSolid(s.font, x, y, s.cellWidth, s.cellHeight, bg_col);
-
                     LoadedFont* activeFont = &s.font;
-                    if (codepoints[0] >= 128)
+                    if (rc.codepoints[0] >= 128)
                     {
-                        if (!fontHasGlyph(s.font, codepoints[0]))
+                        if (!fontHasGlyph(s.font, rc.codepoints[0]))
                         {
-                            if (s.regularFallback.present && fontHasGlyph(s.regularFallback, codepoints[0]))
+                            if (s.regularFallback.present && fontHasGlyph(s.regularFallback, rc.codepoints[0]))
                                 activeFont = &s.regularFallback;
-                            else if (s.nerdFallback.present && fontHasGlyph(s.nerdFallback, codepoints[0]))
+                            else if (s.nerdFallback.present && fontHasGlyph(s.nerdFallback, rc.codepoints[0]))
                                 activeFont = &s.nerdFallback;
                         }
                     }
@@ -1153,44 +1230,35 @@ private void runCoreLoop(ref CoreState s)
                     // combining marks, ZWJ joiners, variation selectors, …) as one
                     // unit. Drawing only codepoints[0] would drop accents and emoji
                     // modifiers.
-                    const cp_count = grapheme_len < 16 ? grapheme_len : 16;
+                    const cp_count = rc.graphemeLen < 16 ? rc.graphemeLen : 16;
 
                     // Italic: shift the glyph right by a fraction of the font
                     // size (a crude slant; raylib can't shear a glyph).
-                    const italic_offset = style.italic ? (s.fontSize / 6) : 0;
-                    drawGrapheme(*activeFont, codepoints[0 .. cp_count],
-                        cast(float)(x + italic_offset), cast(float)y, s.fontSize, fg_col);
+                    const italic_offset = rc.style.italic ? (s.fontSize / 6) : 0;
+                    drawGrapheme(*activeFont, rc.codepoints[0 .. cp_count],
+                        cast(float)(x + italic_offset), cast(float)y, s.fontSize, rc.fgCol);
 
                     // Bold: redraw 1px to the right to thicken strokes (fake bold).
-                    if (style.bold)
-                        drawGrapheme(*activeFont, codepoints[0 .. cp_count],
-                            cast(float)(x + italic_offset + 1), cast(float)y, s.fontSize, fg_col);
+                    if (rc.style.bold)
+                        drawGrapheme(*activeFont, rc.codepoints[0 .. cp_count],
+                            cast(float)(x + italic_offset + 1), cast(float)y, s.fontSize, rc.fgCol);
 
                     // Underline (any SGR underline style) and strikethrough.
-                    if (style.underline != 0)
-                        drawSolid(s.font, x, y + s.cellHeight - 2, s.cellWidth, 1, fg_col);
-                    if (style.strikethrough)
-                        drawSolid(s.font, x, y + s.cellHeight / 2, s.cellWidth, 1, fg_col);
+                    if (rc.style.underline != 0)
+                        drawSolid(s.font, x, y + s.cellHeight - 2, s.cellWidth, 1, rc.fgCol);
+                    if (rc.style.strikethrough)
+                        drawSolid(s.font, x, y + s.cellHeight / 2, s.cellWidth, 1, rc.fgCol);
 
                     GhosttyCell raw_cell;
                     bool has_hyperlink = false;
                     if (ghostty_render_state_row_cells_get(s.cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, cast(void*)&raw_cell) == GHOSTTY_SUCCESS)
                         ghostty_cell_get(raw_cell, GHOSTTY_CELL_DATA_HAS_HYPERLINK, cast(void*)&has_hyperlink);
 
-                    if (has_hyperlink || is_hovered_link)
+                    if (has_hyperlink || rc.isHoveredLink)
                     {
-                        int thickness = is_hovered_link ? 2 : 1;
-                        drawSolid(s.font, x, y + s.cellHeight - thickness, s.cellWidth, thickness, fg_col);
+                        int thickness = rc.isHoveredLink ? 2 : 1;
+                        drawSolid(s.font, x, y + s.cellHeight - thickness, s.cellWidth, thickness, rc.fgCol);
                     }
-                }
-                else
-                {
-                    // Empty cell with no text may still carry a background color
-                    // (e.g. an erase with a color set). BG_COLOR returns
-                    // INVALID_VALUE when the cell has no background.
-                    GhosttyColorRgb bg_rgb;
-                    if (ghostty_render_state_row_cells_get(s.cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &bg_rgb) == GHOSTTY_SUCCESS)
-                        drawSolid(s.font, x, y, s.cellWidth, s.cellHeight, Color(bg_rgb.r, bg_rgb.g, bg_rgb.b, 255));
                 }
 
                 x += s.cellWidth;
@@ -1203,8 +1271,8 @@ private void runCoreLoop(ref CoreState s)
             y += s.cellHeight;
         }
 
-        // Images below text (drawn after cell backgrounds/text in this
-        // single-pass renderer, but before the cursor and above-text images).
+        // Images below text (drawn after cell backgrounds/text, but before the
+        // cursor and above-text images).
         if (has_kitty)
             render_kitty_images(s.terminal, kitty_gfx, s.placement_iter, s.cellWidth, s.cellHeight, GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT);
 
