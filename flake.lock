@@ -414,15 +414,16 @@
         "nixpkgs": "nixpkgs"
       },
       "locked": {
-        "lastModified": 1780686322,
-        "narHash": "sha256-z/SNKqzpOy0LGN6WMS/DQDhaa8VUviszmTnhVALA4Fs=",
+        "lastModified": 1780968078,
+        "narHash": "sha256-+0XKG9PYmt+2NIgEcSB/dxf1hOhoqWw6Lmu+/XznIaE=",
         "owner": "PetarKirov",
         "repo": "dlang.nix",
-        "rev": "a4d19998321619b3e94ed70ffbb5c8685733cd52",
+        "rev": "e441d5e692e13311f7d2598cd15f71b198ccb62d",
         "type": "github"
       },
       "original": {
         "owner": "PetarKirov",
+        "ref": "feat/ldc-android",
         "repo": "dlang.nix",
         "type": "github"
       }

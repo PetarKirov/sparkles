@@ -13,7 +13,10 @@
     systems.url = "github:nix-systems/triplet";
 
     dlang-nix = {
-      url = "github:PetarKirov/dlang.nix";
+      # feat/ldc-android: adds the `ldc-android` aarch64 cross-compiler used by
+      # the opt-in `devShells.android` (see nix/shells/android.nix). Revert to
+      # the default branch once that work merges upstream.
+      url = "github:PetarKirov/dlang.nix/feat/ldc-android";
       inputs = {
         flake-compat.follows = "mcl-nixos-modules/flake-compat";
         flake-parts.follows = "flake-parts";
