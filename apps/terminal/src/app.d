@@ -356,6 +356,33 @@ private int glyphIndexFor(ref LoadedFont lf, int codepoint)
     return lf.fallbackIndex;
 }
 
+// True if the primary font FACE covers `cp`, per the ascending charset ranges
+// parsed from fc-query (see loadFaceCharset). O(log n) binary search over the
+// range starts. Used to decide whether a missing glyph is worth re-requesting
+// from the primary atlas (the face has it) or should be left to the fallbacks.
+@safe nothrow @nogc
+private bool faceHasCodepoint(ref CoreState s, int cp)
+{
+    import std.range : assumeSorted;
+    if (s.faceLo.length == 0)
+        return false;
+    const k = s.faceLo[].assumeSorted.lowerBound(cp).length; // # of range starts < cp
+    if (k < s.faceLo.length && s.faceLo[][k] == cp)
+        return true; // cp is itself a range start
+    return k > 0 && cp <= s.faceHi[][k - 1]; // cp falls inside the preceding range
+}
+
+// Queue `cp` for inclusion in the primary atlas on the next reload, de-duping
+// within the frame's pending set (many cells in a frame share the same icon).
+@safe nothrow @nogc
+private void requestGlyph(ref SmallBuffer!(int, 64) pending, int cp)
+{
+    foreach (existing; pending[])
+        if (existing == cp)
+            return;
+    pending ~= cp;
+}
+
 // Draw a grapheme cluster (base codepoint plus any combining marks) at (x, y),
 // glyph by glyph, using the O(log n) glyph-index map above. This is a drop-in
 // replacement for raylib's DrawTextEx (spacing 0): it reproduces the same
@@ -582,7 +609,23 @@ struct CoreState
     ExitBehavior exitBehavior;
     bool debugScreenshotAndExit;
 
+    // Static base codepoint set, used to (re)load the fallback fonts.
     immutable(int)[] codepoints;
+
+    // Codepoints requested from the PRIMARY font's atlas. Seeded with the base
+    // set and grown on demand as new codepoints appear (see runCoreLoop): the
+    // primary face often contains glyphs — e.g. the Material Design Icons plane
+    // U+F0000+ used by editor file-tree icons — that the fixed base set never
+    // rasterized. Lazily requesting them keeps the atlas bounded to glyphs the
+    // session actually touches instead of preloading the whole ~109k-glyph plane.
+    SmallBuffer!(int, 8192) requestedCps;
+
+    // Sorted codepoint coverage of the primary font FACE, parsed from
+    // `fc-query` at startup (ascending `lo`/`hi` range bounds). A missing glyph
+    // is only re-requested from the primary when the face actually covers it;
+    // otherwise it is left to the fallback chain (and ultimately the '?' glyph).
+    SmallBuffer!(int, 256) faceLo;
+    SmallBuffer!(int, 256) faceHi;
 
     int fontSize = 20;
     int cellWidth = 1;
@@ -634,6 +677,44 @@ void logBuildInfo()
 
     TraceLog(TraceLogLevel.LOG_INFO, "ghostty-vt: simd:     %s", simd ? "enabled".ptr : "disabled".ptr);
     TraceLog(TraceLogLevel.LOG_INFO, "ghostty-vt: optimize: %s", opt_str);
+}
+
+// Parse the primary font face's codepoint coverage from `fc-query` into the
+// sorted lo/hi range buffers on `s`. The charset is emitted as ascending
+// whitespace-separated hex ranges (`lo-hi`) or singletons (`lo`). Best-effort:
+// on any failure the buffers stay empty, which simply disables on-demand glyph
+// requesting (the renderer falls back to its base set as before).
+void loadFaceCharset(ref CoreState s, string fontPath)
+{
+    import std.process : execute;
+    import std.string : strip, split, indexOf;
+    import std.conv : to;
+
+    auto res = execute(["fc-query", "--format=%{charset}", fontPath]);
+    if (res.status != 0)
+        return;
+
+    foreach (tok; res.output.strip.split)
+    {
+        if (tok.length == 0)
+            continue;
+        const dash = tok.indexOf('-');
+        try
+        {
+            if (dash < 0)
+            {
+                int v = tok.to!int(16);
+                s.faceLo ~= v;
+                s.faceHi ~= v;
+            }
+            else
+            {
+                s.faceLo ~= tok[0 .. dash].to!int(16);
+                s.faceHi ~= tok[dash + 1 .. $].to!int(16);
+            }
+        }
+        catch (Exception) { /* skip a malformed token, keep the rest */ }
+    }
 }
 
 // One-time setup (CLI, fonts, terminal, pty). GC and exceptions are fine here;
@@ -708,6 +789,13 @@ int main(string[] args)
     s.debugScreenshotAndExit = debugScreenshotAndExit;
     s.codepoints = loadedCodepoints;
 
+    // Seed the primary font's request set with the base codepoints and learn the
+    // face's full coverage so the render loop can lazily request glyphs the base
+    // set omitted (e.g. the Material Design Icons plane used by editor file trees).
+    foreach (cp; loadedCodepoints)
+        s.requestedCps ~= cast(int) cp;
+    loadFaceCharset(s, fontPath);
+
     InitWindow(800, 600, "Sparkles Terminal");
     // Allow the user to resize the window; the loop recomputes the grid and
     // sends TIOCSWINSZ on IsWindowResized().
@@ -719,7 +807,7 @@ int main(string[] args)
 
     // Load the primary font (cache its NUL-terminated path for in-loop reloads).
     s.font.pathZ = fontPath.toStringz;
-    loadFontInto(s.font, s.fontSize, s.codepoints);
+    loadFontInto(s.font, s.fontSize, s.requestedCps[]);
     if (!s.font.present)
     {
         stderr.writeln("Error: Raylib failed to load font: ", fontPath);
@@ -950,6 +1038,11 @@ private void runCoreLoop(ref CoreState s)
     bool prevChildExited = false;
     int forceFirstFrames = 2;
 
+    // Codepoints seen this frame that the primary face covers but the atlas has
+    // not rasterized yet. Collected during the glyph pass and folded into the
+    // primary font's request set after the frame (a single atlas reload).
+    SmallBuffer!(int, 64) pendingCps;
+
     while (!WindowShouldClose())
     {
         // --- Font-size hotkeys (Ctrl +/-) and window/grid resize. Done first so
@@ -968,7 +1061,7 @@ private void runCoreLoop(ref CoreState s)
 
         if (fontChanged)
         {
-            loadFontInto(s.font, s.fontSize, s.codepoints);
+            loadFontInto(s.font, s.fontSize, s.requestedCps[]);
             if (s.regularFallback.pathZ !is null) loadFontInto(s.regularFallback, s.fontSize, s.codepoints);
             if (s.nerdFallback.pathZ !is null) loadFontInto(s.nerdFallback, s.fontSize, s.codepoints);
             Vector2 mSize = MeasureTextEx(s.font.font, "M", s.fontSize, 0);
@@ -1223,6 +1316,8 @@ private void runCoreLoop(ref CoreState s)
                                 activeFont = &s.regularFallback;
                             else if (s.nerdFallback.present && fontHasGlyph(s.nerdFallback, rc.codepoints[0]))
                                 activeFont = &s.nerdFallback;
+                            else if (faceHasCodepoint(s, rc.codepoints[0]))
+                                requestGlyph(pendingCps, rc.codepoints[0]); // primary face has it; load it on demand
                         }
                     }
 
@@ -1373,6 +1468,21 @@ private void runCoreLoop(ref CoreState s)
         // Free textures uploaded during this frame's kitty rendering, now that
         // EndDrawing() has flushed all draw commands to the GPU.
         flush_deferred_textures();
+
+        // On-demand atlas growth: if the glyph pass found codepoints the primary
+        // face covers but the atlas lacked, fold them into the request set and
+        // rebuild the atlas once (done after EndDrawing so it never reuploads the
+        // font texture mid-frame). "M" is unchanged, so cell metrics hold. Force
+        // a redraw next frame so the now-rasterized glyphs actually get painted.
+        if (pendingCps.length > 0)
+        {
+            foreach (cp; pendingCps[])
+                s.requestedCps ~= cp;
+            pendingCps.clear();
+            loadFontInto(s.font, s.fontSize, s.requestedCps[]);
+            if (forceFirstFrames < 1)
+                forceFirstFrames = 1;
+        }
 
         if (s.debugScreenshotAndExit)
         {
