@@ -7,7 +7,7 @@ export default defineConfig({
 
   // Ignore links to .d source files and to sample/ workspace directories
   // (source artifacts under research/monorepo-tooling/<tool>/sample/, not pages)
-  ignoreDeadLinks: [/\.d$/, /\/sample\//, /\/sample$/],
+  ignoreDeadLinks: [/\.d$/, /\/sample\//, /\/sample$/, /\/example\//],
 
   markdown: {
     languageAlias: {
@@ -1158,6 +1158,45 @@ export default defineConfig({
                         link: '/research/window-system-integration/smithay-libdecor',
                       },
                     ],
+                  },
+                ],
+              },
+              {
+                text: 'OS Windowing APIs',
+                link: '/research/window-system-integration/os-apis/',
+                collapsed: true,
+                items: [
+                  {
+                    text: 'Overview',
+                    link: '/research/window-system-integration/os-apis/',
+                  },
+                  {
+                    text: 'Wayland',
+                    link: '/research/window-system-integration/os-apis/wayland/',
+                  },
+                  {
+                    text: 'X11 / Xlib',
+                    link: '/research/window-system-integration/os-apis/x11/',
+                  },
+                  {
+                    text: 'Windows (Win32)',
+                    link: '/research/window-system-integration/os-apis/win32/',
+                  },
+                  {
+                    text: 'macOS (AppKit)',
+                    link: '/research/window-system-integration/os-apis/appkit/',
+                  },
+                  {
+                    text: 'iOS / iPadOS (UIKit)',
+                    link: '/research/window-system-integration/os-apis/uikit/',
+                  },
+                  {
+                    text: 'Android (NDK)',
+                    link: '/research/window-system-integration/os-apis/android/',
+                  },
+                  {
+                    text: 'Cross-Platform Summary',
+                    link: '/research/window-system-integration/os-apis/summary',
                   },
                 ],
               },
