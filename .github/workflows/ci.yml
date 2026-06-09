@@ -71,3 +71,69 @@ jobs:
 
       - name: Build and run examples
         run: ci --example-files --fail-fast
+
+  # Build the Nix outputs and push them to the binary cache, once per system
+  # (the derivations are compiler-agnostic — they always build with ldc — so
+  # this is independent of the `test` job's DC matrix). Covers the full dev
+  # shell, both apps, and every standalone example.
+  nix-build:
+    name: Nix build & push (${{ matrix.system }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            system: x86_64-linux
+          - runner: macos-latest
+            system: aarch64-darwin
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup Nix
+        uses: metacraft-labs/nixos-modules/.github/setup-nix@main
+        with:
+          push-to-cache: true
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          devshell: default
+          use-nix-cache: true
+          nix-cache-key: nix-${{ runner.os }}-nixbuild-${{ hashFiles('**/flake.lock') }}
+          nix-cache-restore-prefixes: |
+            nix-${{ runner.os }}-nixbuild-
+            nix-${{ runner.os }}-
+
+      - name: Build & push devShells.full, apps, and all examples
+        run: |
+          set -euo pipefail
+          system='${{ matrix.system }}'
+
+          # Explicit top-level targets: the full dev shell and both apps.
+          targets=(
+            ".#devShells.${system}.full"
+            ".#packages.${system}.ci"
+            ".#packages.${system}.terminal"
+          )
+
+          # Every standalone example (examples.<lib>.<name>), enumerated from
+          # the flake so newly added examples are covered automatically.
+          # `|| [ -n "$example" ]` so the final entry isn't dropped (the nix
+          # eval output has no trailing newline).
+          while IFS= read -r example || [ -n "$example" ]; do
+            [ -n "$example" ] && targets+=(".#legacyPackages.${system}.examples.${example}")
+          done < <(
+            nix eval --raw ".#legacyPackages.${system}.examples" --apply \
+              'libs: builtins.concatStringsSep "\n" (builtins.concatMap (lib: map (ex: "${lib}.${ex}") (builtins.attrNames libs.${lib})) (builtins.attrNames libs))'
+          )
+
+          echo "Building ${#targets[@]} targets:"
+          printf '  %s\n' "${targets[@]}"
+
+          # Built paths are pushed to the cache by the setup-nix action
+          # (push-to-cache: true).
+          nix build --print-build-logs "${targets[@]}"

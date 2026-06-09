@@ -102,6 +102,7 @@
             pkgs.ldc
             pkgs.dub
             pkgs.dtools
+            pkgs.dub-to-nix
           ]
           ++ lib.optionals (isx86_64) [
             pkgs.dmd

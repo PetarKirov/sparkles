@@ -1,15 +1,17 @@
 module app;
 
 import core.sys.posix.unistd;
+import core.sys.posix.sys.types : pid_t;
 import core.sys.posix.termios;
 import core.sys.posix.sys.ioctl;
 import core.sys.posix.fcntl;
-import std.process : environment;
 import std.string : toStringz;
 
 import raylib;
 
 import sparkles.ghostty.c;
+import sparkles.core_cli.smallbuffer : SmallBuffer;
+import input : ExitBehavior, SelectionState, ScrollbarState, HoverState;
 
 extern(C) int forkpty(int *amaster, char *name, const termios *termp, const winsize *winp);
 
@@ -36,7 +38,8 @@ private enum DA_DEVICE_TYPE_VT220 = 1;
 // write_pty: the terminal calls this whenever a VT sequence needs a response
 // written back to the application (DSR, mode/DA queries, …). Without it,
 // programs like vim and tmux that probe terminal capabilities would hang.
-extern(C) void effect_write_pty(GhosttyTerminal terminal, void* userdata, const(ubyte)* data, size_t len) @nogc nothrow
+extern(C) nothrow @nogc
+void effect_write_pty(GhosttyTerminal terminal, void* userdata, const(ubyte)* data, size_t len)
 {
     import input : pty_write;
     auto ctx = cast(EffectsContext*) userdata;
@@ -44,7 +47,8 @@ extern(C) void effect_write_pty(GhosttyTerminal terminal, void* userdata, const(
 }
 
 // size: responds to XTWINOPS size queries (CSI 14/16/18 t).
-extern(C) bool effect_size(GhosttyTerminal terminal, void* userdata, GhosttySizeReportSize* out_size) @nogc nothrow
+extern(C) nothrow @nogc
+bool effect_size(GhosttyTerminal terminal, void* userdata, GhosttySizeReportSize* out_size)
 {
     auto ctx = cast(EffectsContext*) userdata;
     out_size.rows = ctx.rows;
@@ -56,7 +60,8 @@ extern(C) bool effect_size(GhosttyTerminal terminal, void* userdata, GhosttySize
 
 // device_attributes: responds to DA1/DA2/DA3 so applications can identify the
 // terminal. We report VT220-level conformance with a modest feature set.
-extern(C) bool effect_device_attributes(GhosttyTerminal terminal, void* userdata, GhosttyDeviceAttributes* out_attrs) @nogc nothrow
+extern(C) nothrow @nogc
+bool effect_device_attributes(GhosttyTerminal terminal, void* userdata, GhosttyDeviceAttributes* out_attrs)
 {
     out_attrs.primary.conformance_level = DA_CONFORMANCE_VT220;
     out_attrs.primary.features[0] = DA_FEATURE_COLUMNS_132;
@@ -73,20 +78,23 @@ extern(C) bool effect_device_attributes(GhosttyTerminal terminal, void* userdata
 }
 
 // xtversion: responds to CSI > q with our application name.
-extern(C) GhosttyString effect_xtversion(GhosttyTerminal terminal, void* userdata) @nogc nothrow
+extern(C) nothrow @nogc
+GhosttyString effect_xtversion(GhosttyTerminal terminal, void* userdata)
 {
     static immutable name = "sparkles";
     return GhosttyString(cast(const(ubyte)*) name.ptr, name.length);
 }
 
 // enquiry: answerback for the ENQ control (0x05). We send nothing.
-extern(C) GhosttyString effect_enquiry(GhosttyTerminal terminal, void* userdata) @nogc nothrow
+extern(C) nothrow @nogc
+GhosttyString effect_enquiry(GhosttyTerminal terminal, void* userdata)
 {
     return GhosttyString(null, 0);
 }
 
 // title_changed: updates the window title on OSC 0 / OSC 2.
-extern(C) void effect_title_changed(GhosttyTerminal terminal, void* userdata) @nogc nothrow
+extern(C) nothrow @nogc
+void effect_title_changed(GhosttyTerminal terminal, void* userdata)
 {
     GhosttyString title;
     if (ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_TITLE, &title) != GHOSTTY_SUCCESS)
@@ -101,13 +109,15 @@ extern(C) void effect_title_changed(GhosttyTerminal terminal, void* userdata) @n
 }
 
 // color_scheme: raylib can't query the OS scheme, so ignore the query.
-extern(C) bool effect_color_scheme(GhosttyTerminal terminal, void* userdata, GhosttyColorScheme* out_scheme) @nogc nothrow
+extern(C) nothrow @nogc
+bool effect_color_scheme(GhosttyTerminal terminal, void* userdata, GhosttyColorScheme* out_scheme)
 {
     return false;
 }
 
 // bell: BEL (0x07) — trigger a brief screen flash as a visual bell.
-extern(C) void effect_bell(GhosttyTerminal terminal, void* userdata) @nogc nothrow
+extern(C) nothrow @nogc
+void effect_bell(GhosttyTerminal terminal, void* userdata)
 {
     auto ctx = cast(EffectsContext*) userdata;
     ctx.bellFlashFrames = 4;
@@ -117,7 +127,8 @@ extern(C) void effect_bell(GhosttyTerminal terminal, void* userdata) @nogc nothr
 // decoder so the terminal can display images via the Kitty Graphics Protocol.
 // The output buffer is allocated through the provided GhosttyAllocator so the
 // library can free it later. Installed process-globally via ghostty_sys_set.
-extern(C) bool decode_png(void* userdata, GhosttyAllocator* allocator, const(ubyte)* data, size_t data_len, GhosttySysImage* outImg) @nogc nothrow
+extern(C) nothrow @nogc
+bool decode_png(void* userdata, GhosttyAllocator* allocator, const(ubyte)* data, size_t data_len, GhosttySysImage* outImg)
 {
     Image img = LoadImageFromMemory(".png".ptr, data, cast(int) data_len);
     if (img.data is null) return false;
@@ -149,6 +160,7 @@ private enum MAX_DEFERRED_TEXTURES = 256;
 private __gshared Texture2D[MAX_DEFERRED_TEXTURES] deferred_textures;
 private __gshared int deferred_texture_count = 0;
 
+@system nothrow @nogc
 private void defer_unload_texture(Texture2D tex)
 {
     if (deferred_texture_count < MAX_DEFERRED_TEXTURES)
@@ -157,6 +169,7 @@ private void defer_unload_texture(Texture2D tex)
         UnloadTexture(tex); // overflow fallback — may glitch but won't leak.
 }
 
+@system nothrow @nogc
 private void flush_deferred_textures()
 {
     foreach (i; 0 .. deferred_texture_count)
@@ -168,6 +181,7 @@ private void flush_deferred_textures()
 // inefficient: every visible image is re-uploaded to the GPU each frame and
 // freed right after (a real implementation would cache textures by image id).
 // Mirrors ghostling's render_kitty_images; this port uses no grid padding.
+@system nothrow @nogc
 private void render_kitty_images(GhosttyTerminal terminal, GhosttyKittyGraphics graphics,
     GhosttyKittyGraphicsPlacementIterator placement_iter,
     int cellWidth, int cellHeight, GhosttyKittyPlacementLayer layer)
@@ -244,28 +258,353 @@ private void render_kitty_images(GhosttyTerminal terminal, GhosttyKittyGraphics 
     }
 }
 
-// Per-font set of present codepoints, keyed by the font's GPU texture id, so
-// glyph lookups are O(1) instead of a linear scan of every glyph per cell per
-// frame. Cleared when fonts are reloaded (see the font-size change handler).
-private __gshared bool[int][uint] glyphCache;
-
-bool fontHasGlyph(ref Font font, int codepoint) {
-    if (font.glyphs == null) return false;
-    auto set = font.texture.id in glyphCache;
-    if (set is null) {
-        bool[int] built;
-        for (int i = 0; i < font.glyphCount; i++)
-            built[font.glyphs[i].value] = true;
-        glyphCache[font.texture.id] = built;
-        set = font.texture.id in glyphCache;
-    }
-    return (codepoint in *set) !is null;
+// A loaded raylib font plus a sorted set of the codepoints it actually has a
+// glyph for, so glyph lookups are an O(log n) binary search instead of a linear
+// scan of every glyph per cell per frame. NUL-terminated `pathZ` lets the core
+// loop reload the font on a font-size change without touching the GC.
+struct LoadedFont
+{
+    Font font;
+    SmallBuffer!(int, 256) glyphValues;  // ascending codepoint values present
+    SmallBuffer!(int, 256) glyphIndices; // font.glyphs index aligned with glyphValues
+    int fallbackIndex;                   // index of the '?' glyph (value 63), or 0
+    Rectangle whiteSrc;                  // a solid-white texel in the atlas (U+2588 center)
+    bool hasWhite;                       // whether whiteSrc is valid (full-block glyph present)
+    const(char)* pathZ;
+    bool present;
 }
 
-int[] getRequiredCodepoints() {
+// (Re)load `lf` from `lf.pathZ` at `fontSize`, requesting `cps`, and rebuild its
+// sorted glyph-value set. Unloads any previously loaded font first.
+@system nothrow @nogc
+private void loadFontInto(ref LoadedFont lf, int fontSize, const(int)[] cps)
+{
+    if (lf.present)
+    {
+        UnloadFont(lf.font);
+        lf.present = false;
+    }
+    if (lf.pathZ is null)
+        return;
+
+    lf.font = LoadFontEx(lf.pathZ, fontSize, cps.ptr, cast(int) cps.length);
+    lf.present = lf.font.texture.id != 0;
+
+    // Rebuild the sorted (codepoint -> glyph-index) map. raylib does not
+    // guarantee ascending glyph order, so copy the value/index pairs then
+    // insertion-sort by value, carrying the indices in parallel (done at most a
+    // few times: at startup and on each font-size change). The map lets the core
+    // loop look up a glyph in O(log n) instead of paying raylib's O(glyphCount)
+    // GetGlyphIndex linear scan per codepoint per cell per frame.
+    lf.glyphValues.clear();
+    lf.glyphIndices.clear();
+    lf.fallbackIndex = 0;
+    if (lf.present && lf.font.glyphs !is null)
+    {
+        foreach (i; 0 .. lf.font.glyphCount)
+        {
+            lf.glyphValues ~= lf.font.glyphs[i].value;
+            lf.glyphIndices ~= i;
+            if (lf.font.glyphs[i].value == 63) lf.fallbackIndex = i; // '?'
+        }
+        auto gv = lf.glyphValues[];
+        auto gi = lf.glyphIndices[];
+        foreach (i; 1 .. gv.length)
+        {
+            const v = gv[i];
+            const vi = gi[i];
+            size_t j = i;
+            while (j > 0 && gv[j - 1] > v) { gv[j] = gv[j - 1]; gi[j] = gi[j - 1]; j--; }
+            gv[j] = v;
+            gi[j] = vi;
+        }
+    }
+
+    // Locate a solid-white texel for drawing background/decoration quads from
+    // the glyph atlas (so they share the glyph texture and the whole grid
+    // batches). U+2588 FULL BLOCK is opaque white throughout; sample its centre.
+    lf.hasWhite = false;
+    if (lf.present && fontHasGlyph(lf, 0x2588))
+    {
+        const r = lf.font.recs[glyphIndexFor(lf, 0x2588)];
+        if (r.width >= 2 && r.height >= 2)
+        {
+            lf.whiteSrc = Rectangle(r.x + r.width * 0.5f, r.y + r.height * 0.5f, 1, 1);
+            lf.hasWhite = true;
+        }
+    }
+}
+
+// O(log n) presence test over the sorted glyph-value set.
+@safe pure nothrow @nogc
+private bool fontHasGlyph(ref LoadedFont lf, int codepoint)
+{
+    import std.range : assumeSorted;
+    return lf.glyphValues[].assumeSorted.contains(codepoint);
+}
+
+// O(log n) codepoint -> glyph-index lookup over the sorted map, falling back to
+// the font's '?' glyph when the codepoint is absent (mirroring raylib's
+// GetGlyphIndex fallback). Replaces that function's O(glyphCount) linear scan.
+@safe pure nothrow @nogc
+private int glyphIndexFor(ref LoadedFont lf, int codepoint)
+{
+    import std.range : assumeSorted;
+    const lower = lf.glyphValues[].assumeSorted.lowerBound(codepoint).length;
+    if (lower < lf.glyphValues.length && lf.glyphValues[][lower] == codepoint)
+        return lf.glyphIndices[][lower];
+    return lf.fallbackIndex;
+}
+
+// True if the primary font FACE covers `cp`, per the ascending charset ranges
+// parsed from fc-query (see loadFaceCharset). O(log n) binary search over the
+// range starts. Used to decide whether a missing glyph is worth re-requesting
+// from the primary atlas (the face has it) or should be left to the fallbacks.
+@safe nothrow @nogc
+private bool faceHasCodepoint(ref CoreState s, int cp)
+{
+    import std.range : assumeSorted;
+    if (s.faceLo.length == 0)
+        return false;
+    const k = s.faceLo[].assumeSorted.lowerBound(cp).length; // # of range starts < cp
+    if (k < s.faceLo.length && s.faceLo[][k] == cp)
+        return true; // cp is itself a range start
+    return k > 0 && cp <= s.faceHi[][k - 1]; // cp falls inside the preceding range
+}
+
+// Queue `cp` for inclusion in the primary atlas on the next reload, de-duping
+// within the frame's pending set (many cells in a frame share the same icon).
+@safe nothrow @nogc
+private void requestGlyph(ref SmallBuffer!(int, 64) pending, int cp)
+{
+    foreach (existing; pending[])
+        if (existing == cp)
+            return;
+    pending ~= cp;
+}
+
+// The face chosen for a cell's bold/italic attributes, plus whether the missing
+// axis still has to be faked (a synthetic slant / a double-strike thickening)
+// because no dedicated face was loaded for it.
+struct StyledFace
+{
+    LoadedFont* font;
+    bool fakeBold;
+    bool fakeItalic;
+}
+
+// Pick the loaded face for the requested bold/italic attributes, preferring a
+// real styled face and falling back toward the regular face — faking whatever
+// axis has no dedicated face. With a real cursive italic face loaded, italic
+// cells render true cursive glyphs instead of the nudged upright fallback.
+@system nothrow @nogc
+private StyledFace pickStyledFace(ref CoreState s, bool bold, bool italic)
+{
+    if (bold && italic)
+    {
+        if (s.fontBoldItalic.present) return StyledFace(&s.fontBoldItalic, false, false);
+        if (s.fontItalic.present)     return StyledFace(&s.fontItalic, true, false);  // real italic, fake bold
+        if (s.fontBold.present)       return StyledFace(&s.fontBold, false, true);    // real bold, fake italic
+        return StyledFace(&s.font, true, true);
+    }
+    if (italic)
+        return s.fontItalic.present
+            ? StyledFace(&s.fontItalic, false, false)
+            : StyledFace(&s.font, false, true);
+    if (bold)
+        return s.fontBold.present
+            ? StyledFace(&s.fontBold, false, false)
+            : StyledFace(&s.font, true, false);
+    return StyledFace(&s.font, false, false);
+}
+
+// Draw a grapheme cluster (base codepoint plus any combining marks) at (x, y),
+// glyph by glyph, using the O(log n) glyph-index map above. This is a drop-in
+// replacement for raylib's DrawTextEx (spacing 0): it reproduces the same
+// DrawTextCodepoint placement/advance math but avoids both GetGlyphIndex's
+// linear scan and DrawTextEx's per-call UTF-8 re-decode.
+@system nothrow @nogc
+private void drawGrapheme(ref LoadedFont lf, scope const(uint)[] cps,
+    float x, float y, int fontSize, Color tint)
+{
+    const font = lf.font;
+    const float scale = font.baseSize > 0 ? cast(float) fontSize / font.baseSize : 1.0f;
+    const float pad = cast(float) font.glyphPadding;
+
+    float ox = x;
+    foreach (cp; cps)
+    {
+        const idx = glyphIndexFor(lf, cast(int) cp);
+        const Rectangle rec = font.recs[idx];
+
+        // Whitespace and other zero-area glyphs draw nothing; just advance.
+        if (rec.width > 0 && rec.height > 0)
+        {
+            const Rectangle src = Rectangle(
+                rec.x - pad, rec.y - pad, rec.width + 2 * pad, rec.height + 2 * pad);
+            const Rectangle dst = Rectangle(
+                ox + font.glyphs[idx].offsetX * scale - pad * scale,
+                y + font.glyphs[idx].offsetY * scale - pad * scale,
+                (rec.width + 2 * pad) * scale,
+                (rec.height + 2 * pad) * scale);
+            DrawTexturePro(font.texture, src, dst, Vector2(0, 0), 0.0f, tint);
+        }
+
+        const adv = font.glyphs[idx].advanceX;
+        ox += adv == 0 ? rec.width * scale : adv * scale;
+    }
+}
+
+// Draw a solid-color rectangle. When `white` has a known white atlas texel, the
+// rect is drawn as a textured quad from that atlas so it shares the glyph
+// texture: with backgrounds, underlines, the cursor and glyphs all sampling one
+// texture, raylib batches the entire cell grid into a handful of draw calls
+// instead of flushing on a texture switch every cell. Falls back to the
+// shapes-texture DrawRectangle when no white texel is available.
+@system nothrow @nogc
+private void drawSolid(ref LoadedFont white, int x, int y, int w, int h, Color c)
+{
+    if (white.hasWhite)
+        DrawTexturePro(white.font.texture, white.whiteSrc,
+            Rectangle(cast(float) x, cast(float) y, cast(float) w, cast(float) h),
+            Vector2(0, 0), 0.0f, c);
+    else
+        DrawRectangle(x, y, w, h, c);
+}
+
+// Per-cell render data resolved by `resolveCell` and consumed by both passes of
+// the two-pass renderer (backgrounds first, then glyphs).
+struct ResolvedCell
+{
+    bool hasGrapheme;     // cell has a grapheme cluster to draw
+    uint graphemeLen;
+    uint[16] codepoints;
+    GhosttyStyle style;
+    Color fgCol;
+    Color bgCol;
+    bool hasBg;           // a background rect should be painted for this cell
+    bool isHoveredLink;   // cell is under a hovered OSC 8 link (drawn underlined)
+}
+
+// Resolve one cell's colors, style, and grapheme into a `ResolvedCell`. Both the
+// background pass and the glyph pass call this for the same cell so the
+// selection / hovered-link / reverse-video swaps are computed identically in
+// each — keeping the two passes from drifting out of sync. It re-queries the
+// cell rather than caching across passes; the queries are cheap relative to the
+// per-cell draw calls, and redraws only happen on dirty frames.
+@system nothrow @nogc
+private ResolvedCell resolveCell(
+    GhosttyRenderStateRowCells cells,
+    in GhosttyRenderStateColors colors,
+    int cellX, int cellY,
+    bool hasSelection,
+    in GhosttyPointCoordinate selStart,
+    in GhosttyPointCoordinate selEnd,
+    in SelectionState selState,
+    in HoverState hoverState)
+{
+    ResolvedCell r;
+
+    uint graphemeLen;
+    ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN, &graphemeLen);
+
+    if (graphemeLen == 0)
+    {
+        // Empty cell with no text may still carry a background color (e.g. an
+        // erase with a color set). BG_COLOR returns INVALID_VALUE otherwise.
+        GhosttyColorRgb bgRgb;
+        if (ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &bgRgb) == GHOSTTY_SUCCESS)
+        {
+            r.bgCol = Color(bgRgb.r, bgRgb.g, bgRgb.b, 255);
+            r.hasBg = true;
+        }
+        return r;
+    }
+
+    r.hasGrapheme = true;
+    r.graphemeLen = graphemeLen;
+    ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF, r.codepoints.ptr);
+
+    // Seed fg/bg from the terminal defaults; the per-cell queries overwrite them
+    // only when the cell has an explicit color and return INVALID_VALUE otherwise.
+    GhosttyColorRgb fgRgb = colors.foreground;
+    ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR, &fgRgb);
+
+    GhosttyColorRgb bgRgb = colors.background;
+    bool hasBg = ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &bgRgb) == GHOSTTY_SUCCESS;
+
+    Color bgCol = Color(bgRgb.r, bgRgb.g, bgRgb.b, 255);
+    Color fgCol = Color(fgRgb.r, fgRgb.g, fgRgb.b, 255);
+
+    // Read the cell style for SGR attribute flags. Colors are already resolved
+    // above via the FG/BG_COLOR queries.
+    r.style.size = GhosttyStyle.sizeof;
+    ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE, &r.style);
+
+    // Reverse video: swap fg/bg up front so the selection/hover swap below
+    // composes on top of it correctly.
+    if (r.style.inverse)
+    {
+        Color inv = bgCol;
+        bgCol = fgCol;
+        fgCol = inv;
+        hasBg = true;
+    }
+
+    bool isSelected = false;
+    if (hasSelection)
+    {
+        if (selState.isRectangular)
+        {
+            int minX = selStart.x < selEnd.x ? selStart.x : selEnd.x;
+            int maxX = selStart.x > selEnd.x ? selStart.x : selEnd.x;
+            if (cellY >= selStart.y && cellY <= selEnd.y && cellX >= minX && cellX <= maxX)
+                isSelected = true;
+        }
+        else
+        {
+            if (cellY > selStart.y && cellY < selEnd.y)
+                isSelected = true;
+            else if (cellY == selStart.y && cellY == selEnd.y)
+                isSelected = cellX >= selStart.x && cellX <= selEnd.x;
+            else if (cellY == selStart.y)
+                isSelected = cellX >= selStart.x;
+            else if (cellY == selEnd.y)
+                isSelected = cellX <= selEnd.x;
+        }
+    }
+
+    bool isHoveredLink = hoverState.isHoveringUrl && cellY == hoverState.y
+        && cellX >= hoverState.start_x && cellX <= hoverState.end_x;
+
+    // Selection and hovered-link both render as inverted. Swap once if either is
+    // set (swapping per-condition would cancel out when both are true).
+    if (isSelected || isHoveredLink)
+    {
+        Color tmp = bgCol;
+        bgCol = fgCol;
+        fgCol = tmp;
+        hasBg = true;
+    }
+
+    r.fgCol = fgCol;
+    r.bgCol = bgCol;
+    r.hasBg = hasBg;
+    r.isHoveredLink = isHoveredLink;
+    return r;
+}
+
+// Codepoints requested from every font. Built once at compile time (CTFE) into
+// static read-only data, so there is no startup GC allocation and no GC root.
+@safe pure nothrow
+private int[] buildCodepoints()
+{
     int[] cps;
-    cps.reserve(10000);
     for (int i = 32; i <= 0xFF; i++) cps ~= i;
+    // Latin Extended-A/B, IPA, spacing modifiers, combining diacritics.
+    for (int i = 0x100; i <= 0x36F; i++) cps ~= i;
+    // Greek and Coptic, Cyrillic, and Cyrillic Supplement.
+    for (int i = 0x370; i <= 0x52F; i++) cps ~= i;
     // General Punctuation up to Misc Symbols and Arrows
     for (int i = 0x2000; i <= 0x2BFF; i++) cps ~= i;
     for (int i = 0xE0A0; i <= 0xE0D4; i++) cps ~= i;
@@ -278,6 +617,84 @@ int[] getRequiredCodepoints() {
     for (int i = 0xF400; i <= 0xF533; i++) cps ~= i;
     for (int i = 0xF500; i <= 0xFD46; i++) cps ~= i;
     return cps;
+}
+
+private static immutable int[] loadedCodepoints = buildCodepoints();
+
+// All per-run state the @nogc core loop touches. Holds non-copyable SmallBuffers
+// (font glyph sets, hover URL), so it lives as a single stack-pinned instance in
+// main() and is passed only by `ref`.
+struct CoreState
+{
+    GhosttyTerminal terminal;
+    GhosttyRenderState render_state;
+    GhosttyRenderStateRowIterator row_iter;
+    GhosttyRenderStateRowCells cells;
+    GhosttyKittyGraphicsPlacementIterator placement_iter;
+    GhosttyKeyEvent key_event;
+    GhosttyKeyEncoder key_encoder;
+    GhosttyMouseEvent mouse_event;
+    GhosttyMouseEncoder mouse_encoder;
+
+    int pty_fd = -1;
+    pid_t child = -1;
+
+    EffectsContext effects_ctx;
+
+    ExitBehavior exitBehavior;
+    bool debugScreenshotAndExit;
+
+    // Static base codepoint set, used to (re)load the fallback fonts.
+    immutable(int)[] codepoints;
+
+    // Codepoints requested from the PRIMARY font's atlas. Seeded with the base
+    // set and grown on demand as new codepoints appear (see runCoreLoop): the
+    // primary face often contains glyphs — e.g. the Material Design Icons plane
+    // U+F0000+ used by editor file-tree icons — that the fixed base set never
+    // rasterized. Lazily requesting them keeps the atlas bounded to glyphs the
+    // session actually touches instead of preloading the whole ~109k-glyph plane.
+    SmallBuffer!(int, 8192) requestedCps;
+
+    // Sorted codepoint coverage of the primary font FACE, parsed from
+    // `fc-query` at startup (ascending `lo`/`hi` range bounds). A missing glyph
+    // is only re-requested from the primary when the face actually covers it;
+    // otherwise it is left to the fallback chain (and ultimately the '?' glyph).
+    SmallBuffer!(int, 256) faceLo;
+    SmallBuffer!(int, 256) faceHi;
+
+    int fontSize = 20;
+    int cellWidth = 1;
+    int cellHeight = 1;
+    ushort cols;
+    ushort rows;
+
+    LoadedFont font;            // primary (regular) face
+    LoadedFont fontBold;        // same family, bold     — empty if unavailable
+    LoadedFont fontItalic;      // same family, italic    — empty if unavailable
+    LoadedFont fontBoldItalic;  // same family, bold+italic — empty if unavailable
+    LoadedFont regularFallback;
+    LoadedFont nerdFallback;
+
+    SelectionState selState;
+    ScrollbarState sbState;
+    HoverState hoverState;
+
+    // Child-process lifecycle. childExited is set when the pty signals EOF/EIO;
+    // childReaped once waitpid() collects the exit status.
+    bool childExited;
+    bool childReaped;
+    int childStatus = -1;
+}
+
+@system nothrow @nogc
+private void freeFonts(ref CoreState s)
+{
+    if (s.font.present) { UnloadFont(s.font.font); s.font.present = false; }
+    if (s.fontBold.present) { UnloadFont(s.fontBold.font); s.fontBold.present = false; }
+    if (s.fontItalic.present) { UnloadFont(s.fontItalic.font); s.fontItalic.present = false; }
+    if (s.fontBoldItalic.present) { UnloadFont(s.fontBoldItalic.font); s.fontBoldItalic.present = false; }
+    if (s.regularFallback.present) { UnloadFont(s.regularFallback.font); s.regularFallback.present = false; }
+    if (s.nerdFallback.present) { UnloadFont(s.nerdFallback.font); s.nerdFallback.present = false; }
 }
 
 // Log compile-time build info from libghostty-vt so we can quickly tell whether
@@ -303,6 +720,121 @@ void logBuildInfo()
     TraceLog(TraceLogLevel.LOG_INFO, "ghostty-vt: optimize: %s", opt_str);
 }
 
+// Parse the primary font face's codepoint coverage from `fc-query` into the
+// sorted lo/hi range buffers on `s`. The charset is emitted as ascending
+// whitespace-separated hex ranges (`lo-hi`) or singletons (`lo`). Best-effort:
+// on any failure the buffers stay empty, which simply disables on-demand glyph
+// requesting (the renderer falls back to its base set as before).
+void loadFaceCharset(ref CoreState s, string fontPath)
+{
+    import std.process : execute;
+    import std.string : strip, split, indexOf;
+    import std.conv : to;
+
+    auto res = execute(["fc-query", "--format=%{charset}", fontPath]);
+    if (res.status != 0)
+        return;
+
+    foreach (tok; res.output.strip.split)
+    {
+        if (tok.length == 0)
+            continue;
+        const dash = tok.indexOf('-');
+        try
+        {
+            if (dash < 0)
+            {
+                int v = tok.to!int(16);
+                s.faceLo ~= v;
+                s.faceHi ~= v;
+            }
+            else
+            {
+                s.faceLo ~= tok[0 .. dash].to!int(16);
+                s.faceHi ~= tok[dash + 1 .. $].to!int(16);
+            }
+        }
+        catch (Exception) { /* skip a malformed token, keep the rest */ }
+    }
+}
+
+// Load the font at `path` into `lf` with codepoint set `cps`; on failure leave
+// `lf` empty (pathZ cleared) so callers treat the variant as unavailable.
+void loadVariantFile(ref LoadedFont lf, string path, int fontSize, const(int)[] cps)
+{
+    import std.file : exists;
+    import std.string : toStringz;
+
+    if (path.length == 0 || !path.exists)
+        return;
+    lf.pathZ = path.toStringz;
+    loadFontInto(lf, fontSize, cps);
+    if (!lf.present)
+        lf.pathZ = null;
+}
+
+// Resolve and load the bold / italic / bold-italic faces of the SAME family as
+// the primary, so SGR bold and italic render with the font's real styled glyphs
+// (e.g. cursive italics) rather than a faked thickening/slant. Variants are
+// found by scanning the primary font's directory with `fc-scan` and matching on
+// family + weight + slant, so this works even for fonts fontconfig hasn't
+// registered (e.g. a raw store path). Missing variants are left empty and the
+// renderer falls back to the regular face, faking the style as before. Must run
+// after InitWindow (LoadFontEx needs the GL context). Loads each variant with
+// the primary's request set so on-demand atlas growth stays in sync.
+void loadStyleVariants(ref CoreState s, string fontPath)
+{
+    import std.process : execute;
+    import std.string : strip, splitLines, split, join;
+    import std.conv : to;
+    import std.path : dirName;
+
+    string pFamily;
+    int pWeight, pSlant;
+    {
+        auto q = execute(["fc-query", "--format=%{family[0]}\n%{weight}\n%{slant}", fontPath]);
+        if (q.status != 0) return;
+        auto lines = q.output.splitLines;
+        if (lines.length < 3) return;
+        pFamily = lines[0].strip.idup;
+        try { pWeight = lines[1].strip.to!int; pSlant = lines[2].strip.to!int; }
+        catch (Exception) return;
+    }
+    if (pFamily.length == 0) return;
+
+    auto sc = execute(["fc-scan", "--format=%{file}:%{family[0]}:%{weight}:%{slant}\n", fontPath.dirName]);
+    if (sc.status != 0) return;
+
+    // fontconfig bold is weight 200; italic/oblique is any non-zero slant.
+    // Match the primary's slant for the bold face and its weight for the italic
+    // face so a non-regular primary (e.g. a Medium weight) still pairs sensibly.
+    string boldPath, italicPath, boldItalicPath;
+    foreach (line; sc.output.splitLines)
+    {
+        // file paths carry no ':' (store paths don't); a family name might, so
+        // take weight/slant as the trailing two fields and the file as the first.
+        auto parts = line.split(':');
+        if (parts.length < 4) continue;
+        const file = parts[0];
+        if (file == fontPath) continue; // the regular face, already loaded
+        const fam = parts[1 .. $ - 2].join(':').strip;
+        if (fam != pFamily) continue;
+        int w, sl;
+        try { w = parts[$ - 2].strip.to!int; sl = parts[$ - 1].strip.to!int; }
+        catch (Exception) continue;
+
+        if (w == 200 && sl == pSlant) { if (boldPath.length == 0) boldPath = file.idup; }
+        else if (w == pWeight && sl != pSlant) { if (italicPath.length == 0) italicPath = file.idup; }
+        else if (w == 200 && sl != pSlant) { if (boldItalicPath.length == 0) boldItalicPath = file.idup; }
+    }
+
+    loadVariantFile(s.fontBold, boldPath, s.fontSize, s.requestedCps[]);
+    loadVariantFile(s.fontItalic, italicPath, s.fontSize, s.requestedCps[]);
+    loadVariantFile(s.fontBoldItalic, boldItalicPath, s.fontSize, s.requestedCps[]);
+}
+
+// One-time setup (CLI, fonts, terminal, pty). GC and exceptions are fine here;
+// the steady-state work happens in the `nothrow @nogc` runCoreLoop below.
 int main(string[] args)
 {
     import std.getopt;
@@ -310,8 +842,7 @@ int main(string[] args)
     import std.process : execute;
     import std.string : strip;
     import std.stdio : stderr, writeln;
-
-    import input : ExitBehavior, parseExitBehavior;
+    import input : parseExitBehavior;
 
     string fontOpt = "monospace";
     int fontSize = 20;
@@ -328,8 +859,6 @@ int main(string[] args)
         "exit-behavior", "On child exit: close | wait-for-key | hold | hold-on-failure (default)", &exitBehaviorOpt,
         "debug-take-screenshot-and-exit", "Takes a screenshot after 2 seconds and exits", &debugScreenshotAndExit
     );
-
-    ExitBehavior exitBehavior = parseExitBehavior(exitBehaviorOpt);
 
     if (helpInfo.helpWanted)
     {
@@ -360,19 +889,28 @@ int main(string[] args)
     {
         auto res = execute(["fc-match", "-f", "%{file}", fontOpt]);
         if (res.status == 0 && res.output.strip().length > 0)
-        {
             fontPath = res.output.strip();
-        }
     }
-
     if (!fontPath.exists)
     {
         stderr.writeln("Error: Could not resolve font '", fontOpt, "'. Please provide a valid path or installed font name.");
         return 1;
     }
 
-    ushort cols = 100;
-    ushort rows = 30;
+    CoreState s;
+    s.fontSize = fontSize;
+    s.cols = 100;
+    s.rows = 30;
+    s.exitBehavior = parseExitBehavior(exitBehaviorOpt);
+    s.debugScreenshotAndExit = debugScreenshotAndExit;
+    s.codepoints = loadedCodepoints;
+
+    // Seed the primary font's request set with the base codepoints and learn the
+    // face's full coverage so the render loop can lazily request glyphs the base
+    // set omitted (e.g. the Material Design Icons plane used by editor file trees).
+    foreach (cp; loadedCodepoints)
+        s.requestedCps ~= cast(int) cp;
+    loadFaceCharset(s, fontPath);
 
     InitWindow(800, 600, "Sparkles Terminal");
     // Allow the user to resize the window; the loop recomputes the grid and
@@ -383,259 +921,332 @@ int main(string[] args)
     // forwarded to the terminal application (vim, less, …) like any other key.
     SetExitKey(KeyboardKey.KEY_NULL);
 
-    // Load Font
-    import std.string : toStringz;
-    int[] loadedCodepoints = getRequiredCodepoints();
-
-    Font font = LoadFontEx(fontPath.toStringz, fontSize, loadedCodepoints.ptr, cast(int)loadedCodepoints.length);
-    if (font.texture.id == 0)
+    // Load the primary font (cache its NUL-terminated path for in-loop reloads).
+    s.font.pathZ = fontPath.toStringz;
+    loadFontInto(s.font, s.fontSize, s.requestedCps[]);
+    if (!s.font.present)
     {
         stderr.writeln("Error: Raylib failed to load font: ", fontPath);
         CloseWindow();
         return 1;
     }
 
-    Font regularFallback;
-    bool hasRegularFallback = false;
-    string regularFallbackPathStr = "";
+    // Load the bold / italic / bold-italic faces of the same family (if any) so
+    // SGR bold and italic use the real styled glyphs instead of a faked slant.
+    loadStyleVariants(s, fontPath);
 
-    Font nerdFallback;
-    bool hasNerdFallback = false;
-    string nerdFallbackPathStr = "";
-
+    // Resolve fallback fonts via fc-match: the first Nerd Font and the first
+    // common regular monospace, used when the primary lacks a glyph.
     auto fbRes = execute(["fc-match", "-f", "%{file}\\n", "monospace", "-s"]);
-    if (fbRes.status == 0) {
+    if (fbRes.status == 0)
+    {
         import std.algorithm : canFind;
         import std.string : splitLines;
-        foreach (line; fbRes.output.splitLines()) {
+        foreach (line; fbRes.output.splitLines())
+        {
             string path = line.strip().idup;
             if (path.length == 0 || path == fontPath) continue;
 
             bool isNerd = path.canFind("NerdFont") || path.canFind("Nerd Font");
-            if (isNerd && !hasNerdFallback) {
-                nerdFallbackPathStr = path;
-                nerdFallback = LoadFontEx(nerdFallbackPathStr.toStringz, fontSize, loadedCodepoints.ptr, cast(int)loadedCodepoints.length);
-                if (nerdFallback.texture.id != 0) hasNerdFallback = true;
-            } else if (!isNerd && !hasRegularFallback && (path.canFind("DejaVu") || path.canFind("FreeMono") || path.canFind("LiberationMono"))) {
-                regularFallbackPathStr = path;
-                regularFallback = LoadFontEx(regularFallbackPathStr.toStringz, fontSize, loadedCodepoints.ptr, cast(int)loadedCodepoints.length);
-                if (regularFallback.texture.id != 0) hasRegularFallback = true;
+            if (isNerd && !s.nerdFallback.present)
+            {
+                s.nerdFallback.pathZ = path.toStringz;
+                loadFontInto(s.nerdFallback, s.fontSize, s.codepoints);
+            }
+            else if (!isNerd && !s.regularFallback.present && (path.canFind("DejaVu") || path.canFind("FreeMono") || path.canFind("LiberationMono")))
+            {
+                s.regularFallback.pathZ = path.toStringz;
+                loadFontInto(s.regularFallback, s.fontSize, s.codepoints);
             }
 
-            if (hasNerdFallback && hasRegularFallback) break;
+            if (s.nerdFallback.present && s.regularFallback.present) break;
         }
     }
 
-    Vector2 mSize = MeasureTextEx(font, "M", fontSize, 0);
-    int cellWidth = cast(int)mSize.x;
-    int cellHeight = cast(int)mSize.y;
+    Vector2 mSize = MeasureTextEx(s.font.font, "M", s.fontSize, 0);
+    s.cellWidth = cast(int) mSize.x;
+    s.cellHeight = cast(int) mSize.y;
     // Guard against a zero-sized cell (degenerate font metrics): every grid
     // computation below divides by these, so a 0 would mean division by zero.
-    if (cellWidth < 1) cellWidth = 1;
-    if (cellHeight < 1) cellHeight = 1;
-    SetWindowSize(cols * cellWidth, rows * cellHeight);
+    if (s.cellWidth < 1) s.cellWidth = 1;
+    if (s.cellHeight < 1) s.cellHeight = 1;
+    SetWindowSize(s.cols * s.cellWidth, s.rows * s.cellHeight);
 
     // Install the PNG decoder via the sys interface so the terminal can handle
     // PNG images in the Kitty Graphics Protocol. This is process-global and
     // must be done before any terminal is created.
     ghostty_sys_set(GHOSTTY_SYS_OPT_DECODE_PNG, cast(const(void)*)&decode_png);
 
-    GhosttyTerminal terminal;
-    GhosttyTerminalOptions opts = { cols: cols, rows: rows, max_scrollback: 1000 };
-    ghostty_terminal_new(null, &terminal, opts);
+    GhosttyTerminalOptions opts = { cols: s.cols, rows: s.rows, max_scrollback: 1000 };
+    ghostty_terminal_new(null, &s.terminal, opts);
 
-    int pty_fd = -1;
+    // The terminal options carry no cell pixel size, so set it up front with an
+    // initial resize. Without this, kitty-graphics placement math and pixel-size
+    // reports would see zero cell dimensions until the first window resize.
+    ghostty_terminal_resize(s.terminal, s.cols, s.rows, s.cellWidth, s.cellHeight);
+
+    // Resolve the shell and build argv in the PARENT, before forkpty, so the
+    // forked child does only async-signal-safe work (execv + _exit) — no GC, no
+    // getpwuid/setenv. Every fork here happens after InitWindow created GL and
+    // window threads, so a GC allocation in the child could deadlock.
+    import core.stdc.stdlib : getenv;
+    import core.sys.posix.stdlib : setenv;
+    import core.stdc.string : strrchr;
+    const(char)* shellZ = getenv("SHELL".ptr);
+    if (shellZ is null || *shellZ == '\0')
+    {
+        import core.sys.posix.pwd : getpwuid, passwd;
+        passwd* pw = getpwuid(getuid());
+        if (pw !is null && pw.pw_shell !is null && *pw.pw_shell != '\0')
+            shellZ = pw.pw_shell;
+        else
+            shellZ = "/bin/sh".ptr;
+    }
+    const(char)* shellName = strrchr(shellZ, '/');
+    shellName = shellName ? shellName + 1 : shellZ;
+
+    // Set TERM in the parent; the child inherits the environment (so we don't
+    // need a non-async-signal-safe setenv between fork and exec).
+    setenv("TERM".ptr, "xterm-256color".ptr, 1);
+
+    const(char)*[4] argv;
+    if (shellCommand !is null)
+        argv = [shellName, "-c".ptr, shellCommand, null];
+    else
+        argv = [shellName, null, null, null];
 
     winsize ws = {
-        ws_row: rows,
-        ws_col: cols,
-        ws_xpixel: cast(ushort)(cols * cellWidth),
-        ws_ypixel: cast(ushort)(rows * cellHeight),
+        ws_row: s.rows,
+        ws_col: s.cols,
+        ws_xpixel: cast(ushort)(s.cols * s.cellWidth),
+        ws_ypixel: cast(ushort)(s.rows * s.cellHeight),
     };
-    pid_t child = forkpty(&pty_fd, null, null, &ws);
+    s.child = forkpty(&s.pty_fd, null, null, &ws);
 
-    if (child < 0)
+    if (s.child < 0)
     {
         stderr.writeln("Error: forkpty failed to spawn the shell.");
-        UnloadFont(font);
-        if (hasRegularFallback) UnloadFont(regularFallback);
-        if (hasNerdFallback) UnloadFont(nerdFallback);
-        ghostty_terminal_free(terminal);
+        freeFonts(s);
+        ghostty_terminal_free(s.terminal);
         CloseWindow();
         return 1;
     }
 
-    if (child == 0)
+    if (s.child == 0)
     {
-        import core.sys.posix.stdlib : setenv;
-        setenv("TERM", "xterm-256color", 1);
-        string shell = environment.get("SHELL", null);
-        if (shell.length == 0)
-        {
-            import core.sys.posix.pwd : getpwuid, passwd;
-            import core.sys.posix.unistd : getuid;
-            import std.string : fromStringz;
-
-            passwd* pw = getpwuid(getuid());
-            if (pw && pw.pw_shell)
-            {
-                shell = fromStringz(pw.pw_shell).idup;
-            }
-            if (shell.length == 0)
-            {
-                shell = "/bin/sh";
-            }
-        }
-
-        import core.stdc.string : strrchr;
-        const(char)* shell_ptr = shell.toStringz();
-        const(char)* shell_name = strrchr(shell_ptr, '/');
-        shell_name = shell_name ? shell_name + 1 : shell_ptr;
-
-        // With a command, run it via the shell (`sh -c "<command>"`) so it exits
-        // when the command finishes; otherwise start an interactive shell.
-        if (shellCommand !is null)
-            execl(shell_ptr, shell_name, "-c".ptr, shellCommand, null);
-        else
-            execl(shell_ptr, shell_name, null);
+        // Child: async-signal-safe only.
+        execv(shellZ, cast(char**) argv.ptr);
         _exit(127);
     }
 
     // Parent: make the master fd non-blocking so read() returns EAGAIN instead
     // of stalling the render loop when there's no pending output.
-    int flags = fcntl(pty_fd, F_GETFL);
-    if (flags < 0 || fcntl(pty_fd, F_SETFL, flags | O_NONBLOCK) < 0)
+    int flags = fcntl(s.pty_fd, F_GETFL);
+    if (flags < 0 || fcntl(s.pty_fd, F_SETFL, flags | O_NONBLOCK) < 0)
     {
         stderr.writeln("Error: failed to set the pty master non-blocking.");
-        UnloadFont(font);
-        if (hasRegularFallback) UnloadFont(regularFallback);
-        if (hasNerdFallback) UnloadFont(nerdFallback);
-        ghostty_terminal_free(terminal);
+        // Reap the child we just forked so it doesn't linger.
+        import core.sys.posix.signal : kill, SIGHUP;
+        import core.sys.posix.sys.wait : waitpid;
+        kill(s.child, SIGHUP);
+        waitpid(s.child, null, 0);
+        freeFonts(s);
+        ghostty_terminal_free(s.terminal);
         CloseWindow();
         return 1;
     }
 
     // Register effects so the terminal can respond to the VT queries that
     // programs like vim, tmux, and htop send at startup (device attributes,
-    // size, xtversion, …). Without these, those queries are silently dropped
-    // and the programs may hang or fall back to degraded behavior.
-    EffectsContext effects_ctx = {
-        pty_fd: pty_fd,
-        cellWidth: cellWidth,
-        cellHeight: cellHeight,
-        cols: cols,
-        rows: rows,
-    };
-    ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_USERDATA, cast(const(void)*)&effects_ctx);
-    ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_WRITE_PTY, cast(const(void)*)&effect_write_pty);
-    ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_SIZE, cast(const(void)*)&effect_size);
-    ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_DEVICE_ATTRIBUTES, cast(const(void)*)&effect_device_attributes);
-    ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_XTVERSION, cast(const(void)*)&effect_xtversion);
-    ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_ENQUIRY, cast(const(void)*)&effect_enquiry);
-    ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_TITLE_CHANGED, cast(const(void)*)&effect_title_changed);
-    ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_COLOR_SCHEME, cast(const(void)*)&effect_color_scheme);
-    ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_BELL, cast(const(void)*)&effect_bell);
+    // size, xtversion, …). The userdata pointer aims at the stack-pinned
+    // CoreState's effects_ctx, which outlives the loop.
+    s.effects_ctx.pty_fd = s.pty_fd;
+    s.effects_ctx.cellWidth = s.cellWidth;
+    s.effects_ctx.cellHeight = s.cellHeight;
+    s.effects_ctx.cols = s.cols;
+    s.effects_ctx.rows = s.rows;
+    ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_USERDATA, cast(const(void)*)&s.effects_ctx);
+    ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_WRITE_PTY, cast(const(void)*)&effect_write_pty);
+    ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_SIZE, cast(const(void)*)&effect_size);
+    ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_DEVICE_ATTRIBUTES, cast(const(void)*)&effect_device_attributes);
+    ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_XTVERSION, cast(const(void)*)&effect_xtversion);
+    ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_ENQUIRY, cast(const(void)*)&effect_enquiry);
+    ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_TITLE_CHANGED, cast(const(void)*)&effect_title_changed);
+    ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_COLOR_SCHEME, cast(const(void)*)&effect_color_scheme);
+    ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_BELL, cast(const(void)*)&effect_bell);
 
     // Enable Kitty graphics: a storage limit is required (otherwise the terminal
     // rejects all image data), plus the file / temp-file / shared-memory
     // transmission mediums in addition to the default inline medium.
     ulong kitty_storage_limit = 64 * 1024 * 1024; // 64 MiB
-    ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT, &kitty_storage_limit);
+    ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT, &kitty_storage_limit);
     bool kitty_medium = true;
-    ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_FILE, &kitty_medium);
-    ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE, &kitty_medium);
-    ghostty_terminal_set(terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_SHARED_MEM, &kitty_medium);
+    ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_FILE, &kitty_medium);
+    ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_TEMP_FILE, &kitty_medium);
+    ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_MEDIUM_SHARED_MEM, &kitty_medium);
 
-    GhosttyRenderState render_state;
-    ghostty_render_state_new(null, &render_state);
+    ghostty_render_state_new(null, &s.render_state);
+    ghostty_render_state_row_iterator_new(null, &s.row_iter);
+    ghostty_render_state_row_cells_new(null, &s.cells);
+    ghostty_kitty_graphics_placement_iterator_new(null, &s.placement_iter);
+    ghostty_key_event_new(null, &s.key_event);
+    ghostty_key_encoder_new(null, &s.key_encoder);
+    ghostty_mouse_event_new(null, &s.mouse_event);
+    ghostty_mouse_encoder_new(null, &s.mouse_encoder);
 
-    GhosttyRenderStateRowIterator row_iter;
-    ghostty_render_state_row_iterator_new(null, &row_iter);
+    // Steady state: everything below runs allocation-free and non-throwing.
+    runCoreLoop(s);
 
-    GhosttyRenderStateRowCells cells;
-    ghostty_render_state_row_cells_new(null, &cells);
+    // Reap the child to avoid a zombie. If it's still alive (the user closed the
+    // window first), hang up its process group, then block until it exits.
+    if (s.child > 0 && !s.childReaped)
+    {
+        import core.sys.posix.signal : kill, SIGHUP;
+        import core.sys.posix.unistd : getpgid;
+        import core.sys.posix.sys.wait : waitpid;
+        if (!s.childExited)
+        {
+            auto pgid = getpgid(s.child);
+            if (pgid <= 0) pgid = s.child;
+            kill(cast(pid_t)(-pgid), SIGHUP); // SIGHUP the whole foreground group.
+        }
+        waitpid(s.child, null, 0);
+    }
 
-    GhosttyKittyGraphicsPlacementIterator placement_iter;
-    ghostty_kitty_graphics_placement_iterator_new(null, &placement_iter);
+    freeFonts(s);
+    ghostty_kitty_graphics_placement_iterator_free(s.placement_iter);
+    ghostty_render_state_row_cells_free(s.cells);
+    ghostty_render_state_row_iterator_free(s.row_iter);
+    ghostty_render_state_free(s.render_state);
+    ghostty_key_event_free(s.key_event);
+    ghostty_key_encoder_free(s.key_encoder);
+    ghostty_mouse_event_free(s.mouse_event);
+    ghostty_mouse_encoder_free(s.mouse_encoder);
+    s.selState.free();
+    ghostty_terminal_free(s.terminal);
+    CloseWindow();
+    return 0;
+}
 
-    GhosttyKeyEvent key_event;
-    ghostty_key_event_new(null, &key_event);
-    GhosttyKeyEncoder key_encoder;
-    ghostty_key_encoder_new(null, &key_encoder);
-
-    GhosttyMouseEvent mouse_event;
-    ghostty_mouse_event_new(null, &mouse_event);
-    GhosttyMouseEncoder mouse_encoder;
-    ghostty_mouse_encoder_new(null, &mouse_encoder);
-
-    import input : SelectionState, ScrollbarState, HoverState;
-    SelectionState selState;
-    ScrollbarState sbState;
-    HoverState hoverState;
-
-    char[4096] pty_buf;
+// The steady-state frame loop. nothrow @nogc: it allocates nothing and cannot
+// throw, so a long-running session has no GC pauses from this code.
+@system nothrow @nogc
+private void runCoreLoop(ref CoreState s)
+{
+    import core.sys.posix.sys.wait : waitpid, WNOHANG, WIFEXITED, WEXITSTATUS, WIFSIGNALED, WTERMSIG;
+    import input : handle_input, handle_mouse, pty_write;
 
     // Initialize from the actual window state to avoid a spurious focus event
     // on the first frame.
     bool prev_focused = IsWindowFocused();
+    char[4096] pty_buf = void;
+    int frameCount = 0;
 
-    // Child-process lifecycle. childExited is set when the pty signals EOF/EIO;
-    // childReaped once waitpid() collects the exit status.
-    import core.sys.posix.sys.wait : waitpid, WNOHANG, WIFEXITED, WEXITSTATUS, WIFSIGNALED, WTERMSIG;
-    bool childExited = false;
-    bool childReaped = false;
-    int childStatus = -1;
+    // Benchmark hook: when set, redraw every frame regardless of dirty state, so
+    // the render path can be measured in isolation (a static screen otherwise
+    // skips, and a stream workload is parse-bound). See apps/terminal-benchmark.
+    import core.stdc.stdlib : getenv;
+    const forceRedraw = getenv("SPARKLES_BENCH_FORCE_REDRAW") !is null;
+
+    // Dirty-frame skipping state. The terminal redraws the whole grid every
+    // frame, so when nothing has changed we skip the (expensive) draw and just
+    // pace + poll input, leaving the last frame on screen. `prevOverlayActive`
+    // forces one extra redraw when an app-side overlay (selection, hover,
+    // scrollbar, bell) turns off so it gets cleared; `forceFirstFrames` paints
+    // the opening frames unconditionally.
+    bool prevOverlayActive = false;
+    bool prevChildExited = false;
+    int forceFirstFrames = 2;
+
+    // Codepoints seen this frame that the primary face covers but the atlas has
+    // not rasterized yet. Collected during the glyph pass and folded into the
+    // primary font's request set after the frame (a single atlas reload).
+    SmallBuffer!(int, 64) pendingCps;
 
     while (!WindowShouldClose())
     {
-        import input : handle_input, handle_mouse, pty_write;
-
-        // Forward keyboard/mouse only while the child is alive.
-        if (!childExited) {
-            handle_input(pty_fd, key_encoder, key_event, terminal, selState);
-            handle_mouse(pty_fd, mouse_encoder, mouse_event, terminal, cellWidth, cellHeight, selState, sbState, hoverState);
+        // --- Font-size hotkeys (Ctrl +/-) and window/grid resize. Done first so
+        //     the new cell metrics feed input and rendering this frame. ---
+        bool fontChanged = false;
+        const ctrlDown = IsKeyDown(KeyboardKey.KEY_LEFT_CONTROL) || IsKeyDown(KeyboardKey.KEY_RIGHT_CONTROL);
+        if (ctrlDown && IsKeyPressed(KeyboardKey.KEY_EQUAL))
+        {
+            s.fontSize += 2;
+            fontChanged = true;
+        }
+        else if (ctrlDown && IsKeyPressed(KeyboardKey.KEY_MINUS))
+        {
+            if (s.fontSize > 6) { s.fontSize -= 2; fontChanged = true; }
         }
 
-        if (hoverState.isHoveringUrl) {
-            SetMouseCursor(MouseCursor.MOUSE_CURSOR_POINTING_HAND);
-        } else {
-            SetMouseCursor(MouseCursor.MOUSE_CURSOR_DEFAULT);
+        if (fontChanged)
+        {
+            loadFontInto(s.font, s.fontSize, s.requestedCps[]);
+            if (s.fontBold.pathZ !is null) loadFontInto(s.fontBold, s.fontSize, s.requestedCps[]);
+            if (s.fontItalic.pathZ !is null) loadFontInto(s.fontItalic, s.fontSize, s.requestedCps[]);
+            if (s.fontBoldItalic.pathZ !is null) loadFontInto(s.fontBoldItalic, s.fontSize, s.requestedCps[]);
+            if (s.regularFallback.pathZ !is null) loadFontInto(s.regularFallback, s.fontSize, s.codepoints);
+            if (s.nerdFallback.pathZ !is null) loadFontInto(s.nerdFallback, s.fontSize, s.codepoints);
+            Vector2 mSize = MeasureTextEx(s.font.font, "M", s.fontSize, 0);
+            s.cellWidth = cast(int) mSize.x;
+            s.cellHeight = cast(int) mSize.y;
+            if (s.cellWidth < 1) s.cellWidth = 1;
+            if (s.cellHeight < 1) s.cellHeight = 1;
         }
 
-        // Focus in/out reporting (DECSET 1004). Only emit when the application
-        // has enabled focus events, otherwise we'd inject stray CSI I / CSI O
-        // into shells that never asked for them. GHOSTTY_MODE_FOCUS_EVENT is
-        // ghostty_mode_new(1004, false), which for a DEC private mode is 1004.
+        if (fontChanged || IsWindowResized())
+        {
+            s.cols = cast(ushort)(GetScreenWidth() / s.cellWidth);
+            s.rows = cast(ushort)(GetScreenHeight() / s.cellHeight);
+            if (s.cols == 0) s.cols = 1;
+            if (s.rows == 0) s.rows = 1;
+
+            ghostty_terminal_resize(s.terminal, s.cols, s.rows, s.cellWidth, s.cellHeight);
+            // Keep the effects context in sync so size/DA reports are accurate.
+            s.effects_ctx.cols = s.cols;
+            s.effects_ctx.rows = s.rows;
+            s.effects_ctx.cellWidth = s.cellWidth;
+            s.effects_ctx.cellHeight = s.cellHeight;
+            winsize new_ws = {
+                ws_row: s.rows,
+                ws_col: s.cols,
+                ws_xpixel: cast(ushort)(s.cols * s.cellWidth),
+                ws_ypixel: cast(ushort)(s.rows * s.cellHeight),
+            };
+            ioctl(s.pty_fd, TIOCSWINSZ, &new_ws);
+        }
+
+        // --- Focus in/out reporting (DECSET 1004). Only emit when the
+        //     application enabled focus events, else we'd inject stray CSI I/O. ---
         bool focused = IsWindowFocused();
-        if (focused != prev_focused) {
+        if (focused != prev_focused)
+        {
             bool focus_mode = false;
-            if (ghostty_terminal_mode_get(terminal, cast(GhosttyMode) 1004, &focus_mode) == GHOSTTY_SUCCESS && focus_mode) {
+            if (ghostty_terminal_mode_get(s.terminal, cast(GhosttyMode) 1004, &focus_mode) == GHOSTTY_SUCCESS && focus_mode)
+            {
                 char[8] fbuf;
                 size_t fwritten = 0;
                 auto fev = focused ? GHOSTTY_FOCUS_GAINED : GHOSTTY_FOCUS_LOST;
                 if (ghostty_focus_encode(fev, fbuf.ptr, fbuf.length, &fwritten) == GHOSTTY_SUCCESS && fwritten > 0)
-                    pty_write(pty_fd, fbuf.ptr, fwritten);
+                    pty_write(s.pty_fd, fbuf.ptr, fwritten);
             }
             prev_focused = focused;
         }
 
-        // Drain all output currently available from the pty in one frame.
-        // The master fd is non-blocking, so we read in a loop until EAGAIN
-        // (kernel buffer empty) instead of once per frame — a single read
-        // would cap throughput and make fast output (cat, yes) crawl. Once the
-        // child has exited we stop reading; the fd may be closed.
-        if (!childExited)
+        // --- Drain the pty BEFORE handling input, so the key/mouse encoders see
+        //     this frame's mode changes. Non-blocking: read until EAGAIN. ---
+        if (!s.childExited)
         {
             while (true)
             {
-                auto n = read(pty_fd, pty_buf.ptr, pty_buf.length);
+                auto n = read(s.pty_fd, pty_buf.ptr, pty_buf.length);
                 if (n > 0)
                 {
-                    ghostty_terminal_vt_write(terminal, cast(const(ubyte)*)pty_buf.ptr, cast(uint)n);
+                    ghostty_terminal_vt_write(s.terminal, cast(const(ubyte)*)pty_buf.ptr, cast(uint)n);
                 }
                 else if (n == 0)
                 {
-                    childExited = true; // Child closed its end of the pty (EOF).
+                    s.childExited = true; // Child closed its end of the pty (EOF).
                     break;
                 }
                 else
@@ -645,39 +1256,37 @@ int main(string[] args)
                         break; // Nothing more available this frame.
                     if (errno == EINTR)
                         continue; // Interrupted by a signal — retry the read.
-                    childExited = true; // EIO (slave closed on Linux) or error.
+                    s.childExited = true; // EIO (slave closed on Linux) or error.
                     break;
                 }
             }
         }
 
-        // Reap the child once it has exited so we get its status and leave no
-        // zombie. The pty EOF can arrive before the child is waitable, so we
-        // retry each frame until WNOHANG succeeds.
-        if (childExited && !childReaped)
+        // --- Reap the child once it has exited (retry until WNOHANG succeeds). ---
+        if (s.childExited && !s.childReaped)
         {
             int wstatus;
-            if (waitpid(child, &wstatus, WNOHANG) == child)
+            if (waitpid(s.child, &wstatus, WNOHANG) == s.child)
             {
-                childReaped = true;
+                s.childReaped = true;
                 if (WIFEXITED(wstatus))
-                    childStatus = WEXITSTATUS(wstatus);
+                    s.childStatus = WEXITSTATUS(wstatus);
                 else if (WIFSIGNALED(wstatus))
-                    childStatus = 128 + WTERMSIG(wstatus);
+                    s.childStatus = 128 + WTERMSIG(wstatus);
             }
         }
 
-        // Decide whether to close based on the configured exit behavior.
-        if (childExited)
+        // --- Decide whether to close based on the configured exit behavior. ---
+        if (s.childExited)
         {
             bool closeNow = false;
-            final switch (exitBehavior)
+            final switch (s.exitBehavior)
             {
                 case ExitBehavior.close:
                     closeNow = true;
                     break;
                 case ExitBehavior.holdOnFailure:
-                    closeNow = childReaped && childStatus == 0; // close on clean exit.
+                    closeNow = s.childReaped && s.childStatus == 0; // close on clean exit.
                     break;
                 case ExitBehavior.hold:
                     break; // Stay open until the window is closed.
@@ -686,87 +1295,90 @@ int main(string[] args)
                     break;
             }
             if (closeNow)
-                break; // exits the main while loop.
+                break;
         }
 
-        // Font size control
-        bool fontChanged = false;
-        if ((IsKeyDown(KeyboardKey.KEY_LEFT_CONTROL) || IsKeyDown(KeyboardKey.KEY_RIGHT_CONTROL)) && IsKeyPressed(KeyboardKey.KEY_EQUAL)) {
-            fontSize += 2;
-            fontChanged = true;
-        }
-        else if ((IsKeyDown(KeyboardKey.KEY_LEFT_CONTROL) || IsKeyDown(KeyboardKey.KEY_RIGHT_CONTROL)) && IsKeyPressed(KeyboardKey.KEY_MINUS)) {
-            if (fontSize > 6) {
-                fontSize -= 2;
-                fontChanged = true;
-            }
+        // --- Forward keyboard/mouse only while the child is alive. ---
+        if (!s.childExited)
+        {
+            handle_input(s.pty_fd, s.key_encoder, s.key_event, s.terminal, s.selState);
+            handle_mouse(s.pty_fd, s.mouse_encoder, s.mouse_event, s.terminal, s.cellWidth, s.cellHeight, s.selState, s.sbState, s.hoverState);
         }
 
-        if (fontChanged) {
-            // Reloading fonts invalidates the glyph cache (texture ids may be
-            // reused by the GPU after the old fonts are unloaded).
-            glyphCache.clear();
-            UnloadFont(font);
-            font = LoadFontEx(fontPath.toStringz, fontSize, loadedCodepoints.ptr, cast(int)loadedCodepoints.length);
-            if (hasRegularFallback) {
-                UnloadFont(regularFallback);
-                regularFallback = LoadFontEx(regularFallbackPathStr.toStringz, fontSize, loadedCodepoints.ptr, cast(int)loadedCodepoints.length);
-            }
-            if (hasNerdFallback) {
-                UnloadFont(nerdFallback);
-                nerdFallback = LoadFontEx(nerdFallbackPathStr.toStringz, fontSize, loadedCodepoints.ptr, cast(int)loadedCodepoints.length);
-            }
-            mSize = MeasureTextEx(font, "M", fontSize, 0);
-            cellWidth = cast(int)mSize.x;
-            cellHeight = cast(int)mSize.y;
-            if (cellWidth < 1) cellWidth = 1;
-            if (cellHeight < 1) cellHeight = 1;
+        if (s.hoverState.isHoveringUrl)
+            SetMouseCursor(MouseCursor.MOUSE_CURSOR_POINTING_HAND);
+        else
+            SetMouseCursor(MouseCursor.MOUSE_CURSOR_DEFAULT);
+
+        // --- Snapshot the terminal into the render state. Always update so the
+        //     terminal's dirty state is consumed; the query below decides
+        //     whether this frame needs a redraw at all. ---
+        ghostty_render_state_update(s.render_state, s.terminal);
+
+        // --- Dirty-frame skipping. When the terminal content is clean and no
+        //     app-side overlay/animation is active (or just ended), the last
+        //     fully-drawn frame is still on screen, so skip the whole-grid
+        //     redraw and only pace + poll input. This drops idle CPU to near
+        //     zero. We pace and poll manually (EndDrawing normally does both)
+        //     but deliberately do NOT swap buffers, keeping the last frame. ---
+        GhosttyRenderStateDirty dirty = GHOSTTY_RENDER_STATE_DIRTY_FULL;
+        ghostty_render_state_get(s.render_state, GHOSTTY_RENDER_STATE_DATA_DIRTY, &dirty);
+
+        const bool overlayActive =
+            s.effects_ctx.bellFlashFrames > 0
+            || s.selState.isSelecting
+            || s.hoverState.isHoveringUrl
+            || s.sbState.isHovered || s.sbState.isDragging
+            || s.sbState.currentWidth != s.sbState.targetWidth;
+
+        const bool redraw =
+            forceRedraw
+            || dirty != GHOSTTY_RENDER_STATE_DIRTY_FALSE
+            || overlayActive || prevOverlayActive
+            || fontChanged || IsWindowResized()
+            || s.childExited != prevChildExited
+            || forceFirstFrames > 0
+            || s.debugScreenshotAndExit; // debug path wants full-rate frames
+
+        prevOverlayActive = overlayActive;
+        prevChildExited = s.childExited;
+        if (forceFirstFrames > 0) forceFirstFrames--;
+
+        if (!redraw)
+        {
+            PollInputEvents();    // register input so next frame's keys/mouse are fresh
+            WaitTime(1.0 / 60.0); // pace to the 60 FPS target without a buffer swap
+            continue;
         }
 
-        if (fontChanged || IsWindowResized()) {
-            cols = cast(ushort)(GetScreenWidth() / cellWidth);
-            rows = cast(ushort)(GetScreenHeight() / cellHeight);
-            if (cols == 0) cols = 1;
-            if (rows == 0) rows = 1;
-
-            ghostty_terminal_resize(terminal, cols, rows, cellWidth, cellHeight);
-            // Keep the effects context in sync so size/DA reports are accurate.
-            effects_ctx.cols = cols;
-            effects_ctx.rows = rows;
-            effects_ctx.cellWidth = cellWidth;
-            effects_ctx.cellHeight = cellHeight;
-            winsize new_ws = {
-                ws_row: rows,
-                ws_col: cols,
-                ws_xpixel: cast(ushort)(cols * cellWidth),
-                ws_ypixel: cast(ushort)(rows * cellHeight),
-            };
-            ioctl(pty_fd, TIOCSWINSZ, &new_ws);
-        }
-
-        // Update render state
-        ghostty_render_state_update(render_state, terminal);
+        // Resolved default colors (used for the window clear, default cell
+        // colors, and the cursor) instead of hardcoded white-on-black.
+        GhosttyRenderStateColors colors;
+        colors.size = GhosttyRenderStateColors.sizeof;
+        ghostty_render_state_colors_get(s.render_state, &colors);
 
         BeginDrawing();
-        ClearBackground(Colors.BLACK);
+        ClearBackground(Color(colors.background.r, colors.background.g, colors.background.b, 255));
 
-        // Obtain the Kitty graphics storage (a borrowed pointer valid until the
-        // next mutating terminal call). Images are drawn in three z-layers:
-        // below backgrounds, below text, and above text.
+        // Kitty graphics storage (borrowed; valid until the next mutating
+        // terminal call). Images draw in three z-layers around the text.
         GhosttyKittyGraphics kitty_gfx = null;
-        bool has_kitty = ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS, &kitty_gfx) == GHOSTTY_SUCCESS && kitty_gfx !is null;
+        bool has_kitty = ghostty_terminal_get(s.terminal, GHOSTTY_TERMINAL_DATA_KITTY_GRAPHICS, &kitty_gfx) == GHOSTTY_SUCCESS && kitty_gfx !is null;
         if (has_kitty)
-            render_kitty_images(terminal, kitty_gfx, placement_iter, cellWidth, cellHeight, GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_BG);
+            render_kitty_images(s.terminal, kitty_gfx, s.placement_iter, s.cellWidth, s.cellHeight, GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_BG);
 
         GhosttyPointCoordinate sel_start_pt, sel_end_pt;
         bool has_selection = false;
-        if (selState.start && selState.end) {
-            if (ghostty_tracked_grid_ref_point(selState.start, GHOSTTY_POINT_TAG_VIEWPORT, &sel_start_pt) == GHOSTTY_SUCCESS &&
-                ghostty_tracked_grid_ref_point(selState.end, GHOSTTY_POINT_TAG_VIEWPORT, &sel_end_pt) == GHOSTTY_SUCCESS) {
+        if (s.selState.start && s.selState.end)
+        {
+            if (ghostty_tracked_grid_ref_point(s.selState.start, GHOSTTY_POINT_TAG_VIEWPORT, &sel_start_pt) == GHOSTTY_SUCCESS &&
+                ghostty_tracked_grid_ref_point(s.selState.end, GHOSTTY_POINT_TAG_VIEWPORT, &sel_end_pt) == GHOSTTY_SUCCESS)
+            {
                 has_selection = true;
 
                 // ensure start is before end
-                if (sel_start_pt.y > sel_end_pt.y || (sel_start_pt.y == sel_end_pt.y && sel_start_pt.x > sel_end_pt.x)) {
+                if (sel_start_pt.y > sel_end_pt.y || (sel_start_pt.y == sel_end_pt.y && sel_start_pt.x > sel_end_pt.x))
+                {
                     auto temp = sel_start_pt;
                     sel_start_pt = sel_end_pt;
                     sel_end_pt = temp;
@@ -774,173 +1386,126 @@ int main(string[] args)
             }
         }
 
-        ghostty_render_state_get(render_state, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &row_iter);
+        // Two-pass render: paint ALL cell backgrounds first, then ALL glyphs.
+        // Full-height glyphs (powerline separators, box-drawing, tall Nerd Font
+        // icons) can exceed the cell box. With a single interleaved pass the
+        // next row's background would overwrite the previous row's glyph
+        // overflow, clipping it ("cut in half"); separating the passes means
+        // every background lands before any glyph is drawn. Both passes resolve
+        // each cell via `resolveCell` so selection/hover/inverse stay identical.
 
-        int y = 0;
-        while (ghostty_render_state_row_iterator_next(row_iter))
+        // --- Pass 1: backgrounds. ---
+        ghostty_render_state_get(s.render_state, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &s.row_iter);
+        int bgY = 0;
+        while (ghostty_render_state_row_iterator_next(s.row_iter))
         {
-            ghostty_render_state_row_get(row_iter, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &cells);
+            ghostty_render_state_row_get(s.row_iter, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &s.cells);
 
-            BeginScissorMode(0, y, GetScreenWidth(), cellHeight);
+            int bgX = 0;
+            while (ghostty_render_state_row_cells_next(s.cells))
+            {
+                const rc = resolveCell(s.cells, colors, bgX / s.cellWidth, bgY / s.cellHeight,
+                    has_selection, sel_start_pt, sel_end_pt, s.selState, s.hoverState);
+                if (rc.hasBg)
+                    drawSolid(s.font, bgX, bgY, s.cellWidth, s.cellHeight, rc.bgCol);
+                bgX += s.cellWidth;
+            }
+
+            bgY += s.cellHeight;
+        }
+
+        // --- Pass 2: glyphs and per-cell decorations. Re-fetching the row
+        //     iterator rewinds it to the first row. ---
+        ghostty_render_state_get(s.render_state, GHOSTTY_RENDER_STATE_DATA_ROW_ITERATOR, &s.row_iter);
+        int y = 0;
+        while (ghostty_render_state_row_iterator_next(s.row_iter))
+        {
+            ghostty_render_state_row_get(s.row_iter, GHOSTTY_RENDER_STATE_ROW_DATA_CELLS, &s.cells);
 
             int x = 0;
-            while (ghostty_render_state_row_cells_next(cells))
+            while (ghostty_render_state_row_cells_next(s.cells))
             {
-                uint grapheme_len;
-                ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_LEN, &grapheme_len);
+                const rc = resolveCell(s.cells, colors, x / s.cellWidth, y / s.cellHeight,
+                    has_selection, sel_start_pt, sel_end_pt, s.selState, s.hoverState);
 
-                if (grapheme_len > 0)
+                if (rc.hasGrapheme)
                 {
-                    uint[16] codepoints;
-                    ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_GRAPHEMES_BUF, codepoints.ptr);
-
-                    // Get background color
-                    GhosttyColorRgb bg_rgb;
-                    ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &bg_rgb);
-
-                    // Get foreground color
-                    GhosttyColorRgb fg_rgb = { r: 255, g: 255, b: 255 }; // Default fallback
-                    ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_FG_COLOR, &fg_rgb);
-
-                    Color bg_col = Color(bg_rgb.r, bg_rgb.g, bg_rgb.b, 255);
-                    Color fg_col = Color(fg_rgb.r, fg_rgb.g, fg_rgb.b, 255);
-
-                    // Read the cell style for SGR attribute flags. Colors are
-                    // already resolved above via the FG/BG_COLOR queries.
-                    GhosttyStyle style;
-                    style.size = GhosttyStyle.sizeof;
-                    ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_STYLE, &style);
-
-                    // Reverse video: swap fg/bg up front so the selection and
-                    // hovered-link swaps below compose on top of it correctly.
-                    if (style.inverse) {
-                        Color inv = bg_col;
-                        bg_col = fg_col;
-                        fg_col = inv;
-                    }
-
-                    int cell_x = x / cellWidth;
-                    int cell_y = y / cellHeight;
-
-                    bool is_selected = false;
-                    if (has_selection) {
-                        if (selState.isRectangular) {
-                            int min_x = sel_start_pt.x < sel_end_pt.x ? sel_start_pt.x : sel_end_pt.x;
-                            int max_x = sel_start_pt.x > sel_end_pt.x ? sel_start_pt.x : sel_end_pt.x;
-                            if (cell_y >= sel_start_pt.y && cell_y <= sel_end_pt.y && cell_x >= min_x && cell_x <= max_x) {
-                                is_selected = true;
-                            }
-                        } else {
-                            if (cell_y > sel_start_pt.y && cell_y < sel_end_pt.y) {
-                                is_selected = true;
-                            } else if (cell_y == sel_start_pt.y && cell_y == sel_end_pt.y) {
-                                is_selected = cell_x >= sel_start_pt.x && cell_x <= sel_end_pt.x;
-                            } else if (cell_y == sel_start_pt.y) {
-                                is_selected = cell_x >= sel_start_pt.x;
-                            } else if (cell_y == sel_end_pt.y) {
-                                is_selected = cell_x <= sel_end_pt.x;
-                            }
+                    // Pick the real bold/italic face for this cell when one was
+                    // loaded; otherwise fall back to the regular face and fake
+                    // the missing axis (slant for italic, double-strike for bold).
+                    auto sf = pickStyledFace(s, rc.style.bold, rc.style.italic);
+                    LoadedFont* activeFont = sf.font;
+                    if (rc.codepoints[0] >= 128)
+                    {
+                        if (!fontHasGlyph(*activeFont, rc.codepoints[0]))
+                        {
+                            if (s.regularFallback.present && fontHasGlyph(s.regularFallback, rc.codepoints[0]))
+                                activeFont = &s.regularFallback;
+                            else if (s.nerdFallback.present && fontHasGlyph(s.nerdFallback, rc.codepoints[0]))
+                                activeFont = &s.nerdFallback;
+                            else if (faceHasCodepoint(s, rc.codepoints[0]))
+                                requestGlyph(pendingCps, rc.codepoints[0]); // primary face has it; load it on demand
                         }
                     }
 
-                    if (is_selected) {
-                        Color tmp = bg_col;
-                        bg_col = fg_col;
-                        fg_col = tmp;
-                    }
+                    // Draw the whole grapheme cluster (base codepoint plus any
+                    // combining marks, ZWJ joiners, variation selectors, …) as one
+                    // unit. Drawing only codepoints[0] would drop accents and emoji
+                    // modifiers.
+                    const cp_count = rc.graphemeLen < 16 ? rc.graphemeLen : 16;
 
-                    bool is_hovered_link = hoverState.isHoveringUrl && cell_y == hoverState.y && cell_x >= hoverState.start_x && cell_x <= hoverState.end_x;
-                    if (is_hovered_link) {
-                        Color tmp = bg_col;
-                        bg_col = fg_col;
-                        fg_col = tmp;
-                    }
+                    // Fake italic only when no real italic face is in use: shift
+                    // the glyph right by a fraction of the font size (a crude
+                    // slant; raylib can't shear a glyph).
+                    const italic_offset = sf.fakeItalic ? (s.fontSize / 6) : 0;
+                    drawGrapheme(*activeFont, rc.codepoints[0 .. cp_count],
+                        cast(float)(x + italic_offset), cast(float)y, s.fontSize, rc.fgCol);
 
-                    DrawRectangle(x, y, cellWidth, cellHeight, bg_col);
-
-                    Font activeFont = font;
-                    if (codepoints[0] >= 128) {
-                        if (!fontHasGlyph(font, codepoints[0])) {
-                            if (hasRegularFallback && fontHasGlyph(regularFallback, codepoints[0])) {
-                                activeFont = regularFallback;
-                            } else if (hasNerdFallback && fontHasGlyph(nerdFallback, codepoints[0])) {
-                                activeFont = nerdFallback;
-                            }
-                        }
-                    }
-
-                    // Encode the whole grapheme cluster (base codepoint plus any
-                    // combining marks, ZWJ joiners, variation selectors, …) into a
-                    // single UTF-8 string and draw it as one unit. Drawing only
-                    // codepoints[0] would drop accents and emoji modifiers.
-                    import std.utf : encode;
-                    import std.typecons : Yes;
-                    char[64] text = void;
-                    size_t text_len = 0;
-                    const cp_count = grapheme_len < 16 ? grapheme_len : 16;
-                    foreach (i; 0 .. cp_count) {
-                        char[4] u8;
-                        const u8n = encode!(Yes.useReplacementDchar)(u8, cast(dchar)codepoints[i]);
-                        if (text_len + u8n >= text.length) break;
-                        text[text_len .. text_len + u8n] = u8[0 .. u8n];
-                        text_len += u8n;
-                    }
-                    text[text_len] = '\0';
-
-                    // Italic: shift the glyph right by a fraction of the font
-                    // size (a crude slant; raylib can't shear a glyph).
-                    const italic_offset = style.italic ? (fontSize / 6) : 0;
-                    DrawTextEx(activeFont, text.ptr, Vector2(cast(float)(x + italic_offset), cast(float)y), fontSize, 0, fg_col);
-
-                    // Bold: redraw 1px to the right to thicken strokes (fake bold).
-                    if (style.bold)
-                        DrawTextEx(activeFont, text.ptr, Vector2(cast(float)(x + italic_offset + 1), cast(float)y), fontSize, 0, fg_col);
+                    // Fake bold only when no real bold face is in use: redraw 1px
+                    // to the right to thicken strokes.
+                    if (sf.fakeBold)
+                        drawGrapheme(*activeFont, rc.codepoints[0 .. cp_count],
+                            cast(float)(x + italic_offset + 1), cast(float)y, s.fontSize, rc.fgCol);
 
                     // Underline (any SGR underline style) and strikethrough.
-                    if (style.underline != 0)
-                        DrawRectangle(x, y + cellHeight - 2, cellWidth, 1, fg_col);
-                    if (style.strikethrough)
-                        DrawRectangle(x, y + cellHeight / 2, cellWidth, 1, fg_col);
+                    if (rc.style.underline != 0)
+                        drawSolid(s.font, x, y + s.cellHeight - 2, s.cellWidth, 1, rc.fgCol);
+                    if (rc.style.strikethrough)
+                        drawSolid(s.font, x, y + s.cellHeight / 2, s.cellWidth, 1, rc.fgCol);
 
                     GhosttyCell raw_cell;
                     bool has_hyperlink = false;
-                    if (ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, cast(void*)&raw_cell) == GHOSTTY_SUCCESS) {
+                    if (ghostty_render_state_row_cells_get(s.cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_RAW, cast(void*)&raw_cell) == GHOSTTY_SUCCESS)
                         ghostty_cell_get(raw_cell, GHOSTTY_CELL_DATA_HAS_HYPERLINK, cast(void*)&has_hyperlink);
-                    }
 
-                    if (has_hyperlink || is_hovered_link) {
-                        int thickness = is_hovered_link ? 2 : 1;
-                        DrawRectangle(x, y + cellHeight - thickness, cellWidth, thickness, fg_col);
-                    }
-                }
-                else
-                {
-                    // Empty cell with no text may still carry a background color
-                    // (e.g. an erase with a color set). BG_COLOR returns
-                    // INVALID_VALUE when the cell has no background.
-                    GhosttyColorRgb bg_rgb;
-                    if (ghostty_render_state_row_cells_get(cells, GHOSTTY_RENDER_STATE_ROW_CELLS_DATA_BG_COLOR, &bg_rgb) == GHOSTTY_SUCCESS) {
-                        DrawRectangle(x, y, cellWidth, cellHeight, Color(bg_rgb.r, bg_rgb.g, bg_rgb.b, 255));
+                    if (has_hyperlink || rc.isHoveredLink)
+                    {
+                        int thickness = rc.isHoveredLink ? 2 : 1;
+                        drawSolid(s.font, x, y + s.cellHeight - thickness, s.cellWidth, thickness, rc.fgCol);
                     }
                 }
 
-                x += cellWidth;
+                x += s.cellWidth;
             }
 
-            EndScissorMode();
-            y += cellHeight;
+            // Clear this row's dirty flag now that it has been drawn.
+            bool rowClean = false;
+            ghostty_render_state_row_set(s.row_iter, GHOSTTY_RENDER_STATE_ROW_OPTION_DIRTY, &rowClean);
+
+            y += s.cellHeight;
         }
 
-        // Images below text (drawn after cell backgrounds/text in this
-        // single-pass renderer, but before the cursor and above-text images).
+        // Images below text (drawn after cell backgrounds/text, but before the
+        // cursor and above-text images).
         if (has_kitty)
-            render_kitty_images(terminal, kitty_gfx, placement_iter, cellWidth, cellHeight, GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT);
+            render_kitty_images(s.terminal, kitty_gfx, s.placement_iter, s.cellWidth, s.cellHeight, GHOSTTY_KITTY_PLACEMENT_LAYER_BELOW_TEXT);
 
         // Render scrollbar
         GhosttyTerminalScrollbar sb;
-        ghostty_terminal_get(terminal, GHOSTTY_TERMINAL_DATA_SCROLLBAR, cast(void*)&sb);
+        ghostty_terminal_get(s.terminal, GHOSTTY_TERMINAL_DATA_SCROLLBAR, cast(void*)&sb);
 
-        if (sb.total > sb.len) {
+        if (sb.total > sb.len)
+        {
             float track_height = cast(float)GetScreenHeight();
             float thumb_height = track_height * (cast(float)sb.len / cast(float)sb.total);
             if (thumb_height < 20.0f) thumb_height = 20.0f;
@@ -952,78 +1517,80 @@ int main(string[] args)
             if (total_movable_rows > 0)
                 thumb_y = movable_pixels * (cast(float)sb.offset / cast(float)total_movable_rows);
 
-            float w = sbState.currentWidth;
+            float w = s.sbState.currentWidth;
             float x = GetScreenWidth() - w;
 
-            if (sbState.isHovered || sbState.isDragging) {
+            if (s.sbState.isHovered || s.sbState.isDragging)
                 DrawRectangle(cast(int)x, 0, cast(int)w, cast(int)track_height, Color(255, 255, 255, 30));
-            }
             DrawRectangle(cast(int)x, cast(int)thumb_y, cast(int)w, cast(int)thumb_height, Color(255, 255, 255, 120));
         }
 
         // Draw the cursor
         bool cursor_visible = false;
-        ghostty_render_state_get(render_state, GHOSTTY_RENDER_STATE_DATA_CURSOR_VISIBLE, cast(void*)&cursor_visible);
+        ghostty_render_state_get(s.render_state, GHOSTTY_RENDER_STATE_DATA_CURSOR_VISIBLE, cast(void*)&cursor_visible);
         bool cursor_in_viewport = false;
-        ghostty_render_state_get(render_state, GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_HAS_VALUE, cast(void*)&cursor_in_viewport);
+        ghostty_render_state_get(s.render_state, GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_HAS_VALUE, cast(void*)&cursor_in_viewport);
 
-        if (cursor_visible && cursor_in_viewport) {
+        if (cursor_visible && cursor_in_viewport)
+        {
             ushort cx = 0, cy = 0;
-            ghostty_render_state_get(render_state, GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_X, cast(void*)&cx);
-            ghostty_render_state_get(render_state, GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_Y, cast(void*)&cy);
-
-            GhosttyRenderStateColors colors;
-            colors.size = GhosttyRenderStateColors.sizeof;
-            ghostty_render_state_colors_get(render_state, &colors);
+            ghostty_render_state_get(s.render_state, GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_X, cast(void*)&cx);
+            ghostty_render_state_get(s.render_state, GHOSTTY_RENDER_STATE_DATA_CURSOR_VIEWPORT_Y, cast(void*)&cy);
 
             GhosttyColorRgb cur_rgb = colors.foreground;
             if (colors.cursor_has_value)
                 cur_rgb = colors.cursor;
 
             int cursor_style = 1; // Block
-            ghostty_render_state_get(render_state, GHOSTTY_RENDER_STATE_DATA_CURSOR_VISUAL_STYLE, cast(void*)&cursor_style);
+            ghostty_render_state_get(s.render_state, GHOSTTY_RENDER_STATE_DATA_CURSOR_VISUAL_STYLE, cast(void*)&cursor_style);
 
-            int c_x = cx * cellWidth;
-            int c_y = cy * cellHeight;
+            int c_x = cx * s.cellWidth;
+            int c_y = cy * s.cellHeight;
             Color c_color = Color(cur_rgb.r, cur_rgb.g, cur_rgb.b, 160);
 
             if (cursor_style == 0) // Bar
-                DrawRectangle(c_x, c_y, 2, cellHeight, c_color);
+                drawSolid(s.font, c_x, c_y, 2, s.cellHeight, c_color);
             else if (cursor_style == 1) // Block
-                DrawRectangle(c_x, c_y, cellWidth, cellHeight, c_color);
+                drawSolid(s.font, c_x, c_y, s.cellWidth, s.cellHeight, c_color);
             else if (cursor_style == 2) // Underline
-                DrawRectangle(c_x, c_y + cellHeight - 2, cellWidth, 2, c_color);
+                drawSolid(s.font, c_x, c_y + s.cellHeight - 2, s.cellWidth, 2, c_color);
             else if (cursor_style == 3) // Hollow block
-                DrawRectangleLines(c_x, c_y, cellWidth, cellHeight, c_color);
+                DrawRectangleLines(c_x, c_y, s.cellWidth, s.cellHeight, c_color);
         }
 
         // Images above text (z >= 0): drawn last, over everything else.
         if (has_kitty)
-            render_kitty_images(terminal, kitty_gfx, placement_iter, cellWidth, cellHeight, GHOSTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT);
+            render_kitty_images(s.terminal, kitty_gfx, s.placement_iter, s.cellWidth, s.cellHeight, GHOSTTY_KITTY_PLACEMENT_LAYER_ABOVE_TEXT);
 
         // Banner shown once the child has exited, so the user knows the shell
         // is gone (they can still scroll / inspect the final output).
-        if (childExited) {
+        if (s.childExited)
+        {
             import core.stdc.stdio : snprintf;
             char[128] msg;
-            if (childReaped && childStatus >= 0)
-                snprintf(msg.ptr, msg.length, "[process exited with status %d]", childStatus);
+            if (s.childReaped && s.childStatus >= 0)
+                snprintf(msg.ptr, msg.length, "[process exited with status %d]", s.childStatus);
             else
                 snprintf(msg.ptr, msg.length, "[process exited]");
 
-            Vector2 msgSize = MeasureTextEx(font, msg.ptr, fontSize, 0);
+            Vector2 msgSize = MeasureTextEx(s.font.font, msg.ptr, s.fontSize, 0);
             int screenW = GetScreenWidth();
             int screenH = GetScreenHeight();
             int bannerH = cast(int) msgSize.y + 8;
             DrawRectangle(0, screenH - bannerH, screenW, bannerH, Color(0, 0, 0, 180));
-            DrawTextEx(font, msg.ptr, Vector2((screenW - msgSize.x) / 2, screenH - bannerH + 4), fontSize, 0, Color(255, 255, 255, 255));
+            DrawTextEx(s.font.font, msg.ptr, Vector2((screenW - msgSize.x) / 2, screenH - bannerH + 4), s.fontSize, 0, Color(255, 255, 255, 255));
         }
 
         // Visual bell: a brief translucent flash over the whole window.
-        if (effects_ctx.bellFlashFrames > 0) {
+        if (s.effects_ctx.bellFlashFrames > 0)
+        {
             DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Color(255, 255, 255, 40));
-            effects_ctx.bellFlashFrames--;
+            s.effects_ctx.bellFlashFrames--;
         }
+
+        // Reset global dirty state so the next update reports changes accurately.
+        GhosttyRenderStateDirty clean_state = GHOSTTY_RENDER_STATE_DIRTY_FALSE;
+        ghostty_render_state_set(s.render_state, GHOSTTY_RENDER_STATE_OPTION_DIRTY, &clean_state);
 
         EndDrawing();
 
@@ -1031,48 +1598,33 @@ int main(string[] args)
         // EndDrawing() has flushed all draw commands to the GPU.
         flush_deferred_textures();
 
-        if (debugScreenshotAndExit) {
-            static int frameCount = 0;
-            frameCount++;
-            if (frameCount == 120) {
-                TakeScreenshot("test_screenshot.png".ptr);
-            }
-            if (frameCount == 130) {
-                break;
-            }
-        }
-    }
-
-    // Reap the child to avoid a zombie. If it's still alive (the user closed
-    // the window first), hang up its process group, then block until it exits.
-    if (child > 0 && !childReaped)
-    {
-        import core.sys.posix.signal : kill, SIGHUP;
-        import core.sys.posix.unistd : getpgid;
-        if (!childExited)
+        // On-demand atlas growth: if the glyph pass found codepoints the primary
+        // face covers but the atlas lacked, fold them into the request set and
+        // rebuild the atlas once (done after EndDrawing so it never reuploads the
+        // font texture mid-frame). "M" is unchanged, so cell metrics hold. Force
+        // a redraw next frame so the now-rasterized glyphs actually get painted.
+        if (pendingCps.length > 0)
         {
-            auto pgid = getpgid(child);
-            if (pgid <= 0) pgid = child;
-            kill(cast(pid_t)(-pgid), SIGHUP); // SIGHUP the whole foreground group.
+            foreach (cp; pendingCps[])
+                s.requestedCps ~= cp;
+            pendingCps.clear();
+            loadFontInto(s.font, s.fontSize, s.requestedCps[]);
+            // Keep the styled faces in lockstep so bold/italic cells get the new
+            // glyphs too (they share the same request set as the regular face).
+            if (s.fontBold.pathZ !is null) loadFontInto(s.fontBold, s.fontSize, s.requestedCps[]);
+            if (s.fontItalic.pathZ !is null) loadFontInto(s.fontItalic, s.fontSize, s.requestedCps[]);
+            if (s.fontBoldItalic.pathZ !is null) loadFontInto(s.fontBoldItalic, s.fontSize, s.requestedCps[]);
+            if (forceFirstFrames < 1)
+                forceFirstFrames = 1;
         }
-        waitpid(child, null, 0);
+
+        if (s.debugScreenshotAndExit)
+        {
+            frameCount++;
+            if (frameCount == 120)
+                TakeScreenshot("test_screenshot.png".ptr);
+            if (frameCount == 130)
+                break;
+        }
     }
-
-    UnloadFont(font);
-    if (hasRegularFallback) UnloadFont(regularFallback);
-    if (hasNerdFallback) UnloadFont(nerdFallback);
-    ghostty_kitty_graphics_placement_iterator_free(placement_iter);
-    ghostty_render_state_row_cells_free(cells);
-    ghostty_render_state_row_iterator_free(row_iter);
-    ghostty_render_state_free(render_state);
-
-    ghostty_key_event_free(key_event);
-    ghostty_key_encoder_free(key_encoder);
-    ghostty_mouse_event_free(mouse_event);
-    ghostty_mouse_encoder_free(mouse_encoder);
-
-    selState.free();
-    ghostty_terminal_free(terminal);
-    CloseWindow();
-    return 0;
 }

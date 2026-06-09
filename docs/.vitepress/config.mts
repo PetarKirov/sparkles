@@ -77,6 +77,10 @@ export default defineConfig({
             link: '/guidelines/importc-c-libraries',
           },
           {
+            text: 'Benchmarking & Profiling',
+            link: '/guidelines/benchmarking-and-profiling',
+          },
+          {
             text: 'Move Semantics & __rvalue',
             link: '/guidelines/move-semantics/',
           },
