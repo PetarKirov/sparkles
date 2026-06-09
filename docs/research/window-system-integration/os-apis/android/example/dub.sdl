@@ -4,12 +4,23 @@ targetType "dynamicLibrary"
 sourcePaths "."
 targetPath "build"
 platforms "android"
-// Android is cross-built with the NDK, not a host `dub run` (see ../index.md):
-//   ldc-build-runtime --dFlags="-mtriple=aarch64-linux-android21" \
-//       CC=$NDK/.../aarch64-linux-android21-clang     # one-time: build D runtime
-//   ldc2 -mtriple=aarch64-linux-android21 -relocation-model=pic \
-//       -gcc=$NDK/.../aarch64-linux-android21-clang \
-//       app.d c.c $NDK/sources/android/native_app_glue/android_native_app_glue.c \
+// Android is cross-built with the NDK, not a host `dub run` (see ../index.md
+// "Building & cross-compiling" for the full story). Reproducible toolchain:
+//   nix develop .#android   # provides `ldc-android` + the NDK, exports $NDK
+//   glue="$NDK/sources/android/native_app_glue"
+//   ldc2 -mtriple=aarch64--linux-android -relocation-model=pic \
+//       -P-I"$glue" \
+//       app.d c.c "$glue/android_native_app_glue.c" \
 //       -L-llog -L-landroid -shared -of=build/libwin_android.so
 // then packaged as an APK with a NativeActivity manifest and run on an emulator.
+//
+// Notes (verified this session):
+//   - triple is `aarch64--linux-android` (double dash); `aarch64-linux-android21`
+//     does NOT match ldc-android's `aarch64-.*-linux-android` config section.
+//   - `-P-I"$glue"` is required so ImportC finds android_native_app_glue.h
+//     (it lives under $NDK/sources, not the sysroot).
+//   - ImportC currently CANNOT parse the full glue header: it pulls in kernel
+//     headers (asm-generic/siginfo.h, linux/types.h) that hit `__int128 not
+//     supported` / `__alignof__(void *)` errors. The lighter <android/...>
+//     headers parse and link fine. See the ../index.md WARNING.
 // Not auto-verified in CI (mobile out of CI scope).
