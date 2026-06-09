@@ -977,7 +977,9 @@ int main(string[] args)
     import input : parseExitBehavior;
 
     string fontOpt = "monospace";
-    int fontSize = 20;
+    int fontSizePt = 13;
+    int windowCols = 100;
+    int windowRows = 30;
     bool debugScreenshotAndExit = false;
     string exitBehaviorOpt = "hold-on-failure";
     string[] codepointMapOpt;
@@ -985,10 +987,12 @@ int main(string[] args)
     auto helpInfo = getopt(
         args,
         // Stop at the first non-option so a trailing command (and its own flags)
-        // is left untouched: `terminal --size 14 -- vim file -R`.
+        // is left untouched: `terminal --font-size 14 -- vim file -R`.
         config.stopOnFirstNonOption,
         "font|f", "Font path or name (e.g. '/path/to/font.ttf' or 'Fira Code')", &fontOpt,
-        "size|s", "Font size in pixels (default: 20)", &fontSize,
+        "font-size|s", "Font size in points (default: 13)", &fontSizePt,
+        "window-width", "Initial window width in columns (default: 100)", &windowCols,
+        "window-height", "Initial window height in rows (default: 30)", &windowRows,
         "font-codepoint-map", "Render codepoints from a specific font (repeatable): 'U+XXXX-U+YYYY,U+ZZZZ=Family'", &codepointMapOpt,
         "exit-behavior", "On child exit: close | wait-for-key | hold | hold-on-failure (default)", &exitBehaviorOpt,
         "debug-take-screenshot-and-exit", "Takes a screenshot after 2 seconds and exits", &debugScreenshotAndExit
@@ -1032,9 +1036,13 @@ int main(string[] args)
     }
 
     CoreState s;
-    s.fontSize = fontSize;
-    s.cols = 100;
-    s.rows = 30;
+    // Point size → pixels for raylib's pixel-based rasterizer (96-DPI points:
+    // 1pt = 1/72in, 96px/in). Converted once; the rest of the renderer works in
+    // pixels (Ctrl +/- then adjusts the pixel size directly).
+    s.fontSize = cast(int) (fontSizePt * 96.0 / 72.0 + 0.5);
+    if (s.fontSize < 1) s.fontSize = 1;
+    s.cols = cast(ushort) (windowCols > 0 ? windowCols : 1);
+    s.rows = cast(ushort) (windowRows > 0 ? windowRows : 1);
     s.exitBehavior = parseExitBehavior(exitBehaviorOpt);
     s.debugScreenshotAndExit = debugScreenshotAndExit;
     s.codepoints = loadedCodepoints;
