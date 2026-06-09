@@ -383,6 +383,41 @@ private void requestGlyph(ref SmallBuffer!(int, 64) pending, int cp)
     pending ~= cp;
 }
 
+// The face chosen for a cell's bold/italic attributes, plus whether the missing
+// axis still has to be faked (a synthetic slant / a double-strike thickening)
+// because no dedicated face was loaded for it.
+struct StyledFace
+{
+    LoadedFont* font;
+    bool fakeBold;
+    bool fakeItalic;
+}
+
+// Pick the loaded face for the requested bold/italic attributes, preferring a
+// real styled face and falling back toward the regular face — faking whatever
+// axis has no dedicated face. With a real cursive italic face loaded, italic
+// cells render true cursive glyphs instead of the nudged upright fallback.
+@system nothrow @nogc
+private StyledFace pickStyledFace(ref CoreState s, bool bold, bool italic)
+{
+    if (bold && italic)
+    {
+        if (s.fontBoldItalic.present) return StyledFace(&s.fontBoldItalic, false, false);
+        if (s.fontItalic.present)     return StyledFace(&s.fontItalic, true, false);  // real italic, fake bold
+        if (s.fontBold.present)       return StyledFace(&s.fontBold, false, true);    // real bold, fake italic
+        return StyledFace(&s.font, true, true);
+    }
+    if (italic)
+        return s.fontItalic.present
+            ? StyledFace(&s.fontItalic, false, false)
+            : StyledFace(&s.font, false, true);
+    if (bold)
+        return s.fontBold.present
+            ? StyledFace(&s.fontBold, false, false)
+            : StyledFace(&s.font, true, false);
+    return StyledFace(&s.font, false, false);
+}
+
 // Draw a grapheme cluster (base codepoint plus any combining marks) at (x, y),
 // glyph by glyph, using the O(log n) glyph-index map above. This is a drop-in
 // replacement for raylib's DrawTextEx (spacing 0): it reproduces the same
@@ -633,7 +668,10 @@ struct CoreState
     ushort cols;
     ushort rows;
 
-    LoadedFont font;
+    LoadedFont font;            // primary (regular) face
+    LoadedFont fontBold;        // same family, bold     — empty if unavailable
+    LoadedFont fontItalic;      // same family, italic    — empty if unavailable
+    LoadedFont fontBoldItalic;  // same family, bold+italic — empty if unavailable
     LoadedFont regularFallback;
     LoadedFont nerdFallback;
 
@@ -652,6 +690,9 @@ struct CoreState
 private void freeFonts(ref CoreState s)
 {
     if (s.font.present) { UnloadFont(s.font.font); s.font.present = false; }
+    if (s.fontBold.present) { UnloadFont(s.fontBold.font); s.fontBold.present = false; }
+    if (s.fontItalic.present) { UnloadFont(s.fontItalic.font); s.fontItalic.present = false; }
+    if (s.fontBoldItalic.present) { UnloadFont(s.fontBoldItalic.font); s.fontBoldItalic.present = false; }
     if (s.regularFallback.present) { UnloadFont(s.regularFallback.font); s.regularFallback.present = false; }
     if (s.nerdFallback.present) { UnloadFont(s.nerdFallback.font); s.nerdFallback.present = false; }
 }
@@ -715,6 +756,81 @@ void loadFaceCharset(ref CoreState s, string fontPath)
         }
         catch (Exception) { /* skip a malformed token, keep the rest */ }
     }
+}
+
+// Load the font at `path` into `lf` with codepoint set `cps`; on failure leave
+// `lf` empty (pathZ cleared) so callers treat the variant as unavailable.
+void loadVariantFile(ref LoadedFont lf, string path, int fontSize, const(int)[] cps)
+{
+    import std.file : exists;
+    import std.string : toStringz;
+
+    if (path.length == 0 || !path.exists)
+        return;
+    lf.pathZ = path.toStringz;
+    loadFontInto(lf, fontSize, cps);
+    if (!lf.present)
+        lf.pathZ = null;
+}
+
+// Resolve and load the bold / italic / bold-italic faces of the SAME family as
+// the primary, so SGR bold and italic render with the font's real styled glyphs
+// (e.g. cursive italics) rather than a faked thickening/slant. Variants are
+// found by scanning the primary font's directory with `fc-scan` and matching on
+// family + weight + slant, so this works even for fonts fontconfig hasn't
+// registered (e.g. a raw store path). Missing variants are left empty and the
+// renderer falls back to the regular face, faking the style as before. Must run
+// after InitWindow (LoadFontEx needs the GL context). Loads each variant with
+// the primary's request set so on-demand atlas growth stays in sync.
+void loadStyleVariants(ref CoreState s, string fontPath)
+{
+    import std.process : execute;
+    import std.string : strip, splitLines, split, join;
+    import std.conv : to;
+    import std.path : dirName;
+
+    string pFamily;
+    int pWeight, pSlant;
+    {
+        auto q = execute(["fc-query", "--format=%{family[0]}\n%{weight}\n%{slant}", fontPath]);
+        if (q.status != 0) return;
+        auto lines = q.output.splitLines;
+        if (lines.length < 3) return;
+        pFamily = lines[0].strip.idup;
+        try { pWeight = lines[1].strip.to!int; pSlant = lines[2].strip.to!int; }
+        catch (Exception) return;
+    }
+    if (pFamily.length == 0) return;
+
+    auto sc = execute(["fc-scan", "--format=%{file}:%{family[0]}:%{weight}:%{slant}\n", fontPath.dirName]);
+    if (sc.status != 0) return;
+
+    // fontconfig bold is weight 200; italic/oblique is any non-zero slant.
+    // Match the primary's slant for the bold face and its weight for the italic
+    // face so a non-regular primary (e.g. a Medium weight) still pairs sensibly.
+    string boldPath, italicPath, boldItalicPath;
+    foreach (line; sc.output.splitLines)
+    {
+        // file paths carry no ':' (store paths don't); a family name might, so
+        // take weight/slant as the trailing two fields and the file as the first.
+        auto parts = line.split(':');
+        if (parts.length < 4) continue;
+        const file = parts[0];
+        if (file == fontPath) continue; // the regular face, already loaded
+        const fam = parts[1 .. $ - 2].join(':').strip;
+        if (fam != pFamily) continue;
+        int w, sl;
+        try { w = parts[$ - 2].strip.to!int; sl = parts[$ - 1].strip.to!int; }
+        catch (Exception) continue;
+
+        if (w == 200 && sl == pSlant) { if (boldPath.length == 0) boldPath = file.idup; }
+        else if (w == pWeight && sl != pSlant) { if (italicPath.length == 0) italicPath = file.idup; }
+        else if (w == 200 && sl != pSlant) { if (boldItalicPath.length == 0) boldItalicPath = file.idup; }
+    }
+
+    loadVariantFile(s.fontBold, boldPath, s.fontSize, s.requestedCps[]);
+    loadVariantFile(s.fontItalic, italicPath, s.fontSize, s.requestedCps[]);
+    loadVariantFile(s.fontBoldItalic, boldItalicPath, s.fontSize, s.requestedCps[]);
 }
 
 // One-time setup (CLI, fonts, terminal, pty). GC and exceptions are fine here;
@@ -814,6 +930,10 @@ int main(string[] args)
         CloseWindow();
         return 1;
     }
+
+    // Load the bold / italic / bold-italic faces of the same family (if any) so
+    // SGR bold and italic use the real styled glyphs instead of a faked slant.
+    loadStyleVariants(s, fontPath);
 
     // Resolve fallback fonts via fc-match: the first Nerd Font and the first
     // common regular monospace, used when the primary lacks a glyph.
@@ -1062,6 +1182,9 @@ private void runCoreLoop(ref CoreState s)
         if (fontChanged)
         {
             loadFontInto(s.font, s.fontSize, s.requestedCps[]);
+            if (s.fontBold.pathZ !is null) loadFontInto(s.fontBold, s.fontSize, s.requestedCps[]);
+            if (s.fontItalic.pathZ !is null) loadFontInto(s.fontItalic, s.fontSize, s.requestedCps[]);
+            if (s.fontBoldItalic.pathZ !is null) loadFontInto(s.fontBoldItalic, s.fontSize, s.requestedCps[]);
             if (s.regularFallback.pathZ !is null) loadFontInto(s.regularFallback, s.fontSize, s.codepoints);
             if (s.nerdFallback.pathZ !is null) loadFontInto(s.nerdFallback, s.fontSize, s.codepoints);
             Vector2 mSize = MeasureTextEx(s.font.font, "M", s.fontSize, 0);
@@ -1307,10 +1430,14 @@ private void runCoreLoop(ref CoreState s)
 
                 if (rc.hasGrapheme)
                 {
-                    LoadedFont* activeFont = &s.font;
+                    // Pick the real bold/italic face for this cell when one was
+                    // loaded; otherwise fall back to the regular face and fake
+                    // the missing axis (slant for italic, double-strike for bold).
+                    auto sf = pickStyledFace(s, rc.style.bold, rc.style.italic);
+                    LoadedFont* activeFont = sf.font;
                     if (rc.codepoints[0] >= 128)
                     {
-                        if (!fontHasGlyph(s.font, rc.codepoints[0]))
+                        if (!fontHasGlyph(*activeFont, rc.codepoints[0]))
                         {
                             if (s.regularFallback.present && fontHasGlyph(s.regularFallback, rc.codepoints[0]))
                                 activeFont = &s.regularFallback;
@@ -1327,14 +1454,16 @@ private void runCoreLoop(ref CoreState s)
                     // modifiers.
                     const cp_count = rc.graphemeLen < 16 ? rc.graphemeLen : 16;
 
-                    // Italic: shift the glyph right by a fraction of the font
-                    // size (a crude slant; raylib can't shear a glyph).
-                    const italic_offset = rc.style.italic ? (s.fontSize / 6) : 0;
+                    // Fake italic only when no real italic face is in use: shift
+                    // the glyph right by a fraction of the font size (a crude
+                    // slant; raylib can't shear a glyph).
+                    const italic_offset = sf.fakeItalic ? (s.fontSize / 6) : 0;
                     drawGrapheme(*activeFont, rc.codepoints[0 .. cp_count],
                         cast(float)(x + italic_offset), cast(float)y, s.fontSize, rc.fgCol);
 
-                    // Bold: redraw 1px to the right to thicken strokes (fake bold).
-                    if (rc.style.bold)
+                    // Fake bold only when no real bold face is in use: redraw 1px
+                    // to the right to thicken strokes.
+                    if (sf.fakeBold)
                         drawGrapheme(*activeFont, rc.codepoints[0 .. cp_count],
                             cast(float)(x + italic_offset + 1), cast(float)y, s.fontSize, rc.fgCol);
 
@@ -1480,6 +1609,11 @@ private void runCoreLoop(ref CoreState s)
                 s.requestedCps ~= cp;
             pendingCps.clear();
             loadFontInto(s.font, s.fontSize, s.requestedCps[]);
+            // Keep the styled faces in lockstep so bold/italic cells get the new
+            // glyphs too (they share the same request set as the regular face).
+            if (s.fontBold.pathZ !is null) loadFontInto(s.fontBold, s.fontSize, s.requestedCps[]);
+            if (s.fontItalic.pathZ !is null) loadFontInto(s.fontItalic, s.fontSize, s.requestedCps[]);
+            if (s.fontBoldItalic.pathZ !is null) loadFontInto(s.fontBoldItalic, s.fontSize, s.requestedCps[]);
             if (forceFirstFrames < 1)
                 forceFirstFrames = 1;
         }
