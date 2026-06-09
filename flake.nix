@@ -38,6 +38,7 @@
         ./nix/packages/default.nix
         ./nix/checks/pre-commit.nix
         ./nix/shells/default.nix
+        ./nix/shells/android.nix
       ];
       systems = import inputs.systems;
     };
