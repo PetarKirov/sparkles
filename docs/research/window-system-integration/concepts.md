@@ -8,6 +8,12 @@ cross-linked to the implementations that show it off. This page is the windowing
 counterpart of the async-I/O survey's [primitives][primitives] vocabulary; where a
 concept is really an event-loop concept wearing a windowing hat, it cross-links there.
 
+For the **raw OS windowing APIs beneath these concepts** — and a minimal, runnable D program per
+platform that opens or bootstraps a window by calling them directly — see the
+[OS Windowing APIs][os-apis] sub-tree: its [overview][os-apis] and
+[cross-platform summary][os-summary], and the per-platform surveys for [Wayland][os-wl],
+[X11][os-x11], [Win32][os-w32], [AppKit][os-ak], [UIKit][os-ui], and [Android][os-and].
+
 > [!NOTE]
 > **Scope.** These are the cross-cutting concepts the deep-dives share — the recurring
 > hazards and design forks of the windowing layer (decorations, coordinates, input
@@ -16,7 +22,7 @@ concept is really an event-loop concept wearing a windowing hat, it cross-links 
 > Several concepts are demonstrated by a CI-verified runnable D snippet (pure `std`, no
 > display, byte-deterministic output) placed in the most relevant section.
 
-**Last reviewed:** June 8, 2026
+**Last reviewed:** June 9, 2026
 
 ---
 
@@ -649,3 +655,14 @@ citations. The cross-cutting external references behind the definitions here:
 [nstextinput]: https://web.archive.org/web/20260115025403/https://developer.apple.com/documentation/appkit/nstextinputclient
 [cvdisplaylink]: https://web.archive.org/web/20250609094433/https://developer.apple.com/documentation/corevideo/cvdisplaylink
 [cadisplaylink]: https://web.archive.org/web/20190614134451/https://developer.apple.com/documentation/quartzcore/cadisplaylink
+
+<!-- OS-API surveys -->
+
+[os-apis]: ./os-apis/index.md
+[os-summary]: ./os-apis/summary.md
+[os-wl]: ./os-apis/wayland/
+[os-x11]: ./os-apis/x11/
+[os-w32]: ./os-apis/win32/
+[os-ak]: ./os-apis/appkit/
+[os-ui]: ./os-apis/uikit/
+[os-and]: ./os-apis/android/

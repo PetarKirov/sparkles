@@ -5,5 +5,6 @@ sourcePaths "."
 targetPath "build"
 platforms "windows"
 // The minimal window needs only druntime's built-in core.sys.windows bindings.
-// For full Windows SDK coverage (DirectX, COM, modern UI) use the windows-d
-// package (windows.win32.*) — see ../index.md.
+// For full Windows SDK coverage (DirectX, COM, modern UI) use the actively-maintained
+// fork github.com/RolandTaverner/windows-d (windows.win32.*) — NOT the unmaintained
+// rumbu13 original. See ../index.md.
