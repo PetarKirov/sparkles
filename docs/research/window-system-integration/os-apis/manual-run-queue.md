@@ -49,6 +49,14 @@ _(no entries yet)_
       cycle never freezes; `tick … gap_us=…` stays ~16 ms (nothing above ~50 ms) through
       both drags. Paste the max observed gap into `x11/f03-modal-loop.md` (findings table,
       "Interactive border/title drag" row).
+- [ ] X11 F05 under a real compositing X server + load: re-run
+      `x11/examples/f05-loop-wakeup` and compare the latency distributions against the
+      Xvfb numbers (no vsync/compositor contention there; the 808 µs `ClientMessage` max
+      likely grows). Paste into `x11/f05-loop-wakeup.md`.
+- [ ] X11 F06 on real `de` hardware: AltGr/`ISO_Level3` symbols, multi-layout group
+      switching (`grp:` options, nonzero `group=` field), and whether real input drivers
+      emit per-device `XkbNewKeyboardNotify` storms like Xvfb's 3x. Paste into
+      `x11/f06-keyboard.md`.
 
 ## KDE session (kwin)
 
