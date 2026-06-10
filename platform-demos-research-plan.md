@@ -1,40 +1,111 @@
-# Platform Windowing API Research — Parallel Demo Program Plan
+# Platform Windowing API Research — Parallel Demo Program Plan (v2)
 
 ## Mission
 
-Build a matrix of small, focused demo programs that exercise the windowing/input APIs of **Wayland, X11, Win32, and macOS (AppKit)** directly — no frameworks, no abstraction layers — to empirically map where the platforms diverge. The output is (a) working reference code per platform per feature, (b) measured/observed behavior recorded in a shared findings matrix, and (c) a final synthesis that pairs with the framework source-code study (`windowing-research-prompt.md`) to drive the design of our windowing layer.
+Build a matrix of small, focused demo programs that exercise the windowing/input APIs of
+**Wayland, X11, Win32, and macOS (AppKit)** directly — no frameworks, no abstraction layers — to
+empirically map where the platforms diverge. The output is (a) working reference code per
+platform per feature, (b) measured/observed behavior recorded in a shared findings matrix, and
+(c) a final synthesis that pairs with the framework source-code study already landed at
+`docs/research/window-system-integration/` (the per-library deep-dives plus `comparison.md`,
+`recommendations.md`, and `platform-gotchas.md`) to drive the design of our windowing layer.
 
-**Language policy:** C for Wayland/X11/Win32 demos, Objective-C (or C calling Objective-C runtime) for macOS. No helper libraries except: `libwayland-client`, `wayland-protocols`, `xkbcommon`, `libxcb`/`Xlib`, and platform SDKs. The point is to touch the raw API.
+Everything lands in **this repository**, inside the existing OS-API research sub-tree at
+`docs/research/window-system-integration/os-apis/`. That sub-tree already contains a survey
+(`index.md`), a cross-platform `summary.md`, and per-platform survey directories
+(`wayland/`, `x11/`, `win32/`, `appkit/`, `uikit/`, `android/`), each with a minimal
+`example/` dub package that opens (or bootstraps) a window by calling the OS API directly.
+This plan extends that sub-tree; it does not create a new repo.
 
-## Repository layout
+> [!NOTE]
+> `uikit/` and `android/` are **out of scope** for this demo matrix — the surveys exist, but
+> mobile is outside CI scope and the feature set below is desktop-windowing-shaped. The matrix
+> covers the four desktop platforms.
 
-All work happens in one repo (create it if absent): `$REPOS/schelling-point/windowing-demos`
+**Language & binding policy:** all demos are **D programs**, binding the OS the same way the
+existing `os-apis/<platform>/example/` packages do:
+
+| Platform     | Mechanism                                                                                      | Precedent                          |
+| ------------ | ---------------------------------------------------------------------------------------------- | ---------------------------------- |
+| Wayland, X11 | **ImportC** — a `c.c` shim `#include`s the real system header; `libs` uses the pkg-config name | `wayland/example/`, `x11/example/` |
+| Win32        | druntime's built-in **`core.sys.windows`** (zero third-party)                                  | `win32/example/`                   |
+| macOS        | **`extern(Objective-C)`** + `@selector` via the `objective-d` package                          | `appkit/example/`                  |
+
+No helper libraries except: `libwayland-client`, `wayland-protocols`, `xkbcommon`,
+`libxcb`/`Xlib`, and platform SDKs. The point is to touch the raw API. (The existing X11
+example uses Xlib; stay with Xlib unless a feature genuinely needs xcb — if so, that choice is
+itself a finding to document.)
+
+## Layout (inside `docs/research/window-system-integration/os-apis/`)
 
 ```
-windowing-demos/
-  common/                  # shared spec, logging helpers (header-only, per-platform impls)
-    spec/                  # the feature specs below, one file per feature (F01..F17)
-    instrument.h           # timestamped event logging in a COMMON FORMAT (see Instrumentation)
-  wayland/
-    scaffold/              # W0 output: connect, registry, xdg-shell window, shm buffer, frame loop
-    f01-first-pixel/ ... f17-threading/
-  x11/      (same structure)
-  win32/    (same structure)
-  macos/    (same structure)
-  findings/
-    matrix.md              # the per-platform × per-feature grid (template below)
-    <platform>/<feature>.md
-  flake.nix                # dev shells: linux (wayland+x11+xkbcommon+weston+xvfb), win32 cross (mingw64), macos stub
-  ci/                      # build-all scripts per platform
+os-apis/
+  index.md                      # existing umbrella — extended with links to the matrix
+  summary.md                    # existing cross-platform synthesis — updated in Phase 3
+  features/                     # the feature specs below, one file per feature
+    f01-first-pixel.md ... f17-threading.md
+  feature-matrix.md             # the per-platform × per-feature grid (template below)
+  manual-run-queue.md           # aggregated Tier C checklist (see below)
+  divergence-map.md             # Phase 3 synthesis docs
+  event-sequences.md
+  design-constraints.md
+  <platform>/                   # wayland/ x11/ win32/ appkit/
+    index.md                    # existing survey — do not break its links
+    example/                    # existing minimal program — DO NOT MODIFY (survey prose cites it)
+    examples/
+      scaffold/                 # Phase 1 output: full scaffold (window + buffer + frame loop)
+      f01-first-pixel/ ... f17-threading/   # one dub package per demo, copied from scaffold/
+    f01-first-pixel.md ... f17-threading.md # per-feature findings docs, next to index.md
 ```
 
-Each demo is a **single small program** (≤ ~500 LOC target) that exercises exactly one feature cluster on top of its platform scaffold. Scaffold code is copied, not shared as a library — duplication is fine; isolation and readability win.
+Each demo is a **single small dub package** (≤ ~500 LOC target, `app.d` + `c.c` shim +
+`dub.sdl`, mirroring the `example/` packages) that exercises exactly one feature cluster on top
+of its platform scaffold. Scaffold code is **copied, not shared** as a library — duplication is
+fine; isolation and readability win. The same goes for the `instrument.d` logging helper: each
+demo carries its own copy.
+
+## Conventions (binding)
+
+All prose artifacts (specs, findings, matrix, synthesis) are research docs and must follow
+[`docs/guidelines/research-docs.md`](docs/guidelines/research-docs.md) — reference-style links
+under `<!-- References -->`, every identifier backticked, every term linked to its definition,
+`**Last reviewed:**` dates on umbrella/synthesis docs, GitHub alerts for caveats, and primary
+sources cited. The findings docs are sub-deep-dives of the graduated platform subjects, exactly
+like `async-io/io-uring/{features,timeline}.md`.
+
+- **VitePress:** register `features/`, the findings docs, the matrix, and the synthesis docs in
+  the `os-apis` sidebar group in `docs/.vitepress/config.mts` (grouped: Features, then per
+  platform, then Synthesis). Links to non-page artifacts (demo `.d`/`.c` files, `dub.sdl`,
+  trace logs) need `ignoreDeadLinks` patterns (the `/\.d$/` rule is the model).
+  `npm run docs:build` **must be green** before every commit.
+- **Commits:** conventional commits, scope `research` (e.g.
+  `docs(research): add os-apis wayland f02 resize demo + findings`). One commit per demo
+  (code + findings + matrix cell together); preparation commits (nix shell, CI, `.gitignore`,
+  sidebar) go first. Commit as you go; only pushing needs explicit sign-off.
+- **Hooks:** `SKIP=lychee,verify-md-examples git commit …` is acceptable for large drops;
+  re-check tables after prettier runs.
+- **Nix footgun:** `git add` every new file **before** any `nix develop`/flake build — the
+  flake cannot see untracked files.
 
 ## Verification tiers (agents must label every result)
 
-- **Tier A — built and run by agent.** Wayland demos run under `weston --backend=headless` (and `WAYLAND_DEBUG=1` captures the protocol trace — attach it to findings). X11 demos run under `Xvfb` (+ `xtrace` for protocol capture). Behavioral findings from headless runs are valid for protocol behavior, NOT for visual/interactive behavior.
-- **Tier B — cross-compiled, not run.** Win32 demos must compile with `x86_64-w64-mingw32-gcc` from the Nix shell. macOS demos must at minimum pass `clang -fsyntax-only` against bundled SDK headers if no macOS builder is available.
-- **Tier C — requires manual run.** Every demo prints its findings checklist to stdout and writes the instrumentation log; agents produce a `MANUAL-RUN.md` per Tier-C demo listing the exact steps and expected observations for Petar to execute on real Windows/macOS machines and real compositors (mutter, kwin, sway). **Never report Tier B/C behavior as observed fact — mark it `[expected, unverified]` in the matrix.**
+- **Tier A — built and run by agent/CI.** Wayland demos run under
+  `weston --backend=headless` (and `WAYLAND_DEBUG=1` captures the protocol trace — quote it in
+  the findings). X11 demos run under `xvfb-run` (+ `xtrace` for protocol capture when useful).
+  Win32 demos that need no interaction (create/paint/auto-close) run on the `windows-latest`
+  CI runner — the existing `win32-example` job in `.github/workflows/ci.yml` is the model.
+  Behavioral findings from headless runs are valid for protocol behavior, NOT for
+  visual/interactive behavior.
+- **Tier B — compiled for target, not run.** Win32 and macOS demos must at minimum produce a
+  target object in the dev shell (`ldc2 -mtriple=x86_64-windows-msvc -c` /
+  `ldc2 -mtriple=arm64-apple-macos -c`), the same compile-for-target bar the existing surveys
+  use for iOS/Win32.
+- **Tier C — requires manual run.** Every demo prints its findings checklist to stdout and
+  writes the instrumentation log; agents add an entry to `manual-run-queue.md` per Tier-C demo
+  listing the exact steps and expected observations for Petar to execute on real Windows/macOS
+  machines and real compositors (mutter, kwin, sway). On the macOS box, build with `ldc2`
+  directly rather than `dub` (known dub fork-ENOMEM there). **Never report Tier B/C behavior
+  as observed fact — mark it `[expected, unverified]` in the matrix and findings.**
 
 ## Instrumentation (uniform across all demos)
 
@@ -44,37 +115,70 @@ Every demo logs to stderr in this exact format so traces are diffable across pla
 <monotonic_us> <DEMO> <EVENT_KIND> key=value key=value...
 ```
 
-Mandatory events: `init_start`, `window_created`, `first_configure` (or equivalent), `first_pixel_presented`, `resize size=WxH scale=S`, `key code=.. sym=.. text=..`, `pointer ...`, `scale_changed`, `close_requested`, `frame_callback t=..`. Demo F01 establishes the format; all others reuse `common/instrument.h`.
+Mandatory events: `init_start`, `window_created`, `first_configure` (or equivalent),
+`first_pixel_presented`, `resize size=WxH scale=S`, `key code=.. sym=.. text=..`,
+`pointer ...`, `scale_changed`, `close_requested`, `frame_callback t=..`. Demo F01 establishes
+the format in `instrument.d`; all others copy it.
 
-Additionally every demo records: **concept count** (number of distinct platform objects/handles touched before first pixel) and **LOC** — these go in the matrix header row.
+Additionally every demo records: **concept count** (number of distinct platform
+objects/handles touched before first pixel) and **LOC** — these go in the matrix header row.
+
+Findings docs must **quote the proving log lines verbatim** in fenced blocks. Full traces are
+committed next to the demo as `trace.log` only when short (≲200 lines); otherwise trim to the
+relevant excerpt.
 
 ---
 
 ## Phase 0 — Orchestrator setup (you, before fan-out)
 
-1. Create the repo skeleton above, write `flake.nix` with the three dev shells, commit.
-2. Copy the feature specs (section below) into `common/spec/F01..F17.md` verbatim.
-3. Create `findings/matrix.md` from the template at the bottom.
-4. Verify the Linux shell can run `weston --backend=headless` and `Xvfb`, and that `x86_64-w64-mingw32-gcc` links a trivial `WinMain`. Fix the flake until true.
+1. Create the layout above (`features/`, `examples/` dirs, `feature-matrix.md` from the
+   template at the bottom, `manual-run-queue.md` stub). `git add` everything immediately.
+2. Write the feature specs (section below) into `features/f01-…md … f17-…md`, register the new
+   docs in the VitePress sidebar, extend `ignoreDeadLinks`, and verify `npm run docs:build`.
+3. Extend the Linux dev shell (`nix/shells/default.nix`) with `weston`, `wayland-protocols`,
+   `libxkbcommon` (+ xcb libs only if a demo ends up needing them) — gated with
+   `lib.optionals pkgs.stdenv.isLinux`, like the existing X11/Wayland deps.
+4. Extend `os-apis/.gitignore` for the new packages (`*/examples/*/build/`,
+   `*/examples/*/.dub/`, `*/examples/*/*.o`).
+5. Extend `.github/workflows/ci.yml`: the Linux step builds/runs every
+   `os-apis/*/examples/*` package (X11 under `xvfb-run`, Wayland under
+   `weston --backend=headless`); the `win32-example` job loops over the Win32 demos. Keep the
+   existing discipline: a demo that lacks a host capability prints `SKIP:` and exits 0 —
+   never a red CI from a missing capability.
+6. Verify the shell can run `weston --backend=headless` and `xvfb-run`, and that both
+   compile-for-target triples produce objects. Fix the flake until true. Commit all of this as
+   the preparation commits.
 
 ## Phase 1 — Scaffolds (4 parallel agents, one per platform)
 
-| Agent          | Task                                                                                                                                                                                                               |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **W0**         | Wayland scaffold: registry, `xdg_wm_base`, toplevel, `wl_shm` double buffer, configure/ack/commit loop, frame-callback redraw, clean teardown. Run under headless weston with `WAYLAND_DEBUG=1`; commit the trace. |
-| **X0**         | X11 scaffold via **xcb**: connection, window, `WM_PROTOCOLS`/`WM_DELETE_WINDOW`, MIT-SHM image presentation, event loop on the connection fd.                                                                      |
-| **N0** (win32) | Win32 scaffold: `RegisterClassEx`, `CreateWindowEx`, message pump, DIB section + `BitBlt` on `WM_PAINT`. Tier B compile; write MANUAL-RUN.md.                                                                      |
-| **M0**         | macOS scaffold: `NSApplication` with explicit activation policy, `NSWindow`, custom `NSView` drawing a CPU buffer via `CGContext`, run loop. Tier B/C.                                                             |
+The existing `example/` packages are the starting point — each already proves the binding
+mechanism and the irreducible bootstrap. Scaffold agents **copy** them into
+`<platform>/examples/scaffold/` and grow them to full scaffold acceptance; the `example/`
+packages stay untouched (the survey prose cites them as the minimal program).
 
-Scaffold acceptance: window opens, shows a gradient, resizes without artifacts (Wayland: correct ack-configure ordering), closes cleanly. Each scaffold agent also writes `findings/<platform>/scaffold.md` answering: concepts-to-pixel count, LOC, what surprised you.
+| Agent          | Task                                                                                                                                                                                                                                                                                                 |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **W0**         | Wayland scaffold: registry, `xdg_wm_base`, toplevel, `wl_shm` double buffer, configure/ack/commit loop, frame-callback redraw, clean teardown. (The existing example stops at the `wl_registry` bootstrap — most of this is new.) Run under headless weston with `WAYLAND_DEBUG=1`; quote the trace. |
+| **X0**         | X11 scaffold (Xlib, like the existing example): window, `WM_PROTOCOLS`/`WM_DELETE_WINDOW`, MIT-SHM image presentation, event loop on the connection fd (`ConnectionNumber`).                                                                                                                         |
+| **N0** (win32) | Win32 scaffold: `RegisterClassEx`, `CreateWindowEx`, message pump, DIB section + `BitBlt` on `WM_PAINT`, auto-close path for CI. Tier A on `windows-latest` for the non-interactive path; manual-queue entry for the rest.                                                                           |
+| **M0**         | macOS scaffold: `NSApplication` with explicit activation policy, `NSWindow`, custom `NSView` drawing a CPU buffer via `CGContext`, run loop. Tier B compile-for-target; manual-queue entry.                                                                                                          |
 
-**Gate:** Phase 2 agents copy their platform scaffold. Do not start Phase 2 for a platform until its scaffold is merged.
+Scaffold acceptance: window opens, shows a gradient, resizes without artifacts (Wayland:
+correct ack-configure ordering), closes cleanly. Each scaffold agent also writes
+`<platform>/scaffold.md` (house style) answering: concepts-to-pixel count, LOC, what surprised
+you — and how the full scaffold differs from the survey's minimal `example/`.
+
+**Gate:** Phase 2 agents copy their platform scaffold. Do not start Phase 2 for a platform
+until its scaffold is merged.
 
 ## Phase 2 — Feature demos (fan out: one agent per platform × feature cluster)
 
-Feature clusters and their specs. Each agent gets ONE row on ONE platform. 17 features × 4 platforms = 68 cells, but several cells are N/A (marked) → ~58 demo tasks. Batch agents by platform if budget requires; priority order is the listed order (F01–F08 are the discriminating core; F09–F17 are second wave).
+Feature clusters and their specs. Each agent gets ONE row on ONE platform. 17 features × 4
+platforms = 68 cells, but several cells are N/A (marked) → ~58 demo tasks. Batch agents by
+platform if budget requires; priority order is the listed order (F01–F08 are the
+discriminating core; F09–F17 are second wave).
 
-| ID      | Feature                            | Spec essentials (full text in `common/spec/`)                                                                                                                                                                                                                                                                                                                                                                    | Platform notes / N-A                                                          |
+| ID      | Feature                            | Spec essentials (full text in `features/`)                                                                                                                                                                                                                                                                                                                                                                       | Platform notes / N-A                                                          |
 | ------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | **F01** | First pixel & init cost            | Software-drawn frame; log every step from `init_start` to `first_pixel_presented`; count concepts.                                                                                                                                                                                                                                                                                                               | All. Mostly done by scaffold — this agent formalizes measurement.             |
 | **F02** | Resize correctness                 | Continuous gradient redraw during resize; no stretching/tearing/protocol errors. Wayland: prove correct configure-serial ack + matching buffer size; log every configure.                                                                                                                                                                                                                                        | All                                                                           |
@@ -96,29 +200,51 @@ Feature clusters and their specs. Each agent gets ONE row on ONE platform. 17 fe
 
 ### Per-agent contract (every Phase 2 agent)
 
-1. Copy your platform scaffold into `<platform>/fXX-<name>/`; do not modify the scaffold directory.
-2. Read `common/spec/FXX.md` — implement everything in it; if something is impossible on your platform, that's a finding, not a skip: document the closest achievable behavior and why.
-3. Build in the Nix shell. Tier A platforms: run it, capture the instrumentation log and protocol trace into `findings/<platform>/fXX-trace.log`.
-4. Write `findings/<platform>/fXX.md`: what the spec asked / what the platform actually does / event sequences observed / surprises / `[expected, unverified]` items / open questions.
-5. Fill your row-cell in `findings/matrix.md` (one-line summary + link). Use exactly one commit per demo, message `fXX(<platform>): <summary>`.
-6. **Cite primary docs** for every non-obvious API behavior claim (MSDN, AppKit docs, wayland-protocols XML, Xorg specs) with links in the findings file.
+1. Copy `<platform>/examples/scaffold/` into `<platform>/examples/fXX-<slug>/`; do not modify
+   the scaffold directory or the survey's `example/`. `git add` new files immediately.
+2. Read `features/fXX-<slug>.md` — implement everything in it; if something is impossible on
+   your platform, that's a finding, not a skip: document the closest achievable behavior and why.
+3. Build in the Nix shell. Tier A platforms: run it, capture the instrumentation log and
+   protocol trace; quote the proving lines in the findings doc.
+4. Write `<platform>/fXX-<slug>.md` in research-doc house style: what the spec asked / what the
+   platform actually does / event sequences observed / surprises / `[expected, unverified]`
+   items / open questions. Cross-link the demo source and the relevant section of the
+   platform's survey `index.md`.
+5. Fill your row-cell in `feature-matrix.md` (one-line summary + link). Register the findings
+   doc in the VitePress sidebar; `npm run docs:build` must be green. One commit per demo:
+   `docs(research): add os-apis <platform> fXX <slug> demo + findings`.
+6. **Cite primary docs** for every non-obvious API behavior claim (Microsoft Learn, AppKit
+   docs, wayland-protocols XML, Xorg specs) as reference-style links in the findings doc.
 
 ## Phase 3 — Synthesis (1 agent, after F01–F08 land; update after second wave)
 
-Read all findings + traces and produce:
+Read all findings + traces and produce (each with a `**Last reviewed:**` line, registered in
+the sidebar):
 
-- `findings/synthesis/divergence-map.md` — for each feature: where the four platforms agree, where they fork, and what abstraction each fork forces (e.g. "resize must be modeled as negotiation, not notification, because Wayland").
-- `findings/synthesis/event-sequences.md` — side-by-side ordered event sequences per lifecycle transition per platform (from F02/F08/F14 logs).
-- `findings/synthesis/design-constraints.md` — the hard constraints a new framework cannot abstract away (threading from F17, modal loop from F03, CSD from F13, client-side repeat from F06, ack-configure from F02), each with the evidence link.
-- Cross-reference against the framework study reports (`research/reports/*.md` from the companion project) — where our empirical findings confirm or contradict how the frameworks behave, say so explicitly.
+- `os-apis/divergence-map.md` — for each feature: where the four platforms agree, where they
+  fork, and what abstraction each fork forces (e.g. "resize must be modeled as negotiation,
+  not notification, because Wayland").
+- `os-apis/event-sequences.md` — side-by-side ordered event sequences per lifecycle transition
+  per platform (from F02/F08/F14 logs).
+- `os-apis/design-constraints.md` — the hard constraints a new framework cannot abstract away
+  (threading from F17, modal loop from F03, CSD from F13, client-side repeat from F06,
+  ack-configure from F02), each with the evidence link.
+- Cross-reference against the framework deep-dives one directory up
+  (`../winit.md`, `../sdl3.md`, …, `../comparison.md`, `../platform-gotchas.md`) — where our
+  empirical findings confirm or contradict how the frameworks behave, say so explicitly.
+- Update `os-apis/summary.md` and `os-apis/index.md` to link the matrix and synthesis docs
+  (refresh their `**Last reviewed:**` dates).
 
 ## Manual-run queue (compiled for Petar)
 
-Orchestrator maintains `findings/MANUAL-RUN-QUEUE.md`: a single ordered checklist aggregating every Tier C item — grouped by machine (Windows box, Mac, GNOME session, KDE session, sway session) so each environment is visited once. Each entry: demo path, build command, steps, expected observation, where to paste results.
+Orchestrator maintains `os-apis/manual-run-queue.md`: a single ordered checklist aggregating
+every Tier C item — grouped by machine (Windows box, Mac, GNOME session, KDE session, sway
+session) so each environment is visited once. Each entry: demo path, build command (on the
+Mac: direct `ldc2`, not `dub`), steps, expected observation, where to paste results.
 
 ---
 
-## `findings/matrix.md` template
+## `feature-matrix.md` template
 
 ```markdown
 # Platform × Feature Findings Matrix
@@ -133,8 +259,15 @@ Legend: A=agent-verified, B=compiled-only, C=manual pending/done, — =N/A
 | ... (all 17 rows)                 |
 ```
 
-Each cell: `[tier] one-line finding → findings/<platform>/fXX.md`
+Each cell: `[tier] one-line finding → <platform>/fXX-<slug>.md` (reference-style links; add a
+`**Last reviewed:**` line at the top).
 
 ## Quality bar
 
-A demo fails review if: it links a convenience library beyond the allowed list; it handles only the happy path the spec called out as divergent (e.g. F08 without the fractional-scale path on Wayland); its findings restate documentation instead of observed logs; or a Tier B/C expectation is written as fact. The traces are the ground truth — when a finding is interesting, the log line proving it must be linked.
+A demo fails review if: it links a convenience library beyond the allowed list; it handles
+only the happy path the spec called out as divergent (e.g. F08 without the fractional-scale
+path on Wayland); its findings restate documentation instead of observed logs; a Tier B/C
+expectation is written as fact; its findings doc breaks the research-doc house style (dead
+links, unbackticked identifiers, missing citations); or `npm run docs:build` is red. The
+traces are the ground truth — when a finding is interesting, the log line proving it must be
+quoted in the findings doc.
