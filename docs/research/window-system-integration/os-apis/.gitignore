@@ -2,3 +2,10 @@
 */example/build/
 */example/.dub/
 */example/*.o
+
+# … and for the per-feature demo packages (examples/scaffold, examples/fXX-*)
+*/examples/*/build/
+*/examples/*/.dub/
+*/examples/*/*.o
+*/examples/*/*-protocol.c
+*/examples/*/*-client-protocol.h

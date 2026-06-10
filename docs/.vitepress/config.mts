@@ -1333,6 +1333,89 @@ export default withMermaid(
                       text: 'Cross-Platform Summary',
                       link: '/research/window-system-integration/os-apis/summary',
                     },
+                    {
+                      text: 'Demo Feature Specs (F01–F17)',
+                      link: '/research/window-system-integration/os-apis/features/',
+                      collapsed: true,
+                      items: [
+                        {
+                          text: 'F01 First pixel & init cost',
+                          link: '/research/window-system-integration/os-apis/features/f01-first-pixel',
+                        },
+                        {
+                          text: 'F02 Resize correctness',
+                          link: '/research/window-system-integration/os-apis/features/f02-resize',
+                        },
+                        {
+                          text: 'F03 Modal-loop survival',
+                          link: '/research/window-system-integration/os-apis/features/f03-modal-loop',
+                        },
+                        {
+                          text: 'F04 Vsync / frame pacing',
+                          link: '/research/window-system-integration/os-apis/features/f04-frame-pacing',
+                        },
+                        {
+                          text: 'F05 Loop wakeup & fds',
+                          link: '/research/window-system-integration/os-apis/features/f05-loop-wakeup',
+                        },
+                        {
+                          text: 'F06 Keyboard & keymap',
+                          link: '/research/window-system-integration/os-apis/features/f06-keyboard',
+                        },
+                        {
+                          text: 'F07 IME / text input',
+                          link: '/research/window-system-integration/os-apis/features/f07-text-input',
+                        },
+                        {
+                          text: 'F08 DPI / runtime rescale',
+                          link: '/research/window-system-integration/os-apis/features/f08-dpi-scaling',
+                        },
+                        {
+                          text: 'F09 Outputs & hotplug',
+                          link: '/research/window-system-integration/os-apis/features/f09-outputs',
+                        },
+                        {
+                          text: 'F10 Pointer lock & confine',
+                          link: '/research/window-system-integration/os-apis/features/f10-pointer-capture',
+                        },
+                        {
+                          text: 'F11 Scroll fidelity',
+                          link: '/research/window-system-integration/os-apis/features/f11-scroll',
+                        },
+                        {
+                          text: 'F12 Cursors',
+                          link: '/research/window-system-integration/os-apis/features/f12-cursors',
+                        },
+                        {
+                          text: 'F13 CSD & decorations',
+                          link: '/research/window-system-integration/os-apis/features/f13-decorations',
+                        },
+                        {
+                          text: 'F14 Window state & close',
+                          link: '/research/window-system-integration/os-apis/features/f14-window-state',
+                        },
+                        {
+                          text: 'F15 Popup with grab',
+                          link: '/research/window-system-integration/os-apis/features/f15-popup',
+                        },
+                        {
+                          text: 'F16 Clipboard + DnD',
+                          link: '/research/window-system-integration/os-apis/features/f16-clipboard-dnd',
+                        },
+                        {
+                          text: 'F17 Threading probes',
+                          link: '/research/window-system-integration/os-apis/features/f17-threading',
+                        },
+                      ],
+                    },
+                    {
+                      text: 'Feature Matrix',
+                      link: '/research/window-system-integration/os-apis/feature-matrix',
+                    },
+                    {
+                      text: 'Manual-Run Queue',
+                      link: '/research/window-system-integration/os-apis/manual-run-queue',
+                    },
                   ],
                 },
                 {
