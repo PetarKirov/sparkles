@@ -492,7 +492,7 @@ client-side tools, and [d-landscape][d-landscape] for where `dub` sits today.
 [bb-storage]: https://github.com/buildbarn/bb-storage
 [bb-storage-readme]: https://github.com/buildbarn/bb-storage/blob/main/README.md
 [bb-re]: https://github.com/buildbarn/bb-remote-execution
-[bb-re-readme]: https://github.com/buildbarn/bb-remote-execution/blob/master/README.md
+[bb-re-readme]: https://github.com/buildbarn/bb-remote-execution/blob/main/README.md
 [bb-deploy]: https://github.com/buildbarn/bb-deployments
 [bb-adrs]: https://github.com/buildbarn/bb-adrs
 [bb-adr-storage]: https://github.com/buildbarn/bb-adrs/blob/main/0002-storage.md

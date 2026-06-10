@@ -532,7 +532,7 @@ projects where `apps/web` `dependsOn` `packages/utils` **locally** (via both
 [proto]: https://moonrepo.dev/proto
 [reapi]: https://github.com/bazelbuild/remote-apis
 [bazel-remote]: https://github.com/buchgr/bazel-remote
-[depot]: https://depot.dev
+[depot]: https://web.archive.org/web/20250103201614/https://depot.dev/
 [bazel]: ../bazel/
 [buck2]: ../buck2/
 [pants]: ../pants/

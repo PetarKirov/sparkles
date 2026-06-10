@@ -438,9 +438,9 @@ consequence of pipelines being code rather than a declared task matrix.
 [docs]: https://docs.dagger.io/
 [modcfg]: https://docs.dagger.io/reference/configuration/modules/
 [schema]: https://docs.dagger.io/reference/dagger.schema.json
-[modstruct]: https://docs.dagger.io/api/module-structure/
+[modstruct]: https://web.archive.org/web/20250113035421/https://docs.dagger.io/api/module-structure/
 [moddeps]: https://docs.dagger.io/extending/module-dependencies/
-[filters]: https://docs.dagger.io/api/filters/
+[filters]: https://web.archive.org/web/20250524003005/https://docs.dagger.io/api/filters/
 [cli]: https://docs.dagger.io/api/cli/
 [bp-monorepo]: https://docs.dagger.io/reference/best-practices/monorepos/
 [blog013]: https://dagger.io/blog/dagger-0-13
