@@ -168,6 +168,34 @@ export default withMermaid(
           ],
         },
         {
+          text: 'Apps',
+          collapsed: false,
+          items: [
+            {
+              text: 'terminal',
+              link: '/apps/terminal/',
+              collapsed: false,
+              items: [
+                {
+                  text: 'Getting started',
+                  link: '/apps/terminal/getting-started',
+                },
+                {
+                  text: 'Reference',
+                  collapsed: true,
+                  items: [
+                    { text: 'CLI', link: '/apps/terminal/reference/cli' },
+                    {
+                      text: 'Key & mouse bindings',
+                      link: '/apps/terminal/reference/bindings',
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+        {
           text: 'Libraries',
           collapsed: false,
           items: [
