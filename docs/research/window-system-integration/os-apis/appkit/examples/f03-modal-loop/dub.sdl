@@ -1,0 +1,8 @@
+name "f03_modal_loop_appkit"
+description "F03 modal-loop-survival demo on macOS/AppKit: a ~2 Hz color cycle driven by an NSRunLoopCommonModes NSTimer vs a default-mode control timer, with a nested NSModalPanelRunLoopMode phase proving the mode-starvation mechanism live-resize uses."
+targetType "executable"
+sourcePaths "."
+targetPath "build"
+platforms "osx"
+dependency "objective-d" version="~>1.1.2"
+lflags "-framework" "Cocoa"
