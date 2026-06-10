@@ -1,0 +1,17 @@
+name "f08_dpi_win32"
+description "F08 DPI demo: Per-Monitor-v2 awareness (SetProcessDpiAwarenessContext before any HWND), all DPI sources logged, awareness-immutability proofs, WM_DPICHANGED suggested-rect handling and 1-physical-px hairlines."
+targetType "executable"
+sourcePaths "."
+targetPath "build"
+platforms "windows"
+// Druntime's built-in core.sys.windows bindings only (the Win10-1607+ DPI
+// surface — DPI_AWARENESS_CONTEXT handles + the user32 entry points — is
+// declared in app.d and resolved with GetProcAddress) — same policy as
+// ../scaffold/. Set WSI_AUTO_EXIT=1 for the bounded CI mode (~1.2 s, exit 0;
+// WSI_RUN_MS=<ms> overrides the deadline for live scale-change hunting).
+// WSI_LATE_AWARENESS=1 creates the window FIRST and then calls
+// SetProcessDpiAwarenessContext to capture the ordering-rule failure, plus the
+// SetThreadDpiAwarenessContext sub-process granularity probe. This dub.sdl is
+// for the Windows CI runner; locally the demo is cross-compiled with
+// `nix develop .#win32` (win32-ldc2) and run under Wine — dub cannot drive
+// that pipeline.
