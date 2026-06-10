@@ -7,9 +7,10 @@ export default withMermaid(
     description: 'D library for building CLI applications',
     base: '/',
 
-    // Ignore links to .d source files and to sample/ workspace directories
-    // (source artifacts under research/monorepo-tooling/<tool>/sample/, not pages)
-    ignoreDeadLinks: [/\.d$/, /\/sample\//, /\/sample$/, /\/example\//],
+    // Ignore links to .d/.c source files and to sample/ workspace directories
+    // (source artifacts under research/monorepo-tooling/<tool>/sample/ and the
+    // os-apis demo packages' ImportC shims, not pages)
+    ignoreDeadLinks: [/\.d$/, /\.c$/, /\/sample\//, /\/sample$/, /\/example\//],
 
     markdown: {
       languageAlias: {
