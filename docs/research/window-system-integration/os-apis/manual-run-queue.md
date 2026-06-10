@@ -25,6 +25,16 @@ here; Petar checks them off.
       `WSI_FORCE_TIMER=1`; note monitor Hz and whether minimize changes the `DwmFlush`
       cadence. Paste both stats blocks into `win32/f04-frame-pacing.md`.
 
+- [ ] Win32 F05 on real Windows: re-measure the wakeup-latency table and the
+      waitable-timer tick distribution at 142 ms period (Wine's ±1 ms is tighter than
+      Windows' default 15.6 ms timer-resolution quantization). Paste into
+      `win32/f05-loop-wakeup.md`.
+- [ ] Win32 F06 on real Windows: `LoadKeyboardLayoutW("00000407")` with real KBDGR
+      tables — capture the Y/Z swap on injected scan 0x15/0x2c and the dead-acute
+      (scan 0x0d) + E sequence (`WM_DEADCHAR 0x00b4` then `WM_CHAR 0x00e9`; the demo logs
+      it as-is). Also confirm the `VK_PACKET` scancode field shows the UTF-16 unit's low
+      byte. Paste into `win32/f06-keyboard.md`.
+
 ## Mac (`mac-bsn`, unlocked GUI session)
 
 - [ ] One-time: unlock the screen during a demo run so `CGWindowListCopyWindowInfo` reports
