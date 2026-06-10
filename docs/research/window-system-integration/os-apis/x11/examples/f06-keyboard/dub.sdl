@@ -1,0 +1,7 @@
+name "f06_keyboard_x11"
+description "X11 F06 demo: xkbcommon-x11 keymap/state, XkbStateNotify sync, detectable auto-repeat, live setxkbmap rebuild, dead-key compose."
+targetType "executable"
+sourcePaths "."
+importPaths "."
+libs "x11" "x11-xcb" "xcb" "xkbcommon" "xkbcommon-x11"
+targetPath "build"
