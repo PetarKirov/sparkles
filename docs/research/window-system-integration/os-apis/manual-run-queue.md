@@ -15,7 +15,15 @@ here; Petar checks them off.
 
 ## Windows box
 
-_(no entries yet)_
+- [ ] Win32 F03 on real Windows: run `win32/examples/f03-modal-loop` (build per
+      `win32/scaffold.md`) without `WSI_AUTO_EXIT`, with and without `WSI_MODAL_FIX=1`;
+      drag titlebar + corner ~2 s each; expect freeze vs ~15.6 ms `src=timer` ticks. Also
+      Alt+Space → S → arrows to check whether Wine's keyboard-mode early-exit reproduces.
+      Paste the `modal_summary` lines into `win32/f03-modal-loop.md`.
+- [ ] Win32 F04 on real Windows: run `win32/examples/f04-frame-pacing` with
+      `WSI_AUTO_EXIT=1` (expect `path=dwm`, true vblank stats) and again with
+      `WSI_FORCE_TIMER=1`; note monitor Hz and whether minimize changes the `DwmFlush`
+      cadence. Paste both stats blocks into `win32/f04-frame-pacing.md`.
 
 ## Mac (`mac-bsn`, unlocked GUI session)
 
