@@ -93,19 +93,64 @@ like `async-io/io-uring/{features,timeline}.md`.
   `weston --backend=headless` (and `WAYLAND_DEBUG=1` captures the protocol trace — quote it in
   the findings). X11 demos run under `xvfb-run` (+ `xtrace` for protocol capture when useful).
   Win32 demos that need no interaction (create/paint/auto-close) run on the `windows-latest`
-  CI runner — the existing `win32-example` job in `.github/workflows/ci.yml` is the model.
-  Behavioral findings from headless runs are valid for protocol behavior, NOT for
-  visual/interactive behavior.
-- **Tier B — compiled for target, not run.** Win32 and macOS demos must at minimum produce a
-  target object in the dev shell (`ldc2 -mtriple=x86_64-windows-msvc -c` /
-  `ldc2 -mtriple=arm64-apple-macos -c`), the same compile-for-target bar the existing surveys
-  use for iOS/Win32.
+  CI runner — the existing `win32-example` job in `.github/workflows/ci.yml` is the model —
+  and, once Phase 0 proves the pipeline, locally under **Wine** from a cross-compile (see
+  [Local test environments](#local-test-environments-agent-driven); label such findings
+  `A[wine]`). macOS demos are built **and run** by the agent over SSH on `mac-bsn` (same
+  section). Behavioral findings from headless/Wine runs are valid for protocol/API behavior,
+  NOT for visual/interactive behavior.
+- **Tier B — compiled for target, not run.** The fallback when Wine or the Mac is
+  unavailable: Win32 and macOS demos must at minimum produce a target object in the dev shell
+  (`ldc2 -mtriple=x86_64-windows-msvc -c` / `ldc2 -mtriple=arm64-apple-macos -c`), the same
+  compile-for-target bar the existing surveys use for iOS/Win32.
 - **Tier C — requires manual run.** Every demo prints its findings checklist to stdout and
   writes the instrumentation log; agents add an entry to `manual-run-queue.md` per Tier-C demo
   listing the exact steps and expected observations for Petar to execute on real Windows/macOS
-  machines and real compositors (mutter, kwin, sway). On the macOS box, build with `ldc2`
-  directly rather than `dub` (known dub fork-ENOMEM there). **Never report Tier B/C behavior
-  as observed fact — mark it `[expected, unverified]` in the matrix and findings.**
+  machines and real compositors (mutter, kwin, sway). **Never report Tier B/C behavior as
+  observed fact — mark it `[expected, unverified]` in the matrix and findings.**
+
+## Local test environments (agent-driven)
+
+### macOS — `mac-bsn` over SSH
+
+`mac-bsn` is an `aarch64-darwin` machine with Nix and Xcode installed, reachable via
+`ssh mac-bsn`. The repo lives at `~/code/repos/mine/sparkles`. Working rules:
+
+- **Check for existing git worktrees first** (`git worktree list`) — earlier sessions may have
+  left some; reuse a worktree for this branch rather than re-pointing a checkout that may be
+  in use for something else.
+- **Verify the checkout is at the right commit** before building anything: `git fetch`, then
+  check out / fast-forward the research branch in the chosen worktree.
+- The D toolchain is **not on `PATH`** — prefix every build/run command with `nix develop -c`
+  from the repo root (e.g. `nix develop -c ldc2 …`).
+- Known footgun: **`dub` fork-ENOMEMs on this machine** — drive `ldc2` directly instead of
+  `dub build`/`dub run`.
+- What an SSH session can verify: building, launching, and the demo's own instrumentation
+  log. Whether an `NSWindow` actually appears (and anything needing focus, real input, or
+  monitor topology) depends on the logged-in GUI session — Phase 0 establishes what works by
+  re-running the existing `appkit/example`; whatever remains unobservable stays Tier C.
+
+### Win32 — cross-compile + Wine
+
+Try a fully local, agent-driven Win32 loop on Linux:
+
+- **Compile:** `ldc2 -mtriple=x86_64-windows-msvc` in the dev shell.
+- **Link:** `lld-link` against nixpkgs **`windows.sdk`**
+  (`pkgs/os-specific/windows/msvcSdk/` — the MSVC CRT + Windows SDK headers/libs, splatted by
+  `xwin`, the engine behind `cargo-xwin`).
+- **Run:** under Wine (headless-friendly via a virtual desktop, e.g.
+  `wine explorer /desktop=ci,1280x720 demo.exe`).
+
+Phase 0 prototypes this against the existing `win32/example/` and records the exact working
+commands; if it works, wire it into the dev shell and treat non-interactive Wine runs as Tier
+A with the `A[wine]` label.
+
+> [!WARNING]
+> **Wine is not Windows.** It is an independent reimplementation of `user32`/DWM behavior, and
+> this research is precisely about behavioral quirks. Every Wine-observed finding carries the
+> `[wine]` label, and any surprising or load-bearing behavior must be re-confirmed on
+> `windows-latest` CI or the real Windows box (manual queue) before the synthesis treats it as
+> fact.
 
 ## Instrumentation (uniform across all demos)
 
@@ -146,8 +191,17 @@ relevant excerpt.
    existing discipline: a demo that lacks a host capability prints `SKIP:` and exits 0 —
    never a red CI from a missing capability.
 6. Verify the shell can run `weston --backend=headless` and `xvfb-run`, and that both
-   compile-for-target triples produce objects. Fix the flake until true. Commit all of this as
-   the preparation commits.
+   compile-for-target triples produce objects. Fix the flake until true.
+7. Prototype the **Win32 cross + Wine** pipeline against the existing `win32/example/`
+   (`ldc2 -mtriple=x86_64-windows-msvc` → `lld-link` vs `windows.sdk` → Wine, per
+   [Local test environments](#local-test-environments-agent-driven)). If it works, add the
+   pieces (`windows.sdk`, `wine`) to the Linux dev shell and record the exact commands in the
+   Win32 scaffold notes; if not, document why and fall back to `windows-latest`-only Tier A.
+8. Verify **`mac-bsn`**: SSH reachable, worktree picked/created on the right commit,
+   `nix develop -c ldc2 --version` works, and whether re-running the existing
+   `appkit/example` shows a window from the SSH session. The outcome decides whether macOS
+   run-findings are Tier A or Tier C.
+9. Commit all of this as the preparation commits.
 
 ## Phase 1 — Scaffolds (4 parallel agents, one per platform)
 
@@ -160,8 +214,8 @@ packages stay untouched (the survey prose cites them as the minimal program).
 | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **W0**         | Wayland scaffold: registry, `xdg_wm_base`, toplevel, `wl_shm` double buffer, configure/ack/commit loop, frame-callback redraw, clean teardown. (The existing example stops at the `wl_registry` bootstrap — most of this is new.) Run under headless weston with `WAYLAND_DEBUG=1`; quote the trace. |
 | **X0**         | X11 scaffold (Xlib, like the existing example): window, `WM_PROTOCOLS`/`WM_DELETE_WINDOW`, MIT-SHM image presentation, event loop on the connection fd (`ConnectionNumber`).                                                                                                                         |
-| **N0** (win32) | Win32 scaffold: `RegisterClassEx`, `CreateWindowEx`, message pump, DIB section + `BitBlt` on `WM_PAINT`, auto-close path for CI. Tier A on `windows-latest` for the non-interactive path; manual-queue entry for the rest.                                                                           |
-| **M0**         | macOS scaffold: `NSApplication` with explicit activation policy, `NSWindow`, custom `NSView` drawing a CPU buffer via `CGContext`, run loop. Tier B compile-for-target; manual-queue entry.                                                                                                          |
+| **N0** (win32) | Win32 scaffold: `RegisterClassEx`, `CreateWindowEx`, message pump, DIB section + `BitBlt` on `WM_PAINT`, auto-close path for CI. Tier A on `windows-latest` plus the local Wine pipeline from Phase 0 (label `A[wine]`); manual-queue entry for the interactive rest.                                |
+| **M0**         | macOS scaffold: `NSApplication` with explicit activation policy, `NSWindow`, custom `NSView` drawing a CPU buffer via `CGContext`, run loop. Build **and run on `mac-bsn` over SSH** (`nix develop -c ldc2`, not `dub`); whatever the SSH session cannot observe goes to the manual queue.           |
 
 Scaffold acceptance: window opens, shows a gradient, resizes without artifacts (Wayland:
 correct ack-configure ordering), closes cleanly. Each scaffold agent also writes
@@ -205,7 +259,10 @@ discriminating core; F09–F17 are second wave).
 2. Read `features/fXX-<slug>.md` — implement everything in it; if something is impossible on
    your platform, that's a finding, not a skip: document the closest achievable behavior and why.
 3. Build in the Nix shell. Tier A platforms: run it, capture the instrumentation log and
-   protocol trace; quote the proving lines in the findings doc.
+   protocol trace; quote the proving lines in the findings doc. Win32 agents use the Wine
+   pipeline, macOS agents the `mac-bsn` SSH loop (see
+   [Local test environments](#local-test-environments-agent-driven)), labeling findings
+   `A[wine]` / `A[ssh]` accordingly.
 4. Write `<platform>/fXX-<slug>.md` in research-doc house style: what the spec asked / what the
    platform actually does / event sequences observed / surprises / `[expected, unverified]`
    items / open questions. Cross-link the demo source and the relevant section of the
@@ -240,7 +297,9 @@ the sidebar):
 Orchestrator maintains `os-apis/manual-run-queue.md`: a single ordered checklist aggregating
 every Tier C item — grouped by machine (Windows box, Mac, GNOME session, KDE session, sway
 session) so each environment is visited once. Each entry: demo path, build command (on the
-Mac: direct `ldc2`, not `dub`), steps, expected observation, where to paste results.
+Mac: `nix develop -c ldc2`, not `dub`), steps, expected observation, where to paste results.
+Wine-verified Win32 items that need real-Windows confirmation are queued here too, flagged
+`[wine]` so they can be batch-confirmed on the Windows box.
 
 ---
 
@@ -249,7 +308,8 @@ Mac: direct `ldc2`, not `dub`), steps, expected observation, where to paste resu
 ```markdown
 # Platform × Feature Findings Matrix
 
-Legend: A=agent-verified, B=compiled-only, C=manual pending/done, — =N/A
+Legend: A=agent-verified (A[wine]=under Wine, A[ssh]=on mac-bsn over SSH),
+B=compiled-only, C=manual pending/done, — =N/A
 
 | Feature                           | Wayland | X11 | Win32 | macOS |
 | --------------------------------- | ------- | --- | ----- | ----- |
