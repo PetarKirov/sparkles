@@ -1,0 +1,7 @@
+name "f09_outputs_x11"
+description "X11 F09 demo: output enumeration both ways (XRRGetMonitors vs the screen-resources object model with computed refresh), geometry-derived window<->output occupancy, and RandR change events under Xvfb/Xephyr."
+targetType "executable"
+sourcePaths "."
+importPaths "."
+libs "x11" "xrandr"
+targetPath "build"
