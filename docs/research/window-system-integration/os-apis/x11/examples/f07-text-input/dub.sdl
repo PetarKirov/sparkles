@@ -1,0 +1,8 @@
+name "f07_text_input_x11"
+description "X11 F07 demo: XIM text input — locale coupling, style negotiation, the XFilterEvent gate, spot-location updates, preedit callbacks, IM instantiate/destroy callbacks."
+targetType "executable"
+sourcePaths "."
+sourceFiles "c.c" // the shim defines helper *functions*, so it must be compiled, not just imported
+importPaths "."
+libs "x11"
+targetPath "build"
