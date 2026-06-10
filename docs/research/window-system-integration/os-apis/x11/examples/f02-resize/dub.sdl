@@ -1,0 +1,7 @@
+name "f02_resize_x11"
+description "F02 demo (X11): resize-correctness storm — self XResizeWindow, an external second-connection client, ConfigureNotify/Expose/realloc logging, stale-frame detection."
+targetType "executable"
+sourcePaths "."
+importPaths "."
+libs "x11" "xext"
+targetPath "build"
