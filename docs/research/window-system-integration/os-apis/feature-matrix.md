@@ -54,6 +54,8 @@ the Wayland F13 findings doc's comparison section.
 [x11-f04]: ./x11/f04-frame-pacing.md
 [x11-f01]: ./x11/f01-first-pixel.md
 [x11-f02]: ./x11/f02-resize.md
+[w32-f05]: ./win32/f05-loop-wakeup.md
+[w32-f06]: ./win32/f06-keyboard.md
 [w32-f03]: ./win32/f03-modal-loop.md
 [w32-f04]: ./win32/f04-frame-pacing.md
 [w32-f01]: ./win32/f01-first-pixel.md
