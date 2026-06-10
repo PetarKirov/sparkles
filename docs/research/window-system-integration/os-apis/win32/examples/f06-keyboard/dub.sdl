@@ -1,0 +1,15 @@
+name "f06_keyboard_win32"
+description "F06 keyboard demo: WM_KEYDOWN -> TranslateMessage -> WM_CHAR chain logging with SendInput scancode injection, layout switching (00000407) and ToUnicodeEx probes."
+targetType "executable"
+sourcePaths "."
+targetPath "build"
+platforms "windows"
+// Druntime's built-in core.sys.windows bindings only (zero third-party) — same
+// policy as ../scaffold/. Set WSI_AUTO_EXIT=1 for the bounded CI mode: a
+// SetTimer-driven script injects a letter, shifted digit, repeat pair, Alt
+// chord, the German-layout scancodes (Y/Z swap + dead acute + E) and a
+// surrogate-pair WM_CHAR, then exits 0. WSI_NO_TRANSLATE=1 skips
+// TranslateMessage in the pump (proves it is the sole WM_CHAR producer). This
+// dub.sdl is for the Windows CI runner; locally the demo is cross-compiled with
+// `nix develop .#win32` (win32-ldc2) and run under Wine — dub cannot drive that
+// pipeline.
