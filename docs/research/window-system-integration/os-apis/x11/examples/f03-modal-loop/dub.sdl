@@ -1,0 +1,7 @@
+name "f03_modal_loop_x11"
+description "F03 modal-loop survival, X11: timerfd-driven color-cycle animation ticking through self/external resize storms — X11 has no modal loop to survive."
+targetType "executable"
+sourcePaths "."
+importPaths "."
+libs "x11" "xext"
+targetPath "build"
