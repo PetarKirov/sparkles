@@ -29,6 +29,18 @@ _(no entries yet)_
       window. Expected on stderr: `live_resize_start` → repeated `resize`/`frame_callback`
       pairs at drag cadence → `live_resize_end` (all three are absent under the programmatic
       storm). Paste the sequence into `appkit/f02-resize.md`.
+- [ ] AppKit F03 interactive live-resize/title-drag: build
+      `…/appkit/examples/f03-modal-loop/` per the scaffold notes (binary also staged at
+      `/tmp/wsi-m2/f03-modal-loop/demo` on the mac). Run `./demo` with no env vars; drag
+      the border, then the title bar, ~3 s each. Expect: color cycle never freezes
+      (common-modes timer), `modal_enter`/`modal_exit` bracket the drag, the
+      `tick timer=default` lines vanish during it with a post-drag `gap_ms` ≈ drag length,
+      `draw … live_resize=1`. Paste into `appkit/f03-modal-loop.md`.
+- [ ] AppKit F04 display-link cadence on a real display: run
+      `…/appkit/examples/f04-frame-pacing/` (`/tmp/wsi-m2/f04-frame-pacing/demo`) in an
+      unlocked GUI session. Expect `path=displaylink` at ~8.33 ms (120 Hz), `fell_back=0`;
+      record whether fires pause during the 3 s `orderOut:` window. Paste into
+      `appkit/f04-frame-pacing.md`.
 
 ## GNOME session (mutter)
 
