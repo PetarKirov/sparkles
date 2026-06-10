@@ -31,9 +31,13 @@
 #   - The case shim covers LDC's default-lib names that the xwin splat spells
 #     differently on a case-sensitive filesystem (`Bcrypt.lib`,
 #     `vcruntime140.lib`).
-#   - Wine's null driver delivers WM_PAINT/message-pump behavior fully
-#     headless (no DISPLAY needed). Do NOT run demos via
-#     `wine explorer /desktop=…` — it swallows the child's stdout & exit code.
+#   - Wine needs SOME display server: on this host it loads winewayland against
+#     the live wayland-0 socket (or the x11 driver under Xvfb); with no display
+#     at all CreateWindowExW fails (error 1400). The loaded driver changes
+#     behavior (winewayland swallows WM_SYSCOMMAND SC_SIZE/SC_MOVE; the x11
+#     driver runs Wine's generic modal loop) — F03 findings have the details.
+#     Do NOT run demos via `wine explorer /desktop=…` — it swallows the
+#     child's stdout & exit code.
 #
 # `lib` is taken from the flake-level module args (see android.nix for why).
 { lib, inputs, ... }:
