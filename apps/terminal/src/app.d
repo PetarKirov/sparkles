@@ -12,6 +12,7 @@ import raylib;
 import sparkles.ghostty.c;
 import sparkles.base.smallbuffer : SmallBuffer;
 import input : ExitBehavior, SelectionState, ScrollbarState, HoverState;
+import osc_query : OscScanner;
 
 extern(C) int forkpty(int *amaster, char *name, const termios *termp, const winsize *winp);
 
@@ -722,6 +723,10 @@ struct CoreState
     ScrollbarState sbState;
     HoverState hoverState;
 
+    // Streaming OSC scanner answering OSC 10/11/12 color queries (see
+    // feedPtyChunk); persists across pty read chunks.
+    OscScanner oscScan;
+
     // Child-process lifecycle. childExited is set when the pty signals EOF/EIO;
     // childReaped once waitpid() collects the exit status.
     bool childExited;
@@ -1273,6 +1278,23 @@ int main(string[] args)
     ghostty_render_state_new(null, &s.render_state);
     ghostty_render_state_row_iterator_new(null, &s.row_iter);
     ghostty_render_state_row_cells_new(null, &s.cells);
+
+    // Promote the render-state fallback colors to terminal-level defaults. The
+    // render state always falls back to a built-in theme, but the terminal
+    // itself keeps unset colors as "no value", so the effective color getters
+    // (which feed the OSC 10/11/12 color-query responder, see feedPtyChunk)
+    // would have nothing to report. Registering the colors we render as the
+    // terminal defaults keeps color reports in sync with the screen.
+    {
+        GhosttyRenderStateColors colors;
+        colors.size = GhosttyRenderStateColors.sizeof;
+        ghostty_render_state_update(s.render_state, s.terminal);
+        if (ghostty_render_state_colors_get(s.render_state, &colors) == GHOSTTY_SUCCESS)
+        {
+            ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_COLOR_FOREGROUND, &colors.foreground);
+            ghostty_terminal_set(s.terminal, GHOSTTY_TERMINAL_OPT_COLOR_BACKGROUND, &colors.background);
+        }
+    }
     ghostty_kitty_graphics_placement_iterator_new(null, &s.placement_iter);
     ghostty_key_event_new(null, &s.key_event);
     ghostty_key_encoder_new(null, &s.key_encoder);
@@ -1311,6 +1333,67 @@ int main(string[] args)
     ghostty_terminal_free(s.terminal);
     CloseWindow();
     return 0;
+}
+
+// Write an xterm-style color report for `code` (10/11/12) to the pty:
+// `ESC ] code ; rgb:rrrr/gggg/bbbb` plus the query's own terminator, 16 bits
+// per channel (value × 257) — Ghostty's default report format. The cursor
+// color falls back to the foreground when unset, as in Ghostty.
+@system nothrow @nogc
+private void replyColorQuery(ref CoreState s, int code)
+{
+    import core.stdc.stdio : snprintf;
+    import input : pty_write;
+
+    GhosttyColorRgb rgb;
+    const data = code == 11 ? GHOSTTY_TERMINAL_DATA_COLOR_BACKGROUND
+        : code == 12 ? GHOSTTY_TERMINAL_DATA_COLOR_CURSOR
+        : GHOSTTY_TERMINAL_DATA_COLOR_FOREGROUND;
+    if (ghostty_terminal_get(s.terminal, data, &rgb) != GHOSTTY_SUCCESS
+        && (code != 12
+            || ghostty_terminal_get(s.terminal, GHOSTTY_TERMINAL_DATA_COLOR_FOREGROUND, &rgb) != GHOSTTY_SUCCESS))
+        return;
+
+    char[48] buf;
+    const len = snprintf(buf.ptr, buf.length, "\x1b]%d;rgb:%04x/%04x/%04x%s",
+        code, rgb.r * 257, rgb.g * 257, rgb.b * 257,
+        s.oscScan.endedWithBel ? "\x07".ptr : "\x1b\\".ptr);
+    if (len > 0)
+        pty_write(s.pty_fd, buf.ptr, cast(size_t) len);
+}
+
+// Feed one pty chunk to the terminal while scanning it for OSC color queries
+// (see the osc_query module for why the emulator must answer them). The chunk
+// is fed in segments split at each complete OSC sequence so that a query's
+// reply is written only after the library consumed the query bytes, and
+// before any response the library generates for later queries in the same
+// chunk (yazi sends `OSC 11;?` followed by DA1 and stops reading at the DA1
+// response, so the color report has to precede it).
+@system nothrow @nogc
+private void feedPtyChunk(ref CoreState s, scope const(char)[] chunk)
+{
+    import osc_query : oscScanByte, oscColorQueryCodes;
+
+    size_t segStart = 0;
+    foreach (i, b; chunk)
+    {
+        if (oscScanByte(s.oscScan, b))
+        {
+            ghostty_terminal_vt_write(s.terminal,
+                cast(const(ubyte)*) chunk.ptr + segStart, cast(uint)(i + 1 - segStart));
+            segStart = i + 1;
+            if (!s.oscScan.overflowed)
+            {
+                SmallBuffer!(int, 4) codes;
+                oscColorQueryCodes(s.oscScan.payload[], codes);
+                foreach (code; codes[])
+                    replyColorQuery(s, code);
+            }
+        }
+    }
+    if (segStart < chunk.length)
+        ghostty_terminal_vt_write(s.terminal,
+            cast(const(ubyte)*) chunk.ptr + segStart, cast(uint)(chunk.length - segStart));
 }
 
 // The steady-state frame loop. nothrow @nogc: it allocates nothing and cannot
@@ -1429,7 +1512,7 @@ private void runCoreLoop(ref CoreState s)
                 auto n = read(s.pty_fd, pty_buf.ptr, pty_buf.length);
                 if (n > 0)
                 {
-                    ghostty_terminal_vt_write(s.terminal, cast(const(ubyte)*)pty_buf.ptr, cast(uint)n);
+                    feedPtyChunk(s, pty_buf[0 .. n]);
                 }
                 else if (n == 0)
                 {
