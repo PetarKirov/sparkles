@@ -81,6 +81,10 @@ export default defineConfig({
             link: '/guidelines/move-semantics/',
           },
           {
+            text: 'Modern D Language Features',
+            link: '/guidelines/d-language-features/',
+          },
+          {
             text: 'Code Style',
             collapsed: true,
             items: [
