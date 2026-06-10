@@ -1,5 +1,6 @@
 import { defineConfig } from 'vitepress';
 import { withMermaid } from 'vitepress-plugin-mermaid';
+import { groupIconMdPlugin } from 'vitepress-plugin-group-icons';
 
 export default withMermaid(
   defineConfig({
@@ -42,6 +43,9 @@ export default withMermaid(
     ],
 
     markdown: {
+      config(md) {
+        md.use(groupIconMdPlugin);
+      },
       languageAlias: {
         sdl: 'd',
         eff: 'ocaml',
