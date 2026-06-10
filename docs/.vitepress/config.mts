@@ -7,12 +7,14 @@ export default withMermaid(
     description: 'D library for building CLI applications',
     base: '/',
 
-    // Ignore links to .d/.nix source files and to sample/ workspace directories
-    // (source artifacts under research/monorepo-tooling/<tool>/sample/, not pages),
-    // and links into repo source trees the harness docs reference (the
-    // text-conformance tool + the base/text source) — these resolve on GitHub but
-    // the VitePress site doesn't serve repo source.
+    // Ignore links to .d/.c/.nix/.sdl source files and to sample/ workspace directories
+    // (source artifacts under research/monorepo-tooling/<tool>/sample/ and the
+    // os-apis demo packages' ImportC shims, not pages), and links into repo
+    // source trees the harness docs reference (the text-conformance tool + the
+    // base/text source) — these resolve on GitHub but the VitePress site doesn't
+    // serve repo source.
     ignoreDeadLinks: [
+      /\.c$/,
       /\.d$/,
       /\.nix$/,
       /\.sdl$/,
