@@ -41,6 +41,14 @@ _(no entries yet)_
       lines during the edge drag, `modal_enter=0 modal_exit=0` in the exit summary. Any
       tick gap far beyond one frame period during the drag falsifies the no-modal-loop
       finding. Paste into `wayland/f03-modal-loop.md`.
+- [ ] X11 F03 interactive border/title drag (any real X11/XWayland session): build with
+      `nix develop -c dub build
+--root=docs/research/window-system-integration/os-apis/x11/examples/f03-modal-loop`,
+      run `…/examples/f03-modal-loop/build/f03_modal_loop_x11` with no env vars.
+      Border-drag-resize ~5 s, then title-bar-drag ~5 s; any key exits. Expected: the color
+      cycle never freezes; `tick … gap_us=…` stays ~16 ms (nothing above ~50 ms) through
+      both drags. Paste the max observed gap into `x11/f03-modal-loop.md` (findings table,
+      "Interactive border/title drag" row).
 
 ## KDE session (kwin)
 
