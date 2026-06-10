@@ -598,3 +598,46 @@ div[class*='language-']:hover > .code-block-actions {
   display: inline-block;
   line-height: 1;
 }
+
+/* --------------------------------------------------------------------------
+ * Code-group tab icons (Nerd Font glyphs, keyed off the data-title attribute
+ * added by vitepress-plugin-group-icons' markdown plugin)
+ * -------------------------------------------------------------------------- */
+/* Fira Code variable font from CDN — the site-wide mono face for inline and
+ * block code (see --vp-font-family-mono). One ~110 KB file covers every
+ * weight (300-700). */
+@font-face {
+  font-family: 'Fira Code';
+  src:
+    local('FiraCode-VF'),
+    url('https://cdn.jsdelivr.net/npm/firacode@6.2.0/distr/woff2/FiraCode-VF.woff2')
+      format('woff2');
+  font-style: normal;
+  font-weight: 300 700;
+  font-display: swap;
+}
+
+/* Symbols Nerd Font from CDN, restricted to the Nerd Fonts private-use icon
+ * planes so the ~950 KB face is only fetched on pages that actually render an
+ * icon glyph — and not at all for visitors who have it installed (local()
+ * wins). Fira Code lacks these codepoints, so icons in code fall through to
+ * this face. */
+@font-face {
+  font-family: 'Symbols Nerd Font';
+  src:
+    local('Symbols Nerd Font'),
+    local('SymbolsNerdFont-Regular'),
+    url('https://cdn.jsdelivr.net/gh/mshaugh/nerdfont-webfonts@v3.3.0/build/fonts/SymbolsNerdFont-Regular.woff2')
+      format('woff2');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  unicode-range: U+E000-F8FF, U+F0000-FFFFD;
+}
+
+.vp-code-group .tabs label[data-title='Nix']::before {
+  /* nf-md-nix (U+F1105) */
+  content: '\f1105';
+  font-family: 'Symbols Nerd Font', monospace;
+  margin-right: 6px;
+}
