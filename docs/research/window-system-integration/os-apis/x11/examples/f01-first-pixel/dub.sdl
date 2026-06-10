@@ -1,0 +1,7 @@
+name "f01_first_pixel_x11"
+description "F01 demo (X11): one instrumented init-to-first-pixel run — per-call steps, round-trip costs, MIT-SHM completion confirmation, concept/LOC summary."
+targetType "executable"
+sourcePaths "."
+importPaths "."
+libs "x11" "xext"
+targetPath "build"
