@@ -35,6 +35,19 @@ here; Petar checks them off.
       it as-is). Also confirm the `VK_PACKET` scancode field shows the UTF-16 unit's low
       byte. Paste into `win32/f06-keyboard.md`.
 
+- [ ] Win32 F07 with Microsoft Pinyin: run `win32/examples/f07-text-input` without
+      `WSI_AUTO_EXIT` and execute the 6-step script in `win32/f07-text-input.md`. Record:
+      composition keydowns swallowed as `VK_PROCESSKEY`?, the cancel shape (zero-flag
+      `WM_IME_COMPOSITION` vs Wine's bare `ENDCOMPOSITION`), focus-loss pre-edit fate,
+      candidate-window position vs the logged `candidate_anchor x=`. Paste into
+      `win32/f07-text-input.md`.
+- [ ] Win32 F08 on mixed-DPI monitors: run `win32/examples/f08-dpi-scaling` without
+      `WSI_AUTO_EXIT`, drag between 100% and 150%/200% monitors. Record the live
+      `dpi_changed` sequence + ordering vs `WM_GETDPISCALEDSIZE`/`WM_SIZE`, hairline
+      sharpness after the suggested-rect move, and whether the late
+      `SetProcessDpiAwarenessContext` fails `ERROR_ACCESS_DENIED` (succeeds-but-noops
+      under Wine). Paste into `win32/f08-dpi-scaling.md`.
+
 ## Mac (`mac-bsn`, unlocked GUI session)
 
 - [ ] One-time: unlock the screen during a demo run so `CGWindowListCopyWindowInfo` reports
