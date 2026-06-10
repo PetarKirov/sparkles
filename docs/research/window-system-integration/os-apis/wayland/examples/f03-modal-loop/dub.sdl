@@ -1,0 +1,24 @@
+name "f03_modal_loop_wayland"
+description "F03 modal-loop survival: ~2 Hz color-cycle animation through a maximize/unmaximize/fullscreen state storm — Wayland has no modal loop to survive."
+targetType "executable"
+sourcePaths "."
+importPaths "."
+// dub's source glob (this dub version) only picks up *.d — the ImportC shim
+// must be listed explicitly. Merely *importing* `c` compiles it
+// declaration-only, leaving every wsi_* wrapper an undefined reference at
+// link time.
+sourceFiles "c.c"
+libs "wayland-client"
+targetPath "build"
+
+// xdg-shell glue is *generated* by wayland-scanner (see ./generate.sh); the
+// outputs are gitignored (os-apis/.gitignore: `*-protocol.c`, `*-client-protocol.h`).
+preGenerateCommands "\"$PACKAGE_DIR/generate.sh\"" platform="linux"
+
+// The generated xdg-shell-protocol.c is textually #include'd by c.c (one
+// translation unit). It must never be compiled as its own dub source:
+// (a) duplicate symbols, and (b) its hyphenated filename is not a valid D
+// module name ("module `xdg-shell-protocol` has non-identifier characters
+// in filename"). Defensive — current dub does not glob *.c, but future
+// versions may.
+excludedSourceFiles "xdg-shell-protocol.c"
