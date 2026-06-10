@@ -1,0 +1,8 @@
+name "f01_first_pixel_appkit"
+description "F01 first-pixel demo on macOS/AppKit: one software-drawn frame, every init API call instrumented, exit on first drawRect: return."
+targetType "executable"
+sourcePaths "."
+targetPath "build"
+platforms "osx"
+dependency "objective-d" version="~>1.1.2"
+lflags "-framework" "Cocoa"
