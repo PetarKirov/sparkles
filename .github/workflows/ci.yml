@@ -92,6 +92,37 @@ jobs:
           xvfb-run -a dub run --compiler=ldc2 --root=docs/research/window-system-integration/os-apis/x11/example
           dub run --compiler=ldc2 --root=docs/research/window-system-integration/os-apis/wayland/example
 
+      # Per-feature windowing demos (os-apis/<platform>/examples/{scaffold,fXX-*}).
+      # Demos exit after a bounded run when WSI_AUTO_EXIT=1 and print `SKIP:` +
+      # exit 0 when a host capability is missing — a missing capability must never
+      # red the build. X11 demos run under Xvfb; Wayland demos under a headless
+      # weston instance.
+      - name: Build & run OS-API windowing demos (X11 + Wayland)
+        if: runner.os == 'Linux' && matrix.DC == 'ldc2'
+        env:
+          WSI_AUTO_EXIT: 1
+        run: |
+          base=docs/research/window-system-integration/os-apis
+          for d in "$base"/x11/examples/*/; do
+            [ -f "$d/dub.sdl" ] || continue
+            echo "::group::x11 $d"
+            xvfb-run -a dub run --compiler=ldc2 --root="$d"
+            echo "::endgroup::"
+          done
+          if ls -d "$base"/wayland/examples/*/ >/dev/null 2>&1; then
+            export XDG_RUNTIME_DIR="$(mktemp -d)"
+            weston --backend=headless --socket=wsi-ci --idle-time=0 &
+            weston_pid=$!
+            sleep 3
+            for d in "$base"/wayland/examples/*/; do
+              [ -f "$d/dub.sdl" ] || continue
+              echo "::group::wayland $d"
+              WAYLAND_DISPLAY=wsi-ci dub run --compiler=ldc2 --root="$d"
+              echo "::endgroup::"
+            done
+            kill "$weston_pid"
+          fi
+
   # The Win32 OS-API example builds with druntime's core.sys.windows (no Nix, no
   # third-party deps), so it runs on a plain windows-latest runner via setup-dlang.
   win32-example:
@@ -116,6 +147,21 @@ jobs:
 
       - name: Build & run the Win32 example
         run: dub run --compiler=ldc2 --root=docs/research/window-system-integration/os-apis/win32/example
+
+      # Per-feature Win32 demos: bounded run via WSI_AUTO_EXIT (interactive parts
+      # are exercised manually / under Wine locally — see the manual-run queue).
+      - name: Build & run the Win32 demos
+        shell: bash
+        env:
+          WSI_AUTO_EXIT: 1
+        run: |
+          base=docs/research/window-system-integration/os-apis
+          for d in "$base"/win32/examples/*/; do
+            [ -f "$d/dub.sdl" ] || continue
+            echo "::group::win32 $d"
+            dub run --compiler=ldc2 --root="$d"
+            echo "::endgroup::"
+          done
 
   # Build the Nix outputs and push them to the binary cache, once per system
   # (the derivations are compiler-agnostic — they always build with ldc — so
