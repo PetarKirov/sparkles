@@ -1,0 +1,7 @@
+name "scaffold_x11"
+description "X11 windowing-demo scaffold: poll()ed event loop, MIT-SHM gradient, instrumented init/resize/teardown."
+targetType "executable"
+sourcePaths "."
+importPaths "."
+libs "x11" "xext"
+targetPath "build"
