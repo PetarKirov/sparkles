@@ -8,19 +8,29 @@
 #
 #     nix develop .#win32
 #
-# Pipeline (verified end-to-end on 2026-06-10):
+# Pipeline (verified end-to-end on 2026-06-10) — one command compiles AND
+# links, because the project `ldc` is the official release binary with
+# integrated LLD (see nix/d-toolchain.nix):
 #
-#   1. compile:  ldc2 -mtriple=x86_64-pc-windows-msvc -c app.d -of=app.obj
-#   2. link:     win32-link app.obj /OUT:app.exe /SUBSYSTEM:CONSOLE
-#   3. run:      WINEPREFIX=$(mktemp -d) WINEDEBUG=-all wine64 app.exe
+#     win32-ldc2 app.d -of=build/app.exe
+#     WINEPREFIX=$(mktemp -d) WINEDEBUG=-all wine64 build/app.exe
 #
-# Notes baked into the wrapper/script choices:
-#   - nixpkgs' ldc2 is built *without* integrated LLD, so `-link-internally`
-#     is rejected — hence the standalone `lld-link` (wrapped as `win32-link`
-#     with the LIBPATHs and the default-lib set the COFF objects don't carry).
+# `win32-ldc2` is `ldc2 -mtriple=x86_64-pc-windows-msvc -link-internally
+# -mscrtlib=msvcrt` plus the /LIBPATHs below. Notes baked into the wiring:
+#
+#   - The Windows druntime/phobos import libs come from the official LDC
+#     release archive for the *same version* as the host compiler.
+#     TODO(dlang.nix): replace the local fetch with
+#     `inputs'.dlang-nix.packages.ldc-binary-windows-libs.override { … }`
+#     once the `feat/ldc-windows-cross-libs` branch lands in the pinned input.
 #   - LDC's bundled mingw import libs are NOT a substitute for the SDK: exes
 #     linked against them page-fault at startup under Wine (UCRT-built
 #     druntime vs classic-msvcrt startup stubs).
+#   - `-mscrtlib=msvcrt` is required: LDC otherwise selects `vcruntime140`
+#     as the CRT lib and the link dies on `wmainCRTStartup`.
+#   - The case shim covers LDC's default-lib names that the xwin splat spells
+#     differently on a case-sensitive filesystem (`Bcrypt.lib`,
+#     `vcruntime140.lib`).
 #   - Wine's null driver delivers WM_PAINT/message-pump behavior fully
 #     headless (no DISPLAY needed). Do NOT run demos via
 #     `wine explorer /desktop=…` — it swallows the child's stdout & exit code.
@@ -68,21 +78,26 @@
         '';
       };
 
-      win32Link = pkgs.writeShellScriptBin "win32-link" ''
-        exec lld-link "$@" \
-          "/LIBPATH:${ldcWindowsLibs}" \
-          "/LIBPATH:${winSdk}/crt/lib/x64" \
-          "/LIBPATH:${winSdk}/sdk/lib/um/x64" \
-          "/LIBPATH:${winSdk}/sdk/lib/ucrt/x64" \
-          druntime-ldc.lib phobos2-ldc.lib msvcrt.lib \
-          legacy_stdio_definitions.lib kernel32.lib user32.lib gdi32.lib
+      caseShim = pkgs.runCommand "win-sdk-case-shim" { } ''
+        mkdir -p $out
+        ln -s ${winSdk}/sdk/lib/um/x64/bcrypt.lib $out/Bcrypt.lib
+        ln -s ${winSdk}/crt/lib/x64/vcruntime.lib $out/vcruntime140.lib
+      '';
+
+      win32Ldc2 = pkgs.writeShellScriptBin "win32-ldc2" ''
+        exec ldc2 -mtriple=x86_64-pc-windows-msvc -link-internally -mscrtlib=msvcrt \
+          "-L/LIBPATH:${ldcWindowsLibs}" \
+          "-L/LIBPATH:${winSdk}/crt/lib/x64" \
+          "-L/LIBPATH:${winSdk}/sdk/lib/um/x64" \
+          "-L/LIBPATH:${winSdk}/sdk/lib/ucrt/x64" \
+          "-L/LIBPATH:${caseShim}" \
+          "$@"
       '';
 
       win32Shell = pkgs.mkShell {
         packages = [
-          pkgs.lld
           pkgs.wine64Packages.minimal
-          win32Link
+          win32Ldc2
         ]
         ++ d-toolchain.packages;
         shellHook = ''
