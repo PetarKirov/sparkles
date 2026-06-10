@@ -50,3 +50,6 @@ request_interval = "1s"
 
 [hosts."api.github.com"]
 request_interval = "200ms"
+
+[hosts."gitlab.freedesktop.org"]
+request_interval = "1s"
