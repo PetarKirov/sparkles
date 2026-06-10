@@ -1,0 +1,7 @@
+name "f04_frame_pacing_x11"
+description "F04 vsync/frame pacing, X11: redraw driven by the Present extension's PresentCompleteNotify clock (via Xlib-xcb interop), with a plain-timer fallback path; jitter stats + histogram."
+targetType "executable"
+sourcePaths "."
+importPaths "."
+libs "x11" "x11-xcb" "xcb" "xcb-present"
+targetPath "build"
