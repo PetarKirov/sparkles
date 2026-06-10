@@ -1225,25 +1225,84 @@ export default defineConfig({
             ],
           },
           {
-            text: 'Vulkan Bindings',
+            text: 'Vulkan Bindings & Wrappers',
+            link: '/research/vulkan/',
             collapsed: true,
             items: [
               { text: 'Overview', link: '/research/vulkan/' },
+              { text: 'Concepts', link: '/research/vulkan/concepts' },
               {
-                text: 'Rust (vulkano)',
-                link: '/research/vulkan/rust-vulkano',
+                text: 'Thin / Generated Bindings',
+                collapsed: true,
+                items: [
+                  {
+                    text: 'C++ (Vulkan-Hpp)',
+                    link: '/research/vulkan/cpp-vulkan-hpp',
+                  },
+                  { text: 'Rust (ash)', link: '/research/vulkan/rust-ash' },
+                  {
+                    text: 'Rust (vulkanalia)',
+                    link: '/research/vulkan/rust-vulkanalia',
+                  },
+                  {
+                    text: 'Zig (vulkan-zig)',
+                    link: '/research/vulkan/zig-vulkan-zig',
+                  },
+                  { text: 'D (ErupteD)', link: '/research/vulkan/d-erupted' },
+                  {
+                    text: 'C# (Silk.NET)',
+                    link: '/research/vulkan/csharp-silknet',
+                  },
+                  {
+                    text: 'Java (LWJGL / vulkan4j)',
+                    link: '/research/vulkan/java-lwjgl-vulkan4j',
+                  },
+                ],
               },
               {
-                text: 'Haskell (vulkan)',
-                link: '/research/vulkan/haskell-vulkan',
+                text: 'Safety-First Wrappers',
+                collapsed: true,
+                items: [
+                  {
+                    text: 'Rust (vulkano)',
+                    link: '/research/vulkan/rust-vulkano',
+                  },
+                  {
+                    text: 'Haskell (vulkan)',
+                    link: '/research/vulkan/haskell-vulkan',
+                  },
+                  {
+                    text: 'OCaml (Olivine)',
+                    link: '/research/vulkan/ocaml-olivine',
+                  },
+                ],
               },
               {
-                text: 'C++ (Vulkan-Hpp)',
-                link: '/research/vulkan/cpp-vulkan-hpp',
+                text: 'Render-Graph / Auto-Sync Layers',
+                collapsed: true,
+                items: [
+                  { text: 'Daxa (C++)', link: '/research/vulkan/cpp-daxa' },
+                  { text: 'vuk (C++)', link: '/research/vulkan/cpp-vuk' },
+                  {
+                    text: 'Tephra (C++)',
+                    link: '/research/vulkan/cpp-tephra',
+                  },
+                  { text: 'wgpu (Rust)', link: '/research/vulkan/rust-wgpu' },
+                ],
               },
               {
-                text: 'OCaml (Olivine)',
-                link: '/research/vulkan/ocaml-olivine',
+                text: 'Thematic & Synthesis',
+                collapsed: true,
+                items: [
+                  {
+                    text: 'Sync & Validation',
+                    link: '/research/vulkan/sync-validation',
+                  },
+                  {
+                    text: 'Comparison',
+                    link: '/research/vulkan/comparison',
+                  },
+                ],
               },
             ],
           },
