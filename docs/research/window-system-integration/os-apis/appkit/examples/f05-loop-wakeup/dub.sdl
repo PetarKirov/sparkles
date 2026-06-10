@@ -1,0 +1,8 @@
+name "f05_loop_wakeup_appkit"
+description "F05 loop-wakeup & external-fd demo on macOS/AppKit: a worker thread measures cross-thread wakeup latency into [NSApp run] via postEvent:atStart:, a version-0 CFRunLoopSource, and a pipe integrated through CFFileDescriptor — proving AppKit accepts raw fds only via CF/dispatch adapters."
+targetType "executable"
+sourcePaths "."
+targetPath "build"
+platforms "osx"
+dependency "objective-d" version="~>1.1.2"
+lflags "-framework" "Cocoa"
