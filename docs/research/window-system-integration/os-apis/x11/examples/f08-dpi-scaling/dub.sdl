@@ -1,0 +1,7 @@
+name "f08_dpi_scaling_x11"
+description "X11 F08 demo: the DPI absence-proof — Xft.dpi / RandR / core-screen snapshot at startup, root RESOURCE_MANAGER PropertyNotify as the only live channel, nothing on the window."
+targetType "executable"
+sourcePaths "."
+importPaths "."
+libs "x11" "xrandr"
+targetPath "build"
