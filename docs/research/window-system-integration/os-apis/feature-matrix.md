@@ -11,26 +11,26 @@ Windows; **A[ssh]** = on `mac-bsn` over SSH — WindowServer-registration verifi
 compositing not), **B** = compiled-for-target only, **C** = manual run pending/done,
 **—** = N/A. Tier B/C expectations are `[expected, unverified]`, never stated as fact.
 
-| Feature                           | Wayland | X11 | Win32 | macOS |
-| --------------------------------- | ------- | --- | ----- | ----- |
-| Scaffold: concepts-to-pixel / LOC |         |     |       |       |
-| [F01 first pixel][f01]            |         |     |       |       |
-| [F02 resize][f02]                 |         |     |       |       |
-| [F03 modal loop][f03]             |         |     |       |       |
-| [F04 frame pacing][f04]           |         |     |       |       |
-| [F05 loop wakeup][f05]            |         |     |       |       |
-| [F06 keyboard][f06]               |         |     |       |       |
-| [F07 text input][f07]             |         |     |       |       |
-| [F08 dpi scaling][f08]            |         |     |       |       |
-| [F09 outputs][f09]                |         |     |       |       |
-| [F10 pointer capture][f10]        |         |     |       |       |
-| [F11 scroll][f11]                 |         |     |       |       |
-| [F12 cursors][f12]                |         |     |       |       |
-| [F13 decorations][f13]            |         |     | —     | —     |
-| [F14 window state][f14]           |         |     |       |       |
-| [F15 popup][f15]                  |         |     |       |       |
-| [F16 clipboard + DnD][f16]        |         |     |       |       |
-| [F17 threading][f17]              |         |     |       |       |
+| Feature                           | Wayland                                | X11                                                                                                                 | Win32                                         | macOS                                        |
+| --------------------------------- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- | -------------------------------------------- |
+| Scaffold: concepts-to-pixel / LOC | [A] 11 / 463 ([findings][wl-scaffold]) | [A] 9 / 412 ([findings][x11-scaffold])                                                                              | [A[wine]] 10 / 323 ([findings][w32-scaffold]) | [A[ssh]] 11 / 391 ([findings][mac-scaffold]) |
+| [F01 first pixel][f01]            |                                        | [A] ~1.4 ms, 5 round-trips dominate; no on-glass proof without Present; a WM adds ~3 ms ([findings][x11-f01])       |                                               |                                              |
+| [F02 resize][f02]                 |                                        | [A] notify-not-negotiate; ≥1 stale frame/resize structural; WM makes `XResizeWindow` deniable ([findings][x11-f02]) |                                               |                                              |
+| [F03 modal loop][f03]             |                                        |                                                                                                                     |                                               |                                              |
+| [F04 frame pacing][f04]           |                                        |                                                                                                                     |                                               |                                              |
+| [F05 loop wakeup][f05]            |                                        |                                                                                                                     |                                               |                                              |
+| [F06 keyboard][f06]               |                                        |                                                                                                                     |                                               |                                              |
+| [F07 text input][f07]             |                                        |                                                                                                                     |                                               |                                              |
+| [F08 dpi scaling][f08]            |                                        |                                                                                                                     |                                               |                                              |
+| [F09 outputs][f09]                |                                        |                                                                                                                     |                                               |                                              |
+| [F10 pointer capture][f10]        |                                        |                                                                                                                     |                                               |                                              |
+| [F11 scroll][f11]                 |                                        |                                                                                                                     |                                               |                                              |
+| [F12 cursors][f12]                |                                        |                                                                                                                     |                                               |                                              |
+| [F13 decorations][f13]            |                                        |                                                                                                                     | —                                             | —                                            |
+| [F14 window state][f14]           |                                        |                                                                                                                     |                                               |                                              |
+| [F15 popup][f15]                  |                                        |                                                                                                                     |                                               |                                              |
+| [F16 clipboard + DnD][f16]        |                                        |                                                                                                                     |                                               |                                              |
+| [F17 threading][f17]              |                                        |                                                                                                                     |                                               |                                              |
 
 The X11 and macOS F13 cells are "N/A — SSD" by design (see the
 [F13 spec](./features/f13-decorations.md)); their one-line customization-hook notes land in
@@ -38,6 +38,12 @@ the Wayland F13 findings doc's comparison section.
 
 <!-- References -->
 
+[wl-scaffold]: ./wayland/scaffold.md
+[x11-scaffold]: ./x11/scaffold.md
+[w32-scaffold]: ./win32/scaffold.md
+[mac-scaffold]: ./appkit/scaffold.md
+[x11-f01]: ./x11/f01-first-pixel.md
+[x11-f02]: ./x11/f02-resize.md
 [f01]: ./features/f01-first-pixel.md
 [f02]: ./features/f02-resize.md
 [f03]: ./features/f03-modal-loop.md
