@@ -32,7 +32,15 @@ _(no entries yet)_
 
 ## GNOME session (mutter)
 
-_(no entries yet)_
+- [ ] Wayland F03 — interactive drag continuity (also run in the KDE and sway sections
+      below): `dub run
+--root=docs/research/window-system-integration/os-apis/wayland/examples/f03-modal-loop`
+      (no `WSI_AUTO_EXIT`). Drag the window by its title bar ≥5 s, then drag an edge to
+      resize ≥5 s. Expect: uninterrupted ~2 Hz color cycling, the `tick … dt_us=…` stream
+      bounded near the display's frame period throughout, `resizing=1` in the configure
+      lines during the edge drag, `modal_enter=0 modal_exit=0` in the exit summary. Any
+      tick gap far beyond one frame period during the drag falsifies the no-modal-loop
+      finding. Paste into `wayland/f03-modal-loop.md`.
 
 ## KDE session (kwin)
 
