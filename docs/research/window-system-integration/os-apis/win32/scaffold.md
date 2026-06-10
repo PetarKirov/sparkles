@@ -255,12 +255,15 @@ the unfree SDK derivation). The exact commands the feature demos reuse, run in
 `docs/research/window-system-integration/os-apis/win32/examples/scaffold/`:
 
 ```bash
-nix develop .#win32 -c ldc2 -mtriple=x86_64-pc-windows-msvc \
-    -c app.d instrument.d -of=build/scaffold.obj
-nix develop .#win32 -c win32-link build/scaffold.obj /OUT:build/scaffold.exe /SUBSYSTEM:CONSOLE
+nix develop .#win32 -c win32-ldc2 app.d instrument.d -of=build/scaffold.exe
 WINEPREFIX=$(mktemp -d) WINEDEBUG=-all WSI_AUTO_EXIT=1 \
     nix develop .#win32 -c wine64 ./build/scaffold.exe
 ```
+
+`win32-ldc2` wraps `ldc2 -mtriple=x86_64-pc-windows-msvc -link-internally -mscrtlib=msvcrt`
+plus the `/LIBPATH`s for the LDC Windows release libs and the `windows.sdk` import libs — the
+project `ldc` is the official release binary with integrated LLD, so one command compiles and
+links (see `nix/shells/win32-cross.nix`).
 
 Exit code `0`, 68 `frame_callback` events (60 timer frames + 8 storm frames), full event
 sequence on stderr. Without `WSI_AUTO_EXIT=1` the program runs (and animates) until the user
