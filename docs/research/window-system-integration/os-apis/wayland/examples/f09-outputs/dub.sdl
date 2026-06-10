@@ -1,0 +1,19 @@
+name "f09_outputs"
+description "F09 output demo: wl_output v4 + zxdg_output_v1 enumeration, wl_surface.enter/leave occupancy, hotplug add/remove."
+targetType "executable"
+sourcePaths "."
+importPaths "."
+// dub's source glob (this dub version) only picks up *.d — the ImportC shim
+// must be listed explicitly (see ../scaffold/dub.sdl for the whole story).
+sourceFiles "c.c"
+libs "wayland-client"
+targetPath "build"
+
+// Protocol glue is *generated* by wayland-scanner (see ./generate.sh); the
+// outputs are gitignored (os-apis/.gitignore: `*-protocol.c`, `*-client-protocol.h`).
+preGenerateCommands "\"$PACKAGE_DIR/generate.sh\"" platform="linux"
+
+// The generated *-protocol.c files are textually #include'd by c.c (one
+// translation unit) — never compiled as their own dub sources (duplicate
+// symbols + hyphenated filenames are not valid D module names).
+excludedSourceFiles "xdg-shell-protocol.c" "xdg-output-unstable-v1-protocol.c"
