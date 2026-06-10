@@ -1,0 +1,8 @@
+name "f04_frame_pacing_appkit"
+description "F04 vsync/frame-pacing demo on macOS/AppKit: redraw paced by CADisplayLink via NSView displayLinkWithTarget:selector: (macOS 14+), with an NSTimer fallback path, inter-frame jitter statistics, and an orderOut: occlusion probe."
+targetType "executable"
+sourcePaths "."
+targetPath "build"
+platforms "osx"
+dependency "objective-d" version="~>1.1.2"
+lflags "-framework" "Cocoa" "-framework" "QuartzCore"
