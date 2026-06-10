@@ -76,6 +76,11 @@ here; Petar checks them off.
       compositor config (virtual keyboards carry their own keymap, so the headless run
       could not observe it), AltGr/`ISO_Level3` symbols, and per-device keymap behavior.
       Paste into `wayland/f06-keyboard.md`.
+- [ ] Wayland F07 candidate-window visuals (GNOME + kimpanel, or KDE): run
+      `wayland/examples/f07-text-input` on the real session with fcitx5+pinyin active,
+      type `nihao` + space at both ends of the line, Esc mid-composition, then switch
+      focus away mid-composition. Expect the doc's logged choreography plus a candidate
+      window anchored at the caret rect. Paste into `wayland/f07-text-input.md`.
 - [ ] X11 F03 interactive border/title drag (any real X11/XWayland session): build with
       `nix develop -c dub build
 --root=docs/research/window-system-integration/os-apis/x11/examples/f03-modal-loop`,
