@@ -60,6 +60,8 @@ the Wayland F13 findings doc's comparison section.
 [w32-f04]: ./win32/f04-frame-pacing.md
 [w32-f01]: ./win32/f01-first-pixel.md
 [w32-f02]: ./win32/f02-resize.md
+[mac-f05]: ./appkit/f05-loop-wakeup.md
+[mac-f06]: ./appkit/f06-keyboard.md
 [mac-f03]: ./appkit/f03-modal-loop.md
 [mac-f04]: ./appkit/f04-frame-pacing.md
 [mac-f01]: ./appkit/f01-first-pixel.md
