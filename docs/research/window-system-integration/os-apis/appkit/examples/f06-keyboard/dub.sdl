@@ -1,0 +1,8 @@
+name "f06_keyboard_appkit"
+description "F06 keyboard & keymap demo on macOS/AppKit: a custom NSView logs scancode/keysym/text for keyDown:/keyUp:/flagsChanged:, routes through interpretKeyEvents: into insertText:/doCommandBySelector:, drives UCKeyTranslate for the three-level + dead-key split, enumerates TIS input sources, and injects keys via synthetic NSEvent and CGEventPost."
+targetType "executable"
+sourcePaths "."
+targetPath "build"
+platforms "osx"
+dependency "objective-d" version="~>1.1.2"
+lflags "-framework" "Cocoa" "-framework" "Carbon"
