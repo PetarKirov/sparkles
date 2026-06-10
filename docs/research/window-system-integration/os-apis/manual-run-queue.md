@@ -22,6 +22,13 @@ _(no entries yet)_
 - [ ] One-time: unlock the screen during a demo run so `CGWindowListCopyWindowInfo` reports
       `onscreen=true`, and grant Screen Recording TCC to `screencapture` for visual capture.
       Paste results into the AppKit scaffold findings.
+- [ ] AppKit F02 interactive live-resize: build
+      `docs/research/window-system-integration/os-apis/appkit/examples/f02-resize/` per the
+      scaffold notes (`nix develop -c ldc2 …`, not dub), run `./demo` with **no** env vars in
+      an unlocked GUI session, drag the window border for a few seconds, then close the
+      window. Expected on stderr: `live_resize_start` → repeated `resize`/`frame_callback`
+      pairs at drag cadence → `live_resize_end` (all three are absent under the programmatic
+      storm). Paste the sequence into `appkit/f02-resize.md`.
 
 ## GNOME session (mutter)
 
