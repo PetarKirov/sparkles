@@ -185,6 +185,28 @@
         # (`libs "kqueue"`; fiber-echo `-c libkqueue`). Same package the
         # Android build cross-compiles the source of.
         pkgs.libkqueue
+
+        # Windowing feature demos (os-apis/<platform>/examples/): the CI job
+        # builds and RUNS these (xvfb for X11, a headless weston for Wayland),
+        # so they are the ci tier, not dev: without weston the Wayland demos
+        # print SKIP and the job goes green having verified nothing.
+        pkgs.weston
+        pkgs.wayland-protocols
+        pkgs.wayland-scanner
+        pkgs.libxkbcommon
+        pkgs.libxkbcommon.dev
+        pkgs.libxext
+        pkgs.libxext.dev
+        pkgs.libxi
+        pkgs.libxi.dev
+        pkgs.libxfixes
+        pkgs.libxfixes.dev
+        pkgs.libxcursor
+        pkgs.libxcursor.dev
+        pkgs.libxrandr
+        pkgs.libxrandr.dev
+        pkgs.libxcb
+        pkgs.libxcb.dev
       ]
       ++ lib.optionals pkgs.stdenv.hostPlatform.isDarwin [
         # MoltenVK is Darwin's Vulkan ICD (Vulkan-on-Metal). The loader
