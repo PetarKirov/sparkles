@@ -965,6 +965,47 @@ void parseCodepointMaps(ref CoreState s, string[] entries)
     }
 }
 
+// Scrub host-terminal identity from the environment so child programs probe
+// *this* terminal instead of trusting variables leaked from the terminal (or
+// multiplexer) we were launched from. Programs like yazi pick their image
+// protocol from these: a leaked TERM_PROGRAM=ghostty makes yazi skip its
+// Kitty-graphics probe, and a leaked ZELLIJ_SESSION_NAME makes it assume a
+// multiplexer that can't pass graphics through — so images degrade to chafa
+// block art even though we support the Kitty graphics protocol. Must run
+// before forkpty (the child inherits the parent's environment).
+void sanitizeChildEnv()
+{
+    import core.sys.posix.stdlib : setenv, unsetenv;
+    import std.process : environment;
+    import std.string : startsWith, toStringz;
+
+    static immutable droppedVars = [
+        "TERM_PROGRAM", "TERM_PROGRAM_VERSION",
+        "TERMINFO", // points into the host terminal's own terminfo tree
+        "WINDOWID", "VTE_VERSION",
+        "TMUX", "TMUX_PANE",
+        "ITERM_SESSION_ID", "ITERM_PROFILE",
+        "KONSOLE_VERSION", "KONSOLE_DBUS_SESSION", "KONSOLE_DBUS_SERVICE",
+        "WT_SESSION", "WT_PROFILE_ID",
+    ];
+    static immutable droppedPrefixes = [
+        "GHOSTTY_", "ZELLIJ", "KITTY_", "WEZTERM_", "ALACRITTY_",
+    ];
+
+    foreach (name; droppedVars)
+        unsetenv(name.ptr); // string literals are NUL-terminated
+
+    foreach (name; environment.toAA.byKey)
+        foreach (prefix; droppedPrefixes)
+            if (name.startsWith(prefix))
+                unsetenv(name.toStringz);
+
+    // Advertise what we actually are: 256-color xterm-compatible with 24-bit
+    // SGR color support (matching our DA1/XTVERSION responses).
+    setenv("TERM", "xterm-256color", 1);
+    setenv("COLORTERM", "truecolor", 1);
+}
+
 // One-time setup (CLI, fonts, terminal, pty). GC and exceptions are fine here;
 // the steady-state work happens in the `nothrow @nogc` runCoreLoop below.
 int main(string[] args)
@@ -1135,7 +1176,6 @@ int main(string[] args)
     // getpwuid/setenv. Every fork here happens after InitWindow created GL and
     // window threads, so a GC allocation in the child could deadlock.
     import core.stdc.stdlib : getenv;
-    import core.sys.posix.stdlib : setenv;
     import core.stdc.string : strrchr;
     const(char)* shellZ = getenv("SHELL".ptr);
     if (shellZ is null || *shellZ == '\0')
@@ -1150,9 +1190,9 @@ int main(string[] args)
     const(char)* shellName = strrchr(shellZ, '/');
     shellName = shellName ? shellName + 1 : shellZ;
 
-    // Set TERM in the parent; the child inherits the environment (so we don't
-    // need a non-async-signal-safe setenv between fork and exec).
-    setenv("TERM".ptr, "xterm-256color".ptr, 1);
+    // Sanitize the environment in the parent; the child inherits it (so we
+    // don't need a non-async-signal-safe setenv between fork and exec).
+    sanitizeChildEnv();
 
     const(char)*[4] argv;
     if (shellCommand !is null)
