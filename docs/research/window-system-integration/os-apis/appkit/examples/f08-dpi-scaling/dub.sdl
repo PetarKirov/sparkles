@@ -1,0 +1,8 @@
+name "f08_dpi_scaling_appkit"
+description "F08 DPI/backingScaleFactor demo on macOS/AppKit: enumerates every scale source (NSScreen, NSWindow, convertRectToBacking:, CALayer contentsScale), pins the created-at-scale timeline and viewDidChangeBackingProperties firing, logs the drawRect: CGContext CTM as ground truth, runs a deliberate 1.0-scale buffer mismatch probe, and registers the runtime-rescale notifications for a Tier-C monitor drag."
+targetType "executable"
+sourcePaths "."
+targetPath "build"
+platforms "osx"
+dependency "objective-d" version="~>1.1.2"
+lflags "-framework" "Cocoa"
