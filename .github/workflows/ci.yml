@@ -71,3 +71,38 @@ jobs:
 
       - name: Build and run examples
         run: ci --example-files --fail-fast
+
+      # OS-API research examples (docs/research/.../os-apis). These are multi-file
+      # dub packages (ImportC), not single-file, so they are outside `ci
+      # --example-files`; build/run the Linux ones here in the devshell. X11 opens a
+      # real window under xvfb; Wayland has no compositor in CI so it prints SKIP and
+      # exits 0. (macOS/iOS/Android are verified out of band — see the surveys.)
+      - name: Build & run OS-API windowing examples (X11 + Wayland)
+        if: runner.os == 'Linux' && matrix.DC == 'ldc2'
+        run: |
+          xvfb-run -a dub run --compiler=ldc2 --root=docs/research/window-system-integration/os-apis/x11/example
+          dub run --compiler=ldc2 --root=docs/research/window-system-integration/os-apis/wayland/example
+
+  # The Win32 OS-API example builds with druntime's core.sys.windows (no Nix, no
+  # third-party deps), so it runs on a plain windows-latest runner via setup-dlang.
+  win32-example:
+    name: Win32 OS-API example (windows-latest)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install D (LDC)
+        uses: dlang-community/setup-dlang@v1
+        with:
+          compiler: ldc-1.41.0
+
+      - name: Cache DUB packages
+        uses: actions/cache@v5
+        with:
+          path: ~/AppData/Local/dub
+          key: windows-dub-osapi
+          restore-keys: windows-dub-osapi
+
+      - name: Build & run the Win32 example
+        run: dub run --compiler=ldc2 --root=docs/research/window-system-integration/os-apis/win32/example
