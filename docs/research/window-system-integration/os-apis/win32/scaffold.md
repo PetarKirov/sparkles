@@ -83,7 +83,7 @@ returns synchronously; nothing analogous to Wayland's configure/ack handshake ex
 
 ## Init step sequence & timing — `A[wine]`
 
-The creation segment of the bounded run (`WSI_AUTO_EXIT=1`, Wine 10.0 null driver,
+The creation segment of the bounded run (`WSI_AUTO_EXIT=1`, Wine 10.0,
 timestamps in µs since `init_start`):
 
 ```text
@@ -237,9 +237,12 @@ Findings (all `A[wine]`):
 - **`WM_ERASEBKGND` before the size is known** in the show/grow cascades (`A[wine]`).
 - **Shrinks self-invalidate nothing** — continuous-redraw apps must invalidate explicitly or
   a shrink shows a stale frame ([F02][f02]'s artifact class, demonstrated trivially here).
-- **Wine's null driver delivers the full message stream headless** — `WM_PAINT`, timers, the
-  storm, teardown — with no display at all, which is what makes this Tier `A[wine]` instead
-  of Tier B. Caveat: Wine itself prints X11 noise (`Authorization required, but no
+- **Wine delivers the full message stream without a visible session** — `WM_PAINT`, timers,
+  the storm, teardown — which is what makes this Tier `A[wine]` instead of Tier B.
+  Correction from the F03/F04 work: this is NOT Wine's null driver — on this host Wine
+  10.0 loads **winewayland** against the live `wayland-0` socket (or the x11 driver under
+  Xvfb); with no display server at all, `CreateWindowExW` fails with error 1400. See
+  [F03][f03-doc] for the driver-dependent `WM_SYSCOMMAND` behavior this implies. Caveat: Wine itself prints X11 noise (`Authorization required, but no
 authorization protocol specified`) to stderr before the demo's first line when `DISPLAY`
   is set but unusable; log consumers must tolerate foreign stderr lines.
 - **Timer cadence ran slightly slow:** the 16 ms `SetTimer` delivered ticks every
@@ -303,3 +306,4 @@ invocation above is fully headless.
 [wm-size]: https://web.archive.org/web/20260610105248/https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-size
 [wm-close]: https://web.archive.org/web/20260610105639/https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-close
 [wm-destroy]: https://web.archive.org/web/20260521184316/https://learn.microsoft.com/en-us/windows/win32/winmsg/wm-destroy
+[f03-doc]: ./f03-modal-loop.md
