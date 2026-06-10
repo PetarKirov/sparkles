@@ -53,6 +53,11 @@ _(no entries yet)_
       lines during the edge drag, `modal_enter=0 modal_exit=0` in the exit summary. Any
       tick gap far beyond one frame period during the drag falsifies the no-modal-loop
       finding. Paste into `wayland/f03-modal-loop.md`.
+- [ ] Wayland F06 on a real seat (any Wayland session): re-run
+      `wayland/examples/f06-keyboard` with a physical keyboard — live layout switch via
+      compositor config (virtual keyboards carry their own keymap, so the headless run
+      could not observe it), AltGr/`ISO_Level3` symbols, and per-device keymap behavior.
+      Paste into `wayland/f06-keyboard.md`.
 - [ ] X11 F03 interactive border/title drag (any real X11/XWayland session): build with
       `nix develop -c dub build
 --root=docs/research/window-system-integration/os-apis/x11/examples/f03-modal-loop`,
