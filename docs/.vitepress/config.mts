@@ -1068,6 +1068,119 @@ export default defineConfig({
               },
             ],
           },
+          {
+            text: 'Window System Integration',
+            link: '/research/window-system-integration/',
+            collapsed: true,
+            items: [
+              {
+                text: 'Concepts',
+                link: '/research/window-system-integration/concepts',
+              },
+              {
+                text: 'Library Deep-Dives',
+                collapsed: true,
+                items: [
+                  {
+                    text: 'Tier 1 — Windowing Libraries',
+                    collapsed: true,
+                    items: [
+                      {
+                        text: 'winit (Rust)',
+                        link: '/research/window-system-integration/winit',
+                      },
+                      {
+                        text: 'SDL3 (C)',
+                        link: '/research/window-system-integration/sdl3',
+                      },
+                      {
+                        text: 'GLFW (C)',
+                        link: '/research/window-system-integration/glfw',
+                      },
+                      {
+                        text: 'sokol_app.h (C)',
+                        link: '/research/window-system-integration/sokol',
+                      },
+                    ],
+                  },
+                  {
+                    text: 'Tier 2 — Framework Platform Layers',
+                    collapsed: true,
+                    items: [
+                      {
+                        text: 'Qt 6 / QPA (C++)',
+                        link: '/research/window-system-integration/qt6',
+                      },
+                      {
+                        text: 'GTK4 / GDK (C)',
+                        link: '/research/window-system-integration/gtk4',
+                      },
+                      {
+                        text: 'Flutter Engine (C++)',
+                        link: '/research/window-system-integration/flutter-engine',
+                      },
+                      {
+                        text: 'Chromium Ozone (C++)',
+                        link: '/research/window-system-integration/chromium-ozone',
+                      },
+                    ],
+                  },
+                  {
+                    text: 'Tier 3 — Additional Perspectives',
+                    collapsed: true,
+                    items: [
+                      {
+                        text: 'Avalonia (.NET)',
+                        link: '/research/window-system-integration/avalonia',
+                      },
+                      {
+                        text: '.NET MAUI',
+                        link: '/research/window-system-integration/dotnet-maui',
+                      },
+                      {
+                        text: 'Uno Platform (.NET)',
+                        link: '/research/window-system-integration/uno-platform',
+                      },
+                      {
+                        text: 'Slint (Rust)',
+                        link: '/research/window-system-integration/slint',
+                      },
+                      {
+                        text: 'wxWidgets (C++)',
+                        link: '/research/window-system-integration/wxwidgets',
+                      },
+                      {
+                        text: 'JUCE (C++)',
+                        link: '/research/window-system-integration/juce',
+                      },
+                      {
+                        text: 'Smithay + libdecor',
+                        link: '/research/window-system-integration/smithay-libdecor',
+                      },
+                    ],
+                  },
+                ],
+              },
+              {
+                text: 'Synthesis',
+                collapsed: true,
+                items: [
+                  {
+                    text: 'Comparison',
+                    link: '/research/window-system-integration/comparison',
+                  },
+                  {
+                    text: 'Recommendations',
+                    link: '/research/window-system-integration/recommendations',
+                  },
+                  {
+                    text: 'Platform Gotchas',
+                    link: '/research/window-system-integration/platform-gotchas',
+                  },
+                ],
+              },
+            ],
+          },
         ],
       },
     ],
