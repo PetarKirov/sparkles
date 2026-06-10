@@ -6,7 +6,7 @@ is visited once. Each entry carries: demo path, build command, steps, the expect
 observation, and where to paste results (the demo's findings doc). Agents append entries
 here; Petar checks them off.
 
-**Last reviewed:** June 10, 2026
+**Last reviewed:** June 11, 2026
 
 > [!NOTE]
 > On the Mac, build with `nix develop -c ldc2 …` (not `dub` — it fork-ENOMEMs there); the
@@ -59,6 +59,24 @@ here; Petar checks them off.
       unlocked GUI session. Expect `path=displaylink` at ~8.33 ms (120 Hz), `fell_back=0`;
       record whether fires pause during the 3 s `orderOut:` window. Paste into
       `appkit/f04-frame-pacing.md`.
+- [ ] AppKit F07 real Pinyin IME: add the **Pinyin – Simplified** input source, run
+      `…/appkit/examples/f07-text-input/` (`/tmp/wsi-m4/f07-text-input/demo`) with **no**
+      env vars, click the window, type `nihao` + Space, `x` + Esc, then `ni` + focus
+      switch — full keystroke script in `appkit/f07-text-input.md` § Tier C. Expect
+      per-keystroke `tic_set_marked_text` (attributed string class?), **system-driven**
+      `tic_first_rect` re-queries anchoring the candidate window, `tic_insert_text
+text=你好` on Space, and the Esc/focus-loss fate of the pre-edit under a real IME.
+      Also re-do option-e + e from the physical keyboard on the US layout. Paste into
+      `appkit/f07-text-input.md`.
+- [ ] AppKit F08 monitor drag across scales: attach a 1× external display, run
+      `…/appkit/examples/f08-dpi-scaling/` (`/tmp/wsi-m4/f08-dpi-scaling/demo`) with no
+      env vars in an unlocked session. First read `ctm when=drawRect` on the Retina screen
+      (expect `a=2.00 d=-2.00`, falsifying the headless identity-CTM artifact), then drag
+      to the 1× display and back — expect `window_backing_changed old_scale=…`,
+      `backing_changed n=2/3`, a CTM re-log, and `buffer_alloc` tracking the pixel size;
+      note the crossing point and hairline crispness. Also flip the built-in "looks like"
+      resolution and record which notification fires. Full script in
+      `appkit/f08-dpi-scaling.md` § Tier C. Paste into `appkit/f08-dpi-scaling.md`.
 
 ## GNOME session (mutter)
 
