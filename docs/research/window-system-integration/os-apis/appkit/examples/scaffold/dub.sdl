@@ -1,0 +1,8 @@
+name "scaffold_appkit"
+description "macOS/AppKit windowing scaffold: NSApplication + NSWindow + custom NSView drawRect: blitting a CPU gradient via CoreGraphics."
+targetType "executable"
+sourcePaths "."
+targetPath "build"
+platforms "osx"
+dependency "objective-d" version="~>1.1.2"
+lflags "-framework" "Cocoa"
