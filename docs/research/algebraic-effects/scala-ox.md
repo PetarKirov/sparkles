@@ -203,6 +203,6 @@ Ox provides utilities for retry, rate limiting, timeout, and circuit breaking th
 [Cats Effect]: scala-cats-effect.md
 [Ox GitHub repository]: https://github.com/softwaremill/ox
 [Ox documentation]: https://ox.softwaremill.com/
-[IO Effect Tracking Using Ox]: https://softwaremill.com/io-effect-tracking-using-ox/
+[IO Effect Tracking Using Ox]: https://web.archive.org/web/20241111045538/https://softwaremill.com/io-effect-tracking-using-ox/
 [Direct style -- Ox documentation]: https://ox.softwaremill.com/latest/basics/direct-style.html
 [How Functional is Direct-Style?]: https://2025.workshop.scala-lang.org/details/scala-2025/1/How-Functional-is-Direct-Style-

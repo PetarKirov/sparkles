@@ -15,6 +15,10 @@
 ^https://developers\.redhat\.com/articles/
 ^https://zigistry\.dev/
 ^https://en.cppreference.com
+# x.com / twitter.com block automated checkers (404/JS wall) and are not archived
+# on the Wayback Machine (CDX returns no snapshots), so neither a direct check nor a
+# web.archive.org pin works (algebraic-effects/scala-kyo.md cites a tweet).
+^https?://(x|twitter)\.com/
 # UI-layout catalog: hosts that reject lychee's UA or have broken TLS/DNS
 ^https?://en\.wikipedia\.org/
 ^https?://developer\.mozilla\.org/
