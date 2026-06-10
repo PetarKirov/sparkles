@@ -1,0 +1,8 @@
+name "f07_text_input_appkit"
+description "F07 IME/text-input demo on macOS/AppKit: a custom NSView implements the full NSTextInputClient protocol (conformance attached at runtime via class_addProtocol), keeps a single-line editor model with inline marked text, logs every protocol callback with arguments, and drives dead-key composition via synthetic and CGEvent-backed NSEvents through interpretKeyEvents:/NSTextInputContext."
+targetType "executable"
+sourcePaths "."
+targetPath "build"
+platforms "osx"
+dependency "objective-d" version="~>1.1.2"
+lflags "-framework" "Cocoa"
