@@ -1,0 +1,7 @@
+name "f12_cursors_x11"
+description "X11 F12 demo: 3x3 hover-zone cursor grid driving both mechanisms (core cursor font vs libXcursor themed lookup), a custom ARGB bullseye via XcursorImageLoadCursor, and a server-animated multi-frame cursor."
+targetType "executable"
+sourcePaths "."
+importPaths "."
+libs "x11" "xcursor"
+targetPath "build"
