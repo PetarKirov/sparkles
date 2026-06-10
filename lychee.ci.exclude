@@ -14,3 +14,12 @@
 ^https?://www\.cambridge\.org/
 # Hacker News rate-limits GitHub Actions' shared IPs (HTTP 429)
 ^https?://news\.ycombinator\.com/
+# wayland.app (the Wayland protocol reference) is slow / throttles under CI's
+# concurrency — it times out across many docs (window-system surveys, slint,
+# chromium-ozone, concepts). Checked locally; it is a stable reference.
+^https?://wayland\.app/
+# web.archive.org snapshots are immutable (verified at authoring) and slow under
+# CI; the os-apis surveys pin bot-hostile hosts (Apple, MS Learn, gitlab) here.
+^https?://web\.archive\.org/
+# quirksmode.org is intermittently slow under CI (ui-layout/css-normal-flow.md)
+^https?://(www\.)?quirksmode\.org/
