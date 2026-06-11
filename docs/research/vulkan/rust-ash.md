@@ -62,6 +62,19 @@ zero-policy 1:1 mirror of the C API. Compare [vulkanalia][vulkanalia] (the other
 binding, which makes even unsafety more explicit) and [vulkano][vulkano] (the safety-first layer
 built on top of ash).
 
+> [!NOTE]
+> **Historical context — the alternatives ash outlived.** [erupt][erupt-repo], the other
+> generated thin Rust binding (built on the same [`vk-parse`][vk-parse]), is in maintenance mode
+> since 2022; its author's note conceded the niche to ash: "_It is not recommended to use erupt
+> for new projects, use ash instead. There is work underway to rewrite ash using ideas from the
+> erupt project_" ([erupt `README.md`][erupt-readme]). [`gfx-hal`][gfx-hal], the gfx-rs
+> Vulkan-shaped portability HAL (on which the [rendy][rendy] frame-graph toolkit was built, now
+> likewise archived), was abandoned by its own flagship consumer: "_`0.9` is going to be the
+> last release that will use `gfx-hal` as its hardware abstraction layer. While it has served us
+> well, it has proved to not be at the exact level of abstraction we need_"
+> ([gfx-rs blog, July 16, 2021][gfx-hal-retired]) — its successor, [wgpu][wgpu]'s `wgpu-hal`,
+> sits directly on ash.
+
 ---
 
 ## How it works
@@ -375,6 +388,11 @@ loudly instead of jumping to null.
 [vk-xml]: https://registry.khronos.org/vulkan/specs/latest/registry.html
 [vk-headers]: https://github.com/KhronosGroup/Vulkan-Headers
 [vulkano-1500]: https://github.com/vulkano-rs/vulkano/issues/1500
+[erupt-repo]: https://github.com/Friz64/erupt
+[erupt-readme]: https://github.com/Friz64/erupt/blob/main/README.md
+[gfx-hal]: https://github.com/gfx-rs/gfx
+[gfx-hal-retired]: https://gfx-rs.github.io/2021/07/16/release-0.9-future.html
+[rendy]: https://github.com/amethyst/rendy
 [dip1000]: https://dlang.org/spec/memory-safe-d.html
 [daxa]: ./cpp-daxa.md
 [vuk]: ./cpp-vuk.md

@@ -127,6 +127,14 @@ The module docs are explicit that this hot path is engineered, not naive: state 
 > tracking cost on every encoder operation whether or not the frame's
 > structure changed since last frame.
 
+#### Comparison: Dawn, the other production tracker
+
+[Dawn][dawn] (Google's WebGPU implementation, shipped in Chrome; C++, calling Vulkan directly) solves the identical problem and is the natural cross-check on wgpu's design. Dawn's frontend records commands into an intermediate linear-allocated command stream ([`src/dawn/native/CommandAllocator.h`][dawn-cmdalloc]: _"To avoid doing an allocation per command or to avoid copying commands when reallocing, we use a linear allocator in a growing set of large memory blocks"_) while a [`SyncScopeUsageTracker`][dawn-usage-tracker] accumulates each pass's merged resource usages — per the header, it _"returns the per-pass usage for use by backends for APIs with explicit barriers"_. Only at submit does the Vulkan backend ([`src/dawn/native/vulkan/CommandBufferVk.cpp`][dawn-cmdvk]) replay the stream and call `PrepareResourcesForSyncScope` — once per render pass, and once per dispatch in compute passes (WebGPU's per-dispatch usage-scope rule, same as wgpu) — diffing against per-resource last-sync state (`SubresourceStorage<TextureSyncInfo>` `mSubresourceLastSyncInfos` in [`TextureVk.cpp`][dawn-texvk], stored _on each resource_ rather than in wgpu's central index-vector device tracker). Where the designs agree: usage-scope merging with exclusive-writer validation, per-subresource granularity, barriers batched at sync-scope boundaries, read-only-reuse skipping (`CanReuseWithoutBarrier`). Where they diverge: Dawn additionally _splits_ merged barriers by destination stage —
+
+> _"Separate barriers with vertex stages in destination stages from all other barriers. This avoids creating unnecessary fragment->vertex dependencies when merging barriers."_ ([`CommandBufferVk.cpp`][dawn-cmdvk])
+
+— a pessimization-avoidance pass wgpu's eager per-encoder emission has no equivalent of; and Dawn's barrier behavior is tuned per device via [**toggles**][dawn-toggles] (e.g. `vulkan_split_command_buffer_on_compute_pass_after_render_pass`, default-on for Qualcomm) rather than wgpu's compile-time/feature gating. Notably, Dawn has published **no overhead numbers** comparable to wgpu's [#2080][d2080] — the wgpu discussion remains the only quantified cost estimate for this architecture, which is itself why this page leans on it.
+
 ### Type-system techniques
 
 Almost deliberately **none** — absence is the finding here. wgpu's safety is dynamic:
@@ -142,7 +150,7 @@ The Rust type system is used for **memory safety of the implementation** (and AP
 
 wgpu is the best-documented data point for what automatic barriers + validation cost on the CPU:
 
-- **Headline estimate:** in the long-running performance discussion [#2080][d2080], maintainer kvark put the expected overhead over raw hal at **5–10 % in a real app**, with a measured **worst case of ~2× CPU time** comparing `halmark` (raw hal) to `bunnymark` (full wgpu) — the gap being _"validation, state tracking, and lifetime tracking"_.
+- **Headline estimate:** in the long-running performance discussion [#2080][d2080], maintainer kvark put the expected overhead over raw hal at **5–10 % in a real app**, with a measured **worst case of ~2× CPU time** comparing `halmark` (raw hal) to `bunnymark` (full wgpu) — the gap being _"validation, state tracking, and lifetime tracking"_. (kvark's own post-wgpu answer to this cost is [blade][rust-blade], which deletes the tracker entirely — the zero-tracking counterpoint whose benchmark numbers are quoted against these.)
 - **Multithreading:** pre-arcanization, parallel encoding was effectively serialized by Hub locks; post-arcanization it scales (the 45 % Bevy number [above](#handle-lifetime--ownership-model)), but contention remains real: [#5525][d5525] (May 2024) profiles a production app dropping from 60 FPS to ~10 FPS during concurrent asset upload, with Tracy traces pointing at the registry `data.write()` in `assign()`, `device.trackers.lock()`, the snatchable read lock, and `texture.views.lock()`. Maintainers' replies acknowledge arcanization replaced _"a global lock"_ with _"finer-grained locks"_ rather than eliminating locking; follow-up work ([#5121][i5121]) targets removing the registries entirely. [#2710][i2710] ("Remove Locking From Hot Paths") tracks the broader goal.
 - **Per-command cost** that typed/manual bindings don't pay: usage-state merge per resource per draw/dispatch, validation of every call against WebGPU rules, and (for `DrawIndirect` with bounds checking) injected GPU-side validation work.
 - **Escape hatches are real and layered.** `as_hal` returns a guard dereferencing to the `wgpu-hal` type, from which raw ash/Vulkan handles (`vk::Buffer`, `vk::Device`, queue) are reachable; `from_hal`/`texture_from_raw`/`Device::create_buffer_from_hal` import externally created Vulkan objects (with an explicit `drop_guard` ownership story, [#6142][i6142]); `CommandEncoder::transition_resources` lets interop code force states so the tracker's assumptions stay true; `vulkan::Queue::add_wait_semaphore` lets CUDA/GL producers be awaited without CPU blocking. One can also skip `wgpu`/`wgpu-core` entirely and program `wgpu-hal` directly — Vulkan-shaped, portable, unsafe, and validation-free, _"1:1 with Vulkan"_ enough that its overhead over raw calls is negligible.
@@ -202,8 +210,9 @@ wgpu **replaces**, rather than integrates, Vulkan's validation layers: `wgpu-cor
 - [Discussion #5525 — "Major performance problems with multithreading"][d5525]
 - [Issue #2710 — Remove locking from hot paths][i2710] · [Issue #5121 — remove registries][i5121] · [Issue #5204 — static lock order][i5204] · [Issue #6378 — recursive snatch-lock deadlock][i6378]
 - [Issue #965 — interop with the underlying graphics API][i965] · [Issue #6142 — `drop_guard` semantics for raw imports][i6142]
+- [google/dawn][dawn]: [`PassResourceUsageTracker.h`][dawn-usage-tracker] · [`vulkan/CommandBufferVk.cpp` — `PrepareResourcesForSyncScope`, vertex-stage barrier split][dawn-cmdvk] · [`vulkan/TextureVk.cpp` — `mSubresourceLastSyncInfos`][dawn-texvk] · [`Toggles.cpp`][dawn-toggles] · [`CommandAllocator.h`][dawn-cmdalloc]
 - [WebGPU specification][webgpu-spec] · [WebGPU error handling][webgpu-errors] · [naga][naga]
-- Related: [ash][rust-ash] · [vulkano][rust-vulkano] · [Daxa][cpp-daxa] · [vuk][cpp-vuk] · [sync-validation][sync-validation] · [concepts][concepts] · [comparison][comparison] · [Survey index][index]
+- Related: [ash][rust-ash] · [vulkano][rust-vulkano] · [blade][rust-blade] · [Daxa][cpp-daxa] · [vuk][cpp-vuk] · [sync-validation][sync-validation] · [concepts][concepts] · [comparison][comparison] · [Survey index][index]
 
 <!-- References -->
 
@@ -228,10 +237,17 @@ wgpu **replaces**, rather than integrates, Vulkan's validation layers: `wgpu-cor
 [i965]: https://github.com/gfx-rs/wgpu/issues/965
 [i6142]: https://github.com/gfx-rs/wgpu/issues/6142
 [ash]: https://github.com/ash-rs/ash
+[dawn]: https://github.com/google/dawn
+[dawn-usage-tracker]: https://github.com/google/dawn/blob/main/src/dawn/native/PassResourceUsageTracker.h
+[dawn-cmdvk]: https://github.com/google/dawn/blob/main/src/dawn/native/vulkan/CommandBufferVk.cpp
+[dawn-texvk]: https://github.com/google/dawn/blob/main/src/dawn/native/vulkan/TextureVk.cpp
+[dawn-toggles]: https://github.com/google/dawn/blob/main/src/dawn/native/Toggles.cpp
+[dawn-cmdalloc]: https://github.com/google/dawn/blob/main/src/dawn/native/CommandAllocator.h
 [naga]: https://github.com/gfx-rs/wgpu/tree/trunk/naga
 [webgpu-spec]: https://www.w3.org/TR/webgpu/
 [webgpu-errors]: https://www.w3.org/TR/webgpu/#errors-and-debugging
 [rust-ash]: ./rust-ash.md
+[rust-blade]: ./rust-blade.md
 [rust-vulkano]: ./rust-vulkano.md
 [cpp-daxa]: ./cpp-daxa.md
 [cpp-vuk]: ./cpp-vuk.md
