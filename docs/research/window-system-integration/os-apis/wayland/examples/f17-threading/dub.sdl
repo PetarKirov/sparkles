@@ -1,0 +1,16 @@
+name "f17_threading_wayland"
+description "F17: Wayland threading probes — shared wl_display across threads, concurrent dispatch, per-thread wl_event_queue, render thread, connection-per-thread, prepare_read violation."
+targetType "executable"
+sourcePaths "."
+importPaths "."
+// dub's source glob only picks up *.d — the ImportC shim must be listed
+// explicitly (see ../scaffold/dub.sdl).
+sourceFiles "c.c"
+libs "wayland-client"
+targetPath "build"
+
+preGenerateCommands "\"$PACKAGE_DIR/generate.sh\"" platform="linux"
+
+// Generated xdg-shell-protocol.c is textually #include'd by c.c — never a dub
+// source (hyphenated filenames are not valid D module names).
+excludedSourceFiles "xdg-shell-protocol.c"

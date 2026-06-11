@@ -1,0 +1,16 @@
+name "f16_clipboard_dnd"
+description "F16 clipboard + DnD: wl_data_source/offer negotiation, set_selection serial coupling, ownership loss, full drag-and-drop action handshake."
+targetType "executable"
+sourcePaths "."
+importPaths "."
+// dub's source glob only picks up *.d — the ImportC shim must be listed
+// explicitly (see ../scaffold/dub.sdl).
+sourceFiles "c.c"
+libs "wayland-client"
+targetPath "build"
+
+preGenerateCommands "\"$PACKAGE_DIR/generate.sh\"" platform="linux"
+
+// Textually #include'd by c.c — never a dub source (hyphenated filename is
+// not a valid D module name; duplicate symbols otherwise).
+excludedSourceFiles "xdg-shell-protocol.c"
