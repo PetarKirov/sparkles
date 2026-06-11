@@ -1,0 +1,14 @@
+name "f09_outputs_win32"
+description "F09 output enumeration & hotplug demo: EnumDisplayMonitors/GetMonitorInfoW/GetDpiForMonitor/EnumDisplaySettingsW observatory with MonitorFromWindow occupancy tracking and WM_DISPLAYCHANGE/WM_DEVICECHANGE hotplug diffing."
+targetType "executable"
+sourcePaths "."
+targetPath "build"
+platforms "windows"
+// Druntime's built-in core.sys.windows bindings only (zero third-party) — same
+// policy as ../../example/. Set WSI_AUTO_EXIT=1 for the bounded CI mode:
+// enumeration passes, an off-screen MonitorFromWindow probe, and a ~0.5 s
+// topology poll, then the window destroys itself (clean exit 0; WSI_RUN_MS
+// extends the run for the hotplug hunt). This dub.sdl is for the Windows CI
+// runner; locally the demo is cross-compiled with `nix develop .#win32` (ldc2
+// -mtriple=x86_64-pc-windows-msvc + win32-link) and run under Wine — dub cannot
+// drive that pipeline.
