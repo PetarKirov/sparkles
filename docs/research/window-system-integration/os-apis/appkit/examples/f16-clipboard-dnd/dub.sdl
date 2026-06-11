@@ -1,0 +1,8 @@
+name "f16_clipboard_dnd_appkit"
+description "F16 clipboard + drag-and-drop demo on macOS/AppKit: NSPasteboard eager copy (clearContents changeCount bump + setString:forType:), the lazy declareTypes:owner: promise (pasteboard:provideDataForType: demanded only when pbpaste reads), the source-exits-first probes (WSI_MODE=promise-exit-return|promise-exit-hard), changeCount polling as the only external-change signal, the pasteboardChangedOwner: loss callback (fires only with an unfulfilled promise, re-entrancy hazard), and the full NSDraggingDestination/NSDraggingSource negotiation with beginDraggingSessionWithItems over the demo's own view."
+targetType "executable"
+sourcePaths "."
+targetPath "build"
+platforms "osx"
+dependency "objective-d" version="~>1.1.2"
+lflags "-framework" "Cocoa"
