@@ -1,0 +1,7 @@
+name "f17_threading_x11"
+description "F17 X11 demo: threading-rule violation probes (XInitThreads present/absent/late, shared-Display XNextEvent, worker-thread XShmPutImage, Display-per-thread)."
+targetType "executable"
+sourcePaths "."
+importPaths "."
+libs "x11" "xext"
+targetPath "build"
