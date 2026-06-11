@@ -1,0 +1,4 @@
+2 f14_state_win32 init_start
+145 f14_state_win32 mode auto_exit=1
+4967 f14_state_win32 msg name=WM_GETMINMAXINFO maxSize=1032x776 maxPos=-4,-4
+5587 f14_state_win32 error what=CreateWindowExW code=1400
