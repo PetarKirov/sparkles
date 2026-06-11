@@ -1,0 +1,11 @@
+name "f17_threading_win32"
+description "Win32 F17: six threading probes (HWND queue affinity, multi-thread pumps, SendMessage blocking/deadlock, cross-thread BitBlt, AttachThreadInput)."
+targetType "executable"
+sourcePaths "."
+targetPath "build"
+platforms "windows"
+// This dub.sdl exists for the Windows CI runner; locally the demo is
+// cross-compiled with `nix develop .#win32` (win32-ldc2 = ldc2
+// -mtriple=x86_64-pc-windows-msvc -link-internally) and run under Wine —
+// dub cannot drive that pipeline. The no-argument run spawns itself with
+// --probe=1..6 twice each and always exits 0 (crash probes included).
