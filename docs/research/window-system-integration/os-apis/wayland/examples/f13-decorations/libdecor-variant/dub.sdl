@@ -1,0 +1,12 @@
+name "f13_libdecor"
+description "F13 libdecor comparison variant: libdecor_decorate replaces the whole xdg-shell + xdg-decoration + CSD layer."
+targetType "executable"
+sourcePaths "."
+importPaths "."
+sourceFiles "c.c"
+// pkg-config names (run.sh provides PKG_CONFIG_PATH for libdecor-0 via
+// `nix build nixpkgs#libdecor.dev`).
+libs "libdecor-0" "wayland-client"
+targetPath "build"
+
+preGenerateCommands "\"$PACKAGE_DIR/generate.sh\"" platform="linux"
