@@ -1,0 +1,8 @@
+name "f09_outputs_appkit"
+description "F09 output-enumeration demo on macOS/AppKit: enumerates the same displays through both object models (NSScreen frame/visibleFrame/scale/localizedName/maximumFramesPerSecond/deviceDescription vs CGGetOnlineDisplayList + CGDisplayBounds/mode/physical-size), checks the NSScreenNumber == CGDirectDisplayID bridge, reads -[NSWindow screen], and registers the screen-change notifications plus a CGDisplayRegisterReconfigurationCallback for a Tier-C hotplug."
+targetType "executable"
+sourcePaths "."
+targetPath "build"
+platforms "osx"
+dependency "objective-d" version="~>1.1.2"
+lflags "-framework" "Cocoa"
