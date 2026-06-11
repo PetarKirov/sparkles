@@ -294,7 +294,7 @@ const(char)* cfName(UINT fmt, char* scratch, size_t n) nothrow
 // Log `clip_offer formats=[...]` for the currently-open clipboard.
 void logOfferedFormats(const(char)* who) nothrow
 {
-    char[512] line;
+    char[512] line = 0;
     char[80] scratch;
     int p;
     UINT fmt = 0;
@@ -503,7 +503,7 @@ void logDataObjectFormats(void* dataObj) nothrow
     if (obj.vtbl.EnumFormatEtc(dataObj, DATADIR_GET, &enumPtr) == S_OK && enumPtr)
     {
         auto en = cast(ComObj!EnumFmtVtbl*) enumPtr;
-        char[256] line;
+        char[256] line = 0;
         char[80] scratch;
         int p, count;
         FORMATETC got;
@@ -1026,7 +1026,8 @@ int main(string[] args)
     wc.lpszClassName = "wsi-f16-class"w.ptr;
     wc.hCursor = LoadCursorW(null, IDC_ARROW);
     wc.hbrBackground = cast(HBRUSH)(COLOR_WINDOW + 1);
-    RegisterClassExW(&wc);
+    if (!RegisterClassExW(&wc))
+        logEvent("error what=RegisterClassExW code=%lu", GetLastError());
 
     g.hwnd = CreateWindowExW(0, "wsi-f16-class"w.ptr, "wsi-f16-clipboard-dnd"w.ptr,
         WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 480, 320,

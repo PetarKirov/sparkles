@@ -1,0 +1,8 @@
+name "f10_pointer_capture_appkit"
+description "F10 pointer lock/confine/relative demo on macOS/AppKit: assembles mouselook from CGAssociateMouseAndMouseCursorPosition + NSCursor.hide + NSEvent.deltaX/Y on mouseMoved:, probes the two synthetic-delta routes (the delta-less NSEvent constructor vs CGEventSetIntegerValueField(kCGMouseEventDeltaX/Y) wrapped via eventWithCGEvent:), measures CGWarpMouseCursorPosition (CGError, read-back, no events generated) and the suppression interval, contrasts app-scoped vs display-scoped cursor hiding, and demonstrates the warp-back workaround for the missing public confine API."
+targetType "executable"
+sourcePaths "."
+targetPath "build"
+platforms "osx"
+dependency "objective-d" version="~>1.1.2"
+lflags "-framework" "Cocoa"
