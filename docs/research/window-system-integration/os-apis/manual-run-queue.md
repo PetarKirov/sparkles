@@ -71,6 +71,16 @@ here; Petar checks them off.
       `SPI_GETMOUSEWHEELROUTING` (errored 1439 under Wine) and toggle "scroll inactive
       windows". Paste into `win32/f11-scroll.md`.
 
+- [ ] Win32 F14 on real Windows: keys M/N/R/F/D in `win32/examples/f14-window-state`;
+      confirm a single `WM_SIZE` echo per transition (winewayland added a late
+      compositor configure), where focus goes on minimize with other apps open, the
+      fullscreen normal-rect corruption, and the ✕-click veto with `D` armed
+      (`src=external`). Paste into `win32/f14-window-state.md`.
+- [ ] Win32 F15 on real Windows: right-click menu tour in `win32/examples/f15-popup`;
+      confirm the parent survives submenu open, outside-click on ANOTHER process's
+      window dismisses (headless Wine can't prove cross-process capture), edge placement
+      matches the `adjust=` log. Paste into `win32/f15-popup.md`.
+
 ## Mac (`mac-bsn`, unlocked GUI session)
 
 - [ ] One-time: unlock the screen during a demo run so `CGWindowListCopyWindowInfo` reports
