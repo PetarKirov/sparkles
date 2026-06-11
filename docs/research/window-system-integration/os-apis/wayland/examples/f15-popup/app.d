@@ -437,8 +437,23 @@ extern (C) void onKeyboardEnter(void* data, wl_keyboard* kb, uint serial,
     // Under an xdg_popup.grab the keyboard focus must land on the POPUP —
     // this line is the proof of where the grab routed it.
     immutable idx = surfIndexOf(surf);
-    instrEvent("keyboard_enter", "surface=%s serial=%u",
-        idx >= 0 ? g_surfNames[idx] : "other", serial);
+    instrEvent("keyboard_enter", "surface=%s serial=%u keys_down=%zu",
+        idx >= 0 ? g_surfNames[idx] : "other", serial, keys.size / uint.sizeof);
+    // Keys already held at enter arrive in the `keys` array, NOT as key
+    // events — a freshly plugged wtype keyboard's Esc press can land here.
+    foreach (key; (cast(uint*) keys.data)[0 .. keys.size / uint.sizeof])
+        handleKey(key, WL_KEYBOARD_KEY_STATE_PRESSED);
+}
+
+void handleKey(uint key, uint state) nothrow @nogc
+{
+    uint sym = 0;
+    if (g_xkbState !is null)
+        sym = xkb_state_key_get_one_sym(g_xkbState, key + 8);
+    instrEvent("key", "key=%u keysym=0x%x state=%u", key, sym, state);
+    if (state == WL_KEYBOARD_KEY_STATE_PRESSED && sym == XKB_KEY_Escape
+        && g_surfs[IDX_POPUP1].popup !is null)
+        dismissPopups("esc-grab-keyboard");
 }
 
 extern (C) void onKeyboardLeave(void* data, wl_keyboard* kb, uint serial, wl_surface* surf) nothrow @nogc
@@ -451,13 +466,7 @@ extern (C) void onKeyboardLeave(void* data, wl_keyboard* kb, uint serial, wl_sur
 extern (C) void onKey(void* data, wl_keyboard* kb, uint serial, uint time,
     uint key, uint state) nothrow @nogc
 {
-    uint sym = 0;
-    if (g_xkbState !is null)
-        sym = xkb_state_key_get_one_sym(g_xkbState, key + 8);
-    instrEvent("key", "key=%u keysym=0x%x state=%u", key, sym, state);
-    if (state == WL_KEYBOARD_KEY_STATE_PRESSED && sym == XKB_KEY_Escape
-        && g_surfs[IDX_POPUP1].popup !is null)
-        dismissPopups("esc-grab-keyboard");
+    handleKey(key, state);
 }
 
 extern (C) void onModifiers(void* data, wl_keyboard* kb, uint serial,
