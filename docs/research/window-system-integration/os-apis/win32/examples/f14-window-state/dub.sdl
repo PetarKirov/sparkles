@@ -1,0 +1,15 @@
+name "f14_state_win32"
+description "F14 window-state demo: ShowWindow maximize/minimize/restore with full message decode, the borderless-fullscreen idiom (style strip + monitor-rect SetWindowPos), GetWindowPlacement normal-rect memory, and the first-class WM_CLOSE veto via a dirty flag."
+targetType "executable"
+sourcePaths "."
+targetPath "build"
+platforms "windows"
+// Druntime's built-in core.sys.windows bindings only (zero third-party) — same
+// policy as ../../example/. Set WSI_AUTO_EXIT=1 for the bounded CI mode: a
+// scripted tour (maximize → restore → minimize → restore → fullscreen on/off →
+// vetoed close → accepted close), then clean exit 0. Without the env var:
+// M maximize toggle, N minimize, R restore, F fullscreen toggle, D dirty
+// toggle (first close is vetoed while dirty). This dub.sdl is for the Windows
+// CI runner; locally the demo is cross-compiled with `nix develop .#win32`
+// (ldc2 -mtriple=x86_64-pc-windows-msvc + win32-link) and run under Wine —
+// dub cannot drive that pipeline.
