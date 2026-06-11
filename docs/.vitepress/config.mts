@@ -1288,6 +1288,13 @@ export default defineConfig({
                     link: '/research/vulkan/cpp-tephra',
                   },
                   { text: 'wgpu (Rust)', link: '/research/vulkan/rust-wgpu' },
+                  {
+                    text: 'Granite (C++)',
+                    link: '/research/vulkan/cpp-granite',
+                  },
+                  { text: 'NVRHI (C++)', link: '/research/vulkan/cpp-nvrhi' },
+                  { text: 'blade (Rust)', link: '/research/vulkan/rust-blade' },
+                  { text: 'V-EZ (C++)', link: '/research/vulkan/cpp-vez' },
                 ],
               },
               {
