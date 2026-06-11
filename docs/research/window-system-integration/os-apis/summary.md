@@ -5,7 +5,7 @@ A side-by-side reading of the six raw OS windowing APIs surveyed in this sub-tre
 the capstone of the [OS-API surveys][index] and the lower-level counterpart to the framework-level
 [comparison & recommendations][comparison]; shared terms link to [concepts][concepts].
 
-**Last reviewed:** June 9, 2026
+**Last reviewed:** June 11, 2026
 
 ## At a glance
 
@@ -78,6 +78,12 @@ Win32's clipboard with **delayed rendering** (`WM_RENDERFORMAT`), `NSPasteboard`
 on Apple, and Android's `ClipboardManager` over JNI.
 
 ## Consensus vs divergence
+
+> [!NOTE]
+> The contrasts below are now backed by a MEASURED layer: the
+> [feature matrix](./feature-matrix.md) (17 demos x 4 platforms, every cell verified) and
+> its three syntheses — the [divergence map](./divergence-map.md),
+> [event sequences](./event-sequences.md), and [design constraints](./design-constraints.md).
 
 **The field agrees on more than it looks.** Every platform is a readiness loop; every one separates
 raw key events from composed text; every one negotiates clipboard formats asynchronously; and the

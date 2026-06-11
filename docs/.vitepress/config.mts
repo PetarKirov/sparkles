@@ -2555,6 +2555,18 @@ export default withMermaid(
                       link: '/research/window-system-integration/os-apis/feature-matrix',
                     },
                     {
+                      text: 'Divergence Map',
+                      link: '/research/window-system-integration/os-apis/divergence-map',
+                    },
+                    {
+                      text: 'Event Sequences',
+                      link: '/research/window-system-integration/os-apis/event-sequences',
+                    },
+                    {
+                      text: 'Design Constraints',
+                      link: '/research/window-system-integration/os-apis/design-constraints',
+                    },
+                    {
                       text: 'Manual-Run Queue',
                       link: '/research/window-system-integration/os-apis/manual-run-queue',
                     },
