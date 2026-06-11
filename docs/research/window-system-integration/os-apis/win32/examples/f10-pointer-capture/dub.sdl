@@ -1,0 +1,15 @@
+name "f10_pointer_win32"
+description "F10 pointer demo: raw WM_INPUT deltas vs cooked WM_MOUSEMOVE, the ClipCursor(1x1)+ShowCursor(FALSE) lock idiom, confine-to-rect clamping proofs, and ClipCursor auto-clear probes."
+targetType "executable"
+sourcePaths "."
+targetPath "build"
+platforms "windows"
+// Druntime's built-in core.sys.windows bindings only (zero third-party) — same
+// policy as ../../example/. Set WSI_AUTO_EXIT=1 for the bounded CI mode: an
+// absolute SetCursorPos tour, a SendInput/mouse_event relative-injection
+// comparison (WM_INPUT vs WM_MOUSEMOVE), a lock/unlock cycle with cursor-pos
+// restore, confine clamping probes, and focus-loss/minimize clip-clear probes,
+// then clean exit 0. Without the env var: L toggles mouselook, C toggles
+// confine. This dub.sdl is for the Windows CI runner; locally the demo is
+// cross-compiled with `nix develop .#win32` (ldc2 -mtriple=x86_64-pc-windows-msvc
+// + win32-link) and run under Wine — dub cannot drive that pipeline.
