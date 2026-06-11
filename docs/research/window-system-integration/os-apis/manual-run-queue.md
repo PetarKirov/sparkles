@@ -60,6 +60,17 @@ here; Petar checks them off.
       `ani_probe` non-null (`C:\Windows\Cursors` ships `.ani`); check `cursor_metrics`
       under large-cursor accessibility / mixed DPI. Paste into `win32/f12-cursors.md`.
 
+- [ ] Win32 F10 on real Windows: rerun `win32/examples/f10-pointer-capture`; expect
+      `WM_INPUT` to report injected deltas verbatim while `WM_MOUSEMOVE` shows
+      post-ballistics motion (Wine accelerated BOTH ×2). Does absolute `SendInput`
+      produce `MOUSE_MOVE_ABSOLUTE` raw events? Does Alt-Tab to another process
+      auto-clear `ClipCursor`? Paste into `win32/f10-pointer-capture.md`.
+- [ ] Win32 F11 on a precision touchpad: two-finger scroll + fling; confirm sub-120
+      `wheelDelta` stream and the inertia tail as decaying wheel messages
+      (`WSI_TRUNCATE=1` should visibly freeze the ruler); probe
+      `SPI_GETMOUSEWHEELROUTING` (errored 1439 under Wine) and toggle "scroll inactive
+      windows". Paste into `win32/f11-scroll.md`.
+
 ## Mac (`mac-bsn`, unlocked GUI session)
 
 - [ ] One-time: unlock the screen during a demo run so `CGWindowListCopyWindowInfo` reports
