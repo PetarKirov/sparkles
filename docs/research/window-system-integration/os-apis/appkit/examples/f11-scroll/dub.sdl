@@ -1,0 +1,8 @@
+name "f11_scroll_appkit"
+description "F11 scroll-fidelity demo on macOS/AppKit: logs every scrollWheel: field (scrollingDeltaX/Y, legacy deltaX/Y, hasPreciseScrollingDeltas, phase/momentumPhase decoded, isDirectionInvertedFromDevice), measures the line-vs-pixel unit duality at the CG layer (kCGScrollWheelEvent{Delta,FixedPtDelta,PointDelta}Axis1 read-backs, the 1 notch = 10 px conversion), probes setting kCGScrollWheelEventScrollPhase/MomentumPhase on a CGEvent and the CG->NSEventPhase mapping, and runs a scripted synthetic fling (began/changed/ended + momentum + cancelled) with per-gesture summaries over a scrollable ruler."
+targetType "executable"
+sourcePaths "."
+targetPath "build"
+platforms "osx"
+dependency "objective-d" version="~>1.1.2"
+lflags "-framework" "Cocoa"
