@@ -1,0 +1,7 @@
+name "f14_window_state_x11"
+description "F14 X11 demo: _NET_WM_STATE maximize/fullscreen, WM_CHANGE_STATE iconify, focus decode, vetoable WM_DELETE_WINDOW close."
+targetType "executable"
+sourcePaths "."
+importPaths "."
+libs "x11" "xext"
+targetPath "build"

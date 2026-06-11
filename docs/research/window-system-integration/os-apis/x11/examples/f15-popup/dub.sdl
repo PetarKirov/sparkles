@@ -1,0 +1,7 @@
+name "f15_popup_x11"
+description "F15 X11 demo: override-redirect popup menu with XGrabPointer/XGrabKeyboard, edge repositioning, nested submenu, grab probes."
+targetType "executable"
+sourcePaths "."
+importPaths "."
+libs "x11" "xext"
+targetPath "build"
