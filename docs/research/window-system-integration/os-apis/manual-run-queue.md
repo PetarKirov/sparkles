@@ -81,6 +81,14 @@ here; Petar checks them off.
       window dismisses (headless Wine can't prove cross-process capture), edge placement
       matches the `adjust=` log. Paste into `win32/f15-popup.md`.
 
+- [ ] Win32 F16 on real Windows: re-run `f16-clipboard-dnd.exe` — delayed-render demand
+      latencies, `WM_CLIPBOARDUPDATE` delivery, clipboard persistence after owner exit
+      (Windows runs a session clipboard, Wine does not), and a real file-manager drag
+      onto the window. Paste into `win32/f16-clipboard-dnd.md`.
+- [ ] Win32 F17 on real Windows: re-run `f17-threading.exe` — confirm probe 4a's
+      mutual-send resolution and 4b's deadlock against real user32, plus probe 5's GDI
+      behavior under DWM. Paste into `win32/f17-threading.md`.
+
 ## Mac (`mac-bsn`, unlocked GUI session)
 
 - [ ] One-time: unlock the screen during a demo run so `CGWindowListCopyWindowInfo` reports
