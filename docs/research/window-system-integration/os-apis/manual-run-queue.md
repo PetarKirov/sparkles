@@ -48,6 +48,18 @@ here; Petar checks them off.
       `SetProcessDpiAwarenessContext` fails `ERROR_ACCESS_DENIED` (succeeds-but-noops
       under Wine). Paste into `win32/f08-dpi-scaling.md`.
 
+- [ ] Win32 F09 on multi-monitor Windows: run `win32/examples/f09-outputs` with
+      `WSI_AUTO_EXIT=1 WSI_RUN_MS=30000`; hot-plug (or disable/enable in Display
+      settings) a monitor mid-run. Expect `output_added/removed` with
+      `via=WM_DISPLAYCHANGE` (vs Wine's `via=poll`), a `WM_SETTINGCHANGE` burst,
+      `WM_DEVICECHANGE` arrivals, real per-monitor `rcMonitor` offsets, and true
+      `dmDisplayFrequency`. Paste into `win32/f09-outputs.md`.
+- [ ] Win32 F12 on real Windows: run `win32/examples/f12-cursors`; visually confirm the
+      3×3 zone cursors, the custom bullseye + hotspot; confirm the
+      `precedence_result phase=set_then_def cursor_after=IDC_CROSS` reproduces; expect
+      `ani_probe` non-null (`C:\Windows\Cursors` ships `.ani`); check `cursor_metrics`
+      under large-cursor accessibility / mixed DPI. Paste into `win32/f12-cursors.md`.
+
 ## Mac (`mac-bsn`, unlocked GUI session)
 
 - [ ] One-time: unlock the screen during a demo run so `CGWindowListCopyWindowInfo` reports
