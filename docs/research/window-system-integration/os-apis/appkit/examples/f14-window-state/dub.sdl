@@ -1,0 +1,8 @@
+name "f14_window_state_appkit"
+description "F14 window-state demo on macOS/AppKit: decodes the ordered NSWindowDelegate + NSNotification choreography for zoom:, miniaturize:/deminiaturize:, toggleFullScreen: (collectionBehavior prerequisite + measured Space-transition duration) and orderOut:/orderFront:, and proves the close contract — windowShouldClose: as the first-class once-veto via performClose:, versus -close which skips the delegate ask entirely."
+targetType "executable"
+sourcePaths "."
+targetPath "build"
+platforms "osx"
+dependency "objective-d" version="~>1.1.2"
+lflags "-framework" "Cocoa"
