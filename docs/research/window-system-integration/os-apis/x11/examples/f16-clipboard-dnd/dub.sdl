@@ -1,0 +1,7 @@
+name "f16_clipboard_dnd_x11"
+description "F16 X11 demo: ICCCM selection ownership (TARGETS/TIMESTAMP/UTF8_STRING), INCR send+receive, hand-rolled XDND source+target in one process."
+targetType "executable"
+sourcePaths "."
+importPaths "."
+libs "x11"
+targetPath "build"
