@@ -1,0 +1,99 @@
+# Style templates with IES
+
+Use the style template syntax inside Interpolated Expression Sequences (IES) to write colorized and formatted text to stdout, stderr, or any output range.
+
+## Template Syntax
+
+Style blocks use the `{styleName content}` syntax, where `styleName` is one or more dot-separated terminal styles.
+
+- **Single Style:** `{red error}` formats the text using a red foreground.
+- **Chained Styles:** `{bold.red critical}` combines styles (bold and red foreground).
+- **Nested Blocks:** `{bold outer {red inner}}` applies `bold` to the entire block, and `red` additionally to `inner`.
+- **Style Negation:** Use `~` prefix to remove a style from the inherited set: `{bold.red styled {~red plain}}`.
+- **Escaped Braces:** Use `#{` and `#}` to write literal braces: `#{style#}` outputs `{style}`.
+
+All standard ANSI colors and formats (`red`, `green`, `blue`, `cyan`, `yellow`, `magenta`, `white`, `black`, `bold`, `dim`, `italic`, `underline`, `inverse`, `bgRed`, `bgGreen`, etc.) are supported.
+
+## Write directly to stdout or stderr
+
+Use the `styledWrite*` helpers to write styled IES content directly to standard output or error streams:
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "base_style_text_templates"
+    dependency "sparkles:base" version="*"
++/
+import sparkles.base.styled_template : styledWriteln, styledWritelnErr;
+
+void main()
+{
+    // Write styled text to stdout
+    styledWriteln(i"Status: {green.bold OK} | Service: {cyan database}");
+
+    // Write styled text to stderr
+    styledWritelnErr(i"{red.bold Fatal Error: connection refused}");
+}
+```
+
+```[Output:ansi]
+[31m[1mFatal Error: connection refused[22m[39m
+Status: [32m[1mOK[22m[39m | Service: [36mdatabase[39m
+```
+
+## Convert to strings
+
+Use `styledText` to evaluate an IES template and return a styled `string` containing ANSI escape codes. Use `plainText` to evaluate the IES but strip all style markup, returning a clean plain-text `string`:
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "base_styled_text_conversion"
+    dependency "sparkles:base" version="*"
++/
+import std.stdio : writeln;
+import sparkles.base.styled_template : styledText, plainText;
+
+void main()
+{
+    auto template_ = i"Progress: {yellow 45%}";
+
+    string styled = styledText(template_);
+    string plain = plainText(template_);
+
+    writeln("Styled length: ", styled.length); // includes escape characters
+    writeln("Plain length: ", plain.length);   // plain text only
+}
+```
+
+```[Output:ansi]
+Styled length: 23
+Plain length: 13
+```
+
+## Format into custom buffers
+
+For memory-conscious or `@nogc` formatting, use `writeStyled` to write formatted, styled templates into any `Writer` (such as a `SmallBuffer`):
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "base_write_styled_buffer"
+    dependency "sparkles:base" version="*"
++/
+import std.stdio : writeln;
+import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.styled_template : writeStyled;
+
+void main()
+{
+    SmallBuffer!(char, 128) buf;
+    writeStyled(buf, i"Level: {magenta debug}");
+
+    writeln(buf[]);
+}
+```
+
+```[Output:ansi]
+Level: [35mdebug[39m
+```
