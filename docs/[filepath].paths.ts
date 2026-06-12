@@ -430,9 +430,13 @@ export default {
         '',
         `# ${name}`,
         '',
+        '<div class="source-code-listing">',
+        '',
         isInsideDocs
           ? `<<< @/${docsRelPath}${lang ? '{' + lang + '}' : ''}`
           : `<<< @/../${file}${lang ? '{' + lang + '}' : ''}`,
+        '',
+        '</div>',
       ].join('\n');
 
       routes.push({
