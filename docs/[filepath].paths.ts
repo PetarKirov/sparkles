@@ -283,6 +283,9 @@ export default {
         text: 'Home',
         link: '/',
         copyText: isInsideDocs ? 'docs' : '',
+        gitHubUrl: isInsideDocs
+          ? 'https://github.com/PetarKirov/sparkles/tree/main/docs'
+          : 'https://github.com/PetarKirov/sparkles/tree/main/',
       });
 
       let accumulatedPath = '';
@@ -309,10 +312,27 @@ export default {
           }
         }
 
+        const targetPath = `${prefix}${accumulatedPath}`;
+        const absSegmentPath = path.resolve(repoDir, targetPath);
+        let gitHubUrl = '';
+        if (fs.existsSync(absSegmentPath)) {
+          const stats = fs.statSync(absSegmentPath);
+          if (stats.isFile()) {
+            gitHubUrl = `https://github.com/PetarKirov/sparkles/edit/main/${targetPath}`;
+          } else {
+            gitHubUrl = `https://github.com/PetarKirov/sparkles/tree/main/${targetPath}`;
+          }
+        } else {
+          // Fallback or dynamically generated page
+          const dirPath = path.dirname(targetPath);
+          gitHubUrl = `https://github.com/PetarKirov/sparkles/tree/main/${dirPath}`;
+        }
+
         breadcrumbSegments.push({
           text: segment,
           link: link,
-          copyText: `${prefix}${accumulatedPath}`,
+          copyText: targetPath,
+          gitHubUrl: gitHubUrl,
         });
       }
 

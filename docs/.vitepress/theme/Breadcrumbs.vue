@@ -5,6 +5,7 @@ interface Segment {
   text: string;
   link: string | null;
   copyText: string;
+  gitHubUrl?: string;
 }
 
 const props = defineProps<{
@@ -64,31 +65,66 @@ function copyAll() {
             <code>{{ segment.text }}</code>
           </span>
 
-          <!-- tooltip copy button shown on hover/focus -->
+          <!-- tooltip shown on hover/focus -->
           <div v-if="segment.copyText" class="breadcrumb-tooltip">
-            <button
-              class="breadcrumb-tooltip-btn"
-              @click.stop="copySegment(segment.copyText, idx)"
-              :aria-label="'Copy path up to ' + segment.text"
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="12"
-                height="12"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
+            <div class="breadcrumb-tooltip-inner">
+              <button
+                class="breadcrumb-tooltip-btn"
+                @click.stop="copySegment(segment.copyText, idx)"
+                :aria-label="'Copy path up to ' + segment.text"
               >
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                <path
-                  d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"
-                />
-              </svg>
-              <span>{{ copiedIndex === idx ? 'Copied!' : 'Copy path' }}</span>
-            </button>
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                  <path
+                    d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"
+                  />
+                </svg>
+                <span>{{ copiedIndex === idx ? 'Copied!' : 'Copy' }}</span>
+              </button>
+
+              <span v-if="segment.gitHubUrl" class="breadcrumb-tooltip-divider"
+                >|</span
+              >
+
+              <a
+                v-if="segment.gitHubUrl"
+                class="breadcrumb-tooltip-link"
+                :href="segment.gitHubUrl"
+                target="_blank"
+                rel="noopener noreferrer"
+                @click.stop
+                :aria-label="'Open ' + segment.text + ' on GitHub'"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path
+                    d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"
+                  />
+                  <polyline points="15 3 21 3 21 9" />
+                  <line x1="10" y1="14" x2="21" y2="3" />
+                </svg>
+                <span>GitHub</span>
+              </a>
+            </div>
           </div>
         </div>
       </template>
@@ -190,13 +226,13 @@ function copyAll() {
   border: 1px solid var(--vp-c-divider-light, rgba(82, 82, 89, 0.18));
 }
 
-/* Tooltip copy button shown on hover/focus */
+/* Tooltip container (transparent hover bridge) */
 .breadcrumb-tooltip {
   position: absolute;
   bottom: 100%;
   left: 50%;
   transform: translateX(-50%);
-  padding-bottom: 8px; /* The gap bridge */
+  padding-bottom: 8px;
   z-index: 100;
   white-space: nowrap;
 
@@ -216,26 +252,20 @@ function copyAll() {
   pointer-events: auto;
 }
 
-.breadcrumb-tooltip-btn {
+/* Tooltip inner box containing buttons/links */
+.breadcrumb-tooltip-inner {
   position: relative; /* For arrow positioning */
   display: flex;
   align-items: center;
-  gap: 4px;
-  color: var(--vp-c-text-2);
-  font-size: 11px;
-  font-weight: 500;
+  gap: 6px;
   background-color: var(--vp-c-bg-elv, #1e1e20);
   border: 1px solid var(--vp-c-divider);
   border-radius: 4px;
   padding: 4px 8px;
   box-shadow: var(--vp-shadow-3);
-  cursor: pointer;
-  transition:
-    color 0.15s,
-    border-color 0.15s;
 }
 
-.breadcrumb-tooltip-btn::after {
+.breadcrumb-tooltip-inner::after {
   content: '';
   position: absolute;
   top: 100%;
@@ -246,9 +276,34 @@ function copyAll() {
   border-color: var(--vp-c-divider) transparent transparent transparent;
 }
 
-.breadcrumb-tooltip-btn:hover {
+/* Tooltip interactive items (buttons and links) */
+.breadcrumb-tooltip-btn,
+.breadcrumb-tooltip-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--vp-c-text-2);
+  font-size: 11px;
+  font-weight: 500;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-decoration: none;
+  padding: 0;
+  transition: color 0.15s;
+  line-height: 1;
+}
+
+.breadcrumb-tooltip-btn:hover,
+.breadcrumb-tooltip-link:hover {
   color: var(--vp-c-text-1);
-  border-color: var(--vp-c-text-3);
+  text-decoration: none;
+}
+
+.breadcrumb-tooltip-divider {
+  color: var(--vp-c-divider-light, rgba(82, 82, 89, 0.18));
+  font-size: 11px;
+  user-select: none;
 }
 
 /* Always visible copy button at the end */
