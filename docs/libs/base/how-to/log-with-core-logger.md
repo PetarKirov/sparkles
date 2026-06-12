@@ -1,14 +1,13 @@
 # Log through `CoreLogger`
 
-Use `CoreLogger` when Sparkles code needs `std.logger` compatibility and a
-Sparkles logging path that can be called from `@safe nothrow @nogc` code.
+Use `CoreLogger` to write fast, structured, and styled log messages. This guide demonstrates the default `DeltaTimeLogger` implementation and how to log using the styled Interpolated Expression Sequences (IES).
 
-## Capture Sparkles log messages
+## Using the DeltaTimeLogger
 
-This example installs a tiny logger that captures the rendered Sparkles
-message. Real applications usually call `initLogger(LogLevel.info)`, which
-installs `DeltaTimeLogger` as both `std.logger.sharedLog` and
-`sparkles.base.logger.sharedCoreLog`.
+By default, calling `initLogger` installs `DeltaTimeLogger` as both the Phobos `std.logger.sharedLog` and `sparkles.base.logger.sharedCoreLog`. `DeltaTimeLogger` formats logs in the following layout:
+`[ Time | Δt (since start) | Δt &nbsp;(since last log) | Level | File:Line ]: Message`
+
+Here is an example showing how to initialize the logger and output logs of various levels, using both static styled messages and dynamic interpolated values.
 
 ```d
 #!/usr/bin/env dub
@@ -16,65 +15,59 @@ installs `DeltaTimeLogger` as both `std.logger.sharedLog` and
     name "base_core_logger"
     dependency "sparkles:base" version="*"
 +/
-import std.logger : Logger;
-import std.stdio : writeln;
-
-import sparkles.base.logger :
-    CoreLogEntry, CoreLogger, LogLevel, coreGlobalLogLevel, info, sharedCoreLog;
-
-final class CaptureLogger : CoreLogger
-{
-    LogLevel lastLevel;
-    char[128] storage;
-    size_t length;
-
-    this() @safe
-    {
-        super(LogLevel.trace);
-    }
-
-    override protected void writeCoreLog(
-        const ref CoreLogEntry entry,
-        scope const(char)[] message,
-    ) @safe nothrow @nogc
-    {
-        lastLevel = entry.level;
-        length = message.length < storage.length ? message.length : storage.length;
-        storage[0 .. length] = message[0 .. length];
-    }
-
-    override protected void writeLogMsg(ref Logger.LogEntry) @safe
-    {
-    }
-
-    const(char)[] text() const @safe nothrow @nogc
-    {
-        return storage[0 .. length];
-    }
-}
+import sparkles.base.logger : initLogger, info, warning, error, critical, log, trace, LogLevel;
 
 void main()
 {
-    auto logger = new CaptureLogger;
-    sharedCoreLog = cast(shared) logger;
-    coreGlobalLogLevel = LogLevel.trace;
+    // Initialize the logger to output logs of TRACE level or higher
+    initLogger(LogLevel.trace);
 
-    immutable host = "db-01";
-    info(i"connected to $(host)");
+    // Standard log levels with static styled messages
+    trace(i"Application starting up");
+    info(i"Listening on port {green 8080}");
+    warning(i"Disk usage above {yellow 80%}");
+    error(i"Connection to {red database} lost");
+    critical(i"{bold.red Out of memory}");
 
-    writeln(logger.lastLevel);
-    writeln(logger.text);
+    // Styled IES with interpolated values
+    immutable host = "db-01.prod";
+    immutable port = 5432;
+    info(i"Reconnected to {green $(host)}:{cyan $(port)}");
+
+    // Explicit log level with styled IES
+    log(LogLevel.warning, i"Latency spike: {yellow.bold 230ms} on {dim $(host)}");
 }
 ```
 
+<!-- md-example-expected
+[ {{_}} | Δt {{_}} | Δtᵢ {{_}} | TRC | {{_}} ]: Application starting up
+[ {{_}} | Δt {{_}} | Δtᵢ {{_}} | INF | {{_}} ]: Listening on port 8080
+[ {{_}} | Δt {{_}} | Δtᵢ {{_}} | WRN | {{_}} ]: Disk usage above 80%
+[ {{_}} | Δt {{_}} | Δtᵢ {{_}} | ERR | {{_}} ]: Connection to database lost
+[ {{_}} | Δt {{_}} | Δtᵢ {{_}} | CRT | {{_}} ]: Out of memory
+[ {{_}} | Δt {{_}} | Δtᵢ {{_}} | INF | {{_}} ]: Reconnected to db-01.prod:5432
+[ {{_}} | Δt {{_}} | Δtᵢ {{_}} | WRN | {{_}} ]: Latency spike: 230ms on db-01.prod
+-->
+
 ```[Output]
-info
-connected to db-01
+[ 14:32:01 | Δt 0ms   | Δtᵢ 0ms   | TRC | base_core_logger.d:13 ]: Application starting up
+[ 14:32:01 | Δt 1ms   | Δtᵢ 1ms   | INF | base_core_logger.d:14 ]: Listening on port 8080
+[ 14:32:01 | Δt 2ms   | Δtᵢ 1ms   | WRN | base_core_logger.d:15 ]: Disk usage above 80%
+[ 14:32:01 | Δt 3ms   | Δtᵢ 1ms   | ERR | base_core_logger.d:16 ]: Connection to database lost
+[ 14:32:01 | Δt 4ms   | Δtᵢ 1ms   | CRT | base_core_logger.d:17 ]: Out of memory
+[ 14:32:01 | Δt 5ms   | Δtᵢ 1ms   | INF | base_core_logger.d:22 ]: Reconnected to db-01.prod:5432
+[ 14:32:01 | Δt 6ms   | Δtᵢ 1ms   | WRN | base_core_logger.d:25 ]: Latency spike: 230ms on db-01.prod
 ```
 
-## Fatal handlers
+## Advanced Customization: Fatal Handlers
 
-`fatal` is also `@safe nothrow @nogc`. Its default handler throws a
-recycled `FatalLogError`. Swap `coreFatalHandler` to
-`assertingFatalHandler` or `abortingFatalHandler` when a process should
-fail by assertion or abort instead.
+`fatal` log calls are also `@safe nothrow @nogc`. By default, the fatal handler throws a thread-local, recycled `FatalLogError` to avoid GC allocation.
+
+If you want the process to exit immediately or panic instead of throwing, you can customize the handler by setting `coreFatalHandler` to `assertingFatalHandler` or `abortingFatalHandler`:
+
+```d
+import sparkles.base.logger : coreFatalHandler, assertingFatalHandler;
+
+// Change the behavior of `fatal` logs to assert(0)
+coreFatalHandler = &assertingFatalHandler;
+```
