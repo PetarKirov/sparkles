@@ -115,6 +115,7 @@ export default withMermaid(
     ],
 
     markdown: {
+      lineNumbers: true,
       languageAlias: {
         sdl: 'd',
         eff: 'ocaml',

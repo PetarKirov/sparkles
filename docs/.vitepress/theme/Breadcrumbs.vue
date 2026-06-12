@@ -16,6 +16,10 @@ const filteredSegments = computed(() => {
   return props.segments.filter(s => s.text !== 'Home');
 });
 
+const lastSegment = computed(() => {
+  return props.segments[props.segments.length - 1] || null;
+});
+
 const copiedIndex = ref<number | null>(null);
 const copiedAll = ref(false);
 let timeoutId: ReturnType<typeof setTimeout> | null = null;
@@ -130,46 +134,79 @@ function copyAll() {
       </template>
     </div>
 
-    <!-- always visible copy button for entire path -->
-    <button
-      class="breadcrumb-copy-all-btn"
-      @click="copyAll"
-      title="Copy entire path"
-      aria-label="Copy entire path"
-    >
-      <svg
-        v-if="!copiedAll"
-        xmlns="http://www.w3.org/2000/svg"
-        width="14"
-        height="14"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
+    <!-- always visible copy & github buttons for entire path -->
+    <div v-if="lastSegment" class="breadcrumb-copy-all-group">
+      <button
+        class="breadcrumb-copy-all-btn"
+        @click="copyAll"
+        title="Copy entire path"
+        aria-label="Copy entire path"
       >
-        <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-      </svg>
-      <svg
-        v-else
-        xmlns="http://www.w3.org/2000/svg"
-        width="14"
-        height="14"
-        viewBox="0 0 24 24"
-        fill="none"
-        stroke="currentColor"
-        stroke-width="2"
-        stroke-linecap="round"
-        stroke-linejoin="round"
+        <svg
+          v-if="!copiedAll"
+          xmlns="http://www.w3.org/2000/svg"
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+        </svg>
+        <svg
+          v-else
+          xmlns="http://www.w3.org/2000/svg"
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+        <span class="copy-all-label">{{
+          copiedAll ? 'Copied!' : 'Copy Path'
+        }}</span>
+      </button>
+
+      <span v-if="lastSegment.gitHubUrl" class="breadcrumb-copy-all-divider"
+        >|</span
       >
-        <polyline points="20 6 9 17 4 12" />
-      </svg>
-      <span class="copy-all-label">{{
-        copiedAll ? 'Copied!' : 'Copy Path'
-      }}</span>
-    </button>
+
+      <a
+        v-if="lastSegment.gitHubUrl"
+        class="breadcrumb-copy-all-link"
+        :href="lastSegment.gitHubUrl"
+        target="_blank"
+        rel="noopener noreferrer"
+        title="Open on GitHub"
+        aria-label="Open on GitHub"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+          <polyline points="15 3 21 3 21 9" />
+          <line x1="10" y1="14" x2="21" y2="3" />
+        </svg>
+        <span class="copy-all-label">GitHub</span>
+      </a>
+    </div>
   </div>
 </template>
 
@@ -306,27 +343,45 @@ function copyAll() {
   user-select: none;
 }
 
-/* Always visible copy button at the end */
-.breadcrumb-copy-all-btn {
+/* Always visible copy/github group at the end */
+.breadcrumb-copy-all-group {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--vp-c-text-2);
   background-color: var(--vp-code-bg);
   border: 1px solid var(--vp-c-divider);
   border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.2s;
   height: 26px;
 }
 
-.breadcrumb-copy-all-btn:hover {
+.breadcrumb-copy-all-btn,
+.breadcrumb-copy-all-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--vp-c-text-2);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  transition: color 0.2s;
+  text-decoration: none;
+  padding: 0;
+  line-height: 1;
+}
+
+.breadcrumb-copy-all-btn:hover,
+.breadcrumb-copy-all-link:hover {
   color: var(--vp-c-text-1);
-  border-color: var(--vp-c-text-3);
-  background-color: var(--vp-c-bg-elv);
+  text-decoration: none;
+}
+
+.breadcrumb-copy-all-divider {
+  color: var(--vp-c-divider-light, rgba(82, 82, 89, 0.18));
+  font-size: 12px;
+  user-select: none;
 }
 
 .copy-all-label {
