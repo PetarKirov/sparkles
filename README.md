@@ -157,12 +157,12 @@ Format D values with syntax highlighting and structural indentation. Supports en
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "readme_pretty_printing"
-    dependency "sparkles:core-cli" version="*"
+    dependency "sparkles:base" version="*"
 +/
 
 import std.stdio : writeln;
 
-import sparkles.core_cli.prettyprint;
+import sparkles.base.prettyprint;
 
 struct Server
 {
@@ -469,9 +469,9 @@ Runnable examples are in [`libs/base/examples/`](libs/base/examples/) and
 
 ```bash
 dub run --single libs/base/examples/logger.d
+dub run --single libs/base/examples/prettyprint.d
 
 dub run --single libs/core-cli/examples/styled-template.d
-dub run --single libs/core-cli/examples/prettyprint.d
 dub run --single libs/core-cli/examples/table.d
 dub run --single libs/core-cli/examples/box.d
 dub run --single libs/core-cli/examples/header.d

@@ -3,7 +3,7 @@
 /// Provides path resolution, editor-specific URI schemes, and a hook interface
 /// for compile-time-configurable source location links. Uses Design by
 /// Introspection to let callers plug in custom URI writers.
-module sparkles.core_cli.source_uri;
+module sparkles.base.source_uri;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Path Resolution
@@ -257,12 +257,12 @@ unittest
 unittest
 {
     enum resolved = resolveSourcePath(
-        "libs/core-cli/src/sparkles/core_cli/source_uri.d");
+        "libs/base/src/sparkles/base/source_uri.d");
     // Must be absolute
     assert(resolved.length > 0 && resolved[0] == '/');
     // Must end with the relative path
-    assert(resolved.length > 48
-        && resolved[$ - 48 .. $] == "libs/core-cli/src/sparkles/core_cli/source_uri.d");
+    assert(resolved.length > 40
+        && resolved[$ - 40 .. $] == "libs/base/src/sparkles/base/source_uri.d");
 }
 
 /// resolveSourcePath works at compile time.
@@ -273,7 +273,7 @@ unittest
     enum absPath = resolveSourcePath("/already/absolute");
     static assert(absPath == "/already/absolute");
 
-    enum relPath = resolveSourcePath("libs/core-cli/src/sparkles/core_cli/source_uri.d");
+    enum relPath = resolveSourcePath("libs/base/src/sparkles/base/source_uri.d");
     static assert(relPath.length > 0 && relPath[0] == '/');
 }
 
