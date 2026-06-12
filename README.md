@@ -4,7 +4,7 @@
     <strong>A small D library for CLI applications</strong>
   </p>
   <p align="center">
-    Terminal styling, pretty-printing, UI components, and @nogc utilities
+    Base utilities, terminal styling, pretty-printing, UI components, and @nogc support
   </p>
   <p align="center">
     <em>Early stage (v0.0.1) -- API may change</em>
@@ -22,24 +22,25 @@
 
 ## Overview
 
-**sparkles:core-cli** is a collection of utilities for building command-line interfaces in D, with a focus on `@safe`, `@nogc`, `pure`, and `nothrow` compatibility.
+`sparkles` is a D monorepo of utilities for building command-line applications
+and supporting libraries. `sparkles:base` provides allocation-conscious
+foundation modules with a focus on `@safe`, `@nogc`, `pure`, and `nothrow`
+compatibility; `sparkles:core-cli` builds on it with higher-level CLI tools.
 
 ### What's Inside
 
+- **Base** -- `SmallBuffer`, lifetime helpers, text readers/writers, terminal styling, styled templates, and logging
 - **Styled Templates** -- Apply ANSI styles using D's Interpolated Expression Sequences (IES) with a concise `{style text}` syntax
 - **Pretty Printing** -- Colorized, type-aware formatting for any D type via compile-time introspection
 - **UI Components** -- Tables, boxes, headers, and OSC 8 hyperlinks
-- **Terminal Styling** -- ANSI color and text attribute support with a fluent builder API
-- **Logger** -- Delta-time-prefixed logger with wall-clock time, elapsed-since-start, and per-entry delta timestamps
-- **SmallBuffer** -- A `@nogc` dynamic buffer with small buffer optimization (SBO)
 - **Semantic Versioning** -- SemVer parsing, normalization, and precedence comparison
-- **@nogc Utilities** -- `recycledInstance`, text writers, and output range interfaces
 
 ## Quick Start
 
-Add sparkles to your `dub.sdl`:
+Add the package you need to your `dub.sdl`:
 
 ```sdl
+dependency "sparkles:base" version="~>0.0.1"
 dependency "sparkles:core-cli" version="~>0.0.1"
 ```
 
@@ -47,11 +48,20 @@ Or `dub.json`:
 
 ```json
 "dependencies": {
+    "sparkles:base": "~>0.0.1",
     "sparkles:core-cli": "~>0.0.1"
 }
 ```
 
 ## Modules
+
+### Base
+
+`sparkles:base` contains the shared low-level modules used by the rest of the
+monorepo: `SmallBuffer`, `recycledInstance`, `recycledErrorInstance`, `@nogc`
+text parsing/formatting, terminal styling, styled IES rendering, and the
+`CoreLogger` logging interface. See the [base documentation](docs/libs/base/index.md)
+for the tutorial, how-to guides, and API index.
 
 ### Versions
 
@@ -107,10 +117,10 @@ Apply terminal styles using D's Interpolated Expression Sequences.
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "readme_styled_templates"
-    dependency "sparkles:core-cli" version="*"
+    dependency "sparkles:base" version="*"
 +/
 
-import sparkles.core_cli.styled_template;
+import sparkles.base.styled_template;
 
 void main()
 {
@@ -147,12 +157,12 @@ Format D values with syntax highlighting and structural indentation. Supports en
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "readme_pretty_printing"
-    dependency "sparkles:core-cli" version="*"
+    dependency "sparkles:base" version="*"
 +/
 
 import std.stdio : writeln;
 
-import sparkles.core_cli.prettyprint;
+import sparkles.base.prettyprint;
 
 struct Server
 {
@@ -219,12 +229,12 @@ ANSI colors and text attributes via `stylize` and a fluent `stylizedTextBuilder`
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "readme_terminal_styling"
-    dependency "sparkles:core-cli" version="*"
+    dependency "sparkles:base" version="*"
 +/
 
 import std.stdio : writeln;
 
-import sparkles.core_cli.term_style;
+import sparkles.base.term_style;
 
 void main()
 {
@@ -360,7 +370,7 @@ Make text clickable in terminal emulators that support [OSC 8](https://gist.gith
 import std.stdio : writeln;
 
 import sparkles.core_cli.ui.osc_link;
-import sparkles.core_cli.term_style : Style;
+import sparkles.base.term_style : Style;
 
 void main()
 {
@@ -380,12 +390,12 @@ Delta-time-prefixed logging via `DeltaTimeLogger`, a `std.logger.Logger` subclas
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "readme_logger"
-    dependency "sparkles:core-cli" version="*"
+    dependency "sparkles:base" version="*"
 +/
 
 import std.logger : log, LogLevel;
 
-import sparkles.core_cli.logger : initLogger;
+import sparkles.base.logger : initLogger;
 
 void main()
 {
@@ -416,7 +426,7 @@ The colored output uses `writeStyled` IES for ANSI styling -- log levels are col
 A `@nogc` dynamic array with small buffer optimization. Stores data inline up to a configurable threshold, then falls back to the heap via `pureMalloc`.
 
 ```d
-import sparkles.core_cli.smallbuffer;
+import sparkles.base.smallbuffer;
 
 @safe pure nothrow @nogc
 unittest {
@@ -436,7 +446,7 @@ Works as an output range, so it composes with `std.algorithm`, `prettyPrint`, st
 **`recycledInstance`** -- Reuse thread-local static instances for throwing errors in `@nogc` code:
 
 ```d
-import sparkles.core_cli.lifetime;
+import sparkles.base.lifetime;
 
 @nogc void validate(int x) {
     if (x < 0)
@@ -446,22 +456,26 @@ import sparkles.core_cli.lifetime;
 
 **`text_writers`** -- Write integers, floats, escaped characters, and ANSI codes without GC allocation. Includes `writeValue` for best-effort `@nogc` conversion of any type, and `writeStyledValue` for hook-controlled styled output.
 
-**`term_unstyle`** -- Strip ANSI escape sequences from styled text.
+**`term_unstyle`** -- Strip ANSI escape sequences from styled text. This lives in
+`sparkles:core-cli`.
 
-**`term_size`** -- Detect terminal window resizes via `SIGWINCH`.
+**`term_size`** -- Detect terminal window resizes via `SIGWINCH`. This lives in
+`sparkles:core-cli`.
 
 ## Examples
 
-Runnable examples are in [`libs/core-cli/examples/`](libs/core-cli/examples/):
+Runnable examples are in [`libs/base/examples/`](libs/base/examples/) and
+[`libs/core-cli/examples/`](libs/core-cli/examples/):
 
 ```bash
+dub run --single libs/base/examples/logger.d
+dub run --single libs/base/examples/prettyprint.d
+
 dub run --single libs/core-cli/examples/styled-template.d
-dub run --single libs/core-cli/examples/prettyprint.d
 dub run --single libs/core-cli/examples/table.d
 dub run --single libs/core-cli/examples/box.d
 dub run --single libs/core-cli/examples/header.d
 dub run --single libs/core-cli/examples/osc-link.d
-dub run --single libs/core-cli/examples/logger.d
 dub run --single libs/core-cli/examples/color.d
 ```
 
@@ -469,16 +483,18 @@ dub run --single libs/core-cli/examples/color.d
 
 ```bash
 # Build
+dub build :base
 dub build :core-cli
 
 # Run all tests
-ci --test
+dub run :ci -- --test
 
 # Test a specific sub-package
+dub test :base
 dub test :core-cli
 
 # Run tests matching a pattern
-dub test :core-cli -- -i "SmallBuffer"
+dub test :base -- -i "SmallBuffer"
 
 # Verbose output with stack traces
 dub test :core-cli -- -v
@@ -488,7 +504,7 @@ The project uses a **Nix development shell** for reproducible builds:
 
 ```bash
 nix develop -c dub build :core-cli
-nix develop -c ci --test
+nix run .#ci -- --test
 ```
 
 ## Documentation

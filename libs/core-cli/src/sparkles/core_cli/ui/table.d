@@ -147,7 +147,7 @@ unittest
 @("drawTable.styledContent")
 @system unittest
 {
-    import sparkles.core_cli.term_style : Style, stylize;
+    import sparkles.base.term_style : Style, stylize;
     import sparkles.test_utils.string : outdent;
     import std.stdio;
 

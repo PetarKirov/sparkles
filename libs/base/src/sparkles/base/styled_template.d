@@ -3,7 +3,7 @@
  *
  * Provides a template syntax for applying terminal styles to IES strings:
  * ---
- * import sparkles.core_cli.styled_template;
+ * import sparkles.base.styled_template;
  *
  * int cpu = 75;
  * styledWriteln(i"CPU: {red $(cpu)%} Status: {green OK}");
@@ -17,11 +17,11 @@
  * - `#{` — Escaped literal `{`
  * - `#}` — Escaped literal `}`
  */
-module sparkles.core_cli.styled_template;
+module sparkles.base.styled_template;
 
 import core.interpolation;
 
-import sparkles.core_cli.term_style : Style;
+import sparkles.base.term_style : Style;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Core Processing Functions
@@ -47,7 +47,7 @@ void writeStyled(bool colored = true, Writer, Args...)(
     InterpolationFooter
 )
 {
-    import sparkles.core_cli.text.writers : writeValue;
+    import sparkles.base.text.writers : writeValue;
 
     ParserContext ctx;
 
@@ -463,7 +463,7 @@ private struct StyleState
     /// Emit escape sequences for transition FROM parent TO this state
     void emitOpenDiff(Writer)(ref Writer w, in StyleState parent) const
     {
-        import sparkles.core_cli.text.writers : writeEscapeSeq;
+        import sparkles.base.text.writers : writeEscapeSeq;
 
         // Close styles that were in parent but removed in this (negation)
         foreach_reverse (i; 0 .. parent.count)
@@ -479,7 +479,7 @@ private struct StyleState
     /// Emit escape sequences for transition FROM this state back TO parent
     void emitCloseDiff(Writer)(ref Writer w, in StyleState parent) const
     {
-        import sparkles.core_cli.text.writers : writeEscapeSeq;
+        import sparkles.base.text.writers : writeEscapeSeq;
 
         // Close styles that were added in this (not in parent)
         foreach_reverse (i; 0 .. count)
@@ -700,7 +700,7 @@ private void parseLiteral(bool colored = true, Writer)(
 }
 
 /// Parses style specification like "bold.red" or "~red.bold"
-@safe
+@safe nothrow @nogc
 private void applyStyleSpec(const(char)[] spec, ref ParserContext ctx)
 {
     // Create new style state based on parent (or empty if root)
@@ -724,7 +724,7 @@ private void applyStyleSpec(const(char)[] spec, ref ParserContext ctx)
     ctx.pushStyle(newState);
 }
 
-@safe
+@safe nothrow @nogc
 private void applyStylePart(const(char)[] part, ref StyleState state)
 {
     if (part.length == 0)

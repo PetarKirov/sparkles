@@ -879,7 +879,7 @@ unittest
 @safe
 unittest
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
+    import sparkles.base.smallbuffer : SmallBuffer;
 
     SmallBuffer!(char, 64) buf;
     auto r = Ranges!SemVer.between(sv("1.2.0"), sv("2.0.0"));

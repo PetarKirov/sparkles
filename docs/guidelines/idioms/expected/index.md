@@ -24,7 +24,7 @@ The `Hook` template parameter defines the execution policies of [`Expected`][Exp
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "basic_usage_example"
-    dependency "expected" version="~>0.4.0"
+    dependency "expected" version="~>0.4.1"
 +/
 import std.stdio : writeln;
 // [!code focus:31]
@@ -99,7 +99,7 @@ pub fn parse_verbosity(level: &str) -> Result<Verbosity, &'static str> {
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "flatten_example"
-    dependency "expected" version="~>0.4.0"
+    dependency "expected" version="~>0.4.1"
 +/
 import std.stdio : writeln;
 // [!code focus:16]
@@ -151,7 +151,7 @@ assert_eq!(successes, vec![1, 3, 5]);
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "and_then_example"
-    dependency "expected" version="~>0.4.0"
+    dependency "expected" version="~>0.4.1"
 +/
 import std.stdio : writeln;
 // [!code focus:33]
@@ -228,7 +228,7 @@ let val = parse_age("42").and_then(validate);
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "map_example"
-    dependency "expected" version="~>0.4.0"
+    dependency "expected" version="~>0.4.1"
 +/
 import std.stdio : writeln;
 import std.format : format;
@@ -273,7 +273,7 @@ let mapped = result
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "fallback_example"
-    dependency "expected" version="~>0.4.0"
+    dependency "expected" version="~>0.4.1"
 +/
 import std.stdio : writeln;
 // [!code focus:32]
@@ -347,7 +347,7 @@ let wrapped_err = result.or_else(|err| Ok(err.len() * 100)); // [!code highlight
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "collapse_example"
-    dependency "expected" version="~>0.4.0"
+    dependency "expected" version="~>0.4.1"
 +/
 import std.stdio : writeln;
 import std.format : format;
@@ -399,7 +399,7 @@ let message = result.map_or_else(
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "nogc_api_example"
-    dependency "expected" version="~>0.4.0"
+    dependency "expected" version="~>0.4.1"
 +/
 import std.stdio : writeln;
 // [!code focus:40]

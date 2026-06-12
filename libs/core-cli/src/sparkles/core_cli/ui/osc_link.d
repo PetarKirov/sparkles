@@ -6,7 +6,7 @@ clickable in terminal emulators that support hyperlinks.
 +/
 module sparkles.core_cli.ui.osc_link;
 
-import sparkles.core_cli.term_style : Style;
+import sparkles.base.term_style : Style;
 
 @safe:
 
@@ -116,7 +116,7 @@ string oscLink(string text, string uri, OscLinkProps props = OscLinkProps.init)
 pure nothrow
 string oscLink(string text, string uri, Style style, OscLinkProps props = OscLinkProps.init)
 {
-    import sparkles.core_cli.term_style : stylize;
+    import sparkles.base.term_style : stylize;
     return oscLinkOpenSeq(uri: uri, props: props) ~ text.stylize(style) ~ oscLinkCloseSeq(props: props);
 }
 
@@ -124,7 +124,7 @@ string oscLink(string text, string uri, Style style, OscLinkProps props = OscLin
 @("oscLink.oscLink.styled")
 @safe pure nothrow unittest
 {
-    import sparkles.core_cli.term_style : stylize;
+    import sparkles.base.term_style : stylize;
 
     const result = oscLink(text: "Click", uri: "https://example.com", style: Style.blue);
     assert(result == "\x1b]8;;https://example.com\x07" ~ "Click".stylize(Style.blue) ~ "\x1b]8;;\x07");
@@ -134,7 +134,7 @@ string oscLink(string text, string uri, Style style, OscLinkProps props = OscLin
 @("oscLink.oscLink.styledWithProps")
 @safe pure nothrow unittest
 {
-    import sparkles.core_cli.term_style : stylize;
+    import sparkles.base.term_style : stylize;
 
     const result = oscLink(text: "Link", uri: "https://d-lang.org", style: Style.underline,
         props: OscLinkProps(terminator: OscTerminator.st, id: "dlang"));

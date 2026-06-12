@@ -4,8 +4,9 @@ dub package tests, and markdown reference maintenance.
 
 This script can parse markdown files to find code blocks that represent
 dub single-file programs, execute them, and report results. It can also
-smoke-test tracked standalone example files such as `libs/core-cli/examples/*.d`,
-or run `dub test` for each sub-package defined in the root `dub.sdl`.
+smoke-test tracked standalone example files such as `libs/base/examples/*.d`
+and `libs/core-cli/examples/*.d`, or run `dub test` for each sub-package
+defined in the root `dub.sdl`.
 
 Standalone example files can declare that they should be compiled but not
 executed by placing a header comment after the `dub.sdl` block:
@@ -28,7 +29,7 @@ $(LIST
     $(ITEM Default — run examples and display results in boxes)
     $(ITEM `--verify` — compare output against expected output blocks, report mismatches)
     $(ITEM `--update` — rewrite the markdown file with actual example output (golden snapshot update))
-    $(ITEM `--example-files` — build/run standalone example `.d` files, defaulting to `libs/core-cli/examples/*.d` and `docs/research/async-io/io-uring/examples/*.d`)
+    $(ITEM `--example-files` — build/run standalone example `.d` files, defaulting to `libs/base/examples/*.d`, `libs/core-cli/examples/*.d`, and `docs/research/async-io/io-uring/examples/*.d`)
     $(ITEM `--test` — run `dub test` for each sub-package defined in the root `dub.sdl`)
     $(ITEM `--files` — select explicit files or git-style globs; when omitted, each mode uses its tracked defaults)
     $(ITEM `--fail-fast` — stop on the first failing example and replay its output at the end)
@@ -85,10 +86,10 @@ import std.string : endsWith, indexOf, lineSplitter, replace, strip, stripRight,
 
 // sparkles packages
 import sparkles.core_cli.args : CliOption, HelpInfo, parseCliArgs;
-import sparkles.core_cli.logger : error, info, initLogger, LogLevel, trace, warning;
+import sparkles.base.logger : error, info, initLogger, LogLevel, trace, warning;
 import sparkles.core_cli.process_utils :
     executeMonitored, MonitoredResult, ResourceUsage, selfRssBytes;
-import sparkles.core_cli.styled_template : styledText, styledWritelnErr;
+import sparkles.base.styled_template : styledText, styledWritelnErr;
 import sparkles.core_cli.term_unstyle : unstyle;
 import sparkles.core_cli.ui.box : BoxProps, drawBox;
 import sparkles.core_cli.ui.header : drawHeader, HeaderProps, HeaderStyle;
@@ -107,7 +108,7 @@ struct CliParams
     @CliOption(`u|update`, "Rewrite the markdown file with actual example output.")
     bool update;
 
-    @CliOption(`x|example-files`, "Run standalone example .d files instead of markdown examples. With no files, defaults to libs/core-cli/examples/*.d and docs/research/async-io/io-uring/examples/*.d.")
+    @CliOption(`x|example-files`, "Run standalone example .d files instead of markdown examples. With no files, defaults to libs/base/examples/*.d, libs/core-cli/examples/*.d, and docs/research/async-io/io-uring/examples/*.d.")
     bool exampleFiles;
 
     @CliOption(`t|test`, "Run dub test for each sub-package defined in the root dub.sdl.")
@@ -146,6 +147,7 @@ struct Example
     string code;
     string expectedOutput;
     string verifyPattern; /// Wildcard pattern from `<!-- md-example-expected -->` directive
+    string outputFenceType; /// "[Output]" or "ansi" or null if no output block
     size_t codeBlockStart;
     size_t codeBlockEnd;
     size_t outputBlockStart;
@@ -353,12 +355,14 @@ private string[] trackedMarkdownFiles()
 
 /// Git pathspecs for the repository's standalone example `.d` files — the
 /// defaults `--example-files` uses when no `--files` selection is given: the
-/// `core-cli` library demos plus the `io_uring` worked examples that accompany
-/// the async-I/O research docs (`docs/research/async-io/io-uring/`).
+/// `base` and `core-cli` library demos plus the `io_uring` worked examples
+/// that accompany the async-I/O research docs
+/// (`docs/research/async-io/io-uring/`).
 @safe pure nothrow
 private string[] standaloneExampleGlobs()
 {
     return [
+        "libs/base/examples/*.d",
         "libs/core-cli/examples/*.d",
         "docs/research/async-io/io-uring/examples/*.d",
     ];
@@ -589,15 +593,27 @@ private int runReferenceLinkMode(string[] mdFiles, bool fix)
 
 // === Core Functions ===
 
+private bool isAnsiFence(string fenceType)
+{
+    return fenceType == "ansi" || fenceType == "[Output:ansi]";
+}
+
 /// Extracts dub single-file examples from markdown content,
 /// including any adjacent expected-output blocks.
 @safe pure
 Example[] extractExamples(string content)
 {
-    // Expected output uses the ```[Output] fence (a VitePress code-group
+    // Expected output uses the ```[Output] or ```ansi fence (a VitePress code-group
     // label). Bare ``` and all other labelled fences (```d [D], ```rust
     // [Rust], etc.) are code blocks, not output.
-    bool isOutputBlockLine(string s) => s.strip == "```[Output]";
+    string getOutputFenceType(string s)
+    {
+        auto stripped = s.strip;
+        if (stripped == "```[Output]") return "[Output]";
+        if (stripped == "```ansi") return "ansi";
+        if (stripped == "```[Output:ansi]") return "[Output:ansi]";
+        return null;
+    }
 
     Example[] examples;
     auto lines = content.lineSplitter.array;
@@ -650,10 +666,11 @@ Example[] extractExamples(string content)
 
         auto name = extractExampleName(codeLines);
 
-        // Look for adjacent output block (a ```[Output] fence),
+        // Look for adjacent output block (a ```[Output] or ```ansi fence),
         // optionally preceded by a <!-- md-example-expected ... --> directive.
         string expectedOutput = null;
         string verifyPattern = null;
+        string outputFenceType = null;
         size_t outputStart = size_t.max;
         size_t outputEnd = size_t.max;
 
@@ -674,7 +691,12 @@ Example[] extractExamples(string content)
                 searchStart++;
         }
 
-        if (searchStart < lines.length && isOutputBlockLine(lines[searchStart]))
+        if (searchStart < lines.length)
+        {
+            outputFenceType = getOutputFenceType(lines[searchStart]);
+        }
+
+        if (outputFenceType !is null)
         {
             outputStart = searchStart;
             auto outEndIdx = lines[searchStart + 1 .. $]
@@ -692,6 +714,7 @@ Example[] extractExamples(string content)
             code: codeLines.join("\n"),
             expectedOutput: expectedOutput,
             verifyPattern: verifyPattern,
+            outputFenceType: outputFenceType,
             codeBlockStart: codeStart,
             codeBlockEnd: codeEnd,
             outputBlockStart: outputStart,
@@ -770,8 +793,8 @@ private MonitoredResult executeLogged(const(string)[] args, string label)
 {
     import std.array : join;
     import std.logger : globalLogLevel;
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-    import sparkles.core_cli.text.writers : writeBytes, writeDuration;
+    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.text.writers : writeBytes, writeDuration;
 
     if (globalLogLevel > LogLevel.trace)
     {
@@ -1108,7 +1131,19 @@ int runVerifyMode(Example[] examples, string mdFile, bool failFast)
             continue;
         }
 
-        auto actual = result.programOutput.strip;
+        string actual;
+        if (example.verifyPattern is null && isAnsiFence(example.outputFenceType))
+        {
+            actual = result.rawOutput
+                .lineSplitter
+                .map!(l => l.stripRight)
+                .join("\n")
+                .strip;
+        }
+        else
+        {
+            actual = result.programOutput.strip;
+        }
         auto expected = verifyAgainst.strip;
 
         if (matchesWithWildcards(actual, expected))
@@ -1197,7 +1232,26 @@ int runUpdateMode(Example[] examples, string mdFile, bool failFast)
             continue;
         }
 
-        auto actualOutput = result.programOutput.strip;
+        string actualOutput;
+        string fenceType = "[Output]";
+
+        if (example.outputFenceType !is null)
+        {
+            fenceType = example.outputFenceType;
+        }
+
+        if (isAnsiFence(fenceType))
+        {
+            actualOutput = result.rawOutput
+                .lineSplitter
+                .map!(l => l.stripRight)
+                .join("\n")
+                .strip;
+        }
+        else
+        {
+            actualOutput = result.programOutput.strip;
+        }
 
         if (example.expectedOutput !is null && actualOutput == example.expectedOutput.strip)
         {
@@ -1206,7 +1260,7 @@ int runUpdateMode(Example[] examples, string mdFile, bool failFast)
             continue;
         }
 
-        auto newOutputLines = ["```[Output]"]
+        auto newOutputLines = ["```" ~ fenceType]
             ~ actualOutput.lineSplitter.map!(l => l.idup).array
             ~ ["```"];
 

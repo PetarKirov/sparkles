@@ -484,7 +484,7 @@ version (unittest)
         size_t toHash() const @safe pure nothrow @nogc => v;
         void toString(W)(ref W w) const
         {
-            import sparkles.core_cli.text.writers : writeInteger;
+            import sparkles.base.text.writers : writeInteger;
             writeInteger(w, v);
         }
     }
@@ -628,7 +628,7 @@ unittest
 @safe pure nothrow
 unittest
 {
-    import sparkles.core_cli.smallbuffer : checkToString;
+    import sparkles.base.smallbuffer : checkToString;
 
     checkToString(Ranges!U3.full(), "*");
     checkToString(Ranges!U3.singleton(U3(3)), "3");

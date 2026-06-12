@@ -11,7 +11,7 @@ module osc_link_example;
 import std.stdio : writeln;
 
 import sparkles.core_cli.ui.osc_link;
-import sparkles.core_cli.term_style : Style;
+import sparkles.base.term_style : Style;
 
 void main()
 {
@@ -43,6 +43,6 @@ void main()
 
 private string stylize(string text, Style style)
 {
-    import sparkles.core_cli.term_style : stylize;
+    import sparkles.base.term_style : stylize;
     return text.stylize(style);
 }

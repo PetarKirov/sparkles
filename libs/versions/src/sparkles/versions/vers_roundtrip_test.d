@@ -51,7 +51,7 @@ private void checkVersRoundTrip(S)(
 if (isVersionScheme!S && supportsNativeRange!S)
 {
     import core.exception : AssertError;
-    import sparkles.core_cli.lifetime : recycledErrorInstance;
+    import sparkles.base.lifetime : recycledErrorInstance;
 
     void fail(in char[] msg) @trusted
     {
@@ -243,7 +243,7 @@ private string[] nativeRangeCorpus(string purlType) @safe pure nothrow
 unittest
 {
     import core.exception : AssertError;
-    import sparkles.core_cli.lifetime : recycledErrorInstance;
+    import sparkles.base.lifetime : recycledErrorInstance;
     import sparkles.versions.vers : allSchemes;
 
     void fail(in char[] msg) @trusted
@@ -274,7 +274,7 @@ unittest
 unittest
 {
     import core.exception : AssertError;
-    import sparkles.core_cli.lifetime : recycledErrorInstance;
+    import sparkles.base.lifetime : recycledErrorInstance;
     import sparkles.versions.vers : parseVersUri, toVersUriString;
 
     void check(string canonical, string file = __FILE__, size_t line = __LINE__) @safe
@@ -309,7 +309,7 @@ unittest
 unittest
 {
     import core.exception : AssertError;
-    import sparkles.core_cli.lifetime : recycledErrorInstance;
+    import sparkles.base.lifetime : recycledErrorInstance;
     import sparkles.versions.vers : parseVersUri, toVersUriString;
 
     void check(
@@ -349,7 +349,7 @@ unittest
 unittest
 {
     import core.exception : AssertError;
-    import sparkles.core_cli.lifetime : recycledErrorInstance;
+    import sparkles.base.lifetime : recycledErrorInstance;
     import sparkles.versions.schemes.semver : SemVer;
     import sparkles.versions.vers : parseVersAs, toVersUriStringAs;
 

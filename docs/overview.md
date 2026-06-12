@@ -1,6 +1,8 @@
-# core-cli Package Overview
+# Sparkles Package Overview
 
-A D library providing utilities for building CLI applications with terminal styling, pretty-printing, UI components, and @nogc support.
+Sparkles is a D monorepo for CLI applications and supporting libraries.
+`sparkles:base` provides allocation-conscious foundation modules; `sparkles:core-cli`
+builds on it with pretty-printing, UI components, CLI helpers, and process utilities.
 
 ## Table of Contents
 
@@ -19,16 +21,21 @@ A D library providing utilities for building CLI applications with terminal styl
 
 ## Installation
 
-Add `sparkles:core-cli` as a dependency:
+Add the package you need as a dependency. Use `sparkles:base` for styling,
+logging, `SmallBuffer`, lifetime helpers, and text readers/writers. Use
+`sparkles:core-cli` when you also need pretty-printing, UI components, CLI
+argument parsing, or process utilities.
 
 ::: code-group
 
 ```sdl [dub.sdl]
+dependency "sparkles:base" version="*"
 dependency "sparkles:core-cli" version="*"
 ```
 
 ```json [dub.json]
 "dependencies": {
+    "sparkles:base": "*",
     "sparkles:core-cli": "*"
 }
 ```
@@ -54,10 +61,10 @@ Available styles include:
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "styledemo"
-    dependency "sparkles:core-cli" version="*"
+    dependency "sparkles:base" version="*"
 +/
 import std.stdio : writeln;
-import sparkles.core_cli.term_style : Style, stylize;
+import sparkles.base.term_style : Style, stylize;
 
 void main()
 {
@@ -75,10 +82,10 @@ For CTFE-compatible styling, use `stylizedTextBuilder`:
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "builderdemo"
-    dependency "sparkles:core-cli" version="*"
+    dependency "sparkles:base" version="*"
 +/
 import std.stdio : writeln;
-import sparkles.core_cli.term_style : stylizedTextBuilder;
+import sparkles.base.term_style : stylizedTextBuilder;
 
 void main()
 {
@@ -96,9 +103,9 @@ The `styled_template` module provides a template syntax for applying terminal st
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "styledtemplatedemo"
-    dependency "sparkles:core-cli" version="*"
+    dependency "sparkles:base" version="*"
 +/
-import sparkles.core_cli.styled_template;
+import sparkles.base.styled_template;
 
 void main()
 {
@@ -140,9 +147,9 @@ void main()
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "styledexamples"
-    dependency "sparkles:core-cli" version="*"
+    dependency "sparkles:base" version="*"
 +/
-import sparkles.core_cli.styled_template;
+import sparkles.base.styled_template;
 
 void main()
 {
@@ -173,10 +180,10 @@ The `prettyprint` module formats any D type with syntax highlighting.
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "prettyprintdemo"
-    dependency "sparkles:core-cli" version="*"
+    dependency "sparkles:base" version="*"
 +/
 import std.stdio : writeln;
-import sparkles.core_cli.prettyprint : prettyPrint, PrettyPrintOptions;
+import sparkles.base.prettyprint : prettyPrint, PrettyPrintOptions;
 
 struct Server { string host; int port; bool ssl; }
 
@@ -212,7 +219,7 @@ PrettyPrintOptions!EditorDetectHook       // auto-detect from $EDITOR/$VISUAL
 
 #### Source URI Hooks
 
-The `SourceUriHook` template parameter controls the URI scheme for OSC 8 hyperlinks on type names. Available hooks from `sparkles.core_cli.source_uri`:
+The `SourceUriHook` template parameter controls the URI scheme for OSC 8 hyperlinks on type names. Available hooks from `sparkles.base.source_uri`:
 
 | Hook                  | Description                                      |
 | --------------------- | ------------------------------------------------ |
@@ -239,7 +246,7 @@ Render data as ASCII tables with Unicode box-drawing characters.
 +/
 import std.stdio : writeln;
 import sparkles.core_cli.ui.table : drawTable;
-import sparkles.core_cli.term_style : Style, stylize;
+import sparkles.base.term_style : Style, stylize;
 
 void main()
 {
@@ -367,7 +374,7 @@ Make text clickable in terminal emulators that support [OSC 8](https://gist.gith
 +/
 import std.stdio : writeln;
 import sparkles.core_cli.ui.osc_link : oscLink;
-import sparkles.core_cli.term_style : Style;
+import sparkles.base.term_style : Style;
 
 void main()
 {
@@ -397,16 +404,19 @@ Configure via `OscLinkProps`:
 
 ## Logger
 
-The `logger` module provides `DeltaTimeLogger`, a `std.logger.Logger` subclass that prints formatted log lines with wall-clock time, elapsed time since start, and elapsed time since the previous log entry.
+The `sparkles.base.logger` module provides `CoreLogger`, a `std.logger.Logger`
+base class with a Sparkles `@safe nothrow @nogc` logging path, plus
+`DeltaTimeLogger`, a stderr logger that prints wall-clock time, elapsed time
+since start, and elapsed time since the previous log entry.
 
 ```d
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "loggerdemo"
-    dependency "sparkles:core-cli" version="*"
+    dependency "sparkles:base" version="*"
 +/
 import std.logger : log, logf, LogLevel;
-import sparkles.core_cli.logger : initLogger;
+import sparkles.base.logger : initLogger;
 
 void main()
 {
@@ -441,10 +451,13 @@ Output:
 
 ### API
 
-| Function              | Description                                           |
-| --------------------- | ----------------------------------------------------- |
-| `initLogger(level)`   | Install as the global `std.logger` with minimum level |
-| `writeLogPrefix(...)` | Write prefix to an output range (zero-allocation)     |
+| Function / type       | Description                                                     |
+| --------------------- | --------------------------------------------------------------- |
+| `CoreLogger`          | `std.logger.Logger` base class with a Sparkles `@nogc` log path |
+| `sharedCoreLog`       | Atomic process-wide Sparkles logger                             |
+| `coreGlobalLogLevel`  | Atomic process-wide Sparkles log-level filter                   |
+| `initLogger(level)`   | Install `DeltaTimeLogger` for both Phobos and Sparkles globals  |
+| `writeLogPrefix(...)` | Write prefix to an output range (zero-allocation)               |
 
 ## SmallBuffer (@nogc)
 
@@ -454,10 +467,10 @@ A `@nogc` container with Small Buffer Optimization (SBO). Stores small data inli
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "smallbufferdemo"
-    dependency "sparkles:core-cli" version="*"
+    dependency "sparkles:base" version="*"
 +/
 import std.stdio : writeln;
-import sparkles.core_cli.smallbuffer : SmallBuffer;
+import sparkles.base.smallbuffer : SmallBuffer;
 
 void main()
 {
@@ -482,11 +495,13 @@ void main()
 
 ## Running Examples
 
-Examples in `libs/core-cli/examples/` are standalone runnable files:
+Examples in `libs/base/examples/` and `libs/core-cli/examples/` are standalone
+runnable files:
 
 ```bash
 # Run directly with dub
-dub run --single libs/core-cli/examples/prettyprint.d
+dub run --single libs/base/examples/logger.d
+dub run --single libs/base/examples/prettyprint.d
 
 # Or make executable and run
 chmod +x libs/core-cli/examples/color.d
@@ -496,10 +511,10 @@ chmod +x libs/core-cli/examples/color.d
 Available examples:
 
 - `color.d` - Style and color palette showcase
-- `prettyprint.d` - Type formatting demonstration
+- `logger.d` - Delta-time-prefixed logging (`libs/base/examples/`)
+- `prettyprint.d` - Type formatting demonstration (`libs/base/examples/`)
 - `styled-template.d` - IES-based template styling
 - `table.d` - Table rendering variations
 - `box.d` - Box layouts with nested content
 - `header.d` - Header styles
 - `osc-link.d` - OSC 8 terminal hyperlinks
-- `logger.d` - Delta-time-prefixed logging

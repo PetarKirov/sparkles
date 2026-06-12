@@ -63,7 +63,7 @@ keyword.
 | ------------------------------------------- | ----------------------------------------------------------------------------------- |
 | `sparkles.versions`                         | Public re-exports (`package.d`)                                                     |
 | `sparkles.versions.traits`                  | `isVersion!T`, `isVersionRange!R`, `isVersionScheme!S` + optional-capability traits |
-| `sparkles.versions.parsing`                 | `ParseMode`; re-exports the parse types from `core_cli.text.errors`                 |
+| `sparkles.versions.parsing`                 | `ParseMode`; re-exports the parse types from `base.text.errors`                     |
 | `sparkles.versions.ranges`                  | `Ranges!V` (sorted disjoint intervals)                                              |
 | `sparkles.versions.operations`              | `order`, `sort`, `satisfies`, `caret`, `tilde`                                      |
 | `sparkles.versions.vers`                    | VERS URI parser/emitter + compile-time scheme registry                              |
@@ -84,18 +84,18 @@ keyword.
 | `sparkles.versions.testing`                 | `version(unittest)` test helpers (`checkParse`, `checkRoundTrip`, …)                |
 
 The library has no `_internal` package: shared low-level primitives live
-in `sparkles.core_cli`, and the SemVer identifier grammar
+in `sparkles:base`, and the SemVer identifier grammar
 (`compareSemVerPrerelease`, identifier validation) lives `package`-scoped
 in `schemes/semver.d`, reused by the other SemVer-shaped schemes.
 
-**Foundation in `sparkles.core_cli`** — the parsing/formatting primitives
-are generic and live in `core_cli`, not in `versions`:
+**Foundation in `sparkles:base`** — the parsing/formatting primitives
+are generic and live in `base`, not in `versions`:
 
-| Module                           | Provides                                                                       |
-| -------------------------------- | ------------------------------------------------------------------------------ |
-| `sparkles.core_cli.text.errors`  | `ParseError {code, offset}`, `ParseErrorCode`, `ParseExpected!T` (generic)     |
-| `sparkles.core_cli.text.readers` | `readInteger`, `skipWhile`, `tryConsume`, `readUntil` (slice-advance, `@nogc`) |
-| `sparkles.core_cli.text.writers` | `writeIntegerPadded` (alongside the existing `writeInteger`)                   |
+| Module                       | Provides                                                                       |
+| ---------------------------- | ------------------------------------------------------------------------------ |
+| `sparkles.base.text.errors`  | `ParseError {code, offset}`, `ParseErrorCode`, `ParseExpected!T` (generic)     |
+| `sparkles.base.text.readers` | `readInteger`, `skipWhile`, `tryConsume`, `readUntil` (slice-advance, `@nogc`) |
+| `sparkles.base.text.writers` | `writeIntegerPadded` (alongside the existing `writeInteger`)                   |
 
 ## 3. The Version concept
 
@@ -129,7 +129,7 @@ void toString(W)(ref W sink) const;                      // writes into an outpu
 
 - Provide `opEquals` and `toHash` consistent with `opCmp` so versions
   work as associative-array keys and in `==`.
-- `toString` writes into an output range, per the `sparkles.core_cli`
+- `toString` writes into an output range, per the Sparkles
   conventions in [`AGENTS.md`](../../guidelines/AGENTS.md#output-ranges).
 
 ### 3.2 Optional capability vocabulary
@@ -486,12 +486,12 @@ which returns `null` across schemes.
 ## 7. Parsing
 
 Parsing is non-throwing and `Expected`-based. The error vocabulary is
-generic and lives in `sparkles.core_cli.text.errors` (reused by every
-`core_cli` text parser, not just versions); `ParseMode` is a versions enum
+generic and lives in `sparkles.base.text.errors` (reused by every
+Sparkles text parser, not just versions); `ParseMode` is a versions enum
 in `sparkles.versions.parsing`.
 
 ```d
-// sparkles.core_cli.text.errors (generic, @nogc)
+// sparkles.base.text.errors (generic, @nogc)
 enum ParseErrorCode
 {
     emptyInput, unexpectedCharacter, unexpectedEnd, leadingZero,
@@ -707,7 +707,7 @@ A consumer who needs a single ecosystem imports just that scheme:
 ```d
 import sparkles.versions.schemes.semver : SemVer;
 import sparkles.versions.parsing : ParseMode;
-import sparkles.core_cli.text.errors : ParseError, ParseErrorCode;
+import sparkles.base.text.errors : ParseError, ParseErrorCode;
 ```
 
 A polyglot consumer (purl/VERS-driven) imports the package module, which
@@ -728,7 +728,7 @@ import sparkles.versions.traits : isVersion, isVersionScheme,
     hasOrderKey, supportsPrerelease, hasComponents, hasSemVerComponents,
     hasBuildMetadata;
 import sparkles.versions.ranges : Ranges;
-import sparkles.core_cli.text.errors : ParseExpected, ParseError, ParseErrorCode;
+import sparkles.base.text.errors : ParseExpected, ParseError, ParseErrorCode;
 
 struct MyScheme { /* … */ }
 static assert(isVersion!MyScheme && isVersionScheme!MyScheme);

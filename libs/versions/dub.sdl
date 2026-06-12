@@ -12,12 +12,12 @@ dependency "expected" version="~>0.4.1"
 
 configuration "library" {
     targetType "library"
-    dependency "sparkles:core-cli" path="../.."
+    dependency "sparkles:base" path="../.."
 }
 
 configuration "unittest" {
     dependency "silly" version="~>1.1.1"
-    dependency "sparkles:core-cli" path="../.."
+    dependency "sparkles:base" path="../.."
 
     dflags "-checkaction=context" "-allinst"
     dflags "-ftime-trace" "-ftime-trace-file=$PACKAGE_DIR/build/trace.json" "--ftime-trace-granularity=0" platform="ldc"

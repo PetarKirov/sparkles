@@ -38,7 +38,7 @@ export default defineConfig({
       {
         text: 'Overview',
         collapsed: false,
-        items: [{ text: 'core-cli Package', link: '/overview' }],
+        items: [{ text: 'Package Overview', link: '/overview' }],
       },
       {
         text: 'Guidelines',
@@ -112,6 +112,73 @@ export default defineConfig({
         text: 'Libraries',
         collapsed: false,
         items: [
+          {
+            text: 'base',
+            link: '/libs/base/',
+            collapsed: false,
+            items: [
+              {
+                text: 'Tutorial',
+                collapsed: false,
+                items: [
+                  {
+                    text: 'Getting started',
+                    link: '/libs/base/tutorial/getting-started',
+                  },
+                ],
+              },
+              {
+                text: 'How-to guides',
+                collapsed: true,
+                items: [
+                  {
+                    text: 'Write @nogc text',
+                    link: '/libs/base/how-to/write-nogc-text',
+                  },
+                  {
+                    text: 'Log with CoreLogger',
+                    link: '/libs/base/how-to/log-with-core-logger',
+                  },
+                  {
+                    text: 'Style templates with IES',
+                    link: '/libs/base/how-to/style-text-templates',
+                  },
+                  {
+                    text: 'Pretty-print values',
+                    link: '/libs/base/how-to/prettyprint-values',
+                  },
+                  {
+                    text: 'Parse text with readers',
+                    link: '/libs/base/how-to/parse-text-readers',
+                  },
+                  {
+                    text: 'Test @nogc code with check helpers',
+                    link: '/libs/base/how-to/test-with-check-helpers',
+                  },
+                ],
+              },
+              {
+                text: 'Reference',
+                collapsed: true,
+                items: [
+                  {
+                    text: 'API index',
+                    link: '/libs/base/reference/api',
+                  },
+                ],
+              },
+              {
+                text: 'Explanation',
+                collapsed: true,
+                items: [
+                  {
+                    text: 'The design',
+                    link: '/libs/base/explanation/design',
+                  },
+                ],
+              },
+            ],
+          },
           {
             text: 'versions',
             link: '/libs/versions/',

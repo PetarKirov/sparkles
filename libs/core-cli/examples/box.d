@@ -11,9 +11,9 @@ import std.conv : to;
 import sparkles.core_cli.ui.box : drawBox, BoxProps;
 import sparkles.core_cli.ui.demo : Section, runDemo;
 import sparkles.core_cli.ui.table : drawTable;
-import sparkles.core_cli.term_style : Style, stylize, styleSample;
-import sparkles.core_cli.styled_template : styledText;
-import sparkles.core_cli.prettyprint : prettyPrint, PrettyPrintOptions;
+import sparkles.base.term_style : Style, stylize, styleSample;
+import sparkles.base.styled_template : styledText;
+import sparkles.base.prettyprint : prettyPrint, PrettyPrintOptions;
 
 struct Config
 {
