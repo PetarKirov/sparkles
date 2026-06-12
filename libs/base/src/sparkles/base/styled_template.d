@@ -700,7 +700,7 @@ private void parseLiteral(bool colored = true, Writer)(
 }
 
 /// Parses style specification like "bold.red" or "~red.bold"
-@safe
+@safe nothrow @nogc
 private void applyStyleSpec(const(char)[] spec, ref ParserContext ctx)
 {
     // Create new style state based on parent (or empty if root)
@@ -724,7 +724,7 @@ private void applyStyleSpec(const(char)[] spec, ref ParserContext ctx)
     ctx.pushStyle(newState);
 }
 
-@safe
+@safe nothrow @nogc
 private void applyStylePart(const(char)[] part, ref StyleState state)
 {
     if (part.length == 0)
