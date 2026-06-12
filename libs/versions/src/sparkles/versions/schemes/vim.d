@@ -54,7 +54,7 @@ struct VimVer
     /// Writes `major.minor.PPPP` (patch zero-padded to 4 digits).
     void toString(W)(ref W w) const
     {
-        import sparkles.core_cli.text.writers : writeInteger, writeIntegerPadded;
+        import sparkles.base.text.writers : writeInteger, writeIntegerPadded;
         import std.range.primitives : put;
 
         writeInteger(w, major);
@@ -97,7 +97,7 @@ static assert(!supportsPrerelease!VimVer);
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : checkToString;
+    import sparkles.base.smallbuffer : checkToString;
     import sparkles.versions.testing : checkParse, checkRejects, checkRoundTrip;
 
     auto v = checkParse!VimVer("9.1.0400");

@@ -8,7 +8,7 @@
  * Primary use case: appending elements in a temporary scope where GC
  * allocation is not desired.
  */
-module sparkles.core_cli.smallbuffer;
+module sparkles.base.smallbuffer;
 
 import core.memory : pureMalloc, pureFree;
 
@@ -282,7 +282,7 @@ private void assertRendered(size_t errorBufferSize)(
 )
 {
     import core.exception : AssertError;
-    import sparkles.core_cli.lifetime : recycledErrorInstance;
+    import sparkles.base.lifetime : recycledErrorInstance;
 
     if (actual == expected)
         return;

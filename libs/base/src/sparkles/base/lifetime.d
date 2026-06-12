@@ -1,4 +1,4 @@
-module sparkles.core_cli.lifetime;
+module sparkles.base.lifetime;
 
 import core.lifetime : emplace;
 

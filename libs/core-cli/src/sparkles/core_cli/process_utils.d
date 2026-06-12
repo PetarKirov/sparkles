@@ -2,9 +2,9 @@ module sparkles.core_cli.process_utils;
 
 import core.time : Duration, msecs;
 
-import sparkles.core_cli.text.errors :
+import sparkles.base.text.errors :
     ParseErrorCode, ParseExpected, parseErr, parseOk;
-import sparkles.core_cli.text.readers :
+import sparkles.base.text.readers :
     readInteger, readUntil, skipSpaces, tryConsume;
 
 void enforceExitStatus(int status, string command)
@@ -157,7 +157,7 @@ size_t selfRssBytes() @safe => 0;
 // /proc parsers
 // ---------------------------------------------------------------------------
 //
-// These are pure, `@nogc` slice walkers built on `core_cli.text.readers`: the
+// These are pure, `@nogc` slice walkers built on `base.text.readers`: the
 // `/proc` files arrive as already-read `const(char)[]`, and a malformed line is
 // surfaced as a `ParseExpected` error rather than a silent sentinel. The
 // readers that fetch the files (below) allocate and so cannot be `@nogc`.

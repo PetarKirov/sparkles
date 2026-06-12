@@ -12,7 +12,7 @@ auto unstyle(R)(R range)
 version (unittest)
 {
     import std.traits : EnumMembers;
-    import sparkles.core_cli.term_style : Style, stylize;
+    import sparkles.base.term_style : Style, stylize;
 
     alias Seq(T...) = T;
 
@@ -34,7 +34,7 @@ version (unittest)
 
 unittest
 {
-    import sparkles.core_cli.term_style : stylizedTextBuilder;
+    import sparkles.base.term_style : stylizedTextBuilder;
 
     const styledText = "Format me"
         .stylizedTextBuilder
@@ -87,7 +87,7 @@ unittest
 @("unstyle.oscLink.withStyles")
 @safe unittest
 {
-    import sparkles.core_cli.term_style : Style, stylize;
+    import sparkles.base.term_style : Style, stylize;
 
     const styledLink = "\x1b]8;;https://example.com\x07"
         ~ "Click".stylize(Style.blue).stylize(Style.underline)

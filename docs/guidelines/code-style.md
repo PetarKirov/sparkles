@@ -38,7 +38,7 @@ import core.memory : pureMalloc, pureFree;
 import std.range.primitives : put, empty, front, popFront;
 import std.traits : isSomeChar, isSomeString, isNumeric;
 
-import sparkles.core_cli.term_style : Style, stylize;
+import sparkles.base.term_style : Style, stylize;
 ```
 
 #### Import Best Practices

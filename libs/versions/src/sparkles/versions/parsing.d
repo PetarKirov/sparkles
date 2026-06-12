@@ -10,7 +10,7 @@ See `docs/specs/versions/SPEC.md` §7.
 */
 module sparkles.versions.parsing;
 
-public import sparkles.core_cli.text.errors :
+public import sparkles.base.text.errors :
     NoGcHook,
     ParseError,
     ParseErrorCode,

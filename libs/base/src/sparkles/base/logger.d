@@ -6,7 +6,7 @@ prints formatted log lines with wall-clock time, elapsed time since start,
 and elapsed time since the previous log entry. Use [initLogger] to install
 it as the global logger.
 */
-module sparkles.core_cli.logger;
+module sparkles.base.logger;
 
 import core.atomic : MemoryOrder, atomicExchange, atomicStore;
 import core.interpolation : InterpolationFooter, InterpolationHeader;
@@ -37,8 +37,8 @@ class DeltaTimeLogger : Logger
 
     override void writeLogMsg(ref Logger.LogEntry payload) @safe
     {
-        import sparkles.core_cli.smallbuffer : SmallBuffer;
-        import sparkles.core_cli.styled_template : writeStyled;
+        import sparkles.base.smallbuffer : SmallBuffer;
+        import sparkles.base.styled_template : writeStyled;
         import std.range.primitives : put;
         import std.stdio : stderr;
 
@@ -91,7 +91,7 @@ void initLogger(LogLevel level) @safe
 /// Logs a styled IES message at the given log level.
 ///
 /// Accepts the same `{style content}` IES syntax as
-/// [writeStyled](sparkles.core_cli.styled_template.writeStyled), but routes
+/// [writeStyled](sparkles.base.styled_template.writeStyled), but routes
 /// the rendered message through `std.logger` so that [DeltaTimeLogger] adds
 /// its timestamp/delta prefix.
 ///
@@ -105,7 +105,7 @@ void log(int line = __LINE__, string file = __FILE__,
     InterpolationHeader header, Args args, InterpolationFooter footer,
 )
 {
-    import sparkles.core_cli.styled_template : styledText;
+    import sparkles.base.styled_template : styledText;
     import std.logger : sharedLog;
 
     () @trusted {
@@ -202,8 +202,8 @@ private:
 
 string fmtDuration(Duration d) @safe
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-    import sparkles.core_cli.text.writers : writeDuration;
+    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.text.writers : writeDuration;
 
     SmallBuffer!(char, 32) buf;
     writeDuration(buf, d);
@@ -264,7 +264,7 @@ Duration durationFromTicks(long ticks) =>
 @safe
 void writeTimeHms(Writer)(ref Writer w, int hour, int minute, int second)
 {
-    import sparkles.core_cli.text.writers : writeInteger;
+    import sparkles.base.text.writers : writeInteger;
     import std.range.primitives : put;
 
     writePadded2(w, hour);
@@ -277,7 +277,7 @@ void writeTimeHms(Writer)(ref Writer w, int hour, int minute, int second)
 @safe
 void writePadded2(Writer)(ref Writer w, int value)
 {
-    import sparkles.core_cli.text.writers : writeIntegerPadded;
+    import sparkles.base.text.writers : writeIntegerPadded;
 
     writeIntegerPadded(w, value, 2);
 }
@@ -285,7 +285,7 @@ void writePadded2(Writer)(ref Writer w, int value)
 @safe
 void writeStyledLevel(bool colored = true, Writer)(ref Writer w, LogLevel level)
 {
-    import sparkles.core_cli.styled_template : writeStyled;
+    import sparkles.base.styled_template : writeStyled;
 
     switch (level)
     {
@@ -310,9 +310,9 @@ void writeLogPrefix(bool colored = false, Writer)(
     int line,
 )
 {
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
-    import sparkles.core_cli.styled_template : writeStyled;
-    import sparkles.core_cli.text.writers : writeDurationPadded;
+    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.styled_template : writeStyled;
+    import sparkles.base.text.writers : writeDurationPadded;
     import std.path : baseName;
 
     SmallBuffer!(char, 16) startBuf;

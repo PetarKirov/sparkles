@@ -110,7 +110,7 @@ Apply terminal styles using D's Interpolated Expression Sequences.
     dependency "sparkles:core-cli" version="*"
 +/
 
-import sparkles.core_cli.styled_template;
+import sparkles.base.styled_template;
 
 void main()
 {
@@ -224,7 +224,7 @@ ANSI colors and text attributes via `stylize` and a fluent `stylizedTextBuilder`
 
 import std.stdio : writeln;
 
-import sparkles.core_cli.term_style;
+import sparkles.base.term_style;
 
 void main()
 {
@@ -360,7 +360,7 @@ Make text clickable in terminal emulators that support [OSC 8](https://gist.gith
 import std.stdio : writeln;
 
 import sparkles.core_cli.ui.osc_link;
-import sparkles.core_cli.term_style : Style;
+import sparkles.base.term_style : Style;
 
 void main()
 {
@@ -385,7 +385,7 @@ Delta-time-prefixed logging via `DeltaTimeLogger`, a `std.logger.Logger` subclas
 
 import std.logger : log, LogLevel;
 
-import sparkles.core_cli.logger : initLogger;
+import sparkles.base.logger : initLogger;
 
 void main()
 {
@@ -416,7 +416,7 @@ The colored output uses `writeStyled` IES for ANSI styling -- log levels are col
 A `@nogc` dynamic array with small buffer optimization. Stores data inline up to a configurable threshold, then falls back to the heap via `pureMalloc`.
 
 ```d
-import sparkles.core_cli.smallbuffer;
+import sparkles.base.smallbuffer;
 
 @safe pure nothrow @nogc
 unittest {
@@ -436,7 +436,7 @@ Works as an output range, so it composes with `std.algorithm`, `prettyPrint`, st
 **`recycledInstance`** -- Reuse thread-local static instances for throwing errors in `@nogc` code:
 
 ```d
-import sparkles.core_cli.lifetime;
+import sparkles.base.lifetime;
 
 @nogc void validate(int x) {
     if (x < 0)

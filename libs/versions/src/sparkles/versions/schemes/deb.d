@@ -145,7 +145,7 @@ struct DebianVersion
     */
     static ParseExpected!Range parseNativeRange(string s) @safe pure nothrow
     {
-        import sparkles.core_cli.text.readers : skipSpaces, tryConsume;
+        import sparkles.base.text.readers : skipSpaces, tryConsume;
 
         const(char)[] rest = s;
         if (rest.length == 0)

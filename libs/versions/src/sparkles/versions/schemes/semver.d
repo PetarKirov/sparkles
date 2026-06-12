@@ -104,7 +104,7 @@ struct SemVer
     /// Writes `major.minor.patch[-prerelease][+build]`.
     void toString(W)(ref W w) const
     {
-        import sparkles.core_cli.text.writers : writeInteger;
+        import sparkles.base.text.writers : writeInteger;
         import std.range.primitives : put;
 
         writeInteger(w, major);
@@ -197,7 +197,7 @@ token is rejected as `unexpectedCharacter`.
 package ParseExpected!(Ranges!S) parseNpmRange(S)(string input) @safe
 if (hasComponents!S && S.components.length >= 3)
 {
-    import sparkles.core_cli.text.readers : skipSpaces;
+    import sparkles.base.text.readers : skipSpaces;
 
     alias R = Ranges!S;
 
@@ -245,7 +245,7 @@ private ParseExpected!(Ranges!S) parseNpmAlternative(S)(
 ) @safe
 if (hasComponents!S && S.components.length >= 3)
 {
-    import sparkles.core_cli.text.readers : skipSpaces;
+    import sparkles.base.text.readers : skipSpaces;
 
     alias R = Ranges!S;
 
@@ -442,7 +442,7 @@ if (hasComponents!S && S.components.length >= 3)
         if (prerelease.length)
         {
             import std.array : appender;
-            import sparkles.core_cli.text.writers : writeInteger;
+            import sparkles.base.text.writers : writeInteger;
 
             auto w = appender!string;
             writeInteger(w, core[0]);
@@ -1146,7 +1146,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : checkToString;
+    import sparkles.base.smallbuffer : checkToString;
 
     static immutable cases = [
         ["v1.2.3", "1.2.3"],
@@ -1283,7 +1283,7 @@ unittest
 @safe
 unittest
 {
-    import sparkles.core_cli.smallbuffer : checkToString;
+    import sparkles.base.smallbuffer : checkToString;
 
     // The VERS textual form of a few ranges (SPEC §9): every comparator
     // `|`-joined, so a bounded interval is `>=lo|<hi`.

@@ -208,7 +208,7 @@ string drawBox(string content, string title, BoxProps props = BoxProps.init)
 @("drawBox.props.footerWithAnsiCodes")
 @system unittest
 {
-    import sparkles.core_cli.term_style : Style, stylize;
+    import sparkles.base.term_style : Style, stylize;
 
     // Styled footer should not affect width calculation
     auto styledFooter = "✓ OK".stylize(Style.green);
@@ -221,7 +221,7 @@ string drawBox(string content, string title, BoxProps props = BoxProps.init)
 @("drawBox.styled.contentWithAnsiCodes")
 @system unittest
 {
-    import sparkles.core_cli.term_style : Style, stylize;
+    import sparkles.base.term_style : Style, stylize;
 
     // ANSI codes should not affect box width calculation
     auto styledContent = "Hello".stylize(Style.bold);
@@ -234,7 +234,7 @@ string drawBox(string content, string title, BoxProps props = BoxProps.init)
 @("drawBox.styled.titleWithAnsiCodes")
 @system unittest
 {
-    import sparkles.core_cli.term_style : Style, stylize;
+    import sparkles.base.term_style : Style, stylize;
 
     // Styled title should not affect width calculation
     auto styledTitle = "Title".stylize(Style.cyan);

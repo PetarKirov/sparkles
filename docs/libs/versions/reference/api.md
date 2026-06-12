@@ -15,7 +15,7 @@ There are three import patterns:
   the sum types, and every shipped scheme.
 - **Scheme author.** Import the concepts and `Ranges` from
   `sparkles.versions.traits` / `.ranges` and the parse vocabulary from
-  `sparkles.core_cli.text.errors`, then `static assert` conformance.
+  `sparkles.base.text.errors`, then `static assert` conformance.
 
 ## `sparkles.versions`
 
@@ -47,12 +47,12 @@ The three concepts and the optional-capability vocabulary.
 ## `sparkles.versions.parsing`
 
 The parse-mode selector; re-exports the generic parse types from
-`sparkles.core_cli.text.errors`.
+`sparkles.base.text.errors`.
 
-| Symbol                                            | Description                                                      |
-| ------------------------------------------------- | ---------------------------------------------------------------- |
-| `ParseMode { strict, loose }`                     | Strict/loose selector for parsers that share one code path.      |
-| `ParseError`, `ParseErrorCode`, `ParseExpected!T` | Re-exported parse vocabulary (see `core_cli.text.errors` below). |
+| Symbol                                            | Description                                                  |
+| ------------------------------------------------- | ------------------------------------------------------------ |
+| `ParseMode { strict, loose }`                     | Strict/loose selector for parsers that share one code path.  |
+| `ParseError`, `ParseErrorCode`, `ParseExpected!T` | Re-exported parse vocabulary (see `base.text.errors` below). |
 
 ## `sparkles.versions.ranges`
 
@@ -164,7 +164,7 @@ optionally `parseLoose` and `parseNativeRange`.
 Re-exported only under `version(unittest)`. Test helpers such as
 `checkParse` and `checkRoundTrip`.
 
-## `sparkles.core_cli.text.errors`
+## `sparkles.base.text.errors`
 
 The generic, `@nogc` parse vocabulary reused by every `core_cli` text
 parser.
@@ -175,7 +175,7 @@ parser.
 | `ParseError { ParseErrorCode code; size_t offset; }` | A structured failure with a byte offset.                                                                                                                 |
 | `ParseExpected!T`                                    | `Expected!(T, ParseError, …)`: either a parsed `T` or a `ParseError`.                                                                                    |
 
-## `sparkles.core_cli.text.readers`
+## `sparkles.base.text.readers`
 
 Slice-advance parser primitives (`@nogc`); useful when hand-writing a
 scheme's `parse`.
@@ -188,7 +188,7 @@ scheme's `parse`.
 | `bool tryConsumeAny(ref scope const(char)[] s, scope const(char)[] set)`         | Consume one char from `set` if present.                        |
 | `const(char)[] readUntil(ref scope const(char)[] s, scope const(char)[] delims)` | Take chars up to the first delimiter, advancing the slice.     |
 
-## `sparkles.core_cli.text.writers`
+## `sparkles.base.text.writers`
 
 Integer-formatting primitives (`@nogc`); useful when hand-writing a
 scheme's `toString`.

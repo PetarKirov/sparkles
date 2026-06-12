@@ -2,8 +2,8 @@ module sparkles.core_cli.prettyprint;
 
 import std.typecons : Tuple;
 
-import sparkles.core_cli.term_style : Style;
-import sparkles.core_cli.text.writers : EnumRender, writeEscapeSeq, writeStylized, writeStyledValue;
+import sparkles.base.term_style : Style;
+import sparkles.base.text.writers : EnumRender, writeEscapeSeq, writeStylized, writeStyledValue;
 
 struct PrettyPrintOptions(SourceUriHook = void)
 {
@@ -154,7 +154,7 @@ private void prettyPrintAA(T, Writer, Hook)(
     import std.range.primitives : put;
     import std.traits : KeyType, ValueType;
 
-    import sparkles.core_cli.text.writers : writeInteger;
+    import sparkles.base.text.writers : writeInteger;
 
     if (aa.length == 0)
     {
@@ -305,7 +305,7 @@ private void prettyPrintRange(R, Writer, Hook)(
     import std.range : repeat;
     import std.range.primitives : put, empty, front, popFront, hasLength;
 
-    import sparkles.core_cli.text.writers : writeInteger;
+    import sparkles.base.text.writers : writeInteger;
 
     static if (hasLength!R)
     {
@@ -567,8 +567,8 @@ version (unittest)
             in PrettyPrintOptions!Hook opts = PrettyPrintOptions!Hook(useColors: false),
             string file = __FILE__, size_t line = __LINE__) @trusted
     {
-        import sparkles.core_cli.lifetime : recycledErrorInstance;
-        import sparkles.core_cli.smallbuffer : SmallBuffer;
+        import sparkles.base.lifetime : recycledErrorInstance;
+        import sparkles.base.smallbuffer : SmallBuffer;
 
         SmallBuffer!(char, 16 * 1024) buf;
         prettyPrint(value, buf, opts);

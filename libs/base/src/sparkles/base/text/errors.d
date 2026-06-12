@@ -7,7 +7,7 @@ $(LREF ParseExpected). The vocabulary is deliberately scheme-agnostic —
 it names mechanical parse outcomes (empty input, unexpected character,
 numeric overflow, …), not domain concepts.
 */
-module sparkles.core_cli.text.errors;
+module sparkles.base.text.errors;
 
 import expected : Expected, err, ok;
 

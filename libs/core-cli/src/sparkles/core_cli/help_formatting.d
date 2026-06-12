@@ -8,7 +8,7 @@ import std.getopt : Option;
 import std.range : chain, choose;
 import std.string : join, toUpper, wrap;
 
-import sparkles.core_cli.term_style : sty = stylizedTextBuilder;
+import sparkles.base.term_style : sty = stylizedTextBuilder;
 
 alias SectionName = string;
 alias SectionText = string[];
