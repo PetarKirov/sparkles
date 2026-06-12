@@ -598,3 +598,14 @@ div[class*='language-']:hover > .code-block-actions {
   display: inline-block;
   line-height: 1;
 }
+
+/* --------------------------------------------------------------------------
+ * Full-width layout for pages without aside (e.g. dynamic code listings)
+ * -------------------------------------------------------------------------- */
+.VPDoc:not(.has-aside) .container {
+  max-width: 100% !important;
+}
+
+.VPDoc:not(.has-aside) .content-container {
+  max-width: 100% !important;
+}
