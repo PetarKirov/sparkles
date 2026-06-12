@@ -5,7 +5,7 @@ Use `CoreLogger` to write fast, structured, and styled log messages. This guide 
 ## Using the DeltaTimeLogger
 
 By default, calling `initLogger` installs `DeltaTimeLogger` as both the Phobos `std.logger.sharedLog` and `sparkles.base.logger.sharedCoreLog`. `DeltaTimeLogger` formats logs in the following layout:
-`[ Time | Δt (since start) | Δt &nbsp;(since last log) | Level | File:Line ]: Message`
+`[ Time | Δt (since start) | Δtᵢ (since last log) | Level | File:Line ]: Message`
 
 Here is an example showing how to initialize the logger and output logs of various levels, using both static styled messages and dynamic interpolated values.
 
