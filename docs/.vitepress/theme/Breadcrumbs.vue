@@ -17,7 +17,6 @@ const filteredSegments = computed(() => {
 
 const copiedIndex = ref<number | null>(null);
 const copiedAll = ref(false);
-const activeTooltipIndex = ref<number | null>(null);
 let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
 function copySegment(text: string, index: number) {
@@ -25,7 +24,6 @@ function copySegment(text: string, index: number) {
   navigator.clipboard.writeText(text);
   copiedIndex.value = index;
   copiedAll.value = false;
-  activeTooltipIndex.value = null; // Hide tooltip immediately on click
   if (timeoutId) clearTimeout(timeoutId);
   timeoutId = setTimeout(() => {
     copiedIndex.value = null;
@@ -53,11 +51,7 @@ function copyAll() {
         <span v-if="idx > 0" class="breadcrumb-separator">/</span>
 
         <!-- segment wrapper -->
-        <div
-          class="breadcrumb-segment-wrapper"
-          @mouseenter="activeTooltipIndex = idx"
-          @mouseleave="activeTooltipIndex = null"
-        >
+        <div class="breadcrumb-segment-wrapper">
           <!-- styled inline code snippet -->
           <a
             v-if="segment.link"
@@ -70,11 +64,8 @@ function copyAll() {
             <code>{{ segment.text }}</code>
           </span>
 
-          <!-- tooltip copy button shown on hover -->
-          <div
-            v-if="segment.copyText && activeTooltipIndex === idx"
-            class="breadcrumb-tooltip"
-          >
+          <!-- tooltip copy button shown on hover/focus -->
+          <div v-if="segment.copyText" class="breadcrumb-tooltip">
             <button
               class="breadcrumb-tooltip-btn"
               @click.stop="copySegment(segment.copyText, idx)"
@@ -199,23 +190,52 @@ function copyAll() {
   border: 1px solid var(--vp-c-divider-light, rgba(82, 82, 89, 0.18));
 }
 
-/* Tooltip copy button shown on hover */
+/* Tooltip copy button shown on hover/focus */
 .breadcrumb-tooltip {
   position: absolute;
   bottom: 100%;
   left: 50%;
-  transform: translateX(-50%) translateY(-6px);
+  transform: translateX(-50%);
+  padding-bottom: 8px; /* The gap bridge */
+  z-index: 100;
+  white-space: nowrap;
+
+  /* Hiding state that allows transition and keyboard focus visibility */
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 0.15s ease,
+    visibility 0.15s ease;
+}
+
+.breadcrumb-segment-wrapper:hover .breadcrumb-tooltip,
+.breadcrumb-segment-wrapper:focus-within .breadcrumb-tooltip {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.breadcrumb-tooltip-btn {
+  position: relative; /* For arrow positioning */
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--vp-c-text-2);
+  font-size: 11px;
+  font-weight: 500;
   background-color: var(--vp-c-bg-elv, #1e1e20);
   border: 1px solid var(--vp-c-divider);
   border-radius: 4px;
   padding: 4px 8px;
-  display: block;
-  z-index: 100;
   box-shadow: var(--vp-shadow-3);
-  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color 0.15s,
+    border-color 0.15s;
 }
 
-.breadcrumb-tooltip::after {
+.breadcrumb-tooltip-btn::after {
   content: '';
   position: absolute;
   top: 100%;
@@ -226,21 +246,9 @@ function copyAll() {
   border-color: var(--vp-c-divider) transparent transparent transparent;
 }
 
-.breadcrumb-tooltip-btn {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--vp-c-text-2);
-  font-size: 11px;
-  font-weight: 500;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  padding: 0;
-}
-
 .breadcrumb-tooltip-btn:hover {
   color: var(--vp-c-text-1);
+  border-color: var(--vp-c-text-3);
 }
 
 /* Always visible copy button at the end */
