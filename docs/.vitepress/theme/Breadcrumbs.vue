@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, computed } from 'vue';
 
 interface Segment {
   text: string;
@@ -11,8 +11,13 @@ const props = defineProps<{
   segments: Segment[];
 }>();
 
+const filteredSegments = computed(() => {
+  return props.segments.filter(s => s.text !== 'Home');
+});
+
 const copiedIndex = ref<number | null>(null);
 const copiedAll = ref(false);
+const activeTooltipIndex = ref<number | null>(null);
 let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
 function copySegment(text: string, index: number) {
@@ -20,6 +25,7 @@ function copySegment(text: string, index: number) {
   navigator.clipboard.writeText(text);
   copiedIndex.value = index;
   copiedAll.value = false;
+  activeTooltipIndex.value = null; // Hide tooltip immediately on click
   if (timeoutId) clearTimeout(timeoutId);
   timeoutId = setTimeout(() => {
     copiedIndex.value = null;
@@ -42,12 +48,16 @@ function copyAll() {
 <template>
   <div class="breadcrumbs-container">
     <div class="breadcrumbs-list">
-      <template v-for="(segment, idx) in segments" :key="idx">
+      <template v-for="(segment, idx) in filteredSegments" :key="idx">
         <!-- separator -->
         <span v-if="idx > 0" class="breadcrumb-separator">/</span>
 
         <!-- segment wrapper -->
-        <div class="breadcrumb-segment-wrapper">
+        <div
+          class="breadcrumb-segment-wrapper"
+          @mouseenter="activeTooltipIndex = idx"
+          @mouseleave="activeTooltipIndex = null"
+        >
           <!-- styled inline code snippet -->
           <a
             v-if="segment.link"
@@ -61,7 +71,10 @@ function copyAll() {
           </span>
 
           <!-- tooltip copy button shown on hover -->
-          <div v-if="segment.copyText" class="breadcrumb-tooltip">
+          <div
+            v-if="segment.copyText && activeTooltipIndex === idx"
+            class="breadcrumb-tooltip"
+          >
             <button
               class="breadcrumb-tooltip-btn"
               @click.stop="copySegment(segment.copyText, idx)"
@@ -147,7 +160,7 @@ function copyAll() {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 1px;
 }
 
 .breadcrumb-separator {
@@ -196,7 +209,7 @@ function copyAll() {
   border: 1px solid var(--vp-c-divider);
   border-radius: 4px;
   padding: 4px 8px;
-  display: none;
+  display: block;
   z-index: 100;
   box-shadow: var(--vp-shadow-3);
   white-space: nowrap;
@@ -211,10 +224,6 @@ function copyAll() {
   border-width: 5px;
   border-style: solid;
   border-color: var(--vp-c-divider) transparent transparent transparent;
-}
-
-.breadcrumb-segment-wrapper:hover .breadcrumb-tooltip {
-  display: block;
 }
 
 .breadcrumb-tooltip-btn {
