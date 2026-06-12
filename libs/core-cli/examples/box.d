@@ -13,7 +13,7 @@ import sparkles.core_cli.ui.demo : Section, runDemo;
 import sparkles.core_cli.ui.table : drawTable;
 import sparkles.base.term_style : Style, stylize, styleSample;
 import sparkles.base.styled_template : styledText;
-import sparkles.core_cli.prettyprint : prettyPrint, PrettyPrintOptions;
+import sparkles.base.prettyprint : prettyPrint, PrettyPrintOptions;
 
 struct Config
 {

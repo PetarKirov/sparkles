@@ -1,15 +1,15 @@
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "prettyprint"
-    dependency "sparkles:core-cli" path="../../.."
+    dependency "sparkles:base" path="../../.."
     targetPath "build"
 +/
 
 import std.stdio : writeln;
 import std.typecons : Tuple, tuple;
 
-import sparkles.core_cli.prettyprint : prettyPrint, PrettyPrintOptions;
-import sparkles.core_cli.source_uri : EditorDetectHook, SchemeHook;
+import sparkles.base.prettyprint : prettyPrint, PrettyPrintOptions;
+import sparkles.base.source_uri : EditorDetectHook, SchemeHook;
 
 // Custom enum
 enum Status { pending, running, completed, failed }

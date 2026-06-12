@@ -62,7 +62,9 @@ sparkles/
 │   ├── base/src/sparkles/base/
 │   │   ├── lifetime.d              # recycledInstance / recycledErrorInstance (@nogc throwing)
 │   │   ├── logger.d                # CoreLogger, DeltaTimeLogger, Sparkles logging wrappers
+│   │   ├── prettyprint.d           # Colorized pretty-printing
 │   │   ├── smallbuffer.d           # @nogc dynamic buffer + checkToString/checkWriter test helpers
+│   │   ├── source_uri.d            # OSC 8 source-URI hooks (editor links)
 │   │   ├── styled_template.d       # IES-based styled text processing
 │   │   ├── term_style.d            # Terminal styling/colors
 │   │   └── text/                   # @nogc text package: readers.d, writers.d, errors.d, package.d
@@ -70,9 +72,7 @@ sparkles/
 │   │   ├── args.d                  # CLI argument parsing (@CliOption, parseCliArgs)
 │   │   ├── common_dirs.d           # XDG / standard directory lookup
 │   │   ├── help_formatting.d       # --help output formatting
-│   │   ├── prettyprint.d           # Colorized pretty-printing
 │   │   ├── process_utils.d         # Process execution + RSS/CPU monitoring
-│   │   ├── source_uri.d            # OSC 8 source-URI hooks (editor links)
 │   │   ├── term_size.d             # Terminal size detection
 │   │   ├── term_unstyle.d          # Strip ANSI escapes
 │   │   └── ui/                     # box.d, header.d, table.d, osc_link.d, demo.d
