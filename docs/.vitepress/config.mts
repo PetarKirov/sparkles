@@ -162,6 +162,11 @@ export default withMermaid(
     },
 
     themeConfig: {
+      editLink: {
+        pattern: 'https://github.com/PetarKirov/sparkles/edit/main/docs/:path',
+        text: 'Edit this page on GitHub',
+      },
+
       // Built-in local search (MiniSearch) — fully client-side, no third-party APIs.
       search: {
         provider: 'local',
