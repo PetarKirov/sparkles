@@ -127,6 +127,10 @@ export default withMermaid(
     },
 
     themeConfig: {
+      editLink: {
+        pattern: 'https://github.com/PetarKirov/sparkles/edit/main/docs/:path',
+        text: 'Edit this page on GitHub',
+      },
       nav: [
         { text: 'Docs', link: '/overview' },
         { text: 'API', link: '/api/' },
