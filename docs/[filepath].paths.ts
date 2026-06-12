@@ -430,19 +430,19 @@ export default {
         '',
         `# ${name}`,
         '',
-        '<div class="source-code-listing">',
-        '',
         isInsideDocs
           ? `<<< @/${docsRelPath}${lang ? '{' + lang + '}' : ''}`
           : `<<< @/../${file}${lang ? '{' + lang + '}' : ''}`,
-        '',
-        '</div>',
       ].join('\n');
 
       routes.push({
         params: { filepath: docsRelPath },
         content,
-        frontmatter: { layout: 'page', aside: false },
+        frontmatter: {
+          layout: 'page',
+          aside: false,
+          pageClass: 'source-code-page',
+        },
       });
     }
 
