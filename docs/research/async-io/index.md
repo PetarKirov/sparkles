@@ -194,6 +194,7 @@ at `6.13` and later are forward-dated "as observed in the v7.1-rc6 checkout" —
 - **[Features & Flags][uring-features]** — `io_uring` features grouped by semantic area.
 - **[Timeline][uring-timeline]** — kernel-version chronology v5.1 → v7.1-rc6 + a feature/version/library matrix.
 - **[Opcodes Reference][uring-opcodes]** — full `IORING_OP_*` / flag reference tables.
+- **[Runnable Examples](./io-uring/examples/)** — browse 41 D program implementations of `io_uring` opcodes (sockets, files, timers, buffers, SQPOLL, cancellations).
 
 ### Library deep-dives
 

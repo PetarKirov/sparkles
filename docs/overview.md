@@ -46,6 +46,9 @@ dependency "sparkles:core-cli" version="*"
 
 The `term_style` module provides ANSI terminal colors and text attributes.
 
+- **Source Code**: [`term_style.d`](../libs/core-cli/src/sparkles/core_cli/term_style.d)
+- **Example**: [`color.d`](../libs/core-cli/examples/color.d)
+
 ### Style Enum
 
 Available styles include:
@@ -108,6 +111,9 @@ void main()
 ## Styled Templates (IES)
 
 The `styled_template` module provides a template syntax for applying terminal styles using D's Interpolated Expression Sequences (IES).
+
+- **Source Code**: [`styled_template.d`](../libs/core-cli/src/sparkles/core_cli/styled_template.d)
+- **Example**: [`styled-template.d`](../libs/core-cli/examples/styled-template.d)
 
 ```d
 #!/usr/bin/env dub
@@ -198,6 +204,9 @@ Use {style text} syntax
 
 The `prettyprint` module formats any D type with syntax highlighting.
 
+- **Source Code**: [`prettyprint.d`](../libs/core-cli/src/sparkles/core_cli/prettyprint.d)
+- **Example**: [`prettyprint.d`](../libs/core-cli/examples/prettyprint.d)
+
 ```d
 #!/usr/bin/env dub
 /+ dub.sdl:
@@ -265,6 +274,9 @@ Custom hooks implement `static void writeSourceUri(string path, size_t line, siz
 
 Render data as ASCII tables with Unicode box-drawing characters.
 
+- **Source Code**: [`table.d`](../libs/core-cli/src/sparkles/core_cli/ui/table.d)
+- **Example**: [`table.d`](../libs/core-cli/examples/table.d)
+
 ```d
 #!/usr/bin/env dub
 /+ dub.sdl:
@@ -297,6 +309,9 @@ void main()
 ### Boxes
 
 Draw bordered boxes around content with optional titles.
+
+- **Source Code**: [`box.d`](../libs/core-cli/src/sparkles/core_cli/ui/box.d)
+- **Example**: [`box.d`](../libs/core-cli/examples/box.d)
 
 ```d
 #!/usr/bin/env dub
@@ -350,6 +365,9 @@ void main()
 
 Create section dividers and banners.
 
+- **Source Code**: [`header.d`](../libs/core-cli/src/sparkles/core_cli/ui/header.d)
+- **Example**: [`header.d`](../libs/core-cli/examples/header.d)
+
 ```d
 #!/usr/bin/env dub
 /+ dub.sdl:
@@ -382,6 +400,9 @@ void main()
 ### OSC 8 Hyperlinks
 
 Make text clickable in terminal emulators that support [OSC 8](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda).
+
+- **Source Code**: [`osc_link.d`](../libs/core-cli/src/sparkles/core_cli/ui/osc_link.d)
+- **Example**: [`osc-link.d`](../libs/core-cli/examples/osc-link.d)
 
 ```d
 #!/usr/bin/env dub
@@ -430,6 +451,9 @@ The `sparkles.base.logger` module provides `CoreLogger`, a `std.logger.Logger`
 base class with a Sparkles `@safe nothrow @nogc` logging path, plus
 `DeltaTimeLogger`, a stderr logger that prints wall-clock time, elapsed time
 since start, and elapsed time since the previous log entry.
+
+- **Source Code**: [`logger.d`](../libs/core-cli/src/sparkles/core_cli/logger.d)
+- **Example**: [`logger.d`](../libs/core-cli/examples/logger.d)
 
 ```d
 #!/usr/bin/env dub
@@ -491,6 +515,8 @@ void main()
 
 A `@nogc` container with Small Buffer Optimization (SBO). Stores small data inline, automatically switches to heap when capacity is exceeded.
 
+- **Source Code**: [`smallbuffer.d`](../libs/core-cli/src/sparkles/core_cli/smallbuffer.d)
+
 ```d
 #!/usr/bin/env dub
 /+ dub.sdl:
@@ -528,8 +554,7 @@ On heap: false
 
 ## Running Examples
 
-Examples in `libs/base/examples/` and `libs/core-cli/examples/` are standalone
-runnable files:
+Examples in [`libs/base/examples/`](../libs/base/examples/) and [`libs/core-cli/examples/`](../libs/core-cli/examples/) are standalone runnable files:
 
 ```bash
 # Run directly with dub
@@ -543,11 +568,11 @@ chmod +x libs/core-cli/examples/color.d
 
 Available examples:
 
-- `color.d` - Style and color palette showcase
-- `logger.d` - Delta-time-prefixed logging (`libs/base/examples/`)
-- `prettyprint.d` - Type formatting demonstration (`libs/base/examples/`)
-- `styled-template.d` - IES-based template styling
-- `table.d` - Table rendering variations
-- `box.d` - Box layouts with nested content
-- `header.d` - Header styles
-- `osc-link.d` - OSC 8 terminal hyperlinks
+- [`color.d`](../libs/core-cli/examples/color.d) - Style and color palette showcase
+- [`logger.d`](../libs/base/examples/logger.d) - Delta-time-prefixed logging
+- [`prettyprint.d`](../libs/base/examples/prettyprint.d) - Type formatting demonstration
+- [`styled-template.d`](../libs/core-cli/examples/styled-template.d) - IES-based template styling
+- [`table.d`](../libs/core-cli/examples/table.d) - Table rendering variations
+- [`box.d`](../libs/core-cli/examples/box.d) - Box layouts with nested content
+- [`header.d`](../libs/core-cli/examples/header.d) - Header styles
+- [`osc-link.d`](../libs/core-cli/examples/osc-link.d) - OSC 8 terminal hyperlinks

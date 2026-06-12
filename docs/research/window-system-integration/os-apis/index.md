@@ -32,7 +32,7 @@ to lives in [concepts][concepts]; the cross-platform contrasts are drawn togethe
 
 Beneath the surveys sits a second, **measured** layer: 17 feature clusters
 ([specs][specs]) × the four desktop platforms, each cell a small instrumented D demo
-(`<platform>/examples/fXX-*/`, grown from the per-platform `examples/scaffold/`) with a
+(located in the `examples/` directory for each platform: [Wayland](./wayland/examples/), [X11](./x11/examples/), [Win32](./win32/examples/), and [AppKit](./appkit/examples/)) with a
 findings doc next to the survey it extends. The grid is the
 [feature matrix][matrix]; the cross-platform synthesis is drawn in three capstones —
 the [divergence map][divmap] (per-feature agree/fork/consequence), the

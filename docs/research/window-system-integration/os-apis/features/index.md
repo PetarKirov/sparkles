@@ -34,4 +34,13 @@ follows the shared conventions: scaffold copied from `<platform>/examples/scaffo
 `instrument.d` log format from [F01](./f01-first-pixel.md), and the verification-tier labels
 defined in the [matrix](../feature-matrix.md) legend.
 
+## Example Directories
+
+Browse the source code folders for all demo implementations across platforms:
+
+- **Wayland Examples**: [`wayland/examples/`](../wayland/examples/)
+- **X11 Examples**: [`x11/examples/`](../x11/examples/)
+- **Windows (Win32) Examples**: [`win32/examples/`](../win32/examples/)
+- **macOS (AppKit) Examples**: [`appkit/examples/`](../appkit/examples/)
+
 <!-- References -->
