@@ -211,6 +211,8 @@ platform" — the [Flutter][flutter] and [MAUI][maui] story.
   ([Winit][winit] or [SDL3][sdl3]) → [Smithay + libdecor][smithay] (the Wayland authority).
 - **"I want the cross-toolkit comparison."** [Master catalog](#master-catalog) →
   [comparison][comparison] → individual deep-dive rows of interest.
+- **"I want to see raw OS API bootstrap examples."** See [OS Windowing APIs](./os-apis/index.md), containing minimal window-bootstrap programs: [Wayland](./os-apis/wayland/example/app.d), [X11](./os-apis/x11/example/app.d), [Win32](./os-apis/win32/example/app.d), [AppKit](./os-apis/appkit/example/app.d), [iOS](./os-apis/uikit/example/app.d), and [Android](./os-apis/android/example/app.d).
+- **"I want to browse the empirical feature demos."** Check the [feature matrix](./os-apis/feature-matrix.md) and browse the implementation folders: [Wayland Demos](./os-apis/wayland/examples/), [X11 Demos](./os-apis/x11/examples/), [Win32 Demos](./os-apis/win32/examples/), and [AppKit Demos](./os-apis/appkit/examples/).
 - **"I want the per-platform traps."** [platform-gotchas][gotchas] (Wayland / X11 / Win32 /
   macOS cheat sheet) → the relevant dimension in [comparison][comparison].
 - **"I care about a specific dimension"** (e.g. IME, DPI, decorations). [concepts][concepts]

@@ -20,40 +20,48 @@ function rewriteLink(href: string, relativePath: string): string | null {
 
   if (fs.existsSync(absolutePath)) {
     const docsDir = path.resolve(process.cwd(), 'docs');
+    const repoDir = process.cwd();
     const isInsideDocs = absolutePath.startsWith(docsDir + path.sep);
+    const isInsideRepo = absolutePath.startsWith(repoDir + path.sep);
 
-    if (isInsideDocs) {
-      const relPath = path.relative(docsDir, absolutePath).replace(/\\/g, '/');
+    if (isInsideRepo) {
       const stats = fs.statSync(absolutePath);
-      const segments = relPath.split('/');
-      const isInsideArtifactDir = segments.some(
-        s => s === 'sample' || s === 'example' || s === 'examples',
-      );
-      const isDOrC = relPath.endsWith('.d') || relPath.endsWith('.c');
+      const filename = path.basename(absolutePath);
+      const ext = path.extname(filename).toLowerCase();
+      const allowedExtensions = [
+        '.d',
+        '.c',
+        '.h',
+        '.sdl',
+        '.sh',
+        '.json',
+        '.toml',
+        '.yaml',
+        '.yml',
+        '.build',
+        '.txt',
+        '.go',
+        '.work',
+      ];
+      const isAllowedFile =
+        allowedExtensions.includes(ext) ||
+        filename === 'Makefile' ||
+        filename === 'Cargo.toml';
 
-      if (isInsideArtifactDir || isDOrC) {
-        if (stats.isDirectory()) {
-          return `/${relPath}/${anchor ? '#' + anchor : ''}`.replace(
+      if (stats.isDirectory() || isAllowedFile) {
+        if (isInsideDocs) {
+          const relPath = path
+            .relative(docsDir, absolutePath)
+            .replace(/\\/g, '/');
+          return `/${relPath}${stats.isDirectory() ? '/' : ''}${anchor ? '#' + anchor : ''}`.replace(
             /\/+/g,
             '/',
           );
         } else {
-          return `/${relPath}${anchor ? '#' + anchor : ''}`.replace(
-            /\/+/g,
-            '/',
-          );
-        }
-      }
-    } else {
-      const repoDir = process.cwd();
-      const isInsideRepo = absolutePath.startsWith(repoDir + path.sep);
-      if (isInsideRepo) {
-        const repoRelPath = path
-          .relative(repoDir, absolutePath)
-          .replace(/\\/g, '/');
-        const isDOrC = repoRelPath.endsWith('.d') || repoRelPath.endsWith('.c');
-        if (isDOrC) {
-          return `/${repoRelPath}${anchor ? '#' + anchor : ''}`.replace(
+          const repoRelPath = path
+            .relative(repoDir, absolutePath)
+            .replace(/\\/g, '/');
+          return `/${repoRelPath}${stats.isDirectory() ? '/' : ''}${anchor ? '#' + anchor : ''}`.replace(
             /\/+/g,
             '/',
           );
