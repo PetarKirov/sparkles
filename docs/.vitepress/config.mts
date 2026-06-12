@@ -8,6 +8,9 @@ function rewriteLink(href: string, relativePath: string): string | null {
   if (/^(https?:|mailto:|#)/.test(href)) {
     return null;
   }
+  if (href.startsWith('/')) {
+    return null;
+  }
 
   const [urlPath, anchor] = href.split('#');
   const currentDir = path.dirname(relativePath);
@@ -31,12 +34,12 @@ function rewriteLink(href: string, relativePath: string): string | null {
 
       if (isInsideArtifactDir || isDOrC) {
         if (stats.isDirectory()) {
-          return `/${relPath}/index.md${anchor ? '#' + anchor : ''}`.replace(
+          return `/${relPath}/${anchor ? '#' + anchor : ''}`.replace(
             /\/+/g,
             '/',
           );
         } else {
-          return `/${relPath}.md${anchor ? '#' + anchor : ''}`.replace(
+          return `/${relPath}${anchor ? '#' + anchor : ''}`.replace(
             /\/+/g,
             '/',
           );
@@ -51,7 +54,7 @@ function rewriteLink(href: string, relativePath: string): string | null {
           .replace(/\\/g, '/');
         const isDOrC = repoRelPath.endsWith('.d') || repoRelPath.endsWith('.c');
         if (isDOrC) {
-          return `/${repoRelPath}.md${anchor ? '#' + anchor : ''}`.replace(
+          return `/${repoRelPath}${anchor ? '#' + anchor : ''}`.replace(
             /\/+/g,
             '/',
           );
