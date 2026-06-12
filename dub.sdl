@@ -8,6 +8,7 @@ targetPath "build"
 
 subPackage "apps/ci"
 subPackage "apps/terminal"
+subPackage "libs/base"
 subPackage "libs/core-cli"
 subPackage "libs/ghostty"
 subPackage "libs/math"

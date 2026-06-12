@@ -231,7 +231,7 @@ dependency of `core-cli` and `versions`):
 - `Expected!(T, E)` is a range (a failure is empty, a success yields one element),
   so `joiner` flattens a collection of results, filtering out errors.
 - For the rare path that must still `throw` in `@nogc`, use
-  `recycledErrorInstance!T("message")` from `sparkles.core_cli.lifetime`.
+  `recycledErrorInstance!T("message")` from `sparkles.base.lifetime`.
 
 See **[Expected Error Handling Idioms](./idioms/expected/index.md)** for the full
 guide (transform/chain/flatten patterns, Rust ↔ D comparisons, and a cheat sheet).
@@ -240,7 +240,7 @@ guide (transform/chain/flatten patterns, Rust ↔ D comparisons, and a cheat she
 
 - `SmallBuffer!(T, N)` — dynamic array with small-buffer optimization; works as an
   output range. Use it instead of `appender` in `@nogc` code.
-- `sparkles.core_cli.text.writers` / `.readers` — `@nogc` integer/float/duration
+- `sparkles.base.text.writers` / `.readers` — `@nogc` integer/float/duration
   formatting and parsing. Prefer these over `.text` / `std.conv` (which GC-allocate)
   and over `std.format` in hot paths.
 - `pureMalloc`/`pureFree` from `core.memory` for manual allocation; static arrays
@@ -364,8 +364,8 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.lifetime : recycledErrorInstance;
-    import sparkles.core_cli.smallbuffer : SmallBuffer;
+    import sparkles.base.lifetime : recycledErrorInstance;
+    import sparkles.base.smallbuffer : SmallBuffer;
 
     SmallBuffer!(char, 1024) buf;
     prettyPrint(42, buf);
@@ -379,7 +379,7 @@ unittest
 
 Prefer the project's helpers over hand-rolled assertions:
 
-- **`checkToString` / `checkWriter`** (`sparkles.core_cli.smallbuffer`) — for types
+- **`checkToString` / `checkWriter`** (`sparkles.base.smallbuffer`) — for types
   exposing `void toString(Writer)(ref Writer w)`. They render into a `SmallBuffer`
   (so the test stays `@safe pure nothrow @nogc`) and report an expected/actual diff
   via a recycled `AssertError` on mismatch.
@@ -391,7 +391,7 @@ Prefer the project's helpers over hand-rolled assertions:
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : checkToString;
+    import sparkles.base.smallbuffer : checkToString;
     checkToString(MyType(42), "MyType(42)");
 }
 ```

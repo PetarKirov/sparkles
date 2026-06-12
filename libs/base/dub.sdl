@@ -1,5 +1,5 @@
-name "versions"
-description "Design-by-Introspection versioning library (SemVer, DMD, CalVer, ...)"
+name "base"
+description "Allocation-conscious base utilities for Sparkles libraries"
 authors "Petar Kirov"
 copyright "Copyright © 2026, Petar Kirov"
 license "BSL-1.0"
@@ -10,17 +10,16 @@ dflags "-preview=in" "-preview=dip1000"
 
 dependency "expected" version="~>0.4.1"
 
+targetType "library"
+
 configuration "library" {
     targetType "library"
-    dependency "sparkles:base" path="../.."
 }
 
 configuration "unittest" {
     dependency "silly" version="~>1.1.1"
-    dependency "sparkles:base" path="../.."
 
     dflags "-checkaction=context" "-allinst"
-    dflags "-ftime-trace" "-ftime-trace-file=$PACKAGE_DIR/build/trace.json" "--ftime-trace-granularity=0" platform="ldc"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
     dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
     lflags "--export-dynamic" platform="linux-ldc"

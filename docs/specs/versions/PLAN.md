@@ -50,24 +50,24 @@ descriptor-walking parser) with the concept-based surface from
 [SPEC §6 (The Scheme concept)](./SPEC.md#6-the-scheme-concept).
 
 **`core_cli` prelude** — foundation primitives are generic, so they live in
-a new `sparkles.core_cli.text` package, **not** in a `versions/_internal`.
+a new `sparkles.base.text` package, **not** in a `versions/_internal`.
 Done as four **atomic commits**, each building green (`dub test :core-cli`)
 before the next:
 
 1. **Refactor `text_writers` → `text.writers`.** Move
    `text_writers.d` → `text/writers.d`
-   (`module sparkles.core_cli.text.writers;`), add a `text/package.d`
-   (`module sparkles.core_cli.text;`) re-exporting the package's modules,
+   (`module sparkles.base.text.writers;`), add a `text/package.d`
+   (`module sparkles.base.text;`) re-exporting the package's modules,
    and update the importers (`logger`, `prettyprint`, `styled_template`).
    Pure move — no behaviour change.
 2. **Add `writeIntegerPadded(w, val, minDigits)`** to `text.writers`, and
    refactor `logger.writePadded2` onto it (it already hand-rolls the same
    logic).
-3. **Add `sparkles.core_cli.text.errors`** — the **generic**
+3. **Add `sparkles.base.text.errors`** — the **generic**
    `ParseError {code, offset}`, `ParseErrorCode`,
    `ParseExpected!T = Expected!(T, ParseError, NoGcHook)`. Add the
    `expected` dependency to `core-cli`'s `dub.sdl`.
-4. **Add `sparkles.core_cli.text.readers`** — `readInteger`, `skipWhile`,
+4. **Add `sparkles.base.text.readers`** — `readInteger`, `skipWhile`,
    `tryConsume`/`tryConsumeAny`, `readUntil` — slice-advance
    (`ref scope const(char)[]`), `@safe pure nothrow @nogc`. `readInteger`
    returns `ParseExpected!T` and is constrained `if (isUnsigned!T)`.
@@ -80,7 +80,7 @@ before the next:
 - `compareSemVerPrerelease`, `validateIdentifierList`, `IdentifierKind`
   → `package`-scoped in `schemes/semver.d`, reused by `schemes/dmd.d`
   (and any other SemVer-shaped scheme).
-- `putPaddedNumber` → superseded by `core_cli.text.writers.writeIntegerPadded`.
+- `putPaddedNumber` → superseded by `base.text.writers.writeIntegerPadded`.
 - `checkParse`/`checkRoundTrip`/`checkRejects`/`checkAscending`
   → `sparkles.versions.testing` (`version(unittest)`).
 

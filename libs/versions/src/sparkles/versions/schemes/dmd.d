@@ -67,7 +67,7 @@ struct Dmd
     /// Writes `major.MMM.patch[-prerelease]` (minor zero-padded to 3).
     void toString(W)(ref W w) const
     {
-        import sparkles.core_cli.text.writers : writeInteger, writeIntegerPadded;
+        import sparkles.base.text.writers : writeInteger, writeIntegerPadded;
         import std.range.primitives : put;
 
         writeInteger(w, major);
@@ -137,7 +137,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : checkToString;
+    import sparkles.base.smallbuffer : checkToString;
     import sparkles.versions.testing : checkRejects;
 
     auto v = Dmd.parse("2.009.0");
@@ -162,7 +162,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : checkToString;
+    import sparkles.base.smallbuffer : checkToString;
 
     static immutable cases = [
         ["v2.79.0", "2.079.0"],

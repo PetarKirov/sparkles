@@ -14,8 +14,8 @@ version (unittest):
 
 import core.exception : AssertError;
 
-import sparkles.core_cli.lifetime : recycledErrorInstance;
-import sparkles.core_cli.smallbuffer : checkToString;
+import sparkles.base.lifetime : recycledErrorInstance;
+import sparkles.base.smallbuffer : checkToString;
 
 import sparkles.versions.parsing : ParseExpected;
 

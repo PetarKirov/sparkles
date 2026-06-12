@@ -32,6 +32,7 @@
           # D source files for the ci app and its only direct dependency.
           ++ map (path: fs.fileFilter (file: file.hasExt "d") (fromRoot path)) [
             "apps/ci/src"
+            "libs/base/src"
             "libs/core-cli/src"
           ]
         );

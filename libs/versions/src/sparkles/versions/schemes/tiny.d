@@ -51,7 +51,7 @@ struct Tiny
     /// Writes `major.minor.patch`.
     void toString(W)(ref W w) const
     {
-        import sparkles.core_cli.text.writers : writeInteger;
+        import sparkles.base.text.writers : writeInteger;
         import std.range.primitives : put;
 
         writeInteger(w, major);
@@ -100,7 +100,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : checkToString;
+    import sparkles.base.smallbuffer : checkToString;
     import sparkles.versions.testing : checkRejects;
 
     // minor over 255 is rejected.

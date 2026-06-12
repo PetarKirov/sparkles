@@ -331,7 +331,7 @@ For @nogc contexts, use `SmallBuffer` and avoid `.to!string`:
 
 ```d
 import core.interpolation;
-import sparkles.core_cli.smallbuffer : SmallBuffer;
+import sparkles.base.smallbuffer : SmallBuffer;
 
 // Usage
 SmallBuffer!(char, 256) buf;
@@ -787,7 +787,7 @@ auto nested = i"outer $(i"inner $(value)") end";
 
 <!-- Sparkles source files -->
 
-[styled-template-src]: ../../libs/core-cli/src/sparkles/core_cli/styled_template.d
+[styled-template-src]: ../../libs/base/src/sparkles/base/styled_template.d
 [example-styled-template]: ../../libs/core-cli/examples/styled-template.d
 [example-box]: ../../libs/core-cli/examples/box.d
 [example-table]: ../../libs/core-cli/examples/table.d

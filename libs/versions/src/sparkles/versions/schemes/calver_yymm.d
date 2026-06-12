@@ -55,7 +55,7 @@ struct CalVerYYMM
     /// Writes `year.MM.patch` (month zero-padded to 2 digits).
     void toString(W)(ref W w) const
     {
-        import sparkles.core_cli.text.writers : writeInteger, writeIntegerPadded;
+        import sparkles.base.text.writers : writeInteger, writeIntegerPadded;
         import std.range.primitives : put;
 
         writeInteger(w, year);

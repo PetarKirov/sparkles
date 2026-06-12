@@ -1,4 +1,4 @@
-module sparkles.core_cli.term_style;
+module sparkles.base.term_style;
 
 @safe pure nothrow:
 

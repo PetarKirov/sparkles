@@ -1,11 +1,11 @@
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "logger"
-    dependency "sparkles:core-cli" path="../../.."
+    dependency "sparkles:base" path="../../.."
     targetPath "build"
 +/
 
-import sparkles.core_cli.logger : initLogger, info, warning, error, critical, log, trace, LogLevel;
+import sparkles.base.logger : initLogger, info, warning, error, critical, log, trace, LogLevel;
 
 void main()
 {

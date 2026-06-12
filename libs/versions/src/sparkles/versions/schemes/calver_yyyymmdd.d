@@ -54,7 +54,7 @@ struct CalVerYYYYMMDD
     /// Writes `year.MM.DD` (month and day zero-padded to 2 digits).
     void toString(W)(ref W w) const
     {
-        import sparkles.core_cli.text.writers : writeInteger, writeIntegerPadded;
+        import sparkles.base.text.writers : writeInteger, writeIntegerPadded;
         import std.range.primitives : put;
 
         writeInteger(w, year);
@@ -99,7 +99,7 @@ static assert(!supportsPrerelease!CalVerYYYYMMDD);
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.smallbuffer : checkToString;
+    import sparkles.base.smallbuffer : checkToString;
     import sparkles.versions.testing : checkParse, checkRejects;
 
     auto v = checkParse!CalVerYYYYMMDD("2024.05.01");

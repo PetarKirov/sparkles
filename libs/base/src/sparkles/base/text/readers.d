@@ -11,11 +11,11 @@ to surface) to the caller.
 The integer reader is the inverse of
 $(REF writeInteger, sparkles,core_cli,text,writers).
 */
-module sparkles.core_cli.text.readers;
+module sparkles.base.text.readers;
 
 import std.traits : isUnsigned;
 
-import sparkles.core_cli.text.errors :
+import sparkles.base.text.errors :
     ParseErrorCode, ParseExpected, parseErr, parseOk;
 
 @safe pure nothrow @nogc:
