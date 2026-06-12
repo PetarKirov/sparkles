@@ -627,6 +627,11 @@ private int runReferenceLinkMode(string[] mdFiles, bool fix)
 
 // === Core Functions ===
 
+private bool isAnsiFence(string fenceType)
+{
+    return fenceType == "ansi" || fenceType == "[Output:ansi]";
+}
+
 /// Extracts dub single-file examples from markdown content,
 /// including any adjacent expected-output blocks.
 @safe pure
@@ -640,6 +645,7 @@ Example[] extractExamples(string content)
         auto stripped = s.strip;
         if (stripped == "```[Output]") return "[Output]";
         if (stripped == "```ansi") return "ansi";
+        if (stripped == "```[Output:ansi]") return "[Output:ansi]";
         return null;
     }
 
@@ -1160,7 +1166,7 @@ int runVerifyMode(Example[] examples, string mdFile, bool failFast)
         }
 
         string actual;
-        if (example.verifyPattern is null && example.outputFenceType == "ansi")
+        if (example.verifyPattern is null && isAnsiFence(example.outputFenceType))
         {
             actual = result.rawOutput
                 .lineSplitter
@@ -1263,9 +1269,13 @@ int runUpdateMode(Example[] examples, string mdFile, bool failFast)
         string actualOutput;
         string fenceType = "[Output]";
 
-        if (example.outputFenceType == "ansi")
+        if (example.outputFenceType !is null)
         {
-            fenceType = "ansi";
+            fenceType = example.outputFenceType;
+        }
+
+        if (isAnsiFence(fenceType))
+        {
             actualOutput = result.rawOutput
                 .lineSplitter
                 .map!(l => l.stripRight)
