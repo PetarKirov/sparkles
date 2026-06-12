@@ -5,6 +5,7 @@ Use `CoreLogger` to write fast, structured, and styled log messages. This guide 
 ## Using the DeltaTimeLogger
 
 By default, calling `initLogger` installs `DeltaTimeLogger` as both the Phobos `std.logger.sharedLog` and `sparkles.base.logger.sharedCoreLog`. `DeltaTimeLogger` formats logs in the following layout:
+
 `[ Time | Δt (since start) | Δtᵢ (since last log) | Level | File:Line ]: Message`
 
 Here is an example showing how to initialize the logger and output logs of various levels, using both static styled messages and dynamic interpolated values.
@@ -49,14 +50,14 @@ void main()
 [ {{_}} | Δt {{_}} | Δtᵢ {{_}} | WRN | {{_}} ]: Latency spike: 230ms on db-01.prod
 -->
 
-```[Output]
-[ 14:32:01 | Δt 0ms   | Δtᵢ 0ms   | TRC | base_core_logger.d:13 ]: Application starting up
-[ 14:32:01 | Δt 1ms   | Δtᵢ 1ms   | INF | base_core_logger.d:14 ]: Listening on port 8080
-[ 14:32:01 | Δt 2ms   | Δtᵢ 1ms   | WRN | base_core_logger.d:15 ]: Disk usage above 80%
-[ 14:32:01 | Δt 3ms   | Δtᵢ 1ms   | ERR | base_core_logger.d:16 ]: Connection to database lost
-[ 14:32:01 | Δt 4ms   | Δtᵢ 1ms   | CRT | base_core_logger.d:17 ]: Out of memory
-[ 14:32:01 | Δt 5ms   | Δtᵢ 1ms   | INF | base_core_logger.d:22 ]: Reconnected to db-01.prod:5432
-[ 14:32:01 | Δt 6ms   | Δtᵢ 1ms   | WRN | base_core_logger.d:25 ]: Latency spike: 230ms on db-01.prod
+```ansi
+[90m[ 15:22:40[39m | Δt [33m46.7µs[39m | Δtᵢ [33m46.7µs[39m | [90mTRC[39m | [2mbase_core_logger.d:14[22m ]: [1mApplication starting up[22m
+[90m[ 15:22:40[39m | Δt [33m119.7µs[39m | Δtᵢ [33m72.9µs[39m | [32mINF[39m | [2mbase_core_logger.d:15[22m ]: [1mListening on port [32m8080[39m[22m
+[90m[ 15:22:40[39m | Δt [33m167.3µs[39m | Δtᵢ [33m47.5µs[39m | [33mWRN[39m | [2mbase_core_logger.d:16[22m ]: [1mDisk usage above [33m80%[39m[22m
+[90m[ 15:22:40[39m | Δt [33m212.2µs[39m | Δtᵢ [33m44.9µs[39m | [31mERR[39m | [2mbase_core_logger.d:17[22m ]: [1mConnection to [31mdatabase[39m lost[22m
+[90m[ 15:22:40[39m | Δt [33m257.9µs[39m | Δtᵢ [33m45.7µs[39m | [1m[31mCRT[39m[22m | [2mbase_core_logger.d:18[22m ]: [1m[1m[31mOut of memory[39m[22m[22m
+[90m[ 15:22:40[39m | Δt [33m315.2µs[39m | Δtᵢ [33m57.2µs[39m | [32mINF[39m | [2mbase_core_logger.d:23[22m ]: [1mReconnected to [32mdb-01.prod[39m:[36m5432[39m[22m
+[90m[ 15:22:40[39m | Δt [33m361.1µs[39m | Δtᵢ [33m45.9µs[39m | [33mWRN[39m | [2mbase_core_logger.d:26[22m ]: [1mLatency spike: [33m[1m230ms[22m[39m on [2mdb-01.prod[22m[22m
 ```
 
 ## Advanced Customization: Fatal Handlers
