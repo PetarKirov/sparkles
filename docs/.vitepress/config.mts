@@ -1,5 +1,66 @@
 import { defineConfig } from 'vitepress';
 import { withMermaid } from 'vitepress-plugin-mermaid';
+import fs from 'fs';
+import path from 'path';
+
+function rewriteLink(href: string, relativePath: string): string | null {
+  if (/^(https?:|mailto:|#)/.test(href)) {
+    return null;
+  }
+
+  const [urlPath, anchor] = href.split('#');
+  const currentDir = path.dirname(relativePath);
+
+  // Resolve relative path from the current markdown file's directory
+  const resolvedPath = path.join(currentDir, urlPath);
+  const absolutePath = path.resolve(process.cwd(), 'docs', resolvedPath);
+
+  if (fs.existsSync(absolutePath)) {
+    const docsDir = path.resolve(process.cwd(), 'docs');
+    const isInsideDocs = absolutePath.startsWith(docsDir + path.sep);
+
+    if (isInsideDocs) {
+      const relPath = path.relative(docsDir, absolutePath).replace(/\\/g, '/');
+      const stats = fs.statSync(absolutePath);
+      const segments = relPath.split('/');
+      const isInsideArtifactDir = segments.some(
+        s => s === 'sample' || s === 'example' || s === 'examples',
+      );
+      const isDOrC = relPath.endsWith('.d') || relPath.endsWith('.c');
+
+      if (isInsideArtifactDir || isDOrC) {
+        if (stats.isDirectory()) {
+          return `/${relPath}/index.md${anchor ? '#' + anchor : ''}`.replace(
+            /\/+/g,
+            '/',
+          );
+        } else {
+          return `/${relPath}.md${anchor ? '#' + anchor : ''}`.replace(
+            /\/+/g,
+            '/',
+          );
+        }
+      }
+    } else {
+      const repoDir = process.cwd();
+      const isInsideRepo = absolutePath.startsWith(repoDir + path.sep);
+      if (isInsideRepo) {
+        const repoRelPath = path
+          .relative(repoDir, absolutePath)
+          .replace(/\\/g, '/');
+        const isDOrC = repoRelPath.endsWith('.d') || repoRelPath.endsWith('.c');
+        if (isDOrC) {
+          return `/${repoRelPath}.md${anchor ? '#' + anchor : ''}`.replace(
+            /\/+/g,
+            '/',
+          );
+        }
+      }
+    }
+  }
+
+  return null;
+}
 
 export default withMermaid(
   defineConfig({
@@ -27,7 +88,6 @@ export default withMermaid(
       /\/specs\/event-horizon\//,
       /\/research\/application-packaging\/grounding\//,
     ],
-
     // The parsing and units-of-measure grounding ledgers are internal QA
     // evidence (claim-by-claim source verification), not published research —
     // keep them out of the site.
@@ -59,6 +119,34 @@ export default withMermaid(
         // plain-text fallback; aliasing them to a non-grammar errors the build.)
         starlark: 'python',
         bzl: 'python',
+      },
+      config(md) {
+        md.core.ruler.push('rewrite-artifact-links', state => {
+          const env = state.env;
+          const relativePath = env.relativePath;
+          if (!relativePath) return;
+
+          function walk(tokens: any[]) {
+            for (const token of tokens) {
+              if (token.type === 'link_open') {
+                const hrefAttr = token.attrs.find(
+                  (attr: string[]) => attr[0] === 'href',
+                );
+                if (hrefAttr) {
+                  const href = hrefAttr[1];
+                  const newHref = rewriteLink(href, relativePath);
+                  if (newHref) {
+                    hrefAttr[1] = newHref;
+                  }
+                }
+              }
+              if (token.children) {
+                walk(token.children);
+              }
+            }
+          }
+          walk(state.tokens);
+        });
       },
     },
 
