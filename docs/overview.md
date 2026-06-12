@@ -180,10 +180,10 @@ The `prettyprint` module formats any D type with syntax highlighting.
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "prettyprintdemo"
-    dependency "sparkles:core-cli" version="*"
+    dependency "sparkles:base" version="*"
 +/
 import std.stdio : writeln;
-import sparkles.core_cli.prettyprint : prettyPrint, PrettyPrintOptions;
+import sparkles.base.prettyprint : prettyPrint, PrettyPrintOptions;
 
 struct Server { string host; int port; bool ssl; }
 
@@ -219,7 +219,7 @@ PrettyPrintOptions!EditorDetectHook       // auto-detect from $EDITOR/$VISUAL
 
 #### Source URI Hooks
 
-The `SourceUriHook` template parameter controls the URI scheme for OSC 8 hyperlinks on type names. Available hooks from `sparkles.core_cli.source_uri`:
+The `SourceUriHook` template parameter controls the URI scheme for OSC 8 hyperlinks on type names. Available hooks from `sparkles.base.source_uri`:
 
 | Hook                  | Description                                      |
 | --------------------- | ------------------------------------------------ |
@@ -501,7 +501,7 @@ runnable files:
 ```bash
 # Run directly with dub
 dub run --single libs/base/examples/logger.d
-dub run --single libs/core-cli/examples/prettyprint.d
+dub run --single libs/base/examples/prettyprint.d
 
 # Or make executable and run
 chmod +x libs/core-cli/examples/color.d
@@ -512,7 +512,7 @@ Available examples:
 
 - `color.d` - Style and color palette showcase
 - `logger.d` - Delta-time-prefixed logging (`libs/base/examples/`)
-- `prettyprint.d` - Type formatting demonstration
+- `prettyprint.d` - Type formatting demonstration (`libs/base/examples/`)
 - `styled-template.d` - IES-based template styling
 - `table.d` - Table rendering variations
 - `box.d` - Box layouts with nested content

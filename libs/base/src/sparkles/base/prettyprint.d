@@ -1,4 +1,4 @@
-module sparkles.core_cli.prettyprint;
+module sparkles.base.prettyprint;
 
 import std.typecons : Tuple;
 
@@ -519,7 +519,7 @@ private immutable PrettyLeafHook prettyLeafHook;
 private void writeTypeName(T, Writer, Hook)(ref Writer w, in PrettyPrintOptions!Hook opt)
 {
     import std.range.primitives : put;
-    import sparkles.core_cli.source_uri : resolveSourcePath, hasWriteSourceUri, FileUriHook;
+    import sparkles.base.source_uri : resolveSourcePath, hasWriteSourceUri, FileUriHook;
 
     enum hasLoc = __traits(compiles, __traits(getLocation, T));
 
@@ -559,7 +559,6 @@ private void writeTypeName(T, Writer, Hook)(ref Writer w, in PrettyPrintOptions!
 version (unittest)
 {
     import core.exception : AssertError;
-    import std.string : outdent;
     import std.typecons : tuple;
 
     /// @nogc-compatible check helper using SmallBuffer
@@ -656,12 +655,7 @@ unittest
 {
     const opts = PrettyPrintOptions!void(softMaxWidth: 0, useColors: false);
     int[] arr = [1, 2, 3];
-    check(arr, outdent(`
-        [
-          1,
-          2,
-          3
-        ]`)[1..$], opts);
+    check(arr, "[\n  1,\n  2,\n  3\n]", opts);
 
     int[] empty;
     check(empty, "[]", opts);
@@ -672,12 +666,7 @@ unittest
 {
     const opts = PrettyPrintOptions!void(softMaxWidth: 0, useColors: false);
     int[3] arr = [10, 20, 30];
-    check(arr, outdent(`
-        [
-          10,
-          20,
-          30
-        ]`)[1..$], opts);
+    check(arr, "[\n  10,\n  20,\n  30\n]", opts);
 }
 
 @("prettyPrint.aa")
@@ -693,11 +682,7 @@ unittest
     struct Point { int x; int y; }
     const opts = PrettyPrintOptions!void(softMaxWidth: 0, useColors: false);
     auto p = Point(10, 20);
-    check(p, outdent(`
-        Point(
-          x: 10,
-          y: 20
-        )`)[1..$], opts);
+    check(p, "Point(\n  x: 10,\n  y: 20\n)", opts);
 }
 
 @("prettyPrint.nestedStruct")
@@ -708,13 +693,7 @@ unittest
 
     const opts = PrettyPrintOptions!void(softMaxWidth: 0, useColors: false);
     auto o = Outer("test", Inner(42));
-    check(o, outdent(`
-        Outer(
-          name: "test",
-          inner: Inner(
-            value: 42
-          )
-        )`)[1..$], opts);
+    check(o, "Outer(\n  name: \"test\",\n  inner: Inner(\n    value: 42\n  )\n)", opts);
 }
 
 @("prettyPrint.tuple")
@@ -743,13 +722,7 @@ unittest
 {
     const opts = PrettyPrintOptions!void(maxItems: 3, useColors: false);
     int[] arr = [1, 2, 3, 4, 5];
-    check(arr, outdent(`
-        [
-          1,
-          2,
-          3,
-          ... 2 more
-        ]`)[1..$], opts);
+    check(arr, "[\n  1,\n  2,\n  3,\n  ... 2 more\n]", opts);
 }
 
 @("prettyPrint.maxDepth")
@@ -765,76 +738,22 @@ unittest
     Deep d1 = Deep(1, &d2);
 
     // maxDepth: 1 - only the top-level struct fields are shown
-    check(d1, outdent(`
-        Deep(
-          value: 1,
-          next: &...
-        )`)[1..$], PrettyPrintOptions!void(maxDepth: 1, softMaxWidth: 0, useColors: false));
+    check(d1, "Deep(\n  value: 1,\n  next: &...\n)", PrettyPrintOptions!void(maxDepth: 1, softMaxWidth: 0, useColors: false));
 
     // maxDepth: 2 - one level of pointer dereference, but inner struct fields hit limit
-    check(d1, outdent(`
-        Deep(
-          value: 1,
-          next: &Deep(
-              value: ...,
-              next: ...
-            )
-        )`)[1..$], PrettyPrintOptions!void(maxDepth: 2, softMaxWidth: 0, useColors: false));
+    check(d1, "Deep(\n  value: 1,\n  next: &Deep(\n      value: ...,\n      next: ...\n    )\n)", PrettyPrintOptions!void(maxDepth: 2, softMaxWidth: 0, useColors: false));
 
     // maxDepth: 3 - inner struct fields visible, but next pointer hits limit
-    check(d1, outdent(`
-        Deep(
-          value: 1,
-          next: &Deep(
-              value: 2,
-              next: &...
-            )
-        )`)[1..$], PrettyPrintOptions!void(maxDepth: 3, softMaxWidth: 0, useColors: false));
+    check(d1, "Deep(\n  value: 1,\n  next: &Deep(\n      value: 2,\n      next: &...\n    )\n)", PrettyPrintOptions!void(maxDepth: 3, softMaxWidth: 0, useColors: false));
 
     // maxDepth: 4 - two levels of nesting visible
-    check(d1, outdent(`
-        Deep(
-          value: 1,
-          next: &Deep(
-              value: 2,
-              next: &Deep(
-                  value: ...,
-                  next: ...
-                )
-            )
-        )`)[1..$], PrettyPrintOptions!void(maxDepth: 4, softMaxWidth: 0, useColors: false));
+    check(d1, "Deep(\n  value: 1,\n  next: &Deep(\n      value: 2,\n      next: &Deep(\n          value: ...,\n          next: ...\n        )\n    )\n)", PrettyPrintOptions!void(maxDepth: 4, softMaxWidth: 0, useColors: false));
 
     // maxDepth: 5 - three levels of nesting visible
-    check(d1, outdent(`
-        Deep(
-          value: 1,
-          next: &Deep(
-              value: 2,
-              next: &Deep(
-                  value: 3,
-                  next: &...
-                )
-            )
-        )`)[1..$], PrettyPrintOptions!void(maxDepth: 5, softMaxWidth: 0, useColors: false));
+    check(d1, "Deep(\n  value: 1,\n  next: &Deep(\n      value: 2,\n      next: &Deep(\n          value: 3,\n          next: &...\n        )\n    )\n)", PrettyPrintOptions!void(maxDepth: 5, softMaxWidth: 0, useColors: false));
 
     // maxDepth: ushort.max - no practical limit, full output
-    check(d1, outdent(`
-        Deep(
-          value: 1,
-          next: &Deep(
-              value: 2,
-              next: &Deep(
-                  value: 3,
-                  next: &Deep(
-                      value: 4,
-                      next: &Deep(
-                          value: 5,
-                          next: null
-                        )
-                    )
-                )
-            )
-        )`)[1..$], PrettyPrintOptions!void(maxDepth: ushort.max, softMaxWidth: 0, useColors: false));
+    check(d1, "Deep(\n  value: 1,\n  next: &Deep(\n      value: 2,\n      next: &Deep(\n          value: 3,\n          next: &Deep(\n              value: 4,\n              next: &Deep(\n                  value: 5,\n                  next: null\n                )\n            )\n        )\n    )\n)", PrettyPrintOptions!void(maxDepth: ushort.max, softMaxWidth: 0, useColors: false));
 }
 
 @("prettyPrint.withColors")
@@ -857,18 +776,14 @@ unittest
     auto obj = new MyClass();
     obj.x = 10;
     obj.name = "test";
-    check(obj, outdent(`
-        MyClass(
-          x: 10,
-          name: "test"
-        )`)[1..$], opts);
+    check(obj, "MyClass(\n  x: 10,\n  name: \"test\"\n)", opts);
 }
 
 @("prettyPrint.oscLink.struct")
 @safe pure nothrow
 unittest
 {
-    import sparkles.core_cli.source_uri : resolveSourcePath, FileUriHook;
+    import sparkles.base.source_uri : resolveSourcePath, FileUriHook;
 
     struct Coord { int x; int y; }
     enum _loc = __traits(getLocation, Coord);
@@ -885,7 +800,7 @@ unittest
 @safe pure nothrow
 unittest
 {
-    import sparkles.core_cli.source_uri : resolveSourcePath;
+    import sparkles.base.source_uri : resolveSourcePath;
 
     enum Dir { north, south }
     enum _loc = __traits(getLocation, Dir);
@@ -911,7 +826,7 @@ unittest
 @safe pure nothrow
 unittest
 {
-    import sparkles.core_cli.source_uri : resolveSourcePath;
+    import sparkles.base.source_uri : resolveSourcePath;
 
     struct Cell { int v; }
     enum _loc = __traits(getLocation, Cell);
@@ -932,7 +847,7 @@ unittest
 @safe pure nothrow
 unittest
 {
-    import sparkles.core_cli.source_uri : resolveSourcePath, SchemeHook;
+    import sparkles.base.source_uri : resolveSourcePath, SchemeHook;
 
     struct Dot { int r; }
     enum _loc = __traits(getLocation, Dot);

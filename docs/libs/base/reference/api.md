@@ -4,8 +4,8 @@ The public symbols of `sparkles:base`, by module.
 
 ## `sparkles.base`
 
-Package module re-exporting `lifetime`, `logger`, `smallbuffer`,
-`styled_template`, `term_style`, and `text`.
+Package module re-exporting `lifetime`, `logger`, `prettyprint`,
+`smallbuffer`, `source_uri`, `styled_template`, `term_style`, and `text`.
 
 ## `sparkles.base.smallbuffer`
 
@@ -65,3 +65,19 @@ The package re-exports `text.writers`, `text.readers`, and `text.errors`.
 | `abortingFatalHandler`                                          | Calls `abort()`.                                                 |
 | `log`, `trace`, `info`, `warning`, `error`, `critical`, `fatal` | Styled IES logging wrappers.                                     |
 | `initLogger`                                                    | Installs `DeltaTimeLogger` for Phobos and Sparkles globals.      |
+
+## `sparkles.base.prettyprint`
+
+| Symbol               | Description                                                       |
+| -------------------- | ----------------------------------------------------------------- |
+| `PrettyPrintOptions` | Configuration for structural indentation and syntax highlighting. |
+| `prettyPrint`        | Pretty-prints any D value to a writer or returns a string.        |
+
+## `sparkles.base.source_uri`
+
+| Symbol              | Description                                                       |
+| ------------------- | ----------------------------------------------------------------- |
+| `resolveSourcePath` | Resolves relative source path to absolute path.                   |
+| `FileUriHook`       | Default hook that formats source locations as `file://` URIs.     |
+| `SchemeHook`        | Hook that formats source locations using custom editor schemes.   |
+| `EditorDetectHook`  | Runtime detector using `$VISUAL`/`$EDITOR` environment variables. |
