@@ -113,6 +113,57 @@ export default defineConfig({
         collapsed: false,
         items: [
           {
+            text: 'base',
+            link: '/libs/base/',
+            collapsed: false,
+            items: [
+              {
+                text: 'Tutorial',
+                collapsed: false,
+                items: [
+                  {
+                    text: 'Getting started',
+                    link: '/libs/base/tutorial/getting-started',
+                  },
+                ],
+              },
+              {
+                text: 'How-to guides',
+                collapsed: true,
+                items: [
+                  {
+                    text: 'Write @nogc text',
+                    link: '/libs/base/how-to/write-nogc-text',
+                  },
+                  {
+                    text: 'Log with CoreLogger',
+                    link: '/libs/base/how-to/log-with-core-logger',
+                  },
+                ],
+              },
+              {
+                text: 'Reference',
+                collapsed: true,
+                items: [
+                  {
+                    text: 'API index',
+                    link: '/libs/base/reference/api',
+                  },
+                ],
+              },
+              {
+                text: 'Explanation',
+                collapsed: true,
+                items: [
+                  {
+                    text: 'The design',
+                    link: '/libs/base/explanation/design',
+                  },
+                ],
+              },
+            ],
+          },
+          {
             text: 'versions',
             link: '/libs/versions/',
             collapsed: false,
