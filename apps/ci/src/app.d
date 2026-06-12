@@ -181,6 +181,7 @@ struct Example
     string code;
     string expectedOutput;
     string verifyPattern; /// Wildcard pattern from `<!-- md-example-expected -->` directive
+    string outputFenceType; /// "[Output]" or "ansi" or null if no output block
     size_t codeBlockStart;
     size_t codeBlockEnd;
     size_t outputBlockStart;
@@ -631,10 +632,16 @@ private int runReferenceLinkMode(string[] mdFiles, bool fix)
 @safe pure
 Example[] extractExamples(string content)
 {
-    // Expected output uses the ```[Output] fence (a VitePress code-group
+    // Expected output uses the ```[Output] or ```ansi fence (a VitePress code-group
     // label). Bare ``` and all other labelled fences (```d [D], ```rust
     // [Rust], etc.) are code blocks, not output.
-    bool isOutputBlockLine(string s) => s.strip == "```[Output]";
+    string getOutputFenceType(string s)
+    {
+        auto stripped = s.strip;
+        if (stripped == "```[Output]") return "[Output]";
+        if (stripped == "```ansi") return "ansi";
+        return null;
+    }
 
     Example[] examples;
     auto lines = content.lineSplitter.array;
@@ -687,10 +694,11 @@ Example[] extractExamples(string content)
 
         auto name = extractExampleName(codeLines);
 
-        // Look for adjacent output block (a ```[Output] fence),
+        // Look for adjacent output block (a ```[Output] or ```ansi fence),
         // optionally preceded by a <!-- md-example-expected ... --> directive.
         string expectedOutput = null;
         string verifyPattern = null;
+        string outputFenceType = null;
         size_t outputStart = size_t.max;
         size_t outputEnd = size_t.max;
 
@@ -711,7 +719,12 @@ Example[] extractExamples(string content)
                 searchStart++;
         }
 
-        if (searchStart < lines.length && isOutputBlockLine(lines[searchStart]))
+        if (searchStart < lines.length)
+        {
+            outputFenceType = getOutputFenceType(lines[searchStart]);
+        }
+
+        if (outputFenceType !is null)
         {
             outputStart = searchStart;
             auto outEndIdx = lines[searchStart + 1 .. $]
@@ -729,6 +742,7 @@ Example[] extractExamples(string content)
             code: codeLines.join("\n"),
             expectedOutput: expectedOutput,
             verifyPattern: verifyPattern,
+            outputFenceType: outputFenceType,
             codeBlockStart: codeStart,
             codeBlockEnd: codeEnd,
             outputBlockStart: outputStart,
@@ -1145,7 +1159,19 @@ int runVerifyMode(Example[] examples, string mdFile, bool failFast)
             continue;
         }
 
-        auto actual = result.programOutput.strip;
+        string actual;
+        if (example.verifyPattern is null && example.outputFenceType == "ansi")
+        {
+            actual = result.rawOutput
+                .lineSplitter
+                .map!(l => l.stripRight)
+                .join("\n")
+                .strip;
+        }
+        else
+        {
+            actual = result.programOutput.strip;
+        }
         auto expected = verifyAgainst.strip;
 
         if (matchesWithWildcards(actual, expected))
@@ -1234,7 +1260,22 @@ int runUpdateMode(Example[] examples, string mdFile, bool failFast)
             continue;
         }
 
-        auto actualOutput = result.programOutput.strip;
+        string actualOutput;
+        string fenceType = "[Output]";
+
+        if (example.outputFenceType == "ansi")
+        {
+            fenceType = "ansi";
+            actualOutput = result.rawOutput
+                .lineSplitter
+                .map!(l => l.stripRight)
+                .join("\n")
+                .strip;
+        }
+        else
+        {
+            actualOutput = result.programOutput.strip;
+        }
 
         if (example.expectedOutput !is null && actualOutput == example.expectedOutput.strip)
         {
@@ -1243,7 +1284,7 @@ int runUpdateMode(Example[] examples, string mdFile, bool failFast)
             continue;
         }
 
-        auto newOutputLines = ["```[Output]"]
+        auto newOutputLines = ["```" ~ fenceType]
             ~ actualOutput.lineSplitter.map!(l => l.idup).array
             ~ ["```"];
 
