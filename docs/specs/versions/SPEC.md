@@ -84,7 +84,7 @@ keyword.
 | `sparkles.versions.testing`                 | `version(unittest)` test helpers (`checkParse`, `checkRoundTrip`, …)                |
 
 The library has no `_internal` package: shared low-level primitives live
-in `sparkles.core_cli`, and the SemVer identifier grammar
+in `sparkles:base`, and the SemVer identifier grammar
 (`compareSemVerPrerelease`, identifier validation) lives `package`-scoped
 in `schemes/semver.d`, reused by the other SemVer-shaped schemes.
 
@@ -129,7 +129,7 @@ void toString(W)(ref W sink) const;                      // writes into an outpu
 
 - Provide `opEquals` and `toHash` consistent with `opCmp` so versions
   work as associative-array keys and in `==`.
-- `toString` writes into an output range, per the `sparkles.core_cli`
+- `toString` writes into an output range, per the Sparkles
   conventions in [`AGENTS.md`](../../guidelines/AGENTS.md#output-ranges).
 
 ### 3.2 Optional capability vocabulary
@@ -487,7 +487,7 @@ which returns `null` across schemes.
 
 Parsing is non-throwing and `Expected`-based. The error vocabulary is
 generic and lives in `sparkles.base.text.errors` (reused by every
-`core_cli` text parser, not just versions); `ParseMode` is a versions enum
+Sparkles text parser, not just versions); `ParseMode` is a versions enum
 in `sparkles.versions.parsing`.
 
 ```d
