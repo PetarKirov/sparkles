@@ -139,6 +139,22 @@ export default defineConfig({
                     text: 'Log with CoreLogger',
                     link: '/libs/base/how-to/log-with-core-logger',
                   },
+                  {
+                    text: 'Style templates with IES',
+                    link: '/libs/base/how-to/style-text-templates',
+                  },
+                  {
+                    text: 'Pretty-print values',
+                    link: '/libs/base/how-to/prettyprint-values',
+                  },
+                  {
+                    text: 'Parse text with readers',
+                    link: '/libs/base/how-to/parse-text-readers',
+                  },
+                  {
+                    text: 'Test @nogc code with check helpers',
+                    link: '/libs/base/how-to/test-with-check-helpers',
+                  },
                 ],
               },
               {
