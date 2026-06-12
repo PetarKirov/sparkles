@@ -34,6 +34,10 @@ _Task-oriented._ Short recipes for common jobs.
 
 - [Log through `CoreLogger`](./how-to/log-with-core-logger.md)
 - [Write `@nogc` text](./how-to/write-nogc-text.md)
+- [Style templates with IES](./how-to/style-text-templates.md)
+- [Pretty-print values](./how-to/prettyprint-values.md)
+- [Parse text with readers](./how-to/parse-text-readers.md)
+- [Test `@nogc` code with check helpers](./how-to/test-with-check-helpers.md)
 
 ### Reference
 
