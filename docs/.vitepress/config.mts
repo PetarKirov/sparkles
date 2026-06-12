@@ -38,7 +38,7 @@ export default defineConfig({
       {
         text: 'Overview',
         collapsed: false,
-        items: [{ text: 'core-cli Package', link: '/overview' }],
+        items: [{ text: 'Package Overview', link: '/overview' }],
       },
       {
         text: 'Guidelines',

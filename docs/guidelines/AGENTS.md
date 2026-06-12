@@ -7,24 +7,26 @@ includes it. Keep it accurate — a stale fact here propagates into every agent'
 ## Project Overview
 
 `sparkles` is a D monorepo of CLI/library utilities. The root `dub.sdl` declares
-seven sub-packages:
+eight sub-packages:
 
-| Sub-package           | Path              | What it is                                                                                                                                                 |
-| --------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ci`                  | `apps/ci`         | Repository CI helper: runs/verifies markdown examples, standalone examples, sub-package tests, and markdown link maintenance                               |
-| `terminal`            | `apps/terminal`   | Minimal raylib-based terminal emulator built on `sparkles:ghostty`                                                                                         |
-| `sparkles:core-cli`   | `libs/core-cli`   | Terminal styling, pretty-printing, UI components (table/box/header/OSC links), logger, `SmallBuffer`, text readers/writers, process utils, CLI arg parsing |
-| `sparkles:ghostty`    | `libs/ghostty`    | D bindings + ImportC integration layer for `libghostty-vt` (Ghostty's terminal VT engine)                                                                  |
-| `sparkles:math`       | `libs/math`       | Small math primitives for games/graphics (early stage)                                                                                                     |
-| `sparkles:test-utils` | `libs/test-utils` | Testing helpers: diff tools, temp-filesystem helpers, string helpers                                                                                       |
-| `sparkles:versions`   | `libs/versions`   | Design-by-Introspection versioning library (SemVer, DMD, CalVer, PyPI, Maven, Deb, …) with VERS/pURL interop                                               |
+| Sub-package           | Path              | What it is                                                                                                                                           |
+| --------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ci`                  | `apps/ci`         | Repository CI helper: runs/verifies markdown examples, standalone examples, sub-package tests, and markdown link maintenance                         |
+| `terminal`            | `apps/terminal`   | Minimal raylib-based terminal emulator built on `sparkles:ghostty`                                                                                   |
+| `sparkles:base`       | `libs/base`       | Allocation-conscious foundation utilities: `SmallBuffer`, lifetime helpers, `@nogc` text readers/writers, terminal styling, styled IES, and logging  |
+| `sparkles:core-cli`   | `libs/core-cli`   | CLI argument parsing, help formatting, pretty-printing, UI components (table/box/header/OSC links), process utilities, terminal size/unstyle helpers |
+| `sparkles:ghostty`    | `libs/ghostty`    | D bindings + ImportC integration layer for `libghostty-vt` (Ghostty's terminal VT engine)                                                            |
+| `sparkles:math`       | `libs/math`       | Small math primitives for games/graphics (early stage)                                                                                               |
+| `sparkles:test-utils` | `libs/test-utils` | Testing helpers: diff tools, temp-filesystem helpers, string helpers                                                                                 |
+| `sparkles:versions`   | `libs/versions`   | Design-by-Introspection versioning library (SemVer, DMD, CalVer, PyPI, Maven, Deb, …) with VERS/pURL interop                                         |
 
 Each library **should** be documented under `docs/libs/<name>/` as a
 [Diátaxis](https://diataxis.fr/) tree (`tutorial/`, `how-to/`, `reference/`,
-`explanation/`). Today only `sparkles:versions` is fully documented
-([`docs/libs/versions/`](../libs/versions/index.md)); `core-cli`, `test-utils`,
-`math`, and `ghostty` do not yet have a `docs/libs/<name>/` tree. When you add or substantially
-extend a library, add/extend its docs in that location.
+`explanation/`). Today `sparkles:base` and `sparkles:versions` are documented
+([`docs/libs/base/`](../libs/base/index.md),
+[`docs/libs/versions/`](../libs/versions/index.md)); `core-cli`, `test-utils`,
+`math`, and `ghostty` do not yet have a `docs/libs/<name>/` tree. When you add
+or substantially extend a library, add/extend its docs in that location.
 
 ## Detailed Guidelines
 
@@ -46,7 +48,7 @@ Cross-cutting guides live in `docs/guidelines/`:
 ```
 sparkles/
 ├── flake.nix                       # Nix flake (devshell, `ci` package, checks)
-├── dub.sdl                         # Root package; declares the 7 sub-packages
+├── dub.sdl                         # Root package; declares the 8 sub-packages
 ├── apps/
 │   ├── ci/                         # `ci` helper (executable sub-package)
 │   │   ├── src/app.d               # Markdown example runner / verifier, link maintenance
@@ -57,21 +59,22 @@ sparkles/
 │       ├── src/app.d               # Window/render loop, font + PTY setup
 │       └── src/input.d             # Keyboard/mouse → libghostty-vt encoding
 ├── libs/
+│   ├── base/src/sparkles/base/
+│   │   ├── lifetime.d              # recycledInstance / recycledErrorInstance (@nogc throwing)
+│   │   ├── logger.d                # CoreLogger, DeltaTimeLogger, Sparkles logging wrappers
+│   │   ├── smallbuffer.d           # @nogc dynamic buffer + checkToString/checkWriter test helpers
+│   │   ├── styled_template.d       # IES-based styled text processing
+│   │   ├── term_style.d            # Terminal styling/colors
+│   │   └── text/                   # @nogc text package: readers.d, writers.d, errors.d, package.d
 │   ├── core-cli/src/sparkles/core_cli/
 │   │   ├── args.d                  # CLI argument parsing (@CliOption, parseCliArgs)
 │   │   ├── common_dirs.d           # XDG / standard directory lookup
 │   │   ├── help_formatting.d       # --help output formatting
-│   │   ├── lifetime.d              # recycledInstance / recycledErrorInstance (@nogc throwing)
-│   │   ├── logger.d                # Delta-time-prefixed logger
 │   │   ├── prettyprint.d           # Colorized pretty-printing
 │   │   ├── process_utils.d         # Process execution + RSS/CPU monitoring
-│   │   ├── smallbuffer.d           # @nogc dynamic buffer + checkToString/checkWriter test helpers
 │   │   ├── source_uri.d            # OSC 8 source-URI hooks (editor links)
-│   │   ├── styled_template.d       # IES-based styled text processing
 │   │   ├── term_size.d             # Terminal size detection
-│   │   ├── term_style.d            # Terminal styling/colors
 │   │   ├── term_unstyle.d          # Strip ANSI escapes
-│   │   ├── text/                   # @nogc text package: readers.d, writers.d, errors.d, package.d
 │   │   └── ui/                     # box.d, header.d, table.d, osc_link.d, demo.d
 │   ├── versions/src/sparkles/versions/
 │   │   ├── schemes/                # semver.d, dmd.d, calver_*.d, pypi.d, maven.d, deb.d, … + registry.d
@@ -86,7 +89,7 @@ sparkles/
 │       └── package.d               # public import sparkles.ghostty.c
 ├── docs/
 │   ├── guidelines/                 # Cross-cutting agent/style guides (this file lives here)
-│   ├── libs/<name>/                # Per-library Diátaxis docs (currently: versions/)
+│   ├── libs/<name>/                # Per-library Diátaxis docs (currently: base/, versions/)
 │   ├── research/                   # Background research notes
 │   ├── specs/                      # Design specs
 │   └── overview.md, index.md
@@ -106,12 +109,14 @@ is available, prefer invoking `dub` **directly** for fast iteration:
 
 ```bash
 # Build / test a sub-package (run dub directly — fast)
+dub build :base
 dub build :core-cli
+dub test  :base
 dub test  :core-cli
 dub test  :versions
 
 # Run tests matching / excluding a pattern (silly runner; see options below)
-dub test :core-cli -- -i "SmallBuffer"
+dub test :base -- -i "SmallBuffer"
 dub test :core-cli -- -e "slow"
 dub test :core-cli -- -v            # verbose: full stack traces + durations
 dub test :core-cli -- -t 1          # single-threaded
@@ -164,7 +169,8 @@ nix run .#ci -- --verify --files README.md   # verify markdown examples (see Exa
 
 ### Debugging tips
 
-- `dub test :core-cli -- -v` shows full stack traces and per-test durations.
+- `dub test :base -- -v` and `dub test :core-cli -- -v` show full stack traces
+  and per-test durations.
 - `-i "name"` isolates a single test by its UDA name.
 - Ensure `@nogc`/`nothrow` tests actually compile with those attributes (don't
   let an accidental allocation relax them).
@@ -223,8 +229,8 @@ per-sub-package.
 ### Error handling — `Expected` in `@nogc nothrow` code
 
 GC exceptions are disallowed in `@safe pure nothrow @nogc` code. Use the
-[`expected`](https://github.com/tchaloupka/expected) library (`~>0.4.0`, a runtime
-dependency of `core-cli` and `versions`):
+[`expected`](https://github.com/tchaloupka/expected) library (`~>0.4.1`, a runtime
+dependency of `base` and `versions`):
 
 - Construct with `ok(value)` / `err!ValType(error)`; check with `hasValue`/`hasError`.
 - Transform/chain with `map`, `mapError`, `andThen`, `orElse`, `mapOrElse`.
@@ -507,6 +513,8 @@ The `path` value depends on the file's depth relative to the repo root:
 
 | File location                | `path` value |
 | ---------------------------- | ------------ |
+| `libs/base/dub.sdl`          | `../..`      |
+| `libs/base/examples/*.d`     | `../../..`   |
 | `libs/core-cli/dub.sdl`      | `../..`      |
 | `libs/core-cli/examples/*.d` | `../../..`   |
 | `docs/guidelines/*.d`        | `../..`      |
@@ -523,20 +531,20 @@ have the repo layout, so they keep `version="*"`.
 
 Conventional commits: `<type>(<scope>): <description>` (lowercase description).
 
-- **Scope** = a sub-package (`core-cli`, `versions`, `math`, `test-utils`, `ghostty`,
-  `ci`, `terminal`) or an area (`nix`, `dub`, `guidelines`, `gh-actions`, `docs`,
+- **Scope** = a sub-package (`base`, `core-cli`, `versions`, `math`, `test-utils`,
+  `ghostty`, `ci`, `terminal`) or an area (`nix`, `dub`, `guidelines`, `gh-actions`, `docs`,
   `research`).
 - **Type** — one of the following (one example each):
 
 | Type       | Use for                                  | Example                                                               |
 | ---------- | ---------------------------------------- | --------------------------------------------------------------------- |
-| `feat`     | new user-facing capability               | `feat(core-cli): add SmallBuffer with small-buffer optimization`      |
+| `feat`     | new user-facing capability               | `feat(base): add SmallBuffer with small-buffer optimization`          |
 | `fix`      | bug fix                                  | `fix(core-cli): handle empty arrays in prettyPrint`                   |
 | `refactor` | behavior-preserving restructuring        | `refactor(ci): extract dub dependency helpers into a testable module` |
 | `docs`     | documentation only                       | `docs(guidelines): document the [Output] example convention`          |
 | `build`    | build system / dependencies              | `build(dub): add expected as a runtime dependency of versions`        |
 | `ci`       | CI/CD pipelines & tooling                | `ci(gh-actions): add DC (D compiler) dimension to the test matrix`    |
-| `test`     | tests only                               | `test(core-cli): add checkWriter for testing writer functions`        |
+| `test`     | tests only                               | `test(base): add checkWriter for testing writer functions`            |
 | `style`    | formatting / renames, no behavior change | `style(core-cli): use kebab-case names for example files`             |
 | `chore`    | maintenance (lockfiles, file modes, …)   | `chore(flake.lock): update all flake inputs`                          |
 | `config`   | config-file changes                      | `config(editorconfig): disable indent checking for markdown`          |
@@ -595,12 +603,13 @@ A quick scan of the gotchas above plus a few more:
 - [ ] Example output blocks must be ` ```[Output] `, never bare ` ``` `.
 - [ ] Cross-module-but-internal symbols use `package` visibility, not `private`.
 - [ ] Symbols used only as UDAs are camelCase (lowercase first letter).
-- [ ] `expected` is pinned to 0.4.0; the upstream fix is untagged, so `dub upgrade` is a no-op.
+- [ ] Dependency version changes need matching `dub.selections.json` and
+      `nix/dub-lock.json` updates.
 
 ## Dependencies
 
-- `expected` (`~>0.4.0`) — `Expected!(T, E)` error handling; **runtime** dep of
-  `core-cli` and `versions`.
+- `expected` (`~>0.4.1`) — `Expected!(T, E)` error handling; **runtime** dep of
+  `base` and `versions`.
 - `silly` (`~>1.1.1`) — unittest runner; dev/configuration dependency.
 - `delta` — diff tool used by test diff output; system dependency via Nix.
 
