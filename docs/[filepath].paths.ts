@@ -271,31 +271,56 @@ export default {
     }
 
     // Helper for breadcrumbs
-    function getBreadcrumbs(docsRelPath: string): string {
+    function getBreadcrumbs(
+      docsRelPath: string,
+      isInsideDocs: boolean,
+    ): string {
       const segments = docsRelPath.split('/');
-      const breadcrumbs: string[] = [];
-      breadcrumbs.push(`[Home](/)`);
+      const breadcrumbSegments: any[] = [];
+
+      // Home segment
+      breadcrumbSegments.push({
+        text: 'Home',
+        link: '/',
+        copyText: isInsideDocs ? 'docs' : '',
+      });
 
       let accumulatedPath = '';
-      for (let i = 0; i < segments.length - 1; i++) {
+      const prefix = isInsideDocs ? 'docs/' : '';
+
+      for (let i = 0; i < segments.length; i++) {
         const segment = segments[i];
+        if (!segment) continue;
+
         accumulatedPath = accumulatedPath
           ? `${accumulatedPath}/${segment}`
           : segment;
 
-        const hasIndexPage =
-          fs.existsSync(path.resolve(docsDir, accumulatedPath, 'index.md')) ||
-          generatedPaths.has(`${accumulatedPath}/index`);
+        const isLast = i === segments.length - 1;
+        let link: string | null = null;
 
-        if (hasIndexPage) {
-          breadcrumbs.push(`[${segment}](/${accumulatedPath}/)`);
-        } else {
-          breadcrumbs.push(segment);
+        if (!isLast) {
+          const hasIndexPage =
+            fs.existsSync(path.resolve(docsDir, accumulatedPath, 'index.md')) ||
+            generatedPaths.has(`${accumulatedPath}/index`);
+
+          if (hasIndexPage) {
+            link = `/${accumulatedPath}/`;
+          }
         }
+
+        breadcrumbSegments.push({
+          text: segment,
+          link: link,
+          copyText: `${prefix}${accumulatedPath}`,
+        });
       }
 
-      breadcrumbs.push(`**${segments[segments.length - 1]}**`);
-      return breadcrumbs.join(' / ');
+      const segmentsJson = JSON.stringify(breadcrumbSegments)
+        .replace(/'/g, '&#39;')
+        .replace(/"/g, '&quot;');
+
+      return `<Breadcrumbs :segments="${segmentsJson}" />`;
     }
 
     // Step 3: Build directory index routes
@@ -344,7 +369,10 @@ export default {
         }
       }
 
-      const breadcrumbTrail = getBreadcrumbs(`${docsRelPath}/index`);
+      const breadcrumbTrail = getBreadcrumbs(
+        `${docsRelPath}/index`,
+        isInsideDocs,
+      );
       const content = [
         breadcrumbTrail,
         '',
@@ -375,7 +403,7 @@ export default {
 
       const name = path.basename(file);
       const lang = getLanguage(name);
-      const breadcrumbTrail = getBreadcrumbs(docsRelPath);
+      const breadcrumbTrail = getBreadcrumbs(docsRelPath, isInsideDocs);
 
       const content = [
         breadcrumbTrail,

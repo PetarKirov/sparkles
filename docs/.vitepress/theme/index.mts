@@ -2,6 +2,7 @@ import DefaultTheme from 'vitepress/theme-without-fonts';
 import type { EnhanceAppContext } from 'vitepress';
 import Layout from './Layout.vue';
 import TextCellViz from './components/TextCellViz.vue';
+import Breadcrumbs from './Breadcrumbs.vue';
 import TablePlayground from './components/TablePlayground.vue';
 import InstallInstructions from './InstallInstructions.vue';
 // Dockview stylesheet powers the drawTable playground's dockable panels. Importing
@@ -16,6 +17,7 @@ export default {
   Layout,
   enhanceApp({ app }: EnhanceAppContext) {
     app.component('TextCellViz', TextCellViz);
+    app.component('Breadcrumbs', Breadcrumbs);
     app.component('TablePlayground', TablePlayground);
     app.component('InstallInstructions', InstallInstructions);
   },
