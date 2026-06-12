@@ -611,12 +611,12 @@ div[class*='language-']:hover > .code-block-actions {
 }
 
 /* Source code listing: disable inner scroll and expand background to content width */
-.source-code-listing div[class*='language-'] {
+.source-code-page div[class*='language-'] {
   overflow-x: visible !important;
   width: 100% !important;
   min-width: max-content !important;
 }
 
-.source-code-listing div[class*='language-'] pre {
+.source-code-page div[class*='language-'] pre {
   overflow-x: visible !important;
 }
