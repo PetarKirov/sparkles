@@ -80,6 +80,7 @@ export default withMermaid(
     base: '/',
 
     markdown: {
+      lineNumbers: true,
       languageAlias: {
         sdl: 'd',
         eff: 'ocaml',
