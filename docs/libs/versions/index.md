@@ -74,6 +74,17 @@ the design.
 - [Prerelease in ranges](./explanation/prerelease-in-range.md) — the
   node-semver rule and why we adopted it.
 
+## Source Code
+
+- **Core Module Index**: [`libs/versions/src/sparkles/versions/`](../../../libs/versions/src/sparkles/versions/)
+- **Version Schemes Catalog**: [`libs/versions/src/sparkles/versions/schemes/`](../../../libs/versions/src/sparkles/versions/schemes/)
+- **Core Implementation Files**:
+  - Version Ranges: [`ranges.d`](../../../libs/versions/src/sparkles/versions/ranges.d)
+  - Package URL (pURL): [`purl.d`](../../../libs/versions/src/sparkles/versions/purl.d)
+  - Version-Range URI (VERS): [`vers.d`](../../../libs/versions/src/sparkles/versions/vers.d)
+  - Operations & Sorting: [`operations.d`](../../../libs/versions/src/sparkles/versions/operations.d)
+  - Traits & Concepts: [`traits.d`](../../../libs/versions/src/sparkles/versions/traits.d)
+
 ## See also
 
 - [SPEC](../../specs/versions/SPEC.md) — the normative specification.
