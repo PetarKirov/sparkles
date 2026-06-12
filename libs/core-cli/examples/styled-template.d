@@ -7,7 +7,7 @@
 
 module styled_template_example;
 
-import sparkles.core_cli.styled_template;
+import sparkles.base.styled_template;
 import sparkles.core_cli.ui.box : drawBox;
 import sparkles.core_cli.ui.demo : Section, runDemo;
 

@@ -6,7 +6,7 @@ dependency "sparkles:core-cli" path="../../.."
 targetPath "build"
 +/
 
-import sparkles.core_cli.term_style;
+import sparkles.base.term_style;
 import std;
 
 alias stb = stylizedTextBuilder;

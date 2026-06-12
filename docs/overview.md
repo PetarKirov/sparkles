@@ -57,7 +57,7 @@ Available styles include:
     dependency "sparkles:core-cli" version="*"
 +/
 import std.stdio : writeln;
-import sparkles.core_cli.term_style : Style, stylize;
+import sparkles.base.term_style : Style, stylize;
 
 void main()
 {
@@ -78,7 +78,7 @@ For CTFE-compatible styling, use `stylizedTextBuilder`:
     dependency "sparkles:core-cli" version="*"
 +/
 import std.stdio : writeln;
-import sparkles.core_cli.term_style : stylizedTextBuilder;
+import sparkles.base.term_style : stylizedTextBuilder;
 
 void main()
 {
@@ -98,7 +98,7 @@ The `styled_template` module provides a template syntax for applying terminal st
     name "styledtemplatedemo"
     dependency "sparkles:core-cli" version="*"
 +/
-import sparkles.core_cli.styled_template;
+import sparkles.base.styled_template;
 
 void main()
 {
@@ -142,7 +142,7 @@ void main()
     name "styledexamples"
     dependency "sparkles:core-cli" version="*"
 +/
-import sparkles.core_cli.styled_template;
+import sparkles.base.styled_template;
 
 void main()
 {
@@ -239,7 +239,7 @@ Render data as ASCII tables with Unicode box-drawing characters.
 +/
 import std.stdio : writeln;
 import sparkles.core_cli.ui.table : drawTable;
-import sparkles.core_cli.term_style : Style, stylize;
+import sparkles.base.term_style : Style, stylize;
 
 void main()
 {
@@ -367,7 +367,7 @@ Make text clickable in terminal emulators that support [OSC 8](https://gist.gith
 +/
 import std.stdio : writeln;
 import sparkles.core_cli.ui.osc_link : oscLink;
-import sparkles.core_cli.term_style : Style;
+import sparkles.base.term_style : Style;
 
 void main()
 {
@@ -406,7 +406,7 @@ The `logger` module provides `DeltaTimeLogger`, a `std.logger.Logger` subclass t
     dependency "sparkles:core-cli" version="*"
 +/
 import std.logger : log, logf, LogLevel;
-import sparkles.core_cli.logger : initLogger;
+import sparkles.base.logger : initLogger;
 
 void main()
 {
@@ -457,7 +457,7 @@ A `@nogc` container with Small Buffer Optimization (SBO). Stores small data inli
     dependency "sparkles:core-cli" version="*"
 +/
 import std.stdio : writeln;
-import sparkles.core_cli.smallbuffer : SmallBuffer;
+import sparkles.base.smallbuffer : SmallBuffer;
 
 void main()
 {

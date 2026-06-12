@@ -7,7 +7,7 @@
 
 import sparkles.core_cli.ui.demo : Section, runDemo;
 import sparkles.core_cli.ui.table : drawTable;
-import sparkles.core_cli.styled_template : styledText;
+import sparkles.base.styled_template : styledText;
 
 void main()
 {

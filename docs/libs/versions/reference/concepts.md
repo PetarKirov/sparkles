@@ -126,7 +126,7 @@ cross-scheme order is impossible, see
 ## Parsing
 
 Parsing is non-throwing and `Expected`-based. The error vocabulary is
-generic and lives in `sparkles.core_cli.text.errors`; `ParseMode` is a
+generic and lives in `sparkles.base.text.errors`; `ParseMode` is a
 versions enum in `sparkles.versions.parsing`.
 
 ```d

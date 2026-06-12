@@ -11,4 +11,5 @@ mainSourceFile "src/app.d"
 
 dflags "-preview=in" "-preview=dip1000"
 
+dependency "sparkles:base" path="../.."
 dependency "sparkles:core-cli" path="../.."

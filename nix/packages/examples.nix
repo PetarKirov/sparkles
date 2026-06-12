@@ -59,6 +59,7 @@
               (fs.fileFilter isDubManifest root)
               # Library sources the example links against via
               # `dependency "sparkles:<lib>" path="../../.."`.
+              (fs.fileFilter (file: file.hasExt "d") (fromRoot "libs/base/src"))
               (fs.fileFilter (file: file.hasExt "d") (fromRoot info.librarySrcRel))
               # The full `examples/` subtree — this brings in the shared
               # `views/` string-import assets alongside the script itself.

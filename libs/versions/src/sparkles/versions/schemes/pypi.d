@@ -151,7 +151,7 @@ struct PypiVersion
     /// `[N!]release[{a,b,rc}N][.postN][.devN][+local]`.
     void toString(W)(ref W w) const
     {
-        import sparkles.core_cli.text.writers : writeInteger;
+        import sparkles.base.text.writers : writeInteger;
         import std.range.primitives : put;
 
         if (epoch != 0)
@@ -803,7 +803,7 @@ unittest
 @safe pure
 unittest
 {
-    import sparkles.core_cli.smallbuffer : checkToString;
+    import sparkles.base.smallbuffer : checkToString;
 
     auto a = PypiVersion.parseLoose("v1.0");
     assert(a.hasValue);
