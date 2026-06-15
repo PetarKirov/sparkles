@@ -30,6 +30,10 @@
             # CI helper (markdown examples, standalone examples, link maintenance)
             config.packages.ci
 
+            # libcurl — linked by the gen_unicode_tables generator tool
+            # (libs/base/tools), which fetches UCD files via std.net.curl.
+            pkgs.curl
+
             # ghostty
             pkgs.pkg-config
             inputs'.ghostty.packages.libghostty-vt
