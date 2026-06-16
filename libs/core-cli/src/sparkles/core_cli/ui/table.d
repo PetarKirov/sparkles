@@ -7,7 +7,7 @@ import std.range : walkLength, repeat, iota;
 import std.format : format;
 
 import sparkles.core_cli.ui.box : BoxProps;
-import sparkles.core_cli.term_unstyle : unstyledLength;
+import sparkles.base.text.grapheme : visibleWidth;
 
 bool hasRectangularShape(T)(const T[][] array)
 {
@@ -37,7 +37,7 @@ in (hasRectangularShape(cells))
 {
     return cells[0].length
         .iota
-        .map!(col => cells.map!(row => unstyledLength(row[col])).maxElement())
+        .map!(col => cells.map!(row => visibleWidth(row[col])).maxElement())
         .array;
 }
 
@@ -87,7 +87,7 @@ in (hasRectangularShape(cells))
         foreach (i, cell; row)
         {
             // Pad manually based on unstyled length to handle ANSI escape codes
-            const padding = maxColWidths[i] - unstyledLength(cell);
+            const padding = maxColWidths[i] - visibleWidth(cell);
             result ~= " " ~ cell ~ ' '.repeat(padding).to!string ~ " ";
             if (i < numCols - 1)
                 result ~= props.verticalLine;
