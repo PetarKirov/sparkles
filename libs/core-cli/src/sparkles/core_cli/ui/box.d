@@ -64,7 +64,8 @@ struct BoxProps
 
 string drawBox(string[] content, string title, BoxProps props = BoxProps.init)
 {
-    import std.array : appender;
+    import std.array : appender, array;
+    import sparkles.base.text.wrap : byWrappedLine, WhitespaceMode, WrapOptions;
 
     const prefix = props.omitLeftBorder ? ""d : props.verticalLine ~ " "d;
     const prefixLen = prefix.length;
@@ -76,44 +77,55 @@ string drawBox(string[] content, string title, BoxProps props = BoxProps.init)
     const contentMax = props.maxWidth > frameOverhead ? props.maxWidth - frameOverhead : 0;
     const contentMin = props.minWidth > frameOverhead ? props.minWidth - frameOverhead : 0;
 
-    // Optionally re-flow each content line to the maxWidth-derived content area,
-    // keeping styles/links across rows and resetting before the border.
-    string[] lines = contentMax > 0 ? wrapContent(content, contentMax) : content;
+    // Re-flow each content line to the maxWidth-derived content area via the lazy
+    // `byWrappedLine`, resetting a styled row before the border so an open style
+    // cannot bleed onto the padding or frame.
+    string[] lines = content;
+    if (contentMax > 0)
+    {
+        auto rows = appender!(string[]);
+        foreach (cline; content)
+            foreach (w; cline.byWrappedLine(
+                    WrapOptions(width: contentMax, whitespace: WhitespaceMode.collapse)))
+                rows ~= w.canFind('\x1b') ? w ~ "\x1b[0m" : w.idup;
+        lines = rows[];
+    }
 
     const footerWidth = props.footer !is null ? props.footer.visibleWidth : 0;
     const minFooterWidth = footerWidth > 0 ? footerWidth + 9 : 10;  // ╰──╼ {footer} ╾──╯ or ╰──────────╯
 
     // Lay out the title. By default it is one line and the box grows to fit it; with
-    // a `maxWidth` cap, `ellipsis`/`wrap` keep the box within the cap (a single-line
-    // title-bound box is `titleWidth + 11` wide; a nested title box, `+ 8`).
+    // a `maxWidth` cap, `ellipsis`/`wrap` keep the box within it. A single-line
+    // title-bound box is `titleWidth + 11` wide, so `cap` is the widest a title line
+    // may be and still leave the box within `maxWidth` on one row.
     const capped = props.maxWidth > 0;
-    const singleCap = props.maxWidth >= 12 ? props.maxWidth - 11 : 1;
-    const nestedCap = props.maxWidth >= 9 ? props.maxWidth - 8 : 1;
+    const cap = props.maxWidth >= 12 ? props.maxWidth - 11 : 1;
     const titleWidth = title.visibleWidth;
 
     string[] titleLines = [title];
     bool nested = false;
-    final switch (props.titleOverflow)
+    if (capped && props.titleOverflow != TitleOverflow.expand && titleWidth > cap)
     {
-        case TitleOverflow.expand:
-            break;
-        case TitleOverflow.ellipsis:
-            if (capped && titleWidth > singleCap)
-                titleLines = [ellipsizeTitle(title, singleCap)];
-            break;
-        case TitleOverflow.wrap:
-            if (capped && titleWidth > singleCap)
+        // No left frame to grow the ┤/├ handles from -> fall back to ellipsis.
+        if (props.titleOverflow == TitleOverflow.ellipsis || prefixLen == 0)
+            titleLines = [ellipsizeTitle(title, cap)];
+        else
+        {
+            // wrap: stream the title, buffer the first line, and nest only if the
+            // wrapped range yields any further lines (else it fit a single row).
+            auto tl = title.byWrappedLine(
+                WrapOptions(width: cap, whitespace: WhitespaceMode.collapse));
+            const first = tl.front;
+            auto rest = tl.save;
+            rest.popFront;
+            if (rest.empty)
+                titleLines = [first.idup];
+            else
             {
-                // No left frame to grow the ┤/├ handles from -> fall back to ellipsis.
-                if (prefixLen == 0)
-                    titleLines = [ellipsizeTitle(title, singleCap)];
-                else
-                {
-                    titleLines = wrapTitle(title, nestedCap);
-                    nested = true;
-                }
+                titleLines = tl.array;
+                nested = true;
             }
-            break;
+        }
     }
 
     // Floor the width to fit the rendered title and footer (in content-area units).
@@ -164,40 +176,14 @@ string drawBox(string content, string title, BoxProps props = BoxProps.init)
     return drawBox(content.lineSplitter.array, title, props);
 }
 
-/// Wrap each content line to `width` visible columns, returning the resulting
-/// box rows. A row that contains any escape is reset (`\x1b[0m`) so an open style
-/// cannot bleed onto the box's padding or border.
-private string[] wrapContent(string[] content, size_t width)
+/// The rendered box as a lazy range of its lines (range-out), so callers can stream
+/// it to a writer without holding the whole string. `drawBox` is this joined with
+/// newlines.
+auto drawBoxLines(string[] content, string title, BoxProps props = BoxProps.init)
 {
-    import std.array : appender;
     import std.string : lineSplitter;
 
-    import sparkles.base.text.wrap : wrapText, WrapOptions, WhitespaceMode;
-
-    auto rows = appender!(string[]);
-    foreach (line; content)
-        foreach (row; line.wrapText(
-                WrapOptions(width: width, whitespace: WhitespaceMode.collapse)).lineSplitter)
-            rows ~= row.canFind('\x1b') ? row ~ "\x1b[0m" : row.idup;
-    return rows[];
-}
-
-/// Column-, style- and link-aware wrap of a title to `width` cells, one string per
-/// line. Shares `wrapContent`'s `wrapText` primitive so titles and content break
-/// identically (and like the divider/banner header titles).
-private string[] wrapTitle(string title, size_t width)
-{
-    import std.array : array;
-    import std.conv : to;
-    import std.string : lineSplitter;
-
-    import sparkles.base.text.wrap : wrapText, WrapOptions, WhitespaceMode;
-
-    return title
-        .wrapText(WrapOptions(width: width, whitespace: WhitespaceMode.collapse))
-        .lineSplitter
-        .map!(to!string)
-        .array;
+    return drawBox(content, title, props).lineSplitter;
 }
 
 /// Truncate `title` to `width` visible columns (the trailing `…` included), keeping
@@ -659,4 +645,27 @@ unittest
     const styled = "cyan cyan cyan cyan cyan cyan cyan cyan".stylize(Style.cyan);
     const box = drawBox(["body"], styled, BoxProps(maxWidth: 30, titleOverflow: TitleOverflow.wrap));
     assert(box.canFind("\x1b[0m"));
+}
+
+@("drawBox.lines.joinEqualsString")
+@system unittest
+{
+    import std.algorithm.comparison : equal;
+    import std.array : join;
+    import std.string : splitLines;
+    import std.typecons : tuple;
+
+    // drawBoxLines is the lazy range view of drawBox: joined with newlines it
+    // reproduces the string, across single-line, footer, and nested-title layouts.
+    static foreach (args; [
+        tuple(["Hello"], "T", BoxProps.init),
+        tuple(["Content"], "Title", BoxProps(footer: "Done")),
+        tuple(["Body content line one"], "This is a very long multi-line title here.",
+            BoxProps(maxWidth: 36, titleOverflow: TitleOverflow.wrap)),
+    ])
+    {{
+        const str = drawBox(args[0], args[1], args[2]);
+        assert(drawBoxLines(args[0], args[1], args[2]).equal(str.splitLines));
+        assert(drawBoxLines(args[0], args[1], args[2]).join("\n") == str);
+    }}
 }
