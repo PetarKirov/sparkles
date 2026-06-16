@@ -91,7 +91,7 @@ import sparkles.core_cli.process_utils :
     executeMonitored, MonitoredResult, ResourceUsage, selfRssBytes;
 import sparkles.base.styled_template : styledText, styledWritelnErr;
 import sparkles.core_cli.term_unstyle : unstyle;
-import sparkles.core_cli.ui.box : BoxProps, drawBox;
+import sparkles.core_cli.ui.box : BoxProps, drawBox, TitleOverflow;
 import sparkles.core_cli.ui.header : drawHeader, HeaderProps, HeaderStyle;
 
 // in-app modules
@@ -123,11 +123,13 @@ private int terminalWidth()
 }
 
 /// `BoxProps` for an example result box: a fixed `uiWidth` frame (long output
-/// wraps in, short output pads out) so every box lines up under its banner.
+/// wraps in, short output pads out) so every box lines up under its banner. A
+/// long title wraps into a nested title box rather than overflowing the frame,
+/// matching the banner header above it.
 private BoxProps resultBox(string footer)
 {
     const w = uiWidth();
-    return BoxProps(footer: footer, minWidth: w, maxWidth: w);
+    return BoxProps(footer: footer, minWidth: w, maxWidth: w, titleOverflow: TitleOverflow.wrap);
 }
 
 // === Types ===
