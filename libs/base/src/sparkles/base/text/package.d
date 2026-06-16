@@ -22,3 +22,4 @@ public import sparkles.base.text.errors;
 public import sparkles.base.text.ansi;
 public import sparkles.base.text.width;
 public import sparkles.base.text.grapheme;
+public import sparkles.base.text.wrap;
