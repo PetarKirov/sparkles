@@ -10,14 +10,18 @@
  */
 module sparkles.base.smallbuffer;
 
-import core.memory : pureMalloc, pureFree;
-import core.stdc.string : memcpy;
+import std.experimental.allocator : makeArray, expandArray, dispose;
+import std.experimental.allocator.building_blocks.affix_allocator : AffixAllocator;
+import std.experimental.allocator.mallocator : Mallocator;
 
 /**
  * A @nogc container with Small Buffer Optimization and copy-on-write.
  *
  * Elements are stored inline up to `smallBufferSize`, then automatically
- * allocated on the heap via `pureMalloc` when capacity is exceeded.
+ * allocated on the heap (via `AffixAllocator!(Mallocator, ControlBlock)`, which
+ * keeps the reference count in an allocation prefix; the element capacity is the
+ * heap slice length) when capacity is exceeded. Heap blocks are managed with the
+ * `std.experimental.allocator` `makeArray`/`expandArray`/`dispose` helpers.
  *
  * The buffer is copyable. Copying an inline buffer duplicates its elements
  * (independent copies). Copying a heap buffer shares the allocation and bumps a
@@ -36,27 +40,14 @@ import core.stdc.string : memcpy;
  *
  * Params:
  *   T = Element type
- *   smallBufferSize = Number of elements for inline storage (default: 16)
+ *   smallBufferSize = Number of elements for inline storage (default: the
+ *                     native slice size in bytes)
  */
-struct SmallBuffer(T, size_t smallBufferSize = 16)
+struct SmallBuffer(T, size_t smallBufferSize = (ubyte[]).sizeof)
 {
+pure nothrow @nogc:
+
     static assert(smallBufferSize > 0, "smallBufferSize must be greater than 0");
-
-    /**
-     * Heap allocation header: a reference count and the element capacity,
-     * immediately followed by the element data (aligned to `T.alignof`).
-     * Present only while the buffer is `onHeap`; copies of a heap buffer share
-     * one `ControlBlock` and clone it copy-on-write on the first mutation.
-     */
-    private static struct ControlBlock
-    {
-        size_t refCount;
-        size_t capacity;
-    }
-
-    // Byte offset of the element data after the control-block header.
-    private enum size_t dataOffset =
-        (ControlBlock.sizeof + T.alignof - 1) / T.alignof * T.alignof;
 
     private
     {
@@ -65,11 +56,41 @@ struct SmallBuffer(T, size_t smallBufferSize = 16)
         union
         {
             T[smallBufferSize] _inline = void;   // live iff !onHeap
-            ControlBlock* _heap;                  // live iff onHeap
+            T[] _block;                           // capacity slots (ControlBlock prefix precedes them)
         }
+
+        // Allocator blocks carry a `ControlBlock` prefix ahead of the element data.
+        struct ControlBlock { size_t refCount; }
+        alias Allocator = AffixAllocator!(Mallocator, ControlBlock);
+
+        // The shared control block (logically-mutable metadata; valid iff onHeap).
+        ref ControlBlock ctrl() const => Allocator.instance.prefix(cast(ubyte[]) _block);
     }
 
-pure nothrow @nogc:
+    @property const
+    {
+    @safe:
+        /// Returns the number of elements in the buffer.
+        size_t length() => _length;
+
+        /// Supports `$` operator in slices.
+        alias opDollar = length;
+
+        /// Returns true if the buffer contains no elements.
+        bool empty() => _length == 0;
+
+        /// Returns true if the buffer is using heap-allocated storage.
+        bool onHeap() => _length > smallBufferSize;
+
+    @trusted:
+        /// Returns the total capacity of the buffer.
+        size_t capacity() =>
+            onHeap ? _block.length : smallBufferSize;
+
+        /// Test-facing: shared reference count (0 while inline).
+        private size_t refCount() =>
+            onHeap ? ctrl().refCount : 0;
+    }
 
     // ─────────────────────────────────────────────────────────────────────────
     // copy / assign / destroy
@@ -84,31 +105,27 @@ pure nothrow @nogc:
      */
     this(ref inout SmallBuffer rhs) inout @trusted
     {
-        // `this` is under construction; write through a mutable view of it.
-        auto self = cast(SmallBuffer*) &this;
-        self._length = rhs._length;
-        if (rhs._length > smallBufferSize)
+        this._length = rhs._length;
+        if (rhs.onHeap)
         {
-            self._heap = cast(ControlBlock*) rhs._heap;
-            ++self._heap.refCount;
+            this._block = rhs._block;
+            ++this.ctrl().refCount;
         }
         else
-            memcpy(self._inline.ptr, cast(const void*) rhs._inline.ptr,
-                rhs._length * T.sizeof);
+            this._inline[0 .. rhs._length] = rhs._inline[0 .. rhs._length];
     }
 
     /// Build a mutable working copy from a `const` (e.g. frozen) buffer.
     this(ref const SmallBuffer rhs) @trusted
     {
         _length = rhs._length;
-        if (rhs._length > smallBufferSize)
+        if (rhs.onHeap)
         {
-            _heap = cast(ControlBlock*) rhs._heap;
-            ++_heap.refCount;
+            _block = cast(T[]) rhs._block;
+            ++ctrl().refCount;
         }
         else
-            memcpy(_inline.ptr, cast(const void*) rhs._inline.ptr,
-                rhs._length * T.sizeof);
+            _inline[0 .. rhs._length] = cast(T[]) rhs._inline[0 .. rhs._length];
     }
 
     /// Copy assignment: release current storage, then share/copy from `rhs`.
@@ -116,60 +133,23 @@ pure nothrow @nogc:
     {
         if (&this is &rhs)
             return this;
-        if (rhs._length > smallBufferSize)
-        {
-            auto cb = rhs._heap;
-            ++cb.refCount;          // acquire rhs before releasing self
-            releaseHeap();
-            _heap = cb;
-            _length = rhs._length;
-        }
+
+        if (rhs.onHeap)
+            ++rhs.ctrl().refCount; // acquire rhs before releasing self
+
+        releaseHeap();
+        _length = rhs._length;
+
+        if (rhs.onHeap)
+            _block = rhs._block;
         else
-        {
-            releaseHeap();
-            _length = rhs._length;
-            memcpy(_inline.ptr, rhs._inline.ptr, rhs._length * T.sizeof);
-        }
+            _inline[0 .. rhs._length] = rhs._inline[0 .. rhs._length];
+
         return this;
     }
 
-    /// Destructor: drop this owner's reference; free heap memory at zero.
-    ~this() @trusted
-    {
-        if (_length > smallBufferSize)
-        {
-            auto cb = cast(ControlBlock*) _heap;
-            if (--cb.refCount == 0)
-                pureFree(cb);
-        }
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // properties
-    // ─────────────────────────────────────────────────────────────────────────
-
-    @property @safe
-    {
-        /// Returns the number of elements in the buffer.
-        size_t length() const => _length;
-
-        /// Returns true if the buffer contains no elements.
-        bool empty() const => _length == 0;
-
-        /// Returns true if the buffer is using heap-allocated storage.
-        bool onHeap() const => _length > smallBufferSize;
-    }
-
-    /// Returns the total capacity of the buffer.
-    @property size_t capacity() const @trusted =>
-        _length > smallBufferSize ? _heap.capacity : smallBufferSize;
-
-    /// Test-facing: shared reference count (0 while inline).
-    private @property size_t refCount() const @trusted =>
-        _length > smallBufferSize ? _heap.refCount : 0;
-
-    /// Supports `$` operator in slices.
-    alias opDollar = length;
+    /// Destructor: drop this owner's reference; dispose heap memory at zero.
+    ~this() @safe { clear(); }
 
     // ─────────────────────────────────────────────────────────────────────────
     // element access — const path shares; mutable path clones if shared
@@ -177,75 +157,80 @@ pure nothrow @nogc:
 
     // Current element slice; element constness follows `this`.
     private inout(T)[] view() inout @trusted
+        => onHeap ? _block[0 .. _length] : _inline[0 .. _length];
+
+    @safe
     {
-        return _length > smallBufferSize
-            ? (cast(inout(T)*)(cast(void*) _heap + dataOffset))[0 .. _length]
-            : _inline.ptr[0 .. _length];
+        /// Returns a read-only slice of all elements (shares storage).
+        const(T)[] opSlice() const => view();
+
+        /// Returns a mutable slice of all elements (clones if shared).
+        T[] opSlice()
+        {
+            ensureUnique();
+            return view();
+        }
+
+        /// Returns a read-only sub-slice from `start` to `end`.
+        const(T)[] opSlice(size_t start, size_t end) const
+        in (start <= end, "Invalid slice bounds: start > end")
+        in (end <= _length, "Slice end out of bounds")
+            => this[][start .. end];
+
+        /// Returns a mutable sub-slice from `start` to `end` (clones if shared).
+        T[] opSlice(size_t start, size_t end)
+        in (start <= end, "Invalid slice bounds: start > end")
+        in (end <= _length, "Slice end out of bounds")
+            => this[][start .. end];
+
+        /// Returns a read-only reference to the element at the given index.
+        ref const(T) opIndex(size_t index) const
+        in (index < _length, "Index out of bounds") => this[][index];
+
+        /// Returns a mutable reference to the element at the given index.
+        ref T opIndex(size_t index)
+        in (index < _length, "Index out of bounds") => this[][index];
+
+        /// Returns a read-only reference to the first element.
+        ref const(T) front() const => this[0];
+
+        /// Returns a mutable reference to the first element.
+        ref T front() => this[0];
+
+        /// Returns a read-only reference to the last element.
+        ref const(T) back() const => this[$ - 1];
+
+        /// Returns a mutable reference to the last element.
+        ref T back() => this[$ - 1];
     }
-
-    /// Returns a read-only slice of all elements (shares storage).
-    const(T)[] opSlice() const @safe => view();
-    /// Returns a mutable slice of all elements (clones if shared).
-    T[] opSlice() @safe { ensureUnique(); return view(); }
-
-    /// Returns a read-only sub-slice from `start` to `end`.
-    const(T)[] opSlice(size_t start, size_t end) const @safe
-    in (start <= end, "Invalid slice bounds: start > end")
-    in (end <= _length, "Slice end out of bounds")
-        => view()[start .. end];
-    /// Returns a mutable sub-slice from `start` to `end` (clones if shared).
-    T[] opSlice(size_t start, size_t end) @safe
-    in (start <= end, "Invalid slice bounds: start > end")
-    in (end <= _length, "Slice end out of bounds")
-    { ensureUnique(); return view()[start .. end]; }
-
-    /// Returns a read-only slice of the underlying data.
-    const(T)[] data() const @safe => view();
-    /// Returns a mutable slice of the underlying data (clones if shared).
-    T[] data() @safe { ensureUnique(); return view(); }
-
-    /// Returns a read-only reference to the element at the given index.
-    ref const(T) opIndex(size_t index) const @safe
-    in (index < _length, "Index out of bounds")
-    { return view()[index]; }
-    /// Returns a mutable reference to the element at the given index.
-    ref T opIndex(size_t index) @safe
-    in (index < _length, "Index out of bounds")
-    { ensureUnique(); return view()[index]; }
-
-    /// Returns a read-only reference to the first element.
-    ref const(T) front() const @safe
-    in (_length > 0, "Cannot access front of empty buffer")
-    { return view()[0]; }
-    /// Returns a mutable reference to the first element.
-    ref T front() @safe
-    in (_length > 0, "Cannot access front of empty buffer")
-    { ensureUnique(); return view()[0]; }
-
-    /// Returns a read-only reference to the last element.
-    ref const(T) back() const @safe
-    in (_length > 0, "Cannot access back of empty buffer")
-    { return view()[_length - 1]; }
-    /// Returns a mutable reference to the last element.
-    ref T back() @safe
-    in (_length > 0, "Cannot access back of empty buffer")
-    { ensureUnique(); return view()[_length - 1]; }
 
     // ─────────────────────────────────────────────────────────────────────────
     // mutation
     // ─────────────────────────────────────────────────────────────────────────
 
     /// Output range interface: appends a single element.
-    void put()(auto ref T element) { appendOne(element); }
+    void put(in T element)
+    {
+        appendOne(element);
+    }
 
     /// Output range interface: appends elements from a slice.
-    void put()(scope const(T)[] elements) { appendSlice(elements); }
+    void put(in T[] elements)
+    {
+        appendSlice(elements);
+    }
 
     /// Appends a single element using `~=` operator.
-    void opOpAssign(string op : "~")(auto ref T element) { appendOne(element); }
+    void opOpAssign(string op : "~")(in T element)
+    {
+        appendOne(element);
+    }
 
     /// Appends elements from a slice using `~=` operator.
-    void opOpAssign(string op : "~")(scope const(T)[] elements) { appendSlice(elements); }
+    void opOpAssign(string op : "~")(in T[] elements)
+    {
+        appendSlice(elements);
+    }
 
     /// Removes the last element.
     void popBack() @trusted
@@ -255,12 +240,11 @@ pure nothrow @nogc:
         {
             // Crossing N+1 -> N: data must move back inline to keep the
             // invariant `length <= N  <=>  inline`. Copy survivors out first.
-            auto cb = _heap;
+            T[] b = _block;
             T[smallBufferSize] tmp = void;
-            memcpy(tmp.ptr, blockData(cb), smallBufferSize * T.sizeof);
-            if (--cb.refCount == 0)
-                pureFree(cb);
-            memcpy(_inline.ptr, tmp.ptr, smallBufferSize * T.sizeof);
+            tmp[] = b[0 .. smallBufferSize];
+            releaseHeap();
+            _inline[0 .. smallBufferSize] = tmp[];
             _length = smallBufferSize;
             return;
         }
@@ -286,8 +270,8 @@ pure nothrow @nogc:
         if (_length <= smallBufferSize)
             return;
         ensureUnique();
-        if (newCapacity > _heap.capacity)
-            growHeap(newCapacity);
+        if (newCapacity > _block.length)
+            growBlock(newCapacity);
     }
 
     /**
@@ -306,25 +290,23 @@ pure nothrow @nogc:
         ensureUnique();
         if (_length < smallBufferSize)
         {
-            _inline.ptr[_length] = element;
-            ++_length;
+            _inline[_length++] = element;
             return;
         }
         if (_length == smallBufferSize)
         {
             // inline -> heap: copy inline elements out before overwriting the
-            // union with the heap pointer (they alias).
-            auto cb = allocBlock(grownCapacity(smallBufferSize, smallBufferSize + 1));
-            T* dst = blockData(cb);
-            memcpy(dst, _inline.ptr, smallBufferSize * T.sizeof);
-            dst[smallBufferSize] = element;
-            _heap = cb;
+            // union with the heap slice (they alias).
+            T[] nb = newBlock(grownCapacity(smallBufferSize, smallBufferSize + 1));
+            nb[0 .. smallBufferSize] = _inline[0 .. smallBufferSize];
+            nb[smallBufferSize] = element;
+            _block = nb;
             _length = smallBufferSize + 1;
             return;
         }
-        if (_length == _heap.capacity)
-            growHeap(_length + 1);
-        blockData(_heap)[_length] = element;
+        if (_length == _block.length)
+            growBlock(_length + 1);
+        _block[_length] = element;
         ++_length;
     }
 
@@ -336,75 +318,63 @@ pure nothrow @nogc:
         const newLen = _length + xs.length;
         if (newLen <= smallBufferSize)
         {
-            foreach (i; 0 .. xs.length)
-                _inline.ptr[_length + i] = xs[i];
+            _inline[_length .. newLen] = xs[];
             _length = newLen;
             return;
         }
         if (_length <= smallBufferSize)
         {
             // inline -> heap transition
-            auto cb = allocBlock(grownCapacity(smallBufferSize, newLen));
-            T* dst = blockData(cb);
-            memcpy(dst, _inline.ptr, _length * T.sizeof);
-            foreach (i; 0 .. xs.length)
-                dst[_length + i] = xs[i];
-            _heap = cb;
+            T[] nb = newBlock(grownCapacity(smallBufferSize, newLen));
+            nb[0 .. _length] = _inline[0 .. _length];
+            nb[_length .. newLen] = xs[];
+            _block = nb;
             _length = newLen;
             return;
         }
-        if (newLen > _heap.capacity)
-            growHeap(newLen);
-        T* dst = blockData(_heap);
-        foreach (i; 0 .. xs.length)
-            dst[_length + i] = xs[i];
+        if (newLen > _block.length)
+            growBlock(newLen);
+        _block[_length .. newLen] = xs[];
         _length = newLen;
     }
 
     // Clone the shared heap block so this instance solely owns it (CoW trigger).
     private void ensureUnique() @trusted
     {
-        if (_length <= smallBufferSize || _heap.refCount <= 1)
+        if (_length <= smallBufferSize || ctrl().refCount <= 1)
             return;
-        auto cb = allocBlock(_heap.capacity);
-        memcpy(blockData(cb), blockData(_heap), _length * T.sizeof);
-        --_heap.refCount;
-        _heap = cb;
+        T[] nb = newBlock(_block.length); // same capacity
+        nb[0 .. _length] = _block[0 .. _length];
+        --ctrl().refCount;
+        _block = nb;
     }
 
     // Grow the uniquely-owned heap block to hold at least `needed` elements.
-    private void growHeap(size_t needed) @trusted
-    in (_length > smallBufferSize)
+    private void growBlock(size_t needed) @trusted
+    in (onHeap)
     {
-        auto cb = allocBlock(grownCapacity(_heap.capacity, needed));
-        memcpy(blockData(cb), blockData(_heap), _length * T.sizeof);
-        pureFree(_heap);
-        _heap = cb;
+        const ok = expandArray(Allocator.instance, _block,
+            grownCapacity(_block.length, needed) - _block.length);
+        if (!ok)
+            assert(false, "SmallBuffer: reallocation failed");
     }
 
-    // Drop this owner's heap reference (freeing at zero); leaves `_heap` stale.
+    // Drop this owner's heap reference. If refCount is 0, destroy and free the
+    // block. Leaves `_block` stale.
     private void releaseHeap() @trusted
     {
-        if (_length > smallBufferSize)
-        {
-            if (--_heap.refCount == 0)
-                pureFree(_heap);
-        }
+        if (onHeap && --ctrl().refCount == 0)
+            dispose(Allocator.instance, _block);
     }
 
-    private static ControlBlock* allocBlock(size_t capacity) @trusted
+    // Allocate a heap block for `capacity` elements (refCount 1).
+    private static T[] newBlock(size_t capacity) @trusted
     {
-        void* p = pureMalloc(dataOffset + capacity * T.sizeof);
-        if (p is null)
-            assert(false, "SmallBuffer: allocation failed");
-        auto cb = cast(ControlBlock*) p;
-        cb.refCount = 1;
-        cb.capacity = capacity;
-        return cb;
+        T[] b = makeArray!T(Allocator.instance, capacity);
+        assert(b !is null, "SmallBuffer: allocation failed");
+        Allocator.instance.prefix(b).refCount = 1;
+        return b;
     }
-
-    private static T* blockData(ControlBlock* cb) @trusted =>
-        cast(T*)(cast(void*) cb + dataOffset);
 
     private static size_t grownCapacity(size_t currentCap, size_t needed) @safe
     {
@@ -501,11 +471,24 @@ private void assertRendered(size_t errorBufferSize)(
 @safe pure nothrow @nogc
 unittest
 {
-    SmallBuffer!(int, 4) buf;
-    assert(buf.length == 0);
-    assert(buf.empty);
-    assert(buf.capacity == 4);
-    assert(!buf.onHeap);
+    // By default, the inline element count matches the native slice size in
+    // bytes, e.g. 16 elements on x86_64.
+    {
+        static assert(SmallBuffer!char.sizeof == 3 * size_t.sizeof);
+        SmallBuffer!int buf;
+        assert(buf.length == 0);
+        assert(buf.empty);
+        assert(buf.capacity == (ubyte[]).sizeof);
+        assert(!buf.onHeap);
+    }
+
+    {
+        SmallBuffer!(int, 4) buf;
+        assert(buf.length == 0);
+        assert(buf.empty);
+        assert(buf.capacity == 4);
+        assert(!buf.onHeap);
+    }
 }
 
 @("checkToString.outputRangeToString")
@@ -561,114 +544,85 @@ unittest
     checkWriter!((ref b) => b.put("hi"))("hi");
 }
 
-@("SmallBuffer.put.singleElement")
+@("SmallBuffer.put.append")
 @safe pure nothrow @nogc
 unittest
 {
     SmallBuffer!(int, 4) buf;
+
+    // Single element put
     buf.put(42);
     assert(buf.length == 1);
     assert(buf[0] == 42);
     assert(!buf.onHeap);
-}
 
-@("SmallBuffer.put.multipleElements")
-@safe pure nothrow @nogc
-unittest
-{
-    SmallBuffer!(int, 4) buf;
-    buf.put(1);
-    buf.put(2);
-    buf.put(3);
+    // Multiple element put
+    buf.put([1, 2]);
     assert(buf.length == 3);
-    assert(buf[] == [1, 2, 3]);
-}
-
-@("SmallBuffer.appendOperator")
-@safe pure nothrow @nogc
-unittest
-{
-    SmallBuffer!(int, 4) buf;
-    buf ~= 1;
-    buf ~= 2;
-    assert(buf.length == 2);
-    assert(buf[0] == 1);
-    assert(buf[1] == 2);
-}
-
-@("SmallBuffer.growthToHeap")
-@safe pure nothrow @nogc
-unittest
-{
-    SmallBuffer!(int, 2) buf;
-    buf ~= 1;
-    buf ~= 2;
+    assert(buf[] == [42, 1, 2]);
     assert(!buf.onHeap);
 
-    // This should trigger heap allocation
-    buf ~= 3;
+    // Append operator
+    buf ~= 100;
+    assert(buf.length == 4);
+    assert(buf.capacity == 4);
+    assert(buf[] == [42, 1, 2, 100]);
+    assert(!buf.onHeap);
+
+    // This will trigger heap allocation
+    buf ~= 200;
+    assert(buf.length == 5);
+    assert(buf[] == [42, 1, 2, 100, 200]);
     assert(buf.onHeap);
 
-    buf ~= 4;
-    buf ~= 5;
-    assert(buf.length == 5);
-    assert(buf[] == [1, 2, 3, 4, 5]);
+    buf ~= [300, 400];
+    assert(buf.length == 7);
+    assert(buf[] == [42, 1, 2, 100, 200, 300, 400]);
+    assert(buf.onHeap);
 }
 
-@("SmallBuffer.opSlice.full")
+@("SmallBuffer.indexingAndSlicing")
 @safe pure nothrow @nogc
 unittest
 {
     SmallBuffer!(int, 4) buf;
-    buf ~= 1;
-    buf ~= 2;
-    buf ~= 3;
-    auto slice = buf[];
-    assert(slice.length == 3);
-    assert(slice == [1, 2, 3]);
-}
 
-@("SmallBuffer.opSlice.partial")
-@safe pure nothrow @nogc
-unittest
-{
-    SmallBuffer!(int, 4) buf;
-    buf ~= 1;
-    buf ~= 2;
-    buf ~= 3;
-    buf ~= 4;
+    // Empty slicing
+    assert(buf[].length == 0);
+    assert(buf[0 .. 0].length == 0);
+
+    buf ~= [1, 2, 3, 4];
+
+    // Full & partial slices
+    assert(buf[] == [1, 2, 3, 4]);
     assert(buf[1 .. 3] == [2, 3]);
     assert(buf[0 .. $] == [1, 2, 3, 4]);
     assert(buf[$ - 2 .. $] == [3, 4]);
-}
 
-@("SmallBuffer.opIndex")
-@safe pure nothrow @nogc
-unittest
-{
-    SmallBuffer!(int, 4) buf;
-    buf ~= 10;
-    buf ~= 20;
-    buf ~= 30;
-    assert(buf[0] == 10);
-    assert(buf[1] == 20);
-    assert(buf[2] == 30);
+    // Index access & Dollar
+    assert(buf[0] == 1);
+    assert(buf[1] == 2);
+    assert(buf[2] == 3);
+    assert(buf[$ - 1] == 4);
+    assert(buf.opDollar() == 4);
 
     // Modify through index
-    buf[1] = 25;
-    assert(buf[1] == 25);
-}
+    buf[1] = 20;
+    assert(buf[1] == 20);
 
-@("SmallBuffer.opDollar")
-@safe pure nothrow @nogc
-unittest
-{
-    SmallBuffer!(int, 4) buf;
-    buf ~= 1;
-    buf ~= 2;
-    buf ~= 3;
-    assert(buf[$ - 1] == 3);
-    assert(buf.opDollar() == 3);
+    // Modify through slice
+    buf[][2] = 30;
+    assert(buf[2] == 30);
+    assert(buf[] == [1, 20, 30, 4]);
+
+    // Const access
+    void checkConst(ref const SmallBuffer!(int, 4) cbuf)
+    {
+        assert(cbuf[0] == 1);
+        assert(cbuf.length == 4);
+        assert(cbuf[] == [1, 20, 30, 4]);
+    }
+    checkConst(buf);
 }
 
 @("SmallBuffer.clear")
@@ -676,40 +630,75 @@ unittest
 unittest
 {
     SmallBuffer!(int, 4) buf;
-    buf ~= 1;
-    buf ~= 2;
+
+    // Clear inline
+    buf ~= [1, 2];
+    assert(buf.length == 2);
     buf.clear();
     assert(buf.length == 0);
     assert(buf.empty);
-    // Capacity should be preserved
-    assert(buf.capacity >= 4);
-}
-
-@("SmallBuffer.reserve.inlineNoOp")
-@safe pure nothrow @nogc
-unittest
-{
-    // Storage location is tied to length, so reserve cannot pre-grow heap while
-    // the buffer is still inline: it is a documented no-op there.
-    SmallBuffer!(int, 4) buf;
-    buf.reserve(100);
-    assert(buf.capacity == 4);
     assert(!buf.onHeap);
+    assert(buf.capacity == 4);
+
+    // Reuse after clear inline
+    buf ~= [10, 20];
+    assert(buf.length == 2);
+    assert(buf[] == [10, 20]);
+
+    // Transition to heap
+    buf ~= [30, 40, 50];
+    assert(buf.onHeap);
+
+    // Clear reverts to inline (invariant check)
+    buf.clear();
     assert(buf.length == 0);
+    assert(buf.empty);
+    assert(!buf.onHeap);
+
+    // Reuse after clear heap
+    buf ~= 7;
+    assert(buf[] == [7]);
+    assert(!buf.onHeap);
 }
 
-@("SmallBuffer.reserve.growsOnHeap")
+@("SmallBuffer.reserve")
 @safe pure nothrow @nogc
 unittest
 {
-    SmallBuffer!(int, 4) buf;
-    foreach (i; 0 .. 5)
-        buf ~= cast(int) i;          // now on the heap
-    assert(buf.onHeap);
-    buf.reserve(100);
-    assert(buf.capacity >= 100);
-    assert(buf.length == 5);
-    assert(buf[] == [0, 1, 2, 3, 4]);
+    // Reserve is a no-op when inline (storage location tied to length)
+    {
+        SmallBuffer!(int, 4) buf;
+        buf.reserve(100);
+        assert(buf.capacity == 4);
+        assert(!buf.onHeap);
+        assert(buf.length == 0);
+    }
+    {
+        SmallBuffer!(int, 8) buf;
+        buf.reserve(4); // Less than smallBufferSize
+        assert(buf.capacity == 8);
+        assert(!buf.onHeap);
+    }
+    {
+        SmallBuffer!(int, 4) buf;
+        buf ~= [1, 2];
+        buf.reserve(8);
+        assert(!buf.onHeap);
+        assert(buf.capacity == 4);
+        assert(buf[] == [1, 2]);
+    }
+
+    // Reserve grows when already on heap
+    {
+        SmallBuffer!(int, 4) buf;
+        foreach (i; 0 .. 5)
+            buf ~= cast(int) i;          // heap
+        assert(buf.onHeap);
+        buf.reserve(100);
+        assert(buf.capacity >= 100);
+        assert(buf.length == 5);
+        assert(buf[] == [0, 1, 2, 3, 4]);
+    }
 }
 
 @("SmallBuffer.frontBack")
@@ -729,12 +718,28 @@ unittest
 unittest
 {
     SmallBuffer!(int, 4) buf;
-    buf ~= 1;
-    buf ~= 2;
-    buf ~= 3;
+    buf ~= [1, 2, 3];
+
+    // Single popBack
     buf.popBack();
     assert(buf.length == 2);
     assert(buf.back == 2);
+
+    // Multiple popBack
+    buf.popBack();
+    assert(buf.length == 1);
+    assert(buf[0] == 1);
+
+    // Revert to inline from heap
+    buf.clear();
+    foreach (i; 0 .. 5)
+        buf ~= cast(int) i; // length 5 > 4 -> heap
+    assert(buf.onHeap);
+
+    buf.popBack(); // 5 -> 4: must revert to inline
+    assert(!buf.onHeap);
+    assert(buf.length == 4);
+    assert(buf[] == [0, 1, 2, 3]);
 }
 
 @("SmallBuffer.withStructType")
@@ -769,15 +774,7 @@ unittest
     assert(buf.capacity >= 8); // Doubled
 }
 
-@("SmallBuffer.emptySlice")
-@safe pure nothrow @nogc
-unittest
-{
-    SmallBuffer!(int, 4) buf;
-    auto slice = buf[];
-    assert(slice.length == 0);
-    assert(buf[0 .. 0].length == 0);
-}
+
 
 @("SmallBuffer.outputRangeCompatibility")
 unittest
@@ -787,23 +784,7 @@ unittest
     static assert(isOutputRange!(SmallBuffer!(char, 16), char));
 }
 
-@("SmallBuffer.constAccess")
-@safe pure nothrow @nogc
-unittest
-{
-    SmallBuffer!(int, 4) buf;
-    buf ~= 1;
-    buf ~= 2;
 
-    void checkConst(ref const SmallBuffer!(int, 4) cbuf)
-    {
-        assert(cbuf[0] == 1);
-        assert(cbuf.length == 2);
-        assert(cbuf[] == [1, 2]);
-    }
-
-    checkConst(buf);
-}
 
 @("SmallBuffer.largeGrowth")
 @safe pure nothrow @nogc
@@ -842,30 +823,7 @@ unittest
     assert(buf[] == [0, 1, 2, 3]);
 }
 
-@("SmallBuffer.dataProperty")
-@safe pure nothrow @nogc
-unittest
-{
-    SmallBuffer!(int, 4) buf;
-    assert(buf.data.length == 0);
 
-    buf ~= 1;
-    buf ~= 2;
-    assert(buf.data == [1, 2]);
-}
-
-@("SmallBuffer.modifyThroughSlice")
-@safe pure nothrow @nogc
-unittest
-{
-    SmallBuffer!(int, 4) buf;
-    buf ~= 1;
-    buf ~= 2;
-    buf ~= 3;
-
-    buf[][1] = 20;
-    assert(buf[1] == 20);
-}
 
 @("SmallBuffer.charBuffer")
 @safe pure nothrow @nogc
@@ -892,60 +850,13 @@ unittest
     assert(buf[0] == 1);
 }
 
-@("SmallBuffer.reserveNoGrowth")
-@safe pure nothrow @nogc
-unittest
-{
-    SmallBuffer!(int, 8) buf;
-    buf.reserve(4); // Less than smallBufferSize
-    assert(buf.capacity == 8);
-    assert(!buf.onHeap);
-}
 
-@("SmallBuffer.reserveInlineKeepsData")
-@safe pure nothrow @nogc
-unittest
-{
-    // reserve() beyond the inline size while still inline is a no-op and must
-    // not disturb existing elements or flip the buffer onto the heap.
-    SmallBuffer!(int, 4) buf;
-    buf ~= 1;
-    buf ~= 2;
-    buf.reserve(8);
-    assert(!buf.onHeap);
-    assert(buf.capacity == 4);
-    assert(buf[] == [1, 2]);
-}
 
-@("SmallBuffer.multiplePopBack")
-@safe pure nothrow @nogc
-unittest
-{
-    SmallBuffer!(int, 4) buf;
-    buf ~= 1;
-    buf ~= 2;
-    buf ~= 3;
 
-    buf.popBack();
-    buf.popBack();
-    assert(buf.length == 1);
-    assert(buf[0] == 1);
-}
 
-@("SmallBuffer.reuseAfterClear")
-@safe pure nothrow @nogc
-unittest
-{
-    SmallBuffer!(int, 4) buf;
-    buf ~= 1;
-    buf ~= 2;
-    buf.clear();
 
-    buf ~= 10;
-    buf ~= 20;
-    assert(buf.length == 2);
-    assert(buf[] == [10, 20]);
-}
+
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Copy-on-write
@@ -1058,34 +969,9 @@ unittest
     assert(work[] == [0, 1, 2, 3, 4, 7]);
 }
 
-@("SmallBuffer.invariant.popBackMigratesToInline")
-@safe pure nothrow @nogc
-unittest
-{
-    SmallBuffer!(int, 4) a;
-    foreach (i; 0 .. 5)
-        a ~= cast(int) i;        // length 5 > 4 -> heap
-    assert(a.onHeap);
-    a.popBack();                 // 5 -> 4: must revert to inline
-    assert(!a.onHeap);
-    assert(a.length == 4);
-    assert(a[] == [0, 1, 2, 3]);
-}
 
-@("SmallBuffer.invariant.clearRevertsToInline")
-@safe pure nothrow @nogc
-unittest
-{
-    SmallBuffer!(int, 2) a;
-    foreach (i; 0 .. 5)
-        a ~= cast(int) i;        // heap
-    assert(a.onHeap);
-    a.clear();
-    assert(!a.onHeap);
-    assert(a.empty);
-    a ~= 7;                      // reuse after clear
-    assert(a[] == [7]);
-}
+
+
 
 @("SmallBuffer.cow.attributesPreserved")
 @safe pure nothrow @nogc
