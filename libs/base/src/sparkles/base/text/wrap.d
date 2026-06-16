@@ -332,6 +332,55 @@ string wrapText(in char[] text, in WrapOptions opt = WrapOptions.init) @safe
     return a[];
 }
 
+/// Lazy range over the wrapped lines of `text` (range-in / range-out). `front` is
+/// the current wrapped line as `const(char)[]`; joining the lines with `opt.newline`
+/// reproduces `wrapText(text, opt)`, so callers can peek the first line (and whether
+/// any further lines follow) without materialising a `string[]`.
+///
+/// The input is range-polymorphic, selected with `static if`: a `string`/`char[]`,
+/// a range of `const(char)[]` chunks, or a range of `char`/`dchar`. A chunk/char
+/// range is gathered into one buffer first and treated as a single logical text
+/// (include any `'\n'` separators in the chunks). Backed by `wrapText` (the proven
+/// engine), so it is GC — a `@nogc` variant would need a caller-supplied scratch
+/// buffer (`SmallBuffer` is non-copyable, so a copyable range cannot own one).
+auto byWrappedLine(Text)(Text text, in WrapOptions opt = WrapOptions.init)
+{
+    import std.array : appender;
+    import std.range.primitives : ElementType, isInputRange;
+    import std.string : lineSplitter;
+    import std.traits : isSomeChar;
+
+    static if (is(Text : const(char)[]))
+        return wrapText(text, opt).lineSplitter;
+    else static if (isInputRange!Text && is(ElementType!Text : const(char)[]))
+    {
+        auto a = appender!(char[]);
+        foreach (chunk; text)
+            a.put(chunk);
+        return wrapText(a[], opt).lineSplitter;
+    }
+    else static if (isInputRange!Text && isSomeChar!(ElementType!Text))
+    {
+        import std.utf : encode;
+
+        auto a = appender!(char[]);
+        foreach (c; text)
+        {
+            static if (is(typeof(c) : char))
+                a.put(cast(char) c);
+            else
+            {
+                char[4] buf;
+                a.put(buf[0 .. encode(buf, c)]);
+            }
+        }
+        return wrapText(a[], opt).lineSplitter;
+    }
+    else
+        static assert(false,
+            "byWrappedLine: text must be a string, a range of strings, or a range of chars");
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
@@ -430,4 +479,65 @@ string wrapText(in char[] text, in WrapOptions opt = WrapOptions.init) @safe
 
     checkWriter!((ref b) => writeWrappedText(b, "the quick brown",
         WrapOptions(width: 9, whitespace: WhitespaceMode.collapse)))("the quick\nbrown");
+}
+
+@("wrap.byWrappedLine.matchesWrapText")
+@safe unittest
+{
+    import std.algorithm.comparison : equal;
+    import std.string : lineSplitter;
+
+    // The lazy line range yields exactly the lines `wrapText` produces, for plain,
+    // long-word-hard-break, CJK, and styled inputs.
+    static foreach (pair; [
+        ["the quick brown fox", "9"],
+        ["abcdefg", "3"],
+        ["世界世", "4"],
+    ])
+    {{
+        const opt = WrapOptions(width: pair[1] == "9" ? 9 : pair[1] == "4" ? 4 : 3,
+            whitespace: WhitespaceMode.collapse);
+        assert(pair[0].byWrappedLine(opt).equal(pair[0].wrapText(opt).lineSplitter));
+    }}
+
+    // Styled input: each line is reset/re-coloured exactly as `wrapText` does.
+    const styled = "\x1b[31mfoo bar\x1b[0m";
+    const sopt = WrapOptions(width: 3, continuity: StyleContinuity.sgrReset,
+        whitespace: WhitespaceMode.collapse);
+    assert(styled.byWrappedLine(sopt).equal(styled.wrapText(sopt).lineSplitter));
+}
+
+@("wrap.byWrappedLine.peekFirstLine")
+@safe unittest
+{
+    // The box's title rule: buffer the first line, then decide "did it wrap?" by
+    // whether any further line follows — without materialising a string[].
+    auto fits = "short".byWrappedLine(WrapOptions(width: 20));
+    assert(fits.front == "short");
+    fits.popFront;
+    assert(fits.empty);            // one line -> title fits, no wrap
+
+    auto wraps = "alpha beta gamma".byWrappedLine(
+        WrapOptions(width: 7, whitespace: WhitespaceMode.collapse));
+    assert(wraps.front == "alpha");
+    wraps.popFront;
+    assert(!wraps.empty);          // further lines -> title wrapped
+}
+
+@("wrap.byWrappedLine.rangeInputs")
+@safe unittest
+{
+    import std.algorithm.comparison : equal;
+    import std.array : array;
+
+    const opt = WrapOptions(width: 9, whitespace: WhitespaceMode.collapse);
+    auto want = "the quick brown".byWrappedLine(opt).array; // ["the quick", "brown"]
+
+    // A range of const(char)[] chunks gathered into one logical text.
+    const(char)[][] chunks = ["the qu", "ick br", "own"];
+    assert(chunks.byWrappedLine(opt).equal(want));
+
+    // A lazy range of char.
+    import std.utf : byChar;
+    assert("the quick brown".byChar.byWrappedLine(opt).equal(want));
 }
