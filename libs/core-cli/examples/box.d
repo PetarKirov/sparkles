@@ -137,6 +137,36 @@ void main()
                     BoxProps(footer: styledText(i"{red ✗ Failed}")),
                 ),
             ),
+            Section(
+                header: "minWidth - Pad a Short Box to a Fixed Frame",
+                content: ["Done"]
+                    .drawBox("Status", BoxProps(minWidth: 40)),
+            ),
+            Section(
+                header: "maxWidth - Wrap Long Lines Within the Frame",
+                content: [
+                    "The quick brown fox jumps over the lazy dog and keeps on running well past the edge.",
+                ].drawBox("Wrapped", BoxProps(maxWidth: 40)),
+            ),
+            Section(
+                header: "Fixed Width - minWidth == maxWidth",
+                content: [
+                    "Short line",
+                    "A much longer line that has to wrap to stay inside the fixed-width frame.",
+                ].drawBox(
+                    "Fixed 40",
+                    BoxProps(minWidth: 40, maxWidth: 40, footer: styledText(i"{green ✓ aligned}")),
+                ),
+            ),
+            Section(
+                header: "Aligned Stack - Same Width Regardless of Content",
+                content: [
+                    ["ok"].drawBox("alpha", BoxProps(minWidth: 44, maxWidth: 44)),
+                    ["a slightly longer middle line"]
+                        .drawBox("beta", BoxProps(minWidth: 44, maxWidth: 44)),
+                    ["x"].drawBox("gamma", BoxProps(minWidth: 44, maxWidth: 44)),
+                ].joiner("\n").to!string,
+            ),
         ],
     );
 }
