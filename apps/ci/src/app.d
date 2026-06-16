@@ -73,7 +73,7 @@ wildcard pattern handles verification against the actual (dynamic) output.
 +/
 
 // std.* modules
-import std.algorithm : any, canFind, countUntil, filter, map, sort, startsWith;
+import std.algorithm : any, canFind, countUntil, filter, map, min, sort, startsWith;
 import std.array : array, join;
 import std.conv : text, to;
 import core.time : msecs;
@@ -97,6 +97,38 @@ import sparkles.core_cli.ui.header : drawHeader, HeaderProps, HeaderStyle;
 // in-app modules
 import dub_deps : parseSubPackages, rewriteInTreeDeps;
 import example_manifest : exampleRunsOnHost;
+
+// === UI sizing ===
+
+/// Shared visible-column width for all UI chrome: `drawHeader` banners and the
+/// `drawBox` `minWidth`/`maxWidth`. Keeping these in lockstep makes headers and
+/// the boxes beneath them line up at a single, predictable width — capped at the
+/// terminal so chrome never overflows a window narrower than 120 columns.
+private size_t uiWidth() => min(120, terminalWidth());
+
+/// The current terminal width in columns, or 120 when stdout is not a tty (piped
+/// output, CI) or the `ioctl` query fails.
+private int terminalWidth()
+{
+    version (Posix)
+    {
+        import core.sys.posix.sys.ioctl : ioctl, winsize, TIOCGWINSZ;
+        import core.sys.posix.unistd : STDOUT_FILENO;
+
+        winsize ws;
+        if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0)
+            return ws.ws_col;
+    }
+    return 120;
+}
+
+/// `BoxProps` for an example result box: a fixed `uiWidth` frame (long output
+/// wraps in, short output pads out) so every box lines up under its banner.
+private BoxProps resultBox(string footer)
+{
+    const w = uiWidth();
+    return BoxProps(footer: footer, minWidth: w, maxWidth: w);
+}
 
 // === Types ===
 
@@ -552,7 +584,7 @@ private int runReferenceLinkMode(string[] mdFiles, bool fix)
         ? "Rewriting duplicate markdown reference links"
         : "Checking duplicate markdown reference links";
     title
-        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: 60))
+        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
         .writeln("\n");
 
     string[] existingFiles;
@@ -834,7 +866,7 @@ private int runExampleFilesMode(string[] allExampleFiles, bool failFast)
         info(i"{yellow ⊘} {cyan $(skippedFile.baseName)} — skipped (unsupported on this platform)");
 
     i"Checking $(exampleFiles.length) standalone example file(s)".text
-        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: 60))
+        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
         .writeln("\n");
 
     const repoRoot = detectRepoRoot();
@@ -948,7 +980,7 @@ private int runDubTestsMode(bool failFast)
     }
 
     i"Testing $(subPackages.length) sub-package(s)".text
-        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: 60))
+        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
         .writeln("\n");
 
     int failures = 0;
@@ -1005,7 +1037,7 @@ private int runDubTestsMode(bool failFast)
 int runDefaultMode(Example[] examples, string mdFile, bool failFast)
 {
     i"Running $(examples.length) example(s) from $(mdFile)".text
-        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: 60))
+        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
         .writeln("\n");
 
     int failures = 0;
@@ -1053,7 +1085,7 @@ int runDefaultMode(Example[] examples, string mdFile, bool failFast)
 int runVerifyMode(Example[] examples, string mdFile, bool failFast)
 {
     i"Verifying $(examples.length) example(s) from $(mdFile)".text
-        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: 60))
+        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
         .writeln("\n");
 
     int failures = 0;
@@ -1076,7 +1108,7 @@ int runVerifyMode(Example[] examples, string mdFile, bool failFast)
                 .formatOutputLines(12)
                 .array;
             failureLines
-                .drawBox(header, BoxProps(footer: styledText(i"{red ✗ build failed}")))
+                .drawBox(header, resultBox(styledText(i"{red ✗ build failed}")))
                 .writeln;
             writeln();
             if (failFast)
@@ -1104,7 +1136,7 @@ int runVerifyMode(Example[] examples, string mdFile, bool failFast)
         {
             outputLines
                 .formatOutputLines
-                .drawBox(header, BoxProps(footer: styledText(i"{green ✓ ran} {dim │} {yellow ⚠ no expected output}")))
+                .drawBox(header, resultBox(styledText(i"{green ✓ ran} {dim │} {yellow ⚠ no expected output}")))
                 .writeln;
             writeln();
             processed = i + 1;
@@ -1118,7 +1150,7 @@ int runVerifyMode(Example[] examples, string mdFile, bool failFast)
         {
             outputLines
                 .formatOutputLines
-                .drawBox(header, BoxProps(footer: styledText(i"{green ✓ ran} {dim │} {green ✓ output matches}")))
+                .drawBox(header, resultBox(styledText(i"{green ✓ ran} {dim │} {green ✓ output matches}")))
                 .writeln;
         }
         else
@@ -1131,7 +1163,7 @@ int runVerifyMode(Example[] examples, string mdFile, bool failFast)
                 .formatOutputLines(24)
                 .array;
             failureLines
-                .drawBox(header, BoxProps(footer: styledText(i"{green ✓ ran} {dim │} {red ✗ output mismatch}")))
+                .drawBox(header, resultBox(styledText(i"{green ✓ ran} {dim │} {red ✗ output mismatch}")))
                 .writeln;
             if (failFast)
             {
@@ -1161,7 +1193,7 @@ int runVerifyMode(Example[] examples, string mdFile, bool failFast)
 int runUpdateMode(Example[] examples, string mdFile, bool failFast)
 {
     i"Updating $(examples.length) example(s) in $(mdFile)".text
-        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: 60))
+        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
         .writeln("\n");
 
     auto lines = mdFile.readText.lineSplitter.array;
