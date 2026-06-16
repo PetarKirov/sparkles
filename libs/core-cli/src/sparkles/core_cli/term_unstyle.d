@@ -1,12 +1,23 @@
 module sparkles.core_cli.term_unstyle;
 
+import sparkles.base.text.ansi : byAnsiToken;
+import sparkles.base.text.grapheme : visibleWidth;
+
 @safe:
 
-auto unstyle(R)(R range)
+/// Returns `s` with every ANSI/VT escape sequence removed (CSI/SGR, OSC
+/// including OSC 8 hyperlinks, DCS/SOS/PM/APC, …). Built on the shared escape
+/// scanner in `sparkles.base.text.ansi`, so stripping and width measurement
+/// always agree (the old regex only matched CSI + OSC 8).
+string unstyle(in char[] s) pure nothrow
 {
-    import std.regex : regex, replaceAll;
-    const pattern = regex(`\x1B\]8;[^\x07\x1B]*;[^\x07\x1B]*(?:\x07|\x1B\\)|\x1B\[[0-9;]*[A-Za-z]`);
-    return range.replaceAll(pattern, "");
+    import std.array : appender;
+
+    auto a = appender!string;
+    foreach (t; s.byAnsiToken)
+        if (!t.isEscape)
+            a ~= t.slice;
+    return a[];
 }
 
 version (unittest)
@@ -103,8 +114,9 @@ unittest
     assert(link.unstyledLength == 10);
 }
 
-size_t unstyledLength(R)(R range)
-{
-    import std.range : walkLength;
-    return range.unstyle.walkLength;
-}
+/// Visible width of `s` in terminal cells, ignoring ANSI escapes. Forwards to
+/// the grapheme- and East-Asian-width-aware `sparkles.base.text.visibleWidth`
+/// (prefer that name in new code); kept for backward compatibility. Unlike the
+/// old code-point count, this is correct for CJK (wide), combining marks (zero),
+/// and emoji / flags (one 2-cell cluster).
+size_t unstyledLength(in char[] s) pure nothrow @nogc => s.visibleWidth;
