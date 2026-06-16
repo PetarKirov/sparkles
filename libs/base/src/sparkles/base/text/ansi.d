@@ -430,21 +430,24 @@ private int tokenInt(in char[] tok) @safe pure nothrow @nogc
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Tracks the *active* OSC 8 hyperlink so it can be closed before a wrap newline
-/// and re-opened on the continuation line. Stores the open sequence as a slice
-/// of the input (no allocation); a close (`\x1b]8;;…`) clears it.
+/// and re-opened on the continuation line. The open sequence is copied into an
+/// inline buffer (a self-contained value type, safe to snapshot — no slice into
+/// the input); a close (`\x1b]8;;…`) clears it. Open sequences longer than the
+/// buffer are ignored (treated as no active link).
 struct OscLinkState
 {
-    private const(char)[] _open;
+    private char[512] _buf = void;
+    private size_t _len;
 
     /// True if a hyperlink is currently open.
-    bool active() const @safe pure nothrow @nogc => _open.length != 0;
+    bool active() const @safe pure nothrow @nogc => _len != 0;
 
     /// Clear the active link.
-    void clear() @safe pure nothrow @nogc { _open = null; }
+    void clear() @safe pure nothrow @nogc { _len = 0; }
 
     /// Feed one escape token. No-op unless it is an OSC 8 sequence; an OSC 8 with
     /// a non-empty URI opens (records) a link, an empty URI closes it.
-    void apply(return scope const(char)[] seq) @safe pure nothrow @nogc
+    void apply(in char[] seq) @safe pure nothrow @nogc
     {
         if (seq.length < 4 || seq[0] != '\x1b' || seq[1] != ']'
             || seq[2] != '8' || seq[3] != ';')
@@ -464,17 +467,20 @@ struct OscLinkState
         while (semi < content.length && content[semi] != ';')
             semi++;
         const uriEmpty = semi + 1 >= content.length;
-        if (uriEmpty)
-            _open = null;        // close
+        if (uriEmpty || seq.length > _buf.length)
+            _len = 0;            // close (or too long to record)
         else
-            _open = seq;         // open (record verbatim for re-emit)
+        {
+            _buf[0 .. seq.length] = seq[]; // open: record verbatim for re-emit
+            _len = seq.length;
+        }
     }
 
     /// Re-open the active link (emit its recorded open sequence), if any.
     void reopen(Writer)(ref Writer w) const
     {
         if (active)
-            put(w, _open);
+            put(w, _buf[0 .. _len]);
     }
 
     /// Emit an OSC 8 close (`\x1b]8;;\x07`), if a link is active.
