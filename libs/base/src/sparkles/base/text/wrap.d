@@ -16,9 +16,11 @@
  */
 module sparkles.base.text.wrap;
 
-import std.range.primitives : put;
+import std.range.primitives : ElementType, isInputRange, put;
+import std.traits : isSomeChar;
 import std.uni : unicode;
 
+import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.text.ansi : OscLinkState, SgrState, writeSgrReset;
 import sparkles.base.text.grapheme : byGraphemeCluster, ClusterMeasure;
 
@@ -107,8 +109,49 @@ private struct StyleSnapshot
 }
 
 /// Greedy-wrap `text` to `opt.width` cells, writing into output range `w`.
+///
 /// Writer-first, `void`; attributes infer (do not force `@safe` on the template).
-void writeWrappedText(Writer)(ref Writer w, in char[] text, in WrapOptions opt = WrapOptions.init)
+/// `text` is range-polymorphic (selected with `static if`): a `string`/`char[]`, a
+/// range of `const(char)[]` chunks, or a range of `char`/`dchar`. A non-contiguous
+/// range is gathered into a `SmallBuffer` first (so the engine still sees one
+/// contiguous buffer); the chunks are treated as a single logical text (include any
+/// `'\n'` separators yourself). The contiguous engine is `writeWrappedImpl`.
+void writeWrappedText(Writer, Text)(ref Writer w, Text text, in WrapOptions opt = WrapOptions.init)
+{
+    static if (is(Text : const(char)[]))
+        writeWrappedImpl(w, text, opt);
+    else static if (isInputRange!Text && is(ElementType!Text : const(char)[]))
+    {
+        SmallBuffer!(char, 256) buf;
+        foreach (chunk; text)
+            buf.put(chunk);
+        writeWrappedImpl(w, buf[], opt);
+    }
+    else static if (isInputRange!Text && isSomeChar!(ElementType!Text))
+    {
+        import std.utf : encode;
+
+        SmallBuffer!(char, 256) buf;
+        foreach (c; text)
+        {
+            static if (is(typeof(c) : char))
+                buf.put(c);
+            else
+            {
+                char[4] enc;
+                buf.put(enc[0 .. encode(enc, c)]);
+            }
+        }
+        writeWrappedImpl(w, buf[], opt);
+    }
+    else
+        static assert(false,
+            "writeWrappedText: text must be a string, a range of strings, or a range of chars");
+}
+
+/// The contiguous greedy-wrap engine; see `writeWrappedText` for the public,
+/// range-polymorphic entry point.
+private void writeWrappedImpl(Writer)(ref Writer w, in char[] text, in WrapOptions opt)
 {
     if (opt.width == 0)
     {
@@ -332,53 +375,81 @@ string wrapText(in char[] text, in WrapOptions opt = WrapOptions.init) @safe
     return a[];
 }
 
-/// Lazy range over the wrapped lines of `text` (range-in / range-out). `front` is
-/// the current wrapped line as `const(char)[]`; joining the lines with `opt.newline`
-/// reproduces `wrapText(text, opt)`, so callers can peek the first line (and whether
-/// any further lines follow) without materialising a `string[]`.
+/// A lazy, `@nogc` forward range over the wrapped lines of some text. `front` is the
+/// current wrapped line as `const(char)[]`; joining the lines with `"\n"` reproduces
+/// `wrapText`, so callers can peek the first line (and whether any further lines
+/// follow) without materialising a `string[]`. Construct it with $(LREF byWrappedLine).
 ///
-/// The input is range-polymorphic, selected with `static if`: a `string`/`char[]`,
-/// a range of `const(char)[]` chunks, or a range of `char`/`dchar`. A chunk/char
-/// range is gathered into one buffer first and treated as a single logical text
-/// (include any `'\n'` separators in the chunks). Backed by `wrapText` (the proven
-/// engine), so it is GC — a `@nogc` variant would need a caller-supplied scratch
-/// buffer (`SmallBuffer` is non-copyable, so a copyable range cannot own one).
-auto byWrappedLine(Text)(Text text, in WrapOptions opt = WrapOptions.init)
+/// The wrapped output is built once (via `writeWrappedText`) into an owned
+/// copy-on-write `SmallBuffer`, so saving/copying the range shares that buffer.
+/// `front` is **borrowed** — a slice into that buffer, valid only while this range
+/// (or a copy sharing its buffer) is alive; to keep a line past then, `.idup` it
+/// (the `File.byLine` contract). Line boundaries are walked lazily.
+struct WrappedLines(size_t bufferSize = 256)
 {
-    import std.array : appender;
-    import std.range.primitives : ElementType, isInputRange;
-    import std.string : lineSplitter;
-    import std.traits : isSomeChar;
+    private SmallBuffer!(char, bufferSize) _buf;
+    private size_t _total, _start, _end;
 
-    static if (is(Text : const(char)[]))
-        return wrapText(text, opt).lineSplitter;
-    else static if (isInputRange!Text && is(ElementType!Text : const(char)[]))
+    // Set the cursor on the first line after `_buf` has been filled.
+    private void initCursor()
     {
-        auto a = appender!(char[]);
-        foreach (chunk; text)
-            a.put(chunk);
-        return wrapText(a[], opt).lineSplitter;
+        _total = _buf.length;
+        _start = _total == 0 ? _total + 1 : 0; // empty input -> empty range
+        if (_start <= _total)
+            scanEnd();
     }
-    else static if (isInputRange!Text && isSomeChar!(ElementType!Text))
-    {
-        import std.utf : encode;
 
-        auto a = appender!(char[]);
-        foreach (c; text)
+    // Extend `_end` to the next '\n' (the only line separator the engine emits) or
+    // the buffer end.
+    private void scanEnd()
+    {
+        const v = (cast(const) _buf)[];
+        _end = _start;
+        while (_end < _total && v[_end] != '\n')
+            ++_end;
+    }
+
+    /// Range primitives (forward range).
+    bool empty() const => _start > _total;
+
+    /// ditto
+    const(char)[] front() const
+    in (!empty)
+        => (cast(const) _buf)[][_start .. _end];
+
+    /// ditto
+    void popFront()
+    in (!empty)
+    {
+        if (_end >= _total) // last line ran to the buffer end
+            _start = _total + 1; // mark empty
+        else
         {
-            static if (is(typeof(c) : char))
-                a.put(cast(char) c);
+            _start = _end + 1; // skip the '\n'
+            if (_start >= _total) // a trailing '\n' adds no extra empty line
+                _start = _total + 1;
             else
-            {
-                char[4] buf;
-                a.put(buf[0 .. encode(buf, c)]);
-            }
+                scanEnd();
         }
-        return wrapText(a[], opt).lineSplitter;
     }
-    else
-        static assert(false,
-            "byWrappedLine: text must be a string, a range of strings, or a range of chars");
+
+    /// ditto
+    typeof(this) save() => this;
+}
+
+/// Build a $(LREF WrappedLines): the wrapped lines of `text` as a lazy `@nogc`
+/// forward range of `const(char)[]`.
+///
+/// `text` is range-polymorphic via `writeWrappedText` — a `string`/`char[]`, a range
+/// of `const(char)[]` chunks, or a range of `char`/`dchar` (chunks are one logical
+/// text; include any `'\n'` separators yourself).
+WrappedLines!bufferSize byWrappedLine(size_t bufferSize = 256, Text)(
+    Text text, in WrapOptions opt = WrapOptions.init)
+{
+    WrappedLines!bufferSize r;
+    writeWrappedText(r._buf, text, opt);
+    r.initCursor();
+    return r;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -507,6 +578,20 @@ auto byWrappedLine(Text)(Text text, in WrapOptions opt = WrapOptions.init)
     assert(styled.byWrappedLine(sopt).equal(styled.wrapText(sopt).lineSplitter));
 }
 
+@("wrap.byWrappedLine.isNogc")
+@safe pure nothrow @nogc unittest
+{
+    // Walking the lazy range allocates nothing on the GC: the wrapped output lives
+    // in the range's own (CoW, malloc-backed) buffer and `front` borrows from it.
+    auto r = "the quick brown".byWrappedLine(
+        WrapOptions(width: 9, whitespace: WhitespaceMode.collapse));
+    assert(r.front == "the quick");
+    r.popFront;
+    assert(r.front == "brown");
+    r.popFront;
+    assert(r.empty);
+}
+
 @("wrap.byWrappedLine.peekFirstLine")
 @safe unittest
 {
@@ -528,10 +613,13 @@ auto byWrappedLine(Text)(Text text, in WrapOptions opt = WrapOptions.init)
 @safe unittest
 {
     import std.algorithm.comparison : equal;
-    import std.array : array;
 
     const opt = WrapOptions(width: 9, whitespace: WhitespaceMode.collapse);
-    auto want = "the quick brown".byWrappedLine(opt).array; // ["the quick", "brown"]
+    // `front` is borrowed (a slice into the range's own buffer), so retain it with
+    // `.idup` before the range dies — like `File.byLine`.
+    string[] want;
+    foreach (l; "the quick brown".byWrappedLine(opt))
+        want ~= l.idup; // ["the quick", "brown"]
 
     // A range of const(char)[] chunks gathered into one logical text.
     const(char)[][] chunks = ["the qu", "ick br", "own"];
