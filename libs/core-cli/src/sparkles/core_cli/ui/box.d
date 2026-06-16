@@ -64,7 +64,7 @@ struct BoxProps
 
 string drawBox(string[] content, string title, BoxProps props = BoxProps.init)
 {
-    import std.array : appender, array;
+    import std.array : appender;
     import sparkles.base.text.wrap : byWrappedLine, WhitespaceMode, WrapOptions;
 
     const prefix = props.omitLeftBorder ? ""d : props.verticalLine ~ " "d;
@@ -87,7 +87,7 @@ string drawBox(string[] content, string title, BoxProps props = BoxProps.init)
         foreach (cline; content)
             foreach (w; cline.byWrappedLine(
                     WrapOptions(width: contentMax, whitespace: WhitespaceMode.collapse)))
-                rows ~= w.canFind('\x1b') ? w ~ "\x1b[0m" : w.idup;
+                rows ~= (w.canFind('\x1b') ? w ~ "\x1b[0m" : w).idup;
         lines = rows[];
     }
 
@@ -122,7 +122,11 @@ string drawBox(string[] content, string title, BoxProps props = BoxProps.init)
                 titleLines = [first.idup];
             else
             {
-                titleLines = tl.array;
+                // `front` is borrowed from the range's buffer, so retain each line.
+                auto tla = appender!(string[]);
+                foreach (l; tl)
+                    tla ~= l.idup;
+                titleLines = tla[];
                 nested = true;
             }
         }
