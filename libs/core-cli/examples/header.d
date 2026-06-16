@@ -34,4 +34,17 @@ void main()
     // Banner with auto width
     writeln("Banner (auto width):");
     "Auto Width Banner".drawHeader(HeaderProps(style: HeaderStyle.banner)).writeln;
+    writeln();
+
+    // A long title that exceeds the width is wrapped to fit, so the banner never
+    // grows past `width` — every line is exactly 40 columns.
+    const longTitle = "Verifying 3 example(s) from docs/libs/base/how-to/prettyprint-values.md";
+
+    writeln("Banner with a long title (wraps to width):");
+    longTitle.drawHeader(HeaderProps(style: HeaderStyle.banner, width: 40)).writeln;
+    writeln();
+
+    // Wrapping applies to dividers too.
+    writeln("Divider with a long title (wraps to width):");
+    longTitle.drawHeader(HeaderProps(width: 40)).writeln;
 }
