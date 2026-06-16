@@ -22,9 +22,9 @@ struct PrettyPrintOptions(SourceUriHook = void)
 
 /// Pretty-prints a value to a writer.
 /// Returns the writer for chaining.
-ref Writer prettyPrint(T, Writer, Hook = void)(
-    in T value,
+ref Writer writePretty(T, Writer, Hook = void)(
     return ref Writer writer,
+    in T value,
     in PrettyPrintOptions!Hook opt = PrettyPrintOptions!Hook()
 )
 {
@@ -37,7 +37,7 @@ string prettyPrint(T, Hook = void)(in T value, in PrettyPrintOptions!Hook opt = 
 {
     import std.array : appender;
     auto w = appender!string;
-    prettyPrint(value, w, opt);
+    writePretty(w, value, opt);
     return w[];
 }
 
@@ -570,7 +570,7 @@ version (unittest)
         import sparkles.base.smallbuffer : SmallBuffer;
 
         SmallBuffer!(char, 16 * 1024) buf;
-        prettyPrint(value, buf, opts);
+        writePretty(buf, value, opts);
         const(char)[] actual = buf[];
 
         if (actual != expected)
