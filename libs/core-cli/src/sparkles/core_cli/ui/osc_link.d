@@ -141,22 +141,22 @@ string oscLink(string text, string uri, Style style, OscLinkProps props = OscLin
     assert(result == "\x1b]8;id=dlang;https://d-lang.org\x1b\\" ~ "Link".stylize(Style.underline) ~ "\x1b]8;;\x1b\\");
 }
 
-/// `unstyledLength` works correctly with OSC links.
-@("oscLink.unstyledLength")
+/// `visibleWidth` works correctly with OSC links.
+@("oscLink.visibleWidth")
 @safe unittest
 {
-    import sparkles.core_cli.term_unstyle : unstyledLength;
+    import sparkles.base.text.grapheme : visibleWidth;
 
-    assert(oscLink(text: "Click here", uri: "https://example.com").unstyledLength == 10);
+    assert(oscLink(text: "Click here", uri: "https://example.com").visibleWidth == 10);
 }
 
 /// Styled OSC link unstyled length counts only the visible text.
-@("oscLink.unstyledLength.styled")
+@("oscLink.visibleWidth.styled")
 @safe unittest
 {
-    import sparkles.core_cli.term_unstyle : unstyledLength;
+    import sparkles.base.text.grapheme : visibleWidth;
 
-    assert(oscLink(text: "Hello", uri: "https://example.com", style: Style.blue).unstyledLength == 5);
+    assert(oscLink(text: "Hello", uri: "https://example.com", style: Style.blue).visibleWidth == 5);
 }
 
 // Legacy test using test files

@@ -9,7 +9,7 @@ module sparkles.core_cli.ui.header;
 import std.conv : to;
 import std.range : repeat;
 
-import sparkles.core_cli.term_unstyle : unstyledLength;
+import sparkles.base.text.grapheme : visibleWidth;
 
 @safe:
 
@@ -99,7 +99,7 @@ unittest
     const lines = result.split('\n');
     assert(lines.length == 3);
     assert(lines[1] == title);                 // no padding, title verbatim
-    assert(lines[0].unstyledLength == title.unstyledLength); // rule fits title
+    assert(lines[0].visibleWidth == title.visibleWidth); // rule fits title
 }
 
 /// The same guard for the divider style.
@@ -116,7 +116,7 @@ unittest
 
 private string drawDivider(string title, HeaderProps props)
 {
-    const titleLen = title.unstyledLength;
+    const titleLen = title.visibleWidth;
     const padding = ' '.repeat(props.titlePadding).to!string;
 
     size_t totalWidth = props.width;
@@ -139,7 +139,7 @@ private string drawDivider(string title, HeaderProps props)
 
 private string drawBanner(string title, HeaderProps props)
 {
-    const titleLen = title.unstyledLength;
+    const titleLen = title.visibleWidth;
     const requested = props.width > 0 ? props.width : titleLen + 20;
     // Never narrower than the title itself, or the pad arithmetic below
     // underflows `size_t` and tries to allocate a near-infinite line.

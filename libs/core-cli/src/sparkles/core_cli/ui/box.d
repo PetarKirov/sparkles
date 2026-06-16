@@ -2,16 +2,22 @@ module sparkles.core_cli.ui.box;
 
 import std.algorithm.comparison : max;
 import std.algorithm.iteration : map;
-import std.algorithm.searching : maxElement;
+import std.algorithm.searching : maxElement, canFind;
 import std.range : walkLength, repeat;
 import std.format : format;
 
-import sparkles.core_cli.term_unstyle : unstyledLength;
+import sparkles.base.text.grapheme : visibleWidth;
 
 struct BoxProps
 {
     bool omitLeftBorder = false;
     string footer = null;
+
+    /// If non-zero, wrap each content line to this many visible columns before
+    /// drawing (0 = no wrapping, the box expands to fit the longest line). Styled
+    /// content keeps its colours/links across wrapped rows and is reset before the
+    /// border so style never bleeds onto the padding or frame.
+    size_t wrapWidth = 0;
 
     dchar topLeft = '╭';
     dchar topRight = '╮';
@@ -30,13 +36,17 @@ string drawBox(string[] content, string title, BoxProps props = BoxProps.init)
     const prefix = props.omitLeftBorder ? ""d : props.verticalLine ~ " "d;
     const prefixLen = prefix.length;
 
+    // Optionally re-flow each content line to props.wrapWidth visible columns,
+    // keeping styles/links across rows and resetting before the border.
+    string[] lines = props.wrapWidth > 0 ? wrapContent(content, props.wrapWidth) : content;
+
     // Minimum width to fit: ╭──╼ {title} ╾─╮ (overhead = 9) and bottom: ╰──────────╯ (overhead = 10)
-    const titleWidth = title.unstyledLength;
-    const footerWidth = props.footer !is null ? props.footer.unstyledLength : 0;
+    const titleWidth = title.visibleWidth;
+    const footerWidth = props.footer !is null ? props.footer.visibleWidth : 0;
     const minTitleWidth = titleWidth + 9;
     const minFooterWidth = footerWidth > 0 ? footerWidth + 9 : 10;  // ╰──╼ {footer} ╾──╯ or ╰──────────╯
     const minWidth = max(minTitleWidth, minFooterWidth) - prefixLen;
-    const contentWidth = content.map!(x => x.unstyledLength).maxElement;
+    const contentWidth = lines.map!(x => x.visibleWidth).maxElement;
     const outputWidth = max(contentWidth, minWidth);
 
     auto topLine = props.horizontalLine.repeat(outputWidth + prefixLen - titleWidth - 7);
@@ -45,9 +55,9 @@ string drawBox(string[] content, string title, BoxProps props = BoxProps.init)
 
     string result = top ~ '\n';
 
-    foreach (line; content)
+    foreach (line; lines)
     {
-        const rightPadLen = outputWidth - line.unstyledLength;
+        const rightPadLen = outputWidth - line.visibleWidth;
         result ~= "%s%s%s %s\n".format(prefix, line, ' '.repeat(rightPadLen), props.verticalLine);
     }
 
@@ -73,6 +83,24 @@ string drawBox(string content, string title, BoxProps props = BoxProps.init)
     import std.string : lineSplitter;
 
     return drawBox(content.lineSplitter.array, title, props);
+}
+
+/// Wrap each content line to `width` visible columns, returning the resulting
+/// box rows. A row that contains any escape is reset (`\x1b[0m`) so an open style
+/// cannot bleed onto the box's padding or border.
+private string[] wrapContent(string[] content, size_t width)
+{
+    import std.array : appender;
+    import std.string : lineSplitter;
+
+    import sparkles.base.text.wrap : wrapText, WrapOptions, WhitespaceMode;
+
+    auto rows = appender!(string[]);
+    foreach (line; content)
+        foreach (row; line.wrapText(
+                WrapOptions(width: width, whitespace: WhitespaceMode.collapse)).lineSplitter)
+            rows ~= row.canFind('\x1b') ? row ~ "\x1b[0m" : row.idup;
+    return rows[];
 }
 
 @("drawBox.basic.singleLine")
@@ -336,3 +364,37 @@ unittest
 
 //   echo "╰────────${bottomline}──╯${reset_esc_seq}"
 // }
+
+@("drawBox.wrap.disabledByDefault")
+@system unittest
+{
+    import std.string : splitLines;
+
+    // wrapWidth defaults to 0 -> no wrapping, box expands to fit the long line.
+    const box = drawBox(["aaaa bbbb cccc"], "T");
+    assert(box.splitLines.length == 3); // top + one content row + bottom
+}
+
+@("drawBox.wrap.wrapsLongLine")
+@system unittest
+{
+    import std.string : splitLines;
+    import std.algorithm.searching : canFind;
+
+    const box = drawBox(["aaaa bbbb cccc"], "T", BoxProps(wrapWidth: 4));
+    assert(box.splitLines.length == 5); // top + three content rows + bottom
+    assert(box.canFind("aaaa") && box.canFind("bbbb") && box.canFind("cccc"));
+}
+
+@("drawBox.wrap.styledNoBleed")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+    import sparkles.base.term_style : stylize, Style;
+
+    // A styled line wrapped across rows is reset before the border, so colour
+    // cannot bleed onto the padding or frame.
+    const styled = "red red red".stylize(Style.red);
+    const box = drawBox([styled], "T", BoxProps(wrapWidth: 7));
+    assert(box.canFind("\x1b[0m"));
+}
