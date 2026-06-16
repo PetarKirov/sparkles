@@ -8,7 +8,7 @@
 import std.algorithm : map, joiner;
 import std.conv : to;
 
-import sparkles.core_cli.ui.box : drawBox, BoxProps;
+import sparkles.core_cli.ui.box : drawBox, BoxProps, TitleOverflow;
 import sparkles.core_cli.ui.demo : Section, runDemo;
 import sparkles.core_cli.ui.table : drawTable;
 import sparkles.base.term_style : Style, stylize, styleSample;
@@ -166,6 +166,24 @@ void main()
                         .drawBox("beta", BoxProps(minWidth: 44, maxWidth: 44)),
                     ["x"].drawBox("gamma", BoxProps(minWidth: 44, maxWidth: 44)),
                 ].joiner("\n").to!string,
+            ),
+            Section(
+                header: "Title Overflow - wrap (nested title box with ┤ ├ handles)",
+                content: [
+                    "Body content line one",
+                    "Body content line two",
+                ].drawBox(
+                    "This is a very long multi-line drawBox title. It ends here.",
+                    BoxProps(maxWidth: 40, titleOverflow: TitleOverflow.wrap),
+                ),
+            ),
+            Section(
+                header: "Title Overflow - ellipsis (truncate to one line)",
+                content: ["Body content line one"]
+                    .drawBox(
+                        "This is a very long multi-line drawBox title. It ends here.",
+                        BoxProps(maxWidth: 40, titleOverflow: TitleOverflow.ellipsis),
+                    ),
             ),
         ],
     );
