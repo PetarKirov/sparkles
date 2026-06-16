@@ -13,11 +13,20 @@ struct BoxProps
     bool omitLeftBorder = false;
     string footer = null;
 
-    /// If non-zero, wrap each content line to this many visible columns before
-    /// drawing (0 = no wrapping, the box expands to fit the longest line). Styled
-    /// content keeps its colours/links across wrapped rows and is reset before the
-    /// border so style never bleeds onto the padding or frame.
-    size_t wrapWidth = 0;
+    /// Lower/upper bounds on the box's total visible width (frame included), in the
+    /// same units as `HeaderProps.width` — set both equal for a fixed-width box.
+    ///
+    /// `maxWidth`, if non-zero, wraps each content line so the box stays within this
+    /// many columns (0 = no wrapping, the box expands to fit the longest line). A
+    /// title or unbreakable content line wider than `maxWidth` still wins — the box
+    /// is never truncated below what it must show. Styled content keeps its
+    /// colours/links across wrapped rows and is reset before the border so style
+    /// never bleeds onto the padding or frame.
+    ///
+    /// `minWidth`, if non-zero, pads the box out to at least this many columns so
+    /// short content still produces a full-width frame.
+    size_t maxWidth = 0;
+    size_t minWidth = 0; /// ditto
 
     dchar topLeft = '╭';
     dchar topRight = '╮';
@@ -36,18 +45,25 @@ string drawBox(string[] content, string title, BoxProps props = BoxProps.init)
     const prefix = props.omitLeftBorder ? ""d : props.verticalLine ~ " "d;
     const prefixLen = prefix.length;
 
-    // Optionally re-flow each content line to props.wrapWidth visible columns,
+    // The frame eats `prefixLen` columns on the left plus " │" (2) on the right, so
+    // a box of total width W has a content area of `W - frameOverhead` columns. The
+    // public min/maxWidth are total-box widths; convert them to content widths here.
+    const frameOverhead = prefixLen + 2;
+    const contentMax = props.maxWidth > frameOverhead ? props.maxWidth - frameOverhead : 0;
+    const contentMin = props.minWidth > frameOverhead ? props.minWidth - frameOverhead : 0;
+
+    // Optionally re-flow each content line to the maxWidth-derived content area,
     // keeping styles/links across rows and resetting before the border.
-    string[] lines = props.wrapWidth > 0 ? wrapContent(content, props.wrapWidth) : content;
+    string[] lines = contentMax > 0 ? wrapContent(content, contentMax) : content;
 
     // Minimum width to fit: ╭──╼ {title} ╾─╮ (overhead = 9) and bottom: ╰──────────╯ (overhead = 10)
     const titleWidth = title.visibleWidth;
     const footerWidth = props.footer !is null ? props.footer.visibleWidth : 0;
     const minTitleWidth = titleWidth + 9;
     const minFooterWidth = footerWidth > 0 ? footerWidth + 9 : 10;  // ╰──╼ {footer} ╾──╯ or ╰──────────╯
-    const minWidth = max(minTitleWidth, minFooterWidth) - prefixLen;
+    const titleFloor = max(minTitleWidth, minFooterWidth) - prefixLen;
     const contentWidth = lines.map!(x => x.visibleWidth).maxElement;
-    const outputWidth = max(contentWidth, minWidth);
+    const outputWidth = max(contentWidth, titleFloor, contentMin);
 
     auto topLine = props.horizontalLine.repeat(outputWidth + prefixLen - titleWidth - 7);
 
@@ -370,7 +386,7 @@ unittest
 {
     import std.string : splitLines;
 
-    // wrapWidth defaults to 0 -> no wrapping, box expands to fit the long line.
+    // maxWidth defaults to 0 -> no wrapping, box expands to fit the long line.
     const box = drawBox(["aaaa bbbb cccc"], "T");
     assert(box.splitLines.length == 3); // top + one content row + bottom
 }
@@ -381,7 +397,9 @@ unittest
     import std.string : splitLines;
     import std.algorithm.searching : canFind;
 
-    const box = drawBox(["aaaa bbbb cccc"], "T", BoxProps(wrapWidth: 4));
+    // maxWidth is the total box width; with the 4-column frame overhead this
+    // leaves a 4-column content area, so "aaaa bbbb cccc" wraps to three rows.
+    const box = drawBox(["aaaa bbbb cccc"], "T", BoxProps(maxWidth: 8));
     assert(box.splitLines.length == 5); // top + three content rows + bottom
     assert(box.canFind("aaaa") && box.canFind("bbbb") && box.canFind("cccc"));
 }
@@ -395,6 +413,32 @@ unittest
     // A styled line wrapped across rows is reset before the border, so colour
     // cannot bleed onto the padding or frame.
     const styled = "red red red".stylize(Style.red);
-    const box = drawBox([styled], "T", BoxProps(wrapWidth: 7));
+    const box = drawBox([styled], "T", BoxProps(maxWidth: 11));
     assert(box.canFind("\x1b[0m"));
+}
+
+@("drawBox.width.minWidthPads")
+@system unittest
+{
+    import std.string : splitLines;
+    import sparkles.base.text.grapheme : visibleWidth;
+
+    // minWidth pads a short box out to a fixed total width so stacked boxes align.
+    const box = drawBox(["x"], "T", BoxProps(minWidth: 40));
+    foreach (line; box.splitLines)
+        assert(line.visibleWidth == 40);
+}
+
+@("drawBox.width.minMaxEqualFixedWidth")
+@system unittest
+{
+    import std.string : splitLines;
+    import sparkles.base.text.grapheme : visibleWidth;
+
+    // Setting minWidth == maxWidth yields a fixed-width box: long content wraps in,
+    // short content pads out, every row lands on the requested total width.
+    const box = drawBox(["aaaa bbbb cccc dddd eeee", "short"], "T",
+        BoxProps(minWidth: 20, maxWidth: 20));
+    foreach (line; box.splitLines)
+        assert(line.visibleWidth == 20);
 }
