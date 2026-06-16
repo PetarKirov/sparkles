@@ -1692,7 +1692,11 @@ private string detectRepoRoot()
 private string[] dubSingleFileCommand(string action, string filePath, string repoRoot)
 in (action == "run" || action == "build", "action must be dub run or dub build")
 {
-    auto command = ["dub", action, "--quiet"];
+    // `--color=always` forces dub *and* the compiler to emit ANSI diagnostics
+    // even though we run them as a captured subprocess (not a TTY). The colored
+    // output flows through `rawOutput` into the failure boxes; `ci` itself
+    // always renders styled output, so forcing color here keeps them in sync.
+    auto command = ["dub", action, "--quiet", "--color=always"];
 
     if (repoRoot !is null)
         command ~= ["--root", repoRoot];
