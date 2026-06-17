@@ -329,7 +329,7 @@ pure nothrow @nogc:
         {
             // inline -> heap: copy inline elements out before overwriting the
             // union with the heap slice (they alias).
-            T[] nb = newBlock(grownCapacity(N, N + 1));
+            T[] nb = newBlock(grownCapacity(N + 1));
             nb[0 .. N] = _inline[0 .. N];
             nb[N] = element;
             _block = nb;
@@ -357,7 +357,7 @@ pure nothrow @nogc:
         if (_length <= N)
         {
             // inline -> heap transition
-            T[] nb = newBlock(grownCapacity(N, newLen));
+            T[] nb = newBlock(grownCapacity(newLen));
             nb[0 .. _length] = _inline[0 .. _length];
             nb[_length .. newLen] = xs[];
             _block = nb;
@@ -372,7 +372,7 @@ pure nothrow @nogc:
                 // realloc-move `_block`, leaving `xs` dangling. Copy into a
                 // fresh block (reading the old block via `xs` first), then
                 // release the old block.
-                T[] nb = newBlock(grownCapacity(_block.length, newLen));
+                T[] nb = newBlock(grownCapacity(newLen));
                 nb[0 .. _length] = _block[0 .. _length];
                 nb[_length .. newLen] = xs[];
                 releaseHeap();
@@ -406,7 +406,7 @@ pure nothrow @nogc:
     in (onHeap)
     {
         const ok = expandArray(Allocator.instance, _block,
-            grownCapacity(_block.length, needed) - _block.length);
+            grownCapacity(needed) - _block.length);
         if (!ok)
             assert(false, "SmallBuffer: reallocation failed");
     }
@@ -432,17 +432,20 @@ pure nothrow @nogc:
         return b;
     }
 
-    private static size_t grownCapacity(size_t currentCap, size_t needed) @safe
+    // Round `needed` up to a power-of-two capacity (geometric growth keeps
+    // appends amortized O(1)). `truncPow2` gives the largest power of two
+    // <= `needed`; if that is not already `needed`, the next power up is one
+    // shift away. A shift that overflows to 0 means no power of two fits, so
+    // clamp to `needed`.
+    private static size_t grownCapacity(size_t needed) @safe
     {
-        size_t c = currentCap;
-        while (c < needed)
-        {
-            const next = c * 2;
-            if (next <= c)
-                return needed; // doubling overflowed: clamp to the exact need
-            c = next;
-        }
-        return c;
+        import std.math.algebraic : truncPow2;
+
+        const t = truncPow2(needed);
+        if (t == needed)
+            return needed;          // already a power of two (covers 0 and 1)
+        const c = t << 1;           // next power of two above `needed`
+        return c == 0 ? needed : c; // c == 0 ⇒ shift overflowed; clamp
     }
 }
 
@@ -933,18 +936,20 @@ unittest
     assert(buf[0] == 1);
 }
 
-@("SmallBuffer.grownCapacity.overflowClamp")
+@("SmallBuffer.grownCapacity.powerOfTwo")
 @safe pure nothrow @nogc
 unittest
 {
     alias grow = SmallBuffer!(int, 2).grownCapacity;
-    // Normal doubling.
-    assert(grow(2, 5) == 8);
-    assert(grow(4, 4) == 4);
-    assert(grow(8, 9) == 16);
-    // Doubling would overflow: clamp to the exact need instead of looping.
-    enum size_t big = (size_t.max >> 1) + 1; // next double overflows
-    assert(grow(big, size_t.max) == size_t.max);
+    // Smallest power of two >= needed.
+    assert(grow(1) == 1);
+    assert(grow(2) == 2);
+    assert(grow(3) == 4);
+    assert(grow(5) == 8);
+    assert(grow(8) == 8);
+    assert(grow(9) == 16);
+    // Overflow (no power of two fits): clamp to the exact need, never wrap to 0.
+    assert(grow(size_t.max) == size_t.max);
 }
 
 @("SmallBuffer.selfAppend.heapGrow")
