@@ -10,6 +10,7 @@
  */
 module sparkles.base.smallbuffer;
 
+import std.algorithm.comparison : max;
 import std.experimental.allocator : makeArray, expandArray, dispose;
 import std.experimental.allocator.building_blocks.affix_allocator : AffixAllocator;
 import std.experimental.allocator.mallocator : Mallocator;
@@ -17,7 +18,7 @@ import std.experimental.allocator.mallocator : Mallocator;
 /**
  * A @nogc container with Small Buffer Optimization and copy-on-write.
  *
- * Elements are stored inline up to `smallBufferSize`, then automatically
+ * Elements are stored inline up to `N` elements, then automatically
  * allocated on the heap (via `AffixAllocator!(Mallocator, ControlBlock)`, which
  * keeps the reference count in an allocation prefix; the element capacity is the
  * heap slice length) when capacity is exceeded. Heap blocks are managed with the
@@ -34,28 +35,30 @@ import std.experimental.allocator.mallocator : Mallocator;
  * copy-on-write caveat) — read through `const` to share without that risk.
  *
  * Note: storage location is tied to length (data is inline whenever
- * `length <= smallBufferSize`), so `reserve` pre-grows only once on the heap,
- * and `clear`/`popBack` that drop the length back to `<= smallBufferSize` revert
+ * `length <= N`), so `reserve` pre-grows only once on the heap,
+ * and `clear`/`popBack` that drop the length back to `<= N` revert
  * to inline storage.
  *
  * Params:
  *   T = Element type
- *   smallBufferSize = Number of elements for inline storage (default: the
- *                     native slice size in bytes)
+ *   N = Number of elements stored inline. The default fills the slice-sized
+ *       union exactly (`max(1, (T[]).sizeof / T.sizeof)`), so the struct stays
+ *       three words (`3 * size_t.sizeof`) regardless of `T` — e.g. 16 for
+ *       `char`, 4 for `int`, 2 for `long`.
  */
-struct SmallBuffer(T, size_t smallBufferSize = (ubyte[]).sizeof)
+struct SmallBuffer(T, size_t N = max(size_t(1), (T[]).sizeof / T.sizeof))
 {
 pure nothrow @nogc:
 
-    static assert(smallBufferSize > 0, "smallBufferSize must be greater than 0");
+    static assert(N > 0, "N must be greater than 0");
 
     private
     {
-        // Discriminant: `_length <= smallBufferSize` <=> data lives inline.
+        // Discriminant: `_length <= N` <=> data lives inline.
         size_t _length = 0;
         union
         {
-            T[smallBufferSize] _inline = void;   // live iff !onHeap
+            T[N] _inline = void;   // live iff !onHeap
             T[] _block;                           // capacity slots (ControlBlock prefix precedes them)
         }
 
@@ -80,12 +83,12 @@ pure nothrow @nogc:
         bool empty() => _length == 0;
 
         /// Returns true if the buffer is using heap-allocated storage.
-        bool onHeap() => _length > smallBufferSize;
+        bool onHeap() => _length > N;
 
     @trusted:
         /// Returns the total capacity of the buffer.
         size_t capacity() =>
-            onHeap ? _block.length : smallBufferSize;
+            onHeap ? _block.length : N;
 
         /// Test-facing: shared reference count (0 while inline).
         private size_t refCount() =>
@@ -253,16 +256,16 @@ pure nothrow @nogc:
     void popBack() @trusted
     in (_length > 0, "Cannot pop from empty buffer")
     {
-        if (_length == smallBufferSize + 1)
+        if (_length == N + 1)
         {
             // Crossing N+1 -> N: data must move back inline to keep the
             // invariant `length <= N  <=>  inline`. Copy survivors out first.
             T[] b = _block;
-            T[smallBufferSize] tmp = void;
-            tmp[] = b[0 .. smallBufferSize];
+            T[N] tmp = void;
+            tmp[] = b[0 .. N];
             releaseHeap();
-            _inline[0 .. smallBufferSize] = tmp[];
-            _length = smallBufferSize;
+            _inline[0 .. N] = tmp[];
+            _length = N;
             return;
         }
         --_length;
@@ -279,12 +282,12 @@ pure nothrow @nogc:
      * Ensures the buffer has at least `newCapacity` slots.
      *
      * Storage location is tied to length here (inline whenever
-     * `length <= smallBufferSize`), so `reserve` can pre-grow only once the
+     * `length <= N`), so `reserve` can pre-grow only once the
      * buffer is already on the heap; while inline it is a no-op.
      */
     void reserve(size_t newCapacity) @trusted
     {
-        if (_length <= smallBufferSize)
+        if (_length <= N)
             return;
         ensureUnique();
         if (newCapacity > _block.length)
@@ -305,20 +308,20 @@ pure nothrow @nogc:
     private void appendOne(T element) @trusted
     {
         ensureUnique();
-        if (_length < smallBufferSize)
+        if (_length < N)
         {
             _inline[_length++] = element;
             return;
         }
-        if (_length == smallBufferSize)
+        if (_length == N)
         {
             // inline -> heap: copy inline elements out before overwriting the
             // union with the heap slice (they alias).
-            T[] nb = newBlock(grownCapacity(smallBufferSize, smallBufferSize + 1));
-            nb[0 .. smallBufferSize] = _inline[0 .. smallBufferSize];
-            nb[smallBufferSize] = element;
+            T[] nb = newBlock(grownCapacity(N, N + 1));
+            nb[0 .. N] = _inline[0 .. N];
+            nb[N] = element;
             _block = nb;
-            _length = smallBufferSize + 1;
+            _length = N + 1;
             return;
         }
         if (_length == _block.length)
@@ -333,16 +336,16 @@ pure nothrow @nogc:
             return;
         ensureUnique();
         const newLen = _length + xs.length;
-        if (newLen <= smallBufferSize)
+        if (newLen <= N)
         {
             _inline[_length .. newLen] = xs[];
             _length = newLen;
             return;
         }
-        if (_length <= smallBufferSize)
+        if (_length <= N)
         {
             // inline -> heap transition
-            T[] nb = newBlock(grownCapacity(smallBufferSize, newLen));
+            T[] nb = newBlock(grownCapacity(N, newLen));
             nb[0 .. _length] = _inline[0 .. _length];
             nb[_length .. newLen] = xs[];
             _block = nb;
@@ -378,7 +381,7 @@ pure nothrow @nogc:
     // Clone the shared heap block so this instance solely owns it (CoW trigger).
     private void ensureUnique() @trusted
     {
-        if (_length <= smallBufferSize || ctrl().refCount <= 1)
+        if (_length <= N || ctrl().refCount <= 1)
             return;
         T[] nb = newBlock(_block.length); // same capacity
         nb[0 .. _length] = _block[0 .. _length];
@@ -517,14 +520,16 @@ private void assertRendered(size_t errorBufferSize)(
 @safe pure nothrow @nogc
 unittest
 {
-    // By default, the inline element count matches the native slice size in
-    // bytes, e.g. 16 elements on x86_64.
+    // By default, N fills the slice-sized union exactly, so the struct stays
+    // three words wide for any T (16 chars / 4 ints / 2 longs inline).
     {
         static assert(SmallBuffer!char.sizeof == 3 * size_t.sizeof);
+        static assert(SmallBuffer!int.sizeof == 3 * size_t.sizeof);
+        static assert(SmallBuffer!long.sizeof == 3 * size_t.sizeof);
         SmallBuffer!int buf;
         assert(buf.length == 0);
         assert(buf.empty);
-        assert(buf.capacity == (ubyte[]).sizeof);
+        assert(buf.capacity == (ubyte[]).sizeof / int.sizeof); // 4 on x86_64
         assert(!buf.onHeap);
     }
 
@@ -741,7 +746,7 @@ unittest
     }
     {
         SmallBuffer!(int, 8) buf;
-        buf.reserve(4); // Less than smallBufferSize
+        buf.reserve(4); // Less than N
         assert(buf.capacity == 8);
         assert(!buf.onHeap);
     }
