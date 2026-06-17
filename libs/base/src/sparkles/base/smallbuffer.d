@@ -449,7 +449,7 @@ Params:
 
 Throws: `AssertError` if the rendered text does not match `expected`.
 */
-void checkToString(T, size_t outputBufferSize = 16 * 1024, size_t errorBufferSize = 4 * 1024)(
+void checkToString(T, size_t outputBufferSize = 1024, size_t errorBufferSize = 1024)(
     auto ref T value,
     const(char)[] expected,
     string file = __FILE__,
@@ -469,8 +469,8 @@ void checkToString(T, size_t outputBufferSize = 16 * 1024, size_t errorBufferSiz
 /// ---
 /// checkWriter!((ref b) => writeIntegerPadded(b, 7, 3))("007");
 /// ---
-void checkWriter(alias render, size_t outputBufferSize = 16 * 1024,
-    size_t errorBufferSize = 4 * 1024)(
+void checkWriter(alias render, size_t outputBufferSize = 1024,
+    size_t errorBufferSize = 1024)(
     const(char)[] expected,
     string file = __FILE__,
     size_t line = __LINE__,
