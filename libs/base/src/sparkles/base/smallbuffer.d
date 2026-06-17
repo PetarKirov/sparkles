@@ -173,6 +173,13 @@ pure nothrow @nogc:
 
     // ─────────────────────────────────────────────────────────────────────────
     // element access — const path shares; mutable path clones if shared
+    //
+    // The mutable `opSlice`/`opIndex`/`front`/`back` overloads call
+    // `ensureUnique()`, so on a shared (heap, refcount > 1) buffer they trigger a
+    // copy-on-write clone *even when you only read* the returned reference —
+    // overload resolution cannot tell read from write. To share a heap buffer
+    // without cloning, read through `const`/`freeze` (which select the const
+    // overloads).
     // ─────────────────────────────────────────────────────────────────────────
 
     // Current element slice; element constness follows `this`.
@@ -281,17 +288,22 @@ pure nothrow @nogc:
     /**
      * Ensures the buffer has at least `newCapacity` slots.
      *
-     * Storage location is tied to length here (inline whenever
-     * `length <= N`), so `reserve` can pre-grow only once the
-     * buffer is already on the heap; while inline it is a no-op.
+     * $(B Limitation:) storage location is tied to length here — data is inline
+     * whenever `length <= N` — so `reserve` can only pre-grow a buffer that is
+     * $(I already) on the heap; on an inline (including empty) buffer it is a
+     * no-op, and the next inline→heap transition reallocates from scratch. This
+     * is a consequence of deriving `onHeap` from `length`; decoupling the storage
+     * discriminant (so an empty buffer can hold a reserved heap block) is a
+     * planned policy knob.
      */
     void reserve(size_t newCapacity) @trusted
     {
         if (_length <= N)
             return;
+        if (newCapacity <= _block.length)
+            return; // already large enough — don't clone a shared block needlessly
         ensureUnique();
-        if (newCapacity > _block.length)
-            growBlock(newCapacity);
+        growBlock(newCapacity);
     }
 
     /**
