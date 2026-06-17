@@ -11,6 +11,7 @@
 module sparkles.base.smallbuffer;
 
 import std.algorithm.comparison : max;
+import std.array : overlap;
 import std.range.primitives : ElementType, hasLength, hasSlicing, isInputRange;
 import std.experimental.allocator : makeArray, expandArray, dispose;
 import std.experimental.allocator.building_blocks.affix_allocator : AffixAllocator;
@@ -106,7 +107,7 @@ pure nothrow @nogc:
      * Copy constructor (copy-on-write). An inline buffer copies its elements,
      * yielding an independent buffer. A heap buffer instead shares storage and
      * bumps the reference count; the shared block is cloned only when a mutable
-     * copy is first written (see `ensureUnique`). Reaching a copy through
+     * copy is first written (see `ensureUniqueStorage`). Reaching a copy through
      * `const` (e.g. via `borrow`) is therefore a zero-clone read-only handle.
      */
     this(ref inout SmallBuffer rhs) inout @trusted
@@ -145,7 +146,7 @@ pure nothrow @nogc:
         if (rhs.onHeap)
             ++rhs.ctrl().refCount; // acquire rhs before releasing self
 
-        releaseHeap();
+        releaseStorage();
         _length = rhs._length;
 
         if (rhs.onHeap)
@@ -161,7 +162,7 @@ pure nothrow @nogc:
     /// neutralized so its destructor frees nothing.
     ref SmallBuffer opAssign(SmallBuffer rhs) return @trusted
     {
-        releaseHeap();
+        releaseStorage();
         _length = rhs._length;
         if (rhs.onHeap)
             _block = rhs._block;
@@ -178,7 +179,7 @@ pure nothrow @nogc:
     // element access — const path shares; mutable path clones if shared
     //
     // The mutable `opSlice`/`opIndex`/`front`/`back` overloads call
-    // `ensureUnique()`, so on a shared (heap, refcount > 1) buffer they trigger a
+    // `ensureUniqueStorage()`, so on a shared (heap, refcount > 1) buffer they trigger a
     // copy-on-write clone *even when you only read* the returned reference —
     // overload resolution cannot tell read from write. To share a heap buffer
     // without cloning, read through `const`/`borrow` (which select the const
@@ -197,7 +198,7 @@ pure nothrow @nogc:
         /// Returns a mutable slice of all elements (clones if shared).
         T[] opSlice()
         {
-            ensureUnique();
+            ensureUniqueStorage();
             return view();
         }
 
@@ -239,27 +240,68 @@ pure nothrow @nogc:
     // ─────────────────────────────────────────────────────────────────────────
 
     /// Output range interface: appends a single element.
-    void put(in T element)
+    void put(in T element) @safe
     {
-        appendOne(element);
+        T[] tail = ensureUniqueStorage(extraLen: 1);
+        tail[0] = element;
+        ++_length;
     }
 
     /// Output range interface: appends elements from a slice.
-    void put(in T[] elements)
+    void put(in T[] elements) @trusted
     {
-        appendSlice(elements);
+        if (elements.length == 0)
+            return;
+
+        const oldLen = _length;
+        const newLen = oldLen + elements.length;
+
+        // If the source aliases inline storage, preserve it before the union is
+        // overwritten by the inline->heap transition.
+        if (oldLen <= N && newLen > N
+            && elements.overlap(cast(const(T)[]) _inline[0 .. oldLen]).length)
+        {
+            T[N] tmp = void;
+            tmp[0 .. elements.length] = elements[];
+            T[] tail = ensureUniqueStorage(extraLen: elements.length);
+            tail[] = tmp[0 .. elements.length];
+            _length = newLen;
+            return;
+        }
+
+        // If a unique heap block must grow while the source aliases it, keep the
+        // old block alive until after the tail copy. `ensureUniqueStorage` then
+        // takes the shared-clone path instead of reallocating underneath us.
+        T[] retainedBlock;
+        if (oldLen > N && newLen > _block.length
+            && ctrl().refCount == 1
+            && elements.overlap(cast(const(T)[]) _block).length)
+        {
+            retainedBlock = _block;
+            ++ctrl().refCount;
+        }
+
+        T[] tail = ensureUniqueStorage(extraLen: elements.length);
+        tail[] = elements[];
+        _length = newLen;
+
+        if (retainedBlock !is null)
+        {
+            if (--Allocator.instance.prefix(retainedBlock).refCount == 0)
+                dispose(Allocator.instance, retainedBlock);
+        }
     }
 
     /// Appends a single element using `~=` operator.
-    void opOpAssign(string op : "~")(in T element)
+    void opOpAssign(string op : "~")(in T element) @safe
     {
-        appendOne(element);
+        put(element);
     }
 
     /// Appends elements from a slice using `~=` operator.
-    void opOpAssign(string op : "~")(in T[] elements)
+    void opOpAssign(string op : "~")(in T[] elements) @safe
     {
-        appendSlice(elements);
+        put(elements);
     }
 
     /// Output range interface: appends every element of an input range whose
@@ -271,12 +313,22 @@ pure nothrow @nogc:
     if (isInputRange!R && is(ElementType!R : T) && !is(immutable R == immutable(T)[]))
     {
         static if (hasSlicing!R && is(typeof(elements[]) : const(T)[]))
-            appendSlice(elements[]);
+            put(elements[]);
         else static if (hasLength!R)
-            appendKnownLength(elements);
+        {
+            const n = elements.length;
+            if (n == 0)
+                return;
+            const oldLen = _length;
+            T[] tail = ensureUniqueStorage(extraLen: n);
+            size_t i;
+            foreach (e; elements)
+                tail[i++] = e;
+            _length = oldLen + n;
+        }
         else
             foreach (e; elements)
-                appendOne(e);
+                put(e);
     }
 
     /// Appends every element of an input range using the `~=` operator.
@@ -297,7 +349,7 @@ pure nothrow @nogc:
             T[] b = _block;
             T[N] tmp = void;
             tmp[] = b[0 .. N];
-            releaseHeap();
+            releaseStorage();
             _inline[0 .. N] = tmp[];
             _length = N;
             return;
@@ -308,7 +360,7 @@ pure nothrow @nogc:
     /// Removes all elements; releases heap storage and reverts to inline.
     void clear() @trusted
     {
-        releaseHeap();
+        releaseStorage();
         _length = 0;
     }
 
@@ -329,9 +381,7 @@ pure nothrow @nogc:
             return;
         if (newCapacity <= _block.length)
             return; // already large enough — don't clone a shared block needlessly
-        ensureUnique(newCapacity); // if shared, clone straight into the grown block
-        if (newCapacity > _block.length)
-            growBlock(newCapacity); // only reached when we were already unique
+        ensureUniqueStorage(minCapacity: newCapacity);
     }
 
     /**
@@ -363,7 +413,7 @@ pure nothrow @nogc:
     SmallBuffer toOwned() const @safe
     {
         SmallBuffer copy = this; // shares (heap) or copies (inline)
-        copy.ensureUnique();     // force a private block if shared
+        copy.ensureUniqueStorage();     // force a private block if shared
         return copy;
     }
 
@@ -371,176 +421,77 @@ pure nothrow @nogc:
     // private helpers
     // ─────────────────────────────────────────────────────────────────────────
 
-    private void appendOne(T element) @trusted
+    // Ensure this buffer has unique mutable storage with room for `extraLen`
+    // additional elements (and at least `minCapacity` total slots). `_length`
+    // is deliberately unchanged; callers fill the returned tail and then commit.
+    private T[] ensureUniqueStorage(size_t extraLen = 0, size_t minCapacity = 0) @trusted
     {
-        ensureUnique(_length + 1); // if shared, clone straight into a grown block
-        if (_length < N)
-        {
-            _inline[_length++] = element;
-            return;
-        }
-        if (_length == N)
-        {
-            // inline -> heap: copy inline elements out before overwriting the
-            // union with the heap slice (they alias).
-            T[] nb = newBlock(grownCapacity(N + 1));
-            nb[0 .. N] = _inline[0 .. N];
-            nb[N] = element;
-            _block = nb;
-            _length = N + 1;
-            return;
-        }
-        if (_length == _block.length)
-            growBlock(_length + 1);
-        _block[_length] = element;
-        ++_length;
-    }
+        import std.math.algebraic : truncPow2;
 
-    private void appendSlice(scope const(T)[] xs) @trusted
-    {
-        if (xs.length == 0)
-            return;
-        const newLen = _length + xs.length;
-        ensureUnique(newLen); // if shared, clone straight into a grown block
-        if (newLen <= N)
+        const oldLen = _length;
+        const newLen = oldLen + extraLen;
+        const needed = max(newLen, minCapacity);
+
+        size_t capacity = needed;
+        if (capacity > 0)
         {
-            _inline[_length .. newLen] = xs[];
-            _length = newLen;
-            return;
-        }
-        if (_length <= N)
-        {
-            // inline -> heap transition
-            T[] nb = newBlock(grownCapacity(newLen));
-            nb[0 .. _length] = _inline[0 .. _length];
-            nb[_length .. newLen] = xs[];
-            _block = nb;
-            _length = newLen;
-            return;
-        }
-        if (newLen > _block.length)
-        {
-            if (overlaps(xs, _block))
+            const t = truncPow2(capacity);
+            if (t != capacity)
             {
-                // Self-aliasing append (e.g. `buf ~= buf[]`): `growBlock` may
-                // realloc-move `_block`, leaving `xs` dangling. Copy into a
-                // fresh block (reading the old block via `xs` first), then
-                // release the old block.
-                T[] nb = newBlock(grownCapacity(newLen));
-                nb[0 .. _length] = _block[0 .. _length];
-                nb[_length .. newLen] = xs[];
-                releaseHeap();
-                _block = nb;
-                _length = newLen;
-                return;
+                const rounded = t << 1;
+                if (rounded != 0)
+                    capacity = rounded;
             }
-            growBlock(newLen);
         }
-        _block[_length .. newLen] = xs[];
-        _length = newLen;
-    }
 
-    // Append a known-length input range, allocating at most once (the by-element
-    // analogue of `appendSlice`). For the inline->heap case the new block is
-    // filled before the `_block`/`_inline` union is committed, so a source range
-    // reading our own inline storage stays valid through the copy.
-    private void appendKnownLength(R)(R elements) @trusted
-    if (hasLength!R)
-    {
-        const n = elements.length;
-        if (n == 0)
-            return;
-        const newLen = _length + n;
+        T[] allocate(size_t blockCapacity)
+        {
+            T[] b = makeArray!T(Allocator.instance, blockCapacity);
+            assert(b !is null, "SmallBuffer: allocation failed");
+            Allocator.instance.prefix(b).refCount = 1;
+            return b;
+        }
+
         if (newLen <= N)
+            return _inline[oldLen .. newLen];
+
+        if (oldLen <= N)
         {
-            size_t i = _length;
-            foreach (e; elements)
-                _inline[i++] = e;
-        }
-        else if (_length <= N)
-        {
-            // inline -> heap: fill the fresh block before overwriting the union.
-            T[] nb = newBlock(grownCapacity(newLen));
-            nb[0 .. _length] = _inline[0 .. _length];
-            size_t i = _length;
-            foreach (e; elements)
-                nb[i++] = e;
+            T[] nb = allocate(capacity);
+            nb[0 .. oldLen] = _inline[0 .. oldLen];
             _block = nb;
+            return _block[oldLen .. newLen];
         }
-        else
+
+        if (ctrl().refCount > 1)
         {
-            ensureUnique(newLen);       // shared → grown clone (one allocation)
-            if (newLen > _block.length)
-                growBlock(newLen);      // unique grow in place
-            size_t i = _length;
-            foreach (e; elements)
-                _block[i++] = e;
+            T[] nb = allocate(max(_block.length, capacity));
+            nb[0 .. oldLen] = _block[0 .. oldLen];
+            --ctrl().refCount;
+            _block = nb;
+            return _block[oldLen .. newLen];
         }
-        _length = newLen;
-    }
 
-    // True if slices `a` and `b` share any underlying element storage.
-    private static bool overlaps(scope const(T)[] a, scope const(T)[] b) @trusted
-        => a.ptr < b.ptr + b.length && b.ptr < a.ptr + a.length;
+        if (needed > _block.length)
+        {
+            const ok = expandArray(Allocator.instance, _block, capacity - _block.length);
+            if (!ok)
+                assert(false, "SmallBuffer: reallocation failed");
+        }
 
-    // Clone the shared heap block so this instance solely owns it (CoW trigger).
-    // When a grow is already pending, pass its target `minCapacity` so the clone
-    // is sized to cover it — folding clone + grow into a single allocation.
-    private void ensureUnique(size_t minCapacity = 0) @trusted
-    {
-        if (_length <= N || ctrl().refCount <= 1)
-            return;
-        T[] nb = newBlock(max(_block.length, grownCapacity(minCapacity)));
-        nb[0 .. _length] = _block[0 .. _length];
-        --ctrl().refCount;
-        _block = nb;
-    }
-
-    // Grow the uniquely-owned heap block to hold at least `needed` elements.
-    private void growBlock(size_t needed) @trusted
-    in (onHeap)
-    {
-        const ok = expandArray(Allocator.instance, _block,
-            grownCapacity(needed) - _block.length);
-        if (!ok)
-            assert(false, "SmallBuffer: reallocation failed");
+        return _block[oldLen .. newLen];
     }
 
     // Drop this owner's heap reference. If refCount hits 0, destroy and free the
     // block. Nulls `_block` so no dangling/aliased pointer survives in the union
     // (callers reset `_length` and/or reassign `_block` afterwards).
-    private void releaseHeap() @trusted
+    private void releaseStorage() @trusted
     {
         if (!onHeap)
             return;
         if (--ctrl().refCount == 0)
             dispose(Allocator.instance, _block);
         _block = null;
-    }
-
-    // Allocate a heap block for `capacity` elements (refCount 1).
-    private static T[] newBlock(size_t capacity) @trusted
-    {
-        T[] b = makeArray!T(Allocator.instance, capacity);
-        assert(b !is null, "SmallBuffer: allocation failed");
-        Allocator.instance.prefix(b).refCount = 1;
-        return b;
-    }
-
-    // Round `needed` up to a power-of-two capacity (geometric growth keeps
-    // appends amortized O(1)). `truncPow2` gives the largest power of two
-    // <= `needed`; if that is not already `needed`, the next power up is one
-    // shift away. A shift that overflows to 0 means no power of two fits, so
-    // clamp to `needed`.
-    private static size_t grownCapacity(size_t needed) @safe
-    {
-        import std.math.algebraic : truncPow2;
-
-        const t = truncPow2(needed);
-        if (t == needed)
-            return needed;          // already a power of two (covers 0 and 1)
-        const c = t << 1;           // next power of two above `needed`
-        return c == 0 ? needed : c; // c == 0 ⇒ shift overflowed; clamp
     }
 }
 
@@ -1099,7 +1050,7 @@ unittest
         assert(big[i] == i);
 
     // Contiguous path: a range that is hasSlicing and slices to a T[] is bulk
-    // copied through appendSlice rather than appended element by element.
+    // copied through the slice put overload rather than appended element by element.
     static struct Contig
     {
         int[] d;
@@ -1147,20 +1098,38 @@ unittest
     assert(buf[0] == 1);
 }
 
-@("SmallBuffer.grownCapacity.powerOfTwo")
+@("SmallBuffer.capacity.powerOfTwoGrowth")
 @safe pure nothrow @nogc
 unittest
 {
-    alias grow = SmallBuffer!(int, 2).grownCapacity;
-    // Smallest power of two >= needed.
-    assert(grow(1) == 1);
-    assert(grow(2) == 2);
-    assert(grow(3) == 4);
-    assert(grow(5) == 8);
-    assert(grow(8) == 8);
-    assert(grow(9) == 16);
-    // Overflow (no power of two fits): clamp to the exact need, never wrap to 0.
-    assert(grow(size_t.max) == size_t.max);
+    SmallBuffer!(int, 2) buf;
+    buf ~= [0, 1];
+    assert(buf.capacity == 2);
+
+    buf ~= 2;
+    assert(buf.onHeap && buf.capacity == 4);
+
+    buf ~= 3;
+    assert(buf.capacity == 4);
+
+    buf ~= 4;
+    assert(buf.capacity == 8);
+
+    SmallBuffer!(int, 2) bulk;
+    bulk ~= iota(9);
+    assert(bulk.capacity == 16);
+}
+
+@("SmallBuffer.selfAppend.inlineToHeap")
+@safe pure nothrow @nogc
+unittest
+{
+    SmallBuffer!(int, 4) buf;
+    buf ~= [0, 1, 2];
+
+    buf ~= buf[];
+    assert(buf.onHeap);
+    assert(buf[] == [0, 1, 2, 0, 1, 2]);
 }
 
 @("SmallBuffer.selfAppend.heapGrow")
@@ -1359,7 +1328,7 @@ unittest
     // Growing a *shared* buffer folds the CoW clone and the grow into one
     // allocation; the shared original must stay intact and detach cleanly.
 
-    // appendOne on a shared, full heap buffer.
+    // Single-element put on a shared, full heap buffer.
     SmallBuffer!(int, 2) a;
     a ~= [0, 1, 2, 3];               // heap, capacity 4 (full)
     const reader = a.borrow;         // share, refCount 2
@@ -1371,7 +1340,7 @@ unittest
     assert(a.refCount == 1 && reader.refCount == 1);
     assert(a.capacity >= 5);
 
-    // appendSlice on a shared, growing heap buffer.
+    // Slice put on a shared, growing heap buffer.
     SmallBuffer!(int, 2) b;
     b ~= [0, 1, 2, 3];               // heap
     const rb = b.borrow;
