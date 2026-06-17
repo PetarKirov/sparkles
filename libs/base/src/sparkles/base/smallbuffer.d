@@ -11,7 +11,7 @@
 module sparkles.base.smallbuffer;
 
 import std.algorithm.comparison : max;
-import std.range.primitives : ElementType, isInputRange;
+import std.range.primitives : ElementType, hasLength, hasSlicing, isInputRange;
 import std.experimental.allocator : makeArray, expandArray, dispose;
 import std.experimental.allocator.building_blocks.affix_allocator : AffixAllocator;
 import std.experimental.allocator.mallocator : Mallocator;
@@ -264,11 +264,19 @@ pure nothrow @nogc:
 
     /// Output range interface: appends every element of an input range whose
     /// elements are convertible to `T` (a `T[]` uses the bulk slice overload).
+    /// Specializes on range capability: a contiguous (sliceable-to-`T[]`) range
+    /// becomes one bulk copy, a known-length range pre-sizes to a single
+    /// allocation, and any other input range falls back to amortized appends.
     void put(R)(R elements)
     if (isInputRange!R && is(ElementType!R : T) && !is(immutable R == immutable(T)[]))
     {
-        foreach (e; elements)
-            appendOne(e);
+        static if (hasSlicing!R && is(typeof(elements[]) : const(T)[]))
+            appendSlice(elements[]);
+        else static if (hasLength!R)
+            appendKnownLength(elements);
+        else
+            foreach (e; elements)
+                appendOne(e);
     }
 
     /// Appends every element of an input range using the `~=` operator.
@@ -429,6 +437,45 @@ pure nothrow @nogc:
             growBlock(newLen);
         }
         _block[_length .. newLen] = xs[];
+        _length = newLen;
+    }
+
+    // Append a known-length input range, allocating at most once (the by-element
+    // analogue of `appendSlice`). For the inline->heap case the new block is
+    // filled before the `_block`/`_inline` union is committed, so a source range
+    // reading our own inline storage stays valid through the copy.
+    private void appendKnownLength(R)(R elements) @trusted
+    if (hasLength!R)
+    {
+        const n = elements.length;
+        if (n == 0)
+            return;
+        const newLen = _length + n;
+        if (newLen <= N)
+        {
+            size_t i = _length;
+            foreach (e; elements)
+                _inline[i++] = e;
+        }
+        else if (_length <= N)
+        {
+            // inline -> heap: fill the fresh block before overwriting the union.
+            T[] nb = newBlock(grownCapacity(newLen));
+            nb[0 .. _length] = _inline[0 .. _length];
+            size_t i = _length;
+            foreach (e; elements)
+                nb[i++] = e;
+            _block = nb;
+        }
+        else
+        {
+            ensureUnique(newLen);       // shared → grown clone (one allocation)
+            if (newLen > _block.length)
+                growBlock(newLen);      // unique grow in place
+            size_t i = _length;
+            foreach (e; elements)
+                _block[i++] = e;
+        }
         _length = newLen;
     }
 
@@ -1037,6 +1084,40 @@ unittest
     SmallBuffer!(long, 2) longs;
     longs ~= iota(4).map!(x => cast(long) x);
     assert(longs[] == [0L, 1, 2, 3]);
+}
+
+@("SmallBuffer.appendInputRange.specialization")
+@safe pure nothrow @nogc
+unittest
+{
+    // hasLength path: a large known-length range goes inline -> heap in a single
+    // fill (no per-element reallocation).
+    SmallBuffer!(int, 4) big;
+    big ~= iota(50);
+    assert(big.length == 50);
+    foreach (i; 0 .. 50)
+        assert(big[i] == i);
+
+    // Contiguous path: a range that is hasSlicing and slices to a T[] is bulk
+    // copied through appendSlice rather than appended element by element.
+    static struct Contig
+    {
+        int[] d;
+        @property bool empty() const => d.length == 0;
+        @property int front() const => d[0];
+        void popFront() { d = d[1 .. $]; }
+        Contig save() => Contig(d);          // forward range (hasSlicing needs this)
+        @property size_t length() const => d.length;
+        alias opDollar = length;
+        const(int)[] opSlice() const => d;                  // r[] → bulk-copy slice
+        Contig opSlice(size_t a, size_t b) => Contig(d[a .. b]); // r[a..b] → subrange
+    }
+    static assert(hasSlicing!Contig && is(typeof(Contig.init[]) : const(int)[]));
+
+    SmallBuffer!(int, 2) c;
+    int[4] backing = [7, 8, 9, 10];
+    c ~= Contig(backing[]);
+    assert(c[] == [7, 8, 9, 10]);
 }
 
 
