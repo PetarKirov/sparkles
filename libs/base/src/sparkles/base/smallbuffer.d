@@ -129,9 +129,11 @@ pure nothrow @nogc:
     }
 
     /// Copy assignment: release current storage, then share/copy from `rhs`.
-    ref SmallBuffer opAssign(ref SmallBuffer rhs) return @trusted
+    /// Accepts a `const` (e.g. frozen) source — a heap source is shared (refcount
+    /// bumped), an inline source is copied — mirroring the copy constructors.
+    ref SmallBuffer opAssign(ref const SmallBuffer rhs) return @trusted
     {
-        if (&this is &rhs)
+        if (cast(const void*) &this is cast(const void*) &rhs)
             return this;
 
         if (rhs.onHeap)
@@ -141,10 +143,25 @@ pure nothrow @nogc:
         _length = rhs._length;
 
         if (rhs.onHeap)
+            _block = cast(T[]) rhs._block;
+        else
+            _inline[0 .. rhs._length] = cast(T[]) rhs._inline[0 .. rhs._length];
+
+        return this;
+    }
+
+    /// Move assignment from an rvalue: release current storage, then steal
+    /// `rhs`'s storage (no refcount change — ownership transfers). `rhs` is
+    /// neutralized so its destructor frees nothing.
+    ref SmallBuffer opAssign(SmallBuffer rhs) return @trusted
+    {
+        releaseHeap();
+        _length = rhs._length;
+        if (rhs.onHeap)
             _block = rhs._block;
         else
             _inline[0 .. rhs._length] = rhs._inline[0 .. rhs._length];
-
+        rhs._length = 0; // rhs no longer owns the (possibly heap) block
         return this;
     }
 
@@ -966,6 +983,42 @@ unittest
     assert(a.refCount == 1);
     assert(a[] == [0, 1, 2, 3, 4]);
     assert(b[] == [0, 1, 2, 3, 4, 5]);
+}
+
+@("SmallBuffer.cow.constOpAssign")
+@safe pure nothrow @nogc
+unittest
+{
+    SmallBuffer!(int, 2) a;
+    foreach (i; 0 .. 5)
+        a ~= cast(int) i;        // heap
+
+    // Assigning a const/frozen source must compile and share storage.
+    const frozen = a.freeze();
+    SmallBuffer!(int, 2) work;
+    work ~= 100;                 // work inline, owns nothing on the heap
+    work = frozen;               // const copy-assign: shares a's block
+    assert(a.refCount == 3);     // a, frozen, work all share
+    assert((cast(const) work)[] == [0, 1, 2, 3, 4]);   // const read: no clone
+
+    work ~= 5;                   // CoW: clone away from the shared block
+    assert(a.refCount == 2);     // a, frozen still share
+    assert(a[] == [0, 1, 2, 3, 4]);
+    assert(work[] == [0, 1, 2, 3, 4, 5]);
+
+    // Rvalue/move assignment must also compile.
+    SmallBuffer!(int, 2) mv;
+    mv = makeHeapBuffer();
+    assert(mv[] == [0, 1, 2, 3, 4]);
+}
+
+// Helper: returns a heap SmallBuffer by value (rvalue source for opAssign).
+private SmallBuffer!(int, 2) makeHeapBuffer() @safe pure nothrow @nogc
+{
+    SmallBuffer!(int, 2) r;
+    foreach (i; 0 .. 5)
+        r ~= cast(int) i;
+    return r;
 }
 
 @("SmallBuffer.cow.refCountLifetime")
