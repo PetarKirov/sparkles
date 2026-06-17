@@ -69,7 +69,7 @@ abstract class CoreLogger : Logger
 {
     private shared LogLevel _coreLogLevel;
 
-    this(LogLevel level) @safe
+    this(this Q)(LogLevel level) @safe
     {
         super(level);
         atomicStore!(MemoryOrder.raw)(_coreLogLevel, level);
@@ -218,7 +218,7 @@ class DeltaTimeLogger : CoreLogger
     private immutable long startTicks;
     private shared long prevTicks;
 
-    this(LogLevel level) @safe
+    this(this Q)(LogLevel level) @safe
     {
         super(level);
         startTicks = MonoTime.currTime.ticks;
@@ -285,8 +285,8 @@ void initLogger(LogLevel level) @safe
     globalLogLevel = level;
     coreGlobalLogLevel = level;
 
-    auto logger = () @trusted { return cast(shared) new DeltaTimeLogger(level); }();
-    sharedLog = cast(shared Logger) logger;
+    auto logger = new shared DeltaTimeLogger(level);
+    sharedLog = logger;
     sharedCoreLog = logger;
 }
 
@@ -295,15 +295,30 @@ void initLogger(LogLevel level) @safe
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
+Explicit source location metadata for log calls.
+*/
+struct SourceLocation
+{
+    int line;
+    string file;
+    string funcName;
+    string prettyFuncName;
+    string moduleName;
+}
+
+/**
 Logs a styled IES message at the given log level.
 */
-void log(int line = __LINE__, string file = __FILE__,
-    string funcName = __FUNCTION__, string prettyFuncName = __PRETTY_FUNCTION__,
-    string moduleName = __MODULE__, Args...)(
+void log(Args...)(
     LogLevel level,
     InterpolationHeader header,
     Args args,
     InterpolationFooter footer,
+    int line = __LINE__,
+    string file = __FILE__,
+    string funcName = __FUNCTION__,
+    string prettyFuncName = __PRETTY_FUNCTION__,
+    string moduleName = __MODULE__,
 ) @safe nothrow @nogc
 {
     import sparkles.base.smallbuffer : SmallBuffer;
@@ -312,7 +327,7 @@ void log(int line = __LINE__, string file = __FILE__,
     SmallBuffer!(char, 4 * 1024) message;
     writeStyled(message, header, args, footer);
 
-    auto entry = makeCoreLogEntry!(line, file, funcName, prettyFuncName, moduleName)(level);
+    auto entry = makeCoreLogEntry(level, line, file, funcName, prettyFuncName, moduleName);
 
     if (auto logger = sharedCoreLog)
     {
@@ -328,76 +343,172 @@ void log(int line = __LINE__, string file = __FILE__,
     }
 }
 
-/// Logs a styled IES message at [LogLevel.trace].
-void trace(int line = __LINE__, string file = __FILE__,
-    string funcName = __FUNCTION__, string prettyFuncName = __PRETTY_FUNCTION__,
-    string moduleName = __MODULE__, Args...)(
+/// ditto
+void log(Args...)(
+    LogLevel level,
+    SourceLocation loc,
     InterpolationHeader header,
     Args args,
     InterpolationFooter footer,
 ) @safe nothrow @nogc
 {
-    log!(line, file, funcName, prettyFuncName, moduleName)(LogLevel.trace, header, args, footer);
+    log!Args(level, header, args, footer, loc.line, loc.file, loc.funcName, loc.prettyFuncName, loc.moduleName);
+}
+
+/// Logs a styled IES message at [LogLevel.trace].
+void trace(Args...)(
+    InterpolationHeader header,
+    Args args,
+    InterpolationFooter footer,
+    int line = __LINE__,
+    string file = __FILE__,
+    string funcName = __FUNCTION__,
+    string prettyFuncName = __PRETTY_FUNCTION__,
+    string moduleName = __MODULE__,
+) @safe nothrow @nogc
+{
+    log!Args(LogLevel.trace, header, args, footer, line, file, funcName, prettyFuncName, moduleName);
+}
+
+/// ditto
+void trace(Args...)(
+    SourceLocation loc,
+    InterpolationHeader header,
+    Args args,
+    InterpolationFooter footer,
+) @safe nothrow @nogc
+{
+    log!Args(LogLevel.trace, loc, header, args, footer);
 }
 
 /// Logs a styled IES message at [LogLevel.info].
-void info(int line = __LINE__, string file = __FILE__,
-    string funcName = __FUNCTION__, string prettyFuncName = __PRETTY_FUNCTION__,
-    string moduleName = __MODULE__, Args...)(
+void info(Args...)(
+    InterpolationHeader header,
+    Args args,
+    InterpolationFooter footer,
+    int line = __LINE__,
+    string file = __FILE__,
+    string funcName = __FUNCTION__,
+    string prettyFuncName = __PRETTY_FUNCTION__,
+    string moduleName = __MODULE__,
+) @safe nothrow @nogc
+{
+    log!Args(LogLevel.info, header, args, footer, line, file, funcName, prettyFuncName, moduleName);
+}
+
+/// ditto
+void info(Args...)(
+    SourceLocation loc,
     InterpolationHeader header,
     Args args,
     InterpolationFooter footer,
 ) @safe nothrow @nogc
 {
-    log!(line, file, funcName, prettyFuncName, moduleName)(LogLevel.info, header, args, footer);
+    log!Args(LogLevel.info, loc, header, args, footer);
 }
 
 /// Logs a styled IES message at [LogLevel.warning].
-void warning(int line = __LINE__, string file = __FILE__,
-    string funcName = __FUNCTION__, string prettyFuncName = __PRETTY_FUNCTION__,
-    string moduleName = __MODULE__, Args...)(
+void warning(Args...)(
+    InterpolationHeader header,
+    Args args,
+    InterpolationFooter footer,
+    int line = __LINE__,
+    string file = __FILE__,
+    string funcName = __FUNCTION__,
+    string prettyFuncName = __PRETTY_FUNCTION__,
+    string moduleName = __MODULE__,
+) @safe nothrow @nogc
+{
+    log!Args(LogLevel.warning, header, args, footer, line, file, funcName, prettyFuncName, moduleName);
+}
+
+/// ditto
+void warning(Args...)(
+    SourceLocation loc,
     InterpolationHeader header,
     Args args,
     InterpolationFooter footer,
 ) @safe nothrow @nogc
 {
-    log!(line, file, funcName, prettyFuncName, moduleName)(LogLevel.warning, header, args, footer);
+    log!Args(LogLevel.warning, loc, header, args, footer);
 }
 
 /// Logs a styled IES message at [LogLevel.error].
-void error(int line = __LINE__, string file = __FILE__,
-    string funcName = __FUNCTION__, string prettyFuncName = __PRETTY_FUNCTION__,
-    string moduleName = __MODULE__, Args...)(
+void error(Args...)(
+    InterpolationHeader header,
+    Args args,
+    InterpolationFooter footer,
+    int line = __LINE__,
+    string file = __FILE__,
+    string funcName = __FUNCTION__,
+    string prettyFuncName = __PRETTY_FUNCTION__,
+    string moduleName = __MODULE__,
+) @safe nothrow @nogc
+{
+    log!Args(LogLevel.error, header, args, footer, line, file, funcName, prettyFuncName, moduleName);
+}
+
+/// ditto
+void error(Args...)(
+    SourceLocation loc,
     InterpolationHeader header,
     Args args,
     InterpolationFooter footer,
 ) @safe nothrow @nogc
 {
-    log!(line, file, funcName, prettyFuncName, moduleName)(LogLevel.error, header, args, footer);
+    log!Args(LogLevel.error, loc, header, args, footer);
 }
 
 /// Logs a styled IES message at [LogLevel.critical].
-void critical(int line = __LINE__, string file = __FILE__,
-    string funcName = __FUNCTION__, string prettyFuncName = __PRETTY_FUNCTION__,
-    string moduleName = __MODULE__, Args...)(
+void critical(Args...)(
+    InterpolationHeader header,
+    Args args,
+    InterpolationFooter footer,
+    int line = __LINE__,
+    string file = __FILE__,
+    string funcName = __FUNCTION__,
+    string prettyFuncName = __PRETTY_FUNCTION__,
+    string moduleName = __MODULE__,
+) @safe nothrow @nogc
+{
+    log!Args(LogLevel.critical, header, args, footer, line, file, funcName, prettyFuncName, moduleName);
+}
+
+/// ditto
+void critical(Args...)(
+    SourceLocation loc,
     InterpolationHeader header,
     Args args,
     InterpolationFooter footer,
 ) @safe nothrow @nogc
 {
-    log!(line, file, funcName, prettyFuncName, moduleName)(LogLevel.critical, header, args, footer);
+    log!Args(LogLevel.critical, loc, header, args, footer);
 }
 
 /// Logs a styled IES message at [LogLevel.fatal].
-void fatal(int line = __LINE__, string file = __FILE__,
-    string funcName = __FUNCTION__, string prettyFuncName = __PRETTY_FUNCTION__,
-    string moduleName = __MODULE__, Args...)(
+void fatal(Args...)(
+    InterpolationHeader header,
+    Args args,
+    InterpolationFooter footer,
+    int line = __LINE__,
+    string file = __FILE__,
+    string funcName = __FUNCTION__,
+    string prettyFuncName = __PRETTY_FUNCTION__,
+    string moduleName = __MODULE__,
+) @safe nothrow @nogc
+{
+    log!Args(LogLevel.fatal, header, args, footer, line, file, funcName, prettyFuncName, moduleName);
+}
+
+/// ditto
+void fatal(Args...)(
+    SourceLocation loc,
     InterpolationHeader header,
     Args args,
     InterpolationFooter footer,
 ) @safe nothrow @nogc
 {
-    log!(line, file, funcName, prettyFuncName, moduleName)(LogLevel.fatal, header, args, footer);
+    log!Args(LogLevel.fatal, loc, header, args, footer);
 }
 
 private:
@@ -412,9 +523,13 @@ bool isCoreLoggingEnabled(LogLevel level, LogLevel loggerLevel, LogLevel globalL
         && loggerLevel != LogLevel.off;
 }
 
-CoreLogEntry makeCoreLogEntry(int line, string file, string funcName,
-    string prettyFuncName, string moduleName)(
+CoreLogEntry makeCoreLogEntry(
     LogLevel level,
+    int line,
+    string file,
+    string funcName,
+    string prettyFuncName,
+    string moduleName,
 ) @safe nothrow @nogc
 {
     auto hms = currentWallClockHms();
@@ -687,7 +802,7 @@ unittest
     coreGlobalLogLevel = LogLevel.trace;
     coreFatalHandler = &noopFatalHandler;
 
-    info!(123, "logger_test.d", "fn", "pretty fn", "sparkles.test")(i"{green ok} $(42)");
+    info(SourceLocation(123, "logger_test.d", "fn", "pretty fn", "sparkles.test"), i"{green ok} $(42)");
     assert(logger.writeCount == 1);
     assert(logger.lastEntry.level == LogLevel.info);
     assert(logger.lastEntry.file == "logger_test.d");
@@ -763,7 +878,7 @@ unittest
     sharedCoreLog = null;
     coreFatalHandler = &throwingFatalHandler;
 
-    assertThrown!FatalLogError(fatal!(456, "fatal_file.d")(i"boom"));
+    assertThrown!FatalLogError(fatal(SourceLocation(456, "fatal_file.d"), i"boom"));
 }
 
 @("logger.sharedCoreLog.atomicAccessors")
