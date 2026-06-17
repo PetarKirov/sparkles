@@ -29,7 +29,7 @@ import std.experimental.allocator.mallocator : Mallocator;
  * reference count; the shared block is cloned copy-on-write the first time a
  * mutable copy is written. This suits the common pattern of one producer
  * building a buffer mutably, then handing out many `const` reader copies — read
- * via `const` (e.g. through `freeze`) never clones. Mutating accessors on a
+ * via `const` (e.g. through `borrow`) never clones. Mutating accessors on a
  * shared mutable copy clone first, so a mutable slice/reference taken from a
  * shared buffer and held across a later mutation may be invalidated (the usual
  * copy-on-write caveat) — read through `const` to share without that risk.
@@ -104,7 +104,7 @@ pure nothrow @nogc:
      * yielding an independent buffer. A heap buffer instead shares storage and
      * bumps the reference count; the shared block is cloned only when a mutable
      * copy is first written (see `ensureUnique`). Reaching a copy through
-     * `const` (e.g. via `freeze`) is therefore a zero-clone read-only handle.
+     * `const` (e.g. via `borrow`) is therefore a zero-clone read-only handle.
      */
     this(ref inout SmallBuffer rhs) inout @trusted
     {
@@ -118,7 +118,7 @@ pure nothrow @nogc:
             this._inline[0 .. rhs._length] = rhs._inline[0 .. rhs._length];
     }
 
-    /// Build a mutable working copy from a `const` (e.g. frozen) buffer.
+    /// Build a mutable working copy from a `const` (e.g. borrowed) buffer.
     this(ref const SmallBuffer rhs) @trusted
     {
         _length = rhs._length;
@@ -132,7 +132,7 @@ pure nothrow @nogc:
     }
 
     /// Copy assignment: release current storage, then share/copy from `rhs`.
-    /// Accepts a `const` (e.g. frozen) source — a heap source is shared (refcount
+    /// Accepts a `const` (e.g. borrowed) source — a heap source is shared (refcount
     /// bumped), an inline source is copied — mirroring the copy constructors.
     ref SmallBuffer opAssign(ref const SmallBuffer rhs) return @trusted
     {
@@ -178,7 +178,7 @@ pure nothrow @nogc:
     // `ensureUnique()`, so on a shared (heap, refcount > 1) buffer they trigger a
     // copy-on-write clone *even when you only read* the returned reference —
     // overload resolution cannot tell read from write. To share a heap buffer
-    // without cloning, read through `const`/`freeze` (which select the const
+    // without cloning, read through `const`/`borrow` (which select the const
     // overloads).
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -307,11 +307,37 @@ pure nothrow @nogc:
     }
 
     /**
-     * Returns a `const` copy that shares this buffer's storage — the
-     * producer-builds-then-many-readers-consume handoff. Copies of the result
-     * share freely and never clone (they cannot mutate through `const`).
+     * Returns a `const`, storage-sharing handle to this buffer — the
+     * producer-builds-then-many-readers handoff. Reading through the result (or
+     * its copies) never clones, since nothing can mutate through `const`.
+     *
+     * Like Rust's `Borrow`, this is the read side of the copy-on-write type — but
+     * unlike a Rust borrow it is an $(I owner): it bumps the reference count and
+     * keeps the heap block alive independently of the source (closer to
+     * `Rc::clone` than a lifetime-bound `&`). `const x = buf;` is equivalent;
+     * `borrow` simply names the handoff and works in expression position.
+     *
+     * See_Also: $(LREF SmallBuffer.toOwned) for the inverse (an independent,
+     * uniquely-owned mutable copy).
      */
-    const(SmallBuffer) freeze() const @safe => this;
+    const(SmallBuffer) borrow() const @safe => this;
+
+    /**
+     * Returns an independent, uniquely-owned mutable copy, eagerly detached from
+     * any shared block (Rust's `ToOwned`/`Cow::into_owned`). The result shares
+     * with no one — its reference count is 1 — so later mutations never pay a
+     * copy-on-write clone, and it is unaffected by writes to the source.
+     *
+     * Plain copy construction (`auto b = a;`) is the lazy counterpart: it shares
+     * a heap block and clones only on the first write. `toOwned` forces that
+     * clone up front.
+     */
+    SmallBuffer toOwned() const @safe
+    {
+        SmallBuffer copy = this; // shares (heap) or copies (inline)
+        copy.ensureUnique();     // force a private block if shared
+        return copy;
+    }
 
     // ─────────────────────────────────────────────────────────────────────────
     // private helpers
@@ -447,6 +473,71 @@ pure nothrow @nogc:
         const c = t << 1;           // next power of two above `needed`
         return c == 0 ? needed : c; // c == 0 ⇒ shift overflowed; clamp
     }
+}
+
+///
+@("SmallBuffer.tour")
+@safe pure nothrow @nogc
+unittest
+{
+    // A `SmallBuffer` starts empty and inline — no heap allocation yet.
+    SmallBuffer!(int, 4) buf;
+    assert(buf.empty && !buf.onHeap && buf.capacity == 4);
+
+    // Append single elements or slices; it is also an output range (`put`).
+    buf ~= 1;
+    buf ~= [2, 3];
+    buf.put(4);
+    assert(buf[] == [1, 2, 3, 4] && !buf.onHeap);
+
+    // Overflowing the inline capacity transparently moves to the heap.
+    buf ~= 5;
+    assert(buf.onHeap && buf.capacity >= 5);
+
+    // Index, sub-slice, front/back, and `$`.
+    assert(buf[0] == 1 && buf[$ - 1] == 5);
+    assert(buf[1 .. 3] == [2, 3]);
+    assert(buf.front == 1 && buf.back == 5);
+
+    // popBack/clear shrink it; dropping back to <= N reverts to inline storage.
+    buf.popBack();
+    assert(buf[] == [1, 2, 3, 4] && !buf.onHeap);
+    buf.clear();
+    assert(buf.empty);
+
+    // ── Copy-on-write ────────────────────────────────────────────────────────
+    SmallBuffer!(int, 2) a;
+    foreach (i; 0 .. 5)
+        a ~= cast(int) i;            // [0, 1, 2, 3, 4], now on the heap
+    assert(a.refCount == 1);         // sole owner
+
+    // `borrow()` hands out a const, storage-sharing reader: no element copy,
+    // just a bumped reference count. Reading through `const` never clones.
+    const reader = a.borrow;
+    assert(a.refCount == 2);         // `a` and `reader` share one block
+    assert(reader[] == [0, 1, 2, 3, 4] && a.refCount == 2);
+
+    // A *mutable* copy shares too — the clone is deferred to the first write.
+    auto b = a;
+    assert(a.refCount == 3);         // a, reader, b
+    b ~= 5;                          // copy-on-write: b detaches here
+    assert(b[] == [0, 1, 2, 3, 4, 5]);          // b is independent
+    assert(reader[] == [0, 1, 2, 3, 4]);        // original intact (const read)
+    assert(a.refCount == 2);         // a and reader still share it
+
+    // Nuance: the *mutable* accessors clone even when you only read — overload
+    // resolution cannot tell a read from a write. A mutable read of the shared
+    // `a` detaches it from `reader`; reach through `const`/`borrow` to avoid it.
+    auto s = a[];                    // mutable opSlice → clones, just from a read
+    assert(s == [0, 1, 2, 3, 4] && a.refCount == 1);   // `a` now owns its block
+
+    // `toOwned()` eagerly detaches: an independent, uniquely-owned copy sharing
+    // with nobody, so its later writes never pay a copy-on-write clone.
+    auto owned = reader.toOwned();
+    assert(owned.refCount == 1);     // detached up front
+    owned ~= 9;                      // already unique → no clone
+    assert(owned[] == [0, 1, 2, 3, 4, 9]);
+    assert(reader[] == [0, 1, 2, 3, 4]);        // reader untouched
 }
 
 /**
@@ -1019,14 +1110,14 @@ unittest
     SmallBuffer!(int, 2) a;
     foreach (i; 0 .. 5)
         a ~= cast(int) i;        // heap
-    const ro = a.freeze();       // const read-only handle, shares storage
+    const ro = a.borrow();       // const read-only handle, shares storage
     const r2 = ro;               // another reader, shares too
     assert(a.refCount == 3);
     assert(ro[] == [0, 1, 2, 3, 4]);
     assert(r2[] == [0, 1, 2, 3, 4]);
 
     a ~= 99;                     // producer mutates -> CoW
-    assert(ro[] == [0, 1, 2, 3, 4]);         // frozen readers keep old value
+    assert(ro[] == [0, 1, 2, 3, 4]);         // borrowed readers keep old value
     assert(a[] == [0, 1, 2, 3, 4, 99]);
     assert(ro.refCount == 2);
 }
@@ -1058,16 +1149,16 @@ unittest
     foreach (i; 0 .. 5)
         a ~= cast(int) i;        // heap
 
-    // Assigning a const/frozen source must compile and share storage.
-    const frozen = a.freeze();
+    // Assigning a const/borrowed source must compile and share storage.
+    const borrowed = a.borrow();
     SmallBuffer!(int, 2) work;
     work ~= 100;                 // work inline, owns nothing on the heap
-    work = frozen;               // const copy-assign: shares a's block
-    assert(a.refCount == 3);     // a, frozen, work all share
+    work = borrowed;               // const copy-assign: shares a's block
+    assert(a.refCount == 3);     // a, borrowed, work all share
     assert((cast(const) work)[] == [0, 1, 2, 3, 4]);   // const read: no clone
 
     work ~= 5;                   // CoW: clone away from the shared block
-    assert(a.refCount == 2);     // a, frozen still share
+    assert(a.refCount == 2);     // a, borrowed still share
     assert(a[] == [0, 1, 2, 3, 4]);
     assert(work[] == [0, 1, 2, 3, 4, 5]);
 
@@ -1114,13 +1205,39 @@ unittest
     SmallBuffer!(int, 2) a;
     foreach (i; 0 .. 5)
         a ~= cast(int) i;
-    const frozen = a.freeze();
-    SmallBuffer!(int, 2) work = frozen;      // const -> mutable copy ctor
+    const borrowed = a.borrow();
+    SmallBuffer!(int, 2) work = borrowed;      // const -> mutable copy ctor
     assert((cast(const) work)[] == [0, 1, 2, 3, 4]);
 
-    work ~= 7;                   // CoW; frozen untouched
-    assert(frozen[] == [0, 1, 2, 3, 4]);
+    work ~= 7;                   // CoW; borrowed untouched
+    assert(borrowed[] == [0, 1, 2, 3, 4]);
     assert(work[] == [0, 1, 2, 3, 4, 7]);
+}
+
+@("SmallBuffer.cow.toOwned")
+@safe pure nothrow @nogc
+unittest
+{
+    SmallBuffer!(int, 2) a;
+    foreach (i; 0 .. 5)
+        a ~= cast(int) i;            // heap
+    const reader = a.borrow();       // a + reader share, refCount 2
+
+    // toOwned detaches an independent copy without disturbing the source.
+    auto owned = a.toOwned();
+    assert(owned.refCount == 1);     // uniquely owns its block
+    assert(a.refCount == 2);         // a and reader still share, untouched
+    assert(owned[] == [0, 1, 2, 3, 4]);
+
+    owned ~= 9;                      // already unique → no CoW clone
+    assert(owned[] == [0, 1, 2, 3, 4, 9]);
+    assert(reader[] == [0, 1, 2, 3, 4]);   // source unaffected
+
+    // An inline buffer is already independent; toOwned just copies it.
+    SmallBuffer!(int, 4) sm;
+    sm ~= [1, 2];
+    auto c = sm.toOwned();
+    assert(!c.onHeap && c[] == [1, 2]);
 }
 
 
@@ -1131,11 +1248,11 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    // The whole copy/freeze/clone cycle must hold @safe pure nothrow @nogc.
+    // The whole copy/borrow/clone cycle must hold @safe pure nothrow @nogc.
     SmallBuffer!(char, 4) a;
     a ~= "hello world";          // heap
     auto b = a;                  // share
-    const ro = a.freeze();       // freeze
+    const ro = a.borrow();       // borrow
     b ~= '!';                    // CoW clone
     assert((cast(const) a)[] == "hello world");
     assert(ro[] == "hello world");
