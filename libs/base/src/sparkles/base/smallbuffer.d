@@ -333,10 +333,30 @@ pure nothrow @nogc:
             return;
         }
         if (newLen > _block.length)
+        {
+            if (overlaps(xs, _block))
+            {
+                // Self-aliasing append (e.g. `buf ~= buf[]`): `growBlock` may
+                // realloc-move `_block`, leaving `xs` dangling. Copy into a
+                // fresh block (reading the old block via `xs` first), then
+                // release the old block.
+                T[] nb = newBlock(grownCapacity(_block.length, newLen));
+                nb[0 .. _length] = _block[0 .. _length];
+                nb[_length .. newLen] = xs[];
+                releaseHeap();
+                _block = nb;
+                _length = newLen;
+                return;
+            }
             growBlock(newLen);
+        }
         _block[_length .. newLen] = xs[];
         _length = newLen;
     }
+
+    // True if slices `a` and `b` share any underlying element storage.
+    private static bool overlaps(scope const(T)[] a, scope const(T)[] b) @trusted
+        => a.ptr < b.ptr + b.length && b.ptr < a.ptr + a.length;
 
     // Clone the shared heap block so this instance solely owns it (CoW trigger).
     private void ensureUnique() @trusted
@@ -848,6 +868,22 @@ unittest
     buf.put(empty);
     assert(buf.length == 1);
     assert(buf[0] == 1);
+}
+
+@("SmallBuffer.selfAppend.heapGrow")
+@safe pure nothrow @nogc
+unittest
+{
+    // Appending a buffer's own slice to itself must survive the reallocation
+    // that the append triggers (the source aliases the block being grown).
+    SmallBuffer!(int, 2) buf;
+    foreach (i; 0 .. 5)
+        buf ~= cast(int) i;          // heap: [0, 1, 2, 3, 4]
+    assert(buf.onHeap);
+
+    buf ~= buf[];                    // self-append across a realloc-grow
+    assert(buf.length == 10);
+    assert(buf[] == [0, 1, 2, 3, 4, 0, 1, 2, 3, 4]);
 }
 
 
