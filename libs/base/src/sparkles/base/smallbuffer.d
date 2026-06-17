@@ -11,9 +11,12 @@
 module sparkles.base.smallbuffer;
 
 import std.algorithm.comparison : max;
+import std.range.primitives : ElementType, isInputRange;
 import std.experimental.allocator : makeArray, expandArray, dispose;
 import std.experimental.allocator.building_blocks.affix_allocator : AffixAllocator;
 import std.experimental.allocator.mallocator : Mallocator;
+
+version (unittest) import std.range : iota;
 
 /**
  * A @nogc container with Small Buffer Optimization and copy-on-write.
@@ -257,6 +260,22 @@ pure nothrow @nogc:
     void opOpAssign(string op : "~")(in T[] elements)
     {
         appendSlice(elements);
+    }
+
+    /// Output range interface: appends every element of an input range whose
+    /// elements are convertible to `T` (a `T[]` uses the bulk slice overload).
+    void put(R)(R elements)
+    if (isInputRange!R && is(ElementType!R : T) && !is(immutable R == immutable(T)[]))
+    {
+        foreach (e; elements)
+            appendOne(e);
+    }
+
+    /// Appends every element of an input range using the `~=` operator.
+    void opOpAssign(string op : "~", R)(R elements)
+    if (isInputRange!R && is(ElementType!R : T) && !is(immutable R == immutable(T)[]))
+    {
+        put(elements);
     }
 
     /// Removes the last element.
@@ -507,8 +526,7 @@ unittest
 
     // ── Copy-on-write ────────────────────────────────────────────────────────
     SmallBuffer!(int, 2) a;
-    foreach (i; 0 .. 5)
-        a ~= cast(int) i;            // [0, 1, 2, 3, 4], now on the heap
+    a ~= iota(5);            // [0, 1, 2, 3, 4], now on the heap
     assert(a.refCount == 1);         // sole owner
 
     // `borrow()` hands out a const, storage-sharing reader: no element copy,
@@ -825,15 +843,13 @@ unittest
     // After clearing a heap buffer, `_block` must not survive as a dangling
     // pointer: re-growing back onto the heap must allocate cleanly.
     SmallBuffer!(int, 2) buf;
-    foreach (i; 0 .. 6)
-        buf ~= cast(int) i;          // heap
+    buf ~= iota(6);          // heap
     assert(buf.onHeap);
 
     buf.clear();
     assert(buf.length == 0 && !buf.onHeap);
 
-    foreach (i; 0 .. 6)
-        buf ~= cast(int)(i + 10);    // re-grow onto a fresh heap block
+    buf ~= iota(10, 16);             // re-grow onto a fresh heap block
     assert(buf.onHeap);
     assert(buf[] == [10, 11, 12, 13, 14, 15]);
 }
@@ -868,8 +884,7 @@ unittest
     // Reserve grows when already on heap
     {
         SmallBuffer!(int, 4) buf;
-        foreach (i; 0 .. 5)
-            buf ~= cast(int) i;          // heap
+        buf ~= iota(5);          // heap
         assert(buf.onHeap);
         buf.reserve(100);
         assert(buf.capacity >= 100);
@@ -909,8 +924,7 @@ unittest
 
     // Revert to inline from heap
     buf.clear();
-    foreach (i; 0 .. 5)
-        buf ~= cast(int) i; // length 5 > 4 -> heap
+    buf ~= iota(5); // length 5 > 4 -> heap
     assert(buf.onHeap);
 
     buf.popBack(); // 5 -> 4: must revert to inline
@@ -969,8 +983,7 @@ unittest
 {
     SmallBuffer!(int, 2) buf;
     // Add many elements to trigger multiple reallocations
-    foreach (i; 0 .. 100)
-        buf ~= cast(int)i;
+    buf ~= iota(100);
 
     assert(buf.length == 100);
     foreach (i; 0 .. 100)
@@ -998,6 +1011,29 @@ unittest
     buf ~= arr[];
     assert(buf.length == 4);
     assert(buf[] == [0, 1, 2, 3]);
+}
+
+@("SmallBuffer.appendInputRange")
+@safe pure nothrow @nogc
+unittest
+{
+    import std.algorithm.iteration : filter, map;
+
+    // Any input range of convertible elements appends, via `put` or `~=`.
+    SmallBuffer!(int, 2) buf;
+    buf.put(iota(3));                 // [0, 1, 2], spills to heap
+    buf ~= iota(3, 6);               // [0, 1, 2, 3, 4, 5]
+    assert(buf[] == [0, 1, 2, 3, 4, 5]);
+
+    // Lazy pipelines work too — no intermediate allocation.
+    SmallBuffer!(int, 8) evens;
+    evens ~= iota(10).filter!(x => x % 2 == 0);
+    assert(evens[] == [0, 2, 4, 6, 8]);
+
+    // Element type need only be convertible to T.
+    SmallBuffer!(long, 2) longs;
+    longs ~= iota(4).map!(x => cast(long) x);
+    assert(longs[] == [0L, 1, 2, 3]);
 }
 
 
@@ -1050,8 +1086,7 @@ unittest
     // Appending a buffer's own slice to itself must survive the reallocation
     // that the append triggers (the source aliases the block being grown).
     SmallBuffer!(int, 2) buf;
-    foreach (i; 0 .. 5)
-        buf ~= cast(int) i;          // heap: [0, 1, 2, 3, 4]
+    buf ~= iota(5);          // heap: [0, 1, 2, 3, 4]
     assert(buf.onHeap);
 
     buf ~= buf[];                    // self-append across a realloc-grow
@@ -1090,8 +1125,7 @@ unittest
 unittest
 {
     SmallBuffer!(int, 2) a;
-    foreach (i; 0 .. 5)
-        a ~= cast(int) i;        // heap: [0, 1, 2, 3, 4]
+    a ~= iota(5);        // heap: [0, 1, 2, 3, 4]
     assert(a.onHeap);
 
     auto b = a;                  // share the heap block
@@ -1108,8 +1142,7 @@ unittest
 unittest
 {
     SmallBuffer!(int, 2) a;
-    foreach (i; 0 .. 5)
-        a ~= cast(int) i;        // heap
+    a ~= iota(5);        // heap
     const ro = a.borrow();       // const read-only handle, shares storage
     const r2 = ro;               // another reader, shares too
     assert(a.refCount == 3);
@@ -1127,8 +1160,7 @@ unittest
 unittest
 {
     SmallBuffer!(int, 2) a, b;
-    foreach (i; 0 .. 5)
-        a ~= cast(int) i;        // heap
+    a ~= iota(5);        // heap
     b ~= 100;                    // b inline
 
     b = a;                       // copy-assign: b releases its own, shares a's
@@ -1146,8 +1178,7 @@ unittest
 unittest
 {
     SmallBuffer!(int, 2) a;
-    foreach (i; 0 .. 5)
-        a ~= cast(int) i;        // heap
+    a ~= iota(5);        // heap
 
     // Assigning a const/borrowed source must compile and share storage.
     const borrowed = a.borrow();
@@ -1169,11 +1200,11 @@ unittest
 }
 
 // Helper: returns a heap SmallBuffer by value (rvalue source for opAssign).
+version (unittest)
 private SmallBuffer!(int, 2) makeHeapBuffer() @safe pure nothrow @nogc
 {
     SmallBuffer!(int, 2) r;
-    foreach (i; 0 .. 5)
-        r ~= cast(int) i;
+    r ~= iota(5);
     return r;
 }
 
@@ -1182,8 +1213,7 @@ private SmallBuffer!(int, 2) makeHeapBuffer() @safe pure nothrow @nogc
 unittest
 {
     SmallBuffer!(int, 2) a;
-    foreach (i; 0 .. 5)
-        a ~= cast(int) i;
+    a ~= iota(5);
     assert(a.refCount == 1);
     {
         auto b = a;
@@ -1203,8 +1233,7 @@ unittest
 unittest
 {
     SmallBuffer!(int, 2) a;
-    foreach (i; 0 .. 5)
-        a ~= cast(int) i;
+    a ~= iota(5);
     const borrowed = a.borrow();
     SmallBuffer!(int, 2) work = borrowed;      // const -> mutable copy ctor
     assert((cast(const) work)[] == [0, 1, 2, 3, 4]);
@@ -1219,8 +1248,7 @@ unittest
 unittest
 {
     SmallBuffer!(int, 2) a;
-    foreach (i; 0 .. 5)
-        a ~= cast(int) i;            // heap
+    a ~= iota(5);            // heap
     const reader = a.borrow();       // a + reader share, refCount 2
 
     // toOwned detaches an independent copy without disturbing the source.
