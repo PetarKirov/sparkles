@@ -396,12 +396,16 @@ pure nothrow @nogc:
             assert(false, "SmallBuffer: reallocation failed");
     }
 
-    // Drop this owner's heap reference. If refCount is 0, destroy and free the
-    // block. Leaves `_block` stale.
+    // Drop this owner's heap reference. If refCount hits 0, destroy and free the
+    // block. Nulls `_block` so no dangling/aliased pointer survives in the union
+    // (callers reset `_length` and/or reassign `_block` afterwards).
     private void releaseHeap() @trusted
     {
-        if (onHeap && --ctrl().refCount == 0)
+        if (!onHeap)
+            return;
+        if (--ctrl().refCount == 0)
             dispose(Allocator.instance, _block);
+        _block = null;
     }
 
     // Allocate a heap block for `capacity` elements (refCount 1).
@@ -696,6 +700,26 @@ unittest
     buf ~= 7;
     assert(buf[] == [7]);
     assert(!buf.onHeap);
+}
+
+@("SmallBuffer.clear.noDanglingReuse")
+@safe pure nothrow @nogc
+unittest
+{
+    // After clearing a heap buffer, `_block` must not survive as a dangling
+    // pointer: re-growing back onto the heap must allocate cleanly.
+    SmallBuffer!(int, 2) buf;
+    foreach (i; 0 .. 6)
+        buf ~= cast(int) i;          // heap
+    assert(buf.onHeap);
+
+    buf.clear();
+    assert(buf.length == 0 && !buf.onHeap);
+
+    foreach (i; 0 .. 6)
+        buf ~= cast(int)(i + 10);    // re-grow onto a fresh heap block
+    assert(buf.onHeap);
+    assert(buf[] == [10, 11, 12, 13, 14, 15]);
 }
 
 @("SmallBuffer.reserve")
