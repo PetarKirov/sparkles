@@ -421,7 +421,12 @@ pure nothrow @nogc:
     {
         size_t c = currentCap;
         while (c < needed)
-            c *= 2;
+        {
+            const next = c * 2;
+            if (next <= c)
+                return needed; // doubling overflowed: clamp to the exact need
+            c = next;
+        }
         return c;
     }
 }
@@ -909,6 +914,20 @@ unittest
     buf.put(empty);
     assert(buf.length == 1);
     assert(buf[0] == 1);
+}
+
+@("SmallBuffer.grownCapacity.overflowClamp")
+@safe pure nothrow @nogc
+unittest
+{
+    alias grow = SmallBuffer!(int, 2).grownCapacity;
+    // Normal doubling.
+    assert(grow(2, 5) == 8);
+    assert(grow(4, 4) == 4);
+    assert(grow(8, 9) == 16);
+    // Doubling would overflow: clamp to the exact need instead of looping.
+    enum size_t big = (size_t.max >> 1) + 1; // next double overflows
+    assert(grow(big, size_t.max) == size_t.max);
 }
 
 @("SmallBuffer.selfAppend.heapGrow")
