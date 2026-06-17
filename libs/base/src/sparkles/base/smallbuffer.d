@@ -321,8 +321,9 @@ pure nothrow @nogc:
             return;
         if (newCapacity <= _block.length)
             return; // already large enough — don't clone a shared block needlessly
-        ensureUnique();
-        growBlock(newCapacity);
+        ensureUnique(newCapacity); // if shared, clone straight into the grown block
+        if (newCapacity > _block.length)
+            growBlock(newCapacity); // only reached when we were already unique
     }
 
     /**
@@ -364,7 +365,7 @@ pure nothrow @nogc:
 
     private void appendOne(T element) @trusted
     {
-        ensureUnique();
+        ensureUnique(_length + 1); // if shared, clone straight into a grown block
         if (_length < N)
         {
             _inline[_length++] = element;
@@ -391,8 +392,8 @@ pure nothrow @nogc:
     {
         if (xs.length == 0)
             return;
-        ensureUnique();
         const newLen = _length + xs.length;
+        ensureUnique(newLen); // if shared, clone straight into a grown block
         if (newLen <= N)
         {
             _inline[_length .. newLen] = xs[];
@@ -436,11 +437,13 @@ pure nothrow @nogc:
         => a.ptr < b.ptr + b.length && b.ptr < a.ptr + a.length;
 
     // Clone the shared heap block so this instance solely owns it (CoW trigger).
-    private void ensureUnique() @trusted
+    // When a grow is already pending, pass its target `minCapacity` so the clone
+    // is sized to cover it — folding clone + grow into a single allocation.
+    private void ensureUnique(size_t minCapacity = 0) @trusted
     {
         if (_length <= N || ctrl().refCount <= 1)
             return;
-        T[] nb = newBlock(_block.length); // same capacity
+        T[] nb = newBlock(max(_block.length, grownCapacity(minCapacity)));
         nb[0 .. _length] = _block[0 .. _length];
         --ctrl().refCount;
         _block = nb;
@@ -1266,6 +1269,66 @@ unittest
     sm ~= [1, 2];
     auto c = sm.toOwned();
     assert(!c.onHeap && c[] == [1, 2]);
+}
+
+@("SmallBuffer.cow.sharedGrowAppend")
+@safe pure nothrow @nogc
+unittest
+{
+    // Growing a *shared* buffer folds the CoW clone and the grow into one
+    // allocation; the shared original must stay intact and detach cleanly.
+
+    // appendOne on a shared, full heap buffer.
+    SmallBuffer!(int, 2) a;
+    a ~= [0, 1, 2, 3];               // heap, capacity 4 (full)
+    const reader = a.borrow;         // share, refCount 2
+    assert(a.refCount == 2 && a.capacity == 4);
+
+    a ~= 4;                          // shared + full → clone straight into grown block
+    assert(reader[] == [0, 1, 2, 3]);            // original block intact
+    assert(a[] == [0, 1, 2, 3, 4]);
+    assert(a.refCount == 1 && reader.refCount == 1);
+    assert(a.capacity >= 5);
+
+    // appendSlice on a shared, growing heap buffer.
+    SmallBuffer!(int, 2) b;
+    b ~= [0, 1, 2, 3];               // heap
+    const rb = b.borrow;
+    assert(b.refCount == 2);
+    b ~= [10, 11, 12];               // shared + grow
+    assert(rb[] == [0, 1, 2, 3]);                // original intact
+    assert(b[] == [0, 1, 2, 3, 10, 11, 12]);
+    assert(b.refCount == 1);
+}
+
+@("SmallBuffer.selfAppend.sharedAlias")
+@safe pure nothrow @nogc
+unittest
+{
+    // Self-append through a const (shared) slice: the source aliases the old
+    // block, which the clone keeps alive (via the borrow) while copying.
+    SmallBuffer!(int, 2) a;
+    a ~= [0, 1, 2, 3];               // heap
+    const reader = a.borrow;         // share, refCount 2
+    a ~= a.borrow[];                 // xs aliases the shared block
+    assert(reader[] == [0, 1, 2, 3]);            // original intact
+    assert(a[] == [0, 1, 2, 3, 0, 1, 2, 3]);
+}
+
+@("SmallBuffer.reserve.sharedGrowsOnce")
+@safe pure nothrow @nogc
+unittest
+{
+    SmallBuffer!(int, 2) a;
+    a ~= [0, 1, 2, 3, 4];            // heap
+    const reader = a.borrow;         // share
+    assert(a.refCount == 2);
+
+    a.reserve(100);                  // shared + grow → one allocation
+    assert(a.refCount == 1 && reader.refCount == 1);
+    assert(a.capacity >= 100);
+    assert(a[] == [0, 1, 2, 3, 4]);
+    assert(reader[] == [0, 1, 2, 3, 4]);         // sharer keeps the old block
 }
 
 
