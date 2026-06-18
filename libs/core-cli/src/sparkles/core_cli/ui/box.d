@@ -78,16 +78,21 @@ string drawBox(string[] content, string title, BoxProps props = BoxProps.init)
     const contentMin = props.minWidth > frameOverhead ? props.minWidth - frameOverhead : 0;
 
     // Re-flow each content line to the maxWidth-derived content area via the lazy
-    // `byWrappedLine`, resetting a styled row before the border so an open style
-    // cannot bleed onto the padding or frame.
+    // `byWrappedLine`. Wrap with `preserve` so internal whitespace runs (aligned
+    // tables, nested boxes) survive, then trim each row's trailing spaces so a
+    // space kept at a wrap point cannot push the row past `contentMax`. A styled
+    // row is reset before the border so an open style cannot bleed onto the frame.
     string[] lines = content;
     if (contentMax > 0)
     {
         auto rows = appender!(string[]);
         foreach (cline; content)
             foreach (w; cline.byWrappedLine(
-                    WrapOptions(width: contentMax, whitespace: WhitespaceMode.collapse)))
-                rows ~= (w.canFind('\x1b') ? w ~ "\x1b[0m" : w).idup;
+                    WrapOptions(width: contentMax, whitespace: WhitespaceMode.preserve)))
+            {
+                const t = stripTrailingSpaces(w);
+                rows ~= (t.canFind('\x1b') ? t ~ "\x1b[0m" : t).idup;
+            }
         lines = rows[];
     }
 
@@ -96,40 +101,51 @@ string drawBox(string[] content, string title, BoxProps props = BoxProps.init)
 
     // Lay out the title. By default it is one line and the box grows to fit it; with
     // a `maxWidth` cap, `ellipsis`/`wrap` keep the box within it. A single-line
-    // title-bound box is `titleWidth + 11` wide, so `cap` is the widest a title line
-    // may be and still leave the box within `maxWidth` on one row.
+    // title-bound box is `titleWidth + 11` wide and a nested title box `+ 8`, so
+    // `singleCap` is the widest a title line may be on a plain top, `nestedCap` the
+    // widest inside the nested box.
     const capped = props.maxWidth > 0;
-    const cap = props.maxWidth >= 12 ? props.maxWidth - 11 : 1;
+    const singleCap = props.maxWidth >= 12 ? props.maxWidth - 11 : 1;
+    const nestedCap = props.maxWidth >= 9 ? props.maxWidth - 8 : 1;
     const titleWidth = title.visibleWidth;
 
     string[] titleLines = [title];
     bool nested = false;
-    if (capped && props.titleOverflow != TitleOverflow.expand && titleWidth > cap)
+    if (capped) final switch (props.titleOverflow)
     {
-        // No left frame to grow the ┤/├ handles from -> fall back to ellipsis.
-        if (props.titleOverflow == TitleOverflow.ellipsis || prefixLen == 0)
-            titleLines = [ellipsizeTitle(title, cap)];
-        else
-        {
-            // wrap: stream the title, buffer the first line, and nest only if the
-            // wrapped range yields any further lines (else it fit a single row).
-            auto tl = title.byWrappedLine(
-                WrapOptions(width: cap, whitespace: WhitespaceMode.collapse));
-            const first = tl.front;
-            auto rest = tl.save;
-            rest.popFront;
-            if (rest.empty)
-                titleLines = [first.idup];
+        case TitleOverflow.expand:
+            break; // box grows to fit the title
+        case TitleOverflow.ellipsis:
+            if (titleWidth > singleCap)
+                titleLines = [ellipsizeTitle(title, singleCap)];
+            break;
+        case TitleOverflow.wrap:
+            // No left frame to grow the ┤/├ handles from -> fall back to ellipsis.
+            if (prefixLen == 0)
+            {
+                if (titleWidth > singleCap)
+                    titleLines = [ellipsizeTitle(title, singleCap)];
+            }
             else
             {
-                // `front` is borrowed from the range's buffer, so retain each line.
-                auto tla = appender!(string[]);
-                foreach (l; tl)
-                    tla ~= l.idup;
-                titleLines = tla[];
-                nested = true;
+                // Stream the title at the single-line cap; nest it (in a title box
+                // wrapped at the wider nested cap) only if it spills past one row.
+                auto probe = title.byWrappedLine(
+                    WrapOptions(width: singleCap, whitespace: WhitespaceMode.preserve));
+                auto more = probe.save;
+                more.popFront;
+                if (!more.empty)
+                {
+                    // `front` is borrowed from the range's buffer; trim + retain.
+                    auto tla = appender!(string[]);
+                    foreach (l; title.byWrappedLine(
+                            WrapOptions(width: nestedCap, whitespace: WhitespaceMode.preserve)))
+                        tla ~= stripTrailingSpaces(l).idup;
+                    titleLines = tla[];
+                    nested = true;
+                }
             }
-        }
+            break;
     }
 
     // Floor the width to fit the rendered title and footer (in content-area units).
@@ -188,6 +204,25 @@ auto drawBoxLines(string[] content, string title, BoxProps props = BoxProps.init
     import std.string : lineSplitter;
 
     return drawBox(content, title, props).lineSplitter;
+}
+
+/// Trim trailing spaces from a wrapped row, keeping internal whitespace intact.
+/// `preserve` wrapping can leave a space at a wrap point (and the engine may append
+/// a style reset after it); this returns the row up to the last non-space, non-escape
+/// cluster, so the row's visible width never exceeds the wrap width. Any opening
+/// style is re-closed by the caller's reset-before-border step.
+private const(char)[] stripTrailingSpaces(const(char)[] s)
+{
+    import sparkles.base.text.grapheme : byGraphemeCluster;
+
+    size_t off = 0, lastVisibleEnd = 0;
+    foreach (c; s.byGraphemeCluster)
+    {
+        if (!c.isEscape && !(c.slice.length == 1 && c.slice[0] == ' '))
+            lastVisibleEnd = off + c.slice.length;
+        off += c.slice.length;
+    }
+    return s[0 .. lastVisibleEnd];
 }
 
 /// Truncate `title` to `width` visible columns (the trailing `…` included), keeping
@@ -672,4 +707,30 @@ unittest
         assert(drawBoxLines(args[0], args[1], args[2]).equal(str.splitLines));
         assert(drawBoxLines(args[0], args[1], args[2]).join("\n") == str);
     }}
+}
+
+@("drawBox.wrap.preservesInternalWhitespace")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+
+    // `preserve` wrapping keeps internal space runs (aligned columns) intact even in
+    // a width-capped box; `collapse` would have folded "Name    Role" to "Name Role".
+    const box = drawBox(["Name    Role", "Bob     Dev"], "T", BoxProps(maxWidth: 30));
+    assert(box.canFind("Name    Role"));
+    assert(box.canFind("Bob     Dev"));
+}
+
+@("drawBox.wrap.fixedWidthTrimsTrailingSpaceAtWrap")
+@system unittest
+{
+    import std.string : splitLines;
+
+    // The first 16 columns exactly fill the content area, so `preserve` would keep
+    // the following space ("…wwww ") at width 17 and push the fixed-width box to 21;
+    // trimming the trailing space keeps every line at the requested 20.
+    const box = drawBox(["wwwwwwwwwwwwwwww x"], "T",
+        BoxProps(minWidth: 20, maxWidth: 20));
+    foreach (line; box.splitLines)
+        assert(line.visibleWidth == 20);
 }
