@@ -48,10 +48,23 @@ string formatProgramManual(HelpInfo info, Option[] options, uint wrapColumn = 80
 
 string formatSynopsis(string programName, Option[] options)
 {
+    // Long-only options have an empty `optShort`; fall back to `optLong` so they show
+    // up as e.g. `[--title]` rather than a bare `[]`.
+    static string flag(Option o) => o.optShort.length ? o.optShort : o.optLong;
     return "%s %-(%s %)".format(
         programName,
-        options.map!(o => o.required ? o.optShort : '[' ~ o.optShort ~ ']')
+        options.map!(o => o.required ? flag(o) : '[' ~ flag(o) ~ ']')
     );
+}
+
+@("help.formatSynopsis.longOnlyFallsBackToLong")
+@system unittest
+{
+    Option shortAndLong = { optShort: "-w", optLong: "--max-width" };
+    Option longOnly = { optLong: "--title" };
+    Option requiredOpt = { optShort: "-f", optLong: "--file", required: true };
+    assert(formatSynopsis("prog", [shortAndLong, longOnly, requiredOpt])
+        == "prog [-w] [--title] -f");
 }
 
 auto optional(string s)
