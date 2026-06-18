@@ -7,21 +7,23 @@ targetPath "build"
 
 module streaming_box_example;
 
-// Animated `drawBox`: both the title and the content are pulled from a range whose
-// `popFront` sleeps, so iterating `drawBoxLines` draws the box top-to-bottom over
-// time. The content showcases colour by listing a source file through `bat`
-// (`--file`), or — with no file — generated colour so the demo always runs.
+// Animated `drawBox`: the box is rendered as a lazy range of *chunks* whose `popFront`
+// sleeps, so iterating `drawBoxChunks!(lineBuffered: false)` reveals the box cell by
+// cell — text appears word by word inside the frame, like tokens typed by an LLM —
+// while the frame draws in place and the bottom border lands once the content ends.
+// The content showcases colour by listing a source file through `bat` (`--file`), or —
+// with no file — generated colour so the demo always runs.
 //
-//   dub run --single streaming-box.d -- --max-width 72 --delay 40
-//   dub run --single streaming-box.d -- --file path/to/src.d --max-width 96 --delay 25
+//   dub run --single streaming-box.d -- --max-width 72 --delay 12
+//   dub run --single streaming-box.d -- --file path/to/src.d --max-width 96 --delay 6
 
 import core.thread : Thread;
 import core.time : dur;
 import std.range.primitives : ElementType, empty, front, popFront;
-import std.stdio : stderr, stdout, writeln;
+import std.stdio : stderr, stdout, write, writeln;
 
 import sparkles.core_cli.args;
-import sparkles.core_cli.ui.box : BoxProps, drawBoxLines, TitleOverflow;
+import sparkles.core_cli.ui.box : BoxProps, drawBoxChunks, TitleOverflow;
 import sparkles.base.term_style : Style, stylize;
 
 struct CliParams
@@ -38,12 +40,14 @@ struct CliParams
     @CliOption("c|content-length", "Generated content length when no --file")
     int contentLength = 600;
 
-    @CliOption("d|delay", "Animation delay per streamed line, in milliseconds")
-    int delayMs = 60;
+    @CliOption("d|delay", "Animation delay per streamed chunk, in milliseconds")
+    int delayMs = 12;
 }
 
 /// A forward range that sleeps on each `popFront`, so consuming it animates output.
-struct DelayedLines(R)
+/// Granularity-agnostic: it paces whatever range it wraps — title words, or the box's
+/// cell-granular output chunks.
+struct DelayedRange(R)
 {
     private R _src;
     private int _delayMs;
@@ -58,35 +62,38 @@ struct DelayedLines(R)
     }
 }
 
-auto delayedLines(R)(R src, int delayMs) => DelayedLines!R(src, delayMs);
+auto delayedRange(R)(R src, int delayMs) => DelayedRange!R(src, delayMs);
 
 void main(string[] args)
 {
     const cli = args.parseCliArgs!CliParams(
         HelpInfo("streaming-box", "Animated streaming drawBox demo"));
 
-    // Stream the title from a delayed range first: the words arrive over time, so
-    // the box's top border appears only once the title has fully composed.
+    // Compose the title first (DelayedRange paces the words too), so the box's top
+    // border is ready before the content streams in.
     string title;
-    foreach (word; delayedLines(generatedTitleWords(cli.titleLength), cli.delayMs))
+    foreach (word; delayedRange(generatedTitleWords(cli.titleLength), cli.delayMs))
         title ~= (title.length ? " " : "") ~ word;
 
     // A fixed-width box so the top can be drawn before any content arrives and the
-    // rows can stream in; `wrap` shows the nested title box for a long title.
+    // content can stream in; `wrap` shows the nested title box for a long title.
     const props = BoxProps(
         minWidth: cli.maxWidth,
         maxWidth: cli.maxWidth,
         titleOverflow: TitleOverflow.wrap,
     );
 
-    // Pull the content lazily through the delayed range; each emitted box row drives
-    // one source `popFront`, so the rows appear one by one.
-    auto content = delayedLines(sourceLines(cli), cli.delayMs);
-    foreach (line; drawBoxLines(content, title, props))
+    // Pace the box's cell-granular output: each chunk is a word/segment (the frame
+    // pieces ride along for free), so the box reveals itself token by token. `write`
+    // (not `writeln`) — the chunks already carry their own newlines.
+    auto content = sourceLines(cli);
+    foreach (chunk; drawBoxChunks!false(content, title, props)
+            .delayedRange(cli.delayMs))
     {
-        writeln(line);
-        stdout.flush(); // show each row as it is produced, not at program exit
+        write(chunk);
+        stdout.flush(); // show each chunk as it is produced, not at program exit
     }
+    writeln();
 }
 
 /// Content lines: a source file colorized by `bat`, or generated colored text when
