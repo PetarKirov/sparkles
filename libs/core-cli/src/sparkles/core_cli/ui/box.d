@@ -4,6 +4,7 @@ import std.algorithm.comparison : max;
 import std.algorithm.iteration : map;
 import std.algorithm.searching : maxElement, canFind;
 import std.range : walkLength, repeat;
+import std.range.primitives : ElementType, empty, front, isInputRange, popFront;
 import std.format : format;
 
 import sparkles.base.text.grapheme : visibleWidth;
@@ -64,7 +65,36 @@ struct BoxProps
 
 string drawBox(string[] content, string title, BoxProps props = BoxProps.init)
 {
+    import std.array : join;
+
+    return drawBoxLines(content, title, props).join("\n");
+}
+
+/// Overload that accepts a single string and splits it into lines internally.
+string drawBox(string content, string title, BoxProps props = BoxProps.init)
+{
+    import std.array : join;
+    import std.string : lineSplitter;
+
+    return drawBoxLines(content.lineSplitter, title, props).join("\n");
+}
+
+/// The rendered box as a lazy range of its lines (range-out): the top border (with
+/// title), then one row per content line, then the bottom border. `drawBox` is just
+/// this joined with newlines.
+///
+/// `content` is any input range of lines (`string[]`, a lazy line range, …). When
+/// the box is **fixed width** (a title/footer/`minWidth` floor already covers
+/// `maxWidth`'s content area) the content range is pulled **lazily** — one source
+/// `popFront` per emitted line group — so a delayed source animates the box. When
+/// the width depends on the content, the content is wrapped once up front to size
+/// the frame. The lazy path is `@nogc`-friendly per row only insofar as the wrap
+/// engine is; `drawBoxLines` itself builds owned `string` rows.
+auto drawBoxLines(Content)(Content content, string title, BoxProps props = BoxProps.init)
+if (isInputRange!Content && is(ElementType!Content : const(char)[]))
+{
     import std.array : appender;
+    import std.string : splitLines;
     import sparkles.base.text.wrap : byWrappedLine, WhitespaceMode, WrapOptions;
 
     const prefix = props.omitLeftBorder ? ""d : props.verticalLine ~ " "d;
@@ -76,25 +106,6 @@ string drawBox(string[] content, string title, BoxProps props = BoxProps.init)
     const frameOverhead = prefixLen + 2;
     const contentMax = props.maxWidth > frameOverhead ? props.maxWidth - frameOverhead : 0;
     const contentMin = props.minWidth > frameOverhead ? props.minWidth - frameOverhead : 0;
-
-    // Re-flow each content line to the maxWidth-derived content area via the lazy
-    // `byWrappedLine`. Wrap with `preserve` so internal whitespace runs (aligned
-    // tables, nested boxes) survive, then trim each row's trailing spaces so a
-    // space kept at a wrap point cannot push the row past `contentMax`. A styled
-    // row is reset before the border so an open style cannot bleed onto the frame.
-    string[] lines = content;
-    if (contentMax > 0)
-    {
-        auto rows = appender!(string[]);
-        foreach (cline; content)
-            foreach (w; cline.byWrappedLine(
-                    WrapOptions(width: contentMax, whitespace: WhitespaceMode.preserve)))
-            {
-                const t = stripTrailingSpaces(w);
-                rows ~= (t.canFind('\x1b') ? t ~ "\x1b[0m" : t).idup;
-            }
-        lines = rows[];
-    }
 
     const footerWidth = props.footer !is null ? props.footer.visibleWidth : 0;
     const minFooterWidth = footerWidth > 0 ? footerWidth + 9 : 10;  // ╰──╼ {footer} ╾──╯ or ╰──────────╯
@@ -148,62 +159,204 @@ string drawBox(string[] content, string title, BoxProps props = BoxProps.init)
             break;
     }
 
-    // Floor the width to fit the rendered title and footer (in content-area units).
+    // Width floors that do not depend on the content (title, footer, minWidth).
     const effTitleWidth = titleLines.map!(x => x.visibleWidth).maxElement;
     const titleFloor = nested ? effTitleWidth + 4 : (effTitleWidth + 9) - prefixLen;
     const footerFloor = minFooterWidth - prefixLen;
-    const contentWidth = lines.map!(x => x.visibleWidth).maxElement;
-    const outputWidth = max(contentWidth, titleFloor, footerFloor, contentMin);
+    const baseWidth = max(titleFloor, footerFloor, contentMin);
 
-    auto result = appender!string;
+    // If a floor already covers the wrapped-content width (`contentMax`), the box is
+    // a fixed width independent of the content, so we can stream the content lazily.
+    // Otherwise the content can widen the box, so wrap it once now to size the frame.
+    const canStream = contentMax > 0 && baseWidth >= contentMax;
+    size_t outputWidth;
+    string[] preparedRows;
+    if (canStream)
+        outputWidth = baseWidth;
+    else
+    {
+        auto rows = appender!(string[]);
+        if (contentMax > 0)
+            foreach (cline; content)
+                foreach (w; cline.byWrappedLine(
+                        WrapOptions(width: contentMax, whitespace: WhitespaceMode.preserve)))
+                {
+                    const t = stripTrailingSpaces(w);
+                    rows ~= (t.canFind('\x1b') ? t ~ "\x1b[0m" : t).idup;
+                }
+        else
+            foreach (cline; content)
+                rows ~= cline.idup;
+        preparedRows = rows[];
+        const contentWidth = preparedRows.length ? preparedRows.map!(x => x.visibleWidth).maxElement : 0;
+        outputWidth = max(baseWidth, contentWidth);
+    }
 
+    // Pre-render the (content-independent) top region and bottom border as strings.
+    auto topApp = appender!string;
     if (nested)
-        result.renderNestedTitle(titleLines, outputWidth, prefix, props);
+        topApp.renderNestedTitle(titleLines, outputWidth, prefix, props);
     else
     {
         const t0 = titleLines[0];
-        auto topLine = props.horizontalLine.repeat(outputWidth + prefixLen - t0.visibleWidth - 7);
-        result ~= "╭──╼ %s ╾%s─╮\n".format(t0, topLine);
+        auto topRule = props.horizontalLine.repeat(outputWidth + prefixLen - t0.visibleWidth - 7);
+        topApp ~= "╭──╼ %s ╾%s─╮\n".format(t0, topRule);
     }
 
-    foreach (line; lines)
-    {
-        const rightPadLen = outputWidth - line.visibleWidth;
-        result ~= "%s%s%s %s\n".format(prefix, line, ' '.repeat(rightPadLen), props.verticalLine);
-    }
-
-    // Bottom line with optional footer
+    string bottomLine;
     if (props.footer !is null)
     {
-        auto bottomLine = props.horizontalLine.repeat(outputWidth + prefixLen - footerWidth - 7);
-        result ~= "╰──╼ %s ╾%s─╯".format(props.footer, bottomLine);
+        auto rule = props.horizontalLine.repeat(outputWidth + prefixLen - footerWidth - 7);
+        bottomLine = "╰──╼ %s ╾%s─╯".format(props.footer, rule);
     }
     else
     {
-        auto bottomLine = props.horizontalLine.repeat(outputWidth + prefixLen - 10);
-        result ~= "╰────────%s──╯".format(bottomLine);
+        auto rule = props.horizontalLine.repeat(outputWidth + prefixLen - 10);
+        bottomLine = "╰────────%s──╯".format(rule);
     }
 
-    return result[];
+    return BoxLineRange!Content(
+        prefix.idup, outputWidth, props, topApp[].splitLines.idupArray, bottomLine,
+        contentMax, canStream, preparedRows, content);
 }
 
-/// Overload that accepts a single string and splits it into lines internally.
-string drawBox(string content, string title, BoxProps props = BoxProps.init)
+/// `splitLines.array` as `string[]` (the appender output is immutable, so its line
+/// slices are already `string`).
+private string[] idupArray(R)(R lines)
 {
-    import std.array : array;
-    import std.string : lineSplitter;
+    import std.array : appender;
 
-    return drawBox(content.lineSplitter.array, title, props);
+    auto a = appender!(string[]);
+    foreach (l; lines)
+        a ~= l.idup;
+    return a[];
 }
 
-/// The rendered box as a lazy range of its lines (range-out), so callers can stream
-/// it to a writer without holding the whole string. `drawBox` is this joined with
-/// newlines.
-auto drawBoxLines(string[] content, string title, BoxProps props = BoxProps.init)
+/// The lazy line range returned by $(LREF drawBoxLines). Emits the top region, then
+/// content rows (streamed from the source for a fixed-width box, else from rows
+/// wrapped up front), then the bottom border.
+private struct BoxLineRange(Content)
 {
-    import std.string : lineSplitter;
+    import sparkles.base.text.wrap : byWrappedLine, WhitespaceMode, WrapOptions, WrappedLines;
 
-    return drawBox(content, title, props).lineSplitter;
+    private
+    {
+        dstring _prefix;
+        size_t _outputWidth;
+        BoxProps _props;
+        string[] _top;
+        string _bottom;
+        size_t _contentMax;
+        bool _stream;
+
+        // Non-streaming: top + bordered rows + bottom, all precomputed.
+        string[] _eager;
+        size_t _ei;
+
+        // Streaming: pull `_content` lazily, wrapping each source line into `_sub`.
+        Content _content;
+        WrappedLines!256 _sub;
+        bool _subActive;
+        size_t _ti;
+        bool _bottomDone;
+
+        string _front;
+        bool _empty;
+    }
+
+    this(dstring prefix, size_t outputWidth, BoxProps props, string[] top, string bottom,
+        size_t contentMax, bool stream, string[] preparedRows, Content content)
+    {
+        _prefix = prefix;
+        _outputWidth = outputWidth;
+        _props = props;
+        _top = top;
+        _bottom = bottom;
+        _contentMax = contentMax;
+        _stream = stream;
+        _content = content;
+
+        if (!stream)
+        {
+            import std.array : appender;
+
+            auto all = appender!(string[]);
+            foreach (l; top)
+                all ~= l;
+            foreach (r; preparedRows)
+                all ~= borderRow(r);
+            all ~= bottom;
+            _eager = all[];
+        }
+        popFront(); // prime `_front`
+    }
+
+    /// Range primitives (input range).
+    bool empty() const => _empty;
+
+    /// ditto
+    string front() const => _front;
+
+    /// ditto
+    void popFront()
+    {
+        if (!_stream)
+        {
+            if (_ei < _eager.length)
+                _front = _eager[_ei++];
+            else
+                _empty = true;
+            return;
+        }
+        if (_ti < _top.length)
+        {
+            _front = _top[_ti++];
+            return;
+        }
+        if (loadNextContentRow())
+            return;
+        if (!_bottomDone)
+        {
+            _bottomDone = true;
+            _front = _bottom;
+            return;
+        }
+        _empty = true;
+    }
+
+    // Pull the next streamed content row into `_front`; false when content is done.
+    private bool loadNextContentRow()
+    {
+        for (;;)
+        {
+            if (!_subActive)
+            {
+                if (_content.empty)
+                    return false;
+                _sub = _content.front.byWrappedLine(
+                    WrapOptions(width: _contentMax, whitespace: WhitespaceMode.preserve));
+                _content.popFront; // drives a delayed source -> animation
+                _subActive = true;
+            }
+            if (_sub.empty)
+            {
+                _subActive = false;
+                continue;
+            }
+            const w = _sub.front;
+            _sub.popFront;
+            const t = stripTrailingSpaces(w);
+            _front = borderRow(t.canFind('\x1b') ? t ~ "\x1b[0m" : t);
+            return true;
+        }
+    }
+
+    // `prefix + line + right-pad + " │"` — `line` already trimmed/reset, ≤ outputWidth.
+    private string borderRow(const(char)[] line)
+    {
+        const rightPad = _outputWidth >= line.visibleWidth ? _outputWidth - line.visibleWidth : 0;
+        return "%s%s%s %s".format(_prefix, line, ' '.repeat(rightPad), _props.verticalLine);
+    }
 }
 
 /// Trim trailing spaces from a wrapped row, keeping internal whitespace intact.
@@ -707,6 +860,20 @@ unittest
         assert(drawBoxLines(args[0], args[1], args[2]).equal(str.splitLines));
         assert(drawBoxLines(args[0], args[1], args[2]).join("\n") == str);
     }}
+}
+
+@("drawBox.lines.acceptsLazyContentRange")
+@system unittest
+{
+    import std.algorithm.comparison : equal;
+    import std.algorithm.iteration : map;
+    import std.array : join;
+
+    // drawBoxLines takes any input range of lines, not just string[]; a lazy range
+    // (here a fixed-width box, which pulls content lazily) yields the same bytes.
+    auto lazyContent = ["one", "two", "three"].map!(x => x);
+    const want = drawBox(["one", "two", "three"], "T", BoxProps(minWidth: 24, maxWidth: 24));
+    assert(drawBoxLines(lazyContent, "T", BoxProps(minWidth: 24, maxWidth: 24)).join("\n") == want);
 }
 
 @("drawBox.wrap.preservesInternalWhitespace")
