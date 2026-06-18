@@ -452,6 +452,141 @@ WrappedLines!bufferSize byWrappedLine(size_t bufferSize = 256, Text)(
     return r;
 }
 
+/// A lazy, `@nogc` forward range over the wrapped *chunks* of some text — the
+/// cell-granular sibling of $(LREF WrappedLines). Each `front` is either exactly
+/// `"\n"` (a line break) or a run of text known to fit the current line;
+/// concatenating every chunk reproduces `wrapText`. The compile-time `lineBuffered`
+/// flag picks the granularity:
+///
+/// $(LIST
+///   * `true` — a chunk is a whole wrapped line, interleaved with `"\n"` chunks
+///     (coarse; one chunk per row, like walking $(LREF WrappedLines)).
+///   * `false` — a chunk is a sub-line run: any leading escapes and space(s) then a
+///     run of visible non-space clusters, ending right before the next space or
+///     newline (fine; a word / break-segment at a time, for cell-granular streaming).
+/// )
+///
+/// A grapheme cluster or escape sequence is never split across chunks, and a chunk
+/// that carries escapes always carries at least one visible cell — so no chunk is
+/// escape-only and per-chunk pacing stays even.
+///
+/// Like $(LREF WrappedLines) the output is built once (via `writeWrappedText`) into
+/// an owned copy-on-write `SmallBuffer`, so saving/copying the range shares that
+/// buffer. `front` is **borrowed** — a slice into the buffer, valid only while this
+/// range (or a copy) is alive; `.idup` it to keep a chunk past then (the
+/// `File.byLine` contract). Construct it with $(LREF byWrappedChunk).
+struct WrappedChunks(bool lineBuffered = true, size_t bufferSize = 256)
+{
+    import sparkles.base.text.grapheme : byGraphemeCluster;
+
+    private SmallBuffer!(char, bufferSize) _buf;
+    private size_t _total, _start, _end;
+
+    // Set the cursor on the first chunk after `_buf` has been filled.
+    private void initCursor()
+    {
+        _total = _buf.length;
+        _start = _total == 0 ? _total + 1 : 0; // empty input -> empty range
+        if (_start <= _total)
+            scanEnd();
+    }
+
+    // Compute `_end`: one past the end of the chunk that starts at `_start`. Chunks
+    // tile the buffer contiguously (newlines included), so `popFront` just hops to
+    // `_end` — unlike `WrappedLines`, which skips the separating '\n'.
+    private void scanEnd()
+    {
+        const v = (cast(const) _buf)[];
+
+        // A newline is always its own chunk.
+        if (v[_start] == '\n')
+        {
+            _end = _start + 1;
+            return;
+        }
+
+        static if (lineBuffered)
+        {
+            // Run up to (not including) the next '\n'.
+            _end = _start;
+            while (_end < _total && v[_end] != '\n')
+                ++_end;
+        }
+        else
+        {
+            // Leading escapes + space(s), then visible non-space clusters, ending
+            // right before the next space/newline. Escapes never end a chunk (they
+            // ride into the adjacent visible chunk); a bare space run before a '\n'
+            // folds into that '\n' chunk so we never emit a space/escape-only chunk.
+            bool sawVisible = false;
+            size_t off = _start;
+            foreach (c; v[_start .. _total].byGraphemeCluster)
+            {
+                if (!c.isEscape && c.slice.length == 1 && c.slice[0] == '\n')
+                    break; // newline starts the next chunk
+                if (c.isEscape)
+                {
+                    off += c.slice.length; // escapes ride along
+                    continue;
+                }
+                if (c.slice.length == 1 && c.slice[0] == ' ')
+                {
+                    if (sawVisible)
+                        break; // a space after content leads the next chunk
+                    off += c.slice.length; // leading space accumulates
+                    continue;
+                }
+                sawVisible = true;
+                off += c.slice.length;
+            }
+            if (!sawVisible && off < _total && v[off] == '\n')
+                off += 1; // fold a leading space/escape run into the following '\n'
+            _end = off;
+        }
+    }
+
+    /// Range primitives (forward range).
+    bool empty() const => _start > _total;
+
+    /// ditto
+    const(char)[] front() const
+    in (!empty)
+        => (cast(const) _buf)[][_start .. _end];
+
+    /// ditto
+    void popFront()
+    in (!empty)
+    {
+        if (_end >= _total) // consumed to the buffer end
+            _start = _total + 1; // mark empty
+        else
+        {
+            _start = _end; // chunks are contiguous; the next begins where this ended
+            scanEnd();
+        }
+    }
+
+    /// ditto
+    typeof(this) save() => this;
+}
+
+/// Build a $(LREF WrappedChunks): the wrapped chunks of `text` as a lazy `@nogc`
+/// forward range of `const(char)[]`.
+///
+/// `text` is range-polymorphic via `writeWrappedText` — a `string`/`char[]`, a range
+/// of `const(char)[]` chunks, or a range of `char`/`dchar` (chunks are one logical
+/// text; include any `'\n'` separators yourself). `lineBuffered` selects whole-line
+/// vs sub-line granularity (see $(LREF WrappedChunks)).
+WrappedChunks!(lineBuffered, bufferSize) byWrappedChunk(
+    bool lineBuffered = true, size_t bufferSize = 256, Text)(
+    Text text, in WrapOptions opt = WrapOptions.init)
+{
+    WrappedChunks!(lineBuffered, bufferSize) r;
+    writeWrappedText(r._buf, text, opt);
+    r.initCursor();
+    return r;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests
 // ─────────────────────────────────────────────────────────────────────────────
@@ -628,4 +763,73 @@ WrappedLines!bufferSize byWrappedLine(size_t bufferSize = 256, Text)(
     // A lazy range of char.
     import std.utf : byChar;
     assert("the quick brown".byChar.byWrappedLine(opt).equal(want));
+}
+
+// Concatenate every chunk of a `WrappedChunks` into one string (test helper).
+version (unittest) private string joinChunks(R)(R r)
+{
+    string s;
+    foreach (c; r)
+        s ~= c;
+    return s;
+}
+
+@("wrap.byWrappedChunk.concatMatchesWrapText")
+@safe unittest
+{
+    // The sub-line chunks concatenate back to exactly what `wrapText` produces — for
+    // plain, long-word-hard-break, CJK, and styled inputs (newlines included as their
+    // own chunks).
+    static foreach (pair; [["the quick brown fox", "9"], ["abcdefg", "3"], ["世界世", "4"]])
+    {{
+        const opt = WrapOptions(width: pair[1] == "9" ? 9 : pair[1] == "4" ? 4 : 3,
+            whitespace: WhitespaceMode.collapse);
+        assert(pair[0].byWrappedChunk!false(opt).joinChunks == pair[0].wrapText(opt));
+    }}
+
+    const styled = "\x1b[31mfoo bar\x1b[0m";
+    const sopt = WrapOptions(width: 3, continuity: StyleContinuity.sgrReset,
+        whitespace: WhitespaceMode.collapse);
+    assert(styled.byWrappedChunk!false(sopt).joinChunks == styled.wrapText(sopt));
+}
+
+@("wrap.byWrappedChunk.noEscapeOnlyChunk")
+@safe unittest
+{
+    import sparkles.base.text.grapheme : visibleWidth;
+
+    // Every chunk is either exactly "\n" or carries at least one visible cell — a
+    // chunk is never escape-only, so the colours ride along with their text.
+    const styled = "\x1b[31mfoo bar baz\x1b[0m";
+    const opt = WrapOptions(width: 3, continuity: StyleContinuity.sgrReset,
+        whitespace: WhitespaceMode.collapse);
+    foreach (c; styled.byWrappedChunk!false(opt))
+        assert(c == "\n" || c.visibleWidth >= 1);
+}
+
+@("wrap.byWrappedChunk.lineBufferedMatchesLines")
+@safe unittest
+{
+    import std.algorithm.comparison : equal;
+
+    // With `lineBuffered`, dropping the "\n" chunks yields exactly `byWrappedLine`.
+    const opt = WrapOptions(width: 9, whitespace: WhitespaceMode.collapse);
+    string[] lines;
+    foreach (c; "the quick brown fox".byWrappedChunk!true(opt))
+        if (c != "\n")
+            lines ~= c.idup;
+    assert("the quick brown fox".byWrappedLine(opt).equal(lines));
+}
+
+@("wrap.byWrappedChunk.isNogc")
+@safe pure nothrow @nogc unittest
+{
+    // Walking the lazy chunk range allocates nothing on the GC, like byWrappedLine.
+    auto r = "ab cd".byWrappedChunk!false(
+        WrapOptions(width: 5, whitespace: WhitespaceMode.collapse));
+    assert(r.front == "ab");
+    r.popFront;
+    assert(r.front == " cd");
+    r.popFront;
+    assert(r.empty);
 }
