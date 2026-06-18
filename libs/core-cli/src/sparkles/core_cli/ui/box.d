@@ -93,6 +93,33 @@ string drawBox(string content, string title, BoxProps props = BoxProps.init)
 auto drawBoxLines(Content)(Content content, string title, BoxProps props = BoxProps.init)
 if (isInputRange!Content && is(ElementType!Content : const(char)[]))
 {
+    auto lay = computeBoxLayout(content, title, props);
+    return BoxLineRange!Content(
+        lay.prefix, lay.outputWidth, props, lay.top, lay.bottom,
+        lay.contentMax, lay.canStream, lay.preparedRows, content);
+}
+
+/// The content-independent layout of a box: frame geometry, the pre-rendered top
+/// region and bottom border, and either a fixed `outputWidth` (when the box can
+/// stream its content) or the already-wrapped `preparedRows` (when the content
+/// determines the width). Shared by $(LREF drawBoxLines) and $(LREF drawBoxChunks).
+private struct BoxLayout
+{
+    dstring prefix;
+    size_t outputWidth;
+    string[] top;
+    string bottom;
+    size_t contentMax;
+    bool canStream;
+    string[] preparedRows;
+}
+
+/// Compute the $(LREF BoxLayout) for `content`/`title`/`props`. When the box is a
+/// fixed width (`canStream`) the content is left untouched for the caller to stream;
+/// otherwise it is wrapped once here into `preparedRows` to size the frame.
+private BoxLayout computeBoxLayout(Content)(Content content, string title, BoxProps props)
+if (isInputRange!Content && is(ElementType!Content : const(char)[]))
+{
     import std.array : appender;
     import std.string : splitLines;
     import sparkles.base.text.wrap : byWrappedLine, WhitespaceMode, WrapOptions;
@@ -215,9 +242,9 @@ if (isInputRange!Content && is(ElementType!Content : const(char)[]))
         bottomLine = "╰────────%s──╯".format(rule);
     }
 
-    return BoxLineRange!Content(
-        prefix.idup, outputWidth, props, topApp[].splitLines.idupArray, bottomLine,
-        contentMax, canStream, preparedRows, content);
+    return BoxLayout(
+        prefix.idup, outputWidth, topApp[].splitLines.idupArray, bottomLine,
+        contentMax, canStream, preparedRows);
 }
 
 /// `splitLines.array` as `string[]` (the appender output is immutable, so its line
@@ -356,6 +383,218 @@ private struct BoxLineRange(Content)
     {
         const rightPad = _outputWidth >= line.visibleWidth ? _outputWidth - line.visibleWidth : 0;
         return "%s%s%s %s".format(_prefix, line, ' '.repeat(rightPad), _props.verticalLine);
+    }
+}
+
+/// The rendered box as a lazy range of *chunks* (cell-granular streaming) — the
+/// sibling of $(LREF drawBoxLines). With `lineBuffered: true` each chunk is a whole
+/// bordered row (the same bytes as `drawBoxLines`); with `lineBuffered: false` each
+/// content run (a word / break-segment) is its own chunk, so pacing the output range
+/// reveals the box cell by cell, like text typed into the frame. Concatenating every
+/// chunk reproduces `drawBox` (chunks already carry their own newlines).
+///
+/// Frame pieces (top rule, per-row borders, bottom rule) never form a standalone
+/// chunk: each is merged onto an adjacent content chunk, so every emitted chunk
+/// carries a visible advance ("content-only ticks"). The bottom border is still drawn
+/// — appended to the final content chunk once the content stream ends — so no TUI
+/// repainting is needed. `content` is pulled lazily for a fixed-width box (one source
+/// line at a time), so a delayed source animates the reveal.
+auto drawBoxChunks(bool lineBuffered = true, Content)(
+    Content content, string title, BoxProps props = BoxProps.init)
+if (isInputRange!Content && is(ElementType!Content : const(char)[]))
+{
+    auto lay = computeBoxLayout(content, title, props);
+    return BoxChunkRange!(lineBuffered, Content)(
+        lay.prefix, lay.outputWidth, props, lay.top, lay.bottom,
+        lay.contentMax, lay.canStream, lay.preparedRows, content);
+}
+
+/// The lazy chunk range returned by $(LREF drawBoxChunks). See that function for the
+/// streaming / frame-merging semantics. `front` is owned (a freshly built string), so
+/// it is safe to retain across `popFront`.
+private struct BoxChunkRange(bool lineBuffered, Content)
+{
+    import std.conv : to;
+    import sparkles.base.text.wrap : byWrappedChunk, byWrappedLine,
+        WhitespaceMode, WrapOptions, WrappedChunks, WrappedLines;
+
+    private
+    {
+        string _prefix;
+        size_t _outputWidth;
+        BoxProps _props;
+        string[] _top;
+        string _bottom;
+        size_t _contentMax;
+        bool _stream;
+
+        // Row source.
+        string[] _eagerRows; // non-stream: finished pre-border rows
+        size_t _eri;
+        Content _content;     // stream: pulled one source line at a time
+        WrappedLines!256 _sub;
+        bool _subActive;
+
+        // Sub-chunking of the current row + frame-merge state.
+        WrappedChunks!(lineBuffered, 256) _rowChunks;
+        bool _rowOpen;
+        size_t _rowWidth;     // visible width accumulated in the current row
+        string _pending;      // frame bytes awaiting a content chunk to attach to
+        bool _anyRow;         // has any row been opened (top region emitted)?
+
+        // One-content-chunk lookahead, so the bottom border attaches to the last one.
+        string _laText, _laPre;
+        bool _laValid;
+
+        string _topFrame;     // top region + its trailing newline (computed once)
+        string _front;
+        bool _empty, _finished;
+    }
+
+    this(dstring prefix, size_t outputWidth, BoxProps props, string[] top, string bottom,
+        size_t contentMax, bool stream, string[] preparedRows, Content content)
+    {
+        import std.array : join;
+
+        _prefix = prefix.to!string;
+        _outputWidth = outputWidth;
+        _props = props;
+        _top = top;
+        _bottom = bottom;
+        _contentMax = contentMax;
+        _stream = stream;
+        _eagerRows = stream ? null : preparedRows;
+        _content = content;
+        _topFrame = top.join("\n") ~ "\n";
+        popFront(); // prime `_front`
+    }
+
+    /// Range primitives (input range).
+    bool empty() const => _empty;
+
+    /// ditto
+    const(char)[] front() const => _front;
+
+    /// ditto
+    void popFront()
+    {
+        if (_finished)
+        {
+            _empty = true;
+            return;
+        }
+        if (!_laValid)
+        {
+            // First call: pull the first content chunk. No content at all -> the box
+            // is just its top region and bottom border.
+            if (!nextTextChunk(_laText, _laPre))
+            {
+                _front = _topFrame ~ _bottom;
+                _finished = true;
+                return;
+            }
+            _laValid = true;
+        }
+        string t2, p2;
+        if (nextTextChunk(t2, p2))
+        {
+            _front = _laPre ~ _laText;
+            _laText = t2;
+            _laPre = p2;
+        }
+        else
+        {
+            // `_laText` was the last content chunk: append the trailing frame (the
+            // last row's close, then the bottom border).
+            _front = _laPre ~ _laText ~ _pending ~ _bottom;
+            _finished = true;
+        }
+    }
+
+    // Pull the next content chunk and the frame bytes that must precede it. Frame
+    // pieces accumulate in `_pending` across rows (including empty rows) and are
+    // handed to the first content chunk that follows. Returns false when content is
+    // done; `_pending` then holds the final row's close (the bottom border is added
+    // by `popFront`).
+    private bool nextTextChunk(out string text, out string pre)
+    {
+        for (;;)
+        {
+            if (_rowOpen)
+            {
+                if (!_rowChunks.empty)
+                {
+                    const c = _rowChunks.front;
+                    _rowChunks.popFront;
+                    text = c.idup; // own it: the buffer is freed when the row advances
+                    _rowWidth += c.visibleWidth;
+                    pre = _pending;
+                    _pending = null;
+                    return true;
+                }
+                // Row exhausted: close it (right-pad + border) plus the row joiner.
+                _pending ~= rowClose(_rowWidth);
+                _rowOpen = false;
+                continue;
+            }
+            string row;
+            if (!nextRow(row))
+                return false;
+            if (!_anyRow)
+            {
+                _pending ~= _topFrame;
+                _anyRow = true;
+            }
+            _pending ~= _prefix; // this row's left border
+            _rowChunks = byWrappedChunk!(lineBuffered)(row, WrapOptions(width: 0));
+            _rowWidth = 0;
+            _rowOpen = true;
+        }
+    }
+
+    // The next finished pre-border row content (trimmed, style-reset), or false.
+    private bool nextRow(out string row)
+    {
+        if (!_stream)
+        {
+            if (_eri < _eagerRows.length)
+            {
+                row = _eagerRows[_eri++];
+                return true;
+            }
+            return false;
+        }
+        for (;;)
+        {
+            if (!_subActive)
+            {
+                if (_content.empty)
+                    return false;
+                _sub = _content.front.byWrappedLine(
+                    WrapOptions(width: _contentMax, whitespace: WhitespaceMode.preserve));
+                _content.popFront; // drives a delayed source -> animation
+                _subActive = true;
+            }
+            if (_sub.empty)
+            {
+                _subActive = false;
+                continue;
+            }
+            const w = _sub.front;
+            _sub.popFront;
+            const t = stripTrailingSpaces(w);
+            row = (t.canFind('\x1b') ? t ~ "\x1b[0m" : t).idup;
+            return true;
+        }
+    }
+
+    // The bytes that close a row of visible width `w`: right-pad to `_outputWidth`,
+    // the trailing space + vertical border, and the newline joiner before the next
+    // element. Mirrors the tail of `BoxLineRange.borderRow`.
+    private string rowClose(size_t w)
+    {
+        const rightPad = _outputWidth >= w ? _outputWidth - w : 0;
+        return ' '.repeat(rightPad).to!string ~ " " ~ _props.verticalLine.to!string ~ "\n";
     }
 }
 
@@ -900,4 +1139,82 @@ unittest
         BoxProps(minWidth: 20, maxWidth: 20));
     foreach (line; box.splitLines)
         assert(line.visibleWidth == 20);
+}
+
+@("drawBox.chunks.lineBufferedJoinEqualsString")
+@system unittest
+{
+    import std.array : join;
+    import std.typecons : tuple;
+
+    // drawBoxChunks!true is the chunk view of drawBox: concatenated (chunks carry
+    // their own newlines) it reproduces the string byte-for-byte, across single-line,
+    // multi-line, footer, nested-title, and wrapped-content layouts.
+    static foreach (args; [
+        tuple(["Hello"], "T", BoxProps.init),
+        tuple(["Line 1", "Line 2", "Line 3"], "Title", BoxProps.init),
+        tuple(["Content"], "Title", BoxProps(footer: "Done")),
+        tuple(["Body content line one"], "This is a very long multi-line title here.",
+            BoxProps(maxWidth: 36, titleOverflow: TitleOverflow.wrap)),
+        tuple(["aaaa bbbb cccc dddd", "short"], "T", BoxProps(minWidth: 20, maxWidth: 20)),
+    ])
+    {{
+        const str = drawBox(args[0], args[1], args[2]);
+        assert(drawBoxChunks!true(args[0], args[1], args[2]).join("") == str);
+    }}
+}
+
+@("drawBox.chunks.cellGranularMatchesLineBuffered")
+@system unittest
+{
+    import std.array : join;
+    import std.string : splitLines;
+
+    // Finer (sub-line) chunks split each row into word-runs but concatenate to the
+    // same final frame, and every row still lands on the fixed width.
+    const props = BoxProps(minWidth: 24, maxWidth: 24);
+    const coarse = drawBoxChunks!true(["aaaa bbbb cccc dddd", "short"], "T", props).join("");
+    const fine = drawBoxChunks!false(["aaaa bbbb cccc dddd", "short"], "T", props).join("");
+    assert(coarse == fine);
+    foreach (line; fine.splitLines)
+        assert(line.visibleWidth == 24);
+}
+
+@("drawBox.chunks.cellGranularSplitsRows")
+@system unittest
+{
+    import std.algorithm.searching : count;
+
+    // With sub-line chunking a multi-word row yields more than one chunk per row, so
+    // pacing the output reveals the box word by word rather than row by row.
+    auto r = drawBoxChunks!false(["alpha beta gamma"], "T", BoxProps(minWidth: 24, maxWidth: 24));
+    size_t n;
+    foreach (_; r)
+        ++n;
+    assert(n >= 3); // top+border+alpha, " beta", " gamma"+close+bottom (at least)
+}
+
+@("drawBox.chunks.acceptsLazyContent")
+@system unittest
+{
+    import std.algorithm.iteration : map;
+    import std.array : join;
+
+    // Any input range of lines works; a lazy fixed-width box yields the same bytes.
+    auto lazyContent = ["one", "two", "three"].map!(x => x);
+    const want = drawBox(["one", "two", "three"], "T", BoxProps(minWidth: 24, maxWidth: 24));
+    assert(drawBoxChunks!true(lazyContent, "T", BoxProps(minWidth: 24, maxWidth: 24)).join("") == want);
+}
+
+@("drawBox.chunks.styledCellGranularMatches")
+@system unittest
+{
+    import std.array : join;
+    import sparkles.base.term_style : stylize, Style;
+
+    // Colours ride along with their word chunks, so the cell-granular stream still
+    // reproduces drawBox's styled row exactly (reset before the border, no bleed).
+    const styled = "red red red red".stylize(Style.red);
+    const want = drawBox([styled], "T", BoxProps(minWidth: 24, maxWidth: 24));
+    assert(drawBoxChunks!false([styled], "T", BoxProps(minWidth: 24, maxWidth: 24)).join("") == want);
 }
