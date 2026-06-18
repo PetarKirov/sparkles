@@ -87,7 +87,6 @@ auto delayedRange(R)(R src, int delayMs) => DelayedRange!R(src, delayMs);
 void main(string[] args)
 {
     import core.stdc.stdlib : exit;
-    import std.array : join, split;
     import std.string : splitLines;
 
     // Pull the optional-value generate flags out of argv first (getopt can't parse an
@@ -149,15 +148,12 @@ void main(string[] args)
         : cli.contentCommand.length ? runCommandLines(cli.contentCommand)
         : generatedColoredLines(contentGenerateLen);
 
-    // Compose the title first (DelayedRange paces the words too), so the box's top
-    // border is ready before the content streams in.
-    string title;
-    foreach (word; delayedRange(fullTitle.split(" "), cli.delayMs))
-    {
-        if (!word.length)
-            continue;
-        title ~= (title.length ? " " : "") ~ word;
-    }
+    // The title lives in the box's top border, which (under the content-only-tick
+    // model) is emitted attached to the first content chunk — it can't stream in
+    // word-by-word without repainting, so there's nothing to pace here. Assemble it up
+    // front and let only the body stream; pacing it would just block output with a
+    // blank screen for the whole title.
+    const title = fullTitle;
 
     // A fixed-width box so the top can be drawn before any content arrives and the
     // content can stream in; `wrap` shows the nested title box for a long title.
