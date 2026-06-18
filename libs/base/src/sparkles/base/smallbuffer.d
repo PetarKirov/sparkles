@@ -242,8 +242,9 @@ pure nothrow @nogc:
     /// Output range interface: appends a single element.
     void put(in T element) @safe
     {
+        T tmp = element;
         T[] tail = ensureUniqueStorage(extraLen: 1);
-        tail[0] = element;
+        tail[0] = tmp;
         ++_length;
     }
 
@@ -320,11 +321,44 @@ pure nothrow @nogc:
             if (n == 0)
                 return;
             const oldLen = _length;
-            T[] tail = ensureUniqueStorage(extraLen: n);
-            size_t i;
-            foreach (e; elements)
-                tail[i++] = e;
-            _length = oldLen + n;
+            const newLen = oldLen + n;
+
+            if (oldLen <= N && newLen > N)
+            {
+                // inline -> heap transition: to prevent range elements that alias
+                // our inline storage from reading corrupted data, we must allocate
+                // the new block, fill it with the inline elements and range elements,
+                // and only then overwrite the union by assigning _block.
+                size_t capacity = newLen;
+                import std.math.algebraic : truncPow2;
+                if (capacity > 0)
+                {
+                    const t = truncPow2(capacity);
+                    if (t != capacity)
+                    {
+                        const rounded = t << 1;
+                        if (rounded != 0)
+                            capacity = rounded;
+                    }
+                }
+
+                T[] nb = allocateBlock(capacity);
+                nb[0 .. oldLen] = _inline[0 .. oldLen];
+                size_t i = oldLen;
+                foreach (e; elements)
+                    nb[i++] = e;
+
+                _block = nb;
+                _length = newLen;
+            }
+            else
+            {
+                T[] tail = ensureUniqueStorage(extraLen: n);
+                size_t i;
+                foreach (e; elements)
+                    tail[i++] = e;
+                _length = oldLen + n;
+            }
         }
         else
             foreach (e; elements)
@@ -421,6 +455,15 @@ pure nothrow @nogc:
     // private helpers
     // ─────────────────────────────────────────────────────────────────────────
 
+    // Allocate a heap block for `blockCapacity` elements (refCount 1).
+    private static T[] allocateBlock(size_t blockCapacity) @trusted
+    {
+        T[] b = makeArray!T(Allocator.instance, blockCapacity);
+        assert(b !is null, "SmallBuffer: allocation failed");
+        Allocator.instance.prefix(b).refCount = 1;
+        return b;
+    }
+
     // Ensure this buffer has unique mutable storage with room for `extraLen`
     // additional elements (and at least `minCapacity` total slots). `_length`
     // is deliberately unchanged; callers fill the returned tail and then commit.
@@ -444,20 +487,12 @@ pure nothrow @nogc:
             }
         }
 
-        T[] allocate(size_t blockCapacity)
-        {
-            T[] b = makeArray!T(Allocator.instance, blockCapacity);
-            assert(b !is null, "SmallBuffer: allocation failed");
-            Allocator.instance.prefix(b).refCount = 1;
-            return b;
-        }
-
         if (newLen <= N)
             return _inline[oldLen .. newLen];
 
         if (oldLen <= N)
         {
-            T[] nb = allocate(capacity);
+            T[] nb = allocateBlock(capacity);
             nb[0 .. oldLen] = _inline[0 .. oldLen];
             _block = nb;
             return _block[oldLen .. newLen];
@@ -465,7 +500,7 @@ pure nothrow @nogc:
 
         if (ctrl().refCount > 1)
         {
-            T[] nb = allocate(max(_block.length, capacity));
+            T[] nb = allocateBlock(max(_block.length, capacity));
             nb[0 .. oldLen] = _block[0 .. oldLen];
             --ctrl().refCount;
             _block = nb;
@@ -1398,4 +1433,38 @@ unittest
     assert((cast(const) a)[] == "hello world");
     assert(ro[] == "hello world");
     assert(b[] == "hello world!");
+}
+
+@("SmallBuffer.selfAppend.singleAliasTransition")
+@safe pure nothrow @nogc
+unittest
+{
+    struct LargePoint { long x, y, z, w; }
+    SmallBuffer!(LargePoint, 2) buf;
+    buf ~= LargePoint(1, 2, 3, 4);
+    buf ~= LargePoint(5, 6, 7, 8);
+
+    // This should append buf[0] to buf, triggering inline->heap transition
+    // while checking that the element passed by ref is not corrupted.
+    buf ~= buf[0];
+    assert(buf.onHeap);
+    assert(buf.length == 3);
+    assert(buf[0] == LargePoint(1, 2, 3, 4));
+    assert(buf[1] == LargePoint(5, 6, 7, 8));
+    assert(buf[2] == LargePoint(1, 2, 3, 4));
+}
+
+@("SmallBuffer.selfAppend.rangeAliasTransition")
+@safe pure nothrow @nogc
+unittest
+{
+    import std.algorithm : map;
+    SmallBuffer!(int, 4) buf;
+    buf ~= [1, 2, 3];
+
+    // Trigger inline->heap transition with map range aliasing buf
+    buf ~= buf[].map!(x => x * 2);
+    assert(buf.onHeap);
+    assert(buf.length == 6);
+    assert(buf[] == [1, 2, 3, 2, 4, 6]);
 }
