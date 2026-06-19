@@ -148,11 +148,10 @@ void main(string[] args)
         : cli.contentCommand.length ? runCommandLines(cli.contentCommand)
         : generatedColoredLines(contentGenerateLen);
 
-    // The title lives in the box's top border, which (under the content-only-tick
-    // model) is emitted attached to the first content chunk — it can't stream in
-    // word-by-word without repainting, so there's nothing to pace here. Assemble it up
-    // front and let only the body stream; pacing it would just block output with a
-    // blank screen for the whole title.
+    // Assemble the full title up front; `drawBoxChunks` streams it word-by-word on the
+    // top border itself (the title is the first row of the chunk stream), so there's
+    // nothing to pace here — pacing the box's output animates the title and the body
+    // alike.
     const title = fullTitle;
 
     // A fixed-width box so the top can be drawn before any content arrives and the
