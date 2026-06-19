@@ -243,12 +243,18 @@ if (isInputRange!Content && is(ElementType!Content : const(char)[]))
         auto rows = appender!(string[]);
         if (contentMax > 0)
             foreach (cline; content)
+            {
+                bool any = false;
                 foreach (w; cline.byWrappedLine(
                         WrapOptions(width: contentMax, whitespace: WhitespaceMode.preserve)))
                 {
+                    any = true;
                     const t = stripTrailingSpaces(w);
                     rows ~= (t.canFind('\x1b') ? t ~ "\x1b[0m" : t).idup;
                 }
+                if (!any)
+                    rows ~= ""; // an empty source line wraps to nothing -> keep it blank
+            }
         else
             foreach (cline; content)
                 rows ~= cline.idup;
@@ -333,6 +339,7 @@ private struct BoxLineRange(Content)
         Content _content;
         WrappedLines!256 _sub;
         bool _subActive;
+        bool _subEmittedRow; // did the current source line yield any wrapped row?
         size_t _ti;
         bool _bottomDone;
 
@@ -413,16 +420,25 @@ private struct BoxLineRange(Content)
                     WrapOptions(width: _contentMax, whitespace: WhitespaceMode.preserve));
                 _content.popFront; // drives a delayed source -> animation
                 _subActive = true;
+                _subEmittedRow = false;
             }
             if (_sub.empty)
             {
                 _subActive = false;
+                if (!_subEmittedRow)
+                {
+                    // An empty source line wraps to nothing: keep it as a blank row.
+                    _subEmittedRow = true;
+                    _front = borderRow("");
+                    return true;
+                }
                 continue;
             }
             const w = _sub.front;
             _sub.popFront;
             const t = stripTrailingSpaces(w);
             _front = borderRow(t.canFind('\x1b') ? t ~ "\x1b[0m" : t);
+            _subEmittedRow = true;
             return true;
         }
     }
@@ -483,6 +499,7 @@ private struct BoxChunkRange(bool lineBuffered, Content)
         Content _content;     // stream: pulled one source line at a time
         WrappedLines!256 _sub;
         bool _subActive;
+        bool _subEmittedRow;  // did the current source line yield any wrapped row?
 
         // Top region: title rows (streamable) + decoration lines, consumed before body.
         TopItem[] _topItems;
@@ -656,16 +673,25 @@ private struct BoxChunkRange(bool lineBuffered, Content)
                     WrapOptions(width: _contentMax, whitespace: WhitespaceMode.preserve));
                 _content.popFront; // drives a delayed source -> animation
                 _subActive = true;
+                _subEmittedRow = false;
             }
             if (_sub.empty)
             {
                 _subActive = false;
+                if (!_subEmittedRow)
+                {
+                    // An empty source line wraps to nothing: keep it as a blank row.
+                    _subEmittedRow = true;
+                    row = "";
+                    return true;
+                }
                 continue;
             }
             const w = _sub.front;
             _sub.popFront;
             const t = stripTrailingSpaces(w);
             row = (t.canFind('\x1b') ? t ~ "\x1b[0m" : t).idup;
+            _subEmittedRow = true;
             return true;
         }
     }
@@ -1371,4 +1397,29 @@ unittest
     const title = "This is a very long multi-line title here.";
     const props = BoxProps(maxWidth: 36, titleOverflow: TitleOverflow.wrap);
     assert(drawBoxChunks!false(noBody, title, props).join("") == drawBox(noBody, title, props));
+}
+
+@("drawBox.content.preservesBlankLines")
+@system unittest
+{
+    import std.algorithm.searching : count;
+    import std.array : join;
+    import std.string : splitLines;
+
+    // An empty source line wraps to nothing, but must still render as a blank bordered
+    // row — across the eager (no-wrap), eager-wrapped, and fixed-width streaming paths,
+    // and identically for drawBox / drawBoxChunks.
+    string[] content = ["1", "", "", "2"];
+    static foreach (props; [
+        BoxProps.init, // eager, no wrapping
+        BoxProps(maxWidth: 20), // eager, content wrapped per line
+        BoxProps(minWidth: 20, maxWidth: 20), // fixed width, streamed
+    ])
+    {{
+        const box = drawBox(content, "T", props);
+        // Four content rows (two of them blank) between the borders.
+        assert(box.splitLines.length == 6);
+        assert(drawBoxChunks!true(content, "T", props).join("") == box);
+        assert(drawBoxChunks!false(content, "T", props).join("") == box);
+    }}
 }
