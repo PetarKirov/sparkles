@@ -411,6 +411,61 @@ void main()
 
 The colored output uses `writeStyled` IES for ANSI styling -- log levels are color-coded (green for info, yellow for warnings, red for errors, bold+red for critical/fatal), durations are highlighted, and file locations are dimmed.
 
+### Dynamic Dispatch
+
+Call a function by name over a module, type, or instance. `call`/`tryCall` do
+**runtime** dispatch (name and args are values — what a REPL or RPC server needs),
+resolving overloads by arity and argument type; `callDirect` and the `wrap()`
+proxy do **compile-time** dispatch (a plain, perfectly-forwarded typed call with
+no `Variant` boxing). Virtual dispatch through base-class/interface references is
+preserved, and only `public` function members are exposed.
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "readme_dispatch"
+    dependency "sparkles:core-cli" version="*"
++/
+
+import std.stdio : writeln;
+import std.variant : Variant;
+
+import sparkles.core_cli.dispatch;
+
+struct Calculator
+{
+    int total;
+    int add(int x) @safe => total + x;
+    int add(int x, int y) @safe => total + x + y;        // overloaded
+    string greet(string who = "world") @safe => "hello, " ~ who;
+}
+
+void main()
+{
+    auto calc = Calculator(100);
+
+    // Runtime dispatch: method name and args as values (e.g. a REPL line or an
+    // RPC frame). Overloads resolve by arity, then argument type.
+    writeln(calc.call("add", Variant(5)));                 // 105
+    writeln(calc.call("add", Variant(5), Variant(20)));    // 125
+    writeln(calc.call("greet"));                           // default argument
+
+    // tryCall reports failures without throwing.
+    writeln(calc.tryCall("nope").hasError);
+
+    // Compile-time dispatch via the wrap() proxy: a plain typed call.
+    writeln(wrap(calc).greet("REPL"));
+}
+```
+
+```[Output]
+105
+125
+hello, world
+true
+hello, REPL
+```
+
 ### SmallBuffer
 
 A `@nogc` dynamic array with small buffer optimization. Stores data inline up to a configurable threshold, then falls back to the heap via `pureMalloc`.
