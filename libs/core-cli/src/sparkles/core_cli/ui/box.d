@@ -99,6 +99,43 @@ if (isInputRange!Content && is(ElementType!Content : const(char)[]))
         lay.contentMax, lay.canStream, lay.preparedRows, content);
 }
 
+/// How a streamable frame row is closed once its text has been emitted: `open` bytes,
+/// then `fill` repeated up to the `target` visible column, then `tail` (incl. the row's
+/// trailing newline). `renderClose(spec, w)` reproduces the original line's right side
+/// from the accumulated visible width `w`, so the title can stream and only have its
+/// right border drawn once complete. A zero-`target` spec (`CloseSpec.init`) renders to
+/// nothing — used by decoration-only rows whose whole line lives in `TopItem.lead`.
+private struct CloseSpec
+{
+    string open;
+    dchar fill = ' ';
+    size_t target;
+    string tail;
+}
+
+/// Render a $(LREF CloseSpec) for an accumulated visible width `w`.
+private string renderClose(in CloseSpec c, size_t w)
+{
+    import std.conv : to;
+    import std.range : repeat;
+
+    const n = c.target >= w ? c.target - w : 0;
+    return c.open ~ c.fill.repeat(n).to!string ~ c.tail;
+}
+
+/// One row of a box's top region, for the chunk renderer. A row is either a streamable
+/// title row (`lead` left border/decoration, `text` the title text streamed via
+/// `byWrappedChunk`, `close` the right border) or a decoration-only line (`text == ""`,
+/// the whole line incl. its newline in `lead`). Concatenating `lead ~ text ~
+/// renderClose(close, text.visibleWidth)` over every item reproduces the top region
+/// byte-for-byte — `BoxLayout.top` is derived from these so the two cannot drift.
+private struct TopItem
+{
+    string lead;
+    string text;
+    CloseSpec close;
+}
+
 /// The content-independent layout of a box: frame geometry, the pre-rendered top
 /// region and bottom border, and either a fixed `outputWidth` (when the box can
 /// stream its content) or the already-wrapped `preparedRows` (when the content
@@ -112,6 +149,7 @@ private struct BoxLayout
     size_t contentMax;
     bool canStream;
     string[] preparedRows;
+    TopItem[] topItems; // structured top region for drawBoxChunks; `top` is derived from it
 }
 
 /// Compute the $(LREF BoxLayout) for `content`/`title`/`props`. When the box is a
@@ -219,16 +257,27 @@ if (isInputRange!Content && is(ElementType!Content : const(char)[]))
         outputWidth = max(baseWidth, contentWidth);
     }
 
-    // Pre-render the (content-independent) top region and bottom border as strings.
-    auto topApp = appender!string;
+    // Build the top region as structured items (the single source of truth for both
+    // renderers); the string form (`top`) is derived from them just below, so the two
+    // can never drift.
+    TopItem[] topItems;
     if (nested)
-        topApp.renderNestedTitle(titleLines, outputWidth, prefix, props);
+        topItems = nestedTitleItems(titleLines, outputWidth, prefix, props);
     else
-    {
-        const t0 = titleLines[0];
-        auto topRule = props.horizontalLine.repeat(outputWidth + prefixLen - t0.visibleWidth - 7);
-        topApp ~= "╭──╼ %s ╾%s─╮\n".format(t0, topRule);
-    }
+        // Single-line title: `╭──╼ {t0} ╾{rule}─╮`. The right side (` ╾…─╮`) is held in
+        // the close so it streams only once the title text is complete. An empty title
+        // (`t0 == ""`) yields zero streamed chunks, so the whole line becomes pending —
+        // exactly the old atomic behavior.
+        topItems = [TopItem(
+            "╭──╼ ",
+            titleLines[0],
+            CloseSpec(" ╾", props.horizontalLine, outputWidth + prefixLen - 7, "─╮\n"))];
+
+    // Derive the pre-rendered top region string from the items (render each at its
+    // natural width). `drawBoxLines` / `string drawBox` keep consuming this unchanged.
+    auto topApp = appender!string;
+    foreach (it; topItems)
+        topApp ~= it.lead ~ it.text ~ renderClose(it.close, it.text.visibleWidth);
 
     string bottomLine;
     if (props.footer !is null)
@@ -244,7 +293,7 @@ if (isInputRange!Content && is(ElementType!Content : const(char)[]))
 
     return BoxLayout(
         prefix.idup, outputWidth, topApp[].splitLines.idupArray, bottomLine,
-        contentMax, canStream, preparedRows);
+        contentMax, canStream, preparedRows, topItems);
 }
 
 /// `splitLines.array` as `string[]` (the appender output is immutable, so its line
@@ -406,7 +455,7 @@ if (isInputRange!Content && is(ElementType!Content : const(char)[]))
     auto lay = computeBoxLayout(content, title, props);
     return BoxChunkRange!(lineBuffered, Content)(
         lay.prefix, lay.outputWidth, props, lay.top, lay.bottom,
-        lay.contentMax, lay.canStream, lay.preparedRows, content);
+        lay.contentMax, lay.canStream, lay.preparedRows, content, lay.topItems);
 }
 
 /// The lazy chunk range returned by $(LREF drawBoxChunks). See that function for the
@@ -435,24 +484,30 @@ private struct BoxChunkRange(bool lineBuffered, Content)
         WrappedLines!256 _sub;
         bool _subActive;
 
+        // Top region: title rows (streamable) + decoration lines, consumed before body.
+        TopItem[] _topItems;
+        size_t _tii;
+
         // Sub-chunking of the current row + frame-merge state.
         WrappedChunks!(lineBuffered, 256) _rowChunks;
         bool _rowOpen;
         size_t _rowWidth;     // visible width accumulated in the current row
+        CloseSpec _rowClose;  // how the current row's right border is drawn
+        CloseSpec _bodyClose; // close spec shared by all body content rows
         string _pending;      // frame bytes awaiting a content chunk to attach to
-        bool _anyRow;         // has any row been opened (top region emitted)?
 
         // One-content-chunk lookahead, so the bottom border attaches to the last one.
         string _laText, _laPre;
         bool _laValid;
 
-        string _topFrame;     // top region + its trailing newline (computed once)
+        string _topFrame;     // top region + its trailing newline (no-content fallback)
         string _front;
         bool _empty, _finished;
     }
 
     this(dstring prefix, size_t outputWidth, BoxProps props, string[] top, string bottom,
-        size_t contentMax, bool stream, string[] preparedRows, Content content)
+        size_t contentMax, bool stream, string[] preparedRows, Content content,
+        TopItem[] topItems)
     {
         import std.array : join;
 
@@ -465,7 +520,10 @@ private struct BoxChunkRange(bool lineBuffered, Content)
         _stream = stream;
         _eagerRows = stream ? null : preparedRows;
         _content = content;
-        _topFrame = top.join("\n") ~ "\n";
+        _topItems = topItems;
+        // Body rows: right-pad the text to `outputWidth`, then ` │` and the row joiner.
+        _bodyClose = CloseSpec("", ' ', outputWidth, " " ~ props.verticalLine.to!string ~ "\n");
+        _topFrame = top.join("\n") ~ "\n"; // only used when there are no chunks at all
         popFront(); // prime `_front`
     }
 
@@ -512,10 +570,10 @@ private struct BoxChunkRange(bool lineBuffered, Content)
     }
 
     // Pull the next content chunk and the frame bytes that must precede it. Frame
-    // pieces accumulate in `_pending` across rows (including empty rows) and are
-    // handed to the first content chunk that follows. Returns false when content is
-    // done; `_pending` then holds the final row's close (the bottom border is added
-    // by `popFront`).
+    // pieces accumulate in `_pending` across rows (including empty/decoration rows) and
+    // are handed to the first content chunk that follows. Returns false when all title
+    // and content rows are done; `_pending` then holds the final row's close (the bottom
+    // border is added by `popFront`).
     private bool nextTextChunk(out string text, out string pre)
     {
         for (;;)
@@ -532,24 +590,48 @@ private struct BoxChunkRange(bool lineBuffered, Content)
                     _pending = null;
                     return true;
                 }
-                // Row exhausted: close it (right-pad + border) plus the row joiner.
-                _pending ~= rowClose(_rowWidth);
+                // Row exhausted: draw its right border (pad + border) and the joiner.
+                _pending ~= renderClose(_rowClose, _rowWidth);
                 _rowOpen = false;
                 continue;
             }
-            string row;
-            if (!nextRow(row))
+            if (!openNextRow())
                 return false;
-            if (!_anyRow)
-            {
-                _pending ~= _topFrame;
-                _anyRow = true;
-            }
-            _pending ~= _prefix; // this row's left border
-            _rowChunks = byWrappedChunk!(lineBuffered)(row, WrapOptions(width: 0));
-            _rowWidth = 0;
-            _rowOpen = true;
         }
+    }
+
+    // Open the next streamable row, appending its left border/decoration to `_pending`.
+    // Title rows (from `_topItems`) come first, then body content rows; decoration-only
+    // top items (`text == ""`) render their whole line into `_pending` and are skipped.
+    // Returns false when no rows remain.
+    private bool openNextRow()
+    {
+        while (_tii < _topItems.length)
+        {
+            const it = _topItems[_tii++];
+            if (it.text.length == 0)
+            {
+                // Decoration-only line (nested top/bottom, or an empty single-line
+                // title): the whole line is in `lead`; nothing to stream.
+                _pending ~= it.lead ~ renderClose(it.close, 0);
+                continue;
+            }
+            _pending ~= it.lead;
+            _rowChunks = byWrappedChunk!(lineBuffered)(it.text, WrapOptions(width: 0));
+            _rowWidth = 0;
+            _rowClose = it.close;
+            _rowOpen = true;
+            return true;
+        }
+        string row;
+        if (!nextRow(row))
+            return false;
+        _pending ~= _prefix; // this body row's left border
+        _rowChunks = byWrappedChunk!(lineBuffered)(row, WrapOptions(width: 0));
+        _rowWidth = 0;
+        _rowClose = _bodyClose;
+        _rowOpen = true;
+        return true;
     }
 
     // The next finished pre-border row content (trimmed, style-reset), or false.
@@ -586,15 +668,6 @@ private struct BoxChunkRange(bool lineBuffered, Content)
             row = (t.canFind('\x1b') ? t ~ "\x1b[0m" : t).idup;
             return true;
         }
-    }
-
-    // The bytes that close a row of visible width `w`: right-pad to `_outputWidth`,
-    // the trailing space + vertical border, and the newline joiner before the next
-    // element. Mirrors the tail of `BoxLineRange.borderRow`.
-    private string rowClose(size_t w)
-    {
-        const rightPad = _outputWidth >= w ? _outputWidth - w : 0;
-        return ' '.repeat(rightPad).to!string ~ " " ~ _props.verticalLine.to!string ~ "\n";
     }
 }
 
@@ -642,12 +715,15 @@ private string ellipsizeTitle(string title, size_t width)
     return "…";
 }
 
-/// Render a wrapped title inside a nested box joined to the frame's top by `┤`/`├`
-/// handles (see `TitleOverflow.wrap`). `outputWidth` is the frame's content-area
-/// width, which the nested box fills exactly. Assumes a standard left frame
-/// (`prefixLen == 2`); callers fall back to `ellipsis` when `omitLeftBorder`.
-private void renderNestedTitle(Sink)(
-    ref Sink sink, string[] titleLines, size_t outputWidth, const(dchar)[] prefix, in BoxProps props)
+/// The top region for a wrapped title inside a nested box joined to the frame's top by
+/// `┤`/`├` handles (see `TitleOverflow.wrap`), as streamable $(LREF TopItem)s. The
+/// nested box top/bottom are decoration-only lines; each title row is a streamable item
+/// whose `close` right-pads the text to the nested `field` column and draws that row's
+/// right border. `outputWidth` is the frame's content-area width, which the nested box
+/// fills exactly. Assumes a standard left frame (`prefixLen == 2`); callers fall back to
+/// `ellipsis` when `omitLeftBorder`.
+private TopItem[] nestedTitleItems(
+    string[] titleLines, size_t outputWidth, const(dchar)[] prefix, in BoxProps props)
 {
     import std.conv : to;
 
@@ -658,25 +734,33 @@ private void renderNestedTitle(Sink)(
     const pfx = prefix.to!string;
     const lead = ' '.repeat(prefix.length).to!string;
 
-    string pad(string s) => s ~ ' '.repeat(field - s.visibleWidth).to!string;
     string reset(string s) => s.canFind('\x1b') ? s ~ "\x1b[0m" : s;
 
-    // Nested box top, protruding above the frame into the left content margin.
-    sink ~= "%s%s%s%s  \n".format(lead, props.topLeft, hlInner, props.topRight);
+    TopItem[] items;
+
+    // Nested box top, protruding above the frame into the left content margin (deco).
+    items ~= TopItem(
+        "%s%s%s%s  \n".format(lead, props.topLeft, hlInner, props.topRight), "", CloseSpec.init);
 
     // Frame top joins the nested box's first title row via the ┤/├ handles.
-    sink ~= "%s%s%s %s %s%s%s\n".format(
-        props.topLeft, hl1, props.titleConnectLeft,
-        pad(reset(titleLines[0])),
-        props.titleConnectRight, hl1, props.topRight);
+    items ~= TopItem(
+        "%s%s%s ".format(props.topLeft, hl1, props.titleConnectLeft),
+        reset(titleLines[0]),
+        CloseSpec("", ' ', field, " %s%s%s\n".format(props.titleConnectRight, hl1, props.topRight)));
 
     // Remaining title rows: frame border + nested box content rows.
     foreach (line; titleLines[1 .. $])
-        sink ~= "%s%s %s %s %s\n".format(
-            pfx, props.verticalLine, pad(reset(line)), props.verticalLine, props.verticalLine);
+        items ~= TopItem(
+            "%s%s ".format(pfx, props.verticalLine),
+            reset(line),
+            CloseSpec("", ' ', field, " %s %s\n".format(props.verticalLine, props.verticalLine)));
 
-    // Nested box bottom, inside the frame.
-    sink ~= "%s%s%s%s %s\n".format(pfx, props.bottomLeft, hlInner, props.bottomRight, props.verticalLine);
+    // Nested box bottom, inside the frame (deco).
+    items ~= TopItem(
+        "%s%s%s%s %s\n".format(pfx, props.bottomLeft, hlInner, props.bottomRight, props.verticalLine),
+        "", CloseSpec.init);
+
+    return items;
 }
 
 @("drawBox.basic.singleLine")
@@ -1147,20 +1231,25 @@ unittest
     import std.array : join;
     import std.typecons : tuple;
 
-    // drawBoxChunks!true is the chunk view of drawBox: concatenated (chunks carry
-    // their own newlines) it reproduces the string byte-for-byte, across single-line,
-    // multi-line, footer, nested-title, and wrapped-content layouts.
+    // Both chunk views of drawBox concatenate (chunks carry their own newlines) to the
+    // string byte-for-byte — across single-line, multi-line, footer, nested-title,
+    // empty-title, omitLeftBorder-wrap, and wrapped-content layouts. The title now
+    // streams through the same chunk path, so this also guards the title decomposition.
     static foreach (args; [
         tuple(["Hello"], "T", BoxProps.init),
         tuple(["Line 1", "Line 2", "Line 3"], "Title", BoxProps.init),
         tuple(["Content"], "Title", BoxProps(footer: "Done")),
+        tuple(["Content"], "", BoxProps.init),
         tuple(["Body content line one"], "This is a very long multi-line title here.",
             BoxProps(maxWidth: 36, titleOverflow: TitleOverflow.wrap)),
+        tuple(["Hi"], "A fairly long title to ellipsize",
+            BoxProps(maxWidth: 24, omitLeftBorder: true, titleOverflow: TitleOverflow.wrap)),
         tuple(["aaaa bbbb cccc dddd", "short"], "T", BoxProps(minWidth: 20, maxWidth: 20)),
     ])
     {{
         const str = drawBox(args[0], args[1], args[2]);
         assert(drawBoxChunks!true(args[0], args[1], args[2]).join("") == str);
+        assert(drawBoxChunks!false(args[0], args[1], args[2]).join("") == str);
     }}
 }
 
@@ -1217,4 +1306,69 @@ unittest
     const styled = "red red red red".stylize(Style.red);
     const want = drawBox([styled], "T", BoxProps(minWidth: 24, maxWidth: 24));
     assert(drawBoxChunks!false([styled], "T", BoxProps(minWidth: 24, maxWidth: 24)).join("") == want);
+}
+
+@("drawBox.chunks.titleStreamsWordByWord")
+@system unittest
+{
+    import std.algorithm.searching : canFind, countUntil;
+    import std.array : array;
+
+    // A single-line multi-word title streams word by word into the top border: each
+    // title word lands in its own chunk, and the whole title precedes any body chunk.
+    auto chunks = drawBoxChunks!false(["body"], "alpha beta gamma",
+        BoxProps(minWidth: 40, maxWidth: 40)).array;
+    const iAlpha = chunks.countUntil!(c => c.canFind("alpha"));
+    const iGamma = chunks.countUntil!(c => c.canFind("gamma"));
+    const iBody = chunks.countUntil!(c => c.canFind("body"));
+    assert(iAlpha >= 0 && iGamma >= 0 && iBody >= 0);
+    assert(iAlpha < iGamma && iGamma < iBody); // title types out, then the body
+}
+
+@("drawBox.chunks.nestedTitleStreamsBeforeBody")
+@system unittest
+{
+    import std.algorithm.searching : canFind, countUntil;
+    import std.array : array;
+
+    // A wrapped (nested) title streams its words too: several title chunks appear, all
+    // before any body chunk.
+    auto chunks = drawBoxChunks!false(["Body content line one"],
+        "This is a very long multi-line title here.",
+        BoxProps(maxWidth: 36, titleOverflow: TitleOverflow.wrap)).array;
+    const iBody = chunks.countUntil!(c => c.canFind("Body"));
+    assert(iBody > 0);
+    size_t titleChunks;
+    foreach (i, c; chunks)
+        if (i < iBody && (c.canFind("This") || c.canFind("very")
+                || c.canFind("title") || c.canFind("here")))
+            ++titleChunks;
+    assert(titleChunks >= 3);
+}
+
+@("drawBox.chunks.styledNestedTitleConcatMatches")
+@system unittest
+{
+    import std.array : join;
+    import sparkles.base.term_style : stylize, Style;
+
+    // A styled wrapped title still concatenates to drawBox byte-for-byte — guards the
+    // reset asymmetry (nested title rows get a style reset, the close pad/border follow
+    // it exactly, no bleed onto the frame).
+    const styled = "alpha beta gamma delta epsilon".stylize(Style.red);
+    const props = BoxProps(maxWidth: 24, titleOverflow: TitleOverflow.wrap);
+    assert(drawBoxChunks!false(["body"], styled, props).join("") == drawBox(["body"], styled, props));
+}
+
+@("drawBox.chunks.titleOnlyNoBody")
+@system unittest
+{
+    import std.array : join;
+
+    // A nested title with no content: the title streams, the bottom border attaches to
+    // the last title chunk, and the whole thing still equals drawBox.
+    string[] noBody;
+    const title = "This is a very long multi-line title here.";
+    const props = BoxProps(maxWidth: 36, titleOverflow: TitleOverflow.wrap);
+    assert(drawBoxChunks!false(noBody, title, props).join("") == drawBox(noBody, title, props));
 }
