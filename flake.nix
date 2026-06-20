@@ -13,10 +13,11 @@
     systems.url = "github:nix-systems/triplet";
 
     dlang-nix = {
-      # feat/ldc-android: adds the `ldc-android` aarch64 cross-compiler used by
-      # the opt-in `devShells.android` (see nix/shells/android.nix). Revert to
-      # the default branch once that work merges upstream.
-      url = "github:PetarKirov/dlang.nix/feat/ldc-android";
+      # feat/ldc-wasm: extends feat/ldc-android (the `ldc-android` aarch64 cross-
+      # compiler used by `devShells.android`) with the `ldc-wasm` wasm32-wasip2
+      # toolchain consumed by `packages.text-wasm`. Revert toward the default
+      # branch once these land upstream.
+      url = "github:PetarKirov/dlang.nix/feat/ldc-wasm";
       inputs = {
         flake-compat.follows = "mcl-nixos-modules/flake-compat";
         flake-parts.follows = "flake-parts";
@@ -39,6 +40,7 @@
         inputs.git-hooks-nix.flakeModule
         ./nix/d-toolchain.nix
         ./nix/packages/default.nix
+        ./nix/packages/text-wasm.nix
         ./nix/checks/pre-commit.nix
         ./nix/shells/default.nix
         ./nix/shells/android.nix

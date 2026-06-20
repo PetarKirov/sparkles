@@ -196,7 +196,13 @@ in
               repo = "builtin";
               hooks = [
                 { id = "trailing-whitespace"; }
-                { id = "check-added-large-files"; }
+                {
+                  id = "check-added-large-files";
+                  # The cell-explorer wasm (real sparkles.base.text + Phobos, built
+                  # by `nix build .#text-wasm`) is ~2.5 MB; it is an intentional,
+                  # reproducible docs asset. Regenerate with that command.
+                  exclude = "^docs/public/spk-text\\.wasm$";
+                }
                 { id = "check-case-conflict"; }
                 { id = "check-illegal-windows-names"; }
                 {

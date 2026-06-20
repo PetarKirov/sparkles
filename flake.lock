@@ -411,19 +411,21 @@
         "git-hooks-nix": [
           "git-hooks-nix"
         ],
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "nixpkgs-wasm": "nixpkgs-wasm",
+        "wasm-component-ld": "wasm-component-ld"
       },
       "locked": {
-        "lastModified": 1780968078,
-        "narHash": "sha256-+0XKG9PYmt+2NIgEcSB/dxf1hOhoqWw6Lmu+/XznIaE=",
+        "lastModified": 1781966257,
+        "narHash": "sha256-ozTkwMHdDBiIcOZVRRgtzsVnyBfodFuizf1vBn3E60E=",
         "owner": "PetarKirov",
         "repo": "dlang.nix",
-        "rev": "e441d5e692e13311f7d2598cd15f71b198ccb62d",
+        "rev": "6336f5234018aeee2a3a28db6523d9b1b665bc2c",
         "type": "github"
       },
       "original": {
         "owner": "PetarKirov",
-        "ref": "feat/ldc-android",
+        "ref": "feat/ldc-wasm",
         "repo": "dlang.nix",
         "type": "github"
       }
@@ -1691,6 +1693,22 @@
         "type": "github"
       }
     },
+    "nixpkgs-wasm": {
+      "locked": {
+        "lastModified": 1777954456,
+        "narHash": "sha256-hGdgeU2Nk87RAuZyYjyDjFL6LK7dAZN5RE9+hrDTkDU=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "549bd84d6279f9852cae6225e372cc67fb91a4c1",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "549bd84d6279f9852cae6225e372cc67fb91a4c1",
+        "type": "github"
+      }
+    },
     "nixpkgs_2": {
       "locked": {
         "lastModified": 1765186076,
@@ -2092,6 +2110,23 @@
       "original": {
         "owner": "nix-community",
         "repo": "nixos-vscode-server",
+        "type": "github"
+      }
+    },
+    "wasm-component-ld": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1775250564,
+        "narHash": "sha256-MS1Yy0mNtJ0Q3obuv2xaHsF5ldMMNhpeDM6jTEt8MnA=",
+        "owner": "bytecodealliance",
+        "repo": "wasm-component-ld",
+        "rev": "c9e38b9bc181ce7a4f8b3d21edb48c47ddf197de",
+        "type": "github"
+      },
+      "original": {
+        "owner": "bytecodealliance",
+        "ref": "v0.5.22",
+        "repo": "wasm-component-ld",
         "type": "github"
       }
     },
