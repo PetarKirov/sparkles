@@ -3,17 +3,14 @@
 _This is the tracked conformance ledger for the
 [cell-splitting & width specification](./index.md). Each row is a normative case:
 its `want` width is what kitty's algorithm prescribes. The executable report below
-measures the current implementation via `visibleWidth` and prints `PASS` / `FAIL`
-per case. It always exits 0, so it is verified by `apps/ci` against its `[Output]`
-block — which currently records the deviations as `FAIL` lines. **The goal of the
-next iteration is to fix `sparkles.base.text` so every case is `PASS`**, then
-re-run `ci --update` here and promote these cases into library `unittest`s._
+measures the implementation via `visibleWidth` and prints `PASS` / `FAIL` per case,
+then a tally; it is verified by `apps/ci` against its `[Output]` block. **All cases
+currently pass.** The same assertions also live as library `unittest`s in `width.d`
+and `grapheme.d`._
 
 ## Ledger
 
-`want` = kitty-normative width (in cells). `current` is shown only where it differs.
-
-### Conformant
+`want` = kitty-normative width (in cells).
 
 | Case                           | Input (code points)      | want | status |
 | ------------------------------ | ------------------------ | ---- | ------ |
@@ -29,17 +26,28 @@ re-run `ci --update` here and promote these cases into library `unittest`s._
 | emoji base bare (ambiguous)    | `U+2764`                 | 1    | ✓      |
 | emoji base + VS15              | `U+2764 U+FE0E`          | 1    | ✓      |
 | styled text (escapes width 0)  | `ESC[31m h i ESC[0m`     | 2    | ✓      |
+| base + spacing mark (`Mc`)     | `U+0915 U+093E`          | 1    | ✓      |
+| Devanagari syllable            | `U+0915 U+0940`          | 1    | ✓      |
+| lone spacing mark (`Mc`)       | `U+093E`                 | 0    | ✓      |
+| lone regional indicator        | `U+1F1FA`                | 2    | ✓      |
+| lone emoji modifier            | `U+1F3FE`                | 2    | ✓      |
+| noncharacter                   | `U+FDD0`                 | 0    | ✓      |
 
-### Known deviations (must become `PASS`)
+### Notes on the trickier rows
 
-| Case                       | Input (code points) | want | current | rule                             |
-| -------------------------- | ------------------- | ---- | ------- | -------------------------------- |
-| base + spacing mark (`Mc`) | `U+0915 U+093E`     | 1    | 2       | Marks: all `M*` (incl. `Mc`) → 0 |
-| Devanagari syllable        | `U+0915 U+0940`     | 1    | 2       | as above                         |
-| lone spacing mark (`Mc`)   | `U+093E`            | 0    | 1       | as above                         |
-| lone regional indicator    | `U+1F1FA`           | 2    | 1       | Regional indicators → 2          |
-| lone emoji modifier        | `U+1F3FE`           | 0    | 2       | Marks: emoji modifiers → 0       |
-| noncharacter               | `U+FDD0`            | 0    | 1       | invalid code points discarded    |
+Several rows were brought into conformance by the width-class fixes in `width.d`:
+
+- **Spacing marks (`Mc`)** are now zero width (all Marks `M*` join `Cf` in the
+  zero-width set), so a Brahmic syllable such as `U+0915 U+093E` is one 1-cell
+  cluster — not two cells.
+- **A lone regional indicator** is width 2 (`EastAsianWidth.txt` marks `U+1F1E6`..`U+1F1FF`
+  as neutral, but kitty's flag rule overrides them to 2).
+- **Noncharacters** (`U+FDD0`..`U+FDEF`, `U+xxFFFE`, `U+xxFFFF`) are discarded → 0.
+- **A lone emoji modifier** is width **2**, not 0. kitty's prose lists modifiers
+  under zero-width _Marks_, but `U+1F3FB`..`U+1F3FF` have `East_Asian_Width = W`, and
+  in kitty's priority order _Doublewidth_ outranks _Marks_, so a modifier in
+  isolation is 2 (it only ever contributes 0 _inside_ a cluster, where the leading
+  emoji already sets the width). sparkles matches this.
 
 ## Executable report
 
@@ -58,7 +66,6 @@ void main()
 {
     // `want` is the kitty-normative width, measured via the top-level visibleWidth.
     static immutable Case[] cases = [
-        // Conformant
         Case("ASCII 'A'",                   "A", 1),
         Case("CJK U+4E16",                  "世", 2),
         Case("Fullwidth U+FF21",            "Ａ", 2),
@@ -71,12 +78,11 @@ void main()
         Case("heart bare (ambiguous)",      "❤", 1),
         Case("heart+VS15",                  "❤︎", 1),
         Case("styled (escapes=0)",          "\x1b[31mhi\x1b[0m", 2),
-        // Deviations (kitty-normative want; current implementation differs)
         Case("base+Mc (U+0915 U+093E)",     "का", 1),
         Case("syllable U+0915 U+0940",      "की", 1),
         Case("lone Mc U+093E",              "ा", 0),
         Case("lone RI U+1F1FA",             "\U0001F1FA", 2),
-        Case("lone emoji modifier U+1F3FE", "\U0001F3FE", 0),
+        Case("lone emoji modifier U+1F3FE", "\U0001F3FE", 2),
         Case("noncharacter U+FDD0",         "﷐", 0),
     ];
 
@@ -104,11 +110,11 @@ PASS  heart+VS16                       width=2
 PASS  heart bare (ambiguous)           width=1
 PASS  heart+VS15                       width=1
 PASS  styled (escapes=0)               width=2
-FAIL  base+Mc (U+0915 U+093E)          got=2 want=1
-FAIL  syllable U+0915 U+0940           got=2 want=1
-FAIL  lone Mc U+093E                   got=1 want=0
-FAIL  lone RI U+1F1FA                  got=1 want=2
-FAIL  lone emoji modifier U+1F3FE      got=2 want=0
-FAIL  noncharacter U+FDD0              got=1 want=0
----- 12 passed, 6 failed (of 18) ----
+PASS  base+Mc (U+0915 U+093E)          width=1
+PASS  syllable U+0915 U+0940           width=1
+PASS  lone Mc U+093E                   width=0
+PASS  lone RI U+1F1FA                  width=2
+PASS  lone emoji modifier U+1F3FE      width=2
+PASS  noncharacter U+FDD0              width=0
+---- 18 passed, 0 failed (of 18) ----
 ```

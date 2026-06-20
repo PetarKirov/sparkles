@@ -162,7 +162,8 @@ unittest
     assert(visibleWidth("\u4E16\u754C") == 4);   // CJK 'shijie' = 2 wide cells x2
     assert(visibleWidth("A\u0301bc") == 3);          // combining acute is zero-width
     assert(visibleWidth("\U0001F1FA\U0001F1F8") == 2); // US flag: one 2-cell cluster
-    assert(visibleWidth("\u0903") == 1);             // Devanagari spacing mark
+    assert(visibleWidth("\u0903") == 0);             // Devanagari spacing mark (Mc -> 0)
+    assert(visibleWidth("\u0915\u093e") == 1);       // \u0915 + \u093e : base + Mc = one cell
 }
 
 @("grapheme.byGraphemeCluster.slicesAndKinds")
