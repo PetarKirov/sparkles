@@ -269,6 +269,26 @@ export default defineConfig({
         collapsed: true,
         items: [
           {
+            text: 'Base',
+            collapsed: false,
+            items: [
+              {
+                text: 'Text',
+                collapsed: false,
+                items: [
+                  {
+                    text: 'Cell-splitting & width spec',
+                    link: '/specs/base/text/',
+                  },
+                  {
+                    text: 'Conformance test cases',
+                    link: '/specs/base/text/test-cases',
+                  },
+                ],
+              },
+            ],
+          },
+          {
             text: 'Versions',
             collapsed: false,
             items: [
