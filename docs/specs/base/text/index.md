@@ -101,8 +101,10 @@ kitty specifies, for each decoded code point:
 
 sparkles realizes this pipeline as: segment with `byGraphemeCluster` (steps 3, 6–9),
 where each cluster's width comes from `graphemeClusterWidth` ([§6](#_6-width-of-a-grapheme-cluster)),
-which folds zero-width members (steps 7–8). Invalid/non-character handling (step 2)
-is a known deviation — see [test cases](./test-cases.md).
+which takes the leading scalar's width and folds zero-width members (steps 7–8).
+Invalid/non-character handling (step 2) is implemented in `codepointWidth` via
+`isNoncharacter`, which measures `U+FDD0`..`U+FDEF` and any `U+xxFFFE`/`U+xxFFFF` as
+width 0.
 
 ## 5. Width of a single code point
 
@@ -112,8 +114,7 @@ kitty assigns width by these classes, in **decreasing priority**:
 >    width 2.
 > 2. _Doublewidth_: … All code points marked `W` or `F` [in `EastAsianWidth.txt`]
 >    have width two. All code points in the following ranges have width two _unless_
->    they are marked as `A`: `[0x3400, 0x4DBF], [0x4E00, 0x9FFF], [0xF900, 0xFAFF],
-[0x20000, 0x2FFFD], [0x30000, 0x3FFFD]`.
+>    they are marked as `A`: `[0x3400, 0x4DBF], [0x4E00, 0x9FFF], [0xF900, 0xFAFF], [0x20000, 0x2FFFD], [0x30000, 0x3FFFD]`.
 > 3. _Wide emoji_: … All `Basic_Emoji` have width two unless they are followed by
 >    `FE0F` in the file. The leading codepoints in all `RGI_Emoji_Modifier_Sequence`
 >    and `RGI_Emoji_Tag_Sequence` have width two. All code points in
@@ -144,11 +145,19 @@ kitty assigns width by these classes, in **decreasing priority**:
 >
 > So `+` (`U+002B`, category `Sm`) is width **1**, not 0. **sparkles follows the
 > implementation**: `codepointWidth` returns 1 for symbols.
+>
+> The same priority order resolves **emoji skin-tone modifiers** (`U+1F3FB`..`U+1F3FF`):
+> the prose lists them under _Marks_, but they have `East_Asian_Width = W`, and
+> _Doublewidth_ (rule 2) outranks _Marks_ (rule 4) — so a modifier in **isolation**
+> is width **2**. It only contributes 0 _inside_ a cluster, where the leading emoji
+> already sets the width.
 
-sparkles' `codepointWidth(dchar)` implements rules 2, 4, 5 directly: East-Asian
-`W`/`F` (via `isEastAsianWide`) → 2; `Mn | Me | Cf` plus a few conjoining ranges
-(`zeroWidthSet`) and controls/line-separators → 0; everything else → 1. Rules 1
-and 3 (regional indicators, wide emoji) are resolved at the **cluster** level
+sparkles' `codepointWidth(dchar)` implements rules 1, 2, 4, 5 directly: a regional
+indicator (`U+1F1E6`..`U+1F1FF`) → 2 (they are EAW-neutral, so this is an explicit
+check); noncharacters and controls/line-separators → 0; all Marks `Mn | Mc | Me`
+plus `Cf` and a few conjoining ranges (`zeroWidthSet`) → 0; East-Asian `W`/`F` (via
+`isEastAsianWide`, which also covers wide emoji and modifiers) → 2; everything else
+→ 1. Rule 3's variation-selector adjustment is applied at the **cluster** level
 ([§6](#_6-width-of-a-grapheme-cluster)).
 
 ```d
@@ -191,9 +200,10 @@ U+0009 TAB (control)     width=0
 
 A cluster occupies one cell whose width is set by its **leading** scalar; combining
 members add nothing, and only the variation selectors ([§7](#_7-variation-selectors))
-adjust it. `graphemeClusterWidth(in dchar[])` implements this, plus the
-cluster-level rules kitty assigns per scalar (a flag's regional indicators and an
-emoji + modifier each resolve to one 2-cell cluster).
+adjust it. `graphemeClusterWidth(in dchar[])` implements exactly that. So a flag
+(leading regional indicator → 2), a ZWJ family (leading wide emoji → 2), and an
+emoji + skin-tone modifier (leading wide emoji → 2) each resolve to one 2-cell
+cluster, while a base + spacing mark (`Mc`) stays one 1-cell cluster.
 
 ```d
 #!/usr/bin/env dub
@@ -360,20 +370,19 @@ styled @ width 3 (ESC as \e):
 ## 11. Conformance
 
 The full, executable conformance ledger — every normative case the implementation
-must satisfy, with current pass/deviation status — is maintained in
-[test cases](./test-cases.md). Summary of known deviations from kitty as of this
-writing:
+must satisfy, with pass status — is maintained in [test cases](./test-cases.md), and
+the same assertions are mirrored as `unittest`s in `width.d` / `grapheme.d`. All
+cases conform to kitty:
 
-| Rule                        | Status     | Note                                                    |
-| --------------------------- | ---------- | ------------------------------------------------------- |
-| EAW `W`/`F` → 2             | ✓          |                                                         |
-| `Mn`/`Me`/`Cf` → 0          | ✓          |                                                         |
-| flags, ZWJ emoji, VS16      | ✓          | segmentation + cluster width correct                    |
-| symbols (`S*`) → 1          | ✓          | matches kitty's implementation                          |
-| spacing marks (`Mc`) → 0    | ✗ deviates | base + `Mc` measured as 2 (should be 1) — Indic scripts |
-| lone regional indicator → 2 | ✗ deviates | measured as 1                                           |
-| lone emoji modifier → 0     | ✗ deviates | measured as 2                                           |
-| noncharacters discarded → 0 | ✗ deviates | measured as 1                                           |
+| Rule                        | Status | Note                                           |
+| --------------------------- | ------ | ---------------------------------------------- |
+| EAW `W`/`F` → 2             | ✓      | also covers emoji bases & skin-tone modifiers  |
+| all Marks `M*` + `Cf` → 0   | ✓      | incl. spacing marks (`Mc`) — Brahmic syllables |
+| symbols (`S*`) → 1          | ✓      | matches kitty's implementation, not its prose  |
+| regional indicator → 2      | ✓      | lone half and flag pair                        |
+| flags, ZWJ emoji, VS16/VS15 | ✓      | segmentation + cluster width                   |
+| lone emoji modifier → 2     | ✓      | EAW `W` outranks _Marks_ in isolation          |
+| noncharacters discarded → 0 | ✓      | `U+FDD0`..`U+FDEF`, `U+xxFFFE`, `U+xxFFFF`     |
 
 ## 12. References
 
