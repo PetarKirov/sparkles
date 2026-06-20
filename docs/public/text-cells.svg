@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="608" height="141" viewBox="0 0 608 141" font-family="ui-monospace, monospace" text-anchor="middle">
+  <rect width="100%" height="100%" fill="#ffffff"/>
+  <line x1="16" y1="22" x2="16" y2="78" stroke="#d0d7de"/>
+  <text x="48" y="15" font-size="11" fill="#57606a">0</text>
+  <line x1="80" y1="22" x2="80" y2="78" stroke="#d0d7de"/>
+  <text x="112" y="15" font-size="11" fill="#57606a">1</text>
+  <line x1="144" y1="22" x2="144" y2="78" stroke="#d0d7de"/>
+  <text x="176" y="15" font-size="11" fill="#57606a">2</text>
+  <line x1="208" y1="22" x2="208" y2="78" stroke="#d0d7de"/>
+  <text x="240" y="15" font-size="11" fill="#57606a">3</text>
+  <line x1="272" y1="22" x2="272" y2="78" stroke="#d0d7de"/>
+  <text x="304" y="15" font-size="11" fill="#57606a">4</text>
+  <line x1="336" y1="22" x2="336" y2="78" stroke="#d0d7de"/>
+  <text x="368" y="15" font-size="11" fill="#57606a">5</text>
+  <line x1="400" y1="22" x2="400" y2="78" stroke="#d0d7de"/>
+  <text x="432" y="15" font-size="11" fill="#57606a">6</text>
+  <line x1="464" y1="22" x2="464" y2="78" stroke="#d0d7de"/>
+  <text x="496" y="15" font-size="11" fill="#57606a">7</text>
+  <line x1="528" y1="22" x2="528" y2="78" stroke="#d0d7de"/>
+  <text x="560" y="15" font-size="11" fill="#57606a">8</text>
+  <line x1="592" y1="22" x2="592" y2="78" stroke="#d0d7de"/>
+  <rect x="16" y="22" width="64" height="56" fill="#f6f8fa" stroke="#57606a"/>
+  <text x="48" y="58" font-size="26">a</text>
+  <text x="48" y="93" font-size="16" fill="#57606a">w=1</text>
+  <text x="48" y="114" font-size="12" fill="#0969da">U+0061</text>
+  <rect x="80" y="22" width="64" height="56" fill="#f6f8fa" stroke="#57606a"/>
+  <text x="112" y="58" font-size="26">Á</text>
+  <text x="112" y="93" font-size="16" fill="#57606a">w=1</text>
+  <text x="112" y="114" font-size="12" fill="#0969da">U+0041</text>
+  <text x="112" y="127" font-size="12" fill="#0969da">U+0301</text>
+  <rect x="144" y="22" width="128" height="56" fill="#ddf4ff" stroke="#57606a"/>
+  <text x="208" y="58" font-size="26">世</text>
+  <text x="208" y="93" font-size="16" fill="#57606a">w=2</text>
+  <text x="208" y="114" font-size="12" fill="#0969da">U+4E16</text>
+  <rect x="272" y="22" width="128" height="56" fill="#ddf4ff" stroke="#57606a"/>
+  <text x="336" y="58" font-size="26">🇺🇸</text>
+  <text x="336" y="93" font-size="16" fill="#57606a">w=2</text>
+  <text x="336" y="114" font-size="12" fill="#0969da">U+1F1FA</text>
+  <text x="336" y="127" font-size="12" fill="#0969da">U+1F1F8</text>
+  <rect x="400" y="22" width="64" height="56" fill="#f6f8fa" stroke="#57606a"/>
+  <text x="432" y="58" font-size="26">कि</text>
+  <text x="432" y="93" font-size="16" fill="#57606a">w=1</text>
+  <text x="432" y="114" font-size="12" fill="#0969da">U+0915</text>
+  <text x="432" y="127" font-size="12" fill="#0969da">U+093F</text>
+  <rect x="464" y="22" width="128" height="56" fill="#ddf4ff" stroke="#57606a"/>
+  <text x="528" y="58" font-size="26">❤️</text>
+  <text x="528" y="93" font-size="16" fill="#57606a">w=2</text>
+  <text x="528" y="114" font-size="12" fill="#0969da">U+2764</text>
+  <text x="528" y="127" font-size="12" fill="#0969da">U+FE0F</text>
+</svg>

@@ -100,6 +100,27 @@ in
               ];
             };
 
+            # Regenerate the cell-grid SVG for docs/specs/base/text/ whenever the
+            # text algorithm or its generator changes. The generator is the
+            # prebuilt standalone example (rebuilt by Nix when the sources change),
+            # so the committed SVG can never drift from `byGraphemeCluster`; prek
+            # reports a failure if the file was rewritten, mirroring prettier.
+            gen-text-svg = {
+              enable = true;
+              files = "(^libs/base/src/sparkles/base/text/.*\\.d$)|(^libs/base/examples/text-cell-svg\\.d$)";
+              language = "system";
+              name = "gen-text-svg";
+              pass_filenames = false;
+              entry = toString (
+                pkgs.writeShellScript "gen-text-svg" ''
+                  set -euo pipefail
+                  repo_root=$(git rev-parse --show-toplevel)
+                  ${lib.getExe config.legacyPackages.examples.base."text-cell-svg"} \
+                    --out "$repo_root/docs/public/text-cells.svg"
+                ''
+              );
+            };
+
             lychee = {
               enable = true;
               files = "\\.md$";
@@ -157,6 +178,7 @@ in
 
                     exec ${lib.getExe pkgs.lychee} \
                       --config "$lychee_config_file" \
+                      --root-dir "$repo_root" \
                       --no-progress \
                       --cache \
                       "''${extra_args[@]}" \
