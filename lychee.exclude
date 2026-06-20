@@ -1,4 +1,8 @@
 # Shared lychee exclusions for endpoints intentionally ignored everywhere
+# VitePress public assets are served at the site root (docs/public/* -> /*); on disk
+# they live under docs/public/, so the root-dir-resolved file:// path doesn't exist.
+# Exclude the generated cell-grid SVG by filename.
+/text-cells\.svg$
 ^https://doi\.org/
 ^https://dl\.acm\.org/
 ^https://link\.springer\.com/
