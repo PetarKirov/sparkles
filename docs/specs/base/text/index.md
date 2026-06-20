@@ -51,6 +51,39 @@ library: it does not own a grid. The correspondence is exact:
 
 So `visibleWidth(s)` equals the number of cells kitty would advance the cursor by
 when printing `s` (escapes excluded — see [§9](#_9-styled-text-a-sparkles-extension)).
+Walking the clusters and advancing a column counter reproduces `visibleWidth`:
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "spec_text_model"
+    dependency "sparkles:base" version="*"
++/
+import std.stdio : writefln;
+import sparkles.base.text.grapheme : byGraphemeCluster, visibleWidth;
+
+void main()
+{
+    const s = "a❤️世\U0001F1FA\U0001F1F8"; // ascii, emoji+VS16, CJK, flag
+    size_t col;
+    foreach (u; s.byGraphemeCluster)
+    {
+        if (u.isEscape)
+            continue;
+        writefln("cells [%s..%s)  %s", col, col + u.width, u.slice.idup);
+        col += u.width;
+    }
+    writefln("cursor advanced %s cells; visibleWidth = %s", col, visibleWidth(s));
+}
+```
+
+```[Output]
+cells [0..1)  a
+cells [1..3)  ❤️
+cells [3..5)  世
+cells [5..7)  🇺🇸
+cursor advanced 7 cells; visibleWidth = 7
+```
 
 ## 3. Decoding (safe UTF-8)
 
@@ -66,6 +99,33 @@ when printing `s` (escapes excluded — see [§9](#_9-styled-text-a-sparkles-ext
 `@nogc nothrow`. `U+FFFD` is East-Asian _ambiguous_, so it measures as width 1.
 (The exact byte-grouping of a maximal ill-formed subpart is a Phobos decoding
 detail and is not pinned by this spec.)
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "spec_text_decoding"
+    dependency "sparkles:base" version="*"
++/
+import std.stdio : writefln, writeln;
+import std.string : representation;
+import sparkles.base.text.grapheme : byGraphemeCluster, visibleWidth;
+
+void main()
+{
+    // 'a', 'b', then one ill-formed byte 0xFF -> decoded as U+FFFD (width 1).
+    const char[] bytes = ['a', 'b', '\xFF'];
+    foreach (u; bytes.byGraphemeCluster)
+        writefln("bytes=%(%02x %)  width=%s", u.slice.representation, u.width);
+    writeln("visibleWidth = ", visibleWidth(bytes));
+}
+```
+
+```[Output]
+bytes=61  width=1
+bytes=62  width=1
+bytes=ff  width=1
+visibleWidth = 3
+```
 
 ## 4. The per-code-point pipeline
 
@@ -105,6 +165,51 @@ which takes the leading scalar's width and folds zero-width members (steps 7–8
 Invalid/non-character handling (step 2) is implemented in `codepointWidth` via
 `isNoncharacter`, which measures `U+FDD0`..`U+FDEF` and any `U+xxFFFE`/`U+xxFFFF` as
 width 0.
+
+Decomposing a cluster into its scalars shows steps 4–9 at work: each scalar has an
+isolated width (step 4), zero-width members attach to the cell (steps 7–8), and the
+cell advances by the **leading** scalar's width — a flag's two width-2 indicators
+still make one 2-cell cell, never four:
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "spec_text_pipeline"
+    dependency "sparkles:base" version="*"
++/
+import std.stdio : writefln;
+import std.array : appender;
+import std.format : format;
+import std.uni : graphemeStride;
+import sparkles.base.text.width : codepointWidth, graphemeClusterWidth;
+
+void main()
+{
+    static struct C { string label; dstring s; }
+    static immutable C[] cs = [
+        C("A + combining acute", "Á"d),
+        C("flag (RI + RI)",      "\U0001F1FA\U0001F1F8"d),
+        C("Devanagari की",       "की"d),
+    ];
+    foreach (c; cs)
+        for (size_t i = 0; i < c.s.length;)
+        {
+            const n = graphemeStride(c.s, i);
+            auto scalars = appender!string;
+            foreach (k, cp; c.s[i .. i + n])
+                scalars ~= format("%sU+%04X(w%s)", k ? " " : "", cp, codepointWidth(cp));
+            writefln("%-22s %s -> cell width %s", c.label, scalars[],
+                graphemeClusterWidth(c.s[i .. i + n]));
+            i += n;
+        }
+}
+```
+
+```[Output]
+A + combining acute    U+00C1(w1) -> cell width 1
+flag (RI + RI)         U+1F1FA(w2) U+1F1F8(w2) -> cell width 2
+Devanagari की           U+0915(w1) U+0940(w0) -> cell width 1
+```
 
 ## 5. Width of a single code point
 
@@ -259,9 +364,41 @@ heart + VS15           width=1
 
 In `width.d`, VS16 promotion is **gated** on the base being an emoji-VS base
 (`isEmojiVsBase`, generated from `emoji-variation-sequences.txt`), exactly as
-specified — see the `heart + VS16` (→ 2) versus bare `heart` (→ 1) cases in
-[§6](#_6-width-of-a-grapheme-cluster). `A + VS16` stays width 1 because `A` is not an
-emoji base.
+specified. VS15 demotion is gated the same way. So a non-emoji base ignores both
+selectors — `A + VS16` stays 1, and a wide `CJK + VS15` stays 2 (gating VS15 is what
+keeps an unrelated wide character from being wrongly narrowed):
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "spec_text_variation_selectors"
+    dependency "sparkles:base" version="*"
++/
+import std.stdio : writefln;
+import sparkles.base.text.width : graphemeClusterWidth;
+
+void main()
+{
+    static struct C { string label; dstring s; }
+    static immutable C[] cs = [
+        C("heart (bare)",                "❤"d),
+        C("heart + VS16",                "❤️"d),
+        C("heart + VS15",                "❤︎"d),
+        C("A + VS16 (not emoji base)",   "A️"d),
+        C("CJK + VS15 (not emoji base)", "世︎"d),
+    ];
+    foreach (c; cs)
+        writefln("%-30s width=%s", c.label, graphemeClusterWidth(c.s));
+}
+```
+
+```[Output]
+heart (bare)                   width=1
+heart + VS16                   width=2
+heart + VS15                   width=1
+A + VS16 (not emoji base)      width=1
+CJK + VS15 (not emoji base)    width=2
+```
 
 ## 8. Grapheme segmentation (UAX29-C1-1)
 
@@ -277,8 +414,75 @@ emoji base.
 sparkles segments via `std.uni.graphemeStride` (the toolchain's Unicode-17 grapheme
 tables) inside `byGraphemeCluster`. This implements the parts of UAX #29 that matter
 for terminal width: **regional-indicator pairing** (a flag is one cluster) and
-**emoji ZWJ sequences** (a multi-person emoji is one cluster). Both are verified in
-[§6](#_6-width-of-a-grapheme-cluster) and the [conformance ledger](./test-cases.md).
+**emoji ZWJ sequences** (a multi-person emoji is one cluster).
+
+The snippet below adapts the format of the Unicode `GraphemeBreakTest.txt` cases
+that drive kitty's `kitten __width_test__`: a `÷` marks a cluster boundary, a `×`
+marks "no boundary", and each hex token is a code point. It reads both halves of
+each line as declarative pipelines — the string the line denotes and the cluster
+lengths it prescribes — then segments with `std.uni.byGrapheme` (the same Unicode-17
+grapheme tables `byGraphemeCluster` uses) and checks the lengths against the spec, so
+the same boundary rules kitty validates against are checked here:
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "spec_text_grapheme_breaks"
+    dependency "sparkles:base" version="*"
++/
+import std.algorithm : splitter, filter, map, count, equal;
+import std.array : array;
+import std.conv : to;
+import std.stdio : writefln;
+import std.uni : byGrapheme;
+
+// A GraphemeBreakTest.txt line is hex code points separated by `÷` (boundary) or
+// `×` (no boundary), e.g. "÷ 0061 × 0301 ÷". Both halves of the line read as a
+// declarative pipeline.
+
+/// The decoded string the line denotes: every hex token, in order, as a dchar.
+dstring specText(string spec) pure
+    => spec.splitter(' ')
+           .filter!(t => t.length && t != "÷" && t != "×")
+           .map!(t => t.to!uint(16).to!dchar)
+           .array;
+
+/// The cluster lengths the line prescribes: code points between `÷` boundaries.
+auto specClusters(string spec) pure
+    => spec.splitter("÷")
+           .map!(cluster => cluster.splitter(' ').count!(t => t.length && t != "×"))
+           .filter!(n => n > 0);
+
+void main()
+{
+    static immutable string[2][] cases = [
+        ["a + acute", "÷ 0061 × 0301 ÷"],
+        ["CRLF", "÷ 000D × 000A ÷"],
+        ["CR | a", "÷ 000D ÷ 0061 ÷"],
+        ["flag pair | RI", "÷ 1F1FA × 1F1F8 ÷ 1F1F8 ÷"],
+        ["ZWJ family", "÷ 1F469 × 200D × 1F467 ÷"],
+        ["Hangul L V T", "÷ 1100 × 1161 × 11A8 ÷"],
+        ["Devanagari KA+AA", "÷ 0915 × 093E ÷"],
+    ];
+    foreach (c; cases)
+    {
+        // Each Grapheme's length is its code-point count — the spec's cluster length.
+        auto got = c[1].specText.byGrapheme.map!(g => g.length).array;
+        writefln("%-5s %-18s %s  clusters=%s",
+            c[1].specClusters.equal(got) ? "PASS" : "FAIL", c[0], c[1], got);
+    }
+}
+```
+
+```[Output]
+PASS  a + acute          ÷ 0061 × 0301 ÷  clusters=[2]
+PASS  CRLF               ÷ 000D × 000A ÷  clusters=[2]
+PASS  CR | a             ÷ 000D ÷ 0061 ÷  clusters=[1, 1]
+PASS  flag pair | RI     ÷ 1F1FA × 1F1F8 ÷ 1F1F8 ÷  clusters=[2, 1]
+PASS  ZWJ family         ÷ 1F469 × 200D × 1F467 ÷  clusters=[3]
+PASS  Hangul L V T       ÷ 1100 × 1161 × 11A8 ÷  clusters=[3]
+PASS  Devanagari KA+AA   ÷ 0915 × 093E ÷  clusters=[2]
+```
 
 ## 9. Styled text (a sparkles extension)
 
