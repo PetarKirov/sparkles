@@ -36,7 +36,7 @@ This puts pnpm in the same niche as [npm](../npm/) and [Yarn Berry](../yarn-berr
 pnpm's three load-bearing commitments, each restated as a column of the trade-offs table below:
 
 1. **Strictness over convenience.** A package may import only what its own `package.json` declares. The non-flat `node_modules` is the enforcement mechanism, not an accident — the maintainers' position is laid out in _["Flat node_modules is not the only way"][flat-blog]_.
-2. **Store the bytes once, link everywhere.** The content-addressable store keyed by `sha512` (`store/cafs/src/index.ts`: `export const HASH_ALGORITHM = 'sha512'`) means identical files across versions/projects share one inode; only changed files cost new disk.
+2. **Store the bytes once, link everywhere.** The content-addressable store keyed by `sha512` ([`store/cafs/src/index.ts`][cafs-index]: `export const HASH_ALGORITHM = 'sha512'`) means identical files across versions/projects share one inode; only changed files cost new disk.
 3. **The workspace is first-class.** Unlike [Composer](../composer/) (no native workspace) or even npm (workspaces bolted onto `package.json`), pnpm carries a dedicated `pnpm-workspace.yaml`, a `workspace:` resolver protocol, version catalogs, and a recursive topological runner — the full monorepo surface in the package manager itself.
 
 > [!NOTE]
@@ -50,10 +50,9 @@ pnpm's three load-bearing commitments, each restated as a column of the trade-of
 
 A pnpm install resolves three nested layers of indirection:
 
-1. **The global content-addressable store** (default `~/.local/share/pnpm/store/v10` on Linux). Each _file_ — not each package — is written under a path derived from its `sha512` digest. From `store/cafs/src/getFilePathInCafs.ts`:
+1. **The global content-addressable store** (default `~/.local/share/pnpm/store/v10` on Linux). Each _file_ — not each package — is written under a path derived from its `sha512` digest. From [`store/cafs/src/getFilePathInCafs.ts`][cafs-path]:
 
    ```ts
-   // store/cafs/src/getFilePathInCafs.ts
    export function contentPathFromHex(fileType: FileType, hex: string): string {
      const p = `files${SEP}${hex.slice(0, 2)}${SEP}${hex.slice(2)}`;
      switch (fileType) {
@@ -65,7 +64,7 @@ A pnpm install resolves three nested layers of indirection:
    }
    ```
 
-   Two package versions that differ in one file share every _other_ file's inode. Writes are atomic and concurrency-safe (`O_CREAT|O_EXCL`, temp+rename on integrity mismatch — see `store/cafs/src/writeBufferToCafs.ts`).
+   Two package versions that differ in one file share every _other_ file's inode. Writes are atomic and concurrency-safe (`O_CREAT|O_EXCL`, temp+rename on integrity mismatch — see [`store/cafs/src/writeBufferToCafs.ts`][write-buffer-to-cafs]).
 
 2. **The virtual store** — `node_modules/.pnpm/` at the workspace (or project) root. Each resolved package+peer-set gets a directory like `.pnpm/lodash@4.17.21/node_modules/lodash`, whose files are **hard-linked** from the global store. A package's _own_ dependencies are symlinked as siblings inside its `.pnpm` entry, so the dependency graph is reconstructed exactly, with no hoisting.
 
@@ -73,18 +72,16 @@ A pnpm install resolves three nested layers of indirection:
 
 ### The `workspace:` protocol
 
-Local cross-references use a dedicated specifier. The parser is tiny (`workspace/spec-parser/src/index.ts`):
+Local cross-references use a dedicated specifier. The parser is tiny ([`workspace/spec-parser/src/index.ts`][spec-parser]):
 
 ```ts
-// workspace/spec-parser/src/index.ts
 const WORKSPACE_PREF_REGEX =
   /^workspace:(?:(?<alias>[^._/][^@]*)@)?(?<version>.*)$/;
 ```
 
-so `workspace:*`, `workspace:^`, `workspace:~`, `workspace:1.2.3`, and aliased `workspace:other-name@*` are all valid. The version part is matched against in-repo member versions by `workspace/range-resolver/src/index.ts`:
+so `workspace:*`, `workspace:^`, `workspace:~`, `workspace:1.2.3`, and aliased `workspace:other-name@*` are all valid. The version part is matched against in-repo member versions by [`workspace/range-resolver/src/index.ts`][range-resolver]:
 
 ```ts
-// workspace/range-resolver/src/index.ts
 export function resolveWorkspaceRange(
   range: string,
   versions: string[],
@@ -100,10 +97,9 @@ During development the dependency is a **symlink to the member's source director
 
 ### Catalogs: one version, referenced many times
 
-A **catalog** defines a dependency range once in `pnpm-workspace.yaml` and lets members reference it by the `catalog:` protocol — the feature was added in `9.5.0`, explicitly _"inspired by a similar idea from the Gradle build tool"_. The manifest type (`workspace/workspace-manifest-reader/src/index.ts`):
+A **catalog** defines a dependency range once in `pnpm-workspace.yaml` and lets members reference it by the `catalog:` protocol — the feature was added in `9.5.0`, explicitly _"inspired by a similar idea from the Gradle build tool"_. The manifest type ([`workspace/workspace-manifest-reader/src/index.ts`][workspace-manifest-reader]):
 
 ```ts
-// workspace/workspace-manifest-reader/src/index.ts
 export interface WorkspaceManifest extends PnpmSettings {
   packages: string[];
   /** The default catalog … referenced via `catalog:default` or the `catalog:` shorthand. */
@@ -117,7 +113,7 @@ A member writes `"react": "catalog:"` (default catalog) or `"react": "catalog:re
 
 ### Injected dependencies (hard-copy isolation)
 
-The default `workspace:` link is a **symlink**, which means the dependent sees the member's _own_ `node_modules` — usually correct, but wrong when the member must be resolved against the _dependent's_ peer dependencies (e.g. a React component library tested against multiple React versions). For that, pnpm offers **injected dependencies** (`dependenciesMeta.<name>.injected: true`): the member is **hard-copied** into the dependent's virtual store instead of symlinked, and `workspace/injected-deps-syncer/src/` re-syncs the copy after each build. This is a deliberate isolation knob distinct from both symlinks and [Yarn Berry](../yarn-berry/)'s Plug'n'Play.
+The default `workspace:` link is a **symlink**, which means the dependent sees the member's _own_ `node_modules` — usually correct, but wrong when the member must be resolved against the _dependent's_ peer dependencies (e.g. a React component library tested against multiple React versions). For that, pnpm offers **injected dependencies** (`dependenciesMeta.<name>.injected: true`): the member is **hard-copied** into the dependent's virtual store instead of symlinked, and [`workspace/injected-deps-syncer/src/`][injected-deps-syncer] re-syncs the copy after each build. This is a deliberate isolation knob distinct from both symlinks and [Yarn Berry](../yarn-berry/)'s Plug'n'Play.
 
 ---
 
@@ -137,7 +133,7 @@ packages:
   - pnpm
 ```
 
-The reader (`workspace/workspace-manifest-reader/src/index.ts`) treats a missing file, an empty file, and `{}` all as "valid, no workspace", and validates that `packages` is a string array. The root manifest is a **virtual root** — `package.json` at the root is typically `"private": true` and holds only orchestration scripts, not shippable code (though a root _can_ also be a member). Members are read and their inter-dependency edges computed in `workspace/projects-graph/src/index.ts`, which walks each member's `dependencies`/`devDependencies`/`optionalDependencies`/`peerDependencies`, recognizes `workspace:` specs and `file:`/directory specs, and resolves each to a member `rootDir` — building the **project graph** that every recursive command consumes.
+The reader ([`workspace/workspace-manifest-reader/src/index.ts`][workspace-manifest-reader]) treats a missing file, an empty file, and `{}` all as "valid, no workspace", and validates that `packages` is a string array. The root manifest is a **virtual root** — `package.json` at the root is typically `"private": true` and holds only orchestration scripts, not shippable code (though a root _can_ also be a member). Members are read and their inter-dependency edges computed in [`workspace/projects-graph/src/index.ts`][projects-graph], which walks each member's `dependencies`/`devDependencies`/`optionalDependencies`/`peerDependencies`, recognizes `workspace:` specs and `file:`/directory specs, and resolves each to a member `rootDir` — building the **project graph** that every recursive command consumes.
 
 > [!NOTE]
 > Since pnpm `11`, `pnpm-workspace.yaml` is also where **all settings** live (`onlyBuiltDependencies` → `allowBuilds`, `linkWorkspacePackages`, `catalogMode`, …). The `pnpm` field of `package.json` and non-auth keys of `.npmrc` are no longer read — registry/auth stay in `.npmrc`, everything else is YAML.
@@ -154,10 +150,9 @@ Cross-member local refs are the `workspace:` protocol (above). A `--shared-works
 
 ### 3. Task Orchestration & Scheduling
 
-pnpm builds a **project DAG** and runs scripts across it **in topological order with bounded concurrency** — but it does **not** do per-task input hashing or result caching (that is the orchestrators' job). The recursive runner `exec/commands/src/runRecursive.ts` is the core:
+pnpm builds a **project DAG** and runs scripts across it **in topological order with bounded concurrency** — but it does **not** do per-task input hashing or result caching (that is the orchestrators' job). The recursive runner [`exec/commands/src/runRecursive.ts`][run-recursive] is the core:
 
 ```ts
-// exec/commands/src/runRecursive.ts (abridged)
 const sortedPackageChunks = opts.sort
   ? sortProjects(opts.selectedProjectsGraph) // topological chunks
   : [Object.keys(opts.selectedProjectsGraph).sort()];
@@ -177,7 +172,7 @@ for (const chunk of packageChunks) {
 }
 ```
 
-The topology comes from `workspace/projects-sorter/src/index.ts`, which feeds the project graph to a `graphSequencer` and returns **chunks**: each chunk is a set of mutually-independent projects safe to run in parallel; chunks run in dependency order so a library builds before its dependents.
+The topology comes from [`workspace/projects-sorter/src/index.ts`][projects-sorter], which feeds the project graph to a `graphSequencer` and returns **chunks**: each chunk is a set of mutually-independent projects safe to run in parallel; chunks run in dependency order so a library builds before its dependents.
 
 | Capability                | pnpm answer                                                                                                                    |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
@@ -201,10 +196,9 @@ There is **no build/test result cache, no input hashing of tasks, and no remote 
 
 ### 5. CLI / UX Ergonomics
 
-pnpm has the **richest member-slicing CLI** in this survey, built on two flags and one selector grammar. Setting either `--filter` or `--filter-prod` **auto-enables recursive mode** (`cli/parse-cli-args/src/index.ts`):
+pnpm has the **richest member-slicing CLI** in this survey, built on two flags and one selector grammar. Setting either `--filter` or `--filter-prod` **auto-enables recursive mode** ([`cli/parse-cli-args/src/index.ts`][cli-parse-args]):
 
 ```ts
-// cli/parse-cli-args/src/index.ts
 const RECURSIVE_CMDS = new Set(['recursive', 'multi', 'm']);
 // ...
 if (
@@ -221,7 +215,7 @@ The command boundary:
 - **Targeted** — `pnpm --filter @scope/app run start`, or the short `pnpm -F @scope/app …`; `pnpm --filter ./packages/cli …` selects by location.
 - **`--workspace-root` / `-w`** pins a command to the root project (e.g. `pnpm add -w typescript`).
 
-The `--filter` **selector grammar** (`workspace/projects-filter/src/parseProjectSelector.ts`) is the standout — a compact algebra over the project graph:
+The `--filter` **selector grammar** ([`workspace/projects-filter/src/parseProjectSelector.ts`][selector]) is the standout — a compact algebra over the project graph:
 
 | Selector              | Meaning                                                                 |
 | --------------------- | ----------------------------------------------------------------------- |
@@ -233,7 +227,7 @@ The `--filter` **selector grammar** (`workspace/projects-filter/src/parseProject
 | `pkg^...` / `...^pkg` | the closure **excluding `pkg` itself** (the `^` marker)                 |
 | `[<git-ref>]`         | members **changed since** `<git-ref>` (e.g. `--filter '[origin/main]'`) |
 
-These compose: `--filter '...{packages/core}[HEAD~1]'` reads "everything that depends on whatever changed under `packages/core` since `HEAD~1`". The git-ref form is backed by `workspace/projects-filter/src/getChangedProjects.ts`, which runs `git diff --name-only <commit>` and maps changed files up to their owning member, even distinguishing `source` vs `test` changes (a test-only change does not force dependents to re-run).
+These compose: `--filter '...{packages/core}[HEAD~1]'` reads "everything that depends on whatever changed under `packages/core` since `HEAD~1`". The git-ref form is backed by [`workspace/projects-filter/src/getChangedProjects.ts`][changed], which runs `git diff --name-only <commit>` and maps changed files up to their owning member, even distinguishing `source` vs `test` changes (a test-only change does not force dependents to re-run).
 
 ---
 
@@ -298,10 +292,13 @@ With pnpm installed: `pnpm install` (links the workspace), `pnpm -r run build`, 
 - [`workspace/projects-sorter/src/index.ts` — topological chunking via `graphSequencer`][projects-sorter]
 - [`workspace/projects-filter/src/parseProjectSelector.ts` — the `--filter` grammar][selector]
 - [`workspace/projects-filter/src/getChangedProjects.ts` — `[git-ref]` changed-since detection][changed]
-- [`workspace/workspace-manifest-reader/src/index.ts` — `pnpm-workspace.yaml` + catalogs][manifest-reader]
+- [`workspace/workspace-manifest-reader/src/index.ts` — `pnpm-workspace.yaml` + catalogs][workspace-manifest-reader]
 - [`exec/commands/src/runRecursive.ts` — the recursive topological runner][run-recursive]
 - [`store/cafs/src/getFilePathInCafs.ts` — content-addressed store layout][cafs-path]
 - [`store/cafs/src/index.ts` — `HASH_ALGORITHM = 'sha512'`][cafs-index]
+- [`cli/parse-cli-args/src/index.ts` — CLI argument parser][cli-parse-args]
+- [`store/cafs/src/writeBufferToCafs.ts` — integrity checks and writing to store][write-buffer-to-cafs]
+- [`workspace/injected-deps-syncer/src/` — injected dependencies synchronization][injected-deps-syncer]
 - [pnpm 11.0 release notes — ESM, Node 22, SQLite store][v11-blog]
 - [Flat node_modules is not the only way (pnpm blog)][flat-blog]
 - [pnpm 9.5 Introduces Catalogs (Socket)][catalogs-blog]
@@ -317,16 +314,19 @@ With pnpm installed: `pnpm install` (links the workspace), `pnpm -r run build`, 
 [catalogs-docs]: https://pnpm.io/catalogs
 [filtering-docs]: https://pnpm.io/filtering
 [settings-docs]: https://pnpm.io/settings
-[spec-parser]: https://github.com/pnpm/pnpm/blob/main/workspace/spec-parser/src/index.ts
-[range-resolver]: https://github.com/pnpm/pnpm/blob/main/workspace/range-resolver/src/index.ts
-[projects-graph]: https://github.com/pnpm/pnpm/blob/main/workspace/projects-graph/src/index.ts
-[projects-sorter]: https://github.com/pnpm/pnpm/blob/main/workspace/projects-sorter/src/index.ts
-[selector]: https://github.com/pnpm/pnpm/blob/main/workspace/projects-filter/src/parseProjectSelector.ts
-[changed]: https://github.com/pnpm/pnpm/blob/main/workspace/projects-filter/src/getChangedProjects.ts
-[manifest-reader]: https://github.com/pnpm/pnpm/blob/main/workspace/workspace-manifest-reader/src/index.ts
-[run-recursive]: https://github.com/pnpm/pnpm/blob/main/exec/commands/src/runRecursive.ts
-[cafs-path]: https://github.com/pnpm/pnpm/blob/main/store/cafs/src/getFilePathInCafs.ts
-[cafs-index]: https://github.com/pnpm/pnpm/blob/main/store/cafs/src/index.ts
+[spec-parser]: https://github.com/pnpm/pnpm/blob/9f002da43f61acd3ca1d99ba4a6e734d9d16ed3a/workspace/spec-parser/src/index.ts
+[range-resolver]: https://github.com/pnpm/pnpm/blob/9f002da43f61acd3ca1d99ba4a6e734d9d16ed3a/workspace/range-resolver/src/index.ts
+[projects-graph]: https://github.com/pnpm/pnpm/blob/9f002da43f61acd3ca1d99ba4a6e734d9d16ed3a/workspace/projects-graph/src/index.ts
+[projects-sorter]: https://github.com/pnpm/pnpm/blob/9f002da43f61acd3ca1d99ba4a6e734d9d16ed3a/workspace/projects-sorter/src/index.ts
+[selector]: https://github.com/pnpm/pnpm/blob/9f002da43f61acd3ca1d99ba4a6e734d9d16ed3a/workspace/projects-filter/src/parseProjectSelector.ts
+[changed]: https://github.com/pnpm/pnpm/blob/9f002da43f61acd3ca1d99ba4a6e734d9d16ed3a/workspace/projects-filter/src/getChangedProjects.ts
+[workspace-manifest-reader]: https://github.com/pnpm/pnpm/blob/9f002da43f61acd3ca1d99ba4a6e734d9d16ed3a/workspace/workspace-manifest-reader/src/index.ts
+[run-recursive]: https://github.com/pnpm/pnpm/blob/9f002da43f61acd3ca1d99ba4a6e734d9d16ed3a/exec/commands/src/runRecursive.ts
+[cafs-path]: https://github.com/pnpm/pnpm/blob/9f002da43f61acd3ca1d99ba4a6e734d9d16ed3a/store/cafs/src/getFilePathInCafs.ts
+[cafs-index]: https://github.com/pnpm/pnpm/blob/9f002da43f61acd3ca1d99ba4a6e734d9d16ed3a/store/cafs/src/index.ts
+[cli-parse-args]: https://github.com/pnpm/pnpm/blob/9f002da43f61acd3ca1d99ba4a6e734d9d16ed3a/cli/parse-cli-args/src/index.ts
+[write-buffer-to-cafs]: https://github.com/pnpm/pnpm/blob/9f002da43f61acd3ca1d99ba4a6e734d9d16ed3a/store/cafs/src/writeBufferToCafs.ts
+[injected-deps-syncer]: https://github.com/pnpm/pnpm/tree/9f002da43f61acd3ca1d99ba4a6e734d9d16ed3a/workspace/injected-deps-syncer/src
 [v11-blog]: https://pnpm.io/blog/releases/11.0
 [flat-blog]: https://pnpm.io/blog/2020/05/27/flat-node-modules-is-not-the-only-way
 [catalogs-blog]: https://socket.dev/blog/pnpm-9-5-introduces-catalogs-shareable-dependency-version-specifiers
