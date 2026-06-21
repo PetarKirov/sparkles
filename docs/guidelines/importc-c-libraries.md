@@ -148,8 +148,8 @@ inputs'.ghostty.packages.libghostty-vt.dev    # headers + dev .pc → PKG_CONFIG
     url = "github:ghostty-org/ghostty";
     inputs.nixpkgs.follows = "nixpkgs";
     inputs.systems.follows = "systems";
-    inputs.flake-compat.follows = "mcl-nixos-modules/flake-compat";
-    inputs.home-manager.follows = "mcl-nixos-modules/home-manager";
+    inputs.flake-compat.follows = "flake-compat";
+    inputs.home-manager.follows = "home-manager";
   };
   ```
 

@@ -1,14 +1,15 @@
 {
   inputs = {
-    mcl-nixos-modules = {
-      url = "github:metacraft-labs/nixos-modules";
-      inputs.dlang-nix.follows = "dlang-nix";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    flake-parts.url = "github:hercules-ci/flake-parts";
+
+    git-hooks-nix = {
+      url = "github:cachix/git-hooks.nix";
+      inputs = {
+        nixpkgs.follows = "nixpkgs";
+        flake-compat.follows = "flake-compat";
+      };
     };
-
-    nixpkgs.follows = "mcl-nixos-modules/nixpkgs-unstable";
-    flake-parts.follows = "mcl-nixos-modules/flake-parts";
-
-    git-hooks-nix.follows = "mcl-nixos-modules/git-hooks-nix";
 
     systems.url = "github:nix-systems/triplet";
 
@@ -19,7 +20,7 @@
       # branch once these land upstream.
       url = "github:PetarKirov/dlang.nix/feat/ldc-wasm";
       inputs = {
-        flake-compat.follows = "mcl-nixos-modules/flake-compat";
+        flake-compat.follows = "flake-compat";
         flake-parts.follows = "flake-parts";
         git-hooks-nix.follows = "git-hooks-nix";
       };
@@ -29,8 +30,12 @@
       url = "github:ghostty-org/ghostty";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.systems.follows = "systems";
-      inputs.flake-compat.follows = "mcl-nixos-modules/flake-compat";
-      inputs.home-manager.follows = "mcl-nixos-modules/home-manager";
+      inputs.flake-compat.follows = "flake-compat";
+    };
+
+    flake-compat = {
+      url = "github:edolstra/flake-compat";
+      flake = false;
     };
   };
   outputs =
