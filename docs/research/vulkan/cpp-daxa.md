@@ -70,12 +70,11 @@ with detailed error messages explaining the issue and potential solutions" ([REA
 The core (`Instance`, `Device`, `CommandRecorder`, `Swapchain`, pipelines, sync primitives) is
 implemented as a **C API** (`include/daxa/c/*.h`, implemented in `src/impl_*.cpp`); the public C++
 classes are a thin layer over it ([`src/cpp_wrapper.cpp`][cpp-wrapper]). `TaskGraph` is an optional
-utility (`include/daxa/utils/task_graph.hpp`, [`src/utils/impl_task_graph.cpp`][impl-tg]) layered
-purely on the core API. A task is declared with a builder, naming its accesses; the callback only
+utility ([`include/daxa/utils/task_graph.hpp`][tg-hpp], [`src/utils/impl_task_graph.cpp`][impl-tg]) layered
+purely on the core API. A task is declared with a builder, naming its attachments, as documented in the [TaskGraph wiki][tg-wiki]; the callback only
 records commands:
 
 ```cpp
-// docs.daxa.dev/wiki/taskgraph/ — task declaration
 daxa::TaskImageView src = ...;
 daxa::TaskImageView dst = ...;
 graph.add_task(daxa::Task::Transfer("example task")
@@ -220,10 +219,9 @@ Daxa uses C++'s type system sparingly but deliberately:
 - **Builder typestate, weak form** — `daxa::Task::Transfer("…").reads(...).writes(...).executes(...)`
   (3.1's builder API) sequences declaration fluently, but the stages are not type-enforced.
 - **Macro-driven host/shader codegen** — the closest thing to typed structure chains in Daxa is
-  the **TaskHead**, a single declaration expanded for both C++ and shaders:
+  the **TaskHead** (documented in the [TaskGraph wiki][tg-wiki]), a single declaration expanded for both C++ and shaders:
 
   ```cpp
-  // docs.daxa.dev/wiki/taskgraph/ — TaskHead
   DAXA_DECL_TASK_HEAD_BEGIN(MyTaskHead)
   DAXA_TH_BUFFER_PTR(READ, daxa_BufferPtr(daxa_u32), src_buffer)
   DAXA_TH_IMAGE_ID(WRITE, REGULAR_2D, dst_image)
@@ -372,21 +370,21 @@ graph-driven code; the standard validation layers remain useful mainly under the
 <!-- References -->
 
 [repo]: https://github.com/Ipotrick/Daxa
-[readme]: https://github.com/Ipotrick/Daxa/blob/master/README.md
+[readme]: https://github.com/Ipotrick/Daxa/blob/00761e80c1dd6d1972d5f4569ce49620a7b4d384/README.md
 [rel]: https://github.com/Ipotrick/Daxa/releases
 [docs]: https://docs.daxa.dev/
-[tg-wiki]: https://docs.daxa.dev/wiki/taskgraph/
-[bindless-wiki]: https://docs.daxa.dev/wiki/bindless/
-[gpures-hpp]: https://github.com/Ipotrick/Daxa/blob/master/include/daxa/gpu_resources.hpp
-[device-hpp]: https://github.com/Ipotrick/Daxa/blob/master/include/daxa/device.hpp
-[cmdrec-hpp]: https://github.com/Ipotrick/Daxa/blob/master/include/daxa/command_recorder.hpp
-[tg-hpp]: https://github.com/Ipotrick/Daxa/blob/master/include/daxa/utils/task_graph.hpp
-[c-device]: https://github.com/Ipotrick/Daxa/blob/master/include/daxa/c/device.h
-[impl-gpures]: https://github.com/Ipotrick/Daxa/blob/master/src/impl_gpu_resources.hpp
-[impl-device]: https://github.com/Ipotrick/Daxa/blob/master/src/impl_device.cpp
-[impl-tg]: https://github.com/Ipotrick/Daxa/blob/master/src/utils/impl_task_graph.cpp
-[impl-tg-ui]: https://github.com/Ipotrick/Daxa/blob/master/src/utils/impl_task_graph_ui.cpp
-[cpp-wrapper]: https://github.com/Ipotrick/Daxa/blob/master/src/cpp_wrapper.cpp
+[tg-wiki]: https://docs.daxa.dev/wiki/taskgraph-bottom-up/
+[bindless-wiki]: https://docs.daxa.dev/wiki/buffers-images-acceleration-structures/#bindless-access
+[gpures-hpp]: https://github.com/Ipotrick/Daxa/blob/00761e80c1dd6d1972d5f4569ce49620a7b4d384/include/daxa/gpu_resources.hpp
+[device-hpp]: https://github.com/Ipotrick/Daxa/blob/00761e80c1dd6d1972d5f4569ce49620a7b4d384/include/daxa/device.hpp
+[cmdrec-hpp]: https://github.com/Ipotrick/Daxa/blob/00761e80c1dd6d1972d5f4569ce49620a7b4d384/include/daxa/command_recorder.hpp
+[tg-hpp]: https://github.com/Ipotrick/Daxa/blob/00761e80c1dd6d1972d5f4569ce49620a7b4d384/include/daxa/utils/task_graph.hpp
+[c-device]: https://github.com/Ipotrick/Daxa/blob/00761e80c1dd6d1972d5f4569ce49620a7b4d384/include/daxa/c/device.h
+[impl-gpures]: https://github.com/Ipotrick/Daxa/blob/00761e80c1dd6d1972d5f4569ce49620a7b4d384/src/impl_gpu_resources.hpp
+[impl-device]: https://github.com/Ipotrick/Daxa/blob/00761e80c1dd6d1972d5f4569ce49620a7b4d384/src/impl_device.cpp
+[impl-tg]: https://github.com/Ipotrick/Daxa/blob/00761e80c1dd6d1972d5f4569ce49620a7b4d384/src/utils/impl_task_graph.cpp
+[impl-tg-ui]: https://github.com/Ipotrick/Daxa/blob/00761e80c1dd6d1972d5f4569ce49620a7b4d384/src/utils/impl_task_graph_ui.cpp
+[cpp-wrapper]: https://github.com/Ipotrick/Daxa/blob/00761e80c1dd6d1972d5f4569ce49620a7b4d384/src/cpp_wrapper.cpp
 [vuk]: ./cpp-vuk.md
 [tephra]: ./cpp-tephra.md
 [vulkano]: ./rust-vulkano.md
