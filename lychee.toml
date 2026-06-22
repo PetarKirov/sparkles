@@ -29,8 +29,9 @@ fallback_extensions = ["md", "html"]
 # Don't check URLs inside code blocks (they're often illustrative, not real)
 include_verbatim = false
 
-# Don't check fragments within URLs
-include_fragments = false
+# Don't check fragments within URLs (lychee >= 0.24 takes an enum here:
+# none|anchor-only|text-only|full; "none" replaces the old boolean `false`)
+include_fragments = "none"
 
 # When a link is broken, suggest replacements from web archives
 suggest = true
@@ -44,6 +45,10 @@ remap = [
 
 #############################  Hosts  ###############################
 
+# NOTE: per-host `[hosts."…"]` throttling is silently ignored by lychee <= 0.21
+# (it only landed later — verified working on 0.24.2). Keep lychee recent or these
+# blocks become no-ops.
+
 # Throttle requests to github.com to reduce rate limiting
 [hosts."github.com"]
 request_interval = "1s"
@@ -52,4 +57,12 @@ request_interval = "1s"
 request_interval = "200ms"
 
 [hosts."gitlab.freedesktop.org"]
+request_interval = "1s"
+
+# web.archive.org refuses *connections* (TCP-level "Connection refused", which is
+# never retried) once an IP opens too many at once; it recovers in tens of seconds.
+# A custom user_agent does not help — the refusal happens before any header is sent.
+# Pacing requests one-at-a-time is the only fix that works. (CI excludes this host
+# entirely via lychee.ci.exclude, so this throttle benefits local pre-commit runs.)
+[hosts."web.archive.org"]
 request_interval = "1s"
