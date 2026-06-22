@@ -27,6 +27,7 @@ indent_size = unset
 
 # Test data files contain exact byte sequences — no trailing newline
 [libs/core-cli/test/data/**]
+charset = unset
 insert_final_newline = unset
 
 # Disable indent checking for markdown - code blocks may have intentional
