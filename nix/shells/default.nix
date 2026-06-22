@@ -19,6 +19,7 @@
           packages = [
             # Pre-commit hooks
             pkgs.prek
+            pkgs.lychee
             # Used by :test-utils package
             pkgs.delta
             # Profiling
