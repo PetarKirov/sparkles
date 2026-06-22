@@ -90,7 +90,14 @@ in
               files = "\\.md$";
               language = "system";
               name = "verify-md-examples";
-              require_serial = false;
+              # Hand every matched *.md to ONE `ci` invocation instead of letting
+              # prek fan out file batches across parallel processes. `ci` then
+              # warms the shared dub dependency artifacts once and parallelizes the
+              # per-example builds itself (capped, see SPARKLES_CI_JOBS). Parallel
+              # *processes* each cold-build `expected` in place and race rewriting
+              # `~/.dub/packages/expected/*/expected/libexpected.a` ("No such file
+              # or directory"); a single coordinator with a warm cache cannot.
+              require_serial = true;
               pass_filenames = true;
               entry = lib.getExe config.packages.ci;
               args = [
@@ -125,6 +132,13 @@ in
               enable = true;
               files = "\\.md$";
               pass_filenames = true;
+              # Run a single lychee process over all matched files. Without this,
+              # prek splits `--all-files` into many parallel lychee invocations
+              # (~32 on this repo); the aggregate connection rate exhausts local
+              # sockets (ResourceBusy / connect failures) and each process keeps
+              # its own per-host throttle governor, defeating the web.archive.org
+              # request_interval and re-tripping its connection-refusal limit.
+              require_serial = true;
               entry = lib.mkForce (
                 toString (
                   pkgs.writeShellScript "lychee-with-auth" ''
