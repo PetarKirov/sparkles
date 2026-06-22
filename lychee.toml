@@ -26,6 +26,13 @@ retry_wait_time = 2
 # Resolve cross-referenced files that omit their extension
 fallback_extensions = ["md", "html"]
 
+# Skip the repo-root AGENTS.md symlink. It points at docs/guidelines/AGENTS.md
+# (the canonical copy, which IS checked and passes), but its relative links are
+# authored for docs/guidelines/; resolved from the repo root they yield false
+# "file not found" errors. Regex-matched against the input path; anchored so it
+# does not also exclude docs/guidelines/AGENTS.md.
+exclude_path = ['^AGENTS\.md$']
+
 # Don't check URLs inside code blocks (they're often illustrative, not real)
 include_verbatim = false
 
