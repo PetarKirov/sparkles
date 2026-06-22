@@ -79,10 +79,7 @@
               # argument has to be overridden back to the plain package.
               dtools = prev.dtools.override { ldc = prev.ldc; };
 
-              # DMD 2.110's ImportC cannot parse GCC 15's stddef.h (`nullptr` is
-              # a C23 keyword unknown to the D parser).  Only needed when stdenv
-              # is GCC-based; on macOS stdenv already uses clang.
-              dmd = if prev.stdenv.cc.isGNU then prev.dmd.override { stdenv = prev.gcc14Stdenv; } else prev.dmd;
+              dmd = inputs'.dlang-nix.packages.dmd-2_112_1;
 
               dub = inputs'.dlang-nix.packages.dub-1_43_0-alpha-5efed36;
             }
