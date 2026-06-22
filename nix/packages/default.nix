@@ -86,7 +86,7 @@
               pkgs.dub
               pkgs.ldc
             ];
-            setEnv = lib.cli.toGNUCommandLineShell {
+            setEnv = lib.cli.toCommandLineShell {
               mkOption = name: value: [
                 "--set"
                 name
