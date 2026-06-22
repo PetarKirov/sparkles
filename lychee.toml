@@ -7,7 +7,7 @@
 max_cache_age = "1d"
 
 # Don't cache transient failures (rate limits, server errors)
-cache_exclude_status = [429, "500.."]
+cache_exclude_status = [403, 429, "500.."]
 
 #############################  Requests  ############################
 
