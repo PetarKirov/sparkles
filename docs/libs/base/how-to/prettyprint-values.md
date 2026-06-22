@@ -35,7 +35,7 @@ void main()
 
 ## Print into custom buffers
 
-For memory-conscious or `@nogc` code, pass a `Writer` reference (such as `SmallBuffer`) to `prettyPrint` to write the output directly into the buffer without allocating memory:
+For memory-conscious or `@nogc` code, pass a `Writer` reference (such as `SmallBuffer`) to `writePretty` to write the output directly into the buffer without allocating memory:
 
 ```d
 #!/usr/bin/env dub
@@ -45,14 +45,14 @@ For memory-conscious or `@nogc` code, pass a `Writer` reference (such as `SmallB
 +/
 import std.stdio : writeln;
 import sparkles.base.smallbuffer : SmallBuffer;
-import sparkles.base.prettyprint : prettyPrint;
+import sparkles.base.prettyprint : writePretty;
 
 void main()
 {
     auto ages = ["Alice": 30, "Bob": 25];
 
     SmallBuffer!(char, 1024) buf;
-    prettyPrint(ages, buf);
+    writePretty(buf, ages);
 
     writeln(buf[]);
 }

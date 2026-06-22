@@ -139,7 +139,7 @@ standard `REAPI` services a Bazel client connects to, plus an internal
 | Worker brokering      | `worker_api` service (private listener)                                | Workers register, stream capabilities, lease jobs, and report results                        |
 | Worker                | `workers[]` (`local`)                                                  | Pulls leased actions, materializes the input tree on disk, runs the command, uploads outputs |
 | Storage               | `stores[]` (a composable stack — see [How it works](#how-it-works))    | Every cache/CAS backend; nested store specs form the durable substrate                       |
-| Toolchain hermeticity | `local-remote-execution/` (`LRE`)                                      | Nix-generated toolchains identical local↔remote for ~100% cache hit rate                    |
+| Toolchain hermeticity | `local-remote-execution/` (`LRE`)                                      | Nix-generated toolchains identical local↔remote for ~100% cache hit rate                     |
 | Server / listeners    | `servers[]` (`listener.http`, `services`)                              | One or more gRPC listeners; public cache/exec ports vs. private worker/admin ports           |
 
 ### The standard REAPI client contract
@@ -582,7 +582,7 @@ config edit, not a recompile or a flag.
 | Content-defined `dedup` (`fastcdc` + per-slice `sha256`)               | Shares storage across partially-overlapping large blobs, not just whole-file identity       | Extra index store + chunking CPU; tuning `min`/`normal`/`max` chunk sizes is non-obvious             |
 | Composable scheduler stack (`cache_lookup`/`property_modifier`/`grpc`) | Same nesting philosophy as stores; local proxy tiers and property rewriting are first-class | Behavior is spread across a stack; reasoning about a multi-layer scheduler takes care                |
 | Property-based worker matching (`exact`/`minimum`/`priority`/`ignore`) | Heterogeneous fleets (GPU, specific `ISA`, container images) route correctly                | Operators must keep worker `platform_properties` and action `Platform` requests in sync              |
-| `LRE`: Nix-pinned toolchains identical local↔remote                   | Near-100% cache hits by eliminating toolchain drift — the usual cause of spurious misses    | Requires committing to Nix and a shared `nixpkgs` pin; non-Nix teams lose the headline feature       |
+| `LRE`: Nix-pinned toolchains identical local↔remote                    | Near-100% cache hits by eliminating toolchain drift — the usual cause of spurious misses    | Requires committing to Nix and a shared `nixpkgs` pin; non-Nix teams lose the headline feature       |
 | `FSL-1.1-Apache-2.0` (delayed-open license)                            | Funds the project while still converting to Apache-2.0 after two years                      | Not OSI-open on day one; competing-product restriction during the embargo window                     |
 
 ---

@@ -96,7 +96,7 @@ Combining N4134 (`n4134:79-81`) and the LLVM lowering, the frame holds:
 
 | Frame slot                                 | What it is                                                                                                     | Source                                                        |
 | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| **Promise**                                | the customization object that bridges coroutine ↔ caller (results, yields, exceptions)                        | `n4134:79`, `Coroutines.rst:84-87`                            |
+| **Promise**                                | the customization object that bridges coroutine ↔ caller (results, yields, exceptions)                         | `n4134:79`, `Coroutines.rst:84-87`                            |
 | **Parameter copies**                       | each coroutine parameter is _copied into the frame_ (automatic-duration), so it outlives the original argument | `n4134:79-81`; copy-into-frame is mandated in C++ (see [cpp]) |
 | **Live-across-suspend locals/temporaries** | any value whose def-use chain crosses a suspend point — _only_ those, computed by the compiler                 | `Coroutines.rst:339-346`                                      |
 | **Resume/destroy function pointers**       | so the manipulation intrinsics work when the coroutine's identity is unknown to the holder                     | `Coroutines.rst:111-113`, `:339-355`                          |

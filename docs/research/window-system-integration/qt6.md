@@ -57,7 +57,7 @@ Above this seam sits the public `QWindow`/`QScreen`/`QGuiApplication` layer; abo
 | The event funnel    | `QWindowSystemInterface` ([`qwindowsysteminterface.h`][qwsi-h]) | `static handle*` methods every backend pushes events into; queues + flushes them to Qt GUI.               |
 | Loop integration    | `QAbstractEventDispatcher` (per-plugin subclass)                | Wraps the native loop / reader thread; created by `createEventDispatcher`.                                |
 | Public window       | `QWindow` ([`qwindow.h`][qwindow-h])                            | App-facing handle; owns a `QPlatformWindow` created lazily via `create()`.                                |
-| Scaling             | `QHighDpiScaling` ([`qhighdpiscaling_p.h`][qhdpi-h])            | Converts native ↔ device-independent coordinates at the seam.                                            |
+| Scaling             | `QHighDpiScaling` ([`qhighdpiscaling_p.h`][qhdpi-h])            | Converts native ↔ device-independent coordinates at the seam.                                             |
 | Native escape hatch | `QPlatformNativeInterface` + `QNativeInterface::*`              | Typed accessors for `Display*`, `wl_display*`, `HWND`, `NSWindow*`, …                                     |
 
 `QPlatformIntegration` makes the create/accessor split explicit; the two methods Qt cannot run without are pure-virtual:

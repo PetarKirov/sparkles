@@ -48,8 +48,7 @@ The central type is declared identically in both lines (`packages/effect/src/Eff
 ```ts
 // v3: packages/effect/src/Effect.ts
 export interface Effect<out A, out E = never, out R = never>
-  extends Effect.Variance<A, E, R>,
-    Pipeable {
+  extends Effect.Variance<A, E, R>, Pipeable {
   [Symbol.iterator](): EffectGenerator<Effect<A, E, R>>;
 }
 ```
@@ -57,8 +56,7 @@ export interface Effect<out A, out E = never, out R = never>
 ```ts
 // v4: typescript/effect-smol/packages/effect/src/Effect.ts
 export interface Effect<out A, out E = never, out R = never>
-  extends Pipeable,
-    Inspectable {
+  extends Pipeable, Inspectable {
   readonly [TypeId]: Variance<A, E, R>;
   [Symbol.iterator](): EffectIterator<Effect<A, E, R>>;
 }
@@ -344,8 +342,7 @@ v4's rewrite is explicitly motivated by bundle size and runtime cost. Per the of
 ```ts
 // v3 packages/effect/src/Layer.ts & v4 effect-smol/.../Layer.ts
 export interface Layer<in ROut, out E = never, out RIn = never>
-  extends Variance<ROut, E, RIn>,
-    Pipeable {}
+  extends Variance<ROut, E, RIn>, Pipeable {}
 ```
 
 A program type-checks as runnable only when its `R` is fully discharged by provided layers (`Effect.provide`). Layers are memoized so a service is constructed once, and they integrate with `Scope` so acquisition/finalization is lifecycle-correct.
