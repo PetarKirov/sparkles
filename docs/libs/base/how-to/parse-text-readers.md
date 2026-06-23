@@ -86,7 +86,7 @@ void main()
 }
 ```
 
-```[Output:ansi]
+```ansi
 Parsed: [32mPoint(x: 10, y: 20)[39m
 [31mError: 1 at offset 0[39m
 ```

@@ -105,7 +105,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 foo(s)           = 2
 foo(__rvalue(s)) = 1
 ```
@@ -175,7 +175,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 copyCtor=1 moveCtor=1 copyAss=1 moveAss=1
 ```
 
@@ -291,7 +291,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 *t.p=5 moveCtor=1 copyCtor=0 g.p is null=true
 ```
 
@@ -347,7 +347,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 u.t.i=2 v.t.i=3
 ```
 
@@ -390,7 +390,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 moves=3
 ```
 
@@ -430,7 +430,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 a.p is null=true *b.p=5
 ```
 
@@ -545,7 +545,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 a.p is null=true *b.p=7
 ```
 
@@ -608,7 +608,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 MoveC: move=true copy=false
 CopyC: move=false copy=true
 Postblit: postblit=true

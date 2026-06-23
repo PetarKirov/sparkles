@@ -530,7 +530,7 @@ void main() @safe
 }
 ```
 
-```[Output]
+```ansi
 sType pre-set:       true
 chain wired:         true
 created:             true

@@ -29,7 +29,7 @@ void main()
 }
 ```
 
-```[Output:ansi]
+```ansi
 [35mUser[39m([96mname[39m: [32m"Alice"[39m, [96mage[39m: [34m30[39m, [96mroles[39m: [[32m"admin"[39m, [32m"developer"[39m])
 ```
 
@@ -58,7 +58,7 @@ void main()
 }
 ```
 
-```[Output:ansi]
+```ansi
 [[32m"Alice"[39m: [34m30[39m, [32m"Bob"[39m: [34m25[39m]
 ```
 
@@ -92,6 +92,6 @@ void main()
 }
 ```
 
-```[Output:ansi]
+```ansi
 [Point(x: 1, y: 2), Point(x: 3, y: 4)]
 ```

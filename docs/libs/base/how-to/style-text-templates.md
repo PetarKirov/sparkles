@@ -36,7 +36,7 @@ void main()
 }
 ```
 
-```[Output:ansi]
+```ansi
 [31m[1mFatal Error: connection refused[22m[39m
 Status: [32m[1mOK[22m[39m | Service: [36mdatabase[39m
 ```
@@ -66,7 +66,7 @@ void main()
 }
 ```
 
-```[Output:ansi]
+```ansi
 Styled length: 23
 Plain length: 13
 ```
@@ -94,6 +94,6 @@ void main()
 }
 ```
 
-```[Output:ansi]
+```ansi
 Level: [35mdebug[39m
 ```

@@ -61,7 +61,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 Success: quiet
 Error: Unknown verbosity level
 ```
@@ -121,7 +121,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 Successes: [1, 3, 5]
 Items: [[1], [], [3], [], [5]]
 ```
@@ -190,7 +190,7 @@ Expected!(int, string) validate(int i)
 }
 ```
 
-```[Output]
+```ansi
 42: Success
 invalid: Invalid age: Unexpected 'i' when converting from type string to type int
 ```
@@ -247,7 +247,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 Mapped: 42
 ```
 
@@ -311,7 +311,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 Eager Value: 100
 Lazy Expression: 100
 Lazy Delegate: 100
@@ -368,7 +368,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 Success: 21
 ```
 
@@ -445,7 +445,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 Value: 42
 Error offset: 5
 ```

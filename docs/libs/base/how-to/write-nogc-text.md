@@ -39,7 +39,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 job=0042 rss=1.5KiB elapsed=1.5m
 ```
 
