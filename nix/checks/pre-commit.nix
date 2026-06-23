@@ -92,11 +92,12 @@ in
               name = "verify-md-examples";
               # Hand every matched *.md to ONE `ci` invocation instead of letting
               # prek fan out file batches across parallel processes. `ci` then
-              # warms the shared dub dependency artifacts once and parallelizes the
-              # per-example builds itself (capped, see SPARKLES_CI_JOBS). Parallel
-              # *processes* each cold-build `expected` in place and race rewriting
-              # `~/.dub/packages/expected/*/expected/libexpected.a` ("No such file
-              # or directory"); a single coordinator with a warm cache cannot.
+              # parallelizes the per-example builds itself, capped by available
+              # cores/memory (see SPARKLES_CI_JOBS) — example builds are OOM-prone,
+              # and one coordinator bounds total concurrency where N independent
+              # prek processes (~32 here) cannot. The build-artifact race itself is
+              # fixed in `ci` via dub `--temp-build`; serializing here is about
+              # bounded, predictable parallelism rather than correctness.
               require_serial = true;
               pass_filenames = true;
               entry = lib.getExe config.packages.ci;

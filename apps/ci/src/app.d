@@ -73,13 +73,15 @@ wildcard pattern handles verification against the actual (dynamic) output.
 +/
 
 // std.* modules
-import std.algorithm : any, canFind, countUntil, filter, map, min, sort, startsWith;
+import std.algorithm : any, canFind, countUntil, filter, joiner, map, min, sort, startsWith;
 import std.array : array, join;
 import std.conv : text, to;
 import core.time : msecs;
 import std.file : exists, mkdirRecurse, readText, remove, tempDir, write;
+import std.parallelism : TaskPool, totalCPUs;
 import std.path : baseName, buildPath;
-import std.process : execute;
+import std.process : environment, execute;
+import std.range : iota;
 import std.regex : ctRegex, matchFirst;
 import std.stdio : writeln;
 import std.string : endsWith, indexOf, lineSplitter, replace, strip, stripRight, toLower;
@@ -528,6 +530,13 @@ private string[] collectInputFiles(
 
 private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool failFast)
 {
+    static struct FileExamples
+    {
+        string mdFile;
+        Example[] examples;
+    }
+
+    FileExamples[] gathered;
     int totalFailures = 0;
 
     foreach (mdFile; mdFiles)
@@ -539,8 +548,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             continue;
         }
 
-        auto content = mdFile.readText;
-        auto examples = extractExamples(content);
+        auto examples = extractExamples(mdFile.readText);
 
         if (examples.length == 0)
         {
@@ -548,17 +556,40 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             continue;
         }
 
+        gathered ~= FileExamples(mdFile, examples);
+    }
+
+    if (gathered.length == 0)
+        return totalFailures > 0 ? 1 : 0;
+
+    const repoRoot = detectRepoRoot();
+
+    // Building (and running) examples is the expensive, parallelizable work; the
+    // per-file presentation below is cheap and order-sensitive. So execute every
+    // example across all files up front, concurrently, then replay the results
+    // through the existing serial display/diff/rewrite loops unchanged.
+    // Concurrency is race-free thanks to `--temp-build` (see executeExample) and
+    // bounded by `exampleJobCount` to keep peak memory in check.
+    auto allExamples = gathered.map!(g => g.examples).joiner.array;
+    auto allResults = executeExamplesParallel(allExamples, repoRoot);
+
+    size_t offset = 0;
+    foreach (g; gathered)
+    {
+        auto results = allResults[offset .. offset + g.examples.length];
+        offset += g.examples.length;
+
         int rc;
         final switch (mode)
         {
             case ProgramMode.runExamples:
-                rc = runDefaultMode(examples, mdFile, failFast);
+                rc = runDefaultMode(g.examples, results, g.mdFile, failFast);
                 break;
             case ProgramMode.verifyExamples:
-                rc = runVerifyMode(examples, mdFile, failFast);
+                rc = runVerifyMode(g.examples, results, g.mdFile, failFast);
                 break;
             case ProgramMode.updateExamples:
-                rc = runUpdateMode(examples, mdFile, failFast);
+                rc = runUpdateMode(g.examples, results, g.mdFile, failFast);
                 break;
             case ProgramMode.runExampleFiles:
             case ProgramMode.runDubTests:
@@ -579,6 +610,88 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
     }
 
     return totalFailures > 0 ? 1 : 0;
+}
+
+/// Number of example builds to run concurrently. Honors `SPARKLES_CI_JOBS`,
+/// otherwise bounds parallelism by both CPU count and available memory — ldc
+/// builds are memory-hungry and this work is historically OOM-prone, so we
+/// deliberately do not fan out to every core.
+private uint exampleJobCount()
+{
+    if (auto raw = environment.get("SPARKLES_CI_JOBS"))
+    {
+        try
+        {
+            const n = raw.to!uint;
+            if (n >= 1)
+                return n;
+        }
+        catch (Exception) { /* fall through to the computed default */ }
+    }
+
+    uint jobs = totalCPUs < 1 ? 1 : cast(uint) totalCPUs;
+
+    // Budget ~2 GiB of headroom per concurrent build.
+    if (const memGiB = totalMemoryGiB())
+    {
+        const byMem = cast(uint)(memGiB / 2);
+        if (byMem >= 1 && byMem < jobs)
+            jobs = byMem;
+    }
+
+    enum uint hardCap = 12;
+    return jobs > hardCap ? hardCap : jobs;
+}
+
+/// Total physical memory in GiB, or 0 when it cannot be determined (non-Linux,
+/// or `/proc/meminfo` unavailable) — callers treat 0 as "no memory-based cap".
+private size_t totalMemoryGiB()
+{
+    version (linux)
+    {
+        import std.ascii : isDigit;
+
+        if (!"/proc/meminfo".exists)
+            return 0;
+
+        foreach (line; "/proc/meminfo".readText.lineSplitter)
+        {
+            if (!line.startsWith("MemTotal:"))
+                continue;
+
+            auto digits = line.filter!isDigit.to!string; // value is in kB
+            return digits.length ? digits.to!size_t / (1024 * 1024) : 0;
+        }
+    }
+
+    return 0;
+}
+
+/// Executes every example concurrently, returning results in input order.
+/// Each build is isolated via `--temp-build` (see `dubSingleFileCommand`), so the
+/// parallel `dub run`s never race on a shared dependency artifact.
+private ExecutionResult[] executeExamplesParallel(Example[] examples, string repoRoot)
+{
+    auto results = new ExecutionResult[](examples.length);
+
+    if (examples.length <= 1)
+    {
+        if (examples.length == 1)
+            results[0] = executeExample(examples[0], repoRoot, 0);
+        return results;
+    }
+
+    const jobs = exampleJobCount();
+
+    // `parallel` also drives work on the calling thread, so a pool of N worker
+    // threads yields N+1 concurrent builds — size it to honor `jobs` as the cap.
+    auto pool = new TaskPool(jobs <= 1 ? 0 : jobs - 1);
+    scope(exit) pool.finish(true);
+
+    foreach (i; pool.parallel(iota(examples.length), 1))
+        results[i] = executeExample(examples[i], repoRoot, i);
+
+    return results;
 }
 
 private int runReferenceLinkMode(string[] mdFiles, bool fix)
@@ -761,57 +874,49 @@ Example[] extractExamples(string content)
     return examples;
 }
 
-/// Runs a single example and returns its result.
+/// Builds and runs a single example, returning its combined result.
 ///
-/// Build and run are split into separate commands so compile-time
-/// diagnostics (deprecation warnings, etc.) don't pollute the captured
-/// program output that gets diffed against the markdown's expected block.
-ExecutionResult executeExample(in Example example)
+/// Uses `dub run --quiet --temp-build`: `--quiet` keeps a successful run's
+/// captured output to just the program's own stdout (no dub progress noise to
+/// pollute the diff against the markdown's expected block), while `--temp-build`
+/// isolates the build so concurrent example runs don't race on shared dependency
+/// artifacts (see `dubSingleFileCommand`). `--temp-build` also places the binary
+/// in a temp folder we don't track, so we let `dub run` execute it rather than
+/// invoking it ourselves.
+ExecutionResult executeExample(in Example example, string repoRoot, size_t uniqueId)
 {
-    auto tmpDir = buildPath(tempDir, "md-examples");
-    mkdirRecurse(tmpDir);
-    auto tmpFile = buildPath(tmpDir, example.name ~ ".d");
-    auto binaryPath = buildPath(tmpDir, example.name);
+    // Give each example its own subdirectory: examples in different markdown
+    // files can share a `name` (hence the same source filename), and these runs
+    // happen concurrently. Keep the filename itself unchanged — ldc derives the
+    // module name from it, which must stay a valid identifier.
+    auto exampleDir = buildPath(tempDir, "md-examples", uniqueId.to!string);
+    mkdirRecurse(exampleDir);
+    auto tmpFile = buildPath(exampleDir, example.name ~ ".d");
 
-    auto repoRoot = detectRepoRoot();
     auto code = repoRoot.length
-        ? rewriteInTreeDeps(example.code, repoRoot, tmpDir)
+        ? rewriteInTreeDeps(example.code, repoRoot, exampleDir)
         : example.code;
     tmpFile.write(code);
     scope(exit)
     {
-        if (tmpFile.exists) tmpFile.remove();
-        if (binaryPath.exists) binaryPath.remove();
+        import std.file : rmdirRecurse;
+        if (exampleDir.exists) rmdirRecurse(exampleDir);
     }
 
-    auto buildResult = executeLogged(
-        dubSingleFileCommand("build", tmpFile, repoRoot), "build " ~ example.name);
-    if (buildResult.status != 0)
-    {
-        auto cleanedBuild = buildResult.output.unstyle
-            .lineSplitter
-            .map!(l => l.stripRight)
-            .join("\n");
-        return ExecutionResult(
-            success: false,
-            programOutput: cleanedBuild,
-            rawOutput: buildResult.output,
-        );
-    }
-
-    auto runResult = executeLogged([binaryPath], "run " ~ example.name);
+    auto result = executeLogged(
+        dubSingleFileCommand("run", tmpFile, repoRoot), "run " ~ example.name);
 
     // Strip ANSI codes, then trim trailing whitespace from each line
     // so output matches what pre-commit hooks produce in markdown files.
-    auto cleaned = runResult.output.unstyle
+    auto cleaned = result.output.unstyle
         .lineSplitter
         .map!(l => l.stripRight)
         .join("\n");
 
     return ExecutionResult(
-        success: runResult.status == 0,
+        success: result.status == 0,
         programOutput: cleaned,
-        rawOutput: runResult.output,
+        rawOutput: result.output,
     );
 }
 
@@ -1056,7 +1161,8 @@ private int runDubTestsMode(bool failFast)
 // === Modes ===
 
 /// Default mode: run examples and display output in boxes.
-int runDefaultMode(Example[] examples, string mdFile, bool failFast)
+/// `results` holds the pre-computed execution result for each example.
+int runDefaultMode(Example[] examples, ExecutionResult[] results, string mdFile, bool failFast)
 {
     i"Running $(examples.length) example(s) from $(mdFile)".text
         .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
@@ -1069,7 +1175,7 @@ int runDefaultMode(Example[] examples, string mdFile, bool failFast)
     foreach (i, example; examples)
     {
         auto progress = i"[$(i + 1)/$(examples.length)]".text;
-        auto result = executeExample(example);
+        auto result = results[i];
         auto header = formatExampleHeader(example, progress);
         auto outputLines = result.rawOutput.lineSplitter
             .map!(l => l.to!string)
@@ -1104,7 +1210,8 @@ int runDefaultMode(Example[] examples, string mdFile, bool failFast)
 }
 
 /// Verify mode: run examples, display output, and compare against expected output blocks.
-int runVerifyMode(Example[] examples, string mdFile, bool failFast)
+/// `results` holds the pre-computed execution result for each example.
+int runVerifyMode(Example[] examples, ExecutionResult[] results, string mdFile, bool failFast)
 {
     i"Verifying $(examples.length) example(s) from $(mdFile)".text
         .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
@@ -1118,7 +1225,7 @@ int runVerifyMode(Example[] examples, string mdFile, bool failFast)
     {
         auto progress = i"[$(i + 1)/$(examples.length)]".text;
         auto header = formatExampleHeader(example, progress);
-        auto result = executeExample(example);
+        auto result = results[i];
         auto outputLines = result.rawOutput.lineSplitter
             .map!(l => l.to!string)
             .array;
@@ -1224,7 +1331,8 @@ int runVerifyMode(Example[] examples, string mdFile, bool failFast)
 
 /// Update mode: rewrite the markdown file with actual output.
 /// Processes examples in reverse order so line indices remain valid.
-int runUpdateMode(Example[] examples, string mdFile, bool failFast)
+/// `results` holds the pre-computed execution result for each example.
+int runUpdateMode(Example[] examples, ExecutionResult[] results, string mdFile, bool failFast)
 {
     i"Updating $(examples.length) example(s) in $(mdFile)".text
         .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
@@ -1239,7 +1347,7 @@ int runUpdateMode(Example[] examples, string mdFile, bool failFast)
 
     foreach_reverse (i, example; examples)
     {
-        auto result = executeExample(example);
+        auto result = results[i];
 
         if (!result.success)
         {
@@ -1781,7 +1889,16 @@ in (action == "run" || action == "build", "action must be dub run or dub build")
     // even though we run them as a captured subprocess (not a TTY). The colored
     // output flows through `rawOutput` into the failure boxes; `ci` itself
     // always renders styled output, so forcing color here keeps them in sync.
-    auto command = ["dub", action, "--quiet", "--color=always"];
+    // `--temp-build` is what makes concurrent example builds safe: it routes the
+    // build through dub's lock-protected content-addressed cache
+    // (`~/.dub/cache/<pkg>/<ver>/build/<hash>/`, guarded by `db.lock`) and emits
+    // the final artifact into a per-invocation temp folder. Without it dub copies
+    // each dependency's target into its package's *unlocked* in-place build dir
+    // (`~/.dub/packages/expected/*/expected/libexpected.a`,
+    // `libs/base/build/libsparkles_base.a`, …) on every build — so two builds
+    // running at once race to remove/rewrite the same file ("No such file or
+    // directory"). The cache reuses already-built deps, so this stays fast.
+    auto command = ["dub", action, "--quiet", "--color=always", "--temp-build"];
 
     if (repoRoot !is null)
         command ~= ["--root", repoRoot];
