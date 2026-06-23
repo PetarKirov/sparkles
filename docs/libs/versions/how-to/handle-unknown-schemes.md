@@ -85,7 +85,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 same-scheme compare null? false
   3.13.0a1 vs 4.0.0: -1
 cross-scheme compare null? true

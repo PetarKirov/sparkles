@@ -77,7 +77,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 cells [0..1)  a
 cells [1..3)  ❤️
 cells [3..5)  世
@@ -140,7 +140,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 bytes=61  width=1
 bytes=62  width=1
 bytes=ff  width=1
@@ -244,7 +244,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 A + combining acute    U+00C1(w1) -> cell width 1
 flag (RI + RI)         U+1F1FA(w2) U+1F1F8(w2) -> cell width 2
 Devanagari की           U+0915(w1) U+0940(w0) -> cell width 1
@@ -349,7 +349,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 U+0041 LATIN A           width=1
 U+002B PLUS (Sm)         width=1
 U+4E16 CJK (EAW W)       width=2
@@ -395,7 +395,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 A + combining acute    width=1
 CJK U+4E16             width=2
 flag (RI + RI)         width=2
@@ -455,7 +455,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 ╭─────────┬────────┬───────────────┬────────┬─────────────────┬───────────────┬───────────────╮
 │ cluster │ a      │ Á             │ 世     │ 🇺🇸              │ की             │ ❤️            │
 │ cells   │ [0,1)  │ [1,2)         │ [2,4)  │ [4,6)           │ [6,7)         │ [7,9)         │
@@ -508,7 +508,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 heart (bare)                   width=1
 heart + VS16                   width=2
 heart + VS15                   width=1
@@ -590,7 +590,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 PASS  a + acute          ÷ 0061 × 0301 ÷  clusters=[2]
 PASS  CRLF               ÷ 000D × 000A ÷  clusters=[2]
 PASS  CR | a             ÷ 000D ÷ 0061 ÷  clusters=[1, 1]
@@ -627,7 +627,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 cluster width=1  a
 escape  width=0  <esc>
 cluster width=2  世
@@ -675,7 +675,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 CJK @ width 4:
 世界
 世

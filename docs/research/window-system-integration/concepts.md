@@ -153,7 +153,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 scancode  1 -> keysym Escape
 scancode 30 -> keysym a
 scancode 57 -> keysym space
@@ -259,7 +259,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 preferred_scale=120 -> scale=1.0000
 preferred_scale=180 -> scale=1.5000
 preferred_scale= 90 -> scale=0.7500
@@ -296,7 +296,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 wParam=0x00600060 -> dpiX=96 dpiY=96 scale=1.000
 wParam=0x00780078 -> dpiX=120 dpiY=120 scale=1.250
 wParam=0x00C000C0 -> dpiX=192 dpiY=192 scale=2.000
@@ -458,7 +458,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 wheel notch #1
 emitted 1 notch(es), remainder 30/120
 ```

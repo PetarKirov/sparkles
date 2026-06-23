@@ -97,7 +97,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 PASS  ASCII 'A'                        width=1
 PASS  CJK U+4E16                       width=2
 PASS  Fullwidth U+FF21                 width=2

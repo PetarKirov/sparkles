@@ -92,7 +92,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 parse error: unexpectedCharacter at offset 4
 order(a, b): 1
 latest: 2.0.0

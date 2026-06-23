@@ -96,7 +96,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 007 1.5s
 ready after 007 1.5s
 ```

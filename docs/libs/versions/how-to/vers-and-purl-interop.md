@@ -106,7 +106,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 typed as PypiVersion: 3.13.0a1
 type=pypi name=django ver=3.13.0a1
 parseVersAny ok: true

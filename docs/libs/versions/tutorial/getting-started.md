@@ -142,9 +142,7 @@ void main()
 }
 ```
 
-Run it with `dub run --single tour.d`. You will see:
-
-```
+```ansi
 parsed: 1.4.2
 rc < release: true
   1.2.0-beta

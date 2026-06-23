@@ -50,7 +50,7 @@ void main()
 [ {{_}} | Δt {{_}} | Δtᵢ {{_}} | WRN | {{_}} ]: Latency spike: 230ms on db-01.prod
 -->
 
-```[Output:ansi]
+```ansi
 [90m[ 15:22:40[39m | Δt [33m46.7µs[39m | Δtᵢ [33m46.7µs[39m | [90mTRC[39m | [2mbase_core_logger.d:14[22m ]: [1mApplication starting up[22m
 [90m[ 15:22:40[39m | Δt [33m119.7µs[39m | Δtᵢ [33m72.9µs[39m | [32mINF[39m | [2mbase_core_logger.d:15[22m ]: [1mListening on port [32m8080[39m[22m
 [90m[ 15:22:40[39m | Δt [33m167.3µs[39m | Δtᵢ [33m47.5µs[39m | [33mWRN[39m | [2mbase_core_logger.d:16[22m ]: [1mDisk usage above [33m80%[39m[22m

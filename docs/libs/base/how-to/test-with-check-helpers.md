@@ -56,7 +56,7 @@ void main()
 }
 ```
 
-```[Output:ansi]
+```ansi
 [32m✓ All tests passed successfully![39m
 ```
 

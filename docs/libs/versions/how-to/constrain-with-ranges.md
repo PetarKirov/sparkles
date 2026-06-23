@@ -96,7 +96,7 @@ void main()
 }
 ```
 
-```[Output]
+```ansi
 1.5.0 in >=1.2.0 <2.0.0: true
 2.0.0 in >=1.2.0 <2.0.0: false
 1.9.9 in ^1.2.3: true

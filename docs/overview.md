@@ -74,6 +74,12 @@ void main()
 }
 ```
 
+```ansi
+[31mError: [39mSomething went wrong
+[32mSuccess: [39mOperation completed
+[33m[1mWarning[22m[39m
+```
+
 ### Compile-Time Builder
 
 For CTFE-compatible styling, use `stylizedTextBuilder`:
@@ -95,6 +101,10 @@ void main()
 }
 ```
 
+```ansi
+[31m[4m[1mImportant[22m[24m[39m
+```
+
 ## Styled Templates (IES)
 
 The `styled_template` module provides a template syntax for applying terminal styles using D's Interpolated Expression Sequences (IES).
@@ -112,6 +122,10 @@ void main()
     int cpu = 75;
     styledWriteln(i"CPU: {red $(cpu)%} Status: {green OK}");
 }
+```
+
+```ansi
+CPU: [31m75%[39m Status: [32mOK[39m
 ```
 
 ### Syntax Reference
@@ -172,6 +186,14 @@ void main()
 }
 ```
 
+```ansi
+[1m[3m[32mBold italic green text[39m[23m[22m
+[1mBold [31mbold+red[39m back to bold[22m
+[1m[31mBoth [39mjust bold[31m both again[39m[22m
+[2mmain.d:[22m [31m[1m3 errors[22m[39m
+Use {style text} syntax
+```
+
 ## Pretty Printing
 
 The `prettyprint` module formats any D type with syntax highlighting.
@@ -196,6 +218,11 @@ void main()
     int[] numbers = [1, 2, 3, 4, 5];
     writeln(prettyPrint(numbers, PrettyPrintOptions!void(useColors: false)));
 }
+```
+
+```ansi
+[35mServer[39m([96mhost[39m: [32m"localhost"[39m, [96mport[39m: [34m8080[39m, [96mssl[39m: [33mtrue[39m)
+[1, 2, 3, 4, 5]
 ```
 
 ### PrettyPrintOptions
@@ -259,14 +286,11 @@ void main()
 }
 ```
 
-Output:
-
-```text
+```ansi
 ╭────────┬─────────╮
-│ Name   │ Status  │
-├────────┼─────────┤
-│ web-01 │ Running │
-│ web-02 │ Stopped │
+│ [1mName[22m   │ [1mStatus[22m  │
+│ web-01 │ [32mRunning[39m │
+│ web-02 │ [31mStopped[39m │
 ╰────────┴─────────╯
 ```
 
@@ -289,9 +313,7 @@ void main()
 }
 ```
 
-Output:
-
-```text
+```ansi
 ╭──╼ My Box ╾───╮
 │ Line 1        │
 │ Line 2        │
@@ -318,9 +340,7 @@ void main()
 }
 ```
 
-Output:
-
-```text
+```ansi
 ╭──╼ Status ╾──────────────╮
 │ Processing...            │
 ╰──╼ Press Q to cancel ╾───╯
@@ -352,11 +372,8 @@ void main()
 }
 ```
 
-Output:
-
-```text
+```ansi
 ── Configuration ──
-
 ══════════════════════════════
          Main Section
 ══════════════════════════════
@@ -384,6 +401,11 @@ void main()
     // Styled clickable link (blue text)
     writeln(oscLink(text: "D Language", uri: "https://dlang.org", style: Style.blue));
 }
+```
+
+```ansi
+]8;;https://example.comExample]8;;
+]8;;https://dlang.org[34mD Language[39m]8;;
 ```
 
 #### API
@@ -432,14 +454,20 @@ void main()
 }
 ```
 
-Output:
+<!-- md-example-expected
+[ {{_}} | Δt {{_}} | Δtᵢ {{_}} | INF | loggerdemo.d:13 ]: Listening on port 8080
+[ {{_}} | Δt {{_}} | Δtᵢ {{_}} | WRN | loggerdemo.d:14 ]: Disk usage above 80%
+[ {{_}} | Δt {{_}} | Δtᵢ {{_}} | ERR | loggerdemo.d:15 ]: Connection to database lost
+[ {{_}} | Δt {{_}} | Δtᵢ {{_}} | CRT | loggerdemo.d:16 ]: Out of memory
+[ {{_}} | Δt {{_}} | Δtᵢ {{_}} | INF | loggerdemo.d:19 ]: Reconnected to db-01.prod:5432
+-->
 
-```text
-[ 14:32:01 | Δt 0ms   | Δtᵢ 0ms   | INF | app.d:17 ]: Listening on port 8080
-[ 14:32:01 | Δt 3ms   | Δtᵢ 3ms   | WRN | app.d:18 ]: Disk usage above 80%
-[ 14:32:01 | Δt 5ms   | Δtᵢ 2ms   | ERR | app.d:19 ]: Connection to database lost
-[ 14:32:01 | Δt 5ms   | Δtᵢ 0ms   | CRT | app.d:20 ]: Out of memory
-[ 14:32:01 | Δt 12ms  | Δtᵢ 7ms   | INF | app.d:23 ]: Reconnected to db-01.prod:5432
+```ansi
+[90m[ 22:24:12[39m | Δt [33m92.8µs[39m | Δtᵢ [33m92.8µs[39m | [32mINF[39m | [2mloggerdemo.d:13[22m ]: [1mListening on port 8080[22m
+[90m[ 22:24:12[39m | Δt [33m185.2µs[39m | Δtᵢ [33m92.4µs[39m | [33mWRN[39m | [2mloggerdemo.d:14[22m ]: [1mDisk usage above 80%[22m
+[90m[ 22:24:12[39m | Δt [33m225.5µs[39m | Δtᵢ [33m40.3µs[39m | [31mERR[39m | [2mloggerdemo.d:15[22m ]: [1mConnection to database lost[22m
+[90m[ 22:24:12[39m | Δt [33m266.7µs[39m | Δtᵢ [33m41.1µs[39m | [1m[31mCRT[39m[22m | [2mloggerdemo.d:16[22m ]: [1mOut of memory[22m
+[90m[ 22:24:12[39m | Δt [33m338.0µs[39m | Δtᵢ [33m71.3µs[39m | [32mINF[39m | [2mloggerdemo.d:19[22m ]: [1mReconnected to db-01.prod:5432[22m
 ```
 
 ### Features
@@ -484,6 +512,11 @@ void main()
     writeln(buf[]);  // "Hello World"
     writeln("On heap: ", buf.onHeap);  // false
 }
+```
+
+```ansi
+Hello World
+On heap: false
 ```
 
 ### Key Features
