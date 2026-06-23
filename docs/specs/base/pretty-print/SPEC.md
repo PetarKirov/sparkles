@@ -1,11 +1,12 @@
-# `sparkles:base` prettyPrint — Specification
+# `sparkles.base.prettyprint` — value pretty-printing & extension specification
 
-_Audience: developers and coding agents building against the pretty-printer.
-This document is normative and self-contained — it states what `prettyPrint`
-provides and how to extend it, not why. For the delivery plan and milestone
-orchestration, see [PLAN.md](./PLAN.md). The extension model follows the
-repo's [Design by Introspection guidelines](../../../guidelines/design-by-introspection-01-guidelines.md).
-The implementation is [`libs/base/src/sparkles/base/prettyprint.d`](../../../../libs/base/src/sparkles/base/prettyprint.d)._
+_Audience: developers and coding agents building against `sparkles:base`. This
+document is normative and self-contained — it states what `prettyPrint` provides
+and how to extend it, not why. For the delivery plan and milestone orchestration,
+see [PLAN.md](./PLAN.md); the extension model follows the repo's
+[Design by Introspection guidelines](../../../guidelines/design-by-introspection-01-guidelines.md);
+for the library overview see [`sparkles:base`](../../../libs/base/index.md). The
+implementation is [`libs/base/src/sparkles/base/prettyprint.d`](../../../../libs/base/src/sparkles/base/prettyprint.d)._
 
 ## 1. Overview
 
@@ -57,11 +58,11 @@ assert(prettyPrint(Point(1, 2), PrettyPrintOptions(useColors: false))
 
 ## 2. Module and public API surface
 
-| Identifier      | Value                                               |
-| --------------- | --------------------------------------------------- |
-| Dub sub-package | `sparkles:base`                                     |
-| Module          | `sparkles.base.prettyprint`                         |
-| Source          | `libs/base/src/sparkles/base/prettyprint.d`         |
+| Identifier      | Value                                       |
+| --------------- | ------------------------------------------- |
+| Dub sub-package | `sparkles:base`                             |
+| Module          | `sparkles.base.prettyprint`                 |
+| Source          | `libs/base/src/sparkles/base/prettyprint.d` |
 
 | Public symbol                                                       | Role                                                                |
 | ------------------------------------------------------------------- | ------------------------------------------------------------------- |
@@ -201,12 +202,17 @@ branches (no hook required), inserted before the generic struct/class branch
   probes a small set of common scalar types and otherwise prints the dynamic
   type name. This is a documented limitation, not a guarantee.
 
-- **Raw `union`** has no discriminant. `prettyPrint` **never reads a union
-  member** (an inactive member with indirections would yield a garbage pointer
-  that the printer could dereference). It renders the type name, a
-  `/* union */` marker, and the member **names and declared types** from
-  compile-time introspection only — e.g. `U /* union */ { i: int, f: float }`.
-  This branch is `@safe pure nothrow @nogc`.
+- **Raw `union`** renders the type name, a `/* union */` marker, and the member
+  **names and declared types** from compile-time introspection only — e.g.
+  `U /* union */ { i: int, f: float }`. This branch is `@safe pure nothrow @nogc`.
+
+> [!IMPORTANT]
+> **A raw `union` member is never read.** A union has no discriminant, so the
+> printer cannot know which member is active; reading a non-active member that
+> holds an indirection (pointer, slice, class reference) yields a garbage value the
+> printer would then follow — a crash, and not `@safe`. The union branch therefore
+> consults only compile-time field names and declared types, never a member's
+> value — which is exactly what lets it stay `@safe pure nothrow @nogc`.
 
 Detection uses import-free traits so `std.variant` is not pulled into module
 scope for consumers that never use it.
@@ -289,6 +295,21 @@ depth guard
   → static assert(false, "unsupported type")
 ```
 
+As a decision flow — first match wins:
+
+```mermaid
+flowchart TD
+  V["value of type T at depth d"] --> DG{"d > opt.maxDepth?"}
+  DG -- yes --> DOT["write '...'; stop"]
+  DG -- no --> RH{"render hook?<br/>hasRenderHook!(Hook, T, Printer)"}
+  RH -- yes --> HK["hook.render(value, this, d)<br/>(full override)"]
+  RH -- no --> PT{"prettyPrintTo?<br/>hasPrettyPrintTo!(T, Printer)"}
+  PT -- yes --> SELF["value.prettyPrintTo(this, d)<br/>(the type renders itself)"]
+  PT -- no --> BI["built-in fallback:<br/>null / enum / leaf / pointer /<br/>Tuple / AA / array / struct or class"]
+```
+
+_Illustrative; the precedence list above and the prose below are normative._
+
 When the printer's `Hook` is `NullHook` (no `canRender`) and the value's type has
 no `prettyPrintTo`, both capability traits are `false` and control falls through to
 the unchanged built-in fallback. The new branches are dead `static if` code → **the
@@ -319,6 +340,17 @@ whole point of keeping them separate (§3). Traversal-scoped scratch that is **n
 type-specific — a cycle visited-set, an indentation counter — is naturally a field
 of the `PrettyPrinter` itself (a built-in capability) rather than a hook; the event
 hooks (§6.8) build on that.
+
+> [!NOTE]
+> **Why not embed the hook in the options?** An earlier design carried the hook
+> inside `PrettyPrintOptions` and passed the options `in` (const). D's `const` is
+> transitive, so a stateful hook's session was `const` too and could not mutate
+> (force a Nix thunk, update a visited-set) — the only escape was to launder
+> `const` away by storing the session's address as a `size_t` and reconstructing a
+> mutable pointer through a `@trusted` accessor. That was a smell: it conflated
+> read-only **config** with a mutable **session**. The `PrettyPrinter` object
+> separates them — config stays `in`/const, the session is a mutable field — so the
+> laundering disappears.
 
 ### 6.6 Composition — `CombineRenderHooks`
 
@@ -379,10 +411,28 @@ argument is the `PrettyPrinter!(Writer, Hook)` the call runs against:
 | `hasRenderField!(Hook, T, member)` | `Hook.canRenderField!(T, member)` and `renderField` compile |
 | `hasOnEnter!(Hook, T, Printer)`    | `Hook.onEnter(value, p, depth)` compiles                    |
 
-`hasRenderHook` is **staged** (it checks `canRender!T` _before_ probing
-`render`) so `render`'s body is not semantically analyzed for types the hook
-rejects — important under `-allinst` and to keep an impure `render` from
-affecting unrelated instantiations.
+> [!NOTE]
+> `hasRenderHook` is **staged**: it checks `canRender!T` _before_ probing `render`,
+> so `render`'s body is not semantically analyzed for types the hook rejects. This
+> matters under `-allinst` (which instantiates every template body) and keeps an
+> impure `render` from infecting the attribute inference of unrelated
+> instantiations.
+
+### 6.10 Capability summary
+
+Every customization point, its home, its detection trait, its DbI precedence tier,
+and the milestone (PLAN) that lands it:
+
+| Optional primitive             | Provided on         | Detection trait     | Precedence (DbI §5.4) | Lands in |
+| ------------------------------ | ------------------- | ------------------- | --------------------- | -------- |
+| `canRender` / `render`         | the hook            | `hasRenderHook`     | full override (1st)   | M1       |
+| `prettyPrintTo`                | the value's type    | `hasPrettyPrintTo`  | full override (2nd)   | M1       |
+| `canRenderField`/`renderField` | the hook            | `hasRenderField`    | full override (field) | M2       |
+| `onEnter` / `onLeave`          | the hook            | `hasOnEnter`        | event hook            | M2       |
+| `writeSourceUri`               | the hook (`static`) | `hasWriteSourceUri` | n/a (URI scheme, §7)  | shipped  |
+
+Absence of any primitive falls back to the built-in renderer; `NullHook` provides
+none — the byte-identical baseline (§6.4).
 
 ## 7. OSC 8 hyperlinks and source URIs
 
@@ -501,3 +551,20 @@ external context.
 - **Runtime editor-scheme source links.** Runtime source positions link via
   `file://` only; reusing the editor-scheme table (`vscode://`, …) for runtime
   positions is a later refinement.
+
+## 11. References
+
+- **Design by Introspection** — the repo's
+  [intro](../../../guidelines/design-by-introspection-00-intro.md) and
+  [standard](../../../guidelines/design-by-introspection-01-guidelines.md)
+  (shell-with-hooks, capability traits, precedence order, the `void`-hook baseline).
+- **Prior art for hook protocols** — Phobos
+  [`std.checkedint`](https://dlang.org/phobos/std_checkedint.html) (layered hook
+  fallback) and [`expected`](https://tchaloupka.github.io/expected/expected.html)
+  (documented hook table, predefined hooks).
+- **Implementation** — `libs/base/src/sparkles/base/prettyprint.d`; the OSC 8 URI
+  hooks live in `sparkles.base.source_uri`. The delivery plan is [PLAN.md](./PLAN.md).
+- **Sibling spec** — [`sparkles.base.text`](../text/index.md), whose
+  executable-snippet standard this document follows (see PLAN's executable-spec
+  discipline). The Nix `Value` consumer of §8.3 is specified in `sparkles:nix`'s
+  own docs.
