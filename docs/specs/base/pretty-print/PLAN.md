@@ -28,6 +28,15 @@ M1 is the load-bearing milestone (the dispatch change + compatibility
 contract). M3 is independent of the hooks and may land in any order. M4–M5
 consume M1 from `sparkles:nix`.
 
+**Executable-spec discipline.** The SPEC follows the
+[`sparkles.base.text` standard](../text/index.md): each section earns a runnable
+`#!/usr/bin/env dub` + `[Output]` snippet that executes the real library, verified
+by `verify-md-examples`. Because the API is unbuilt at M0, the SPEC's code blocks
+start **illustrative**; **as each milestone lands the code, convert its sections'
+snippets to executable, CI-verified examples** — M1 → §1 (overview) + §4 (built-in
+rendering) + the render-hook / `prettyPrintTo` examples; M3 → §5 (sum/union/variant);
+M4 → §8.3 (Nix). A milestone is not done until its sections' examples run green.
+
 ## 2. Per-milestone detail
 
 ### M0 — Spec
@@ -163,6 +172,8 @@ built-in aggregate path).
       `«error»` on a throwing attr, colors auto-off when piped.
 - [ ] `version(NixSourceLocations)` build compiles against a patched Nix and its
       gated tests pass; stock-Nix builds skip them.
+- [ ] Each landed milestone's SPEC sections carry runnable `[Output]` examples
+      that pass `nix run .#ci -- --verify` (the executable-spec standard).
 - [ ] New files `git add`-ed before any `nix develop`/flake build.
 - [ ] Atomic commits per AGENTS.md: `docs(base)` spec, then `feat(base)`
       per milestone, then `feat(nix)`/`feat(nix-eval)`.
