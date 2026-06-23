@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Setup Nix
-        uses: metacraft-labs/nixos-modules/.github/setup-nix@main
+        uses: ./.github/actions/setup-nix
         with:
           push-to-cache: true
           nix-github-token: ${{ github.token }}
@@ -30,10 +30,10 @@ jobs:
           substituters: ${{ vars.SUBSTITUTERS }}
           devshell: pre-commit
           use-nix-cache: true
-          nix-cache-key: nix-${{ runner.os }}-lint-${{ hashFiles('**/flake.lock') }}
+          nix-cache-key: nix-v2-${{ runner.os }}-lint-${{ hashFiles('**/flake.lock') }}
           nix-cache-restore-prefixes: |
-            nix-${{ runner.os }}-lint-
-            nix-${{ runner.os }}-
+            nix-v2-${{ runner.os }}-lint-
+            nix-v2-${{ runner.os }}-
 
       - name: Cache lychee results
         uses: actions/cache@v5

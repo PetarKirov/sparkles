@@ -39,7 +39,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Nix
-        uses: metacraft-labs/nixos-modules/.github/setup-nix@main
+        uses: ./.github/actions/setup-nix
         with:
           push-to-cache: true
           cachix-cache: ${{ vars.CACHIX_CACHE }}
@@ -48,10 +48,10 @@ jobs:
           substituters: ${{ vars.SUBSTITUTERS }}
           devshell: default
           use-nix-cache: true
-          nix-cache-key: nix-${{ runner.os }}-${{ matrix.DC }}-${{ hashFiles('**/flake.lock') }}
+          nix-cache-key: nix-v2-${{ runner.os }}-${{ matrix.DC }}-${{ hashFiles('**/flake.lock') }}
           nix-cache-restore-prefixes: |
-            nix-${{ runner.os }}-${{ matrix.DC }}-
-            nix-${{ runner.os }}-
+            nix-v2-${{ runner.os }}-${{ matrix.DC }}-
+            nix-v2-${{ runner.os }}-
 
       - name: Cache DUB packages
         uses: actions/cache@v5

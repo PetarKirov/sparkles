@@ -1,0 +1,228 @@
+name: Setup Nix
+description: Installs Nix, configures binary caches, and optionally builds/activates a development environment using direnv or a specific Nix devShell.
+
+inputs:
+  push-to-cache:
+    description: Whether to use cachix or not
+    type: boolean
+    required: false
+    default: false
+  cachix-cache:
+    description: The name of the cachix cache to use
+    required: false
+    default: ''
+  cachix-auth-token:
+    description: Cachix auth token
+    required: false
+    default: ''
+  trusted-public-keys:
+    description: Trusted public keys
+    required: false
+    default: ''
+  substituters:
+    description: Substituters
+    required: false
+    default: ''
+  nix-github-token:
+    description: GitHub token to add as access-token in nix.conf
+    default: ''
+    required: false
+  nix-gitlab-token:
+    description: GitLab token to add as access-token in nix.conf
+    default: ''
+    required: false
+  nix-gitlab-domain:
+    description: GitLab domain to add as access-token in nix.conf
+    default: 'gitlab.com'
+    required: false
+  nix-version:
+    description: Nix version to install
+    default: ''
+    required: false
+  use-direnv:
+    description: Whether to use direnv to load the environment
+    type: boolean
+    required: false
+    default: false
+  devshell:
+    description: The name of the devShell to build and export to GITHUB_ENV (e.g. 'default' for .#devShells.default)
+    required: false
+    default: ''
+  use-nix-cache:
+    description: Whether to use nix-community/cache-nix-action to cache /nix/store in GHA (opt-in)
+    type: boolean
+    required: false
+    default: false
+  nix-cache-key:
+    description: The primary key to use for the Nix GHA cache
+    required: false
+    default: nix-${{ runner.os }}-${{ hashFiles('**/flake.lock') }}
+  nix-cache-restore-prefixes:
+    description: The fallback restore prefixes for the Nix GHA cache
+    required: false
+    default: |
+      nix-${{ runner.os }}-
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Log GH API rate limits
+      env:
+        GH_TOKEN: ${{ github.token }}
+      shell: bash
+      run: |
+        echo "::group::GH API rate limits"
+        gh api /rate_limit | jq || true
+        echo "::endgroup::"
+
+    - name: Check if Nix is available
+      id: check-nix
+      shell: bash
+      run: |
+        if command -v nix &>/dev/null; then
+          echo "has_nix=true" >> "$GITHUB_OUTPUT"
+          echo "Nix is already installed: $(nix --version)"
+        else
+          echo "has_nix=false" >> "$GITHUB_OUTPUT"
+          echo "Nix is not installed, will install it"
+        fi
+
+    - name: Install Nix
+      uses: cachix/install-nix-action@v31
+      if: steps.check-nix.outputs.has_nix != 'true'
+      with:
+        install_url: ${{ inputs.nix-version != '' && format('https://releases.nixos.org/nix/nix-{0}/install', inputs.nix-version) || '' }}
+        extra_nix_config: |
+          auto-optimise-store = false
+
+    - name: Configure Nix
+      shell: bash
+      run: |
+        mkdir -p $HOME/.config/nix
+
+        cat << EOF > "$HOME/.config/nix/nix.conf"
+          ${{
+            (inputs.nix-github-token != '' && inputs.nix-gitlab-token != '' && inputs.nix-gitlab-domain != '' &&
+              format('access-tokens = github.com={0} {1}=PAT:{2}', inputs.nix-github-token, inputs.nix-gitlab-domain, inputs.nix-gitlab-token)) ||
+            (inputs.nix-github-token != '' &&
+              format('access-tokens = github.com={0}', inputs.nix-github-token)) ||
+            (inputs.nix-gitlab-token != '' && inputs.nix-gitlab-domain != '' &&
+              format('access-tokens = {0}=PAT:{1}', inputs.nix-gitlab-domain, inputs.nix-gitlab-token)) ||
+            ''
+          }}
+
+          auto-optimise-store = false
+          fallback = true
+          download-attempts = 2
+          connect-timeout = 5
+          narinfo-cache-negative-ttl = 120
+          allow-import-from-derivation = true
+
+          substituters = https://cache.nixos.org ${{inputs.substituters}}
+          trusted-public-keys = cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY= ${{inputs.trusted-public-keys}}
+          netrc-file = $HOME/.config/nix/netrc
+        EOF
+
+        if [ -f /etc/nix/nix.conf ]; then
+          echo "auto-optimise-store = false" | sudo tee -a /etc/nix/nix.conf
+        fi
+
+        touch "$HOME/.config/nix/netrc"
+        chmod 0600 "$HOME/.config/nix/netrc"
+        if [[ -n "${{ inputs.cachix-cache }}" && -n "${{ inputs.cachix-auth-token }}" ]]; then
+          cat << EOF >> "$HOME/.config/nix/netrc"
+          machine ${{ inputs.cachix-cache }}.cachix.org password ${{ inputs.cachix-auth-token }}
+        EOF
+        fi
+
+    - uses: cachix/cachix-action@v15
+      if: ${{ fromJSON(inputs.push-to-cache || 'false') && inputs.cachix-cache != '' && inputs.cachix-auth-token != '' }}
+      with:
+        name: ${{ inputs.cachix-cache }}
+        authToken: ${{ inputs.cachix-auth-token }}
+
+    - name: Restore/Save Nix Store GHA Cache
+      uses: nix-community/cache-nix-action@v7
+      if: ${{ fromJSON(inputs.use-nix-cache || 'false') }}
+      with:
+        primary-key: ${{ inputs.nix-cache-key }}
+        restore-prefixes-first-match: ${{ inputs.nix-cache-restore-prefixes }}
+
+    # Resolve which flake devShell to build/activate, validating the inputs.
+    # In `devshell` mode the ref is given directly; in `use-direnv` mode we read
+    # it from the repo's .envrc when it loads a flake (`use flake [ref]`,
+    # defaulting to the '.' default devShell). The output `flake-ref` stays
+    # empty for non-flake .envrc files, which we cannot pre-build generically.
+    - name: Determine the devShell to build
+      id: determine-devshell
+      if: ${{ fromJSON(inputs.use-direnv || 'false') || inputs.devshell != '' }}
+      shell: bash
+      run: |
+        if [ "${{ inputs.devshell }}" != "" ] && [ "${{ inputs.use-direnv }}" == "true" ]; then
+          echo "Error: 'devshell' and 'use-direnv' are mutually exclusive."
+          exit 1
+        fi
+
+        flake_ref=""
+        if [ "${{ inputs.devshell }}" != "" ]; then
+          flake_ref=".#${{ inputs.devshell }}"
+        elif [ "${{ inputs.use-direnv }}" == "true" ]; then
+          if [ ! -f .envrc ]; then
+            echo "Error: 'use-direnv' is enabled but .envrc does not exist."
+            exit 1
+          fi
+          if grep -qE '^[[:space:]]*use[[:space:]]+flake' .envrc; then
+            flake_ref="$(sed -n 's/^[[:space:]]*use[[:space:]][[:space:]]*flake[[:space:]]*//p' .envrc | head -n1)"
+            flake_ref="${flake_ref:-.}"
+          fi
+        fi
+
+        echo "flake-ref=$flake_ref" >> "$GITHUB_OUTPUT"
+        echo "Resolved devShell flake ref: '${flake_ref:-<none>}'"
+
+    # Build the devShell explicitly so a build/eval failure aborts the job here
+    # with a clear error. This is necessary because direnv's `use flake`
+    # swallows such failures: it runs `eval "$(nix print-dev-env ...)"`, so when
+    # the devShell fails to build the substitution is empty, `eval ""` succeeds,
+    # and the later `direnv export` still exits 0 while leaving $GITHUB_ENV
+    # without the devShell's PATH. The action would then report success and the
+    # real failure would only surface in a later step as an obscure
+    # "<tool>: command not found" (exit 127). `nix print-dev-env` propagates the
+    # build/eval exit code, so we use it to fail fast.
+    - name: Build the Nix DevShell
+      if: ${{ steps.determine-devshell.outputs.flake-ref != '' }}
+      shell: bash
+      run: |
+        echo "::group::Building Nix DevShell"
+        nix --extra-experimental-features "nix-command flakes" \
+          print-dev-env "${{ steps.determine-devshell.outputs.flake-ref }}" >/dev/null
+        echo "::endgroup::"
+
+    # Generate the .envrc (in `devshell` mode) or use the repo's existing one
+    # (in `use-direnv` mode), then export the devShell environment to
+    # $GITHUB_ENV via direnv so subsequent steps run inside it.
+    - name: Activate the Nix DevShell
+      if: ${{ fromJSON(inputs.use-direnv || 'false') || inputs.devshell != '' }}
+      shell: bash
+      run: |
+        direnv() { nix run --inputs-from . nixpkgs#direnv -- "$@"; }
+
+        if [ "${{ inputs.devshell }}" != "" ]; then
+          # Function to restore .envrc
+          restore_envrc() {
+            if git ls-files --error-unmatch .envrc > /dev/null 2>&1; then
+              git restore .envrc
+            else
+              rm -f .envrc
+            fi
+          }
+          # Set trap to restore .envrc on exit (success or failure)
+          trap restore_envrc EXIT
+
+          echo "use flake .#${{ inputs.devshell }}" > .envrc
+        fi
+
+        direnv allow .
+        echo "::group::Exporting Nix DevShell to GITHUB_ENV"
+        direnv export gha >> "$GITHUB_ENV"
+        echo "::endgroup::"
