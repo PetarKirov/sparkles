@@ -87,14 +87,8 @@ onMounted(async () => {
 <template>
   <div class="tcv">
     <div class="tcv-controls">
-      <input
-        v-model="input"
-        class="tcv-input"
-        spellcheck="false"
-        @input="update"
-        aria-label="text to measure"
-      />
       <div class="tcv-presets">
+        Examples:
         <button
           v-for="p in presets"
           :key="p.label"
@@ -107,6 +101,13 @@ onMounted(async () => {
           {{ p.label }}
         </button>
       </div>
+      <input
+        v-model="input"
+        class="tcv-input"
+        spellcheck="false"
+        @input="update"
+        aria-label="text to measure"
+      />
     </div>
 
     <p v-if="status" class="tcv-status">{{ status }}</p>
@@ -161,6 +162,7 @@ onMounted(async () => {
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
+  align-items: center;
 }
 .tcv-preset {
   font-size: 0.8rem;
