@@ -277,21 +277,6 @@ export default withMermaid(
           collapsed: true,
           items: [
             {
-              text: 'core-cli: prettyPrint',
-              collapsed: false,
-              items: [
-                {
-                  text: 'Specification',
-                  link: '/specs/core-cli/pretty-print/SPEC',
-                },
-                {
-                  text: 'Delivery Plan',
-                  link: '/specs/core-cli/pretty-print/PLAN',
-                },
-              ],
-            },
-
-            {
               text: 'Base',
               collapsed: false,
               items: [
@@ -306,6 +291,20 @@ export default withMermaid(
                     {
                       text: 'Conformance test cases',
                       link: '/specs/base/text/test-cases',
+                    },
+                  ],
+                },
+                {
+                  text: 'Pretty-print',
+                  collapsed: false,
+                  items: [
+                    {
+                      text: 'Specification',
+                      link: '/specs/base/pretty-print/SPEC',
+                    },
+                    {
+                      text: 'Delivery Plan',
+                      link: '/specs/base/pretty-print/PLAN',
                     },
                   ],
                 },
