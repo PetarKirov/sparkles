@@ -35,6 +35,11 @@ insert_final_newline = unset
 [*.md]
 indent_size = unset
 
+# Also disable charset checking for markdown files in `docs/` as they can
+# contain ```ansi code blocks with raw ANSI escape codes (non-printable chars)
+[docs/**.md]
+charset = unset
+
 # The Make deep-dive embeds real Makefile recipes in fenced code blocks, and
 # Make requires literal tabs — so disable indent-style checking for that file.
 [docs/research/monorepo-tooling/make/index.md]
