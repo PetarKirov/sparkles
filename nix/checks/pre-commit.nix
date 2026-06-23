@@ -38,6 +38,47 @@ in
           '';
         };
 
+      # `nix fmt` runs prek, but only the hooks that *rewrite* files — formatting
+      # is the job, not linting. Checkers (editorconfig-checker, lychee,
+      # verify-md-examples, the `check-*`/`detect-*` family) and generators
+      # (gen-text-svg) are deliberately excluded; they run on commit, not on
+      # `nix fmt`. Defining a concrete formatter also resolves flake-parts'
+      # heuristic, which otherwise can't prove `formatter` is null for the custom
+      # `systems` input and emits a broken `formatter.<system>` output.
+      #
+      # Note: like `prek`/`pre-commit` itself, this exits non-zero when a hook
+      # reformats a file; re-run until clean. Pass paths to format a subset.
+      formatter =
+        let
+          inherit (config.pre-commit.settings) package configFile;
+          formattingHooks = [
+            "nixfmt"
+            "prettier"
+            "fix-markdown-reference-links"
+            "trailing-whitespace"
+            "end-of-file-fixer"
+            "file-contents-sorter"
+            "fix-byte-order-marker"
+            "pretty-format-json"
+            "mixed-line-ending"
+          ];
+        in
+        pkgs.writeShellApplication {
+          name = "sparkles-fmt";
+          runtimeInputs = [
+            package
+            pkgs.git
+          ];
+          text = ''
+            hooks=(${lib.concatStringsSep " " formattingHooks})
+            if [ "$#" -eq 0 ]; then
+              exec prek run --config ${configFile} --all-files "''${hooks[@]}"
+            else
+              exec prek run --config ${configFile} "''${hooks[@]}" --files "$@"
+            fi
+          '';
+        };
+
       # impl: https://github.com/cachix/git-hooks.nix/blob/master/flake-module.nix
       pre-commit = {
         # Disable `checks` flake output
