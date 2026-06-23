@@ -1,4 +1,4 @@
-# `sparkles:core-cli` prettyPrint — Delivery Plan
+# `sparkles:base` prettyPrint — Delivery Plan
 
 _Audience: contributors implementing the extension model. This document is
 execution-only — milestones, verification, and risks. For the desired-state
@@ -9,7 +9,7 @@ The work generalizes `prettyPrint`'s latent `Hook` policy (today only a
 stateless source-URI writer) into a full DbI shell-with-hooks, adds built-in
 rendering for the standard tagged-union types, and lands Nix value rendering as
 the first non-trivial consumer. Each milestone ends green: it compiles,
-`dub test :core-cli` (and from M4, `dub test :nix` in the devshell) passes, and
+`dub test :base` (and from M4, `dub test :nix` in the devshell) passes, and
 the **byte-identical-when-no-hook** contract (SPEC §6.4) holds — guarded by a
 regression test added in M1.
 
@@ -33,12 +33,12 @@ consume M1 from `sparkles:nix`.
 ### M0 — Spec
 
 Author `SPEC.md` (done) + this `PLAN.md`, matching the house style of
-`docs/specs/{versions,nix}/`. **Reviewed before implementation.** Register the
-new `docs/specs/core-cli/` area; no code yet.
+`docs/specs/{versions,nix}/`. **Reviewed before implementation.** Lives under the
+existing `docs/specs/base/` area (alongside `base/text/`); no code yet.
 
 ### M1 — The PrettyPrinter object + core hooks (the heart)
 
-In `libs/core-cli/src/sparkles/core_cli/prettyprint.d`:
+In `libs/base/src/sparkles/base/prettyprint.d`:
 
 1. **Reify the shell.** Turn the free-function renderer into a
    `struct PrettyPrinter(Writer, Hook = NullHook)` owning the wrapped writer,
@@ -57,9 +57,10 @@ In `libs/core-cli/src/sparkles/core_cli/prettyprint.d`:
 4. **Detemplate the config.** Remove `PrettyPrintOptions`' `SourceUriHook` param;
    move the URI-scheme capability onto the printer's `Hook` (`writeTypeName` reads
    `Hook.writeSourceUri`). Migrate the ~25 `PrettyPrintOptions!void(...)` /
-   `PrettyPrintOptions!(SchemeHook!"…")(...)` call sites (incl. `examples/box.d` and
-   the OSC tests): `!void` → drop the arg; a scheme hook → pass it as the
-   printer/free-fn `hook`. **Output unchanged** (the byte-identical contract is
+   `PrettyPrintOptions!(SchemeHook!"…")(...)` call sites — across `libs/base`'s
+   tests + `examples/prettyprint.d`, the OSC tests, and downstream consumers like
+   `libs/core-cli`'s `box.d`: `!void` → drop the arg; a scheme hook → pass it as
+   the printer/free-fn `hook`. **Output unchanged** (the byte-identical contract is
    about output, not source).
 5. **Inline guard.** Gate the single-line attempts in
    `printAA`/`printRange`/`printAggregate` with `static if (!anyChildRenderedByHook!(Hook, T))`
@@ -151,7 +152,7 @@ built-in aggregate path).
 
 ## 3. Verification checklist
 
-- [ ] `dub test :core-cli` green, including `prettyPrint.hook.void.baseline`
+- [ ] `dub test :base` green, including `prettyPrint.hook.void.baseline`
       (byte-identical legacy output) and the existing 23 tests unchanged.
 - [ ] `static assert` detection tests cover positive / negative /
       signature-mismatch for each capability trait.
@@ -163,7 +164,7 @@ built-in aggregate path).
 - [ ] `version(NixSourceLocations)` build compiles against a patched Nix and its
       gated tests pass; stock-Nix builds skip them.
 - [ ] New files `git add`-ed before any `nix develop`/flake build.
-- [ ] Atomic commits per AGENTS.md: `docs(core-cli)` spec, then `feat(core-cli)`
+- [ ] Atomic commits per AGENTS.md: `docs(base)` spec, then `feat(base)`
       per milestone, then `feat(nix)`/`feat(nix-eval)`.
 
 ## 4. Workflow orchestration
@@ -182,7 +183,7 @@ next.
   free-function → `PrettyPrinter`-object refactor, and the `PrettyPrintOptions`
   detemplate (migrating ~25 `!void`/`!(SchemeHook…)` call sites). Mitigated by the
   `hook.void.baseline` test and keeping the dispatch chain verbatim inside the
-  trailing `else`. Run the full `:core-cli` suite after M1; the contract is
+  trailing `else`. Run the full `:base` suite after M1; the contract is
   identical **output**, not identical source.
 - **`-allinst` + impure `render`** — an unstaged `hasRenderHook` would
   semantically analyze `render` for every type. Mitigated by staging the trait

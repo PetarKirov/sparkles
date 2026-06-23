@@ -1,11 +1,11 @@
-# `sparkles:core-cli` prettyPrint — Specification
+# `sparkles:base` prettyPrint — Specification
 
 _Audience: developers and coding agents building against the pretty-printer.
 This document is normative and self-contained — it states what `prettyPrint`
 provides and how to extend it, not why. For the delivery plan and milestone
 orchestration, see [PLAN.md](./PLAN.md). The extension model follows the
 repo's [Design by Introspection guidelines](../../../guidelines/design-by-introspection-01-guidelines.md).
-The implementation is [`libs/core-cli/src/sparkles/core_cli/prettyprint.d`](../../../../libs/core-cli/src/sparkles/core_cli/prettyprint.d)._
+The implementation is [`libs/base/src/sparkles/base/prettyprint.d`](../../../../libs/base/src/sparkles/base/prettyprint.d)._
 
 ## 1. Overview
 
@@ -48,7 +48,7 @@ Core rules:
 A consumer who just wants to print a value touches one function:
 
 ```d
-import sparkles.core_cli.prettyprint : prettyPrint;
+import sparkles.base.prettyprint : prettyPrint;
 
 struct Point { int x, y; }
 assert(prettyPrint(Point(1, 2), PrettyPrintOptions(useColors: false))
@@ -59,9 +59,9 @@ assert(prettyPrint(Point(1, 2), PrettyPrintOptions(useColors: false))
 
 | Identifier      | Value                                               |
 | --------------- | --------------------------------------------------- |
-| Dub sub-package | `sparkles:core-cli`                                 |
-| Module          | `sparkles.core_cli.prettyprint`                     |
-| Source          | `libs/core-cli/src/sparkles/core_cli/prettyprint.d` |
+| Dub sub-package | `sparkles:base`                                     |
+| Module          | `sparkles.base.prettyprint`                         |
+| Source          | `libs/base/src/sparkles/base/prettyprint.d`         |
 
 | Public symbol                                                       | Role                                                                |
 | ------------------------------------------------------------------- | ------------------------------------------------------------------- |
@@ -389,7 +389,7 @@ affecting unrelated instantiations.
 When `useOscLinks`, type names are wrapped in OSC 8 terminal hyperlinks to
 their definition site, obtained from `__traits(getLocation, T)`. The URI scheme
 is an optional **static** capability on the printer's `Hook`
-(`sparkles.core_cli.source_uri`):
+(`sparkles.base.source_uri`):
 
 ```
 static void writeSourceUri(string path, size_t line, size_t col, Writer)(ref Writer w);
@@ -493,9 +493,9 @@ external context.
   first matching sub-hook; there is no priority negotiation or merging.
 - **A UDA policy engine.** The field-override hook is a mechanism; a declarative
   "redact every `@sensitive` field" layer on top is out of scope.
-- **Built-in JSON/Nix consumers in core-cli.** core-cli ships the _mechanism_
-  and in-tree validation hooks; `JSONValue`/Nix renderers live with their data
-  types (Nix in `sparkles:nix`), not in `prettyprint.d`.
+- **Built-in JSON/Nix consumers in `sparkles:base`.** `sparkles:base` ships the
+  _mechanism_ and in-tree validation hooks; `JSONValue`/Nix renderers live with
+  their data types (Nix in `sparkles:nix`), not in `prettyprint.d`.
 - **Whole-graph deduplication** beyond what an `onEnter` visited-set hook
   implements.
 - **Runtime editor-scheme source links.** Runtime source positions link via

@@ -774,6 +774,20 @@
           {
             "text": "CustomFloat spec",
             "link": "/specs/base/custom-float"
+          },
+          {
+            "text": "Pretty-print",
+            "collapsed": true,
+            "items": [
+              {
+                "text": "Specification",
+                "link": "/specs/base/pretty-print/SPEC"
+              },
+              {
+                "text": "Delivery Plan",
+                "link": "/specs/base/pretty-print/PLAN"
+              }
+            ]
           }
         ]
       },
@@ -818,14 +832,6 @@
           {
             "text": "TUI components delivery plan",
             "link": "/specs/core-cli/tui-components/PLAN"
-          },
-          {
-            "text": "prettyPrint spec",
-            "link": "/specs/core-cli/pretty-print/SPEC"
-          },
-          {
-            "text": "prettyPrint delivery plan",
-            "link": "/specs/core-cli/pretty-print/PLAN"
           }
         ]
       },
