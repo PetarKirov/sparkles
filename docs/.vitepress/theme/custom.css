@@ -60,9 +60,14 @@
   --vp-font-family-base:
     'Inter', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji',
     'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
+  /* Fira Code first (ligatures), with Nerd Font families so glyphs in the
+    Private Use Area (Powerline, devicons, box-drawing extras) resolve via the
+    browser's per-glyph fallback. Like the other families here, these are not
+    web-loaded — they apply where installed and degrade to the next entry. */
   --vp-font-family-mono:
-    'JetBrains Mono', ui-monospace, 'Menlo', 'Monaco', 'Consolas',
-    'Liberation Mono', 'Courier New', monospace;
+    'FiraCode Nerd Font Mono', 'Fira Code', 'Symbols Nerd Font Mono',
+    'Symbols Nerd Font', 'JetBrains Mono', ui-monospace, 'Menlo', 'Monaco',
+    'Consolas', 'Liberation Mono', 'Courier New', monospace;
 }
 
 /* -- Headings: Space Grotesk with refined tracking ----------------------- */

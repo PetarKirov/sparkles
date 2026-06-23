@@ -5,12 +5,17 @@
 // clusters and show each one over the terminal cells it occupies.
 //
 // SSR-safe: all WebAssembly/DOM work happens in onMounted (client only).
-import { ref, onMounted } from 'vue';
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
+import TerminalCellGrid from './TerminalCellGrid.vue';
+
+// Column width in rem; keep in sync with `--cell-w` in TerminalCellGrid.vue.
+// Small enough that ~45+ columns fit the component width without overflowing.
+const CELL_REM = 0.8;
 
 type Cell = { glyph: string; width: number; cps: string[] };
 
 const presets: { label: string; value: string }[] = [
-  { label: 'mixed', value: 'aÁ世\u{1F1FA}\u{1F1F8}कि❤️' },
+  { label: 'mixed', value: 'aÁ世\u{1F1FA}\u{1F1F8}कि❤️' },
   {
     label: 'flags',
     value: '\u{1F1FA}\u{1F1F8}\u{1F1EF}\u{1F1F5}\u{1F1EB}\u{1F1F7}',
@@ -18,14 +23,70 @@ const presets: { label: string; value: string }[] = [
   { label: 'ZWJ family', value: '\u{1F469}‍\u{1F467}' },
   { label: 'Devanagari', value: 'नमस्ते' },
   { label: 'CJK', value: '世界終わり' },
-  { label: 'emoji + VS', value: '❤️\u{1F600}\u{1F3FD}' },
+  { label: 'emoji + VS', value: '❤️\u{1F44D}\u{1F3FD}' },
+  { label: 'multiline', value: 'hello\n世界\n❤️ok' },
+  {
+    // The `drawBox` grand-tour frame from libs/core-cli/examples/unicode-box.d.
+    // Joiners / variation selector / rocket are escaped so they're auditable.
+    label: 'box drawing',
+    value:
+      '╭──╼ Grand tour 世界 \u{1F680} ╾───────────────────────╮\n' +
+      '│ CJK 世界, emoji \u{1F469}\u200D\u{1F467} \u2764\uFE0F, and a clickable styled │\n' +
+      '│ link — all wrapped and streamed together.     │\n' +
+      '╰───────────────────────────────────────────────╯',
+  },
 ];
 
 const input = ref(presets[0].value);
 const cells = ref<Cell[]>([]);
 const total = ref(0);
 const status = ref('loading…');
+const mode = ref<'cards' | 'grid'>('cards');
+const cols = ref(16);
+const truncated = ref(false);
 let exp: any = null;
+
+// Max grapheme clusters we segment per update. The wasm scratch buffer keeps the
+// input in [0, 40000) and the output triples from 40000, leaving room for ~2100
+// triples; this cap stays well within that while covering multi-line inputs.
+const MAX_CELLS = 512;
+
+// Cap the column count to what fits the component's content width, so a grid row
+// never overflows the TextCellViz box. `availPx` tracks the measured content-box
+// width (kept current by a ResizeObserver); `maxCols` is the resulting ceiling.
+const rootEl = ref<HTMLElement | null>(null);
+const availPx = ref(0);
+let ro: ResizeObserver | null = null;
+
+function rootFontPx() {
+  if (typeof window === 'undefined') return 16;
+  return parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+}
+
+const maxCols = computed(() => {
+  const cellPx = CELL_REM * rootFontPx();
+  // -1 leaves room for the grid container's 1px border.
+  return Math.max(4, Math.floor((availPx.value - 1) / cellPx));
+});
+
+// Only ever clamp down: shrinking the viewport pulls the slider in, but widening
+// it just raises the ceiling without moving the user's chosen value.
+watch(maxCols, m => {
+  if (cols.value > m) cols.value = m;
+});
+
+onMounted(() => {
+  if (!rootEl.value || typeof ResizeObserver === 'undefined') return;
+  // Seed synchronously (content width = clientWidth minus the 1rem×2 padding) so
+  // maxCols is correct before the first preset click, then keep it live.
+  availPx.value = rootEl.value.clientWidth - 2 * rootFontPx();
+  ro = new ResizeObserver(entries => {
+    availPx.value = entries[0].contentRect.width;
+  });
+  ro.observe(rootEl.value);
+});
+
+onUnmounted(() => ro?.disconnect());
 
 function withBase(p: string) {
   const base = (import.meta as any).env?.BASE_URL ?? '/';
@@ -42,7 +103,8 @@ function update() {
   }
   new Uint8Array(exp.memory.buffer).set(bytes, p);
   const outP = (p + 40000) & ~3;
-  const n = exp.spk_segment(p, bytes.length, outP, 64);
+  const n = exp.spk_segment(p, bytes.length, outP, MAX_CELLS);
+  truncated.value = n >= MAX_CELLS;
   const o = new Uint32Array(exp.memory.buffer, outP, n * 3);
   const dec = new TextDecoder();
   const out: Cell[] = [];
@@ -61,6 +123,34 @@ function update() {
   cells.value = out;
   total.value = sum;
   status.value = '';
+}
+
+// Visible width (in cells) of the widest line — the sum of cluster widths per
+// line, line breaks resetting the run. Used to fit the grid to a preset.
+function widestLineWidth(list: Cell[]): number {
+  const lineBreak = /[\n\r\u2028\u2029]/;
+  let max = 0;
+  let cur = 0;
+  for (const c of list) {
+    if (lineBreak.test(c.glyph)) {
+      if (cur > max) max = cur;
+      cur = 0;
+    } else {
+      cur += c.width;
+    }
+  }
+  return cur > max ? cur : max;
+}
+
+// Choosing a preset sizes the grid to its widest line, so it shows on one row
+// (clamped to what fits the component — see maxCols).
+function applyPreset(value: string) {
+  input.value = value;
+  update();
+  cols.value = Math.min(
+    maxCols.value,
+    Math.max(4, widestLineWidth(cells.value)),
+  );
 }
 
 onMounted(async () => {
@@ -85,7 +175,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="tcv">
+  <div ref="rootEl" class="tcv">
     <div class="tcv-controls">
       <div class="tcv-presets">
         Examples:
@@ -93,24 +183,54 @@ onMounted(async () => {
           v-for="p in presets"
           :key="p.label"
           class="tcv-preset"
-          @click="
-            input = p.value;
-            update();
-          "
+          @click="applyPreset(p.value)"
         >
           {{ p.label }}
         </button>
       </div>
-      <input
+      <textarea
         v-model="input"
         class="tcv-input"
+        rows="2"
         spellcheck="false"
         @input="update"
         aria-label="text to measure"
-      />
+      ></textarea>
+    </div>
+
+    <div class="tcv-view-controls">
+      <div class="tcv-modes" role="group" aria-label="presentation mode">
+        <button
+          class="tcv-mode"
+          :class="{ active: mode === 'cards' }"
+          @click="mode = 'cards'"
+        >
+          Cards
+        </button>
+        <button
+          class="tcv-mode"
+          :class="{ active: mode === 'grid' }"
+          @click="mode = 'grid'"
+        >
+          Terminal grid
+        </button>
+      </div>
+      <label v-if="mode === 'grid'" class="tcv-cols">
+        columns
+        <input
+          v-model.number="cols"
+          type="range"
+          min="4"
+          :max="maxCols"
+          aria-label="terminal columns"
+        />
+        <span class="tcv-cols-val">{{ cols }}</span>
+      </label>
     </div>
 
     <p v-if="status" class="tcv-status">{{ status }}</p>
+
+    <TerminalCellGrid v-else-if="mode === 'grid'" :cells="cells" :cols="cols" />
 
     <div v-else class="tcv-grid">
       <div
@@ -131,6 +251,9 @@ onMounted(async () => {
     <p v-if="!status" class="tcv-total">
       <code>visibleWidth</code> = {{ total }} cell{{ total === 1 ? '' : 's' }} ·
       {{ cells.length }} cluster{{ cells.length === 1 ? '' : 's' }}
+      <span v-if="truncated" class="tcv-trunc"
+        >· showing first {{ MAX_CELLS }} clusters</span
+      >
     </p>
   </div>
 </template>
@@ -157,6 +280,8 @@ onMounted(async () => {
   border-radius: 6px;
   background: var(--vp-c-bg);
   color: var(--vp-c-text-1);
+  resize: vertical;
+  line-height: 1.4;
 }
 .tcv-presets {
   display: flex;
@@ -174,6 +299,49 @@ onMounted(async () => {
 }
 .tcv-preset:hover {
   border-color: var(--vp-c-brand-1);
+}
+.tcv-view-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  margin-top: 0.75rem;
+}
+.tcv-modes {
+  display: inline-flex;
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.tcv-mode {
+  font-size: 0.8rem;
+  padding: 0.25rem 0.6rem;
+  border: none;
+  background: var(--vp-c-bg-soft);
+  color: var(--vp-c-text-2);
+  cursor: pointer;
+}
+.tcv-mode + .tcv-mode {
+  border-left: 1px solid var(--vp-c-divider);
+}
+.tcv-mode:hover {
+  color: var(--vp-c-brand-1);
+}
+.tcv-mode.active {
+  background: var(--vp-c-brand-soft);
+  color: var(--vp-c-brand-1);
+}
+.tcv-cols {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--vp-c-text-2);
+}
+.tcv-cols-val {
+  font-family: var(--vp-font-family-mono);
+  min-width: 1.5rem;
+  color: var(--vp-c-text-1);
 }
 .tcv-grid {
   display: flex;
@@ -228,5 +396,8 @@ onMounted(async () => {
   margin-top: 0.75rem;
   color: var(--vp-c-text-2);
   font-size: 0.9rem;
+}
+.tcv-trunc {
+  color: var(--vp-c-warning-1, var(--vp-c-text-3));
 }
 </style>
