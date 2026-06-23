@@ -86,13 +86,19 @@
               pkgs.dub
               pkgs.ldc
             ];
-            setEnv = lib.cli.toCommandLineShell {
-              mkOption = name: value: [
-                "--set"
-                name
-                value
-              ];
-            } d-toolchain.env;
+            # Render `--set NAME VALUE` triples for wrapProgram from the toolchain
+            # env (non-empty on darwin: CC/CXX/SDKROOT/MACOSX_DEPLOYMENT_TARGET).
+            # Not lib.cli.toCommandLine*: its option-spec model renders `--flag
+            # value` pairs, not wrapProgram's three-token `--set KEY VALUE` form.
+            setEnv = lib.escapeShellArgs (
+              lib.concatLists (
+                lib.mapAttrsToList (name: value: [
+                  "--set"
+                  name
+                  value
+                ]) d-toolchain.env
+              )
+            );
           in
           ''
             install -Dm755 build/${finalAttrs.pname} $out/bin/${finalAttrs.pname}
