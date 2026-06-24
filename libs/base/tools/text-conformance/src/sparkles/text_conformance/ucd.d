@@ -15,7 +15,8 @@ import std.algorithm : canFind, map, filter, splitter, startsWith, findSplit;
 import std.array : array;
 import std.file : exists, mkdirRecurse, readText;
 import std.format : format, formattedRead;
-import std.net.curl : HTTP, CurlException, CurlOption;
+version (TextConformanceNoCurl) {} // offline build: no libcurl linkage
+else import std.net.curl : HTTP, CurlException, CurlOption;
 import std.path : buildPath, buildNormalizedPath, dirName;
 import std.string : strip, lineSplitter;
 import std.uni : CodepointSet, isWhite;
@@ -91,18 +92,26 @@ private string cachedFetch(string urlSuffix, string cacheRelPath, in Config cfg)
 }
 
 /// Download `ucdBaseUrl/urlSuffix` into `dest` via libcurl. Mirrors `curl -fSL`.
+/// In the offline (`TextConformanceNoCurl`) build there is no libcurl linkage,
+/// so any cache miss is a hard error directing the caller to `--ucd-dir`.
 private void download(string url, string dest)
 {
-    import std.net.curl : download;
-    import std.stdio : stderr;
-    stderr.writeln("  fetching ", url);
+    version (TextConformanceNoCurl)
+        throw new Exception("built without curl (offline config); "
+            ~ "provide --ucd-dir with a cached copy of " ~ url);
+    else
+    {
+        import std.net.curl : download;
+        import std.stdio : stderr;
+        stderr.writeln("  fetching ", url);
 
-    auto http = HTTP();
-    http.handle.set(CurlOption.failonerror, 1L);
-    try
-        download(url, dest, http);
-    catch (CurlException e)
-        throw new Exception(format("download failed for %s:\n%s", url, e.msg));
+        auto http = HTTP();
+        http.handle.set(CurlOption.failonerror, 1L);
+        try
+            download(url, dest, http);
+        catch (CurlException e)
+            throw new Exception(format("download failed for %s:\n%s", url, e.msg));
+    }
 }
 
 /// Load the three raw-UCD inputs the width oracle needs, for `cfg.widthVersion`.
