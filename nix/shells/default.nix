@@ -40,6 +40,11 @@
             inputs'.ghostty.packages.libghostty-vt
             inputs'.ghostty.packages.libghostty-vt.dev
 
+            # utf8proc — independent per-codepoint width/grapheme oracle for the
+            # text-conformance harness (libs/utf8proc bindings). Single output
+            # carries the headers + libutf8proc.pc.
+            pkgs.utf8proc
+
             # rendering
             pkgs.raylib
           ]
