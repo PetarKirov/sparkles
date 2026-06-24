@@ -30,8 +30,10 @@ struct Divergence
 struct LayerResult
 {
     string name;
-    bool skipped;
+    bool skipped;      /// Intentional soft skip (e.g. optional oracle absent).
     string skipReason;
+    bool errored;      /// Hard failure: the layer could not run (network, etc.).
+    string errorMsg;
     size_t passed;
     Divergence[] divergences;
     string[] notes; /// Extra summary lines (e.g. category buckets).
@@ -43,14 +45,16 @@ struct LayerOutcome
     string name;
     bool skipped;
     string skipReason;
+    bool errored;
     size_t passed;
     size_t known;
     size_t newFail;
 }
 
-/// True if any layer has new (non-allowlisted) failures — drives the exit code.
+/// True if any layer has new (non-allowlisted) failures or hard errors — drives
+/// the exit code.
 bool anyNewFailures(in LayerOutcome[] outcomes)
-    => outcomes.any!(o => o.newFail > 0);
+    => outcomes.any!(o => o.newFail > 0 || o.errored);
 
 /// Render the per-layer summary as a banner + table.
 string renderSummary(in LayerOutcome[] outcomes)
@@ -66,7 +70,9 @@ string renderSummary(in LayerOutcome[] outcomes)
     foreach (o; outcomes)
     {
         string status;
-        if (o.skipped)
+        if (o.errored)
+            status = styledText(i"{red ✗ error}");
+        else if (o.skipped)
             status = styledText(i"{yellow ⊘ skipped}");
         else if (o.newFail > 0)
             status = styledText(i"{red ✗ fail}");
@@ -75,11 +81,12 @@ string renderSummary(in LayerOutcome[] outcomes)
         else
             status = styledText(i"{green ✓ pass}");
 
+        const blank = o.skipped || o.errored;
         rows ~= [
             o.name,
-            o.skipped ? "—" : o.passed.to!string,
-            o.skipped ? "—" : o.known.to!string,
-            o.skipped ? "—" : o.newFail.to!string,
+            blank ? "—" : o.passed.to!string,
+            blank ? "—" : o.known.to!string,
+            blank ? "—" : o.newFail.to!string,
             status,
         ];
     }
