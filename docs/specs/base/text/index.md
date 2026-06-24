@@ -704,6 +704,14 @@ cases conform to kitty:
 | lone emoji modifier → 2     | ✓      | EAW `W` outranks _Marks_ in isolation          |
 | noncharacters discarded → 0 | ✓      | `U+FDD0`..`U+FDEF`, `U+xxFFFE`, `U+xxFFFF`     |
 
+Beyond this curated ledger, the [conformance harness](./conformance-harness.md)
+differentially tests the implementation **exhaustively** — every code point and
+the official `GraphemeBreakTest.txt` / `emoji-test.txt` corpora — against a
+clean-room raw-UCD oracle and against two reference terminals (kitty and ghostty,
+the latter via `libghostty-vt` as a library). It also documents where those two
+terminals' width models genuinely _disagree_ (emoji-modifier sequences, Hangul
+jamo, Brahmic spacing marks) and which interpretation sparkles follows.
+
 ## 12. References
 
 - kitty Text Sizing Protocol — <https://sw.kovidgoyal.net/kitty/text-sizing-protocol/>

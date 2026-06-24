@@ -8,6 +8,11 @@ then a tally; it is verified by `apps/ci` against its `[Output]` block. **All ca
 currently pass.** The same assertions also live as library `unittest`s in `width.d`
 and `grapheme.d`._
 
+_This is the curated, always-green ledger. For **exhaustive** differential testing
+(every code point, the official `GraphemeBreakTest.txt` / `emoji-test.txt` corpora,
+and cross-checks against the kitty and ghostty terminals), see the
+[conformance harness](./conformance-harness.md)._
+
 ## Ledger
 
 `want` = kitty-normative width (in cells).
