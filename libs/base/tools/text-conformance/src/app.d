@@ -28,7 +28,8 @@ import sparkles.base.styled_template : styledText;
 import sparkles.core_cli.args : CliOption, HelpInfo, parseCliArgs;
 
 import sparkles.text_conformance.allowlist : Allowlist, loadAllowlist, renderAllowlist;
-import sparkles.text_conformance.config : Config, pinnedUnicodeVersion;
+import sparkles.text_conformance.config : Config, pinnedUnicodeVersion,
+    phobosGraphemeUnicodeVersion;
 import sparkles.text_conformance.layer0_segmentation : runLayer0;
 import sparkles.text_conformance.layer1_width : runLayer1;
 import sparkles.text_conformance.layer2_emoji : runLayer2;
@@ -56,7 +57,7 @@ struct CliParams
     string widthVersion = pinnedUnicodeVersion;
 
     @CliOption(`segmentation-unicode-version`, "Unicode version for the Layer-0/2 grapheme corpora (should match Phobos's std.uni tables).")
-    string segVersion = pinnedUnicodeVersion;
+    string segVersion = phobosGraphemeUnicodeVersion;
 
     @CliOption(`require-kitty`, "Fail (instead of skip) Layer 3 when the kitty width oracle is unavailable.")
     bool requireKitty;
