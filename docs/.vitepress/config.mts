@@ -8,8 +8,18 @@ export default withMermaid(
     base: '/',
 
     // Ignore links to .d source files and to sample/ workspace directories
-    // (source artifacts under research/monorepo-tooling/<tool>/sample/, not pages)
-    ignoreDeadLinks: [/\.d$/, /\/sample\//, /\/sample$/, /\/example\//],
+    // (source artifacts under research/monorepo-tooling/<tool>/sample/, not pages),
+    // and links into repo source trees the harness docs reference (the
+    // text-conformance tool + the base/text source) — these resolve on GitHub but
+    // the VitePress site doesn't serve repo source.
+    ignoreDeadLinks: [
+      /\.d$/,
+      /\/sample\//,
+      /\/sample$/,
+      /\/example\//,
+      /\/text-conformance\//,
+      /\/libs\/base\/src\//,
+    ],
 
     // The parsing and units-of-measure grounding ledgers are internal QA
     // evidence (claim-by-claim source verification), not published research —
