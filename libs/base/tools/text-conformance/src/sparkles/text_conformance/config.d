@@ -9,8 +9,18 @@
  */
 module sparkles.text_conformance.config;
 
-/// Default Unicode version. Keep matched to `gen_unicode_tables.d`'s pin.
+/// Default Unicode version for the **width** tables. Keep matched to
+/// `gen_unicode_tables.d`'s pin.
 enum string pinnedUnicodeVersion = "17.0.0";
+
+/// Default Unicode version for **segmentation** (Layer 0/2 corpora). This must
+/// match the toolchain's Phobos `std.uni` grapheme tables, which lag the width
+/// pin: empirically, the current LDC/Phobos segments per Unicode 15.0
+/// (`text-conformance --layers 0 --segmentation-unicode-version <v>` reports
+/// zero divergences at 15.0.0 and a cluster of Indic-conjunct/emoji-ZWJ
+/// divergences at 15.1+). Bump this when you upgrade the compiler and re-run
+/// Layer 0 to find the new matching version.
+enum string phobosGraphemeUnicodeVersion = "15.0.0";
 
 /// Resolved run configuration handed to each layer.
 struct Config
@@ -28,7 +38,7 @@ struct Config
     string widthVersion = pinnedUnicodeVersion;
 
     /// Unicode version for the Layer-0/2 grapheme corpora.
-    string segVersion = pinnedUnicodeVersion;
+    string segVersion = phobosGraphemeUnicodeVersion;
 
     /// Fail rather than skip when the kitty oracle is unavailable.
     bool requireKitty;
