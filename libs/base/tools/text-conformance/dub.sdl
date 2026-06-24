@@ -1,0 +1,33 @@
+name "text-conformance"
+description "Differential-testing harness cross-checking sparkles.base.text against independent Unicode oracles"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetType "executable"
+targetName "text-conformance"
+targetPath "build"
+mainSourceFile "src/app.d"
+
+dflags "-preview=in" "-preview=dip1000"
+
+libs "curl"
+
+dependency "sparkles:base" path="../../../.."
+dependency "sparkles:core-cli" path="../../../.."
+
+configuration "application" {
+    targetType "executable"
+}
+
+configuration "unittest" {
+    targetType "library"
+    excludedSourceFiles "src/app.d"
+
+    dependency "silly" version="~>1.1.1"
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
