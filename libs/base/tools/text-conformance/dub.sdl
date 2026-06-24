@@ -24,11 +24,13 @@ configuration "application" {
 
     libs "curl"
 
-    // Layer 4 uses libghostty-vt as a library (via the ImportC bindings in
-    // sparkles:ghostty). Gated behind a version so the offline/unittest configs
-    // build without the native dependency.
+    // Native-library oracles via ImportC bindings. ghostty stays a top-level
+    // sparkles lib (used by apps/terminal too); the conformance-only bindings
+    // live under bindings/ and are referenced by relative path. Gated behind
+    // versions so the offline/unittest configs build without the native deps.
     dependency "sparkles:ghostty" path="../../../.."
-    versions "TextConformanceGhostty"
+    dependency "utf8proc" path="bindings/utf8proc"
+    versions "TextConformanceGhostty" "TextConformanceUtf8proc"
 
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
 }
