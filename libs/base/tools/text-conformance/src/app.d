@@ -113,8 +113,10 @@ int main(string[] args)
     return anyNewFailures(outcomes) ? 1 : 0;
 }
 
-/// Run one layer, converting a thrown exception into a skipped result so one
-/// layer's setup failure (e.g. a download error) doesn't abort the others.
+/// Run one layer, converting a thrown exception into a hard error result (so a
+/// broken layer fails the run rather than passing silently) without aborting
+/// the other layers. A layer that means to *skip* (e.g. an optional oracle is
+/// absent) returns `skipped` itself instead of throwing.
 private LayerResult run(string label, LayerResult delegate() body_)
 {
     try
@@ -123,9 +125,9 @@ private LayerResult run(string label, LayerResult delegate() body_)
     {
         LayerResult r;
         r.name = label;
-        r.skipped = true;
-        r.skipReason = e.msg;
-        stderr.writeln(label, " skipped: ", e.msg);
+        r.errored = true;
+        r.errorMsg = e.msg;
+        stderr.writeln(label, " error: ", e.msg);
         return r;
     }
 }
@@ -137,6 +139,7 @@ private LayerOutcome classify(in LayerResult r, in Allowlist allow)
     o.name = r.name;
     o.skipped = r.skipped;
     o.skipReason = r.skipReason;
+    o.errored = r.errored;
     o.passed = r.passed;
     foreach (d; r.divergences)
     {
