@@ -1,0 +1,182 @@
+# text-conformance
+
+A differential-testing harness that cross-checks
+[`sparkles.base.text`](../../../../libs/base/src/sparkles/base/text/) — terminal
+cell **width** and UAX #29 **grapheme segmentation** — against independent
+Unicode oracles. It replaces ad-hoc, font-dependent spot checks with exhaustive,
+data-driven comparison against authoritative sources.
+
+It is the executable companion to the normative
+[cell-splitting & width spec](./index.md) and its curated
+[conformance test cases](./test-cases.md). The tool itself lives at
+[`libs/base/tools/text-conformance/`](../../../../libs/base/tools/text-conformance/).
+
+## The five layers
+
+| Layer | Checks                                                               | Oracle                                                                    |
+| ----- | -------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| **0** | segmentation: `byGraphemeCluster` boundaries                         | the official `GraphemeBreakTest.txt` (`÷`/`×` ground truth)               |
+| **1** | per-code-point width: `codepointWidth` over **all** of `0..0x10FFFF` | a clean-room oracle re-derived from raw UCD (`oracle.d`)                  |
+| **2** | cluster width + single-cluster segmentation of every RGI emoji       | `emoji-test.txt` + the clean-room oracle                                  |
+| **3** | `visibleWidth` over an emoji + segmentation corpus                   | **kitty's** reference `wcswidth` (same Text Sizing Protocol spec)         |
+| **4** | `visibleWidth` over the same corpus                                  | **ghostty's** VT engine as a **library** (`libghostty-vt` cursor advance) |
+
+Why five, and why they overlap: Layers 1 and 2 use a clean-room oracle that is
+independent in code and data (it reads the raw UCD, never `std.uni` or the
+library's generated tables), but it deliberately mirrors `width.d`'s **model** —
+so a simplification shared by both (see "Shared constants") is invisible to them.
+Layers 3 and 4 compare against entirely separate _implementations_ (kitty,
+ghostty), which catch those shared-simplification cases — and, crucially,
+**disagree with each other**, showing which width questions are genuinely
+contested rather than simple bugs.
+
+### Two terminal oracles, two models
+
+kitty (Layer 3) and ghostty (Layer 4) implement _different_ width models, and
+`sparkles` sits between them — so each oracle flags a different class:
+
+| Case                                               | sparkles | kitty | ghostty |
+| -------------------------------------------------- | -------- | ----- | ------- |
+| RGI emoji-modifier, neutral base (✌🏻 `270C 1F3FB`) | 1        | **2** | 1       |
+| isolated Hangul medial/final jamo (`U+11A8`)       | 0        | **1** | 0       |
+| Brahmic syllable + spacing mark (`की`, `कः`)       | 1        | 1     | **2**   |
+| prepended format (`U+0600` + digit)                | 1        | 1     | **2**   |
+
+`sparkles` follows the kitty **Text Sizing Protocol** (Marks → 0, one cell per
+Brahmic syllable), so kitty agrees on the bottom two rows; ghostty's engine
+instead _advances a cell per spacing mark_, so it agrees on the top two. Neither
+terminal is "right" — the harness documents exactly where the models part ways.
+
+Layer 4 uses ghostty **as a library** (the `sparkles:ghostty` ImportC bindings to
+`libghostty-vt`), not the CLI. It drives a real terminal: enable DEC mode 2027
+(grapheme clustering — **off by default**, and the difference between
+per-codepoint and modern grapheme width), write the bytes, read the cursor
+column. Because the cursor reflects real placement, this layer is restricted to
+control-free strings (the whole emoji corpus + printable GraphemeBreakTest
+strings); kitty's pure `wcswidth` (Layer 3) covers the rest.
+
+## Running
+
+```bash
+# all layers (downloads UCD on first run, caches under $XDG_CACHE_HOME)
+dub run --root=libs/base/tools/text-conformance -- --layers all
+
+# a single layer
+dub run --root=libs/base/tools/text-conformance -- --layers 1
+
+# offline, against a pre-populated UCD tree (e.g. the cache itself).
+# the offline config drops libcurl AND ghostty, so layers 3/4 skip.
+dub run --root=libs/base/tools/text-conformance --config=offline -- \
+    --layers 0,1,2 --ucd-dir ~/.cache/sparkles-text-conformance --no-network
+
+# unit tests for the oracle
+dub test --root=libs/base/tools/text-conformance
+```
+
+Layer 3 needs the `kitty` binary on `PATH` (optional — skips when absent;
+`--require-kitty` makes it a hard error). Layer 4 links `libghostty-vt` at build
+time via `sparkles:ghostty`; it is built in the default `application` config and
+skips in the `offline` config.
+
+Exit code is `0` unless a layer has a **new** (non-allowlisted) divergence or a
+hard error (a download failure, or required-but-missing kitty).
+
+## The two Unicode versions
+
+The harness pins **two** versions because the library itself does:
+
+- **Width** (`--width-unicode-version`, default `17.0.0`) — matches the EAW /
+  emoji-VS tables generated by
+  [`gen_unicode_tables.d`](../../../../libs/base/tools/gen_unicode_tables.d).
+- **Segmentation** (`--segmentation-unicode-version`, default `15.0.0`) — must
+  match the toolchain's Phobos `std.uni` grapheme tables, which lag the width
+  pin. Found empirically: Layer 0 reports **zero** divergences at 15.0.0 and a
+  cluster of Indic-conjunct/emoji-ZWJ divergences at 15.1+, so the current
+  LDC/Phobos segments per Unicode 15.0.
+
+`--unicode-version` sets both. **After a compiler upgrade**, re-run `--layers 0`
+across a few versions to find the new matching segmentation version and bump
+`phobosGraphemeUnicodeVersion` in `config.d`.
+
+## The ratchet: `known-divergences.md`
+
+Only divergences **absent** from
+[`known-divergences.md`](../../../../libs/base/tools/text-conformance/known-divergences.md)
+fail the run; listed ones are reported as "known" (yellow count) and do not fail.
+This makes the harness a ratchet: a new regression turns the run red, while
+already-understood divergences stay documented and green.
+
+Regenerate after reviewing changes (with both oracles present):
+
+```bash
+nix shell nixpkgs#kitty --command \
+    dub run --root=libs/base/tools/text-conformance -- --layers all --update-allowlist
+```
+
+Each row carries a `reason`. The current ledger records three kinds:
+
+- **Version skew (Layer 1, 42).** Combining marks `U+1ACF..U+1AE4` are width 0 in
+  UCD 17.0 but width 1 from the older `std.uni`. Resolve on a toolchain bump.
+- **Model gaps vs kitty (Layer 3, 108).** Cases where `sparkles` matches ghostty
+  but not kitty: 45 RGI emoji-modifier sequences (neutral base → 1, kitty 2), 62
+  conjoining Hangul jamo (→ 0, kitty 1), 1 ZWJ dingbat.
+- **Model gaps vs ghostty (Layer 4, 99).** Cases where `sparkles` matches kitty
+  but not ghostty: 45 spacing marks (Mc) and 53 prepended-format (Cf) code points
+  that ghostty advances a cell for, while the Text Sizing Protocol treats every
+  Mark as width 0 (one cell per Brahmic syllable).
+
+The Layer 3 and Layer 4 ledgers are near-mirror images: that is the headline —
+the contested width classes are terminal-dependent, and `sparkles` consistently
+follows the kitty Text Sizing Protocol.
+
+## Shared constants (Layer 1's honest limitation)
+
+The clean-room oracle differentially tests the **data-driven** classes
+(East-Asian Width, general category). But a few inputs are spec constants, not
+UCD properties — the regional-indicator range, the noncharacter formula, and the
+four conjoining/format ranges. Both `width.d` and the oracle encode the same
+literals, so Layer 1 only **asserts** them. Layers 3 and 4 (real terminals) cover
+that blind spot.
+
+## Comparing compilers (LDC vs DMD)
+
+Segmentation rides Phobos `std.uni`, so it can differ between compilers. The
+`offline` config drops libcurl (so a `--compiler=dmd` binary links a consistent
+glibc) and ghostty, and reads everything from `--ucd-dir`:
+
+```bash
+for c in ldc2 dmd; do for v in 15.0.0 17.0.0; do
+  dub run --root=libs/base/tools/text-conformance --config=offline --compiler=$c -- \
+    --layers 0 --segmentation-unicode-version $v \
+    --ucd-dir ~/.cache/sparkles-text-conformance --no-network
+done; done
+```
+
+Result (LDC 1.41 / Phobos 2.111 vs DMD 2.112.1): **both** segment Indic conjuncts
+(InCB) like Unicode **15.0** — the Phobos "Update to Unicode 17.0.0" (v2.112.0)
+bumped property _data_ but not grapheme-break behavior — and disagree on exactly
+**one** boundary, `U+2701 U+200D U+2701`, where DMD's `Extended_Pictographic`
+data flips the GB11 result. So `phobosGraphemeUnicodeVersion = 15.0.0` is right
+for both.
+
+## Layout
+
+```
+text-conformance/
+├── dub.sdl
+├── known-divergences.md          # the ratchet ledger
+├── src/
+│   ├── app.d                     # CLI, orchestration, summary, exit code
+│   └── sparkles/text_conformance/
+│       ├── config.d              # versions + resolved Config
+│       ├── ucd.d                 # fetch + XDG cache + raw-UCD parser
+│       ├── oracle.d              # clean-room width oracle (+ unit tests)
+│       ├── corpus.d              # shared corpus loaders
+│       ├── allowlist.d           # known-divergence ratchet
+│       ├── report.d              # result types + summary table
+│       ├── layer0_segmentation.d
+│       ├── layer1_width.d
+│       ├── layer2_emoji.d
+│       ├── layer3_kitty.d        # kitty wcswidth (CLI binary, optional)
+│       └── layer4_ghostty.d      # libghostty-vt cursor advance (library)
+```
