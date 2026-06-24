@@ -15,7 +15,7 @@ import std.algorithm : canFind, map, filter, splitter, startsWith, findSplit;
 import std.array : array;
 import std.file : exists, mkdirRecurse, readText;
 import std.format : format, formattedRead;
-import std.net.curl : download, HTTP, CurlException, CurlOption;
+import std.net.curl : HTTP, CurlException, CurlOption;
 import std.path : buildPath, buildNormalizedPath, dirName;
 import std.string : strip, lineSplitter;
 import std.uni : CodepointSet, isWhite;
@@ -43,10 +43,33 @@ struct WidthData
 /// download (unless `--no-network`). Downloads are cached under a
 /// version-scoped subdir so the width and segmentation versions never collide.
 string ucdText(string ver, string remoteRelPath, in Config cfg)
+    => cachedFetch(ver ~ "/ucd/" ~ remoteRelPath, buildPath(ver, remoteRelPath), cfg);
+
+/// Read `emoji-test.txt` for the segmentation version. Unicode publishes it
+/// under `/Public/emoji/<major.minor>/`, not the UCD tree — hence the separate
+/// URL/cache layout. (`15.0.0` → emoji `15.0`.)
+string emojiTestText(in Config cfg)
+{
+    const emojiVer = emojiVersionOf(cfg.segVersion);
+    return cachedFetch("emoji/" ~ emojiVer ~ "/emoji-test.txt",
+        buildPath("emoji-" ~ emojiVer, "emoji-test.txt"), cfg);
+}
+
+/// Map a UCD version (`major.minor.patch`) to its emoji `major.minor` line.
+private string emojiVersionOf(string ucdVersion)
+{
+    auto parts = ucdVersion.splitter('.').array;
+    return parts.length >= 2 ? parts[0] ~ "." ~ parts[1] : ucdVersion;
+}
+
+/// Resolve a Unicode file by `urlSuffix` (appended to the Public base) with an
+/// XDG cache at `cacheRelPath`. Offline `--ucd-dir` reads `<dir>/<cacheRelPath>`
+/// so a mirrored layout works; `--no-network` fails on a cache miss.
+private string cachedFetch(string urlSuffix, string cacheRelPath, in Config cfg)
 {
     if (cfg.ucdDir.length)
     {
-        const local = buildPath(cfg.ucdDir, remoteRelPath);
+        const local = buildPath(cfg.ucdDir, cacheRelPath);
         if (!local.exists)
             throw new Exception(format("--ucd-dir given but %s is missing", local));
         return local.readText;
@@ -55,22 +78,22 @@ string ucdText(string ver, string remoteRelPath, in Config cfg)
     const cache = cacheDir();
     if (!cache.length)
         throw new Exception("cannot determine cache dir; pass --ucd-dir");
-    const dest = buildPath(cache, "sparkles-text-conformance", ver, remoteRelPath);
+    const dest = buildPath(cache, "sparkles-text-conformance", cacheRelPath);
     if (dest.exists)
         return dest.readText;
 
     if (cfg.noNetwork)
-        throw new Exception(format("--no-network and cache miss for %s (%s)", remoteRelPath, ver));
+        throw new Exception(format("--no-network and cache miss for %s", urlSuffix));
 
     mkdirRecurse(dest.dirName);
-    fetchUcd(ver, remoteRelPath, dest);
+    download(ucdBaseUrl ~ "/" ~ urlSuffix, dest);
     return dest.readText;
 }
 
-/// Download a UCD file for `ver` into `dest` via libcurl. Mirrors `curl -fSL`.
-private void fetchUcd(string ver, string remoteRelPath, string dest)
+/// Download `ucdBaseUrl/urlSuffix` into `dest` via libcurl. Mirrors `curl -fSL`.
+private void download(string url, string dest)
 {
-    const url = ucdBaseUrl ~ "/" ~ ver ~ "/ucd/" ~ remoteRelPath;
+    import std.net.curl : download;
     import std.stdio : stderr;
     stderr.writeln("  fetching ", url);
 
