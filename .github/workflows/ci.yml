@@ -54,7 +54,7 @@ jobs:
             nix-v2-${{ runner.os }}-
 
       - name: Cache DUB packages
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: |
             ~/.dub
@@ -98,7 +98,7 @@ jobs:
           compiler: ldc-1.41.0
 
       - name: Cache DUB packages
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/AppData/Local/dub
           key: windows-dub-osapi
