@@ -36,20 +36,10 @@ import sparkles.text_conformance.config : Config;
 import sparkles.text_conformance.corpus : emojiStrings, graphemeBreakStrings;
 import sparkles.text_conformance.report : Divergence, LayerResult;
 import sparkles.text_conformance.ucd : loadWidthData, WidthData;
+import sparkles.text_conformance.util : hasCursorControl, hexOf;
 
 version (TextConformanceGhostty)
     import sparkles.ghostty;
-
-/// True if a string contains a code point that moves the cursor or otherwise
-/// makes `cursor_x` not a pure width (controls, DEL, C1, line/para separators).
-private bool hasCursorControl(string s) @safe
-{
-    foreach (cp; s.byDchar)
-        if (cp < 0x20 || cp == 0x7F || (cp >= 0x80 && cp <= 0x9F)
-            || cp == 0x2028 || cp == 0x2029)
-            return true;
-    return false;
-}
 
 version (TextConformanceGhostty)
 LayerResult runLayer4(in Config cfg)
@@ -127,11 +117,4 @@ private string causeOf(string s, in WidthData d) @safe
     if (hasModifier)
         return "RGI emoji-modifier sequence";
     return "visibleWidth vs ghostty cursor advance";
-}
-
-private string hexOf(string s) @safe
-{
-    import std.digest : toHexString;
-    import std.string : representation;
-    return toHexString(cast(const(ubyte)[]) s.representation).idup;
 }

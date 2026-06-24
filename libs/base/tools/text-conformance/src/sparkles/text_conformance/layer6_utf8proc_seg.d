@@ -25,19 +25,10 @@ import sparkles.base.text.grapheme : byGraphemeCluster;
 import sparkles.text_conformance.config : Config;
 import sparkles.text_conformance.corpus : emojiStrings, graphemeBreakStrings;
 import sparkles.text_conformance.report : Divergence, LayerResult;
+import sparkles.text_conformance.util : libClusters;
 
 version (TextConformanceUtf8proc)
     import sparkles.utf8proc;
-
-/// Cluster lengths (in code points) the library produces for `s`.
-private size_t[] libClusters(string s) @safe
-{
-    size_t[] got;
-    foreach (u; s.byGraphemeCluster)
-        if (!u.isEscape)
-            got ~= u.slice.byDchar.walkLength;
-    return got;
-}
 
 version (TextConformanceUtf8proc)
 LayerResult runLayer6(in Config cfg)
