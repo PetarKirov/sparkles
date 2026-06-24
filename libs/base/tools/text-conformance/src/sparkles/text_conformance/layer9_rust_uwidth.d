@@ -32,14 +32,12 @@ import sparkles.text_conformance.corpus : emojiStrings, graphemeBreakStrings;
 import sparkles.text_conformance.report : Divergence, LayerResult;
 import sparkles.text_conformance.subprocess : runIntPipe;
 import sparkles.text_conformance.ucd : loadWidthData, WidthData;
+import sparkles.text_conformance.util : cpClass, hexOf, isNoncharacter;
 
 version (TextConformanceUtf8proc)
     import sparkles.utf8proc;
 
 private enum string rustCmd = "uwidth-rs";
-
-private bool isNoncharacter(dchar cp) @safe pure nothrow @nogc
-    => (cp >= 0xFDD0 && cp <= 0xFDEF) || (cp & 0xFFFE) == 0xFFFE;
 
 private bool rustAvailable()
 {
@@ -63,9 +61,6 @@ private string causeOf(dchar cp, in WidthData d) @safe nothrow
         return "Mark/format: width-class or version difference";
     return "codepointWidth vs unicode-width";
 }
-
-private string hexOf(string s) @safe
-    => toHexString(cast(const(ubyte)[]) s.representation).idup;
 
 version (TextConformanceUtf8proc)
 LayerResult runLayer9(in Config cfg)
@@ -109,7 +104,7 @@ LayerResult runLayer9(in Config cfg)
             r.passed++;
             continue;
         }
-        buckets[bucketKey(cp, d)]++;
+        buckets[cpClass(cp, d)]++;
         r.divergences ~= Divergence(9, format("U+%04X", cast(uint) cp),
             got.to!string, cpw[i].to!string, causeOf(cp, d));
     }
@@ -138,13 +133,4 @@ LayerResult runLayer9(in Config cfg)
     r.skipped = true;
     r.skipReason = "built without utf8proc (needed for the assigned-code-point filter)";
     return r;
-}
-
-private string bucketKey(dchar cp, in WidthData d) @safe nothrow
-{
-    if (cp >= 0x1F1E6 && cp <= 0x1F1FF) return "regional-indicator";
-    if (isNoncharacter(cp)) return "noncharacter";
-    if (cp >= 0x1160 && cp <= 0x11FF) return "hangul-jamo";
-    if (d.mn[cp] || d.mc[cp] || d.me[cp] || d.cf[cp]) return "mark/format";
-    return "other";
 }

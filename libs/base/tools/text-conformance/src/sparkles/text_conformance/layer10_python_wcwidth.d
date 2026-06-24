@@ -29,6 +29,7 @@ import sparkles.text_conformance.config : Config;
 import sparkles.text_conformance.corpus : emojiStrings, graphemeBreakStrings;
 import sparkles.text_conformance.report : Divergence, LayerResult;
 import sparkles.text_conformance.ucd : loadWidthData, WidthData;
+import sparkles.text_conformance.util : cpClass, isNoncharacter;
 
 version (TextConformancePython)
 {
@@ -58,18 +59,6 @@ version (TextConformancePython)
     }
 }
 
-private bool isNoncharacter(dchar cp) @safe pure nothrow @nogc
-    => (cp >= 0xFDD0 && cp <= 0xFDEF) || (cp & 0xFFFE) == 0xFFFE;
-
-private string bucketKey(dchar cp, in WidthData d) @safe nothrow
-{
-    if (cp >= 0x1F1E6 && cp <= 0x1F1FF) return "regional-indicator";
-    if (isNoncharacter(cp)) return "noncharacter";
-    if (cp >= 0x1160 && cp <= 0x11FF) return "hangul-jamo";
-    if (d.mn[cp] || d.mc[cp] || d.me[cp] || d.cf[cp]) return "mark/format";
-    if (codepointWidth(cp) == 0) return "control/zero-width";
-    return "other";
-}
 
 version (TextConformancePython)
 LayerResult runLayer10(in Config cfg)
@@ -122,7 +111,7 @@ LayerResult runLayer10(in Config cfg)
             r.passed++;
             continue;
         }
-        buckets[bucketKey(cp, d)]++;
+        buckets[cpClass(cp, d)]++;
         r.divergences ~= Divergence(10, format("U+%04X", cast(uint) cp),
             got.to!string, pw[i].to!string, causeOf(cp, d));
     }

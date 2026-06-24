@@ -25,6 +25,7 @@ import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.text_conformance.config : Config;
 import sparkles.text_conformance.corpus : emojiStrings, graphemeBreakStrings;
 import sparkles.text_conformance.report : Divergence, LayerResult;
+import sparkles.text_conformance.util : hexOf;
 
 /// Python driver run inside kitty: read hex-encoded UTF-8 per line, print width.
 private enum string kittyDriver = `import sys
@@ -115,6 +116,3 @@ private int[] runKitty(const(string)[] corpus)
     import sparkles.text_conformance.subprocess : runIntPipe;
     return runIntPipe(["kitty", "+runpy", kittyDriver], corpus.map!hexOf.array);
 }
-
-private string hexOf(string s)
-    => toHexString(cast(const(ubyte)[]) s.representation).idup;

@@ -37,12 +37,10 @@ import sparkles.base.text.width : codepointWidth;
 import sparkles.text_conformance.config : Config;
 import sparkles.text_conformance.report : Divergence, LayerResult;
 import sparkles.text_conformance.ucd : loadWidthData, WidthData;
+import sparkles.text_conformance.util : cpClass, isNoncharacter;
 
 version (TextConformanceUtf8proc)
     import sparkles.utf8proc;
-
-private bool isNoncharacter(dchar cp) @safe pure nothrow @nogc
-    => (cp >= 0xFDD0 && cp <= 0xFDEF) || (cp & 0xFFFE) == 0xFFFE;
 
 /// Explain a per-code-point width divergence from `cp`'s class and direction.
 private string causeOf(dchar cp, int got, int want, in WidthData d) @safe nothrow
@@ -102,7 +100,7 @@ LayerResult runLayer5(in Config cfg)
             continue;
         }
 
-        buckets[bucketKey(dc, d)]++;
+        buckets[cpClass(dc, d)]++;
         r.divergences ~= Divergence(5, format("U+%04X", cp),
             got.to!string, want.to!string, causeOf(dc, got, want, d));
     }
@@ -122,14 +120,4 @@ LayerResult runLayer5(in Config cfg)
     r.skipped = true;
     r.skipReason = "built without utf8proc (use the default 'application' config)";
     return r;
-}
-
-/// Short bucket label for the summary notes.
-private string bucketKey(dchar cp, in WidthData d) @safe nothrow
-{
-    if (cp >= 0x1F1E6 && cp <= 0x1F1FF) return "regional-indicator";
-    if (isNoncharacter(cp)) return "noncharacter";
-    if (cp >= 0x1160 && cp <= 0x11FF) return "hangul-jamo";
-    if (d.mn[cp] || d.mc[cp] || d.me[cp] || d.cf[cp]) return "mark/format";
-    return "other";
 }
