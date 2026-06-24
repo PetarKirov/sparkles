@@ -305,6 +305,10 @@ export default withMermaid(
                       text: 'Conformance test cases',
                       link: '/specs/base/text/test-cases',
                     },
+                    {
+                      text: 'Conformance harness',
+                      link: '/specs/base/text/conformance-harness',
+                    },
                   ],
                 },
               ],
