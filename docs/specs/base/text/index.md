@@ -728,12 +728,14 @@ cases conform to kitty:
 
 Beyond this curated ledger, the [conformance harness](./conformance-harness.md)
 differentially tests the implementation **exhaustively** — every code point and
-the official `GraphemeBreakTest.txt` / `emoji-test.txt` corpora — against a
-clean-room raw-UCD oracle, two reference terminals (kitty and ghostty via
-`libghostty-vt`), and the utf8proc library. It documents where these independent
-implementations genuinely _disagree_ (emoji-modifier sequences, Hangul jamo,
-Brahmic spacing marks, regional indicators) and which interpretation sparkles
-follows.
+the official `GraphemeBreakTest.txt` / `emoji-test.txt` corpora — across eleven
+layers: a clean-room raw-UCD oracle, three reference terminals (kitty, ghostty
+via `libghostty-vt`, notcurses), three width libraries (utf8proc, Rust
+`unicode-width`, Python `wcwidth` embedded in-process), and two live UAX #29
+segmenters (utf8proc, ICU). It documents where these independent implementations
+genuinely _disagree_ (emoji-modifier sequences, Hangul jamo, Brahmic spacing
+marks, regional indicators, VS16) and which interpretation sparkles follows — the
+contested classes are implementation-dependent, not bugs.
 
 ## 12. References
 
