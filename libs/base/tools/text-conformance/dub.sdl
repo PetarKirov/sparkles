@@ -31,7 +31,8 @@ configuration "application" {
     dependency "sparkles:ghostty" path="../../../.."
     dependency "utf8proc" path="bindings/utf8proc"
     dependency "icu" path="bindings/icu"
-    versions "TextConformanceGhostty" "TextConformanceUtf8proc" "TextConformanceIcu"
+    dependency "notcurses" path="bindings/notcurses"
+    versions "TextConformanceGhostty" "TextConformanceUtf8proc" "TextConformanceIcu" "TextConformanceNotcurses"
 
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
 }
