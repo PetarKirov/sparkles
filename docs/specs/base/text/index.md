@@ -32,10 +32,15 @@ kitty's documentation and source, **© Kovid Goyal, licensed GPL-3.0**:
 
 > [!NOTE]
 > kitty's algorithm document states it is based on **Unicode 16**. sparkles pins its
-> East-Asian-Width / emoji tables to **Unicode 17.0** (see
-> `libs/base/tools/gen_unicode_tables.d`), matching the toolchain's `std.uni`
-> grapheme tables. Width assignments are stable across these versions for the cases
-> in this spec.
+> East-Asian-Width / emoji **width** tables to **Unicode 17.0** (see
+> `libs/base/tools/gen_unicode_tables.d`), but **grapheme segmentation and the
+> general categories** (the zero-width Mark set) ride the toolchain's Phobos
+> `std.uni`, which currently tracks **Unicode 15.0** (LDC 1.41). The two axes can
+> therefore disagree: a code point that UCD 17.0 assigns a Mark category but
+> `std.uni` does not yet know measures as width 1 instead of 0. Width assignments
+> are stable across these versions for the curated cases in this spec, but **not in
+> general** — the [conformance harness](./conformance-harness.md) pins each axis
+> separately and tracks the (currently 42) such version-skew code points.
 
 ## 2. Measurement model vs. kitty's placement model
 
@@ -323,6 +328,18 @@ plus `Cf` and a few conjoining ranges (`zeroWidthSet`) → 0; East-Asian `W`/`F`
 → 1. Rule 3's variation-selector adjustment is applied at the **cluster** level
 ([§6](#_6-width-of-a-grapheme-cluster)).
 
+> [!IMPORTANT]
+> **Partial rule 3 — RGI modifier/tag sequences.** sparkles honors the _Wide
+> emoji_ rule only through the EAW table (and VS16/VS15 at the cluster level). It
+> does **not** separately force "the leading code point of an
+> `RGI_Emoji_Modifier_Sequence` / `RGI_Emoji_Tag_Sequence` to width 2." So when the
+> base is already EAW-wide (👍 `U+1F44D`) a skin-tone sequence is 2 either way, but
+> when the base is EAW-_neutral_ (✌ `U+270C`, EAW `N`) the sequence `270C 1F3FB`
+> stays width **1**, where kitty's rule 3 gives 2. This is a real divergence from
+> kitty — but **ghostty agrees with sparkles** here, so it is a contested,
+> terminal-dependent case rather than a clear bug. The
+> [conformance harness](./conformance-harness.md) (Layers 3 & 4) enumerates these.
+
 ```d
 #!/usr/bin/env dub
 /+ dub.sdl:
@@ -367,6 +384,11 @@ adjust it. `graphemeClusterWidth(in dchar[])` implements exactly that. So a flag
 (leading regional indicator → 2), a ZWJ family (leading wide emoji → 2), and an
 emoji + skin-tone modifier (leading wide emoji → 2) each resolve to one 2-cell
 cluster, while a base + spacing mark (`Mc`) stays one 1-cell cluster.
+
+Note the parenthetical "leading **wide** emoji": a skin-tone modifier never adds
+width itself, so a sequence whose base is EAW-_neutral_ (✌ `U+270C`) stays width 1
+— sparkles does not implement kitty's separate "modifier-sequence base → 2" rule
+(see the §5 note above and the [conformance harness](./conformance-harness.md)).
 
 ```d
 #!/usr/bin/env dub
