@@ -13,6 +13,10 @@
       envExports = lib.concatStringsSep "\n" (
         lib.mapAttrsToList (name: value: "export ${name}=${lib.escapeShellArg value}") d-toolchain.env
       );
+
+      # Python (3.11, the newest CPython PyD supports) with jquast wcwidth, for
+      # the text-conformance harness Layer 10 (PyD-embedded Python wcwidth oracle).
+      pythonEnv = pkgs.python311.withPackages (ps: [ ps.wcwidth ]);
       mkSparklesShell =
         greeting:
         pkgs.mkShell {
@@ -54,6 +58,9 @@
             # crate under the harness's oracles/ dir.
             config.packages.uwidth-rs
 
+            # Python + wcwidth for the PyD-embedded Layer 10.
+            pythonEnv
+
             # rendering
             pkgs.raylib
           ]
@@ -75,6 +82,13 @@
           shellHook = ''
             ${envExports}
             export GITHUB_TOKEN="$(gh auth token)"
+
+            # PyD-embedded Python (text-conformance Layer 10): make libpython
+            # linkable and let the embedded interpreter find wcwidth + the stdlib.
+            export LIBRARY_PATH="${pythonEnv}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
+            export LD_LIBRARY_PATH="${pythonEnv}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            export PYTHONPATH="${pythonEnv}/${pythonEnv.sitePackages}''${PYTHONPATH:+:$PYTHONPATH}"
+
             ${lib.optionalString greeting "figlet 'sparkles : *'"}
           ''
           + config.pre-commit.installationScript;

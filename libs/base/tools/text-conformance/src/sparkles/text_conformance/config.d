@@ -25,8 +25,8 @@ enum string phobosGraphemeUnicodeVersion = "15.0.0";
 /// Resolved run configuration handed to each layer.
 struct Config
 {
-    /// Which layers to run (true = run). Index = layer number (0..9).
-    bool[10] layers = [true, true, true, true, true, true, true, true, true, true];
+    /// Which layers to run (true = run). Index = layer number (0..10).
+    bool[11] layers = [true, true, true, true, true, true, true, true, true, true, true];
 
     /// Offline UCD directory (`--ucd-dir`); empty means download + cache.
     string ucdDir;
