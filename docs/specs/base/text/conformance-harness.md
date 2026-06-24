@@ -11,7 +11,7 @@ It is the executable companion to the normative
 [conformance test cases](./test-cases.md). The tool itself lives at
 [`libs/base/tools/text-conformance/`](../../../../libs/base/tools/text-conformance/).
 
-## The five layers
+## The six layers
 
 | Layer | Checks                                                               | Oracle                                                                    |
 | ----- | -------------------------------------------------------------------- | ------------------------------------------------------------------------- |
@@ -20,15 +20,18 @@ It is the executable companion to the normative
 | **2** | cluster width + single-cluster segmentation of every RGI emoji       | `emoji-test.txt` + the clean-room oracle                                  |
 | **3** | `visibleWidth` over an emoji + segmentation corpus                   | **kitty's** reference `wcswidth` (same Text Sizing Protocol spec)         |
 | **4** | `visibleWidth` over the same corpus                                  | **ghostty's** VT engine as a **library** (`libghostty-vt` cursor advance) |
+| **5** | `codepointWidth` over every assigned code point                      | **utf8proc's** `utf8proc_charwidth` as a **library**                      |
 
-Why five, and why they overlap: Layers 1 and 2 use a clean-room oracle that is
+Why six, and why they overlap: Layers 1 and 2 use a clean-room oracle that is
 independent in code and data (it reads the raw UCD, never `std.uni` or the
 library's generated tables), but it deliberately mirrors `width.d`'s **model** —
 so a simplification shared by both (see "Shared constants") is invisible to them.
-Layers 3 and 4 compare against entirely separate _implementations_ (kitty,
-ghostty), which catch those shared-simplification cases — and, crucially,
-**disagree with each other**, showing which width questions are genuinely
-contested rather than simple bugs.
+Layers 3, 4, and 5 compare against entirely separate _implementations_ (kitty,
+ghostty, utf8proc), which catch those shared-simplification cases — and,
+crucially, **disagree with each other**, showing which width questions are
+genuinely contested rather than simple bugs. utf8proc (Layer 5) is a per-code-point
+oracle pinned to Unicode 17.0, so it doubles as an independent confirmation of the
+Layer-1 raw-UCD oracle (and of the std.uni version skew).
 
 ### Two terminal oracles, two models
 
@@ -65,7 +68,7 @@ dub run --root=libs/base/tools/text-conformance -- --layers all
 dub run --root=libs/base/tools/text-conformance -- --layers 1
 
 # offline, against a pre-populated UCD tree (e.g. the cache itself).
-# the offline config drops libcurl AND ghostty, so layers 3/4 skip.
+# the offline config drops libcurl, ghostty AND utf8proc, so layers 3/4/5 skip.
 dub run --root=libs/base/tools/text-conformance --config=offline -- \
     --layers 0,1,2 --ucd-dir ~/.cache/sparkles-text-conformance --no-network
 
@@ -74,9 +77,9 @@ dub test --root=libs/base/tools/text-conformance
 ```
 
 Layer 3 needs the `kitty` binary on `PATH` (optional — skips when absent;
-`--require-kitty` makes it a hard error). Layer 4 links `libghostty-vt` at build
-time via `sparkles:ghostty`; it is built in the default `application` config and
-skips in the `offline` config.
+`--require-kitty` makes it a hard error). Layers 4 and 5 link `libghostty-vt` and
+`utf8proc` at build time via `sparkles:ghostty` / `sparkles:utf8proc`; they are
+built in the default `application` config and skip in the `offline` config.
 
 Exit code is `0` unless a layer has a **new** (non-allowlisted) divergence or a
 hard error (a download failure, or required-but-missing kitty).
@@ -113,7 +116,7 @@ nix shell nixpkgs#kitty --command \
     dub run --root=libs/base/tools/text-conformance -- --layers all --update-allowlist
 ```
 
-Each row carries a `reason`. The current ledger records three kinds:
+Each row carries a `reason`. The current ledger records four kinds:
 
 - **Version skew (Layer 1, 42).** Combining marks `U+1ACF..U+1AE4` are width 0 in
   UCD 17.0 but width 1 from the older `std.uni`. Resolve on a toolchain bump.
@@ -124,10 +127,18 @@ Each row carries a `reason`. The current ledger records three kinds:
   but not ghostty: 45 spacing marks (Mc) and 53 prepended-format (Cf) code points
   that ghostty advances a cell for, while the Text Sizing Protocol treats every
   Mark as width 0 (one cell per Brahmic syllable).
+- **Per-code-point gaps vs utf8proc (Layer 5, 299).** Over assigned code points:
+  26 regional indicators (sparkles applies kitty's flag rule → 2, utf8proc 1), 66
+  noncharacters (sparkles discards → 0, utf8proc 1), 160 conjoining Hangul jamo
+  (→ 0, utf8proc 1 — **the same class ghostty flags**), and 47 marks/format,
+  including the 42 version-skew marks utf8proc independently confirms.
 
 The Layer 3 and Layer 4 ledgers are near-mirror images: that is the headline —
 the contested width classes are terminal-dependent, and `sparkles` consistently
-follows the kitty Text Sizing Protocol.
+follows the kitty Text Sizing Protocol. Layer 5 corroborates from a third angle:
+utf8proc (at Unicode 17.0) agrees with the Layer-1 oracle on the 42 version-skew
+marks and with ghostty on the Hangul jamo, while differing on the
+regional-indicator and noncharacter rules that are sparkles/kitty conventions.
 
 ## Shared constants (Layer 1's honest limitation)
 
@@ -178,5 +189,6 @@ text-conformance/
 │       ├── layer1_width.d
 │       ├── layer2_emoji.d
 │       ├── layer3_kitty.d        # kitty wcswidth (CLI binary, optional)
-│       └── layer4_ghostty.d      # libghostty-vt cursor advance (library)
+│       ├── layer4_ghostty.d      # libghostty-vt cursor advance (library)
+│       └── layer5_utf8proc.d     # utf8proc_charwidth per code point (library)
 ```
