@@ -32,7 +32,12 @@ configuration "application" {
     dependency "utf8proc" path="bindings/utf8proc"
     dependency "icu" path="bindings/icu"
     dependency "notcurses" path="bindings/notcurses"
-    versions "TextConformanceGhostty" "TextConformanceUtf8proc" "TextConformanceIcu" "TextConformanceNotcurses"
+    // Layer 10 embeds Python via PyD. Pinned to the upstream commit that carries
+    // the (untagged) D-2.111 compatibility fix (ariovistus/pyd PR #172); the
+    // tagged 0.14.5 does not compile with this toolchain.
+    dependency "pyd" repository="git+https://github.com/ariovistus/pyd.git" version="bdba4ca50d0329780c5317c1a06f8afd4032535b"
+    subConfiguration "pyd" "python311"
+    versions "TextConformanceGhostty" "TextConformanceUtf8proc" "TextConformanceIcu" "TextConformanceNotcurses" "TextConformancePython"
 
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
 }
