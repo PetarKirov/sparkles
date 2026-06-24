@@ -36,7 +36,7 @@ jobs:
             nix-v2-${{ runner.os }}-
 
       - name: Cache lychee results
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: .lycheecache
           key: cache-lychee-v2-${{ github.sha }}
