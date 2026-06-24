@@ -1,0 +1,14 @@
+name "utf8proc"
+description "ImportC bindings for utf8proc (JuliaStrings/utf8proc) — scoped to the text-conformance harness"
+authors "Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+
+dflags "-preview=in" "-preview=dip1000"
+
+libs "utf8proc"
+
+configuration "library" {
+    targetType "sourceLibrary"
+}

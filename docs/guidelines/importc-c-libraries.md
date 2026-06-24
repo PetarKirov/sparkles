@@ -264,6 +264,14 @@ pkg-config is the clean path. If upstream ships no `.pc`:
 
 ## ImportC limitations worth knowing
 
+- **Module name is the file _stem_.** ImportC names the module after the file's
+  base name, ignoring the package path: `sparkles/ghostty/c.c` becomes module
+  `c`. That is fine for one binding, but when a build links **two** ImportC
+  bindings that both use `c.c`, their modules collide (`module 'c' … conflicts
+with another module c`). Give each shim a **unique stem** —
+  `libs/utf8proc/src/sparkles/utf8proc/utf8proc_c.c` (module `utf8proc_c`), with
+  `package.d` doing `public import sparkles.utf8proc.utf8proc_c;`. The canonical
+  `c.c` is only safe while a binary pulls in at most one such binding.
 - **Macros.** ImportC exposes simple object-like `#define INT_CONST 5` as manifest
   constants, but **function-like macros and `static inline` functions are not
   reliably importable.** Re-declare the value in D (`enum X = 1004;`) or call a
