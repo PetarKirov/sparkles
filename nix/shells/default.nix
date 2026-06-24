@@ -50,6 +50,10 @@
             pkgs.notcurses
             pkgs.notcurses.dev
 
+            # Rust unicode-width oracle helper (Layer 9), built from the in-tree
+            # crate under the harness's oracles/ dir.
+            config.packages.uwidth-rs
+
             # rendering
             pkgs.raylib
           ]
