@@ -23,19 +23,10 @@ import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.text_conformance.config : Config;
 import sparkles.text_conformance.corpus : emojiStrings, graphemeBreakStrings;
 import sparkles.text_conformance.report : Divergence, LayerResult;
+import sparkles.text_conformance.util : hasCursorControl, hexOf;
 
 version (TextConformanceNotcurses)
     import sparkles.notcurses;
-
-/// Skip strings whose width isn't a pure column count (cursor-moving controls).
-private bool hasCursorControl(string s) @safe
-{
-    foreach (cp; s.byDchar)
-        if (cp < 0x20 || cp == 0x7F || (cp >= 0x80 && cp <= 0x9F)
-            || cp == 0x2028 || cp == 0x2029)
-            return true;
-    return false;
-}
 
 version (TextConformanceNotcurses)
 LayerResult runLayer8(in Config cfg)
@@ -71,8 +62,7 @@ LayerResult runLayer8(in Config cfg)
             r.passed++;
             continue;
         }
-        r.divergences ~= Divergence(8,
-            toHexString(cast(const(ubyte)[]) s.representation).idup,
+        r.divergences ~= Divergence(8, hexOf(s),
             got.to!string, w.to!string, causeOf(s));
     }
 
