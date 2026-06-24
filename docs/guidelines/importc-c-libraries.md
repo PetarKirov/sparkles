@@ -277,6 +277,27 @@ with another module c`). Give each shim a **unique stem** —
   reliably importable.** Re-declare the value in D (`enum X = 1004;`) or call a
   wrapper from the `.c`. (We hit this with libghostty's `GHOSTTY_MODE_FOCUS_EVENT`
   and the device-attribute `#define`s — re-declared as D `enum`s.)
+- **Fortified `<wchar.h>` is unparseable.** A heavy system header that includes
+  `<wchar.h>` (e.g. `<notcurses/notcurses.h>`) pulls glibc's `bits/wchar2.h`,
+  whose `_FORTIFY_SOURCE` inline wrappers use compiler builtins ImportC doesn't
+  implement (`__builtin_dynamic_object_size`, `__builtin_va_arg_pack`). The nix cc
+  wrapper forces `_FORTIFY_SOURCE`, so `-P-D_FORTIFY_SOURCE=0` can't override it.
+  If the symbol you need has a **primitive signature**, skip the header and
+  declare just its prototype in the shim — the symbol resolves from the `.so`.
+  (notcurses' `ncstrwidth` is `int(const char*, int*, int*)`, so the shim is one
+  line, no `#include`.)
+- **A shim that _defines_ functions needs `cSourcePaths`.** Declaration-only shims
+  (whose symbols live in the `.so`) are pulled in via `-I` + import and link fine.
+  But if the shim **defines** a wrapper (e.g. to hide a versioned/renamed symbol —
+  ICU renames `ubrk_open`→`ubrk_open_76` via macros), the import-only path doesn't
+  emit the body → undefined-reference at link. Add `cSourcePaths "src/sparkles/<name>"`
+  so dub compiles the `.c` as a real source. Its module is then the bare **stem**
+  (`import icu_c;`, not `import sparkles.icu.icu_c;`).
+- **Embedding Python (PyD), not ImportC.** Calling Python _from_ D in-process is
+  done with PyD (the engine behind `$REPOS/dlang/autowrap`), not an ImportC shim.
+  See `libs/base/tools/text-conformance/src/sparkles/text_conformance/layer10_python_wcwidth.d`
+  for the working pattern (pin pyd to the untagged D-2.111-compat commit; read
+  result lists element-wise; `__import__` inside comprehensions).
 - **`const` on parameters.** ImportC may drop top-level `const` on function
   parameters; match the _generated_ signature (declare a callback's param
   non-`const` if the generated decl is non-`const`).
