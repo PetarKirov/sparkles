@@ -54,8 +54,12 @@ In `libs/base/src/sparkles/base/prettyprint.d`:
    `PrettyPrintOptions opt`, and a **mutable `Hook hook` field**; make it an output
    range (`put`); move the current dispatch body into a non-`const`
    `printImpl(T)(in T, ushort depth)`; add `print` / `printNested` methods. The
-   free `prettyPrint(...)` functions become thin front doors that construct a
-   `PrettyPrinter` and call `.print` — preserving the hookless call sites.
+   existing front-door free functions become thin wrappers that construct a
+   `PrettyPrinter` and call `.print` — **keeping the baseline names and order**:
+   `writePretty(ref Writer w, in T value, [auto ref Hook hook,] opt)` (writer-first,
+   the `write*` family) returns the writer, and `prettyPrint(in T value, opt)`
+   returns a string. This preserves the hookless call sites (e.g. the `check`
+   helper's `writePretty(buf, value, opts)`) verbatim.
 2. **Capability traits.** Add public `template hasRenderHook(Hook, T, Printer)`
    (staged: no `canRender` → `!canRender!T` → probe `render`) and
    `hasPrettyPrintTo(T, Printer)`, mirroring `hasWriteSourceUri`.
