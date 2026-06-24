@@ -1,0 +1,19 @@
+name "icu"
+description "ImportC bindings for ICU grapheme segmentation — scoped to the text-conformance harness"
+authors "Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+
+dflags "-preview=in" "-preview=dip1000"
+
+libs "icu-uc"
+
+// Unlike the declaration-only shims (utf8proc/ghostty, whose symbols live in the
+// .so), this shim *defines* wrapper functions, so the .c must be compiled as a
+// real source (emitted + linked), not merely imported for its declarations.
+cSourcePaths "src/sparkles/icu"
+
+configuration "library" {
+    targetType "sourceLibrary"
+}
