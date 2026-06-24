@@ -30,7 +30,8 @@ configuration "application" {
     // versions so the offline/unittest configs build without the native deps.
     dependency "sparkles:ghostty" path="../../../.."
     dependency "utf8proc" path="bindings/utf8proc"
-    versions "TextConformanceGhostty" "TextConformanceUtf8proc"
+    dependency "icu" path="bindings/icu"
+    versions "TextConformanceGhostty" "TextConformanceUtf8proc" "TextConformanceIcu"
 
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
 }

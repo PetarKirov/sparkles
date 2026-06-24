@@ -37,6 +37,7 @@ import sparkles.text_conformance.layer3_kitty : runLayer3;
 import sparkles.text_conformance.layer4_ghostty : runLayer4;
 import sparkles.text_conformance.layer5_utf8proc : runLayer5;
 import sparkles.text_conformance.layer6_utf8proc_seg : runLayer6;
+import sparkles.text_conformance.layer7_icu_seg : runLayer7;
 import sparkles.text_conformance.report : Divergence, LayerOutcome, LayerResult,
     anyNewFailures, renderSummary;
 
@@ -47,7 +48,7 @@ enum string defaultAllowlistPath = __FILE_FULL_PATH__
 
 struct CliParams
 {
-    @CliOption(`l|layers`, "Comma-separated layers to run: any of 0,1,2,3,4,5,6, or 'all' (default).")
+    @CliOption(`l|layers`, "Comma-separated layers to run: any of 0,1,2,3,4,5,6,7, or 'all' (default).")
     string layers = "all";
 
     @CliOption(`u|ucd-dir`, "Read Unicode data from this directory instead of downloading (offline).")
@@ -99,6 +100,7 @@ int main(string[] args)
     if (cfg.layers[4]) results ~= run("Layer 4", () => runLayer4(cfg));
     if (cfg.layers[5]) results ~= run("Layer 5", () => runLayer5(cfg));
     if (cfg.layers[6]) results ~= run("Layer 6", () => runLayer6(cfg));
+    if (cfg.layers[7]) results ~= run("Layer 7", () => runLayer7(cfg));
 
     if (cfg.updateAllowlist)
     {
@@ -188,12 +190,12 @@ private void printDivergences(in LayerResult[] results, in Allowlist allow)
 }
 
 /// Parse the `--layers` selector into a run mask.
-private bool[7] parseLayers(string spec)
+private bool[8] parseLayers(string spec)
 {
     if (spec == "all" || spec.length == 0)
-        return [true, true, true, true, true, true, true];
+        return [true, true, true, true, true, true, true, true];
 
-    bool[7] mask;
+    bool[8] mask;
     foreach (tok; spec.splitter(','))
     {
         switch (tok.strip)
@@ -205,6 +207,7 @@ private bool[7] parseLayers(string spec)
             case "4": mask[4] = true; break;
             case "5": mask[5] = true; break;
             case "6": mask[6] = true; break;
+            case "7": mask[7] = true; break;
             default: throw new Exception("unknown layer in --layers: " ~ tok);
         }
     }
