@@ -117,6 +117,34 @@ literals, so Layer 1 only **asserts** them; it cannot independently validate
 them. Layer 3 (kitty) is what covers that blind spot — and indeed it is where the
 conjoining-jamo divergence surfaced.
 
+## Comparing compilers (LDC vs DMD)
+
+Segmentation rides Phobos `std.uni`, so it can differ between compilers. The
+`offline` build configuration drops the libcurl dependency (so a `--compiler=dmd`
+binary links against a consistent glibc in the Nix shell) and reads everything
+from `--ucd-dir`:
+
+```bash
+for c in ldc2 dmd; do for v in 15.0.0 17.0.0; do
+  dub run --root=libs/base/tools/text-conformance --config=offline --compiler=$c -- \
+    --layers 0 --segmentation-unicode-version $v \
+    --ucd-dir ~/.cache/sparkles-text-conformance --no-network
+done; done
+```
+
+Empirical result (LDC 1.41 / Phobos 2.111 vs DMD 2.112.1):
+
+- **Both** compilers segment Indic conjuncts (InCB) like Unicode **15.0** — the
+  Phobos "Update to Unicode 17.0.0" (v2.112.0) bumped property _data_ but not the
+  grapheme-break behavior for those.
+- They disagree on exactly **one** boundary: `U+2701 U+200D U+2701`
+  (scissors-ZWJ-scissors). DMD's 17.0 data marks `U+2701` `Extended_Pictographic`,
+  flipping that one GB11 boundary (DMD splits 2+1; LDC keeps it whole). It is the
+  lone fingerprint of the data bump in grapheme output.
+
+So `phobosGraphemeUnicodeVersion = 15.0.0` is the right default for _both_; the
+single `U+2701` case is the only compiler-dependent boundary.
+
 ## Layout
 
 ```

@@ -11,18 +11,35 @@ mainSourceFile "src/app.d"
 
 dflags "-preview=in" "-preview=dip1000"
 
-libs "curl"
-
 dependency "sparkles:base" path="../../../.."
 dependency "sparkles:core-cli" path="../../../.."
 
+// `libs "curl"` lives per-configuration (not at top level) so the offline
+// config can build without libcurl — which lets the harness run under a
+// `--compiler=dmd` Nix toolchain whose libcurl would otherwise pull a newer
+// glibc than the dmd-linked binary. The shared-phobos / gold-linker flags are
+// the repo convention for linking against the right glibc in the Nix shell.
 configuration "application" {
     targetType "executable"
+
+    libs "curl"
+
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+}
+
+configuration "offline" {
+    targetType "executable"
+
+    versions "TextConformanceNoCurl"
+
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
 }
 
 configuration "unittest" {
     targetType "library"
     excludedSourceFiles "src/app.d"
+
+    libs "curl"
 
     dependency "silly" version="~>1.1.1"
 
