@@ -24,6 +24,12 @@ configuration "application" {
 
     libs "curl"
 
+    // Layer 4 uses libghostty-vt as a library (via the ImportC bindings in
+    // sparkles:ghostty). Gated behind a version so the offline/unittest configs
+    // build without the native dependency.
+    dependency "sparkles:ghostty" path="../../../.."
+    versions "TextConformanceGhostty"
+
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
 }
 
