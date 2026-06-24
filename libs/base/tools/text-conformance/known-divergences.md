@@ -562,3 +562,4 @@ after a toolchain bump.
 | 5     | U+FFFFF                          | 0        | 1        | noncharacter: sparkles discards it (0); utf8proc returns 1                                                                              |
 | 5     | U+10FFFE                         | 0        | 1        | noncharacter: sparkles discards it (0); utf8proc returns 1                                                                              |
 | 5     | U+10FFFF                         | 0        | 1        | noncharacter: sparkles discards it (0); utf8proc returns 1                                                                              |
+| 6     | 2701 200D 2701                   | 3        | 2,1      | live UAX#29 (utf8proc 17.0) vs std.uni (15.0) grapheme boundary                                                                         |
