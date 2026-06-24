@@ -110,21 +110,10 @@ private bool kittyAvailable()
 /// Run `kitty +runpy`, piping hex-encoded corpus entries on stdin.
 private int[] runKitty(const(string)[] corpus)
 {
-    auto pipes = pipeProcess(["kitty", "+runpy", kittyDriver],
-        Redirect.stdin | Redirect.stdout);
-    foreach (s; corpus)
-        pipes.stdin.writeln(hexOf(s));
-    pipes.stdin.close();
-
-    int[] widths;
-    foreach (line; pipes.stdout.byLine)
-    {
-        const t = line.strip;
-        if (t.length)
-            widths ~= t.to!int;
-    }
-    wait(pipes.pid);
-    return widths;
+    import std.algorithm : map;
+    import std.array : array;
+    import sparkles.text_conformance.subprocess : runIntPipe;
+    return runIntPipe(["kitty", "+runpy", kittyDriver], corpus.map!hexOf.array);
 }
 
 private string hexOf(string s)
