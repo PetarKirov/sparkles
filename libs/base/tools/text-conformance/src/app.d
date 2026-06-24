@@ -40,6 +40,7 @@ import sparkles.text_conformance.layer6_utf8proc_seg : runLayer6;
 import sparkles.text_conformance.layer7_icu_seg : runLayer7;
 import sparkles.text_conformance.layer8_notcurses : runLayer8;
 import sparkles.text_conformance.layer9_rust_uwidth : runLayer9;
+import sparkles.text_conformance.layer10_python_wcwidth : runLayer10;
 import sparkles.text_conformance.report : Divergence, LayerOutcome, LayerResult,
     anyNewFailures, renderSummary;
 
@@ -50,7 +51,7 @@ enum string defaultAllowlistPath = __FILE_FULL_PATH__
 
 struct CliParams
 {
-    @CliOption(`l|layers`, "Comma-separated layers to run: any of 0,1,2,3,4,5,6,7,8,9, or 'all' (default).")
+    @CliOption(`l|layers`, "Comma-separated layers to run: any of 0..10, or 'all' (default).")
     string layers = "all";
 
     @CliOption(`u|ucd-dir`, "Read Unicode data from this directory instead of downloading (offline).")
@@ -105,6 +106,7 @@ int main(string[] args)
     if (cfg.layers[7]) results ~= run("Layer 7", () => runLayer7(cfg));
     if (cfg.layers[8]) results ~= run("Layer 8", () => runLayer8(cfg));
     if (cfg.layers[9]) results ~= run("Layer 9", () => runLayer9(cfg));
+    if (cfg.layers[10]) results ~= run("Layer 10", () => runLayer10(cfg));
 
     if (cfg.updateAllowlist)
     {
@@ -194,12 +196,12 @@ private void printDivergences(in LayerResult[] results, in Allowlist allow)
 }
 
 /// Parse the `--layers` selector into a run mask.
-private bool[10] parseLayers(string spec)
+private bool[11] parseLayers(string spec)
 {
     if (spec == "all" || spec.length == 0)
-        return [true, true, true, true, true, true, true, true, true, true];
+        return [true, true, true, true, true, true, true, true, true, true, true];
 
-    bool[10] mask;
+    bool[11] mask;
     foreach (tok; spec.splitter(','))
     {
         switch (tok.strip)
@@ -214,6 +216,7 @@ private bool[10] parseLayers(string spec)
             case "7": mask[7] = true; break;
             case "8": mask[8] = true; break;
             case "9": mask[9] = true; break;
+            case "10": mask[10] = true; break;
             default: throw new Exception("unknown layer in --layers: " ~ tok);
         }
     }
