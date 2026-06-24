@@ -66,7 +66,7 @@ assert(prettyPrint(Point(1, 2), PrettyPrintOptions(useColors: false))
 
 | Public symbol                                                       | Role                                                                |
 | ------------------------------------------------------------------- | ------------------------------------------------------------------- |
-| `prettyPrint(value, ref writer, [hook,] opt)`                       | Front-door free function; renders into an output range, returns it  |
+| `writePretty(ref writer, value, [hook,] opt)`                       | Front-door writer function (writer-first, `write*` family); returns the writer |
 | `prettyPrint(value, opt) → string`                                  | Convenience overload returning a freshly-allocated string           |
 | `PrettyPrinter(Writer, Hook = NullHook)`                            | The renderer **object** (the shell, §6): `.print` / `.printNested`  |
 | `NullHook`                                                          | The default no-op hook — yields the built-in fallback               |
@@ -78,8 +78,8 @@ assert(prettyPrint(Point(1, 2), PrettyPrintOptions(useColors: false))
 The renderer is a **stateful object**, `PrettyPrinter`, that owns the output
 range, the formatting config, and the hook (a **mutable field** — so a stateful
 hook mutates its session directly, with no `const` games; §6.5). The free
-`prettyPrint` functions are thin front doors that construct a `PrettyPrinter` and
-call `.print`:
+`writePretty` (writer-first) and `prettyPrint` (string) functions are thin front
+doors that construct a `PrettyPrinter` and call `.print`:
 
 ```d
 struct PrettyPrinter(Writer, Hook = NullHook)
@@ -92,15 +92,16 @@ struct PrettyPrinter(Writer, Hook = NullHook)
     // PrettyPrinter is itself an output range (`put`) writing to the wrapped Writer.
 }
 
-// Front-door free functions. The hookless forms use NullHook (the built-in fallback).
-ref Writer prettyPrint(T, Writer)(
-    in T value, return ref Writer w, in PrettyPrintOptions opt = PrettyPrintOptions.init);
+// Front-door free functions — the write*-family convention: the writer comes
+// first. The hookless forms use NullHook (the built-in fallback).
+ref Writer writePretty(T, Writer)(
+    return ref Writer w, in T value, in PrettyPrintOptions opt = PrettyPrintOptions.init);
 
 string prettyPrint(T)(in T value, in PrettyPrintOptions opt = PrettyPrintOptions.init);
 
-// With an explicit hook (the stateful session lives in the printer it builds):
-ref Writer prettyPrint(T, Writer, Hook)(
-    in T value, return ref Writer w, auto ref Hook hook,
+// With an explicit render hook (its mutable session lives in the printer it builds):
+ref Writer writePretty(T, Writer, Hook)(
+    return ref Writer w, in T value, auto ref Hook hook,
     in PrettyPrintOptions opt = PrettyPrintOptions.init);
 ```
 
@@ -356,7 +357,7 @@ hooks (§6.8) build on that.
 
 ```d
 auto hook = CombineRenderHooks!(NixRenderHook, RedactStringsHook)(NixRenderHook(es), RedactStringsHook());
-prettyPrint(value, w, hook, opt);   // or PrettyPrinter!(Writer, typeof(hook))
+writePretty(w, value, hook, opt);   // or PrettyPrinter!(Writer, typeof(hook))
 ```
 
 `CombineRenderHooks!(Hooks...)` stores each sub-hook (mutably, as printer state);
@@ -449,7 +450,7 @@ static void writeSourceUri(string path, size_t line, size_t col, Writer)(ref Wri
   `SchemeHook!"idea"`, etc. emit editor schemes (`vscode://…`,
   `jetbrains://…`); `EditorDetectHook` picks one from `$VISUAL`/`$EDITOR` at
   runtime. The scheme table lives in `source_uri.d`. A URI-scheme-only hook
-  (e.g. `prettyPrint(v, w, SchemeHook!"code"(), opt)`) provides `writeSourceUri`
+  (e.g. `writePretty(w, v, SchemeHook!"code"(), opt)`) provides `writeSourceUri`
   and nothing else.
 - The same `Hook` type may carry both `writeSourceUri` (a `static` method,
   CTFE — `path`/`line`/`col` are template arguments) and the render/field/event
@@ -505,9 +506,10 @@ maxDepth` an unforced thunk renders `…` (never forced); a list/attr set forces
   attribute names and lambdas additionally link to their **definition site**
   via a runtime `file://path#Lline` URI (§7). On stock Nix this is absent.
 
-Convenience entries `prettyPrintNixValue(es, v, w, opt)` and
-`toPrettyString(es, v, opt)` build a printer with a `NixRenderHook(es)` and call
-`print`. This consumer is specified in full in `sparkles:nix`'s own docs.
+Convenience entries `writePrettyNixValue(w, es, v, opt)` (writer-first, like
+`writePretty`) and `toPrettyString(es, v, opt)` build a printer with a
+`NixRenderHook(es)` and render. This consumer is specified in full in
+`sparkles:nix`'s own docs.
 
 ### 8.4 `std.json.JSONValue` (illustrative)
 
@@ -519,8 +521,8 @@ external context.
 ## 9. Safety attributes and conventions
 
 - **Inference, not annotation.** `PrettyPrinter` and its methods (`print`,
-  `printNested`, `printImpl`), the free `prettyPrint` functions, and the
-  capability traits are templates with inferred attributes. Following the repo
+  `printNested`, `printImpl`), the free `writePretty`/`prettyPrint` functions, and
+  the capability traits are templates with inferred attributes. Following the repo
   rule, no `@safe`/`@trusted` is forced on them. A pure/`@nogc`/`@safe`
   payload+hook keeps the instantiation `@safe pure nothrow @nogc`; an impure hook
   (Nix) infers impure for _that_ printer instantiation only.
