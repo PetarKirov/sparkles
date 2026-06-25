@@ -1,0 +1,16 @@
+name "f11_scroll_win32"
+description "F11 scroll-fidelity demo: raw WM_MOUSEWHEEL/WM_MOUSEHWHEEL wheelDelta logging, the sub-120 accumulation contract vs the per-event-truncation bug, SendInput wheel gestures, and a focus-vs-cursor wheel-routing probe."
+targetType "executable"
+sourcePaths "."
+targetPath "build"
+platforms "windows"
+// Druntime's built-in core.sys.windows bindings only (zero third-party) — same
+// policy as ../../example/. Set WSI_AUTO_EXIT=1 for the bounded CI mode: eight
+// injected wheel gestures (±120, ±40 sub-detent bursts, +360 multi-detent,
+// a net-40 jitter burst, horizontal, and a focus-vs-cursor routing probe),
+// each with a gesture summary, then clean exit 0. WSI_TRUNCATE=1 drives the
+// ruler from the buggy per-event-truncation model instead of the carried
+// accumulator (both are always logged). This dub.sdl is for the Windows CI
+// runner; locally the demo is cross-compiled with `nix develop .#win32`
+// (ldc2 -mtriple=x86_64-pc-windows-msvc + win32-link) and run under Wine —
+// dub cannot drive that pipeline.

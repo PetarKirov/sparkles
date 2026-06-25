@@ -1,0 +1,8 @@
+name "f12_cursors_appkit"
+description "F12 cursors demo on macOS/AppKit: probes the full NSCursor standard-cursor vocabulary (incl. the macOS 15 frame/column/row-resize additions and the missing public diagonals before them), drives a 3x3 NSTrackingArea hover grid through cursorUpdate:, exercises the legacy addCursorRect:cursor: path, builds a custom 24x24 bullseye cursor with a 2x rep via initWithImage:hotSpot:, and probes the push/pop-vs-set cursor stack and hide/unhide pairing."
+targetType "executable"
+sourcePaths "."
+targetPath "build"
+platforms "osx"
+dependency "objective-d" version="~>1.1.2"
+lflags "-framework" "Cocoa"

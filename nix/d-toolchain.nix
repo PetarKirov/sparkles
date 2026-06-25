@@ -27,63 +27,39 @@
       _module.args.pkgs = import inputs.nixpkgs {
         inherit system;
         overlays = [
-          (
-            final: prev:
-            let
-              inherit (prev) lib;
-              inherit (prev.stdenv) isDarwin;
+          (final: prev: {
+            # The project LDC is the *official upstream release binary*,
+            # packaged by dlang.nix — not nixpkgs' source build. Two reasons:
+            #
+            #   1. The official binaries ship with integrated LLD, so
+            #      `-link-internally` works; the win32 cross shell
+            #      (nix/shells/win32-cross.nix) cross-links PE executables
+            #      with it in one `ldc2` invocation. nixpkgs' ldc is built
+            #      without LLD and rejects the flag.
+            #   2. It retires the Darwin ldc2.conf cleanup wrapper that the
+            #      nixpkgs package needed (its conf shipped a nonexistent
+            #      compiler-rt `lib-dirs` entry): the release archive's conf
+            #      only references its own relocated prefix.
+            #
+            # Keep the version in lockstep with `ldcWindowsLibs` in
+            # win32-cross.nix — cross-linking mixes this compiler with the
+            # Windows druntime/phobos import libs of the same release.
+            ldc = inputs'.dlang-nix.packages."ldc-binary-1_41_0";
 
-              cleanLdcConfig = lib.pipe "${prev.ldc}/etc/ldc2.conf" [
-                builtins.readFile
-                (lib.splitString "\n")
-                (lib.filter (line: !(lib.hasInfix "/lib/clang/" line && lib.hasInfix "/lib/darwin" line)))
-                lib.concatLines
-                (prev.writeText "ldc2-clean.conf")
-              ];
-            in
-            {
-              # On Darwin, ldc2.conf ships a lib-dirs entry pointing at a
-              # compiler-rt path that does not exist in the Nix store, yielding
-              # a spurious `ld: warning: directory not found`. Re-point both
-              # drivers at the cleaned config via a wrapper. Because this overlay
-              # replaces `pkgs.ldc` package-set-wide, the result must stay a
-              # *complete* ldc — dub builds link against `${ldc}/lib`
-              # (druntime/phobos) and may invoke `ldmd2` — so we `symlinkJoin`
-              # the real package and only wrap the two drivers, rather than
-              # substituting a bare `ldc2` shim.
-              ldc =
-                if isDarwin then
-                  prev.symlinkJoin {
-                    name = "ldc-${prev.ldc.version}";
-                    paths = [ prev.ldc ];
-                    nativeBuildInputs = [ prev.makeWrapper ];
-                    postBuild = ''
-                      for drv in ldc2 ldmd2; do
-                        wrapProgram "$out/bin/$drv" --add-flags "-conf=${cleanLdcConfig}"
-                      done
-                    '';
-                    meta = prev.ldc.meta // {
-                      mainProgram = "ldc2";
-                    };
-                  }
-                else
-                  prev.ldc;
+            # Build `dtools` (rdmd, dustmite, …) against nixpkgs' own ldc,
+            # not the dlang.nix release binary above: nixpkgs `by-name`
+            # packages bind `callPackage` to the *final* package set, so a
+            # bare `prev.dtools` would resolve `ldc` to the overlaid binary,
+            # whose derivation layout nixpkgs' dtools build was never tested
+            # against — the `ldc` argument is pinned back to the nixpkgs
+            # package the recipe was written for.
+            dtools = prev.dtools.override { ldc = prev.ldc; };
 
-              # Build `dtools` (rdmd, dustmite, …) against the *unwrapped* ldc.
-              # Its check phase (`test_rdmd`) copies `ldmd2` into a temp dir and
-              # execs it, which trips over the Darwin wrapper above ("Permission
-              # denied"), and the tool bundle gains nothing from our cleaned
-              # config. A bare `prev.dtools` would not help: nixpkgs `by-name`
-              # packages bind `callPackage` to the *final* package set, so
-              # `prev.dtools` already resolves `ldc` to the wrapper — the `ldc`
-              # argument has to be overridden back to the plain package.
-              dtools = prev.dtools.override { ldc = prev.ldc; };
+            dmd = inputs'.dlang-nix.packages.dmd-2_112_1;
 
-              dmd = inputs'.dlang-nix.packages.dmd-2_112_1;
+            dub = inputs'.dlang-nix.packages.dub-1_43_0-alpha-5efed36;
 
-              dub = inputs'.dlang-nix.packages.dub-1_43_0-alpha-5efed36;
-            }
-          )
+          })
         ];
       };
 
