@@ -1,0 +1,30 @@
+name "release"
+description "Cut a sparkles release: scan tags, summarize commits, suggest a bump, write notes, tag and publish"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetType "executable"
+targetName "release"
+targetPath "build"
+mainSourceFile "src/app.d"
+
+dflags "-preview=in" "-preview=dip1000"
+
+dependency "expected" version="~>0.4.1"
+dependency "sparkles:base" path="../.."
+dependency "sparkles:core-cli" path="../.."
+dependency "sparkles:versions" path="../.."
+
+configuration "application" {
+    targetType "executable"
+}
+
+configuration "unittest" {
+    targetType "library"
+    excludedSourceFiles "src/app.d"
+
+    dependency "silly" version="~>1.1.1"
+
+    dflags "-checkaction=context" "-allinst"
+}

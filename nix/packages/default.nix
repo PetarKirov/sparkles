@@ -29,11 +29,13 @@
             # must be present too.
             (fs.fileFilter isDubManifest root)
           ]
-          # D source files for the ci app and its only direct dependency.
+          # D source files for the ci/release apps and their direct dependencies.
           ++ map (path: fs.fileFilter (file: file.hasExt "d") (fromRoot path)) [
             "apps/ci/src"
+            "apps/release/src"
             "libs/base/src"
             "libs/core-cli/src"
+            "libs/versions/src"
           ]
         );
       };
@@ -129,6 +131,64 @@
       apps.ci = {
         type = "app";
         program = lib.getExe config.packages.ci;
+      };
+
+      packages.release = pkgs.buildDubPackage (finalAttrs: {
+        pname = "release";
+        version = "0.1.0";
+
+        inherit src;
+        sourceRoot = "${finalAttrs.src.name}/apps/${finalAttrs.pname}";
+
+        # Shared with `ci` and the example derivations (see ./examples.nix).
+        dubLock = fromRoot "nix/dub-lock.json";
+        compiler = pkgs.ldc;
+
+        nativeBuildInputs = [
+          pkgs.makeWrapper
+        ];
+
+        # Keep the runtime closure honest (see the `ci` derivation for why
+        # clearing this matters for the wrapper PATH).
+        disallowedReferences = [ ];
+
+        preBuild = ''chmod -R u+w "$NIX_BUILD_TOP"'';
+
+        installPhase = ''
+          install -Dm755 build/${finalAttrs.pname} $out/bin/${finalAttrs.pname}
+        '';
+
+        # `release` shells out to `git`, optionally `gh` (for the GitHub release
+        # stages), and — for the pre-flight checks — the repo's own `ci` tool.
+        # Bundling the flake-built `ci` here means pre-flight uses the pinned,
+        # never-stale binary (no nested `nix run`). LLM agents are deliberately
+        # NOT bundled: they are user-provided and discovered on the caller's PATH.
+        postFixup =
+          let
+            path = lib.makeBinPath [
+              pkgs.git
+              pkgs.gh
+              config.packages.ci
+            ];
+          in
+          ''
+            install -Dm755 build/${finalAttrs.pname} $out/bin/${finalAttrs.pname}
+            wrapProgram $out/bin/${finalAttrs.pname} \
+              --prefix PATH : ${path}
+          '';
+
+        meta = {
+          description = ''
+            Cut a sparkles release: scan tags, summarize commits, suggest a bump,
+            write notes, tag and publish
+          '';
+          mainProgram = finalAttrs.pname;
+        };
+      });
+
+      apps.release = {
+        type = "app";
+        program = lib.getExe config.packages.release;
       };
     };
 }
