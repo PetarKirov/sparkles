@@ -311,6 +311,92 @@ export default withMermaid(
           collapsed: true,
           items: [
             {
+              text: 'Parsing',
+              link: '/research/parsing/',
+              collapsed: true,
+              items: [
+                {
+                  text: 'Concepts & Vocabulary',
+                  link: '/research/parsing/concepts',
+                },
+                {
+                  text: 'Foundations (Theory)',
+                  link: '/research/parsing/theory/',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Formal Languages',
+                      link: '/research/parsing/theory/formal-languages',
+                    },
+                    {
+                      text: 'Top-Down (LL / ALL*)',
+                      link: '/research/parsing/theory/top-down',
+                    },
+                    {
+                      text: 'Bottom-Up (LR / GLR)',
+                      link: '/research/parsing/theory/bottom-up',
+                    },
+                    {
+                      text: 'General (Earley / CYK / GLL)',
+                      link: '/research/parsing/theory/general-parsing',
+                    },
+                    {
+                      text: 'PEG & Packrat',
+                      link: '/research/parsing/theory/peg-packrat',
+                    },
+                    {
+                      text: 'Operator-Precedence & Pratt',
+                      link: '/research/parsing/theory/pratt-precedence',
+                    },
+                    {
+                      text: 'Parsing with Derivatives',
+                      link: '/research/parsing/theory/derivatives',
+                    },
+                  ],
+                },
+                {
+                  text: 'Generators',
+                  collapsed: true,
+                  items: [
+                    { text: 'ANTLR', link: '/research/parsing/antlr' },
+                    {
+                      text: 'GNU Bison & yacc',
+                      link: '/research/parsing/bison-yacc',
+                    },
+                    { text: 'Menhir', link: '/research/parsing/menhir' },
+                    { text: 'pest', link: '/research/parsing/pest' },
+                  ],
+                },
+                {
+                  text: 'Parser Combinators',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Parsec / Megaparsec',
+                      link: '/research/parsing/haskell-parsec',
+                    },
+                    { text: 'nom', link: '/research/parsing/rust-nom' },
+                    { text: 'chumsky', link: '/research/parsing/rust-chumsky' },
+                  ],
+                },
+                {
+                  text: 'High-Performance & Incremental',
+                  collapsed: true,
+                  items: [
+                    { text: 'simdjson', link: '/research/parsing/simdjson' },
+                    {
+                      text: 'Tree-sitter',
+                      link: '/research/parsing/tree-sitter',
+                    },
+                  ],
+                },
+                {
+                  text: 'Comparison & Synthesis',
+                  link: '/research/parsing/comparison',
+                },
+              ],
+            },
+            {
               text: 'Sean Parent: Better Code',
               link: '/research/sean-parent/',
               collapsed: true,

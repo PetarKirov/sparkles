@@ -6,6 +6,12 @@
 ^https://doi\.org/
 ^https://dl\.acm\.org/
 ^https://link\.springer\.com/
+# Elsevier ScienceDirect auth-walls automated checkers (302 -> id.elsevier.com,
+# HTTP 400) and Oxford UP returns 403 — like dl.acm.org/springer above. Several
+# parsing-survey papers are Elsevier/OUP-only (Knuth 1965, Leo 1991, Antimirov
+# 1996, Aycock-Horspool 2002); preferred dl.acm.org where a version exists.
+^https?://([^/]+\.)?sciencedirect\.com/
+^https?://academic\.oup\.com/
 ^https://rosettacode\.org/
 ^https://hnterm\.ggerganov\.com/
 ^https?://([^/]+\.)?medium\.com/
@@ -50,3 +56,7 @@
 ^https?://([^/]+\.)?googlesource\.com/
 ^https?://([^/]+\.)?think-async\.com/
 ^https?://([^/]+\.)?cs\.columbia\.edu/
+# gallium.inria.fr (INRIA Menhir / Pottier pages, cited in parsing/menhir.md):
+# connection times out locally and under CI (the cambium successor too); the links
+# are valid canonical citations, so exclude rather than rot-pin.
+^https?://gallium\.inria\.fr/
