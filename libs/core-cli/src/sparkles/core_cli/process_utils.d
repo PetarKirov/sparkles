@@ -25,6 +25,171 @@ string executeShell(in string command)
 }
 
 // ---------------------------------------------------------------------------
+// PATH lookup and captured execution
+// ---------------------------------------------------------------------------
+
+/**
+True when an executable named `name` is found on `$PATH`. Mirrors a shell's
+command lookup: each `$PATH` entry is joined with `name` and the candidate must
+exist, be a regular file, and (on POSIX) be executable by the current user.
+*/
+bool isInPath(string name) @safe
+{
+    import std.algorithm.iteration : splitter;
+    import std.file : exists, isFile;
+    import std.path : buildPath, pathSeparator;
+    import std.process : environment;
+
+    const pathVar = environment.get("PATH", "");
+    foreach (dir; pathVar.splitter(pathSeparator))
+    {
+        if (dir.length == 0)
+            continue;
+        const candidate = dir.buildPath(name);
+        // `isFile` guards against a searchable directory of the same name;
+        // `isExecutable` ensures the file can actually be run.
+        if (candidate.exists && candidate.isFile && isExecutable(candidate))
+            return true;
+    }
+    return false;
+}
+
+/// `access(path, X_OK)` wrapped so the single unsafe call is the only trusted
+/// surface. Non-POSIX targets fall back to existence (checked by the caller).
+private bool isExecutable(scope const(char)[] path) @trusted
+{
+    version (Posix)
+    {
+        import std.string : toStringz;
+        import core.sys.posix.unistd : access, X_OK;
+
+        return access(path.toStringz, X_OK) == 0;
+    }
+    else
+        return true;
+}
+
+/// The outcome of $(LREF runCaptured): the child's exit status and its stdout
+/// and stderr captured as *separate* strings (unlike `std.process.execute` and
+/// $(LREF executeMonitored), which combine the two).
+struct CapturedResult
+{
+    int status;     /// child exit code (`127` when the process could not be spawned)
+    string stdout;  /// everything the child wrote to stdout
+    string stderr;  /// everything the child wrote to stderr
+
+    /// True when the child exited successfully.
+    bool succeeded() const @safe pure nothrow @nogc => status == 0;
+}
+
+/**
+Runs `args` (an argv array — no shell, so no quoting hazards) to completion and
+captures its stdout and stderr separately, optionally feeding `stdinText` to the
+child's standard input and running it in `workDir` (the current directory when
+`null`).
+
+Unlike $(LREF executeShell) this **never throws**: a non-zero exit is reported
+through `CapturedResult.status`, and a failure to even spawn the process (e.g. a
+missing binary) yields `status == 127` with the error text in `stderr`. Output
+is drained through temp files rather than pipes, so a chatty child cannot
+deadlock against an undrained pipe.
+*/
+CapturedResult runCaptured(
+    const(string)[] args,
+    string stdinText = null,
+    string workDir = null,
+) @safe
+{
+    return () @trusted {
+        import std.conv : text;
+        import std.file : tempDir, readText, remove, write;
+        import std.path : buildPath;
+        import std.process : spawnProcess, wait, thisProcessID, Config;
+        import std.stdio : File, stdin;
+        import core.atomic : atomicOp;
+
+        static shared size_t counter;
+        const id = atomicOp!"+="(counter, 1);
+        const base = buildPath(tempDir,
+            text("sparkles-run-", thisProcessID, "-", id));
+        const outPath = base ~ ".out";
+        const errPath = base ~ ".err";
+        const inPath = base ~ ".in";
+        const haveStdin = stdinText !is null;
+
+        CapturedResult result;
+        try
+        {
+            if (haveStdin)
+                write(inPath, stdinText);
+
+            auto inFile = haveStdin ? File(inPath, "r") : stdin;
+            auto outFile = File(outPath, "w");
+            auto errFile = File(errPath, "w");
+
+            auto pid = spawnProcess(
+                args, inFile, outFile, errFile, null, Config.none, workDir);
+            result.status = wait(pid);
+
+            outFile.close();
+            errFile.close();
+            if (haveStdin)
+                inFile.close();
+
+            result.stdout = readText(outPath);
+            result.stderr = readText(errPath);
+        }
+        catch (Exception e)
+        {
+            result.status = 127;
+            result.stderr = e.msg;
+        }
+
+        foreach (p; [outPath, errPath, inPath])
+            try
+                remove(p);
+            catch (Exception)
+            {
+            }                                // best-effort cleanup
+        return result;
+    }();
+}
+
+@("process_utils.isInPath")
+@safe unittest
+{
+    // A POSIX system always has a shell on PATH; the bogus name never resolves.
+    assert(isInPath("sh"));
+    assert(!isInPath("sparkles-nonexistent-binary-xyzzy-123"));
+}
+
+@("process_utils.runCaptured.exitCodes")
+@safe unittest
+{
+    assert(runCaptured(["true"]).succeeded);
+    assert(!runCaptured(["false"]).succeeded);
+    // A missing binary is reported, not thrown.
+    assert(runCaptured(["sparkles-nonexistent-binary-xyzzy-123"]).status == 127);
+}
+
+@("process_utils.runCaptured.separateStreams")
+@safe unittest
+{
+    auto r = runCaptured(["sh", "-c", "printf out; printf err 1>&2"]);
+    assert(r.succeeded);
+    assert(r.stdout == "out");
+    assert(r.stderr == "err");
+}
+
+@("process_utils.runCaptured.stdin")
+@safe unittest
+{
+    auto r = runCaptured(["cat"], "hello stdin");
+    assert(r.succeeded);
+    assert(r.stdout == "hello stdin");
+}
+
+// ---------------------------------------------------------------------------
 // Resource-monitored execution
 // ---------------------------------------------------------------------------
 
