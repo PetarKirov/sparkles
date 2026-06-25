@@ -9,6 +9,7 @@ module sparkles.base.text.writers;
 import core.time : Duration;
 
 import sparkles.base.term_style : Style;
+import sparkles.base.text.enums : StringRepresentation, enumToString;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Integer Writing
@@ -792,9 +793,9 @@ unittest
 
 /// Writes an enum value's member name to an output range. @nogc-compatible.
 ///
-/// Uses `static foreach` over `__traits(allMembers, E)` for a compile-time
-/// generated lookup. Falls back to writing the underlying integer value
-/// if no member matches (e.g., combined bit flags).
+/// Uses the shared `enumToString` mapping for matched members. Falls back to
+/// writing the underlying integer value if no member matches (e.g., combined
+/// bit flags).
 void writeEnumMemberName(E, Writer)(ref Writer w, const E val)
 if (is(E == enum))
 {
@@ -807,7 +808,7 @@ if (is(E == enum))
     {{
         if (!matched && val == __traits(getMember, E, member))
         {
-            put(w, member);
+            put(w, enumToString(__traits(getMember, E, member)));
             matched = true;
         }
     }}
@@ -827,6 +828,23 @@ unittest
     SmallBuffer!(char, 32) buf;
     writeEnumMemberName(buf, Color.green);
     assert(buf[] == "green");
+}
+
+@("writeEnumMemberName.stringRepresentation")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    enum Color
+    {
+        @StringRepresentation("bright-red") red,
+        green,
+    }
+
+    SmallBuffer!(char, 32) buf;
+    writeEnumMemberName(buf, Color.red);
+    assert(buf[] == "bright-red");
 }
 
 @("writeEnumMemberName.fallback")
