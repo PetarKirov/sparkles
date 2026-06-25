@@ -106,6 +106,10 @@ export default withMermaid(
               link: '/guidelines/importc-c-libraries',
             },
             {
+              text: 'Cutting a Release',
+              link: '/guidelines/release',
+            },
+            {
               text: 'Move Semantics & __rvalue',
               link: '/guidelines/move-semantics/',
             },
