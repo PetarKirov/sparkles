@@ -20,6 +20,7 @@ enum ParseErrorCode
     leadingZero,         /// a numeric field had a disallowed leading zero
     numericOverflow,     /// a number exceeded the target type's range
     invalidIdentifier,   /// an identifier contained a disallowed character
+    unknownValue,        /// a token matched no value in a known (closed) set
     widthMismatch,       /// a fixed-width field did not meet its width
 }
 
@@ -29,6 +30,9 @@ struct ParseError
 {
     ParseErrorCode code; /// what went wrong
     size_t offset;       /// byte offset of the failure
+    /// optional borrowed detail (typically a CTFE literal, e.g.
+    /// `"expected one of: a, b, c"`)
+    string context = null;
 }
 
 /**
@@ -66,6 +70,12 @@ ParseExpected!T parseErr(T)(ParseError error) @safe pure nothrow @nogc
 /// `return parseErr!T(ParseErrorCode.numericOverflow, i);`
 ParseExpected!T parseErr(T)(ParseErrorCode code, size_t offset) @safe pure nothrow @nogc
     => err!(T, NoGcHook)(ParseError(code, offset));
+
+/// ditto — `code` + `offset` + a borrowed `context` detail (typically a CTFE
+/// literal so the call stays `@nogc`):
+/// `return parseErr!T(ParseErrorCode.unknownValue, 0, msg);`
+ParseExpected!T parseErr(T)(ParseErrorCode code, size_t offset, string context) @safe pure nothrow @nogc
+    => err!(T, NoGcHook)(ParseError(code, offset, context));
 
 @("text.errors.parseOk")
 @safe pure nothrow @nogc
