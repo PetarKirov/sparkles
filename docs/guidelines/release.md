@@ -46,6 +46,20 @@ that tag is the authoritative version — there is no `version` field in any
 
 ## Cutting a release
 
+> [!TIP]
+> Most of this checklist is automated by the `release` tool:
+>
+> ```bash
+> nix run .#release            # interactive: stats → bump → notes → local tag
+> nix run .#release -- --auto --agent claude-code --stage push-tag
+> ```
+>
+> It scans the tags, summarizes the commits, suggests the bump (using the policy
+> above), gathers the notes (your `$EDITOR` or a CLI LLM agent), runs the
+> pre-flight checks, and goes as far as `--stage` allows (default: a local
+> annotated tag). The steps below are the reference it implements — and the
+> fallback when you'd rather do it by hand.
+
 A checklist. Each step assumes the toolchain from `nix develop` / `direnv`.
 
 1. **Pick the version** per the policy above. Decide minor vs. patch from the
