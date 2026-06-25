@@ -23,12 +23,14 @@ Package module re-exporting `lifetime`, `logger`, `prettyprint`,
 
 ## `sparkles.base.text`
 
-The package re-exports `text.writers`, `text.readers`, and `text.errors`.
+The package re-exports `text.writers`, `text.readers`, `text.enums`, and
+`text.errors`.
 
 | Module                       | Description                                                  |
 | ---------------------------- | ------------------------------------------------------------ |
 | `sparkles.base.text.writers` | Integer, float, duration, byte, escape, and value writers.   |
 | `sparkles.base.text.readers` | Slice-advance parsers such as `readInteger` and `readUntil`. |
+| `sparkles.base.text.enums`   | Enum text helpers such as `StringRepresentation`.            |
 | `sparkles.base.text.errors`  | `ParseErrorCode`, `ParseError`, and `ParseExpected!T`.       |
 
 ## `sparkles.base.term_style`
