@@ -1,0 +1,35 @@
+name: Notify DUB Registry
+
+# Pokes code.dlang.org to ingest a new release immediately. The registry also
+# background-scans registered repos on its own schedule, so this only *speeds up*
+# ingestion — it is not what makes a tag public.
+on:
+  # Trigger on a *published* GitHub Release, not a bare tag push. This leaves a
+  # grace window between pushing the `vX.Y.Z` tag and publishing the Release in
+  # which a mistaken tag can be deleted before we nudge the registry. (Best
+  # effort: the registry's background scan can still ingest a pushed tag on its
+  # own — pushing the tag is the real point of no return.)
+  release:
+    types: [published]
+
+  # Allow re-notifying by hand if the release-time call failed.
+  workflow_dispatch:
+
+concurrency:
+  group: notify-dub-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger code.dlang.org update
+        env:
+          # Optional. Set this repo secret only if the package was registered
+          # with an update secret; otherwise the empty default is accepted.
+          SECRET: ${{ secrets.DUB_REGISTRY_SECRET }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --retry 3 --retry-delay 5 \
+            -X POST 'https://code.dlang.org/api/packages/sparkles/update' \
+            --data-urlencode "secret=${SECRET}"
