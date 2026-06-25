@@ -16,8 +16,11 @@ import sparkles.base.text : StringRepresentation, enumToString, readEnumString;
 private T enumFromJsonString(T)(in string value)
 if (is(T == enum))
 {
-    auto parsed = readEnumString!T(value);
-    if (parsed.hasValue)
+    // `readEnumString` is a slice-advancing reader; require it to consume the
+    // entire token (an exact match), not just a member-name prefix.
+    scope const(char)[] cursor = value;
+    auto parsed = readEnumString!T(cursor);
+    if (parsed.hasValue && cursor.length == 0)
         return parsed.value;
 
     throw new Exception(

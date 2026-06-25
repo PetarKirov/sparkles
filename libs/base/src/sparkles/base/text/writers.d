@@ -9,7 +9,7 @@ module sparkles.base.text.writers;
 import core.time : Duration;
 
 import sparkles.base.term_style : Style;
-import sparkles.base.text.enums : StringRepresentation, enumToString;
+import sparkles.base.text.enums : StringRepresentation, enumMemberName;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Integer Writing
@@ -793,9 +793,9 @@ unittest
 
 /// Writes an enum value's member name to an output range. @nogc-compatible.
 ///
-/// Uses the shared `enumToString` mapping for matched members. Falls back to
-/// writing the underlying integer value if no member matches (e.g., combined
-/// bit flags).
+/// Uses the shared `enumMemberName` policy (`sparkles.base.text.enums`) for a
+/// direct compile-time lookup of the matched member. Falls back to writing the
+/// underlying integer value if no member matches (e.g., combined bit flags).
 void writeEnumMemberName(E, Writer)(ref Writer w, const E val)
 if (is(E == enum))
 {
@@ -808,7 +808,7 @@ if (is(E == enum))
     {{
         if (!matched && val == __traits(getMember, E, member))
         {
-            put(w, enumToString(__traits(getMember, E, member)));
+            put(w, enumMemberName!(__traits(getMember, E, member)));
             matched = true;
         }
     }}

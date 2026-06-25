@@ -9,12 +9,14 @@ all higher-level rules (leading-zero handling, field widths, which error
 to surface) to the caller.
 
 The integer reader is the inverse of
-$(REF writeInteger, sparkles,core_cli,text,writers).
+$(REF writeInteger, sparkles,core_cli,text,writers); $(LREF readEnumString) is
+the inverse of `writeEnumMemberName` (`sparkles.base.text.writers`).
 */
 module sparkles.base.text.readers;
 
 import std.traits : isUnsigned;
 
+import sparkles.base.text.enums : enumMemberName;
 import sparkles.base.text.errors :
     ParseErrorCode, ParseExpected, parseErr, parseOk;
 
@@ -113,6 +115,69 @@ const(char)[] readUntil(return ref scope const(char)[] s, scope const(char)[] de
     return head;
 }
 
+/// The enum's member names joined as `"a, b, c"`, computed at compile time —
+/// the body of the `"expected one of: …"` detail $(LREF readEnumString) attaches
+/// to an `unknownValue` error.
+private template enumExpectedList(E)
+if (is(E == enum))
+{
+    enum string enumExpectedList = {
+        string s;
+        static foreach (i, memberName; __traits(allMembers, E))
+        {
+            static if (i)
+                s ~= ", ";
+            s ~= enumMemberName!(__traits(getMember, E, memberName));
+        }
+        return s;
+    }();
+}
+
+/**
+Reads an enum member name from the front of `s`, advancing past it on success.
+
+The inverse of `writeEnumMemberName` (`sparkles.base.text.writers`): each
+member is matched by its $(REF enumMemberName, sparkles,base,text,enums)
+policy text (the `@StringRepresentation` override, else the source identifier).
+Matching is greedy — the longest member name that is a prefix of `s` wins, so
+names that prefix one another (e.g. `fast` / `faster`) resolve to the longer.
+
+Fails — leaving `s` unchanged — on empty input (`emptyInput`) or when no member
+name is a prefix (`unknownValue`, with a `"expected one of: …"` context). For
+an exact whole-token match (e.g. a JSON key), check that `s` is empty
+afterwards.
+*/
+ParseExpected!E readEnumString(E)(ref scope const(char)[] s)
+if (is(E == enum))
+{
+    if (s.length == 0)
+        return parseErr!E(ParseErrorCode.emptyInput, 0);
+
+    size_t bestLen = 0;
+    E best;
+    bool matched = false;
+
+    static foreach (memberName; __traits(allMembers, E))
+    {{
+        enum name = enumMemberName!(__traits(getMember, E, memberName));
+        if (name.length > bestLen && s.length >= name.length && s[0 .. name.length] == name)
+        {
+            bestLen = name.length;
+            best = __traits(getMember, E, memberName);
+            matched = true;
+        }
+    }}
+
+    if (!matched)
+    {
+        enum string msg = "expected one of: " ~ enumExpectedList!E;
+        return parseErr!E(ParseErrorCode.unknownValue, 0, msg);
+    }
+
+    s = s[bestLen .. $]; // advance only on success
+    return parseOk(best);
+}
+
 @("text.readers.readInteger.advancesOnSuccess")
 unittest
 {
@@ -183,4 +248,77 @@ unittest
     const(char)[] none = "abc";
     assert(readUntil(none, ".") == "abc");
     assert(none.length == 0);
+}
+
+@("text.readers.readEnumString.advancesOnSuccess")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.text.enums : StringRepresentation;
+
+    enum Mode
+    {
+        @StringRepresentation("fast-mode") fast,
+        slow,
+    }
+
+    const(char)[] s = "fast-mode!";
+    auto r = readEnumString!Mode(s);
+    assert(r.hasValue);
+    assert(r.value == Mode.fast);
+    assert(s == "!"); // advanced past the member name only
+
+    const(char)[] t = "slow";
+    assert(readEnumString!Mode(t).value == Mode.slow);
+    assert(t.length == 0);
+}
+
+@("text.readers.readEnumString.longestMatchWins")
+@safe pure nothrow @nogc
+unittest
+{
+    enum Mode { fast, faster }
+
+    // "faster" must beat the "fast" prefix and consume the whole token.
+    const(char)[] s = "faster";
+    auto r = readEnumString!Mode(s);
+    assert(r.hasValue);
+    assert(r.value == Mode.faster);
+    assert(s.length == 0);
+
+    // A "fast" member leaves the trailing "est" for the caller to reject.
+    enum Only { fast }
+    const(char)[] t = "fastest";
+    auto rt = readEnumString!Only(t);
+    assert(rt.hasValue);
+    assert(rt.value == Only.fast);
+    assert(t == "est");
+}
+
+@("text.readers.readEnumString.emptyInput")
+@safe pure nothrow @nogc
+unittest
+{
+    enum Mode { fast }
+
+    const(char)[] s = "";
+    auto r = readEnumString!Mode(s);
+    assert(!r.hasValue);
+    assert(r.error.code == ParseErrorCode.emptyInput);
+    assert(r.error.offset == 0);
+}
+
+@("text.readers.readEnumString.unknownValueWithContext")
+@safe pure nothrow @nogc
+unittest
+{
+    enum Mode { fast, slow }
+
+    const(char)[] s = "zoom";
+    auto r = readEnumString!Mode(s);
+    assert(!r.hasValue);
+    assert(r.error.code == ParseErrorCode.unknownValue);
+    assert(r.error.offset == 0);
+    assert(r.error.context == "expected one of: fast, slow");
+    assert(s == "zoom"); // not advanced on failure
 }
