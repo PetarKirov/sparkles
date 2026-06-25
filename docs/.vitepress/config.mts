@@ -293,6 +293,10 @@ export default withMermaid(
                 },
               ],
             },
+            {
+              text: 'wired',
+              link: '/libs/wired/',
+            },
           ],
         },
         {
@@ -341,6 +345,14 @@ export default withMermaid(
               items: [
                 { text: 'Specification', link: '/specs/versions/SPEC' },
                 { text: 'Delivery Plan', link: '/specs/versions/PLAN' },
+              ],
+            },
+            {
+              text: 'Wired',
+              collapsed: false,
+              items: [
+                { text: 'Specification', link: '/specs/wired/SPEC' },
+                { text: 'Delivery Plan', link: '/specs/wired/PLAN' },
               ],
             },
           ],
