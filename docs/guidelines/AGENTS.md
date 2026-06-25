@@ -7,11 +7,12 @@ includes it. Keep it accurate — a stale fact here propagates into every agent'
 ## Project Overview
 
 `sparkles` is a D monorepo of CLI/library utilities. The root `dub.sdl` declares
-eight sub-packages:
+nine sub-packages:
 
 | Sub-package           | Path              | What it is                                                                                                                                           |
 | --------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `ci`                  | `apps/ci`         | Repository CI helper: runs/verifies markdown examples, standalone examples, sub-package tests, and markdown link maintenance                         |
+| `release`             | `apps/release`    | Release automation: scans tags as SemVer, summarizes commits, suggests a bump, gathers notes ($EDITOR or a CLI LLM agent), tags and publishes        |
 | `terminal`            | `apps/terminal`   | Minimal raylib-based terminal emulator built on `sparkles:ghostty`                                                                                   |
 | `sparkles:base`       | `libs/base`       | Allocation-conscious foundation utilities: `SmallBuffer`, lifetime helpers, `@nogc` text readers/writers, terminal styling, styled IES, and logging  |
 | `sparkles:core-cli`   | `libs/core-cli`   | CLI argument parsing, help formatting, pretty-printing, UI components (table/box/header/OSC links), process utilities, terminal size/unstyle helpers |
@@ -57,6 +58,12 @@ sparkles/
 │   │   ├── src/dub_deps.d          # In-tree dependency rewriting helpers
 │   │   ├── dub.sdl
 │   │   └── dub.selections.json
+│   ├── release/                    # release automation helper (executable)
+│   │   ├── src/app.d               # CLI + orchestration (stats → bump → notes → stages)
+│   │   ├── src/git.d               # git/gh porcelain wrappers
+│   │   ├── src/conventional.d      # conventional-commit parsing; bump.d/stages.d policy
+│   │   ├── src/agents.d            # CLI LLM-agent registry (PATH-filtered)
+│   │   └── src/notes.d             # $EDITOR seeding / comment stripping
 │   └── terminal/                   # raylib-based terminal emulator (executable)
 │       ├── src/app.d               # Window/render loop, font + PTY setup
 │       └── src/input.d             # Keyboard/mouse → libghostty-vt encoding
@@ -534,8 +541,8 @@ have the repo layout, so they keep `version="*"`.
 Conventional commits: `<type>(<scope>): <description>` (lowercase description).
 
 - **Scope** = a sub-package (`base`, `core-cli`, `versions`, `math`, `test-utils`,
-  `ghostty`, `ci`, `terminal`) or an area (`nix`, `dub`, `guidelines`, `gh-actions`, `docs`,
-  `research`).
+  `ghostty`, `ci`, `release`, `terminal`) or an area (`nix`, `dub`, `guidelines`,
+  `gh-actions`, `docs`, `research`).
 - **Type** — one of the following (one example each):
 
 | Type       | Use for                                  | Example                                                               |
