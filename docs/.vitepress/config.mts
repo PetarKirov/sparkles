@@ -1054,6 +1054,10 @@ export default withMermaid(
                   text: 'Tree-View Case Study',
                   link: '/research/tui-libraries/tree-view-case-study',
                 },
+                {
+                  text: 'Table Row/Column-Span Case Study',
+                  link: '/research/tui-libraries/table-span-case-study',
+                },
               ],
             },
             {
