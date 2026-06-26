@@ -31,6 +31,11 @@ export default withMermaid(
     },
 
     themeConfig: {
+      // Built-in local search (MiniSearch) — fully client-side, no third-party APIs.
+      search: {
+        provider: 'local',
+      },
+
       nav: [
         { text: 'Docs', link: '/overview' },
         { text: 'API', link: '/api/' },
