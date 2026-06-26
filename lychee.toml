@@ -5,7 +5,7 @@
 cache = true
 
 # Discard cached results older than this duration
-max_cache_age = "1d"
+max_cache_age = "14d"
 
 # Don't cache transient failures (rate limits, server errors)
 cache_exclude_status = [403, 429, "500.."]
@@ -13,7 +13,7 @@ cache_exclude_status = [403, 429, "500.."]
 #############################  Requests  ############################
 
 # Timeout per request (seconds)
-timeout = 30
+timeout = 5
 
 # Reduce concurrent requests in CI to avoid rate limits and connection resets
 max_concurrency = 16
