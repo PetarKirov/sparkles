@@ -2,6 +2,7 @@
 # https://lychee.cli.rs/#/usage/config
 
 #############################  Cache  ###############################
+cache = true
 
 # Discard cached results older than this duration
 max_cache_age = "1d"
@@ -42,6 +43,13 @@ include_fragments = "none"
 
 # When a link is broken, suggest replacements from web archives
 suggest = true
+
+# Root directory to use when checking absolute links in local files.
+# Resolved against the current working directory.
+root_dir = "."
+
+# Show interactive progress bar
+no_progress = false
 
 # Rewrite GitHub blob/tree URLs to avoid rate limits and auth issues.
 # Remap only PetarKirov/sparkles links to the Contents API (where we have valid authentication token)

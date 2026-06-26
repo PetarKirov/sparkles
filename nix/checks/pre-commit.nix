@@ -226,9 +226,6 @@ in
 
                     exec ${lib.getExe pkgs.lychee} \
                       --config "$lychee_config_file" \
-                      --root-dir "$repo_root" \
-                      --no-progress \
-                      --cache \
                       "''${extra_args[@]}" \
                       "$@"
                   ''
