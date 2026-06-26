@@ -224,14 +224,6 @@ in
                       extra_args+=(--header "Authorization: Bearer $GITHUB_TOKEN")
                     fi
 
-                    # Remap only PetarKirov/sparkles links to the Contents API (where we have valid authentication token)
-                    extra_args+=(
-                      --remap 'https://github\.com/PetarKirov/sparkles/blob/([^/]+)/(.*) https://api.github.com/repos/PetarKirov/sparkles/contents/$2?ref=$1'
-                      --remap 'https://github\.com/PetarKirov/sparkles/tree/([^/]+)/(.*) https://api.github.com/repos/PetarKirov/sparkles/contents/$2?ref=$1'
-                      # Remap other public repositories' files to raw.githubusercontent.com to avoid API rate limits and 401 auth issues
-                      --remap 'https://github\.com/([^/]+)/([^/]+)/blob/([^/]+)/(.*) https://raw.githubusercontent.com/$1/$2/$3/$4'
-                    )
-
                     exec ${lib.getExe pkgs.lychee} \
                       --config "$lychee_config_file" \
                       --root-dir "$repo_root" \
