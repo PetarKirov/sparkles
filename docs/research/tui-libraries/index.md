@@ -188,6 +188,8 @@ See the **[Comparison][comparison]** for cross-library synthesis and design reco
 
 See the **[Tree-View Case Study][tree-view-case-study]** for a focused analysis of tree-view implementations across 13 libraries, including detailed studies of [snacks.nvim][snacks-nvim], [ratatui][ratatui], [Textual][textual], Rich (Python), [broot][broot], `cursive_tree_view` (Rust), and stlab::forest (C++).
 
+See the **[Table Row/Column-Span Case Study][table-span-case-study]** for a focused analysis of how tables represent cell spanning (`colspan`/`rowspan`, merged cells) across terminal renderers (cli-table3, npm `table`, tablewriter, [ratatui][ratatui], [FTXUI][ftxui], [ImTui][imtui]), document/markup systems (HTML, GNU `tbl`, LaTeX, AsciiDoc, reStructuredText), and GUI grid layouts (CSS Grid, Qt, GTK, Swing, Android, Tk) — distilled into five representation strategies and design principles for a span-capable Sparkles table.
+
 ## References
 
 [ratatui]: ratatui.md
@@ -207,3 +209,4 @@ See the **[Tree-View Case Study][tree-view-case-study]** for a focused analysis 
 [broot]: broot.md
 [comparison]: comparison.md
 [tree-view-case-study]: tree-view-case-study.md
+[table-span-case-study]: table-span-case-study.md
