@@ -177,7 +177,7 @@ A high-confidence timeline interleaving **theory/algorithm milestones** with
 | 2020–2021   | **CPython** adopts a [PEG][peg] parser (PEP 617)                                                 | **chumsky** (recovering combinators); **Bison 3.8** counterexamples                           |
 | 2023–2026\* | —                                                                                                | **winnow** forks nom; **chumsky** zero-copy rewrite lands in 0.10+; **Menhir** GLR back-end\* |
 
-<sub>\* The Menhir GLR back-end is dated to the `20260122` release as observed in
+<sub>\* The Menhir GLR back-end is dated to the `20260112` release as observed in
 this review; treat 2023–2026 tool entries as current-as-of-review.</sub>
 
 ---
