@@ -2,20 +2,20 @@
 
 A Rust [parser-combinator][concepts] library built around first-class **error recovery** and rich diagnostics: a parser is an ordinary Rust value, but a failing parse yields a _partial_ AST **and** a list of errors rather than bailing on the first mistake — the property that makes it suited to building real language frontends and LSPs.
 
-| Field                     | Value                                                                                                                                        |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Language                  | Rust (`no_std`-capable)                                                                                                                      |
-| License                   | MIT                                                                                                                                          |
-| Repository                | [zesterer/chumsky][repo] (now primary on [Codeberg][codeberg]; GitHub mirror archived)                                                       |
-| Documentation             | [docs.rs/chumsky][docs] · [crates.io][crate] · [lib.rs][librs]                                                                               |
-| Key authors               | Joshua Barretto ([zesterer]) and contributors                                                                                                |
-| Category                  | Parser combinator (internal DSL, host-language-embedded)                                                                                     |
-| Algorithm / grammar class | Recursive-descent over **PEG** (ordered choice, no ambiguity); opt-in left-recursion + memoization; context-sensitive combinators            |
-| Lexing model              | Scannerless _or_ two-stage — generic over `Input`, so the same combinators run over `&str`, `&[u8]`, or a `&[Token]` slice                   |
-| Latest release            | `0.13.0` (published-stable line); the `1.0.0-alpha.x` line — _"A parser library for humans with powerful error recovery"_ — runs in parallel |
+| Field                     | Value                                                                                                                             |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Language                  | Rust (`no_std`-capable)                                                                                                           |
+| License                   | MIT                                                                                                                               |
+| Repository                | [zesterer/chumsky][repo] (now primary on [Codeberg][codeberg]; GitHub mirror archived)                                            |
+| Documentation             | [docs.rs/chumsky][docs] · [crates.io][crate] · [lib.rs][librs]                                                                    |
+| Key authors               | Joshua Barretto ([zesterer]) and contributors                                                                                     |
+| Category                  | Parser combinator (internal DSL, host-language-embedded)                                                                          |
+| Algorithm / grammar class | Recursive-descent over **PEG** (ordered choice, no ambiguity); opt-in left-recursion + memoization; context-sensitive combinators |
+| Lexing model              | Scannerless _or_ two-stage — generic over `Input`, so the same combinators run over `&str`, `&[u8]`, or a `&[Token]` slice        |
+| Latest release            | `0.13.0` (published line; the `1.0.0-alpha.0` tag marks where the zero-copy rewrite incubated)                                    |
 
 > [!NOTE]
-> chumsky has two living version lines. The published **`0.x`** line carries the **zero-copy rewrite** since [`0.10.0`][rel010] (2025-03-22); the long-running **`1.0.0-alpha.x`** line (first cut in early 2023, latest `1.0.0-alpha.8`, 2025-01-22) is where the rewrite incubated and the `1.0` API is still being settled. This deep-dive describes the **zero-copy** API common to both — the [`Parser`][parser-trait] trait parameterised by an input lifetime `'src` — not the pre-rewrite `0.9.x` API, which differs substantially.
+> The published **`0.x`** line carries the **zero-copy rewrite** since [`0.10.0`][rel010] (2025-03-22), with `0.13.0` current in the cloned Codeberg source. The earlier `1.0.0-alpha.0` tag is where the rewrite incubated before landing in the published line. This deep-dive describes the **zero-copy** API — the [`Parser`][parser-trait] trait parameterised by an input lifetime `'src` — not the pre-rewrite `0.9.x` API, which differs substantially.
 
 ---
 
@@ -214,7 +214,7 @@ This replaces the multi-level `foldl` precedence ladder a combinator parser woul
 
 ### Context-sensitive parsing: stateful and nested
 
-Pure PEGs are context-_free_; some real syntaxes are not. chumsky's rewrite added dedicated combinators for context-sensitivity. The `0.10.0` changelog records both the context-sensitive support and the state mechanism ([`CHANGELOG.md`][changelog]):
+Pure PEGs are not simply "context-free": [PEGs and CFGs are best treated as incomparable](./theory/peg-packrat.md), with deterministic CFLs as common ground and syntactic predicates pushing PEGs beyond CFGs in other directions. Some real syntaxes need still more state. chumsky's rewrite added dedicated combinators for those context-sensitive cases. The `0.10.0` changelog records both the context-sensitive support and the state mechanism ([`CHANGELOG.md`][changelog]):
 
 > _"Support for parsing context-sensitive grammars such as Python-style indentation, Rust-style raw strings, and much more"_ … _"Support for manipulating shared state during parsing, elegantly allowing support for arena allocators, cstrees, interners, and much more"_
 
@@ -233,11 +233,11 @@ chumsky deliberately stops at producing `Rich` error values; **rendering** them 
 
 ## Algorithm & grammar class
 
-chumsky is a **recursive-descent** parser with **PEG** semantics: choice is **ordered** (`choice`/`or` take the first alternative that matches), so a chumsky grammar is unambiguous by construction — there are no parse forests and no GLR-style ambiguity to resolve, in contrast to the general parsers ([Earley/GLR][theory-general]). The docs state the class directly:
+chumsky is a **recursive-descent** parser with **PEG** semantics: choice is **ordered** (`choice`/`or` take the first alternative that matches), so a chumsky grammar is unambiguous by construction — there are no parse forests and no GLR-style ambiguity to resolve, in contrast to the general parsers ([Earley/GLR][theory-general]). The README states the project's broad practical claim directly:
 
 > _"Chumsky's parsers are recursive descent parsers and are capable of parsing parsing expression grammars (PEGs), which includes all known context-free languages. However, chumsky doesn't stop there: it also supports context-sensitive grammars via a set of dedicated combinators."_
 
-Two refinements push past textbook PEG. First, **left recursion** — normally fatal to recursive descent — has **opt-in** support via memoization (the README: _"Left recursion and memoization have opt-in support"_), so a directly left-recursive rule can be written without the `foldl` rewrite. Second, the **context-sensitive** combinators ([above](#context-sensitive-parsing-stateful-and-nested)) take it beyond the context-free languages PEG covers, handling indentation-sensitive and delimiter-counting syntaxes that a CFG cannot express. Ambiguity, the central concern of [bottom-up][theory-bottom-up] and [general][theory-general] parsing, simply does not arise here — ordered choice resolves every overlap by source order, the same determinism the [PEG/packrat theory][theory-peg] guarantees.
+Read that as an upstream capability claim, not as a settled formal theorem that PEGs strictly contain CFGs. This survey's [PEG theory deep-dive][theory-peg] follows Ford's more careful position: PEGs express all deterministic LR-class CFLs, can express some non-CFLs such as `aⁿbⁿcⁿ`, and are believed but not proven to be incomparable with CFGs overall. Two refinements push chumsky past textbook recursive descent in practice. First, **left recursion** — normally fatal to recursive descent — has **opt-in** support via memoization (the README: _"Left recursion and memoization have opt-in support"_), so a directly left-recursive rule can be written without the `foldl` rewrite. Second, the **context-sensitive** combinators ([above](#context-sensitive-parsing-stateful-and-nested)) handle indentation-sensitive and delimiter-counting syntaxes that a plain CFG cannot express. Ambiguity, the central concern of [bottom-up][theory-bottom-up] and [general][theory-general] parsing, simply does not arise here — ordered choice resolves every overlap by source order, the same determinism the [PEG/packrat theory][theory-peg] guarantees.
 
 ## Interface & composition model
 
@@ -271,7 +271,7 @@ What chumsky does **not** do is _incremental reparsing_ — re-parsing only the 
 
 ## Ecosystem & maturity
 
-chumsky is a **widely-adopted, single-maintainer-led** project (Joshua Barretto / [zesterer], with contributors) — among the two best-known Rust parser-combinator libraries alongside [`nom`][nom], and the default recommendation for **programming-language and DSL frontends** in Rust where errors matter. Its flagship production user is the author's own statically-typed functional language **[Tao][tao]**, used as the "dog food" project that drives the library's error-reporting work. It pairs with the sibling [`ariadne`][ariadne] diagnostics crate (also widely used independently). The maturity caveat is the **version split**: the API a newcomer should use lives in the `1.0.0-alpha.x` line and the post-`0.10` published line, and the `1.0` API is _"still being settled"_ — the alpha label is honest about churn. The project recently moved its primary home to [Codeberg][codeberg], with the GitHub repository archived as a mirror. Tooling beyond the core is light: railroad-diagram generation and parser debugging utilities are built in; there is no separate grammar-workbench or generator IDE (there is nothing to generate _from_).
+chumsky is a **widely-adopted, single-maintainer-led** project (Joshua Barretto / [zesterer], with contributors) — among the two best-known Rust parser-combinator libraries alongside [`nom`][nom], and the default recommendation for **programming-language and DSL frontends** in Rust where errors matter. Its flagship production user is the author's own statically-typed functional language **[Tao][tao]**, used as the "dog food" project that drives the library's error-reporting work. It pairs with the sibling [`ariadne`][ariadne] diagnostics crate (also widely used independently). The maturity caveat is API churn around the post-`0.10` zero-copy redesign: the `0.13.0` published line is current, but the rewrite changed the trait shape substantially from `0.9.x` and the road to a final `1.0` remains visible in the old alpha tag and branch history. The project recently moved its primary home to [Codeberg][codeberg], with the GitHub repository archived as a mirror. Tooling beyond the core is light: railroad-diagram generation and parser debugging utilities are built in; there is no separate grammar-workbench or generator IDE (there is nothing to generate _from_).
 
 ---
 
@@ -288,7 +288,7 @@ chumsky is a **widely-adopted, single-maintainer-led** project (Joshua Barretto 
 
 ## Weaknesses
 
-- **API instability.** The recommended API lives in a long-running `1.0.0-alpha.x` line plus a fast-moving published line; `1.0` is not yet finalised and the rewrite changed the trait shape substantially from `0.9.x`.
+- **API instability.** The recommended API is the post-`0.10` zero-copy line, but `1.0` is not yet finalised and the rewrite changed the trait shape substantially from `0.9.x`.
 - **Compile-time and type complexity.** Deeply nested combinator types and the GAT-based machinery can produce intimidating type errors and non-trivial `rustc` build times — a known cost of the heavily-generic combinator approach.
 - **No incremental reparsing.** Every parse is whole-input; unlike [tree-sitter][tree-sitter] it does not re-parse only the edited subtree, so for very large always-changing buffers it leans on full re-parse speed rather than edit-locality.
 - **Not the throughput champion.** For machine/binary formats and maximum bytes/second, [`nom`][nom] and [`simdjson`][simdjson] remain faster; chumsky trades the last increment of speed for error quality.

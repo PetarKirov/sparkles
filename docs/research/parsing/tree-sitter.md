@@ -13,7 +13,7 @@ A parser-generator and a `pure C11` runtime that produces a **lossless concrete 
 | Algorithm / grammar class | Table-driven **GLR** (generalized LR) over a context-free grammar; ambiguity resolved by static `prec` and runtime `prec.dynamic` / error cost  |
 | Lexing model              | **Separate lexer**, generated alongside the parser; context-aware, on-demand, longest-match with lexical precedence; pluggable external scanner |
 | Output                    | **Lossless** concrete syntax tree (every byte accounted for via `padding` + `size`); ref-counted `Subtree` nodes shared across edits            |
-| Latest release            | `0.25.x` series (the runtime API is stable; see [Ecosystem & maturity](#ecosystem--maturity))                                                   |
+| Latest release            | `v0.26.9` (`0.26.x` series; the runtime API is stable — see [Ecosystem & maturity](#ecosystem--maturity))                                       |
 
 > [!NOTE]
 > This deep-dive surveys the **upstream C runtime and parser generator** (`tree-sitter/tree-sitter`). Individual language grammars (`tree-sitter-rust`, `tree-sitter-python`, …) and host-language bindings (Rust, Node, WASM, Go, Python, …) are separate repositories that link the same `lib/src/` runtime; they are referenced but not catalogued here.
@@ -24,7 +24,7 @@ A parser-generator and a `pure C11` runtime that produces a **lossless concrete 
 
 ### What it solves
 
-A compiler front-end parses a file once, from scratch, and aborts on the first syntax error. A text editor needs the opposite contract: it must parse a file that is **constantly half-typed**, re-parse it **on every keystroke** without redoing all the work, and still return a usable tree even while a brace is unbalanced or an expression is incomplete. Classic [LR][bottom-up] and [LL][top-down] generators (`bison`, `ANTLR`) were built for the batch contract; using them for editor tooling means re-running the whole parse per edit and getting nothing on a syntax error.
+A compiler front-end usually parses a file once, from scratch, under a batch contract. A text editor needs a different contract: it must parse a file that is **constantly half-typed**, re-parse it **on every keystroke** without redoing all the work, and still return a usable tree even while a brace is unbalanced or an expression is incomplete. Classic [LR][bottom-up] and [LL][top-down] generators (`bison`, `ANTLR`) can recover from syntax errors, but their recovery is grammar- or strategy-driven and a keystroke still means re-running a whole parser rather than reusing a lossless edit-local CST.
 
 Tree-sitter targets the editor contract directly. From the project introduction ([`docs/src/index.md`][index-md]):
 
@@ -261,7 +261,7 @@ This keeps the runtime dependency-free (no regex engine in `lib/src/`) while let
 ## Algorithm & grammar class
 
 - **Formalism.** A **context-free grammar** authored in a JavaScript DSL, compiled to an **LR(1)-style parse table** and driven by a **generalized LR (GLR)** loop. The generator builds the deterministic table where it can and falls back to runtime forking only at declared conflict points. Per the Wikipedia summary, _"Tree-sitter uses a GLR parser, a type of LR parser."_
-- **Grammar class accepted.** Effectively **all context-free grammars** — GLR is not restricted to LALR(1) or LR(1) the way [`bison`][bison-yacc]/[yacc][bison-yacc] are. Ambiguity is a _feature_ you opt into via `conflicts`, not a generation error you must eliminate. (Contrast with [PEG][peg-packrat], which is unambiguous-by-construction via ordered `choice`, at the cost of being unable to express genuine ambiguity.)
+- **Grammar class accepted.** Effectively **all context-free grammars** — GLR is not restricted to the deterministic LALR(1), IELR(1), or canonical-LR modes used by `yacc` and default [`bison`][bison-yacc]. Bison can enter the same generalized territory with `%glr-parser`; Tree-sitter makes GLR the editor-oriented default. Ambiguity is a _feature_ you opt into via `conflicts`, not a generation error you must eliminate. (Contrast with [PEG][peg-packrat], which is unambiguous-by-construction via ordered `choice`, at the cost of being unable to express genuine ambiguity.)
 - **Ambiguity handling, three layers:**
   1. **Static, at generation time** — `prec(n)`, `prec.left`, `prec.right` resolve shift/reduce and reduce/reduce conflicts when the table is built.
   2. **Runtime, declared** — `conflicts` defers a conflict to GLR; competing parses run in parallel on the graph-structured stack.
@@ -323,7 +323,7 @@ This is where Tree-sitter most diverges from a batch parser, and it is the "robu
   A recovery that _skips a character_ costs 1; skipping a whole _line_ costs 30; _inserting_ a missing tree costs 110; entering a fresh recovery costs 500. Because GLR keeps multiple stack versions alive, recovery is itself a _forked search_: the parser explores several repairs in parallel and `ts_parser__select_tree` keeps the one with the **smallest total error cost** — so the recovered tree is the one that "explains" the broken input by discarding/inserting the _least_ text.
 
 - **Incremental reparsing = error handling.** The incremental path and the error path are the same machinery: an edit marks `has_changes`, the parser re-parses the dirty region reusing clean subtrees, and if the edit leaves the file syntactically broken it produces `ERROR`/`MISSING` nodes — but the _unbroken_ parts of the tree remain intact and usable. `ts_tree_get_changed_ranges` then reports exactly which byte ranges changed between the old and new tree, so an editor can re-highlight only what moved.
-- **IDE-readiness.** This is the _defining_ dimension for Tree-sitter and it scores at the top: a half-typed file always yields a complete tree (errors localized to `ERROR`/`MISSING` nodes), positions are exact down to the column, edits are O(edit) not O(file), and the changed-range delta drives incremental re-highlighting. No other subject in this catalog combines all four. (Batch generators like [`bison`][bison-yacc] abort on the first error; [parser combinators][haskell-parsec] and [PEG][peg-packrat] give a single error position, not a recovered tree.)
+- **IDE-readiness.** This is the _defining_ dimension for Tree-sitter and it scores at the top: a half-typed file always yields a complete tree (errors localized to `ERROR`/`MISSING` nodes), positions are exact down to the column, edits are O(edit) not O(file), and the changed-range delta drives incremental re-highlighting. No other subject in this catalog combines all four. (Batch generators such as [`bison`][bison-yacc] and [ANTLR][antlr] can recover via `error` rules or a runtime strategy, but they do not maintain a lossless recovered CST with edit-local reuse.)
 
 ## Ecosystem & maturity
 
@@ -332,7 +332,7 @@ This is where Tree-sitter most diverges from a batch parser, and it is the "robu
 - **Grammars.** Over a hundred maintained grammars exist (`tree-sitter-rust`, `-python`, `-javascript`, `-go`, `-c`, `-cpp`, …), each a small repo shipping a `grammar.js` + generated `parser.c`.
 - **Bindings / ports.** First-class bindings for Rust, Node.js, WASM (browser), Python, Go, Swift, Java, Kotlin, OCaml, Ruby, Perl, Lua, C#, and Zig — all over the same C runtime. Pure-language _re-implementations_ of the runtime also exist (e.g. Go ports), trading the C dependency for less battle-testing.
 - **Tooling.** The `tree-sitter` CLI does codegen, an interactive `playground` (WASM in the browser), corpus-based `test`, `highlight`, and `query` evaluation. The query DSL is its own ecosystem (`highlights.scm`, `injections.scm`, `locals.scm` conventions shared across editors).
-- **Stability.** The C runtime API (`tree_sitter/api.h`) is stable and versioned; the project is on the `0.25.x` line at the time of writing and is maintained by an active org (`tree-sitter`) plus a large grammar-maintainer community. It is mature, widely embedded, and under continuous development.
+- **Stability.** The C runtime API (`tree_sitter/api.h`) is stable and versioned; the project is on the `0.26.x` line at the time of writing and is maintained by an active org (`tree-sitter`) plus a large grammar-maintainer community. It is mature, widely embedded, and under continuous development.
 
 ---
 

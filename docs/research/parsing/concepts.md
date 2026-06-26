@@ -182,7 +182,9 @@ deliberately restores.
 > "Parser" in tool names is loose. A "JSON parser" like [simdjson][simdjson] both
 > validates (recognizes) and produces a navigable document (parses); a "validator"
 > recognizes only. When a deep-dive says a tool is `O(n³)`, that is the
-> _recognition_ bound — the parse-tree construction never costs more asymptotically.
+> _recognition_ bound. Building one tree, or a compact shared-packed parse forest, stays
+> within that bound; explicitly enumerating every tree in an ambiguous grammar can still be
+> exponential in the number of parses.
 
 ---
 
@@ -432,10 +434,11 @@ chart in [Earley][general] and the GSS in [GLL/GLR][general] — memoization is 
 idea that tames every backtracking or generalized parser.
 
 **Incrementality** is the ability to re-parse a small edit in time proportional to the
-edit, not to the whole file — the contract an editor demands. The batch contract
-("parse once, abort on the first error") is wrong for a buffer that is _constantly
-half-typed_ and re-parsed on every keystroke. [tree-sitter][tree-sitter] is the canonical
-incremental parser; its self-description states the contract directly:
+edit, not to the whole file — the contract an editor demands. A batch parser may recover
+from syntax errors, but its unit of work is still a complete input; that contract is wrong
+for a buffer that is _constantly half-typed_ and re-parsed on every keystroke.
+[tree-sitter][tree-sitter] is the canonical incremental parser; its self-description
+states the contract directly:
 
 > "Tree-sitter is a parser generator tool and an incremental parsing library. It can
 > build a concrete syntax tree for a source file and efficiently update the syntax tree
