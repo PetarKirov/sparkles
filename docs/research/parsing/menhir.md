@@ -13,10 +13,10 @@ A modern LR(1) parser generator for OCaml whose distinguishing features are huma
 | Algorithm / grammar class | LR(1); Pager's minimal-state construction by default, with optional canonical-LR(1) and LALR(1) modes; optional GLR back-end  |
 | Lexing model              | Separate lexer (typically [`ocamllex`][ocamllex]); a `Lexing.lexbuf -> token` function — **not** scannerless                  |
 | AST/CST construction      | User-written OCaml semantic actions; values built bottom-up on reduction                                                      |
-| Latest release            | `20260122` (the 2026-01-22 dated release; first to ship a `--GLR` back-end)                                                   |
+| Latest release            | `20260209` (date-stamped release line; `--GLR` first shipped in `20260122`)                                                   |
 
 > [!NOTE]
-> Menhir uses **date-stamped** version numbers (`20231231`, `20240715`, `20260122`, …) rather than SemVer. The upstream repository lives on Inria's GitLab; a read-only GitHub mirror exists at [`savonet/mehnir`][mirror]. This deep-dive cites the upstream source and the dated reference manual.
+> Menhir uses **date-stamped** version numbers (`20231231`, `20240715`, `20260122`, `20260209`, …) rather than SemVer. The upstream repository lives on Inria's GitLab; a read-only GitHub mirror exists at [`savonet/mehnir`][mirror]. This deep-dive cites the upstream source and the dated reference manual.
 
 ---
 
@@ -44,7 +44,7 @@ Menhir's stance is that an LR generator should be _more powerful and more humane
 
 Three commitments shape the rest of the tool. First, **the grammar is the specification**: parameterized rules and `%inline` let a grammar be factored like a functional program, and the `.conflicts`/`.automaton`/`.messages` files are all expressed back in terms of that grammar. Second, **the parser is a value, not a global**: generated parsers are reentrant, and the incremental back-end makes a parser _state_ a first-class persistent data structure — exactly the property an editor needs. Third, **correctness is auditable**: rather than trust a complex generator, Menhir's verified mode emits a certificate that an independently proved validator checks, so the _generator_ never has to be trusted (see [Error handling](#error-handling--recovery)).
 
-Within this survey Menhir is the canonical _modern, usable LR_ data point. Contrast it with its `yacc`-family predecessor [Bison/yacc](./bison-yacc.md); with the [ANTLR](./antlr.md) ALL(\*) top-down generator; with [tree-sitter](./tree-sitter.md), the other production _incremental_ parser (GLR, scannerless) used by editors; and with the combinator and PEG families ([nom](./rust-nom.md), [chumsky](./rust-chumsky.md), [Parsec](./haskell-parsec.md), [pest](./pest.md)). The [theory of bottom-up parsing](./theory/bottom-up.md) underpins everything here; the [comparison capstone](./comparison.md) places Menhir against the field.
+Within this survey Menhir is the canonical _modern, usable LR_ data point. Contrast it with its `yacc`-family predecessor [Bison/yacc](./bison-yacc.md); with the [ANTLR](./antlr.md) ALL(\*) top-down generator; with [tree-sitter](./tree-sitter.md), the other production _incremental_ parser (GLR with a separate context-aware lexer) used by editors; and with the combinator and PEG families ([nom](./rust-nom.md), [chumsky](./rust-chumsky.md), [Parsec](./haskell-parsec.md), [pest](./pest.md)). The [theory of bottom-up parsing](./theory/bottom-up.md) underpins everything here; the [comparison capstone](./comparison.md) places Menhir against the field.
 
 ---
 
@@ -255,9 +255,9 @@ This verified parser is the front end of the **[CompCert][compcert]** verified C
 
 **Adoption.** Menhir is the _de facto_ parser generator of the OCaml ecosystem. It is the recommended choice over `ocamlyacc` in [Real World OCaml][rwo], is packaged as the `menhir` opam package (with `menhirLib` and `menhirSdk` companions), and is integrated as a first-class rule in the `dune` build system. Production users include the **OCaml compiler family** and tooling around it, **[Merlin][merlin]** and **[`ocaml-lsp`][ocamllsp]** (incremental + recovery), **[CompCert][compcert]** (Rocq back-end), **[Reason][reason]**, **[Coq/Rocq][compcert]** itself for some front ends, and a long tail of language implementations. Frédéric Bour also maintains a [`LexiFi/menhir`][lexifi] fork tracking the incremental-recovery features.
 
-**Stability and tooling.** The tool is mature (development since the mid-2000s; Pottier & Régis-Gianas' design paper dates to 2006) and actively maintained, with dated releases through `20260122`. The ecosystem around it includes `menhirLib` (runtime tables), the `menhirSdk` (the "[Menhir development kit][merlin]" exposing serialized grammar and automaton for third-party annotation processors — what powers Merlin's recovery as an _external_ tool), the `.automaton`/`.conflicts`/`.messages` artifacts, and `coq-menhirlib` for the verified back-end. The newest direction is the `20260122` `--GLR` back-end, which moves Menhir beyond deterministic LR into [generalized parsing](./theory/general-parsing.md) for naturally ambiguous grammars.
+**Stability and tooling.** The tool is mature (development since the mid-2000s; Pottier & Régis-Gianas' design paper dates to 2006) and actively maintained, with dated releases through `20260209`. The ecosystem around it includes `menhirLib` (runtime tables), the `menhirSdk` (the "[Menhir development kit][merlin]" exposing serialized grammar and automaton for third-party annotation processors — what powers Merlin's recovery as an _external_ tool), the `.automaton`/`.conflicts`/`.messages` artifacts, and `coq-menhirlib` for the verified back-end. The newest direction remains the `--GLR` back-end introduced in `20260122`, which moves Menhir beyond deterministic LR into [generalized parsing](./theory/general-parsing.md) for naturally ambiguous grammars.
 
-**Notable derivatives and relatives.** The incremental + recovery features began as Merlin's fork and were partly upstreamed; the verified back-end seeded a line of formally verified front-end work (CompCert, and the C11 parser). In the broader field, Menhir's _conflict-explanation_ idea later converged with [Bison's](./bison-yacc.md) counterexample generation, and its _incremental editor parser_ role overlaps with [tree-sitter](./tree-sitter.md) (which takes the GLR/scannerless route instead). For the LR formalism Menhir implements, see the [bottom-up parsing theory deep-dive](./theory/bottom-up.md); for where it sits among all surveyed tools, the [comparison](./comparison.md).
+**Notable derivatives and relatives.** The incremental + recovery features began as Merlin's fork and were partly upstreamed; the verified back-end seeded a line of formally verified front-end work (CompCert, and the C11 parser). In the broader field, Menhir's _conflict-explanation_ idea later converged with [Bison's](./bison-yacc.md) counterexample generation, and its _incremental editor parser_ role overlaps with [tree-sitter](./tree-sitter.md) (which takes the GLR + context-aware-lexer route instead). For the LR formalism Menhir implements, see the [bottom-up parsing theory deep-dive](./theory/bottom-up.md); for where it sits among all surveyed tools, the [comparison](./comparison.md).
 
 ---
 
@@ -274,12 +274,12 @@ This verified parser is the front end of the **[CompCert][compcert]** verified C
 
 ## Weaknesses
 
-- **Not scannerless**: a separate lexer is required, and lexer↔parser feedback (the C "lexer hack") must be handled out-of-band (via the incremental API or mutable state) rather than naturally as in [PEG](./theory/peg-packrat.md)/[GLR](./theory/general-parsing.md) scannerless tools.
+- **Not scannerless**: a separate lexer is required, and lexer↔parser feedback (the C "lexer hack") must be handled out-of-band (via the incremental API or mutable state) rather than through a scannerless grammar or a [tree-sitter](./tree-sitter.md)-style context-aware lexer.
 - **LR conflicts are still LR conflicts**: ambiguous or non-LR(1) grammars require precedence hacks or grammar refactoring; the diagnostics are excellent but the _constraint_ remains (contrast the always-unambiguous [ordered choice](./theory/peg-packrat.md) of PEGs, which trades the problem for silent disambiguation).
 - **Verified back-end has a real cost**: the Rocq-validated parser ran ~5× slower in CompCert; completeness proofs require a _conflict-free_ grammar.
 - **OCaml-only**: the generator targets OCaml (and Rocq); it is not a cross-language tool like [ANTLR](./antlr.md).
 - **Incremental/inspection features need the table back-end** (`--table`), forgoing the fastest code back-end and adding the `menhirLib` runtime dependency.
-- **Date-stamped versioning** (`20260122`) gives no SemVer signal about breaking changes; the rich feature surface (`--explain`, `.messages`, incremental, inspection, Rocq) has a learning curve beyond plain `yacc`.
+- **Date-stamped versioning** (`20260209`) gives no SemVer signal about breaking changes; the rich feature surface (`--explain`, `.messages`, incremental, inspection, Rocq) has a learning curve beyond plain `yacc`.
 
 ## Key design decisions and trade-offs
 
