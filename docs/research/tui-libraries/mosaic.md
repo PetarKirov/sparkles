@@ -1018,7 +1018,7 @@ A D renderer can maintain a front buffer and back buffer, comparing them to emit
 ## References
 
 - **GitHub Repository**: <https://github.com/JakeWharton/mosaic>
-- **Compose Runtime (upstream)**: <https://developer.android.com/jetpack/compose/mental-model>
+- **Compose Runtime (upstream)**: <https://developer.android.com/develop/ui/compose/mental-model>
 - **Compose Compiler Plugin**: <https://developer.android.com/jetpack/compose/compiler>
 - **Compose Snapshot System**: <https://dev.to/zachklipp/introduction-to-the-compose-snapshot-system-19cn>
 - **Jake Wharton's "Compose Runtime" Talk**: <https://jakewharton.com/a-jetpack-compose-by-any-other-name/>
