@@ -275,6 +275,10 @@ export default withMermaid(
                 },
               ],
             },
+            {
+              text: 'serde',
+              link: '/libs/serde/',
+            },
           ],
         },
         {
