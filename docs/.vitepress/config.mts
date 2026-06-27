@@ -299,6 +299,20 @@ export default withMermaid(
                     },
                   ],
                 },
+                {
+                  text: 'Pretty-print',
+                  collapsed: false,
+                  items: [
+                    {
+                      text: 'Specification',
+                      link: '/specs/base/pretty-print/SPEC',
+                    },
+                    {
+                      text: 'Delivery Plan',
+                      link: '/specs/base/pretty-print/PLAN',
+                    },
+                  ],
+                },
               ],
             },
             {
