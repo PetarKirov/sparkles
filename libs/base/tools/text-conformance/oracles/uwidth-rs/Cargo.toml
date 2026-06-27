@@ -1,0 +1,16 @@
+[package]
+name = "uwidth-rs"
+version = "0.1.0"
+edition = "2021"
+description = "Width oracle for the sparkles text-conformance harness (Rust unicode-width crate)"
+license = "BSL-1.0"
+
+[[bin]]
+name = "uwidth-rs"
+path = "src/main.rs"
+
+[dependencies]
+unicode-width = "0.2"
+
+[profile.release]
+opt-level = 1
