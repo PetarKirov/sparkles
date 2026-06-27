@@ -29,3 +29,9 @@
 ^https?://([^/]+\.)?nx\.dev/
 # pypi.org blocks/rate-limits automated checkers under GitHub Actions (HTTP 503/403)
 ^https?://([^/]+\.)?pypi\.org/
+# isocpp.org returns HTTP 403 to GitHub Actions' shared IPs (live + 200 locally;
+# sean-parent/safety.md cites the "Safety, Revisited" blog post)
+^https?://isocpp\.org/
+# Wikimedia (wikibooks) rejects GitHub Actions' shared IPs with HTTP 400 (live +
+# 200 locally; tui-libraries/table-span-case-study.md cites LaTeX/Tables)
+^https?://([^/]+\.)?wikibooks\.org/
