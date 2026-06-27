@@ -35,12 +35,14 @@ jobs:
             nix-v2-${{ runner.os }}-lint-
             nix-v2-${{ runner.os }}-
 
-      - name: Cache lychee results
-        uses: actions/cache@v6
+      - name: Restore lychee cache
+        uses: actions/cache/restore@v6
         with:
           path: .lycheecache
-          key: cache-lychee-v2-${{ github.sha }}
-          restore-keys: cache-lychee-v2-
+          enableCrossOsArchive: true
+          key: cache-lychee-v3
+          restore-keys: |
+            cache-lychee-v3
 
       - name: Lint and check links
         run: prek run --all-files --show-diff-on-failure --color always
@@ -51,3 +53,15 @@ jobs:
       - name: Verify markdown runnable examples
         run: |
           nix run .#ci -- --verify --files '**.md'
+
+      # Save even when a prior step (e.g. prek) fails, so the lychee link-check
+      # cache still gets populated. The combined actions/cache action gates its
+      # save post-step on `post-if: success()`, which skips it on any failure;
+      # the split restore/save sub-actions let us force `if: always()`.
+      - name: Save lychee cache
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: .lycheecache
+          enableCrossOsArchive: true
+          key: cache-lychee-v3
