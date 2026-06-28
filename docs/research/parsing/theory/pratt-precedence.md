@@ -92,8 +92,8 @@ right. [matklad][matklad] frames the intuition that makes the whole thing click:
 
 The subtle, beautiful part is associativity. To make `+` **left-associative**
 (`a + b + c` ⇒ `(a + b) + c`) you do _not_ need a second mechanism — you give `+` a
-binding power that is slightly **asymmetric**, a hair stronger on the left than on the
-right, so when the parser reaches the second `+` the already-built left side wins:
+binding power that is slightly **asymmetric**, a hair stronger on the right than on the
+left, so when the parser reaches the second `+` the already-built left side wins:
 
 ```text
 expr:    a       +       b       +       c
@@ -103,7 +103,7 @@ power:       1       2       1       2       1
 [matklad][matklad] visualizes exactly this — the right binding power is "pumped" up so
 the left `+` holds its right operand tighter than the next `+` can pull it away. Right
 associativity (`a ^ b ^ c` ⇒ `a ^ (b ^ c)`, assignment `a = b = c`) is the mirror
-asymmetry: bind tighter on the _right_. That single trick — encode associativity as the
+asymmetry: bind tighter on the _left_. That single trick — encode associativity as the
 _direction_ of the precedence asymmetry — is what lets one loop handle both directions,
 and it is the unifying observation behind Pratt, precedence climbing, and the shunting
 yard alike.

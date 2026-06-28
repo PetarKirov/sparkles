@@ -51,14 +51,16 @@ mis-parse) the rest. The general algorithms make the opposite bargain: **accept 
 class of context-free languages**, and pay for it in worst-case time.
 
 The watershed is [Earley's 1970 CACM paper][earley70], the first algorithm to parse an
-_unrestricted_ CFG efficiently. Earley's own framing of the result:
+_unrestricted_ CFG efficiently without requiring a normal form. Earley's own framing of the
+result:
 
-> "A parsing algorithm is presented which seems to be the most efficient general
-> context-free algorithm known … It executes in time proportional to `n³` for general
-> context-free grammars, `n²` for unambiguous grammars, and `n` for almost all LR(k)
-> grammars; in particular, it parses any LR(k) grammar … and also handles ambiguous
-> grammars." — Earley, _An Efficient Context-Free Parsing Algorithm_, CACM 13(2), 1970
-> ([abstract][earley70])
+> "A parsing algorithm which seems to be the most efficient general context-free algorithm
+> known is described. It is similar to both Knuth's LR(k) algorithm and the familiar
+> top-down algorithm. It has a time bound proportional to `n³` (where n is the length of the
+> string being parsed) in general; it has an `n²` bound for unambiguous grammars; and it runs
+> in linear time on a large class of grammars, which seems to include most practical
+> context-free programming language grammars." — Earley, _An Efficient Context-Free Parsing
+> Algorithm_, CACM 13(2), 1970 ([abstract][earley70])
 
 Two things in that sentence are decisive and recur throughout this family:
 
@@ -72,8 +74,10 @@ Two things in that sentence are decisive and recur throughout this family:
 
 2. **The complexity is grammar-adaptive, not fixed.** The same algorithm runs in cubic time
    only on the genuinely hard (ambiguous) grammars; on unambiguous grammars it is quadratic,
-   and on `LR(k)` grammars it is linear — _"linear results on grammars of bounded-state"_
-   (the [bounded-state class][formal] that includes all deterministic grammars). General
+   and on a large class of grammars it is linear — _"linear results on grammars of
+   bounded-state"_ (the [bounded-state class][formal] that includes all deterministic
+   grammars; note plain Earley is still `O(n²)` on right-recursive grammars until the
+   [Leo][leo] fix — see [below](#joop-leos-right-recursion-optimisation)). General
    parsing is thus a strict super-set capability that degrades to deterministic-parser speed
    exactly when the grammar is deterministic.
 
