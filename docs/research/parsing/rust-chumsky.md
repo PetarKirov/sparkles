@@ -179,9 +179,9 @@ The blunter `skip_until` carries an explicit health warning in its own doc comme
 
 > _"A recovery parser that skips input until one of several inputs is found. This strategy is very 'stupid' and can result in very poor error generation in some languages. Place this strategy after others as a last resort, and be careful about over-using it."_
 
-The recommended discipline is to **stack strategies specific-to-general** and to place recovery **high in the parser stack** so the real grammar gets every chance to parse before a fallback fires. From the recovery guide:
+The recommended discipline is to **stack strategies specific-to-general** and to place recovery **high in the parser stack** so the real grammar gets every chance to parse before a fallback fires. From the [`recover_with`][lib] doc-comment:
 
-> _"It's important to have error recovery occur as high up the stack as you reasonably can, and to not be overly general, so that the parser gets the opportunity to try all valid approaches to parsing the syntax before falling back to recovery."_
+> _"There is no silver bullet for error recovery, so this function allows you to specify one of several different strategies at the location of your choice. Prefer an error recovery strategy that more precisely mirrors valid syntax where possible to make error recovery more reliable."_
 
 In practice a recovering expression parser reads:
 
@@ -247,7 +247,7 @@ The **AST is built inline**: each combinator's `map`/`to`/`foldl`/Pratt fold con
 
 ## Performance
 
-chumsky's performance story is the **zero-copy rewrite**. The pre-`0.10` `0.9.x` line allocated owned outputs; the rewrite (incubated across the `1.0.0-alpha.x` line, shipped to stable in [`0.10.0`][rel010]) reworked the entire `Parser` trait around a borrowed input lifetime so outputs hold references into the input. The changelog's verdict is blunt — _"Performance has **radically** improved"_ ([`CHANGELOG.md`][changelog]) — and the `1.0.0-alpha.0` announcement framed the target as parity with the throughput-focused libraries: JSON parsing _"approaching hand-written parser speeds"_ and competitive with [`nom`][nom]. The enabling mechanisms:
+chumsky's performance story is the **zero-copy rewrite**. The pre-`0.10` `0.9.x` line allocated owned outputs; the rewrite (incubated across the `1.0.0-alpha.x` line, shipped to stable in [`0.10.0`][rel010]) reworked the entire `Parser` trait around a borrowed input lifetime so outputs hold references into the input. The changelog's verdict is blunt — _"Performance has **radically** improved"_ ([`CHANGELOG.md`][changelog]) — and the README frames the target as parity with the throughput-focused libraries: chumsky has _"performance comparable to a hand-written parser"_ and stays competitive with [`nom`][nom] ([`README.md`][readme]). The enabling mechanisms:
 
 - **Zero-copy outputs** — _"Zero-copy parsing minimises allocation by having outputs hold references/slices of the input"_ ([`README.md`][readme]) — eliminate the per-token `String` allocations that dominated the old line.
 - **GAT-based internal optimiser** — the trait machinery monomorphises and inlines the combinator tree, so a chumsky parser compiles down to roughly the nested-`match` code a hand-written recursive-descent parser would be.
@@ -265,7 +265,7 @@ This is chumsky's reason to exist, and the dimension where it leads the field. T
 
 1. **Rich errors by default.** The built-in `Rich` error type records the span, the token found, the set of tokens expected, and any `labelled` grammar-production names — enough to render a "found `}`, expected expression" message without hand-rolling an error type.
 2. **Recovery as a first-class outcome.** [`recover_with`](#error-recovery-recover_with-and-the-recovery-strategies) plus the [`via_parser`][rec-via] / [`nested_delimiters`][rec-nested] / [`skip_then_retry_until`][rec-skip] strategies let the parser produce a **partial AST and a list of errors** in one run — the `ParseResult<O, E::Error>` return type encodes exactly that. This is what no other mainstream Rust combinator library does declaratively.
-3. **IDE-readiness.** Because a syntax error in one function leaves the rest of the file's AST intact (recovery substitutes an `Error` node and continues), chumsky is well-suited to **LSP servers** and incremental compiler frontends, which must keep functioning on perpetually-incomplete, perpetually-invalid buffers. The author's own [Tao][tao] language uses chumsky for both lexer and parser specifically to _"report many lexer, parser, and type errors at once"_.
+3. **IDE-readiness.** Because a syntax error in one function leaves the rest of the file's AST intact (recovery substitutes an `Error` node and continues), chumsky is well-suited to **LSP servers** and incremental compiler frontends, which must keep functioning on perpetually-incomplete, perpetually-invalid buffers. The author's own [Tao][tao] language uses chumsky for both lexer and parser specifically to surface many lexer, parser, and type errors in a single run.
 
 What chumsky does **not** do is _incremental reparsing_ — re-parsing only the edited subtree of a previous parse, the way [tree-sitter][tree-sitter] does. A chumsky parse is whole-input each time; its IDE story is error-resilience and partial ASTs, not sub-linear edit reparsing. For an editor that needs both, the two are complementary, not competing.
 

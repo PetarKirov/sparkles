@@ -64,7 +64,7 @@ derivation tree, then frames parsing as **handle pruning**:
 > a complete branch … This process of pruning the handle at each step corresponds exactly
 > to [the rightmost] derivation in reverse. The reader may easily verify, in fact, that
 > 'handle pruning' always produces, in reverse, the derivation obtained by replacing the
-> _rightmost_ intermediate character at each step." — [Knuth 1965, p. 610][knuth-pdf]
+> _rightmost_ intermediate character at each step." — [Knuth 1965, pp. 609–610][knuth-pdf]
 
 The decisive question is whether the handle can be recognised by a finite amount of
 left context plus a bounded lookahead. Knuth's `LR(k)` condition answers exactly this,
@@ -96,8 +96,9 @@ are unambiguous, and connects them to the deterministic languages —
 The motivation for **GLR**, twenty years later, is the inverse: many real grammars
 (natural language above all, but also C's typedef/expression overlap and many DSLs) are
 _not_ `LR(k)` for any `k`, yet we still want LR-style efficiency on the common
-deterministic case. Masaru Tomita's 1985 _Efficient Parsing for Natural Language_
-generalizes the `LR` stack into a graph so that conflicts need not be resolved — the
+deterministic case. Masaru Tomita's 1985 GLR algorithm (_Efficient Parsing for Natural
+Language_, Kluwer, 1986) generalizes the `LR` stack into a graph so that conflicts need
+not be resolved — the
 parser simply pursues every alternative simultaneously, sharing work so that the cost
 stays polynomial.
 
@@ -288,7 +289,8 @@ without the canonical blow-up.
 ### Conflicts and their resolution
 
 A state is **inconsistent** (has a conflict) when the chosen lookahead discipline cannot
-pick a single action. Two kinds, named by DeRemer & Pennello and by every generator:
+pick a single action. Two kinds, named by yacc/Bison and every generator since (DeRemer &
+Pennello instead call the shift case a "read-reduce" conflict):
 
 - **shift/reduce** — the state has both a shiftable terminal and a complete item whose
   lookahead includes that terminal; the parser cannot tell whether to read more input or
@@ -414,8 +416,8 @@ reduce to the same symbol over the same span they are **packed** into one `SPPF`
 lets the grammar author either resolve statically with precedence, or supply a `%merge`
 function called on the competing semantic values when the last two parsers reunite ([Bison
 §1.5][bison-glr]). [Tree-sitter](../tree-sitter.md) takes the same two-tier stance:
-ambiguity is resolved "at compile-time via precedence annotations, and at run-time via the
-GLR algorithm."
+ambiguity is resolved at compile time via precedence annotations and at run time via the
+GLR algorithm.
 
 ### Error detection & recovery
 
@@ -521,7 +523,7 @@ These are surveyed in their own deep-dives; this document is the theory behind t
   relations, the `LA`/`Follow`/`Read`/`DR` decomposition, the linear `Digraph` algorithm,
   and the not-`LR(k)` SCC diagnostics. [ACM DL][deremer-acm]; [PDF][deremer-pdf]. (LALR
   itself: DeRemer's 1969 MIT Ph.D. thesis, _Practical Translators for `LR(k)` Languages_.)
-- **Masaru Tomita (1985)**, _Efficient Parsing for Natural Language: A Fast Algorithm for
+- **Masaru Tomita (1986)**, _Efficient Parsing for Natural Language: A Fast Algorithm for
   Practical Systems_, Kluwer — the graph-structured stack and shared packed parse forest;
   Algorithms 0–4. [Springer][tomita-book]. Reference exposition: [_Generalised LR
   parsing_][glr-book].

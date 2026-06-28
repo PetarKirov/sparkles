@@ -284,7 +284,7 @@ by restricting the grammar class.
 > "The main disadvantage of packrat parsing is its space consumption. Although its asymptotic
 > worst-case bound is the same as those of conventional algorithms—linear in the size of the
 > input—its space utilization is directly proportional to input size rather than maximum
-> recursion depth, which may differ by orders of magnitude." — [Ford 2002][packrat-icfp], Abstract
+> recursion depth, which may differ by orders of magnitude." — [Ford 2002][packrat-icfp], §1
 
 A packrat parser "literally squirrels away everything it has ever computed about the input
 text, including the entire input text itself" (§5.3). `LL(k)`/`LR(k)` and plain backtracking
@@ -367,8 +367,8 @@ whole expression fails. The engine will not back up and try again." This is a do
 sword. It eliminates the dangling-`else` problem cleanly — `IF Cond THEN S ELSE S / IF Cond
 THEN S` binds the `ELSE` to the nearest `IF` automatically ([Ford 2004][peg-popl], §2.3) — but
 it also means a misordered choice can _hide a productive alternative forever_ (the
-`A ← a / a b` case), and "there is no guarantee that this greedy matching will find the
-globally longest match." The grammar author, not the formalism, owns disambiguation. As Ford
+`A ← a / a b` case), and there is no guarantee that this greedy matching will find the
+globally longest match. The grammar author, not the formalism, owns disambiguation. As Ford
 puts it, the challenge is no longer "are these two CFG alternatives ambiguous?" but the
 "analogous challenge of determining whether two alternatives in a `/` expression can be
 reordered without affecting the language" — which "is undecidable in general."
@@ -477,11 +477,11 @@ The mechanism, in two moves:
 
 Indirect recursion needs more bookkeeping: a **rule invocation stack** identifies the **head**
 rule of a left-recursion loop and the set of rules **involved** in it (the `LR`, `HEAD`,
-`involvedSet`/`evalSet` structures, §3.4). While growing the head's seed, the parser "bypasses
-the memo table and re-evaluates the body of any rule involved in the left recursion." Warth et
-al. are upfront about the cost: a packrat parser with their modification "can yield super-linear
-parse times for some left-recursive grammars," though "this is not the case for typical uses of
-left recursion."
+`involvedSet`/`evalSet` structures, §3.4). While growing the head's seed, "we bypass the
+memo table and re-evaluate the body of any rule involved in the left recursion" ([Warth et
+al.][warth-pepm], §3.3). Warth et al. are upfront about the cost: a packrat parser with
+their modification "to yield super-linear parse times for some left-recursive grammars,"
+though "this is not the case for typical uses of left recursion."
 
 ### Medeiros–Mascarenhas–Ierusalimschy: bounded left recursion
 
@@ -520,15 +520,15 @@ new PEG parser support left recursion in production.
 
 ## Where it shows up in practice
 
-| Tool / engine                   | Language      | Role                                                                                                                      |
-| ------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| [`pest`][pest]                  | Rust          | The flagship Rust PEG generator; derives a parser from a `.pest` grammar — see the [deep-dive][pest]                      |
-| `rust-peg` / [`peg`][peg-crate] | Rust          | `peg!{}` macro PEG generator; ordered choice, `&`/`!` predicates                                                          |
-| [LPeg][lpeg]                    | Lua           | Roberto Ierusalimschy's PEG library; compiles PEGs to a parsing machine (the Medeiros et al. target)                      |
-| [PEG.js][pegjs] / Peggy         | JavaScript    | Browser/Node PEG generators                                                                                               |
-| `Rats!`, `Pappy`                | Java, Haskell | Early packrat generators with automatic direct-left-recursion elimination ([Warth][warth-pepm], §1)                       |
-| CPython `pegen`                 | Python        | Since 3.9, CPython's grammar is parsed by a PEG parser (PEP 617) with left-recursion support                              |
-| [ANTLR][antlr]                  | Java (multi)  | Not packrat, but its `&`/`!` _syntactic predicates_ were Parr's contribution that Ford adopted ([peg-popl][peg-popl], §6) |
+| Tool / engine                   | Language      | Role                                                                                                                                               |
+| ------------------------------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`pest`][pest]                  | Rust          | The flagship Rust PEG generator; derives a parser from a `.pest` grammar — see the [deep-dive][pest]                                               |
+| `rust-peg` / [`peg`][peg-crate] | Rust          | `peg!{}` macro PEG generator; ordered choice, `&`/`!` predicates                                                                                   |
+| [LPeg][lpeg]                    | Lua           | Roberto Ierusalimschy's PEG library; compiles PEGs to a parsing machine (the Medeiros et al. target)                                               |
+| [PEG.js][pegjs] / Peggy         | JavaScript    | Browser/Node PEG generators                                                                                                                        |
+| `Rats!`, `Pappy`                | Java, Haskell | Early packrat generators with automatic direct-left-recursion elimination ([Warth][warth-pepm], §1)                                                |
+| CPython `pegen`                 | Python        | Since 3.9, CPython's grammar is parsed by a PEG parser (PEP 617) with left-recursion support                                                       |
+| [ANTLR][antlr]                  | Java (multi)  | Not packrat, but its and-predicate `&` was Parr's contribution that Ford adopted; the not-predicate `!` was new in Ford ([peg-popl][peg-popl], §6) |
 
 > [!IMPORTANT]
 > Be careful not to conflate PEGs with **parser combinators** ([Parsec][parsec], [`nom`][nom],

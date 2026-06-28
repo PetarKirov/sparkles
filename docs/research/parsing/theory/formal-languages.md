@@ -64,8 +64,9 @@ constructs that genuinely escape it.
 The Dragon Book frames syntax analysis around exactly this choice — context-free grammars are
 the formalism because they are expressive enough for nesting yet cheap enough to parse:
 
-> "Every programming language has rules that prescribe the syntactic structure of well-formed
-> programs. … These rules can be expressed by a context-free grammar." — Aho, Lam, Sethi &
+> "By design, every programming language has precise rules that prescribe the syntactic
+> structure of well-formed programs. … The syntax of programming language constructs can be
+> specified by context-free grammars or BNF (Backus-Naur Form) notation." — Aho, Lam, Sethi &
 > Ullman, _Compilers: Principles, Techniques, and Tools_, 2nd ed. ([Dragon Book][dragon])
 
 This doc unpacks that sentence: what the grammar classes are, which machine recognizes each,
@@ -176,7 +177,7 @@ well-behaved grammars — `O(n²)` for unambiguous grammars and `O(n)` on the de
 that covers most programming languages. Earley's own abstract states the three-tier bound:
 
 > "[It has] a time bound proportional to n³ … in general; … n² for unambiguous grammars, and
-> linear time for a large class of grammars." — Earley, "An efficient context-free parsing
+> linear time on a large class of grammars." — Earley, "An efficient context-free parsing
 > algorithm" (1970) ([CACM 13(2)][earley-cacm])
 
 Both algorithms are charted in [general-parsing][general]. The cubic wall is not laziness —

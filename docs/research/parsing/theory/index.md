@@ -7,7 +7,7 @@ reify. This is the theory subtree of the [parsing survey][umbrella]; the
 [systems deep-dives][umbrella] (simdjson, ANTLR, Bison, …) are where these algorithms
 ship. Where a deep-dive here names a real tool, it links to that tool's page.
 
-**Last reviewed:** June 25, 2026
+**Last reviewed:** June 29, 2026
 
 ---
 

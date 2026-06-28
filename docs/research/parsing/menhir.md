@@ -16,7 +16,7 @@ A modern LR(1) parser generator for OCaml whose distinguishing features are huma
 | Latest release            | `20260209` (date-stamped release line; `--GLR` first shipped in `20260112`)                                                   |
 
 > [!NOTE]
-> Menhir uses **date-stamped** version numbers (`20231231`, `20240715`, `20260122`, `20260209`, …) rather than SemVer. The upstream repository lives on Inria's GitLab; a read-only GitHub mirror exists at [`savonet/mehnir`][mirror]. This deep-dive cites the upstream source and the dated reference manual.
+> Menhir uses **date-stamped** version numbers (`20231231`, `20240715`, `20260122`, `20260209`, …) rather than SemVer. The upstream repository lives on Inria's GitLab. This deep-dive cites the upstream source and the dated reference manual.
 
 ---
 
@@ -26,7 +26,7 @@ A modern LR(1) parser generator for OCaml whose distinguishing features are huma
 
 A parser generator turns a declarative grammar — productions decorated with code fragments that build the result — into an efficient deterministic parser. OCaml's traditional tool is [`ocamlyacc`][ocamllex], a near-direct port of Berkeley `yacc`: it builds an **LALR(1)** automaton, reports conflicts only as opaque state numbers, uses a single mutable global parser, and offers no facilities for parameterized rules, error-message engineering, or incremental use. Menhir is the modern replacement. From the [reference manual][manual] introduction:
 
-> _"Menhir is a parser generator. It turns high-level grammar specifications, decorated with semantic actions expressed in the OCaml programming language, into parsers, again expressed in OCaml. It is based on Knuth's LR(1) parser construction technique. It is strongly inspired by its precursors: yacc, ML-Yacc, and ocamlyacc, but offers a large number of minor and major improvements that make it a more modern tool."_ — [Menhir Reference Manual, §1][manual]
+> _"Menhir is a parser generator. It turns high-level grammar specifications, decorated with "semantic actions" (fragments of executable code), into parsers. It is based on Knuth's LR(1) parser construction technique. It is strongly inspired by its precursors: yacc, ML-Yacc, and ocamlyacc, but offers a large number of minor and major improvements that make it a more modern tool."_ — [Menhir Reference Manual, Foreword][manual]
 
 Menhir keeps the `yacc` family's strengths — a declarative external [grammar DSL](#interface--composition-model), bottom-up [LR parsing](./theory/bottom-up.md) with the linear-time guarantee, deterministic conflict resolution by precedence — while fixing the historical pain points the `yacc` lineage is notorious for:
 
@@ -143,20 +143,26 @@ For each conflicted state the file shows a _conflict string_ (a concrete sequenc
 %public option(X):
   /* nothing */
     { None }
+    [@name none]
 | x = X
     { Some x }
+    [@name some]
 
 %public list(X):
   /* nothing */
     { [] }
+    [@name nil]
 | x = X; xs = list(X)
     { x :: xs }
+    [@name cons]
 
 %public separated_nonempty_list(separator, X):
   x = X
     { [ x ] }
+    [@name one]
 | x = X; separator; xs = separated_nonempty_list(separator, X)
     { x :: xs }
+    [@name more]
 
 %public %inline separated_list(separator, X):
   xs = loption(separated_nonempty_list(separator, X))
@@ -300,7 +306,7 @@ This verified parser is the front end of the **[CompCert][compcert]** verified C
 ## Sources
 
 - [Menhir Reference Manual][manual] — the authoritative reference (conflicts/`--explain`, incremental & inspection APIs, Rocq back-end, `.messages`)
-- [`gitlab.inria.fr/fpottier/menhir`][repo] — upstream source; [GitHub mirror][mirror]; [`src/standard.mly`][stdlib] — the parameterized standard library
+- [`gitlab.inria.fr/fpottier/menhir`][repo] — upstream source; [`front/standard.mly`][stdlib] — the parameterized standard library
 - [Menhir project page][home] and [`menhir(1)` manpage][manpage] — command-line flags (`--canonical`, `--lalr`, `--list-errors`, `--compile-errors`, `--rocq`, `--infer`, `--GLR`)
 - François Pottier & Yann Régis-Gianas — Menhir's original design (the 2006 typed-LR work referenced by the Merlin report)
 - [F. Bour, T. Refis & G. Scherer, "Merlin: A Language Server for OCaml (Experience Report)," ICFP 2018][merlin] — the incremental API, recovery annotations, and "live parsing"
@@ -315,8 +321,7 @@ This verified parser is the front end of the **[CompCert][compcert]** verified C
 [manual]: https://gallium.inria.fr/~fpottier/menhir/manual.html
 [home]: https://gallium.inria.fr/~fpottier/menhir/
 [repo]: https://gitlab.inria.fr/fpottier/menhir
-[mirror]: https://github.com/savonet/mehnir
-[stdlib]: https://gitlab.inria.fr/fpottier/menhir/-/blob/master/src/standard.mly
+[stdlib]: https://gitlab.inria.fr/fpottier/menhir/-/blob/master/front/standard.mly
 [manpage]: https://www.mankier.com/1/menhir
 [ocamllex]: https://ocaml.org/manual/lexyacc.html
 [rwo]: https://dev.realworldocaml.org/parsing-with-ocamllex-and-menhir.html

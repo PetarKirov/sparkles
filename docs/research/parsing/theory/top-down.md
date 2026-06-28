@@ -108,8 +108,9 @@ This one-to-one mapping — rule ↔ function, alternative ↔ `switch`/`if`, re
 loop, recursion ↔ recursion — is why top-down parsers are the easiest to write by
 hand, to read, and to debug: a stack trace through the parser _is_ a partial parse
 tree. It is the technique behind the reference compilers for many production languages
-(the [ALL(\*) paper][allstar] notes the GCC and Clang C/C++ front-ends and the Java
-compiler `javac` all use hand-written recursive descent), and the one
+(the [ALL(\*) paper][allstar] benchmarks against the hand-built recursive-descent parser
+of the Java compiler `javac`; GCC's and Clang's C/C++ front-ends are likewise
+hand-written recursive descent), and the one
 [combinator libraries][parsec] reify as composable values rather than emit as code.
 
 ---
@@ -435,7 +436,7 @@ Adaptive lookahead trades this guarantee for generality. `ALL(*)` is, by Theorem
 
 — "because in the worst-case, the parser must make a prediction at each input symbol and
 each prediction must examine the entire remaining input; examining an input symbol can
-cost `O(n²)`" (§6). The DFA cache and `GSS` (which has `O(n)` nodes, Theorem 6.4) make
+cost `O(n²)`" (§1). The DFA cache and `GSS` (which has `O(n)` nodes, Theorem 6.4) make
 this almost never bite: empirically ANTLR 4's `ALL(*)` parses a 12,920-file, 123 MB Java
 corpus "only about 20% slower than the handbuilt parser in the Java compiler itself,"
 ~4.4× faster than the fastest GLR tool tested, and ~135× faster than the GLL tool (§7.1).

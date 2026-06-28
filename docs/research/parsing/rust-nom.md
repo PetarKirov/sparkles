@@ -149,7 +149,8 @@ gives the canonical signature ([`src/lib.rs`][lib]):
 
 > _"nom is based on functions that generate parsers, with a signature like this:
 > `(arguments) -> impl Fn(Input) -> IResult<Input, Output, Error>`. The arguments of a
-> combinator can be direct values (like a number of bytes) or even other parsers."_
+> combinator can be direct values (like `take` which uses a number of bytes or
+> character as argument) or even other parsers."_
 
 The post-`5.0` API is **functions**, not the macros nom originally shipped (see
 [Interface & composition model](#interface--composition-model)). The frequently-used
@@ -212,7 +213,7 @@ compiled in different "output modes" (produce the value, or just check that it m
 ([docs.rs `Parser`][parsertrait]):
 
 ```rust
-// nom 8.0: src/traits.rs (Parser trait, abridged)
+// nom 8.0: src/internal.rs (Parser trait, abridged)
 pub trait Parser<Input> {
     type Output;
     type Error: ParseError<Input>;
@@ -329,7 +330,7 @@ Performance is nom's headline and its principal reason for existing. The charact
   compiler inlines the tower into straight-line code, which is why the README can claim
   parity with handwritten C.
 - **Bit-level and SIMD-adjacent.** nom has dedicated bit parsers (`nom::bits`) and a
-  `bitvec` integration (added in `7.0`). It does not itself vectorize, but it is the
+  `bitvec` integration (added in 6.0, split out to the `nom-bitvec` crate in 7.0). It does not itself vectorize, but it is the
   glue layer often paired with hand-vectorized primitives; it is not a data-parallel
   engine like [`simdjson`][simdjson].
 - **Published benchmarks.** The README's "outperform … even handwritten C parsers"
