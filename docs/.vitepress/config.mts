@@ -11,6 +11,10 @@ export default withMermaid(
     // (source artifacts under research/monorepo-tooling/<tool>/sample/, not pages)
     ignoreDeadLinks: [/\.d$/, /\/sample\//, /\/sample$/, /\/example\//],
 
+    // The parsing grounding ledger is internal QA evidence (claim-by-claim
+    // source verification), not published research — keep it out of the site.
+    srcExclude: ['**/research/parsing/grounding/**'],
+
     markdown: {
       languageAlias: {
         sdl: 'd',
