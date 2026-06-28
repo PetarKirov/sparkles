@@ -142,7 +142,7 @@ The structural bitset is sparse and irregularly spaced, so simdjson transforms i
 
 In the classic DOM path, stage 2 iterates the index and runs a `goto`-based state machine, pushing array/object state on a stack ([paper][paper-pdf], §3.2). It emits a **tape**: an array of 64-bit words, one per value, with bracket/brace words annotated with the matching close position so navigation can skip a whole subtree without reading it ([paper][paper-pdf], §3.1, Fig. 2). Numbers and strings are parsed by dedicated functions here, deliberately deferred from stage 1 "_as these tasks are comparatively expensive and difficult to perform unconditionally and cheaply over our entire input_" ([paper][paper-pdf], §3).
 
-Number parsing has its own SIMD fast path: when ≥ 8 fractional digits are present, `parse_eight_digits_unrolled` converts them with `pmaddubsw`/`pmaddwd`/`packusdw` SIMD multiply-adds in ~7 instructions instead of eight scalar loads ([paper][paper-pdf], §3.2.1, Fig. 7). simdjson ships a full **fast float** parser (the `fast_float` algorithm, also extracted as a standalone library) that produces correctly-rounded `double`s to within 1 ULP.
+Number parsing has its own SIMD fast path: when ≥ 8 fractional digits are present, `parse_eight_digits_unrolled` converts them with `pmaddubsw`/`pmaddwd`/`packusdw` SIMD multiply-adds in ~7 instructions instead of eight scalar loads ([paper][paper-pdf], §3.2.1, Fig. 7). simdjson ships a full **fast float** parser (the `fast_float` algorithm, also extracted as a standalone library) that produces correctly-rounded `double`s — the nearest representable value (within ½ ULP).
 
 ### On Demand vs DOM
 
@@ -195,7 +195,7 @@ simdjson parses **exactly one grammar — RFC 8259 JSON** (plus NDJSON for the s
 - **Stage 1 is regular-language territory done data-parallel.** Detecting strings, classifying characters, and validating UTF-8 are all finite-state computations, but rather than run a [DFA][formal-languages] one byte at a time, simdjson reformulates them as **branchless bit/SIMD arithmetic over fixed-width windows** — prefix-XOR via carry-less multiply, `pshufb` table lookups, saturated subtraction. This is the data-parallel-finite-automaton idea (Mytkowicz et al.) applied to JSON.
 - **Stage 2 is a hand-written pushdown automaton.** Matching brackets/braces requires a stack (JSON nesting is context-free, not regular), implemented as an explicit stack + `goto` state machine, _not_ recursive descent and _not_ a generated [LR table][bottom-up].
 
-**Ambiguity does not arise** — JSON is an unambiguous, `LL(1)`-style grammar with single-character lookahead disambiguation of atoms. simdjson exploits exactly this: every value's type is decided by its first byte ([paper][paper-pdf], §3.1.3). The parser is strict and validating: it rejects malformed numbers (`012`, `1E+`, `.1`), out-of-range integers (outside `[−2^63, 2^63)`), overflowing floats (`1e309`), invalid UTF-8, and unclosed structures.
+**Ambiguity does not arise** — JSON is an unambiguous, `LL(1)`-style grammar with single-character lookahead disambiguation of atoms. simdjson exploits exactly this: every value's type is decided by its first byte ([paper][paper-pdf], §3.1.3). The parser is strict and validating: it rejects malformed numbers (`012`, `1E+`, `.1`), overflowing floats (`1e309`), invalid UTF-8, and unclosed structures. Integers are exact across the full signed-and-unsigned 64-bit range `[−2^63, 2^64)` (values beyond it fall back to `double`).
 
 ## Interface & composition model
 

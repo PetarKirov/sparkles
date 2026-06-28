@@ -99,7 +99,7 @@ regular-language layer, [Owens, Reppy & Turon][owens] make the parallel case for
 
 ### Why it was forgotten, then revived
 
-Brzozowski published derivatives in 1964, two years before [Younger's CYK][general] and six
+Brzozowski published derivatives in 1964, three years before [Younger's CYK][general] and six
 before [Earley][general]; yet the technique vanished. Owens et al. open with the lament:
 
 > "Unfortunately, RE derivatives have been lost in the sands of time, and few computer

@@ -355,7 +355,7 @@ The lineage is among the **most battle-tested parsing infrastructure in any lang
 ## Sources
 
 - [`parsec-paper-letter.pdf` — Leijen & Meijer, _Parsec: Direct Style Monadic Parser Combinators For The Real World_ (2001)][parsec-paper] — the consumed/empty model, `try`, error-message machinery (§§2–4 quoted above)
-- [`monparsing.pdf` — Hutton & Meijer, _Monadic Parsing in Haskell / Monadic Parser Combinators_ (1996)][hutton-meijer] — the list-of-successes `type Parser a = String -> [(a, String)]` model and the parser monad
+- [`monparsing.pdf` — Hutton & Meijer, _Monadic Parser Combinators_ (1996, tech. report NOTTCS-TR-96-4)][hutton-meijer] — the list-of-successes `type Parser a = String -> [(a, String)]` model and the parser monad. (The shorter, revised version is _Monadic Parsing in Haskell_, JFP 8(4):437–444, 1998 — a separate paper, not the linked PDF.)
 - [`parsec` on Hackage][parsec-hackage] · [haskell/parsec source tree][parsec-repo]
 - [`megaparsec` on Hackage][mega-hackage] · [mrkkrp/megaparsec source tree][mega-repo]
 - [`Text.Megaparsec.Internal` — `ParsecT`, `pPlus`, `pTry`, `pLabel`, `Reply`/`Consumption`/`Result`][mega-internal]

@@ -575,7 +575,7 @@ contrast cases. The capstone [comparison][comparison] places them all on one axi
 <!-- External primary sources -->
 
 [lewis-stearns]: https://dl.acm.org/doi/10.1145/321466.321477
-[rs70]: https://dl.acm.org/doi/10.1145/800169.805431
+[rs70]: https://www.sciencedirect.com/science/article/pii/S0019995870904468
 [allstar]: https://www.antlr.org/papers/allstar-techreport.pdf
 [llstar]: https://www.antlr.org/papers/LL-star-PLDI11.pdf
 [dragon]: https://web.archive.org/web/20260610070726/https://suif.stanford.edu/dragonbook/
