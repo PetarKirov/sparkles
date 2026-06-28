@@ -911,7 +911,7 @@ unittest
 void writeStyledValue(Hook, Writer, T)(ref Writer w, in T value, in Hook hook, bool useColors)
 {
     import std.range.primitives : put;
-    import std.traits : isSomeChar, isSomeString;
+    import std.traits : isSomeChar, isSomeString, OriginalType;
 
     // 1. Compute style from hook (optional primitive)
     Style style = Style.none;
@@ -927,55 +927,39 @@ void writeStyledValue(Hook, Writer, T)(ref Writer w, in T value, in Hook hook, b
 
     // 3. Dispatch by type
     static if (is(T == typeof(null)))
-    {
         put(w, "null");
-    }
+
     else static if (is(T == enum))
     {
         // Hook-controlled enum rendering
-        enum render = {
-            static if (__traits(compiles, Hook.enumRender))
-                return Hook.enumRender;
-            else
-                return EnumRender.underlying;
-        }();
+        static if (__traits(compiles, Hook.enumRender))
+            enum render = Hook.enumRender;
+        else
+            enum render = EnumRender.underlying;
 
         static if (render == EnumRender.memberName)
             writeEnumMemberName(w, value);
-        else
-        {
-            import std.traits : OriginalType;
+        else static if (render == EnumRender.underlying)
             writeInteger(w, cast(OriginalType!T) value);
-        }
+        else
+            static assert(false, "Unknown enum render value");
     }
     else static if (is(T == bool))
-    {
         put(w, value ? "true" : "false");
-    }
+
     else static if (isSomeChar!T)
     {
-        enum esc = {
-            static if (__traits(compiles, Hook.escapeChars))
-                return Hook.escapeChars;
-            else
-                return false;
-        }();
-
-        static if (esc)
+        static if (__traits(compiles, Hook.escapeChars) && Hook.escapeChars)
             writeEscapedCharLiteral(w, value);
         else
-            put(w, (&value)[0 .. 1]);
+        {
+            T[1] arr = value;
+            put(w, arr[]);
+        }
     }
     else static if (isSomeString!T)
     {
-        enum esc = {
-            static if (__traits(compiles, Hook.escapeStrings))
-                return Hook.escapeStrings;
-            else
-                return false;
-        }();
-
-        static if (esc)
+        static if (__traits(compiles, Hook.escapeStrings) && Hook.escapeStrings)
             writeEscapedString(w, value);
         else
             put(w, value);
@@ -1047,18 +1031,29 @@ unittest
 {
     import sparkles.base.smallbuffer : SmallBuffer;
 
-    struct EscHook
+    struct EscStrings
     {
         enum escapeStrings = true;
+    }
+    struct EscChars
+    {
         enum escapeChars = true;
     }
 
     SmallBuffer!(char, 64) buf;
-    writeStyledValue(buf, "hi\nthere", EscHook(), false);
+    writeStyledValue(buf, "hi\nthere", EscStrings(), false);
     assert(buf[] == `"hi\nthere"`);
 
     buf.clear();
-    writeStyledValue(buf, '\t', EscHook(), false);
+    writeStyledValue(buf, '\t', EscStrings(), false);
+    assert(buf[] == "\t");
+
+    buf.clear();
+    writeStyledValue(buf, "hi\nthere", EscChars(), false);
+    assert(buf[] == "hi\nthere");
+
+    buf.clear();
+    writeStyledValue(buf, '\t', EscChars(), false);
     assert(buf[] == `'\t'`);
 }
 
