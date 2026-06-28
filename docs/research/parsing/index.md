@@ -44,7 +44,7 @@ This survey answers six questions:
 > incremental/IDE cluster (Roslyn red-green trees, rust-analyzer/rowan, Lezer). Rows
 > below that a future deep-dive will add are noted, not silently omitted.
 
-**Last reviewed:** June 25, 2026
+**Last reviewed:** June 29, 2026
 
 ---
 
@@ -59,7 +59,7 @@ The classical results, each developed in its own deep-dive. Start with the
 | **Concepts & vocabulary**                | The operational glossary every deep-dive links to; the parser-landscape table              | —                                                                        | [concepts][concepts]       |
 | **Formal languages & the parse problem** | The Chomsky hierarchy, grammar↔automaton pairing, decidability & the cubic complexity wall | Chomsky 1956; Valiant 1975 / Lee 2002 (BMM bound); ambiguity undecidable | [formal-languages][formal] |
 | **Top-down parsing**                     | Recursive descent, FIRST/FOLLOW & LL(1), LL(k)/strong-LL, LL(\*)/ALL(\*)                   | Lewis & Stearns 1968; Rosenkrantz & Stearns 1970; Parr et al. 2011/2014  | [top-down][top-down]       |
-| **Bottom-up parsing**                    | Shift-reduce, the LR(0) automaton, SLR/LALR/canonical-LR, GLR                              | Knuth 1965; DeRemer & Pennello 1982; Tomita 1985                         | [bottom-up][bottom-up]     |
+| **Bottom-up parsing**                    | Shift-reduce, the LR(0) automaton, SLR/LALR/canonical-LR, GLR                              | Knuth 1965; DeRemer & Pennello 1982; Tomita 1985 (book: Kluwer, 1986)    | [bottom-up][bottom-up]     |
 | **General CF parsing**                   | Parsing _every_ CFG (ambiguous, left-recursive) — Earley, CYK, GLL, SPPFs                  | Earley 1970; CYK; Leo 1991; Scott & Johnstone (GLL); Marpa               | [general-parsing][general] |
 | **PEG & packrat**                        | Recognition-based grammars, ordered choice, linear-time memoization, the space cost        | Ford 2002 (packrat) & 2004 (PEG); Warth 2008 (left recursion)            | [peg-packrat][peg]         |
 | **Operator-precedence & Pratt**          | The linear-time expression engine recursive descent drops in                               | Floyd 1963; Pratt 1973; Crockford 2007; matklad                          | [pratt-precedence][pratt]  |
@@ -152,30 +152,30 @@ separates a batch compiler back-end from an IDE-grade front-end.
 A high-confidence timeline interleaving **theory/algorithm milestones** with
 **tool/system milestones**. Per-result provenance lives in each deep-dive's `Sources`.
 
-| Year        | Theory / algorithm milestone                                                                     | Tool / system milestone                                                                       |
-| ----------- | ------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| **1956**    | **Chomsky** — _Three Models for the Description of Language_ (the [hierarchy][formal])           | —                                                                                             |
-| 1959–1963   | Chomsky formal properties; **Floyd 1963** — [operator-precedence][pratt] parsing                 | —                                                                                             |
-| **1964**    | **Brzozowski** — [derivatives of regular expressions][derivatives]                               | —                                                                                             |
-| **1965**    | **Knuth** — _On the Translation of Languages from Left to Right_ ([LR parsing][bottom-up])       | CYK recognition (Cocke/Kasami/Younger, 1965–67)                                               |
-| 1968–1970   | **Lewis & Stearns** LL(k); **Earley 1970** — general [CF parsing][general]                       | —                                                                                             |
-| **1973**    | **Pratt** — _Top Down Operator Precedence_ ([TDOP][pratt])                                       | —                                                                                             |
-| **1975**    | **Valiant** — sub-cubic CF recognition via Boolean matrix mult.                                  | **yacc** (Johnson, Bell Labs) — LALR(1) generator ships on Unix                               |
-| 1977–1982   | **Pager 1977** minimal-state LR; **DeRemer & Pennello 1982** efficient [LALR(1)][bottom-up]      | **lex**/**flex** lexer generators                                                             |
-| **1985**    | **Tomita** — [GLR][bottom-up] (graph-structured stack) for natural language                      | **GNU Bison** released                                                                        |
-| 1986        | The **"Dragon Book"** (Aho, Sethi & Ullman) codifies the field                                   | **PCCTS**, Terence Parr's ANTLR predecessor (1989)                                            |
-| **1991**    | **Leo** — linear Earley on every LR(k) grammar                                                   | —                                                                                             |
-| 1998–2001   | **Hutton & Meijer 1998** _Monadic Parsing_; combinator theory matures                            | **Parsec** (Leijen & Meijer, 2001) — [Haskell combinators][parsec]                            |
-| **2002**    | **Ford** — [packrat parsing][peg] (linear-time PEG); **Lee** — BMM lower bound                   | **Aycock & Horspool** practical Earley                                                        |
-| **2004**    | **Ford** — [Parsing Expression Grammars][peg] (POPL)                                             | —                                                                                             |
-| 2006–2009   | **Warth 2008** PEG + left recursion; **Owens et al. 2009** [derivatives reexamined][derivatives] | **Menhir** (Pottier & Régis-Gianas, 2006); **attoparsec**                                     |
-| **2011**    | **Might, Darais & Spiewak** — [Parsing with Derivatives][derivatives]; **LL(\*)** (PLDI)         | **nom** development begins; **Marpa** (Kegler) — engineered Earley                            |
-| 2012–2014   | **CompCert** verified parser (ESOP 2012); **ALL(\*)** (Parr, Harwell & Fisher, OOPSLA 2014)      | **ANTLR 4** (2013, [ALL(\*)][top-down]); **nom** 1.0 (2015)                                   |
-| 2015–2016   | **Megaparsec**; **Adams et al. 2016** — PWD is cubic, ~951× faster                               | Bison counterexample research (Isradisaikul & Myers, PLDI 2015)                               |
-| 2017–2018   | **Jourdan & Pottier 2017** — verified C11 LR parser (TOPLAS)                                     | **tree-sitter** (Brunsfeld/GitHub, 2018) — [incremental GLR][tree-sitter]                     |
-| **2019**    | —                                                                                                | **simdjson** (Langdale & Lemire, VLDB J.) — [SIMD JSON][simdjson]                             |
-| 2020–2021   | **CPython** adopts a [PEG][peg] parser (PEP 617)                                                 | **chumsky** (recovering combinators); **Bison 3.8** counterexamples                           |
-| 2023–2026\* | —                                                                                                | **winnow** forks nom; **chumsky** zero-copy rewrite lands in 0.10+; **Menhir** GLR back-end\* |
+| Year        | Theory / algorithm milestone                                                                                                         | Tool / system milestone                                                                       |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| **1956**    | **Chomsky** — _Three Models for the Description of Language_ (the [hierarchy][formal])                                               | —                                                                                             |
+| 1959–1963   | Chomsky formal properties; **Floyd 1963** — [operator-precedence][pratt] parsing                                                     | —                                                                                             |
+| **1964**    | **Brzozowski** — [derivatives of regular expressions][derivatives]                                                                   | —                                                                                             |
+| **1965**    | **Knuth** — _On the Translation of Languages from Left to Right_ ([LR parsing][bottom-up])                                           | CYK recognition (Cocke/Kasami/Younger, 1965–67)                                               |
+| 1968–1970   | **Lewis & Stearns** LL(k); **Earley 1970** — general [CF parsing][general]                                                           | —                                                                                             |
+| **1973**    | **Pratt** — _Top Down Operator Precedence_ ([TDOP][pratt])                                                                           | —                                                                                             |
+| **1975**    | **Valiant** — sub-cubic CF recognition via Boolean matrix mult.                                                                      | **yacc** (Johnson, Bell Labs) — LALR(1) generator ships on Unix                               |
+| 1977–1982   | **Pager 1977** minimal-state LR; **DeRemer & Pennello 1982** efficient [LALR(1)][bottom-up]                                          | **lex**/**flex** lexer generators                                                             |
+| **1985**    | **Tomita** — [GLR][bottom-up] (graph-structured stack) for natural language (_Efficient Parsing for Natural Language_, Kluwer, 1986) | **GNU Bison** released                                                                        |
+| 1986        | The **"Dragon Book"** (Aho, Sethi & Ullman) codifies the field                                                                       | **PCCTS**, Terence Parr's ANTLR predecessor (1989)                                            |
+| **1991**    | **Leo** — linear Earley on every LR(k) grammar                                                                                       | —                                                                                             |
+| 1998–2001   | **Hutton & Meijer 1998** _Monadic Parsing_; combinator theory matures                                                                | **Parsec** (Leijen & Meijer, 2001) — [Haskell combinators][parsec]                            |
+| **2002**    | **Ford** — [packrat parsing][peg] (linear-time PEG); **Lee** — BMM lower bound                                                       | **Aycock & Horspool** practical Earley                                                        |
+| **2004**    | **Ford** — [Parsing Expression Grammars][peg] (POPL)                                                                                 | —                                                                                             |
+| 2006–2009   | **Warth 2008** PEG + left recursion; **Owens et al. 2009** [derivatives reexamined][derivatives]                                     | **Menhir** (Pottier & Régis-Gianas, 2006); **attoparsec**                                     |
+| **2011**    | **Might, Darais & Spiewak** — [Parsing with Derivatives][derivatives]; **LL(\*)** (PLDI)                                             | **Marpa** (Kegler) — engineered Earley                                                        |
+| 2012–2014   | **CompCert** verified parser (ESOP 2012); **ALL(\*)** (Parr, Harwell & Fisher, OOPSLA 2014)                                          | **ANTLR 4** (2013, [ALL(\*)][top-down]); **nom** 1.0 (2015)                                   |
+| 2015–2016   | **Megaparsec**; **Adams et al. 2016** — PWD is cubic, ~951× faster                                                                   | Bison counterexample research (Isradisaikul & Myers, PLDI 2015)                               |
+| 2017–2018   | **Jourdan & Pottier 2017** — verified C11 LR parser (TOPLAS)                                                                         | **tree-sitter** (Brunsfeld/GitHub, 2018) — [incremental GLR][tree-sitter]                     |
+| **2019**    | —                                                                                                                                    | **simdjson** (Langdale & Lemire, VLDB J.) — [SIMD JSON][simdjson]                             |
+| 2020–2021   | **CPython** adopts a [PEG][peg] parser (PEP 617)                                                                                     | **chumsky** (recovering combinators); **Bison 3.8** counterexamples                           |
+| 2023–2026\* | —                                                                                                                                    | **winnow** forks nom; **chumsky** zero-copy rewrite lands in 0.10+; **Menhir** GLR back-end\* |
 
 <sub>\* The Menhir GLR back-end is dated to the `20260112` release as observed in
 this review; treat 2023–2026 tool entries as current-as-of-review.</sub>

@@ -2,17 +2,17 @@
 
 The dominant LL-based parser generator: from one `.g4` grammar it generates a top-down parser whose run-time **ALL(\*)** (Adaptive LL-star) prediction launches pseudo-parallel subparsers and caches a lookahead DFA, "[combining] the simplicity, efficiency, and predictability of conventional top-down LL(k) parsers with the power of a GLR-like mechanism to make parsing decisions."
 
-| Field                     | Value                                                                                                                      |
-| ------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Language                  | Tool in Java; runtimes in Java, C#, Python3, JavaScript, TypeScript, Go, C++, Swift, PHP, Dart                             |
-| License                   | BSD-3-Clause                                                                                                               |
-| Repository                | [`antlr/antlr4`][repo] (tool in [`tool/`][tool-dir], runtimes in [`runtime/`][runtime-dir])                                |
-| Documentation             | [antlr.org][site] · [`doc/index.md`][doc-index] · _The Definitive ANTLR 4 Reference_ (Parr, 2013)                          |
-| Key authors               | Terence Parr (project lead since 1989), Sam Harwell, Kathleen Fisher, Eric Vergnaud, and contributors                      |
-| Category                  | Parser generator (external DSL → generated recursive-descent + ATN simulator), LL-based                                    |
-| Algorithm / grammar class | **ALL(\*)** — Adaptive LL(\*); accepts any non-left-recursive CFG, with direct left-recursion handled by grammar rewriting |
-| Lexing model              | **Separate lexer** (its own ALL(\*) recognizer); also supports combined grammars and, in principle, scannerless parsing    |
-| Latest release            | `4.13.2` (August 2024)                                                                                                     |
+| Field                     | Value                                                                                                                                                                                      |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Language                  | Tool in Java; runtimes for 10 target languages — eight in-repo (Java, C#, Python3, JavaScript, Go, C++, Swift, Dart), plus PHP (separate repo) and TypeScript (via the JavaScript runtime) |
+| License                   | BSD-3-Clause                                                                                                                                                                               |
+| Repository                | [`antlr/antlr4`][repo] (tool in [`tool/`][tool-dir], runtimes in [`runtime/`][runtime-dir])                                                                                                |
+| Documentation             | [antlr.org][site] · [`doc/index.md`][doc-index] · _The Definitive ANTLR 4 Reference_ (Parr, 2013)                                                                                          |
+| Key authors               | Terence Parr (project lead since 1989), Sam Harwell, Kathleen Fisher, Eric Vergnaud, and contributors                                                                                      |
+| Category                  | Parser generator (external DSL → generated recursive-descent + ATN simulator), LL-based                                                                                                    |
+| Algorithm / grammar class | **ALL(\*)** — Adaptive LL(\*); accepts any non-left-recursive CFG, with direct left-recursion handled by grammar rewriting                                                                 |
+| Lexing model              | **Separate lexer** (its own ALL(\*) recognizer); also supports combined grammars and, in principle, scannerless parsing                                                                    |
+| Latest release            | `4.13.2` (August 2024)                                                                                                                                                                     |
 
 > [!NOTE]
 > ANTLR is the canonical _LL-based parser generator_ data point for this survey — the top-down counterpart to the [bottom-up / LR][bottom-up] generators [`bison`/`yacc`][bison] and [`menhir`][menhir]. Its distinguishing feature is that grammar analysis happens **at parse time**: rather than statically computing a fixed-_k_ lookahead table, an ALL(\*) parser simulates an augmented transition network over the actual input and memoizes the result. That choice is what lets it accept grammars that no static LL(k)/LL(\*) tool could. Compare it against the PEG-based [`pest`][pest] (ordered choice, packrat), the GLR-adjacent incremental [`tree-sitter`][tree-sitter], and the combinator libraries [`parsec`][parsec] / [`nom`][nom] / [`chumsky`][chumsky] in the [capstone comparison][comparison].
@@ -184,9 +184,9 @@ Rule `stat`'s two alternatives share the prefix `expr`, which "is sufficient to 
 ANTLR's lexer is not a regular-expression scanner bolted on — it is itself an ALL(\*) recognizer (`LexerATNSimulator`):
 
 > _"ANTLR uses a variation of ALL(\*) for lexing that fully matches tokens instead of just predicting productions like ALL(\*) parsers do. After warm-up, the lexer will have built a DFA similar to what regular-expression based tools such as lex would create statically. The key difference is that ALL(\*) lexers are predicated context-free grammars not just regular expressions so they can recognize context-free tokens such as nested comments and can gate tokens in and out according to semantic context."_
-> — [_Adaptive LL(\*) Parsing_, §2.2][allstar]
+> — [_Adaptive LL(\*) Parsing_, §2.3][allstar]
 
-Lexer matching is **maximal munch**: the rule that matches the longest input wins, and ties break by grammar order (the earliest rule wins) — the standard `lex`-family disambiguation ([`doc/lexer-rules.md`][lexer-rules]). `fragment` rules are reusable sub-patterns that never produce a token of their own (`fragment DIGIT : [0-9] ; INT : DIGIT+ ;`).
+Lexer matching is **maximal munch**: the rule that matches the longest input wins, and ties break by grammar order (the earliest rule wins) — the standard `lex`-family disambiguation. `fragment` rules are reusable sub-patterns that never produce a token of their own (`fragment DIGIT : [0-9] ; INT : DIGIT+ ;`).
 
 **Lexer modes** turn one lexer into a stack of context-specific sub-lexers — "Modes allow you to group lexical rules by context, such as inside and outside of XML tags. It's like having multiple sublexers, one for each context. The lexer can only return tokens matched by entering a rule in the current mode" ([`doc/lexer-rules.md`][lexer-rules]). Modes are available only in `lexer grammar` files, not combined grammars. Transitions and token disposition are driven by **lexer commands** at the end of an alternative:
 
@@ -216,7 +216,7 @@ S     : [ \t\r\n] -> skip ;
 ALL(\*) itself cannot handle left recursion, but ANTLR 4 rewrites **direct** left recursion before generating the parser:
 
 > _"The ALL(\*) parsing strategy itself does not support left-recursion, but ANTLR supports direct left-recursion through grammar rewriting prior to parser generation. Direct left-recursion covers the most common cases, such as arithmetic expression productions, like E → E . id, and C declarators. We made an engineering decision not to support indirect or hidden left-recursion."_
-> — [_Adaptive LL(\*) Parsing_, §2.4][allstar]
+> — [_Adaptive LL(\*) Parsing_, §2.2][allstar]
 
 (Indirect left recursion is `A → B`, `B → A`; hidden left recursion is exposed through an empty production, `A → B A`, `B → ε` — both rejected.) The rewrite turns a left-recursive `expr` rule into a precedence-climbing form: ANTLR introduces a precedence parameter `expr[int _p]` and guards each alternative with a synthesized semantic predicate that compares the operator's precedence to `_p`, so "an expansion of `expr[pr]` can match only those subexpressions whose precedence meets or exceeds `pr`." Operator **precedence is just the textual order of the alternatives**, and associativity is per-alternative via `<assoc=right>` (e.g. for `^`). This is the same idea as a hand-written [Pratt / precedence-climbing parser][pratt], generated automatically:
 
@@ -262,13 +262,13 @@ Listeners suit passive work (symbol tables, validation, pretty-printing) where a
 
 **Ambiguity handling.** ANTLR is a _single-parse_ engine, not a forest producer — a deliberate stance, since "for computer languages, ambiguity is almost always an error" ([§1][allstar]). Genuine ambiguity is resolved by **production order** (lowest-numbered surviving alternative wins), and `PredictionMode.LL_EXACT_AMBIG_DETECTION` plus an `ANTLRErrorListener` can _report_ ambiguities to the grammar author for diagnosis. Semantic predicates give the author a manual override to disambiguate by host-language state.
 
-**Complexity bound.** ALL(\*) is **O(n⁴)** in the worst case (Theorem 6.3): "in the worst-case, the parser must make a prediction at each input symbol and each prediction must examine the entire remaining input; examining an input symbol can cost O(n²)" ([§1.1][allstar]). The contrived worst-case grammar `S → A $`, `A → aAA | aA | a` does exhibit quartic growth empirically ([§7.4][allstar]). This is "in line with the complexity of GLR," but the lookahead-DFA cache makes real grammars run linearly (next section).
+**Complexity bound.** ALL(\*) is **O(n⁴)** in the worst case (Theorem 6.3): "in the worst-case, the parser must make a prediction at each input symbol and each prediction must examine the entire remaining input; examining an input symbol can cost O(n²)" ([§1][allstar]). The contrived worst-case grammar `S → A $`, `A → aAA | aA | a` does exhibit quartic growth empirically ([§7.4][allstar]). This is "in line with the complexity of GLR," but the lookahead-DFA cache makes real grammars run linearly (next section).
 
 ## Interface & composition model
 
 **External DSL, not a combinator library.** ANTLR is a code generator: grammars are written in a standalone `.g4` DSL and compiled by a Java tool into target-language source. This is the opposite pole from the in-language **combinator** approach of [`parsec`][parsec], [`nom`][nom], and [`chumsky`][chumsky] (where the parser _is_ host-language code), and a peer of the other generators [`bison`/`yacc`][bison], [`menhir`][menhir], and [`pest`][pest] (which is also an external DSL but [PEG][peg]-based). The trade is the classic generator one: a separate build step and generated artifacts, in exchange for a declarative grammar that is language-agnostic and analyzable.
 
-**Host-language integration via runtime targets.** One `.g4` generates a parser for any of the ten runtime targets ([`runtime/`][runtime-dir]); the generated parser depends only on that language's ANTLR runtime library (`antlr4-runtime`), which carries the `ParserATNSimulator`, DFA cache, and tree types. The grammar itself is **action-free by convention** (the [`grammars-v4`][grammars-v4] repository requires it), so the same grammar drives a Java tool, a Go service, and a C++ application unchanged.
+**Host-language integration via runtime targets.** One `.g4` generates a parser for any of the ten target languages (eight have an in-repo runtime under [`runtime/`][runtime-dir]; PHP's runtime is a separate repo and TypeScript ships with the JavaScript runtime); the generated parser depends only on that language's ANTLR runtime library (`antlr4-runtime`), which carries the `ParserATNSimulator`, DFA cache, and tree types. The grammar itself is **action-free by convention** (the [`grammars-v4`][grammars-v4] repository requires it), so the same grammar drives a Java tool, a Go service, and a C++ application unchanged.
 
 **CST construction and action separation.** The parser builds a concrete syntax tree automatically; the author does not write tree-building code. Computation is layered on top via the generated **listener** (push, walker-driven) or **visitor** (pull, value-returning) interfaces — see [Parse trees, listeners, and visitors](#parse-trees-listeners-and-visitors). For inline behavior, embedded actions `{ … }` and semantic predicates `{ … }?` are still available, but the dominant idiom keeps the grammar pure and the actions in generated callbacks. Element labels (`x=`, `x+=`) and alternative labels (`# Name`) shape the generated context classes so callbacks address sub-results by name.
 
@@ -314,7 +314,7 @@ The `sync()` method additionally implements "Jim Idle's magic sync" — at the s
 
 **Tooling.** First-party: the `antlr4` command-line tool, the `TestRig`/`grun` parse-tree visualizer, and the IntelliJ ANTLR plugin (interactive parse-tree inspection, profiling, ambiguity highlighting). The `PredictionMode.LL_EXACT_AMBIG_DETECTION` mode and the runtime profiler surface decision costs and ambiguities for grammar tuning.
 
-**Stability and maturity.** ANTLR has been continuously developed since 1989 ("Terence Parr is the maniac behind ANTLR and has been working on ANTLR since 1989," [About][about]); ANTLR 4 / ALL(\*) shipped January 2013, with the current `4.13.2` released August 2024 under the permissive **BSD-3-Clause** license. The tool is on every Linux and macOS distribution. The ten runtime targets are the canonical "many ports," but they are first-party — all generated from and validated against the same tool and test suite, not independent reimplementations.
+**Stability and maturity.** ANTLR has been continuously developed since 1989 ("Terence Parr is the maniac behind ANTLR and has been working on ANTLR since 1989," [About][about]); ANTLR 4 / ALL(\*) shipped January 2013, with the current `4.13.2` released August 2024 under the permissive **BSD-3-Clause** license. The tool is on every Linux and macOS distribution. The ten target languages are the canonical "many ports," and they are first-party — generated from and validated against the same tool and test suite, not independent reimplementations (eight runtimes live in-repo under `runtime/`; PHP's runtime is a separate repo and TypeScript ships with the JavaScript runtime).
 
 **Notable derivatives & relatives.** The OOPSLA paper spawned formal follow-ups, notably **CoStar** (PLDI 2021), "a verified ALL(\*) parser" mechanized in Coq — an unusual mark of an algorithm rigorous enough to be machine-checked. ANTLR's lineage (ANTLR 2 → LL(k), ANTLR 3 → LL(\*), ANTLR 4 → ALL(\*)) and `tunnelvisionlabs/antlr4` (Sam Harwell's optimized fork) round out the family.
 
@@ -326,7 +326,7 @@ The `sync()` method additionally implements "Jim Idle's magic sync" — at the s
 - **Grammar/action separation**: action-free `.g4` plus generated listener/visitor keeps grammars reusable across all ten targets; the [`grammars-v4`][grammars-v4] library is the dividend.
 - **Linear, low-memory in practice**: warm DFA + two-stage SLL puts it within ~20% of hand-written recursive descent and orders of magnitude ahead of GLR/GLL on real grammars.
 - **Excellent automatic error recovery**: single-token deletion/insertion plus FOLLOW-set sync gives useful diagnostics and continued parsing for free.
-- **Ten production runtime targets** from one grammar, all first-party and co-tested.
+- **Ten production target languages** from one grammar, all first-party and co-tested (eight runtimes in-repo under `runtime/`; PHP in a separate repo, TypeScript via the JavaScript runtime).
 - **Predictable single-parse semantics**: no parse forests; ambiguity resolved by rule order and reportable for diagnosis; arbitrary mutators/predicates are safe because there is no speculation during the real parse.
 - **Vast ecosystem and longevity**: 35+ years of development, ubiquitous in data/query engines, rich IDE tooling, BSD-licensed.
 
@@ -337,7 +337,7 @@ The `sync()` method additionally implements "Jim Idle's magic sync" — at the s
 - **O(n⁴) worst case** is real (contrived grammars provoke it) and cold-start DFA construction costs latency on the first parse / first sight of each lookahead phrase.
 - **No indirect or hidden left recursion**: must be refactored by hand.
 - **No SIMD / data-parallelism**: intrinsically token-at-a-time and decision-by-decision — far from [`simdjson`][simdjson]-class throughput on simple structured formats.
-- **Dynamic analysis shifts burden to testing**: ambiguities surface at parse time on specific inputs, so "programmers must cover as many grammar position and input sequence combinations as possible" ([§1.1][allstar]).
+- **Dynamic analysis shifts burden to testing**: ambiguities surface at parse time on specific inputs, so "programmers must cover as many grammar position and input sequence combinations as possible" ([§1][allstar]).
 - **External-DSL ergonomics**: a separate generation step and generated artifacts, versus the no-codegen immediacy of combinator libraries.
 
 ## Key design decisions and trade-offs
@@ -351,7 +351,7 @@ The `sync()` method additionally implements "Jim Idle's magic sync" — at the s
 | **Separate grammar from actions** (listener/visitor + CST)     | Action-free grammars are reusable across ten targets and analyzable; clean app/grammar split  | Extra indirection vs inline actions; a full CST may be heavier than streaming reductions        |
 | **Rewrite direct left recursion** to precedence-climbing form  | Lets authors write natural left-recursive expression grammars; precedence = alternative order | Indirect/hidden left recursion unsupported; generated rule shape is non-obvious                 |
 | **Lexer is its own ALL(\*) recognizer** (with modes/commands)  | Context-free, predicated tokens (nested comments, mode stacks); same engine as the parser     | Heavier than a static DFA scanner; maximal-munch + rule-order ties can surprise grammar authors |
-| **Code generation to 10 first-party runtimes**                 | One grammar, many languages; shared serialized ATN; co-tested targets                         | Build step + generated artifacts; runtime library dependency per target                         |
+| **Code generation to 10 first-party target languages**         | One grammar, many languages; shared serialized ATN; co-tested targets                         | Build step + generated artifacts; runtime library dependency per target                         |
 
 ---
 
@@ -359,7 +359,7 @@ The `sync()` method additionally implements "Jim Idle's magic sync" — at the s
 
 - [`antlr/antlr4` — GitHub repository (tool + runtimes, BSD-3-Clause)][repo]
 - [`tool/` — the ANTLR tool: grammar parsing, ATN construction, left-recursion rewrite, code generation][tool-dir]
-- [`runtime/` — the ten runtime targets (Java, C#, Python3, JavaScript, TypeScript, Go, C++, Swift, PHP, Dart)][runtime-dir]
+- [`runtime/` — the eight in-repo runtime targets (Java, C#, Python3, JavaScript, Go, C++, Swift, Dart); PHP is a separate repo and TypeScript ships with the JavaScript runtime][runtime-dir]
 - [`runtime/Java/.../atn/ParserATNSimulator.java` — SLL/LL prediction, two-stage parsing, DFA cache][simulator]
 - [`runtime/Java/.../DefaultErrorStrategy.java` — single-token deletion/insertion, sync-set recovery][error-strategy]
 - [`doc/parser-rules.md` — parser rules, alternative/element labels][parser-rules]

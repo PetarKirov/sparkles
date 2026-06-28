@@ -59,8 +59,9 @@ must: Type 1 recognition is `PSPACE`-complete and Type 0 is undecidable. The Dra
 Book frames syntax analysis around precisely this choice — context-free grammars are
 expressive enough for nesting yet cheap enough to parse:
 
-> "Every programming language has rules that prescribe the syntactic structure of
-> well-formed programs. … These rules can be expressed by a context-free grammar." —
+> "By design, every programming language has precise rules that prescribe the syntactic
+> structure of well-formed programs. … The syntax of programming language constructs can
+> be specified by context-free grammars or BNF (Backus-Naur Form) notation." —
 > Aho, Lam, Sethi & Ullman, _Compilers: Principles, Techniques, and Tools_ (the
 > "Dragon Book"), 2nd ed. ([source][dragon])
 
@@ -250,7 +251,7 @@ language intersected with a regular language is still context-free — so runnin
 regular lexer in front of a CF parser keeps the composite context-free
 ([formal-languages][formal]). The Dragon Book gives three reasons to separate them:
 
-> "There are several reasons for separating the analysis phase of compiling into lexical analysis and parsing. **1. Simplicity of design** … **2. Compiler efficiency is improved** [a specialized buffering technique for reading characters speeds up the compiler] … **3. Compiler portability is enhanced** [input-device-specific peculiarities can be restricted to the lexical analyzer]." — Dragon Book, §3.1 ([source][dragon])
+> "There are a number of reasons why the analysis portion of a compiler is normally separated into lexical analysis and parsing (syntax analysis) phases. **1. Simplicity of design** … **2. Compiler efficiency is improved** [a specialized buffering technique for reading characters speeds up the compiler] … **3. Compiler portability is enhanced** [input-device-specific peculiarities can be restricted to the lexical analyzer]." — Dragon Book, §3.1 ([source][dragon])
 
 The lexer's job is more than splitting: it classifies each token (keyword? operator?
 literal?), discards whitespace and comments, and resolves the **longest-match** /
@@ -422,8 +423,8 @@ backtracking into **guaranteed linear time** by trading time for a memo table. F
 functional pearl introduced it:
 
 > "Packrat parsing is a novel technique for implementing parsers in a lazy functional
-> programming language. Packrat parsers provide the power and flexibility of top-down
-> parsing with backtracking and unlimited lookahead, but nevertheless guarantee linear
+> programming language. A packrat parser provides the power and flexibility of top-down
+> parsing with backtracking and unlimited lookahead, but nevertheless guarantees linear
 > parse time." — Ford, "Packrat Parsing: Simple, Powerful, Lazy, Linear Time" (ICFP 2002) ([source][packrat])
 
 The trade is space: the memo table is `O(n × |grammar|)`, so packrat parsers use far

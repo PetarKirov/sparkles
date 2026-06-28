@@ -31,9 +31,9 @@ yacc's contribution was to make the [LR-parsing][bottom-up] machinery of Knuth a
 
 > _"Yacc is written in portable C. The class of specifications accepted is a very general one: LALR(1) grammars with disambiguating rules."_
 
-[GNU Bison][gnu] is the Free Software Foundation's reimplementation and superset. The manual's one-line self-description ([introduction][intro-mirror]):
+[GNU Bison][gnu] is the Free Software Foundation's reimplementation and superset. The manual's one-line self-description ([introduction][intro]):
 
-> _"Bison is a general-purpose parser generator that converts a grammar description for an LALR(1) context-free grammar into a C program to parse that grammar. … Bison is upward compatible with Yacc: all properly-written Yacc grammars ought to work with Bison with no change."_
+> _"Bison is a general-purpose parser generator that converts an annotated context-free grammar into a deterministic LR or generalized LR (GLR) parser employing LALR(1), IELR(1) or canonical LR(1) parser tables. … Bison is upward compatible with Yacc: all properly-written Yacc grammars ought to work with Bison with no change."_
 
 The problem this family solves, then, is: **turn a high-level grammar into an efficient, deterministic, table-driven recognizer without the grammar author hand-writing a parser.** It is the canonical "parser generator" — the antithesis of a hand-written [recursive-descent][top-down] or [parser-combinator][nom] approach, where the grammar and the parser are the same hand-maintained code.
 
@@ -151,7 +151,9 @@ else.y: warning: shift/reduce conflict on token "else" [-Wcounterexamples]
   Example: "if" expr "then" "if" expr "then" stmt • "else" stmt
   Reduce derivation
     if_stmt
-    ↳ 4: "if" expr "then" stmt "else" stmt
+    ↳ 4: "if" expr "then" stmt                                "else" stmt
+                           ↳ 2: if_stmt
+                                 ↳ 3: "if" expr "then" stmt •
 ```
 
 This is a step-change in usability: the developer sees the exact ambiguous program, not just a state number. It is the closest the LR lineage comes to the IDE-grade error reporting of [tree-sitter][tree-sitter].
@@ -308,7 +310,7 @@ The most mature, most deployed parsing technology in existence — and a whole g
 [repo]: https://cgit.git.savannah.gnu.org/cgit/bison.git/tree/src
 [cex-src]: https://cgit.git.savannah.gnu.org/cgit/bison.git/tree/src/counterexample.c
 [exception]: https://www.gnu.org/licenses/gpl-faq.html#GPLOutput
-[intro-mirror]: https://web.mit.edu/gnu/doc/html/bison_1.html
+[intro]: https://cgit.git.savannah.gnu.org/cgit/bison.git/tree/doc/bison.texi
 [algorithm-mirror]: https://fog.misty.com/perry/osp/references/bison/by-chapter/bison_8.html
 [shiftreduce]: https://www.gnu.org/software/bison/manual/html_node/Shift_002fReduce.html
 [howprec-mirror]: https://www.gnu.org/software/bison/manual/html_node/How-Precedence.html

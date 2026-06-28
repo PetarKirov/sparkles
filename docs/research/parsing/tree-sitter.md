@@ -33,7 +33,7 @@ Tree-sitter targets the editor contract directly. From the project introduction 
 > - _**General** enough to parse any programming language_
 > - _**Fast** enough to parse on every keystroke in a text editor_
 > - _**Robust** enough to provide useful results even in the presence of syntax errors_
-> - _**Dependency-free** so that the runtime library (which is written in pure C) can be embedded in any application"_
+> - _**Dependency-free** so that the runtime library (which is written in pure C11) can be embedded in any application"_
 
 These four goals — **general, fast, robust, dependency-free** — are the design axes, and each maps to a concrete mechanism in `lib/src/`:
 

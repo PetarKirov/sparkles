@@ -14,7 +14,7 @@ note on **where a Sparkles parser would sit**. Terminology is defined in the
 > Angstrom, FlatParse, simd-json/sonic-rs, yyjson/RapidJSON, Hyperscan, LALRPOP, Lark,
 > Lezer, rowan, Roslyn). Conclusions below are stable for the families surveyed.
 
-**Last reviewed:** June 25, 2026
+**Last reviewed:** June 29, 2026
 
 ---
 
@@ -30,7 +30,7 @@ note on **where a Sparkles parser would sit**. Terminology is defined in the
 | [pest][pest]               | [PEG][peg] generator                 | `.pest` generator          | ⚠️ no memo          | diagnostic           | ✅ (leaves)   | —               | —               |
 | [Parsec][parsec]           | predictive [LL][top-down] combinator | host-language values       | ~ on LL(1)          | diagnostic / recov.² | ⚠️ attoparsec | —               | —               |
 | [nom][nom]                 | [PEG][peg]-like combinator           | host-language values       | ⚠️ no memo          | fail-fast            | ✅            | —               | —               |
-| [chumsky][chumsky]         | [PEG][peg] combinator                | host-language values       | ⚠️ opt-in memo      | **recovering**       | ✅ (1.0)      | —               | —               |
+| [chumsky][chumsky]         | [PEG][peg] combinator                | host-language values       | ⚠️ opt-in memo      | **recovering**       | ✅ (0.10+)    | —               | —               |
 
 <sub>¹ Menhir's _generator_ is batch; its incremental/inspection API is what IDE tools
 (Merlin, ocaml-lsp) drive for live recovery and client-managed parsing. It is not a
@@ -113,7 +113,7 @@ mostly leaves on the table:
   work across edits — fast where the _workload_ is "the same file, slightly changed,"
   which is the IDE workload. [Menhir][menhir]'s API exposes resumable checkpoints that
   clients can cache and resume, but the edit-reuse strategy lives in the client.
-- **Zero-copy.** [nom][nom], [chumsky][chumsky] 1.0, [pest][pest] leaves, [simdjson][simdjson],
+- **Zero-copy.** [nom][nom], [chumsky][chumsky] 0.10+, [pest][pest] leaves, [simdjson][simdjson],
   and tree-sitter's CST all hand back slices/views into the input rather than copying —
   the single most portable performance lever, and the one most relevant to a `@nogc`
   design.
@@ -155,7 +155,7 @@ parser cannot be retrofitted into an IDE-grade one without changing its core loo
 
 | Tier                              | Systems                                                                                                                                                                                          |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Decades-deep, load-bearing**    | [Bison][bison]/yacc (50 yrs; Bash, PostgreSQL), [ANTLR][antlr] (since 1989; Hive, Trino, Spark SQL), [Parsec][parsec] (Cabal, GHC, Dhall)                                                        |
+| **Decades-deep, load-bearing**    | [Bison][bison]/yacc (50 yrs; Bash, PostgreSQL), [ANTLR][antlr] (since 1989; Hive, Trino, Spark SQL), [Parsec][parsec] (Cabal)                                                                    |
 | **Modern standard for its niche** | [tree-sitter][tree-sitter] (Neovim/Helix/Zed/GitHub), [simdjson][simdjson] (Node.js, ClickHouse, Velox), [Menhir][menhir] (the OCaml toolchain, CompCert), [nom][nom] (576M downloads, Suricata) |
 | **Ascendant / settling**          | [pest][pest] (stable 2.x), [chumsky][chumsky] (single-maintainer, 0.x + 1.0-alpha), winnow (now under Cargo via `toml_edit`)                                                                     |
 

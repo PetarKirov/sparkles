@@ -16,19 +16,19 @@ driven) — three faces of one idea. This is the operator-expression leaf of the
 
 ## At a glance
 
-| Dimension                | Operator-precedence / Pratt parsing                                                                                                                                        |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Problem solved           | Parsing **operator expressions** with precedence + associativity, where a plain CFG is ambiguous and left-recursive                                                        |
-| Grammar class            | **Operator grammars** (Floyd): no two adjacent nonterminals on any RHS, no ε-productions — a restricted, _non-hierarchical_ subset of [CFGs][formal]                       |
-| Two algorithm families   | **Bottom-up**: Floyd operator-precedence (precedence-relation matrix + shift/reduce). **Top-down**: Pratt / precedence climbing (binding power + one loop)                 |
-| Core idea                | Attach a numeric **binding power** (precedence) to each operator token; associativity = a deliberate **asymmetry** between left and right binding power                    |
-| Lookahead / memory       | `1` token of lookahead; `O(d)` stack for nesting depth `d`; no parse table beyond the per-operator precedence map                                                          |
-| Time / space             | `O(n)` time, `O(d)` space — strictly linear, no backtracking, no memoization                                                                                               |
-| Driving handlers (Pratt) | **`nud`** (null denotation — atoms, prefix ops) and **`led`** (left denotation — infix, postfix ops), keyed per token                                                      |
-| Ambiguity                | _Resolved by construction_: the precedence/associativity table makes every input unambiguous; non-associative operators can be made a parse error                          |
-| Error detection          | Immediate, at the offending token (it's recursive descent); recovery is the host parser's panic-mode                                                                       |
-| Canonical references     | [Floyd 1963][floyd]; [Pratt 1973][pratt-paper]; [Norvell (precedence climbing)][norvell]; [Crockford 2007][crockford]; [matklad 2020][matklad]; [Dragon Book §4.6][dragon] |
-| Real-world tools         | GCC & Clang C/C++ front-ends; V8/JSLint ([Crockford][crockford]); [chumsky `pratt`][chumsky] & [pest `pratt_parser`][pest]; Lua, rustc, Go, Zig expression parsers         |
+| Dimension                | Operator-precedence / Pratt parsing                                                                                                                                |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Problem solved           | Parsing **operator expressions** with precedence + associativity, where a plain CFG is ambiguous and left-recursive                                                |
+| Grammar class            | **Operator grammars** (Floyd): no two adjacent nonterminals on any RHS, no ε-productions — a restricted, _non-hierarchical_ subset of [CFGs][formal]               |
+| Two algorithm families   | **Bottom-up**: Floyd operator-precedence (precedence-relation matrix + shift/reduce). **Top-down**: Pratt / precedence climbing (binding power + one loop)         |
+| Core idea                | Attach a numeric **binding power** (precedence) to each operator token; associativity = a deliberate **asymmetry** between left and right binding power            |
+| Lookahead / memory       | `1` token of lookahead; `O(d)` stack for nesting depth `d`; no parse table beyond the per-operator precedence map                                                  |
+| Time / space             | `O(n)` time, `O(d)` space — strictly linear, no backtracking, no memoization                                                                                       |
+| Driving handlers (Pratt) | **`nud`** (null denotation — atoms, prefix ops) and **`led`** (left denotation — infix, postfix ops), keyed per token                                              |
+| Ambiguity                | _Resolved by construction_: the precedence/associativity table makes every input unambiguous; non-associative operators can be made a parse error                  |
+| Error detection          | Immediate, at the offending token (it's recursive descent); recovery is the host parser's panic-mode                                                               |
+| Canonical references     | [Floyd 1963][floyd]; [Pratt 1973][pratt-paper]; [Norvell (precedence climbing)][norvell]; [Crockford 2007][crockford]; [matklad 2020][matklad]                     |
+| Real-world tools         | GCC & Clang C/C++ front-ends; V8/JSLint ([Crockford][crockford]); [chumsky `pratt`][chumsky] & [pest `pratt_parser`][pest]; Lua, rustc, Go, Zig expression parsers |
 
 > [!NOTE]
 > This page is the expression-parsing specialization of [top-down parsing][top-down].
@@ -132,7 +132,7 @@ through each in turn, then shows the equivalence and where each shows up in prac
 
 [Floyd's 1963 paper][floyd] introduced **operator grammars** and the
 **precedence-relation** method that the whole family descends from. An _operator
-grammar_ is a CFG with two restrictions ([Dragon Book §4.6][dragon]):
+grammar_ is a CFG with two restrictions ([Floyd 1963][floyd]):
 
 1. **no ε-productions**, and
 2. **no two adjacent nonterminals** on any right-hand side.
@@ -178,12 +178,12 @@ and it is the engine that compiler-generated parsers embed to accelerate express
 Floyd's method has a sharp limit that the top-down reformulations inherit and the
 matrix shows starkly: a terminal that is **both** unary and binary — the classic
 example is `-`, prefix negation vs. infix subtraction — wants two different precedences
-in the same matrix cell, which a single-relation table cannot express. The Dragon Book
-records the practical consequence:
+in the same matrix cell, which a single-relation table cannot express. Floyd 1963 already
+flagged this — the unary and binary signs satisfy _different_ precedence relations:
 
-> "Operators such as the minus sign (−) are difficult to handle because they may behave
-> as both unary and binary operators." — [Aho, Lam, Sethi & Ullman, _Compilers_ (Dragon
-> Book) §4.6][dragon]
+> "The difference between the precedence relations of the unary and binary plus and minus
+> signs occurs because the unary signs are introduced in the definition of factor, rather
+> than in that of simple arithmetic expression." — [Floyd 1963][floyd]
 
 The top-down formulations dodge this cleanly by keying on _position_ — a `-` seen with
 no expression to its left is prefix (a `nud`), with an expression to its left is infix
@@ -431,7 +431,7 @@ disambiguation. Three knobs cover the cases real languages need:
 - **Associativity** (the binding-power asymmetry) disambiguates _repeated_ operators of
   equal precedence: left for `-`, right for `^`/`=`.
 - **Non-associativity** rejects chaining outright. [chumsky's][chumsky] `none(prec)`
-  associativity does exactly this — "`a < b < c` produces an error" — turning an
+  associativity does exactly this — "`a < b < c` will produce an error" — turning an
   ambiguous-or-meaningless chain into a clean parse error rather than an arbitrary
   grouping.
 
@@ -619,8 +619,9 @@ difference across the whole family.
 ## Sources
 
 - R. W. Floyd, ["Syntactic Analysis and Operator Precedence"][floyd], _Journal of the
-  ACM_ 10(3):316–333, 1963 — operator grammars, the `⋖ ≐ ⋗` precedence relations, and the
-  precedence-relation matrix as a bottom-up shift/reduce parser.
+  ACM_ 10(3):316–333, 1963 — operator grammars, the `⋖ ≐ ⋗` precedence relations, the
+  precedence-relation matrix as a bottom-up shift/reduce parser, and the unary/binary-sign
+  precedence limitation.
 - V. R. Pratt, ["Top Down Operator Precedence"][pratt-paper], _Proceedings of the 1st ACM
   SIGACT-SIGPLAN Symposium on Principles of Programming Languages (POPL)_, 1973, pp.
   41–51 — `nud`/`led`, left/right binding power, and the `expression(rbp)` loop;
@@ -643,9 +644,10 @@ difference across the whole family.
   `compute_expr(min_prec)` / `OPINFO` presentation and Clang's use of precedence climbing.
 - B. Nystrom, ["Pratt Parsers: Expression Parsing Made Easy"][nystrom] (2011) — the
   `PrefixParselet`/`InfixParselet` (parselet) reframing of `nud`/`led`.
-- A. Aho, M. Lam, R. Sethi & J. Ullman, _Compilers: Principles, Techniques, and Tools_
-  (the [Dragon Book][dragon]), §4.6 "Operator-Precedence Parsing" — operator grammars,
-  precedence relations, and the unary-minus limitation.
+- A. Aho, M. Lam, R. Sethi & J. Ullman, _Compilers: Principles, Techniques, and Tools_,
+  2nd ed. (the [Dragon Book][dragon]), §4.4 "Top-Down Parsing" — panic-mode error recovery
+  for expression parsing. (Operator-precedence parsing and the unary-minus remark are
+  1st-edition material: Aho, Sethi & Ullman, 1986, §4.6 "Operator-Precedence Parsing".)
 - [chumsky `pratt` module docs][chumsky] and [`src/pratt.rs`][chumsky-src] — a production
   parser-combinator library exposing Pratt parsing as `infix`/`prefix`/`postfix` builders
   with `left`/`right`/`none` associativity (see [the chumsky deep-dive][chumsky-deep]).
