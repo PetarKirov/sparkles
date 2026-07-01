@@ -49,13 +49,16 @@ support adds the `optional` package as a `sparkles:wired` dependency (with the
 matching `dub.selections.json` / `nix/dub-lock.json` entries).
 
 Gate: `dub test :wired` — Expected-returning file helpers with final newlines,
+atomic writes (temp + rename) and recursive parent-directory creation,
 strict scalar kind/range checks, character-as-string mapping with fit/validity
-rejection (non-ASCII `char`, astral `wchar`, out-of-range `dchar`), UTC `SysTime`
+rejection (non-ASCII `char`, astral `wchar`, out-of-range `dchar`), static-array
+(`T[N]`) exact-length decode, UTC `SysTime`
 round-trips with offsetless-string rejection, per-axis and per-format
-resolution, explicit `WireTarget.all` defaults, field overrides over one wrapper
-level (including `Nullable!T` and `Optional!T`), `WireTarget.key` /
-`WireTarget.value` field overrides including aggregate and nullable/optional
-value-slot casing, directly-nested null-aware rejection, enum value/name
+resolution, explicit `WireTarget.all` defaults, field overrides reaching through
+composed wrapper chains (`Nullable!(E[])`, `E[][]`, `V[Mode][]`) down to the
+first enum/aggregate on each branch, `WireTarget.key` / `WireTarget.value` branch
+selection (including aggregate and nullable/optional value-slot casing, and
+key-branch enums), directly-nested null-aware rejection, enum value/name
 collision rejection, aggregate
 field `@WireName` / `@WireCase`, required-field handling, `@WireOptional`
 decode-tolerance across `WireInvalid.reject` / `useDefault` plus `WireSkip`

@@ -50,11 +50,11 @@ true
 | Source root     | `libs/wired/src/sparkles/wired/` |
 | Package module  | `sparkles.wired`                 |
 
-| Module                  | Contents                                                                                                              |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `sparkles.wired`        | Public re-exports (`package.d`)                                                                                       |
-| `sparkles.wired.policy` | `AnyFormat`, `Repr`, the `@Wire*` UDAs (`WireName`, `WireCase`, `WireRepr`, `WireOptional`, `WireConvert`), resolvers |
-| `sparkles.wired.json`   | `struct Json {}` (the JSON format marker) + the JSON backend (`toJSON`, `fromJSON`, `readJSONFile`, `writeJSONFile`)  |
+| Module                  | Contents                                                                                                                                                                                     |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sparkles.wired`        | Public re-exports (`package.d`)                                                                                                                                                              |
+| `sparkles.wired.policy` | `AnyFormat`, the `@Wire*` UDAs (`WireName`, `WireCase`, `WireRepr`, `WireOptional`, `WireConvert`, `WireMatch`) and their enums (`Repr`, `WireTarget`, `WireSkip`, `WireInvalid`), resolvers |
+| `sparkles.wired.json`   | `struct Json {}` (the JSON format marker) + the JSON backend (`toJSON`, `fromJSON`, `readJSONFile`, `writeJSONFile`)                                                                         |
 
 Each format module owns its own marker type (§3); there is no central format
 registry.
@@ -109,8 +109,11 @@ identifies the failing stage (read, parse, or decode) and preserves the original
 exception as the cause where one exists.
 
 `writeJSONFile(value, path, compact = false)` encodes `value` with `toJSON`,
-creates the parent directory when `path` has one, and writes UTF-8 text to
-`path`, overwriting any existing file.
+recursively creates any missing parent directories of `path`, and writes UTF-8
+text to `path`. The write is **atomic**: the encoded text is written to a
+temporary file in the same directory and then renamed onto `path`, so a partial
+or failed write never truncates or corrupts an existing file — after the call,
+`path` holds either its previous contents or the fully written new contents.
 
 - `compact == false` renders with
   `json.toPrettyString(JSONOptions.doNotEscapeSlashes)`.
@@ -119,8 +122,9 @@ creates the parent directory when `path` has one, and writes UTF-8 text to
   text.
 
 Failures are returned as `Expected!(void, Exception)` errors. The error message
-identifies the failing stage (encode, create parent directory, or write) and
-preserves the original exception as the cause where one exists.
+identifies the failing stage (encode, create parent directories, or write and
+rename) and preserves the original exception as the cause where one exists. A
+failure during writing leaves any existing file at `path` unchanged.
 
 ### 4.2 Supported types
 
@@ -128,7 +132,8 @@ Encoding and decoding cover, in both directions:
 
 - **Scalars** — `bool`, `string`, `char`, integral and floating-point types.
 - **Enums** — by member name or underlying value, per the policy of §5/§7.
-- **Arrays / slices** — of any supported element type.
+- **Arrays / slices** — dynamic (`T[]`) and static (`T[N]`) arrays of any
+  supported element type (§4.3).
 - **Associative arrays** — keyed by `string` or by an enum; enum keys follow
   the enum representation rules of §7.
 - **Aggregates** (`struct`) — field by field, under their resolved field keys
@@ -245,6 +250,11 @@ Array and slice mapping:
   string aliases) encode as JSON strings and decode from JSON strings.
 - Non-character arrays and slices encode as JSON arrays and decode only from
   JSON arrays.
+- Static arrays (`T[N]`) map like their dynamic counterparts — character static
+  arrays (`char[N]`, `wchar[N]`, `dchar[N]`) as JSON strings, other static arrays
+  as JSON arrays — but decoding requires an **exact length** match: a JSON array
+  of a length other than `N`, or a JSON string that does not decode to exactly `N`
+  code units, is a decode error. There is no padding or truncation.
 
 ### 4.4 `SysTime` mapping
 
@@ -264,7 +274,8 @@ field value is `T.init`, an empty `Nullable!T`/`Optional!T`, or `Ternary.unknown
 null-aware empties are encoded as explicit JSON `null`, not omitted. The
 exception is a `@WireOptional` field, whose `WireSkip` policy (§5.4) can omit the
 key entirely: the default `whenEmpty` omits an empty null-aware value instead of
-writing `null`, and `whenDefault` omits any field value equal to `T.init`.
+writing `null`, and `whenDefault` omits any field value equal to its declared
+default (§5.4).
 
 Aggregate decoding distinguishes a missing field from an explicit JSON `null`:
 
@@ -421,7 +432,7 @@ only under the named format:
 
 @WireOptional                           // AnyFormat; whenEmpty, reject (the defaults)
 @WireOptional!Json                      // Json only
-@WireOptional(WireSkip.whenDefault)     // omit any field at T.init on encode
+@WireOptional(WireSkip.whenDefault)     // omit any field at its declared default
 @WireOptional(WireSkip.never)           // always emit; still missing-tolerant on decode
 @WireOptional(onInvalid: WireInvalid.useDefault) // present-but-invalid → field default
 @WireOptional(WireSkip.whenDefault, WireInvalid.useDefault)
@@ -447,32 +458,49 @@ template argument on the chosen strategy (`WireMatch.first!Json`).
 
 A policy may be declared at the **type** (the type definition — the default for
 every use of that type) or at a **field** (the use site — overriding the type
-default for that field). Enum policies (`WireCase`, `WireRepr`, and enum-member
-`WireName`) reach the field's enum **and one wrapper level** (`E[]`, `V[K]`,
-`Nullable!E`, `Optional!E`); they do not descend into enums nested inside a
-sub-`struct`.
+default for that field).
+
+Enum policies (`WireCase`, `WireRepr`, and enum-member `WireName`) reach the
+field's target enum through **any composition of the wrapper forms** `E[]`,
+`V[K]`, `Nullable!E`, and `Optional!E`, descending to the first enum or aggregate
+on each branch. The descent forks at each associative-array wrapper into a **key
+branch** (its `K`) and a **value branch** (its `V`); array, `Nullable`, and
+`Optional` wrappers continue down the single value branch. An associative-array
+key is always terminal — a `string` or an enum (§4.2) — so composition nests only
+on the value side. The descent stops at the first enum or aggregate it reaches and
+never descends further (in particular, not into the fields of a reached
+sub-`struct`). For example, a field-level `WireRepr` reaches the `Suit` in `Suit`,
+`Suit[]`, `Nullable!(Suit[])`, and `Suit[][]` alike, and the `Mode` key plus the
+`Suit` value in `Suit[Mode][]`.
+
 Aggregate naming policies (`WireCase` on an aggregate type or aggregate-valued
-field, plus field `WireName`) follow the same shape for aggregate field keys
+field, plus field `WireName`) follow the same composition for aggregate field keys
 (§5.3). `WireConvert` applies to the exact annotated type or to the whole
-annotated field value (§8).
+annotated field value (§8), never through wrappers.
 
-`WireTarget` selects which slot a field-level `WireCase` or `WireRepr` applies
-to. `WireTarget.all` is also valid anywhere `WireCase` or `WireRepr` is
-otherwise valid, including type declarations, because it is the explicit spelling
-of the default.
+`WireTarget` selects which branch of the wrapper composition a field-level
+`WireCase` or `WireRepr` applies to. `WireTarget.all` is also valid anywhere
+`WireCase` or `WireRepr` is otherwise valid, including type declarations, because
+it is the explicit spelling of the default.
 
-- `WireTarget.all` is the default and keeps the broad field-level behavior:
-  every eligible enum or aggregate reached at the field value and one wrapper
-  level is affected. For `V[K]`, that includes both `K` and `V`.
-- `WireTarget.key` targets only the key slot of an associative-array field.
-- `WireTarget.value` targets only the value slot of an associative-array field
-  (`V[K]`), the element slot of an array/slice field (`E[]`), or the contained
-  value slot of a nullable or optional field (`Nullable!T`, `Optional!T`).
+- `WireTarget.all` is the default and keeps the broad field-level behavior: every
+  eligible enum or aggregate reached on any branch — key or value — is affected.
+  For `V[K]`, that is both `K` and `V`; for `Suit[Mode][]`, both the `Mode` keys
+  and the `Suit` values.
+- `WireTarget.key` targets only enums reached in an associative-array **key**
+  position anywhere in the composition (e.g. `Mode` in `V[Mode]` or `V[Mode][]`).
+  Keys are always enums or strings, so `WireTarget.key` never selects an
+  aggregate.
+- `WireTarget.value` targets only the **value** branch: the first enum or
+  aggregate reached by descending array elements, associative-array values, and
+  nullable/optional contained values, never a key.
 
 Slot-targeted `WireCase` / `WireRepr` forms (`WireTarget.key` or
 `WireTarget.value`) are compile-time unsupported on type declarations, on fields
-with no matching target slot, or when the selected slot has no supported policy
-target (`WireRepr` targets enums; `WireCase` targets enums and aggregates).
+whose composition has no matching branch, or when the selected branch reaches no
+supported policy target (`WireRepr` targets enums; `WireCase` targets enums and
+aggregates). For example, `WireTarget.key` on a field with no associative array in
+its composition, or on one whose keys are `string`, is unsupported.
 
 When a broad field-level policy and a targeted field-level policy both apply,
 the targeted policy wins for its slot:
@@ -520,8 +548,9 @@ Aggregate field keys are resolved like enum member names:
   field-only selectors, so they are unsupported on aggregate type declarations.
 - `@WireCase!F(style)` or `@WireCase!F(style, WireTarget.all)` on an
   aggregate-valued field is a use-site override for that field's aggregate value
-  and one wrapper level (`S[]`, `S[K]`, `Nullable!S`, `Optional!S`); it does not
-  rename the containing field itself.
+  reached through any composition of the wrapper forms (`S[]`, `S[K]`,
+  `Nullable!S`, `Optional!S`, and their nestings such as `Nullable!(S[])`, per
+  §5.2); it does not rename the containing field itself.
 - `@WireCase!F(style, WireTarget.value)` targets aggregate values in the
   associative-array value slot, array/slice element slot, or nullable/optional
   contained value slot. For example, on `Config[string] configs`, it recases the
@@ -581,10 +610,14 @@ object entirely instead of being written:
 - `WireSkip.whenEmpty` (default) — omit only when the field holds an empty
   null-aware value (empty `Nullable!T`/`Optional!T` or `Ternary.unknown`); every
   other field, including `@WireOptional int count;`, is emitted as specified.
-- `WireSkip.whenDefault` — omit whenever the field value equals `T.init` (by
-  `==`). For null-aware fields this coincides with `whenEmpty`; it additionally
-  omits plain defaults such as `int` `0`, an empty `string` or array, and a
-  `struct` at `.init`.
+- `WireSkip.whenDefault` — omit whenever the field value equals the field's
+  **declared default** (by `==`): the value it holds in the enclosing aggregate's
+  `.init` — its member initializer when the field has one, otherwise `T.init`.
+  This is exactly the value a missing key restores on decode (§4.5), so an omitted
+  field round-trips. For a field with a `T.init` default this omits plain defaults
+  such as `int` `0`, an empty `string` or array, and a `struct` at `.init`; for a
+  field with an explicit initializer such as `int retries = 3`, it omits `3` (and
+  emits `0`), never the reverse.
 - `WireSkip.never` — always emit the field, even an empty null-aware value (which
   is then written as JSON `null`).
 
@@ -682,10 +715,11 @@ and a full conversion table are the normative
   `toJSON(cast(OriginalType!E) value)` and propagates any error.
 
 Decoding by name matches the resolved candidate names; an unknown token fails with
-an `"expected one of: …"` context. Decoding by value first decodes an
-`OriginalType!E`, then rejects any underlying value that is not equal to a
-declared enum member. Encoding an enum value that is not a declared member is an
-encode error.
+an `"expected one of: …"` context listing the accepted member names. Decoding by
+value first decodes an `OriginalType!E`, then rejects any underlying value that is
+not equal to a declared enum member, with an `"expected one of: …"` context
+listing the accepted underlying values. Encoding an enum value that is not a
+declared member is an encode error.
 
 For JSON object keys where the key type is an enum:
 
@@ -856,8 +890,9 @@ such as `server.port` is therefore reported as `$["server.port"]`, not
 `$.server.port`, and a key requiring string escaping is reported with JSON
 string escapes, such as `$["quote\"key"]`. `SumType` variant diagnostics list
 candidate or matching variant type names, but the path remains at the same JSON
-location. Unknown enum values include the resolved candidate names
-(`expected one of: ...`).
+location. Unknown enum tokens include the accepted candidates for the active
+representation (`expected one of: ...`): the resolved member names under
+`Repr.name`, or the accepted underlying values under `Repr.value`.
 
 Exact full message strings are not part of the contract, but those path and
 reason fragments are. For example:
@@ -928,4 +963,5 @@ enum Mode { fastPath, slowPath }      // and as-written under any other format
 ---
 
 → [PLAN.md](./PLAN.md) — delivery milestones
+→ [open-issues.md](./open-issues.md) — unresolved specification questions
 → [`sparkles:base`](../../libs/base/index.md) — the text/case primitives this builds on
