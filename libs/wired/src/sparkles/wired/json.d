@@ -13,8 +13,12 @@ up; the remaining supported types (`SumType`, null-aware wrappers, `SysTime`,
 */
 module sparkles.wired.json;
 
+import std.datetime.systime : SysTime;
 import std.json : JSONValue, JSONType;
-import std.traits : isFloatingPoint, isIntegral, isSomeChar, OriginalType, Unqual;
+import std.sumtype : isSumType, match, SumType;
+import std.traits : isFloatingPoint, isIntegral, isSomeChar, OriginalType,
+    TemplateArgsOf, Unqual;
+import std.typecons : Nullable, Ternary;
 
 import expected : Expected, ok, err;
 
@@ -79,6 +83,26 @@ JsonResult!JSONValue toJSON(T)(const T value)
             return ok!Exception(JSONValue(arr));
         }
     }
+
+    else static if (is(U == Nullable!N, N))
+    {
+        if (value.isNull)
+            return ok!Exception(JSONValue(null));
+        return toJSON(value.get);
+    }
+
+    else static if (is(U == Ternary))
+    {
+        if (value == Ternary.unknown)
+            return ok!Exception(JSONValue(null));
+        return ok!Exception(JSONValue(value == Ternary.yes));
+    }
+
+    else static if (is(U == SysTime))
+        return ok!Exception(JSONValue(value.toUTC.toISOExtString));
+
+    else static if (isSumType!U)
+        return value.match!(v => toJSON(v));
 
     else static if (is(U == struct))
         return encodeStruct(value);
@@ -220,11 +244,104 @@ JsonResult!T fromJSON(T)(JSONValue json)
         }
     }
 
+    else static if (is(U == Nullable!N, N))
+    {
+        if (json.type == JSONType.null_)
+            return ok!Exception(U.init);
+        auto r = fromJSON!N(json);
+        if (r.hasError)
+            return err!T(r.error);
+        return ok!Exception(U(r.value));
+    }
+
+    else static if (is(U == Ternary))
+    {
+        switch (json.type)
+        {
+            case JSONType.null_:  return ok!Exception(Ternary.unknown);
+            case JSONType.true_:  return ok!Exception(Ternary.yes);
+            case JSONType.false_: return ok!Exception(Ternary.no);
+            default:
+                return fail!T("Cannot decode Ternary at $: expected null, true, or false");
+        }
+    }
+
+    else static if (is(U == SysTime))
+    {
+        if (json.type != JSONType.string)
+            return fail!T("Cannot decode SysTime at $: expected a JSON string");
+        if (!hasZoneOffset(json.str))
+            return fail!T(
+                "Cannot decode SysTime at $: timestamp must include an explicit UTC marker or offset");
+        try
+            return ok!Exception(SysTime.fromISOExtString(json.str).toUTC);
+        catch (Exception e)
+            return fail!T("Cannot decode SysTime at $: " ~ e.msg);
+    }
+
+    else static if (isSumType!U)
+        return decodeSumType!(U, MatchStrategy.exactlyOne)(json);
+
     else static if (is(U == struct))
         return decodeStruct!T(json);
 
     else
         static assert(false, "wired: unsupported type for fromJSON: " ~ T.stringof);
+}
+
+/// True when an ISO-8601 extended timestamp carries an explicit zone — a `Z` or a
+/// numeric `±HH:MM` offset in the time portion (after the `T`). §4.4 rejects
+/// offsetless timestamps.
+private bool hasZoneOffset(string s)
+{
+    import std.string : indexOf;
+    import std.algorithm : canFind;
+
+    const t = s.indexOf('T');
+    if (t < 0)
+        return false;
+    const time = s[t + 1 .. $];
+    return time.canFind('Z') || time.canFind('+') || time.canFind('-');
+}
+
+/// Decodes a `SumType` by probing each variant (declaration order). `exactlyOne`
+/// requires a single match (zero → no-match, many → ambiguity); `first` takes the
+/// first success (§4.7).
+private JsonResult!ST decodeSumType(ST, MatchStrategy strat)(JSONValue json)
+if (isSumType!ST)
+{
+    alias Types = TemplateArgsOf!ST;
+
+    static if (strat == MatchStrategy.first)
+    {
+        static foreach (V; Types)
+        {{
+            auto r = fromJSON!V(json);
+            if (r.hasValue)
+                return ok!Exception(ST(r.value));
+        }}
+        return fail!ST("Cannot decode " ~ ST.stringof ~ " at $: no variant matched");
+    }
+    else
+    {
+        ST result;
+        size_t matches = 0;
+        static foreach (V; Types)
+        {{
+            auto r = fromJSON!V(json);
+            if (r.hasValue)
+            {
+                matches++;
+                result = ST(r.value);
+            }
+        }}
+        if (matches == 1)
+            return ok!Exception(result);
+        if (matches == 0)
+            return fail!ST("Cannot decode " ~ ST.stringof ~ " at $: no variant matched");
+        return fail!ST(
+            "Cannot decode " ~ ST.stringof ~ " at $: ambiguous — multiple variants matched");
+    }
 }
 
 private JsonResult!T decodeIntegral(T)(JSONValue json)
@@ -310,6 +427,11 @@ if (is(T == struct))
                 return err!T(r.error);
             result.tupleof[i] = r.value;
         }
+        else static if (isNullAware!(typeof(T.tupleof[i])))
+        {
+            // A missing null-aware field decodes to its empty value, which the
+            // `T result;` default already holds (§4.5).
+        }
         else
             return fail!T(
                 "Cannot decode " ~ T.stringof ~ " at $." ~ key ~ ": missing required field");
@@ -343,9 +465,16 @@ private JsonResult!(typeof(T.tupleof[i])) decodeFieldValue(T, size_t i)(JSONValu
         return ok!Exception(result);
     }
 
+    else static if (isSumType!V)
+        return decodeSumType!(V, resolveMatch!(Json, T.tupleof[i]))(json);
+
     else
         return fromJSON!V(json);
 }
+
+/// True for the null-aware wrapper types whose empty value maps to JSON `null`
+/// and whose missing key decodes to that empty value (§4.5).
+private enum bool isNullAware(V) = is(V == Nullable!N, N) || is(V == Ternary);
 
 /// The comma-joined resolved member names of `E` under `Json` at case `style`,
 /// for the `"expected one of: …"` decode-error context.
@@ -479,6 +608,61 @@ if (is(E == enum))
     // The field-level WireCase overrides the (absent) type policy for the enum.
     assert(toJSON(S(Mode.fastPath)).value["m"] == JSONValue("fast-path"));
     assert(fromJSON!S(toJSON(S(Mode.slowPath)).value).value == S(Mode.slowPath));
+}
+
+@("wired.json.nullableAndTernary")
+@system unittest
+{
+    // Nullable round-trips through JSON null / value.
+    assert(toJSON(Nullable!int.init).value == JSONValue(null));
+    assert(toJSON(Nullable!int(7)).value == JSONValue(7));
+    assert(fromJSON!(Nullable!int)(JSONValue(null)).value.isNull);
+    assert(fromJSON!(Nullable!int)(JSONValue(7)).value.get == 7);
+
+    // Ternary ⇄ null/true/false.
+    assert(toJSON(Ternary.unknown).value == JSONValue(null));
+    assert(toJSON(Ternary.yes).value == JSONValue(true));
+    assert(fromJSON!Ternary(JSONValue(null)).value == Ternary.unknown);
+    assert(fromJSON!Ternary(JSONValue(false)).value == Ternary.no);
+
+    // A missing null-aware field decodes to its empty value.
+    static struct S { int a; Nullable!int b; Ternary c; }
+    auto r = fromJSON!S(parseObject(`{"a":1}`));
+    assert(r.value.a == 1 && r.value.b.isNull && r.value.c == Ternary.unknown);
+}
+
+@("wired.json.sysTime")
+@system unittest
+{
+    auto t = SysTime.fromISOExtString("2026-07-01T12:30:00Z");
+    auto json = toJSON(t).value;
+    assert(json.type == JSONType.string);
+    assert(fromJSON!SysTime(json).value == t.toUTC);
+
+    // Offsetless timestamps are rejected.
+    assert(fromJSON!SysTime(JSONValue("2026-07-01T12:30:00")).hasError);
+}
+
+@("wired.json.sumType")
+@system unittest
+{
+    alias Cell = SumType!(int, string);
+
+    assert(toJSON(Cell(42)).value == JSONValue(42));
+    assert(toJSON(Cell("hi")).value == JSONValue("hi"));
+    assert(fromJSON!Cell(JSONValue(42)).value == Cell(42));
+    assert(fromJSON!Cell(JSONValue("hi")).value == Cell("hi"));
+
+    // exactlyOne (default) rejects when no variant matches.
+    assert(fromJSON!Cell(JSONValue(true)).hasError);
+
+    // Field-level @(WireMatch.first) picks the first matching arm.
+    static struct Row
+    {
+        @(WireMatch.first!Json) SumType!(int, double) cell;
+    }
+    auto r = fromJSON!Row(parseObject(`{"cell":42}`));
+    assert(r.value.cell == SumType!(int, double)(42));
 }
 
 version (unittest) private JSONValue parseObject(string s)
