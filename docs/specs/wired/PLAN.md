@@ -16,8 +16,10 @@ checked output; the implementation milestones make them pass under
 
 Format-agnostic, no policy:
 
-- `sparkles.base.text.case_style` — `CaseStyle` and the CTFE-compatible
-  `convertCase!style(ident)` word-splitter (SPEC §6).
+- `sparkles.base.text.case_style` — `CaseStyle`, the CTFE-compatible
+  `convertCase!style(ident)` word-splitter, and its `@nogc` writer form
+  `writeConvertedCase!style(w, ident)` (`convertCase` is the allocating wrapper
+  over it) ([case-style spec](../base/text/case-style.md); SPEC §6).
 - `sparkles.base.text.enums` — `enumMemberName!style(value)` (value → cased member
   name, selecting a compile-time literal) and `enumFromValue!E(v)`
   (membership-checked value → enum, via `OriginalType`).
@@ -25,32 +27,45 @@ Format-agnostic, no policy:
   `writeEnumMemberName` / `writeEnumValue` output-range primitives.
 
 Gate: `dub test :base` — `convertCase` runtime cases plus `static assert` CTFE
-coverage (incl. acronym/digit boundaries), the enum primitives, and a
-non-integer-backed enum.
+coverage (incl. acronym/digit boundaries), `writeConvertedCase` into a
+`SmallBuffer` matching `convertCase` for every style (and a `@nogc` case), the
+enum primitives, and a non-integer-backed enum; plus
+`nix run .#ci -- --verify --files docs/specs/base/text/case-style.md`.
 
 ## M3 — policy (`sparkles.wired.policy`)
 
-`AnyFormat`, `Repr`, the `@Wire*` UDA structs supporting the exact source forms
-from SPEC §5.1, and the per-axis resolvers implementing the precedence lattice
-(SPEC §5), plus the per-member / per-field name dispatchers and uniqueness
-checks.
+`AnyFormat`, `Repr`, `WireSkip`, `WireInvalid`, `WireMatch`, the `@Wire*` UDA
+structs supporting the exact source forms from SPEC §5.1, and the per-axis
+resolvers implementing the precedence lattice (SPEC §5), plus the per-member /
+per-field name dispatchers and uniqueness checks.
 
 ## M4 — JSON backend (`sparkles.wired.json`)
 
 `struct Json {}`, `toJSON` / `fromJSON` / `readJSONFile` / `writeJSONFile`, the
 supported-type mapping (SPEC §4.2), and the enum /
 aggregate-field / AA-key wiring that consults the policy under the `Json` tag.
-Re-export the public surface from `sparkles.wired` (`package.d`).
+Re-export the public surface from `sparkles.wired` (`package.d`). `Optional!T`
+support adds the `optional` package as a `sparkles:wired` dependency (with the
+matching `dub.selections.json` / `nix/dub-lock.json` entries).
 
 Gate: `dub test :wired` — Expected-returning file helpers with final newlines,
-strict scalar kind/range checks, character-as-string mapping, UTC `SysTime`
+strict scalar kind/range checks, character-as-string mapping with fit/validity
+rejection (non-ASCII `char`, astral `wchar`, out-of-range `dchar`), UTC `SysTime`
 round-trips with offsetless-string rejection, per-axis and per-format
-resolution, field overrides over one wrapper level, enum value/name collision
-rejection, aggregate field `@WireName` / `@WireCase`, required-field and
-`@WireOptional` decode behavior, aggregate key collision rejection, unsupported
-aggregate field/construction shapes, `@WireConvert` round-trips, `SumType`
-zero-match and ambiguity errors, decode errors with nested path diagnostics, and
-nested-struct isolation.
+resolution, explicit `WireTarget.all` defaults, field overrides over one wrapper
+level (including `Nullable!T` and `Optional!T`), `WireTarget.key` /
+`WireTarget.value` field overrides including aggregate and nullable/optional
+value-slot casing, directly-nested null-aware rejection, enum value/name
+collision rejection, aggregate
+field `@WireName` / `@WireCase`, required-field handling, `@WireOptional`
+decode-tolerance across `WireInvalid.reject` / `useDefault` plus `WireSkip`
+encode-omission (`whenEmpty` / `whenDefault` / `never`), aggregate key
+collision rejection, unsupported aggregate
+field/construction shapes, `@WireConvert` return-type inference and round-trips,
+`SumType` zero-match and ambiguity errors under `WireMatch.exactlyOne` plus
+`WireMatch.first` order-based selection, nothrow and `Expected`-returning
+converter failures, decode errors with nested path diagnostics including escaped
+object-key path segments, and nested-struct isolation.
 
 ## M5 — docs & verification
 
