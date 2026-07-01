@@ -574,3 +574,96 @@ if (is(S == struct))
     }();
     static assert(firstDuplicate(names) == "fast_path");
 }
+
+/// Index of the first `Attr` UDA on `sym` with format `Fmt` and `.target == tgt`,
+/// or -1. Target-filtered variant of $(LREF firstAttr) for `WireCase`/`WireRepr`.
+private template firstAttrTarget(alias sym, alias Attr, Fmt, WireTarget tgt)
+{
+    enum ptrdiff_t firstAttrTarget = () {
+        static foreach (i, uda; getUDAs!(sym, Attr))
+            static if (is(typeof(uda).Format == Fmt))
+                if (uda.target == tgt)
+                    return cast(ptrdiff_t) i;
+        return cast(ptrdiff_t)(-1);
+    }();
+}
+
+/// The `CaseStyle` resolved for the `slot` branch of `field` (whose target type
+/// at that slot is `Type`) under format `F`, following the §5.2 lattice:
+/// targeted-field `!F` → targeted-field `!Any` → broad-field `!F` → broad-field
+/// `!Any` → type `!F` → type `!Any` → `CaseStyle.original`. `slot` is
+/// `WireTarget.key` or `WireTarget.value`; `WireTarget.all` skips the targeted
+/// rows.
+template resolveCaseFor(F, WireTarget slot, alias field, Type)
+{
+    enum CaseStyle resolveCaseFor = () {
+        static if (slot != WireTarget.all && firstAttrTarget!(field, WireCaseAttr, F, slot) >= 0)
+            return getUDAs!(field, WireCaseAttr)[firstAttrTarget!(field, WireCaseAttr, F, slot)].style;
+        else static if (slot != WireTarget.all && firstAttrTarget!(field, WireCaseAttr, AnyFormat, slot) >= 0)
+            return getUDAs!(field, WireCaseAttr)[firstAttrTarget!(field, WireCaseAttr, AnyFormat, slot)].style;
+        else static if (firstAttrTarget!(field, WireCaseAttr, F, WireTarget.all) >= 0)
+            return getUDAs!(field, WireCaseAttr)[firstAttrTarget!(field, WireCaseAttr, F, WireTarget.all)].style;
+        else static if (firstAttrTarget!(field, WireCaseAttr, AnyFormat, WireTarget.all) >= 0)
+            return getUDAs!(field, WireCaseAttr)[firstAttrTarget!(field, WireCaseAttr, AnyFormat, WireTarget.all)].style;
+        else static if (firstAttrTarget!(Type, WireCaseAttr, F, WireTarget.all) >= 0)
+            return getUDAs!(Type, WireCaseAttr)[firstAttrTarget!(Type, WireCaseAttr, F, WireTarget.all)].style;
+        else static if (firstAttrTarget!(Type, WireCaseAttr, AnyFormat, WireTarget.all) >= 0)
+            return getUDAs!(Type, WireCaseAttr)[firstAttrTarget!(Type, WireCaseAttr, AnyFormat, WireTarget.all)].style;
+        else
+            return CaseStyle.original;
+    }();
+}
+
+/// The `Repr` resolved for the `slot` branch of `field` (whose enum at that slot
+/// is `E`) under `F`, following the same §5.2 lattice as $(LREF resolveCaseFor),
+/// defaulting to `Repr.name`.
+template resolveReprFor(F, WireTarget slot, alias field, E)
+{
+    enum Repr resolveReprFor = () {
+        static if (slot != WireTarget.all && firstAttrTarget!(field, WireReprAttr, F, slot) >= 0)
+            return getUDAs!(field, WireReprAttr)[firstAttrTarget!(field, WireReprAttr, F, slot)].repr;
+        else static if (slot != WireTarget.all && firstAttrTarget!(field, WireReprAttr, AnyFormat, slot) >= 0)
+            return getUDAs!(field, WireReprAttr)[firstAttrTarget!(field, WireReprAttr, AnyFormat, slot)].repr;
+        else static if (firstAttrTarget!(field, WireReprAttr, F, WireTarget.all) >= 0)
+            return getUDAs!(field, WireReprAttr)[firstAttrTarget!(field, WireReprAttr, F, WireTarget.all)].repr;
+        else static if (firstAttrTarget!(field, WireReprAttr, AnyFormat, WireTarget.all) >= 0)
+            return getUDAs!(field, WireReprAttr)[firstAttrTarget!(field, WireReprAttr, AnyFormat, WireTarget.all)].repr;
+        else static if (firstAttrTarget!(E, WireReprAttr, F, WireTarget.all) >= 0)
+            return getUDAs!(E, WireReprAttr)[firstAttrTarget!(E, WireReprAttr, F, WireTarget.all)].repr;
+        else static if (firstAttrTarget!(E, WireReprAttr, AnyFormat, WireTarget.all) >= 0)
+            return getUDAs!(E, WireReprAttr)[firstAttrTarget!(E, WireReprAttr, AnyFormat, WireTarget.all)].repr;
+        else
+            return Repr.name;
+    }();
+}
+
+@("wired.policy.resolve.targetedSlots")
+@safe pure unittest
+{
+    struct Json
+    {
+    }
+
+    enum Mode { off, on }
+    enum Status { good, bad }
+
+    static struct S
+    {
+        // §5.2 example: Mode keys by value; Status values by name.
+        @WireRepr!Json(Repr.name)
+        @WireRepr!Json(Repr.value, WireTarget.key)
+        Status[Mode] states;
+
+        // value-slot recasing reaches the array element enum.
+        @WireCase!Json(CaseStyle.snakeCase, WireTarget.value)
+        Mode[] modes;
+    }
+
+    // Targeted key wins for the key slot; broad applies to the value slot.
+    static assert(resolveReprFor!(Json, WireTarget.key, S.states, Mode) == Repr.value);
+    static assert(resolveReprFor!(Json, WireTarget.value, S.states, Status) == Repr.name);
+
+    // Value-targeted case reaches the element; the (absent) key slot falls back.
+    static assert(resolveCaseFor!(Json, WireTarget.value, S.modes, Mode) == CaseStyle.snakeCase);
+    static assert(resolveCaseFor!(Json, WireTarget.all, S.states, Status) == CaseStyle.original);
+}
