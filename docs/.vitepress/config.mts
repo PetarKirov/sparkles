@@ -327,6 +327,10 @@ export default withMermaid(
                       text: 'Case-style spec',
                       link: '/specs/base/text/case-style',
                     },
+                    {
+                      text: 'Enums spec',
+                      link: '/specs/base/text/enums',
+                    },
                   ],
                 },
               ],
