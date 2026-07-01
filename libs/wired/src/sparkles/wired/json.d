@@ -143,10 +143,18 @@ if (is(T == struct))
     static foreach (i; 0 .. T.tupleof.length)
     {{
         enum key = wireName!(Json, T.tupleof[i], aggStyle);
-        auto r = encodeFieldValue!(T, i)(value.tupleof[i]);
-        if (r.hasError)
-            return err!JSONValue(r.error);
-        obj[key] = r.value;
+        static if (isOptional!(Json, T.tupleof[i]))
+            enum skip = optionalPolicy!(Json, T.tupleof[i]).skip;
+        else
+            enum skip = WireSkip.never;
+
+        if (!shouldOmit!(T, i, skip)(value.tupleof[i]))
+        {
+            auto r = encodeFieldValue!(T, i)(value.tupleof[i]);
+            if (r.hasError)
+                return err!JSONValue(r.error);
+            obj[key] = r.value;
+        }
     }}
     return ok!Exception(JSONValue(obj));
 }
@@ -439,13 +447,23 @@ if (is(T == struct))
         {
             auto r = decodeFieldValue!(T, i)(*p);
             if (r.hasError)
-                return err!T(r.error);
-            result.tupleof[i] = r.value;
+            {
+                // A present but invalid value under `useDefault` leaves the field
+                // at its default (§5.4); otherwise the failure propagates.
+                static if (isOptional!(Json, T.tupleof[i])
+                    && optionalPolicy!(Json, T.tupleof[i]).onInvalid == WireInvalid.useDefault)
+                {
+                }
+                else
+                    return err!T(r.error);
+            }
+            else
+                result.tupleof[i] = r.value;
         }
-        else static if (isNullAware!(typeof(T.tupleof[i])))
+        else static if (isNullAware!(typeof(T.tupleof[i])) || isOptional!(Json, T.tupleof[i]))
         {
-            // A missing null-aware field decodes to its empty value, which the
-            // `T result;` default already holds (§4.5).
+            // A missing null-aware or @WireOptional field decodes to its default,
+            // which the `T result;` default already holds (§4.5, §5.4).
         }
         else
             return fail!T(
@@ -493,6 +511,28 @@ private JsonResult!(typeof(T.tupleof[i])) decodeFieldValue(T, size_t i)(JSONValu
 /// True for the null-aware wrapper types whose empty value maps to JSON `null`
 /// and whose missing key decodes to that empty value (§4.5).
 private enum bool isNullAware(V) = is(V == Nullable!N, N) || is(V == Ternary);
+
+/// Whether aggregate field `i` of `T` is omitted on encode under its `@WireOptional`
+/// `skip` policy (§5.4): `whenEmpty` omits an empty null-aware value; `whenDefault`
+/// omits a value equal to the field's declared default; `never` never omits.
+private bool shouldOmit(T, size_t i, WireSkip skip)(const typeof(T.tupleof[i]) value)
+{
+    alias V = typeof(T.tupleof[i]);
+
+    static if (skip == WireSkip.never)
+        return false;
+    else static if (skip == WireSkip.whenEmpty)
+    {
+        static if (is(V == Nullable!N, N))
+            return value.isNull;
+        else static if (is(V == Ternary))
+            return value == Ternary.unknown;
+        else
+            return false;
+    }
+    else
+        return value == T.init.tupleof[i];
+}
 
 /// Duck-types the `expected` result so a converter may return either a plain
 /// value or an `Expected!(Value, Exception)` (§8).
@@ -886,6 +926,42 @@ if (is(E == enum))
     auto json = toJSON(t).value;
     assert(json["timeout"] == JSONValue(1500)); // Duration encoded as its ms count
     assert(fromJSON!Timer(json).value == t);     // round-trips back to a Duration
+}
+
+@("wired.json.wireOptional")
+@system unittest
+{
+    static struct S
+    {
+        @WireOptional() Nullable!int a;             // whenEmpty: omit when empty
+        @WireOptional(WireSkip.whenDefault) int b;  // omit at declared default
+        @WireOptional(WireSkip.never) Nullable!int c;
+    }
+
+    // Encode omission.
+    auto j = toJSON(S(Nullable!int.init, 0, Nullable!int.init)).value;
+    assert("a" !in j.object);        // empty Nullable omitted
+    assert("b" !in j.object);        // int 0 == default, omitted
+    assert(j["c"].type == JSONType.null_); // never → emitted as null
+
+    auto j2 = toJSON(S(Nullable!int(5), 7, Nullable!int.init)).value;
+    assert(j2["a"] == JSONValue(5) && j2["b"] == JSONValue(7));
+
+    // Decode: missing optional fields fall back to defaults.
+    auto r = fromJSON!S(parseObject(`{}`));
+    assert(r.value.a.isNull && r.value.b == 0 && r.value.c.isNull);
+
+    // onInvalid: a present but invalid value falls back to the default.
+    static struct T
+    {
+        @WireOptional(onInvalid: WireInvalid.useDefault) int x;
+    }
+    auto ri = fromJSON!T(parseObject(`{"x":"not-a-number"}`));
+    assert(ri.hasValue && ri.value.x == 0);
+
+    // Without useDefault (default reject), the same input is an error.
+    static struct T2 { @WireOptional() int x; }
+    assert(fromJSON!T2(parseObject(`{"x":"nope"}`)).hasError);
 }
 
 version (unittest) private JSONValue parseObject(string s)
