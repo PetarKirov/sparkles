@@ -84,6 +84,9 @@ JsonResult!JSONValue toJSON(T)(const T value)
         }
     }
 
+    else static if (is(U == V[K], V, K))
+        return encodeAA(value);
+
     else static if (is(U == Nullable!N, N))
     {
         if (value.isNull)
@@ -243,6 +246,9 @@ JsonResult!T fromJSON(T)(JSONValue json)
             return ok!Exception(result);
         }
     }
+
+    else static if (is(U == V[K], V, K))
+        return decodeAA!U(json);
 
     else static if (is(U == Nullable!N, N))
     {
@@ -476,6 +482,120 @@ private JsonResult!(typeof(T.tupleof[i])) decodeFieldValue(T, size_t i)(JSONValu
 /// and whose missing key decodes to that empty value (§4.5).
 private enum bool isNullAware(V) = is(V == Nullable!N, N) || is(V == Ternary);
 
+private JsonResult!JSONValue encodeAA(T)(const T value)
+if (is(T == V[K], V, K))
+{
+    alias V = typeof(T.init.values[0]);
+    JSONValue[string] obj;
+    foreach (k, ref v; value)
+    {
+        auto rv = toJSON(v);
+        if (rv.hasError)
+            return err!JSONValue(rv.error);
+        obj[aaKeyText(k)] = rv.value;
+    }
+    return ok!Exception(JSONValue(obj));
+}
+
+private JsonResult!T decodeAA(T)(JSONValue json)
+if (is(T == V[K], V, K))
+{
+    alias V = typeof(T.init.values[0]);
+    alias K = typeof(T.init.keys[0]);
+
+    if (json.type != JSONType.object)
+        return fail!T("Cannot decode " ~ T.stringof ~ " at $: expected a JSON object");
+
+    T result;
+    foreach (keyStr, jval; json.object)
+    {
+        auto k = aaKeyParse!K(keyStr);
+        if (k.hasError)
+            return err!T(k.error);
+        auto rv = fromJSON!V(jval);
+        if (rv.hasError)
+            return err!T(rv.error);
+        result[k.value] = rv.value;
+    }
+    return ok!Exception(result);
+}
+
+/// The JSON object-key text for an associative-array key: a `string` verbatim,
+/// or an enum by its resolved name / underlying-value text (§7).
+private string aaKeyText(K)(K k)
+{
+    static if (is(K == string))
+        return k;
+    else static if (is(K == enum))
+    {
+        enum repr = resolveRepr!(Json, K);
+        static if (repr == Repr.name)
+        {
+            enum style = resolveCaseStyle!(Json, K);
+            static foreach (m; __traits(allMembers, K))
+                if (k == __traits(getMember, K, m))
+                    return wireName!(Json, __traits(getMember, K, m), style);
+            assert(0, "aaKeyText: value is not a declared enum member");
+        }
+        else
+        {
+            auto orig = cast(OriginalType!K) k;
+            static if (is(OriginalType!K == string))
+                return orig;
+            else
+            {
+                import std.conv : to;
+                return orig.to!string;
+            }
+        }
+    }
+    else
+        static assert(false, "wired: associative-array keys must be string or enum, not " ~ K.stringof);
+}
+
+/// Parses an associative-array key from its JSON object-key text — the inverse of
+/// $(LREF aaKeyText).
+private JsonResult!K aaKeyParse(K)(string keyStr)
+{
+    static if (is(K == string))
+        return ok!Exception(keyStr);
+    else static if (is(K == enum))
+    {
+        enum repr = resolveRepr!(Json, K);
+        static if (repr == Repr.name)
+        {
+            enum style = resolveCaseStyle!(Json, K);
+            static foreach (m; __traits(allMembers, K))
+                if (keyStr == wireName!(Json, __traits(getMember, K, m), style))
+                    return ok!Exception(__traits(getMember, K, m));
+            return fail!K(
+                "Cannot decode " ~ K.stringof ~ " key \"" ~ keyStr
+                ~ "\": expected one of: " ~ nameList!(K, style));
+        }
+        else
+        {
+            import std.conv : to, ConvException;
+
+            OriginalType!K orig;
+            static if (is(OriginalType!K == string))
+                orig = keyStr;
+            else
+            {
+                try
+                    orig = keyStr.to!(OriginalType!K);
+                catch (ConvException e)
+                    return fail!K("Cannot decode " ~ K.stringof ~ " key \"" ~ keyStr ~ "\": " ~ e.msg);
+            }
+            auto member = enumFromValue!K(orig);
+            if (member.hasError)
+                return fail!K("Cannot decode " ~ K.stringof ~ " key \"" ~ keyStr ~ "\": " ~ member.error.context);
+            return ok!Exception(member.value);
+        }
+    }
+    else
+        static assert(false, "wired: associative-array keys must be string or enum, not " ~ K.stringof);
+}
+
 /// The comma-joined resolved member names of `E` under `Json` at case `style`,
 /// for the `"expected one of: …"` decode-error context.
 private template nameList(E, CaseStyle style)
@@ -663,6 +783,29 @@ if (is(E == enum))
     }
     auto r = fromJSON!Row(parseObject(`{"cell":42}`));
     assert(r.value.cell == SumType!(int, double)(42));
+}
+
+@("wired.json.associativeArrays")
+@system unittest
+{
+    // String-keyed AA.
+    auto m = ["a": 1, "b": 2];
+    assert(fromJSON!(int[string])(toJSON(m).value).value == m);
+
+    // Enum-keyed AA by member name (default).
+    enum Suit { spades, hearts }
+    auto byName = [Suit.spades: 1, Suit.hearts: 2];
+    auto jn = toJSON(byName).value;
+    assert(jn["spades"] == JSONValue(1) && jn["hearts"] == JSONValue(2));
+    assert(fromJSON!(int[Suit])(jn).value == byName);
+
+    // Enum-keyed AA by underlying value.
+    @WireRepr!Json(Repr.value)
+    enum Priority { low = 1, high = 5 }
+    auto byVal = [Priority.low: "lo", Priority.high: "hi"];
+    auto jv = toJSON(byVal).value;
+    assert(jv["1"] == JSONValue("lo") && jv["5"] == JSONValue("hi"));
+    assert(fromJSON!(string[Priority])(jv).value == byVal);
 }
 
 version (unittest) private JSONValue parseObject(string s)
