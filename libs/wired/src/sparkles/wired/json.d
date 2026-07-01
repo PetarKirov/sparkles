@@ -21,6 +21,7 @@ import std.traits : isFloatingPoint, isIntegral, isSomeChar, OriginalType,
 import std.typecons : Nullable, Ternary;
 
 import expected : Expected, ok, err;
+import optional : Optional, some;
 
 import sparkles.wired.policy;
 import sparkles.base.text.case_style : CaseStyle;
@@ -95,6 +96,13 @@ JsonResult!JSONValue toJSON(T)(const T value)
         if (value.isNull)
             return ok!Exception(JSONValue(null));
         return toJSON(value.get);
+    }
+
+    else static if (is(U == Optional!N, N))
+    {
+        if (value.empty)
+            return ok!Exception(JSONValue(null));
+        return toJSON(value.front);
     }
 
     else static if (is(U == Ternary))
@@ -346,6 +354,16 @@ JsonResult!T fromJSON(T)(JSONValue json)
         return ok!Exception(U(r.value));
     }
 
+    else static if (is(U == Optional!N, N))
+    {
+        if (json.type == JSONType.null_)
+            return ok!Exception(U.init);
+        auto r = fromJSON!N(json);
+        if (r.hasError)
+            return err!T(r.error);
+        return ok!Exception(some(r.value));
+    }
+
     else static if (is(U == Ternary))
     {
         switch (json.type)
@@ -579,7 +597,8 @@ private JsonResult!(typeof(T.tupleof[i])) decodeFieldValue(T, size_t i)(JSONValu
 
 /// True for the null-aware wrapper types whose empty value maps to JSON `null`
 /// and whose missing key decodes to that empty value (§4.5).
-private enum bool isNullAware(V) = is(V == Nullable!N, N) || is(V == Ternary);
+private enum bool isNullAware(V) =
+    is(V == Nullable!N, N) || is(V == Optional!O, O) || is(V == Ternary);
 
 /// Whether aggregate field `i` of `T` is omitted on encode under its `@WireOptional`
 /// `skip` policy (§5.4): `whenEmpty` omits an empty null-aware value; `whenDefault`
@@ -594,6 +613,8 @@ private bool shouldOmit(T, size_t i, WireSkip skip)(const typeof(T.tupleof[i]) v
     {
         static if (is(V == Nullable!N, N))
             return value.isNull;
+        else static if (is(V == Optional!O, O))
+            return value.empty;
         else static if (is(V == Ternary))
             return value == Ternary.unknown;
         else
@@ -1031,6 +1052,22 @@ if (is(E == enum))
     // Without useDefault (default reject), the same input is an error.
     static struct T2 { @WireOptional() int x; }
     assert(fromJSON!T2(parseObject(`{"x":"nope"}`)).hasError);
+}
+
+@("wired.json.optional")
+@system unittest
+{
+    import optional : no, some, Optional;
+
+    assert(toJSON(no!int).value == JSONValue(null));
+    assert(toJSON(some(7)).value == JSONValue(7));
+    assert(fromJSON!(Optional!int)(JSONValue(null)).value.empty);
+    assert(fromJSON!(Optional!int)(JSONValue(7)).value.front == 7);
+
+    // A missing Optional field decodes to empty (none).
+    static struct S { int a; Optional!int b; }
+    auto r = fromJSON!S(parseObject(`{"a":1}`));
+    assert(r.value.a == 1 && r.value.b.empty);
 }
 
 @("wired.json.fileHelpers")
