@@ -411,3 +411,78 @@ template resolveMatch(F, alias field)
     static assert(resolveMatch!(Toml, S.jmatch) == MatchStrategy.exactlyOne); // !Json inert under Toml
     static assert(resolveMatch!(Toml, S.amatch) == MatchStrategy.first);      // AnyFormat applies
 }
+
+/// Index of the first `WireConvert` type UDA on `sym` whose format is `Fmt`, or
+/// -1. `WireConvert` is a type UDA, so its format is read from the template
+/// arguments rather than an instance field.
+private template firstConvert(alias sym, Fmt)
+{
+    import std.traits : TemplateArgsOf;
+
+    enum ptrdiff_t firstConvert = () {
+        static foreach (i, uda; getUDAs!(sym, WireConvert))
+            static if (is(TemplateArgsOf!(uda)[2] == Fmt))
+                return cast(ptrdiff_t) i;
+        return cast(ptrdiff_t)(-1);
+    }();
+}
+
+/// Whether a `WireConvert` applies for format `F` across `syms` (field then type),
+/// for `F` or `AnyFormat` (§8).
+template hasConvert(F, syms...)
+{
+    static if (syms.length == 0)
+        enum hasConvert = false;
+    else
+        enum hasConvert = firstConvert!(syms[0], F) >= 0
+            || firstConvert!(syms[0], AnyFormat) >= 0
+            || hasConvert!(F, syms[1 .. $]);
+}
+
+/// The resolved `WireConvert` type for format `F` across `syms` (field override(s)
+/// first, then the type; exact `F` over `AnyFormat`). Access its transforms via
+/// `.to` / `.from`. Instantiable only when $(LREF hasConvert) is true.
+template convertOf(F, syms...)
+if (hasConvert!(F, syms))
+{
+    alias sym = syms[0];
+    static if (firstConvert!(sym, F) >= 0)
+        alias convertOf = getUDAs!(sym, WireConvert)[firstConvert!(sym, F)];
+    else static if (firstConvert!(sym, AnyFormat) >= 0)
+        alias convertOf = getUDAs!(sym, WireConvert)[firstConvert!(sym, AnyFormat)];
+    else
+        alias convertOf = convertOf!(F, syms[1 .. $]);
+}
+
+@("wired.policy.resolve.convert")
+@safe pure unittest
+{
+    struct Json
+    {
+    }
+
+    struct Toml
+    {
+    }
+
+    static struct S
+    {
+        int plain;
+        @WireConvert!(x => x + 1, x => x - 1) int any;
+        @WireConvert!(x => x * 10, x => x / 10, Json) int json;
+        @WireConvert!(x => x + 1, x => x - 1)
+        @WireConvert!(x => x * 10, x => x / 10, Json) int both;
+    }
+
+    static assert(!hasConvert!(Json, S.plain));
+    static assert(hasConvert!(Json, S.any));
+
+    // AnyFormat converter applies under any format.
+    static assert(convertOf!(Json, S.any).to(4) == 5);
+    static assert(convertOf!(Toml, S.any).from(5) == 4);
+
+    // Exact-format converter wins over the AnyFormat one under its format...
+    static assert(convertOf!(Json, S.both).to(3) == 30);
+    // ...but the AnyFormat one still applies under a different format.
+    static assert(convertOf!(Toml, S.both).to(3) == 4);
+}
