@@ -7,12 +7,13 @@ the `sparkles.wired.policy` resolvers under the `Json` tag. Encoding and decodin
 never throw — a failure is captured as the `Exception` payload of the returned
 `Expected` (`docs/specs/wired/SPEC.md` §4, §9).
 
-This is the incremental backend: scalars and enums are wired up first; the
-remaining supported types (§4.2) land alongside the type walk.
+This is the incremental backend: scalars, enums, arrays, and aggregates are wired
+up; the remaining supported types (`SumType`, null-aware wrappers, `SysTime`,
+`@WireConvert`, associative arrays) land alongside the type walk.
 */
 module sparkles.wired.json;
 
-import std.json : JSONValue, JSONType, parseJSON;
+import std.json : JSONValue, JSONType;
 import std.traits : isFloatingPoint, isIntegral, isSomeChar, OriginalType, Unqual;
 
 import expected : Expected, ok, err;
@@ -46,7 +47,7 @@ JsonResult!JSONValue toJSON(T)(const T value)
         return ok!Exception(JSONValue(value));
 
     else static if (is(U == enum))
-        return encodeEnum(value);
+        return encodeEnumWith!(U, resolveRepr!(Json, U), resolveCaseStyle!(Json, U))(value);
 
     else static if (isIntegral!U)
         return ok!Exception(JSONValue(value));
@@ -61,20 +62,38 @@ JsonResult!JSONValue toJSON(T)(const T value)
         return ok!Exception(JSONValue(value));
     }
 
+    else static if (is(U == E[], E))
+    {
+        static if (isSomeChar!E)
+            return ok!Exception(JSONValue(value.idup));
+        else
+        {
+            JSONValue[] arr;
+            foreach (e; value)
+            {
+                auto r = toJSON(e);
+                if (r.hasError)
+                    return err!JSONValue(r.error);
+                arr ~= r.value;
+            }
+            return ok!Exception(JSONValue(arr));
+        }
+    }
+
+    else static if (is(U == struct))
+        return encodeStruct(value);
+
     else
         static assert(false, "wired: unsupported type for toJSON: " ~ T.stringof);
 }
 
-private JsonResult!JSONValue encodeEnum(E)(const E value)
+private JsonResult!JSONValue encodeEnumWith(E, Repr repr, CaseStyle style)(const E value)
 if (is(E == enum))
 {
-    enum repr = resolveRepr!(Json, E);
-
     static if (repr == Repr.value)
         return toJSON(cast(OriginalType!E) value);
     else
     {
-        enum style = resolveCaseStyle!(Json, E);
         static foreach (m; __traits(allMembers, E))
             if (value == __traits(getMember, E, m))
                 return ok!Exception(JSONValue(wireName!(Json, __traits(getMember, E, m), style)));
@@ -82,6 +101,56 @@ if (is(E == enum))
         return fail!JSONValue(
             "Cannot encode " ~ E.stringof ~ " at $: value is not a declared member");
     }
+}
+
+private JsonResult!JSONValue encodeStruct(T)(const T value)
+if (is(T == struct))
+{
+    enum _uniq = checkUniqueFieldKeys!(Json, T);
+    enum aggStyle = resolveCaseStyle!(Json, T);
+
+    JSONValue[string] obj;
+    static foreach (i; 0 .. T.tupleof.length)
+    {{
+        enum key = wireName!(Json, T.tupleof[i], aggStyle);
+        auto r = encodeFieldValue!(T, i)(value.tupleof[i]);
+        if (r.hasError)
+            return err!JSONValue(r.error);
+        obj[key] = r.value;
+    }}
+    return ok!Exception(JSONValue(obj));
+}
+
+/// Encodes an aggregate field's value, applying the field's value-slot enum
+/// policy at the field and one wrapper level; everything else recurses through
+/// the type-level `toJSON`. Takes the aggregate type and field index so the
+/// field alias carries no instance context.
+private JsonResult!JSONValue encodeFieldValue(T, size_t i)(const typeof(T.tupleof[i]) value)
+{
+    alias V = typeof(T.tupleof[i]);
+
+    static if (is(V == enum))
+        return encodeEnumWith!(V,
+            resolveReprFor!(Json, WireTarget.all, T.tupleof[i], V),
+            resolveCaseFor!(Json, WireTarget.all, T.tupleof[i], V))(value);
+
+    else static if (is(V == E[], E) && is(E == enum))
+    {
+        JSONValue[] arr;
+        foreach (e; value)
+        {
+            auto r = encodeEnumWith!(E,
+                resolveReprFor!(Json, WireTarget.value, T.tupleof[i], E),
+                resolveCaseFor!(Json, WireTarget.value, T.tupleof[i], E))(e);
+            if (r.hasError)
+                return err!JSONValue(r.error);
+            arr ~= r.value;
+        }
+        return ok!Exception(JSONValue(arr));
+    }
+
+    else
+        return toJSON(value);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -108,7 +177,7 @@ JsonResult!T fromJSON(T)(JSONValue json)
     }
 
     else static if (is(U == enum))
-        return decodeEnum!T(json);
+        return decodeEnumWith!(U, resolveRepr!(Json, U), resolveCaseStyle!(Json, U))(json);
 
     else static if (isIntegral!U)
         return decodeIntegral!T(json);
@@ -117,13 +186,42 @@ JsonResult!T fromJSON(T)(JSONValue json)
     {
         switch (json.type)
         {
-            case JSONType.float_:    return ok!Exception(cast(T) json.floating);
-            case JSONType.integer:   return ok!Exception(cast(T) json.integer);
-            case JSONType.uinteger:  return ok!Exception(cast(T) json.uinteger);
+            case JSONType.float_:   return ok!Exception(cast(T) json.floating);
+            case JSONType.integer:  return ok!Exception(cast(T) json.integer);
+            case JSONType.uinteger: return ok!Exception(cast(T) json.uinteger);
             default:
                 return fail!T("Cannot decode " ~ T.stringof ~ " at $: expected a JSON number");
         }
     }
+
+    else static if (is(U == E[], E))
+    {
+        static if (isSomeChar!E)
+        {
+            auto s = fromJSON!string(json);
+            if (s.hasError)
+                return err!T(s.error);
+            import std.conv : to;
+            return ok!Exception(s.value.to!U);
+        }
+        else
+        {
+            if (json.type != JSONType.array)
+                return fail!T("Cannot decode " ~ T.stringof ~ " at $: expected a JSON array");
+            U result;
+            foreach (elem; json.array)
+            {
+                auto r = fromJSON!E(elem);
+                if (r.hasError)
+                    return err!T(r.error);
+                result ~= r.value;
+            }
+            return ok!Exception(result);
+        }
+    }
+
+    else static if (is(U == struct))
+        return decodeStruct!T(json);
 
     else
         static assert(false, "wired: unsupported type for fromJSON: " ~ T.stringof);
@@ -164,11 +262,9 @@ private JsonResult!T decodeIntegral(T)(JSONValue json)
     return fail!T("Cannot decode " ~ T.stringof ~ " at $: expected an integer");
 }
 
-private JsonResult!E decodeEnum(E)(JSONValue json)
+private JsonResult!E decodeEnumWith(E, Repr repr, CaseStyle style)(JSONValue json)
 if (is(E == enum))
 {
-    enum repr = resolveRepr!(Json, E);
-
     static if (repr == Repr.value)
     {
         auto orig = fromJSON!(OriginalType!E)(json);
@@ -181,7 +277,6 @@ if (is(E == enum))
     }
     else
     {
-        enum style = resolveCaseStyle!(Json, E);
         if (json.type != JSONType.string)
             return fail!E("Cannot decode " ~ E.stringof ~ " at $: expected a JSON string");
 
@@ -191,17 +286,73 @@ if (is(E == enum))
 
         return fail!E(
             "Cannot decode " ~ E.stringof ~ " at $ from JSON string \"" ~ json.str
-            ~ "\": expected one of: " ~ nameList!E);
+            ~ "\": expected one of: " ~ nameList!(E, style));
     }
 }
 
-/// The comma-joined resolved member names of `E` under `Json`, for the
-/// `"expected one of: …"` decode-error context.
-private template nameList(E)
+private JsonResult!T decodeStruct(T)(JSONValue json)
+if (is(T == struct))
+{
+    enum _uniq = checkUniqueFieldKeys!(Json, T);
+
+    if (json.type != JSONType.object)
+        return fail!T("Cannot decode " ~ T.stringof ~ " at $: expected a JSON object");
+
+    enum aggStyle = resolveCaseStyle!(Json, T);
+    T result;
+    static foreach (i; 0 .. T.tupleof.length)
+    {{
+        enum key = wireName!(Json, T.tupleof[i], aggStyle);
+        if (auto p = key in json.object)
+        {
+            auto r = decodeFieldValue!(T, i)(*p);
+            if (r.hasError)
+                return err!T(r.error);
+            result.tupleof[i] = r.value;
+        }
+        else
+            return fail!T(
+                "Cannot decode " ~ T.stringof ~ " at $." ~ key ~ ": missing required field");
+    }}
+    return ok!Exception(result);
+}
+
+private JsonResult!(typeof(T.tupleof[i])) decodeFieldValue(T, size_t i)(JSONValue json)
+{
+    alias V = typeof(T.tupleof[i]);
+
+    static if (is(V == enum))
+        return decodeEnumWith!(V,
+            resolveReprFor!(Json, WireTarget.all, T.tupleof[i], V),
+            resolveCaseFor!(Json, WireTarget.all, T.tupleof[i], V))(json);
+
+    else static if (is(V == E[], E) && is(E == enum))
+    {
+        if (json.type != JSONType.array)
+            return fail!V("Cannot decode " ~ V.stringof ~ " at $: expected a JSON array");
+        V result;
+        foreach (elem; json.array)
+        {
+            auto r = decodeEnumWith!(E,
+                resolveReprFor!(Json, WireTarget.value, T.tupleof[i], E),
+                resolveCaseFor!(Json, WireTarget.value, T.tupleof[i], E))(elem);
+            if (r.hasError)
+                return err!V(r.error);
+            result ~= r.value;
+        }
+        return ok!Exception(result);
+    }
+
+    else
+        return fromJSON!V(json);
+}
+
+/// The comma-joined resolved member names of `E` under `Json` at case `style`,
+/// for the `"expected one of: …"` decode-error context.
+private template nameList(E, CaseStyle style)
 if (is(E == enum))
 {
     enum string nameList = () {
-        enum style = resolveCaseStyle!(Json, E);
         string s;
         static foreach (i, m; __traits(allMembers, E))
         {
@@ -226,7 +377,6 @@ if (is(E == enum))
     assert(fromJSON!int(JSONValue(42)).value == 42);
     assert(fromJSON!double(JSONValue(3.5)).value == 3.5);
 
-    // strict kind checking and range checking
     assert(fromJSON!int(JSONValue("42")).hasError);
     assert(fromJSON!ubyte(JSONValue(300)).hasError);
     assert(fromJSON!bool(JSONValue(1)).hasError);
@@ -239,7 +389,7 @@ if (is(E == enum))
     assert(toJSON(double.infinity).hasError);
 }
 
-@("wired.json.enumByName")
+@("wired.json.enumByNameAndValue")
 @safe unittest
 {
     @WireCase!Json(CaseStyle.snakeCase)
@@ -249,26 +399,90 @@ if (is(E == enum))
         @WireName!Json("turbo") slowPath,
     }
 
-    // Encode: recased member name, WireName override wins.
     assert(toJSON(Mode.fastPath).value == JSONValue("fast_path"));
     assert(toJSON(Mode.slowPath).value == JSONValue("turbo"));
-
-    // Decode: round-trips; unknown token surfaces the candidate names.
     assert(fromJSON!Mode(JSONValue("fast_path")).value == Mode.fastPath);
     assert(fromJSON!Mode(JSONValue("turbo")).value == Mode.slowPath);
+    assert(fromJSON!Mode(JSONValue("nope")).hasError);
 
-    auto bad = fromJSON!Mode(JSONValue("nope"));
-    assert(bad.hasError);
-    assert(bad.error.msg.length > 0);
-}
-
-@("wired.json.enumByValue")
-@safe unittest
-{
     @WireRepr!Json(Repr.value)
     enum Priority { low = 1, high = 5 }
 
     assert(toJSON(Priority.high).value == JSONValue(5));
     assert(fromJSON!Priority(JSONValue(5)).value == Priority.high);
-    assert(fromJSON!Priority(JSONValue(2)).hasError); // not a declared value
+    assert(fromJSON!Priority(JSONValue(2)).hasError);
+}
+
+@("wired.json.arrays")
+@system unittest
+{
+    assert(toJSON([1, 2, 3]).value == JSONValue([1, 2, 3]));
+    assert(fromJSON!(int[])(JSONValue([1, 2, 3])).value == [1, 2, 3]);
+    assert(fromJSON!(int[])(JSONValue(4)).hasError);
+
+    enum Suit { spades, hearts }
+    assert(toJSON([Suit.spades, Suit.hearts]).value == JSONValue(["spades", "hearts"]));
+    assert(fromJSON!(Suit[])(JSONValue(["hearts", "spades"])).value == [Suit.hearts, Suit.spades]);
+}
+
+@("wired.json.aggregate")
+@system unittest
+{
+    static struct Server
+    {
+        string host;
+        ushort port;
+    }
+
+    auto s = Server("localhost", 8080);
+    auto json = toJSON(s).value;
+    assert(json.type == JSONType.object);
+    assert(json["host"] == JSONValue("localhost"));
+    assert(json["port"] == JSONValue(8080));
+
+    assert(fromJSON!Server(json).value == s);
+
+    // Missing required field is a decode error naming the path.
+    auto bad = fromJSON!Server(parseObject(`{"host":"x"}`));
+    assert(bad.hasError);
+}
+
+@("wired.json.aggregateFieldPolicy")
+@system unittest
+{
+    struct Toml {}
+
+    @WireCase!Json(CaseStyle.snakeCase)
+    static struct Config
+    {
+        @WireName!Json("db_host") string dbHost;
+        int retryCount;
+    }
+
+    auto c = Config("h", 3);
+    auto json = toJSON(c).value;
+    assert(json["db_host"] == JSONValue("h"));     // field WireName wins
+    assert(json["retry_count"] == JSONValue(3));    // aggregate snake_case recasing
+    assert(fromJSON!Config(json).value == c);
+}
+
+@("wired.json.fieldEnumOverride")
+@system unittest
+{
+    enum Mode { fastPath, slowPath }
+
+    static struct S
+    {
+        @WireCase!Json(CaseStyle.kebabCase) Mode m;
+    }
+
+    // The field-level WireCase overrides the (absent) type policy for the enum.
+    assert(toJSON(S(Mode.fastPath)).value["m"] == JSONValue("fast-path"));
+    assert(fromJSON!S(toJSON(S(Mode.slowPath)).value).value == S(Mode.slowPath));
+}
+
+version (unittest) private JSONValue parseObject(string s)
+{
+    import std.json : parseJSON;
+    return parseJSON(s);
 }
