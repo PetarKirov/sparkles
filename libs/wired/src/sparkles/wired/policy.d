@@ -16,7 +16,9 @@ See `docs/specs/wired/SPEC.md` §5 for the normative surface.
 */
 module sparkles.wired.policy;
 
-import sparkles.base.text.case_style : CaseStyle;
+import std.traits : getUDAs;
+
+import sparkles.base.text.case_style : CaseStyle, convertCase;
 
 /// The sentinel format: an untagged `@Wire*` UDA applies under every format.
 struct AnyFormat
@@ -213,4 +215,132 @@ struct WireMatch
     static assert(getUDAs!(S.i, WireMatchPolicy)[0].strategy == MatchStrategy.first);
     static assert(getUDAs!(S.j, WireMatchPolicy)[0].strategy == MatchStrategy.first);
     static assert(is(getUDAs!(S.j, WireMatchPolicy)[0].Format == Json));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Policy resolution
+// ─────────────────────────────────────────────────────────────────────────────
+
+private bool broadTarget(A)(A a) => a.target == WireTarget.all;
+private bool anyAttr(A)(A a) => true;
+
+/// Index of the first `Attr` UDA on `sym` whose format is exactly `Fmt` and that
+/// passes `pred`, or -1. CTFE helper underpinning the resolvers.
+private template firstAttr(alias sym, alias Attr, Fmt, alias pred)
+{
+    enum ptrdiff_t firstAttr = () {
+        static foreach (i, uda; getUDAs!(sym, Attr))
+            static if (is(typeof(uda).Format == Fmt))
+                if (pred(uda))
+                    return cast(ptrdiff_t) i;
+        return cast(ptrdiff_t)(-1);
+    }();
+}
+
+/// The `CaseStyle` resolved for format `F` across `syms` (field override(s) first,
+/// then the type), preferring an exact-`F` `WireCase` over its `AnyFormat` form,
+/// and falling back to `CaseStyle.original`. Only broad (`WireTarget.all`)
+/// `WireCase` participates here.
+template resolveCaseStyle(F, syms...)
+{
+    enum CaseStyle resolveCaseStyle = () {
+        static foreach (sym; syms)
+        {
+            static if (firstAttr!(sym, WireCaseAttr, F, broadTarget) >= 0)
+                return getUDAs!(sym, WireCaseAttr)[firstAttr!(sym, WireCaseAttr, F, broadTarget)].style;
+            else static if (firstAttr!(sym, WireCaseAttr, AnyFormat, broadTarget) >= 0)
+                return getUDAs!(sym, WireCaseAttr)[firstAttr!(sym, WireCaseAttr, AnyFormat, broadTarget)].style;
+        }
+        return CaseStyle.original;
+    }();
+}
+
+/// The `Repr` resolved for format `F` across `syms` (field override(s) first, then
+/// the type), preferring exact-`F` over `AnyFormat`, defaulting to `Repr.name`.
+/// Only broad (`WireTarget.all`) `WireRepr` participates here.
+template resolveRepr(F, syms...)
+{
+    enum Repr resolveRepr = () {
+        static foreach (sym; syms)
+        {
+            static if (firstAttr!(sym, WireReprAttr, F, broadTarget) >= 0)
+                return getUDAs!(sym, WireReprAttr)[firstAttr!(sym, WireReprAttr, F, broadTarget)].repr;
+            else static if (firstAttr!(sym, WireReprAttr, AnyFormat, broadTarget) >= 0)
+                return getUDAs!(sym, WireReprAttr)[firstAttr!(sym, WireReprAttr, AnyFormat, broadTarget)].repr;
+        }
+        return Repr.name;
+    }();
+}
+
+/// The wire name of enum member (or aggregate field) `sym` under format `F`,
+/// given the resolved case `style`: an explicit `@WireName!F` wins, then
+/// `@WireName!Any`, else the identifier recased by `convertCase!style`.
+template wireName(F, alias sym, CaseStyle style)
+{
+    enum string wireName = () {
+        static if (firstAttr!(sym, WireNameAttr, F, anyAttr) >= 0)
+            return getUDAs!(sym, WireNameAttr)[firstAttr!(sym, WireNameAttr, F, anyAttr)].name;
+        else static if (firstAttr!(sym, WireNameAttr, AnyFormat, anyAttr) >= 0)
+            return getUDAs!(sym, WireNameAttr)[firstAttr!(sym, WireNameAttr, AnyFormat, anyAttr)].name;
+        else
+            return convertCase!style(__traits(identifier, sym));
+    }();
+}
+
+@("wired.policy.resolve.caseReprAndName")
+@safe pure unittest
+{
+    struct Json
+    {
+    }
+
+    struct Toml
+    {
+    }
+
+    @WireCase!Json(CaseStyle.snakeCase)
+    @WireCase(CaseStyle.kebabCase) // AnyFormat fallback
+    enum Mode
+    {
+        fastPath,
+        @WireName!Json("turbo") slowPath,
+    }
+
+    @WireRepr!Json(Repr.value)
+    enum Priority { low, high }
+
+    // Case: exact format beats AnyFormat beats the default.
+    static assert(resolveCaseStyle!(Json, Mode) == CaseStyle.snakeCase);
+    static assert(resolveCaseStyle!(Toml, Mode) == CaseStyle.kebabCase);
+    static assert(resolveCaseStyle!(Json, Priority) == CaseStyle.original);
+
+    // Repr: exact format, else the Repr.name default.
+    static assert(resolveRepr!(Json, Priority) == Repr.value);
+    static assert(resolveRepr!(Toml, Priority) == Repr.name);
+
+    // Member names: @WireName!F wins; otherwise recase by the resolved style.
+    static assert(wireName!(Json, Mode.fastPath, resolveCaseStyle!(Json, Mode)) == "fast_path");
+    static assert(wireName!(Json, Mode.slowPath, resolveCaseStyle!(Json, Mode)) == "turbo");
+    static assert(wireName!(Toml, Mode.slowPath, resolveCaseStyle!(Toml, Mode)) == "slow-path");
+}
+
+@("wired.policy.resolve.fieldOverridesType")
+@safe pure unittest
+{
+    struct Json
+    {
+    }
+
+    @WireCase!Json(CaseStyle.snakeCase)
+    enum Mode { fastPath, slowPath }
+
+    static struct S
+    {
+        @WireCase!Json(CaseStyle.kebabCase) Mode a; // field override
+        Mode b;                                     // uses the type policy
+    }
+
+    // Field override beats the type policy for that field's enum.
+    static assert(resolveCaseStyle!(Json, S.a, Mode) == CaseStyle.kebabCase);
+    static assert(resolveCaseStyle!(Json, S.b, Mode) == CaseStyle.snakeCase);
 }
