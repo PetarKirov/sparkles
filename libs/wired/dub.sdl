@@ -11,6 +11,7 @@ dflags "-preview=in" "-preview=dip1000"
 
 dependency "sparkles:base" path="../.."
 dependency "expected" version="~>0.4.1"
+dependency "optional" version="~>1.3.0"
 
 configuration "library" {
     targetType "library"
