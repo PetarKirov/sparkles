@@ -366,7 +366,7 @@ import sparkles.wired : fromJSON, WireMatch;
 
 struct Row
 {
-    @(WireMatch.first)                 // integer JSON picks int, the first arm
+    @(WireMatch.first!())              // integer JSON picks int, the first arm
     SumType!(int, double) cell;        // (exactlyOne would report an ambiguity)
 }
 
@@ -430,8 +430,8 @@ only under the named format:
 @WireRepr(Repr.value, WireTarget.value) // AnyFormat, value slot only
 @WireRepr!Json(Repr.value, WireTarget.key) // Json only, AA key slot only
 
-@WireOptional                           // AnyFormat; whenEmpty, reject (the defaults)
-@WireOptional!Json                      // Json only
+@WireOptional()                         // AnyFormat; whenEmpty, reject (the defaults)
+@WireOptional!Json()                    // Json only
 @WireOptional(WireSkip.whenDefault)     // omit any field at its declared default
 @WireOptional(WireSkip.never)           // always emit; still missing-tolerant on decode
 @WireOptional(onInvalid: WireInvalid.useDefault) // present-but-invalid → field default
@@ -443,9 +443,9 @@ only under the named format:
 @WireConvert!(toWire, fromWire, Json)   // Json only
 @WireConvert!(toWire, void, Json)       // serialize-only, Json only
 
-@(WireMatch.exactlyOne)                 // AnyFormat, explicit default
+@(WireMatch.exactlyOne!())              // AnyFormat, explicit default
 @(WireMatch.exactlyOne!Json)            // Json only
-@(WireMatch.first)                      // AnyFormat
+@(WireMatch.first!())                   // AnyFormat
 @(WireMatch.first!Json)                 // Json only
 ```
 
@@ -453,6 +453,11 @@ Most `@Wire*` UDAs take the format as their first template argument when a
 format-specific policy is needed. The two exceptions are `WireConvert`, whose
 format tag is a trailing template argument, and `WireMatch`, whose format tag is a
 template argument on the chosen strategy (`WireMatch.first!Json`).
+
+`WireName`, `WireCase`, `WireRepr`, and `WireOptional` are attribute factories, so
+they are always written as a call — including the arg-less default, spelled
+`@WireOptional()` (or `@WireOptional!Json()`). Likewise the `AnyFormat` `WireMatch`
+forms take an explicit empty instantiation, `@(WireMatch.first!())`.
 
 ### 5.2 Resolution sites and precedence
 
@@ -579,7 +584,7 @@ both edges of that field's (de)serialization through two independent parameters:
 enum WireSkip { never, whenEmpty, whenDefault }   // encode omission
 enum WireInvalid { reject, useDefault }            // present-but-invalid decode
 
-@WireOptional                                  // whenEmpty, reject (the defaults)
+@WireOptional()                                // whenEmpty, reject (the defaults)
 @WireOptional(WireSkip.whenDefault)
 @WireOptional(WireSkip.never)
 @WireOptional(onInvalid: WireInvalid.useDefault)
@@ -609,7 +614,7 @@ object entirely instead of being written:
 
 - `WireSkip.whenEmpty` (default) — omit only when the field holds an empty
   null-aware value (empty `Nullable!T`/`Optional!T` or `Ternary.unknown`); every
-  other field, including `@WireOptional int count;`, is emitted as specified.
+  other field, including `@WireOptional() int count;`, is emitted as specified.
 - `WireSkip.whenDefault` — omit whenever the field value equals the field's
   **declared default** (by `==`): the value it holds in the enclosing aggregate's
   `.init` — its member initializer when the field has one, otherwise `T.init`.
