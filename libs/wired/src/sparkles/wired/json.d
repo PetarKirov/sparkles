@@ -48,7 +48,13 @@ JsonResult!JSONValue toJSON(T)(const T value)
 {
     alias U = Unqual!T;
 
-    static if (hasConvert!(Json, U))
+    static if (is(U == JSONValue))
+    {
+        JSONValue v = value; // mutable copy of the passed-through value
+        return ok!Exception(v);
+    }
+
+    else static if (hasConvert!(Json, U))
         return encodeVia!(convertOf!(Json, U), U)(value);
 
     else static if (is(U == bool) || is(U == string))
@@ -280,7 +286,10 @@ JsonResult!T fromJSON(T)(JSONValue json)
 {
     alias U = Unqual!T;
 
-    static if (hasConvert!(Json, U))
+    static if (is(U == JSONValue))
+        return ok!Exception(json);
+
+    else static if (hasConvert!(Json, U))
         return decodeVia!(convertOf!(Json, U), U)(json);
 
     else static if (is(U == bool))
@@ -822,6 +831,11 @@ if (is(E == enum))
     assert(fromJSON!int(JSONValue("42")).hasError);
     assert(fromJSON!ubyte(JSONValue(300)).hasError);
     assert(fromJSON!bool(JSONValue(1)).hasError);
+
+    // JSONValue passes through unchanged in both directions.
+    auto raw = JSONValue(["k": JSONValue(1)]);
+    assert(toJSON(raw).value == raw);
+    assert(fromJSON!JSONValue(raw).value == raw);
 }
 
 @("wired.json.floatRejectsNaN")
