@@ -319,6 +319,10 @@ export default withMermaid(
                       text: 'Conformance harness',
                       link: '/specs/base/text/conformance-harness',
                     },
+                    {
+                      text: 'Case-style spec',
+                      link: '/specs/base/text/case-style',
+                    },
                   ],
                 },
               ],
