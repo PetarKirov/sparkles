@@ -70,6 +70,19 @@ that matches any non-empty text:
 
 The literal output block is kept for display in rendered markdown, while the
 wildcard pattern handles verification against the actual (dynamic) output.
+
+To park a runnable example whose dependency does not exist yet (for example, a
+spec written before its implementation lands), place a `<!-- md-example-skip -->`
+HTML comment directly before its code block. A skipped example is neither built
+nor verified; removing the directive makes the example required again:
+
+---
+<!-- md-example-skip: sparkles:wired not implemented until M4 -->
+```d
+#!/usr/bin/env dub
+...
+```
+---
 +/
 
 // std.* modules
@@ -805,6 +818,15 @@ Example[] extractExamples(string content)
 
         auto codeLines = lines[idx + 1 .. idx + 1 + endIdx];
         auto codeEnd = idx + 1 + endIdx;
+
+        // An example explicitly marked <!-- md-example-skip --> is neither built
+        // nor verified. Advance past it; any adjacent output block is ignored as
+        // a non-`d` fence on the next iterations.
+        if (precededBySkipDirective(lines, codeStart))
+        {
+            idx = codeEnd;
+            continue;
+        }
 
         if (!isDubSingleFileBlock(codeLines))
         {
@@ -1833,6 +1855,31 @@ private string parseExpectedDirective(const(char[])[] lines, size_t startIdx)
     }
 
     return contentLines.length > 0 ? contentLines.join("\n") : null;
+}
+
+/// True when the code fence beginning at `codeStart` is immediately preceded
+/// (ignoring blank lines) by a `<!-- md-example-skip ... -->` directive.
+///
+/// A skipped example is neither built nor verified — used to park a runnable
+/// example whose dependency does not exist yet (e.g. a spec written before its
+/// implementation lands). Remove the directive to make the example required.
+@safe pure
+private bool precededBySkipDirective(const(char[])[] lines, size_t codeStart)
+{
+    enum openTag = "<!-- md-example-skip";
+    enum closeTag = "-->";
+
+    if (codeStart == 0)
+        return false;
+
+    ptrdiff_t i = cast(ptrdiff_t) codeStart - 1;
+    while (i >= 0 && lines[i].strip.length == 0)
+        i--;
+    if (i < 0)
+        return false;
+
+    auto s = lines[i].strip;
+    return s.startsWith(openTag) && s.endsWith(closeTag);
 }
 
 /// Checks if code lines represent a dub single-file program.
