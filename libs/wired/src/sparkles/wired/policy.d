@@ -486,3 +486,91 @@ if (hasConvert!(F, syms))
     // ...but the AnyFormat one still applies under a different format.
     static assert(convertOf!(Toml, S.both).to(3) == 4);
 }
+
+/// The first value in `names` that equals an earlier one, or `null` when all are
+/// distinct. CTFE helper for the uniqueness checks (§5.5).
+private string firstDuplicate(const(string)[] names)
+{
+    foreach (i, n; names)
+        foreach (m; names[0 .. i])
+            if (n == m)
+                return n;
+    return null;
+}
+
+/// Compile-time check that enum `E`'s resolved member names are unique under
+/// format `F` (after `WireName` and `WireCase` resolution) — the requirement for
+/// serializing `E` by `Repr.name` (§5.5). Evaluates to `true`, or fails a
+/// `static assert` naming the colliding name.
+template checkUniqueMemberNames(F, E)
+if (is(E == enum))
+{
+    private enum style = resolveCaseStyle!(F, E);
+    private enum string[] names = () {
+        string[] r;
+        static foreach (m; __traits(allMembers, E))
+            r ~= wireName!(F, __traits(getMember, E, m), style);
+        return r;
+    }();
+    private enum dup = firstDuplicate(names);
+    static assert(dup is null,
+        "wired: duplicate member name \"" ~ dup ~ "\" for enum " ~ E.stringof
+        ~ " under format " ~ F.stringof);
+    enum checkUniqueMemberNames = true;
+}
+
+/// Compile-time check that aggregate `S`'s resolved field keys are unique under
+/// format `F` (after field `WireName` and aggregate `WireCase` resolution, §5.5).
+/// Evaluates to `true`, or fails a `static assert` naming the colliding key.
+template checkUniqueFieldKeys(F, S)
+if (is(S == struct))
+{
+    private enum style = resolveCaseStyle!(F, S);
+    private enum string[] keys = () {
+        string[] r;
+        static foreach (i, field; S.tupleof)
+            r ~= wireName!(F, S.tupleof[i], style);
+        return r;
+    }();
+    private enum dup = firstDuplicate(keys);
+    static assert(dup is null,
+        "wired: duplicate field key \"" ~ dup ~ "\" for " ~ S.stringof
+        ~ " under format " ~ F.stringof);
+    enum checkUniqueFieldKeys = true;
+}
+
+@("wired.policy.uniqueness")
+@safe pure unittest
+{
+    struct Json
+    {
+    }
+
+    // The CTFE duplicate finder.
+    static assert(firstDuplicate(["a", "b", "c"]) is null);
+    static assert(firstDuplicate(["a", "b", "a"]) == "a");
+
+    // Distinct resolved names/keys pass.
+    @WireCase!Json(CaseStyle.snakeCase)
+    enum Mode { fastPath, @WireName!Json("turbo") slowPath }
+    static assert(checkUniqueMemberNames!(Json, Mode));
+
+    static struct S
+    {
+        @WireName!Json("id") int identifier;
+        int count;
+    }
+    static assert(checkUniqueFieldKeys!(Json, S));
+
+    // A rename collision is detected by the finder (a real one would fail the
+    // static assert at compile time).
+    @WireCase!Json(CaseStyle.snakeCase)
+    enum Clash { fastPath, @WireName!Json("fast_path") slowPath }
+    enum names = () {
+        string[] r;
+        static foreach (m; __traits(allMembers, Clash))
+            r ~= wireName!(Json, __traits(getMember, Clash, m), resolveCaseStyle!(Json, Clash));
+        return r;
+    }();
+    static assert(firstDuplicate(names) == "fast_path");
+}
