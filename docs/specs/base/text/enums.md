@@ -103,8 +103,6 @@ their results from the enum's declared members, so no runtime table is built.
 Rendering a member name, recased, and reading a member back from its underlying
 value:
 
-<!-- md-example-skip: sparkles.base.text.enums value API not implemented yet -->
-
 ```d
 #!/usr/bin/env dub
 /+ dub.sdl:
@@ -138,8 +136,6 @@ false expected one of: 1, 5
 ```
 
 A non-integer-backed enum round-trips through its underlying value:
-
-<!-- md-example-skip: sparkles.base.text.enums value API not implemented yet -->
 
 ```d
 #!/usr/bin/env dub

@@ -9,7 +9,7 @@ module sparkles.base.text.writers;
 import core.time : Duration;
 
 import sparkles.base.term_style : Style;
-import sparkles.base.text.enums : StringRepresentation, enumMemberName;
+import sparkles.base.text.case_style : CaseStyle, convertCase;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Integer Writing
@@ -791,30 +791,41 @@ unittest
 // Enum Member Name Writing
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Writes an enum value's member name to an output range. @nogc-compatible.
+/// Writes an enum value's member name, recased per `style`, to an output range.
+/// @nogc-compatible.
 ///
-/// Uses the shared `enumMemberName` policy (`sparkles.base.text.enums`) for a
-/// direct compile-time lookup of the matched member. Falls back to writing the
-/// underlying integer value if no member matches (e.g., combined bit flags).
-void writeEnumMemberName(E, Writer)(ref Writer w, const E val)
+/// Each member's identifier is recased with `convertCase!style`
+/// (`sparkles.base.text.case_style`). Falls back to writing the underlying value
+/// when no member matches (e.g. combined bit flags), so — unlike the strict
+/// `enumMemberName` (`sparkles.base.text.enums`) — it never asserts.
+void writeEnumMemberName(CaseStyle style = CaseStyle.original, Writer, E)(ref Writer w, const E val)
 if (is(E == enum))
 {
     import std.range.primitives : put;
     import std.traits : OriginalType;
 
-    bool matched = false;
-
     static foreach (member; __traits(allMembers, E))
     {{
-        if (!matched && val == __traits(getMember, E, member))
+        if (val == __traits(getMember, E, member))
         {
-            put(w, enumMemberName!(__traits(getMember, E, member)));
-            matched = true;
+            enum string name = convertCase!style(member);
+            put(w, name);
+            return;
         }
     }}
 
-    if (!matched)
-        writeInteger(w, cast(OriginalType!E) val);
+    writeValue(w, cast(OriginalType!E) val);
+}
+
+/// Writes an enum value's underlying value (`cast(OriginalType!E)`) to an output
+/// range, using $(LREF writeValue). The value-representation counterpart of
+/// $(LREF writeEnumMemberName).
+void writeEnumValue(Writer, E)(ref Writer w, const E val)
+if (is(E == enum))
+{
+    import std.traits : OriginalType;
+
+    writeValue(w, cast(OriginalType!E) val);
 }
 
 @("writeEnumMemberName.basic")
@@ -830,21 +841,17 @@ unittest
     assert(buf[] == "green");
 }
 
-@("writeEnumMemberName.stringRepresentation")
+@("writeEnumMemberName.recased")
 @safe pure nothrow @nogc
 unittest
 {
     import sparkles.base.smallbuffer : SmallBuffer;
 
-    enum Color
-    {
-        @StringRepresentation("bright-red") red,
-        green,
-    }
+    enum Mode { fastPath, slowPath }
 
     SmallBuffer!(char, 32) buf;
-    writeEnumMemberName(buf, Color.red);
-    assert(buf[] == "bright-red");
+    writeEnumMemberName!(CaseStyle.snakeCase)(buf, Mode.fastPath);
+    assert(buf[] == "fast_path");
 }
 
 @("writeEnumMemberName.fallback")
@@ -858,6 +865,19 @@ unittest
     SmallBuffer!(char, 32) buf;
     writeEnumMemberName(buf, cast(Flags) 3);
     assert(buf[] == "3");
+}
+
+@("writeEnumValue.basic")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    enum Priority { low = 1, high = 5 }
+
+    SmallBuffer!(char, 32) buf;
+    writeEnumValue(buf, Priority.high);
+    assert(buf[] == "5");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

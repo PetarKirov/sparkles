@@ -16,7 +16,7 @@ module sparkles.base.text.readers;
 
 import std.traits : isUnsigned;
 
-import sparkles.base.text.enums : enumMemberName;
+import sparkles.base.text.case_style : CaseStyle, convertCase;
 import sparkles.base.text.errors :
     ParseErrorCode, ParseExpected, parseErr, parseOk;
 
@@ -118,7 +118,7 @@ const(char)[] readUntil(return ref scope const(char)[] s, scope const(char)[] de
 /// The enum's member names joined as `"a, b, c"`, computed at compile time —
 /// the body of the `"expected one of: …"` detail $(LREF readEnumString) attaches
 /// to an `unknownValue` error.
-private template enumExpectedList(E)
+private template enumExpectedList(E, CaseStyle style)
 if (is(E == enum))
 {
     enum string enumExpectedList = {
@@ -127,7 +127,7 @@ if (is(E == enum))
         {
             static if (i)
                 s ~= ", ";
-            s ~= enumMemberName!(__traits(getMember, E, memberName));
+            s ~= convertCase!style(memberName);
         }
         return s;
     }();
@@ -136,9 +136,9 @@ if (is(E == enum))
 /**
 Reads an enum member name from the front of `s`, advancing past it on success.
 
-The inverse of `writeEnumMemberName` (`sparkles.base.text.writers`): each
-member is matched by its $(REF enumMemberName, sparkles,base,text,enums)
-policy text (the `@StringRepresentation` override, else the source identifier).
+The inverse of `writeEnumMemberName` (`sparkles.base.text.writers`): each member
+is matched by its identifier recased with `convertCase!style`
+(`sparkles.base.text.case_style`); `style` defaults to `CaseStyle.original`.
 Matching is greedy — the longest member name that is a prefix of `s` wins, so
 names that prefix one another (e.g. `fast` / `faster`) resolve to the longer.
 
@@ -147,7 +147,7 @@ name is a prefix (`unknownValue`, with a `"expected one of: …"` context). For
 an exact whole-token match (e.g. a JSON key), check that `s` is empty
 afterwards.
 */
-ParseExpected!E readEnumString(E)(ref scope const(char)[] s)
+ParseExpected!E readEnumString(E, CaseStyle style = CaseStyle.original)(ref scope const(char)[] s)
 if (is(E == enum))
 {
     if (s.length == 0)
@@ -159,7 +159,7 @@ if (is(E == enum))
 
     static foreach (memberName; __traits(allMembers, E))
     {{
-        enum name = enumMemberName!(__traits(getMember, E, memberName));
+        enum name = convertCase!style(memberName);
         if (name.length > bestLen && s.length >= name.length && s[0 .. name.length] == name)
         {
             bestLen = name.length;
@@ -170,7 +170,7 @@ if (is(E == enum))
 
     if (!matched)
     {
-        enum string msg = "expected one of: " ~ enumExpectedList!E;
+        enum string msg = "expected one of: " ~ enumExpectedList!(E, style);
         return parseErr!E(ParseErrorCode.unknownValue, 0, msg);
     }
 
@@ -254,22 +254,17 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.base.text.enums : StringRepresentation;
+    enum Mode { fastMode, slow }
 
-    enum Mode
-    {
-        @StringRepresentation("fast-mode") fast,
-        slow,
-    }
-
+    // Under kebab-case, `fastMode` is matched as `fast-mode`.
     const(char)[] s = "fast-mode!";
-    auto r = readEnumString!Mode(s);
+    auto r = readEnumString!(Mode, CaseStyle.kebabCase)(s);
     assert(r.hasValue);
-    assert(r.value == Mode.fast);
+    assert(r.value == Mode.fastMode);
     assert(s == "!"); // advanced past the member name only
 
     const(char)[] t = "slow";
-    assert(readEnumString!Mode(t).value == Mode.slow);
+    assert(readEnumString!(Mode, CaseStyle.kebabCase)(t).value == Mode.slow);
     assert(t.length == 0);
 }
 

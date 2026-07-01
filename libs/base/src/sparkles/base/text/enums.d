@@ -1,100 +1,70 @@
 /**
-Enum text conversion policy.
+Enum ↔ text/value conversion.
 
-This module is the single source of truth for an enum's human-readable
-member-name policy: members render as their source member name unless
-annotated with $(LREF StringRepresentation). It deliberately stays format-
-agnostic (no JSON, no styling) so the conventional views can build on it:
+Format-agnostic primitives for an enum's two serialized forms:
 
 $(UL
-    $(LI $(LREF enumToString) — the borrowed-string view (this module).)
-    $(LI `writeEnumMemberName` (`sparkles.base.text.writers`) — the
-        output-range writer view.)
-    $(LI `readEnumString` (`sparkles.base.text.readers`) — the
-        slice-advancing reader view (the inverse).)
+    $(LI $(LREF enumMemberName) — a value's member name, recased per a
+        $(REF CaseStyle, sparkles,base,text,case_style).)
+    $(LI $(LREF enumFromValue) — a membership-checked underlying value back to
+        the enum.)
 )
+
+The module is unopinionated — it applies no per-member name override (that is a
+policy concern for a layer such as `@WireName` in `sparkles:wired`). The inverse
+name direction is `readEnumString` (`sparkles.base.text.readers`); the
+output-range writers are `writeEnumMemberName` / `writeEnumValue`
+(`sparkles.base.text.writers`).
 */
 module sparkles.base.text.enums;
 
 import std.traits : OriginalType;
 
+import sparkles.base.text.case_style : CaseStyle, convertCase;
 import sparkles.base.text.errors : ParseExpected;
 
-/// Optional enum-member UDA that overrides the member's textual name.
-struct StringRepresentation
-{
-    string repr; /// replacement text for the enum member
-}
-
 /**
-The textual name policy for a single enum `member`, resolved at compile time:
-the $(LREF StringRepresentation) override when present, else the source
-member identifier. This is the shared primitive the string / writer / reader
-views all derive from.
+The name of the declared member equal to `value`, recased per `style` as a
+compile-time string literal (so the call allocates nothing).
+
+`value` must be a declared member of `E`. The generated `final switch` rejects a
+duplicate-valued enum at compile time (duplicate `case` labels) and asserts on a
+value that is not a declared member.
 */
-template enumMemberName(alias member)
-if (is(typeof(member) == enum))
-{
-    import std.traits : getUDAs, hasUDA;
-
-    static if (hasUDA!(member, StringRepresentation))
-        enum string enumMemberName = getUDAs!(member, StringRepresentation)[0].repr;
-    else
-        enum string enumMemberName = __traits(identifier, member);
-}
-
-/**
-Returns the text representation for `value` as a borrowed compile-time string
-(a string literal — no allocation, so callers stay `@nogc`).
-
-Valid enum values render as the member name, or the
-$(LREF StringRepresentation) override when present. Invalid enum values
-trigger an assertion; use the output-range writer `writeEnumMemberName`
-(`sparkles.base.text.writers`) when invalid bit-flag combinations need a
-numeric fallback, or the reader `readEnumString`
-(`sparkles.base.text.readers`) for the inverse direction.
-*/
-string enumToString(E)(in E value)
+string enumMemberName(CaseStyle style = CaseStyle.original, E)(in E value)
 if (is(E == enum))
 {
-    bool matched;
-    string result;
-
-    static foreach (memberName; __traits(allMembers, E))
-    {{
-        alias member = __traits(getMember, E, memberName);
-        if (!matched && value == member)
+    final switch (value)
+    {
+        static foreach (name; __traits(allMembers, E))
         {
-            result = enumMemberName!member;
-            matched = true;
+            case __traits(getMember, E, name):
+            {
+                enum string result = convertCase!style(name);
+                return result;
+            }
         }
-    }}
-
-    assert(matched, "Invalid enum value");
-    return result;
+    }
 }
 
-@("text.enums.enumToString.defaultNames")
+@("text.enums.enumMemberName.defaultOriginal")
 @safe pure nothrow @nogc
 unittest
 {
     enum Color { red, green, blue }
 
-    assert(enumToString(Color.green) == "green");
+    assert(enumMemberName(Color.green) == "green");
 }
 
-@("text.enums.enumToString.stringRepresentation")
+@("text.enums.enumMemberName.recased")
 @safe pure nothrow @nogc
 unittest
 {
-    enum WireKind
-    {
-        @StringRepresentation("wire-kind") wireKind,
-        defaultKind,
-    }
+    enum Mode { fastPath, slowPath }
 
-    assert(enumToString(WireKind.wireKind) == "wire-kind");
-    assert(enumToString(WireKind.defaultKind) == "defaultKind");
+    assert(enumMemberName!(CaseStyle.snakeCase)(Mode.fastPath) == "fast_path");
+    assert(enumMemberName!(CaseStyle.kebabCase)(Mode.slowPath) == "slow-path");
+    assert(enumMemberName(Mode.fastPath) == "fastPath"); // original by default
 }
 
 /// The enum's declared underlying values joined as `"1, 5"` (or, for a string-
@@ -106,7 +76,6 @@ if (is(E == enum))
 {
     enum string enumValueList = {
         import std.conv : to;
-        import std.traits : OriginalType;
 
         string s;
         static foreach (i, memberName; __traits(allMembers, E))
@@ -131,8 +100,7 @@ underlying values. Never throws, never allocates.
 ParseExpected!E enumFromValue(E)(OriginalType!E value)
 if (is(E == enum))
 {
-    import std.traits : OriginalType;
-    import sparkles.base.text.errors : ParseErrorCode, ParseExpected, parseErr, parseOk;
+    import sparkles.base.text.errors : ParseErrorCode, parseErr, parseOk;
 
     static foreach (memberName; __traits(allMembers, E))
         if (value == cast(OriginalType!E) __traits(getMember, E, memberName))
