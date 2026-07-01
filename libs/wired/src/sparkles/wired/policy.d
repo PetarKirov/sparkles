@@ -344,3 +344,70 @@ template wireName(F, alias sym, CaseStyle style)
     static assert(resolveCaseStyle!(Json, S.a, Mode) == CaseStyle.kebabCase);
     static assert(resolveCaseStyle!(Json, S.b, Mode) == CaseStyle.snakeCase);
 }
+
+/// Whether aggregate field `field` is optional under format `F` — i.e. carries a
+/// `@WireOptional` for `F` or for `AnyFormat` (§5.4).
+enum bool isOptional(F, alias field) =
+    firstAttr!(field, WireOptionalAttr, F, anyAttr) >= 0
+    || firstAttr!(field, WireOptionalAttr, AnyFormat, anyAttr) >= 0;
+
+/// The resolved `@WireOptional` policy for `field` under `F` (exact `F` over
+/// `AnyFormat`). Instantiable only when $(LREF isOptional) is true.
+template optionalPolicy(F, alias field)
+if (isOptional!(F, field))
+{
+    static if (firstAttr!(field, WireOptionalAttr, F, anyAttr) >= 0)
+        enum optionalPolicy = getUDAs!(field, WireOptionalAttr)[firstAttr!(field, WireOptionalAttr, F, anyAttr)];
+    else
+        enum optionalPolicy = getUDAs!(field, WireOptionalAttr)[firstAttr!(field, WireOptionalAttr, AnyFormat, anyAttr)];
+}
+
+/// The `SumType` decode strategy resolved for `field` under `F`: a
+/// `@(WireMatch.…!F)`, then `@(WireMatch.…!Any)`, else `MatchStrategy.exactlyOne`
+/// (§4.7).
+template resolveMatch(F, alias field)
+{
+    enum MatchStrategy resolveMatch = () {
+        static if (firstAttr!(field, WireMatchPolicy, F, anyAttr) >= 0)
+            return getUDAs!(field, WireMatchPolicy)[firstAttr!(field, WireMatchPolicy, F, anyAttr)].strategy;
+        else static if (firstAttr!(field, WireMatchPolicy, AnyFormat, anyAttr) >= 0)
+            return getUDAs!(field, WireMatchPolicy)[firstAttr!(field, WireMatchPolicy, AnyFormat, anyAttr)].strategy;
+        else
+            return MatchStrategy.exactlyOne;
+    }();
+}
+
+@("wired.policy.resolve.optionalAndMatch")
+@safe pure unittest
+{
+    struct Json
+    {
+    }
+
+    struct Toml
+    {
+    }
+
+    static struct S
+    {
+        int required;
+        @WireOptional() int opt;
+        @WireOptional!Json(WireSkip.whenDefault, WireInvalid.useDefault) int jopt;
+        int plainSum;
+        @(WireMatch.first!Json) int jmatch;
+        @(WireMatch.first!()) int amatch;
+    }
+
+    // Optionality and its resolved policy.
+    static assert(!isOptional!(Json, S.required));
+    static assert(isOptional!(Json, S.opt));
+    static assert(optionalPolicy!(Json, S.opt).skip == WireSkip.whenEmpty);
+    static assert(optionalPolicy!(Json, S.jopt).skip == WireSkip.whenDefault);
+    static assert(optionalPolicy!(Json, S.jopt).onInvalid == WireInvalid.useDefault);
+
+    // Match strategy: exact format, AnyFormat, and the exactlyOne default.
+    static assert(resolveMatch!(Json, S.plainSum) == MatchStrategy.exactlyOne);
+    static assert(resolveMatch!(Json, S.jmatch) == MatchStrategy.first);
+    static assert(resolveMatch!(Toml, S.jmatch) == MatchStrategy.exactlyOne); // !Json inert under Toml
+    static assert(resolveMatch!(Toml, S.amatch) == MatchStrategy.first);      // AnyFormat applies
+}
