@@ -47,7 +47,10 @@ JsonResult!JSONValue toJSON(T)(const T value)
 {
     alias U = Unqual!T;
 
-    static if (is(U == bool) || is(U == string))
+    static if (hasConvert!(Json, U))
+        return encodeVia!(convertOf!(Json, U), U)(value);
+
+    else static if (is(U == bool) || is(U == string))
         return ok!Exception(JSONValue(value));
 
     else static if (is(U == enum))
@@ -156,7 +159,10 @@ private JsonResult!JSONValue encodeFieldValue(T, size_t i)(const typeof(T.tupleo
 {
     alias V = typeof(T.tupleof[i]);
 
-    static if (is(V == enum))
+    static if (hasConvert!(Json, T.tupleof[i]))
+        return encodeVia!(convertOf!(Json, T.tupleof[i]), V)(value);
+
+    else static if (is(V == enum))
         return encodeEnumWith!(V,
             resolveReprFor!(Json, WireTarget.all, T.tupleof[i], V),
             resolveCaseFor!(Json, WireTarget.all, T.tupleof[i], V))(value);
@@ -189,7 +195,10 @@ JsonResult!T fromJSON(T)(JSONValue json)
 {
     alias U = Unqual!T;
 
-    static if (is(U == bool))
+    static if (hasConvert!(Json, U))
+        return decodeVia!(convertOf!(Json, U), U)(json);
+
+    else static if (is(U == bool))
     {
         if (json.type != JSONType.true_ && json.type != JSONType.false_)
             return fail!T("Cannot decode bool at $: expected a JSON boolean");
@@ -449,7 +458,10 @@ private JsonResult!(typeof(T.tupleof[i])) decodeFieldValue(T, size_t i)(JSONValu
 {
     alias V = typeof(T.tupleof[i]);
 
-    static if (is(V == enum))
+    static if (hasConvert!(Json, T.tupleof[i]))
+        return decodeVia!(convertOf!(Json, T.tupleof[i]), V)(json);
+
+    else static if (is(V == enum))
         return decodeEnumWith!(V,
             resolveReprFor!(Json, WireTarget.all, T.tupleof[i], V),
             resolveCaseFor!(Json, WireTarget.all, T.tupleof[i], V))(json);
@@ -481,6 +493,57 @@ private JsonResult!(typeof(T.tupleof[i])) decodeFieldValue(T, size_t i)(JSONValu
 /// True for the null-aware wrapper types whose empty value maps to JSON `null`
 /// and whose missing key decodes to that empty value (§4.5).
 private enum bool isNullAware(V) = is(V == Nullable!N, N) || is(V == Ternary);
+
+/// Duck-types the `expected` result so a converter may return either a plain
+/// value or an `Expected!(Value, Exception)` (§8).
+private enum bool isExpectedLike(X) =
+    __traits(hasMember, X, "hasValue") && __traits(hasMember, X, "hasError")
+    && __traits(hasMember, X, "value") && __traits(hasMember, X, "error");
+
+/// Encodes `value` through the resolved `@WireConvert` `Conv`: `toWire(value)` is
+/// encoded normally; an `Expected`-returning `toWire` is unwrapped, its failure
+/// propagated (§8).
+private JsonResult!JSONValue encodeVia(alias Conv, V)(const V value)
+{
+    auto wire = Conv.to(value);
+    static if (isExpectedLike!(typeof(wire)))
+    {
+        if (wire.hasError)
+            return err!JSONValue(wire.error);
+        return toJSON(wire.value);
+    }
+    else
+        return toJSON(wire);
+}
+
+/// Decodes into `V` through the resolved `@WireConvert` `Conv`: the wire type is
+/// inferred from `toWire`'s return for `V`, decoded, then passed to `fromWire`
+/// (§8). A serialize-only converter (no `fromWire`) is unsupported at compile time.
+private JsonResult!V decodeVia(alias Conv, V)(JSONValue json)
+{
+    static assert(!is(Conv.from == void),
+        "wired: a serialize-only @WireConvert cannot decode " ~ V.stringof);
+
+    alias Raw = typeof(Conv.to(V.init));
+    static if (isExpectedLike!Raw)
+        alias WireT = typeof(Raw.init.value);
+    else
+        alias WireT = Raw;
+
+    auto raw = fromJSON!WireT(json);
+    if (raw.hasError)
+        return err!V(raw.error);
+
+    auto back = Conv.from(raw.value);
+    static if (isExpectedLike!(typeof(back)))
+    {
+        if (back.hasError)
+            return err!V(back.error);
+        return ok!Exception(back.value);
+    }
+    else
+        return ok!Exception(back);
+}
 
 private JsonResult!JSONValue encodeAA(T)(const T value)
 if (is(T == V[K], V, K))
@@ -806,6 +869,23 @@ if (is(E == enum))
     auto jv = toJSON(byVal).value;
     assert(jv["1"] == JSONValue("lo") && jv["5"] == JSONValue("hi"));
     assert(fromJSON!(string[Priority])(jv).value == byVal);
+}
+
+@("wired.json.wireConvert")
+@system unittest
+{
+    import core.time : Duration, msecs;
+
+    static struct Timer
+    {
+        @WireConvert!(d => d.total!"msecs", ms => msecs(ms))
+        Duration timeout;
+    }
+
+    auto t = Timer(1500.msecs);
+    auto json = toJSON(t).value;
+    assert(json["timeout"] == JSONValue(1500)); // Duration encoded as its ms count
+    assert(fromJSON!Timer(json).value == t);     // round-trips back to a Duration
 }
 
 version (unittest) private JSONValue parseObject(string s)
