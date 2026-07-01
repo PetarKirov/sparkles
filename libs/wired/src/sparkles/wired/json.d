@@ -14,7 +14,7 @@ up; the remaining supported types (`SumType`, null-aware wrappers, `SysTime`,
 module sparkles.wired.json;
 
 import std.datetime.systime : SysTime;
-import std.json : JSONValue, JSONType;
+import std.json : JSONValue, JSONType, parseJSON;
 import std.sumtype : isSumType, match, SumType;
 import std.traits : isFloatingPoint, isIntegral, isSomeChar, OriginalType,
     TemplateArgsOf, Unqual;
@@ -192,6 +192,75 @@ private JsonResult!JSONValue encodeFieldValue(T, size_t i)(const typeof(T.tupleo
 
     else
         return toJSON(value);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// File helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Reads UTF-8 from `path`, parses it, and decodes it into a `T` — without
+/// throwing (§4.1). The error identifies the failing stage (read, parse, decode).
+JsonResult!T readJSONFile(T)(string path)
+{
+    import std.file : readText;
+
+    string text;
+    try
+        text = readText(path);
+    catch (Exception e)
+        return fail!T("Cannot read " ~ path ~ ": " ~ e.msg);
+
+    JSONValue json;
+    try
+        json = parseJSON(text);
+    catch (Exception e)
+        return fail!T("Cannot parse " ~ path ~ ": " ~ e.msg);
+
+    auto r = fromJSON!T(json);
+    if (r.hasError)
+        return fail!T("Cannot decode " ~ path ~ ": " ~ r.error.msg);
+    return r;
+}
+
+/// Encodes `value` and writes it to `path` atomically (temp file in the same
+/// directory + rename) with a trailing newline, creating missing parent
+/// directories — without throwing (§4.1). `compact` selects single-line vs pretty
+/// rendering; both use `doNotEscapeSlashes`.
+JsonResult!void writeJSONFile(T)(const T value, string path, bool compact = false)
+{
+    import std.file : mkdirRecurse, rename, write;
+    import std.json : JSONOptions;
+    import std.path : dirName;
+
+    auto enc = toJSON(value);
+    if (enc.hasError)
+        return err!void(enc.error);
+
+    string text = compact
+        ? enc.value.toString(JSONOptions.doNotEscapeSlashes)
+        : enc.value.toPrettyString(JSONOptions.doNotEscapeSlashes);
+    text ~= "\n";
+
+    const dir = path.dirName;
+    try
+    {
+        if (dir.length && dir != ".")
+            mkdirRecurse(dir);
+    }
+    catch (Exception e)
+        return err!void(new Exception(
+            "Cannot create parent directory of " ~ path ~ ": " ~ e.msg));
+
+    const tmp = path ~ ".wired-tmp";
+    try
+    {
+        write(tmp, text);
+        rename(tmp, path);
+    }
+    catch (Exception e)
+        return err!void(new Exception("Cannot write " ~ path ~ ": " ~ e.msg));
+
+    return ok!Exception();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -964,8 +1033,28 @@ if (is(E == enum))
     assert(fromJSON!T2(parseObject(`{"x":"nope"}`)).hasError);
 }
 
+@("wired.json.fileHelpers")
+@system unittest
+{
+    import std.file : exists, remove, readText, tempDir;
+    import std.path : buildPath;
+
+    static struct Cfg { string host; int port; }
+
+    const path = buildPath(tempDir, "wired-test-cfg.json");
+    scope(exit) if (path.exists) remove(path);
+
+    assert(!writeJSONFile(Cfg("localhost", 8080), path).hasError);
+    assert(readText(path)[$ - 1] == '\n'); // trailing newline
+
+    auto r = readJSONFile!Cfg(path);
+    assert(r.hasValue && r.value == Cfg("localhost", 8080));
+
+    // Missing file → read-stage error.
+    assert(readJSONFile!Cfg(buildPath(tempDir, "wired-does-not-exist.json")).hasError);
+}
+
 version (unittest) private JSONValue parseObject(string s)
 {
-    import std.json : parseJSON;
     return parseJSON(s);
 }
