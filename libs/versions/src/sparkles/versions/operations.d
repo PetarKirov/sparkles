@@ -122,17 +122,13 @@ if (hasSemVerComponents!T)
 
 /**
 The npm caret operator: `^1.2.3` admits every version `>= 1.2.3` and
-`< 2.0.0` (compatible within the major). Requires the SemVer triple.
-
-A clear compile-time diagnostic fires for a scheme without the triple.
+`< 2.0.0` (compatible within the major). Constrained to schemes with the
+SemVer triple (`hasSemVerComponents!V`); other schemes don't match, so
+`caret` is a compile error for them — build the range explicitly instead.
 */
 Ranges!V caret(V)(in V v) @safe
+if (hasSemVerComponents!V)
 {
-    static assert(hasSemVerComponents!V,
-        "caret/tilde require components beginning [\"major\",\"minor\",\"patch\"] "
-        ~ "(hasSemVerComponents!V). " ~ V.stringof
-        ~ " has no SemVer triple; build the range explicitly instead.");
-
     const upper = bumpComponent!(V, 0)(v); // next major, minor/patch zeroed
     return Ranges!V.between(stripExtras(v), upper);
 }
@@ -142,12 +138,8 @@ The npm tilde operator: `~1.2.3` admits every version `>= 1.2.3` and
 `< 1.3.0` (compatible within the minor). Requires the SemVer triple.
 */
 Ranges!V tilde(V)(in V v) @safe
+if (hasSemVerComponents!V)
 {
-    static assert(hasSemVerComponents!V,
-        "caret/tilde require components beginning [\"major\",\"minor\",\"patch\"] "
-        ~ "(hasSemVerComponents!V). " ~ V.stringof
-        ~ " has no SemVer triple; build the range explicitly instead.");
-
     const upper = bumpComponent!(V, 1)(v); // next minor, patch zeroed
     return Ranges!V.between(stripExtras(v), upper);
 }
