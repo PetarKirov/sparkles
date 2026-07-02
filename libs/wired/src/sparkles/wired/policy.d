@@ -491,10 +491,13 @@ if (hasConvert!(F, syms))
 /// distinct. CTFE helper for the uniqueness checks (§5.5).
 private string firstDuplicate(const(string)[] names)
 {
-    foreach (i, n; names)
-        foreach (m; names[0 .. i])
-            if (n == m)
-                return n;
+    bool[string] seen;
+    foreach (n; names)
+    {
+        if (n in seen)
+            return n;
+        seen[n] = true;
+    }
     return null;
 }
 
