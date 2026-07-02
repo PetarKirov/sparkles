@@ -542,14 +542,7 @@ private string firstDuplicate(const(string)[] names)
 template checkUniqueMemberNames(F, E)
 if (is(E == enum))
 {
-    private enum style = resolveCaseStyle!(F, E);
-    private enum string[] names = () {
-        string[] r;
-        static foreach (m; __traits(allMembers, E))
-            r ~= wireName!(F, __traits(getMember, E, m), style);
-        return r;
-    }();
-    private enum dup = firstDuplicate(names);
+    private enum dup = firstDuplicate(wireNames!(F, E, resolveCaseStyle!(F, E)));
     static assert(dup is null,
         "wired: duplicate member name \"" ~ dup ~ "\" for enum " ~ E.stringof
         ~ " under format " ~ F.stringof);
@@ -562,14 +555,12 @@ if (is(E == enum))
 template checkUniqueFieldKeys(F, S)
 if (is(S == struct))
 {
-    private enum style = resolveCaseStyle!(F, S);
-    private enum string[] keys = () {
-        string[] r;
-        static foreach (i, field; S.tupleof)
-            r ~= wireName!(F, S.tupleof[i], style);
-        return r;
+    private enum dup = () {
+        string[] keys;
+        foreach (p; fieldPolicies!(F, S))
+            keys ~= p.key;
+        return firstDuplicate(keys);
     }();
-    private enum dup = firstDuplicate(keys);
     static assert(dup is null,
         "wired: duplicate field key \"" ~ dup ~ "\" for " ~ S.stringof
         ~ " under format " ~ F.stringof);
@@ -692,4 +683,307 @@ template resolveReprFor(F, WireTarget slot, alias field, E)
     // Value-targeted case reaches the element; the (absent) key slot falls back.
     static assert(resolveCaseFor!(Json, WireTarget.value, S.modes, Mode) == CaseStyle.snakeCase);
     static assert(resolveCaseFor!(Json, WireTarget.all, S.states, Status) == CaseStyle.original);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Aggregated policy gathering
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// The fine-grained resolvers above answer one question about one symbol and are
+// the normative §5 semantics. A format backend walking a whole aggregate would
+// ask them ~10 times per field, instantiating a getUDAs scan each time. The
+// aggregated views below make one pass per (format, type) instead, reading
+// `__traits(getAttributes, …)` inline in a single CTFE initializer and reducing
+// every value-carrying attribute to a plain data table the walk indexes into.
+// Only `@WireConvert` stays on the per-symbol path — it carries alias transforms
+// that cannot live in a value.
+
+/// Recases `ident` under a run-time `style` — the dispatch `convertCase` needs
+/// when the style is a CTFE value rather than a template argument.
+private string convertCaseOf(CaseStyle style, string ident) @safe pure
+{
+    final switch (style)
+    {
+        static foreach (m; __traits(allMembers, CaseStyle))
+        {
+            case __traits(getMember, CaseStyle, m):
+                return convertCase!(__traits(getMember, CaseStyle, m))(ident);
+        }
+    }
+}
+
+/// The value-level policy of one aggregate field under a format: everything the
+/// struct walk needs about the field except its (alias-carrying) `@WireConvert`.
+/// Produced by $(LREF fieldPolicies); the slot lattice is finished by
+/// $(LREF caseFor) / $(LREF reprFor) once the slot type's own policy is known.
+struct FieldPolicy
+{
+    string key;                 /// the resolved wire key (§5.1, §6)
+    bool optional;              /// carries `@WireOptional` (§5.4)
+    WireSkip skip = WireSkip.never;                 /// encode omission policy
+    WireInvalid onInvalid = WireInvalid.reject;     /// present-but-invalid policy
+    MatchStrategy match = MatchStrategy.exactlyOne; /// `SumType` strategy (§4.7)
+    bool[3] hasCase;            /// field-level `WireCase` present, per target
+    CaseStyle[3] caseStyle;     /// … and its style, per target
+    bool[3] hasRepr;            /// field-level `WireRepr` present, per target
+    Repr[3] repr;               /// … and its repr, per target
+
+    /// The §5.2-resolved `CaseStyle` for `slot`, given `typeStyle` — the slot
+    /// type's own broad resolution (which already folds in the default).
+    CaseStyle caseFor(WireTarget slot, CaseStyle typeStyle) const @safe pure nothrow @nogc
+    {
+        if (slot != WireTarget.all && hasCase[slot])
+            return caseStyle[slot];
+        if (hasCase[WireTarget.all])
+            return caseStyle[WireTarget.all];
+        return typeStyle;
+    }
+
+    /// The §5.2-resolved `Repr` for `slot`, given `typeRepr` — the slot type's
+    /// own broad resolution (which already folds in the default).
+    Repr reprFor(WireTarget slot, Repr typeRepr) const @safe pure nothrow @nogc
+    {
+        if (slot != WireTarget.all && hasRepr[slot])
+            return repr[slot];
+        if (hasRepr[WireTarget.all])
+            return repr[WireTarget.all];
+        return typeRepr;
+    }
+}
+
+/// The per-field policies of aggregate `T` under format `F`, resolved in one
+/// compile-time pass: one entry per field of `T.tupleof`, excluding the hidden
+/// context pointer of a nested struct. Exact-`F` attributes win over `AnyFormat`
+/// ones, first-written wins within a tier, and field keys apply an explicit
+/// `@WireName` else the identifier recased by `T`'s aggregate `@WireCase` (§5.1).
+template fieldPolicies(F, T)
+if (is(T == struct))
+{
+    // `static immutable`, not `enum`: a manifest-constant array is re-copied at
+    // every use site (each `fieldPolicies!(F, T)[i]` would re-materialize all N
+    // entries in CTFE — O(N²) over a struct walk); this is built once and its
+    // reads constant-fold.
+    static immutable FieldPolicy[] fieldPolicies = () {
+        // Tier per slot: 0 = unset, 1 = AnyFormat, 2 = exact-F; higher wins,
+        // first-written wins within a tier (matching pickAttr's scan order).
+        int aggTier = 0;
+        CaseStyle aggStyle = CaseStyle.original;
+        static foreach (uda; __traits(getAttributes, T))
+        {
+            static if (is(typeof(uda) == WireCaseAttr!F))
+            {
+                if (uda.target == WireTarget.all && aggTier < 2)
+                {
+                    aggStyle = uda.style;
+                    aggTier = 2;
+                }
+            }
+            else static if (is(typeof(uda) == WireCaseAttr!AnyFormat))
+            {
+                if (uda.target == WireTarget.all && aggTier < 1)
+                {
+                    aggStyle = uda.style;
+                    aggTier = 1;
+                }
+            }
+        }
+
+        FieldPolicy[] r;
+        static foreach (i; 0 .. T.tupleof.length - __traits(isNested, T))
+        {{
+            FieldPolicy p;
+            string explicitName;
+            int nameTier, optTier, matchTier;
+            int[3] caseTier, reprTier;
+
+            static foreach (uda; __traits(getAttributes, T.tupleof[i]))
+            {{
+                static if (is(typeof(uda) == WireNameAttr!F))
+                    enum tier = 2;
+                else static if (is(typeof(uda) == WireNameAttr!AnyFormat))
+                    enum tier = 1;
+                static if (is(typeof(tier)))
+                {
+                    if (nameTier < tier)
+                    {
+                        explicitName = uda.name;
+                        nameTier = tier;
+                    }
+                }
+
+                static if (is(typeof(uda) == WireCaseAttr!F))
+                    enum caseT = 2;
+                else static if (is(typeof(uda) == WireCaseAttr!AnyFormat))
+                    enum caseT = 1;
+                static if (is(typeof(caseT)))
+                {
+                    if (caseTier[uda.target] < caseT)
+                    {
+                        p.hasCase[uda.target] = true;
+                        p.caseStyle[uda.target] = uda.style;
+                        caseTier[uda.target] = caseT;
+                    }
+                }
+
+                static if (is(typeof(uda) == WireReprAttr!F))
+                    enum reprT = 2;
+                else static if (is(typeof(uda) == WireReprAttr!AnyFormat))
+                    enum reprT = 1;
+                static if (is(typeof(reprT)))
+                {
+                    if (reprTier[uda.target] < reprT)
+                    {
+                        p.hasRepr[uda.target] = true;
+                        p.repr[uda.target] = uda.repr;
+                        reprTier[uda.target] = reprT;
+                    }
+                }
+
+                static if (is(typeof(uda) == WireOptionalAttr!F))
+                    enum optT = 2;
+                else static if (is(typeof(uda) == WireOptionalAttr!AnyFormat))
+                    enum optT = 1;
+                static if (is(typeof(optT)))
+                {
+                    if (optTier < optT)
+                    {
+                        p.optional = true;
+                        p.skip = uda.skip;
+                        p.onInvalid = uda.onInvalid;
+                        optTier = optT;
+                    }
+                }
+
+                static if (is(typeof(uda) == WireMatchPolicy!F))
+                    enum matchT = 2;
+                else static if (is(typeof(uda) == WireMatchPolicy!AnyFormat))
+                    enum matchT = 1;
+                static if (is(typeof(matchT)))
+                {
+                    if (matchTier < matchT)
+                    {
+                        p.match = uda.strategy;
+                        matchTier = matchT;
+                    }
+                }
+            }}
+
+            p.key = nameTier
+                ? explicitName
+                : convertCaseOf(aggStyle, __traits(identifier, T.tupleof[i]));
+            r ~= p;
+        }}
+        return r;
+    }();
+}
+
+/// The resolved wire names of `E`'s members under format `F` at case `style`,
+/// in declaration order, computed in one compile-time pass: an explicit
+/// `@WireName!F` wins, then `@WireName!Any`, else the identifier recased by
+/// `convertCase!style` — member-for-member identical to $(LREF wireName).
+template wireNames(F, E, CaseStyle style)
+if (is(E == enum))
+{
+    // `static immutable` for the same reason as `fieldPolicies`: per-member
+    // `names[i]` reads must not re-copy the whole array.
+    static immutable string[] wireNames = () {
+        string[] r;
+        static foreach (m; __traits(allMembers, E))
+        {{
+            string explicitName;
+            int nameTier;
+            static foreach (uda; __traits(getAttributes, __traits(getMember, E, m)))
+            {{
+                static if (is(typeof(uda) == WireNameAttr!F))
+                    enum tier = 2;
+                else static if (is(typeof(uda) == WireNameAttr!AnyFormat))
+                    enum tier = 1;
+                static if (is(typeof(tier)))
+                {
+                    if (nameTier < tier)
+                    {
+                        explicitName = uda.name;
+                        nameTier = tier;
+                    }
+                }
+            }}
+            r ~= nameTier ? explicitName : convertCase!style(m);
+        }}
+        return r;
+    }();
+}
+
+// The aggregated views must agree with the fine-grained resolvers they
+// summarize — every FieldPolicy component is cross-checked against the §5
+// resolver answering the same question.
+@("wired.policy.aggregate.matchesResolvers")
+@safe pure unittest
+{
+    struct Json
+    {
+    }
+
+    @WireCase!Json(CaseStyle.snakeCase)
+    enum Mode { fastPath, @WireName!Json("turbo") slowPath }
+
+    @WireCase!Json(CaseStyle.snakeCase)
+    static struct S
+    {
+        @WireName!Json("id") int identifier;
+        @WireCase!Json(CaseStyle.kebabCase, WireTarget.value) Mode[] modeList;
+        @WireRepr(Repr.value, WireTarget.key) int[Mode] modeTable;
+        @WireOptional(WireSkip.whenDefault, WireInvalid.useDefault) int optCount;
+        @(WireMatch.first!Json) int matchField;
+        int plainField;
+    }
+
+    alias P = fieldPolicies!(Json, S);
+    enum aggStyle = resolveCaseStyle!(Json, S);
+    static assert(P.length == S.tupleof.length);
+
+    static foreach (i; 0 .. P.length)
+        static assert(P[i].key == wireName!(Json, S.tupleof[i], aggStyle));
+
+    static assert(P[1].caseFor(WireTarget.value, resolveCaseStyle!(Json, Mode))
+        == resolveCaseFor!(Json, WireTarget.value, S.tupleof[1], Mode));
+    static assert(P[2].reprFor(WireTarget.key, resolveRepr!(Json, Mode))
+        == resolveReprFor!(Json, WireTarget.key, S.tupleof[2], Mode));
+    static assert(P[2].reprFor(WireTarget.value, resolveRepr!(Json, Mode))
+        == resolveReprFor!(Json, WireTarget.value, S.tupleof[2], Mode));
+
+    static assert(P[3].optional == isOptional!(Json, S.tupleof[3]));
+    static assert(P[3].skip == optionalPolicy!(Json, S.tupleof[3]).skip);
+    static assert(P[3].onInvalid == optionalPolicy!(Json, S.tupleof[3]).onInvalid);
+    static assert(P[4].match == resolveMatch!(Json, S.tupleof[4]));
+
+    static assert(!P[5].optional && P[5].skip == WireSkip.never);
+    static assert(P[5].match == MatchStrategy.exactlyOne);
+
+    // Member names agree with the per-member resolver, tier by tier.
+    alias names = wireNames!(Json, Mode, resolveCaseStyle!(Json, Mode));
+    static assert(names == ["fast_path", "turbo"]);
+    static foreach (i, m; __traits(allMembers, Mode))
+        static assert(names[i]
+            == wireName!(Json, __traits(getMember, Mode, m), resolveCaseStyle!(Json, Mode)));
+}
+
+// A nested struct's hidden context pointer is not a field: the policy table
+// covers only declared fields.
+@("wired.policy.aggregate.nestedContextPointer")
+@safe pure unittest
+{
+    struct Json
+    {
+    }
+
+    int captured = 3;
+    struct Nested
+    {
+        int visibleField;
+        int peek() => captured; // forces a context pointer
+    }
+
+    static assert(__traits(isNested, Nested));
+    static assert(fieldPolicies!(Json, Nested).length == 1);
+    static assert(fieldPolicies!(Json, Nested)[0].key == "visibleField");
 }
