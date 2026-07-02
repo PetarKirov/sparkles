@@ -102,7 +102,8 @@ Oracle requirements (all provided by the dev shell):
   `nix build .#uwidth-rs`); runtime-skips if absent.
 - **Layer 10 (Python)** embeds CPython 3.11 in-process via PyD; needs the
   `python311`-with-`wcwidth` env and the `PYTHONPATH`/libpython variables the dev
-  shell sets. PyD is pinned to an untagged upstream commit (see the layer source).
+  shell sets. The dev shell pins `wcwidth` 0.8.2; PyD is pinned to an untagged
+  upstream commit (see the layer source).
 
 All binding/helper layers are gated behind `version(...)` flags, so the
 `offline`/`unittest` builds compile and run without any native dependency.
@@ -156,7 +157,7 @@ Each row carries a `reason`. The ledger's classes, by layer:
 - **Model gaps vs ghostty (Layer 4, 99).** `sparkles` matches kitty but not
   ghostty: spacing marks (Mc) and prepended format (Cf) that ghostty advances.
 - **Per-code-point gaps vs utf8proc / Rust / Python (Layers 5/9/10, 299 / 661 /
-  639).** Regional indicators (sparkles 2 vs 1), noncharacters, conjoining jamo
+  260).** Regional indicators (sparkles 2 vs 1), noncharacters, conjoining jamo
   and spacing marks (the libraries give 1, like ghostty), plus the 42 version-skew
   marks that utf8proc (17.0) independently confirms. Python additionally returns
   `-1` for non-printables. Each of Layers 9 and 10 also reports a _per-string_
