@@ -221,16 +221,7 @@ struct WireMatch
 // Policy resolution
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// A $(LREF firstAttr) predicate matching UDAs whose `.target` is `tgt`. One
-/// shared predicate template keeps broad and slot-targeted scans of the same
-/// symbol on the same memoized `firstAttr` instantiations.
-private template targetIs(WireTarget tgt)
-{
-    alias targetIs = (a) => a.target == tgt;
-}
-
-private alias broadTarget = targetIs!(WireTarget.all);
-private bool anyAttr(A)(A a) => true;
+private bool broadTarget(A)(A a) => a.target == WireTarget.all;
 
 /// Index of the first `Attr` UDA on `sym` whose format is exactly `Fmt` and that
 /// passes `pred`, or -1. CTFE helper underpinning the resolvers.
@@ -269,61 +260,29 @@ private template pickAttr(alias sym, alias Attr, F, alias pred)
         enum found = false;
 }
 
-/// $(LREF pickAttr) across `syms` in order — field override(s) first, then the
-/// type — each stop preferring exact-`F` over `AnyFormat`.
-private template pickAttrAcross(alias Attr, alias pred, F, syms...)
+/// The broad (`WireTarget.all`) `CaseStyle` of type `T` under format `F`,
+/// preferring an exact-`F` `WireCase` over its `AnyFormat` form, and falling
+/// back to `CaseStyle.original` (§6). Field-level overrides live in
+/// $(LREF fieldPolicies); this answers the per-type question.
+template resolveCaseStyle(F, T)
 {
-    static if (syms.length == 0)
-        enum found = false;
-    else static if (pickAttr!(syms[0], Attr, F, pred).found)
-    {
-        enum found = true;
-        enum uda = pickAttr!(syms[0], Attr, F, pred).uda;
-    }
-    else
-    {
-        private alias rest = pickAttrAcross!(Attr, pred, F, syms[1 .. $]);
-        enum found = rest.found;
-        static if (rest.found)
-            enum uda = rest.uda;
-    }
-}
-
-/// The `CaseStyle` resolved for format `F` across `syms` (field override(s) first,
-/// then the type), preferring an exact-`F` `WireCase` over its `AnyFormat` form,
-/// and falling back to `CaseStyle.original`. Only broad (`WireTarget.all`)
-/// `WireCase` participates here.
-template resolveCaseStyle(F, syms...)
-{
-    private alias p = pickAttrAcross!(WireCaseAttr, broadTarget, F, syms);
+    private alias p = pickAttr!(T, WireCaseAttr, F, broadTarget);
     static if (p.found)
         enum CaseStyle resolveCaseStyle = p.uda.style;
     else
         enum CaseStyle resolveCaseStyle = CaseStyle.original;
 }
 
-/// The `Repr` resolved for format `F` across `syms` (field override(s) first, then
-/// the type), preferring exact-`F` over `AnyFormat`, defaulting to `Repr.name`.
-/// Only broad (`WireTarget.all`) `WireRepr` participates here.
-template resolveRepr(F, syms...)
+/// The broad (`WireTarget.all`) `Repr` of type `T` under format `F`, preferring
+/// exact-`F` over `AnyFormat`, defaulting to `Repr.name` (§7). Field-level
+/// overrides live in $(LREF fieldPolicies); this answers the per-type question.
+template resolveRepr(F, T)
 {
-    private alias p = pickAttrAcross!(WireReprAttr, broadTarget, F, syms);
+    private alias p = pickAttr!(T, WireReprAttr, F, broadTarget);
     static if (p.found)
         enum Repr resolveRepr = p.uda.repr;
     else
         enum Repr resolveRepr = Repr.name;
-}
-
-/// The wire name of enum member (or aggregate field) `sym` under format `F`,
-/// given the resolved case `style`: an explicit `@WireName!F` wins, then
-/// `@WireName!Any`, else the identifier recased by `convertCase!style`.
-template wireName(F, alias sym, CaseStyle style)
-{
-    private alias p = pickAttr!(sym, WireNameAttr, F, anyAttr);
-    static if (p.found)
-        enum string wireName = p.uda.name;
-    else
-        enum string wireName = convertCase!style(__traits(identifier, sym));
 }
 
 @("wired.policy.resolve.caseReprAndName")
@@ -358,9 +317,10 @@ template wireName(F, alias sym, CaseStyle style)
     static assert(resolveRepr!(Toml, Priority) == Repr.name);
 
     // Member names: @WireName!F wins; otherwise recase by the resolved style.
-    static assert(wireName!(Json, Mode.fastPath, resolveCaseStyle!(Json, Mode)) == "fast_path");
-    static assert(wireName!(Json, Mode.slowPath, resolveCaseStyle!(Json, Mode)) == "turbo");
-    static assert(wireName!(Toml, Mode.slowPath, resolveCaseStyle!(Toml, Mode)) == "slow-path");
+    static assert(wireNames!(Json, Mode, resolveCaseStyle!(Json, Mode))
+        == ["fast_path", "turbo"]);
+    static assert(wireNames!(Toml, Mode, resolveCaseStyle!(Toml, Mode))
+        == ["fast-path", "slow-path"]); // the !Json rename is inert under Toml
 }
 
 @("wired.policy.resolve.fieldOverridesType")
@@ -380,33 +340,11 @@ template wireName(F, alias sym, CaseStyle style)
     }
 
     // Field override beats the type policy for that field's enum.
-    static assert(resolveCaseStyle!(Json, S.a, Mode) == CaseStyle.kebabCase);
-    static assert(resolveCaseStyle!(Json, S.b, Mode) == CaseStyle.snakeCase);
-}
-
-/// Whether aggregate field `field` is optional under format `F` — i.e. carries a
-/// `@WireOptional` for `F` or for `AnyFormat` (§5.4).
-enum bool isOptional(F, alias field) =
-    pickAttr!(field, WireOptionalAttr, F, anyAttr).found;
-
-/// The resolved `@WireOptional` policy for `field` under `F` (exact `F` over
-/// `AnyFormat`). Instantiable only when $(LREF isOptional) is true.
-template optionalPolicy(F, alias field)
-if (isOptional!(F, field))
-{
-    enum optionalPolicy = pickAttr!(field, WireOptionalAttr, F, anyAttr).uda;
-}
-
-/// The `SumType` decode strategy resolved for `field` under `F`: a
-/// `@(WireMatch.…!F)`, then `@(WireMatch.…!Any)`, else `MatchStrategy.exactlyOne`
-/// (§4.7).
-template resolveMatch(F, alias field)
-{
-    private alias p = pickAttr!(field, WireMatchPolicy, F, anyAttr);
-    static if (p.found)
-        enum MatchStrategy resolveMatch = p.uda.strategy;
-    else
-        enum MatchStrategy resolveMatch = MatchStrategy.exactlyOne;
+    alias P = fieldPolicies!(Json, S);
+    static assert(P[0].caseFor(WireTarget.all, resolveCaseStyle!(Json, Mode))
+        == CaseStyle.kebabCase);
+    static assert(P[1].caseFor(WireTarget.all, resolveCaseStyle!(Json, Mode))
+        == CaseStyle.snakeCase);
 }
 
 @("wired.policy.resolve.optionalAndMatch")
@@ -431,17 +369,19 @@ template resolveMatch(F, alias field)
     }
 
     // Optionality and its resolved policy.
-    static assert(!isOptional!(Json, S.required));
-    static assert(isOptional!(Json, S.opt));
-    static assert(optionalPolicy!(Json, S.opt).skip == WireSkip.whenEmpty);
-    static assert(optionalPolicy!(Json, S.jopt).skip == WireSkip.whenDefault);
-    static assert(optionalPolicy!(Json, S.jopt).onInvalid == WireInvalid.useDefault);
+    alias P = fieldPolicies!(Json, S);
+    static assert(!P[0].optional && P[0].skip == WireSkip.never);
+    static assert(P[1].optional);
+    static assert(P[1].skip == WireSkip.whenEmpty);
+    static assert(P[2].skip == WireSkip.whenDefault);
+    static assert(P[2].onInvalid == WireInvalid.useDefault);
 
     // Match strategy: exact format, AnyFormat, and the exactlyOne default.
-    static assert(resolveMatch!(Json, S.plainSum) == MatchStrategy.exactlyOne);
-    static assert(resolveMatch!(Json, S.jmatch) == MatchStrategy.first);
-    static assert(resolveMatch!(Toml, S.jmatch) == MatchStrategy.exactlyOne); // !Json inert under Toml
-    static assert(resolveMatch!(Toml, S.amatch) == MatchStrategy.first);      // AnyFormat applies
+    alias PT = fieldPolicies!(Toml, S);
+    static assert(P[3].match == MatchStrategy.exactlyOne);
+    static assert(P[4].match == MatchStrategy.first);
+    static assert(PT[4].match == MatchStrategy.exactlyOne); // !Json inert under Toml
+    static assert(PT[5].match == MatchStrategy.first);      // AnyFormat applies
 }
 
 /// Index of the first `WireConvert` type UDA on `sym` whose format is `Fmt`, or
@@ -594,64 +534,8 @@ if (is(S == struct))
     // static assert at compile time).
     @WireCase!Json(CaseStyle.snakeCase)
     enum Clash { fastPath, @WireName!Json("fast_path") slowPath }
-    enum names = () {
-        string[] r;
-        static foreach (m; __traits(allMembers, Clash))
-            r ~= wireName!(Json, __traits(getMember, Clash, m), resolveCaseStyle!(Json, Clash));
-        return r;
-    }();
-    static assert(firstDuplicate(names) == "fast_path");
-}
-
-/// The §5.2 lattice shared by the slot-targeted resolvers: targeted-field
-/// (`!F` then `!Any`) → broad-field (`!F` then `!Any`) → broad on the slot
-/// type (`!F` then `!Any`). `slot == WireTarget.all` skips the targeted rows.
-private template pickSlotAttr(alias Attr, F, WireTarget slot, alias field, Type)
-{
-    static if (slot != WireTarget.all && pickAttr!(field, Attr, F, targetIs!slot).found)
-    {
-        enum found = true;
-        enum uda = pickAttr!(field, Attr, F, targetIs!slot).uda;
-    }
-    else static if (pickAttr!(field, Attr, F, broadTarget).found)
-    {
-        enum found = true;
-        enum uda = pickAttr!(field, Attr, F, broadTarget).uda;
-    }
-    else static if (pickAttr!(Type, Attr, F, broadTarget).found)
-    {
-        enum found = true;
-        enum uda = pickAttr!(Type, Attr, F, broadTarget).uda;
-    }
-    else
-        enum found = false;
-}
-
-/// The `CaseStyle` resolved for the `slot` branch of `field` (whose target type
-/// at that slot is `Type`) under format `F`, following the §5.2 lattice:
-/// targeted-field `!F` → targeted-field `!Any` → broad-field `!F` → broad-field
-/// `!Any` → type `!F` → type `!Any` → `CaseStyle.original`. `slot` is
-/// `WireTarget.key` or `WireTarget.value`; `WireTarget.all` skips the targeted
-/// rows.
-template resolveCaseFor(F, WireTarget slot, alias field, Type)
-{
-    private alias p = pickSlotAttr!(WireCaseAttr, F, slot, field, Type);
-    static if (p.found)
-        enum CaseStyle resolveCaseFor = p.uda.style;
-    else
-        enum CaseStyle resolveCaseFor = CaseStyle.original;
-}
-
-/// The `Repr` resolved for the `slot` branch of `field` (whose enum at that slot
-/// is `E`) under `F`, following the same §5.2 lattice as $(LREF resolveCaseFor),
-/// defaulting to `Repr.name`.
-template resolveReprFor(F, WireTarget slot, alias field, E)
-{
-    private alias p = pickSlotAttr!(WireReprAttr, F, slot, field, E);
-    static if (p.found)
-        enum Repr resolveReprFor = p.uda.repr;
-    else
-        enum Repr resolveReprFor = Repr.name;
+    static assert(firstDuplicate(
+        wireNames!(Json, Clash, resolveCaseStyle!(Json, Clash))) == "fast_path");
 }
 
 @("wired.policy.resolve.targetedSlots")
@@ -676,27 +560,31 @@ template resolveReprFor(F, WireTarget slot, alias field, E)
         Mode[] modes;
     }
 
+    alias P = fieldPolicies!(Json, S);
+
     // Targeted key wins for the key slot; broad applies to the value slot.
-    static assert(resolveReprFor!(Json, WireTarget.key, S.states, Mode) == Repr.value);
-    static assert(resolveReprFor!(Json, WireTarget.value, S.states, Status) == Repr.name);
+    static assert(P[0].reprFor(WireTarget.key, resolveRepr!(Json, Mode)) == Repr.value);
+    static assert(P[0].reprFor(WireTarget.value, resolveRepr!(Json, Status)) == Repr.name);
 
     // Value-targeted case reaches the element; the (absent) key slot falls back.
-    static assert(resolveCaseFor!(Json, WireTarget.value, S.modes, Mode) == CaseStyle.snakeCase);
-    static assert(resolveCaseFor!(Json, WireTarget.all, S.states, Status) == CaseStyle.original);
+    static assert(P[1].caseFor(WireTarget.value, resolveCaseStyle!(Json, Mode))
+        == CaseStyle.snakeCase);
+    static assert(P[0].caseFor(WireTarget.all, resolveCaseStyle!(Json, Status))
+        == CaseStyle.original);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Aggregated policy gathering
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// The fine-grained resolvers above answer one question about one symbol and are
-// the normative §5 semantics. A format backend walking a whole aggregate would
-// ask them ~10 times per field, instantiating a getUDAs scan each time. The
-// aggregated views below make one pass per (format, type) instead, reading
+// The aggregated views below are how a format backend consumes the §5 field
+// and member policies: one compile-time pass per (format, type), reading
 // `__traits(getAttributes, …)` inline in a single CTFE initializer and reducing
-// every value-carrying attribute to a plain data table the walk indexes into.
-// Only `@WireConvert` stays on the per-symbol path — it carries alias transforms
-// that cannot live in a value.
+// every value-carrying attribute to a plain data table the walk indexes into —
+// instead of ~10 per-field resolver instantiations, each with its own getUDAs
+// scan. Only the per-type `resolveCaseStyle`/`resolveRepr` (the slot-type
+// fallback of the §5.2 lattice) and `@WireConvert` (alias transforms cannot
+// live in a value) stay on the per-symbol path.
 
 /// Recases `ident` under a run-time `style` — the dispatch `convertCase` needs
 /// when the style is a CTFE value rather than a template argument.
@@ -880,7 +768,7 @@ if (is(T == struct))
 /// The resolved wire names of `E`'s members under format `F` at case `style`,
 /// in declaration order, computed in one compile-time pass: an explicit
 /// `@WireName!F` wins, then `@WireName!Any`, else the identifier recased by
-/// `convertCase!style` — member-for-member identical to $(LREF wireName).
+/// `convertCase!style` (§5.1, §6).
 template wireNames(F, E, CaseStyle style)
 if (is(E == enum))
 {
@@ -913,10 +801,9 @@ if (is(E == enum))
     }();
 }
 
-// The aggregated views must agree with the fine-grained resolvers they
-// summarize — every FieldPolicy component is cross-checked against the §5
-// resolver answering the same question.
-@("wired.policy.aggregate.matchesResolvers")
+// One aggregate exercising every FieldPolicy component at once: renamed,
+// slot-targeted, optional, match-tuned, and plain fields side by side.
+@("wired.policy.aggregate.fieldPolicies")
 @safe pure unittest
 {
     struct Json
@@ -938,33 +825,31 @@ if (is(E == enum))
     }
 
     alias P = fieldPolicies!(Json, S);
-    enum aggStyle = resolveCaseStyle!(Json, S);
     static assert(P.length == S.tupleof.length);
 
-    static foreach (i; 0 .. P.length)
-        static assert(P[i].key == wireName!(Json, S.tupleof[i], aggStyle));
+    // Keys: explicit @WireName else the identifier under the aggregate style.
+    static assert(P[0].key == "id");
+    static assert(P[1].key == "mode_list");
+    static assert(P[5].key == "plain_field");
 
+    // Slot lattice: the value-targeted recase wins over Mode's own snake_case;
+    // the key-targeted repr applies only to the key slot.
     static assert(P[1].caseFor(WireTarget.value, resolveCaseStyle!(Json, Mode))
-        == resolveCaseFor!(Json, WireTarget.value, S.tupleof[1], Mode));
-    static assert(P[2].reprFor(WireTarget.key, resolveRepr!(Json, Mode))
-        == resolveReprFor!(Json, WireTarget.key, S.tupleof[2], Mode));
-    static assert(P[2].reprFor(WireTarget.value, resolveRepr!(Json, Mode))
-        == resolveReprFor!(Json, WireTarget.value, S.tupleof[2], Mode));
+        == CaseStyle.kebabCase);
+    static assert(P[2].reprFor(WireTarget.key, resolveRepr!(Json, Mode)) == Repr.value);
+    static assert(P[2].reprFor(WireTarget.value, resolveRepr!(Json, Mode)) == Repr.name);
 
-    static assert(P[3].optional == isOptional!(Json, S.tupleof[3]));
-    static assert(P[3].skip == optionalPolicy!(Json, S.tupleof[3]).skip);
-    static assert(P[3].onInvalid == optionalPolicy!(Json, S.tupleof[3]).onInvalid);
-    static assert(P[4].match == resolveMatch!(Json, S.tupleof[4]));
+    static assert(P[3].optional);
+    static assert(P[3].skip == WireSkip.whenDefault);
+    static assert(P[3].onInvalid == WireInvalid.useDefault);
+    static assert(P[4].match == MatchStrategy.first);
 
     static assert(!P[5].optional && P[5].skip == WireSkip.never);
     static assert(P[5].match == MatchStrategy.exactlyOne);
 
-    // Member names agree with the per-member resolver, tier by tier.
-    alias names = wireNames!(Json, Mode, resolveCaseStyle!(Json, Mode));
-    static assert(names == ["fast_path", "turbo"]);
-    static foreach (i, m; __traits(allMembers, Mode))
-        static assert(names[i]
-            == wireName!(Json, __traits(getMember, Mode, m), resolveCaseStyle!(Json, Mode)));
+    // Member names: the explicit rename wins; the rest recase by Mode's style.
+    static assert(wireNames!(Json, Mode, resolveCaseStyle!(Json, Mode))
+        == ["fast_path", "turbo"]);
 }
 
 // A nested struct's hidden context pointer is not a field: the policy table
