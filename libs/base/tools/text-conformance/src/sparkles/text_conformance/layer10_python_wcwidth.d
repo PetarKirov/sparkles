@@ -72,6 +72,8 @@ LayerResult runLayer10(in Config cfg)
         ensurePython();
         ctx = new InterpContext();
         ctx.py_stmts("import wcwidth"); // fail fast if the module is missing
+        r.notes ~= "python wcwidth version: "
+            ~ ctx.py_eval("__import__('wcwidth').__version__").to_d!string;
     }
     catch (Exception e)
     {
@@ -113,7 +115,7 @@ LayerResult runLayer10(in Config cfg)
         }
         buckets[cpClass(cp, d)]++;
         r.divergences ~= Divergence(10, format("U+%04X", cast(uint) cp),
-            got.to!string, pw[i].to!string, causeOf(cp, d));
+            got.to!string, pw[i].to!string, causeOf(cp, pw[i], d));
     }
     foreach (k, n; buckets)
         r.notes ~= format("%s: %d", k, n);
@@ -143,7 +145,7 @@ LayerResult runLayer10(in Config cfg)
     return r;
 }
 
-private string causeOf(dchar cp, in WidthData d) @safe nothrow
+private string causeOf(dchar cp, int pyWidth, in WidthData d) @safe nothrow
 {
     if (cp >= 0x1F1E6 && cp <= 0x1F1FF)
         return "regional indicator: sparkles applies kitty's flag rule (2); wcwidth gives 1";
@@ -151,9 +153,11 @@ private string causeOf(dchar cp, in WidthData d) @safe nothrow
         return "noncharacter: sparkles 0; wcwidth differs";
     if (cp >= 0x1160 && cp <= 0x11FF)
         return "conjoining Hangul jamo: sparkles forces 0; wcwidth differs";
-    if (codepointWidth(cp) == 0)
-        return "control/zero-width: sparkles 0; wcwidth returns -1 for non-printable";
     if (d.mn[cp] || d.mc[cp] || d.me[cp] || d.cf[cp])
         return "Mark/format: width-class or version difference";
+    if (codepointWidth(cp) == 0 && pyWidth < 0)
+        return "control/zero-width: sparkles 0; wcwidth returns -1 for non-printable";
+    if (codepointWidth(cp) == 0)
+        return "zero-width: sparkles 0; wcwidth differs";
     return "codepointWidth vs python wcwidth";
 }

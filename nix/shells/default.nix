@@ -16,7 +16,20 @@
 
       # Python (3.11, the newest CPython PyD supports) with jquast wcwidth, for
       # the text-conformance harness Layer 10 (PyD-embedded Python wcwidth oracle).
-      pythonEnv = pkgs.python311.withPackages (ps: [ ps.wcwidth ]);
+      wcwidth = pkgs.python311Packages.buildPythonPackage rec {
+        pname = "wcwidth";
+        version = "0.8.2";
+        pyproject = true;
+
+        src = pkgs.fetchPypi {
+          inherit pname version;
+          hash = "sha256-kfvvlyBLlqPU1CFgm4A0C3YM8z4m2hI/8kPXax/ajdo=";
+        };
+
+        build-system = [ pkgs.python311Packages.hatchling ];
+        pythonImportsCheck = [ "wcwidth" ];
+      };
+      pythonEnv = pkgs.python311.withPackages (_: [ wcwidth ]);
       mkSparklesShell =
         greeting:
         pkgs.mkShell {
