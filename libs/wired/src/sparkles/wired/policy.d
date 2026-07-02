@@ -248,10 +248,14 @@ private template firstAttr(alias sym, alias Attr, Fmt, alias pred)
 /// The first `Attr` UDA on `sym` passing `pred`, preferring an exact-`F` tag
 /// over `AnyFormat` — the one resolution rule every `@Wire*` attribute follows
 /// (§5.1). `found` tells whether one matched; `uda` exists only when it did.
-/// The `AnyFormat` scan is not instantiated when the exact-`F` scan hits.
+/// The `AnyFormat` scan is not instantiated when the exact-`F` scan hits, and
+/// an unannotated symbol — the overwhelmingly common case in a type walk —
+/// short-circuits before any `getUDAs` scan is instantiated at all.
 private template pickAttr(alias sym, alias Attr, F, alias pred)
 {
-    static if (firstAttr!(sym, Attr, F, pred) >= 0)
+    static if (__traits(getAttributes, sym).length == 0)
+        enum found = false;
+    else static if (firstAttr!(sym, Attr, F, pred) >= 0)
     {
         enum found = true;
         enum uda = getUDAs!(sym, Attr)[firstAttr!(sym, Attr, F, pred)];
@@ -456,11 +460,13 @@ private template firstConvert(alias sym, Fmt)
 }
 
 /// Whether a `WireConvert` applies for format `F` across `syms` (field then type),
-/// for `F` or `AnyFormat` (§8).
+/// for `F` or `AnyFormat` (§8). An unannotated symbol skips the `getUDAs` scans.
 template hasConvert(F, syms...)
 {
     static if (syms.length == 0)
         enum hasConvert = false;
+    else static if (__traits(getAttributes, syms[0]).length == 0)
+        enum hasConvert = hasConvert!(F, syms[1 .. $]);
     else
         enum hasConvert = firstConvert!(syms[0], F) >= 0
             || firstConvert!(syms[0], AnyFormat) >= 0
