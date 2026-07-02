@@ -9,6 +9,12 @@
     let
       inherit (config.legacyPackages) d-toolchain;
 
+      # `ci` runs a D compiler to build the examples, so it lands in ci's
+      # runtime closure (and every consumer's — pre-commit devShell, lint CI).
+      # Prefer DMD on x86_64-linux: no LLVM backend, so ~half LDC's closure.
+      # DMD only targets x86_64/i686-linux + x86_64-darwin; keep LDC elsewhere.
+      ciCompiler = if pkgs.stdenv.hostPlatform.system == "x86_64-linux" then pkgs.dmd else pkgs.ldc;
+
       fs = lib.fileset;
       root = ../..;
       fromRoot = lib.path.append root;
@@ -51,19 +57,19 @@
         # that sharing explicit instead of having `examples.nix` reach
         # into a sibling sub-package's dir to grab the file.
         dubLock = fromRoot "nix/dub-lock.json";
-        compiler = pkgs.ldc;
+        compiler = ciCompiler;
 
         nativeBuildInputs = [
           pkgs.makeWrapper
         ];
 
         # `ci` shells out to `dub run --single` / `dub build --single` at
-        # runtime, so the wrapped binary genuinely needs `ldc2` and `dub`
-        # on its PATH. By default `buildDubPackage` declares the compiler
+        # runtime, so the wrapped binary genuinely needs the D compiler and
+        # `dub` on its PATH. By default `buildDubPackage` declares the compiler
         # as a `disallowedReference` and runs `remove-references-to` in
         # `preFixup`, which would scrub the compiler path out of our
-        # wrapper script (turning `…ldc-1.41.0/bin` into the placeholder
-        # `…eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-ldc-1.41.0/bin`). Clearing
+        # wrapper script (turning `…dmd-2.112.1/bin` into the placeholder
+        # `…eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-dmd-2.112.1/bin`). Clearing
         # `disallowedReferences` keeps the runtime closure honest.
         disallowedReferences = [ ];
 
@@ -84,7 +90,7 @@
             path = lib.makeBinPath [
               pkgs.git
               pkgs.dub
-              pkgs.ldc
+              ciCompiler
             ];
             # Render `--set NAME VALUE` triples for wrapProgram from the toolchain
             # env (non-empty on darwin: CC/CXX/SDKROOT/MACOSX_DEPLOYMENT_TARGET).
