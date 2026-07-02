@@ -221,7 +221,15 @@ struct WireMatch
 // Policy resolution
 // ─────────────────────────────────────────────────────────────────────────────
 
-private bool broadTarget(A)(A a) => a.target == WireTarget.all;
+/// A $(LREF firstAttr) predicate matching UDAs whose `.target` is `tgt`. One
+/// shared predicate template keeps broad and slot-targeted scans of the same
+/// symbol on the same memoized `firstAttr` instantiations.
+private template targetIs(WireTarget tgt)
+{
+    alias targetIs = (a) => a.target == tgt;
+}
+
+private alias broadTarget = targetIs!(WireTarget.all);
 private bool anyAttr(A)(A a) => true;
 
 /// Index of the first `Attr` UDA on `sym` whose format is exactly `Fmt` and that
@@ -578,19 +586,6 @@ if (is(S == struct))
     static assert(firstDuplicate(names) == "fast_path");
 }
 
-/// Index of the first `Attr` UDA on `sym` with format `Fmt` and `.target == tgt`,
-/// or -1. Target-filtered variant of $(LREF firstAttr) for `WireCase`/`WireRepr`.
-private template firstAttrTarget(alias sym, alias Attr, Fmt, WireTarget tgt)
-{
-    enum ptrdiff_t firstAttrTarget = () {
-        static foreach (i, uda; getUDAs!(sym, Attr))
-            static if (is(typeof(uda).Format == Fmt))
-                if (uda.target == tgt)
-                    return cast(ptrdiff_t) i;
-        return cast(ptrdiff_t)(-1);
-    }();
-}
-
 /// The `CaseStyle` resolved for the `slot` branch of `field` (whose target type
 /// at that slot is `Type`) under format `F`, following the §5.2 lattice:
 /// targeted-field `!F` → targeted-field `!Any` → broad-field `!F` → broad-field
@@ -600,18 +595,18 @@ private template firstAttrTarget(alias sym, alias Attr, Fmt, WireTarget tgt)
 template resolveCaseFor(F, WireTarget slot, alias field, Type)
 {
     enum CaseStyle resolveCaseFor = () {
-        static if (slot != WireTarget.all && firstAttrTarget!(field, WireCaseAttr, F, slot) >= 0)
-            return getUDAs!(field, WireCaseAttr)[firstAttrTarget!(field, WireCaseAttr, F, slot)].style;
-        else static if (slot != WireTarget.all && firstAttrTarget!(field, WireCaseAttr, AnyFormat, slot) >= 0)
-            return getUDAs!(field, WireCaseAttr)[firstAttrTarget!(field, WireCaseAttr, AnyFormat, slot)].style;
-        else static if (firstAttrTarget!(field, WireCaseAttr, F, WireTarget.all) >= 0)
-            return getUDAs!(field, WireCaseAttr)[firstAttrTarget!(field, WireCaseAttr, F, WireTarget.all)].style;
-        else static if (firstAttrTarget!(field, WireCaseAttr, AnyFormat, WireTarget.all) >= 0)
-            return getUDAs!(field, WireCaseAttr)[firstAttrTarget!(field, WireCaseAttr, AnyFormat, WireTarget.all)].style;
-        else static if (firstAttrTarget!(Type, WireCaseAttr, F, WireTarget.all) >= 0)
-            return getUDAs!(Type, WireCaseAttr)[firstAttrTarget!(Type, WireCaseAttr, F, WireTarget.all)].style;
-        else static if (firstAttrTarget!(Type, WireCaseAttr, AnyFormat, WireTarget.all) >= 0)
-            return getUDAs!(Type, WireCaseAttr)[firstAttrTarget!(Type, WireCaseAttr, AnyFormat, WireTarget.all)].style;
+        static if (slot != WireTarget.all && firstAttr!(field, WireCaseAttr, F, targetIs!slot) >= 0)
+            return getUDAs!(field, WireCaseAttr)[firstAttr!(field, WireCaseAttr, F, targetIs!slot)].style;
+        else static if (slot != WireTarget.all && firstAttr!(field, WireCaseAttr, AnyFormat, targetIs!slot) >= 0)
+            return getUDAs!(field, WireCaseAttr)[firstAttr!(field, WireCaseAttr, AnyFormat, targetIs!slot)].style;
+        else static if (firstAttr!(field, WireCaseAttr, F, targetIs!(WireTarget.all)) >= 0)
+            return getUDAs!(field, WireCaseAttr)[firstAttr!(field, WireCaseAttr, F, targetIs!(WireTarget.all))].style;
+        else static if (firstAttr!(field, WireCaseAttr, AnyFormat, targetIs!(WireTarget.all)) >= 0)
+            return getUDAs!(field, WireCaseAttr)[firstAttr!(field, WireCaseAttr, AnyFormat, targetIs!(WireTarget.all))].style;
+        else static if (firstAttr!(Type, WireCaseAttr, F, targetIs!(WireTarget.all)) >= 0)
+            return getUDAs!(Type, WireCaseAttr)[firstAttr!(Type, WireCaseAttr, F, targetIs!(WireTarget.all))].style;
+        else static if (firstAttr!(Type, WireCaseAttr, AnyFormat, targetIs!(WireTarget.all)) >= 0)
+            return getUDAs!(Type, WireCaseAttr)[firstAttr!(Type, WireCaseAttr, AnyFormat, targetIs!(WireTarget.all))].style;
         else
             return CaseStyle.original;
     }();
@@ -623,18 +618,18 @@ template resolveCaseFor(F, WireTarget slot, alias field, Type)
 template resolveReprFor(F, WireTarget slot, alias field, E)
 {
     enum Repr resolveReprFor = () {
-        static if (slot != WireTarget.all && firstAttrTarget!(field, WireReprAttr, F, slot) >= 0)
-            return getUDAs!(field, WireReprAttr)[firstAttrTarget!(field, WireReprAttr, F, slot)].repr;
-        else static if (slot != WireTarget.all && firstAttrTarget!(field, WireReprAttr, AnyFormat, slot) >= 0)
-            return getUDAs!(field, WireReprAttr)[firstAttrTarget!(field, WireReprAttr, AnyFormat, slot)].repr;
-        else static if (firstAttrTarget!(field, WireReprAttr, F, WireTarget.all) >= 0)
-            return getUDAs!(field, WireReprAttr)[firstAttrTarget!(field, WireReprAttr, F, WireTarget.all)].repr;
-        else static if (firstAttrTarget!(field, WireReprAttr, AnyFormat, WireTarget.all) >= 0)
-            return getUDAs!(field, WireReprAttr)[firstAttrTarget!(field, WireReprAttr, AnyFormat, WireTarget.all)].repr;
-        else static if (firstAttrTarget!(E, WireReprAttr, F, WireTarget.all) >= 0)
-            return getUDAs!(E, WireReprAttr)[firstAttrTarget!(E, WireReprAttr, F, WireTarget.all)].repr;
-        else static if (firstAttrTarget!(E, WireReprAttr, AnyFormat, WireTarget.all) >= 0)
-            return getUDAs!(E, WireReprAttr)[firstAttrTarget!(E, WireReprAttr, AnyFormat, WireTarget.all)].repr;
+        static if (slot != WireTarget.all && firstAttr!(field, WireReprAttr, F, targetIs!slot) >= 0)
+            return getUDAs!(field, WireReprAttr)[firstAttr!(field, WireReprAttr, F, targetIs!slot)].repr;
+        else static if (slot != WireTarget.all && firstAttr!(field, WireReprAttr, AnyFormat, targetIs!slot) >= 0)
+            return getUDAs!(field, WireReprAttr)[firstAttr!(field, WireReprAttr, AnyFormat, targetIs!slot)].repr;
+        else static if (firstAttr!(field, WireReprAttr, F, targetIs!(WireTarget.all)) >= 0)
+            return getUDAs!(field, WireReprAttr)[firstAttr!(field, WireReprAttr, F, targetIs!(WireTarget.all))].repr;
+        else static if (firstAttr!(field, WireReprAttr, AnyFormat, targetIs!(WireTarget.all)) >= 0)
+            return getUDAs!(field, WireReprAttr)[firstAttr!(field, WireReprAttr, AnyFormat, targetIs!(WireTarget.all))].repr;
+        else static if (firstAttr!(E, WireReprAttr, F, targetIs!(WireTarget.all)) >= 0)
+            return getUDAs!(E, WireReprAttr)[firstAttr!(E, WireReprAttr, F, targetIs!(WireTarget.all))].repr;
+        else static if (firstAttr!(E, WireReprAttr, AnyFormat, targetIs!(WireTarget.all)) >= 0)
+            return getUDAs!(E, WireReprAttr)[firstAttr!(E, WireReprAttr, AnyFormat, targetIs!(WireTarget.all))].repr;
         else
             return Repr.name;
     }();
