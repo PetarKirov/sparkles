@@ -1122,8 +1122,14 @@ private int runDubTestsMode(bool failFast)
         const header = styledText(i"{dim $(progress)} {cyan $(pkgName)} {dim › dub test :$(pkgName)}");
 
         mkdirRecurse(buildPath(repoRoot, pkg, "build"));
-        auto result = executeLogged(
-            ["dub", "--root", repoRoot, "test", ":" ~ pkgName], "test " ~ pkgName);
+        // Honour `$DC` so the sub-package tests use the CI matrix's compiler
+        // (the dev shell provides both dmd and ldc). Example verification keeps
+        // `ci`'s own embedded compiler; only the test suite is compiler-matrixed.
+        auto testCmd = ["dub", "--root", repoRoot, "test", ":" ~ pkgName];
+        const dc = environment.get("DC", "");
+        if (dc.length)
+            testCmd ~= "--compiler=" ~ dc;
+        auto result = executeLogged(testCmd, "test " ~ pkgName);
 
         auto outputLines = result.output.lineSplitter
             .map!(l => l.to!string)
