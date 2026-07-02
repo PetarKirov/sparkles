@@ -40,6 +40,14 @@
 # the Bison manual's LALR algorithm/GLR/precedence chapters)
 ^https?://(www\.)?gnu\.org/software/bison/
 ^https?://(www\.)?gnu\.org/licenses/gpl-faq\.html
+# lists.gnu.org (info-gnu release announcements) times out under GitHub Actions'
+# concurrency (live + 200 locally; monorepo-tooling/make/index.md cites the
+# GNU Make 4.4 / 4.4.1 release announcements)
+^https?://lists\.gnu\.org/
+# docs.dagger.io resets the connection ("Connection reset by peer") for GitHub
+# Actions' shared IPs — same pattern as web.archive.org, retries don't help
+# (live + 200 locally; monorepo-tooling/dagger/index.md cites the Dagger docs)
+^https?://docs\.dagger\.io/
 # dickgrune.com (Parsing Techniques, 1st & 2nd editions) times out under GitHub
 # Actions' concurrency (live + 200 locally; cited across parsing/theory/*.md)
 ^https?://(www\.)?dickgrune\.com/
