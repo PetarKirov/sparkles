@@ -29,7 +29,9 @@ in
         let
           inherit (config.pre-commit.settings) enabledPackages package configFile;
         in
-        pkgs.mkShell {
+        # No C toolchain needed to lint — mkShellNoCC keeps the default stdenv's
+        # cc/binutils out of the shell's own closure.
+        pkgs.mkShellNoCC {
           packages = enabledPackages ++ [ package ];
           shellHook = ''
             ln -fvs ${configFile} .pre-commit-config.yaml
