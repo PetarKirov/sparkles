@@ -68,6 +68,11 @@ jobs:
 
       - name: Build and test with dub
         run: ci --test --fail-fast
+        env:
+          # `ci` embeds dmd (small closure); honour the matrix compiler for the
+          # test suite so the ldc2/dmd dimensions are actually exercised. Both
+          # are on PATH via the `default` dev shell.
+          DC: ${{ matrix.DC }}
 
       - name: Build and run examples
         run: ci --example-files --fail-fast
