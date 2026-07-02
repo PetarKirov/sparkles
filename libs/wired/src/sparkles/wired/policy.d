@@ -245,22 +245,57 @@ private template firstAttr(alias sym, alias Attr, Fmt, alias pred)
     }();
 }
 
+/// The first `Attr` UDA on `sym` passing `pred`, preferring an exact-`F` tag
+/// over `AnyFormat` — the one resolution rule every `@Wire*` attribute follows
+/// (§5.1). `found` tells whether one matched; `uda` exists only when it did.
+/// The `AnyFormat` scan is not instantiated when the exact-`F` scan hits.
+private template pickAttr(alias sym, alias Attr, F, alias pred)
+{
+    static if (firstAttr!(sym, Attr, F, pred) >= 0)
+    {
+        enum found = true;
+        enum uda = getUDAs!(sym, Attr)[firstAttr!(sym, Attr, F, pred)];
+    }
+    else static if (firstAttr!(sym, Attr, AnyFormat, pred) >= 0)
+    {
+        enum found = true;
+        enum uda = getUDAs!(sym, Attr)[firstAttr!(sym, Attr, AnyFormat, pred)];
+    }
+    else
+        enum found = false;
+}
+
+/// $(LREF pickAttr) across `syms` in order — field override(s) first, then the
+/// type — each stop preferring exact-`F` over `AnyFormat`.
+private template pickAttrAcross(alias Attr, alias pred, F, syms...)
+{
+    static if (syms.length == 0)
+        enum found = false;
+    else static if (pickAttr!(syms[0], Attr, F, pred).found)
+    {
+        enum found = true;
+        enum uda = pickAttr!(syms[0], Attr, F, pred).uda;
+    }
+    else
+    {
+        private alias rest = pickAttrAcross!(Attr, pred, F, syms[1 .. $]);
+        enum found = rest.found;
+        static if (rest.found)
+            enum uda = rest.uda;
+    }
+}
+
 /// The `CaseStyle` resolved for format `F` across `syms` (field override(s) first,
 /// then the type), preferring an exact-`F` `WireCase` over its `AnyFormat` form,
 /// and falling back to `CaseStyle.original`. Only broad (`WireTarget.all`)
 /// `WireCase` participates here.
 template resolveCaseStyle(F, syms...)
 {
-    enum CaseStyle resolveCaseStyle = () {
-        static foreach (sym; syms)
-        {
-            static if (firstAttr!(sym, WireCaseAttr, F, broadTarget) >= 0)
-                return getUDAs!(sym, WireCaseAttr)[firstAttr!(sym, WireCaseAttr, F, broadTarget)].style;
-            else static if (firstAttr!(sym, WireCaseAttr, AnyFormat, broadTarget) >= 0)
-                return getUDAs!(sym, WireCaseAttr)[firstAttr!(sym, WireCaseAttr, AnyFormat, broadTarget)].style;
-        }
-        return CaseStyle.original;
-    }();
+    private alias p = pickAttrAcross!(WireCaseAttr, broadTarget, F, syms);
+    static if (p.found)
+        enum CaseStyle resolveCaseStyle = p.uda.style;
+    else
+        enum CaseStyle resolveCaseStyle = CaseStyle.original;
 }
 
 /// The `Repr` resolved for format `F` across `syms` (field override(s) first, then
@@ -268,16 +303,11 @@ template resolveCaseStyle(F, syms...)
 /// Only broad (`WireTarget.all`) `WireRepr` participates here.
 template resolveRepr(F, syms...)
 {
-    enum Repr resolveRepr = () {
-        static foreach (sym; syms)
-        {
-            static if (firstAttr!(sym, WireReprAttr, F, broadTarget) >= 0)
-                return getUDAs!(sym, WireReprAttr)[firstAttr!(sym, WireReprAttr, F, broadTarget)].repr;
-            else static if (firstAttr!(sym, WireReprAttr, AnyFormat, broadTarget) >= 0)
-                return getUDAs!(sym, WireReprAttr)[firstAttr!(sym, WireReprAttr, AnyFormat, broadTarget)].repr;
-        }
-        return Repr.name;
-    }();
+    private alias p = pickAttrAcross!(WireReprAttr, broadTarget, F, syms);
+    static if (p.found)
+        enum Repr resolveRepr = p.uda.repr;
+    else
+        enum Repr resolveRepr = Repr.name;
 }
 
 /// The wire name of enum member (or aggregate field) `sym` under format `F`,
@@ -285,14 +315,11 @@ template resolveRepr(F, syms...)
 /// `@WireName!Any`, else the identifier recased by `convertCase!style`.
 template wireName(F, alias sym, CaseStyle style)
 {
-    enum string wireName = () {
-        static if (firstAttr!(sym, WireNameAttr, F, anyAttr) >= 0)
-            return getUDAs!(sym, WireNameAttr)[firstAttr!(sym, WireNameAttr, F, anyAttr)].name;
-        else static if (firstAttr!(sym, WireNameAttr, AnyFormat, anyAttr) >= 0)
-            return getUDAs!(sym, WireNameAttr)[firstAttr!(sym, WireNameAttr, AnyFormat, anyAttr)].name;
-        else
-            return convertCase!style(__traits(identifier, sym));
-    }();
+    private alias p = pickAttr!(sym, WireNameAttr, F, anyAttr);
+    static if (p.found)
+        enum string wireName = p.uda.name;
+    else
+        enum string wireName = convertCase!style(__traits(identifier, sym));
 }
 
 @("wired.policy.resolve.caseReprAndName")
@@ -356,18 +383,14 @@ template wireName(F, alias sym, CaseStyle style)
 /// Whether aggregate field `field` is optional under format `F` — i.e. carries a
 /// `@WireOptional` for `F` or for `AnyFormat` (§5.4).
 enum bool isOptional(F, alias field) =
-    firstAttr!(field, WireOptionalAttr, F, anyAttr) >= 0
-    || firstAttr!(field, WireOptionalAttr, AnyFormat, anyAttr) >= 0;
+    pickAttr!(field, WireOptionalAttr, F, anyAttr).found;
 
 /// The resolved `@WireOptional` policy for `field` under `F` (exact `F` over
 /// `AnyFormat`). Instantiable only when $(LREF isOptional) is true.
 template optionalPolicy(F, alias field)
 if (isOptional!(F, field))
 {
-    static if (firstAttr!(field, WireOptionalAttr, F, anyAttr) >= 0)
-        enum optionalPolicy = getUDAs!(field, WireOptionalAttr)[firstAttr!(field, WireOptionalAttr, F, anyAttr)];
-    else
-        enum optionalPolicy = getUDAs!(field, WireOptionalAttr)[firstAttr!(field, WireOptionalAttr, AnyFormat, anyAttr)];
+    enum optionalPolicy = pickAttr!(field, WireOptionalAttr, F, anyAttr).uda;
 }
 
 /// The `SumType` decode strategy resolved for `field` under `F`: a
@@ -375,14 +398,11 @@ if (isOptional!(F, field))
 /// (§4.7).
 template resolveMatch(F, alias field)
 {
-    enum MatchStrategy resolveMatch = () {
-        static if (firstAttr!(field, WireMatchPolicy, F, anyAttr) >= 0)
-            return getUDAs!(field, WireMatchPolicy)[firstAttr!(field, WireMatchPolicy, F, anyAttr)].strategy;
-        else static if (firstAttr!(field, WireMatchPolicy, AnyFormat, anyAttr) >= 0)
-            return getUDAs!(field, WireMatchPolicy)[firstAttr!(field, WireMatchPolicy, AnyFormat, anyAttr)].strategy;
-        else
-            return MatchStrategy.exactlyOne;
-    }();
+    private alias p = pickAttr!(field, WireMatchPolicy, F, anyAttr);
+    static if (p.found)
+        enum MatchStrategy resolveMatch = p.uda.strategy;
+    else
+        enum MatchStrategy resolveMatch = MatchStrategy.exactlyOne;
 }
 
 @("wired.policy.resolve.optionalAndMatch")
@@ -586,6 +606,30 @@ if (is(S == struct))
     static assert(firstDuplicate(names) == "fast_path");
 }
 
+/// The §5.2 lattice shared by the slot-targeted resolvers: targeted-field
+/// (`!F` then `!Any`) → broad-field (`!F` then `!Any`) → broad on the slot
+/// type (`!F` then `!Any`). `slot == WireTarget.all` skips the targeted rows.
+private template pickSlotAttr(alias Attr, F, WireTarget slot, alias field, Type)
+{
+    static if (slot != WireTarget.all && pickAttr!(field, Attr, F, targetIs!slot).found)
+    {
+        enum found = true;
+        enum uda = pickAttr!(field, Attr, F, targetIs!slot).uda;
+    }
+    else static if (pickAttr!(field, Attr, F, broadTarget).found)
+    {
+        enum found = true;
+        enum uda = pickAttr!(field, Attr, F, broadTarget).uda;
+    }
+    else static if (pickAttr!(Type, Attr, F, broadTarget).found)
+    {
+        enum found = true;
+        enum uda = pickAttr!(Type, Attr, F, broadTarget).uda;
+    }
+    else
+        enum found = false;
+}
+
 /// The `CaseStyle` resolved for the `slot` branch of `field` (whose target type
 /// at that slot is `Type`) under format `F`, following the §5.2 lattice:
 /// targeted-field `!F` → targeted-field `!Any` → broad-field `!F` → broad-field
@@ -594,22 +638,11 @@ if (is(S == struct))
 /// rows.
 template resolveCaseFor(F, WireTarget slot, alias field, Type)
 {
-    enum CaseStyle resolveCaseFor = () {
-        static if (slot != WireTarget.all && firstAttr!(field, WireCaseAttr, F, targetIs!slot) >= 0)
-            return getUDAs!(field, WireCaseAttr)[firstAttr!(field, WireCaseAttr, F, targetIs!slot)].style;
-        else static if (slot != WireTarget.all && firstAttr!(field, WireCaseAttr, AnyFormat, targetIs!slot) >= 0)
-            return getUDAs!(field, WireCaseAttr)[firstAttr!(field, WireCaseAttr, AnyFormat, targetIs!slot)].style;
-        else static if (firstAttr!(field, WireCaseAttr, F, targetIs!(WireTarget.all)) >= 0)
-            return getUDAs!(field, WireCaseAttr)[firstAttr!(field, WireCaseAttr, F, targetIs!(WireTarget.all))].style;
-        else static if (firstAttr!(field, WireCaseAttr, AnyFormat, targetIs!(WireTarget.all)) >= 0)
-            return getUDAs!(field, WireCaseAttr)[firstAttr!(field, WireCaseAttr, AnyFormat, targetIs!(WireTarget.all))].style;
-        else static if (firstAttr!(Type, WireCaseAttr, F, targetIs!(WireTarget.all)) >= 0)
-            return getUDAs!(Type, WireCaseAttr)[firstAttr!(Type, WireCaseAttr, F, targetIs!(WireTarget.all))].style;
-        else static if (firstAttr!(Type, WireCaseAttr, AnyFormat, targetIs!(WireTarget.all)) >= 0)
-            return getUDAs!(Type, WireCaseAttr)[firstAttr!(Type, WireCaseAttr, AnyFormat, targetIs!(WireTarget.all))].style;
-        else
-            return CaseStyle.original;
-    }();
+    private alias p = pickSlotAttr!(WireCaseAttr, F, slot, field, Type);
+    static if (p.found)
+        enum CaseStyle resolveCaseFor = p.uda.style;
+    else
+        enum CaseStyle resolveCaseFor = CaseStyle.original;
 }
 
 /// The `Repr` resolved for the `slot` branch of `field` (whose enum at that slot
@@ -617,22 +650,11 @@ template resolveCaseFor(F, WireTarget slot, alias field, Type)
 /// defaulting to `Repr.name`.
 template resolveReprFor(F, WireTarget slot, alias field, E)
 {
-    enum Repr resolveReprFor = () {
-        static if (slot != WireTarget.all && firstAttr!(field, WireReprAttr, F, targetIs!slot) >= 0)
-            return getUDAs!(field, WireReprAttr)[firstAttr!(field, WireReprAttr, F, targetIs!slot)].repr;
-        else static if (slot != WireTarget.all && firstAttr!(field, WireReprAttr, AnyFormat, targetIs!slot) >= 0)
-            return getUDAs!(field, WireReprAttr)[firstAttr!(field, WireReprAttr, AnyFormat, targetIs!slot)].repr;
-        else static if (firstAttr!(field, WireReprAttr, F, targetIs!(WireTarget.all)) >= 0)
-            return getUDAs!(field, WireReprAttr)[firstAttr!(field, WireReprAttr, F, targetIs!(WireTarget.all))].repr;
-        else static if (firstAttr!(field, WireReprAttr, AnyFormat, targetIs!(WireTarget.all)) >= 0)
-            return getUDAs!(field, WireReprAttr)[firstAttr!(field, WireReprAttr, AnyFormat, targetIs!(WireTarget.all))].repr;
-        else static if (firstAttr!(E, WireReprAttr, F, targetIs!(WireTarget.all)) >= 0)
-            return getUDAs!(E, WireReprAttr)[firstAttr!(E, WireReprAttr, F, targetIs!(WireTarget.all))].repr;
-        else static if (firstAttr!(E, WireReprAttr, AnyFormat, targetIs!(WireTarget.all)) >= 0)
-            return getUDAs!(E, WireReprAttr)[firstAttr!(E, WireReprAttr, AnyFormat, targetIs!(WireTarget.all))].repr;
-        else
-            return Repr.name;
-    }();
+    private alias p = pickSlotAttr!(WireReprAttr, F, slot, field, E);
+    static if (p.found)
+        enum Repr resolveReprFor = p.uda.repr;
+    else
+        enum Repr resolveReprFor = Repr.name;
 }
 
 @("wired.policy.resolve.targetedSlots")
