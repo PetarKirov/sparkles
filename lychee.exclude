@@ -60,3 +60,7 @@
 # connection times out locally and under CI (the cambium successor too); the links
 # are valid canonical citations, so exclude rather than rot-pin.
 ^https?://gallium\.inria\.fr/
+# engr.mun.ca (Theo Norvell's precedence-climbing page, cited in
+# parsing/theory/pratt-precedence.md): a slow academic host that times out for
+# automated checkers (12 timeouts, 0 real errors in a local run); valid citation.
+^https?://(www\.)?engr\.mun\.ca/
