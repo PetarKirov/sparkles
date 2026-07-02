@@ -138,9 +138,10 @@ if (is(E == enum))
         return toJSON(cast(OriginalType!E) value);
     else
     {
-        static foreach (m; __traits(allMembers, E))
+        alias names = wireNames!(Json, E, style);
+        static foreach (i, m; __traits(allMembers, E))
             if (value == __traits(getMember, E, m))
-                return ok!Exception(JSONValue(wireName!(Json, __traits(getMember, E, m), style)));
+                return ok!Exception(JSONValue(names[i]));
 
         return fail!JSONValue(
             "Cannot encode " ~ E.stringof ~ " at $: value is not a declared member");
@@ -151,23 +152,17 @@ private JsonResult!JSONValue encodeStruct(T)(const T value)
 if (is(T == struct))
 {
     enum _uniq = checkUniqueFieldKeys!(Json, T);
-    enum aggStyle = resolveCaseStyle!(Json, T);
+    alias policies = fieldPolicies!(Json, T);
 
     JSONValue[string] obj;
-    static foreach (i; 0 .. T.tupleof.length)
+    static foreach (i; 0 .. policies.length)
     {{
-        enum key = wireName!(Json, T.tupleof[i], aggStyle);
-        static if (isOptional!(Json, T.tupleof[i]))
-            enum skip = optionalPolicy!(Json, T.tupleof[i]).skip;
-        else
-            enum skip = WireSkip.never;
-
-        if (!shouldOmit!(T, i, skip)(value.tupleof[i]))
+        if (!shouldOmit!(T, i, policies[i].skip)(value.tupleof[i]))
         {
             auto r = encodeFieldValue!(T, i)(value.tupleof[i]);
             if (r.hasError)
                 return err!JSONValue(r.error);
-            obj[key] = r.value;
+            obj[policies[i].key] = r.value;
         }
     }}
     return ok!Exception(JSONValue(obj));
@@ -180,14 +175,15 @@ if (is(T == struct))
 private JsonResult!JSONValue encodeFieldValue(T, size_t i)(const typeof(T.tupleof[i]) value)
 {
     alias V = typeof(T.tupleof[i]);
+    enum pol = fieldPolicies!(Json, T)[i];
 
     static if (hasConvert!(Json, T.tupleof[i]))
         return encodeVia!(convertOf!(Json, T.tupleof[i]), V)(value);
 
     else static if (is(V == enum))
         return encodeEnumWith!(V,
-            resolveReprFor!(Json, WireTarget.all, T.tupleof[i], V),
-            resolveCaseFor!(Json, WireTarget.all, T.tupleof[i], V))(value);
+            pol.reprFor(WireTarget.all, resolveRepr!(Json, V)),
+            pol.caseFor(WireTarget.all, resolveCaseStyle!(Json, V)))(value);
 
     else static if (is(V == E[], E) && is(E == enum))
     {
@@ -195,8 +191,8 @@ private JsonResult!JSONValue encodeFieldValue(T, size_t i)(const typeof(T.tupleo
         foreach (e; value)
         {
             auto r = encodeEnumWith!(E,
-                resolveReprFor!(Json, WireTarget.value, T.tupleof[i], E),
-                resolveCaseFor!(Json, WireTarget.value, T.tupleof[i], E))(e);
+                pol.reprFor(WireTarget.value, resolveRepr!(Json, E)),
+                pol.caseFor(WireTarget.value, resolveCaseStyle!(Json, E)))(e);
             if (r.hasError)
                 return err!JSONValue(r.error);
             arr ~= r.value;
@@ -516,8 +512,9 @@ if (is(E == enum))
         if (json.type != JSONType.string)
             return fail!E("Cannot decode " ~ E.stringof ~ " at $: expected a JSON string");
 
-        static foreach (m; __traits(allMembers, E))
-            if (json.str == wireName!(Json, __traits(getMember, E, m), style))
+        alias names = wireNames!(Json, E, style);
+        static foreach (i, m; __traits(allMembers, E))
+            if (json.str == names[i])
                 return ok!Exception(__traits(getMember, E, m));
 
         return fail!E(
@@ -534,36 +531,33 @@ if (is(T == struct))
     if (json.type != JSONType.object)
         return fail!T("Cannot decode " ~ T.stringof ~ " at $: expected a JSON object");
 
-    enum aggStyle = resolveCaseStyle!(Json, T);
+    alias policies = fieldPolicies!(Json, T);
     T result;
-    static foreach (i; 0 .. T.tupleof.length)
+    static foreach (i; 0 .. policies.length)
     {{
-        enum key = wireName!(Json, T.tupleof[i], aggStyle);
-        if (auto p = key in json.object)
+        if (auto p = policies[i].key in json.object)
         {
             auto r = decodeFieldValue!(T, i)(*p);
             if (r.hasError)
             {
                 // A present but invalid value under `useDefault` leaves the field
                 // at its default (§5.4); otherwise the failure propagates.
-                static if (isOptional!(Json, T.tupleof[i])
-                    && optionalPolicy!(Json, T.tupleof[i]).onInvalid == WireInvalid.useDefault)
-                {
-                }
-                else
+                static if (!(policies[i].optional
+                    && policies[i].onInvalid == WireInvalid.useDefault))
                     return err!T(r.error);
             }
             else
                 result.tupleof[i] = r.value;
         }
-        else static if (isNullAware!(typeof(T.tupleof[i])) || isOptional!(Json, T.tupleof[i]))
+        else static if (isNullAware!(typeof(T.tupleof[i])) || policies[i].optional)
         {
             // A missing null-aware or @WireOptional field decodes to its default,
             // which the `T result;` default already holds (§4.5, §5.4).
         }
         else
             return fail!T(
-                "Cannot decode " ~ T.stringof ~ " at $." ~ key ~ ": missing required field");
+                "Cannot decode " ~ T.stringof ~ " at $." ~ policies[i].key
+                ~ ": missing required field");
     }}
     return ok!Exception(result);
 }
@@ -571,14 +565,15 @@ if (is(T == struct))
 private JsonResult!(typeof(T.tupleof[i])) decodeFieldValue(T, size_t i)(JSONValue json)
 {
     alias V = typeof(T.tupleof[i]);
+    enum pol = fieldPolicies!(Json, T)[i];
 
     static if (hasConvert!(Json, T.tupleof[i]))
         return decodeVia!(convertOf!(Json, T.tupleof[i]), V)(json);
 
     else static if (is(V == enum))
         return decodeEnumWith!(V,
-            resolveReprFor!(Json, WireTarget.all, T.tupleof[i], V),
-            resolveCaseFor!(Json, WireTarget.all, T.tupleof[i], V))(json);
+            pol.reprFor(WireTarget.all, resolveRepr!(Json, V)),
+            pol.caseFor(WireTarget.all, resolveCaseStyle!(Json, V)))(json);
 
     else static if (is(V == E[], E) && is(E == enum))
     {
@@ -588,8 +583,8 @@ private JsonResult!(typeof(T.tupleof[i])) decodeFieldValue(T, size_t i)(JSONValu
         foreach (elem; json.array)
         {
             auto r = decodeEnumWith!(E,
-                resolveReprFor!(Json, WireTarget.value, T.tupleof[i], E),
-                resolveCaseFor!(Json, WireTarget.value, T.tupleof[i], E))(elem);
+                pol.reprFor(WireTarget.value, resolveRepr!(Json, E)),
+                pol.caseFor(WireTarget.value, resolveCaseStyle!(Json, E)))(elem);
             if (r.hasError)
                 return err!V(r.error);
             result ~= r.value;
@@ -598,7 +593,7 @@ private JsonResult!(typeof(T.tupleof[i])) decodeFieldValue(T, size_t i)(JSONValu
     }
 
     else static if (isSumType!V)
-        return decodeSumType!(V, resolveMatch!(Json, T.tupleof[i]))(json);
+        return decodeSumType!(V, pol.match)(json);
 
     else
         return fromJSON!V(json);
@@ -733,10 +728,10 @@ private string aaKeyText(K)(K k)
         enum repr = resolveRepr!(Json, K);
         static if (repr == Repr.name)
         {
-            enum style = resolveCaseStyle!(Json, K);
-            static foreach (m; __traits(allMembers, K))
+            alias names = wireNames!(Json, K, resolveCaseStyle!(Json, K));
+            static foreach (i, m; __traits(allMembers, K))
                 if (k == __traits(getMember, K, m))
-                    return wireName!(Json, __traits(getMember, K, m), style);
+                    return names[i];
             assert(0, "aaKeyText: value is not a declared enum member");
         }
         else
@@ -767,8 +762,9 @@ private JsonResult!K aaKeyParse(K)(string keyStr)
         static if (repr == Repr.name)
         {
             enum style = resolveCaseStyle!(Json, K);
-            static foreach (m; __traits(allMembers, K))
-                if (keyStr == wireName!(Json, __traits(getMember, K, m), style))
+            alias names = wireNames!(Json, K, style);
+            static foreach (i, m; __traits(allMembers, K))
+                if (keyStr == names[i])
                     return ok!Exception(__traits(getMember, K, m));
             return fail!K(
                 "Cannot decode " ~ K.stringof ~ " key \"" ~ keyStr
@@ -805,11 +801,11 @@ if (is(E == enum))
 {
     enum string nameList = () {
         string s;
-        static foreach (i, m; __traits(allMembers, E))
+        foreach (i, n; wireNames!(Json, E, style))
         {
-            static if (i)
+            if (i)
                 s ~= ", ";
-            s ~= wireName!(Json, __traits(getMember, E, m), style);
+            s ~= n;
         }
         return s;
     }();
