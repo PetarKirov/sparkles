@@ -35,16 +35,19 @@ This survey answers six questions:
    Sparkles parser would sit. See the [comparison][comparison].
 
 > [!NOTE]
-> **Scope: this is wave 1 — the foundation + flagship wave.** It establishes the
-> theory subtree, the shared vocabulary, and nine flagship systems that anchor each
-> category. A second wave will broaden each category: more combinators (winnow,
-> combine, FastParse, parsley, cats-parse, FParsec, Angstrom, FlatParse), more
-> high-performance/SIMD parsers (simd-json/sonic-rs, yyjson/RapidJSON, Hyperscan,
-> Zig's tokenizer), more generators (LALRPOP, Lark/PLY, Peggy, Ragel/re2c), and the
-> incremental/IDE cluster (Roslyn red-green trees, rust-analyzer/rowan, Lezer). Rows
-> below that a future deep-dive will add are noted, not silently omitted.
+> **Scope: wave 1 (foundation + flagship) + the first wave-2 cluster.** Wave 1
+> established the theory subtree, the shared vocabulary, and nine flagship systems.
+> **Wave 2 is now underway, starting with the incremental / query-based cluster** — the
+> [`incremental` theory page][incremental] plus [rust-analyzer], [Roslyn][roslyn],
+> [Lezer][lezer], and the [`rustc` query system][rustc] (joining wave-1's [tree-sitter]),
+> because query-based compiler design is the most design-relevant axis for the Sparkles
+> direction. Still deferred to later wave-2 passes: more combinators (winnow, combine,
+> FastParse, parsley, cats-parse, FParsec, Angstrom, FlatParse), more high-performance/SIMD
+> parsers (simd-json/sonic-rs, yyjson/RapidJSON, Hyperscan, Zig's tokenizer), and more
+> generators (LALRPOP, Lark/PLY, Peggy, Ragel/re2c). Rows below that a future deep-dive
+> will add are noted, not silently omitted.
 
-**Last reviewed:** June 29, 2026
+**Last reviewed:** July 3, 2026
 
 ---
 
@@ -77,30 +80,37 @@ error) → _panic-mode_ (skip to a synchronizing token and resume) → _diagnost
 result + a list of errors) → _incremental/IDE_ (recover **and** re-parse edited
 regions on every keystroke). **Performance posture** is the headline runtime model.
 
-| System            | Ecosystem      | Category                 | Algorithm / grammar class                                       | Error recovery       | Performance posture                                          | Link                       |
-| ----------------- | -------------- | ------------------------ | --------------------------------------------------------------- | -------------------- | ------------------------------------------------------------ | -------------------------- |
-| **simdjson**      | C++            | SIMD / data-parallel     | Two-stage: vectorized structural index + pushdown state machine | Fail-fast (validate) | Branchless SIMD, ~ GB/s, zero-copy, runtime CPU dispatch     | [simdjson][simdjson]       |
-| **tree-sitter**   | C              | Incremental / IDE-grade  | Table-driven [GLR][bottom-up]; lossless CST                     | **Incremental/IDE**  | Temporal: reuse unchanged subtrees per keystroke; no SIMD    | [tree-sitter][tree-sitter] |
-| **ANTLR**         | Java (10 tgts) | Generator (LL / ALL(\*)) | [ALL(\*)][top-down] adaptive LL — any non-left-recursive CFG    | Recovering           | O(n⁴) worst, linear in practice via warm lookahead-DFA cache | [antlr][antlr]             |
-| **GNU Bison**     | C (multi-tgt)  | Generator (LR)           | [LALR(1)][bottom-up] default; IELR/canonical; opt-in GLR        | Panic-mode (`error`) | Linear, table-driven, tiny constant; sequential              | [bison-yacc][bison]        |
-| **Menhir**        | OCaml          | Generator (LR)           | Full [LR(1)][bottom-up] (Pager); opt-in canonical/LALR/GLR      | Recovering API¹      | Linear; resumable API powers Merlin/ocaml-lsp                | [menhir][menhir]           |
-| **pest**          | Rust           | Generator (PEG)          | [PEG][peg] (non-memoizing recursive descent)                    | Diagnostic           | Scannerless, zero-copy leaves; super-linear on adversarial   | [pest][pest]               |
-| **Parsec family** | Haskell        | Parser combinator        | Predictive [LL][top-down]-with-`try`; ordered choice            | Diagnostic / recov.² | Scalar; near-linear on LL(1); attoparsec streaming/zero-copy | [haskell-parsec][parsec]   |
-| **nom**           | Rust           | Parser combinator        | [PEG][peg]-like ordered-choice recursive descent (scannerless)  | Fail-fast            | Zero-copy, byte/streaming, ~ handwritten-C; no memoization   | [rust-nom][nom]            |
-| **chumsky**       | Rust           | Parser combinator        | Recursive-descent [PEG][peg]; opt-in left-rec + memoization     | **Recovering**       | Post-0.10 zero-copy rewrite; no SIMD/streaming/incremental   | [rust-chumsky][chumsky]    |
+| System              | Ecosystem      | Category                  | Algorithm / grammar class                                                               | Error recovery       | Performance posture                                          | Link                       |
+| ------------------- | -------------- | ------------------------- | --------------------------------------------------------------------------------------- | -------------------- | ------------------------------------------------------------ | -------------------------- |
+| **simdjson**        | C++            | SIMD / data-parallel      | Two-stage: vectorized structural index + pushdown state machine                         | Fail-fast (validate) | Branchless SIMD, ~ GB/s, zero-copy, runtime CPU dispatch     | [simdjson][simdjson]       |
+| **tree-sitter**     | C              | Incremental / IDE-grade   | Table-driven [GLR][bottom-up]; lossless CST                                             | **Incremental/IDE**  | Temporal: reuse unchanged subtrees per keystroke; no SIMD    | [tree-sitter][tree-sitter] |
+| **rust-analyzer**   | Rust           | Incremental / query-based | Hand-written [RD][top-down] → `rowan` [red-green][incremental] CST; [salsa] query graph | **Incremental/IDE**  | Demand-driven, memoized queries; in-memory reuse per edit    | [rust-analyzer]            |
+| **Roslyn**          | C# / VB        | Incremental / IDE-grade   | Hand-written [RD][top-down] → [red-green][incremental] full-fidelity tree               | **Incremental/IDE**  | Subtree reuse ~99.99% per edit; lazy red nodes; DAG at green | [roslyn]                   |
+| **Lezer**           | JS / TS        | Incremental / IDE-grade   | Table-driven **incremental [GLR][bottom-up]**; compact blob tree                        | **Incremental/IDE**  | `TreeFragment` reuse per edit; in-browser; no SIMD           | [lezer]                    |
+| **`rustc` queries** | Rust           | Query-based compiler      | Demand-driven memoized [queries][incremental] over AST/HIR/MIR                          | n/a — query engine³  | On-disk red/green `DepGraph` reused **across** compiles      | [rustc]                    |
+| **ANTLR**           | Java (10 tgts) | Generator (LL / ALL(\*))  | [ALL(\*)][top-down] adaptive LL — any non-left-recursive CFG                            | Recovering           | O(n⁴) worst, linear in practice via warm lookahead-DFA cache | [antlr][antlr]             |
+| **GNU Bison**       | C (multi-tgt)  | Generator (LR)            | [LALR(1)][bottom-up] default; IELR/canonical; opt-in GLR                                | Panic-mode (`error`) | Linear, table-driven, tiny constant; sequential              | [bison-yacc][bison]        |
+| **Menhir**          | OCaml          | Generator (LR)            | Full [LR(1)][bottom-up] (Pager); opt-in canonical/LALR/GLR                              | Recovering API¹      | Linear; resumable API powers Merlin/ocaml-lsp                | [menhir][menhir]           |
+| **pest**            | Rust           | Generator (PEG)           | [PEG][peg] (non-memoizing recursive descent)                                            | Diagnostic           | Scannerless, zero-copy leaves; super-linear on adversarial   | [pest][pest]               |
+| **Parsec family**   | Haskell        | Parser combinator         | Predictive [LL][top-down]-with-`try`; ordered choice                                    | Diagnostic / recov.² | Scalar; near-linear on LL(1); attoparsec streaming/zero-copy | [haskell-parsec][parsec]   |
+| **nom**             | Rust           | Parser combinator         | [PEG][peg]-like ordered-choice recursive descent (scannerless)                          | Fail-fast            | Zero-copy, byte/streaming, ~ handwritten-C; no memoization   | [rust-nom][nom]            |
+| **chumsky**         | Rust           | Parser combinator         | Recursive-descent [PEG][peg]; opt-in left-rec + memoization                             | **Recovering**       | Post-0.10 zero-copy rewrite; no SIMD/streaming/incremental   | [rust-chumsky][chumsky]    |
 
 <sub>¹ Menhir's incremental/inspection API is the substrate IDE tooling uses for
 recovery and live parsing; unlike tree-sitter, it is not a built-in edit-local CST
 reuse engine. ² attoparsec drops error book-keeping for speed; Megaparsec adds typed
-errors, error bundles, and on-the-fly recovery.</sub>
+errors, error bundles, and on-the-fly recovery. ³ `rustc`'s query system is an
+incremental-**computation** engine, not a parser; its front-end lexer/parser is still
+batch. Incrementality applies to everything derived _from_ the AST, reused across whole
+compiler invocations via an on-disk dependency graph.</sub>
 
-> Categories deferred to wave 2: **Combinators** — winnow, combine (Rust),
+> Wave-2 **Incremental / query-based** now landed: [rust-analyzer], [Roslyn][roslyn],
+> [Lezer][lezer], [`rustc` queries][rustc] (see the [`incremental` theory page][incremental]).
+> Still deferred to later wave-2 passes: **Combinators** — winnow, combine (Rust),
 > FastParse/parsley/cats-parse (Scala), FParsec (F#), Angstrom (OCaml), FlatParse
 > (Haskell). **SIMD / data-parallel** — simd-json & sonic-rs (Rust), yyjson &
 > RapidJSON (C/C++), Hyperscan/Vectorscan (regex SIMD), Zig's tokenizer. **Generators**
-> — LALRPOP (Rust), Lark & PLY (Python), Peggy (JS), Ragel/re2c (state-machine
-> lexers). **Incremental/IDE** — Roslyn red-green trees (C#), rust-analyzer/rowan,
-> Lezer (CodeMirror).
+> — LALRPOP (Rust), Lark & PLY (Python), Peggy (JS), Ragel/re2c (state-machine lexers).
 
 ---
 
@@ -111,39 +121,41 @@ errors, error bundles, and on-the-fly recovery.</sub>
 The single most load-bearing axis: _how_ the parser explores the grammar. Each family
 is developed in the linked theory deep-dive.
 
-| Strategy                              | The idea                                                                         | Theory                                      | Systems here                                                           |
-| ------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------- |
-| **Top-down (LL / recursive descent)** | Predict the rule from lookahead, expand from the root; leftmost derivation       | [top-down][top-down]                        | [ANTLR][antlr] (ALL(\*)), and every combinator below                   |
-| **Bottom-up (LR family)**             | Shift tokens, reduce handles bottom-up; rightmost derivation in reverse          | [bottom-up][bottom-up]                      | [Bison][bison] (LALR), [Menhir][menhir] (LR(1))                        |
-| **Generalized (GLR / GLL / Earley)**  | Pursue all live parses at once (graph-structured stack / chart); all CFGs        | [bottom-up][bottom-up] · [general][general] | [tree-sitter][tree-sitter] (GLR); Bison/Menhir GLR mode                |
-| **PEG (ordered-choice recognition)**  | First-match-wins ordered choice + syntactic predicates; unambiguous, scannerless | [peg-packrat][peg]                          | [pest][pest], [nom][nom], [chumsky][chumsky], [Parsec][parsec] (-like) |
-| **Operator-precedence / Pratt**       | A linear expression sub-engine driven by binding power                           | [pratt-precedence][pratt]                   | embedded in [chumsky][chumsky], [pest][pest] (`PrattParser`)           |
-| **Derivative-based**                  | Differentiate the language by each input symbol; regex→DFA up to full CFG        | [derivatives][derivatives]                  | research-grade (derp); derivative lexers in ml-ulex                    |
-| **SIMD / data-parallel**              | Classify the whole input with vector instructions, then a scalar second pass     | [formal-languages][formal]                  | [simdjson][simdjson]                                                   |
+| Strategy                              | The idea                                                                                     | Theory                                      | Systems here                                                                                                                     |
+| ------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| **Top-down (LL / recursive descent)** | Predict the rule from lookahead, expand from the root; leftmost derivation                   | [top-down][top-down]                        | [ANTLR][antlr] (ALL(\*)), and every combinator below                                                                             |
+| **Bottom-up (LR family)**             | Shift tokens, reduce handles bottom-up; rightmost derivation in reverse                      | [bottom-up][bottom-up]                      | [Bison][bison] (LALR), [Menhir][menhir] (LR(1))                                                                                  |
+| **Generalized (GLR / GLL / Earley)**  | Pursue all live parses at once (graph-structured stack / chart); all CFGs                    | [bottom-up][bottom-up] · [general][general] | [tree-sitter][tree-sitter] (GLR); Bison/Menhir GLR mode                                                                          |
+| **PEG (ordered-choice recognition)**  | First-match-wins ordered choice + syntactic predicates; unambiguous, scannerless             | [peg-packrat][peg]                          | [pest][pest], [nom][nom], [chumsky][chumsky], [Parsec][parsec] (-like)                                                           |
+| **Operator-precedence / Pratt**       | A linear expression sub-engine driven by binding power                                       | [pratt-precedence][pratt]                   | embedded in [chumsky][chumsky], [pest][pest] (`PrattParser`)                                                                     |
+| **Derivative-based**                  | Differentiate the language by each input symbol; regex→DFA up to full CFG                    | [derivatives][derivatives]                  | research-grade (derp); derivative lexers in ml-ulex                                                                              |
+| **SIMD / data-parallel**              | Classify the whole input with vector instructions, then a scalar second pass                 | [formal-languages][formal]                  | [simdjson][simdjson]                                                                                                             |
+| **Incremental / query-based**         | Reuse the parse _tree_ (node reuse) and/or the _computation_ (memoized queries) across edits | [incremental][incremental]                  | [tree-sitter][tree-sitter] · [Lezer][lezer] (GLR); [rust-analyzer] · [Roslyn][roslyn] (red-green RD); [`rustc`][rustc] (queries) |
 
 ### By interface model
 
 _How the grammar reaches the parser_ — the ergonomics axis.
 
-| Interface model                         | What you write                                                   | Systems                                                                                                                                     |
-| --------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Offline generator (external DSL)**    | A grammar file compiled to a parser ahead of time                | [ANTLR][antlr] (`.g4`), [Bison][bison] (`.y`), [Menhir][menhir] (`.mly`), [pest][pest] (`.pest`), [tree-sitter][tree-sitter] (`grammar.js`) |
-| **Embedded combinators (internal DSL)** | Ordinary host-language values composed with combinator functions | [Parsec][parsec], [nom][nom], [chumsky][chumsky]                                                                                            |
-| **Hand-written recursive descent**      | A procedure per rule, often + a [Pratt][pratt] expression loop   | the production norm (GCC/Clang/rustc/Go); the substrate the above reify                                                                     |
-| **Library state machine (no grammar)**  | Direct two-stage SIMD pipeline, hand-tuned                       | [simdjson][simdjson]                                                                                                                        |
+| Interface model                         | What you write                                                            | Systems                                                                                                                                        |
+| --------------------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Offline generator (external DSL)**    | A grammar file compiled to a parser ahead of time                         | [ANTLR][antlr] (`.g4`), [Bison][bison] (`.y`), [Menhir][menhir] (`.mly`), [pest][pest] (`.pest`), [tree-sitter][tree-sitter] (`grammar.js`)    |
+| **Embedded combinators (internal DSL)** | Ordinary host-language values composed with combinator functions          | [Parsec][parsec], [nom][nom], [chumsky][chumsky]                                                                                               |
+| **Hand-written recursive descent**      | A procedure per rule, often + a [Pratt][pratt] expression loop            | the production norm (GCC/Clang/rustc/Go); [rust-analyzer] + [Roslyn][roslyn] (→ a [red-green][incremental] CST); the substrate the above reify |
+| **Library state machine (no grammar)**  | Direct two-stage SIMD pipeline, hand-tuned                                | [simdjson][simdjson]                                                                                                                           |
+| **Query graph (no phases)**             | Define the compiler as memoized `K → V` queries; results reused on demand | [rust-analyzer] ([salsa]), [`rustc`][rustc]                                                                                                    |
 
 ### By error-recovery posture
 
 The modern differentiator (see the [comparison][comparison]). Recovery is what
 separates a batch compiler back-end from an IDE-grade front-end.
 
-| Posture                  | Behaviour on a syntax error                                       | Systems                                                                  |
-| ------------------------ | ----------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| **Fail-fast / validate** | Stop at the first error; report position                          | [simdjson][simdjson], [nom][nom], [Bison][bison] (without `error` rules) |
-| **Panic-mode**           | Skip to a synchronizing token and resume without a full tree      | [Bison][bison] (`error` rules), classic LL/LR parsers                    |
-| **Diagnostic**           | Precise positioned message (expected-sets), still one error       | [pest][pest], [Parsec/Megaparsec][parsec] (base)                         |
-| **Recovering**           | Produce a partial AST **and** a list of errors                    | [chumsky][chumsky], [ANTLR][antlr], Megaparsec, [Menhir][menhir] clients |
-| **Incremental / IDE**    | Recover **and** re-parse only the edited region on each keystroke | [tree-sitter][tree-sitter]                                               |
+| Posture                  | Behaviour on a syntax error                                       | Systems                                                                       |
+| ------------------------ | ----------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| **Fail-fast / validate** | Stop at the first error; report position                          | [simdjson][simdjson], [nom][nom], [Bison][bison] (without `error` rules)      |
+| **Panic-mode**           | Skip to a synchronizing token and resume without a full tree      | [Bison][bison] (`error` rules), classic LL/LR parsers                         |
+| **Diagnostic**           | Precise positioned message (expected-sets), still one error       | [pest][pest], [Parsec/Megaparsec][parsec] (base)                              |
+| **Recovering**           | Produce a partial AST **and** a list of errors                    | [chumsky][chumsky], [ANTLR][antlr], Megaparsec, [Menhir][menhir] clients      |
+| **Incremental / IDE**    | Recover **and** re-parse only the edited region on each keystroke | [tree-sitter][tree-sitter], [rust-analyzer], [Roslyn][roslyn], [Lezer][lezer] |
 
 ---
 
@@ -152,30 +164,30 @@ separates a batch compiler back-end from an IDE-grade front-end.
 A high-confidence timeline interleaving **theory/algorithm milestones** with
 **tool/system milestones**. Per-result provenance lives in each deep-dive's `Sources`.
 
-| Year        | Theory / algorithm milestone                                                                                                         | Tool / system milestone                                                                       |
-| ----------- | ------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| **1956**    | **Chomsky** — _Three Models for the Description of Language_ (the [hierarchy][formal])                                               | —                                                                                             |
-| 1959–1963   | Chomsky formal properties; **Floyd 1963** — [operator-precedence][pratt] parsing                                                     | —                                                                                             |
-| **1964**    | **Brzozowski** — [derivatives of regular expressions][derivatives]                                                                   | —                                                                                             |
-| **1965**    | **Knuth** — _On the Translation of Languages from Left to Right_ ([LR parsing][bottom-up])                                           | CYK recognition (Cocke/Kasami/Younger, 1965–67)                                               |
-| 1968–1970   | **Lewis & Stearns** LL(k); **Earley 1970** — general [CF parsing][general]                                                           | —                                                                                             |
-| **1973**    | **Pratt** — _Top Down Operator Precedence_ ([TDOP][pratt])                                                                           | —                                                                                             |
-| **1975**    | **Valiant** — sub-cubic CF recognition via Boolean matrix mult.                                                                      | **yacc** (Johnson, Bell Labs) — LALR(1) generator ships on Unix                               |
-| 1977–1982   | **Pager 1977** minimal-state LR; **DeRemer & Pennello 1982** efficient [LALR(1)][bottom-up]                                          | **lex**/**flex** lexer generators                                                             |
-| **1985**    | **Tomita** — [GLR][bottom-up] (graph-structured stack) for natural language (_Efficient Parsing for Natural Language_, Kluwer, 1986) | **GNU Bison** released                                                                        |
-| 1986        | The **"Dragon Book"** (Aho, Sethi & Ullman) codifies the field                                                                       | **PCCTS**, Terence Parr's ANTLR predecessor (1989)                                            |
-| **1991**    | **Leo** — linear Earley on every LR(k) grammar                                                                                       | —                                                                                             |
-| 1998–2001   | **Hutton & Meijer 1998** _Monadic Parsing_; combinator theory matures                                                                | **Parsec** (Leijen & Meijer, 2001) — [Haskell combinators][parsec]                            |
-| **2002**    | **Ford** — [packrat parsing][peg] (linear-time PEG); **Lee** — BMM lower bound                                                       | **Aycock & Horspool** practical Earley                                                        |
-| **2004**    | **Ford** — [Parsing Expression Grammars][peg] (POPL)                                                                                 | —                                                                                             |
-| 2006–2009   | **Warth 2008** PEG + left recursion; **Owens et al. 2009** [derivatives reexamined][derivatives]                                     | **Menhir** (Pottier & Régis-Gianas, 2006); **attoparsec**                                     |
-| **2011**    | **Might, Darais & Spiewak** — [Parsing with Derivatives][derivatives]; **LL(\*)** (PLDI)                                             | **Marpa** (Kegler) — engineered Earley                                                        |
-| 2012–2014   | **CompCert** verified parser (ESOP 2012); **ALL(\*)** (Parr, Harwell & Fisher, OOPSLA 2014)                                          | **ANTLR 4** (2013, [ALL(\*)][top-down]); **nom** 1.0 (2015)                                   |
-| 2015–2016   | **Megaparsec**; **Adams et al. 2016** — PWD is cubic, ~951× faster                                                                   | Bison counterexample research (Isradisaikul & Myers, PLDI 2015)                               |
-| 2017–2018   | **Jourdan & Pottier 2017** — verified C11 LR parser (TOPLAS)                                                                         | **tree-sitter** (Brunsfeld/GitHub, 2018) — [incremental GLR][tree-sitter]                     |
-| **2019**    | —                                                                                                                                    | **simdjson** (Langdale & Lemire, VLDB J.) — [SIMD JSON][simdjson]                             |
-| 2020–2021   | **CPython** adopts a [PEG][peg] parser (PEP 617)                                                                                     | **chumsky** (recovering combinators); **Bison 3.8** counterexamples                           |
-| 2023–2026\* | —                                                                                                                                    | **winnow** forks nom; **chumsky** zero-copy rewrite lands in 0.10+; **Menhir** GLR back-end\* |
+| Year        | Theory / algorithm milestone                                                                                                         | Tool / system milestone                                                                                                        |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| **1956**    | **Chomsky** — _Three Models for the Description of Language_ (the [hierarchy][formal])                                               | —                                                                                                                              |
+| 1959–1963   | Chomsky formal properties; **Floyd 1963** — [operator-precedence][pratt] parsing                                                     | —                                                                                                                              |
+| **1964**    | **Brzozowski** — [derivatives of regular expressions][derivatives]                                                                   | —                                                                                                                              |
+| **1965**    | **Knuth** — _On the Translation of Languages from Left to Right_ ([LR parsing][bottom-up])                                           | CYK recognition (Cocke/Kasami/Younger, 1965–67)                                                                                |
+| 1968–1970   | **Lewis & Stearns** LL(k); **Earley 1970** — general [CF parsing][general]                                                           | —                                                                                                                              |
+| **1973**    | **Pratt** — _Top Down Operator Precedence_ ([TDOP][pratt])                                                                           | —                                                                                                                              |
+| **1975**    | **Valiant** — sub-cubic CF recognition via Boolean matrix mult.                                                                      | **yacc** (Johnson, Bell Labs) — LALR(1) generator ships on Unix                                                                |
+| 1977–1982   | **Pager 1977** minimal-state LR; **DeRemer & Pennello 1982** efficient [LALR(1)][bottom-up]                                          | **lex**/**flex** lexer generators                                                                                              |
+| **1985**    | **Tomita** — [GLR][bottom-up] (graph-structured stack) for natural language (_Efficient Parsing for Natural Language_, Kluwer, 1986) | **GNU Bison** released                                                                                                         |
+| 1986        | The **"Dragon Book"** (Aho, Sethi & Ullman) codifies the field                                                                       | **PCCTS**, Terence Parr's ANTLR predecessor (1989)                                                                             |
+| **1991**    | **Leo** — linear Earley on every LR(k) grammar                                                                                       | —                                                                                                                              |
+| 1997–2001   | **Wagner & Graham 1997/98** — optimal [incremental parsing][incremental] (`O(t+s·lg N)`); **Hutton & Meijer 1998** _Monadic Parsing_ | **Parsec** (Leijen & Meijer, 2001) — [Haskell combinators][parsec]                                                             |
+| **2002**    | **Ford** — [packrat parsing][peg] (linear-time PEG); **Lee** — BMM lower bound                                                       | **Aycock & Horspool** practical Earley                                                                                         |
+| **2004**    | **Ford** — [Parsing Expression Grammars][peg] (POPL)                                                                                 | —                                                                                                                              |
+| 2006–2009   | **Warth 2008** PEG + left recursion; **Owens et al. 2009** [derivatives reexamined][derivatives]                                     | **Menhir** (Pottier & Régis-Gianas, 2006); **attoparsec**                                                                      |
+| **2011**    | **Might, Darais & Spiewak** — [Parsing with Derivatives][derivatives]; **LL(\*)** (PLDI)                                             | **Marpa** (Kegler) — engineered Earley; **Roslyn** CTP — [red-green][incremental] trees / compiler-as-a-service                |
+| 2012–2014   | **CompCert** verified parser (ESOP 2012); **ALL(\*)** (Parr, Harwell & Fisher, OOPSLA 2014)                                          | **ANTLR 4** (2013, [ALL(\*)][top-down]); **[Roslyn][roslyn]** open-sourced (2014); **nom** 1.0 (2015)                          |
+| 2015–2016   | **Megaparsec**; **Adams et al. 2016** — PWD is cubic, ~951× faster                                                                   | Bison counterexamples (Isradisaikul & Myers, PLDI 2015); **[`rustc`][rustc]** on-demand query system + incremental compilation |
+| 2017–2018   | **Jourdan & Pottier 2017** — verified C11 LR parser (TOPLAS); **_Build Systems à la Carte_** (Mokhov et al., ICFP 2018)              | **tree-sitter** (Brunsfeld/GitHub, 2018) — [incremental GLR][tree-sitter]; **[rust-analyzer]** + **[salsa]** (2018)            |
+| **2019**    | —                                                                                                                                    | **simdjson** (Langdale & Lemire, VLDB J.) — [SIMD JSON][simdjson]                                                              |
+| 2020–2021   | **CPython** adopts a [PEG][peg] parser (PEP 617)                                                                                     | **chumsky** (recovering combinators); **[Lezer][lezer]** / CodeMirror 6 (incremental GLR); **Bison 3.8** counterexamples       |
+| 2023–2026\* | —                                                                                                                                    | **winnow** forks nom; **chumsky** zero-copy rewrite lands in 0.10+; **Menhir** GLR back-end\*                                  |
 
 <sub>\* The Menhir GLR back-end is dated to the `20260112` release as observed in
 this review; treat 2023–2026 tool entries as current-as-of-review.</sub>
@@ -234,6 +246,7 @@ official docs); the authoritative artifacts behind this index's classifications 
 [peg]: ./theory/peg-packrat.md
 [pratt]: ./theory/pratt-precedence.md
 [derivatives]: ./theory/derivatives.md
+[incremental]: ./theory/incremental.md
 
 <!-- Within-tree: systems -->
 
@@ -246,6 +259,11 @@ official docs); the authoritative artifacts behind this index's classifications 
 [parsec]: ./haskell-parsec.md
 [nom]: ./rust-nom.md
 [chumsky]: ./rust-chumsky.md
+[rust-analyzer]: ./rust-analyzer.md
+[roslyn]: ./roslyn.md
+[lezer]: ./lezer.md
+[rustc]: ./rustc-queries.md
+[salsa]: ./rust-analyzer.md#salsa-the-query-engine
 
 <!-- Within-tree: synthesis -->
 

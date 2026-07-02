@@ -361,6 +361,10 @@ export default withMermaid(
                       text: 'Parsing with Derivatives',
                       link: '/research/parsing/theory/derivatives',
                     },
+                    {
+                      text: 'Incremental & Query-Based',
+                      link: '/research/parsing/theory/incremental',
+                    },
                   ],
                 },
                 {
@@ -389,13 +393,29 @@ export default withMermaid(
                   ],
                 },
                 {
-                  text: 'High-Performance & Incremental',
+                  text: 'High-Performance (SIMD)',
                   collapsed: true,
                   items: [
                     { text: 'simdjson', link: '/research/parsing/simdjson' },
+                  ],
+                },
+                {
+                  text: 'Incremental & Query-Based',
+                  collapsed: true,
+                  items: [
                     {
                       text: 'Tree-sitter',
                       link: '/research/parsing/tree-sitter',
+                    },
+                    {
+                      text: 'rust-analyzer (+ salsa)',
+                      link: '/research/parsing/rust-analyzer',
+                    },
+                    { text: 'Roslyn', link: '/research/parsing/roslyn' },
+                    { text: 'Lezer', link: '/research/parsing/lezer' },
+                    {
+                      text: 'rustc queries',
+                      link: '/research/parsing/rustc-queries',
                     },
                   ],
                 },
