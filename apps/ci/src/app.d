@@ -668,8 +668,8 @@ private size_t totalMemoryGiB()
 }
 
 /// Executes every example concurrently, returning results in input order.
-/// Each build is isolated via `--temp-build` (see `dubSingleFileCommand`), so the
-/// parallel `dub run`s never race on a shared dependency artifact.
+/// Each build runs in its own `DUB_HOME` (see `executeExample`), so the parallel
+/// `dub run`s never race on a shared dependency artifact.
 private ExecutionResult[] executeExamplesParallel(Example[] examples, string repoRoot)
 {
     auto results = new ExecutionResult[](examples.length);
@@ -903,8 +903,17 @@ ExecutionResult executeExample(in Example example, string repoRoot, size_t uniqu
         if (exampleDir.exists) rmdirRecurse(exampleDir);
     }
 
-    auto result = executeLogged(
-        dubSingleFileCommand("run", tmpFile, repoRoot), "run " ~ example.name);
+    // Give each example its own `DUB_HOME` so concurrent builds don't race.
+    // README examples depend on the in-repo `sparkles` package as `~master`,
+    // which dub rebuilds *in place and unlocked* on every `dub run` (it's a
+    // mutable branch version, never cached) — parallel builds then clobber the
+    // shared `libsparkles_*.a`. `--temp-build` only isolates the leaf
+    // single-file build, not this path dependency; a per-example home isolates
+    // it. Registry deps still resolve normally (dub locks its own fetches).
+    auto dubHome = buildPath(exampleDir, "dub-home");
+    auto cmd = ["/usr/bin/env", "DUB_HOME=" ~ dubHome]
+        ~ dubSingleFileCommand("run", tmpFile, repoRoot);
+    auto result = executeLogged(cmd, "run " ~ example.name);
 
     // Strip ANSI codes, then trim trailing whitespace from each line
     // so output matches what pre-commit hooks produce in markdown files.
