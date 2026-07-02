@@ -40,20 +40,24 @@ expression-specific families:
   sub-engine recursive descent embeds.
 - **Derivatives** ([derivatives][derivatives]) — one self-similar operation from
   regex→DFA up to full CFG parsing.
+- **Incremental & query-based** ([incremental][incremental]) — the editor contract:
+  reuse the parse _tree_ (node reuse) and reuse the _computation_ (demand-driven,
+  memoized queries) so an edit costs `O(edit)`, not `O(file)`.
 
 ---
 
 ## Catalog
 
-| Deep-dive                               | Grammar class / scope                                               | Worst-case time             | Resolves ambiguity by                          | Representative tools                                                           |
-| --------------------------------------- | ------------------------------------------------------------------- | --------------------------- | ---------------------------------------------- | ------------------------------------------------------------------------------ |
-| [Formal languages][formal]              | Chomsky hierarchy; the parse/recognition problem & complexity walls | Θ(n³) general / O(n) det.   | (theory) — ambiguity is **undecidable**        | —                                                                              |
-| [Top-down][top-down]                    | LL(1) ⊊ LL(k) ⊊ LL(\*) ⊊ non-left-recursive CFG                     | O(n) fixed-k; O(n⁴) ALL(\*) | First match / production order                 | [ANTLR][antlr], combinators ([Parsec][parsec], [nom][nom], [chumsky][chumsky]) |
-| [Bottom-up][bottom-up]                  | LR(0) ⊊ SLR(1) ⊊ LALR(1) ⊊ LR(1); GLR = all CFGs                    | O(n) det.; O(n³) GLR        | Declared precedence; GLR keeps all parses      | [Bison][bison], [Menhir][menhir], [tree-sitter][tree-sitter] (GLR)             |
-| [General parsing][general]              | **All** CFGs (ambiguous, left-recursive)                            | O(n³); O(n) on LR(k) (Leo)  | Returns a forest (SPPF) of all parses          | Marpa, nearley, NLTK; cf. [tree-sitter][tree-sitter]                           |
-| [PEG & packrat][peg]                    | PEG — superset of LL/LR reaching some non-CFLs                      | O(n) packrat (O(n) space)   | **Ordered choice** — unambiguous by definition | [pest][pest], [nom][nom], [chumsky][chumsky]; LPeg, Peggy                      |
-| [Operator-precedence & Pratt][pratt]    | Operator grammars (expressions only)                                | O(n)                        | Binding power (implicit, global)               | embedded in GCC/Clang, [chumsky][chumsky], [pest][pest]                        |
-| [Parsing with derivatives][derivatives] | Regular (Brzozowski) up to **all** CFGs (PWD)                       | O(G·n³) PWD; O(n) lexers    | Returns a forest; nullability fixpoints        | ml-ulex (lexers); derp (research)                                              |
+| Deep-dive                                | Grammar class / scope                                               | Worst-case time                             | Resolves ambiguity by                          | Representative tools                                                               |
+| ---------------------------------------- | ------------------------------------------------------------------- | ------------------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------- |
+| [Formal languages][formal]               | Chomsky hierarchy; the parse/recognition problem & complexity walls | Θ(n³) general / O(n) det.                   | (theory) — ambiguity is **undecidable**        | —                                                                                  |
+| [Top-down][top-down]                     | LL(1) ⊊ LL(k) ⊊ LL(\*) ⊊ non-left-recursive CFG                     | O(n) fixed-k; O(n⁴) ALL(\*)                 | First match / production order                 | [ANTLR][antlr], combinators ([Parsec][parsec], [nom][nom], [chumsky][chumsky])     |
+| [Bottom-up][bottom-up]                   | LR(0) ⊊ SLR(1) ⊊ LALR(1) ⊊ LR(1); GLR = all CFGs                    | O(n) det.; O(n³) GLR                        | Declared precedence; GLR keeps all parses      | [Bison][bison], [Menhir][menhir], [tree-sitter][tree-sitter] (GLR)                 |
+| [General parsing][general]               | **All** CFGs (ambiguous, left-recursive)                            | O(n³); O(n) on LR(k) (Leo)                  | Returns a forest (SPPF) of all parses          | Marpa, nearley, NLTK; cf. [tree-sitter][tree-sitter]                               |
+| [PEG & packrat][peg]                     | PEG — superset of LL/LR reaching some non-CFLs                      | O(n) packrat (O(n) space)                   | **Ordered choice** — unambiguous by definition | [pest][pest], [nom][nom], [chumsky][chumsky]; LPeg, Peggy                          |
+| [Operator-precedence & Pratt][pratt]     | Operator grammars (expressions only)                                | O(n)                                        | Binding power (implicit, global)               | embedded in GCC/Clang, [chumsky][chumsky], [pest][pest]                            |
+| [Parsing with derivatives][derivatives]  | Regular (Brzozowski) up to **all** CFGs (PWD)                       | O(G·n³) PWD; O(n) lexers                    | Returns a forest; nullability fixpoints        | ml-ulex (lexers); derp (research)                                                  |
+| [Incremental & query-based][incremental] | Any base parser + a persistent tree / query graph                   | **O(edit)** re-parse (Wagner `O(t+s·lg N)`) | (orthogonal — reuses the chosen parser's tree) | [tree-sitter], [rust-analyzer], [Roslyn][roslyn], [Lezer][lezer], [`rustc`][rustc] |
 
 ---
 
@@ -96,6 +100,8 @@ as composable host-language values. The comparison weighs these in the
   as recursive descent) → the [comparison][comparison].
 - **"Just the expression parser."** [pratt-precedence][pratt].
 - **"The elegant outlier."** [derivatives][derivatives] → [general-parsing][general].
+- **"How editors parse on every keystroke."** [incremental][incremental] → [tree-sitter]
+  → [rust-analyzer] (query-based) → the [comparison][comparison].
 
 ---
 
@@ -119,6 +125,7 @@ Jacobs, _Parsing Techniques_. See the individual pages and the [concepts glossar
 [peg]: ./peg-packrat.md
 [pratt]: ./pratt-precedence.md
 [derivatives]: ./derivatives.md
+[incremental]: ./incremental.md
 [simdjson]: ../simdjson.md
 [tree-sitter]: ../tree-sitter.md
 [antlr]: ../antlr.md
@@ -128,3 +135,7 @@ Jacobs, _Parsing Techniques_. See the individual pages and the [concepts glossar
 [parsec]: ../haskell-parsec.md
 [nom]: ../rust-nom.md
 [chumsky]: ../rust-chumsky.md
+[rust-analyzer]: ../rust-analyzer.md
+[roslyn]: ../roslyn.md
+[lezer]: ../lezer.md
+[rustc]: ../rustc-queries.md

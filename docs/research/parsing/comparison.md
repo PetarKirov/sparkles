@@ -9,43 +9,54 @@ note on **where a Sparkles parser would sit**. Terminology is defined in the
 [theory subtree][theory].
 
 > [!NOTE]
-> **Scope: wave 1.** This synthesis covers the nine flagship systems and the theory
-> spine. It will be extended as wave 2 adds the rest of each category (winnow, FParsec,
-> Angstrom, FlatParse, simd-json/sonic-rs, yyjson/RapidJSON, Hyperscan, LALRPOP, Lark,
-> Lezer, rowan, Roslyn). Conclusions below are stable for the families surveyed.
+> **Scope: wave 1 + the incremental / query-based cluster.** This synthesis covers the
+> nine flagship systems, the theory spine, and now the first wave-2 cluster —
+> [rust-analyzer], [Roslyn][roslyn], [Lezer][lezer], and the [`rustc` query system][rustc]
+> (see the [`incremental` theory page][incremental]). It will be extended further as wave
+> 2 adds the remaining categories (winnow, FParsec, Angstrom, FlatParse,
+> simd-json/sonic-rs, yyjson/RapidJSON, Hyperscan, LALRPOP, Lark). Conclusions below are
+> stable for the families surveyed.
 
-**Last reviewed:** June 29, 2026
+**Last reviewed:** July 3, 2026
 
 ---
 
 ## At-a-glance matrix
 
-| System                     | Strategy                             | Grammar reaches parser via | Linear time?        | Error recovery       | Zero-copy     | Incremental     | Data-parallel   |
-| -------------------------- | ------------------------------------ | -------------------------- | ------------------- | -------------------- | ------------- | --------------- | --------------- |
-| [simdjson][simdjson]       | [SIMD two-stage][formal]             | hand-tuned state machine   | ✅ (+SIMD)          | fail-fast (validate) | ✅            | —               | ✅ **only one** |
-| [tree-sitter][tree-sitter] | [GLR][bottom-up], incremental        | `grammar.js` generator     | ✅ det.; O(n³) amb. | **incremental/IDE**  | ✅ (CST)      | ✅ **only one** | —               |
-| [ANTLR][antlr]             | [ALL(\*)][top-down] top-down         | `.g4` generator            | in practice         | recovering           | —             | —               | —               |
-| [Bison][bison]             | [LALR(1)][bottom-up] bottom-up       | `.y` generator             | ✅                  | panic-mode `error`   | —             | —               | —               |
-| [Menhir][menhir]           | [LR(1)][bottom-up] bottom-up         | `.mly` generator           | ✅                  | recovering API¹      | —             | API only¹       | —               |
-| [pest][pest]               | [PEG][peg] generator                 | `.pest` generator          | ⚠️ no memo          | diagnostic           | ✅ (leaves)   | —               | —               |
-| [Parsec][parsec]           | predictive [LL][top-down] combinator | host-language values       | ~ on LL(1)          | diagnostic / recov.² | ⚠️ attoparsec | —               | —               |
-| [nom][nom]                 | [PEG][peg]-like combinator           | host-language values       | ⚠️ no memo          | fail-fast            | ✅            | —               | —               |
-| [chumsky][chumsky]         | [PEG][peg] combinator                | host-language values       | ⚠️ opt-in memo      | **recovering**       | ✅ (0.10+)    | —               | —               |
+| System                     | Strategy                                        | Grammar reaches parser via | Linear time?        | Error recovery       | Zero-copy     | Incremental    | Data-parallel   |
+| -------------------------- | ----------------------------------------------- | -------------------------- | ------------------- | -------------------- | ------------- | -------------- | --------------- |
+| [simdjson][simdjson]       | [SIMD two-stage][formal]                        | hand-tuned state machine   | ✅ (+SIMD)          | fail-fast (validate) | ✅            | —              | ✅ **only one** |
+| [tree-sitter][tree-sitter] | [GLR][bottom-up], incremental                   | `grammar.js` generator     | ✅ det.; O(n³) amb. | **incremental/IDE**  | ✅ (CST)      | ✅ (subtree)   | —               |
+| [rust-analyzer]            | [RD][top-down]→[red-green][incremental]+[salsa] | hand-written + query graph | ✅                  | **incremental/IDE**  | ✅ (CST)      | ✅ (+queries)  | —               |
+| [Roslyn][roslyn]           | [RD][top-down]→[red-green][incremental]         | hand-written parser        | ✅                  | **incremental/IDE**  | ✅ (CST)      | ✅ (subtree)   | —               |
+| [Lezer][lezer]             | incremental [GLR][bottom-up]                    | `@lezer/generator`         | ✅ det.; O(n³) amb. | **incremental/IDE**  | ✅ (CST)      | ✅ (fragment)  | —               |
+| [`rustc` queries][rustc]   | demand-driven [queries][incremental]            | queries over AST/HIR/MIR   | ✅                  | n/a (parser batch)³  | —             | ✅ (cross-run) | —               |
+| [ANTLR][antlr]             | [ALL(\*)][top-down] top-down                    | `.g4` generator            | in practice         | recovering           | —             | —              | —               |
+| [Bison][bison]             | [LALR(1)][bottom-up] bottom-up                  | `.y` generator             | ✅                  | panic-mode `error`   | —             | —              | —               |
+| [Menhir][menhir]           | [LR(1)][bottom-up] bottom-up                    | `.mly` generator           | ✅                  | recovering API¹      | —             | API only¹      | —               |
+| [pest][pest]               | [PEG][peg] generator                            | `.pest` generator          | ⚠️ no memo          | diagnostic           | ✅ (leaves)   | —              | —               |
+| [Parsec][parsec]           | predictive [LL][top-down] combinator            | host-language values       | ~ on LL(1)          | diagnostic / recov.² | ⚠️ attoparsec | —              | —               |
+| [nom][nom]                 | [PEG][peg]-like combinator                      | host-language values       | ⚠️ no memo          | fail-fast            | ✅            | —              | —               |
+| [chumsky][chumsky]         | [PEG][peg] combinator                           | host-language values       | ⚠️ opt-in memo      | **recovering**       | ✅ (0.10+)    | —              | —               |
 
 <sub>¹ Menhir's _generator_ is batch; its incremental/inspection API is what IDE tools
 (Merlin, ocaml-lsp) drive for live recovery and client-managed parsing. It is not a
 built-in edit-local CST reuse engine like tree-sitter. ² attoparsec drops error
 book-keeping for speed; Megaparsec adds typed errors, error bundles, and
-`withRecovery`.</sub>
+`withRecovery`. ³ `rustc`'s incrementality is a **computation** engine (memoized
+queries reused across whole compiles); its front-end lexer/parser is still batch, so the
+recovery/zero-copy columns describe the query layer, not a live parse tree.</sub>
 
-The single most striking row-fact: **only simdjson is data-parallel, and only
-tree-sitter is incremental.** Those are two _orthogonal_ escapes from "parse the whole
-file, scalar, every time" — one attacks the constant factor (vectorize the byte scan),
-the other attacks the work itself (re-parse only what changed). Menhir exposes a
-resumable API that clients can use for live parsing, but it does not provide
-tree-sitter-style edit-local tree reuse. Everything else in the catalog is a scalar,
-whole-input, single-pass parser distinguished by _grammar class_ and _error posture_,
-not by raw mechanism.
+The single most striking row-fact: **only simdjson is data-parallel, but incrementality
+is now a whole cluster.** These are two _orthogonal_ escapes from "parse the whole file,
+scalar, every time" — one attacks the constant factor (vectorize the byte scan), the
+other attacks the work itself (reuse what didn't change). And incrementality itself
+splits two ways: reuse the **tree** (tree-sitter subtree reuse, Roslyn/rust-analyzer
+[red-green][incremental] nodes, Lezer fragments) versus reuse the **computation**
+([`rustc`][rustc]/[salsa] memoized queries) — [rust-analyzer] does both at once. Menhir
+exposes a resumable API clients drive for live parsing, but no edit-local tree reuse.
+Everything else in the catalog is a scalar, whole-input, single-pass parser distinguished
+by _grammar class_ and _error posture_, not by raw mechanism.
 
 ---
 
@@ -225,6 +236,17 @@ survey suggests the design center for an allocation-conscious D parsing toolkit:
   idiom already models fail-fast parse results without GC exceptions; a recovering
   variant would pair a partial value with an error list, exactly as chumsky's
   `ParseResult` does.
+- **Stay batch — don't reach for [incremental / query-based][incremental] machinery.**
+  The incremental cluster ([tree-sitter], [rust-analyzer], [Roslyn][roslyn], [Lezer][lezer],
+  [`rustc`][rustc]) earns its keep only when the _same_ input is re-parsed after small
+  edits, repeatedly, under an editor contract — and it costs persistent trees plus a
+  dependency graph, the opposite of a small `@nogc` footprint. Sparkles' inputs (a
+  version string, a CLI line, a VT sequence) are parse-once, so the [Wagner][incremental]
+  node-reuse / [salsa]-query apparatus is pure overhead here. The one transferable idea
+  is cheaper: a **[red-green][incremental]-style lossless view** (kind + width, positions
+  computed on demand) is worth borrowing _only_ if a future Sparkles use wants a
+  re-serializable CST (e.g. a formatter) — otherwise a plain AST is lighter. Incremental
+  is an architecture to adopt deliberately for an editor, never to retrofit.
 
 A future `d-landscape.md` (Pegged, `std.experimental.lexer`, the in-tree parsers) and a
 milestoned proposal are deferred; this section is the design-lessons sketch the survey
@@ -252,6 +274,7 @@ recovery ladder — trace to Knuth 1965, Earley 1970, Ford 2002/2004, Valiant 19
 [peg]: ./theory/peg-packrat.md
 [pratt]: ./theory/pratt-precedence.md
 [derivatives]: ./theory/derivatives.md
+[incremental]: ./theory/incremental.md
 [simdjson]: ./simdjson.md
 [tree-sitter]: ./tree-sitter.md
 [antlr]: ./antlr.md
@@ -261,6 +284,11 @@ recovery ladder — trace to Knuth 1965, Earley 1970, Ford 2002/2004, Valiant 19
 [parsec]: ./haskell-parsec.md
 [nom]: ./rust-nom.md
 [chumsky]: ./rust-chumsky.md
+[rust-analyzer]: ./rust-analyzer.md
+[roslyn]: ./roslyn.md
+[lezer]: ./lezer.md
+[rustc]: ./rustc-queries.md
+[salsa]: ./rust-analyzer.md#salsa-the-query-engine
 [v-parsing]: https://github.com/PetarKirov/sparkles/blob/main/libs/versions/src/sparkles/versions/parsing.d
 [cli-args]: https://github.com/PetarKirov/sparkles/blob/main/libs/core-cli/src/sparkles/core_cli/args.d
 [base-text]: https://github.com/PetarKirov/sparkles/blob/main/libs/base/src/sparkles/base/text/package.d
