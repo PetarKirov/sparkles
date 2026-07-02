@@ -635,7 +635,7 @@ new PEG parser support left recursion in production.
 [medeiros]: https://arxiv.org/abs/1207.0443
 [pest-peg]: https://pest.rs/book/grammars/peg.html
 [peg-crate]: https://crates.io/crates/peg
-[pegjs]: https://pegjs.org/
+[pegjs]: https://web.archive.org/web/20260530055107/https://pegjs.org/
 [lpeg]: https://www.inf.puc-rio.br/~roberto/lpeg/
 
 <!-- Sibling theory docs -->

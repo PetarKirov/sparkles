@@ -368,7 +368,7 @@ pest is a **mature, widely-adopted, stable** member of the Rust parsing ecosyste
 [editor]: https://pest.rs/#editor
 [nom-bench]: https://web.archive.org/web/20260413080622/http://unhandledexpression.com/general/2018/10/04/no-pest-is-not-faster-than-nom.html
 [lpeg]: https://www.inf.puc-rio.br/~roberto/lpeg/
-[pegjs]: https://pegjs.org/
+[pegjs]: https://web.archive.org/web/20260530055107/https://pegjs.org/
 [index]: ./index.md
 [concepts]: ./concepts.md
 [comparison]: ./comparison.md
