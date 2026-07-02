@@ -35,3 +35,14 @@
 # Wikimedia (wikibooks) rejects GitHub Actions' shared IPs with HTTP 400 (live +
 # 200 locally; tui-libraries/table-span-case-study.md cites LaTeX/Tables)
 ^https?://([^/]+\.)?wikibooks\.org/
+# gnu.org (bison manual + gpl-faq) times out under GitHub Actions' concurrency
+# (live + 200 locally; parsing/bison-yacc.md and parsing/theory/bottom-up.md cite
+# the Bison manual's LALR algorithm/GLR/precedence chapters)
+^https?://(www\.)?gnu\.org/software/bison/
+^https?://(www\.)?gnu\.org/licenses/gpl-faq\.html
+# dickgrune.com (Parsing Techniques, 1st & 2nd editions) times out under GitHub
+# Actions' concurrency (live + 200 locally; cited across parsing/theory/*.md)
+^https?://(www\.)?dickgrune\.com/
+# docs.vulkan.org blocks GitHub Actions' shared IPs with HTTP 403 (live + 200
+# locally), same pattern as registry.khronos.org above
+^https?://docs\.vulkan\.org/
