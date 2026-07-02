@@ -30,6 +30,7 @@ Web is fallback-only. This tree is internal QA evidence — excluded from the Vi
 | theory/peg-packrat      | [theory-peg-packrat.md](./theory-peg-packrat.md)           | full | 5   | Medeiros        | ✅ B2  |
 | theory/pratt-precedence | [theory-pratt-precedence.md](./theory-pratt-precedence.md) | full | 2   | blogs           | ✅ B2  |
 | theory/derivatives      | [theory-derivatives.md](./theory-derivatives.md)           | full | 0   | Antimirov/blog  | ✅ B2  |
+| theory/incremental      | [theory-incremental.md](./theory-incremental.md)           | full | 0   | Adapton biblio  | ✅ B6  |
 | theory/index            | [theory-index.md](./theory-index.md)                       | full | 0   | —               | ✅ B5  |
 | concepts                | [concepts.md](./concepts.md)                               | full | 3   | GLL/Hopcroft    | ✅ B2  |
 | comparison              | [comparison.md](./comparison.md)                           | full | 2   | Sparkles-fit    | ✅ B5  |
@@ -43,6 +44,10 @@ Web is fallback-only. This tree is internal QA evidence — excluded from the Vi
 | rust-nom                | [rust-nom.md](./rust-nom.md)                               | full | 3   | bench/downloads | ✅ B4  |
 | rust-chumsky            | [rust-chumsky.md](./rust-chumsky.md)                       | full | 3   | blog/adoption   | ✅ B4  |
 | haskell-parsec          | [haskell-parsec.md](./haskell-parsec.md)                   | full | 1   | FlatParse/ports | ✅ B5  |
+| rust-analyzer           | [rust-analyzer.md](./rust-analyzer.md)                     | full | 0   | matklad/cadence | ✅ B6  |
+| roslyn                  | [roslyn.md](./roslyn.md)                                   | full | 0   | CTP/OSS dates   | ✅ B6  |
+| lezer                   | [lezer.md](./lezer.md)                                     | full | 0   | CodeMirror bio  | ✅ B6  |
+| rustc-queries           | [rustc-queries.md](./rustc-queries.md)                     | full | 0   | Matsakis/blog   | ✅ B6  |
 
 ## Master discrepancy register
 
@@ -137,7 +142,24 @@ Notes (no edit): pest clean (non-memoizing confirmed in `parser_state.rs`; book 
 
 Notes (no edit): theory/index clean; haskell-parsec otherwise clean (1996/1998 fix confirmed). index Tomita 1985 = same as R15 (mirror). Minor parsec locator slips ([Hackage]→README at :283,:302; [synopsis]→description :284) left as ◯.
 
-## Status: all 20 pages grounded (5 batches). 44 discrepancies (R8–R51); all minor — quote-precision, citation-locator, version/attribution. No fabricated _facts_ beyond R8/R23 quote-padding and R26/R39/R45–R47 quote-sourcing. Proceed to Phase 3 (apply fixes).
+### Batch 6 (wave 2 — incremental / query-based, 2026-07-03)
+
+**Zero discrepancies.** The five new pages ([`theory/incremental`](./theory-incremental.md),
+[`rust-analyzer`](./rust-analyzer.md), [`roslyn`](./roslyn.md), [`lezer`](./lezer.md),
+[`rustc-queries`](./rustc-queries.md)) were grounded against the pinned wave-2 repos + the Wagner /
+_à-la-carte_ / Adapton papers. Every material blockquote was confirmed verbatim in-tree (roslyn
+`Red-Green Trees.md` / `Incremental Parser.md`; rust-analyzer `syntax.md:125/311/522` + salsa
+`durability.rs`/`cancelled.rs`; lezer README + `constants.ts` `File.Version=14` + `stack.ts`
+`MinBigReduction=2000`; rustc-dev-guide `query.md` + `incremental-compilation*.md`). One at-risk quote
+("surprisingly simple extension to the overall query system") was a **false alarm** — verbatim but
+line-wrapped at `incremental-compilation.md:3-4`. Web-attested only: author/creator names, release
+cadence/dates, and the Roslyn CTP/OSS milestone dates (all flagged ◯/🌐 in each ledger, none asserted
+as tree facts).
+
+## Status: all 25 pages grounded (6 batches). 44 discrepancies (R8–R51, all from B1–B5); wave-2 B6 added
+
+0. All minor — quote-precision, citation-locator, version/attribution. No fabricated _facts_ beyond
+   R8/R23 quote-padding and R26/R39/R45–R47 quote-sourcing. Proceed to Phase 3 (apply fixes).
 
 ## Pre-flagged for this pass
 
