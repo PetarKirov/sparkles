@@ -138,6 +138,7 @@ if (is(E == enum))
         return toJSON(cast(OriginalType!E) value);
     else
     {
+        enum _uniq = checkUniqueMemberNames!(Json, E);
         alias names = wireNames!(Json, E, style);
         static foreach (i, m; __traits(allMembers, E))
             if (value == __traits(getMember, E, m))
@@ -512,6 +513,7 @@ if (is(E == enum))
         if (json.type != JSONType.string)
             return fail!E("Cannot decode " ~ E.stringof ~ " at $: expected a JSON string");
 
+        enum _uniq = checkUniqueMemberNames!(Json, E);
         alias names = wireNames!(Json, E, style);
         static foreach (i, m; __traits(allMembers, E))
             if (json.str == names[i])
@@ -728,6 +730,7 @@ private string aaKeyText(K)(K k)
         enum repr = resolveRepr!(Json, K);
         static if (repr == Repr.name)
         {
+            enum _uniq = checkUniqueMemberNames!(Json, K);
             alias names = wireNames!(Json, K, resolveCaseStyle!(Json, K));
             static foreach (i, m; __traits(allMembers, K))
                 if (k == __traits(getMember, K, m))
@@ -761,6 +764,7 @@ private JsonResult!K aaKeyParse(K)(string keyStr)
         enum repr = resolveRepr!(Json, K);
         static if (repr == Repr.name)
         {
+            enum _uniq = checkUniqueMemberNames!(Json, K);
             enum style = resolveCaseStyle!(Json, K);
             alias names = wireNames!(Json, K, style);
             static foreach (i, m; __traits(allMembers, K))
