@@ -28,9 +28,25 @@ no open copy → grounded against secondary local artifacts (noted per row).
 | megaparsec      | `$REPOS/haskell/megaparsec`      | `39e7760`   | 2026-06-23 |
 | attoparsec      | `$REPOS/haskell/attoparsec`      | `7244e6b`   | 2024-12-11 |
 
+Wave 2 — incremental / query-based (added 2026-07-03):
+
+| Repo            | Path                          | Pinned SHA | As of      |
+| --------------- | ----------------------------- | ---------- | ---------- |
+| rust-analyzer   | `$REPOS/rust/rust-analyzer`   | `3033d4f`  | 2026-07-02 |
+| salsa           | `$REPOS/rust/salsa`           | `9447e2f`  | 2026-07-02 |
+| rowan           | `$REPOS/rust/rowan`           | `0c1077e`  | 2025-07-27 |
+| rustc-dev-guide | `$REPOS/rust/rustc-dev-guide` | `646dd8e`  | 2026-07-01 |
+| lezer-lr        | `$REPOS/js/lezer-lr`          | `ed59b8b`  | 2026-04-15 |
+| lezer-common    | `$REPOS/js/lezer-common`      | `d87b56c`  | 2026-04-15 |
+| roslyn          | `$REPOS/dotnet/roslyn`        | `e42c3902` | 2026-07-02 |
+
 In-repo docs/manuals to use for quote-grounding: bison `doc/bison.texi`; menhir
 `doc/` + `CHANGES.md`; tree-sitter `docs/src/`; nom/winnow/chumsky/pest `doc/` + `README` +
-`src/`; the Haskell libs' `.cabal`/`CHANGELOG`/`src` + Haddocks in-tree.
+`src/`; the Haskell libs' `.cabal`/`CHANGELOG`/`src` + Haddocks in-tree. For wave 2:
+roslyn `docs/compilers/Design/Red-Green Trees.md` + `Incremental Parser.md`; salsa
+`README.md` + `src/{durability,cancelled,cycle}.rs` + `book/`; rustc-dev-guide
+`src/query.md` + `src/queries/incremental-compilation-in-detail.md`; lezer-lr
+`README.md` + `src/{parse,stack,token}.ts`; rowan `README.md` + `src/`.
 
 ## Papers present — `$REPOS/papers/parsing/`
 
@@ -55,6 +71,14 @@ isradisaikul-myers-2015-counterexamples-parsing-conflicts-pldi.pdf  warth-2008-p
 jourdan-2012-validating-lr1-parsers-esop.pdf        keiser-lemire-2021-validating-utf8-spe.pdf
 keiser-lemire-2024-on-demand-json-spe.pdf
 ```
+
+Wave 2 — incremental / query-based (added 2026-07-03):
+
+```
+mokhov-2018-build-systems-a-la-carte-icfp.pdf       hammer-2014-adapton-pldi.pdf
+```
+
+(`wagner-1997-incremental-parsing-thesis-berkeley.pdf` was already present from wave 1.)
 
 ## Unobtainable primaries → secondary grounding
 
