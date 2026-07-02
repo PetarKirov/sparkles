@@ -1,15 +1,23 @@
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "wired_compile_time_bench"
+
+    dependency "sparkles:wired"    path="../../.."
+    dependency "sparkles:core-cli" path="../../.."
+    dependency "sparkles:base"     path="../../.."
+
+    dflags "-preview=in" "-preview=dip1000"
 +/
 /**
 Compile-time benchmark for `sparkles:wired`.
 
 Generates synthetic consumer modules of parameterized shape and size, compiles
 each frontend-only (`-o-`) with LDC's `-ftime-trace`, and reports where the
-compiler spent its time — wall clock, template-instantiation and CTFE totals
-(interval-union per category, so nested events are not double-counted), event
-counts, and the top `sparkles.wired` templates by time. A separate
+compiler spent its time — wall clock, peak resident-set size and CPU time of
+the compiler tree (via `sparkles:core-cli`'s resource-monitored executor),
+template-instantiation and CTFE totals (interval-union per category, so nested
+events are not double-counted), event counts, and the top `sparkles.wired`
+templates by time. A separate
 `-vtemplates` pass counts instantiations of the `sparkles.wired` templates —
 a deterministic signal for validating refactorings, independent of timer noise.
 
@@ -39,73 +47,97 @@ module compile_time_bench;
 
 import std.algorithm : canFind, filter, map, maxElement, minElement, sort,
     startsWith, sum;
-import std.array : array, join, replace, split;
+import std.array : array, join, split;
 import std.conv : to;
 import std.datetime.stopwatch : AutoStart, StopWatch;
 import std.exception : enforce;
-import std.file : exists, mkdirRecurse, rmdirRecurse, tempDir, write;
+import std.file : mkdirRecurse, readText, rmdirRecurse, tempDir, writeFile = write;
 import std.format : format;
-import std.getopt : defaultGetoptPrinter, getopt;
 import std.json : JSONValue, parseJSON;
+import std.logger : LogLevel;
 import std.path : buildPath, dirName;
 import std.process : execute;
-import std.range : iota;
-import std.stdio : File, writefln, writeln;
+import std.range : iota, retro;
+import std.stdio : File, stderr, write, writefln, writeln;
+
+import sparkles.base.logger : info, initLogger;
+import sparkles.base.term_style : Style, stylize;
+
+import sparkles.core_cli.args : CliOption, parseCliArgs;
+import sparkles.core_cli.help_formatting : HelpInfo;
+import sparkles.core_cli.process_utils : enforceExitStatus, executeMonitored;
+import sparkles.core_cli.ui.header : drawHeader, HeaderProps, HeaderStyle;
+import sparkles.core_cli.ui.table : drawTable;
+
+import sparkles.wired.json : toJSON;
+
+/// Command-line configuration, parsed by `sparkles:core-cli`.
+struct BenchOptions
+{
+    @CliOption("s|sizes", "Comma-separated workload sizes (default 8,32,128)")
+    string sizes = "8,32,128";
+
+    @CliOption("w|workloads", "Comma-separated workload names (default all)")
+    string workloads = "wide,deep,enums,mixed";
+
+    @CliOption("i|iters", "Compile runs per data point; wall time is the minimum")
+    uint iters = 3;
+
+    @CliOption("t|top", "How many top templates to show per data point")
+    uint top = 8;
+
+    @CliOption("j|json", "Dump metrics as JSON to this file")
+    string json;
+
+    @CliOption("c|compiler", "D compiler to benchmark (must support -ftime-trace)")
+    string compiler = "ldc2";
+
+    @CliOption("k|keep", "Keep the generated workload modules")
+    bool keep;
+}
 
 int main(string[] args)
 {
-    string sizesArg = "8,32,128";
-    string workloadsArg = "wide,deep,enums,mixed";
-    string jsonOut;
-    string compiler = "ldc2";
-    uint iters = 3;
-    uint top = 8;
-    bool keep;
+    initLogger(LogLevel.info);
 
-    auto opts = getopt(args,
-        "sizes", "Comma-separated workload sizes (default 8,32,128)", &sizesArg,
-        "workloads", "Comma-separated workload names (default all)", &workloadsArg,
-        "iters", "Compile runs per data point; wall time is the minimum", &iters,
-        "top", "How many top templates to show per data point", &top,
-        "json", "Dump metrics as JSON to this file", &jsonOut,
-        "compiler", "D compiler to benchmark (must support -ftime-trace)", &compiler,
-        "keep", "Keep the generated workload modules", &keep,
-    );
-    if (opts.helpWanted)
-    {
-        defaultGetoptPrinter("Compile-time benchmark for sparkles:wired.", opts.options);
-        return 0;
-    }
+    const opts = args.parseCliArgs!BenchOptions(
+        HelpInfo("compile-time-bench", "Compile-time benchmark for sparkles:wired."));
 
-    const sizes = sizesArg.split(',').map!(to!uint).array;
-    const workloads = workloadsArg.split(',');
+    const sizes = opts.sizes.split(',').map!(to!uint).array;
+    const workloads = opts.workloads.split(',');
     const importPaths = wiredImportPaths();
     const genDir = buildPath(tempDir, "wired-compile-bench");
     mkdirRecurse(genDir);
     scope (exit)
-        if (!keep)
+        if (!opts.keep)
             rmdirRecurse(genDir);
 
-    JSONValue[] results;
+    Metrics[] results;
     foreach (workload; workloads)
         foreach (size; sizes)
         {
+            info(i"benchmarking $(workload) size=$(size)");
             const name = format!"bench_%s_%s"(workload, size);
             const file = buildPath(genDir, name ~ ".d");
-            write(file, generate(workload, name, size));
+            writeFile(file, generate(workload, name, size));
 
-            const m = measure(compiler, file, buildPath(genDir, name ~ ".trace.json"),
-                importPaths, iters);
-            report(workload, size, m, top);
-            results ~= m.toJSON(workload, size);
+            auto m = measure(opts.compiler, file,
+                buildPath(genDir, name ~ ".trace.json"), importPaths, opts.iters);
+            m.workload = workload;
+            m.size = size;
+            report(m, opts.top);
+            results ~= m;
         }
 
-    if (jsonOut.length)
+    if (opts.json.length)
     {
-        File(jsonOut, "w").writeln(JSONValue(results).toPrettyString);
-        writefln!"\nmetrics written to %s"(jsonOut);
+        // Dogfood sparkles:wired to serialize the benchmark's own results.
+        auto encoded = toJSON(results);
+        enforce(encoded.hasValue, "wired failed to encode metrics");
+        File(opts.json, "w").writeln(encoded.value.toPrettyString);
+        writefln!"\nmetrics written to %s"(opts.json);
     }
-    if (keep)
+    if (opts.keep)
         writefln!"\ngenerated modules kept in %s"(genDir);
     return 0;
 }
@@ -117,7 +149,9 @@ string[] wiredImportPaths()
     const wiredRoot = __FILE_FULL_PATH__.dirName.dirName;
     const r = execute(["dub", "describe", "--root", wiredRoot,
         "--data=import-paths", "--data-list"]);
-    enforce(r.status == 0, "dub describe failed:\n" ~ r.output);
+    if (r.status != 0)
+        stderr.writeln(r.output);
+    enforceExitStatus(r.status, "dub describe");
     return r.output.split('\n').filter!(l => l.length).array;
 }
 
@@ -159,26 +193,25 @@ private string anchor(string type)
 /// optional — the shape of a large flat config aggregate.
 string genWide(uint size)
 {
-    string s = "@WireCase!Json(CaseStyle.snakeCase)\nstruct Wide\n{\n";
     static immutable types = ["int", "string", "double", "bool"];
-    foreach (i; 0 .. size)
-    {
+    const fields = size.iota.map!((i) {
+        string f;
         if (i % 4 == 3)
-            s ~= format!"    @WireName!Json(\"wire%s\")\n"(i);
+            f ~= format!"    @WireName!Json(\"wire%s\")\n"(i);
         if (i % 6 == 5)
-            s ~= "    @WireOptional()\n";
-        s ~= format!"    %s someField%s;\n"(types[i % $], i);
-    }
-    return s ~ "}\n" ~ anchor("Wide");
+            f ~= "    @WireOptional()\n";
+        return f ~ format!"    %s someField%s;\n"(types[i % $], i);
+    }).join;
+    return "@WireCase!Json(CaseStyle.snakeCase)\nstruct Wide\n{\n"
+        ~ fields ~ "}\n" ~ anchor("Wide");
 }
 
 /// A chain of `size` nested structs; every 4th level recased, every 3rd field
 /// renamed — the shape of a deeply structured document.
 string genDeep(uint size)
 {
-    string s;
-    foreach_reverse (lvl; 0 .. size)
-    {
+    const levels = size.iota.retro.map!((lvl) {
+        string s;
         if (lvl % 4 == 1)
             s ~= "@WireCase!Json(CaseStyle.snakeCase)\n";
         s ~= format!"struct Level%s\n{\n"(lvl);
@@ -187,9 +220,9 @@ string genDeep(uint size)
         s ~= format!"    int payloadValue%s;\n    string labelText%s;\n"(lvl, lvl);
         if (lvl + 1 < size)
             s ~= format!"    Level%s child;\n"(lvl + 1);
-        s ~= "}\n\n";
-    }
-    return s ~ anchor("Level0");
+        return s ~ "}\n\n";
+    }).join;
+    return levels ~ anchor("Level0");
 }
 
 /// `size / 4` enums of 8 members each, used as plain fields, array elements,
@@ -197,59 +230,60 @@ string genDeep(uint size)
 string genEnums(uint size)
 {
     const nEnums = size < 4 ? 1 : size / 4;
-    string s;
-    foreach (e; 0 .. nEnums)
-    {
+
+    const enums = nEnums.iota.map!((e) {
+        string s;
         if (e % 2 == 0)
             s ~= "@WireCase!Json(CaseStyle.snakeCase)\n";
         if (e % 3 == 2)
             s ~= "@WireRepr!Json(Repr.value)\n";
         s ~= format!"enum Choice%s\n{\n"(e);
-        foreach (m; 0 .. 8)
-        {
+        s ~= 8.iota.map!((m) {
+            string member;
             if (e == 0 && m % 4 == 3)
-                s ~= format!"    @WireName!Json(\"alias%s\")\n"(m);
-            s ~= format!"    optionValue%s,\n"(m);
-        }
-        s ~= "}\n\n";
-    }
+                member ~= format!"    @WireName!Json(\"alias%s\")\n"(m);
+            return member ~ format!"    optionValue%s,\n"(m);
+        }).join;
+        return s ~ "}\n\n";
+    }).join;
 
-    s ~= "struct Enums\n{\n";
-    foreach (e; 0 .. nEnums)
-    {
-        s ~= format!"    Choice%s plain%s;\n"(e, e);
+    const fields = nEnums.iota.map!((e) {
+        string s = format!"    Choice%s plain%s;\n"(e, e);
         if (e % 2 == 1)
-            s ~= format!"    @WireCase!Json(CaseStyle.kebabCase, WireTarget.value)\n"();
+            s ~= "    @WireCase!Json(CaseStyle.kebabCase, WireTarget.value)\n";
         s ~= format!"    Choice%s[] list%s;\n"(e, e);
         if (e % 3 != 2) // value-repr enums as AA keys need no name uniqueness
             s ~= format!"    int[Choice%s] table%s;\n"(e, e);
-    }
-    return s ~ "}\n" ~ anchor("Enums");
+        return s;
+    }).join;
+
+    return enums ~ "struct Enums\n{\n" ~ fields ~ "}\n" ~ anchor("Enums");
 }
 
 /// `size` fields cycling through wrappers, sum types, enums, arrays, AA keys,
 /// converts, and small nested structs — the shape of a realistic API payload.
 string genMixed(uint size)
 {
-    string s = "enum Kind { alphaMode, betaMode, gammaMode }\n\n"
+    const header = "enum Kind { alphaMode, betaMode, gammaMode }\n\n"
         ~ "struct Point\n{\n    double xCoord;\n    double yCoord;\n}\n\n"
         ~ "@WireCase!Json(CaseStyle.snakeCase)\nstruct Mixed\n{\n";
-    foreach (i; 0 .. size)
-    {
+    const fields = size.iota.map!((i) {
+        string s;
         final switch (i % 9)
         {
-            case 0: s ~= format!"    long counterValue%s;\n"(i); break;
-            case 1: s ~= format!"    @WireOptional() Nullable!int maybeInt%s;\n"(i); break;
-            case 2: s ~= format!"    @WireOptional(WireSkip.whenDefault) Optional!string maybeText%s;\n"(i); break;
-            case 3: s ~= format!"    @(WireMatch.first!Json) SumType!(long, string) either%s;\n"(i); break;
-            case 4: s ~= format!"    @WireConvert!(d => d.total!\"msecs\", ms => msecs(ms)) Duration timeout%s;\n"(i); break;
-            case 5: s ~= format!"    @WireName!Json(\"kind%s\") Kind kindTag%s;\n"(i, i); break;
-            case 6: s ~= format!"    @WireCase!Json(CaseStyle.kebabCase, WireTarget.value) Kind[] kindList%s;\n"(i); break;
-            case 7: s ~= format!"    int[Kind] kindTable%s;\n"(i); break;
-            case 8: s ~= format!"    Point position%s;\n"(i); break;
+            case 0: s = format!"    long counterValue%s;\n"(i); break;
+            case 1: s = format!"    @WireOptional() Nullable!int maybeInt%s;\n"(i); break;
+            case 2: s = format!"    @WireOptional(WireSkip.whenDefault) Optional!string maybeText%s;\n"(i); break;
+            case 3: s = format!"    @(WireMatch.first!Json) SumType!(long, string) either%s;\n"(i); break;
+            case 4: s = format!"    @WireConvert!(d => d.total!\"msecs\", ms => msecs(ms)) Duration timeout%s;\n"(i); break;
+            case 5: s = format!"    @WireName!Json(\"kind%s\") Kind kindTag%s;\n"(i, i); break;
+            case 6: s = format!"    @WireCase!Json(CaseStyle.kebabCase, WireTarget.value) Kind[] kindList%s;\n"(i); break;
+            case 7: s = format!"    int[Kind] kindTable%s;\n"(i); break;
+            case 8: s = format!"    Point position%s;\n"(i); break;
         }
-    }
-    return s ~ "}\n" ~ anchor("Mixed");
+        return s;
+    }).join;
+    return header ~ fields ~ "}\n" ~ anchor("Mixed");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -258,38 +292,20 @@ string genMixed(uint size)
 
 struct Metrics
 {
+    string workload;        /// workload name this data point belongs to
+    uint size;              /// workload size this data point belongs to
     long wallMs;            /// best-of-iters wall clock of the whole compile
     long frontendMs;        /// span of all trace events (≈ frontend time)
     long templateMs;        /// interval-union of template-instantiation events
     long ctfeMs;            /// interval-union of CTFE events
+    size_t peakRssBytes;    /// peak RSS of the compiler tree (0 off Linux)
+    long cpuMs;             /// summed user+system CPU of the tree (0 off Linux)
     size_t templateCount;   /// number of template-instantiation events
     size_t ctfeCount;       /// number of CTFE events
     size_t instTotal;       /// -vtemplates: total wired-template instantiations
     size_t instDistinct;    /// -vtemplates: distinct wired-template instantiations
     TopEntry[] topWired;    /// top sparkles.wired templates by unioned time
     InstEntry[] topInst;    /// top sparkles.wired templates by instantiation count
-
-    JSONValue toJSON(string workload, uint size) const
-    {
-        return JSONValue([
-            "workload": JSONValue(workload),
-            "size": JSONValue(size),
-            "wallMs": JSONValue(wallMs),
-            "frontendMs": JSONValue(frontendMs),
-            "templateMs": JSONValue(templateMs),
-            "ctfeMs": JSONValue(ctfeMs),
-            "templateCount": JSONValue(templateCount),
-            "ctfeCount": JSONValue(ctfeCount),
-            "instTotal": JSONValue(instTotal),
-            "instDistinct": JSONValue(instDistinct),
-            "topWired": JSONValue(topWired.map!(t =>
-                JSONValue(["name": JSONValue(t.name), "ms": JSONValue(t.ms),
-                    "count": JSONValue(t.count)])).array),
-            "topInst": JSONValue(topInst.map!(t =>
-                JSONValue(["name": JSONValue(t.name), "total": JSONValue(t.total),
-                    "distinct": JSONValue(t.distinct)])).array),
-        ]);
-    }
 }
 
 struct TopEntry
@@ -321,11 +337,18 @@ Metrics measure(string compiler, string file, string traceFile,
     foreach (i; 0 .. iters)
     {
         auto sw = StopWatch(AutoStart.yes);
-        const r = execute(cmd);
+        const r = executeMonitored(cmd);
         const elapsed = sw.peek.total!"msecs";
-        enforce(r.status == 0, "compile failed:\n" ~ r.output);
+        if (r.status != 0)
+            stderr.writeln(r.output);
+        enforceExitStatus(r.status, "compile");
         if (elapsed < m.wallMs)
             m.wallMs = elapsed;
+        if (r.usage.peakRssBytes > m.peakRssBytes)
+            m.peakRssBytes = r.usage.peakRssBytes;
+        const cpuMs = r.usage.cpuTime.total!"msecs";
+        if (cpuMs > m.cpuMs)
+            m.cpuMs = cpuMs;
     }
 
     analyzeTrace(traceFile, m);
@@ -338,7 +361,9 @@ Metrics measure(string compiler, string file, string traceFile,
 void countInstantiations(const string[] baseCmd, string file, ref Metrics m)
 {
     const r = execute(baseCmd.dup ~ ["-vtemplates", file]);
-    enforce(r.status == 0, "compile failed:\n" ~ r.output);
+    if (r.status != 0)
+        stderr.writeln(r.output);
+    enforceExitStatus(r.status, "vtemplates pass");
 
     size_t[2][string] byName; // template name → [total, distinct]
     foreach (line; r.output.split('\n'))
@@ -369,8 +394,6 @@ private enum ctfePrefix = "Ctfe: ";
 /// Fills the trace-derived fields of `m` from a Chrome-trace JSON file.
 void analyzeTrace(string traceFile, ref Metrics m)
 {
-    import std.file : readText;
-
     static string detailOf(JSONValue e)
     {
         if (auto args = "args" in e)
@@ -455,14 +478,48 @@ long unionUs(TraceEvent[] events)
 // Reporting
 // ─────────────────────────────────────────────────────────────────────────────
 
-void report(string workload, uint size, in Metrics m, uint top)
+void report(Metrics m, uint top)
 {
-    writefln!"\n%s size=%s: wall %s ms | frontend %s ms | templates %s ms (%s events) | ctfe %s ms (%s events) | wired insts %s (%s distinct)"(
-        workload, size, m.wallMs, m.frontendMs,
-        m.templateMs, m.templateCount, m.ctfeMs, m.ctfeCount,
-        m.instTotal, m.instDistinct);
-    foreach (t; m.topWired.length > top ? m.topWired[0 .. top] : m.topWired)
-        writefln!"    %6s ms  %5s×  %s"(t.ms, t.count, t.name);
-    foreach (t; m.topInst.length > top ? m.topInst[0 .. top] : m.topInst)
-        writefln!"    %6s insts (%s distinct)  %s"(t.total, t.distinct, t.name);
+    writeln;
+    format!"%s size=%s"(m.workload, m.size)
+        .drawHeader(HeaderProps(style: HeaderStyle.banner, width: 72))
+        .writeln;
+
+    // Scalar metrics as a two-row key/value table.
+    string[] labels = ["wall", "frontend", "templates", "ctfe",
+        "peak rss", "cpu", "wired insts"];
+    string[] values = [
+        format!"%s ms"(m.wallMs),
+        format!"%s ms"(m.frontendMs),
+        format!"%s ms (%s ev)"(m.templateMs, m.templateCount),
+        format!"%s ms (%s ev)"(m.ctfeMs, m.ctfeCount),
+        format!"%.1f MiB"(m.peakRssBytes / (1024.0 * 1024.0)),
+        format!"%s ms"(m.cpuMs),
+        format!"%s (%s distinct)"(m.instTotal, m.instDistinct),
+    ];
+    drawTable([labels, values]).write;
+
+    if (m.topWired.length)
+    {
+        writeln("top sparkles.wired templates by time:");
+        (["ms".stylize(Style.bold), "count".stylize(Style.bold),
+                "template".stylize(Style.bold)]
+            ~ m.topWired.head(top)
+                .map!(t => [t.ms.to!string, t.count.to!string, t.name])
+                .array)
+            .drawTable.write;
+    }
+    if (m.topInst.length)
+    {
+        writeln("top sparkles.wired templates by instantiation count:");
+        (["total".stylize(Style.bold), "distinct".stylize(Style.bold),
+                "template".stylize(Style.bold)]
+            ~ m.topInst.head(top)
+                .map!(t => [t.total.to!string, t.distinct.to!string, t.name])
+                .array)
+            .drawTable.write;
+    }
 }
+
+/// The first `n` elements of `r`, or all of them when it is shorter.
+auto head(R)(R r, size_t n) => r.length > n ? r[0 .. n] : r;
