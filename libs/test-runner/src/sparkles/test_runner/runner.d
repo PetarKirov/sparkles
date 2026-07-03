@@ -77,6 +77,7 @@ private struct RunnerOptions
     bool noColours;
     bool list;
     bool bench;
+    string ctfeTrace;
     bool selfTest;
 }
 
@@ -122,6 +123,9 @@ private UnitTestResult runnerMain()
         "bench",
             "Run @benchmark tests instead of regular tests",
             &options.bench,
+        "ctfe-trace",
+            "Report per-@ctfe-test CTFE cost from an LDC -ftime-trace JSON file",
+            &options.ctfeTrace,
         "self-test",
             "Also run the test runner's own unittests",
             &options.selfTest,
@@ -158,7 +162,41 @@ private UnitTestResult runnerMain()
         return listTests(tests, colored);
     if (options.bench)
         return runBenchMode(tests, colored);
+    if (options.ctfeTrace.length)
+        return runCtfeTraceMode(tests, options.ctfeTrace, colored);
     return runDefaultMode(tests, options, colored);
+}
+
+/// `--ctfe-trace <file>`: attribute the compile-time cost recorded by LDC's
+/// `-ftime-trace` to the individual `@ctfe` tests.
+private UnitTestResult runCtfeTraceMode(Test[] tests, string traceFile, bool colored)
+{
+    import std.algorithm.iteration : filter;
+    import std.array : array;
+    import std.file : exists, readText;
+    import std.stdio : stderr, stdout;
+    import sparkles.test_runner.ctfe_trace : attributeCtfeCosts, parseCtfeEvents;
+    import sparkles.test_runner.reporting : formatCtfeTraceTable, render;
+
+    if (!traceFile.exists)
+    {
+        stderr.writeln(render(colored, i"{red no such trace file:} $(traceFile)"));
+        stderr.writeln("produce one by adding to the package's unittest configuration:");
+        stderr.writeln(`    dflags "-ftime-trace" "-ftime-trace-file=$PACKAGE_DIR/build/trace.json" ` ~
+            `"--ftime-trace-granularity=0" platform="ldc"`);
+        return UnitTestResult(1, 0, false, false);
+    }
+
+    auto ctfeTests = tests.filter!(t => t.traits.isCtfe).array;
+    if (!ctfeTests.length)
+    {
+        stdout.writeln("no @ctfe tests found");
+        return UnitTestResult(0, 0, false, false);
+    }
+
+    const costs = attributeCtfeCosts(ctfeTests, parseCtfeEvents(readText(traceFile)));
+    stdout.write(formatCtfeTraceTable(costs, colored));
+    return UnitTestResult(ctfeTests.length, ctfeTests.length, false, false);
 }
 
 /// `--list`: one line per test with its special-handling markers.
