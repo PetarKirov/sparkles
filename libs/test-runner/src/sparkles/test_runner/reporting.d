@@ -10,6 +10,7 @@ import core.interpolation : InterpolationFooter, InterpolationHeader;
 import core.time : Duration;
 
 import sparkles.test_runner.bench : BenchStats;
+import sparkles.test_runner.ctfe_trace : CtfeTestCost;
 import sparkles.test_runner.model : Test, TestLocation, TestResult, Thrown;
 
 /// Whether `sparkles:core-cli` is in the tested package's dependency closure.
@@ -281,6 +282,13 @@ string formatBenchTable(in BenchStats[] rows, bool colored) @system // drawTable
             ns(row.nsPerIterMax),
         ];
 
+    return renderCells(cells);
+}
+
+/// Renders table cells with `core-cli`'s `drawTable` when available, plain
+/// space-aligned columns otherwise.
+package string renderCells(string[][] cells) @system // drawTable is @system
+{
     static if (hasCoreCliUi)
     {
         import sparkles.core_cli.ui.table : drawTable;
@@ -289,6 +297,35 @@ string formatBenchTable(in BenchStats[] rows, bool colored) @system // drawTable
     }
     else
         return alignColumns(cells);
+}
+
+/// The `--ctfe-trace` report: compile-time cost of each `@ctfe` test.
+string formatCtfeTraceTable(in CtfeTestCost[] costs, bool colored) @system // renderCells
+{
+    import core.time : usecs;
+    import std.conv : text;
+
+    string[][] cells = [[
+        render(colored, i"{bold @ctfe test}"),
+        render(colored, i"{bold location}"),
+        render(colored, i"{bold CTFE time}"),
+    ]];
+    long totalUs;
+    foreach (ref cost; costs)
+    {
+        const location = text(cost.test.location.file, ':', cost.test.location.line);
+        cells ~= [
+            cost.test.name,
+            location,
+            cost.durUs < 0
+                ? render(colored, i"{dim n/a}")
+                : formatDuration(cost.durUs.usecs),
+        ];
+        if (cost.durUs > 0)
+            totalUs += cost.durUs;
+    }
+    return renderCells(cells)
+        ~ render(colored, i"{bold total CTFE time attributed to @ctfe tests:} $(formatDuration(totalUs.usecs))\n");
 }
 
 /// Fallback tabular rendering: two-space-separated left-aligned columns.
