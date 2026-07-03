@@ -21,33 +21,44 @@ Web is fallback-only. This tree is internal QA evidence — excluded from the Vi
 
 ## Per-page ledgers
 
-| Page                    | Ledger                                                     | Rows | ⚠   | ◯               | Status |
-| ----------------------- | ---------------------------------------------------------- | ---- | --- | --------------- | ------ |
-| theory/formal-languages | [theory-formal-languages.md](./theory-formal-languages.md) | full | 2   | several         | ✅ B1  |
-| theory/top-down         | [theory-top-down.md](./theory-top-down.md)                 | full | 2   | RS70            | ✅ B1  |
-| theory/bottom-up        | [theory-bottom-up.md](./theory-bottom-up.md)               | full | 4   | Tomita/Pager    | ✅ B1  |
-| theory/general-parsing  | [theory-general-parsing.md](./theory-general-parsing.md)   | full | 0   | Leo/Marpa/GLL   | ✅ B1  |
-| theory/peg-packrat      | [theory-peg-packrat.md](./theory-peg-packrat.md)           | full | 5   | Medeiros        | ✅ B2  |
-| theory/pratt-precedence | [theory-pratt-precedence.md](./theory-pratt-precedence.md) | full | 2   | blogs           | ✅ B2  |
-| theory/derivatives      | [theory-derivatives.md](./theory-derivatives.md)           | full | 0   | Antimirov/blog  | ✅ B2  |
-| theory/incremental      | [theory-incremental.md](./theory-incremental.md)           | full | 0   | Adapton biblio  | ✅ B6  |
-| theory/index            | [theory-index.md](./theory-index.md)                       | full | 0   | —               | ✅ B5  |
-| concepts                | [concepts.md](./concepts.md)                               | full | 3   | GLL/Hopcroft    | ✅ B2  |
-| comparison              | [comparison.md](./comparison.md)                           | full | 2   | Sparkles-fit    | ✅ B5  |
-| index                   | [page-index.md](./page-index.md)                           | full | 2   | biblio dates    | ✅ B5  |
-| simdjson                | [simdjson.md](./simdjson.md)                               | full | 5   | port provenance | ✅ B3  |
-| tree-sitter             | [tree-sitter.md](./tree-sitter.md)                         | full | 1   | talk/wiki       | ✅ B3  |
-| antlr                   | [antlr.md](./antlr.md)                                     | full | 5   | adopters        | ✅ B3  |
-| bison-yacc              | [bison-yacc.md](./bison-yacc.md)                           | full | 2   | Johnson/Lemon   | ✅ B3  |
-| menhir                  | [menhir.md](./menhir.md)                                   | full | 3   | blog/C11        | ✅ B4  |
-| pest                    | [pest.md](./pest.md)                                       | full | 0   | book/blog       | ✅ B4  |
-| rust-nom                | [rust-nom.md](./rust-nom.md)                               | full | 3   | bench/downloads | ✅ B4  |
-| rust-chumsky            | [rust-chumsky.md](./rust-chumsky.md)                       | full | 3   | blog/adoption   | ✅ B4  |
-| haskell-parsec          | [haskell-parsec.md](./haskell-parsec.md)                   | full | 1   | FlatParse/ports | ✅ B5  |
-| rust-analyzer           | [rust-analyzer.md](./rust-analyzer.md)                     | full | 0   | matklad/cadence | ✅ B6  |
-| roslyn                  | [roslyn.md](./roslyn.md)                                   | full | 0   | CTP/OSS dates   | ✅ B6  |
-| lezer                   | [lezer.md](./lezer.md)                                     | full | 0   | CodeMirror bio  | ✅ B6  |
-| rustc-queries           | [rustc-queries.md](./rustc-queries.md)                     | full | 0   | Matsakis/blog   | ✅ B6  |
+| Page                    | Ledger                                                     | Rows | ⚠   | ◯                | Status |
+| ----------------------- | ---------------------------------------------------------- | ---- | --- | ---------------- | ------ |
+| theory/formal-languages | [theory-formal-languages.md](./theory-formal-languages.md) | full | 2   | several          | ✅ B1  |
+| theory/top-down         | [theory-top-down.md](./theory-top-down.md)                 | full | 2   | RS70             | ✅ B1  |
+| theory/bottom-up        | [theory-bottom-up.md](./theory-bottom-up.md)               | full | 4   | Tomita/Pager     | ✅ B1  |
+| theory/general-parsing  | [theory-general-parsing.md](./theory-general-parsing.md)   | full | 0   | Leo/Marpa/GLL    | ✅ B1  |
+| theory/peg-packrat      | [theory-peg-packrat.md](./theory-peg-packrat.md)           | full | 5   | Medeiros         | ✅ B2  |
+| theory/pratt-precedence | [theory-pratt-precedence.md](./theory-pratt-precedence.md) | full | 2   | blogs            | ✅ B2  |
+| theory/derivatives      | [theory-derivatives.md](./theory-derivatives.md)           | full | 0   | Antimirov/blog   | ✅ B2  |
+| theory/incremental      | [theory-incremental.md](./theory-incremental.md)           | full | 0   | Adapton biblio   | ✅ B6  |
+| theory/index            | [theory-index.md](./theory-index.md)                       | full | 0   | —                | ✅ B5  |
+| concepts                | [concepts.md](./concepts.md)                               | full | 3   | GLL/Hopcroft     | ✅ B2  |
+| comparison              | [comparison.md](./comparison.md)                           | full | 2   | Sparkles-fit     | ✅ B5  |
+| index                   | [page-index.md](./page-index.md)                           | full | 2   | biblio dates     | ✅ B5  |
+| simdjson                | [simdjson.md](./simdjson.md)                               | full | 5   | port provenance  | ✅ B3  |
+| tree-sitter             | [tree-sitter.md](./tree-sitter.md)                         | full | 1   | talk/wiki        | ✅ B3  |
+| antlr                   | [antlr.md](./antlr.md)                                     | full | 5   | adopters         | ✅ B3  |
+| bison-yacc              | [bison-yacc.md](./bison-yacc.md)                           | full | 2   | Johnson/Lemon    | ✅ B3  |
+| menhir                  | [menhir.md](./menhir.md)                                   | full | 3   | blog/C11         | ✅ B4  |
+| pest                    | [pest.md](./pest.md)                                       | full | 0   | book/blog        | ✅ B4  |
+| rust-nom                | [rust-nom.md](./rust-nom.md)                               | full | 3   | bench/downloads  | ✅ B4  |
+| rust-chumsky            | [rust-chumsky.md](./rust-chumsky.md)                       | full | 3   | blog/adoption    | ✅ B4  |
+| haskell-parsec          | [haskell-parsec.md](./haskell-parsec.md)                   | full | 1   | FlatParse/ports  | ✅ B5  |
+| rust-analyzer           | [rust-analyzer.md](./rust-analyzer.md)                     | full | 0   | matklad/cadence  | ✅ B6  |
+| roslyn                  | [roslyn.md](./roslyn.md)                                   | full | 0   | CTP/OSS dates    | ✅ B6  |
+| lezer                   | [lezer.md](./lezer.md)                                     | full | 0   | CodeMirror bio   | ✅ B6  |
+| rustc-queries           | [rustc-queries.md](./rustc-queries.md)                     | full | 0   | Matsakis/blog    | ✅ B6  |
+| simd-json               | [simd-json.md](./simd-json.md)                             | full | 0   | bench/date       | ✅ B7  |
+| sonic-rs                | [sonic-rs.md](./sonic-rs.md)                               | full | 0   | bench            | ✅ B7  |
+| yyjson                  | [yyjson.md](./yyjson.md)                                   | full | 0   | bench            | ✅ B7  |
+| rapidjson               | [rapidjson.md](./rapidjson.md)                             | full | 1   | bench (simdjson) | ✅ B7  |
+| hyperscan               | [hyperscan.md](./hyperscan.md)                             | full | 0   | Vectorscan       | ✅ B7  |
+| zig-tokenizer           | [zig-tokenizer.md](./zig-tokenizer.md)                     | full | 1   | Parse.zig        | ✅ B7  |
+| rust-winnow             | [rust-winnow.md](./rust-winnow.md)                         | full | 0   | downloads        | ✅ B7  |
+| haskell-flatparse       | [haskell-flatparse.md](./haskell-flatparse.md)             | full | 0   | bench            | ✅ B7  |
+| rust-combine            | [rust-combine.md](./rust-combine.md)                       | full | 0   | downloads        | ✅ B7  |
+| ocaml-angstrom          | [ocaml-angstrom.md](./ocaml-angstrom.md)                   | full | 0   | httpaf/RWO       | ✅ B7  |
+| fsharp-fparsec          | [fsharp-fparsec.md](./fsharp-fparsec.md)                   | full | 0   | reputation       | ✅ B7  |
 
 ## Master discrepancy register
 
@@ -156,10 +167,43 @@ line-wrapped at `incremental-compilation.md:3-4`. Web-attested only: author/crea
 cadence/dates, and the Roslyn CTP/OSS milestone dates (all flagged ◯/🌐 in each ledger, none asserted
 as tree facts).
 
-## Status: all 25 pages grounded (6 batches). 44 discrepancies (R8–R51, all from B1–B5); wave-2 B6 added
+### Batch 7 (wave 2 — SIMD / high-performance + combinators, 2026-07-03)
 
-0. All minor — quote-precision, citation-locator, version/attribution. No fabricated _facts_ beyond
-   R8/R23 quote-padding and R26/R39/R45–R47 quote-sourcing. Proceed to Phase 3 (apply fixes).
+**Effectively zero substantive discrepancies** across the eleven new pages ([simd-json],
+[sonic-rs], [yyjson], [rapidjson], [hyperscan], [zig-tokenizer]; [rust-winnow],
+[haskell-flatparse], [rust-combine], [ocaml-angstrom], [fsharp-fparsec]). Every material
+quote confirmed verbatim in the pinned wave-2 repos + the Hyperscan NSDI'19 paper. Two
+non-content locator/scope caveats, both self-flagged in their ledgers:
+
+- **D-R1** (`rapidjson`) — in-tree source disagreement (README RFC 7159 vs `features.md`
+  RFC 4627); page follows the README and NOTEs it. Not a page error.
+- **D-Z1** (`zig-tokenizer`) — `Parse.zig` not opened; the one-sentence "hand-written RD
+  parser" context is asserted from `Ast.zig` + known design. Author also correctly
+  **declined** to call `StaticStringMap` a "perfect hash" (unverifiable from the call site).
+
+Corrections applied to task briefs during grounding (agents caught these): `sonic-rs`
+license is **Apache-2.0 only** (not dual); `simd-json` makes **no** GB/s claim (no in-repo
+benchmarks). Web-attested only: benchmark numbers, release dates, and downstream-adoption
+notes (all flagged 🌐 per ledger; none asserted as tree facts).
+
+[simd-json]: ./simd-json.md
+[sonic-rs]: ./sonic-rs.md
+[yyjson]: ./yyjson.md
+[rapidjson]: ./rapidjson.md
+[hyperscan]: ./hyperscan.md
+[zig-tokenizer]: ./zig-tokenizer.md
+[rust-winnow]: ./rust-winnow.md
+[haskell-flatparse]: ./haskell-flatparse.md
+[rust-combine]: ./rust-combine.md
+[ocaml-angstrom]: ./ocaml-angstrom.md
+[fsharp-fparsec]: ./fsharp-fparsec.md
+
+## Status: all 36 pages grounded (7 batches). 44 discrepancies (R8–R51, all from B1–B5);
+
+wave-2 B6 + B7 added
+
+0 substantive. All minor — quote-precision, citation-locator, version/attribution. No fabricated _facts_
+beyond R8/R23 quote-padding and R26/R39/R45–R47 quote-sourcing. Proceed to Phase 3 (apply fixes).
 
 ## Pre-flagged for this pass
 

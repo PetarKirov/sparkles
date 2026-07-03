@@ -40,6 +40,24 @@ Wave 2 — incremental / query-based (added 2026-07-03):
 | lezer-common    | `$REPOS/js/lezer-common`      | `d87b56c`  | 2026-04-15 |
 | roslyn          | `$REPOS/dotnet/roslyn`        | `e42c3902` | 2026-07-02 |
 
+Wave 2 — SIMD / data-parallel + combinators (added 2026-07-03):
+
+| Repo      | Path                       | Pinned SHA | As of      |
+| --------- | -------------------------- | ---------- | ---------- |
+| simd-json | `$REPOS/rust/simd-json`    | `0662a83`  | 2026-03-11 |
+| sonic-rs  | `$REPOS/rust/sonic-rs`     | `03545a9`  | 2026-04-15 |
+| yyjson    | `$REPOS/c/yyjson`          | `12797c6`  | 2026-07-02 |
+| rapidjson | `$REPOS/cpp/rapidjson`     | `24b5e7a`  | 2025-02-05 |
+| hyperscan | `$REPOS/cpp/hyperscan`     | `828b4fe`  | 2026-06-29 |
+| combine   | `$REPOS/rust/combine`      | `203b76a`  | 2026-02-03 |
+| angstrom  | `$REPOS/ocaml/angstrom`    | `76c5ef5`  | 2024-09-11 |
+| fparsec   | `$REPOS/fsharp/fparsec`    | `156cbd7`  | 2022-12-04 |
+| flatparse | `$REPOS/haskell/flatparse` | `df7e978`  | 2025-10-08 |
+
+(`winnow` was already pinned above, wave 1; the Zig tokenizer is read from the existing
+`$REPOS/zig/zig/lib/std/zig/tokenizer.zig` checkout. Hyperscan paper:
+`papers/parsing/wang-2019-hyperscan-nsdi.pdf`, NSDI 2019, 19 pp.)
+
 In-repo docs/manuals to use for quote-grounding: bison `doc/bison.texi`; menhir
 `doc/` + `CHANGES.md`; tree-sitter `docs/src/`; nom/winnow/chumsky/pest `doc/` + `README` +
 `src/`; the Haskell libs' `.cabal`/`CHANGELOG`/`src` + Haddocks in-tree. For wave 2:
