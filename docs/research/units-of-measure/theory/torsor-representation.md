@@ -47,7 +47,7 @@ comparison foil.
 | Unit                       | A point of a **torsor**: an element of `R_d^×` (any non-zero element serves); a whole unit _system_ is a multiplicative section `u : D → R` of the dimension projection                                         |
 | Homogeneity of laws        | **Equivariance** under the torus action; verifiable at a _single_ choice of units (Tao's transfer principle)                                                                                                    |
 | Dimensionless              | Weight `0` — literally invariant under all rescalings; the **dimensionless slice** `R₁` (an ordinary ring/field)                                                                                                |
-| Central theorem            | A choice of units **trivializes**: `R_D ≅ R₁ × D` ([Prop 3.4][zapata]) and the power ring of `k` lines `≅ F × ℤᵏ` ([Thm 4.1][zapata]) — always non-canonically                                                  |
+| Central theorem            | A choice of units **trivializes**: `R_D ≅ R₁ × D` ([Prop 3.4][zapata]) and the power ring of `k` lines `≅ F × ℤᵏ` ([Thm 4.1][zapata] + its §4 extension) — always non-canonically                               |
 | Addition across dimensions | Partial (slice-wise) by algebraic necessity — distributivity _forces_ multiplication to act on dimensions ([Zapata-Carratala][zapata]); or total-but-**hybrid** with no single weight ([Tao][tao])              |
 | One-sorted alternative     | **Scalable monoids / quantity spaces**: a monoid with a ring scaling action, dimensions as orbits, addition _derived_ from unit elements ([Jonsson][jonsson])                                                   |
 | Canonical sources          | [Baez 2009][baez] (torsor pedagogy); [Tao 2012][tao] (weight spaces, structure groups); [Zapata-Carratala 2021][zapata] (dimensioned algebra); [Jonsson 2021][jonsson] (scalable monoids)                       |
@@ -218,7 +218,7 @@ is structure, not folklore:
 > addition only partially defined in the first argument and multiplication defined as a
 > direct product in both arguments. The Zⁿ component corresponds to the types of physical
 > quantities and the domains of partial addition are precisely the subsets of matching
-> type."_ — [Zapata-Carratala][zapata], §2.1 (`pdftotext` extraction, p. 4–5)
+> type."_ — [Zapata-Carratala][zapata], §2.1 (`pdftotext` extraction, p. 5)
 
 The machinery, in his own terms:
 
@@ -343,7 +343,7 @@ one-dimensional vector spaces by Quade and Raposo" ([Jonsson][jonsson], §2.6) �
 to [tensor of lines][tensor-of-lines]. A **quantity space** is a commutative scalable
 monoid over a field with a finite basis of invertible elements (unique expansion
 `x = µ · ∏ᵢ eᵢ^(kᵢ)`); its monoid of dimensions `Q/∼` is then a free abelian group of rank
-`n` (Prop 3.20), each dimension is a 1-dimensional vector space (Prop 3.9), and _every_
+`n` (Props 3.19–3.20), each dimension is a 1-dimensional vector space (Prop 3.9), and _every_
 non-zero quantity is a unit quantity for its dimension (Prop 3.7). Jonsson also never says
 "torsor", but Definition 2.32's two conditions on a unit element — generating and faithful —
 are exactly transitivity and freeness of the scalar action on the orbitoid `[exposition]`.
@@ -444,12 +444,12 @@ genuine difference:
 
 ### Quantity, unit, dimension, kind
 
-| Notion    | Tao (parametric)                                                   | Zapata-Carratala                                                                 | Jonsson                                                                        | Baez                                                          |
-| --------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------- |
-| Quantity  | family `x_{M,L,T}` transforming by a power law (weight vector)     | element `a_d` of a slice of a dimensioned ring                                   | element of a quantity space                                                    | element of a `G`-torsor (for origin-like quantities)          |
-| Dimension | the **weight** `(a,b,c)` — a character of the torus                | element `d` of the dimension monoid `D`; equivalently the slice `R_d`            | **orbitoid** `[x]` — a commensurability class; `Q/∼` is free abelian           | the group `G` itself (implicitly: which `G` acts)             |
-| Unit      | a reference choice `M₀,L₀,T₀`; better, a point of a torsor `V^M` … | a multiplicative **section** `u : D → R`, `u_d ≠ 0` (may not exist globally)     | **unit element**: a generating, faithful `u ∈ C`; systems: dense+sparse+closed | a chosen base point of the torsor ("declare it the identity") |
-| Kind      | — (see below)                                                      | — (silent; `D` is arbitrary, so a finer monoid _could_ split kinds, undeveloped) | **same kind ⟺ commensurable** — an explicit, radical identification            | — (silent)                                                    |
+| Notion    | Tao (parametric)                                                   | Zapata-Carratala                                                                 | Jonsson                                                                        | Baez                                                                |
+| --------- | ------------------------------------------------------------------ | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
+| Quantity  | family `x_{M,L,T}` transforming by a power law (weight vector)     | element `a_d` of a slice of a dimensioned ring                                   | element of a quantity space                                                    | element of a `G`-torsor (for origin-like quantities)                |
+| Dimension | the **weight** `(a,b,c)` — a character of the torus                | element `d` of the dimension monoid `D`; equivalently the slice `R_d`            | **orbitoid** `[x]` — a commensurability class; `Q/∼` is free abelian           | the group `G` itself (implicitly: which `G` acts)                   |
+| Unit      | a reference choice `M₀,L₀,T₀`; better, a point of a torsor `V^M` … | a multiplicative **section** `u : D → R`, `u_d ≠ 0` (may not exist globally)     | **unit element**: a generating, faithful `u ∈ C`; systems: dense+sparse+closed | a chosen base point of the torsor ("declare it to be the identity") |
+| Kind      | — (see below)                                                      | — (silent; `D` is arbitrary, so a finer monoid _could_ split kinds, undeveloped) | **same kind ⟺ commensurable** — an explicit, radical identification            | — (silent)                                                          |
 
 On _kind_, Jonsson is the only one of the four to commit, and he commits to the collapse:
 "we introduce a seemingly more radical idea: quantities are of the same kind if and only if
@@ -478,7 +478,7 @@ do so for a single choice of the dimension parameters `M,L,T`" (stated with its 
 sketch on [tensor of lines][tensor-of-lines]) — Tao's worked example being
 `E = mc²`: verify it in Planck-style units where `c = 1` (where it degenerates to the
 dimensionally _inconsistent_ `E = m`), and equivariance propagates it to all unit systems;
-but having spent the consistency one cannot transfer back ([Tao][tao], §2). In Jonsson the
+but having spent the consistency one cannot transfer back ([Tao][tao], §1). In Jonsson the
 same principle appears arithmetically: equal quantities have equal exponent vectors
 (Lemma 3.6), and "this is the essence of the principle of dimensional homogeneity
 formulated by Fourier" ([Jonsson][jonsson], §3.2). In Zapata-Carratala homogeneity is
@@ -531,7 +531,7 @@ multiplication to be a _dimensioned_ binar, i.e. forces dimensions themselves to
 > _"Therefore, if we are to demand distributivity as generally as possible, the
 > multiplicative operation must map transitively between dimension slices, in other words,
 > the dimension of a_d · c_f only depends on d and f."_ — [Zapata-Carratala][zapata], §3
-> (`pdftotext` extraction, p. 9; subscripts inlined)
+> (`pdftotext` extraction, p. 10; subscripts inlined)
 
 So in dimensioned algebra the monoid structure on `D` — the very existence of a
 "multiplication of dimensions" — is _explained_ by the partiality of addition plus
@@ -647,9 +647,11 @@ picture's two halves are both mechanized, separately:
   the system behind [F# units of measure][fsharp-uom] is literally the statement that
   well-typed programs are equivariant under the scaling torus: "the behaviour of programs
   is invariant under changes to the units used. We prove this 'dimensional invariance'
-  result" — with changes-of-units modelled as _scaling environments_ extended "to a
+  result" — with changes-of-units modelled as _scaling environments_; §5's natural
+  first-cut notion assigns a scale factor to each unit variable and extends it "to a
   homomorphism from the Abelian group of (equivalence classes of) unit expressions into
-  the Abelian group of scale factors"
+  the Abelian group of scale factors", and the paper's more general relational definition
+  is then shown to subsume exactly these homomorphisms
   (`$REPOS/papers/units-of-measure/kennedy-1997-relational-parametricity-units-popl.pdf`,
   abstract and §5). That is the character/weight picture in type-theoretic clothing —
   developed fully in [Kennedy's dimension types][kennedy-types] and
@@ -662,7 +664,8 @@ picture's two halves are both mechanized, separately:
   [Pint][pint] implements offset units (`degC`) via `OffsetConverter` and logarithmic
   units via `LogarithmicConverter` in `pint/facets/nonmultiplicative/definitions.py`;
   [Unitful.jl][unitful] defines `°C`/`°F` through an `@affineunit` macro and an
-  `AffineUnits` type (`src/pkgdefaults.jl`, `src/user.jl`). All paths verified in the
+  `AffineUnits` type (`src/pkgdefaults.jl`, `src/user.jl`, `src/types.jl`). All paths
+  verified in the
   pinned repos of the survey's grounding map (`grounding/_sources.md`). An independent
   rediscovery of the same discipline — a reader's C++ embedding of 1-D vector spaces,
   duals, tensor products, _and 1-dimensional affine spaces_ under strong typing — is
@@ -765,7 +768,9 @@ units set to `1`) and conclude it for all — the strategy runtime unit systems 
   multiplication of a positive space is "a free and transitive action of the group
   (ℝ⁺, ·)") and the §3.1 unit-as-semi-basis definition. (Both statements verified
   against a `pdftotext -layout` extraction of
-  `$REPOS/papers/units-of-measure/janyska-modugno-vitolo-2007-semi-vector-spaces-units-arxiv.pdf`.)
+  `$REPOS/papers/units-of-measure/janyska-modugno-vitolo-2007-semi-vector-spaces-units-arxiv.pdf`;
+  the extraction renders `ℝ⁺` as `IR+` and sets `semi–basis` with an en-dash —
+  normalized here.)
 - A. Kennedy, "Relational parametricity and units of measure", POPL '97 — dimensional
   invariance as the semantics of unit-polymorphic typing; cited here from the local author
   copy `$REPOS/papers/units-of-measure/kennedy-1997-relational-parametricity-units-popl.pdf`

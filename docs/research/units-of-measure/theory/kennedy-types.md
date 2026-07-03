@@ -321,7 +321,8 @@ sign-case dispatchers ([POPL '97 §5.2][k97]).
 The operational reading: a root-finder needs an initial estimate of type `num u`, and the only
 `num u` it can manufacture is zero. Hence the _repair_: `∀u. num u → num u² → num u` (seed
 supplied by the caller) **is** inhabited. Similarly `∀u₁ u₂. (num u₁ → num u₂) → num u₁·u₂`
-("definite integration without bounds") contains only trivial terms, and a first-order type
+(a would-be "area under a curve" function, impossible with "no arguments representing bounds")
+contains only trivial terms, and a first-order type
 `∀u₁…u_m. num µ₁ → ⋯ → num µ_n → num µ₀` has a non-trivial inhabitant **iff** the integer linear
 system `A·X = B` of its exponents is solvable — in which case `x₁^z₁·…·x_n^z_n` is an inhabitant
 ([POPL '97 §5.2][k97]).
@@ -486,7 +487,7 @@ in types and relations; none lives in values.
   "In computer science terms, these can be seen as isomorphic data representations; then the
   notion of dimension is a class of representations" ([POPL '97 §2.1][k97]). The thesis
   sharpens the same idea in ADT language: "a dimension is an abstract data type which 'hides'
-  the actual units used (it is a class of units)" ([thesis §1.1][k96]). Whether types are
+  the actual units used (it is a class of units)" ([thesis §1.3][k96]). Whether types are
   indexed by dimensions (thesis) or units (F#) is "mostly a matter of taste" for checking —
   it matters only once multiple units per dimension coexist and conversions are automated
   ([thesis §1.3][k96]; [POPL '97 §2.3][k97]).
@@ -695,8 +696,8 @@ type constructors (`UProd<m, UInv<UProd<s,s>>>`), but "the crucial aspect of uni
 that is not captured by this encoding is _equations that hold between syntactically distinct
 units_" — `m·s` vs `s·m`, `s·s⁻¹` vs `1` — so every encoding must either canonicalise (fixed
 exponent vectors: [Boost.Units][boost], [dimensional][dimensional], [uom][rust-uom]) or witness
-the AG laws in proofs ([CEFP §3][k10], which cites Boost.Units and Buckwalter's `dimensional` as
-the "abuse the rich type systems … at some cost in usability" exhibits). The catalog-wide
+the AG laws in proofs ([CEFP §3][k10]; the notes' introduction cites Boost.Units and Buckwalter's
+`dimensional` as the "abuse the rich type systems … at some cost in usability" exhibits). The catalog-wide
 comparison of these strategies is [`type-system-mechanisms.md`][mechanisms].
 
 **Mechanized metatheory.** The parametricity semantics itself was later formalized — Kennedy,

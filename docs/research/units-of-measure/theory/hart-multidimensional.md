@@ -71,8 +71,9 @@ this layer.
   grounded here. The paper cites the book as reference `[3]`, "to be published by
   Springer Verlag, (1994)" — it actually appeared in 1995.
 - **G. W. Hart, [_Multidimensional Analysis: Algebras and Systems for Science and
-  Engineering_][book-doi], Springer-Verlag New York, 1995. ISBN 0-387-94417-6 (hardcover;
-  ISBN-13 978-1-4612-8697-4, e-ISBN 978-1-4612-4208-6, DOI `10.1007/978-1-4612-4208-6`).**
+  Engineering_][book-doi], Springer-Verlag New York, 1995. ISBN 0-387-94417-6 (hardcover);
+  the local scan is the softcover reprint (ISBN-13 978-1-4612-8697-4,
+  e-ISBN 978-1-4612-4208-6, DOI `10.1007/978-1-4612-4208-6`).**
   _Not inspected beyond the front matter._ The local artifact
   (`hart-1995-multidimensional-analysis-frontmatter-springer.pdf`) is the title pages +
   full table of contents + list of figures/tables; every book-structure claim below cites
@@ -196,7 +197,8 @@ Unpacked via `(15)`: a multipliable `n × m` matrix has `T(Aᵢⱼ) = T(yᵢ)/T(
 **outer product** of two type vectors. Hart's phrase is that useful matrices are
 _dimensionally of rank 1_.
 
-_Proof sketch (the paper's own, §3.2)._ Suppose `Ax` is defined. Then an inner product
+_Proof sketch (the paper's own for the forward direction, §3.2; the converse is
+immediate)._ Suppose `Ax` is defined. Then an inner product
 is defined between each row of `A` (transposed into a column) and `x`; by `(19)` each
 row is `≈ x̃ᵀ`, and by transitivity of `≈` **all rows of `A` are dimensionally parallel
 to each other**. So the dimensional form of `A` factors as a column of scalars
@@ -241,7 +243,7 @@ Specializing `yx̃` produces the operations one at a time (§§3.3–3.5):
   `A ∼ cxx̃`: every eigenvalue `λ ∼ c` and every eigenvector `y ≈ x`. Eigenvalues of a
   physically meaningful matrix all carry _the same dimension_, the squarability scale
   `c` — and _"most square matrices are not squarable and so have no eigenstructure"_
-  (§3.5). In particular symmetric matrices, whose form is `xxᵀ`, are generally **not**
+  (§3.4). In particular symmetric matrices, whose form is `xxᵀ`, are generally **not**
   squarable, _"so the analysis of positive definite matrices in terms of eigenstructure
   is not generally meaningful"_.
 - **Additional results** (§3.5, stated without proof, referred to the book):
@@ -441,7 +443,8 @@ matrices"_ (§4) — and the website adds the working engineer's translations:
 - **`AA⁻¹ ≠ A⁻¹A` in general** — `(23)`: they agree iff `A` is uniform. Both products
   equal an identity matrix _numerically_; they are different identity matrices, with
   differently-typed off-diagonal zeros (`AA⁻¹ ∼ yỹ`, `A⁻¹A ∼ xx̃`). Hart poses exactly
-  this as quiz #2: _"For a nonsingular square matrix, A with inverse B, it is true as
+  this as quiz #2 and spells out the resolution among his "surprising theorems":
+  _"For a nonsingular square matrix, A with inverse B, it is true as
   expected that AB=I and BA=I, but in general AB does not equal BA. The explanation lies
   in the fact that there are many different dimensionally distinct identity matrices."_
   (website §D.6).

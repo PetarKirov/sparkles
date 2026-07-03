@@ -64,8 +64,8 @@ Inspected directly (local artifacts under `$REPOS/papers/units-of-measure/`):
   Mathematica_ 14:84–99, 1953.** The first fully rigorous algebraic foundation. The
   local artifact `drobot-1953-foundations-dimensional-analysis-studia.pdf` is an
   **image-only** scan (no text layer); it was read page-by-page as images, so this page
-  cites it _structurally_ (section/page references, paraphrase) and quotes nothing
-  verbatim from it.
+  cites it _structurally_ (section/page references, paraphrase); the two short quoted
+  phrases below were transcribed from the page images.
 - **W. D. Curtis, J. D. Logan & W. A. Parker, ["Dimensional Analysis and the Pi
   Theorem"][clp-doi], _Linear Algebra and its Applications_ 47:117–126, 1982.** The
   rigorous linear-algebra statement and proof this page's formal core follows. Read in
@@ -221,7 +221,8 @@ and the law  f = x − ½gt² = 0  is equivalent to  1 − ½·Π₃ = 0   (ψ(z
 
 ### The abstract version: laws as equivariant families
 
-CLP §3 (pp. 124–125) then restates the theorem "without reference to physical
+CLP §3 (pp. 124–125) then restates the theorem — in their abstract's words,
+"without reference to physical
 quantities, units, dimensions, and so on": take an `n`-dimensional real vector space
 `V` of "quantities" _written additively_ (the product `Q₁Q₂` becomes `Q₁ + Q₂`, the
 power `Qᶜ` becomes `cQ` — i.e. `V` is the exponent space), a linear map
@@ -505,8 +506,8 @@ The unit-change action is, in every formulation, a **multiplicative group action
 
 - CLP §2: `S_λ`, `λ ∈ ℝ₊^d`, acting on each quantity through its dimension exponents;
   §3 abstractly: the additive group `ℝ^d` acting on value tuples via
-  `exp(λ·Teᵢ)`-scalings per frame member (p. 124). "The λᵢ … in practice they are just
-  conversion factors" (p. 121).
+  `exp(λ·Teᵢ)`-scalings per frame member (p. 124). "We regard the λᵢ as dimensionless
+  (in practice they are just conversion factors)" (p. 121).
 - Drobot: the dimensional transformations `Δ`, and separately the passage between two
   systems of units via a non-singular exponent matrix (his eqs. (2)–(3), p. 90 — a
   change of basis in the dimension group, cf. the [torsor picture][torsor] of unit
@@ -641,7 +642,7 @@ ill-dimensioned expressions; the π-theorem does something no such checker does 
   as a bare argument of `ψ` — Jonsson's pendulum Example 2, where `[θ] = [1_Q]` and
   the conclusion is `t² = ℓg⁻¹Ψ(θ)` with `Ψ` unknowable to the method (p. 12);
   likewise Buckingham's radiation example, where the angle `θ` rides along "being
-  dimensionless like the r's" (p. 352 ff). Treating angle as a base dimension would
+  dimensionless like the r's" (p. 362). Treating angle as a base dimension would
   change `A`'s rank and the count of `π`s — the formalism permits either convention
   and adjudicates nothing (cf. [concepts: angles][concepts]).
 - **Same-dimension, different-kind quantities.** Torque vs energy, `Hz` vs `Bq`,
@@ -650,7 +651,8 @@ ill-dimensioned expressions; the π-theorem does something no such checker does 
   spurious `Π`. No surveyed source even remarks on the problem; the silence is total.
   (The _number of base dimensions_ — which determines what gets conflated — is itself
   conventional: Buckingham's `k` varies per problem, p. 358, and Drobot's "paradoxical"
-  heat-conduction example turns on taking heat as a fourth independent unit, p. 95.
+  heat-conduction example turns on taking temperature (the degree) as a fourth
+  independent unit, p. 95.
   See [Open problems](#open-problems--frontier).)
 - **Vector and tensor quantities.** The `Qᵢ` are scalars; direction-dependent laws
   must be scalarized first. The systematic extension of dimension bookkeeping to
@@ -787,7 +789,7 @@ eponym — not groundable in the local artifacts]`). Jonsson's account of basis
   counterexamples (§IV), dimensions as equivalence classes (§VI), fiberwise addition
   (§VI.4), the "paradoxical" examples (§VII). Local artifact:
   `drobot-1953-foundations-dimensional-analysis-studia.pdf` (image-only scan — cited
-  structurally, no verbatim quotes).
+  structurally; two short phrases transcribed from the page images).
 - W. D. Curtis, J. D. Logan & W. A. Parker, ["Dimensional Analysis and the Pi
   Theorem"][clp-doi], _Linear Algebra and its Applications_ 47:117–126, 1982 — the
   rigorous statement and proof this page follows: dimension matrix and `Aα = 0`
