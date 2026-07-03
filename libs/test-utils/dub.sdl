@@ -4,6 +4,8 @@ license "BSL-1.0"
 
 targetPath "build"
 
+importPaths "src" "../test-runner/src"
+
 dflags "-preview=in" "-preview=dip1000"
 
 configuration "library" {
@@ -15,7 +17,6 @@ configuration "unittest" {
     excludedSourceFiles "src/app.d"
 
     sourcePaths "../test-runner/src"
-    importPaths "../test-runner/src"
 
     dependency "sparkles:base" path="../.."
 

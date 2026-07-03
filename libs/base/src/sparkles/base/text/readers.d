@@ -20,6 +20,10 @@ import sparkles.base.text.case_style : CaseStyle, convertCase;
 import sparkles.base.text.errors :
     ParseErrorCode, ParseExpected, parseErr, parseOk;
 
+// Unconditional import (phobos-style, cf. std.internal.attributes): unittest
+// UDAs are resolved even in builds where the unittest bodies are not compiled.
+import sparkles.test_runner.attributes : betterC;
+
 @safe pure nothrow @nogc:
 
 /**
@@ -179,6 +183,7 @@ if (is(E == enum))
 }
 
 @("text.readers.readInteger.advancesOnSuccess")
+@betterC
 unittest
 {
     const(char)[] s = "123abc";
@@ -189,8 +194,12 @@ unittest
 }
 
 @("text.readers.readInteger.rejectsNonDigitWithoutAdvancing")
+@betterC
 unittest
 {
+    // Local import: extracted @betterC tests only see the module's public API.
+    import sparkles.base.text.errors : ParseErrorCode;
+
     const(char)[] s = "abc";
     auto r = readInteger!uint(s);
     assert(!r.hasValue);
@@ -199,8 +208,11 @@ unittest
 }
 
 @("text.readers.readInteger.overflow")
+@betterC
 unittest
 {
+    import sparkles.base.text.errors : ParseErrorCode;
+
     const(char)[] s = "256";
     auto r = readInteger!ubyte(s);
     assert(!r.hasValue);
@@ -212,6 +224,7 @@ unittest
 }
 
 @("text.readers.skipSpaces")
+@betterC
 unittest
 {
     const(char)[] s = "  \tx";
@@ -220,6 +233,7 @@ unittest
 }
 
 @("text.readers.tryConsume")
+@betterC
 unittest
 {
     const(char)[] s = "=1";
@@ -230,6 +244,7 @@ unittest
 }
 
 @("text.readers.tryConsumeAny")
+@betterC
 unittest
 {
     const(char)[] s = "v2";
@@ -239,6 +254,7 @@ unittest
 }
 
 @("text.readers.readUntil")
+@betterC
 unittest
 {
     const(char)[] s = "alpha.1";

@@ -11,6 +11,8 @@ dependency "sparkles:base" path="../.."
 targetType "library"
 targetPath "build"
 
+importPaths "src" "../test-runner/src"
+
 configuration "library" {
     targetType "library"
     excludedSourceFiles "src/app.d"
@@ -20,7 +22,6 @@ configuration "unittest" {
     excludedSourceFiles "src/app.d"
 
     sourcePaths "../test-runner/src"
-    importPaths "../test-runner/src"
     dependency "sparkles:test-utils" path="../.."
 
     dflags "-checkaction=context" "-allinst"
