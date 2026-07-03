@@ -482,10 +482,7 @@ private string firstDuplicate(const(string)[] names)
 template checkUniqueMemberNames(F, E)
 if (is(E == enum))
 {
-    private enum dup = firstDuplicate(wireNames!(F, E, resolveCaseStyle!(F, E)));
-    static assert(dup is null,
-        "wired: duplicate member name \"" ~ dup ~ "\" for enum " ~ E.stringof
-        ~ " under format " ~ F.stringof);
+    private alias names = wireNames!(F, E, resolveCaseStyle!(F, E)); // asserts §5.5
     enum checkUniqueMemberNames = true;
 }
 
@@ -495,15 +492,7 @@ if (is(E == enum))
 template checkUniqueFieldKeys(F, S)
 if (is(S == struct))
 {
-    private enum dup = () {
-        string[] keys;
-        foreach (p; fieldPolicies!(F, S))
-            keys ~= p.key;
-        return firstDuplicate(keys);
-    }();
-    static assert(dup is null,
-        "wired: duplicate field key \"" ~ dup ~ "\" for " ~ S.stringof
-        ~ " under format " ~ F.stringof);
+    private alias policies = fieldPolicies!(F, S); // asserts §5.5
     enum checkUniqueFieldKeys = true;
 }
 
@@ -530,12 +519,20 @@ if (is(S == struct))
     }
     static assert(checkUniqueFieldKeys!(Json, S));
 
-    // A rename collision is detected by the finder (a real one would fail the
-    // static assert at compile time).
+    // A rename collision makes the name table itself — and with it every
+    // Repr.name use of the enum — fail to instantiate.
     @WireCase!Json(CaseStyle.snakeCase)
     enum Clash { fastPath, @WireName!Json("fast_path") slowPath }
-    static assert(firstDuplicate(
-        wireNames!(Json, Clash, resolveCaseStyle!(Json, Clash))) == "fast_path");
+    static assert(!__traits(compiles,
+        wireNames!(Json, Clash, resolveCaseStyle!(Json, Clash))));
+
+    // A field-key collision likewise rejects the aggregate's policy table.
+    static struct ClashS
+    {
+        @WireName!Json("count") int identifier;
+        int count;
+    }
+    static assert(!__traits(compiles, fieldPolicies!(Json, ClashS)));
 }
 
 @("wired.policy.resolve.targetedSlots")
@@ -772,6 +769,17 @@ if (is(T == struct))
         }}
         return r;
     }();
+
+    // §5.5: resolved field keys must be unique under this format.
+    private enum dupKey = () {
+        string[] keys;
+        foreach (p; fieldPolicies)
+            keys ~= p.key;
+        return firstDuplicate(keys);
+    }();
+    static assert(dupKey is null,
+        "wired: duplicate field key \"" ~ dupKey ~ "\" for " ~ T.stringof
+        ~ " under format " ~ F.stringof);
 }
 
 /// The resolved wire names of `E`'s members under format `F` at case `style`,
@@ -808,6 +816,13 @@ if (is(E == enum))
         }}
         return r;
     }();
+
+    // §5.5: the names actually used on the wire must be unique — checked on the
+    // exact (format, enum, style) table, so field-override styles are covered.
+    private enum dupName = firstDuplicate(wireNames);
+    static assert(dupName is null,
+        "wired: duplicate member name \"" ~ dupName ~ "\" for enum " ~ E.stringof
+        ~ " under format " ~ F.stringof);
 }
 
 // One aggregate exercising every FieldPolicy component at once: renamed,
