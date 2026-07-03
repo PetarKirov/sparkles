@@ -55,8 +55,9 @@ the subject: its construction, its two `GL`-actions (unit rescaling and basis ch
 - **A. J. Kennedy, [_Programming Languages and Dimensions_][kennedy-thesis], PhD dissertation,
   University of Cambridge, 1996** (Technical Report UCAM-CL-TR-391, April 1996; dissertation
   submitted November 1995). The origin of the dimension-group formalization in programming
-  languages: §2.1 defines dimension expressions and the congruence `=D` whose axioms "are
-  precisely the axioms of Abelian groups", §3.1 develops unitary abelian-group unification
+  languages: §2.1 defines dimension expressions and the congruence `=D`, §3.1 notes that
+  its defining equations "are precisely the axioms of Abelian groups" and develops unitary
+  abelian-group unification
   (`DimUnify`), Chapter 6 defines scaling environments as group homomorphisms `Dim → ℝ⁺`,
   §7.3 restates the π theorem over the exponent matrix, and Appendix B recasts everything as
   `ℤ`-module (integer matrix) linear algebra. **Inspected** — local artifact
@@ -437,8 +438,10 @@ precise in four genuinely different ways, which is this page's main comparative 
    ring-like structure.
 
 No source treats heterogeneous addition as _meaningful-but-partial_ in the sense of
-returning a formal sum; that option (direct sums of fibers, `⊕_C C`) belongs to
-[Hart's multidimensional analysis][hart] and is deliberately absent here.
+scalar `+` returning a formal sum. The nearest neighbouring option — aggregating
+mixed-dimension data as _tuples_ of fibers (points of `F₁ × ⋯ × Fₙ`, equivalently
+elements of the direct sum `⊕_C C`, though there too scalar `+` across dimensions stays
+undefined) — is [Hart's multidimensional analysis][hart], and is deliberately absent here.
 
 ---
 
@@ -452,7 +455,7 @@ returning a formal sum; that option (direct sums of fibers, `⊕_C C`) belongs t
   abelian groups, unification is **unitary** — Kennedy: _"We are very fortunate in that
   unification is unitary for Abelian groups with free nullary constants (our base
   dimensions). So if a unifier exists at all then there is a unique most general unifier
-  from which all others can be derived by instantiation."_ (§3.1, p. 44). Types like
+  from which all others can be derived by instantiation."_ (§3.1, p. 43). Types like
   `sqr : real d → real d²` are inferable, most-generally, by machine — the load-bearing
   property behind [F#'s units of measure][fsharp] and the [`uom-plugin`][uom-plugin]
   (developed on the [Kennedy types page][kennedy-types]).
@@ -536,7 +539,7 @@ numbers like `√2` and `π` are excluded as powers in dimensional analysis", fn
   spaces through zero. Kennedy flags the boundary himself, in a parenthesis doing a lot of
   work: _"(Of course this assumes that the units are linear with origin at zero—it makes no
   sense to add two amplitudes measured in decibels or to double a temperature measured in
-  degrees Celsius)."_ (§1.3, p. 6–7). Affine structure is the [torsor page's][torsor]
+  degrees Celsius)."_ (§1.3, p. 7). Affine structure is the [torsor page's][torsor]
   subject; libraries bolt it on outside the group (`quantity_point` in
   [mp-units][mp-units], `absolute` in [dimensional][dimensional], non-multiplicative units
   in [pint][pint]).
@@ -686,7 +689,7 @@ placed at a different point of the compile/run spectrum; the mechanics are disse
 | Type-level rational exponents in parametric types   | `ℚ`            | [Unitful.jl][unitful]                                                                                                                   |
 | Run-time exponent dictionaries/vectors              | numeric        | [pint][pint], [Wolfram/MATLAB][wolfram-matlab]                                                                                          |
 | Proof-assistant `CommGroup` instance                | any `CommRing` | [LeanDimensionalAnalysis][lean-page] (`Basic.lean:234`)                                                                                 |
-| Library-level D template arithmetic                 | `ℤ`            | [D `quantities` / `units-d`][d-quantities]                                                                                              |
+| Library-level D template arithmetic                 | `ℚ`            | [D `quantities` / `units-d`][d-quantities]                                                                                              |
 
 ---
 
@@ -700,9 +703,9 @@ placed at a different point of the compile/run spectrum; the mechanics are disse
   [comparison capstone][comparison] tabulates who chose what.
 - **Decidability of abelian-group semi-unification.** Needed for dimension-polymorphic
   recursion. Kennedy's summary still stands as the sharpest statement: single inequation
-  decidable (Rittri), the general integral case "is not known", while the `ℚ` case is
-  decidable — and it is "not known whether a reduction can be made in the other direction"
-  from semi-unification back to inference (§3.5, pp. 64–66). **[Status as of the thesis;
+  decidable (Rittri), the general integral case "is still open", while the `ℚ` case is
+  decidable — and it is "not yet known whether a reduction can be made in the other
+  direction" from semi-unification back to inference (§3.5, pp. 64–66). **[Status as of the thesis;
   not re-verified against later literature.]**
 - **Where does the group structure come from?** The sources derive different fragments:
   Zapata-Carratalá _derives_ "D is a group" from distributivity + invertibility but allows

@@ -428,8 +428,8 @@ it is the cleanest statement in the survey of "a unit is just a distinguished qu
 charge `e ∈ L^(3/2) ⊗̂ M^(1/2)` — genuinely fractional exponents in a Gaussian-flavoured
 system — are **universal coupling scales**; particle-dependent scales include a mass
 `m ∈ M` and a charge `q ∈ T̄⁻¹ ⊗̂ L^(3/2) ⊗̂ M^(1/2)`, where the bar marks the vector
-extension because "a charge might be positive, vanishing, or negative". Prop 3.4 then
-computes: `(m, q, ħ)`, `(m, ħ, g)`, `(q, ħ, g)` are scale bases (determinants `−1/2`,
+extension because "a charge might be positive, vanishing, or negative". Note 3.11 then
+computes, by Prop 3.4's criterion: `(m, q, ħ)`, `(m, ħ, g)`, `(q, ħ, g)` are scale bases (determinants `−1/2`,
 `1`, `1`); `(m, q, g)` is not (determinant `0`, since `|g| = |q²/m²|`). Finally, §3.2
 extends everything from scalars to fields: a **scaled object** is a section of
 `S ⊗́ F` for a vector bundle `F → B` (sesqui-tensor with the trivial positive-space
@@ -610,8 +610,8 @@ any such identification "introduces some non-canonical choices". The only canoni
 recipient of a heterogeneous sum is the direct sum `V^M ⊕ V^{LT⁻¹}`, and taking it
 means leaving the graded fragment — Tao's "formal sums of spaces of different
 dimensionalities", which he notes exist but declines to develop, pointing instead at
-the formalisms that embrace them (Clifford algebras "do in fact allow one to (among
-other things) add vectors with scalars"; `exp(ω)` of a symplectic form, whose `n`-th
+the formalisms that embrace them (the formalism of Clifford algebras "does in fact
+allow one to (among other things) add vectors with scalars"; `exp(ω)` of a symplectic form, whose `n`-th
 graded component is the Liouville measure).
 
 **Parametric layer: total but dimension-destroying.** Here `x + y` always exists

@@ -45,7 +45,7 @@ types][kennedy-types] are all recognizable as refinements of exactly this pictur
 | Central theorems         | Part I: **isomorphism theorem** — every ray homomorphism "is necessarily an isomorphism onto"; Part II (as restated): **representation** `q = α · u₁^r₁ ⋯ uₙ^rₙ` uniquely, i.e. `Q ≅ ℝ × ℚⁿ`                                               |
 | Exponent ring            | `ℚ` per Raposo 2018, `ℝ` per Raposo 2019, "`Q` or `R`" per Jonsson's comparison table — unresolved here because Part II is uninspected                                                                                                     |
 | Cross-dimension addition | Inexpressible at carrier level (`m + l` has no home: different sets, no shared operation) — yet Whitney's own counting example manipulates the formal sum `2 bl + 3 ck` distributively without naming its habitat                          |
-| Dimensional analysis     | Part II's subtitle; per Raposo 2019 the `ℝ × ℚⁿ` model "has served its main purpose: giving a proof of Buckingham's Pi Theorem"                                                                                                            |
+| Dimensional analysis     | Part II's subtitle; per Raposo 2019 the coordinatized model (real exponents in his telling) "has served its main purpose: giving a proof of Buckingham's Pi Theorem"                                                                       |
 | Provenance               | Part I inspected via 2-page excerpt (intro §§1–7 only); Part II via restatements in `raposo-2018`/`raposo-2019`/`jonsson-2021`; Kennedy 1996 contains **no Whitney citation**                                                              |
 | Modern descendants       | [Raposo's fiber bundle][raposo-2018] (dimension-centred, `ℤ` exponents, one zero _per fiber_), [Jonsson's quantity spaces][jonsson-2021] (proved equivalent to Raposo's), [Kennedy's dimension types][kennedy-types] (structural parallel) |
 
@@ -77,7 +77,7 @@ capstone][comparison] places all of them side by side.
   Monthly_ 75(3), March 1968, pp. 227–256.** _Not inspected — grounded via
   restatement._ The full citation including the 227–256 page range is printed in
   both local restatements: Raposo 2018 reference [22]
-  (`raposo-2018-algebraic-structure-quantity-calculus-msr.pdf`, p. 156) and Jonsson
+  (`raposo-2018-algebraic-structure-quantity-calculus-msr.pdf`, p. 157) and Jonsson
   2021 reference [31]
   (`jonsson-2021-magnitudes-scalable-monoids-quantity-spaces-arxiv.pdf`).
 - **Á. P. Raposo, ["The Algebraic Structure of Quantity Calculus"][raposo-2018],
@@ -460,7 +460,8 @@ survey's central question:
    addition is **undefined within any one model, but not treated as meaningless as
    notation** — a subtlety most of the lineage's descendants legislate away.
 
-One more delta worth recording: in the `ℝ × ℚⁿ` reading restated by Raposo 2019,
+One more delta worth recording: in the coordinatized reading restated by Raposo
+2019 (with real exponents there),
 "the rays coincide in a point, the zero of the algebraic structure" — a **single
 shared zero** for all dimensions. Raposo's replacement structure takes the opposite
 choice (a zero _per fiber_: "0 ms−1 is a different quantity than 0 kg",
@@ -515,7 +516,8 @@ Whitney's exponent field (`ℚ` or `ℝ`, per the restatements) buys closure und
 through product, scalar product, and same-kind addition, "Therefore, only integer
 exponents of quantities, and thus of units, should be expected … An algebraic
 structure for quantity calculus, which allows fractional exponents, is oversized"
-(`raposo-2018-…msr.pdf`, §1 — his `v = √(2T/m)` and pendulum examples show every
+(`raposo-2018-…msr.pdf`, §1 — his pendulum and standard-deviation examples, and
+the `v = √(2T/m)` formula spelled out in `raposo-2019-…msr.pdf` §1, show every
 physical square root acting on a quantity that is already a square). Second,
 **incoherence at the scalars**: Jonsson's verdict on the Drobot–Whitney design is
 that the two assumptions — `V_Q` is a vector space over the exponent field via
@@ -574,14 +576,15 @@ at all; see the [Lean page][lean-units]). What is mechanized, pervasively, is th
 `ℝ × ℤⁿ`), checking dimensional consistency is linear algebra over the exponent
 ring, and _inference_ is unification in the corresponding equational theory. The
 exponent-ring fork in the restatements maps exactly onto the mechanization
-landscape, per [Kennedy's thesis][kennedy-thesis] (§3.5's summary, quoted from
+landscape, per [Kennedy's thesis][kennedy-thesis] (§3.4's related-work survey and
+§3.5's summary, quoted from
 `kennedy-1996-programming-languages-dimensions-thesis.pdf`):
 
-| Exponent ring                               | Equational theory of dimensions       | Decision procedure                                                                                                                                                                                                                                                 |
-| ------------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ℤ` (Kennedy, Quade, Raposo, Jonsson)       | [free abelian group][free-abelian]    | AG-unification — decidable, unitary; the basis of [Kennedy's dimension types][kennedy-types] and [F#'s `UnifyMeasures` solver][fsharp-uom]; with polymorphic recursion, AG _semi_-unification is solved for one inequation (Rittri), general case open per Kennedy |
-| `ℚ` (Whitney per Raposo 2018; Goubault)     | vector space over `ℚ`                 | Gaussian elimination for solving; Kennedy: inference with dimension-polymorphic recursion "can be reduced to semi-unification over vector spaces. That problem is decidable and admits a straightforward algorithm" (Rittri's result)                              |
-| `ℝ` (Whitney per Raposo 2019; Wand–O'Keefe) | vector space over `ℝ` (rational data) | Gaussian elimination (Kennedy on Wand & O'Keefe: "equations are not necessarily integral, so Gaussian elimination is used to solve them"); types can be dimensionally nonsensical, e.g. exponent-swapping                                                          |
+| Exponent ring                                         | Equational theory of dimensions    | Decision procedure                                                                                                                                                                                                                                                                                                                                                                                                               |
+| ----------------------------------------------------- | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ℤ` (Kennedy, Quade, Raposo, Jonsson)                 | [free abelian group][free-abelian] | AG-unification — decidable, unitary; the basis of [Kennedy's dimension types][kennedy-types] and [F#'s `UnifyMeasures` solver][fsharp-uom]; with polymorphic recursion, AG _semi_-unification is solved for one inequation (Rittri), general case open per Kennedy                                                                                                                                                               |
+| `ℚ` (Whitney per Raposo 2018; Wand–O'Keefe, Goubault) | vector space over `ℚ`              | Gaussian elimination for solving (Kennedy on Wand & O'Keefe: "equations are not necessarily integral, so Gaussian elimination is used to solve them"; their types can be dimensionally nonsensical, e.g. exponent-swapping); Kennedy: inference with dimension-polymorphic recursion "can be reduced to semi-unification over vector spaces. That problem is decidable and admits a straightforward algorithm" (Rittri's result) |
+| `ℝ` (Whitney per Raposo 2019)                         | vector space over `ℝ`              | The same Gaussian elimination — rank and kernel are field-independent for the rational data that arise in practice; no checker in this survey actually infers over `ℝ`-exponent dimensions                                                                                                                                                                                                                                       |
 
 The curiosity is that the `ℚ`-exponent theory — Whitney's, on the 2018 restatement —
 is in one respect **better-behaved for type inference** than the `ℤ` theory the
