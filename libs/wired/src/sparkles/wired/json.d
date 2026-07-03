@@ -39,58 +39,81 @@ alias JsonResult(T) = Expected!(T, Exception);
 
 private JsonResult!T fail(T)(string msg) => err!T(new Exception(msg));
 
+/// Internal walk result: a value or an `Exception`, with none of `Expected`'s
+/// hook and introspection machinery — one `Expected!(T, Exception)` drags in
+/// roughly 25–30 nested instantiations per distinct `T`. The recursive walk
+/// passes `Res` and the public entry points convert at the boundary, so the
+/// `Expected` cost is paid once per public call type instead of once per node
+/// type. §9 still holds: nothing here throws.
+private struct Res(T)
+{
+    Exception error;
+    T value;
+}
+
+private Res!T resOk(T)(T value) => Res!T(null, value);
+private Res!T resFail(T)(string msg) => Res!T(new Exception(msg));
+
+/// Converts an internal `Res` into the public `Expected`-based result.
+private JsonResult!T toResult(T)(Res!T r)
+    => r.error is null ? ok!Exception(r.value) : err!T(r.error);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Encoding
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Encodes `value` into a `JSONValue` under the `Json` format, without throwing.
 JsonResult!JSONValue toJSON(T)(const T value)
+    => encodeImpl(value).toResult;
+
+/// The recursive encode walk, on the lightweight `Res` channel.
+private Res!JSONValue encodeImpl(T)(const T value)
 {
     alias U = Unqual!T;
 
     static if (is(U == JSONValue))
     {
         JSONValue v = value; // mutable copy of the passed-through value
-        return ok!Exception(v);
+        return resOk(v);
     }
 
     else static if (hasConvert!(Json, U))
         return encodeVia!(convertOf!(Json, U), U)(value);
 
     else static if (is(U == bool) || is(U == string))
-        return ok!Exception(JSONValue(value));
+        return resOk(JSONValue(value));
 
     else static if (is(U == enum))
         return encodeEnumWith!(U, resolveRepr!(Json, U), resolveCaseStyle!(Json, U))(value);
 
     else static if (isIntegral!U)
-        return ok!Exception(JSONValue(value));
+        return resOk(JSONValue(value));
 
     else static if (isFloatingPoint!U)
     {
         import std.math : isFinite;
 
         if (!isFinite(value))
-            return fail!JSONValue(
+            return resFail!JSONValue(
                 "Cannot encode " ~ T.stringof ~ " at $: NaN and infinity are not representable in JSON");
-        return ok!Exception(JSONValue(value));
+        return resOk(JSONValue(value));
     }
 
     else static if (is(U == E[], E))
     {
         static if (isSomeChar!E)
-            return ok!Exception(JSONValue(value.idup));
+            return resOk(JSONValue(value.idup));
         else
         {
             JSONValue[] arr;
             foreach (e; value)
             {
-                auto r = toJSON(e);
-                if (r.hasError)
-                    return err!JSONValue(r.error);
+                auto r = encodeImpl(e);
+                if (r.error !is null)
+                    return r;
                 arr ~= r.value;
             }
-            return ok!Exception(JSONValue(arr));
+            return resOk(JSONValue(arr));
         }
     }
 
@@ -100,29 +123,29 @@ JsonResult!JSONValue toJSON(T)(const T value)
     else static if (is(U == Nullable!N, N))
     {
         if (value.isNull)
-            return ok!Exception(JSONValue(null));
-        return toJSON(value.get);
+            return resOk(JSONValue(null));
+        return encodeImpl(value.get);
     }
 
     else static if (is(U == Optional!N, N))
     {
         if (value.empty)
-            return ok!Exception(JSONValue(null));
-        return toJSON(value.front);
+            return resOk(JSONValue(null));
+        return encodeImpl(value.front);
     }
 
     else static if (is(U == Ternary))
     {
         if (value == Ternary.unknown)
-            return ok!Exception(JSONValue(null));
-        return ok!Exception(JSONValue(value == Ternary.yes));
+            return resOk(JSONValue(null));
+        return resOk(JSONValue(value == Ternary.yes));
     }
 
     else static if (is(U == SysTime))
-        return ok!Exception(JSONValue(value.toUTC.toISOExtString));
+        return resOk(JSONValue(value.toUTC.toISOExtString));
 
     else static if (isSumType!U)
-        return value.match!(v => toJSON(v));
+        return value.match!(v => encodeImpl(v));
 
     else static if (is(U == struct))
         return encodeStruct(value);
@@ -131,25 +154,25 @@ JsonResult!JSONValue toJSON(T)(const T value)
         static assert(false, "wired: unsupported type for toJSON: " ~ T.stringof);
 }
 
-private JsonResult!JSONValue encodeEnumWith(E, Repr repr, CaseStyle style)(const E value)
+private Res!JSONValue encodeEnumWith(E, Repr repr, CaseStyle style)(const E value)
 if (is(E == enum))
 {
     static if (repr == Repr.value)
-        return toJSON(cast(OriginalType!E) value);
+        return encodeImpl(cast(OriginalType!E) value);
     else
     {
         enum _uniq = checkUniqueMemberNames!(Json, E);
         alias names = wireNames!(Json, E, style);
         static foreach (i, m; __traits(allMembers, E))
             if (value == __traits(getMember, E, m))
-                return ok!Exception(JSONValue(names[i]));
+                return resOk(JSONValue(names[i]));
 
-        return fail!JSONValue(
+        return resFail!JSONValue(
             "Cannot encode " ~ E.stringof ~ " at $: value is not a declared member");
     }
 }
 
-private JsonResult!JSONValue encodeStruct(T)(const T value)
+private Res!JSONValue encodeStruct(T)(const T value)
 if (is(T == struct))
 {
     enum _uniq = checkUniqueFieldKeys!(Json, T);
@@ -161,19 +184,19 @@ if (is(T == struct))
         if (!shouldOmit!(T, i, policies[i].skip)(value.tupleof[i]))
         {
             auto r = encodeFieldValue!(T, i)(value.tupleof[i]);
-            if (r.hasError)
-                return err!JSONValue(r.error);
+            if (r.error !is null)
+                return r;
             obj[policies[i].key] = r.value;
         }
     }}
-    return ok!Exception(JSONValue(obj));
+    return resOk(JSONValue(obj));
 }
 
 /// Encodes an aggregate field's value, applying the field's value-slot enum
 /// policy at the field and one wrapper level; everything else recurses through
 /// the type-level `toJSON`. Takes the aggregate type and field index so the
 /// field alias carries no instance context.
-private JsonResult!JSONValue encodeFieldValue(T, size_t i)(const typeof(T.tupleof[i]) value)
+private Res!JSONValue encodeFieldValue(T, size_t i)(const typeof(T.tupleof[i]) value)
 {
     alias V = typeof(T.tupleof[i]);
     enum pol = fieldPolicies!(Json, T)[i];
@@ -194,15 +217,15 @@ private JsonResult!JSONValue encodeFieldValue(T, size_t i)(const typeof(T.tupleo
             auto r = encodeEnumWith!(E,
                 pol.reprFor(WireTarget.value, resolveRepr!(Json, E)),
                 pol.caseFor(WireTarget.value, resolveCaseStyle!(Json, E)))(e);
-            if (r.hasError)
-                return err!JSONValue(r.error);
+            if (r.error !is null)
+                return r;
             arr ~= r.value;
         }
-        return ok!Exception(JSONValue(arr));
+        return resOk(JSONValue(arr));
     }
 
     else
-        return toJSON(value);
+        return encodeImpl(value);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -280,11 +303,15 @@ JsonResult!void writeJSONFile(T)(const T value, string path, bool compact = fals
 
 /// Decodes a `JSONValue` into a `T` under the `Json` format, without throwing.
 JsonResult!T fromJSON(T)(JSONValue json)
+    => decodeImpl!T(json).toResult;
+
+/// The recursive decode walk, on the lightweight `Res` channel.
+private Res!T decodeImpl(T)(JSONValue json)
 {
     alias U = Unqual!T;
 
     static if (is(U == JSONValue))
-        return ok!Exception(json);
+        return resOk(json);
 
     else static if (hasConvert!(Json, U))
         return decodeVia!(convertOf!(Json, U), U)(json);
@@ -292,15 +319,15 @@ JsonResult!T fromJSON(T)(JSONValue json)
     else static if (is(U == bool))
     {
         if (json.type != JSONType.true_ && json.type != JSONType.false_)
-            return fail!T("Cannot decode bool at $: expected a JSON boolean");
-        return ok!Exception(json.boolean);
+            return resFail!T("Cannot decode bool at $: expected a JSON boolean");
+        return resOk(json.boolean);
     }
 
     else static if (is(U == string))
     {
         if (json.type != JSONType.string)
-            return fail!T("Cannot decode string at $: expected a JSON string");
-        return ok!Exception(json.str);
+            return resFail!T("Cannot decode string at $: expected a JSON string");
+        return resOk(json.str);
     }
 
     else static if (is(U == enum))
@@ -313,11 +340,11 @@ JsonResult!T fromJSON(T)(JSONValue json)
     {
         switch (json.type)
         {
-            case JSONType.float_:   return ok!Exception(cast(T) json.floating);
-            case JSONType.integer:  return ok!Exception(cast(T) json.integer);
-            case JSONType.uinteger: return ok!Exception(cast(T) json.uinteger);
+            case JSONType.float_:   return resOk(cast(T) json.floating);
+            case JSONType.integer:  return resOk(cast(T) json.integer);
+            case JSONType.uinteger: return resOk(cast(T) json.uinteger);
             default:
-                return fail!T("Cannot decode " ~ T.stringof ~ " at $: expected a JSON number");
+                return resFail!T("Cannot decode " ~ T.stringof ~ " at $: expected a JSON number");
         }
     }
 
@@ -325,25 +352,25 @@ JsonResult!T fromJSON(T)(JSONValue json)
     {
         static if (isSomeChar!E)
         {
-            auto s = fromJSON!string(json);
-            if (s.hasError)
-                return err!T(s.error);
+            auto s = decodeImpl!string(json);
+            if (s.error !is null)
+                return Res!T(s.error);
             import std.conv : to;
-            return ok!Exception(s.value.to!U);
+            return resOk(s.value.to!U);
         }
         else
         {
             if (json.type != JSONType.array)
-                return fail!T("Cannot decode " ~ T.stringof ~ " at $: expected a JSON array");
+                return resFail!T("Cannot decode " ~ T.stringof ~ " at $: expected a JSON array");
             U result;
             foreach (elem; json.array)
             {
-                auto r = fromJSON!E(elem);
-                if (r.hasError)
-                    return err!T(r.error);
+                auto r = decodeImpl!E(elem);
+                if (r.error !is null)
+                    return Res!T(r.error);
                 result ~= r.value;
             }
-            return ok!Exception(result);
+            return resOk(result);
         }
     }
 
@@ -353,46 +380,46 @@ JsonResult!T fromJSON(T)(JSONValue json)
     else static if (is(U == Nullable!N, N))
     {
         if (json.type == JSONType.null_)
-            return ok!Exception(U.init);
-        auto r = fromJSON!N(json);
-        if (r.hasError)
-            return err!T(r.error);
-        return ok!Exception(U(r.value));
+            return resOk(U.init);
+        auto r = decodeImpl!N(json);
+        if (r.error !is null)
+            return Res!T(r.error);
+        return resOk(U(r.value));
     }
 
     else static if (is(U == Optional!N, N))
     {
         if (json.type == JSONType.null_)
-            return ok!Exception(U.init);
-        auto r = fromJSON!N(json);
-        if (r.hasError)
-            return err!T(r.error);
-        return ok!Exception(some(r.value));
+            return resOk(U.init);
+        auto r = decodeImpl!N(json);
+        if (r.error !is null)
+            return Res!T(r.error);
+        return resOk(some(r.value));
     }
 
     else static if (is(U == Ternary))
     {
         switch (json.type)
         {
-            case JSONType.null_:  return ok!Exception(Ternary.unknown);
-            case JSONType.true_:  return ok!Exception(Ternary.yes);
-            case JSONType.false_: return ok!Exception(Ternary.no);
+            case JSONType.null_:  return resOk(Ternary.unknown);
+            case JSONType.true_:  return resOk(Ternary.yes);
+            case JSONType.false_: return resOk(Ternary.no);
             default:
-                return fail!T("Cannot decode Ternary at $: expected null, true, or false");
+                return resFail!T("Cannot decode Ternary at $: expected null, true, or false");
         }
     }
 
     else static if (is(U == SysTime))
     {
         if (json.type != JSONType.string)
-            return fail!T("Cannot decode SysTime at $: expected a JSON string");
+            return resFail!T("Cannot decode SysTime at $: expected a JSON string");
         if (!hasZoneOffset(json.str))
-            return fail!T(
+            return resFail!T(
                 "Cannot decode SysTime at $: timestamp must include an explicit UTC marker or offset");
         try
-            return ok!Exception(SysTime.fromISOExtString(json.str).toUTC);
+            return resOk(SysTime.fromISOExtString(json.str).toUTC);
         catch (Exception e)
-            return fail!T("Cannot decode SysTime at $: " ~ e.msg);
+            return resFail!T("Cannot decode SysTime at $: " ~ e.msg);
     }
 
     else static if (isSumType!U)
@@ -423,7 +450,7 @@ private bool hasZoneOffset(string s)
 /// Decodes a `SumType` by probing each variant (declaration order). `exactlyOne`
 /// requires a single match (zero → no-match, many → ambiguity); `first` takes the
 /// first success (§4.7).
-private JsonResult!ST decodeSumType(ST, MatchStrategy strat)(JSONValue json)
+private Res!ST decodeSumType(ST, MatchStrategy strat)(JSONValue json)
 if (isSumType!ST)
 {
     alias Types = TemplateArgsOf!ST;
@@ -432,11 +459,11 @@ if (isSumType!ST)
     {
         static foreach (V; Types)
         {{
-            auto r = fromJSON!V(json);
-            if (r.hasValue)
-                return ok!Exception(ST(r.value));
+            auto r = decodeImpl!V(json);
+            if (r.error is null)
+                return resOk(ST(r.value));
         }}
-        return fail!ST("Cannot decode " ~ ST.stringof ~ " at $: no variant matched");
+        return resFail!ST("Cannot decode " ~ ST.stringof ~ " at $: no variant matched");
     }
     else
     {
@@ -444,37 +471,37 @@ if (isSumType!ST)
         size_t matches = 0;
         static foreach (V; Types)
         {{
-            auto r = fromJSON!V(json);
-            if (r.hasValue)
+            auto r = decodeImpl!V(json);
+            if (r.error is null)
             {
                 matches++;
                 result = ST(r.value);
             }
         }}
         if (matches == 1)
-            return ok!Exception(result);
+            return resOk(result);
         if (matches == 0)
-            return fail!ST("Cannot decode " ~ ST.stringof ~ " at $: no variant matched");
-        return fail!ST(
+            return resFail!ST("Cannot decode " ~ ST.stringof ~ " at $: no variant matched");
+        return resFail!ST(
             "Cannot decode " ~ ST.stringof ~ " at $: ambiguous — multiple variants matched");
     }
 }
 
-private JsonResult!T decodeIntegral(T)(JSONValue json)
+private Res!T decodeIntegral(T)(JSONValue json)
 {
     static if (__traits(isUnsigned, T))
     {
         if (json.type == JSONType.uinteger)
         {
             if (json.uinteger > T.max)
-                return fail!T("Cannot decode " ~ T.stringof ~ " at $: value out of range");
-            return ok!Exception(cast(T) json.uinteger);
+                return resFail!T("Cannot decode " ~ T.stringof ~ " at $: value out of range");
+            return resOk(cast(T) json.uinteger);
         }
         if (json.type == JSONType.integer)
         {
             if (json.integer < 0 || json.integer > T.max)
-                return fail!T("Cannot decode " ~ T.stringof ~ " at $: value out of range");
-            return ok!Exception(cast(T) json.integer);
+                return resFail!T("Cannot decode " ~ T.stringof ~ " at $: value out of range");
+            return resOk(cast(T) json.integer);
         }
     }
     else
@@ -482,56 +509,56 @@ private JsonResult!T decodeIntegral(T)(JSONValue json)
         if (json.type == JSONType.integer)
         {
             if (json.integer < T.min || json.integer > T.max)
-                return fail!T("Cannot decode " ~ T.stringof ~ " at $: value out of range");
-            return ok!Exception(cast(T) json.integer);
+                return resFail!T("Cannot decode " ~ T.stringof ~ " at $: value out of range");
+            return resOk(cast(T) json.integer);
         }
         if (json.type == JSONType.uinteger)
         {
             if (json.uinteger > T.max)
-                return fail!T("Cannot decode " ~ T.stringof ~ " at $: value out of range");
-            return ok!Exception(cast(T) json.uinteger);
+                return resFail!T("Cannot decode " ~ T.stringof ~ " at $: value out of range");
+            return resOk(cast(T) json.uinteger);
         }
     }
-    return fail!T("Cannot decode " ~ T.stringof ~ " at $: expected an integer");
+    return resFail!T("Cannot decode " ~ T.stringof ~ " at $: expected an integer");
 }
 
-private JsonResult!E decodeEnumWith(E, Repr repr, CaseStyle style)(JSONValue json)
+private Res!E decodeEnumWith(E, Repr repr, CaseStyle style)(JSONValue json)
 if (is(E == enum))
 {
     static if (repr == Repr.value)
     {
-        auto orig = fromJSON!(OriginalType!E)(json);
-        if (orig.hasError)
-            return err!E(orig.error);
+        auto orig = decodeImpl!(OriginalType!E)(json);
+        if (orig.error !is null)
+            return Res!E(orig.error);
         auto member = enumFromValue!E(orig.value);
         if (member.hasError)
-            return fail!E("Cannot decode " ~ E.stringof ~ " at $: " ~ member.error.context);
-        return ok!Exception(member.value);
+            return resFail!E("Cannot decode " ~ E.stringof ~ " at $: " ~ member.error.context);
+        return resOk(member.value);
     }
     else
     {
         if (json.type != JSONType.string)
-            return fail!E("Cannot decode " ~ E.stringof ~ " at $: expected a JSON string");
+            return resFail!E("Cannot decode " ~ E.stringof ~ " at $: expected a JSON string");
 
         enum _uniq = checkUniqueMemberNames!(Json, E);
         alias names = wireNames!(Json, E, style);
         static foreach (i, m; __traits(allMembers, E))
             if (json.str == names[i])
-                return ok!Exception(__traits(getMember, E, m));
+                return resOk(__traits(getMember, E, m));
 
-        return fail!E(
+        return resFail!E(
             "Cannot decode " ~ E.stringof ~ " at $ from JSON string \"" ~ json.str
             ~ "\": expected one of: " ~ nameList!(E, style));
     }
 }
 
-private JsonResult!T decodeStruct(T)(JSONValue json)
+private Res!T decodeStruct(T)(JSONValue json)
 if (is(T == struct))
 {
     enum _uniq = checkUniqueFieldKeys!(Json, T);
 
     if (json.type != JSONType.object)
-        return fail!T("Cannot decode " ~ T.stringof ~ " at $: expected a JSON object");
+        return resFail!T("Cannot decode " ~ T.stringof ~ " at $: expected a JSON object");
 
     alias policies = fieldPolicies!(Json, T);
     T result;
@@ -540,13 +567,13 @@ if (is(T == struct))
         if (auto p = policies[i].key in json.object)
         {
             auto r = decodeFieldValue!(T, i)(*p);
-            if (r.hasError)
+            if (r.error !is null)
             {
                 // A present but invalid value under `useDefault` leaves the field
                 // at its default (§5.4); otherwise the failure propagates.
                 static if (!(policies[i].optional
                     && policies[i].onInvalid == WireInvalid.useDefault))
-                    return err!T(r.error);
+                    return Res!T(r.error);
             }
             else
                 result.tupleof[i] = r.value;
@@ -557,14 +584,14 @@ if (is(T == struct))
             // which the `T result;` default already holds (§4.5, §5.4).
         }
         else
-            return fail!T(
+            return resFail!T(
                 "Cannot decode " ~ T.stringof ~ " at $." ~ policies[i].key
                 ~ ": missing required field");
     }}
-    return ok!Exception(result);
+    return resOk(result);
 }
 
-private JsonResult!(typeof(T.tupleof[i])) decodeFieldValue(T, size_t i)(JSONValue json)
+private Res!(typeof(T.tupleof[i])) decodeFieldValue(T, size_t i)(JSONValue json)
 {
     alias V = typeof(T.tupleof[i]);
     enum pol = fieldPolicies!(Json, T)[i];
@@ -580,25 +607,25 @@ private JsonResult!(typeof(T.tupleof[i])) decodeFieldValue(T, size_t i)(JSONValu
     else static if (is(V == E[], E) && is(E == enum))
     {
         if (json.type != JSONType.array)
-            return fail!V("Cannot decode " ~ V.stringof ~ " at $: expected a JSON array");
+            return resFail!V("Cannot decode " ~ V.stringof ~ " at $: expected a JSON array");
         V result;
         foreach (elem; json.array)
         {
             auto r = decodeEnumWith!(E,
                 pol.reprFor(WireTarget.value, resolveRepr!(Json, E)),
                 pol.caseFor(WireTarget.value, resolveCaseStyle!(Json, E)))(elem);
-            if (r.hasError)
-                return err!V(r.error);
+            if (r.error !is null)
+                return Res!V(r.error);
             result ~= r.value;
         }
-        return ok!Exception(result);
+        return resOk(result);
     }
 
     else static if (isSumType!V)
         return decodeSumType!(V, pol.match)(json);
 
     else
-        return fromJSON!V(json);
+        return decodeImpl!V(json);
 }
 
 /// True for the null-aware wrapper types whose empty value maps to JSON `null`
@@ -639,23 +666,23 @@ private enum bool isExpectedLike(X) =
 /// Encodes `value` through the resolved `@WireConvert` `Conv`: `toWire(value)` is
 /// encoded normally; an `Expected`-returning `toWire` is unwrapped, its failure
 /// propagated (§8).
-private JsonResult!JSONValue encodeVia(alias Conv, V)(const V value)
+private Res!JSONValue encodeVia(alias Conv, V)(const V value)
 {
     auto wire = Conv.to(value);
     static if (isExpectedLike!(typeof(wire)))
     {
         if (wire.hasError)
-            return err!JSONValue(wire.error);
-        return toJSON(wire.value);
+            return Res!JSONValue(wire.error);
+        return encodeImpl(wire.value);
     }
     else
-        return toJSON(wire);
+        return encodeImpl(wire);
 }
 
 /// Decodes into `V` through the resolved `@WireConvert` `Conv`: the wire type is
 /// inferred from `toWire`'s return for `V`, decoded, then passed to `fromWire`
 /// (§8). A serialize-only converter (no `fromWire`) is unsupported at compile time.
-private JsonResult!V decodeVia(alias Conv, V)(JSONValue json)
+private Res!V decodeVia(alias Conv, V)(JSONValue json)
 {
     static assert(!is(Conv.from == void),
         "wired: a serialize-only @WireConvert cannot decode " ~ V.stringof);
@@ -666,57 +693,57 @@ private JsonResult!V decodeVia(alias Conv, V)(JSONValue json)
     else
         alias WireT = Raw;
 
-    auto raw = fromJSON!WireT(json);
-    if (raw.hasError)
-        return err!V(raw.error);
+    auto raw = decodeImpl!WireT(json);
+    if (raw.error !is null)
+        return Res!V(raw.error);
 
     auto back = Conv.from(raw.value);
     static if (isExpectedLike!(typeof(back)))
     {
         if (back.hasError)
-            return err!V(back.error);
-        return ok!Exception(back.value);
+            return Res!V(back.error);
+        return resOk(back.value);
     }
     else
-        return ok!Exception(back);
+        return resOk(back);
 }
 
-private JsonResult!JSONValue encodeAA(T)(const T value)
+private Res!JSONValue encodeAA(T)(const T value)
 if (is(T == V[K], V, K))
 {
     alias V = typeof(T.init.values[0]);
     JSONValue[string] obj;
     foreach (k, ref v; value)
     {
-        auto rv = toJSON(v);
-        if (rv.hasError)
-            return err!JSONValue(rv.error);
+        auto rv = encodeImpl(v);
+        if (rv.error !is null)
+            return rv;
         obj[aaKeyText(k)] = rv.value;
     }
-    return ok!Exception(JSONValue(obj));
+    return resOk(JSONValue(obj));
 }
 
-private JsonResult!T decodeAA(T)(JSONValue json)
+private Res!T decodeAA(T)(JSONValue json)
 if (is(T == V[K], V, K))
 {
     alias V = typeof(T.init.values[0]);
     alias K = typeof(T.init.keys[0]);
 
     if (json.type != JSONType.object)
-        return fail!T("Cannot decode " ~ T.stringof ~ " at $: expected a JSON object");
+        return resFail!T("Cannot decode " ~ T.stringof ~ " at $: expected a JSON object");
 
     T result;
     foreach (keyStr, jval; json.object)
     {
         auto k = aaKeyParse!K(keyStr);
-        if (k.hasError)
-            return err!T(k.error);
-        auto rv = fromJSON!V(jval);
-        if (rv.hasError)
-            return err!T(rv.error);
+        if (k.error !is null)
+            return Res!T(k.error);
+        auto rv = decodeImpl!V(jval);
+        if (rv.error !is null)
+            return Res!T(rv.error);
         result[k.value] = rv.value;
     }
-    return ok!Exception(result);
+    return resOk(result);
 }
 
 /// The JSON object-key text for an associative-array key: a `string` verbatim,
@@ -755,10 +782,10 @@ private string aaKeyText(K)(K k)
 
 /// Parses an associative-array key from its JSON object-key text — the inverse of
 /// $(LREF aaKeyText).
-private JsonResult!K aaKeyParse(K)(string keyStr)
+private Res!K aaKeyParse(K)(string keyStr)
 {
     static if (is(K == string))
-        return ok!Exception(keyStr);
+        return resOk(keyStr);
     else static if (is(K == enum))
     {
         enum repr = resolveRepr!(Json, K);
@@ -769,8 +796,8 @@ private JsonResult!K aaKeyParse(K)(string keyStr)
             alias names = wireNames!(Json, K, style);
             static foreach (i, m; __traits(allMembers, K))
                 if (keyStr == names[i])
-                    return ok!Exception(__traits(getMember, K, m));
-            return fail!K(
+                    return resOk(__traits(getMember, K, m));
+            return resFail!K(
                 "Cannot decode " ~ K.stringof ~ " key \"" ~ keyStr
                 ~ "\": expected one of: " ~ nameList!(K, style));
         }
@@ -786,12 +813,12 @@ private JsonResult!K aaKeyParse(K)(string keyStr)
                 try
                     orig = keyStr.to!(OriginalType!K);
                 catch (ConvException e)
-                    return fail!K("Cannot decode " ~ K.stringof ~ " key \"" ~ keyStr ~ "\": " ~ e.msg);
+                    return resFail!K("Cannot decode " ~ K.stringof ~ " key \"" ~ keyStr ~ "\": " ~ e.msg);
             }
             auto member = enumFromValue!K(orig);
             if (member.hasError)
-                return fail!K("Cannot decode " ~ K.stringof ~ " key \"" ~ keyStr ~ "\": " ~ member.error.context);
-            return ok!Exception(member.value);
+                return resFail!K("Cannot decode " ~ K.stringof ~ " key \"" ~ keyStr ~ "\": " ~ member.error.context);
+            return resOk(member.value);
         }
     }
     else
