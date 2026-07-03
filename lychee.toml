@@ -32,7 +32,11 @@ fallback_extensions = ["md", "html"]
 # authored for docs/guidelines/; resolved from the repo root they yield false
 # "file not found" errors. Regex-matched against the input path; anchored so it
 # does not also exclude docs/guidelines/AGENTS.md.
-exclude_path = ['^AGENTS\.md$', '^docs/research/parsing/grounding/']
+exclude_path = [
+    '^AGENTS\.md$',
+    '^docs/research/parsing/grounding/',
+    '^docs/research/units-of-measure/grounding/',
+]
 
 # Don't check URLs inside code blocks (they're often illustrative, not real)
 include_verbatim = false
