@@ -1,0 +1,39 @@
+name "test-runner"
+description "General-purpose unittest runner with CTFE, betterC, wasm, and benchmark support"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+
+dflags "-preview=in" "-preview=dip1000"
+
+// These dependencies serve `dub test :test-runner` and *external* consumers
+// (which pull this package as a regular dependency). In-monorepo consumers —
+// including `sparkles:base` and `sparkles:core-cli` themselves — must NOT
+// depend on this package (dub rejects the resulting package-level cycle);
+// instead their `configuration "unittest"` adds the runner sources directly:
+//
+//     sourcePaths "../test-runner/src"
+//     importPaths "../test-runner/src"
+//
+// The runner hard-imports `sparkles.base` (in-tree hosts provide it from
+// their own dependency closure) and detects `sparkles.core_cli` niceties by
+// introspection, degrading gracefully when absent (e.g. in base's own tests).
+dependency "sparkles:base" path="../.."
+dependency "sparkles:core-cli" path="../.."
+
+targetType "sourceLibrary"
+
+configuration "library" {
+    targetType "sourceLibrary"
+}
+
+configuration "unittest" {
+    targetType "library"
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
