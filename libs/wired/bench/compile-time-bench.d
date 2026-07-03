@@ -182,10 +182,13 @@ string generate(string workload, string moduleName, uint size)
     }
 }
 
-/// The encode + decode instantiation anchor for the root type.
+/// The encode + decode instantiation anchor for the root type. The encode
+/// parameter is `const`, not `in`: the encoded `JSONValue` legitimately aliases
+/// string slices of the input, so a dip1000 `scope` parameter cannot flow into
+/// the returned result.
 private string anchor(string type)
 {
-    return "\nJsonResult!JSONValue enc(in " ~ type ~ " v) => toJSON(v);\n"
+    return "\nJsonResult!JSONValue enc(const " ~ type ~ " v) => toJSON(v);\n"
         ~ "JsonResult!" ~ type ~ " dec(JSONValue j) => fromJSON!" ~ type ~ "(j);\n";
 }
 
