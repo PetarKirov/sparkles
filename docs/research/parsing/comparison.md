@@ -9,13 +9,15 @@ note on **where a Sparkles parser would sit**. Terminology is defined in the
 [theory subtree][theory].
 
 > [!NOTE]
-> **Scope: wave 1 + the incremental / query-based cluster.** This synthesis covers the
-> nine flagship systems, the theory spine, and now the first wave-2 cluster —
-> [rust-analyzer], [Roslyn][roslyn], [Lezer][lezer], and the [`rustc` query system][rustc]
-> (see the [`incremental` theory page][incremental]). It will be extended further as wave
-> 2 adds the remaining categories (winnow, FParsec, Angstrom, FlatParse,
-> simd-json/sonic-rs, yyjson/RapidJSON, Hyperscan, LALRPOP, Lark). Conclusions below are
-> stable for the families surveyed.
+> **Scope: wave 1 + three wave-2 clusters.** This synthesis covers the nine flagship
+> systems, the theory spine, and the three wave-2 clusters now landed — **incremental /
+> query-based** ([rust-analyzer], [Roslyn][roslyn], [Lezer][lezer], [`rustc`][rustc];
+> see [`incremental`][incremental]), **SIMD / high-performance** ([simd-json], [sonic-rs],
+> [yyjson], [RapidJSON][rapidjson], [Hyperscan][hyperscan], [Zig tokenizer][zig]), and
+> **parser combinators** ([winnow], [flatparse], [combine], [Angstrom][angstrom],
+> [FParsec][fparsec]). Only the **generators** cluster (LALRPOP, Lark/PLY, Peggy,
+> Ragel/re2c) and a few JVM combinators remain. Conclusions below are stable for the
+> families surveyed.
 
 **Last reviewed:** July 3, 2026
 
@@ -23,21 +25,32 @@ note on **where a Sparkles parser would sit**. Terminology is defined in the
 
 ## At-a-glance matrix
 
-| System                     | Strategy                                        | Grammar reaches parser via | Linear time?        | Error recovery       | Zero-copy     | Incremental    | Data-parallel   |
-| -------------------------- | ----------------------------------------------- | -------------------------- | ------------------- | -------------------- | ------------- | -------------- | --------------- |
-| [simdjson][simdjson]       | [SIMD two-stage][formal]                        | hand-tuned state machine   | ✅ (+SIMD)          | fail-fast (validate) | ✅            | —              | ✅ **only one** |
-| [tree-sitter][tree-sitter] | [GLR][bottom-up], incremental                   | `grammar.js` generator     | ✅ det.; O(n³) amb. | **incremental/IDE**  | ✅ (CST)      | ✅ (subtree)   | —               |
-| [rust-analyzer]            | [RD][top-down]→[red-green][incremental]+[salsa] | hand-written + query graph | ✅                  | **incremental/IDE**  | ✅ (CST)      | ✅ (+queries)  | —               |
-| [Roslyn][roslyn]           | [RD][top-down]→[red-green][incremental]         | hand-written parser        | ✅                  | **incremental/IDE**  | ✅ (CST)      | ✅ (subtree)   | —               |
-| [Lezer][lezer]             | incremental [GLR][bottom-up]                    | `@lezer/generator`         | ✅ det.; O(n³) amb. | **incremental/IDE**  | ✅ (CST)      | ✅ (fragment)  | —               |
-| [`rustc` queries][rustc]   | demand-driven [queries][incremental]            | queries over AST/HIR/MIR   | ✅                  | n/a (parser batch)³  | —             | ✅ (cross-run) | —               |
-| [ANTLR][antlr]             | [ALL(\*)][top-down] top-down                    | `.g4` generator            | in practice         | recovering           | —             | —              | —               |
-| [Bison][bison]             | [LALR(1)][bottom-up] bottom-up                  | `.y` generator             | ✅                  | panic-mode `error`   | —             | —              | —               |
-| [Menhir][menhir]           | [LR(1)][bottom-up] bottom-up                    | `.mly` generator           | ✅                  | recovering API¹      | —             | API only¹      | —               |
-| [pest][pest]               | [PEG][peg] generator                            | `.pest` generator          | ⚠️ no memo          | diagnostic           | ✅ (leaves)   | —              | —               |
-| [Parsec][parsec]           | predictive [LL][top-down] combinator            | host-language values       | ~ on LL(1)          | diagnostic / recov.² | ⚠️ attoparsec | —              | —               |
-| [nom][nom]                 | [PEG][peg]-like combinator                      | host-language values       | ⚠️ no memo          | fail-fast            | ✅            | —              | —               |
-| [chumsky][chumsky]         | [PEG][peg] combinator                           | host-language values       | ⚠️ opt-in memo      | **recovering**       | ✅ (0.10+)    | —              | —               |
+| System                     | Strategy                                        | Grammar reaches parser via  | Linear time?        | Error recovery        | Zero-copy       | Incremental    | Data-parallel  |
+| -------------------------- | ----------------------------------------------- | --------------------------- | ------------------- | --------------------- | --------------- | -------------- | -------------- |
+| [simdjson][simdjson]       | [SIMD two-stage][formal]                        | hand-tuned state machine    | ✅ (+SIMD)          | fail-fast (validate)  | ✅              | —              | ✅             |
+| [simd-json]                | [SIMD two-stage][formal] (port)                 | hand-tuned (`&mut` in-situ) | ✅ (+SIMD)          | fail-fast (validate)  | ✅ (in-situ)    | —              | ✅             |
+| [sonic-rs]                 | SIMD **on-demand**                              | lazy `get`-by-pointer       | ✅ (+SIMD)          | fail-fast (validate)  | ✅              | —              | ✅             |
+| [yyjson]                   | **scalar** (no SIMD)                            | hand-tuned C reader         | ✅                  | fail-fast (err pos)   | ✅ (in-situ)    | —              | — (no SIMD)    |
+| [RapidJSON][rapidjson]     | SAX + DOM, in-situ                              | hand-tuned C++              | ✅                  | fail-fast (offset)    | ✅ (in-situ)    | —              | ~ (whitespace) |
+| [Hyperscan][hyperscan]     | [SIMD automata][formal] (regex)                 | compiled pattern DB         | ✅ (+SIMD)          | n/a — matcher⁴        | ✅ (in-place)   | — (streaming)  | ✅             |
+| [Zig tokenizer][zig]       | hand-written **lexer**                          | hand-written                | ✅                  | invalid-token         | ✅ (ranges)     | —              | —              |
+| [tree-sitter][tree-sitter] | [GLR][bottom-up], incremental                   | `grammar.js` generator      | ✅ det.; O(n³) amb. | **incremental/IDE**   | ✅ (CST)        | ✅ (subtree)   | —              |
+| [rust-analyzer]            | [RD][top-down]→[red-green][incremental]+[salsa] | hand-written + query graph  | ✅                  | **incremental/IDE**   | ✅ (CST)        | ✅ (+queries)  | —              |
+| [Roslyn][roslyn]           | [RD][top-down]→[red-green][incremental]         | hand-written parser         | ✅                  | **incremental/IDE**   | ✅ (CST)        | ✅ (subtree)   | —              |
+| [Lezer][lezer]             | incremental [GLR][bottom-up]                    | `@lezer/generator`          | ✅ det.; O(n³) amb. | **incremental/IDE**   | ✅ (CST)        | ✅ (fragment)  | —              |
+| [`rustc` queries][rustc]   | demand-driven [queries][incremental]            | queries over AST/HIR/MIR    | ✅                  | n/a (parser batch)³   | —               | ✅ (cross-run) | —              |
+| [ANTLR][antlr]             | [ALL(\*)][top-down] top-down                    | `.g4` generator             | in practice         | recovering            | —               | —              | —              |
+| [Bison][bison]             | [LALR(1)][bottom-up] bottom-up                  | `.y` generator              | ✅                  | panic-mode `error`    | —               | —              | —              |
+| [Menhir][menhir]           | [LR(1)][bottom-up] bottom-up                    | `.mly` generator            | ✅                  | recovering API¹       | —               | API only¹      | —              |
+| [pest][pest]               | [PEG][peg] generator                            | `.pest` generator           | ⚠️ no memo          | diagnostic            | ✅ (leaves)     | —              | —              |
+| [Parsec][parsec]           | predictive [LL][top-down] combinator            | host-language values        | ~ on LL(1)          | diagnostic / recov.²  | ⚠️ attoparsec   | —              | —              |
+| [nom][nom]                 | [PEG][peg]-like combinator                      | host-language values        | ⚠️ no memo          | fail-fast             | ✅              | —              | —              |
+| [chumsky][chumsky]         | [PEG][peg] combinator                           | host-language values        | ⚠️ opt-in memo      | **recovering**        | ✅ (0.10+)      | —              | —              |
+| [winnow]                   | [PEG][peg]-like combinator ([nom] fork)         | host-language values        | ⚠️ no memo          | fail-fast + `cut`     | ✅              | —              | —              |
+| [flatparse]                | [PEG][peg]-like combinator                      | host-language values        | ⚠️ no memo          | fail-fast + errors    | ✅ (zero-alloc) | —              | —              |
+| [combine]                  | [LL][top-down](1) + `attempt`                   | host-language values        | ~ on LL(1)          | diagnostic (commit)   | ✅ (`range`)    | — (streaming)  | —              |
+| [Angstrom][angstrom]       | [PEG][peg]-like combinator                      | host-language values        | ⚠️ no memo          | backtrack + `commit`  | ✅ (bigstring)  | — (streaming)  | —              |
+| [FParsec][fparsec]         | [LL][top-down] + backtrack combinator           | host-language values        | ~                   | **diagnostic** (best) | ⚠️ CharStream   | —              | —              |
 
 <sub>¹ Menhir's _generator_ is batch; its incremental/inspection API is what IDE tools
 (Merlin, ocaml-lsp) drive for live recovery and client-managed parsing. It is not a
@@ -45,17 +58,21 @@ built-in edit-local CST reuse engine like tree-sitter. ² attoparsec drops error
 book-keeping for speed; Megaparsec adds typed errors, error bundles, and
 `withRecovery`. ³ `rustc`'s incrementality is a **computation** engine (memoized
 queries reused across whole compiles); its front-end lexer/parser is still batch, so the
-recovery/zero-copy columns describe the query layer, not a live parse tree.</sub>
+recovery/zero-copy columns describe the query layer, not a live parse tree. ⁴ Hyperscan
+is a multi-pattern regex **matcher**, not a parser — it reports matches via a callback and
+builds no tree; the row describes its scanning engine.</sub>
 
-The single most striking row-fact: **only simdjson is data-parallel, but incrementality
-is now a whole cluster.** These are two _orthogonal_ escapes from "parse the whole file,
-scalar, every time" — one attacks the constant factor (vectorize the byte scan), the
-other attacks the work itself (reuse what didn't change). And incrementality itself
-splits two ways: reuse the **tree** (tree-sitter subtree reuse, Roslyn/rust-analyzer
-[red-green][incremental] nodes, Lezer fragments) versus reuse the **computation**
-([`rustc`][rustc]/[salsa] memoized queries) — [rust-analyzer] does both at once. Menhir
-exposes a resumable API clients drive for live parsing, but no edit-local tree reuse.
-Everything else in the catalog is a scalar, whole-input, single-pass parser distinguished
+Two orthogonal escapes from "parse the whole file, scalar, every time" now each fill a
+cluster. **Data-parallel** is no longer simdjson-alone: [simd-json], [sonic-rs], and
+[Hyperscan][hyperscan] all vectorize the byte scan ([RapidJSON][rapidjson] does so
+narrowly, for whitespace) — while [yyjson] is the pointed **counter-example**, hitting
+GB/s with careful _scalar_ C and **no SIMD at all**, proving vectorization is one road to
+speed, not the only one. **Incrementality** is the other escape, and splits two ways:
+reuse the **tree** (tree-sitter subtree reuse, Roslyn/rust-analyzer [red-green][incremental]
+nodes, Lezer fragments) versus reuse the **computation** ([`rustc`][rustc]/[salsa] memoized
+queries) — [rust-analyzer] does both at once. Menhir exposes a resumable API clients drive
+for live parsing, but no edit-local tree reuse. The rest of the catalog is a scalar,
+whole-input, single-pass parser distinguished
 by _grammar class_ and _error posture_, not by raw mechanism.
 
 ---
@@ -219,10 +236,22 @@ sequences (`sparkles:ghostty`) — all in `@nogc`/`@safe`, allocation-conscious 
 survey suggests the design center for an allocation-conscious D parsing toolkit:
 
 - **Zero-copy, scannerless recursive descent** is the natural `@nogc` fit — it is what
-  [nom][nom] does in Rust (slices, no allocator on the recognizer path) and matches the
-  repo's existing `@nogc` text readers in [`sparkles.base.text`][base-text]. A PEG-style
-  ordered-choice combinator over `const(char)[]`/`SmallBuffer` slices would compose with
-  the existing primitives.
+  [nom][nom] and its fork [winnow] do in Rust (slices, no allocator on the recognizer
+  path) and matches the repo's existing `@nogc` text readers in
+  [`sparkles.base.text`][base-text]. A PEG-style ordered-choice combinator over
+  `const(char)[]`/`SmallBuffer` slices would compose with the existing primitives.
+- **A combinator API _can_ be zero-allocation — [flatparse] is the proof.** Its pure
+  validators (parsers returning `()`) run with **zero heap allocation** via unboxed
+  results; that is exactly the target for a `@nogc` D combinator, and its failure-vs-error
+  split (control-flow backtracking vs unrecoverable error, like [nom]) maps cleanly onto
+  `Expected!(T, E)`. [winnow]'s `&mut`-stream ergonomics and [combine]/[Angstrom][angstrom]'s
+  streaming show the design space; flatparse shows the allocation floor.
+- **Hand-write the lexer, table-free — [Zig's tokenizer][zig] is the model.** A
+  character-class state machine emitting `(tag, byte-range)` tokens with no transition
+  table and no heap is the smallest, most `@nogc`-shaped front end; prefer it to a
+  generated lexer for Sparkles' small languages. And don't reach for [SIMD][simdjson]
+  prematurely: [yyjson] hits GB/s with careful _scalar_ C, so SIMD is a measured
+  optimization for large hot inputs, not a default.
 - **Skip packrat memoization by default** — like [pest][pest] and [nom][nom] — to keep
   memory bounded and `@nogc`-friendly; reserve memoization for a measured hot spot. The
   [packrat space cost][peg] is the wrong default for a small-footprint library.
@@ -289,6 +318,17 @@ recovery ladder — trace to Knuth 1965, Earley 1970, Ford 2002/2004, Valiant 19
 [lezer]: ./lezer.md
 [rustc]: ./rustc-queries.md
 [salsa]: ./rust-analyzer.md#salsa-the-query-engine
+[simd-json]: ./simd-json.md
+[sonic-rs]: ./sonic-rs.md
+[yyjson]: ./yyjson.md
+[rapidjson]: ./rapidjson.md
+[hyperscan]: ./hyperscan.md
+[zig]: ./zig-tokenizer.md
+[winnow]: ./rust-winnow.md
+[flatparse]: ./haskell-flatparse.md
+[combine]: ./rust-combine.md
+[angstrom]: ./ocaml-angstrom.md
+[fparsec]: ./fsharp-fparsec.md
 [v-parsing]: https://github.com/PetarKirov/sparkles/blob/main/libs/versions/src/sparkles/versions/parsing.d
 [cli-args]: https://github.com/PetarKirov/sparkles/blob/main/libs/core-cli/src/sparkles/core_cli/args.d
 [base-text]: https://github.com/PetarKirov/sparkles/blob/main/libs/base/src/sparkles/base/text/package.d

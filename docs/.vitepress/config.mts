@@ -390,13 +390,57 @@ export default withMermaid(
                     },
                     { text: 'nom', link: '/research/parsing/rust-nom' },
                     { text: 'chumsky', link: '/research/parsing/rust-chumsky' },
+                    {
+                      text: 'winnow (nom fork)',
+                      link: '/research/parsing/rust-winnow',
+                    },
+                    {
+                      text: 'flatparse (Haskell)',
+                      link: '/research/parsing/haskell-flatparse',
+                    },
+                    {
+                      text: 'combine (Rust)',
+                      link: '/research/parsing/rust-combine',
+                    },
+                    {
+                      text: 'Angstrom (OCaml)',
+                      link: '/research/parsing/ocaml-angstrom',
+                    },
+                    {
+                      text: 'FParsec (F#)',
+                      link: '/research/parsing/fsharp-fparsec',
+                    },
                   ],
                 },
                 {
-                  text: 'High-Performance (SIMD)',
+                  text: 'High-Performance & SIMD',
                   collapsed: true,
                   items: [
                     { text: 'simdjson', link: '/research/parsing/simdjson' },
+                    {
+                      text: 'simd-json (Rust)',
+                      link: '/research/parsing/simd-json',
+                    },
+                    {
+                      text: 'sonic-rs (Rust)',
+                      link: '/research/parsing/sonic-rs',
+                    },
+                    {
+                      text: 'yyjson (C, no-SIMD)',
+                      link: '/research/parsing/yyjson',
+                    },
+                    {
+                      text: 'RapidJSON (C++)',
+                      link: '/research/parsing/rapidjson',
+                    },
+                    {
+                      text: 'Hyperscan (regex)',
+                      link: '/research/parsing/hyperscan',
+                    },
+                    {
+                      text: 'Zig tokenizer',
+                      link: '/research/parsing/zig-tokenizer',
+                    },
                   ],
                 },
                 {
