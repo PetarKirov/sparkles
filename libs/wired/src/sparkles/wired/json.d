@@ -199,7 +199,7 @@ if (is(T == struct))
 
         if (!omitted)
         {
-            static if (hasConvert!(Json, T.tupleof[i]))
+            static if (policies[i].hasConvert)
                 auto r = encodeVia!(convertOf!(Json, T.tupleof[i]), V)(value.tupleof[i]);
             else static if (is(V == enum))
                 auto r = encodeEnumWith!(V,
@@ -578,7 +578,7 @@ if (is(T == struct))
 
         if (auto p = policies[i].key in json.object)
         {
-            static if (hasConvert!(Json, T.tupleof[i]))
+            static if (policies[i].hasConvert)
                 auto r = decodeVia!(convertOf!(Json, T.tupleof[i]), V)(*p);
             else static if (is(V == enum))
                 auto r = decodeEnumWith!(V,

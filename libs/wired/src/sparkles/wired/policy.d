@@ -16,7 +16,7 @@ See `docs/specs/wired/SPEC.md` §5 for the normative surface.
 */
 module sparkles.wired.policy;
 
-import std.traits : getUDAs;
+import std.traits : getUDAs, TemplateArgsOf, TemplateOf;
 
 import sparkles.base.text.case_style : CaseStyle, convertCase;
 
@@ -607,6 +607,7 @@ private string convertCaseOf(CaseStyle style, string ident) @safe pure
 struct FieldPolicy
 {
     string key;                 /// the resolved wire key (§5.1, §6)
+    bool hasConvert;            /// carries a `@WireConvert` for the format (§8)
     bool optional;              /// carries `@WireOptional` (§5.4)
     WireSkip skip = WireSkip.never;                 /// encode omission policy
     WireInvalid onInvalid = WireInvalid.reject;     /// present-but-invalid policy
@@ -754,6 +755,14 @@ if (is(T == struct))
                         matchTier = matchT;
                     }
                 }
+
+                // @WireConvert is a type UDA; its format is a template argument.
+                static if (is(uda) && __traits(isSame, TemplateOf!uda, WireConvert))
+                {
+                    static if (is(TemplateArgsOf!uda[2] == F)
+                        || is(TemplateArgsOf!uda[2] == AnyFormat))
+                        p.hasConvert = true;
+                }
             }}
 
             p.key = nameTier
@@ -822,6 +831,8 @@ if (is(E == enum))
         @WireOptional(WireSkip.whenDefault, WireInvalid.useDefault) int optCount;
         @(WireMatch.first!Json) int matchField;
         int plainField;
+        @WireConvert!(x => x + 1, x => x - 1) int anyConverted;
+        @WireConvert!(x => x * 10, x => x / 10, Json) int jsonConverted;
     }
 
     alias P = fieldPolicies!(Json, S);
@@ -846,6 +857,15 @@ if (is(E == enum))
 
     static assert(!P[5].optional && P[5].skip == WireSkip.never);
     static assert(P[5].match == MatchStrategy.exactlyOne);
+
+    // The convert flag agrees with the alias-level hasConvert scan, format by
+    // format: AnyFormat applies everywhere, an exact tag only under its format.
+    static assert(!P[5].hasConvert);
+    static assert(P[6].hasConvert && P[7].hasConvert);
+    static foreach (i; 0 .. P.length)
+        static assert(P[i].hasConvert == hasConvert!(Json, S.tupleof[i]));
+    static assert(fieldPolicies!(AnyFormat, S)[6].hasConvert);
+    static assert(!fieldPolicies!(AnyFormat, S)[7].hasConvert); // !Json is inert elsewhere
 
     // Member names: the explicit rename wins; the rest recase by Mode's style.
     static assert(wireNames!(Json, Mode, resolveCaseStyle!(Json, Mode))
