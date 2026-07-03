@@ -37,7 +37,8 @@ string testName(alias test)()
 /// The source location of a unittest block.
 TestLocation testLocation(alias test)()
 {
-    return TestLocation(__traits(getLocation, test));
+    auto loc = __traits(getLocation, test);
+    return TestLocation(file: loc[0], line: loc[1], column: loc[2]);
 }
 
 /// The subset of a test's function attributes that extracted `@betterC` /

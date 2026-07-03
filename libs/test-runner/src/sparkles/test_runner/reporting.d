@@ -85,7 +85,7 @@ string formatLocation(in TestLocation location, bool colored) @safe
 @safe
 unittest
 {
-    assert(formatLocation(TestLocation("src/foo.d", 42, 1), false) == "[src/foo.d:42]");
+    assert(formatLocation(TestLocation(file: "src/foo.d", line: 42, column: 1), false) == "[src/foo.d:42]");
     assert(formatLocation(TestLocation.init, false) is null);
 }
 
@@ -123,7 +123,7 @@ unittest
     );
     assert(formatResultLine(result, false, false) == " ✓ pkg.mod case");
 
-    result.test.location = TestLocation("src/mod.d", 7, 1);
+    result.test.location = TestLocation(file: "src/mod.d", line: 7, column: 1);
     assert(formatResultLine(result, false, true) == " ✓ pkg.mod case (1.5ms) [src/mod.d:7]");
 
     result.succeeded = false;

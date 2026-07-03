@@ -95,11 +95,11 @@ unittest
 
     const tests = [
         Test(fullName: "pkg.a.__unittest_L1_C1", name: "a",
-            location: TestLocation("src/pkg/a.d", 1, 1)),
+            location: TestLocation(file: "src/pkg/a.d", line: 1, column: 1)),
         Test(fullName: "pkg.b.__unittest_L1_C1", name: "b",
-            location: TestLocation("src/pkg/b.d", 1, 1)),
+            location: TestLocation(file: "src/pkg/b.d", line: 1, column: 1)),
         Test(fullName: "other.c.__unittest_L1_C1", name: "c",
-            location: TestLocation("lib2/src/other/c.d", 1, 1)),
+            location: TestLocation(file: "lib2/src/other/c.d", line: 1, column: 1)),
     ];
     assert(deriveImportPaths(tests, ["extra"]) ==
         ["extra", runnerSourceRoot, "src", "lib2/src"]);

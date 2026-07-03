@@ -113,12 +113,18 @@ unittest
         `{"ph":"X","name": "Ctfe: call __unittest_L9_C1","ts":9,"dur":42,"loc":"b.d:9","args":{}}]}`;
 
     enum events = parseCtfeEvents(trace);
-    static assert(events.length == 2);
-    static assert(events[0].symbol == "__unittest_L148_C1");
-    static assert(events[0].durUs == 5818);
-    static assert(events[0].loc == "libs/test-runner/src/sparkles/test_runner/bench.d:148");
-    static assert(events[1].symbol == "__unittest_L9_C1");
-    static assert(events[1].durUs == 42);
+    static assert(events == [
+        CtfeTraceEvent(
+            symbol: "__unittest_L148_C1",
+            loc: "libs/test-runner/src/sparkles/test_runner/bench.d:148",
+            durUs: 5818,
+        ),
+        CtfeTraceEvent(
+            symbol: "__unittest_L9_C1",
+            loc: "b.d:9",
+            durUs: 42,
+        )
+    ]);
 }
 
 /// One `@ctfe` test with its attributed compile-time cost.
@@ -155,14 +161,14 @@ unittest
 
     auto tests = [
         Test(fullName: "m.__unittest_L148_C1", name: "hit",
-            location: TestLocation("src/m.d", 148, 1)),
+            location: TestLocation(file: "src/m.d", line: 148, column: 1)),
         Test(fullName: "m.__unittest_L7_C1", name: "miss",
-            location: TestLocation("src/m.d", 7, 1)),
+            location: TestLocation(file: "src/m.d", line: 7, column: 1)),
     ];
     auto events = [
-        CtfeTraceEvent("__unittest_L148_C1", "src/m.d:148", 100),
-        CtfeTraceEvent("__unittest_L148_C1", "src/m.d:148", 20),
-        CtfeTraceEvent("__unittest_L9_C1", "other.d:9", 5),
+        CtfeTraceEvent(symbol: "__unittest_L148_C1", loc: "src/m.d:148", durUs: 100),
+        CtfeTraceEvent(symbol: "__unittest_L148_C1", loc: "src/m.d:148", durUs: 20),
+        CtfeTraceEvent(symbol: "__unittest_L9_C1", loc: "other.d:9", durUs: 5),
     ];
 
     const costs = attributeCtfeCosts(tests, events);
