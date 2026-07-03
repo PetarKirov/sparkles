@@ -16,7 +16,8 @@ configuration "library" {
 }
 
 configuration "unittest" {
-    dependency "silly" version="~>1.1.1"
+    sourcePaths "../test-runner/src"
+    importPaths "../test-runner/src"
     dependency "sparkles:base" path="../.."
 
     dflags "-checkaction=context" "-allinst"

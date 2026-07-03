@@ -23,7 +23,8 @@ configuration "unittest" {
     targetType "library"
     excludedSourceFiles "src/app.d"
 
-    dependency "silly" version="~>1.1.1"
+    sourcePaths "../../libs/test-runner/src"
+    importPaths "../../libs/test-runner/src"
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
