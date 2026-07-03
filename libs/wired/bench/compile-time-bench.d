@@ -306,6 +306,7 @@ struct Metrics
     size_t instDistinct;    /// -vtemplates: distinct wired-template instantiations
     TopEntry[] topWired;    /// top sparkles.wired templates by unioned time
     InstEntry[] topInst;    /// top sparkles.wired templates by instantiation count
+    TopEntry[] byPackage;   /// template time attributed to each root package
 }
 
 struct TopEntry
@@ -424,8 +425,10 @@ void analyzeTrace(string traceFile, ref Metrics m)
     // stripped) and union each group's intervals so self-recursion is not
     // double-counted. The event's `detail` carries the qualified name.
     TraceEvent[][string] byName;
+    TraceEvent[][string] byPkg;
     foreach (e; templates)
     {
+        byPkg[e.detail.rootPackage] ~= e;
         if (!e.detail.startsWith("sparkles.wired"))
             continue;
         byName[e.detail.templateBaseName] ~= e;
@@ -435,6 +438,25 @@ void analyzeTrace(string traceFile, ref Metrics m)
         .array
         .sort!((a, b) => a.ms > b.ms || (a.ms == b.ms && a.count > b.count))
         .release;
+    m.byPackage = byPkg.byKeyValue
+        .map!(kv => TopEntry(kv.key, unionUs(kv.value) / 1000, kv.value.length))
+        .array
+        .sort!((a, b) => a.ms > b.ms || (a.ms == b.ms && a.count > b.count))
+        .release;
+}
+
+/// The root package of a qualified instantiation name — two dot-components for
+/// the `std`/`core`/`sparkles` namespaces, one otherwise. Nested events count
+/// toward every enclosing package's union, so shares can overlap.
+string rootPackage(string detail)
+{
+    if (!detail.length)
+        return "?";
+    const parts = detail.split('.');
+    if (parts.length >= 2
+        && (parts[0] == "std" || parts[0] == "core" || parts[0] == "sparkles"))
+        return parts[0] ~ "." ~ parts[1].templateBaseName;
+    return parts[0].templateBaseName;
 }
 
 struct TraceEvent
@@ -516,6 +538,16 @@ void report(Metrics m, uint top)
                 "template".stylize(Style.bold)]
             ~ m.topInst.head(top)
                 .map!(t => [t.total.to!string, t.distinct.to!string, t.name])
+                .array)
+            .drawTable.write;
+    }
+    if (m.byPackage.length)
+    {
+        writeln("template time by root package (unions overlap across nesting):");
+        (["ms".stylize(Style.bold), "events".stylize(Style.bold),
+                "package".stylize(Style.bold)]
+            ~ m.byPackage.head(top)
+                .map!(t => [t.ms.to!string, t.count.to!string, t.name])
                 .array)
             .drawTable.write;
     }
