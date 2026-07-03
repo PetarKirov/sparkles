@@ -11,9 +11,13 @@ export default withMermaid(
     // (source artifacts under research/monorepo-tooling/<tool>/sample/, not pages)
     ignoreDeadLinks: [/\.d$/, /\/sample\//, /\/sample$/, /\/example\//],
 
-    // The parsing grounding ledger is internal QA evidence (claim-by-claim
-    // source verification), not published research — keep it out of the site.
-    srcExclude: ['**/research/parsing/grounding/**'],
+    // The parsing and units-of-measure grounding ledgers are internal QA
+    // evidence (claim-by-claim source verification), not published research —
+    // keep them out of the site.
+    srcExclude: [
+      '**/research/parsing/grounding/**',
+      '**/research/units-of-measure/grounding/**',
+    ],
 
     markdown: {
       languageAlias: {
@@ -1605,6 +1609,128 @@ export default withMermaid(
                     {
                       text: 'Comparison',
                       link: '/research/vulkan/comparison',
+                    },
+                  ],
+                },
+              ],
+            },
+            {
+              text: 'Units of Measure',
+              link: '/research/units-of-measure/',
+              collapsed: true,
+              items: [
+                {
+                  text: 'Concepts & Vocabulary',
+                  link: '/research/units-of-measure/concepts',
+                },
+                {
+                  text: 'Foundations (Theory)',
+                  link: '/research/units-of-measure/theory/',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: "Whitney's Quantity Structures",
+                      link: '/research/units-of-measure/theory/whitney',
+                    },
+                    {
+                      text: 'Buckingham π',
+                      link: '/research/units-of-measure/theory/buckingham-pi',
+                    },
+                    {
+                      text: 'Free Abelian Group of Dimensions',
+                      link: '/research/units-of-measure/theory/free-abelian-group',
+                    },
+                    {
+                      text: 'Tensor of Lines',
+                      link: '/research/units-of-measure/theory/tensor-of-lines',
+                    },
+                    {
+                      text: 'Torsors & the Scaling Torus',
+                      link: '/research/units-of-measure/theory/torsor-representation',
+                    },
+                    {
+                      text: "Kennedy's Units of Measure",
+                      link: '/research/units-of-measure/theory/kennedy-types',
+                    },
+                    {
+                      text: "Hart's Multidimensional Analysis",
+                      link: '/research/units-of-measure/theory/hart-multidimensional',
+                    },
+                    {
+                      text: 'Type-System Mechanisms',
+                      link: '/research/units-of-measure/theory/type-system-mechanisms',
+                    },
+                  ],
+                },
+                {
+                  text: 'Systems',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'F# Units of Measure',
+                      link: '/research/units-of-measure/fsharp-uom',
+                    },
+                    {
+                      text: 'uom-plugin (Haskell)',
+                      link: '/research/units-of-measure/haskell-uom-plugin',
+                    },
+                    {
+                      text: 'dimensional (Haskell)',
+                      link: '/research/units-of-measure/haskell-dimensional',
+                    },
+                    {
+                      text: 'uom (Rust)',
+                      link: '/research/units-of-measure/rust-uom',
+                    },
+                    {
+                      text: 'dimensioned (Rust)',
+                      link: '/research/units-of-measure/rust-dimensioned',
+                    },
+                    {
+                      text: 'mp-units (C++)',
+                      link: '/research/units-of-measure/cpp-mp-units',
+                    },
+                    {
+                      text: 'Boost.Units (C++)',
+                      link: '/research/units-of-measure/cpp-boost-units',
+                    },
+                    {
+                      text: 'Au (C++)',
+                      link: '/research/units-of-measure/cpp-au',
+                    },
+                    {
+                      text: 'D Prior Art',
+                      link: '/research/units-of-measure/d-quantities',
+                    },
+                    {
+                      text: 'Pint (Python)',
+                      link: '/research/units-of-measure/python-pint',
+                    },
+                    {
+                      text: 'Unitful.jl (Julia)',
+                      link: '/research/units-of-measure/julia-unitful',
+                    },
+                    {
+                      text: 'GNAT Dimensions (Ada)',
+                      link: '/research/units-of-measure/ada-gnat-dimensions',
+                    },
+                    {
+                      text: 'Lean/mathlib & Provers',
+                      link: '/research/units-of-measure/lean-mathlib-units',
+                    },
+                    {
+                      text: 'Wolfram & MATLAB',
+                      link: '/research/units-of-measure/wolfram-matlab',
+                    },
+                  ],
+                },
+                {
+                  text: 'Synthesis',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Comparison',
+                      link: '/research/units-of-measure/comparison',
                     },
                   ],
                 },
