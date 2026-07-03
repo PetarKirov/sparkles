@@ -34,6 +34,7 @@ compatibility; `sparkles:core-cli` builds on it with higher-level CLI tools.
 - **Pretty Printing** -- Colorized, type-aware formatting for any D type via compile-time introspection
 - **UI Components** -- Tables, boxes, headers, and OSC 8 hyperlinks
 - **Semantic Versioning** -- SemVer parsing, normalization, and precedence comparison
+- **Test Runner** -- Parallel `unittest` runner with compile-time (`@ctfe`), `-betterC` (`@betterC`), WebAssembly (`@wasm`), and benchmark (`@benchmark`) modes
 
 ## Quick Start
 
@@ -462,6 +463,63 @@ import sparkles.base.lifetime;
 **`term_size`** -- Detect terminal window resizes via `SIGWINCH`. This lives in
 `sparkles:core-cli`.
 
+### Test Runner
+
+`sparkles:test-runner` runs a package's `unittest`s in parallel (add it to
+`configuration "unittest"` and use `dub test` as usual), with marker
+attributes that opt individual tests into extra environments: `@ctfe` tests
+run while the build compiles (a failure is a compile error), `@betterC` and
+`@wasm` tests are additionally extracted and executed without druntime /
+on `wasm32` (`--better-c` / `--wasm`), and `@benchmark` tests are measured
+with auto-scaling iteration counts (`--bench`). See the
+[test-runner documentation](docs/libs/test-runner/index.md).
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "readme_test_runner"
+    dependency "sparkles:test-runner" version="*"
++/
+import sparkles.test_runner.attributes : benchmark, betterC, ctfe;
+import sparkles.test_runner.bench : blackBox, computeStats;
+
+@("digits.parity")
+@betterC @safe pure nothrow @nogc
+unittest // runs under `dub test` — and without druntime via `--better-c`
+{
+    int parity;
+    foreach (c; "12345")
+        parity ^= c - '0';
+    assert(parity == 1);
+}
+
+@("digits.parity.ct")
+@ctfe @safe pure nothrow @nogc
+unittest // runs while the test build compiles; never at runtime
+{
+    assert((1 ^ 2 ^ 3 ^ 4 ^ 5) == 1);
+}
+
+void main()
+{
+    import std.stdio : writefln;
+
+    // The statistics `--bench` reports, over hand-made ns/iter samples so
+    // this example's output is deterministic:
+    const stats = computeStats("demo", 1000, [22.0, 18.0, 20.0]);
+    writefln!"median=%.0fns/iter min=%.0f max=%.0f over %s samples"(
+        stats.nsPerIterMedian, stats.nsPerIterMin, stats.nsPerIterMax,
+        stats.samples);
+
+    // blackBox is the optimizer barrier used inside @benchmark tests.
+    assert(blackBox(21) * 2 == 42);
+}
+```
+
+```[Output]
+median=20ns/iter min=18 max=22 over 3 samples
+```
+
 ## Examples
 
 Runnable examples are in [`libs/base/examples/`](libs/base/examples/) and
@@ -498,6 +556,11 @@ dub test :base -- -i "SmallBuffer"
 
 # Verbose output with stack traces
 dub test :core-cli -- -v
+
+# Special test-runner modes (see docs/libs/test-runner/)
+dub test :base -- --bench       # measure @benchmark tests
+dub test :base -- --better-c    # run @betterC tests without druntime
+dub test :base -- --wasm        # run @wasm tests on wasm32
 ```
 
 The project uses a **Nix development shell** for reproducible builds:

@@ -227,7 +227,9 @@ $ env -u NIX_CFLAGS_COMPILE -u CPATH -u C_INCLUDE_PATH dub build :terminal --for
      }
 
      configuration "unittest" {
-         dependency "silly" version="~>1.1.1"
+         sourcePaths "../test-runner/src"
+         importPaths "../test-runner/src"
+         dependency "sparkles:base" path="../.."
          dflags "-checkaction=context" "-allinst"
          dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
          dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"

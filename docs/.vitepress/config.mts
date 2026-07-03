@@ -220,6 +220,73 @@ export default withMermaid(
               ],
             },
             {
+              text: 'test-runner',
+              link: '/libs/test-runner/',
+              collapsed: false,
+              items: [
+                {
+                  text: 'Tutorial',
+                  collapsed: false,
+                  items: [
+                    {
+                      text: 'Getting started',
+                      link: '/libs/test-runner/tutorial/getting-started',
+                    },
+                  ],
+                },
+                {
+                  text: 'How-to guides',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Run and filter tests',
+                      link: '/libs/test-runner/how-to/run-and-filter-tests',
+                    },
+                    {
+                      text: 'Write @ctfe tests',
+                      link: '/libs/test-runner/how-to/write-ctfe-tests',
+                    },
+                    {
+                      text: 'Write @betterC tests',
+                      link: '/libs/test-runner/how-to/write-betterc-tests',
+                    },
+                    {
+                      text: 'Write @wasm tests',
+                      link: '/libs/test-runner/how-to/write-wasm-tests',
+                    },
+                    {
+                      text: 'Benchmark with @benchmark',
+                      link: '/libs/test-runner/how-to/benchmark',
+                    },
+                  ],
+                },
+                {
+                  text: 'Reference',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Command-line options',
+                      link: '/libs/test-runner/reference/cli',
+                    },
+                    {
+                      text: 'Attributes',
+                      link: '/libs/test-runner/reference/attributes',
+                    },
+                  ],
+                },
+                {
+                  text: 'Explanation',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'The design',
+                      link: '/libs/test-runner/explanation/design',
+                    },
+                  ],
+                },
+              ],
+            },
+            {
               text: 'versions',
               link: '/libs/versions/',
               collapsed: false,
