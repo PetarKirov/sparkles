@@ -5,6 +5,8 @@ license "BSL-1.0"
 
 targetPath "build"
 
+importPaths "src" "../test-runner/src"
+
 dflags "-preview=in" "-preview=dip1000"
 
 libs "ghostty-vt"
@@ -15,7 +17,6 @@ configuration "library" {
 
 configuration "unittest" {
     sourcePaths "../test-runner/src"
-    importPaths "../test-runner/src"
 
     dependency "sparkles:base" path="../.."
     dependency "sparkles:test-utils" path="../.."

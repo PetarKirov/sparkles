@@ -7,6 +7,8 @@ license "BSL-1.0"
 targetType "executable"
 targetName "release"
 targetPath "build"
+
+importPaths "src" "../../libs/test-runner/src"
 mainSourceFile "src/app.d"
 
 dflags "-preview=in" "-preview=dip1000"
@@ -25,7 +27,6 @@ configuration "unittest" {
     excludedSourceFiles "src/app.d"
 
     sourcePaths "../../libs/test-runner/src"
-    importPaths "../../libs/test-runner/src"
 
     dflags "-checkaction=context" "-allinst"
 }

@@ -18,6 +18,7 @@ struct DriverOptions
 {
     string compiler; /// explicit D compiler; empty = `$DC`, then `ldc2`, `dmd`
     string[] importPaths; /// extra `-I` paths
+    string[] includeImports; /// extra `-i=<pattern>` module-inclusion patterns
     bool keep; /// keep the generated files and print their location
     bool verbose; /// echo the commands that are run
 }
@@ -64,13 +65,19 @@ string detectCompiler(string preferred) @safe
     return null;
 }
 
+/// This package's own source root — extracted modules are compiled with
+/// `-unittest`, so their `version (unittest)` imports of
+/// `sparkles.test_runner.attributes` must resolve.
+private enum string runnerSourceRoot =
+    sourceRootOf(__FILE_FULL_PATH__, "sparkles.test_runner.driver");
+
 /// `-I` roots derived from every discovered test's module-name ↔ file-path
-/// pair, plus the user-supplied extras.
+/// pair, plus the runner's own root and the user-supplied extras.
 string[] deriveImportPaths(in Test[] allTests, in string[] extra) @safe pure
 {
     import std.algorithm.searching : canFind;
 
-    string[] roots = extra.dup;
+    string[] roots = extra.dup ~ runnerSourceRoot;
     foreach (ref test; allTests)
     {
         const root = sourceRootOf(test.location.file, test.moduleName);
@@ -94,7 +101,58 @@ unittest
         Test(fullName: "other.c.__unittest_L1_C1", name: "c",
             location: TestLocation("lib2/src/other/c.d", 1, 1)),
     ];
-    assert(deriveImportPaths(tests, ["extra"]) == ["extra", "src", "lib2/src"]);
+    assert(deriveImportPaths(tests, ["extra"]) ==
+        ["extra", runnerSourceRoot, "src", "lib2/src"]);
+}
+
+/// The dub package root containing `sourceRoot`: the nearest ancestor
+/// directory (including itself) with a `dub.sdl`/`dub.json`, or `null`.
+private string findPackageRoot(string sourceRoot) @safe
+{
+    import std.file : exists;
+    import std.path : buildPath, dirName;
+
+    for (string dir = sourceRoot; dir.length && dir != "/" && dir != ".";
+        dir = dir.dirName)
+    {
+        if (buildPath(dir, "dub.sdl").exists || buildPath(dir, "dub.json").exists)
+            return dir;
+    }
+    return null;
+}
+
+/// Import paths reported by `dub describe` for the packages containing the
+/// derived source roots — this is how paths of registry dependencies (e.g.
+/// `expected`) are found. Best-effort: failures yield an empty list.
+private string[] dubDescribeImportPaths(in string[] sourceRoots, bool verbose)
+{
+    import std.algorithm.iteration : filter;
+    import std.algorithm.searching : canFind;
+    import std.string : lineSplitter;
+
+    if (!inPath("dub"))
+        return null;
+
+    string[] packageRoots;
+    foreach (root; sourceRoots)
+    {
+        const packageRoot = findPackageRoot(root);
+        if (packageRoot !is null && !packageRoots.canFind(packageRoot))
+            packageRoots ~= packageRoot;
+    }
+
+    string[] paths;
+    foreach (packageRoot; packageRoots)
+    {
+        const result = run(["dub", "describe", "--root", packageRoot,
+            "--data=import-paths", "--data-list"], verbose);
+        if (result.status != 0)
+            continue;
+        foreach (line; result.output.lineSplitter.filter!(l => l.length))
+            if (!paths.canFind(line))
+                paths ~= line;
+    }
+    return paths;
 }
 
 /// Slices the bodies of `tests` out of their source files. Files are read
@@ -162,6 +220,32 @@ private auto run(const(string)[] command, bool verbose)
     return execute(command);
 }
 
+/// The extra `-i=<pattern>` flags requested with `--include-import` (e.g.
+/// `--include-import=std.ascii` to compile a std module in when an extracted
+/// test needs one of its non-template functions).
+private string[] includeFlags(in DriverOptions options) @safe pure
+{
+    import std.algorithm.iteration : map;
+    import std.array : array;
+
+    return options.includeImports.map!(p => "-i=" ~ p).array;
+}
+
+/// The complete `-I` flag list: derived source roots, `dub describe`d
+/// dependency paths, and user extras.
+private string[] allImportFlags(in Test[] allTests, in DriverOptions options)
+{
+    import std.algorithm.iteration : map;
+    import std.algorithm.searching : canFind;
+    import std.array : array;
+
+    auto roots = deriveImportPaths(allTests, options.importPaths);
+    foreach (path; dubDescribeImportPaths(roots, options.verbose))
+        if (!roots.canFind(path))
+            roots ~= path;
+    return roots.map!(p => "-I" ~ p).array;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // --better-c
 // ─────────────────────────────────────────────────────────────────────────────
@@ -197,11 +281,16 @@ DriverOutcome runBetterCTests(Test[] betterCTests, Test[] allTests, in DriverOpt
     const binary = buildPath(workDir, "betterc_tests");
     write(sourceFile, generateBetterCProgram(extractTests(betterCTests)));
 
-    const importFlags = deriveImportPaths(allTests, options.importPaths)
-        .map!(p => "-I" ~ p)
-        .array;
+    const importFlags = allImportFlags(allTests, options);
+    // By default only the generated program is compiled, so extracted tests
+    // can use templates/CTFE-able code from the imported modules but cannot
+    // link against their non-template functions (same constraints as the
+    // phobos @betterC suite). `--include-import=<pattern>` compiles matching
+    // modules in (`-i=<pattern>`) — they must be betterC-codegen-clean, e.g.
+    // `--include-import=sparkles.base.text --include-import=std.ascii`.
     const compile = run(
-        [compiler, "-betterC", "-of=" ~ binary] ~ importFlags ~ [sourceFile],
+        [compiler, "-betterC", "-of=" ~ binary]
+            ~ includeFlags(options) ~ importFlags ~ [sourceFile],
         options.verbose);
     if (compile.status != 0)
     {
@@ -261,14 +350,12 @@ DriverOutcome runWasmTests(Test[] wasmTests, Test[] allTests, in DriverOptions o
     write(sourceFile, generateWasmProgram(extracted));
     write(shimFile, generateWasmJsShim(extracted, wasmFile));
 
-    const importFlags = deriveImportPaths(allTests, options.importPaths)
-        .map!(p => "-I" ~ p)
-        .array;
+    const importFlags = allImportFlags(allTests, options);
     const compile = run(
         [compiler, "-mtriple=wasm32-unknown-unknown-wasm", "-betterC",
             // reactor-style module: no _start, tests are individual exports
             "-L--no-entry",
-            "-of=" ~ wasmFile] ~ importFlags ~ [sourceFile],
+            "-of=" ~ wasmFile] ~ includeFlags(options) ~ importFlags ~ [sourceFile],
         options.verbose);
     if (compile.status != 0)
     {
