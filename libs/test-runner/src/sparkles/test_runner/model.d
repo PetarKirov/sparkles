@@ -29,6 +29,10 @@ struct TestTraits
 
     /// Fixed benchmark iteration count; `0` auto-scales.
     uint benchIterations;
+
+    /// The test's safety/purity attributes (`"@safe pure nothrow @nogc"`),
+    /// re-applied to extracted `@betterC`/`@wasm` test functions.
+    string functionAttributes;
 }
 
 /// One discovered `unittest` block.

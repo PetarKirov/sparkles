@@ -65,3 +65,17 @@ struct benchmark
     /// count until one sample takes long enough to time reliably.
     uint iterations = 0;
 }
+
+@("attributes.selfContained.wasm")
+@wasm @betterC @safe pure nothrow @nogc
+unittest
+{
+    // Dogfoods @wasm (and @betterC) end to end. It lives in this import-free
+    // module on purpose: with a stock LDC, a `@wasm` test's module import
+    // chain must avoid druntime headers that don't support wasm32 (a
+    // wasm-enabled LDC with full druntime/Phobos lifts that restriction).
+    int parity;
+    foreach (c; "wasm")
+        parity ^= c;
+    assert(parity == ('w' ^ 'a' ^ 's' ^ 'm'));
+}
