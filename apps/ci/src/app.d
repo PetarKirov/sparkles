@@ -144,7 +144,7 @@ struct CliParams
     @CliOption(`u|update`, "Rewrite the markdown file with actual example output.")
     bool update;
 
-    @CliOption(`x|example-files`, "Run standalone example .d files instead of markdown examples. With no files, defaults to libs/base/examples/*.d, libs/core-cli/examples/*.d, and docs/research/async-io/io-uring/examples/*.d.")
+    @CliOption(`x|example-files`, "Run standalone example .d files instead of markdown examples. With no files, defaults to libs/base/examples/*.d, libs/core-cli/examples/*.d, docs/research/async-io/io-uring/examples/*.d, and docs/research/units-of-measure/examples/*.d.")
     bool exampleFiles;
 
     @CliOption(`t|test`, "Run dub test for each sub-package defined in the root dub.sdl.")
@@ -391,9 +391,9 @@ private string[] trackedMarkdownFiles()
 
 /// Git pathspecs for the repository's standalone example `.d` files — the
 /// defaults `--example-files` uses when no `--files` selection is given: the
-/// `base` and `core-cli` library demos plus the `io_uring` worked examples
-/// that accompany the async-I/O research docs
-/// (`docs/research/async-io/io-uring/`).
+/// `base` and `core-cli` library demos plus the worked examples that accompany
+/// the research docs (`docs/research/async-io/io-uring/` and
+/// `docs/research/units-of-measure/`).
 @safe pure nothrow
 private string[] standaloneExampleGlobs()
 {
@@ -401,6 +401,7 @@ private string[] standaloneExampleGlobs()
         "libs/base/examples/*.d",
         "libs/core-cli/examples/*.d",
         "docs/research/async-io/io-uring/examples/*.d",
+        "docs/research/units-of-measure/examples/*.d",
     ];
 }
 
