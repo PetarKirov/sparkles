@@ -40,6 +40,22 @@ TestLocation testLocation(alias test)()
     return TestLocation(__traits(getLocation, test));
 }
 
+/// The subset of a test's function attributes that extracted `@betterC` /
+/// `@wasm` test functions re-apply (safety, purity, `nothrow`, `@nogc`).
+string functionAttributesOf(alias test)()
+{
+    string attributes;
+    static foreach (attribute; __traits(getFunctionAttributes, test))
+    {
+        static if (attribute == "@safe" || attribute == "@system"
+            || attribute == "pure" || attribute == "nothrow" || attribute == "@nogc")
+        {
+            attributes ~= attribute ~ " ";
+        }
+    }
+    return attributes;
+}
+
 /// The runner-attribute traits of a unittest block.
 TestTraits testTraits(alias test)()
 {
@@ -47,6 +63,8 @@ TestTraits testTraits(alias test)()
     traits.isBetterC = hasUDA!(test, betterC);
     traits.isCtfe = hasUDA!(test, ctfe);
     traits.isWasm = hasUDA!(test, wasm);
+    static if (hasUDA!(test, betterC) || hasUDA!(test, wasm))
+        traits.functionAttributes = functionAttributesOf!test;
     static if (hasUDA!(test, benchmark))
     {
         traits.isBenchmark = true;
