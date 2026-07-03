@@ -172,6 +172,12 @@ if (is(E == enum))
     }
 }
 
+/// Encodes a struct field by field, dispatching each on its policy inline —
+/// converts, then the field's value-slot enum policy at the field and one
+/// wrapper level, then the type-level walk. The dispatch lives in the loop body
+/// (rather than a per-field helper template) so a plain field costs no
+/// per-field instantiation and policy-carrying fields share the value-keyed
+/// `encodeEnumWith`/`encodeEnumArray` instantiations.
 private Res!JSONValue encodeStruct(T)(const T value)
 if (is(T == struct))
 {
@@ -181,9 +187,33 @@ if (is(T == struct))
     JSONValue[string] obj;
     static foreach (i; 0 .. policies.length)
     {{
-        if (!shouldOmit!(T, i, policies[i].skip)(value.tupleof[i]))
+        alias V = typeof(T.tupleof[i]);
+
+        // The §5.4 encode-omission test for this field's skip policy.
+        static if (policies[i].skip == WireSkip.never)
+            enum bool omitted = false;
+        else static if (policies[i].skip == WireSkip.whenDefault)
+            const bool omitted = value.tupleof[i] == T.init.tupleof[i];
+        else
+            const bool omitted = isEmptyValue(value.tupleof[i]);
+
+        if (!omitted)
         {
-            auto r = encodeFieldValue!(T, i)(value.tupleof[i]);
+            static if (hasConvert!(Json, T.tupleof[i]))
+                auto r = encodeVia!(convertOf!(Json, T.tupleof[i]), V)(value.tupleof[i]);
+            else static if (is(V == enum))
+                auto r = encodeEnumWith!(V,
+                    policies[i].reprFor(WireTarget.all, resolveRepr!(Json, V)),
+                    policies[i].caseFor(WireTarget.all, resolveCaseStyle!(Json, V)))(
+                    value.tupleof[i]);
+            else static if (is(V == E[], E) && is(E == enum))
+                auto r = encodeEnumArray!(E,
+                    policies[i].reprFor(WireTarget.value, resolveRepr!(Json, E)),
+                    policies[i].caseFor(WireTarget.value, resolveCaseStyle!(Json, E)))(
+                    value.tupleof[i]);
+            else
+                auto r = encodeImpl(value.tupleof[i]);
+
             if (r.error !is null)
                 return r;
             obj[policies[i].key] = r.value;
@@ -192,40 +222,18 @@ if (is(T == struct))
     return resOk(JSONValue(obj));
 }
 
-/// Encodes an aggregate field's value, applying the field's value-slot enum
-/// policy at the field and one wrapper level; everything else recurses through
-/// the type-level `toJSON`. Takes the aggregate type and field index so the
-/// field alias carries no instance context.
-private Res!JSONValue encodeFieldValue(T, size_t i)(const typeof(T.tupleof[i]) value)
+private Res!JSONValue encodeEnumArray(E, Repr repr, CaseStyle style)(const E[] values)
+if (is(E == enum))
 {
-    alias V = typeof(T.tupleof[i]);
-    enum pol = fieldPolicies!(Json, T)[i];
-
-    static if (hasConvert!(Json, T.tupleof[i]))
-        return encodeVia!(convertOf!(Json, T.tupleof[i]), V)(value);
-
-    else static if (is(V == enum))
-        return encodeEnumWith!(V,
-            pol.reprFor(WireTarget.all, resolveRepr!(Json, V)),
-            pol.caseFor(WireTarget.all, resolveCaseStyle!(Json, V)))(value);
-
-    else static if (is(V == E[], E) && is(E == enum))
+    JSONValue[] arr;
+    foreach (e; values)
     {
-        JSONValue[] arr;
-        foreach (e; value)
-        {
-            auto r = encodeEnumWith!(E,
-                pol.reprFor(WireTarget.value, resolveRepr!(Json, E)),
-                pol.caseFor(WireTarget.value, resolveCaseStyle!(Json, E)))(e);
-            if (r.error !is null)
-                return r;
-            arr ~= r.value;
-        }
-        return resOk(JSONValue(arr));
+        auto r = encodeEnumWith!(E, repr, style)(e);
+        if (r.error !is null)
+            return r;
+        arr ~= r.value;
     }
-
-    else
-        return encodeImpl(value);
+    return resOk(JSONValue(arr));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -552,6 +560,8 @@ if (is(E == enum))
     }
 }
 
+/// Decodes a struct field by field, dispatching each on its policy inline —
+/// see `encodeStruct` for why the dispatch is not a per-field helper template.
 private Res!T decodeStruct(T)(JSONValue json)
 if (is(T == struct))
 {
@@ -564,9 +574,25 @@ if (is(T == struct))
     T result;
     static foreach (i; 0 .. policies.length)
     {{
+        alias V = typeof(T.tupleof[i]);
+
         if (auto p = policies[i].key in json.object)
         {
-            auto r = decodeFieldValue!(T, i)(*p);
+            static if (hasConvert!(Json, T.tupleof[i]))
+                auto r = decodeVia!(convertOf!(Json, T.tupleof[i]), V)(*p);
+            else static if (is(V == enum))
+                auto r = decodeEnumWith!(V,
+                    policies[i].reprFor(WireTarget.all, resolveRepr!(Json, V)),
+                    policies[i].caseFor(WireTarget.all, resolveCaseStyle!(Json, V)))(*p);
+            else static if (is(V == E[], E) && is(E == enum))
+                auto r = decodeEnumArray!(E,
+                    policies[i].reprFor(WireTarget.value, resolveRepr!(Json, E)),
+                    policies[i].caseFor(WireTarget.value, resolveCaseStyle!(Json, E)))(*p);
+            else static if (isSumType!V)
+                auto r = decodeSumType!(V, policies[i].match)(*p);
+            else
+                auto r = decodeImpl!V(*p);
+
             if (r.error !is null)
             {
                 // A present but invalid value under `useDefault` leaves the field
@@ -578,7 +604,7 @@ if (is(T == struct))
             else
                 result.tupleof[i] = r.value;
         }
-        else static if (isNullAware!(typeof(T.tupleof[i])) || policies[i].optional)
+        else static if (isNullAware!V || policies[i].optional)
         {
             // A missing null-aware or @WireOptional field decodes to its default,
             // which the `T result;` default already holds (§4.5, §5.4).
@@ -591,41 +617,20 @@ if (is(T == struct))
     return resOk(result);
 }
 
-private Res!(typeof(T.tupleof[i])) decodeFieldValue(T, size_t i)(JSONValue json)
+private Res!(E[]) decodeEnumArray(E, Repr repr, CaseStyle style)(JSONValue json)
+if (is(E == enum))
 {
-    alias V = typeof(T.tupleof[i]);
-    enum pol = fieldPolicies!(Json, T)[i];
-
-    static if (hasConvert!(Json, T.tupleof[i]))
-        return decodeVia!(convertOf!(Json, T.tupleof[i]), V)(json);
-
-    else static if (is(V == enum))
-        return decodeEnumWith!(V,
-            pol.reprFor(WireTarget.all, resolveRepr!(Json, V)),
-            pol.caseFor(WireTarget.all, resolveCaseStyle!(Json, V)))(json);
-
-    else static if (is(V == E[], E) && is(E == enum))
+    if (json.type != JSONType.array)
+        return resFail!(E[])("Cannot decode " ~ (E[]).stringof ~ " at $: expected a JSON array");
+    E[] result;
+    foreach (elem; json.array)
     {
-        if (json.type != JSONType.array)
-            return resFail!V("Cannot decode " ~ V.stringof ~ " at $: expected a JSON array");
-        V result;
-        foreach (elem; json.array)
-        {
-            auto r = decodeEnumWith!(E,
-                pol.reprFor(WireTarget.value, resolveRepr!(Json, E)),
-                pol.caseFor(WireTarget.value, resolveCaseStyle!(Json, E)))(elem);
-            if (r.error !is null)
-                return Res!V(r.error);
-            result ~= r.value;
-        }
-        return resOk(result);
+        auto r = decodeEnumWith!(E, repr, style)(elem);
+        if (r.error !is null)
+            return Res!(E[])(r.error);
+        result ~= r.value;
     }
-
-    else static if (isSumType!V)
-        return decodeSumType!(V, pol.match)(json);
-
-    else
-        return decodeImpl!V(json);
+    return resOk(result);
 }
 
 /// True for the null-aware wrapper types whose empty value maps to JSON `null`
@@ -633,28 +638,19 @@ private Res!(typeof(T.tupleof[i])) decodeFieldValue(T, size_t i)(JSONValue json)
 private enum bool isNullAware(V) =
     is(V == Nullable!N, N) || is(V == Optional!O, O) || is(V == Ternary);
 
-/// Whether aggregate field `i` of `T` is omitted on encode under its `@WireOptional`
-/// `skip` policy (§5.4): `whenEmpty` omits an empty null-aware value; `whenDefault`
-/// omits a value equal to the field's declared default; `never` never omits.
-private bool shouldOmit(T, size_t i, WireSkip skip)(const typeof(T.tupleof[i]) value)
+/// Whether a null-aware value is empty — the `WireSkip.whenEmpty` test (§5.4).
+/// Keyed by the value type alone so same-typed fields share one instantiation;
+/// the `never` and `whenDefault` policies are handled inline in `encodeStruct`.
+private bool isEmptyValue(V)(const V value)
 {
-    alias V = typeof(T.tupleof[i]);
-
-    static if (skip == WireSkip.never)
-        return false;
-    else static if (skip == WireSkip.whenEmpty)
-    {
-        static if (is(V == Nullable!N, N))
-            return value.isNull;
-        else static if (is(V == Optional!O, O))
-            return value.empty;
-        else static if (is(V == Ternary))
-            return value == Ternary.unknown;
-        else
-            return false;
-    }
+    static if (is(V == Nullable!N, N))
+        return value.isNull;
+    else static if (is(V == Optional!O, O))
+        return value.empty;
+    else static if (is(V == Ternary))
+        return value == Ternary.unknown;
     else
-        return value == T.init.tupleof[i];
+        return false;
 }
 
 /// Duck-types the `expected` result so a converter may return either a plain
