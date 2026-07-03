@@ -47,12 +47,10 @@ import sparkles.test_runner.reporting : formatBenchTable, formatCtfeLine,
 // Compile-time execution of @ctfe tests
 // ─────────────────────────────────────────────────────────────────────────────
 
-private enum bool ctfePasses(alias test) = () { test(); return true; }();
-
 static foreach (m; dub_test_root.allModules)
     static foreach (test; __traits(getUnitTests, moduleOf!m))
         static if (hasUDA!(test, ctfe))
-            static assert(ctfePasses!test,
+            static assert({ test(); return true; }(),
                 "@ctfe unittest failed during CTFE: " ~ fullyQualifiedName!test);
 
 // ─────────────────────────────────────────────────────────────────────────────

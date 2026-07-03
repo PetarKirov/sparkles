@@ -15,7 +15,7 @@ TestResult executeTest(Test test)
     import core.exception : AssertError, OutOfMemoryError;
     import core.time : MonoTime;
 
-    auto result = TestResult(test);
+    auto result = TestResult(test: test);
     const started = MonoTime.currTime;
 
     try
