@@ -122,9 +122,12 @@ if (isOutputRange!(Writer, char) && isForwardRange!R && isSomeChar!(ElementType!
 
 /**
 Recases `ident` under `style`, returning a fresh `string`. For
-`CaseStyle.original` it returns `ident` unchanged; otherwise it builds the result
-via $(LREF writeConvertedCase), so the two forms never disagree. Usable during
-CTFE, so consumers can derive names at compile time.
+`CaseStyle.original` it returns `ident` unchanged; otherwise it builds the
+result via $(LREF writeConvertedCase) at run time, and via an index-loop mirror
+of the same split/rejoin rules during CTFE — the interpreter pays heavily for
+the range and output-range machinery, and compile-time name derivation (e.g.
+the `sparkles:wired` policy tables) calls this in every consumer build. The
+`case_style.convertCase.ctfeMatchesRuntime` test locks the two paths together.
 */
 string convertCase(CaseStyle style)(string ident)
 {
@@ -134,6 +137,65 @@ string convertCase(CaseStyle style)(string ident)
     }
     else
     {
+        if (__ctfe)
+        {
+            import std.ascii : isDigit, isLower, isUpper, toLower, toUpper;
+
+            enum bool hasJoin = style == CaseStyle.snakeCase
+                || style == CaseStyle.kebabCase
+                || style == CaseStyle.screamingSnakeCase;
+            enum char joinCh = style == CaseStyle.kebabCase ? '-' : '_';
+
+            string s;
+            bool atWordStart = true;
+            size_t wordNumber = 0;
+            char prev = 0;
+
+            foreach (i, c; ident)
+            {
+                if (c == '_' || c == '-' || c == ' ')
+                {
+                    atWordStart = true;
+                    prev = c;
+                    continue;
+                }
+
+                if (!atWordStart && c.isUpper)
+                {
+                    const bool nextLower = i + 1 < ident.length && ident[i + 1].isLower;
+                    if (prev.isLower || prev.isDigit || (prev.isUpper && nextLower))
+                        atWordStart = true;
+                }
+
+                if (atWordStart)
+                {
+                    if (s.length && hasJoin)
+                        s ~= joinCh;
+
+                    static if (style == CaseStyle.snakeCase || style == CaseStyle.kebabCase)
+                        s ~= cast(char) c.toLower;
+                    else static if (style == CaseStyle.screamingSnakeCase
+                        || style == CaseStyle.pascalCase)
+                        s ~= cast(char) c.toUpper;
+                    else // camelCase: lowercase the leading word, title-case the rest
+                        s ~= cast(char)(wordNumber == 0 ? c.toLower : c.toUpper);
+
+                    atWordStart = false;
+                    wordNumber++;
+                }
+                else
+                {
+                    static if (style == CaseStyle.screamingSnakeCase)
+                        s ~= cast(char) c.toUpper;
+                    else
+                        s ~= cast(char) c.toLower;
+                }
+
+                prev = c;
+            }
+            return s;
+        }
+
         static struct StringSink
         {
             string s;
@@ -144,6 +206,25 @@ string convertCase(CaseStyle style)(string ident)
         writeConvertedCase!style(sink, ident);
         return sink.s;
     }
+}
+
+// The CTFE fast path and the writer-based runtime path must agree, style by
+// style, over the conformance corpus (acronyms, digits, separators, edges).
+@("case_style.convertCase.ctfeMatchesRuntime")
+@safe pure unittest
+{
+    static immutable inputs = ["fromXMLToJSON", "JSONValue", "fastPath",
+        "html5Parser", "version2", "already_snake", "kebab-input", "Mixed_Sep hi",
+        "A", "ab", "", "x Y z"];
+
+    static foreach (m; __traits(allMembers, CaseStyle))
+        static foreach (i; 0 .. inputs.length)
+        {{
+            enum ctfeResult =
+                convertCase!(__traits(getMember, CaseStyle, m))(inputs[i]);
+            assert(convertCase!(__traits(getMember, CaseStyle, m))(inputs[i])
+                == ctfeResult);
+        }}
 }
 
 // CTFE conformance (case-style spec §4/§5): every style, plus acronym, digit,
