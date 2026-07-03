@@ -7,24 +7,26 @@ includes it. Keep it accurate — a stale fact here propagates into every agent'
 ## Project Overview
 
 `sparkles` is a D monorepo of CLI/library utilities. The root `dub.sdl` declares
-nine sub-packages:
+ten sub-packages:
 
-| Sub-package           | Path              | What it is                                                                                                                                           |
-| --------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ci`                  | `apps/ci`         | Repository CI helper: runs/verifies markdown examples, standalone examples, sub-package tests, and markdown link maintenance                         |
-| `release`             | `apps/release`    | Release automation: scans tags as SemVer, summarizes commits, suggests a bump, gathers notes ($EDITOR or a CLI LLM agent), tags and publishes        |
-| `terminal`            | `apps/terminal`   | Minimal raylib-based terminal emulator built on `sparkles:ghostty`                                                                                   |
-| `sparkles:base`       | `libs/base`       | Allocation-conscious foundation utilities: `SmallBuffer`, lifetime helpers, `@nogc` text readers/writers, terminal styling, styled IES, and logging  |
-| `sparkles:core-cli`   | `libs/core-cli`   | CLI argument parsing, help formatting, pretty-printing, UI components (table/box/header/OSC links), process utilities, terminal size/unstyle helpers |
-| `sparkles:ghostty`    | `libs/ghostty`    | D bindings + ImportC integration layer for `libghostty-vt` (Ghostty's terminal VT engine)                                                            |
-| `sparkles:math`       | `libs/math`       | Small math primitives for games/graphics (early stage)                                                                                               |
-| `sparkles:test-utils` | `libs/test-utils` | Testing helpers: diff tools, temp-filesystem helpers, string helpers                                                                                 |
-| `sparkles:versions`   | `libs/versions`   | Design-by-Introspection versioning library (SemVer, DMD, CalVer, PyPI, Maven, Deb, …) with VERS/pURL interop                                         |
+| Sub-package            | Path               | What it is                                                                                                                                           |
+| ---------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ci`                   | `apps/ci`          | Repository CI helper: runs/verifies markdown examples, standalone examples, sub-package tests, and markdown link maintenance                         |
+| `release`              | `apps/release`     | Release automation: scans tags as SemVer, summarizes commits, suggests a bump, gathers notes ($EDITOR or a CLI LLM agent), tags and publishes        |
+| `terminal`             | `apps/terminal`    | Minimal raylib-based terminal emulator built on `sparkles:ghostty`                                                                                   |
+| `sparkles:base`        | `libs/base`        | Allocation-conscious foundation utilities: `SmallBuffer`, lifetime helpers, `@nogc` text readers/writers, terminal styling, styled IES, and logging  |
+| `sparkles:core-cli`    | `libs/core-cli`    | CLI argument parsing, help formatting, pretty-printing, UI components (table/box/header/OSC links), process utilities, terminal size/unstyle helpers |
+| `sparkles:ghostty`     | `libs/ghostty`     | D bindings + ImportC integration layer for `libghostty-vt` (Ghostty's terminal VT engine)                                                            |
+| `sparkles:math`        | `libs/math`        | Small math primitives for games/graphics (early stage)                                                                                               |
+| `sparkles:test-runner` | `libs/test-runner` | General-purpose `unittest` runner (silly successor): parallel runtime tests plus `@ctfe`, `@betterC`, `@wasm`, and `@benchmark` modes                |
+| `sparkles:test-utils`  | `libs/test-utils`  | Testing helpers: diff tools, temp-filesystem helpers, string helpers                                                                                 |
+| `sparkles:versions`    | `libs/versions`    | Design-by-Introspection versioning library (SemVer, DMD, CalVer, PyPI, Maven, Deb, …) with VERS/pURL interop                                         |
 
 Each library **should** be documented under `docs/libs/<name>/` as a
 [Diátaxis](https://diataxis.fr/) tree (`tutorial/`, `how-to/`, `reference/`,
-`explanation/`). Today `sparkles:base` and `sparkles:versions` are documented
-([`docs/libs/base/`](../libs/base/index.md),
+`explanation/`). Today `sparkles:base`, `sparkles:test-runner`, and
+`sparkles:versions` are documented ([`docs/libs/base/`](../libs/base/index.md),
+[`docs/libs/test-runner/`](../libs/test-runner/index.md),
 [`docs/libs/versions/`](../libs/versions/index.md)); `core-cli`, `test-utils`,
 `math`, and `ghostty` do not yet have a `docs/libs/<name>/` tree. When you add
 or substantially extend a library, add/extend its docs in that location.
@@ -51,7 +53,7 @@ Cross-cutting guides live in `docs/guidelines/`:
 ```
 sparkles/
 ├── flake.nix                       # Nix flake (devshell, `ci` package, checks)
-├── dub.sdl                         # Root package; declares the 8 sub-packages
+├── dub.sdl                         # Root package; declares the 10 sub-packages
 ├── apps/
 │   ├── ci/                         # `ci` helper (executable sub-package)
 │   │   ├── src/app.d               # Markdown example runner / verifier, link maintenance
@@ -90,6 +92,14 @@ sparkles/
 │   │   ├── operations.d, ranges.d, parsing.d, traits.d, any.d
 │   │   ├── purl.d, vers.d          # pURL / VERS interop
 │   │   └── testing.d               # checkRoundTrip / checkRejects / checkAscending
+│   ├── test-runner/src/sparkles/test_runner/
+│   │   ├── attributes.d            # @betterC / @ctfe / @wasm / @benchmark marker UDAs
+│   │   ├── runner.d                # extendedModuleUnitTester hook, CLI, mode dispatch
+│   │   ├── discovery.d, model.d    # compile-time discovery; Test/TestResult data model
+│   │   ├── execution.d, reporting.d # parallel execution; styled result rendering
+│   │   ├── bench.d                 # benchIter/blackBox, auto-scaling measurement
+│   │   ├── extract.d, driver.d     # unittest-body extraction; -betterC/wasm drivers
+│   │   └── ctfe_trace.d            # -ftime-trace CTFE cost attribution
 │   ├── test-utils/src/sparkles/test_utils/
 │   │   └── diff_tools.d, tmpfs.d, string.d, package.d
 │   ├── math/src/sparkles/math/     # vector.d, package.d
@@ -124,7 +134,7 @@ dub test  :base
 dub test  :core-cli
 dub test  :versions
 
-# Run tests matching / excluding a pattern (silly runner; see options below)
+# Run tests matching / excluding a pattern (sparkles:test-runner; see below)
 dub test :base -- -i "SmallBuffer"
 dub test :core-cli -- -e "slow"
 dub test :core-cli -- -v            # verbose: full stack traces + durations
@@ -150,24 +160,45 @@ dub --root /path/to/worktree test :core-cli
 > untracked files. Symptom: a freshly created `libs/foo/dub.sdl` or new module
 > "doesn't exist" / "No package file found". Fix: `git add` it.
 
-### Test runner (silly)
+### Test runner (`sparkles:test-runner`)
 
-The project uses the `silly` test runner (`~>1.1.1`). Options after `--`:
+The project uses its own runner, `sparkles:test-runner` (`libs/test-runner`,
+silly's successor — same CLI, documented under
+[`docs/libs/test-runner/`](../libs/test-runner/index.md)). Options after `--`:
 
 ```
--i, --include    Run tests matching regex
--e, --exclude    Skip tests matching regex
--v, --verbose    Show full stack traces and durations
--t, --threads    Number of worker threads (0 = auto)
---no-colours     Disable colored output
+-i, --include       Run tests matching regex
+-e, --exclude       Skip tests matching regex
+-v, --verbose       Show durations, [file:line] locations, full stack traces
+-t, --threads       Number of worker threads (0 = auto)
+-l, --list          List discovered tests (with attribute markers)
+--no-colours        Disable colored output
+--bench             Run @benchmark tests (auto-scaling ns/iter statistics)
+--better-c          Extract @betterC tests, compile with -betterC, run them
+--wasm              Extract @wasm tests, cross-compile to wasm32, run them
+--ctfe-trace FILE   Attribute CTFE cost per @ctfe test from -ftime-trace JSON
+--self-test         Also run the runner's own unittests
 ```
+
+Tests opt into the special modes with marker UDAs from
+`sparkles.test_runner.attributes` (`@ctfe`, `@betterC`, `@wasm`,
+`@benchmark`); import them **unconditionally**, not under
+`version (unittest)` — see the
+[attribute reference](../libs/test-runner/reference/attributes.md).
+`@ctfe` tests run while the test build compiles (a failure is a compile
+error) and are skipped at runtime.
+
+Every sub-package integrates the runner via `sourcePaths`/`importPaths` in
+`dub.sdl` (a dub dependency would be a package-level cycle for `base` and
+`core-cli`) — copy the block from any existing `configuration "unittest"`
+when adding a new sub-package.
 
 > [!WARNING]
-> **silly does not discover unittests that live only in `package.d`.** `dub test`
-> generates a `dub_test_root.d` whose `allModules` list excludes `package.d`, so a
-> module whose tests are in `package.d` runs **zero** tests (and silently
-> "passes"). Put tests in feature modules; keep `package.d` for `public import`
-> re-exports only.
+> **The runner does not discover unittests that live only in `package.d`**
+> (same as silly). `dub test` generates a `dub_test_root.d` whose
+> `allModules` list excludes `package.d`, so a module whose tests are in
+> `package.d` runs **zero** tests (and silently "passes"). Put tests in
+> feature modules; keep `package.d` for `public import` re-exports only.
 
 ### Run the full CI check locally
 
@@ -348,7 +379,8 @@ see [Design by Introspection Guidelines](./design-by-introspection-01-guidelines
 
 - Every public function should have a unit test following it.
 - At minimum, one public/DDoc-ed unit test (`///`) per function.
-- Keep tests in feature modules, **not** in `package.d` (see the silly warning above).
+- Keep tests in feature modules, **not** in `package.d` (see the test-runner
+  warning above).
 
 ### Test attributes
 
@@ -414,7 +446,7 @@ unittest
 (Note: a bare `check` is **not** an importable helper — it appears as an ad-hoc
 local function inside some tests. Use the named helpers above.)
 
-### Test naming (silly UDAs)
+### Test naming (string UDAs)
 
 ```d
 @("ModuleName.functionName.testCase")
@@ -540,9 +572,9 @@ have the repo layout, so they keep `version="*"`.
 
 Conventional commits: `<type>(<scope>): <description>` (lowercase description).
 
-- **Scope** = a sub-package (`base`, `core-cli`, `versions`, `math`, `test-utils`,
-  `ghostty`, `ci`, `release`, `terminal`) or an area (`nix`, `dub`, `guidelines`,
-  `gh-actions`, `docs`, `research`).
+- **Scope** = a sub-package (`base`, `core-cli`, `versions`, `math`,
+  `test-runner`, `test-utils`, `ghostty`, `ci`, `release`, `terminal`) or an
+  area (`nix`, `dub`, `guidelines`, `gh-actions`, `docs`, `research`).
 - **Type** — one of the following (one example each):
 
 | Type       | Use for                                  | Example                                                               |
@@ -605,7 +637,7 @@ A quick scan of the gotchas above plus a few more:
 
 - [ ] `git add` new files before `nix develop`/flake builds see them.
 - [ ] Don't run bare `ci` after editing `apps/ci`; use `dub run :ci -- …` / `nix run .#ci -- …`.
-- [ ] Tests in `package.d` don't run under silly — move them to feature modules.
+- [ ] Tests in `package.d` don't run under the test runner — move them to feature modules.
 - [ ] Don't force `@safe`/`@trusted` on templates; let attributes infer.
 - [ ] `dip1000`/`in` can reject `scope` for some Phobos calls — relax to `const(char)[]`.
 - [ ] `splitter`/`std.utf`/`.text`/`std.conv` break `nothrow @nogc` — use the `text` package.
@@ -619,7 +651,8 @@ A quick scan of the gotchas above plus a few more:
 
 - `expected` (`~>0.4.1`) — `Expected!(T, E)` error handling; **runtime** dep of
   `base` and `versions`.
-- `silly` (`~>1.1.1`) — unittest runner; dev/configuration dependency.
+- `sparkles:test-runner` (in-tree) — unittest runner; integrated via
+  `sourcePaths`/`importPaths` in each `configuration "unittest"`.
 - `delta` — diff tool used by test diff output; system dependency via Nix.
 
 D dependencies are managed via `dub.sdl` (pinned in `dub.selections.json` /
