@@ -88,7 +88,10 @@
         postFixup =
           let
             path = lib.makeBinPath [
-              pkgs.git
+              # gitMinimal (no python/perl): ci only shells out to git plumbing
+              # for link maintenance, and full git pulls a second CPython (via
+              # git-p4's shebang) into the closure. See nix/shells/default.nix.
+              pkgs.gitMinimal
               pkgs.dub
               ciCompiler
             ];
