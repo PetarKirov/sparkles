@@ -277,9 +277,13 @@ survey suggests the design center for an allocation-conscious D parsing toolkit:
   re-serializable CST (e.g. a formatter) — otherwise a plain AST is lighter. Incremental
   is an architecture to adopt deliberately for an editor, never to retrofit.
 
-A future `d-landscape.md` (Pegged, `std.experimental.lexer`, the in-tree parsers) and a
-milestoned proposal are deferred; this section is the design-lessons sketch the survey
-currently supports.
+These design lessons are cashed in two follow-on documents: the **[D parsing
+landscape][d-landscape]** surveys what D itself offers (Pegged, the dmd/libdparse/sdc
+hand-written front-ends, mir-ion/asdf, pry) and pinpoints the gap — no maintained, `@nogc`,
+zero-copy ordered-choice combinator — that a Sparkles toolkit fills; and the
+**[`sparkles:parsing` proposal](../../specs/parsing/index.md)** (+ its
+[milestones](../../specs/parsing/PLAN.md)) turns the sketch above into a concrete,
+bottom-up design over the existing [`sparkles.base.text`][base-text] readers.
 
 ---
 
@@ -329,6 +333,7 @@ recovery ladder — trace to Knuth 1965, Earley 1970, Ford 2002/2004, Valiant 19
 [combine]: ./rust-combine.md
 [angstrom]: ./ocaml-angstrom.md
 [fparsec]: ./fsharp-fparsec.md
+[d-landscape]: ./d-landscape.md
 [v-parsing]: https://github.com/PetarKirov/sparkles/blob/main/libs/versions/src/sparkles/versions/parsing.d
 [cli-args]: https://github.com/PetarKirov/sparkles/blob/main/libs/core-cli/src/sparkles/core_cli/args.d
 [base-text]: https://github.com/PetarKirov/sparkles/blob/main/libs/base/src/sparkles/base/text/package.d

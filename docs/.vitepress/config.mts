@@ -306,6 +306,14 @@ export default withMermaid(
               ],
             },
             {
+              text: 'Parsing (proposal)',
+              collapsed: true,
+              items: [
+                { text: 'Design Proposal', link: '/specs/parsing/' },
+                { text: 'Delivery Plan', link: '/specs/parsing/PLAN' },
+              ],
+            },
+            {
               text: 'Versions',
               collapsed: false,
               items: [
@@ -466,6 +474,10 @@ export default withMermaid(
                 {
                   text: 'Comparison & Synthesis',
                   link: '/research/parsing/comparison',
+                },
+                {
+                  text: 'The D Landscape',
+                  link: '/research/parsing/d-landscape',
                 },
               ],
             },
