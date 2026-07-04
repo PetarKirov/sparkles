@@ -357,7 +357,7 @@ extending `uom::Kind`, named in a `quantity!`'s optional `kind:` field —
 
   `degree_celsius` on the point type is the one place the conversion _constant_ slot is
   used (`@degree_celsius: 1.0_E0, 273.15_E0;` — [`src/si/thermodynamic_temperature.rs`][tt]
-  L92); on the interval type Celsius is a pure scale factor. This is a concrete
+  L90); on the interval type Celsius is a pure scale factor. This is a concrete
   instance of the [torsor / affine-quantity model][torsor], restricted to temperature —
   no general point-vs-difference machinery exists (no position-vs-displacement, no
   timestamp-vs-duration; contrast [Au][au]'s `QuantityPoint` and
@@ -432,7 +432,7 @@ directory in the repository. The evidence in the clone:
   it is qualified elsewhere, and the crate says so itself.
 
 Runtime artifacts do exist — the per-quantity `Units` enum, `FromStr`, and the
-formatting machinery ([`src/quantity.rs`][quantity-rs] L158–206, L426–451) — but they
+formatting machinery ([`src/quantity.rs`][quantity-rs] L158–206, L315–451) — but they
 are opt-in call sites, not overhead on arithmetic.
 
 ## Diagnostics
@@ -556,8 +556,9 @@ v0.37.0 even after the numerous quantity and unit additions", attributing the wi
   only) and half-integer dimensions are unwritable; see
   [Dimension representation](#dimension-representation).
 - **Unreadable errors** — `typenum`-mangled, alphabetized, truncated-to-file type
-  names with no domain-language rendering; the survey's worst-in-class diagnostic
-  quoted in [Diagnostics](#diagnostics).
+  names with no domain-language rendering; among the survey's least readable
+  diagnostics (only [`dimensioned`][dimensioned]'s nameless positional arrays are
+  worse), quoted in [Diagnostics](#diagnostics).
 - **Kind erasure under multiplication** — kinds don't compose; every
   quantity-times-quantity result resets to the default kind, so the angle/information
   distinctions vanish exactly where an angle-aware algebra would need them.

@@ -106,7 +106,8 @@ The file's own header documents the grammar
 # E.g. see below `meter = [length]`
 ```
 
-Representative lines, verbatim from the pinned file:
+Representative lines, verbatim from the pinned file (one trailing `#` comment
+elided from the `kelvin` line):
 
 ```text
 # pint: default_en.txt L109-110, L115-118, L207, L230
@@ -151,8 +152,9 @@ class UnitsContainer(Mapping[str, Scalar]):
     __slots__ = ("_d", "_hash", "_one", "_non_int_type")
 ```
 
-`Scalar` is `complex | float | int | Decimal | Fraction`
-([`pint/_typing.py`][typing] L18) — the exponent slot is an arbitrary Python number,
+`Scalar` covers `complex | float | int | Decimal | Fraction`
+(`_BuiltinScalar`, [`pint/_typing.py`][typing] L18; plus `np.number` when NumPy is
+present) — the exponent slot is an arbitrary Python number,
 which is where fractional powers come from. Multiplication merges the dicts adding
 exponents; division subtracts; `**` scales them — the
 [free-abelian-group][fag] operations executed literally on hash maps at run time.
@@ -316,7 +318,8 @@ Everything is extension, because everything is data:
 - **Groups and systems — named collections and base-unit choices.** `@group`
   clusters units (`USCSLengthInternational`, `Avoirdupois`, …); `@system` picks the
   base units used by `to_base_units()` — the shipped file defines `SI`, `mks`,
-  `cgs`, `atomic`, and `Planck` ([`default_en.txt`][defaults] L876–914), and
+  `cgs`, `atomic`, `Planck`, `imperial`, and `US`
+  ([`default_en.txt`][defaults] L876–924), and
   `ureg.default_system` switches among them at run time
   ([`docs/user/systems.rst`][systems]).
 - **Contexts — sanctioned dimension-crossing.** A `@context` registers _parametric_
@@ -325,7 +328,7 @@ Everything is extension, because everything is data:
   `speed_of_light / n / value` (refractive index `n` is a context parameter,
   [`default_en.txt`][defaults] L816–822); the `Gaussian` and `ESU` contexts bridge
   the half-integer electromagnetic dimensions to SI ones
-  ([`default_en.txt`][defaults] L752–786). This is Pint's counterpart of astropy's
+  ([`default_en.txt`][defaults] L752–785, L802–812). This is Pint's counterpart of astropy's
   equivalencies (below) — an escape hatch a static system would need a distinct
   quantity-relationship mechanism for.
 - **Scoping.** Each `UnitRegistry` is an isolated world: quantities are instances of
@@ -621,7 +624,8 @@ runtime-checked, term-level — with five instructive divergences:
 'second' ([time])`, with docs URLs in the affine/logarithmic errors.
 - **Near-zero adoption overhead** — one import, one registry, multiply by
   `ureg.meter`; string parsing for configuration-driven units.
-- **Ecosystem reach** — `pint-pandas`, `pint-xarray`, MetPy and others build on the
+- **Ecosystem reach** — `pint-pandas`, `pint-xarray`, and downstream packages
+  (`fluids`, `thermo`, InstrumentKit, …) build on the
   facet/application-registry architecture ([`docs/ecosystem.rst`][ecosystem]).
 
 ## Weaknesses

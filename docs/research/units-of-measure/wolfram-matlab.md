@@ -107,8 +107,9 @@ its dimensions are incompatible ([`matlab-checkunits.html`][mcheck] capture; see
 
 ### Wolfram: `Quantity` as held symbolic data over a curated corpus
 
-The two constructor forms and the structural rules, verbatim from the reference page
-([`wolfram-quantity.html`][wq] capture, usage + "Details"):
+The two constructor forms (the comments condense the capture's usage sentences) and
+the structural rules, verbatim from the reference page ([`wolfram-quantity.html`][wq]
+capture, usage + "Details"):
 
 ```wolfram
 Quantity[magnitude, unit]  (* a quantity with size magnitude and unit *)
@@ -149,10 +150,12 @@ capture, "Details") — the full term-level representation, queryable at run tim
 
 > [!IMPORTANT]
 > **Capture limitation.** Wolfram documentation pages store their example notebook
-> cells as _images_ (the capture's example inputs reference external `Files/…/i_N.txt`
-> assets that are not part of the HTML). The section headings and Details text quoted
-> here are verbatim; no in-notebook input/output — including any error-message text —
-> exists in the local captures, and none is quoted on this page.
+> cells as _images_. Example **inputs** survive in the captures as screen-reader
+> captions ("Wolfram Language code: …") beside `Files/…/i_N.txt` asset references,
+> but example **outputs** are image references with no text alternative. The section
+> headings and Details text quoted here are verbatim; no in-notebook output —
+> including any error-message text — exists in the local captures, and none is
+> quoted on this page.
 
 ### MATLAB: units as symbolic factors from the `symunit` collection
 
@@ -301,10 +304,11 @@ hermetic by construction — "An independent unit can only be converted to itsel
 multiples or submultiples of itself" ([`wolfram-unitconvert.html`][wuc] capture,
 "Properties & Relations") — exactly the fresh-generator semantics of a new base
 dimension in the static systems, delivered at run time. Around the user extensions
-sits the curated periphery no other surveyed system has: `DatedUnit` (a unit pinned
-to a date), `CurrencyConvert` "using real-time data", `InflationAdjust`, and
+sits the curated periphery no other surveyed system has: `DatedUnit` (a unit paired
+with a date, as in `DatedUnit["USDollars", 1990]` — [`wolfram-knownunitq.html`][wkq]
+capture), `CurrencyConvert` "using real-time data", `InflationAdjust`, and
 `MixedUnit`/`MixedMagnitude` for sexagesimal-style compound displays ("a mixed unit
-formed from a list of units (e.g. hours, minutes, seconds)"; all
+formed from a list of units (e.g. hours, minutes, seconds)"; the rest
 [`wolfram-units-guide.html`][wguide] capture). The `"SIBase"` targets for the
 non-SI dimensions are themselves curated policy: "The "SIBase" unit for
 "InformationUnit" is "Bits"" and "The "SIBase" unit for "MoneyUnit" is "USDollars""

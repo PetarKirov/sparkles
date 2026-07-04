@@ -2,19 +2,19 @@
 
 The only mainstream language whose _compiler_ implements [Kennedy's units-of-measure type system][kennedy-types] natively: `[<Measure>]` declarations mint type-level units, the built-in numeric types take measure parameters (`float<m/s>`), the Hindley–Milner constraint solver unifies measures modulo the abelian-group laws, and every trace of a unit is erased before IL generation.
 
-| Field            | Value                                                                                                                                                   |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Language         | F# (feature of the language itself; compiler implemented in F#)                                                                                         |
-| License          | MIT                                                                                                                                                     |
-| Repository       | [dotnet/fsharp][repo]                                                                                                                                   |
-| Documentation    | [MS Learn: Units of Measure][msdocs] · [F# 4.1 spec §9][spec] · [Kennedy, CEFP 2010][k10]                                                               |
-| Key authors      | Andrew Kennedy (design + original implementation); Don Syme and the F# team (compiler)                                                                  |
-| Category         | Compiler-native static units (a type-system feature, not a library)                                                                                     |
-| Mechanism        | Measure-kinded type parameters (`TyparKind.Measure`) + abelian-group unification inside the constraint solver; measures fully erased at code generation |
-| Exponent domain  | `ℚ` — integer at the surface by default; parenthesized rational literals (`kg^(1/2)`) accepted; the solver computes over rationals throughout           |
-| Checking time    | Compile time only — no run-time representation exists to check                                                                                          |
-| Analyzed version | [`dotnet/fsharp`][repo] @ `25c6a37e` (2026-07-03)                                                                                                       |
-| Latest release   | F# 10 (Nov 2025, .NET SDK 10); units-of-measure unchanged since F# 6.0's `ExpandedMeasurables`                                                          |
+| Field            | Value                                                                                                                                                                       |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Language         | F# (feature of the language itself; compiler implemented in F#)                                                                                                             |
+| License          | MIT                                                                                                                                                                         |
+| Repository       | [dotnet/fsharp][repo]                                                                                                                                                       |
+| Documentation    | [MS Learn: Units of Measure][msdocs] · [F# 4.1 spec §9][spec] · [Kennedy, CEFP 2010][k10]                                                                                   |
+| Key authors      | Andrew Kennedy (design + original implementation); Don Syme and the F# team (compiler)                                                                                      |
+| Category         | Compiler-native static units (a type-system feature, not a library)                                                                                                         |
+| Mechanism        | Measure-kinded type parameters (`TyparKind.Measure`) + abelian-group unification inside the constraint solver; measures fully erased at code generation                     |
+| Exponent domain  | `ℚ` — integer at the surface by default; parenthesized rational literals (`kg^(1/2)`) accepted; the solver computes over rationals throughout                               |
+| Checking time    | Compile time only — no run-time representation exists to check                                                                                                              |
+| Analyzed version | [`dotnet/fsharp`][repo] @ `25c6a37e` (2026-07-03)                                                                                                                           |
+| Latest release   | F# 10 (newest shipped entry in the clone's `docs/release-notes/.Language/`, with `11.0.md` in development); units-of-measure unchanged since F# 6.0's `ExpandedMeasurables` |
 
 > [!NOTE]
 > F# is the reference point of this survey: every library-level system in the catalog
@@ -41,8 +41,8 @@ cost. Kennedy's lecture notes on the F# design open with the framing
 and motivate it with the 1999 Mars Climate Orbiter loss (a newton/pound-force
 confusion). In F#, `let speed = distance / time` on `float<m>` and `float<s>` operands
 _infers_ `float<m/s>`; adding metres to seconds is a compile error; and a generic
-`let sqr x = x * x` gets the principal type `float<'u> -> float<'u ^ 2>` with no
-annotation at all ([spec §9][spec] intro). No wrapper objects, no quantity class, no
+`let sqr (x: float<_>) = x * x` gets the principal type `float<'u> -> float<'u ^ 2>`
+without naming a single unit ([spec §9][spec] intro). No wrapper objects, no quantity class, no
 conversion registry: units are type-level decorations on the numeric primitives the
 program already uses.
 
@@ -364,9 +364,10 @@ The story is total erasure, and it is documented, implemented, and observable:
   type Erasure = EraseAll | EraseMeasures | EraseNone      // L1005
   ```
 
-  Code generation and signature hashing compare types with `EraseMeasures`, so
-  `float<m>` and `float` are the same IL type `float64` — no wrapper struct exists to
-  optimize away.
+  Code generation and duplicate-signature checking compare types modulo measure
+  erasure (`typeEquivAux EraseMeasures` in `IlxGen.fs`; `EraseAll` in the FS0438
+  duplicate-method check), so `float<m>` and `float` are the same IL type `float64` —
+  no wrapper struct exists to optimize away.
 
 - **Observable at run time** (reproduced locally; toolchain below):
 
@@ -438,7 +439,10 @@ appended to the standard expected/given form
 ([`E_RangeOfDimensioned03.fsx`][e-range] expectation):
 
 ```text
-Type mismatch. Expecting a 'float<Kg>' but given a 'float<s>'.
+Type mismatch. Expecting a
+    'float<Kg>'
+but given a
+    'float<s>'
 The unit of measure 'Kg' does not match the unit of measure 's'
 ```
 

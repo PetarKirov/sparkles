@@ -92,14 +92,14 @@ The deepest disagreement, developed in full in
 [comparison § what is primitive][comparison-primitive]: each ordering makes an axiom
 of what the others must prove.
 
-| Primitive                            | Pages             | What must then be earned                                                                    |
-| ------------------------------------ | ----------------- | ------------------------------------------------------------------------------------------- |
-| **The quantities themselves**        | [whitney]         | the number systems — `ℕ → ℚ⁺ → ℝ` constructed as operators on rays                          |
-| **Measures + a transformation rule** | [pi]              | the quantity/measure distinction (conflated deliberately; re-axiomatized by Drobot/CLP)     |
-| **The carriers (1-D lines)**         | [tensor]          | the rescaling group — derived as basis change; a change of units is abstractly "nothing"    |
-| **The group action**                 | [torsor]          | the carriers — recovered as weight spaces/slices; even same-dimension `+` must be recovered |
-| **Types and programs**               | [kennedy], [mech] | the scaling group itself — derived from `0`, `<`, `*`, `/` (POPL '97 Theorem 2)             |
-| **The trivialized pair `(f, g)`**    | [hart]            | nothing — a unit per dimension is already chosen, non-canonically; invariance via quotients |
+| Primitive                            | Pages             | What must then be earned                                                                                      |
+| ------------------------------------ | ----------------- | ------------------------------------------------------------------------------------------------------------- |
+| **The quantities themselves**        | [whitney]         | the number systems — `ℕ → ℚ⁺ → ℝ⁺ → ℝ` constructed as operators on rays                                       |
+| **Measures + a transformation rule** | [pi]              | the quantity/measure distinction (conflated deliberately; re-axiomatized by Drobot/CLP)                       |
+| **The carriers (1-D lines)**         | [tensor]          | the rescaling group — derived as basis change; a change of units is abstractly "nothing"                      |
+| **The group action**                 | [torsor]          | the carriers — recovered as weight spaces/slices; even same-dimension `+` must be recovered                   |
+| **Types and programs**               | [kennedy], [mech] | the scaling group itself — derived from the primitives `0`, `1`, `+`, `−`, `*`, `/`, `<` (POPL '97 Theorem 2) |
+| **The trivialized pair `(f, g)`**    | [hart]            | nothing — a unit per dimension is already chosen, non-canonically; invariance via quotients                   |
 
 ### The exponent ring: `ℤ`, `ℚ`, or `ℝ`
 

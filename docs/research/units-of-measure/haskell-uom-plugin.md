@@ -216,9 +216,11 @@ cannot use.
    when its exponent divides all others, or introducing a fresh variable `beta` to reduce
    exponents modulo the smallest (the Gaussian-elimination step, rule (4) of the paper's
    Figure 7); results are `Win`/`Draw`/`Lose`;
-4. reports contradictions (`Lose`, e.g. `kg ~ m`) as `TcPluginContradiction` — which is
-   what turns into the user-visible type error — and returns solved constraints paired
-   with evidence.
+4. reports contradictory _givens_ (`Lose`) as `TcPluginContradiction`, but deliberately
+   leaves contradictory _wanteds_ (e.g. `kg ~ m`) unsolved — the code returns
+   `TcPluginOk [] []` with the comment "Don't report a contradiction, see #22" — so the
+   user-visible type error is GHC's ordinary report of the unsolved equality; solved
+   constraints are returned paired with evidence.
 
 The evidence step is deliberately blunt ([`Plugin.hs`][plugin]):
 
@@ -270,8 +272,10 @@ explicit about the choice (§5.2):
   subsystem ([`Convert.hs`][convert]) picks a "canonical base unit" per dimension —
   "Rather than defining dimensions explicitly, we pick a 'canonical' base unit for each
   dimension, and record the conversion ratio between each base unit and the canonical base
-  unit for its dimension" — and defines `Convertible u v` as "both units reduce to the same
-  canonical form". Two units share a dimension iff `ToCanonicalUnit u ~ ToCanonicalUnit v`.
+  unit for its dimension" — and defines `Convertible u v` to require that both units reduce
+  to the same canonical form ("they are both 'Good' and they have the same canonical units
+  (and hence the same dimension)"). Two units share a dimension iff
+  `ToCanonicalUnit u ~ ToCanonicalUnit v`.
 
 ## Checking & inference
 
@@ -535,11 +539,12 @@ unsolved constraint ([`Tutorial.hs`][tutorial] warns about exactly this).
 
 **Compile-time cost is unquantified but visibly nonzero.** No benchmarks exist, but the
 pinned tree records friction: the solver loop can hit GHC's constraint-solver iteration
-cap — "`solveSimpleWanteds: too many iterations (limit = 4)`" appears twice as a comment
-explaining disabled tests and a rejected `PartialTypeSignatures` refactor
+cap — "`solveSimpleWanteds: too many iterations (limit = 4)`" appears three times as a
+comment explaining disabled tests and a rejected `PartialTypeSignatures` refactor
 ([`Tests.hs`][tests]), and on GHC 8.0.2 the same limit broke `unQuantity [u| 3 m s^-1 |]`
 outright. A long comment in [`Plugin.hs`][plugin] documents Core Lint
-`Trans coercion mis-match` warnings on GHC 9.2 that "seem to work on 9.4" — plugin-GHC
+`Trans coercion mis-match` errors — "this leads to errors like this on GHC 9.2, but seems
+to work on 9.4?" — plugin-GHC
 version coupling in the raw.
 
 **Maintenance status is the sharpest finding.** The pinned HEAD `0b87268` (2022-10-09) _is_
@@ -551,7 +556,7 @@ floor ([`README.md`][readme]):
 > versions supporting GHC 8.4 to 8.10 (#43)."
 
 The 0.3 → 0.4 gap was four years ([#43][i43]; the port ultimately required the
-[`ghc-tcplugin-api`][tcplugin-api] compatibility layer, `>= 0.8.3 && < 0.9` in the cabal
+[`ghc-tcplugin-api`][tcplugin-api] compatibility layer, `>=0.8.3.0 && <0.9` in the cabal
 file), and as of this survey's acquisition date (2026-07-03) no release supports any GHC
 newer than 9.4 — a plugin is coupled to compiler internals, and this one has been left
 behind by them twice. That fragility is intrinsic to the mechanism, and it is the
@@ -586,7 +591,8 @@ type-families encodings ([`dimensional`][dimensional]) despite their inference d
   an old compiler.
 - **Soundness by assertion.** Evidence is `PluginProv` universal coercions ("bogus
   evidence", per the source); a solver bug is a type-soundness bug, as the README warns.
-  Issue [#22][i22] (a unit-safety bug on GHC 8.0) shows the risk was real.
+  Issue [#22][i22] (a unit-safety bug on GHC 8.0 and later, fixed in 0.3.0.0 per the
+  changelog) shows the risk was real.
 - **Units only — no dimensions, no quantity kinds.** Torque ≡ energy, `Hz` ≡ `Bq`;
   no affine temperatures, no logarithmic units, no fractional exponents.
 - **Global, unscoped unit names.** `Symbol`-keyed `MkUnit` instances cannot be namespaced
@@ -628,7 +634,7 @@ type-families encodings ([`dimensional`][dimensional]) despite their inference d
 - [`test-suite-units/ErrorTests.hs` — expected type errors, documented incompleteness][errortests]
 - [`uom-plugin.cabal` — license, `tested-with`, `ghc-tcplugin-api` bound][cabal] · [`CHANGELOG.md`][changelog] · [`haskell-ci.yml` — `-dcore-lint` CI][ci]
 - Adam Gundry, _"A Typechecker Plugin for Units of Measure: Domain-Specific Constraint Solving in GHC Haskell"_, Haskell Symposium 2015 — [author page][paper-page] (archived locally for this survey as `gundry-2015-typechecker-plugin-uom-haskell.pdf`)
-- [GHC issue tracker: #43 (GHC 8.4–8.10 gap)][i43] · [#66 (haddock needs GHC 9.4)][i66] · [#22 (unit-safety bug on GHC 8.0)][i22]
+- [GHC issue tracker: #43 (GHC 8.4–8.10 gap)][i43] · [#66 (haddock needs GHC 9.4)][i66] · [#22 (unit-safety bug on GHC 8.0 and later)][i22]
 - [`ghc-tcplugin-api` — the GHC-version compatibility layer the 0.4 port targets][tcplugin-api]
 - [GHC User's Guide — typechecker plugins][ghc-plugins]
 - Vytiniotis, Peyton Jones, Schrijvers, Sulzmann, _"OutsideIn(X): Modular type inference with local assumptions"_, JFP 21(4–5), 2011 — [DOI][outsidein-doi]

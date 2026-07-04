@@ -13,7 +13,7 @@ The C++ standardization vehicle for quantities and units ([P3045][p3045]): a val
 | Mechanism        | Value-based symbolic expressions: `quantity<R, Rep>` where the NTTP `R` binds a `quantity_spec` (a node in a kind-hierarchy tree) to a unit; dimension/unit/spec algebra runs in `consteval` over empty tag types |
 | Exponent domain  | `ℚ` — rational exponents via `power<F, Num, Den>` (`pow<1, 2>(…)`, `sqrt`, `cbrt`); base-dimension set **open** (any `base_dimension<Symbol>`)                                                                    |
 | Checking time    | Compile time (concept-constrained overloads + immediate `consteval` functions); zero runtime checks                                                                                                               |
-| Analyzed version | `d7b11de` (pinned clone, 2026-07-01; in-tree version `2.6.0`-dev per [`src/CMakeLists.txt`][src-cmake])                                                                                                           |
+| Analyzed version | `d7b11de` (pinned clone, 2026-07-02; in-tree version `2.6.0`-dev per [`src/CMakeLists.txt`][src-cmake])                                                                                                           |
 | Latest release   | `v2.5.0` (2025-12-24, [`CITATION.cff`][citation])                                                                                                                                                                 |
 
 > [!NOTE]
@@ -219,10 +219,11 @@ Derived dimensions are the normalized symbolic products described above —
 L149–191, with a worked list in the doc comment). `dimension_one` is the empty product
 (L200–203). Three properties are load-bearing for this survey:
 
-- **The exponent domain is `ℚ`.** `power<F, Num, Den>` accepts any valid non-zero
-  rational ([`symbolic_expression.h`][symexpr] L117–122), and the dimension interface
-  exposes `pow<Num, Den>`, `sqrt`, `cbrt` directly on dimension values
-  ([`dimension.h`][dimension-h] L96–110). Fractional dimensions are first-class, not an
+- **The exponent domain is `ℚ`.** `power<F, Num, Den>` accepts any valid positive
+  rational — negative exponents are carried by the `per<…>` wrapper with inverted sign
+  ([`symbolic_expression.h`][symexpr] L104–122) — and the dimension interface exposes
+  `pow<Num, Den>`, `sqrt`, `cbrt` directly on dimension values
+  ([`dimension.h`][dimension-h] L96–111). Fractional dimensions are first-class, not an
   encoding trick — contrast the `ℤ`-only [`uom`][uom]/[`dimensioned`][dimensioned] and
   F#'s `ℚ`-during-inference ([Kennedy's type system][kennedy]).
 - **The base set is open.** Any library or user can mint `base_dimension<"X">`; there is
@@ -500,7 +501,7 @@ deliberately offers **two commitment levels** — simple (`quantity<km / h>`, un
 kind-checked) and typed (`quantity<isq::speed[km / h]>`, tree-checked) — so ISQ rigor is
 opt-in per interface ([`simple_and_typed_quantities.md`][simple]). UDLs are rejected by
 design with documented reasons (literals-only, widest-type defaults, namespace pollution —
-[`faq.md`][faq] L10–35); the multiply syntax `42 * m` works for variables and any
+[`faq.md`][faq] L10–46); the multiply syntax `42 * m` works for variables and any
 representation type.
 
 **Error readability** is quoted above; the one caveat is volume — the readable two-line
@@ -577,7 +578,7 @@ use.
 ## Sources
 
 - [mpusz/mp-units — GitHub repository][repo] (pinned locally at `$REPOS/cpp/mp-units` @
-  `d7b11de`, 2026-07-01)
+  `d7b11de`, 2026-07-02)
 - [`framework/quantity.h` — `quantity` class, operator constraints, `unsatisfied` truncation messages, double-width comparison][quantity-h]
 - [`framework/dimension.h` — `base_dimension`, `derived_dimension`, `pow<Num, Den>`/`sqrt`/`cbrt`, type-identity equality, same-name convention note][dimension-h]
 - [`framework/symbolic_expression.h` — `per`/`power<F, Num, Den>`, consolidation, simplification, `expr_multiply`/`expr_pow`/`expr_map`][symexpr]

@@ -233,8 +233,9 @@ group multiplication as component-wise exponent addition. Three properties follo
   `+`, `-`, `*`, `/` families. The restriction is deliberate
   ([`TypeLevel.hs`][typelevel], comment above `^`): _"We limit ourselves to integer
   powers of Dimensionals as fractional powers make little physical sense."_ The
-  `NRoot d x` family divides each exponent by `x` and simply has no equation when
-  any division is inexact — so `sqrt` of a non-square dimension is a compile error,
+  `NRoot d x` family divides each exponent by `x` via `numtype-dk`'s partial
+  type-level division, which is stuck (no matching equation) when the division is
+  inexact — so `sqrt` of a non-square dimension is a compile error,
   and `ℚ` exponents are unrepresentable (contrast [mp-units][mp-units]' rational
   exponents and [F#][fsharp]'s `RationalPower`).
 - **The representation is a normal form by construction.** Because a dimension _is_
@@ -334,8 +335,8 @@ kilo :: Num a => Unit 'Metric d a -> Unit 'NonMetric d a
 
 So `kilo (kilo meter)` and `kilo (meter / second)` are _type errors_ — composite
 units are `'NonMetric` by the `Variants.hs` product family — statically enforcing
-NIST SP 811's prohibitions on double and stand-alone prefixes (§6.2.6, cited in the
-source).
+NIST SP 811's prohibitions on compound (§6.2.4) and stand-alone (§6.2.6, the section
+cited in the source) prefixes.
 
 **New base dimensions: impossible.** This is the finding the brief flags. The
 `Dimension` kind is a closed seven-field tuple; there is no class, family, or open
@@ -442,7 +443,7 @@ problems in [type-system mechanisms][mechanisms]).
 
 `dimensional`'s own haddock documents the error for adding metres to seconds — the
 best case, where GHC's expected/actual types surface the library's synonyms
-([`src/Numeric/Units/Dimensional.hs`][core] L99–111 @ `f759f32`; **provenance:
+([`src/Numeric/Units/Dimensional.hs`][core] L98–110 @ `f759f32`; **provenance:
 repo documentation** — the library's recorded GHC output, per this survey's rung-2
 ladder; not re-captured locally):
 
@@ -476,6 +477,8 @@ Expected type: Quantity DMass a
                  ('DQuantity V.* 'DQuantity) (DLength / DTime) a
 In the first argument of `(+)', namely `1 *~ meter / (1 *~ second)'
 In the expression: 1 *~ meter / (1 *~ second) + 1 *~ kilo gram
+In an equation for `x':
+      x = 1 *~ meter / (1 *~ second) + 1 *~ kilo gram
 ```
 
 When the offending side is a _computed_ dimension, internal machinery leaks: the
@@ -526,7 +529,7 @@ normal-form errors quoted in the contrast below — and materially worse than
 
 Richard Eisenberg's [`units`][units-repo] (with Takayuki Muranushi; pinned locally
 @ `c06d560`, `units` 2.4.1.5 + `units-defs` 2.2.1) is the other type-family units
-library — the one [Gundry 2015][gundry-paper] §7 calls _"the state of the art as
+library — the one [Gundry 2015][gundry-paper] §5.2 calls _"the state of the art as
 far as units of measure in Haskell are concerned"_ before demonstrating why a
 plugin beats it. It differs from `dimensional` on exactly the two axes this page
 flagged as findings.
@@ -571,7 +574,7 @@ instance Unit Foot where
 The payoff shows immediately in `units-defs`, which does what `dimensional`
 _cannot_: it declares `PlaneAngle` and `SolidAngle` as **fundamental dimensions**,
 on the record that _"It would be wrong to divide 2 meters by 1 meter and conclude
-that the quantity is 2 radians"_ ([`units-defs/Data/Dimensions/SI.hs`][units-defs-si]),
+that the quantity is 2 radians or degrees"_ ([`units-defs/Data/Dimensions/SI.hs`][units-defs-si]),
 and ships a CGS module alongside SI.
 
 **The coherent-unit-system generalization.** `dimensional` stores every quantity in
@@ -587,7 +590,7 @@ Within one LCSU no conversions ever happen; conversions occur only at the `%` /
 `#` boundaries or between LCSUs. Gundry's summary of why this matters: it lets
 code _"be typechecked for dimension safety, but remain polymorphic in the
 particular units, and makes it easier to avoid numeric overflow"_
-([Gundry 2015][gundry-paper] §7) — e.g. an astrophysics simulation can store
+([Gundry 2015][gundry-paper] §5.2) — e.g. an astrophysics simulation can store
 lengths in parsecs without accumulating `3.086e16`-scale factors, something
 structurally impossible in `dimensional`.
 
@@ -697,7 +700,7 @@ Length Rational` is `127 % 5000 m`, per the [`NonSI.hs`][nonsi] doctests).
 | One `Dimensional` data family for `Quantity` and `Unit`            | Operator reuse across variants; quantities erase while units carry names + exact factors                         | Intimidating operator signatures (`KnownVariant`, `V.*` families) that surface in error messages            |
 | Values stored in the SI coherent unit; units act only at `*~`/`/~` | Arithmetic after construction is raw machine ops; one multiplication at the boundary                             | Storage basis is unchangeable — no LCSU-style unit-polymorphic representation (contrast `units`)            |
 | `ExactPi` conversion factors + `mkUnitZ/Q/R` hierarchy             | Exact π-rational unit chains; doctest-verifiable exact conversions                                               | `Unit` is a runtime record; extra dependency surface (`exact-pi`, `numtype-dk`)                             |
-| Prefixes as `'Metric`→`'NonMetric` functions                       | NIST §6.2.6 made structural; double/composite prefixing rejected at compile time                                 | Occasionally over-strict; unit-name machinery (`UnitNames`, UCUM codes) is a large ancillary subsystem      |
+| Prefixes as `'Metric`→`'NonMetric` functions                       | NIST §6.2.4/§6.2.6 made structural; double/composite prefixing rejected at compile time                          | Occasionally over-strict; unit-name machinery (`UnitNames`, UCUM codes) is a large ancillary subsystem      |
 | Prelude-shadowing `Numeric.Units.Dimensional.Prelude`              | Client code reads as ordinary arithmetic on quantities                                                           | `NoImplicitPrelude` everywhere; qualified imports for mixed plain/dimensioned math                          |
 
 ## Sources
@@ -712,7 +715,7 @@ Length Rational` is `127 % 5000 m`, per the [`NonSI.hs`][nonsi] doctests).
 - [`src/Numeric/Units/Dimensional/Dynamic.hs` — `AnyQuantity`/`DynQuantity` runtime tier][dynamic] · [`FixedPoint.hs` — scaled quantities, binary angles][fixedpoint]
 - [`README.md` — design statement, worked example][readme] · [`CHANGELOG.md` — 1.0 `DataKinds` rewrite, 1.6.2 release][changelog] · [`dimensional.cabal` — description, `tested-with` matrix][cabal] · [`benchmarks/Main.hs` — criterion harness][benchmark]
 - [goldfirere/units — GitHub repository][units-repo] (contrast subject; pin `c06d560`, local clone `$REPOS/haskell/units`): [root `README.md`][units-readme-root] · [`units/README.md` — dimension/unit/LCSU walkthrough, `redim`][units-readme] · [`units/Data/Metrology/Qu.hs`][units-qu] · [`Factor.hs` — `@~` normal-form constraint][units-factor] · [`Z.hs` — unary type-level integers][units-z] · [`units-defs/Data/Dimensions/SI.hs` — `PlaneAngle` as a fundamental dimension][units-defs-si]
-- [Adam Gundry, "A Typechecker Plugin for Units of Measure" (Haskell Symposium 2015) — §2.2 type-family impossibility analysis, §2.2.1 `units` error/polymorphism critique, §7 `units` appraisal][gundry-paper] (local artifact `gundry-2015-typechecker-plugin-uom-haskell.pdf`)
+- [Adam Gundry, "A Typechecker Plugin for Units of Measure" (Haskell Symposium 2015) — §2.2 type-family impossibility analysis, §2.2.1 `units` error/polymorphism critique, §5.2 `units` appraisal][gundry-paper] (local artifact `gundry-2015-typechecker-plugin-uom-haskell.pdf`)
 - [NIST SP 811, "Guide for the Use of the International System of Units (SI)" — the guideline document the library tracks section-by-section][nist] (local artifact `nist-2008-sp811-guide-si.pdf`)
 - [`numtype-dk` on Hackage — the type-level integer companion package][numtype-dk] · [`exact-pi` on Hackage — exact π-rational arithmetic][exact-pi]
 - Related deep-dives in this survey: [`uom-plugin`][uom-plugin] · [F# units of measure][fsharp] · [type-system mechanisms][mechanisms] · [Kennedy's type system][kennedy] · [free abelian group representation][fag] · [torsors & affine quantities][torsor] · [mp-units][mp-units] · [Boost.Units][boost] · [`uom` (Rust)][rust-uom] · [Pint][pint] · [concepts][concepts] · [the comparison capstone][comparison]

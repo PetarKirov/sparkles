@@ -68,7 +68,7 @@ rank, `KrullDimension` is ring theory, `SmallInductiveDimension` is topology),
 and repository-wide greps for "dimensional analysis", "units of measure",
 "Buckingham", and "physical quantit-" return **zero hits**. What mathlib calls
 `Units` is abstract algebra ([`Mathlib/Algebra/Group/Units/Defs.lean`][mathlib-units]
-L14–18 @ `ab4e75d`):
+L13–17 @ `ab4e75d`):
 
 > "An element of a `Monoid` is a unit if it has a two-sided inverse. …
 > `Units M`: the group of units (i.e., invertible elements) of a monoid."
@@ -76,7 +76,7 @@ L14–18 @ `ab4e75d`):
 The closest building block to a dimension group is
 [`Mathlib/GroupTheory/FreeAbelianGroup.lean`][mathlib-fag] — the free abelian
 group `FreeAbelianGroup α`, which its header describes in exactly the shape a
-dimension lattice needs (L19–22 @ `ab4e75d`):
+dimension lattice needs (L20–22 @ `ab4e75d`):
 
 > "Alternatively, one could define it as the functions `α → ℤ` which send all
 > but finitely many `(a : α)` to `0`, under pointwise addition."
@@ -214,8 +214,8 @@ can automatically look inside the definition" during unification
 ([Bobbin et al. 2025][bobbin-arxiv] §4.4). Homogeneity facts are then ordinary
 theorems — [`DimensionalHomogeneity.lean` L7–14][lda-homog] proves
 `acceleration B E = velocity B E / time B E` by rewriting, and that the
-Reynolds-number dimension equals `dimensionless B E` by an eleven-rewrite
-chain.
+Reynolds-number dimension equals `dimensionless B E` by two `rw` chains
+totalling 21 rewrite steps.
 
 ### Quantities: a graded structure, with units as values
 
@@ -362,7 +362,7 @@ theorems whose _statements_ are dimensionally checked by construction.
   pointwise operations is `Eᴮ`, which for infinite `B` contains
   infinitely-supported "dimensions" no finite product of base dimensions
   generates. mathlib's `FreeAbelianGroup α` (functions `α → ℤ` with **finite
-  support**, [`FreeAbelianGroup.lean`][mathlib-fag] L20–23) is the exact
+  support**, [`FreeAbelianGroup.lean`][mathlib-fag] L20–22) is the exact
   [free-abelian-group][fag] construction — and is not used. For the finite
   systems the framework actually instantiates (`Fintype B`, as in
   [`ISQ.lean`][lda-isq]; also required by `dimensional_matrix`) the two
@@ -586,8 +586,8 @@ proof goal — inspectable, and closable interactively.
   gigabytes. Per-file elaboration after that is seconds-to-minutes —
   unmeasured here (no local toolchain; see Diagnostics) and undocumented in
   the artifacts.
-- **Proof burden scales with ambition.** `reynolds_eq_dimless` is an
-  eleven-lemma rewrite chain ([`DimensionalHomogeneity.lean` L10–14][lda-homog]);
+- **Proof burden scales with ambition.** `reynolds_eq_dimless` is a
+  21-step rewrite chain ([`DimensionalHomogeneity.lean` L10–14][lda-homog]);
   `LJ_deriv` is ~25 tactic lines ending in two `aesop`s
   ([`LennardJones.lean` L43–70][lda-lj]). `evalAutoDim` absorbs the routine
   cases ("for all the cases we tested, we found the tactic to be strong

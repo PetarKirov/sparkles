@@ -90,7 +90,8 @@ from `pdftotext -layout` output of those PDFs and from the pinned repo files.
   Atkey–Johann–Kennedy POPL '13 "algebraically indexed types" paper is **not held locally**
   and is cited only as restated in [Gundry 2015][gundry] §6.1 (translation groups for
   temperature origins).
-- **Mechanism evidence in pinned repos** (SHAs in the [grounding table][sources]) —
+- **Mechanism evidence in pinned repos** (SHAs listed per repo under
+  [Mechanization](#mechanization) below) —
   **inspected files**: `dotnet/fsharp` `src/Compiler/TypedTree/TypedTree.fs` (`type Measure`,
   L4696) and `src/Compiler/Checking/ConstraintSolver.fs` (`UnifyMeasures` L801,
   `SimplifyMeasure`/`SimplifyMeasuresInType`); `rust/uom` `src/system.rs` (the `system!`
@@ -232,7 +233,7 @@ exactly to the extent that its typed interface matches Kennedy's. The F# specifi
 erasure normatively:
 
 > _"Measures play no role at runtime; in fact, they are erased."_
-> — [The F# Language Specification 4.1][fsharp-spec], §9 (p. 174)
+> — [The F# Language Specification 4.1][fsharp-spec], §9 (p. 175)
 
 with the operational consequences spelled out in §9.6: casting, method resolution and
 reflection all act on the erased types.
@@ -501,7 +502,7 @@ group — details on the system pages.
 
 ### Same dimension, different kind
 
-The free abelian group identifies torque with energy (`kg·m²/s⁻²`) and `Hz` with `Bq`
+The free abelian group identifies torque with energy (`kg·m²·s⁻²`) and `Hz` with `Bq`
 (`s⁻¹`). Kennedy's mechanism inherits the identification; F# users get no protection. The
 two library answers are `uom`'s flat opaque `Kind` tag (quantities of equal dimension but
 different kinds "are not comparable", [`system.rs`][uom-repo]) and mp-units'
@@ -586,7 +587,7 @@ the `X` of `OutsideIn(X)` for any theory that can supply sound, most-general sim
   [`ada-gnat-dimensions.md`][gnat].
 - **Dependent types** — [`lean-mathlib-units.md`][lean]; `LeanDimensionalAnalysis` pinned
   `de263ee` (`DimensionalAnalysis/Basic.lean`) + [Bobbin 2025][bobbin]; note the honest
-  negative finding recorded in the [grounding table][sources]: mathlib4 itself has no
+  negative finding from the source survey: mathlib4 itself has no
   dedicated physical-units development.
 
 ---

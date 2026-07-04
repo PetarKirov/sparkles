@@ -66,7 +66,7 @@ Two ideas define the crate against its successor.
 docs walk the mechanism ([`src/lib.rs`][lib] L43–48):
 
 > "When a unit system is created, say the SI system, a struct with two parameters is
-> made; in this case `SI<V, U>`. The first parameter, `V`, is for the value type — it
+> made; in this case `SI<V, U>`. The first parameter, `V`, is for the value type -- it
 > can be anything, and is the value to which we are giving units. The second parameter,
 > `U`, is where the magic happens. It represents the units, and is a type-level array
 > of type-level numbers."
@@ -94,7 +94,7 @@ docs define a miniature two-unit system that this survey reproduced locally (see
 [Diagnostics](#diagnostics) for the toolchain):
 
 ```rust
-// dimensioned: src/make_units.rs L18-49 (macro doc example; locally re-run)
+// dimensioned: src/make_units.rs L18-49 (macro doc example, abridged; locally re-run)
 pub mod ms {
     make_units! {
         MS;
@@ -324,7 +324,8 @@ A small, documented-by-comment soundness concession no other operator makes.
   exported precisely so users can build systems the crate lacks; the macro docs open by
   asking you to upstream them: "If you find yourself using this macro, please think
   about whether the unit system you are creating would be useful to others; if so,
-  submit an issue" ([`src/make_units.rs`][make-units] L6–7). The base-dimension set of
+  submit an issue to get it added to dimensioned"
+  ([`src/make_units.rs`][make-units] L6–7). The base-dimension set of
   a new system is arbitrary (`n` slots for `n` base lines), so a currency-plus-time
   system is as writable as a physics one. This is the axis where `dimensioned` is
   _more_ extensible than [`uom`][rust-uom], whose `system!`/`quantity!` split assumes
@@ -418,8 +419,8 @@ pinned SHA:
   compiler's layout in practice, not an ABI guarantee. The crate itself leans on
   layout compatibility in `unsafe` code — the generated `Index` impls cast
   `&V::Output` to `&Self::Output` by raw-pointer transmute
-  ([`src/make_units.rs`][make-units] L519–546), and the crate-level clippy allow
-  wears the caveat: "`clippy::transmute_ptr_to_ptr`, // Not great. See issue #52."
+  ([`src/make_units.rs`][make-units] L519–546), and the crate-level clippy allow for
+  `clippy::transmute_ptr_to_ptr` wears the caveat "// Not great. See issue #52."
   ([`src/lib.rs`][lib] L120–121).
 - **`#[inline]` on every generated operator** and a `const fn new`
   ([`src/make_units.rs`][make-units] L211–216, made `const` in `0.8.0` —
@@ -520,7 +521,7 @@ whole new system is a single readable block (the `ms` example above is 20 lines
 including constants).
 
 **Definition-site ergonomics were fighting 2015-era Rust.** The stable/nightly split
-shows the era: scalar interop needs either the `prim!` enumeration of 13 primitive
+shows the era: scalar interop needs either the `prim!` enumeration of 14 primitive
 types or the nightly `oibit` auto-trait; `no_std` needs nightly for `Sqrt`/`Root` and
 conversions ([`CHANGELOG.md`][changelog] `0.8.0`); `spec` (specialization) gates the
 generated cross-system tests. [`todo.org`][todo] records the endgame the author was

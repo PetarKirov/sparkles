@@ -36,7 +36,7 @@ The de-facto standard Julia units library: a `Quantity{T,D,U}` whose dimension a
 Unitful gives Julia programs unit-safe arithmetic, unit conversion, and dimensional
 analysis across an _open_, user-extensible set of dimensions, while exploiting Julia's
 compilation model so that the safety is (mostly) free in hot loops. The README states
-the goals in four sentences ([`README.md`][readme] L9–13):
+the goals directly ([`README.md`][readme] L9–13):
 
 > "Unitful is a Julia package for physical units. We want to support not only SI units
 > but also any other unit system. We also want to minimize or in some cases eliminate

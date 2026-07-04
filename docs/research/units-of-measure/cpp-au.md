@@ -214,10 +214,10 @@ with policy arguments as the blessed forcing syntax.)
 
 The **overflow** side is Au's "adaptive safety surface": a conversion is admitted only
 if values up to a threshold survive it, with the threshold chosen against the rep's
-range ([`au/conversion_policy.hh`][conversion-policy-hh] L117–119):
+range ([`au/conversion_policy.hh`][conversion-policy-hh] L118–119):
 
 ```cpp
-// au: au/conversion_policy.hh L117-119
+// au: au/conversion_policy.hh L118-119
 // Chosen so as to allow populating a `QuantityI32<Hertz>` with an input in MHz.
 constexpr auto OVERFLOW_THRESHOLD = mag<2'147>();
 ```
@@ -239,7 +239,7 @@ A dimension is a canonicalized variadic pack of base-dimension powers
 ([`au/dimension.hh`][dimension-hh] L23–36):
 
 ```cpp
-// au: au/dimension.hh L23-36
+// au: au/dimension.hh L23-36 (comments elided)
 template <typename... BPs>
 struct Dimension {
     static_assert(AreAllPowersNonzero<Dimension, Dimension<BPs...>>::value,
@@ -379,9 +379,9 @@ example of what the C++14 floor actually costs.
 - **New units — the primary, frictionless path.** Five lines of ordinary code (shown
   [above](#defining-a-unit-inherit-from-a-unit-expression)); no macro, no registry,
   no fork. Prefixes compose on both types and makers: `Kilo<Grams>{}`,
-  `kilo(grams)`, `mebi(bytes)` ([`au/prefix.hh`][prefix-hh]). 121 unit headers ship
-  in `au/units/`, plus SI-2019 exact constants in `au/constants/`
-  ([`au/constants/`][constants-dir]).
+  `kilo(grams)`, `mebi(bytes)` ([`au/prefix.hh`][prefix-hh]). 60 unit headers (each
+  with a `_fwd.hh` companion) ship in `au/units/`, plus SI-2019 exact constants in
+  `au/constants/` ([`au/constants/`][constants-dir]).
 - **New base dimensions — supported, with a distributed-uniqueness quirk.** A base
   dimension is any type with a unique `int64_t base_dim_index`
   ([`docs/howto/new-dimensions.md`][new-dimensions]):
@@ -413,7 +413,8 @@ example of what the C++14 floor actually costs.
 - **Interop as a first-class feature.** `CorrespondingQuantity<T>` gives
   _bidirectional implicit_ conversion with equivalent types from `std::chrono` or
   any other units library ([`au/quantity.hh`][quantity-hh] L58–110) — explicitly
-  pitched at incremental migration, including "two-hop" conversions.
+  pitched at incremental migration, including "two-hop" conversions
+  (`docs/reference/corresponding_quantity.md`).
 
 ## Expressiveness edges
 
