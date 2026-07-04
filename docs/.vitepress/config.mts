@@ -1734,6 +1734,30 @@ export default withMermaid(
                       text: 'Wolfram & MATLAB',
                       link: '/research/units-of-measure/wolfram-matlab',
                     },
+                    {
+                      text: 'coulomb (Scala)',
+                      link: '/research/units-of-measure/scala-coulomb',
+                    },
+                    {
+                      text: 'squants (Scala)',
+                      link: '/research/units-of-measure/scala-squants',
+                    },
+                    {
+                      text: 'unchained (Nim)',
+                      link: '/research/units-of-measure/nim-unchained',
+                    },
+                    {
+                      text: 'Swift Measurement',
+                      link: '/research/units-of-measure/swift-units',
+                    },
+                    {
+                      text: 'measured (Kotlin)',
+                      link: '/research/units-of-measure/kotlin-measured',
+                    },
+                    {
+                      text: 'UCUM & QUDT',
+                      link: '/research/units-of-measure/ucum-qudt',
+                    },
                   ],
                 },
                 {
