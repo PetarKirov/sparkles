@@ -12,6 +12,12 @@
 # 1996, Aycock-Horspool 2002); preferred dl.acm.org where a version exists.
 ^https?://([^/]+\.)?sciencedirect\.com/
 ^https?://academic\.oup\.com/
+# iso.org returns HTTP 403 to automated checkers (like dl.acm.org/springer above);
+# the ISO 80000-1 standard page is paywalled (so not Wayback-archivable) but is the
+# canonical citation for the units-of-measure survey's concepts.md.
+^https?://(www\.)?iso\.org/
+# bipm.org returns HTTP 401 to automated checkers
+^https?://(www\.)?bipm\.org/
 ^https://rosettacode\.org/
 ^https://hnterm\.ggerganov\.com/
 ^https?://([^/]+\.)?medium\.com/
