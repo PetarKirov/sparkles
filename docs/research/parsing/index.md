@@ -226,13 +226,17 @@ this review; treat 2023–2026 tool entries as current-as-of-review.</sub>
   in [pest][pest] / [chumsky][chumsky].
 - **"I'm designing the Sparkles parser."** [comparison][comparison] → [rust-nom][nom]
   (zero-copy, `@nogc`-shaped) + [rust-chumsky][chumsky] (recovery) → [peg-packrat][peg]
-  (the space cost) → [pratt-precedence][pratt] (the expression engine).
+  (the space cost) → [pratt-precedence][pratt] (the expression engine) → the
+  **[D landscape][d-landscape]** (what D offers + the gap) → the
+  **[`sparkles:parsing` proposal](../../specs/parsing/index.md)** (the design).
 
 ### Synthesis
 
 - **[Concepts & vocabulary][concepts]** — the shared glossary + the parser-landscape table.
 - **[Theory umbrella][theory]** — the classical algorithm spine, end to end.
 - **[Comparison][comparison]** — the head-to-head matrix, the consensus, the trade-offs, and where a Sparkles parser fits.
+- **[D landscape][d-landscape]** — the inward turn: what the D ecosystem offers for parsing,
+  and the `@nogc`-combinator gap the [`sparkles:parsing` proposal](../../specs/parsing/index.md) fills.
 
 ---
 
@@ -294,6 +298,7 @@ official docs); the authoritative artifacts behind this index's classifications 
 <!-- Within-tree: synthesis -->
 
 [comparison]: ./comparison.md
+[d-landscape]: ./d-landscape.md
 
 <!-- Sparkles source -->
 
