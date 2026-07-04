@@ -26,37 +26,45 @@ Claim **Types:** `quote` · `fact` (date/author/venue/attribution) · `figure`
 
 `Rows` counts material claim rows; `⚠` the discrepancies found and fixed this
 pass; `◯` the rows groundable only to a secondary or to an unobtainable primary
-(all named per row). Every page's discrepancies were **applied** — no open ⚠.
+(all named per row). Every material discrepancy was **applied** to its page; the
+few wave-2 ⚠ rows that flag only a condensed-but-faithful quote or a secondary
+attribution — needing no page change — are named per row.
 
-| Page                               | Ledger                                                                   | Rows     | ⚠      | ◯      | Status |
-| ---------------------------------- | ------------------------------------------------------------------------ | -------- | ------ | ------ | ------ |
-| `theory/whitney.md`                | [`theory-whitney.md`](./theory-whitney.md)                               | 63       | 4      | 4      | ✅     |
-| `theory/buckingham-pi.md`          | [`theory-buckingham-pi.md`](./theory-buckingham-pi.md)                   | 77       | 5      | 2      | ✅     |
-| `theory/free-abelian-group.md`     | [`theory-free-abelian-group.md`](./theory-free-abelian-group.md)         | 71       | 6      | 5      | ✅     |
-| `theory/tensor-of-lines.md`        | [`theory-tensor-of-lines.md`](./theory-tensor-of-lines.md)               | 69       | 2      | 3      | ✅     |
-| `theory/torsor-representation.md`  | [`theory-torsor-representation.md`](./theory-torsor-representation.md)   | 81       | 9      | 2      | ✅     |
-| `theory/kennedy-types.md`          | [`theory-kennedy-types.md`](./theory-kennedy-types.md)                   | 69       | 2      | 3      | ✅     |
-| `theory/hart-multidimensional.md`  | [`theory-hart-multidimensional.md`](./theory-hart-multidimensional.md)   | 51       | 4      | 4      | ✅     |
-| `theory/type-system-mechanisms.md` | [`theory-type-system-mechanisms.md`](./theory-type-system-mechanisms.md) | 52       | 3      | 4      | ✅     |
-| `fsharp-uom.md`                    | [`fsharp-uom.md`](./fsharp-uom.md)                                       | 76       | 4      | 4      | ✅     |
-| `haskell-uom-plugin.md`            | [`haskell-uom-plugin.md`](./haskell-uom-plugin.md)                       | 69       | 6      | 2      | ✅     |
-| `haskell-dimensional.md`           | [`haskell-dimensional.md`](./haskell-dimensional.md)                     | 70       | 6      | 2      | ✅     |
-| `rust-uom.md`                      | [`rust-uom.md`](./rust-uom.md)                                           | 47       | 3      | 1      | ✅     |
-| `rust-dimensioned.md`              | [`rust-dimensioned.md`](./rust-dimensioned.md)                           | 54       | 5      | 3      | ✅     |
-| `cpp-mp-units.md`                  | [`cpp-mp-units.md`](./cpp-mp-units.md)                                   | 72       | 3      | 0      | ✅     |
-| `cpp-boost-units.md`               | [`cpp-boost-units.md`](./cpp-boost-units.md)                             | 65       | 1      | 1      | ✅     |
-| `cpp-au.md`                        | [`cpp-au.md`](./cpp-au.md)                                               | 85       | 4      | 1      | ✅     |
-| `d-quantities.md`                  | [`d-quantities.md`](./d-quantities.md)                                   | 78       | 3      | 0      | ✅     |
-| `python-pint.md`                   | [`python-pint.md`](./python-pint.md)                                     | 65       | 5      | 2      | ✅     |
-| `julia-unitful.md`                 | [`julia-unitful.md`](./julia-unitful.md)                                 | 62       | 1      | 2      | ✅     |
-| `ada-gnat-dimensions.md`           | [`ada-gnat-dimensions.md`](./ada-gnat-dimensions.md)                     | 54       | 0      | 5      | ✅     |
-| `lean-mathlib-units.md`            | [`lean-mathlib-units.md`](./lean-mathlib-units.md)                       | 56       | 3      | 1      | ✅     |
-| `wolfram-matlab.md`                | [`wolfram-matlab.md`](./wolfram-matlab.md)                               | 58       | 3      | 1      | ✅     |
-| `comparison.md`                    | [`comparison.md`](./comparison.md)                                       | 78       | 9      | 3      | ✅     |
-| `concepts.md`                      | [`concepts.md`](./concepts.md)                                           | 81       | 4      | 4      | ✅     |
-| `index.md`                         | [`page-index.md`](./page-index.md)                                       | 46       | 1      | 1      | ✅     |
-| `theory/index.md`                  | [`theory-index.md`](./theory-index.md)                                   | 39       | 1      | 2      | ✅     |
-| **Total**                          |                                                                          | **1688** | **97** | **62** | ✅     |
+| Page                               | Ledger                                                                   | Rows     | ⚠       | ◯      | Status |
+| ---------------------------------- | ------------------------------------------------------------------------ | -------- | ------- | ------ | ------ |
+| `theory/whitney.md`                | [`theory-whitney.md`](./theory-whitney.md)                               | 63       | 4       | 4      | ✅     |
+| `theory/buckingham-pi.md`          | [`theory-buckingham-pi.md`](./theory-buckingham-pi.md)                   | 77       | 5       | 2      | ✅     |
+| `theory/free-abelian-group.md`     | [`theory-free-abelian-group.md`](./theory-free-abelian-group.md)         | 71       | 6       | 5      | ✅     |
+| `theory/tensor-of-lines.md`        | [`theory-tensor-of-lines.md`](./theory-tensor-of-lines.md)               | 69       | 2       | 3      | ✅     |
+| `theory/torsor-representation.md`  | [`theory-torsor-representation.md`](./theory-torsor-representation.md)   | 81       | 9       | 2      | ✅     |
+| `theory/kennedy-types.md`          | [`theory-kennedy-types.md`](./theory-kennedy-types.md)                   | 69       | 2       | 3      | ✅     |
+| `theory/hart-multidimensional.md`  | [`theory-hart-multidimensional.md`](./theory-hart-multidimensional.md)   | 51       | 4       | 4      | ✅     |
+| `theory/type-system-mechanisms.md` | [`theory-type-system-mechanisms.md`](./theory-type-system-mechanisms.md) | 52       | 3       | 4      | ✅     |
+| `fsharp-uom.md`                    | [`fsharp-uom.md`](./fsharp-uom.md)                                       | 76       | 4       | 4      | ✅     |
+| `haskell-uom-plugin.md`            | [`haskell-uom-plugin.md`](./haskell-uom-plugin.md)                       | 69       | 6       | 2      | ✅     |
+| `haskell-dimensional.md`           | [`haskell-dimensional.md`](./haskell-dimensional.md)                     | 70       | 6       | 2      | ✅     |
+| `rust-uom.md`                      | [`rust-uom.md`](./rust-uom.md)                                           | 47       | 3       | 1      | ✅     |
+| `rust-dimensioned.md`              | [`rust-dimensioned.md`](./rust-dimensioned.md)                           | 54       | 5       | 3      | ✅     |
+| `cpp-mp-units.md`                  | [`cpp-mp-units.md`](./cpp-mp-units.md)                                   | 72       | 3       | 0      | ✅     |
+| `cpp-boost-units.md`               | [`cpp-boost-units.md`](./cpp-boost-units.md)                             | 65       | 1       | 1      | ✅     |
+| `cpp-au.md`                        | [`cpp-au.md`](./cpp-au.md)                                               | 85       | 4       | 1      | ✅     |
+| `d-quantities.md`                  | [`d-quantities.md`](./d-quantities.md)                                   | 78       | 3       | 0      | ✅     |
+| `python-pint.md`                   | [`python-pint.md`](./python-pint.md)                                     | 65       | 5       | 2      | ✅     |
+| `julia-unitful.md`                 | [`julia-unitful.md`](./julia-unitful.md)                                 | 62       | 1       | 2      | ✅     |
+| `ada-gnat-dimensions.md`           | [`ada-gnat-dimensions.md`](./ada-gnat-dimensions.md)                     | 54       | 0       | 5      | ✅     |
+| `lean-mathlib-units.md`            | [`lean-mathlib-units.md`](./lean-mathlib-units.md)                       | 56       | 3       | 1      | ✅     |
+| `wolfram-matlab.md`                | [`wolfram-matlab.md`](./wolfram-matlab.md)                               | 58       | 3       | 1      | ✅     |
+| `scala-coulomb.md`                 | [`scala-coulomb.md`](./scala-coulomb.md)                                 | 52       | 2       | 3      | ✅     |
+| `scala-squants.md`                 | [`scala-squants.md`](./scala-squants.md)                                 | 49       | 4       | 2      | ✅     |
+| `nim-unchained.md`                 | [`nim-unchained.md`](./nim-unchained.md)                                 | 51       | 3       | 3      | ✅     |
+| `swift-units.md`                   | [`swift-units.md`](./swift-units.md)                                     | 47       | 7       | 2      | ✅     |
+| `kotlin-measured.md`               | [`kotlin-measured.md`](./kotlin-measured.md)                             | 49       | 6       | 3      | ✅     |
+| `ucum-qudt.md`                     | [`ucum-qudt.md`](./ucum-qudt.md)                                         | 48       | 8       | 3      | ✅     |
+| `comparison.md`                    | [`comparison.md`](./comparison.md)                                       | 78       | 9       | 3      | ✅     |
+| `concepts.md`                      | [`concepts.md`](./concepts.md)                                           | 81       | 4       | 4      | ✅     |
+| `index.md`                         | [`page-index.md`](./page-index.md)                                       | 46       | 1       | 1      | ✅     |
+| `theory/index.md`                  | [`theory-index.md`](./theory-index.md)                                   | 39       | 1       | 2      | ✅     |
+| **Total**                          |                                                                          | **1984** | **127** | **78** | ✅     |
 
 Each `◯` row names its fallback in the per-page ledger. The tree-wide
 unobtainable primaries and their secondaries (Whitney 1968 I & II, ISO 80000-1,
@@ -182,9 +190,43 @@ minor (imprecise locator, quote truncation, cosmetic).
 | R96 | `index` (`page-index`) | `#D1` | m   | :214     | ✓      |
 | R97 | `theory/index`         | `#D1` | m   | :76      | ✓      |
 
+### Systems — wave 2 (R98–R118)
+
+The twenty-one **material** discrepancies caught by the wave-2 grounding pass,
+all applied to the pages in commit `bc7dc75`. (The six wave-2 ledgers additionally
+mark nine rows ⚠ for condensed-but-faithful quotes or secondary attributions that
+needed no page change — they are noted in-ledger, not listed here.) The rows the
+wave-2 systems added to `comparison.md`'s matrix and `index.md`'s catalog derive
+from these six page ledgers; no new primary claim was introduced in the synthesis
+pages.
+
+| R    | Page              | ID    | Sev | Location       | Fixed? |
+| ---- | ----------------- | ----- | --- | -------------- | ------ |
+| R98  | `scala-squants`   | `#D1` | S   | :155-156,:297  | ✓      |
+| R99  | `scala-squants`   | `#D2` | m   | :313-317       | ✓      |
+| R100 | `scala-squants`   | `#D3` | m   | :434           | ✓      |
+| R101 | `scala-squants`   | `#D4` | m   | :496           | ✓      |
+| R102 | `nim-unchained`   | `#D1` | m   | :326-329,:577  | ✓      |
+| R103 | `nim-unchained`   | `#D2` | m   | :17            | ✓      |
+| R104 | `swift-units`     | `#D7` | S   | :292           | ✓      |
+| R105 | `swift-units`     | `#D1` | m   | :52            | ✓      |
+| R106 | `swift-units`     | `#D2` | m   | :286           | ✓      |
+| R107 | `swift-units`     | `#D3` | m   | :130           | ✓      |
+| R108 | `swift-units`     | `#D4` | m   | :395           | ✓      |
+| R109 | `swift-units`     | `#D5` | m   | :101,:406,:409 | ✓      |
+| R110 | `swift-units`     | `#D6` | m   | :415           | ✓      |
+| R111 | `kotlin-measured` | `#D1` | m   | :50-53         | ✓      |
+| R112 | `kotlin-measured` | `#D2` | m   | :57            | ✓      |
+| R113 | `kotlin-measured` | `#D3` | m   | :174,:459      | ✓      |
+| R114 | `ucum-qudt`       | `#D1` | m   | :294           | ✓      |
+| R115 | `ucum-qudt`       | `#D2` | m   | :164,:174      | ✓      |
+| R116 | `ucum-qudt`       | `#D3` | m   | :254           | ✓      |
+| R117 | `ucum-qudt`       | `#D4` | m   | :220,:223,:287 | ✓      |
+| R118 | `ucum-qudt`       | `#D5` | m   | :163           | ✓      |
+
 ## Substantive corrections (spelled out)
 
-The ten `S` rows are the corrections that changed a claim's meaning, not just a
+The twelve `S` rows are the corrections that changed a claim's meaning, not just a
 locator or a transcription. Each is detailed in its ledger; in brief:
 
 - **R1 — `whitney` `#D1`.** The mechanization table filed Wand & O'Keefe under
@@ -217,6 +259,14 @@ locator or a transcription. Each is detailed in its ledger; in brief:
   — the page's own matrix has **eleven**. Figure corrected.
 - **R87 — `comparison` `#D5`.** Called Pint "the only shipped dB"; Unitful.jl also
   ships `dB`/`B` via `@logscale`/`@logunit`. Corrected.
+- **R98 — `scala-squants` `#D1`.** The base-quantity count read **seven**; squants
+  mixes `BaseDimension` into **eight** quantities — the seven SI base plus
+  `Information` (symbol `"B"`, `information/Information.scala:74,86`). Corrected to
+  eight in both spots.
+- **R104 — `swift-units` `#D7`.** The illustrative `20 °C + 68 °F` result was given
+  as `≈ 548.5 K ≈ 275.4 °C`; both operands are 293.15 K and Foundation sums them via
+  base kelvin, so the (deliberately meaningless) result is `≈ 586.3 K ≈ 313.2 °C`.
+  Figure corrected; the point (summing absolute temperatures is nonsense) stands.
 
 ## Adversarial verification pass
 
@@ -237,11 +287,22 @@ in `comparison.md`.
   pin, the VIM "to some extent arbitrary" quote, and the `comparison.md` figures
   all held.
 
+- Wave-2 systems scope: the six wave-2 ledgers were each authored by an independent
+  verifier reading the pinned clone directly (not the page author) — the adversarial
+  check and the ledger are one pass here. **296 rows checked, 21 material
+  discrepancies found and applied** (2 substantive: R98, R104), the remaining rows
+  upheld or noted as acceptable imprecision. Every corrected locator was re-confirmed
+  against the clone before editing.
+
 No new discrepancies survived the adversarial pass; no ledger `Fix` was wrong.
 
 ## Status
 
-All 26 pages ledgered; **1688** claim rows verified; **97** discrepancies found
-and applied (10 substantive, 87 minor/cosmetic); **62** rows are secondary- or
-opinion-grounded with their fallback named. Two independent adversarial verifiers
-upheld all 154 highest-risk rows they re-checked. No open discrepancies.
+All 32 pages ledgered (14 wave-1 systems + 8 theory + 3 synthesis + 6 wave-2
+systems, plus the umbrellas); **1984** claim rows checked; **118** material
+discrepancies found and applied (12 substantive, 106 minor/cosmetic), with **9**
+further wave-2 ⚠ rows flagging condensed-but-faithful quotes or secondary
+attributions that needed no page change; **78** rows are secondary- or
+opinion-grounded with their fallback named. Independent adversarial verification
+upheld every high-risk row re-checked (154 in wave 1; the six wave-2 ledgers are
+themselves the independent pass). No open discrepancies.
