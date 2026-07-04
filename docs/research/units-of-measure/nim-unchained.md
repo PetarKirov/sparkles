@@ -5,19 +5,19 @@ types and whose entire dimensional algebra runs inside term-rewriting macros ove
 an integer [`QuantityPowerArray`][quantities] — so a checked value _is_ a bare
 `float` at runtime, with no dimension data and no wrapper left behind.
 
-| Field            | Value                                                                                                                         |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Language         | Nim (`requires "nim >= 1.6.0"`; verified here on `nim 2.2.4`)                                                                 |
-| License          | MIT (declared in [`unchained.nimble`][nimble] L6; there is no standalone `LICENSE` file in the tree)                          |
-| Repository       | [SciNim/Unchained][repo]                                                                                                      |
-| Documentation    | [`README.org`][readme] (the primary reference) · generated API docs via the `gen_docs` nimble task                            |
-| Key authors      | Sebastian Schmidt (`Vindaar`) and contributors, under the [SciNim][scinim] scientific-computing org                           |
-| Category         | Library-level [compile-time checking][concepts] (no compiler support; a macro-based DSL on stock Nim)                         |
-| Mechanism        | `distinct float` unit types; dimensions are integer exponent arrays reduced and compared inside Nim macros at compile time    |
-| Exponent domain  | `ℤ` — `QuantityPower.power: int` ([`ct_unit_types.nim`][ctunit] L31, [`quantities.nim`][quantities] L15–18); **no rationals** |
-| Checking time    | Compile time (macros evaluated during semantic analysis); zero runtime checks and zero runtime dimension representation       |
-| Analyzed version | `426d72a` (pinned clone, 2025-11-20; `unchained.nimble` version `0.4.8`, git tag `v0.4.8`)                                    |
-| Latest release   | `v0.4.8` (git tag; the project publishes no GitHub "release", only the nimble/tag version)                                    |
+| Field            | Value                                                                                                                                                        |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Language         | Nim (`requires "nim >= 1.6.0"`; verified here on `nim 2.2.4`)                                                                                                |
+| License          | MIT (declared in [`unchained.nimble`][nimble] L6; there is no standalone `LICENSE` file in the tree)                                                         |
+| Repository       | [SciNim/Unchained][repo]                                                                                                                                     |
+| Documentation    | [`README.org`][readme] (the primary reference) · generated API docs via the `gen_docs` nimble task                                                           |
+| Key authors      | Sebastian Schmidt (`Vindaar`) and contributors, under the [SciNim][scinim] scientific-computing org                                                          |
+| Category         | Library-level [compile-time checking][concepts] (no compiler support; a macro-based DSL on stock Nim)                                                        |
+| Mechanism        | `distinct float` unit types; dimensions are integer exponent arrays reduced and compared inside Nim macros at compile time                                   |
+| Exponent domain  | `ℤ` — `QuantityPower.power: int` ([`quantities.nim`][quantities] L15–18) and `UnitInstance.power: int` ([`ct_unit_types.nim`][ctunit] L31); **no rationals** |
+| Checking time    | Compile time (macros evaluated during semantic analysis); zero runtime checks and zero runtime dimension representation                                      |
+| Analyzed version | `426d72a` (pinned clone, 2025-11-20; `unchained.nimble` version `0.4.8`, git tag `v0.4.8`)                                                                   |
+| Latest release   | `v0.4.8` (git tag; the project publishes no GitHub "release", only the nimble/tag version)                                                                   |
 
 > [!NOTE]
 > `unchained` is this survey's **Nim** data point for the **integer-exponent-array,
@@ -322,8 +322,9 @@ Extension is a strength, and it comes in three tiers grounded in shipped code:
   you want.
 
 The one real limitation is that the definitions populate **global compile-time
-tables** (`QuantityTab`, and a global `UnitTable`, both `{.compileTime.}` vars —
-[`quantities.nim`][quantities] L55–57). There is a single active unit registry per
+tables** — `QuantityTab`/`BaseQuantityTab` ([`quantities.nim`][quantities] L55, L57)
+and the global unit registry `UnitTab` (a `UnitTable`, [`define_units.nim`][defunits]
+L15), all `{.compileTime.}` vars. There is a single active unit registry per
 compilation, so a module that `import unchained` gets SI and cannot trivially host a
 second, independent system alongside it in the same scope; a custom system imports
 the bare `api`/`ct_api` instead of the SI-populated `unchained`.
@@ -576,7 +577,7 @@ dominate the build.
   ([`README.org`][readme] L187–231).
 - **A single global unit registry per compilation** — custom systems must avoid
   importing the SI-populated `unchained`; two live systems don't trivially coexist
-  ([`quantities.nim`][quantities] L55–57).
+  ([`define_units.nim`][defunits] L15).
 
 ## Key design decisions and trade-offs
 

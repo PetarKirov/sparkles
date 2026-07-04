@@ -152,10 +152,12 @@ object Length extends Dimension[Length] with BaseDimension {
 
 `Dimension[A]` carries the runtime registry — the unit `Set`, the `primaryUnit` (the
 unit whose `conversionFactor` is `1.0`), the `siUnit`, and string-parsing helpers
-([`Dimension.scala`][dimension] L20–79). Seven of the quantities additionally mix in
+([`Dimension.scala`][dimension] L20–79). Eight of the quantities additionally mix in
 `BaseDimension`, which adds an SI base-unit marker and a `dimensionSymbol: String`
-([`Dimension.scala`][dimension] L101–115) — but that symbol is a **display string**
-(`"L"`, `"Θ"`, …), not a participant in any exponent computation. Dimension identity is
+([`Dimension.scala`][dimension] L101–115) — the seven SI base quantities plus
+`Information` (symbol `"B"`, [`Information.scala`][information] L74, L86) — but that
+symbol is a **display string** (`"L"`, `"Θ"`, `"B"`, …), not a participant in any
+exponent computation. Dimension identity is
 implemented by comparing companion **class names** at runtime
 ([`Dimension.scala`][dimension] L87–93), used by `Quantity.equals` to reject
 cross-dimension equality ([`Quantity.scala`][quantity] L173–176).
@@ -294,7 +296,7 @@ type system) at the cost of an inexpressible dimensional algebra.
 
 - **No user-defined base-dimension system.** Unlike [`uom`][uom]'s `system!` or
   [`coulomb`][coulomb]'s open type-level base units, there is no mechanism to declare a
-  _new coordinate system_ of base quantities; the base set is whatever the seven
+  _new coordinate system_ of base quantities; the base set is whatever the eight
   `BaseDimension` classes are. Extension happens by adding classes to the same flat
   namespace, not by parameterising a system.
 
@@ -311,10 +313,10 @@ type system) at the cost of an inexpressible dimensional algebra.
   is special-cased precisely because Celsius/Fahrenheit/Kelvin/Rankine have different
   zero points. squants overrides `plus`/`minus` so the **right** operand is interpreted
   as an interval (degrees), not an absolute point ([`thermal/Temperature.scala`][temp]
-  L73–74):
+  L78–79):
 
   ```scala
-  // squants @ 29aa57f — shared/src/main/scala/squants/thermal/Temperature.scala L73-74
+  // squants @ 29aa57f — shared/src/main/scala/squants/thermal/Temperature.scala L78-79
   override def plus(that: Temperature): Temperature =
       Temperature(this.value + that.convert(unit, withOffset = false).value, unit)
   override def minus(that: Temperature): Temperature =
@@ -431,7 +433,7 @@ This is the **best diagnostic in the survey**, and it is essentially free: becau
 dimension is a nominal class, `scalac` reports the mismatch in the domain's own
 language — `found: Energy`, `required: Power` — with the plain class names, no
 `typenum` binary encoding, no phantom-parameter soup, no truncation-to-file. The
-library documents the identical error verbatim ([`README.md`][readme] L150–154):
+library documents the identical error verbatim ([`README.md`][readme] L150–155):
 
 ```text
 scala> val sum = load + energy
@@ -493,7 +495,7 @@ cross-build across Scala 2.12/2.13/3 and three platforms is substantial, but tha
 maintainers' cost, not the consumer's.)
 
 **A note on version drift.** The README in the pinned clone still advertises Current
-Release `1.6.0` ([`README.md`][readme] L23) while `project/Build.scala` cross-builds
+Release `1.6.0` ([`README.md`][readme] L22) while `project/Build.scala` cross-builds
 `3.3.7` and the last _tagged_ GitHub release is `v1.8.3` (2021-08-26). Cite the pinned
 SHA (`29aa57f`), not the README's stale version banner.
 
@@ -587,6 +589,7 @@ Power` in domain vocabulary, for free, because dimensions are nominal classes; n
 [money]: https://github.com/typelevel/squants/blob/29aa57f/shared/src/main/scala/squants/market/Money.scala
 [timederiv]: https://github.com/typelevel/squants/blob/29aa57f/shared/src/main/scala/squants/time/TimeDerivative.scala
 [metric]: https://github.com/typelevel/squants/blob/29aa57f/shared/src/main/scala/squants/MetricSystem.scala
+[information]: https://github.com/typelevel/squants/blob/29aa57f/shared/src/main/scala/squants/information/Information.scala
 [svector]: https://github.com/typelevel/squants/blob/29aa57f/shared/src/main/scala/squants/SVector.scala
 [readme]: https://github.com/typelevel/squants/blob/29aa57f/README.md
 [build]: https://github.com/typelevel/squants/blob/29aa57f/project/Build.scala

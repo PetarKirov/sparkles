@@ -47,14 +47,14 @@ new compound-unit types. The README states the positioning in its first paragrap
 > milliseconds vs microseconds or seconds. Measured helps you avoid pitfalls like
 > these."
 
-The shipped model is deliberately small — seven dimension files
-(`Length`, `Mass`, `Time`, `Angle`, `BinarySize`, `GraphicsLength`, and the compound
-`Velocity`/`Acceleration` aliases) sitting on one 429-line core
+The shipped model is deliberately small — six dimension files
+(`Length`, `Mass`, `Time`, `Angle`, `BinarySize`, `GraphicsLength`), with the compound
+`Velocity`/`Acceleration` aliases living in the core `Units.kt`, sitting on one 429-line core
 ([`Units.kt`][units]) — and its ambition is ergonomics on the JVM/Multiplatform stack
 (UI/graphics/time code) rather than a complete SI. The `time` example is the library's
 motivating case: `Measure<Time>` makes "is this milliseconds or seconds?" a
 type-checked question, with the base unit fixed at milliseconds
-([`Time.kt`][time] L11).
+([`Time.kt`][time] L10).
 
 ### Design philosophy
 
@@ -171,9 +171,11 @@ operator fun <A: Units, B: Units> A.times(other: UnitsRatio<B, A>): Measure<B>  
 ```
 
 `@JvmName` disambiguation is pervasive because JVM erasure collapses these signatures to
-the same descriptor. `Units.kt` carries **127** `operator fun` declarations across four
-regions (`Units * Units`, `Units / Units`, `Measure * Measure`, `Measure / Measure`, plus
-`Measure * Units` and `Number - Measure`). Crucially, the table is _incomplete by
+the same descriptor. `Units.kt` carries **127** `operator fun` lines — **110** active
+declarations plus **17** commented-out (16 `// FIXME` holes and one disabled `div`) —
+across four regions (`Units * Units`, `Units / Units`, `Measure * Measure`,
+`Measure / Measure`, plus `Measure * Units` and `Number - Measure`). Crucially, the table
+is _incomplete by
 construction_: **16** combinations are checked in as commented-out `// FIXME` lines —
 every one of them a `UnitsProduct` operand that Kotlin's overload resolution cannot
 disambiguate from its siblings ([`Units.kt`][units] L179–186, L281–288):
@@ -456,7 +458,8 @@ dimension files), so there is no macro expansion or type-family solving to pay f
 full JVM compile of the entire library plus a small consumer file finishes in **~4.2 s
 wall** (`kotlinc-jvm 2.2.21`, `-include-runtime`), most of it compiler/JVM startup
 rather than type-checking [measured locally, 2026-07-04]. The latent cost is
-**overload-resolution pressure**: 127 `operator fun` overloads distinguished by
+**overload-resolution pressure**: 110 active `operator fun` overloads (of 127
+`operator fun` lines, the other 17 commented out) distinguished by
 `@JvmName` and generic shape mean that deeply-nested compound expressions can force the
 resolver to consider many candidates, and — as the `// FIXME` lines attest — some shapes
 are ambiguous enough that no overload could be written at all. In practice this bites as
