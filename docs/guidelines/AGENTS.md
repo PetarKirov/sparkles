@@ -176,7 +176,7 @@ silly's successor — same CLI, documented under
 --bench             Run @benchmark tests (auto-scaling ns/iter statistics)
 --better-c          Extract @betterC tests, compile with -betterC, run them
 --wasm              Extract @wasm tests, cross-compile to wasm32, run them
---ctfe-trace FILE   Attribute CTFE cost per @ctfe test from -ftime-trace JSON
+--ctfe-trace FILE   Evaluate @ctfe tests under LDC -ftime-trace; per-test cost
 --self-test         Also run the runner's own unittests
 ```
 
@@ -185,8 +185,11 @@ Tests opt into the special modes with marker UDAs from
 `@benchmark`); import them **unconditionally**, not under
 `version (unittest)` — see the
 [attribute reference](../libs/test-runner/reference/attributes.md).
-`@ctfe` tests run while the test build compiles (a failure is a compile
-error) and are skipped at runtime.
+`@ctfe` tests never execute at runtime: after `-i`/`-e` filtering, the
+runner CTFE-evaluates the selected ones through a probe compiled with
+`-o- -unittest` (semantic analysis only, needs a D compiler on `PATH`), so
+filters control which tests execute and a failing `@ctfe` test can't break
+the test build, `--help`, or `--list`.
 
 Every sub-package integrates the runner via `sourcePaths`/`importPaths` in
 `dub.sdl` (a dub dependency would be a package-level cycle for `base` and
