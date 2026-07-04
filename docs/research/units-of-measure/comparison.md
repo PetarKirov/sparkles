@@ -12,7 +12,7 @@ defined in the [concepts glossary][concepts].
 
 > [!NOTE]
 > **Scope.** This synthesis draws only on the landed pages of this tree — eight theory
-> pages, twenty system pages, and the three CI-verified D prototypes in
+> pages, twenty system pages, and the thirteen CI-verified D prototypes in
 > [`examples/`](#part-iv-where-a-sparkles-units-library-would-fit) — and inherits
 > their provenance limits (e.g. Whitney's Part II is known via restatements; Hart's
 > book via its TOC; Wolfram/MATLAB via vendor-doc captures). Claims new to this page
@@ -625,13 +625,23 @@ Sparkles' constraints — templates + CTFE, `@safe pure nothrow @nogc` cores,
 region of the design space, and the survey's D evidence is unusually direct:
 [d-quantities][dq] shows two complete prior designs (biozic's CTFE value-level
 dimension vectors; Nadlinger's units-as-types conversion graph, still compiling
-unmodified after fifteen years), and the three runnable prototypes co-located with
-this tree already demonstrate the mechanism end-to-end, CI-verified:
-[`quantity-zn-graded.d`][ex-z] (dimension = `ℤ³` normal form as a template value
+unmodified after fifteen years), and the thirteen runnable prototypes co-located with
+this tree machine-check the design space end-to-end, CI-verified. The core mechanism is
+three: [`quantity-zn-graded.d`][ex-z] (dimension = `ℤ³` normal form as a template value
 parameter; rejection demos as `static assert(!__traits(compiles, …))`),
 [`quantity-rational-exponents.d`][ex-q] (CTFE-gcd-normalized `ℚ` exponents making
 `sqrt` total while `m^(1/2) + m` stays rejected), and [`quantity-erasure.d`][ex-e]
-(representation-equality machine-checked, with the codegen-identity boundary stated).
+(representation-equality machine-checked, with the codegen-identity boundary stated). Ten
+more, motivated by a physically-based raytracer, prototype the remaining open decisions
+below: affine points and rays ([`quantity-affine-torsor.d`][ex-affine]), flat kind tags
+([`quantity-kind-tags.d`][ex-kind]) and the nominal fork ([`quantity-nominal.d`][ex-nominal]),
+runtime checking through [`Expected`][expected] ([`quantity-runtime-expected.d`][ex-runtime]),
+unit-in-type lazy conversion ([`quantity-unit-in-type.d`][ex-unit]), engineered diagnostics
+([`quantity-diagnostics.d`][ex-diag]), dimensional polymorphism
+([`quantity-polymorphism.d`][ex-poly]), an open dimension basis
+([`quantity-open-basis.d`][ex-open]), and logarithmic units
+([`quantity-logarithmic.d`][ex-log]) — plus the linear-algebra composition that the next
+subsection draws out ([`quantity-vector-composition.d`][ex-compose]).
 
 What the findings imply, without designing anything:
 
@@ -672,12 +682,50 @@ The decisions a future `docs/specs/` proposal must actually make:
 | Runtime companion          | none · `Expected`-based dynamic quantity · parse-only bridge                                                  | [d-quantities][dq] (`QVariant`'s GC/exception cost); [Pint][pint] (what a term-level twin is for); repo [`Expected` idiom][expected]                                                                                                                                                                                                                                                                                                                                                                |
 | Angle & logarithmic policy | SI-dimensionless angles · angle as base dimension · log units deferred                                        | [boost-units][boost]/[au][au] (angle-as-dimension trade); [python-pint][pint] (the `2π` trap; shipped dB — elsewhere only [Unitful][unitful]'s experimental layer); theory silence recorded on [torsor][torsor]                                                                                                                                                                                                                                                                                     |
 
+### Composition with `sparkles:math`
+
+The prototypes are the first place the units layer meets a real linear-algebra type, and
+the interaction turns out to be a genuine co-design question. Reading
+`libs/math/src/sparkles/math/vector.d`: `Vector(T, N)` is constrained `if (isNumeric!T)`,
+so **`Vector!(Quantity, N)` — a vector of dimensioned scalars, the ergonomic thing to
+write — does not compile today**; its `dot` uses a dimension-blind `cast(CommonType)` (the
+dot of two length-vectors comes back a bare scalar, not an area); and it ships no 3-D
+`cross`, `magnitude`, or `normalize` at all — exactly what a raytracer needs.
+[`quantity-vector-composition.d`][ex-compose] puts the two orderings side by side and
+machine-checks the blocker:
+
+- **Ordering A — `Quantity!(dim, Vector)`** (the dimension wraps a numeric vector). Works
+  with the current `Vector` unchanged; [`quantity-affine-torsor.d`][ex-affine] builds the
+  raytracer's affine `Point3`/`Ray` this way. The cost: one dimension for the whole vector,
+  and the caller must re-attach the grade that `Vector.dot` discards
+  ([`quantity-polymorphism.d`][ex-poly] wraps `Vector.dot` to make `length·length = area`).
+- **Ordering B — `Vector!(Quantity, N)`** (a vector of quantities). Needs the element
+  constraint relaxed from `isNumeric!T` to an `isScalar` capability concept — and then
+  `dot` returns the _element's_ product type, so `length·length = area` falls out for free,
+  no cast. A ~30-line element-generic `Vec` in the composition prototype compiles ordering B
+  where the library's `Vector` does not.
+
+Three recommendations for the (explicitly open) `sparkles:math` redesign follow, each a
+shared input to the units `docs/specs/` proposal:
+
+1. **Relax `Vector`'s `isNumeric!T` to an `isScalar!T` capability concept** so a `Quantity`
+   is a valid element (ordering B).
+2. **Make `dot`/`cross`/`magnitude` element-type-driven, not `cast(CommonType)`**, and add
+   the missing 3-D `cross`/`magnitude`/`normalize` — dimension-correct by construction.
+3. **Add an N-generic, unit-aware affine `Point!(dim,N)`/`Vec!(dim,N)` split** — the same
+   affine separation the 2-D math-evolution work already wants, generalized to N dimensions
+   and made dimension-aware ([torsor][torsor], [`quantity-affine-torsor.d`][ex-affine]).
+
+(One minor wrinkle, machine-hit while writing the prototypes: `Vector.toString` takes a
+`scope` writer whose escape analysis rejects `writeln`'s `LockingTextWriter` in `@safe`
+code, so a dimensioned vector must be rendered through an `appender` — worth smoothing.)
+
 ---
 
 ## Sources
 
 This synthesis rests entirely on the landed pages of this tree: the eight
-[theory deep-dives][theory], the twenty system pages, and the three CI-verified
+[theory deep-dives][theory], the twenty system pages, and the thirteen CI-verified
 prototypes in `examples/`. Each carries its own primary citations (papers, pinned
 source trees, vendor-doc captures, local reproductions); nothing is cited here that is
 not already grounded on one of them. The cross-cutting framings introduced on this
@@ -731,6 +779,16 @@ the kind ladder — are syntheses of per-page findings, attributed inline.
 [ex-z]: ./examples/quantity-zn-graded.d
 [ex-q]: ./examples/quantity-rational-exponents.d
 [ex-e]: ./examples/quantity-erasure.d
+[ex-affine]: ./examples/quantity-affine-torsor.d
+[ex-kind]: ./examples/quantity-kind-tags.d
+[ex-nominal]: ./examples/quantity-nominal.d
+[ex-runtime]: ./examples/quantity-runtime-expected.d
+[ex-unit]: ./examples/quantity-unit-in-type.d
+[ex-diag]: ./examples/quantity-diagnostics.d
+[ex-poly]: ./examples/quantity-polymorphism.d
+[ex-open]: ./examples/quantity-open-basis.d
+[ex-log]: ./examples/quantity-logarithmic.d
+[ex-compose]: ./examples/quantity-vector-composition.d
 
 <!-- Repo guidelines -->
 
