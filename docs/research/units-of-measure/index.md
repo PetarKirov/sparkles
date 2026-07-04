@@ -12,7 +12,7 @@ inform a future **Sparkles quantities library**: the repo's constraints — temp
 CTFE, `@safe pure nothrow @nogc` cores, [`Expected`-based error handling][expected] —
 select a specific region of that space, and the survey closes with the delta
 ([comparison, Part IV][comparison-sparkles]), the D prior art ([d-quantities][dq]),
-and three CI-verified runnable D prototypes ([`examples/`](#runnable-prototypes)).
+and thirteen CI-verified runnable D prototypes ([`examples/`](#runnable-prototypes)).
 
 This survey answers seven questions:
 
@@ -38,7 +38,7 @@ This survey answers seven questions:
    (quantities as a graded object) tested against the evidence. See the
    [comparison][comparison].
 7. **Where would a Sparkles units library sit?** The D evidence — two complete prior
-   designs, three runnable prototypes — and the open decisions a `docs/specs/`
+   designs, thirteen runnable prototypes — and the open decisions a `docs/specs/`
    proposal must make. See [comparison, Part IV][comparison-sparkles],
    [d-quantities][dq], and the [prototypes](#runnable-prototypes).
 
@@ -155,9 +155,9 @@ exponent algebra.</sub>
 
 ### Runnable prototypes
 
-Three zero-dependency single-file D programs co-located with this tree, compiled and
-run by the repository's `ci` helper on every pass (and green under both `ldc2` and
-`dmd`); each header cross-links the theory section it demonstrates:
+Thirteen single-file D programs co-located with this tree, compiled and run by the
+repository's `ci` helper on every pass; each header cross-links the theory or system page
+it demonstrates. The first three are zero-dependency and pin the core mechanism:
 
 - [`quantity-zn-graded.d`][ex-z] — a minimal `ℤ³`-graded `Quantity`: the dimension is
   its unique normal form as a template value parameter; `metres + seconds` is a
@@ -168,6 +168,34 @@ run by the repository's `ci` helper on every pass (and green under both `ldc2` a
 - [`quantity-erasure.d`][ex-e] — representation-level erasure machine-checked
   (`sizeof`/`alignof`/`offsetof`/array layout), with the codegen-identity honesty
   boundary stated.
+
+Ten more are motivated by a physically-based raytracer and, where relevant, composed with
+`sparkles:math`'s `Vector`; they prototype the remaining design-space axes:
+
+- [`quantity-affine-torsor.d`][ex-affine] — affine `Point3` vs `Displacement` vs
+  `Direction` and `Ray.at(Length t)`; `Point + Point` and `scalar · Point` rejected
+  (composition ordering A: `Quantity!(dim, Vec3)` over the real `Vector`).
+- [`quantity-kind-tags.d`][ex-kind] — a flat `Kind` tag orthogonal to the exponent
+  vector (`Hz` ≠ `Bq`, plane-angle ≠ ratio); kind erased under `×`/`÷`.
+- [`quantity-nominal.d`][ex-nominal] — a distinct struct per quantity (kind for free),
+  hand-wired products, undeclared product unnameable; poor `Vector` reuse shown.
+- [`quantity-runtime-expected.d`][ex-runtime] — a runtime dimension value; fallible ops
+  return an `Expected` (`m + s` is a runtime `err`, not a throw).
+- [`quantity-unit-in-type.d`][ex-unit] — the unit (rational scale) lives in the type;
+  `nm + m` converts lazily at the boundary, not eagerly at construction.
+- [`quantity-diagnostics.d`][ex-diag] — a CTFE pretty-printer emits domain-language
+  `static assert` prose, contrasted with the raw mangled encoding.
+- [`quantity-polymorphism.d`][ex-poly] — dimension-aware generic `dot`/`cross`/
+  `magnitude`/`normalize`; forward IFTI inference works, the invert-from-result ceiling
+  does not.
+- [`quantity-open-basis.d`][ex-open] — an open `(name, exp)` dimension basis; mint a
+  custom base dimension without editing a closed vector core.
+- [`quantity-logarithmic.d`][ex-log] — EV/stops and dB: log-domain add = linear-domain
+  multiply; why logarithmic units resist the exponent-vector model.
+- [`quantity-vector-composition.d`][ex-compose] — units ⋈ linear algebra, head to head:
+  `Vector!(Quantity, N)` is blocked today (the `isNumeric!T` constraint) while an
+  element-generic `Vec` works, yielding a co-design recommendation for `sparkles:math`
+  (see the [comparison capstone][comparison]).
 
 ---
 
@@ -366,6 +394,16 @@ are:
 [ex-z]: ./examples/quantity-zn-graded.d
 [ex-q]: ./examples/quantity-rational-exponents.d
 [ex-e]: ./examples/quantity-erasure.d
+[ex-affine]: ./examples/quantity-affine-torsor.d
+[ex-kind]: ./examples/quantity-kind-tags.d
+[ex-nominal]: ./examples/quantity-nominal.d
+[ex-runtime]: ./examples/quantity-runtime-expected.d
+[ex-unit]: ./examples/quantity-unit-in-type.d
+[ex-diag]: ./examples/quantity-diagnostics.d
+[ex-poly]: ./examples/quantity-polymorphism.d
+[ex-open]: ./examples/quantity-open-basis.d
+[ex-log]: ./examples/quantity-logarithmic.d
+[ex-compose]: ./examples/quantity-vector-composition.d
 
 <!-- Repo guidelines -->
 
