@@ -17,15 +17,21 @@ Everything after `--` in `dub test :pkg -- <options>` goes to the runner.
 
 ## Modes
 
-| Option              | Description                                                             |
-| ------------------- | ----------------------------------------------------------------------- |
-| _(none)_            | Run regular tests in parallel; report `@ctfe` as compile-time-verified  |
-| `--bench`           | Measure `@benchmark` tests (serial); print the statistics table         |
-| `--better-c`        | Extract `@betterC` tests, compile with `-betterC`, run without druntime |
-| `--wasm`            | Extract `@wasm` tests, cross-compile to `wasm32`, run in a wasm runtime |
-| `--ctfe-trace FILE` | Attribute CTFE cost per `@ctfe` test from an LDC `-ftime-trace` JSON    |
+| Option              | Description                                                              |
+| ------------------- | ------------------------------------------------------------------------ |
+| _(none)_            | Run regular tests in parallel; evaluate selected `@ctfe` tests via CTFE  |
+| `--bench`           | Measure `@benchmark` tests (serial); print the statistics table          |
+| `--better-c`        | Extract `@betterC` tests, compile with `-betterC`, run without druntime  |
+| `--wasm`            | Extract `@wasm` tests, cross-compile to `wasm32`, run in a wasm runtime  |
+| `--ctfe-trace FILE` | Evaluate `@ctfe` tests under LDC `-ftime-trace` and report per-test cost |
 
-## `--better-c` / `--wasm` toolchain options
+`@ctfe` tests are evaluated by a probe program compiled with `-o- -unittest`
+(semantic analysis only) after `-i`/`-e` filtering, so only the selected
+tests execute, and `--help`/`--list` never evaluate any — even ones that
+would fail. See
+[Write compile-time tests](../how-to/write-ctfe-tests.md).
+
+## `@ctfe` / `--better-c` / `--wasm` toolchain options
 
 | Option                     | Description                                                      |
 | -------------------------- | ---------------------------------------------------------------- |

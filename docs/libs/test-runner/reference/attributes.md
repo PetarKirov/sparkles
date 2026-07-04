@@ -19,10 +19,14 @@ The test is `-betterC`-compatible (no GC, exceptions, TypeInfo, druntime).
 
 The test runs at **compile time instead of runtime**.
 
-- Forced through CTFE with `static assert` while the test build compiles;
-  a failure is a compile error with the CTFE call stack.
-- Reported at runtime as `⚙ … (compile time)`; never executed again.
-- The body must be CTFE-able.
+- Evaluated through CTFE by a runner-generated probe compiled with
+  `-o- -unittest` (semantic analysis only) after `-i`/`-e` filtering — so
+  filters control which tests execute, and `--help`/`--list` work even when
+  an `@ctfe` test would fail.
+- Reported as `⚙ … (compile time)` on success, `✗ … (compile time)` plus the
+  compiler's CTFE error trail on failure; never executed at runtime.
+- The body must be CTFE-able; needs a D compiler on `PATH` (or `$DC` /
+  `--compiler`) at run time.
 - Named after (and forward-compatible with) DMD 2.113's `@__ctfe` function
   attribute.
 
