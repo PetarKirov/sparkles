@@ -4,7 +4,7 @@ The capstone of the [units-of-measure survey][umbrella], in four parts: a
 **reconciliation of the seven formalizations** in the [theory subtree][theory] across
 the survey's shared protocol questions; a **test of a candidate unifying hypothesis**
 (quantities as a graded commutative algebra / weight-space decomposition) against the
-landed evidence; the **at-a-glance matrix** over the fourteen surveyed systems with the
+landed evidence; the **at-a-glance matrix** over the twenty surveyed systems with the
 consensus the field has converged on and the trade-offs that remain genuinely open; and
 the **delta for a Sparkles units library** — the open design decisions a future
 `docs/specs/` proposal must resolve, with the evidence that frames each. Terminology is
@@ -12,7 +12,7 @@ defined in the [concepts glossary][concepts].
 
 > [!NOTE]
 > **Scope.** This synthesis draws only on the landed pages of this tree — eight theory
-> pages, fourteen system pages, and the three CI-verified D prototypes in
+> pages, twenty system pages, and the three CI-verified D prototypes in
 > [`examples/`](#part-iv-where-a-sparkles-units-library-would-fit) — and inherits
 > their provenance limits (e.g. Whitney's Part II is known via restatements; Hart's
 > book via its TOC; Wolfram/MATLAB via vendor-doc captures). Claims new to this page
@@ -290,21 +290,26 @@ Confronting the hypothesis with the stress cases the pages document:
 
 ### Verdict, row by row
 
-| Formalization / mechanism family                                         | Fits the graded reading?                                                                         | Where it strains                                                                                               | What resists                                                                                          |
-| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| [Whitney][whitney]                                                       | Yes — `Q ≅ ℝ × ℚⁿ` is the trivialized graded object                                              | one _global_ zero (rays "coincide in a point"); exponent ring unresolved (`ℚ` vs `ℝ`); positivity incoherence  | kinds by model-choice, not by grading; the balloons/cookies formal sum has no declared home           |
-| [Buckingham π][pi]                                                       | Yes — the theorem _is_ lattice linear algebra on the grading group (`ker A`, rank–nullity)       | quantities are pre-trivialized positive numbers; no lines anywhere                                             | Bridgman's conditional homogeneity: law-level content the graded reading cannot see                   |
-| [Free abelian group][fag]                                                | It **is** the grading group, by definition                                                       | `ℤⁿ` vs `ℚⁿ` is a change of category (freeness, perfect squares, gcd structure all lost over `ℚ`)              | kind unrepresentable — the group element is a dimension's whole identity                              |
-| [Tensor of lines][tensor]                                                | Yes, nearly verbatim — lines, `⊗`, weights, and the dictionary theorem                           | JMV carriers are zero-free cones, not lines; irrational exponents open; is keeping the lines worth it vs `ℤⁿ`? | hybrids live outside; `Hz` vs `Bq` conflated at _every_ structure group                               |
-| [Torsor / scaling torus][torsor]                                         | Yes — the hypothesis's second clause is this page                                                | characters form `ℝⁿ`: the torus explains no particular lattice; trivialization always non-canonical            | affine layer needs _additive_ torsors; logarithmic units a fourfold silence                           |
-| [Kennedy types][kennedy]                                                 | As the checked shadow: `num` is a graded family, the scaling group is derived                    | model has no lines — every fiber denotes bare `ℚ⊥`; torus over `ℚ⁺`, not `ℝ₊`                                  | value-dependent exponents, affine, log, kind — all outside by declaration                             |
-| [Hart][hart]                                                             | Yes, if extended to graded _modules_: `x`-spaces = direct sums of fibers, matrices = graded maps | `TFF` is post-trivialization; `G` need not be free abelian (or abelian)                                        | the matrix classes are indexed by `(x, y)` mod scaling — `n + m − 1` parameters no grading names      |
-| Native AG unifier ([F#][fsharp])                                         | Checks equality in the grading group; erasure = global trivialization                            | shipped group is `ℚⁿ` (`RationalPower`), against the published `ℤⁿ` theory                                     | `Hz + Bq` type-checks — the stdlib itself exhibits the kind collapse                                  |
-| Plugin AG unifier ([uom-plugin][uom-plugin])                             | Same object; torsion-freeness rule names free abelian groups as _the_ intended models            | evidence by assertion; weakened principality; plugin died of compiler coupling                                 | `√Hz`, affine, dB all explicitly future work                                                          |
-| Type-level integer vectors ([uom][rust-uom], C++)                        | The grading group in fixed (or symbolic) coordinates; checker evaluates the group operation      | no solver: ground grades only; bounds substitute for unification                                               | kind tags/trees are extra-graded structure bolted on nominally                                        |
-| Closed type families ([dimensional][dimensional])                        | The group as syntactic normal forms                                                              | AC axioms are not a terminating rewrite system — stuck on variables                                            | normal-form debris in errors; no backwards inference                                                  |
-| Dependent types ([Lean][lean])                                           | The only mechanization where the group is a **theorem** (`CommGroup (dimension B E)`)            | `B → E` is the full function group `Eᴮ` — free abelian only for finite `B`; grades are not 1-D lines           | `+` on dimensions via `Classical.epsilon`: total, unknowable — deliberately not the graded answer     |
-| Term-level dictionaries ([Pint][pint], [Julia][unitful], [CAS][wolfram]) | The grading group as run-time data (dicts, `Rational` tuples, symbolic exponents)                | fibers never materialize; checking only on executed paths (or on request)                                      | precisely the systems that ship what the graded object lacks: affine deltas, log units, curated kinds |
+| Formalization / mechanism family                                           | Fits the graded reading?                                                                                                                     | Where it strains                                                                                                                                     | What resists                                                                                                                                                                 |
+| -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Whitney][whitney]                                                         | Yes — `Q ≅ ℝ × ℚⁿ` is the trivialized graded object                                                                                          | one _global_ zero (rays "coincide in a point"); exponent ring unresolved (`ℚ` vs `ℝ`); positivity incoherence                                        | kinds by model-choice, not by grading; the balloons/cookies formal sum has no declared home                                                                                  |
+| [Buckingham π][pi]                                                         | Yes — the theorem _is_ lattice linear algebra on the grading group (`ker A`, rank–nullity)                                                   | quantities are pre-trivialized positive numbers; no lines anywhere                                                                                   | Bridgman's conditional homogeneity: law-level content the graded reading cannot see                                                                                          |
+| [Free abelian group][fag]                                                  | It **is** the grading group, by definition                                                                                                   | `ℤⁿ` vs `ℚⁿ` is a change of category (freeness, perfect squares, gcd structure all lost over `ℚ`)                                                    | kind unrepresentable — the group element is a dimension's whole identity                                                                                                     |
+| [Tensor of lines][tensor]                                                  | Yes, nearly verbatim — lines, `⊗`, weights, and the dictionary theorem                                                                       | JMV carriers are zero-free cones, not lines; irrational exponents open; is keeping the lines worth it vs `ℤⁿ`?                                       | hybrids live outside; `Hz` vs `Bq` conflated at _every_ structure group                                                                                                      |
+| [Torsor / scaling torus][torsor]                                           | Yes — the hypothesis's second clause is this page                                                                                            | characters form `ℝⁿ`: the torus explains no particular lattice; trivialization always non-canonical                                                  | affine layer needs _additive_ torsors; logarithmic units a fourfold silence                                                                                                  |
+| [Kennedy types][kennedy]                                                   | As the checked shadow: `num` is a graded family, the scaling group is derived                                                                | model has no lines — every fiber denotes bare `ℚ⊥`; torus over `ℚ⁺`, not `ℝ₊`                                                                        | value-dependent exponents, affine, log, kind — all outside by declaration                                                                                                    |
+| [Hart][hart]                                                               | Yes, if extended to graded _modules_: `x`-spaces = direct sums of fibers, matrices = graded maps                                             | `TFF` is post-trivialization; `G` need not be free abelian (or abelian)                                                                              | the matrix classes are indexed by `(x, y)` mod scaling — `n + m − 1` parameters no grading names                                                                             |
+| Native AG unifier ([F#][fsharp])                                           | Checks equality in the grading group; erasure = global trivialization                                                                        | shipped group is `ℚⁿ` (`RationalPower`), against the published `ℤⁿ` theory                                                                           | `Hz + Bq` type-checks — the stdlib itself exhibits the kind collapse                                                                                                         |
+| Plugin AG unifier ([uom-plugin][uom-plugin])                               | Same object; torsion-freeness rule names free abelian groups as _the_ intended models                                                        | evidence by assertion; weakened principality; plugin died of compiler coupling                                                                       | `√Hz`, affine, dB all explicitly future work                                                                                                                                 |
+| Type-level integer vectors ([uom][rust-uom], C++)                          | The grading group in fixed (or symbolic) coordinates; checker evaluates the group operation                                                  | no solver: ground grades only; bounds substitute for unification                                                                                     | kind tags/trees are extra-graded structure bolted on nominally                                                                                                               |
+| Closed type families ([dimensional][dimensional])                          | The group as syntactic normal forms                                                                                                          | AC axioms are not a terminating rewrite system — stuck on variables                                                                                  | normal-form debris in errors; no backwards inference                                                                                                                         |
+| Dependent types ([Lean][lean])                                             | The only mechanization where the group is a **theorem** (`CommGroup (dimension B E)`)                                                        | `B → E` is the full function group `Eᴮ` — free abelian only for finite `B`; grades are not 1-D lines                                                 | `+` on dimensions via `Classical.epsilon`: total, unknowable — deliberately not the graded answer                                                                            |
+| Term-level dictionaries ([Pint][pint], [Julia][unitful], [CAS][wolfram])   | The grading group as run-time data (dicts, `Rational` tuples, symbolic exponents)                                                            | fibers never materialize; checking only on executed paths (or on request)                                                                            | precisely the systems that ship what the graded object lacks: affine deltas, log units, curated kinds                                                                        |
+| Reflective opaque-type macro ([coulomb][scala-coulomb])                    | **Yes, cleanly** — type-level `ℚ` exponents _are_ the grading group; `DeltaQuantity[V,U,B]` is the additive torsor made general              | canonicalization is recomputed by the `cansig` macro per operation (an engineering cost, not a conceptual gap)                                       | kind — Hz/Bq, torque/energy are the bare group, unguarded (no tag layer)                                                                                                     |
+| Nominal typing ([squants][scala-squants], [Swift Foundation][swift-units]) | **No — the counter-example.** A dimension is a bare Scala/Swift _class_; there is no exponent group at all                                   | nothing to strain: the grading object is simply _absent_ — products are hand-enumerated (squants) or unnameable (Swift's `m·s`)                      | the hypothesis itself — direct evidence _against_ "the group is primitive" being universal; yet it delivers kind (torque ≠ energy) for free, which the graded systems cannot |
+| Nested generics, no normal form ([measured][kotlin-measured])              | Partly — `ℤ`-graded in spirit (products of dimensions), but never normalized                                                                 | so `A·B` ≠ `B·A`: it does not even realize the group's _commutativity_; no dimensionless-one type (cancellation → bare `Double`); 16 `//FIXME` holes | torsors, affine (no `Temperature` at all), fractional powers                                                                                                                 |
+| Integer-array macro ([unchained][nim-unchained])                           | Yes — `ℤ`-graded exactly as [uom][rust-uom]/[dimensioned][dimensioned]; `commonQuantity` is group equality over the reduced power vector     | the same `ℤ`-vs-`ℚ` change of category; correctness rests on an imperative `reduce`/`simplify`, not type identity                                    | torsors silent; affine, log, and kind all absent by construction                                                                                                             |
+| Runtime group-as-data ([UCUM/QUDT][ucum-qudt])                             | Yes, but as a **runtime value, not a type** — the free abelian group realized as an integer 7-vector / dimension-vector IRI / `Map<Dim,Int>` | fibers never materialize; only qudtlib reaches fractional exponents _and_ an additive torsor (offset + `TEMPERATURE_DIFFERENCE`)                     | kind (QUDT's `QuantityKind` is unchecked metadata); every check deferred to run time                                                                                         |
 
 ### The verdict, plainly
 
@@ -334,6 +339,19 @@ the hypothesis:
    `Bq`) are demonstrably required by mature systems and demonstrably not derivable
    from the graded object. A "unifying object" for the _field_ — as opposed to for
    classical dimensional analysis — must carry both as additional structure.
+4. **The graded object is common but not universal, and the wave-2 systems mark its
+   three live rivals.** [coulomb][scala-coulomb] and [unchained][nim-unchained] fit it
+   (a `ℚ`- and a `ℤ`-grading respectively, coulomb even supplying the additive torsor);
+   but two families _decline_ it and the disagreement should not be averaged away.
+   **Nominal typing** ([squants][scala-squants], [Swift Foundation][swift-units]) has no
+   exponent group at all — a dimension is a bare class — which is direct evidence that
+   "the group is primitive" is a modelling _choice_, not a necessity; the payoff is that
+   torque ≠ energy comes free, the one thing the graded systems cannot derive.
+   **Nested generics without a normal form** ([measured][kotlin-measured]) keep the
+   products but drop even commutativity (`A·B` ≠ `B·A`). And **group-as-runtime-data**
+   ([UCUM/QUDT][ucum-qudt], with [Pint][pint]) realizes the same free abelian group as a
+   value — an integer vector or an IRI — rather than a type or a model, a third ontic
+   stance the hypothesis's "graded algebra / weight-space" framing does not anticipate.
 
 ---
 
@@ -341,22 +359,28 @@ the hypothesis:
 
 ### At-a-glance matrix
 
-| System                               | Checked      | Mechanism                                 | Exponents    | Affine           | Log     | Kind           | Poly. `sqr` / inference | Erasure evidence            | Mismatch diagnostics          |
-| ------------------------------------ | ------------ | ----------------------------------------- | ------------ | ---------------- | ------- | -------------- | ----------------------- | --------------------------- | ----------------------------- |
-| [F# UoM][fsharp]                     | compile      | **native AG unifier**                     | `ℚ`¹         | —                | —       | —²             | ✅ inferred, principal  | ✅ total erasure³           | ✅ one-line, unit-level       |
-| [uom-plugin][uom-plugin] (Haskell)   | compile      | **plugin AG unifier**                     | `ℤ`          | —                | —       | —              | ✅ inferred⁴            | ✅ `newtype` (unmeasured)   | ✅ unit-level (via plugin)    |
-| [dimensional][dimensional] (Haskell) | compile      | closed type families                      | `ℤ⁷` closed  | ~ offset fns     | —⁵      | —              | ~ stuck on variables    | ✅ `newtype`/`coerce`⁶      | ~ type-level leaks            |
-| [uom][rust-uom] (Rust)               | compile      | `typenum` trait arithmetic                | `ℤ⁷`         | ~ temp-only⁷     | —       | ✅ flat tags⁸  | ~ 7-fold bounds         | ✅ verified (`transparent`) | ✗ `typenum` spines            |
-| [dimensioned][dimensioned] (Rust)    | compile      | `typenum` `tarr!` arrays                  | `ℤⁿ`⁹        | —                | —       | —              | ~ system-polymorphic    | ✅ verified¹⁰               | ✗✗ positional spines          |
-| [mp-units][mp-units] (C++)           | compile      | `consteval` symbolic expressions          | `ℚ` open     | ✅ general       | —¹¹     | ✅✅ hierarchy | ~ generic, no inference | ✅ verified                 | ✅✅ engineered, domain-level |
-| [Boost.Units][boost] (C++)           | compile      | MPL typelists                             | `ℚ` open     | ✅ `absolute<T>` | —       | ~ base dims¹²  | ~ `typeof` helpers      | ✅ verified + codegen diff  | ✗✗✗ 37-line/9.8 KB            |
-| [Au][au] (C++)                       | compile      | variadic packs + magnitude vector space   | `ℚ` open     | ✅ general       | —¹³     | —¹⁴            | ~ generic               | ✅ verified                 | ✅ `static_assert` prose      |
-| [D: quantities / std.units][dq]      | compile¹⁵    | CTFE dimension values / unit-type graph   | `ℚ` (all 3)  | ~ split¹⁶        | —       | ~ by fiat¹⁷    | ~ CTFE, no inference    | ✅ in-source asserts        | ~ readable first line         |
-| [Pint][pint] (Python)                | run          | registry + exponent dictionaries          | `ℚ` open     | ✅✅ `delta_`    | ✅ Beta | —              | n/a (dynamic)           | ✗ 38×–250× overhead         | ✅ most readable (runtime)    |
-| [Unitful.jl][unitful] (Julia)        | dispatch¹⁸   | `Rational{Int}` values in type parameters | `ℚ` open     | ✅ any dim       | ✅ exp. | —              | ~ free, uncheckable     | ✅ `isbits` + LLVM check    | ✅ most readable              |
-| [GNAT Ada][gnat]                     | compile      | compiler aspects, `ℚ` vectors on AST      | `ℚ⁷` (cap 7) | —¹⁹              | —       | —              | ✗ inexpressible         | ✅ byte-identical asm       | ✅ compiler-grade             |
-| [Lean][lean]                         | elaboration  | dependent types, proved `CommGroup`       | open ring²⁰  | —                | —       | —              | ✅ as theorems          | n/a (`noncomputable`)       | ~ generic type mismatch       |
-| [Wolfram / MATLAB][wolfram]          | run / opt-in | symbolic expressions over curated corpus  | `ℤ` observed | ✅ curated²¹     | —²²     | ~ temp only    | n/a                     | ✗ symbolic cost             | ~ `$Failed` / quiet logicals  |
+| System                               | Checked         | Mechanism                                 | Exponents       | Affine            | Log      | Kind           | Poly. `sqr` / inference             | Erasure evidence            | Mismatch diagnostics               |
+| ------------------------------------ | --------------- | ----------------------------------------- | --------------- | ----------------- | -------- | -------------- | ----------------------------------- | --------------------------- | ---------------------------------- |
+| [F# UoM][fsharp]                     | compile         | **native AG unifier**                     | `ℚ`¹            | —                 | —        | —²             | ✅ inferred, principal              | ✅ total erasure³           | ✅ one-line, unit-level            |
+| [uom-plugin][uom-plugin] (Haskell)   | compile         | **plugin AG unifier**                     | `ℤ`             | —                 | —        | —              | ✅ inferred⁴                        | ✅ `newtype` (unmeasured)   | ✅ unit-level (via plugin)         |
+| [dimensional][dimensional] (Haskell) | compile         | closed type families                      | `ℤ⁷` closed     | ~ offset fns      | —⁵       | —              | ~ stuck on variables                | ✅ `newtype`/`coerce`⁶      | ~ type-level leaks                 |
+| [uom][rust-uom] (Rust)               | compile         | `typenum` trait arithmetic                | `ℤ⁷`            | ~ temp-only⁷      | —        | ✅ flat tags⁸  | ~ 7-fold bounds                     | ✅ verified (`transparent`) | ✗ `typenum` spines                 |
+| [dimensioned][dimensioned] (Rust)    | compile         | `typenum` `tarr!` arrays                  | `ℤⁿ`⁹           | —                 | —        | —              | ~ system-polymorphic                | ✅ verified¹⁰               | ✗✗ positional spines               |
+| [mp-units][mp-units] (C++)           | compile         | `consteval` symbolic expressions          | `ℚ` open        | ✅ general        | —¹¹      | ✅✅ hierarchy | ~ generic, no inference             | ✅ verified                 | ✅✅ engineered, domain-level      |
+| [Boost.Units][boost] (C++)           | compile         | MPL typelists                             | `ℚ` open        | ✅ `absolute<T>`  | —        | ~ base dims¹²  | ~ `typeof` helpers                  | ✅ verified + codegen diff  | ✗✗✗ 37-line/9.8 KB                 |
+| [Au][au] (C++)                       | compile         | variadic packs + magnitude vector space   | `ℚ` open        | ✅ general        | —¹³      | —¹⁴            | ~ generic                           | ✅ verified                 | ✅ `static_assert` prose           |
+| [D: quantities / std.units][dq]      | compile¹⁵       | CTFE dimension values / unit-type graph   | `ℚ` (all 3)     | ~ split¹⁶         | —        | ~ by fiat¹⁷    | ~ CTFE, no inference                | ✅ in-source asserts        | ~ readable first line              |
+| [Pint][pint] (Python)                | run             | registry + exponent dictionaries          | `ℚ` open        | ✅✅ `delta_`     | ✅ Beta  | —              | n/a (dynamic)                       | ✗ 38×–250× overhead         | ✅ most readable (runtime)         |
+| [Unitful.jl][unitful] (Julia)        | dispatch¹⁸      | `Rational{Int}` values in type parameters | `ℚ` open        | ✅ any dim        | ✅ exp.  | —              | ~ free, uncheckable                 | ✅ `isbits` + LLVM check    | ✅ most readable                   |
+| [GNAT Ada][gnat]                     | compile         | compiler aspects, `ℚ` vectors on AST      | `ℚ⁷` (cap 7)    | —¹⁹               | —        | —              | ✗ inexpressible                     | ✅ byte-identical asm       | ✅ compiler-grade                  |
+| [Lean][lean]                         | elaboration     | dependent types, proved `CommGroup`       | open ring²⁰     | —                 | —        | —              | ✅ as theorems                      | n/a (`noncomputable`)       | ~ generic type mismatch            |
+| [Wolfram / MATLAB][wolfram]          | run / opt-in    | symbolic expressions over curated corpus  | `ℤ` observed    | ✅ curated²¹      | —²²      | ~ temp only    | n/a                                 | ✗ symbolic cost             | ~ `$Failed` / quiet logicals       |
+| [coulomb][scala-coulomb] (Scala)     | compile         | opaque type + reflective `cansig` macro   | `ℚ` first-class | ✅ general        | —        | —              | ~ term-inferred; `sqrt` total       | ✅ opaque-type (structural) | ✅✅ domain-language, library-made |
+| [squants][scala-squants] (Scala)     | compile / run²³ | nominal F-bounded classes                 | — (nominal)     | ~ temp hand-coded | —        | ✅ nominal²⁴   | ✗ no exponent algebra               | ✗ heap object per quantity  | ✅✅ best-in-survey (class names)  |
+| [unchained][nim-unchained] (Nim)     | compile²⁵       | `ℤ` power-array term-rewriting macros     | `ℤ`             | —                 | —        | —              | ~ concept-poly; `sqrt` squares-only | ✅ `distinct float`         | ✅✅ domain-language (macro)       |
+| [measured][kotlin-measured] (Kotlin) | compile         | nested generics + hand overload table     | ✗ no temp dim   | —                 | —        | —              | ✗ overload gaps (`A·B`≠`B·A`)       | ✗ boxed `Double` + ref      | ✅✅ nominal, domain-named         |
+| [Swift `Measurement`][swift-units]   | compile / run²⁶ | nominal `Measurement<UnitType>` class     | — (no product)  | ~ conv-layer²⁷    | —        | —              | ✗ no product type; no inference     | ✗ class ref + virtual       | ✅ nominal (comparison hole²⁶)     |
+| [UCUM / QUDT][ucum-qudt]             | run             | canonical-string / `ℤ⁷` / IRI / JSR-385   | `ℤ`²⁸           | ~ qudtlib²⁸       | ~ UCUM²⁸ | —²⁸            | n/a (runtime)                       | ✗ runtime data              | ✅ runtime throw (per-ecosystem)   |
 
 <sub>¹ Surface syntax defaults to integers; parenthesized `kg^(1/2)` accepted and the
 solver is rational throughout — diverging from both the spec grammar and Kennedy's
@@ -385,17 +409,38 @@ assignment type-checks. ²⁰ Any `CommRing E` — `ℝ` exponents type-check; n
 the physics convention. ²¹ Wolfram: point/difference temperature units curated;
 MATLAB: all temperatures default to _differences_, with a documented
 `0*u.Celsius` → dimensionless-`0` trap. ²² MATLAB documents the exclusion ("arithmetic
-operations are not possible for these units"); Wolfram captures are silent.</sub>
+operations are not possible for these units"); Wolfram captures are silent.
+²³ Dimensional safety is compile-time nominal typing; the value and its scale
+conversion are runtime — a `Quantity` is a heap object, so **not** zero-cost.
+²⁴ `Torque` ≠ `Energy`, `Frequency` ≠ `Activity` fall out of nominal typing for free;
+the mirror cost is that squants can never _derive_ that two classes share a dimension.
+²⁵ Runtime is free (`distinct float` + emitted bare-float ops), but the compile-time
+cost is unbounded — one stress test needed ~10 GB of compiler RAM and is barred from CI.
+²⁶ Only `+`/`-` are compile-guarded (matching `UnitType`); `==`/`<` are generic over
+_two_ unit types, so `length < duration` compiles and `fatalError`s at runtime, and
+there is no `Measurement × Measurement`, so `m·s` is unnameable. ²⁷ `UnitConverterLinear`
+coefficient + constant; the offset is applied inside `+`, so adding two absolute
+temperatures silently yields a physically meaningless sum — no point/interval split.
+²⁸ Five libraries: ucum-java (`int`), ucum-lhc (`ℤ⁷`), JSR-385 (`Map<…,Int>`) are
+integer-only; only qudtlib's `float[8]` holds fractional exponents. Affine only in
+qudtlib (`conversionOffset` + a `TEMPERATURE_DIFFERENCE` kind); UCUM ships `bel`/`neper`
+as function-based "special units". No member checks kind (QUDT's `QuantityKind` is
+unchecked metadata).</sub>
 
-Reading across: the matrix splits into a **static majority** (eleven systems where
-mismatches are compile/elaboration errors), a **dynamic pole** (Pint, the CAS pair)
-where expressiveness is highest and cost is inverted, and Julia's **specialization-time**
-middle. Within the static majority the deepest split is not language but
-_solver access_: only the two AG-unifier systems infer; everything else evaluates.
-And the affine/log/kind columns are nearly the inverse of the "Checked" column — the
-systems with the strongest static guarantees historically shipped the least of the
-structure the graded object lacks, though mp-units and Au show that is contingent, not
-necessary.
+Reading across: the matrix splits into a **static majority** (fifteen systems where
+mismatches are compile/elaboration errors — the wave-2 additions coulomb, unchained,
+measured, and squants' dimensional layer all land here), a **dynamic pole** (Pint, the
+CAS pair, and the five-library UCUM/QUDT interchange set) where expressiveness is
+highest and cost is inverted, and Julia's **specialization-time** middle — with Swift
+Foundation a fourth, _asymmetric_ category, compile-guarded for `+`/`-` yet
+runtime-`fatalError` for comparison. Within the static majority the deepest split is
+not language but _solver access_: only the two AG-unifier systems infer; everything
+else evaluates. And the affine/log/kind columns are nearly the inverse of the "Checked"
+column — the systems with the strongest static guarantees historically shipped the
+least of the structure the graded object lacks, though mp-units, Au, and now coulomb
+(a general `DeltaQuantity` affine layer) show that is contingent, not necessary; and
+squants inverts the correlation from the other side, buying the kind distinction
+(`Torque` ≠ `Energy`) _for free_ by forfeiting the exponent algebra entirely.
 
 ### 1. Mechanism: evaluators vs solvers
 
@@ -526,7 +571,7 @@ per-specialization JIT tax.
 
 ### The consensus standard
 
-Across fourteen systems and three decades, the field agrees on:
+Across twenty systems and three decades, the field agrees on:
 
 1. **Dimensions are exponent vectors in a free abelian group, compared by unique
    normal form.** Every system — static, dynamic, or symbolic — implements the
@@ -615,24 +660,24 @@ What the findings imply, without designing anything:
 
 The decisions a future `docs/specs/` proposal must actually make:
 
-| Open decision              | Options on the table                                                                                          | Evidence that frames it                                                                                                                                                                                         |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Exponent domain            | `ℤⁿ` · `ℚⁿ` · `ℤⁿ` surface with `ℚⁿ` escape hatch                                                             | [free-abelian-group][fag] (`ℤⁿ→ℚⁿ` is a change of category); [§2](#2-the-exponent-domain-in-practice) (practice drifted to `ℚ`); both prototypes ([ℤ][ex-z], [ℚ][ex-q]) are green                               |
-| Affine quantities          | dedicated point type with typed origins · offsets in conversions only · out of scope v1                       | [torsor][torsor] (the additive-torsor layer); [§3](#3-affine-and-logarithmic-quantities) (seven-way convergence; the `celsius = kelvin` trap in [d-quantities][dq])                                             |
-| Kind system                | none · extra base dimensions · flat tags · spec hierarchy                                                     | [§4](#4-kinds) ladder; [mp-units][mp-units] (propagating kinds are possible but a five-layer ontology); theory offers no derivation ([Part I](#kinds-the-shared-blind-spot))                                    |
-| Registry vs closed system  | code-declared closed set · open generator set · data-driven runtime registry                                  | [Pint][pint] (registry ceiling and its cost); [fsharp-uom][fsharp] (one-liner declarations, no metrology); [Au][au]/[mp-units][mp-units] (open basis with static checking)                                      |
-| Unit storage               | normalize-to-base at construction (`quantities`, uom) · unit-in-type, lazy conversion (mp-units, Au, Unitful) | [rust-uom][rust-uom] (boundary rounding, integer-storage limits); [cpp-au][au] (exact integer reps, `CommonUnit` machinery); [d-quantities][dq] (both designs shipped, trade-offs listed)                       |
-| Diagnostics strategy       | raw encoding · engineered `static assert` prose · custom dimension pretty-printing                            | [§6](#6-diagnostics-and-compile-cost); [mp-units][mp-units] and [Au][au] as the engineered exemplars; [d-quantities][dq] first-line readability finding                                                         |
-| Erasure guarantee          | representation asserts only · plus codegen checks in CI · plus documented ABI story                           | [§5](#5-the-zero-cost-evidence-ladder); [`quantity-erasure.d`][ex-e] (what is checkable in-language); [boost-units][boost] (the trivially-copyable ABI caveat to avoid)                                         |
-| Runtime companion          | none · `Expected`-based dynamic quantity · parse-only bridge                                                  | [d-quantities][dq] (`QVariant`'s GC/exception cost); [Pint][pint] (what a term-level twin is for); repo [`Expected` idiom][expected]                                                                            |
-| Angle & logarithmic policy | SI-dimensionless angles · angle as base dimension · log units deferred                                        | [boost-units][boost]/[au][au] (angle-as-dimension trade); [python-pint][pint] (the `2π` trap; shipped dB — elsewhere only [Unitful][unitful]'s experimental layer); theory silence recorded on [torsor][torsor] |
+| Open decision              | Options on the table                                                                                          | Evidence that frames it                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Exponent domain            | `ℤⁿ` · `ℚⁿ` · `ℤⁿ` surface with `ℚⁿ` escape hatch                                                             | [free-abelian-group][fag] (`ℤⁿ→ℚⁿ` is a change of category); [§2](#2-the-exponent-domain-in-practice) (practice drifted to `ℚ`); both prototypes ([ℤ][ex-z], [ℚ][ex-q]) are green                                                                                                                                                                                                                                                                                                                   |
+| Affine quantities          | dedicated point type with typed origins · offsets in conversions only · out of scope v1                       | [torsor][torsor] (the additive-torsor layer); [§3](#3-affine-and-logarithmic-quantities) (seven-way convergence; the `celsius = kelvin` trap in [d-quantities][dq])                                                                                                                                                                                                                                                                                                                                 |
+| Kind system                | none · extra base dimensions · flat tags · spec hierarchy · nominal per-quantity types                        | [§4](#4-kinds) ladder; [mp-units][mp-units] (propagating kinds are possible but a five-layer ontology); theory offers no derivation ([Part I](#kinds-the-shared-blind-spot)); [squants][scala-squants] shows nominal typing buys `Torque` ≠ `Energy` _free_ but forfeits the exponent algebra — a genuine fork against the exponent-vector-plus-Kind-tag split, **not** a stacking option; [Swift Foundation][swift-units]'s product-less nominal model (`m·s` unnameable) is the dead-end to avoid |
+| Registry vs closed system  | code-declared closed set · open generator set · data-driven runtime registry                                  | [Pint][pint] (registry ceiling and its cost); [fsharp-uom][fsharp] (one-liner declarations, no metrology); [Au][au]/[mp-units][mp-units] (open basis with static checking)                                                                                                                                                                                                                                                                                                                          |
+| Unit storage               | normalize-to-base at construction (`quantities`, uom) · unit-in-type, lazy conversion (mp-units, Au, Unitful) | [rust-uom][rust-uom] (boundary rounding, integer-storage limits); [cpp-au][au] (exact integer reps, `CommonUnit` machinery); [d-quantities][dq] (both designs shipped, trade-offs listed)                                                                                                                                                                                                                                                                                                           |
+| Diagnostics strategy       | raw encoding · engineered `static assert` prose · custom dimension pretty-printing                            | [§6](#6-diagnostics-and-compile-cost); [mp-units][mp-units] and [Au][au] as the engineered exemplars; [d-quantities][dq] first-line readability finding; [coulomb][scala-coulomb]/[unchained][nim-unchained] (library-generated domain-language error text) and [squants][scala-squants]/[measured][kotlin-measured] (nominal type names) confirm readable messages need not cost a solver                                                                                                          |
+| Erasure guarantee          | representation asserts only · plus codegen checks in CI · plus documented ABI story                           | [§5](#5-the-zero-cost-evidence-ladder); [`quantity-erasure.d`][ex-e] (what is checkable in-language); [boost-units][boost] (the trivially-copyable ABI caveat to avoid); [coulomb][scala-coulomb] (opaque-type erasure) and [unchained][nim-unchained] (`distinct float`) reach the same structural erasure the D value-parameter struct does, and [squants][scala-squants]/[measured][kotlin-measured] are the boxed-object counter-examples to _not_ imitate                                      |
+| Runtime companion          | none · `Expected`-based dynamic quantity · parse-only bridge                                                  | [d-quantities][dq] (`QVariant`'s GC/exception cost); [Pint][pint] (what a term-level twin is for); repo [`Expected` idiom][expected]                                                                                                                                                                                                                                                                                                                                                                |
+| Angle & logarithmic policy | SI-dimensionless angles · angle as base dimension · log units deferred                                        | [boost-units][boost]/[au][au] (angle-as-dimension trade); [python-pint][pint] (the `2π` trap; shipped dB — elsewhere only [Unitful][unitful]'s experimental layer); theory silence recorded on [torsor][torsor]                                                                                                                                                                                                                                                                                     |
 
 ---
 
 ## Sources
 
 This synthesis rests entirely on the landed pages of this tree: the eight
-[theory deep-dives][theory], the fourteen system pages, and the three CI-verified
+[theory deep-dives][theory], the twenty system pages, and the three CI-verified
 prototypes in `examples/`. Each carries its own primary citations (papers, pinned
 source trees, vendor-doc captures, local reproductions); nothing is cited here that is
 not already grounded on one of them. The cross-cutting framings introduced on this
@@ -674,6 +719,12 @@ the kind ladder — are syntheses of per-page findings, attributed inline.
 [gnat]: ./ada-gnat-dimensions.md
 [lean]: ./lean-mathlib-units.md
 [wolfram]: ./wolfram-matlab.md
+[scala-coulomb]: ./scala-coulomb.md
+[scala-squants]: ./scala-squants.md
+[nim-unchained]: ./nim-unchained.md
+[swift-units]: ./swift-units.md
+[kotlin-measured]: ./kotlin-measured.md
+[ucum-qudt]: ./ucum-qudt.md
 
 <!-- Runnable prototypes -->
 
