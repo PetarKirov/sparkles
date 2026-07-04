@@ -1083,6 +1083,14 @@ if (is(E == enum))
     // Without useDefault (default reject), the same input is an error.
     static struct T2 { @WireOptional() int x; }
     assert(fromJSON!T2(parseObject(`{"x":"nope"}`)).hasError);
+
+    // whenDefault on an Optional field compares by emptiness and contents.
+    static struct O
+    {
+        @WireOptional(WireSkip.whenDefault) Optional!string tag;
+    }
+    assert("tag" !in toJSON(O.init).value.object); // empty == default → omitted
+    assert(toJSON(O(some("x"))).value["tag"] == JSONValue("x"));
 }
 
 @("wired.json.optional")
