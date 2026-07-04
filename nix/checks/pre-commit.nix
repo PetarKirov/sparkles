@@ -69,7 +69,11 @@ in
           name = "sparkles-fmt";
           runtimeInputs = [
             package
-            pkgs.git
+            # gitMinimal (no python/perl) over full git: the hook only needs
+            # `git rev-parse`, and full git drags a second CPython (git-p4's
+            # shebang) into the closure — see nix/shells/default.nix for why we
+            # keep the closure to a single Python (the PyD-pinned 3.11).
+            pkgs.gitMinimal
           ];
           text = ''
             hooks=(${lib.concatStringsSep " " formattingHooks})
