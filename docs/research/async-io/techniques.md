@@ -534,4 +534,4 @@ The finest granularity: even a supported op may have a faster path on newer kern
 [multishot-accept-man]: https://man7.org/linux/man-pages/man3/io_uring_prep_multishot_accept.3.html
 [buf-ring-man]: https://man7.org/linux/man-pages/man3/io_uring_register_buf_ring.3.html
 [kernel-dk]: https://kernel.dk/io_uring.pdf
-[posa2]: https://www.dre.vanderbilt.edu/~schmidt/PDF/proactor.pdf
+[posa2]: https://web.archive.org/web/20260302122517/https://www.dre.vanderbilt.edu/~schmidt/PDF/proactor.pdf
