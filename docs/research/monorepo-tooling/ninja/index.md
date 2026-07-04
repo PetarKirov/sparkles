@@ -515,7 +515,7 @@ path` ([manual § Evaluation and scoping][manual]):
 [deps]: https://github.com/ninja-build/ninja/blob/master/src/deps_log.cc
 [state]: https://github.com/ninja-build/ninja/blob/master/src/state.cc
 [jobserver]: https://github.com/ninja-build/ninja/blob/master/src/jobserver.cc
-[jobserver-blog]: https://thebrokenrail.com/2025/06/30/ninja-jobserver.html
+[jobserver-blog]: http://web.archive.org/web/20260511015624/http://thebrokenrail.com/2025/06/30/ninja-jobserver.html
 [reapi]: https://github.com/bazelbuild/remote-apis
 [gn]: ../gn/
 [cmake]: ../cmake/
