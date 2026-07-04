@@ -297,7 +297,7 @@ thesis's `ψ : V → ℝ⁺`) proves the equational free theorems but is too wea
 results; POPL '97's relational generalisation — allowing the degenerate `{(0,0)}` outside a
 subgroup — is what makes impossibility proofs go through. (The thesis gets the same effect
 differently: scale factors range over `ℝ⁺` while values are rationals, so an irrational scaling
-relates only zeros — [thesis §6.4][k96].)
+relates only zeros — the choice is made in [thesis §6.4][k96], the argument run in §7.2.)
 
 ### Consequences of the theorem
 
@@ -671,7 +671,8 @@ pinned tree (`dotnet/fsharp` @ `25c6a37e`):
   Note what changed from the paper algorithm: exponents are **rationals** internally
   (`DivRational`, `NegRational`), so `e` always divides and the Euclid-style iteration collapses
   to **one elimination step per variable** — Gauss–Jordan over ℚ rather than Hermite reduction
-  over ℤ, with integrality of user-visible types maintained at the surface. This is the
+  over ℤ; since F# 4.0, fractional exponents are even admitted in the surface syntax
+  ([Gundry 2015][gundry] fn. 21 dates the feature). This is the
   Wand–O'Keefe linear-algebra picture quietly re-adopted _inside_ Kennedy's own compiler, two
   decades on.
 

@@ -18,10 +18,11 @@ The D ecosystem's three units-of-measure artifacts — really **two designs**: `
 
 > [!NOTE]
 > This is the survey's home-ecosystem page and the **direct prior-art input for a
-> future sparkles units library**. All three artifacts still compile — and two of the
-> three pass their own test suites — under `ldc2` 1.41 (D 2.111) in 2026; the
-> compilability results below are all locally reproduced, including a 2011 file that
-> builds warning-free without a single edit. The mechanism taxonomy these libraries
+> future sparkles units library**. All three artifacts still compile under `ldc2` 1.41
+> (D 2.111) in 2026 — `quantities` passes its full test suite, and in both
+> Nadlinger-lineage artifacts the core units module passes while the SI layer's tests
+> fail on float-comparison asserts; the compilability results below are all locally
+> reproduced, including a 2011 file that builds warning-free without a single edit. The mechanism taxonomy these libraries
 > instantiate (template normal forms, per-instantiation checking, no unification) is
 > [type-system mechanisms][mechanisms]; what a checker with real measure _inference_
 > looks like is [Kennedy's type system][kennedy] as shipped in [F#][fsharp]. The
@@ -225,6 +226,7 @@ a bare base unit is one line ([`units.d`][units-d-file] L257–270):
 
 ```d
 // nadlinger-std-units: units.d — base units and derived-unit normal form
+// (abridged; gathered from L257, L304, L351)
 struct BaseUnit(string name, string symbol = null) { mixin UnitImpl; /* toString */ }
 
 struct BaseUnitExp(B, R) if (!isDerivedUnit!B && isUnit!B && isRational!R)
@@ -235,7 +237,7 @@ struct BaseUnitExp(B, R) if (!isDerivedUnit!B && isUnit!B && isRational!R)
 
 template DerivedUnit(T...) if (allSatisfy!(isBaseUnitExp, T))
 {
-    alias DerivedUnit = MakeDerivedUnit!(T).Result;
+    alias MakeDerivedUnit!(T).Result DerivedUnit;
 }
 ```
 
@@ -560,8 +562,9 @@ exotic, and `alias Speed = typeof(meter / second)` for signatures. The
 safer, noisier.
 
 **Compile-time cost is a non-issue at this scale** [measured locally, `ldc2` 1.41.0,
-2026-07-03, front-end-only `-o-` builds of each full library + its unittests]:
-Nadlinger `std.units`+`std.si` 0.15 s; `units-d` 0.25 s; `quantities` (all six
+2026-07-03, front-end-only `-o-` builds of each full library + the unittests that
+compile]: Nadlinger `std.units`+`std.si` 0.15 s (without `-unittest` — `std.si`'s
+unittest no longer compiles, see below); `units-d` 0.25 s; `quantities` (all six
 modules, including CTFE-parsing tests) 0.36 s; a full compile-link of a small
 `quantities` program ≈ 1.2 s. Against the minutes-scale numbers of the C++ pages
 ([Boost.Units][boost], [mp-units][mp-units]) this is two orders of magnitude —
@@ -575,7 +578,7 @@ locally, `ldc2` 1.41.0, 2026-07-03]:
 | ------------------------------ | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
 | `quantities` @ `3cb3205`       | Yes; `-de` clean for library code   | **All 6 modules pass** under `-unittest`; only warnings are deprecated `approxEqual` calls inside its own doc-tests |
 | `units-d` @ `9589ac9`          | Yes; `-de` clean                    | `experimental.units` passes; **`experimental.units.si` FAILS at runtime** (`si.d:147`, see below)                   |
-| `std.units` @ `4a7279a` (2011) | **Yes — unmodified, zero warnings** | **All unittests pass** (`std.units` + `std.si` under `-unittest`)                                                   |
+| `std.units` @ `4a7279a` (2011) | **Yes — unmodified, zero warnings** | `std.units` passes all its unittests; **`std.si`'s unittest FAILS to compile** (`si.d:130`, see below)              |
 
 Two surprises. First, the 1992-line `units.d` that Nadlinger pushed in December 2011
 — `alias TypeTuple!(…) Conversions;`-era syntax, `std.typetuple`, workarounds for
@@ -583,16 +586,23 @@ long-fixed DMD bugs still commented `@@BUG@@` — compiles **without a single ed
 passes its whole test suite on a 2026 compiler**. Fifteen years of D language
 evolution (and this survey's expectation of bit-rot) notwithstanding, the old alias
 syntax and `std.typetuple` remain legal; the proposal did not die of language drift.
-Second, the _modernized_ fork is the broken one: `units-d`'s HEAD commit (2021-03-13,
-"Replace approxEqual with isClose") mechanically swapped `approxEqual` for `isClose`
-in [`si.d`][si-u], and `assert(isClose(sin(PI*radian), 0))` (L147) now fails —
-`isClose` against a zero reference uses a default absolute tolerance of `0.0`, so
-`sin(π) ≈ 1.2e-16` no longer "equals" zero. The port's final commit broke its own
-test suite in a way its author evidently never ran.
+Its companion `std.si` is the one casualty: under `-unittest`, `si.d:130`'s
+`static assert(n == 0xb.dd95ef4ddcb82f7p-59 * mole)` — a 2011 hex-float exactness
+check on a CTFE gas-law computation — now fails to compile, identically under `ldc2`
+1.41.0 and `dmd` 2.112.1 (without `-unittest` the module builds clean).
+Second, the _modernized_ fork broke in its own, new way: `units-d`'s HEAD commit
+(2021-03-13, "Replace approxEqual with isClose") mechanically swapped `approxEqual`
+for `isClose` in [`si.d`][si-u], and `assert(isClose(sin(PI*radian), 0))` (L147) now
+fails **at runtime** — `isClose` against a zero reference uses a default absolute
+tolerance of `0.0`, so `sin(π) ≈ 1.2e-16` no longer "equals" zero. (Tellingly,
+Nordlöw had already commented out the 2011 hex-float assert — `units-d` `si.d:210` —
+only to plant a float-comparison failure of his own.) The port's final commit broke
+its own test suite in a way its author evidently never ran.
 
 **API-ergonomics history.** The [RFC thread][rfc] captures early usability data:
-within three days a reviewer found `enum foo = metre / 2;` crashing on integer
-negative powers (fixed the same day with the `(rhs ^^ 0) / rhs` idiom that survives
+within three days a reviewer found `enum foo = metre / 2;` failing to compile on
+integer negative powers ("cannot raise int to a negative integer power" — fixed the
+same day with the `(rhs ^^ 0) / rhs` idiom that survives
 at [`units.d`][units-d-file] L170–172 — with Nadlinger warning the reporter that
 `int` value-type inference made the result `0 * metre` anyway), and Nadlinger
 flagged, presciently, that template constraints "lose the ability to specify helpful
@@ -640,8 +650,9 @@ review later" meant later never came.
   bit-exactness stance [Unitful.jl][unitful] and [Au][au] later made mainstream.
 - **`std.units`: conversions as arbitrary callables** (even closing over runtime
   state) — a generality point none of the C++/Rust template systems match.
-- **Longevity for free:** all three artifacts compile on a 2026 toolchain; two of
-  three pass their own suites untouched.
+- **Longevity for free:** all three artifacts compile on a 2026 toolchain untouched;
+  `quantities` passes its full suite, and both Nadlinger-lineage core modules pass
+  theirs — only the two SI layers' float-comparison tests fail.
 
 ## Weaknesses
 

@@ -28,16 +28,16 @@ Every theory page answers the same protocol; here the answers sit side by side. 
 page presents its own framing as the natural one — the purpose of this table and the
 prose after it is to expose where the framings genuinely conflict.
 
-| Formalization                    | Primary structure                                                                                 | Quantity                                              | Unit                                                                    | Dimension                                               | Homogeneity                                                                            | Change of units                                                                         | Cross-dimension `+`                                                                                 |
-| -------------------------------- | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| [Whitney][whitney]               | One-kind measurement models (rays/birays); numbers arrive later as operators                      | element of a model — the property itself              | any element "kept fixed for a period"; no algebraic privilege           | the biray itself (the set of comparables)               | well-formedness — heterogeneous equations are unformulable                             | a change of _description_; quantities untouched                                         | **inexpressible** — yet Whitney computes `6(2 bl + 3 ck) = 12 bl + 18 ck` distributively            |
-| [Buckingham π][pi]               | multiplicative skeleton of measures + the rescaling group; the dimension matrix `A`               | a positive measure-number (CLP: exponent vector)      | `k` of the problem's own quantities; a frame; a local basis             | exponent tuple; Drobot/Jonsson: an equivalence class    | four accounts — assumed, derived-and-**conditional** (Bridgman), two axioms, definable | the group action `S_λ`; invariants = exactly the `Π`s                                   | four accounts; Bridgman's `v + s = gt + ½gt²` shows the ban is a _conditional theorem_              |
-| [Free abelian group][fag]        | the dimension group `Dim ≅ ℤⁿ` itself (`ℚⁿ` after fractional powers)                              | a value _indexed by_ a group element                  | deferred (Kennedy), derived (Jonsson), a section `u : D → R` (Zapata)   | a group element — an exponent vector                    | equality in the group; semantically, invariance under every `ψ : Dim → (ℝ⁺, ·)`        | two actions: rescaling homomorphism + `GL(n, ℤ)` base change                            | outside the structure; four precise renderings (typing, signature, `Classical.epsilon`, partiality) |
-| [Tensor of lines][tensor]        | 1-D ordered lines closed under `⊗`/duals; weight spaces of a structure group; JMV positive spaces | element of a line; equivariant family; a scale        | a (positive) basis vector — "a semi–basis … is called a unit"           | the line itself; the weight `(a,b,c)`                   | well-typedness (abstract); equivariance (parametric); rationality of maps (JMV)        | a non-event (abstract); the passive group action (parametric)                           | **unwritable** / total-but-**hybrid** with a convex-hull criterion / no subtraction at all (JMV)    |
-| [Torsor / scaling torus][torsor] | the group action `(ℝ⁺)ⁿ`; a dimensioned ring `R_D` fibred over `D`                                | a weight-`d` family; a slice element `a_d`            | a **torsor point**; a whole system = a section `u : D → R`              | a character/weight of the torus; a slice `R_d`          | equivariance; verifiable at a single unit choice (transfer)                            | a torus element acting passively; a change of section/trivialization                    | partial by definition, with distributivity _forcing_ `·` to grade (Zapata); hybrid (Tao)            |
-| [Kennedy types][kennedy]         | a typed λ-calculus with the AG embedded in the type grammar                                       | `r : num µ` — a bare rational at run time             | a unit _variable_ (base units = free occurrences)                       | a class of units ≅ isomorphic data representations      | typability; provably equal to scaling invariance (parametricity)                       | a scaling environment `ψ : G → ℚ⁺` — **derived** from the primitives, not assumed       | ill-typed statically; **defined but not invariant** semantically; `0` the unique polymorphic value  |
-| [Hart][hart]                     | the `TFF` `F × G`: total `·`, type-guarded partial `+`; dimensioned vectors/matrices above        | an ordered pair `(f, g)`                              | **not a formal object** (recorded silence)                              | the group element `g` — any group, not necessarily `ℤⁿ` | class membership: multipliable/similar/squarable/endomorphic                           | absent from the paper; invariance carried by the `∼`/`≈` quotients                      | undefined by definition `(4)`; aggregation by **tupling**; one zero _per type_                      |
-| [Type-system mechanisms][mech]   | the group as _checkable type structure_ — six encodings from phantom tags to dependent types      | a value of an indexed type; at run time a bare scalar | a type-level index (measure AST, `typenum` vector, symbolic expression) | the index, modulo whatever equality the host can decide | typability of `+` at equal index; the erased program means its unit-stripped self      | relational — Kennedy's scaling semantics; erasure _is_ choosing a global trivialization | unification failure / missing `impl` / unprovable constraint / `Classical.epsilon`-unknowable       |
+| Formalization                    | Primary structure                                                                                 | Quantity                                              | Unit                                                                         | Dimension                                               | Homogeneity                                                                            | Change of units                                                                         | Cross-dimension `+`                                                                                 |
+| -------------------------------- | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| [Whitney][whitney]               | One-kind measurement models (rays/birays); numbers arrive later as operators                      | element of a model — the property itself              | any element "kept fixed for a period"; no algebraic privilege                | the biray itself (the set of comparables)               | well-formedness — heterogeneous equations are unformulable                             | a change of _description_; quantities untouched                                         | **inexpressible** — yet Whitney computes `6(2 bl + 3 ck) = 12 bl + 18 ck` distributively            |
+| [Buckingham π][pi]               | multiplicative skeleton of measures + the rescaling group; the dimension matrix `A`               | a positive measure-number (CLP: exponent vector)      | `k` of the problem's own quantities; a frame; a local basis                  | exponent tuple; Drobot/Jonsson: an equivalence class    | four accounts — assumed, derived-and-**conditional** (Bridgman), two axioms, definable | the group action `S_λ`; invariants = exactly the `Π`s                                   | four accounts; Bridgman's `v + s = gt + ½gt²` shows the ban is a _conditional theorem_              |
+| [Free abelian group][fag]        | the dimension group `Dim ≅ ℤⁿ` itself (`ℚⁿ` after fractional powers)                              | a value _indexed by_ a group element                  | deferred (Kennedy), derived (Jonsson), a section `u : D → R` (Zapata)        | a group element — an exponent vector                    | equality in the group; semantically, invariance under every `ψ : Dim → (ℝ⁺, ·)`        | two actions: rescaling homomorphism + `GL(n, ℤ)` base change                            | outside the structure; four precise renderings (typing, signature, `Classical.epsilon`, partiality) |
+| [Tensor of lines][tensor]        | 1-D ordered lines closed under `⊗`/duals; weight spaces of a structure group; JMV positive spaces | element of a line; equivariant family; a scale        | a (positive) basis vector — "a semi–basis … is called a unit of measurement" | the line itself; the weight `(a,b,c)`                   | well-typedness (abstract); equivariance (parametric); rationality of maps (JMV)        | a non-event (abstract); the passive group action (parametric)                           | **unwritable** / total-but-**hybrid** with a convex-hull criterion / no subtraction at all (JMV)    |
+| [Torsor / scaling torus][torsor] | the group action `(ℝ⁺)ⁿ`; a dimensioned ring `R_D` fibred over `D`                                | a weight-`d` family; a slice element `a_d`            | a **torsor point**; a whole system = a section `u : D → R`                   | a character/weight of the torus; a slice `R_d`          | equivariance; verifiable at a single unit choice (transfer)                            | a torus element acting passively; a change of section/trivialization                    | partial by definition, with distributivity _forcing_ `·` to grade (Zapata); hybrid (Tao)            |
+| [Kennedy types][kennedy]         | a typed λ-calculus with the AG embedded in the type grammar                                       | `r : num µ` — a bare rational at run time             | a unit _variable_ (base units = free occurrences)                            | a class of units ≅ isomorphic data representations      | typability; provably equal to scaling invariance (parametricity)                       | a scaling environment `ψ : G → ℚ⁺` — **derived** from the primitives, not assumed       | ill-typed statically; **defined but not invariant** semantically; `0` the unique polymorphic value  |
+| [Hart][hart]                     | the `TFF` `F × G`: total `·`, type-guarded partial `+`; dimensioned vectors/matrices above        | an ordered pair `(f, g)`                              | **not a formal object** (recorded silence)                                   | the group element `g` — any group, not necessarily `ℤⁿ` | class membership: multipliable/similar/squarable/endomorphic                           | absent from the paper; invariance carried by the `∼`/`≈` quotients                      | undefined by definition `(4)`; aggregation by **tupling**; one zero _per type_                      |
+| [Type-system mechanisms][mech]   | the group as _checkable type structure_ — six encodings from phantom tags to dependent types      | a value of an indexed type; at run time a bare scalar | a type-level index (measure AST, `typenum` vector, symbolic expression)      | the index, modulo whatever equality the host can decide | typability of `+` at equal index; the erased program means its unit-stripped self      | relational — Kennedy's scaling semantics; erasure _is_ choosing a global trivialization | unification failure / missing `impl` / unprovable constraint / `Classical.epsilon`-unknowable       |
 
 ### What is primitive — quantities, units, dimensions, or the action?
 
@@ -78,9 +78,10 @@ exists rather than posit it — his POPL '97 Theorem 2 derives it from `0`, `<`,
 
 A genuine three-way conflict that the pages document without resolving:
 
-- **One global zero.** In the `ℝ × ℚⁿ` reading of Whitney's lineage "the rays coincide
-  in a point, the zero of the algebraic structure" ([Whitney][whitney], per Raposo
-  2019); Kennedy keeps a single **polymorphic** `0 : real d` for every `d` — semantically
+- **One global zero.** In the coordinatized reading of Whitney's lineage "the rays
+  coincide in a point, the zero of the algebraic structure" ([Whitney][whitney], per
+  Raposo 2019 — whose restatement carries real exponents); Kennedy keeps a single
+  **polymorphic** `0 : real d` for every `d` — semantically
   justified as the unique fixed point of every scaling ([Kennedy][kennedy]).
 - **One zero per fiber.** Raposo's bundle ("`0 ms−1` is a different quantity than
   `0 kg`"), Jonsson's `0_C` per dimension class, and Hart's per-type zeros `(0, g)` —
@@ -107,7 +108,7 @@ No two corners of the survey agree, and the disagreement is load-bearing:
   dimension matrix is rational, and after clearing denominators `ℤ` bases always exist
   for `ker A` ([Buckingham π][pi]) — which is why integer-exponent type systems can
   state the theorem at all.
-- Kennedy fixed `ℤ` **deliberately** (fractional dimensions "should prompt revision of
+- Kennedy fixed `ℤ` **deliberately** (a fractional dimension "would suggest revision of
   the set of base dimensions") and his sqrt-indefinability theorem _depends_ on it; over
   `ℚ` the perfect-square predicate is inexpressible and the theorem has no analogue
   ([free abelian group][fag]).
@@ -170,9 +171,10 @@ notation, the **same object**: a point of the finite product of fibers
 horizontally (`(2 bl, 3 ck)`, Hart's tuple) or additively (`2 bl + 3 ck`, Whitney's
 formal sum). What Hart declines — and no formalization except Tao's parametric model
 accepts — is letting scalar `+` _produce_ such an element. (The
-[free-abelian-group page][fag] attributes "formal sums of fibers" to Hart and the
-[Hart page][hart] insists he only tuples; on this reading both are right, and the
-residual difference is which _sort_ the aggregate lives in.)
+[free-abelian-group page][fag] and the [Hart page][hart] state exactly this reading —
+mixed-dimension aggregates are tuples of fibers, equivalently elements of the direct
+sum, which scalar `+` never produces; the residual difference is which _sort_ the
+aggregate lives in.)
 
 ### Kinds: the shared blind spot
 
@@ -223,8 +225,8 @@ provably the same picture:
   between its graded and weight-space clauses.
 - **Units-as-torsor is verbatim too.** JMV Note 2.3: the scalar multiplication "turns
   out to be a free and transitive action of the group `(ℝ⁺, ·)`" on each positive
-  space; Zapata-Carratalá's Prop 3.4/Thm 4.1 make "a choice of units is a
-  trivialization `R_D ≅ R₁ × D`, never canonically" a theorem ([torsor][torsor]).
+  space; Zapata-Carratalá's Prop 3.4/Thm 4.1 make "a choice of units is exactly a
+  trivialization `R_D ≅ R₁ × D`" a theorem — always non-canonically ([torsor][torsor]).
 - **The type-system lineage checks this object's shadow.** Kennedy's `num` is literally
   a monoid-graded family (`* : num u₁ → num u₂ → num (u₁·u₂)`, `1 : num 1`), erasure is
   choosing a global trivialization, and parametricity recovers the graded/torsor
@@ -385,7 +387,7 @@ MATLAB: all temperatures default to _differences_, with a documented
 `0*u.Celsius` → dimensionless-`0` trap. ²² MATLAB documents the exclusion ("arithmetic
 operations are not possible for these units"); Wolfram captures are silent.</sub>
 
-Reading across: the matrix splits into a **static majority** (nine systems where
+Reading across: the matrix splits into a **static majority** (eleven systems where
 mismatches are compile/elaboration errors), a **dynamic pole** (Pint, the CAS pair)
 where expressiveness is highest and cost is inverted, and Julia's **specialization-time**
 middle. Within the static majority the deepest split is not language but
@@ -515,7 +517,8 @@ treats diagnostics as a feature (same-name type/object convention, type-simplifi
 rules, `unsatisfied<"…">` consteval messages) and Au embeds prose and doc URLs in
 `static_assert` text. The D prior art sits in the readable camp (the offending
 dimension vector prints in the first error line) with struct-literal noise below it
-([d-quantities][dq]). Compile-time cost, where measured, spans an order of magnitude:
+([d-quantities][dq]). Compile-time cost, where measured (single-toolchain local data
+points from the system pages, not benchmarks), spans an order of magnitude:
 uom 16.1 s / ~1.1 GB clean build vs dimensioned's 5.8 s / 0.3 GB on the same
 toolchain; mp-units ~3.6 s/TU header-mode; Au ~0.2 s increment over an `iostream`
 baseline; Boost ~1.2 s over baseline; Unitful pays ~10.5 s of one-time precompile plus
@@ -523,7 +526,7 @@ per-specialization JIT tax.
 
 ### The consensus standard
 
-Across fourteen systems and forty years, the field agrees on:
+Across fourteen systems and three decades, the field agrees on:
 
 1. **Dimensions are exponent vectors in a free abelian group, compared by unique
    normal form.** Every system — static, dynamic, or symbolic — implements the
@@ -612,17 +615,17 @@ What the findings imply, without designing anything:
 
 The decisions a future `docs/specs/` proposal must actually make:
 
-| Open decision              | Options on the table                                                                                          | Evidence that frames it                                                                                                                                                                   |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Exponent domain            | `ℤⁿ` · `ℚⁿ` · `ℤⁿ` surface with `ℚⁿ` escape hatch                                                             | [free-abelian-group][fag] (`ℤⁿ→ℚⁿ` is a change of category); [§2](#2-the-exponent-domain-in-practice) (practice drifted to `ℚ`); both prototypes ([ℤ][ex-z], [ℚ][ex-q]) are green         |
-| Affine quantities          | dedicated point type with typed origins · offsets in conversions only · out of scope v1                       | [torsor][torsor] (the additive-torsor layer); [§3](#3-affine-and-logarithmic-quantities) (seven-way convergence; the `celsius = kelvin` trap in [d-quantities][dq])                       |
-| Kind system                | none · extra base dimensions · flat tags · spec hierarchy                                                     | [§4](#4-kinds) ladder; [mp-units][mp-units] (propagating kinds are possible but a five-layer ontology); theory offers no derivation ([Part I](#kinds-the-shared-blind-spot))              |
-| Registry vs closed system  | code-declared closed set · open generator set · data-driven runtime registry                                  | [Pint][pint] (registry ceiling and its cost); [fsharp-uom][fsharp] (one-liner declarations, no metrology); [Au][au]/[mp-units][mp-units] (open basis with static checking)                |
-| Unit storage               | normalize-to-base at construction (`quantities`, uom) · unit-in-type, lazy conversion (mp-units, Au, Unitful) | [rust-uom][rust-uom] (boundary rounding, integer-storage limits); [cpp-au][au] (exact integer reps, `CommonUnit` machinery); [d-quantities][dq] (both designs shipped, trade-offs listed) |
-| Diagnostics strategy       | raw encoding · engineered `static assert` prose · custom dimension pretty-printing                            | [§6](#6-diagnostics-and-compile-cost); [mp-units][mp-units] and [Au][au] as the engineered exemplars; [d-quantities][dq] first-line readability finding                                   |
-| Erasure guarantee          | representation asserts only · plus codegen checks in CI · plus documented ABI story                           | [§5](#5-the-zero-cost-evidence-ladder); [`quantity-erasure.d`][ex-e] (what is checkable in-language); [boost-units][boost] (the trivially-copyable ABI caveat to avoid)                   |
-| Runtime companion          | none · `Expected`-based dynamic quantity · parse-only bridge                                                  | [d-quantities][dq] (`QVariant`'s GC/exception cost); [Pint][pint] (what a term-level twin is for); repo [`Expected` idiom][expected]                                                      |
-| Angle & logarithmic policy | SI-dimensionless angles · angle as base dimension · log units deferred                                        | [boost-units][boost]/[au][au] (angle-as-dimension trade); [python-pint][pint] (the `2π` trap; the only shipped dB); theory silence recorded on [torsor][torsor]                           |
+| Open decision              | Options on the table                                                                                          | Evidence that frames it                                                                                                                                                                                         |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Exponent domain            | `ℤⁿ` · `ℚⁿ` · `ℤⁿ` surface with `ℚⁿ` escape hatch                                                             | [free-abelian-group][fag] (`ℤⁿ→ℚⁿ` is a change of category); [§2](#2-the-exponent-domain-in-practice) (practice drifted to `ℚ`); both prototypes ([ℤ][ex-z], [ℚ][ex-q]) are green                               |
+| Affine quantities          | dedicated point type with typed origins · offsets in conversions only · out of scope v1                       | [torsor][torsor] (the additive-torsor layer); [§3](#3-affine-and-logarithmic-quantities) (seven-way convergence; the `celsius = kelvin` trap in [d-quantities][dq])                                             |
+| Kind system                | none · extra base dimensions · flat tags · spec hierarchy                                                     | [§4](#4-kinds) ladder; [mp-units][mp-units] (propagating kinds are possible but a five-layer ontology); theory offers no derivation ([Part I](#kinds-the-shared-blind-spot))                                    |
+| Registry vs closed system  | code-declared closed set · open generator set · data-driven runtime registry                                  | [Pint][pint] (registry ceiling and its cost); [fsharp-uom][fsharp] (one-liner declarations, no metrology); [Au][au]/[mp-units][mp-units] (open basis with static checking)                                      |
+| Unit storage               | normalize-to-base at construction (`quantities`, uom) · unit-in-type, lazy conversion (mp-units, Au, Unitful) | [rust-uom][rust-uom] (boundary rounding, integer-storage limits); [cpp-au][au] (exact integer reps, `CommonUnit` machinery); [d-quantities][dq] (both designs shipped, trade-offs listed)                       |
+| Diagnostics strategy       | raw encoding · engineered `static assert` prose · custom dimension pretty-printing                            | [§6](#6-diagnostics-and-compile-cost); [mp-units][mp-units] and [Au][au] as the engineered exemplars; [d-quantities][dq] first-line readability finding                                                         |
+| Erasure guarantee          | representation asserts only · plus codegen checks in CI · plus documented ABI story                           | [§5](#5-the-zero-cost-evidence-ladder); [`quantity-erasure.d`][ex-e] (what is checkable in-language); [boost-units][boost] (the trivially-copyable ABI caveat to avoid)                                         |
+| Runtime companion          | none · `Expected`-based dynamic quantity · parse-only bridge                                                  | [d-quantities][dq] (`QVariant`'s GC/exception cost); [Pint][pint] (what a term-level twin is for); repo [`Expected` idiom][expected]                                                                            |
+| Angle & logarithmic policy | SI-dimensionless angles · angle as base dimension · log units deferred                                        | [boost-units][boost]/[au][au] (angle-as-dimension trade); [python-pint][pint] (the `2π` trap; shipped dB — elsewhere only [Unitful][unitful]'s experimental layer); theory silence recorded on [torsor][torsor] |
 
 ---
 
