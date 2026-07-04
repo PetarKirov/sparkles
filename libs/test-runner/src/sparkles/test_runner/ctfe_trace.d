@@ -2,18 +2,13 @@
  * Attribution of compile-time (CTFE) cost to individual `@ctfe` tests from an
  * LDC `-ftime-trace` profile.
  *
- * The runner forces `@ctfe` tests through CTFE while the test build compiles,
- * so their cost shows up in the compiler's time trace as
- * `"Ctfe: call __unittest_LN_CM"` events whose `loc` field is the test's
- * source location. The `--ctfe-trace <trace.json>` runner mode matches those
- * events against the discovered `@ctfe` tests and reports a per-test table.
- *
- * To produce the trace, add LDC's flags to the package's unittest
- * configuration (see `libs/math/dub.sdl` for the established pattern):
- * ---
- * dflags "-ftime-trace" "-ftime-trace-file=$PACKAGE_DIR/build/trace.json" \
- *     "--ftime-trace-granularity=0" platform="ldc"
- * ---
+ * The `--ctfe-trace <trace.json>` runner mode evaluates the `@ctfe` tests
+ * through the driver's probe compile (see
+ * $(MREF sparkles,test_runner,driver)) with LDC's `-ftime-trace` flags added,
+ * writing the trace to the given file. Each test's cost shows up as a
+ * `"Ctfe: call __unittest_LN_CM"` event whose `loc` field is the test's
+ * source location; this module matches those events against the discovered
+ * `@ctfe` tests and reports a per-test table.
  *
  * The trace can be 100+ MB, so instead of a full JSON parse this module does
  * a linear text scan for the handful of event shapes it cares about.
