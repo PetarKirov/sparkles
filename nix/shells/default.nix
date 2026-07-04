@@ -16,6 +16,10 @@
 
       # Python (3.11, the newest CPython PyD supports) with jquast wcwidth, for
       # the text-conformance harness Layer 10 (PyD-embedded Python wcwidth oracle).
+      # PyD is hard-pinned to 3.11 (dub `subConfiguration "pyd" "python311"`), so
+      # this can't reuse another interpreter. To keep the closure to this *single*
+      # Python, the ci and pre-commit tooling use `gitMinimal` rather than full
+      # git — full git drags in a second CPython via git-p4's shebang.
       wcwidth = pkgs.python311Packages.buildPythonPackage rec {
         pname = "wcwidth";
         version = "0.8.2";
@@ -30,6 +34,12 @@
         pythonImportsCheck = [ "wcwidth" ];
       };
       pythonEnv = pkgs.python311.withPackages (_: [ wcwidth ]);
+
+      # The harness only calls `ncstrwidth` (Layer 8), which lives in
+      # libnotcurses-core. The default `notcurses` links the whole multimedia
+      # backend (ffmpeg + audio/video codecs, ~140 MiB of closure) that we never
+      # touch — drop it. `.dev` still carries the pkg-config the binding needs.
+      notcursesCore = pkgs.notcurses.override { multimediaSupport = false; };
       mkSparklesShell =
         greeting:
         pkgs.mkShell {
@@ -64,8 +74,8 @@
             pkgs.utf8proc
             pkgs.icu
             pkgs.icu.dev
-            pkgs.notcurses
-            pkgs.notcurses.dev
+            notcursesCore
+            notcursesCore.dev
 
             # Rust unicode-width oracle helper (Layer 9), built from the in-tree
             # crate under the harness's oracles/ dir.
