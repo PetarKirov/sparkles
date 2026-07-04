@@ -12,6 +12,10 @@ no open copy → grounded against secondary local artifacts (noted per row).
 Provenance details (mirror used, wayback snapshot, sha256 checks) live in the
 acquisition manifest notes; the load-bearing facts are repeated here.
 
+**Wave-2 acquisition:** 2026-07-04 — 11 further repos cloned and SHA-pinned for the
+deferred wave-2 system pages (Scala, Nim, Swift, Kotlin, and the UCUM/QUDT
+interchange implementations); see [Wave-2 source repos](#wave-2-source-repos).
+
 ## Source repos (pinned to reviewed HEAD)
 
 | Repo                    | Path                                  | Pinned SHA | As of      |
@@ -61,6 +65,60 @@ LeanDimensionalAnalysis `DimensionalAnalysis/{Basic,Basic_Multiplicative,Dimensi
 finding: nothing dedicated to physical units/dimensional analysis (`Units` =
 invertible monoid elements); closest building block
 `Mathlib/GroupTheory/FreeAbelianGroup.lean`.
+
+## Wave-2 source repos
+
+Pins for the wave-2 system pages (deferred systems, acquired 2026-07-04). Same
+conventions as the wave-1 table above.
+
+| Repo                        | Path                                     | Pinned SHA | As of      |
+| --------------------------- | ---------------------------------------- | ---------- | ---------- |
+| coulomb (Scala)             | `$REPOS/scala/coulomb`                   | `681442a`  | 2026-06-22 |
+| squants (Scala)             | `$REPOS/scala/squants`                   | `29aa57f`  | 2026-03-17 |
+| unchained (Nim)             | `$REPOS/nim/unchained`                   | `426d72a`  | 2025-11-20 |
+| swift-corelibs-foundation ⁴ | `$REPOS/swift/swift-corelibs-foundation` | `cd04666`  | 2026-07-01 |
+| Units (Swift, secondary) ⁵  | `$REPOS/swift/Units`                     | `08ab9be`  | 2026-07-03 |
+| measured (Kotlin)           | `$REPOS/kotlin/measured`                 | `3f65500`  | 2026-04-05 |
+| Ucum-java (FHIR) ⁶          | `$REPOS/java/ucum-java`                  | `70106f4`  | 2026-04-28 |
+| ucum-lhc (JS)               | `$REPOS/js/ucum-lhc`                     | `3713cd1`  | 2026-06-16 |
+| indriya (JSR-385 RI)        | `$REPOS/java/indriya`                    | `c3dc219`  | 2026-05-18 |
+| unit-api (JSR-385 API)      | `$REPOS/java/unit-api`                   | `79682ff`  | 2026-05-19 |
+| qudtlib-java                | `$REPOS/java/qudtlib-java`               | `8530b43`  | 2026-02-11 |
+
+⁴ `--depth 1 --filter=blob:none --sparse`, `sparse-checkout set Sources/Foundation`
+— Foundation's `Measurement`/`Unit`/`Dimension`, the standard Swift units facility
+(the primary for the Swift page). ⁵ `NeedleInAJayStack/Units` — a runtime-checked
+typed-units library, pinned as the compile-time-safety contrast foil (Foundation is
+the primary). ⁶ The canonical UCUM grammar parser on the JVM is `FHIR/Ucum-java`
+(Health Intersections / Grahame Grieve; Maven `org.fhir:ucum`) —
+`unitsofmeasurement/ucum-java` does not exist.
+
+In-repo files for wave-2 quote-grounding: coulomb
+`core/src/main/scala/coulomb/{quantity.scala,infra/meta.scala,define/define.scala}`
+(opaque `Quantity[V, U]`; the `cansig` canonical-signature macro; the compile error
+`report.error(…"not convertable"…)` at `meta.scala:140`; compile-fail tests under
+`core/src/test/scala/coulomb/`); squants
+`shared/src/main/scala/squants/{Quantity.scala,Dimension.scala,UnitOfMeasure.scala,space/Length.scala,thermal/Temperature.scala}`
+(F-bounded `Quantity[A <: Quantity[A]]`; runtime `conversionFactor`); unchained
+`src/unchained/{core_types.nim,quantities.nim,units.nim,si_units.nim}`
+(`QuantityPower` int-exponent array; the `+` macro `error("Different quantities…")`
+at `units.nim:265`); Swift Foundation
+`Sources/Foundation/{Measurement.swift,Unit.swift}` (`Measurement<UnitType: Unit>`;
+per-quantity `Dimension` subclasses; `UnitConverterLinear` coefficient+constant) +
+`$REPOS/swift/Units` `Sources/Units/{Unit/Unit.swift,Measurement/Measurement.swift,Quantity.swift}`
+(runtime `[Quantity: Int]` map; throwing `+`); Kotlin measured
+`src/commonMain/kotlin/io/nacular/measured/units/Units.kt` (`Measure<T: Units>`;
+`UnitsProduct`/`UnitsRatio` nested generics; `plus` at `:113`); UCUM/QUDT — ucum-java
+`src/main/java/org/fhir/ucum/{Lexer,ExpressionParser,Converter,Canonical,BaseUnit,UcumEssenceService}.java`
+(canonical-string commensurability; `UcumException` at `UcumEssenceService.java:304`),
+ucum-lhc `source/{unitString,dimension,unit,ucumLhcUtils}.js` (numeric 7-slot
+`dimVec_`; `Error` throw at `unit.js:400`), indriya
+`src/main/java/tech/units/indriya/{AbstractUnit.java,unit/UnitDimension.java}` +
+unit-api `src/main/java/javax/measure/{Unit,Quantity,Dimension,IncommensurableException}.java`
+(`Map<Dimension, Integer>` exponents; checked `IncommensurableException`),
+qudtlib-java
+`qudtlib-model/src/main/java/io/github/qudtlib/model/{Unit.java,DimensionVector.java}`
+(QUDT dimension-vector IRI; `InconvertibleQuantitiesException`).
 
 ## Papers present — `$REPOS/papers/units-of-measure/`
 
@@ -168,4 +226,10 @@ Official manuals/blogs/Wikipedia reground in the primary paper or repo named.
 - **ada-gnat-dimensions.md** — `$REPOS/ada/gcc` (`sem_dim.*`, `libgnat/s-di*`) + `vendor-docs/gnat-rm-…` + `vendor-docs/gnat-ugn-…`.
 - **lean-mathlib-units.md** — `$REPOS/lean/LeanDimensionalAnalysis` + `bobbin-2025` + the mathlib4 negative finding.
 - **wolfram-matlab.md** — `vendor-docs/wolfram-*.html` + `vendor-docs/matlab-*.html` only (closed source; docs-grounded).
+- **scala-coulomb.md** (wave 2) — `$REPOS/scala/coulomb` (`quantity.scala`, `infra/meta.scala`, `define/define.scala`, `conversion/{unit,coefficient}.scala`, `deltaquantity.scala` + compile-fail tests under `core/src/test/scala/coulomb/`).
+- **scala-squants.md** (wave 2) — `$REPOS/scala/squants` (`Quantity.scala`, `Dimension.scala`, `UnitOfMeasure.scala`, `space/Length.scala`, `thermal/Temperature.scala`, `README.md` type-mismatch block).
+- **nim-unchained.md** (wave 2) — `$REPOS/nim/unchained` (`core_types.nim`, `quantities.nim`, `units.nim`, `si_units.nim`, `README.org`, `unchained.nimble`).
+- **swift-units.md** (wave 2) — `$REPOS/swift/swift-corelibs-foundation` (`Sources/Foundation/{Measurement,Unit}.swift`) as primary + `$REPOS/swift/Units` (`Sources/Units/…`) as the runtime-checked contrast.
+- **kotlin-measured.md** (wave 2) — `$REPOS/kotlin/measured` (`src/commonMain/kotlin/io/nacular/measured/units/Units.kt`, `README.md`, `gradle/libs.versions.toml`).
+- **ucum-qudt.md** (wave 2) — `$REPOS/java/ucum-java` (FHIR UCUM), `$REPOS/js/ucum-lhc` (NLM UCUM), `$REPOS/java/{indriya,unit-api}` (JSR-385), `$REPOS/java/qudtlib-java` (QUDT); the UCUM spec (`ucum-spec.html`) and QUDT ontology (`$REPOS/misc/qudt-public-repo`) are grounded as the interchange/data poles in `concepts.md`.
 - **concepts.md** — `jcgm-2012-vim-3rd-ed`, `bipm-2019-si-brochure-9th-ed`, `nist-2008-sp811-guide-si` (ISO-80000 secondary), `ucum-spec.html`, `$REPOS/misc/qudt-public-repo`.
