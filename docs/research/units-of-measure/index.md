@@ -3,7 +3,7 @@
 A breadth-first survey of **units of measure** — the mathematics of physical
 quantities and dimensional analysis (quantity calculus, the Buckingham π theorem, free
 abelian groups of dimensions, tensor lines, torsors, dimensioned algebra, and
-Kennedy's type-theoretic line), and the checked-units systems fourteen real ecosystems
+Kennedy's type-theoretic line), and the twenty checked-units systems real ecosystems
 ship, from compiler-native ([F#][fsharp], [GNAT][gnat]) through static library
 encodings (Rust, C++, Haskell, D) and dependent types ([Lean][lean]) to dispatch-time
 ([Julia][unitful]), runtime registries ([Python][pint]), and symbolic engines
@@ -30,7 +30,7 @@ This survey answers seven questions:
 4. **How does the algebra become a type system?** Kennedy's line — types-as-invariance,
    AG-unification, erasure — and the six mechanism families that encode the group in
    real checkers. See [kennedy-types][kennedy] and [type-system-mechanisms][mech].
-5. **How do real ecosystems package this?** Fourteen systems, from the one compiler
+5. **How do real ecosystems package this?** Twenty systems, from the one compiler
    with the theory built in to registries and symbolic engines. See the
    [master catalog](#systems-master-catalog).
 6. **What does the field agree on, and where does it split?** Seven consensus points,
@@ -43,21 +43,25 @@ This survey answers seven questions:
    [d-quantities][dq], and the [prototypes](#runnable-prototypes).
 
 > [!NOTE]
-> **Scope: wave 1 — foundations, vocabulary, and fourteen flagship systems.** The
+> **Scope: foundations, vocabulary, and twenty flagship systems (waves 1–2).** The
 > [theory subtree][theory] (eight deep-dives), the [concepts glossary][concepts], the
-> fourteen system pages below, the [comparison capstone][comparison], and the three
-> CI-verified D prototypes are landed. Several systems are covered as in-page asides
-> rather than own rows: `astropy.units` (inside [python-pint][pint]), Eisenberg's
-> `units` package (inside [haskell-dimensional][dimensional]), `std::chrono` (inside
-> [cpp-boost-units][boost]), and `nordlow/units-d` (inside [d-quantities][dq]).
-> **Deferred to a future wave 2** — rows noted here, not silently omitted: the Scala
-> libraries (**coulomb**, **squants**), Nim's **unchained**, the Swift and Kotlin
-> units libraries, and **UCUM/QUDT implementation libraries** (UCUM-grammar parsers,
-> QUDT-backed converters); the UCUM spec and the QUDT ontology _themselves_ are
-> covered in [concepts][concepts] as the interchange and data poles of the design
-> space.
+> twenty system pages below, the [comparison capstone][comparison], and the three
+> CI-verified D prototypes are landed. **Wave 2 has now landed six further system
+> pages** — the Scala libraries ([coulomb][scala-coulomb] + [squants][scala-squants]),
+> Nim's [unchained][nim-unchained], Swift's Foundation [`Measurement`][swift-units],
+> Kotlin's [measured][kotlin-measured], and the
+> [UCUM / QUDT interchange implementations][ucum-qudt] — taking the catalog from
+> fourteen to **twenty** systems. Several systems are covered as in-page asides rather
+> than own rows: `astropy.units` (inside [python-pint][pint]), Eisenberg's `units`
+> package (inside [haskell-dimensional][dimensional]), `std::chrono` (inside
+> [cpp-boost-units][boost]), `nordlow/units-d` (inside [d-quantities][dq]),
+> `NeedleInAJayStack/Units` (inside [swift-units][swift-units]), and the JSR-385
+> `indriya` / `unit-api` layer (inside [ucum-qudt][ucum-qudt]). Other-language units
+> libraries remain out of scope for now; the UCUM spec and the QUDT ontology
+> _themselves_ are covered in [concepts][concepts] as the interchange and data poles
+> of the design space.
 
-**Last reviewed:** July 3, 2026
+**Last reviewed:** July 4, 2026
 
 ---
 
@@ -93,22 +97,28 @@ energy) are distinguishable. The full per-dimension comparison — affine and
 logarithmic support, polymorphism, erasure evidence, diagnostics, compile cost — is
 the [comparison's at-a-glance matrix][comparison-matrix]; this catalog is who-is-who.
 
-| System                      | Ecosystem              | Mechanism                                                          | Checked        | Exponents           | Kind                       | Link                               |
-| --------------------------- | ---------------------- | ------------------------------------------------------------------ | -------------- | ------------------- | -------------------------- | ---------------------------------- |
-| **F# units of measure**     | F# / .NET              | native AG unifier in the compiler's constraint solver              | compile        | `ℚ`¹                | —²                         | [fsharp-uom][fsharp]               |
-| **uom-plugin**              | Haskell (GHC)          | typechecker-plugin AG unifier over an uninterpreted `Unit` kind    | compile        | `ℤ`³                | —                          | [haskell-uom-plugin][uom-plugin]   |
-| **dimensional**             | Haskell                | closed type families over a fixed 7-slot `Dimension` kind          | compile        | `ℤ⁷`, closed basis  | —⁴                         | [haskell-dimensional][dimensional] |
-| **uom**                     | Rust                   | macro-generated `Quantity` over `typenum` trait arithmetic         | compile        | `ℤ⁷`                | flat `Kind` tags⁵          | [rust-uom][rust-uom]               |
-| **dimensioned**             | Rust                   | `make_units!` systems over `typenum` `tarr!` exponent arrays       | compile        | `ℤⁿ` per system⁶    | —                          | [rust-dimensioned][dimensioned]    |
-| **mp-units**                | C++20/23               | `consteval` symbolic expressions (constexpr values of empty types) | compile        | `ℚ`, open basis     | `quantity_spec` hierarchy⁷ | [cpp-mp-units][mp-units]           |
-| **Boost.Units**             | C++03                  | MPL typelists of (base dimension, `static_rational`) pairs         | compile        | `ℚ`, open basis     | extra base dimensions⁸     | [cpp-boost-units][boost]           |
-| **Au**                      | C++14                  | canonicalized variadic packs + a prime/π magnitude vector space    | compile        | `ℚ`, open basis     | —⁹                         | [cpp-au][au]                       |
-| **quantities / std.units**  | D                      | CTFE dimension values · units-as-types conversion graph            | compile¹⁰      | `ℚ` (all artifacts) | —                          | [d-quantities][dq]                 |
-| **Pint**                    | Python                 | runtime `UnitRegistry` + exponent dictionaries                     | run            | `ℚ`, open basis     | —                          | [python-pint][pint]                |
-| **Unitful.jl**              | Julia                  | `Rational{Int}` exponents as type parameters, multiple dispatch    | dispatch¹¹     | `ℚ`, open basis     | —                          | [julia-unitful][unitful]           |
-| **GNAT dimensionality**     | Ada (GNAT-only)        | implementation-defined aspects; `ℚ` vectors on AST nodes           | compile        | `ℚ`, ≤ 7 dimensions | —                          | [ada-gnat-dimensions][gnat]        |
-| **LeanDimensionalAnalysis** | Lean 4                 | dependent types; `CommGroup (dimension B E)` proved, not encoded   | elaboration    | open ring¹²         | —                          | [lean-mathlib-units][lean]         |
-| **Wolfram / MATLAB**        | Wolfram Lang. · MATLAB | symbolic `Quantity` data · inert `symunit` factors                 | run / opt-in¹³ | `ℤ` observed        | temperature only¹⁴         | [wolfram-matlab][wolfram]          |
+| System                       | Ecosystem              | Mechanism                                                                              | Checked        | Exponents           | Kind                       | Link                               |
+| ---------------------------- | ---------------------- | -------------------------------------------------------------------------------------- | -------------- | ------------------- | -------------------------- | ---------------------------------- |
+| **F# units of measure**      | F# / .NET              | native AG unifier in the compiler's constraint solver                                  | compile        | `ℚ`¹                | —²                         | [fsharp-uom][fsharp]               |
+| **uom-plugin**               | Haskell (GHC)          | typechecker-plugin AG unifier over an uninterpreted `Unit` kind                        | compile        | `ℤ`³                | —                          | [haskell-uom-plugin][uom-plugin]   |
+| **dimensional**              | Haskell                | closed type families over a fixed 7-slot `Dimension` kind                              | compile        | `ℤ⁷`, closed basis  | —⁴                         | [haskell-dimensional][dimensional] |
+| **uom**                      | Rust                   | macro-generated `Quantity` over `typenum` trait arithmetic                             | compile        | `ℤ⁷`                | flat `Kind` tags⁵          | [rust-uom][rust-uom]               |
+| **dimensioned**              | Rust                   | `make_units!` systems over `typenum` `tarr!` exponent arrays                           | compile        | `ℤⁿ` per system⁶    | —                          | [rust-dimensioned][dimensioned]    |
+| **mp-units**                 | C++20/23               | `consteval` symbolic expressions (constexpr values of empty types)                     | compile        | `ℚ`, open basis     | `quantity_spec` hierarchy⁷ | [cpp-mp-units][mp-units]           |
+| **Boost.Units**              | C++03                  | MPL typelists of (base dimension, `static_rational`) pairs                             | compile        | `ℚ`, open basis     | extra base dimensions⁸     | [cpp-boost-units][boost]           |
+| **Au**                       | C++14                  | canonicalized variadic packs + a prime/π magnitude vector space                        | compile        | `ℚ`, open basis     | —⁹                         | [cpp-au][au]                       |
+| **quantities / std.units**   | D                      | CTFE dimension values · units-as-types conversion graph                                | compile¹⁰      | `ℚ` (all artifacts) | —                          | [d-quantities][dq]                 |
+| **Pint**                     | Python                 | runtime `UnitRegistry` + exponent dictionaries                                         | run            | `ℚ`, open basis     | —                          | [python-pint][pint]                |
+| **Unitful.jl**               | Julia                  | `Rational{Int}` exponents as type parameters, multiple dispatch                        | dispatch¹¹     | `ℚ`, open basis     | —                          | [julia-unitful][unitful]           |
+| **GNAT dimensionality**      | Ada (GNAT-only)        | implementation-defined aspects; `ℚ` vectors on AST nodes                               | compile        | `ℚ`, ≤ 7 dimensions | —                          | [ada-gnat-dimensions][gnat]        |
+| **LeanDimensionalAnalysis**  | Lean 4                 | dependent types; `CommGroup (dimension B E)` proved, not encoded                       | elaboration    | open ring¹²         | —                          | [lean-mathlib-units][lean]         |
+| **Wolfram / MATLAB**         | Wolfram Lang. · MATLAB | symbolic `Quantity` data · inert `symunit` factors                                     | run / opt-in¹³ | `ℤ` observed        | temperature only¹⁴         | [wolfram-matlab][wolfram]          |
+| **coulomb**                  | Scala                  | opaque-type `Quantity[V,U]=V` + reflective-macro canonicalization (`cansig`)           | compile        | `ℚ`                 | —¹⁵                        | [scala-coulomb][scala-coulomb]     |
+| **squants**                  | Scala                  | runtime values; a dimension is a distinct final class; F-bounded nominal typing        | compile¹⁶      | n/a (nominal)       | nominal (free)¹⁷           | [scala-squants][scala-squants]     |
+| **unchained**                | Nim                    | compile-time-only macros over an integer `QuantityPower` array                         | compile        | `ℤ`                 | —                          | [nim-unchained][nim-unchained]     |
+| **measured**                 | Kotlin                 | `Measure<T:Units>` with nested `UnitsProduct`/`UnitsRatio` generics (no normalization) | compile        | `ℤ` (structural)¹⁸  | —                          | [kotlin-measured][kotlin-measured] |
+| **Foundation `Measurement`** | Swift                  | nominal `Measurement<UnitType:Unit>`; per-quantity `Dimension` subclass                | compile¹⁹      | n/a (nominal)       | nominal                    | [swift-units][swift-units]         |
+| **UCUM / QUDT**              | JVM · JS               | UCUM string-grammar canonicalization / QUDT dimension-vector IRI; JSR-385 type-API     | run            | `ℤ` (7–8-slot)      | —                          | [ucum-qudt][ucum-qudt]             |
 
 <sub>¹ Surface syntax defaults to integers, but parenthesized `kg^(1/2)` parses and the
 shipped solver is rational throughout — diverging from Kennedy's published `ℤ` design.
@@ -131,7 +141,17 @@ and run. ¹² Any `CommRing E` — `ℝ` exponents type-check; the artifact is t
 (`noncomputable`), not executables. ¹³ Wolfram checks eagerly at evaluation (`$Failed`
 on incompatibles); MATLAB checks only on an explicit `checkUnits` query returning
 logicals, never raising. ¹⁴ Wolfram curates `DegreesCelsius` vs
-`DegreesCelsiusDifference`; MATLAB defaults all temperatures to differences.</sub>
+`DegreesCelsiusDifference`; MATLAB defaults all temperatures to differences.
+¹⁵ coulomb has NO Kind mechanism — torque/energy, Hz/Bq, angle/ratio are unguarded
+(the sharpest contrast with uom's `Kind`). ¹⁶ squants rejects `Power + Energy` at
+compile time as an ordinary nominal type mismatch; value + scale-conversion are
+runtime. ¹⁷ nominal typing gives kind-vs-dimension for free — `Torque` ≠ `Energy`
+despite identical dimension. ¹⁸ Kotlin has no type-level integers; composite dimensions
+are nested generic types (`A·B` ≠ `B·A`), not a normalized exponent vector; no
+fractional powers. ¹⁹ Foundation catches `m + s` as a generic-parameter mismatch, but
+there is no product type (`m·s` is unnameable); the typed third-party contrast on the
+same page (`NeedleInAJayStack/Units`) is runtime-thrown — neither is a full type-level
+exponent algebra.</sub>
 
 ### Runnable prototypes
 
@@ -158,41 +178,43 @@ run by the repository's `ci` helper on every pass (and green under both `ldc2` a
 The survey's most load-bearing axis ([comparison][comparison] reads the matrix along
 it): _when_ is a dimensional mismatch reported, and by whom.
 
-| Checking time                     | The contract                                                               | Systems                                                                                                                                          |
-| --------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Compile — compiler-native**     | the language's own type checker / semantic pass reports the mismatch       | [F#][fsharp] (AG unifier), [GNAT][gnat] (`sem_dim` aspects)                                                                                      |
-| **Compile — compiler plugin**     | a plugin extends the stock solver with the abelian-group theory            | [uom-plugin][uom-plugin]                                                                                                                         |
-| **Compile — library encoding**    | the host's generic-programming machinery _evaluates_ the group; no solver  | [dimensional][dimensional], [uom][rust-uom], [dimensioned][dimensioned], [mp-units][mp-units], [Boost.Units][boost], [Au][au], [D artifacts][dq] |
-| **Elaboration (proof assistant)** | homogeneity is a proposition; the output is theorems, not executables      | [Lean][lean]                                                                                                                                     |
-| **Dispatch / specialization**     | the check resolves per JIT specialization — mismatch compiles to a `throw` | [Unitful.jl][unitful]                                                                                                                            |
-| **Run**                           | checked when two quantities actually meet (registry / symbolic evaluation) | [Pint][pint], [Wolfram][wolfram]                                                                                                                 |
-| **Opt-in query**                  | arithmetic never checks; an explicit call reports a logical verdict        | [MATLAB `symunit`][wolfram]                                                                                                                      |
+| Checking time                     | The contract                                                               | Systems                                                                                                                                                                                                                                                                                                |
+| --------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Compile — compiler-native**     | the language's own type checker / semantic pass reports the mismatch       | [F#][fsharp] (AG unifier), [GNAT][gnat] (`sem_dim` aspects)                                                                                                                                                                                                                                            |
+| **Compile — compiler plugin**     | a plugin extends the stock solver with the abelian-group theory            | [uom-plugin][uom-plugin]                                                                                                                                                                                                                                                                               |
+| **Compile — library encoding**    | the host's generic-programming machinery _evaluates_ the group; no solver  | [dimensional][dimensional], [uom][rust-uom], [dimensioned][dimensioned], [mp-units][mp-units], [Boost.Units][boost], [Au][au], [D artifacts][dq], [coulomb][scala-coulomb], [squants][scala-squants], [unchained][nim-unchained], [measured][kotlin-measured], [Foundation `Measurement`][swift-units] |
+| **Elaboration (proof assistant)** | homogeneity is a proposition; the output is theorems, not executables      | [Lean][lean]                                                                                                                                                                                                                                                                                           |
+| **Dispatch / specialization**     | the check resolves per JIT specialization — mismatch compiles to a `throw` | [Unitful.jl][unitful]                                                                                                                                                                                                                                                                                  |
+| **Run**                           | checked when two quantities actually meet (registry / symbolic evaluation) | [Pint][pint], [Wolfram][wolfram], [UCUM / QUDT][ucum-qudt]                                                                                                                                                                                                                                             |
+| **Opt-in query**                  | arithmetic never checks; an explicit call reports a logical verdict        | [MATLAB `symunit`][wolfram]                                                                                                                                                                                                                                                                            |
 
 ### By exponent domain
 
 Theory published `ℤ`; practice shipped `ℚ` ([comparison § exponents][comparison-exp]);
 the [free-abelian-group page][fag] tallies what the extension costs.
 
-| Exponent domain                | Systems                                                                                                       | The documented cost / benefit                                                                        |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| **`ℤ` — closed 7-vector**      | [dimensional][dimensional]                                                                                    | `sqrt` of a non-square dimension is a compile error ("fractional powers make little physical sense") |
-| **`ℤ` — per-system vectors**   | [uom][rust-uom], [dimensioned][dimensioned], [uom-plugin][uom-plugin]                                         | `Length.sqrt()` rejected; `√Hz` named future work; Gaussian basis rescaled to stay integral          |
-| **`ℚ` — capped basis**         | [GNAT][gnat] (≤ 7 dimensions)                                                                                 | `Sqrt` halves vectors; `**` requires a static exponent                                               |
-| **`ℚ` — open basis**           | [F#][fsharp], [mp-units][mp-units], [Boost.Units][boost], [Au][au], [D][dq], [Pint][pint], [Unitful][unitful] | total `sqrt` and honest `√Hz` — at the price of freeness, perfect squares, and gcd structure         |
-| **Open ring**                  | [Lean][lean]                                                                                                  | any `CommRing E`; nothing enforces the physics convention against `ℝ`                                |
-| **`ℤ` observed (uncommitted)** | [Wolfram / MATLAB][wolfram]                                                                                   | captures show integer powers only, with no stated bound                                              |
+| Exponent domain                  | Systems                                                                                                                                     | The documented cost / benefit                                                                           |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| **`ℤ` — closed 7-vector**        | [dimensional][dimensional], [UCUM / QUDT][ucum-qudt] (7–8-slot)                                                                             | `sqrt` of a non-square dimension is a compile error ("fractional powers make little physical sense")    |
+| **`ℤ` — per-system vectors**     | [uom][rust-uom], [dimensioned][dimensioned], [uom-plugin][uom-plugin], [unchained][nim-unchained], [measured][kotlin-measured] (structural) | `Length.sqrt()` rejected; `√Hz` named future work; Gaussian basis rescaled to stay integral             |
+| **`ℚ` — capped basis**           | [GNAT][gnat] (≤ 7 dimensions)                                                                                                               | `Sqrt` halves vectors; `**` requires a static exponent                                                  |
+| **`ℚ` — open basis**             | [F#][fsharp], [mp-units][mp-units], [Boost.Units][boost], [Au][au], [D][dq], [Pint][pint], [Unitful][unitful], [coulomb][scala-coulomb]     | total `sqrt` and honest `√Hz` — at the price of freeness, perfect squares, and gcd structure            |
+| **Open ring**                    | [Lean][lean]                                                                                                                                | any `CommRing E`; nothing enforces the physics convention against `ℝ`                                   |
+| **`ℤ` observed (uncommitted)**   | [Wolfram / MATLAB][wolfram]                                                                                                                 | captures show integer powers only, with no stated bound                                                 |
+| **Nominal — no exponent vector** | [squants][scala-squants], [Foundation `Measurement`][swift-units]                                                                           | a dimension is a class / generic-parameter identity, not an exponent tuple — there is no domain to have |
 
 ### By kind treatment
 
 The four-rung ladder from [comparison § kinds][comparison-kinds] — no rung is derived
 from theory, and [QUDT][concepts] (kind above dimension, as data) sits off-ladder.
 
-| Rung                          | Mechanism                                                    | Systems                                                                                                                                                                         |
-| ----------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **1 — nothing**               | the dimension vector is the whole identity; `Hz + Bq` passes | [F#][fsharp], [GNAT][gnat], [dimensional][dimensional], [dimensioned][dimensioned], [uom-plugin][uom-plugin], [Pint][pint], [Unitful][unitful], [Lean][lean], [D artifacts][dq] |
-| **2 — extra base dimensions** | mint an axis; splits torque/energy but never `Hz`/`Bq`       | [Boost.Units][boost] (radian/steradian), [Au][au] (`Angle`, `Information`), [Wolfram][wolfram] (angle/solid-angle/information/money/person axes)                                |
-| **3 — flat tags**             | nominal comparability tags, erased under `×`/`÷`             | [uom][rust-uom]                                                                                                                                                                 |
-| **4 — propagating hierarchy** | a `quantity_spec` tree: LCA addition + a conversion lattice  | [mp-units][mp-units]                                                                                                                                                            |
+| Rung                          | Mechanism                                                                                             | Systems                                                                                                                                                                                                                                                                                      |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **1 — nothing**               | the dimension vector is the whole identity; `Hz + Bq` passes                                          | [F#][fsharp], [GNAT][gnat], [dimensional][dimensional], [dimensioned][dimensioned], [uom-plugin][uom-plugin], [Pint][pint], [Unitful][unitful], [Lean][lean], [D artifacts][dq], [coulomb][scala-coulomb], [unchained][nim-unchained], [measured][kotlin-measured], [UCUM / QUDT][ucum-qudt] |
+| **2 — extra base dimensions** | mint an axis; splits torque/energy but never `Hz`/`Bq`                                                | [Boost.Units][boost] (radian/steradian), [Au][au] (`Angle`, `Information`), [Wolfram][wolfram] (angle/solid-angle/information/money/person axes)                                                                                                                                             |
+| **3 — flat tags**             | nominal comparability tags, erased under `×`/`÷`                                                      | [uom][rust-uom]                                                                                                                                                                                                                                                                              |
+| **4 — propagating hierarchy** | a `quantity_spec` tree: LCA addition + a conversion lattice                                           | [mp-units][mp-units]                                                                                                                                                                                                                                                                         |
+| **Nominal — kind for free**   | same-dimension quantities are distinct nominal types, so `Torque` ≠ `Energy` with no tag (off-ladder) | [squants][scala-squants], [Foundation `Measurement`][swift-units]                                                                                                                                                                                                                            |
 
 ---
 
@@ -202,37 +224,38 @@ A timeline interleaving **theory / formalization milestones** with **system / to
 milestones**. Every date below is grounded in a landed page of this tree (per-result
 provenance in each page's `Sources`); uncertain entries are marked `*`.
 
-| Year      | Theory / formalization milestone                                                                   | System / tooling milestone                                                                                             |
-| --------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| **1892**  | **Vaschy** states the π-theorem ([buckingham-pi][pi])                                              | —                                                                                                                      |
-| **1914**  | **Buckingham** names it, proving "for special cases" under a sum-of-monomials postulate            | —                                                                                                                      |
-| **1922**  | **Bridgman** — _Dimensional Analysis_: complete equations, the tacit single-relation restriction   | —                                                                                                                      |
-| **1953**  | **Drobot** — the first fully rigorous algebraic foundation                                         | —                                                                                                                      |
-| **1968**  | **Whitney** — _The Mathematics of Physical Quantities_ I & II ([whitney][whitney])                 | —                                                                                                                      |
-| **1982**  | **Curtis–Logan–Parker** — the π-theorem as frames + group action, no smoothness                    | —                                                                                                                      |
-| **1991**  | **Wand & O'Keefe** — dimensional inference "fits neatly" into ML type inference                    | —                                                                                                                      |
-| **1994**  | **Kennedy** — _Dimension Types_ (ESOP); **Hart** — dimensioned matrices (SIAM)                     | ML Kit extension — the first implementation of Kennedy's dimension types ([kennedy-types][kennedy])                    |
-| 1995–1997 | Kennedy's thesis (TR-391, 1996) and POPL '97 parametricity; Hart's Springer book (1995)            | —                                                                                                                      |
-| **2003**  | —                                                                                                  | Schabel's MPL dimensional-analysis demo — Boost.Units' origin ([cpp-boost-units][boost])                               |
-| **2007**  | **Janyška–Modugno–Vitolo** — positive spaces (arXiv, Oct)                                          | Boost.Units formal review (Feb; after a factor-of-10 compile-time rewrite)                                             |
-| **2008**  | —                                                                                                  | Boost.Units 1.0.0 ships in Boost 1.36 (Aug), `ℚ` exponents from the start                                              |
-| **2010**  | **Kennedy's CEFP notes** — the shipped F# design, didactically ([kennedy-types][kennedy])          | Boost.Units feature-frozen (v1.2, Boost 1.43)                                                                          |
-| **2011**  | —                                                                                                  | Nadlinger's `std.units` Phobos RFC (Apr) and push (Dec) — never formally reviewed ([d-quantities][dq])                 |
-| **2012**  | **Tao** — the tensor-of-lines / weight-space essay (Dec) ([tensor-of-lines][tensor])               | GNAT dimensionality aspects presented (HILT 2012\*); Mathematica 9.0 ships `Quantity` ([wolfram-matlab][wolfram])      |
-| **2013**  | —                                                                                                  | `quantities` — D's CTFE value-level design (Sicard, 2013–2020) ([d-quantities][dq])                                    |
-| **2014**  | **Atkey** — parametricity → conservation laws, closing Kennedy's POPL '97 conjecture               | —                                                                                                                      |
-| **2015**  | **Gundry** — the GHC typechecker-plugin AG unifier ([haskell-uom-plugin][uom-plugin])              | `dimensioned` 0.5.0 moves to `typenum` (Dec) ([rust-dimensioned][dimensioned])                                         |
-| **2016**  | —                                                                                                  | `units-d` fork created the day the `std.units` thread ends (30 Mar) ([d-quantities][dq])                               |
-| 2017–2018 | —                                                                                                  | MATLAB `symunit`/`checkUnits` (R2017a); `unitConvert` (R2018b)                                                         |
-| 2018–2019 | **Raposo** — the algebraic structure of quantity calculus, I & II ([whitney][whitney])             | —                                                                                                                      |
-| 2020–2021 | **Jonsson** (2020 π-foundation; 2021 scalable monoids); **Zapata-Carratalá** — dimensioned algebra | mp-units **P1935R2** before WG21 (2020) ([cpp-mp-units][mp-units])                                                     |
-| **2022**  | —                                                                                                  | `uom-plugin` 0.4.0.0 final (Oct; GHC 9.0–9.4, then dormant); `dimensioned` 0.8.0 final (Apr)                           |
-| **2023**  | —                                                                                                  | **P2980R1** — the C++29 standardization plan                                                                           |
-| **2025**  | **Bobbin et al.** — the Lean 4 formalization (arXiv, Sep) ([lean-mathlib-units][lean])             | mp-units v2.5.0 (Dec)                                                                                                  |
-| 2026\*    | —                                                                                                  | **P3045R8** — _Quantities and units library_ (WG21); current pins as reviewed: uom 0.38.0, Unitful 1.28.0, Pint 0.25.3 |
+| Year      | Theory / formalization milestone                                                                   | System / tooling milestone                                                                                                                                                                                                                                 |
+| --------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **1892**  | **Vaschy** states the π-theorem ([buckingham-pi][pi])                                              | —                                                                                                                                                                                                                                                          |
+| **1914**  | **Buckingham** names it, proving "for special cases" under a sum-of-monomials postulate            | —                                                                                                                                                                                                                                                          |
+| **1922**  | **Bridgman** — _Dimensional Analysis_: complete equations, the tacit single-relation restriction   | —                                                                                                                                                                                                                                                          |
+| **1953**  | **Drobot** — the first fully rigorous algebraic foundation                                         | —                                                                                                                                                                                                                                                          |
+| **1968**  | **Whitney** — _The Mathematics of Physical Quantities_ I & II ([whitney][whitney])                 | —                                                                                                                                                                                                                                                          |
+| **1982**  | **Curtis–Logan–Parker** — the π-theorem as frames + group action, no smoothness                    | —                                                                                                                                                                                                                                                          |
+| **1991**  | **Wand & O'Keefe** — dimensional inference "fits neatly" into ML type inference                    | —                                                                                                                                                                                                                                                          |
+| **1994**  | **Kennedy** — _Dimension Types_ (ESOP); **Hart** — dimensioned matrices (SIAM)                     | ML Kit extension — the first implementation of Kennedy's dimension types ([kennedy-types][kennedy])                                                                                                                                                        |
+| 1995–1997 | Kennedy's thesis (TR-391, 1996) and POPL '97 parametricity; Hart's Springer book (1995)            | —                                                                                                                                                                                                                                                          |
+| **2003**  | —                                                                                                  | Schabel's MPL dimensional-analysis demo — Boost.Units' origin ([cpp-boost-units][boost])                                                                                                                                                                   |
+| **2007**  | **Janyška–Modugno–Vitolo** — positive spaces (arXiv, Oct)                                          | Boost.Units formal review (Feb; after a factor-of-10 compile-time rewrite)                                                                                                                                                                                 |
+| **2008**  | —                                                                                                  | Boost.Units 1.0.0 ships in Boost 1.36 (Aug), `ℚ` exponents from the start                                                                                                                                                                                  |
+| **2010**  | **Kennedy's CEFP notes** — the shipped F# design, didactically ([kennedy-types][kennedy])          | Boost.Units feature-frozen (v1.2, Boost 1.43)                                                                                                                                                                                                              |
+| **2011**  | —                                                                                                  | Nadlinger's `std.units` Phobos RFC (Apr) and push (Dec) — never formally reviewed ([d-quantities][dq])                                                                                                                                                     |
+| **2012**  | **Tao** — the tensor-of-lines / weight-space essay (Dec) ([tensor-of-lines][tensor])               | GNAT dimensionality aspects presented (HILT 2012\*); Mathematica 9.0 ships `Quantity` ([wolfram-matlab][wolfram])                                                                                                                                          |
+| **2013**  | —                                                                                                  | `quantities` — D's CTFE value-level design (Sicard, 2013–2020) ([d-quantities][dq])                                                                                                                                                                        |
+| **2014**  | **Atkey** — parametricity → conservation laws, closing Kennedy's POPL '97 conjecture               | —                                                                                                                                                                                                                                                          |
+| **2015**  | **Gundry** — the GHC typechecker-plugin AG unifier ([haskell-uom-plugin][uom-plugin])              | `dimensioned` 0.5.0 moves to `typenum` (Dec) ([rust-dimensioned][dimensioned])                                                                                                                                                                             |
+| **2016**  | —                                                                                                  | `units-d` fork created the day the `std.units` thread ends (30 Mar) ([d-quantities][dq]); Foundation `Measurement` ships with Swift 3\* ([swift-units][swift-units])                                                                                       |
+| 2017–2018 | —                                                                                                  | MATLAB `symunit`/`checkUnits` (R2017a); `unitConvert` (R2018b)                                                                                                                                                                                             |
+| 2018–2019 | **Raposo** — the algebraic structure of quantity calculus, I & II ([whitney][whitney])             | —                                                                                                                                                                                                                                                          |
+| 2020–2021 | **Jonsson** (2020 π-foundation; 2021 scalable monoids); **Zapata-Carratalá** — dimensioned algebra | mp-units **P1935R2** before WG21 (2020) ([cpp-mp-units][mp-units]); `squants` v1.8.3 — last tagged release (Aug 2021) ([scala-squants][scala-squants])                                                                                                     |
+| **2022**  | —                                                                                                  | `uom-plugin` 0.4.0.0 final (Oct; GHC 9.0–9.4, then dormant); `dimensioned` 0.8.0 final (Apr)                                                                                                                                                               |
+| **2023**  | —                                                                                                  | **P2980R1** — the C++29 standardization plan; JSR-385 `unit-api` v2.2 (May) ([ucum-qudt][ucum-qudt])                                                                                                                                                       |
+| **2025**  | **Bobbin et al.** — the Lean 4 formalization (arXiv, Sep) ([lean-mathlib-units][lean])             | mp-units v2.5.0 (Dec); `coulomb` v0.9.1 (Sep) ([scala-coulomb][scala-coulomb])                                                                                                                                                                             |
+| 2026\*    | —                                                                                                  | **P3045R8** — _Quantities and units library_ (WG21); Kotlin `measured` v0.5.0 (Apr) ([kotlin-measured][kotlin-measured]); indriya v2.2.4, the JSR-385 RI (May) ([ucum-qudt][ucum-qudt]); current pins as reviewed: uom 0.38.0, Unitful 1.28.0, Pint 0.25.3 |
 
 <sub>\* The HILT 2012 attribution (Pucci & Schonberg) is stated on the
-[GNAT page][gnat] but has no local artifact behind it; 2026 entries are
+[GNAT page][gnat] but has no local artifact behind it; the Swift 3 / macOS 10.12 date
+for Foundation `Measurement` is the platform era, not a pinned release; 2026 entries are
 current-as-of-review (July 2026).</sub>
 
 ---
@@ -322,6 +345,12 @@ are:
 [gnat]: ./ada-gnat-dimensions.md
 [lean]: ./lean-mathlib-units.md
 [wolfram]: ./wolfram-matlab.md
+[scala-coulomb]: ./scala-coulomb.md
+[scala-squants]: ./scala-squants.md
+[nim-unchained]: ./nim-unchained.md
+[swift-units]: ./swift-units.md
+[kotlin-measured]: ./kotlin-measured.md
+[ucum-qudt]: ./ucum-qudt.md
 
 <!-- Synthesis -->
 
