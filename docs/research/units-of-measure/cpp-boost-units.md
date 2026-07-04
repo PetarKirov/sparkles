@@ -158,7 +158,7 @@ load-bearing sentence of the whole design
 Same dimension ⇒ same C++ type: equality checking is type identity, with no
 separate normalization pass at use sites. Dimension arithmetic is spelled as MPL
 metafunction specializations on the list's tag ([`dimension.hpp`][dimension-hpp]
-L85–132): `mpl::times` merges two sorted lists adding exponents, `mpl::divides`
+L42–51 doc comment, specializations L85–132): `mpl::times` merges two sorted lists adding exponents, `mpl::divides`
 merges against the inverse, `static_power`/`static_root` multiply/divide every
 exponent by a `static_rational` — and, tellingly, `mpl::plus`/`mpl::minus` are
 "defined only on two equal dimensions" via a `BOOST_STATIC_ASSERT((is_same…))`.
