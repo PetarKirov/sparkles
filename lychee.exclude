@@ -70,3 +70,9 @@
 # parsing/theory/pratt-precedence.md): a slow academic host that times out for
 # automated checkers (12 timeouts, 0 real errors in a local run); valid citation.
 ^https?://(www\.)?engr\.mun\.ca/
+# cgit.git.savannah.gnu.org (GNU Bison source-tree browse links, cited in
+# parsing/bison-yacc.md): the Savannah cgit server intermittently returns 502 Bad
+# Gateway to automated checkers (6/6 links 502'd in one CI run, all transient); the
+# links are valid canonical source citations, so exclude the flaky host rather than
+# rot-pin each tree URL.
+^https?://cgit\.git\.savannah\.gnu\.org/
