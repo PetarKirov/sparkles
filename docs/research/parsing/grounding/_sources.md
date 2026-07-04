@@ -58,6 +58,32 @@ Wave 2 — SIMD / data-parallel + combinators (added 2026-07-03):
 `$REPOS/zig/zig/lib/std/zig/tokenizer.zig` checkout. Hyperscan paper:
 `papers/parsing/wang-2019-hyperscan-nsdi.pdf`, NSDI 2019, 19 pp.)
 
+Wave 3 — D landscape (added 2026-07-03). All under `$REPOS/dlang/`:
+
+| Repo          | Path                                     | Pinned SHA   | As of      |
+| ------------- | ---------------------------------------- | ------------ | ---------- |
+| asdf          | `$REPOS/dlang/asdf`                      | `8b33521`    | 2025-11-07 |
+| mir-ion       | `$REPOS/dlang/mir/mir-ion`               | `a5c2a78`    | 2025-11-07 |
+| D-YAML        | `$REPOS/dlang/dlang-community/D-YAML`    | `09aeac1`    | 2026-01-24 |
+| sdlite        | `$REPOS/dlang/sdlite`                    | `b33048b`    | 2025-10-14 |
+| jsoniopipe    | `$REPOS/dlang/jsoniopipe`                | `36abd4f`    | 2026-06-14 |
+| Pegged        | `$REPOS/dlang/Pegged`                    | `c351440`    | 2025-08-01 |
+| libdparse     | `$REPOS/dlang/dlang-community/libdparse` | `ce770e4`    | 2026-05-10 |
+| dxml          | `$REPOS/dlang/dxml`                      | `6c25b3d`    | 2025-08-20 |
+| pry           | `$REPOS/dlang/pry-parser`                | `ae4c017`    | 2024-04-24 |
+| mir-algorithm | `$REPOS/dlang/mir/mir-algorithm`         | `2da2123`    | 2026-02-04 |
+| mir-core      | `$REPOS/dlang/mir/mir-core`              | `4397b03`    | 2026-02-24 |
+| cerealed      | `$REPOS/dlang/cerealed`                  | `3340ea8`    | 2026-05-09 |
+| dmd           | `$REPOS/dlang/dmd`                       | `e6baf47458` | 2026-07-03 |
+| sdc           | `$REPOS/dlang/sdc`                       | `611d70ad`   | 2026-03-16 |
+| phobos        | `$REPOS/dlang/phobos`                    | `6be6c3809`  | 2026-06-29 |
+
+Wave-3 grounding notes: `std.experimental.lexer` was **removed from Phobos**; the canonical
+copy is vendored inside libdparse at `src/std/experimental/lexer.d`. `mir-algorithm` ships
+only the `mir.serde`/`mir.parse` framework + `JsonAlgebraic` — the actual SIMD parsers are
+`asdf`/`mir-ion`. The three D-language front-ends: `dmd` (`compiler/src/dmd/{lexer,parse}.d`),
+`libdparse` (`src/dparse/{lexer,parser}.d`), `sdc` (`src/d/parser/` incl. `ambiguous.d`).
+
 In-repo docs/manuals to use for quote-grounding: bison `doc/bison.texi`; menhir
 `doc/` + `CHANGES.md`; tree-sitter `docs/src/`; nom/winnow/chumsky/pest `doc/` + `README` +
 `src/`; the Haskell libs' `.cabal`/`CHANGELOG`/`src` + Haddocks in-tree. For wave 2:

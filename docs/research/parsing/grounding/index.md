@@ -59,6 +59,7 @@ Web is fallback-only. This tree is internal QA evidence — excluded from the Vi
 | rust-combine            | [rust-combine.md](./rust-combine.md)                       | full | 0   | downloads        | ✅ B7  |
 | ocaml-angstrom          | [ocaml-angstrom.md](./ocaml-angstrom.md)                   | full | 0   | httpaf/RWO       | ✅ B7  |
 | fsharp-fparsec          | [fsharp-fparsec.md](./fsharp-fparsec.md)                   | full | 0   | reputation       | ✅ B7  |
+| d-landscape             | [d-landscape.md](./d-landscape.md)                         | full | 0   | dub scores       | ✅ B8  |
 
 ## Master discrepancy register
 
@@ -198,9 +199,21 @@ notes (all flagged 🌐 per ledger; none asserted as tree facts).
 [ocaml-angstrom]: ./ocaml-angstrom.md
 [fsharp-fparsec]: ./fsharp-fparsec.md
 
-## Status: all 36 pages grounded (7 batches). 44 discrepancies (R8–R51, all from B1–B5);
+### Batch 8 (wave 3 — D landscape, 2026-07-03)
 
-wave-2 B6 + B7 added
+**Zero discrepancies.** The [`d-landscape.md`](./d-landscape.md) page's every project quote
+was read directly from a locally pinned checkout under `$REPOS/dlang/` this session (Pegged
+`mixin(grammar)`/compile-time; libdparse "Library for lexing and parsing D source code" + the
+vendored `std.experimental.lexer` provenance; dmd `lexer.d`/`parse.d` headers; sdc
+`ambiguous.d`; pry; mir `serde.d`/`parse.d` + mir-ion/asdf READMEs; JSONiopipe; `std.json`'s
+RED GC warning; dxml; sdlite). Web-attested only: **dub scores/download counts** and the three
+brief-mention uncloned projects (ctpg, d_tree_sitter, httparsed) — all flagged 🌐/≈, none
+asserted as tree facts. The `docs/specs/parsing/` proposal is design, not a research claim, so
+it carries no ledger; its prior-art links resolve to real survey pages.
+
+## Status: all 37 pages grounded (8 batches). 44 discrepancies (R8–R51, all from B1–B5);
+
+wave-2 B6 + B7 + wave-3 B8 added
 
 0 substantive. All minor — quote-precision, citation-locator, version/attribution. No fabricated _facts_
 beyond R8/R23 quote-padding and R26/R39/R45–R47 quote-sourcing. Proceed to Phase 3 (apply fixes).
