@@ -160,11 +160,11 @@ entry points (`convertUnitTo`, `convertToBaseUnits`, `commensurablesList`) live 
 
 **qudtlib** stores per-unit data harvested from RDF. A `Unit` carries a
 `conversionMultiplier` and `conversionOffset` (both `BigDecimal`) plus a
-`dimensionVectorIri` ([`Unit.java`][qudt-unit] L60–61, L70). Conversion applies the
-affine formula in `DECIMAL128` ([`Unit.java`][qudt-unit] L419–430):
+`dimensionVector` ([`Unit.java`][qudt-unit] L271–272, L288). Conversion applies the
+affine formula in `DECIMAL128` ([`Unit.java`][qudt-unit] L419–433):
 
 ```java
-// qudtlib-java: Unit.java L419-430 (affine conversion) — illustration
+// qudtlib-java: Unit.java L419-433 (affine conversion) — illustration
 BigDecimal result =
         value.add(fromOffset)
                 .multiply(fromMultiplier, MathContext.DECIMAL128)
@@ -217,10 +217,10 @@ Javadoc states the rule ([`IncommensurableException.java`][uapi-inc] L31–38):
 > equated, added, or subtracted. … This is a **checked** exception."
 
 **indriya** implements this. `AbstractUnit.getConverterToAny` is the gate: it calls
-`isCompatible` and throws on mismatch ([`AbstractUnit.java`][ind-au] L400–401):
+`isCompatible` and throws on mismatch ([`AbstractUnit.java`][ind-au] L401–402):
 
 ```java
-// indriya: AbstractUnit.java L400-401 — illustration
+// indriya: AbstractUnit.java L401-402 — illustration
 if (!isCompatible(that))
     throw new IncommensurableException(this + " is not compatible with " + that);
 ```
@@ -252,7 +252,7 @@ space:
   the very same UCUM grammar.
 - **qudtlib — an 8-slot `float` vector, compared as an _IRI string_.** The runtime
   comparison is `getDimensionVectorIri().equals(...)` ([`Unit.java`][qudt-unit]
-  L508–510) — like ucum-java, string equality, but the string is an ontology IRI. The
+  L504–511) — like ucum-java, string equality, but the string is an ontology IRI. The
   eighth slot `D` is the ratio flag, not a base dimension
   ([`DimensionVector.java`][qudt-dv] L15–28).
 - **JSR-385 / indriya — a `Map<Dimension, Integer>`.** A dimension is a map from base
@@ -284,14 +284,14 @@ concrete run-time predicate:
   L414–418).
 - **JSR-385 / indriya:** `isCompatible` compares dimensions
   ([`AbstractUnit.java`][ind-au] L277–278); `getConverterToAny` throws
-  `IncommensurableException` when it fails ([`AbstractUnit.java`][ind-au] L400–401).
+  `IncommensurableException` when it fails ([`AbstractUnit.java`][ind-au] L401–402).
 
 **The one compile-time nuance is JSR-385's `Unit<Q>` generic.** Because `Unit` is
 parameterized by its quantity type `Q`, a `Unit<Length>` variable cannot hold a
 `Unit<Time>` — that _is_ a compile error, and `getConverterTo(Unit<Q>)` exploits it to
 avoid the checked exception ([`Unit.java`][uapi-unit] L205). But this guard is
 shallow: it protects _named references_, not arithmetic. `Unit.multiply`/`divide`
-return `Unit<?>` (raw quantity type, [`Unit.java`][uapi-unit] L383, L392), and
+return `Unit<?>` (raw quantity type, [`Unit.java`][uapi-unit] L328, L372), and
 `asType(Class<T>)` is a **run-time** cast that throws `ClassCastException` on a
 dimension mismatch ([`AbstractUnit.java`][ind-au] L349–354). So the moment you compute
 a unit rather than name one, you are back to run-time checking — the reason

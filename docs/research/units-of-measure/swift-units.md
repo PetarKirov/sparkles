@@ -49,7 +49,7 @@ The contrast library's facts, for reference:
 Foundation's `Measurement` is a **model-and-display type**: it holds a magnitude and a
 unit so an app can convert between units of the same physical quantity and render the
 result in the user's locale. The type's own doc comment states the scope plainly
-([`Measurement.swift`][f-meas] L23–24):
+([`Measurement.swift`][f-meas] L22–24):
 
 > "A `Measurement` is a model type that holds a `Double` value associated with a
 > `Unit`. Measurements support a large set of operators, including `+`, `-`, `*`, `/`,
@@ -98,7 +98,7 @@ on every conversion.
 For the contrast library, [`Units`][units-repo] takes the structural route: its `Unit`
 doc comment promises a full algebra ([`Unit.swift`][u-unit] L3–7) — "Units may be
 multiplied and divided, resulting in 'composite' units" — and its README is candid that
-the safety is _runtime_ ([`README.md`][u-readme] L35):
+the safety is _runtime_ ([`README.md`][u-readme] L36):
 
 > "addition and subtraction requires that both measurements have the same dimensionality
 > (5 meters - 10 seconds ❌), otherwise a runtime error is thrown."
@@ -127,7 +127,7 @@ The type hierarchy is three layers ([`Unit.swift`][f-unit]):
 
 - **One `final class` per physical quantity.** `UnitLength`, `UnitDuration`,
   `UnitArea`, `UnitTemperature`, `UnitSpeed`, … — 22 hand-written `Dimension`
-  subclasses in the shipped set ([`Unit.swift`][f-unit] L251–2340), each exposing its
+  subclasses in the shipped set ([`Unit.swift`][f-unit] L251–2620), each exposing its
   units as `class var`s (`UnitLength.meters`, `UnitDuration.seconds`) and overriding
   `baseUnit()`.
 
@@ -283,13 +283,13 @@ being deferred to runtime.
   half-integer powers (the `V/√Hz` idiom) are unrepresentable. Neither can express
   `L^(1/2)`.
 - **Affine / temperature: modeled at the conversion layer, with a real hazard.**
-  Foundation's `UnitConverterLinear` carries a `constant` ([`Unit.swift`][f-unit] L45,
+  Foundation's `UnitConverterLinear` carries a `constant` ([`Unit.swift`][f-unit] L43,
   L56–58), and `UnitTemperature` uses it — Celsius is `coefficient 1.0, constant
 273.15`, Fahrenheit `coefficient 0.5556, constant 255.372` ([`Unit.swift`][f-unit]
   L2278–2325). But that constant is applied _inside `+`'s base-unit conversion_
   ([`Measurement.swift`][f-meas] L110–116): adding two temperatures in different units
   converts each to _absolute_ kelvin (offset included) and sums them, so
-  `20 °C + 68 °F` yields `≈ 548.5 K ≈ 275.4 °C` — the sum of two absolute temperatures,
+  `20 °C + 68 °F` yields `≈ 586.3 K ≈ 313.2 °C` — the sum of two absolute temperatures,
   which is physically meaningless. There is a **single `UnitTemperature` type**, no
   point-vs-interval distinction, so nothing prevents adding absolute temperatures. This
   is precisely the discipline that [Au][au]'s `QuantityPoint` and [uom][uom]'s
@@ -392,10 +392,10 @@ XCTAssertThrowsError(
 
 The `+` operator is `throws` ([`Measurement.swift`][u-meas] L58) and routes through
 `convert(to:)`, which throws when the units are not dimensionally equivalent
-([`Measurement.swift`][u-meas] L44–46):
+([`Measurement.swift`][u-meas] L45–47):
 
 ```swift
-// Units: Sources/Units/Measurement/Measurement.swift L44-46 (illustration; not runnable)
+// Units: Sources/Units/Measurement/Measurement.swift L45-47 (illustration; not runnable)
 guard unit.isDimensionallyEquivalent(to: newUnit) else {
     throw UnitError.incompatibleUnits(message: "Cannot convert \(unit) to \(newUnit)")
 }
@@ -403,16 +403,16 @@ guard unit.isDimensionallyEquivalent(to: newUnit) else {
 
 So `meter + second` **compiles and links**; the dimensional error is a
 `UnitError.incompatibleUnits` thrown at runtime, exactly as the README documents
-([`README.md`][u-readme] L35). For a runtime-checked library, a thrown exception _is_
+([`README.md`][u-readme] L36). For a runtime-checked library, a thrown exception _is_
 the finding: the dimensional guard exists, but it fires while the program runs, not
 while it builds.
-[in-repo throw test: `Tests/UnitsTests/MeasurementTests.swift` L45–48; documented: `README.md` L35]
+[in-repo throw test: `Tests/UnitsTests/MeasurementTests.swift` L45–48; documented: `README.md` L36]
 
 The valid path, for contrast, is what both libraries do handle: Foundation's
 `meters + feet` auto-converts through the base unit ([`Measurement.swift`][f-meas]
 L110–116), and `Units`' `60.measured(in: .mile / .hour) * 30.measured(in: .minute)`
 produces a distance whose composite unit reduces on `convert(to: .mile)`
-([`README.md`][u-readme] L26–32).
+([`README.md`][u-readme] L28–33).
 
 ## Ergonomics & compile-time cost
 
@@ -497,7 +497,7 @@ compile-time work that cost buys.
 - [`Sources/Units/Quantity.swift` — `RawRepresentable` base quantities][u-quantity] · [`Sources/Units/UnitError.swift` — the error enum][u-err]
 - [`Tests/UnitsTests/MeasurementTests.swift` — the in-repo `XCTAssertThrowsError(meter + second)` test][u-test] · [`README.md` — the "runtime error is thrown" contract][u-readme]
 - [Apple Developer docs: `Measurement`][apple-measurement] · [`Unit`/`Dimension`][apple-dimension]
-- `m + s` provenance: Foundation reproduction attempted with `swift 5.10.1` (nixpkgs), 2026-07-04 — fell (no `Foundation` module); mechanism pinned to `Measurement.swift` L108/138. `Units`: in-repo throw test `MeasurementTests.swift` L45–48 + documented `README.md` L35.
+- `m + s` provenance: Foundation reproduction attempted with `swift 5.10.1` (nixpkgs), 2026-07-04 — fell (no `Foundation` module); mechanism pinned to `Measurement.swift` L108/138. `Units`: in-repo throw test `MeasurementTests.swift` L45–48 + documented `README.md` L36.
 - Related deep-dives in this survey: [type-system mechanisms][mechanisms] ·
   [free abelian group][fag] · [torsors & affine quantities][torsor] ·
   [Kennedy's type system][kennedy] · [uom][uom] · [Au][au] · [mp-units][mp-units] ·
