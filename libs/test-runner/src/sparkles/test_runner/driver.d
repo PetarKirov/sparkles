@@ -9,8 +9,9 @@
  */
 module sparkles.test_runner.driver;
 
-import sparkles.test_runner.extract : ExtractedTest, extractUnittestBody,
-    generateBetterCProgram, generateWasmJsShim, generateWasmProgram, sourceRootOf;
+import sparkles.test_runner.extract : CtfeTarget, ExtractedTest,
+    extractUnittestBody, generateBetterCProgram, generateCtfeProgram,
+    generateWasmJsShim, generateWasmProgram, sourceRootOf;
 import sparkles.test_runner.model : Test;
 
 /// Options shared by both driver modes.
@@ -244,6 +245,174 @@ private string[] allImportFlags(in Test[] allTests, in DriverOptions options)
         if (!roots.canFind(path))
             roots ~= path;
     return roots.map!(p => "-I" ~ p).array;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// @ctfe
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The outcome of evaluating `@ctfe` tests through a probe compile.
+struct CtfeOutcome
+{
+    bool skipped; /// no D compiler found — reported but not a failure
+    bool succeeded; /// the probe compiled: every selected test passed
+    string[] failedNames; /// failing tests attributed from the compiler errors
+    string output; /// full compiler output (`__ctfeWrite` text, errors, …)
+}
+
+/// The actual module containing `test`: `test.moduleName` with aggregate
+/// qualifiers stripped (a nested test's `fullName` includes its aggregate),
+/// found by peeling trailing components until the name matches the file path.
+string probeModuleName(const Test test) @safe pure nothrow
+{
+    string candidate = test.moduleName;
+    while (candidate.length)
+    {
+        if (sourceRootOf(test.location.file, candidate) !is null)
+            return candidate;
+        size_t cut = 0;
+        foreach_reverse (i, c; candidate)
+            if (c == '.')
+            {
+                cut = i;
+                break;
+            }
+        if (!cut)
+            break;
+        candidate = candidate[0 .. cut];
+    }
+    return test.moduleName;
+}
+
+@("probeModuleName.nestedAndPlain")
+@safe pure
+unittest
+{
+    import sparkles.test_runner.model : TestLocation;
+
+    const plain = Test(fullName: "pkg.mod.__unittest_L1_C1", name: "t",
+        location: TestLocation(file: "src/pkg/mod.d", line: 1, column: 1));
+    assert(probeModuleName(plain) == "pkg.mod");
+
+    const nested = Test(fullName: "pkg.mod.Host.__unittest_L9_C1", name: "t",
+        location: TestLocation(file: "src/pkg/mod.d", line: 9, column: 1));
+    assert(probeModuleName(nested) == "pkg.mod");
+
+    // Unresolvable path ↔ name pairs fall back to the raw module name.
+    const odd = Test(fullName: "pkg.mod.__unittest_L1_C1", name: "t",
+        location: TestLocation(file: "elsewhere.d", line: 1, column: 1));
+    assert(probeModuleName(odd) == "pkg.mod");
+}
+
+/// Failing test names attributed from probe-compile output: the display-name
+/// argument of `ctfePassed!(…, "name")` on `error instantiating` lines.
+string[] parseCtfeFailures(string output) @safe pure
+{
+    import std.algorithm.searching : canFind;
+    import std.string : indexOf, lineSplitter;
+
+    string[] names;
+    foreach (line; output.lineSplitter)
+    {
+        if (!line.canFind("error instantiating"))
+            continue;
+        auto at = line.indexOf("ctfePassed!(");
+        if (at < 0)
+            continue;
+        const open = line.indexOf('"', at);
+        if (open < 0)
+            continue;
+        size_t close = open + 1;
+        while (close < line.length && !(line[close] == '"' && line[close - 1] != '\\'))
+            close++;
+        if (close >= line.length)
+            continue;
+        const name = line[open + 1 .. close];
+        if (!names.canFind(name))
+            names ~= name;
+    }
+    return names;
+}
+
+@("parseCtfeFailures.trailLines")
+@safe pure
+unittest
+{
+    enum output = "src/m.d(12,5): Error: boom\n" ~
+        "probe.d(60,27): Error: template instance " ~
+        "`sparkles_test_runner_ctfe.ctfePassed!(__unittest_L12_C1, \"a.one\")` " ~
+        "error instantiating\n" ~
+        "probe.d(60,13):        while evaluating: `static assert(ctfePassed!" ~
+        "(__unittest_L12_C1, \"a.one\"))`\n" ~
+        "probe.d(64,27): Error: template instance " ~
+        "`sparkles_test_runner_ctfe.ctfePassed!(__unittest_L30_C1, \"b.two\")` " ~
+        "error instantiating\n";
+    assert(parseCtfeFailures(output) == ["a.one", "b.two"]);
+    assert(parseCtfeFailures("all fine") == []);
+}
+
+/// Evaluates the given `@ctfe` tests: generates a probe program selecting
+/// exactly those tests, and compiles it — together with the tests' module
+/// sources — with `-o- -unittest` (semantic analysis only, so CTFE runs but
+/// nothing is codegen'd or linked). When `traceFile` is given, LDC's
+/// `-ftime-trace` flags are added and the trace is written there.
+CtfeOutcome runCtfeTests(
+    in Test[] ctfeTests, in Test[] allTests, in DriverOptions options,
+    string traceFile = null)
+{
+    import std.algorithm.searching : canFind;
+    import std.file : mkdirRecurse, write;
+    import std.path : buildPath, dirName;
+    import std.stdio : stdout;
+
+    CtfeOutcome outcome;
+
+    const compiler = detectCompiler(options.compiler);
+    if (!compiler.length)
+    {
+        outcome.skipped = true;
+        return outcome;
+    }
+
+    CtfeTarget[] targets;
+    string[] moduleFiles;
+    foreach (ref test; ctfeTests)
+    {
+        targets ~= CtfeTarget(
+            moduleName: probeModuleName(test),
+            file: test.location.file,
+            line: test.location.line,
+            name: test.name,
+        );
+        if (!moduleFiles.canFind(test.location.file))
+            moduleFiles ~= test.location.file;
+    }
+
+    const workDir = makeWorkDir("ctfe");
+    const sourceFile = buildPath(workDir, "ctfe_tests.d");
+    write(sourceFile, generateCtfeProgram(targets));
+
+    string[] traceFlags;
+    if (traceFile.length)
+    {
+        mkdirRecurse(traceFile.dirName);
+        traceFlags = ["-ftime-trace", "-ftime-trace-file=" ~ traceFile,
+            "--ftime-trace-granularity=0"];
+    }
+
+    const compile = run(
+        [compiler, "-o-", "-unittest", "-checkaction=context"]
+            ~ traceFlags ~ includeFlags(options)
+            ~ allImportFlags(allTests, options) ~ moduleFiles ~ [sourceFile],
+        options.verbose);
+
+    outcome.succeeded = compile.status == 0;
+    outcome.output = compile.output;
+    if (!outcome.succeeded)
+        outcome.failedNames = parseCtfeFailures(compile.output);
+    if (options.keep)
+        stdout.writeln("generated files kept in ", workDir);
+    return outcome;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

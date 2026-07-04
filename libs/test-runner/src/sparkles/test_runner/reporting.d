@@ -146,6 +146,23 @@ unittest
     assert(formatCtfeLine(test, false) == " ⚙ pkg.mod ct (compile time)");
 }
 
+/// The line reported for an `@ctfe` test whose compile-time evaluation
+/// failed; the compiler's error trail is printed separately above.
+string formatCtfeFailedLine(in Test test, bool colored) @safe
+{
+    const moduleName = test.moduleName;
+    return render(colored,
+        i" {bold.red ✗} {dim $(moduleName)} {bold $(test.name)} {dim (compile time)}");
+}
+
+@("formatCtfeFailedLine.plain")
+@safe
+unittest
+{
+    const test = Test(fullName: "pkg.mod.__unittest_L9_C1", name: "ct");
+    assert(formatCtfeFailedLine(test, false) == " ✗ pkg.mod ct (compile time)");
+}
+
 /// Details of one caught `Throwable`, indented under the failed test's line.
 /// Non-`verbose` traces stop at the first runner frame.
 string formatThrown(in Thrown thrown, bool colored, bool verbose) @safe
