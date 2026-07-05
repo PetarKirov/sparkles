@@ -64,6 +64,12 @@ best preset the host supports at shell entry (exported as
 `$WIRED_BENCH_ISA`, stamped into every report). simdjson intentionally stays
 the generic nixpkgs build: it dispatches to AVX-512-tier kernels at runtime.
 
+## Recorded results
+
+Baseline snapshots live under `results/` (`--json` dumps, named
+`<date>-<host>-<isa>.json`); the findings note that reads them is
+[`docs/specs/wired/bench-baseline.md`](../../../../docs/specs/wired/bench-baseline.md).
+
 ## Datasets
 
 Pinned by `nix/packages/wired-bench-data.nix` (never committed):
