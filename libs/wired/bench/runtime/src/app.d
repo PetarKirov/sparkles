@@ -28,7 +28,7 @@ import sparkles.core_cli.help_formatting : HelpInfo;
 
 import sparkles.wired_bench.config : BenchOptions;
 import sparkles.wired_bench.data : loadDatasets, resolveDataDir;
-import sparkles.wired_bench.engines : AllEngines;
+import sparkles.wired_bench.engines : AllEngines, engineVersions;
 import sparkles.wired_bench.report : BenchReport, collectEnvInfo, dumpJson,
     reportEnvironment, reportResults;
 import sparkles.wired_bench.runner : runAll;
@@ -43,7 +43,12 @@ int main(string[] args)
             ~ "meaningless; use `dub run -b bench`");
 
     const datasets = loadDatasets(opts.datasetNames, resolveDataDir(opts.dataDir));
-    const env = collectEnvInfo();
+    auto env = collectEnvInfo();
+    {
+        import std.string : join;
+
+        env.engines = engineVersions().join("; ");
+    }
     reportEnvironment(env, datasets);
 
     auto results = runAll!AllEngines(datasets, opts);

@@ -26,6 +26,7 @@ struct EnvInfo
     string cpu;       /// CPU model string (empty off Linux)
     string compiler;  /// D compiler name + front-end version
     string isaPreset; /// $WIRED_BENCH_ISA — the nix-built shims' ISA preset
+    string engines;   /// foreign engine versions (from the shims)
 }
 
 /// The full machine-readable report (`--json`).
@@ -81,6 +82,8 @@ void reportEnvironment(in EnvInfo env, const Dataset[] datasets)
     if (env.cpu.length)
         rows ~= ["cpu", env.cpu];
     rows ~= ["shim isa", env.isaPreset.length ? env.isaPreset : "(not set — outside the devshell?)"];
+    if (env.engines.length)
+        rows ~= ["engines", env.engines];
     foreach (ds; datasets)
         rows ~= ["dataset " ~ ds.name, format!"%.1f KiB"(ds.text.length / 1024.0)];
     drawTable(rows).write;
