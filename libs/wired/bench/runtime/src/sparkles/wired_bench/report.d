@@ -27,6 +27,7 @@ struct EnvInfo
     string compiler;  /// D compiler name + front-end version
     string isaPreset; /// $WIRED_BENCH_ISA — the nix-built shims' ISA preset
     string engines;   /// foreign engine versions (from the shims)
+    string perf;      /// hardware-counter availability (perf_event_open)
 }
 
 /// The full machine-readable report (`--json`).
@@ -84,6 +85,8 @@ void reportEnvironment(in EnvInfo env, const Dataset[] datasets)
     rows ~= ["shim isa", env.isaPreset.length ? env.isaPreset : "(not set — outside the devshell?)"];
     if (env.engines.length)
         rows ~= ["engines", env.engines];
+    if (env.perf.length)
+        rows ~= ["perf", env.perf];
     foreach (ds; datasets)
         rows ~= ["dataset " ~ ds.name, format!"%.1f KiB"(ds.text.length / 1024.0)];
     drawTable(rows).write;
@@ -126,6 +129,58 @@ void reportResults(const OpResult[] results, const Dataset[] datasets)
                 baseline > 0 ? format!"%.2f"(r.mbPerSec / baseline) : "-",
                 r.iters.to!string,
                 r.notes,
+            ];
+        }
+        drawTable(table).write;
+    }
+}
+
+/// Renders one hardware-counter table per dataset (rows that have perf
+/// data): the "why" behind the throughput table — IPC, per-input-byte
+/// cycle/instruction budgets, miss rates, and the allocation signature
+/// (page faults per iteration).
+void reportPerf(const OpResult[] results, const Dataset[] datasets)
+{
+    import std.math : isNaN;
+    import std.stdio : write, writeln;
+    import sparkles.wired_bench.perf : branchMissPercent, cacheMissPercent, ipc;
+
+    static string num(string spec)(double v)
+    {
+        return v.isNaN ? "-" : format!spec(v);
+    }
+
+    foreach (ds; datasets)
+    {
+        auto rows = results
+            .filter!(r => r.dataset == ds.name && !r.perf.isNull)
+            .array;
+        if (!rows.length)
+            continue;
+
+        writeln;
+        (ds.name ~ " — hardware counters")
+            .drawHeader(HeaderProps(style: HeaderStyle.banner, width: 72))
+            .writeln;
+
+        string[][] table = [[
+            "engine".stylize(Style.bold), "op".stylize(Style.bold),
+            "IPC".stylize(Style.bold), "cyc/B".stylize(Style.bold),
+            "ins/B".stylize(Style.bold), "br-miss%".stylize(Style.bold),
+            "LLC-miss%".stylize(Style.bold), "faults/it".stylize(Style.bold),
+        ]];
+        foreach (r; rows)
+        {
+            const p = r.perf.get;
+            const bytes = double(r.bytes);
+            table ~= [
+                r.engine, r.op,
+                num!"%.2f"(p.ipc),
+                num!"%.2f"(bytes > 0 ? p.cycles / bytes : double.nan),
+                num!"%.2f"(bytes > 0 ? p.instructions / bytes : double.nan),
+                num!"%.2f"(p.branchMissPercent),
+                num!"%.1f"(p.cacheMissPercent),
+                num!"%.1f"(p.pageFaults),
             ];
         }
         drawTable(table).write;

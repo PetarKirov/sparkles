@@ -44,6 +44,12 @@ struct BenchOptions
     @CliOption("skip-verify", "Skip cross-engine fingerprint verification (debug only)")
     bool skipVerify;
 
+    @CliOption("no-perf", "Skip the hardware-counter pass (perf_event_open)")
+    bool noPerf;
+
+    @CliOption("perf-iters", "Iterations of each op's counting pass")
+    uint perfIters = 20;
+
     /// Whether `name` passes the `--engines` filter (empty filter = all).
     bool engineEnabled(string name) const @safe pure
     {

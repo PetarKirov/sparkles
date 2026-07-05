@@ -11,6 +11,12 @@ mainSourceFile "src/app.d"
 
 dflags "-preview=in" "-preview=dip1000"
 
+// The perf_event_open helper *defines* functions, so its .c must be
+// compiled as a real source (emitted + linked), not merely imported for
+// declarations (the icu-binding precedent). Compiles to an empty module
+// off Linux (#ifdef __linux__).
+cSourcePaths "src"
+
 dependency "sparkles:base"     path="../../../.."
 dependency "sparkles:core-cli" path="../../../.."
 dependency "sparkles:wired"    path="../../../.."
