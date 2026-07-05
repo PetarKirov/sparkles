@@ -12,18 +12,20 @@ module sparkles.event_horizon.backend.uring;
 
 version (linux)  :  // io_uring is Linux-only; peer backends land in M10/M11.
 
-import during : AcceptFlags, CancelFlags, CQEFlags, MsgFlags, Operation, SetupFlags,
-    SubmissionEntry, TimeoutFlags, Uring, io_uring_getevents_arg, prepAccept,
-    prepConnect, prepNop, prepRW, prepRead, prepRecv, prepRecvMsg, prepSend,
-    prepSendMsg, prepTimeout, prepWrite, setup;
+import during : AcceptFlags, CancelFlags, CQEFlags, FsyncFlags, MsgFlags, Operation,
+    SetupFlags, SubmissionEntry, TimeoutFlags, Uring, io_uring_getevents_arg,
+    prepAccept, prepClose, prepConnect, prepFsync, prepNop, prepOpenat, prepRW,
+    prepRead, prepRecv, prepRecvMsg, prepSend, prepSendMsg, prepStatx,
+    prepTimeout, prepWaitid, prepWrite, setup;
 import during : DuringTimespec = KernelTimespec;
 
 import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion;
 import sparkles.event_horizon.backend.probe;
 import sparkles.event_horizon.errors;
 import sparkles.event_horizon.op : CompletionFlags, KernelTimespec, OpAccept,
-    OpConnect, OpNop, OpRead, OpRecv, OpRecvFrom, OpSend, OpSendTo, OpSlot,
-    OpTimeout, OpToken, OpWrite, SockAddr;
+    OpClose, OpConnect, OpFsync, OpNop, OpOpenAt, OpRead, OpRecv, OpRecvFrom,
+    OpSend, OpSendTo, OpSlot, OpStatx, OpTimeout, OpToken, OpWaitid, OpWrite,
+    SockAddr;
 
 import core.stdc.errno : ETIME;
 
@@ -242,6 +244,69 @@ struct UringBackend
             e.prepTimeout(*cast(DuringTimespec*) &s.operands.ts, 0, TimeoutFlags.REL);
             e.user_data = ud;
         })(slot, token.raw);
+        return true;
+    }
+
+    /// Lowers an open (the path pointer must be kernel-stable, SPEC §4.1).
+    bool trySubmit(in OpOpenAt op, OpToken token, ref OpSlot) @trusted nothrow @nogc
+    {
+        if (_io.full)
+            return false;
+        _io.putWith!((ref SubmissionEntry e, in OpOpenAt o, ulong ud) {
+            e.prepOpenat(o.dirFd, o.path, o.flags, o.mode);
+            e.user_data = ud;
+        })(op, token.raw);
+        return true;
+    }
+
+    /// Lowers a close.
+    bool trySubmit(in OpClose op, OpToken token, ref OpSlot) @safe nothrow @nogc
+    {
+        if (_io.full)
+            return false;
+        _io.putWith!((ref SubmissionEntry e, int fd, ulong ud) {
+            e.prepClose(fd);
+            e.user_data = ud;
+        })(op.fd, token.raw);
+        return true;
+    }
+
+    /// Lowers an fsync.
+    bool trySubmit(in OpFsync op, OpToken token, ref OpSlot) @safe nothrow @nogc
+    {
+        if (_io.full)
+            return false;
+        _io.putWith!((ref SubmissionEntry e, int fd, ulong ud) {
+            e.prepFsync(fd, FsyncFlags.NORMAL);
+            e.user_data = ud;
+        })(op.fd, token.raw);
+        return true;
+    }
+
+    /// Lowers a statx (path and out-buffer must be kernel-stable).
+    bool trySubmit(in OpStatx op, OpToken token, ref OpSlot) @trusted nothrow @nogc
+    {
+        if (_io.full)
+            return false;
+        _io.putWith!((ref SubmissionEntry e, in OpStatx o, ulong ud) {
+            e.prepStatx(o.dirFd, o.path, o.flags, o.mask,
+                *cast(ubyte[256]*) o.statxBuf);
+            e.user_data = ud;
+        })(op, token.raw);
+        return true;
+    }
+
+    /// Lowers a child reap (the siginfo out-buffer must be kernel-stable).
+    bool trySubmit(in OpWaitid op, OpToken token, ref OpSlot) @trusted nothrow @nogc
+    {
+        import core.sys.posix.signal : siginfo_t;
+
+        if (_io.full)
+            return false;
+        _io.putWith!((ref SubmissionEntry e, in OpWaitid o, ulong ud) {
+            e.prepWaitid(o.idType, o.id, cast(siginfo_t*) o.siginfo, o.options);
+            e.user_data = ud;
+        })(op, token.raw);
         return true;
     }
 
