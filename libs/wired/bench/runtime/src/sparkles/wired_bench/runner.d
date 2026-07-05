@@ -16,6 +16,12 @@ import sparkles.wired_bench.fingerprint : Fingerprint, diffFingerprints,
     referenceFingerprint;
 import sparkles.wired_bench.timing : OpStats, mbPerSec, measureOp;
 import sparkles.wired_bench.traits;
+import sparkles.wired_bench.twitter : TwitterStats, diffTwitterStats,
+    referenceTwitterStats;
+
+/// The dataset the typed decode op runs on (the only one with a shared
+/// cross-language struct definition).
+private enum decodeDataset = "twitter";
 
 /// One row of the report: an (engine, dataset, op) measurement.
 struct OpResult
@@ -61,9 +67,11 @@ OpResult[] runAll(Engines...)(const Dataset[] datasets, const BenchOptions opts)
 /// trait-supported op that passes the `--ops` filter. The dataset is a plain
 /// `const` parameter (not `in`): its name and text legitimately flow into
 /// the returned rows, which a dip1000 `scope` parameter would reject.
+/// An engine may also be decode-only (`canDecodeTwitter` without
+/// `isJsonEngine`, e.g. the `wired` row) — it gets only the decode path.
 void runEngine(E)(const Dataset ds, in Fingerprint reference, const BenchOptions opts,
     ref OpResult[] results)
-if (isJsonEngine!E)
+if (isJsonEngine!E || canDecodeTwitter!E)
 {
     E e;
     static if (hasSetup!E)
@@ -74,52 +82,76 @@ if (isJsonEngine!E)
             e.teardown();
     }
 
-    if (!opts.skipVerify)
-    {
-        e.parse(ds.text);
-        const actual = e.fingerprint();
-        static if (hasFreeDoc!E)
-            e.freeDoc();
-        if (!reference.matches(actual))
-        {
-            results ~= failedRow(ds.name, E.name, "verify",
-                "fingerprint mismatch vs std.json reference:"
-                ~ diffFingerprints(reference, actual));
-            return;
-        }
-    }
-
     const cfg = opts.timing;
 
-    if (opts.opEnabled("parse"))
+    static if (isJsonEngine!E)
     {
-        const stats = measureOp(() { e.parse(ds.text); }, () { freeDocOf(e); }, cfg);
-        results ~= row!E(ds.name, "parse", ds.text.length, stats);
+        if (!opts.skipVerify)
+        {
+            e.parse(ds.text);
+            const actual = e.fingerprint();
+            static if (hasFreeDoc!E)
+                e.freeDoc();
+            if (!reference.matches(actual))
+            {
+                results ~= failedRow(ds.name, E.name, "verify",
+                    "fingerprint mismatch vs std.json reference:"
+                    ~ diffFingerprints(reference, actual));
+                return;
+            }
+        }
+
+        if (opts.opEnabled("parse"))
+        {
+            const stats = measureOp(() { e.parse(ds.text); },
+                () { freeDocOf(e); }, cfg);
+            results ~= row!E(ds.name, "parse", ds.text.length, stats);
+        }
+
+        static if (hasParseInsitu!E)
+            if (opts.opEnabled("insitu"))
+            {
+                const stats = measureOp(() { e.parseInsitu(ds.text); },
+                    () { freeDocOf(e); }, cfg);
+                results ~= row!E(ds.name, "parse-insitu", ds.text.length, stats);
+            }
+
+        static if (hasValidate!E)
+            if (opts.opEnabled("validate"))
+            {
+                const stats = measureOp(() { e.validate(ds.text); }, () {}, cfg);
+                results ~= row!E(ds.name, "validate", ds.text.length, stats);
+            }
+
+        static if (hasSerialize!E)
+            if (opts.opEnabled("serialize"))
+            {
+                e.parse(ds.text); // the document under serialization; untimed
+                const outBytes = e.serialize().length;
+                const stats = measureOp(() { cast(void) e.serialize(); }, () {}, cfg);
+                freeDocOf(e);
+                results ~= row!E(ds.name, "serialize", outBytes, stats);
+            }
     }
 
-    static if (hasParseInsitu!E)
-        if (opts.opEnabled("insitu"))
+    static if (canDecodeTwitter!E)
+        if (opts.opEnabled("decode") && ds.name == decodeDataset)
         {
-            const stats = measureOp(() { e.parseInsitu(ds.text); },
-                () { freeDocOf(e); }, cfg);
-            results ~= row!E(ds.name, "parse-insitu", ds.text.length, stats);
-        }
-
-    static if (hasValidate!E)
-        if (opts.opEnabled("validate"))
-        {
-            const stats = measureOp(() { e.validate(ds.text); }, () {}, cfg);
-            results ~= row!E(ds.name, "validate", ds.text.length, stats);
-        }
-
-    static if (hasSerialize!E)
-        if (opts.opEnabled("serialize"))
-        {
-            e.parse(ds.text); // the document under serialization; untimed
-            const outBytes = e.serialize().length;
-            const stats = measureOp(() { cast(void) e.serialize(); }, () {}, cfg);
-            freeDocOf(e);
-            results ~= row!E(ds.name, "serialize", outBytes, stats);
+            if (!opts.skipVerify)
+            {
+                e.decodeTwitter(ds.text);
+                const actual = e.twitterStats();
+                const expected = referenceTwitterStats(ds.text);
+                if (actual != expected)
+                {
+                    results ~= failedRow(ds.name, E.name, "decode",
+                        "twitter stats mismatch vs std.json reference:"
+                        ~ diffTwitterStats(expected, actual));
+                    return;
+                }
+            }
+            const stats = measureOp(() { e.decodeTwitter(ds.text); }, () {}, cfg);
+            results ~= row!E(ds.name, "decode", ds.text.length, stats);
         }
 }
 

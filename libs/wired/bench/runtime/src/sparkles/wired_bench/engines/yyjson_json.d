@@ -15,6 +15,8 @@ import std.exception : enforce;
 import sparkles.yyjson;
 
 import sparkles.wired_bench.fingerprint : Fingerprint;
+import sparkles.wired_bench.twitter : Twitter, TwitterStats, TwitterStatus,
+    TwitterUser, statsOf;
 
 /// Adapter over the yyjson C API (immutable-document read path).
 struct YyjsonEngine
@@ -80,6 +82,50 @@ struct YyjsonEngine
         accumulateYyjson(yyjson_doc_get_root(doc), f);
         return f;
     }
+
+    /// Typed decode: parse + accessor-walk extraction into the D structs
+    /// (string fields are duplicated out of the document, like every other
+    /// engine's owned strings).
+    void decodeTwitter(scope const(char)[] text) @trusted
+    {
+        static string str(yyjson_val* v) @trusted
+        {
+            return yyjson_get_str(v)[0 .. yyjson_get_len(v)].idup;
+        }
+
+        parse(text);
+        auto statuses = yyjson_obj_get(yyjson_doc_get_root(doc), "statuses");
+        enforce(statuses !is null, "decode: no statuses array");
+
+        twitter = Twitter.init;
+        twitter.statuses.reserve(yyjson_arr_size(statuses));
+        yyjson_arr_iter iter;
+        yyjson_arr_iter_init(statuses, &iter);
+        for (auto st = yyjson_arr_iter_next(&iter); st !is null;
+            st = yyjson_arr_iter_next(&iter))
+        {
+            auto user = yyjson_obj_get(st, "user");
+            twitter.statuses ~= TwitterStatus(
+                str(yyjson_obj_get(st, "created_at")),
+                yyjson_get_sint(yyjson_obj_get(st, "id")),
+                str(yyjson_obj_get(st, "text")),
+                TwitterUser(
+                    yyjson_get_sint(yyjson_obj_get(user, "id")),
+                    str(yyjson_obj_get(user, "screen_name")),
+                    yyjson_get_sint(yyjson_obj_get(user, "followers_count"))),
+                yyjson_get_sint(yyjson_obj_get(st, "retweet_count")),
+                yyjson_get_sint(yyjson_obj_get(st, "favorite_count")));
+        }
+        releaseDoc();
+    }
+
+    /// Checksum of the held decoded document.
+    TwitterStats twitterStats() const @safe pure nothrow @nogc
+    {
+        return statsOf(twitter);
+    }
+
+    private Twitter twitter;
 
     private void releaseDoc() @trusted
     {

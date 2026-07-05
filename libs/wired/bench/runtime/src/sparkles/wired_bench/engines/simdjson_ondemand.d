@@ -12,8 +12,10 @@ import std.exception : enforce;
 
 import sparkles.bench_shim;
 
-import sparkles.wired_bench.engines.shim_support : shimError, toFingerprint;
+import sparkles.wired_bench.engines.shim_support : shimError, toFingerprint,
+    toTwitterStats;
 import sparkles.wired_bench.fingerprint : Fingerprint;
+import sparkles.wired_bench.twitter : TwitterStats;
 
 /// Adapter over the simdjson On-Demand shim.
 struct SimdjsonOndemandEngine
@@ -62,5 +64,22 @@ struct SimdjsonOndemandEngine
     Fingerprint fingerprint() const @safe pure nothrow @nogc
     {
         return lastWalk;
+    }
+
+    /// Typed decode: hand-written On-Demand extraction (unread fields are
+    /// lazily skipped — the technique's home turf).
+    void decodeTwitter(scope const(char)[] text) @trusted
+    {
+        enforce(jb_sj_od_decode(ctx, text.ptr, text.length) == 0,
+            shimError(jb_sj_od_error(ctx)));
+    }
+
+    /// Checksum of the held decoded document.
+    TwitterStats twitterStats() @trusted
+    {
+        jb_twitter_stats c;
+        enforce(jb_sj_od_twitter_stats(ctx, &c) == 0,
+            shimError(jb_sj_od_error(ctx)));
+        return toTwitterStats(c);
     }
 }

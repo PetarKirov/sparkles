@@ -7,6 +7,8 @@ module sparkles.wired_bench.engines.std_json;
 import std.json : JSONValue, parseJSON;
 
 import sparkles.wired_bench.fingerprint : Fingerprint, accumulate;
+import sparkles.wired_bench.twitter : Twitter, TwitterStats, extractTwitter,
+    statsOf;
 
 /// Baseline adapter over `std.json.parseJSON` / `JSONValue.toString`.
 struct StdJsonEngine
@@ -52,6 +54,22 @@ struct StdJsonEngine
         accumulate(doc, f);
         return f;
     }
+
+    /// Typed decode: `parseJSON` + manual field extraction — the code a
+    /// std.json user writes by hand today (the reference implementation).
+    void decodeTwitter(const(char)[] text) @safe
+    {
+        const parsed = parseJSON(text);
+        twitter = extractTwitter(parsed);
+    }
+
+    /// Checksum of the held decoded document.
+    TwitterStats twitterStats() const @safe pure nothrow @nogc
+    {
+        return statsOf(twitter);
+    }
+
+    private Twitter twitter;
 }
 
 @("StdJsonEngine.parseSerializeRoundTrip")

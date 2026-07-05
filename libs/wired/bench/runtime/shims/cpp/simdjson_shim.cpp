@@ -234,9 +234,30 @@ void skip_ondemand(ondemand::value v, uint64_t &containers)
 
 } // namespace
 
+namespace {
+
+// The partial Twitter mirror (canonical definition: the D-side twitter.d).
+struct tw_user {
+    int64_t id;
+    std::string screen_name;
+    int64_t followers_count;
+};
+
+struct tw_status {
+    std::string created_at;
+    int64_t id;
+    std::string text;
+    tw_user user;
+    int64_t retweet_count;
+    int64_t favorite_count;
+};
+
+} // namespace
+
 struct jb_sj_od_ctx {
     ondemand::parser parser;
     std::vector<char> padded; // reused input copy with SIMDJSON_PADDING slack
+    std::vector<tw_status> statuses;
     std::string error;
 };
 
@@ -304,6 +325,57 @@ int jb_sj_od_validate(jb_sj_od_ctx *ctx, const char *data, size_t len)
         ctx->error = "unexpected exception in jb_sj_od_validate";
         return 1;
     }
+}
+
+int jb_sj_od_decode(jb_sj_od_ctx *ctx, const char *data, size_t len)
+{
+    try {
+        if (ctx->padded.size() < len + SIMDJSON_PADDING)
+            ctx->padded.resize(len + SIMDJSON_PADDING);
+        std::memcpy(ctx->padded.data(), data, len);
+
+        auto doc = ctx->parser.iterate(
+            padded_string_view(ctx->padded.data(), len, ctx->padded.size()));
+
+        ctx->statuses.clear();
+        for (ondemand::object st : doc["statuses"].get_array()) {
+            tw_status s;
+            s.created_at = std::string_view(st["created_at"]);
+            s.id = int64_t(st["id"]);
+            s.text = std::string_view(st["text"]);
+            ondemand::object u = st["user"];
+            s.user.id = int64_t(u["id"]);
+            s.user.screen_name = std::string_view(u["screen_name"]);
+            s.user.followers_count = int64_t(u["followers_count"]);
+            s.retweet_count = int64_t(st["retweet_count"]);
+            s.favorite_count = int64_t(st["favorite_count"]);
+            ctx->statuses.push_back(std::move(s));
+        }
+        return 0;
+    } catch (const std::exception &e) {
+        ctx->error = e.what();
+        return 1;
+    } catch (...) {
+        ctx->error = "unexpected exception in jb_sj_od_decode";
+        return 1;
+    }
+}
+
+int jb_sj_od_twitter_stats(jb_sj_od_ctx *ctx, jb_twitter_stats *out)
+{
+    std::memset(out, 0, sizeof(*out));
+    out->status_count = ctx->statuses.size();
+    for (const tw_status &s : ctx->statuses) {
+        out->id_sum += uint64_t(s.id);
+        out->user_id_sum += uint64_t(s.user.id);
+        out->followers_sum += uint64_t(s.user.followers_count);
+        out->retweet_sum += uint64_t(s.retweet_count);
+        out->favorite_sum += uint64_t(s.favorite_count);
+        out->text_bytes += s.text.size();
+        out->screen_name_bytes += s.user.screen_name.size();
+        out->created_at_bytes += s.created_at.size();
+    }
+    return 0;
 }
 
 const char *jb_sj_od_error(const jb_sj_od_ctx *ctx)

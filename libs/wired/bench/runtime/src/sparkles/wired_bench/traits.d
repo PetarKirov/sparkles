@@ -9,6 +9,7 @@ has no row for it — never a compile error.
 module sparkles.wired_bench.traits;
 
 import sparkles.wired_bench.fingerprint : Fingerprint;
+import sparkles.wired_bench.twitter : TwitterStats;
 
 /// The required engine surface: a display/filter name, a full parse of
 /// immutable input (any engine-required copy or padding happens inside — the
@@ -55,6 +56,16 @@ enum bool hasValidate(E) = __traits(compiles, {
 /// Optional caveat string shown in the report's notes column.
 enum bool hasNotes(E) = __traits(compiles, { string s = E.notes; });
 
+/// Optional typed decode: the full text → partial-Twitter-struct pipeline
+/// (`decodeTwitter` holds the result; `twitterStats` computes the checksum
+/// of the held result, untimed). An engine may support *only* this pair —
+/// the `wired` row has no DOM of its own to fingerprint.
+enum bool canDecodeTwitter(E) = __traits(compiles, {
+    E e;
+    e.decodeTwitter((const(char)[]).init);
+    TwitterStats s = e.twitterStats();
+});
+
 @("traits.isJsonEngine.detection")
 @safe pure unittest
 {
@@ -91,10 +102,26 @@ enum bool hasNotes(E) = __traits(compiles, { string s = E.notes; });
         void freeDoc() {}
         const(char)[] serialize() => null;
         Fingerprint fingerprint() => Fingerprint();
+        void decodeTwitter(const(char)[]) {}
+        TwitterStats twitterStats() => TwitterStats();
     }
 
     static assert(isJsonEngine!Full);
     static assert(hasSetup!Full && hasTeardown!Full && hasFreeDoc!Full);
     static assert(hasSerialize!Full && hasParseInsitu!Full && hasValidate!Full);
-    static assert(hasNotes!Full);
+    static assert(hasNotes!Full && canDecodeTwitter!Full);
+}
+
+@("traits.canDecodeTwitter.decodeOnlyEngine")
+@safe pure unittest
+{
+    static struct DecodeOnly
+    {
+        enum name = "decode-only";
+        void decodeTwitter(const(char)[]) {}
+        TwitterStats twitterStats() => TwitterStats();
+    }
+
+    static assert(!isJsonEngine!DecodeOnly);
+    static assert(canDecodeTwitter!DecodeOnly);
 }

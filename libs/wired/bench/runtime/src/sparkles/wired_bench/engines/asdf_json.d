@@ -10,8 +10,10 @@ version (BenchAsdf):
 
 import asdf.asdf : Asdf;
 import asdf.jsonparser : parseJson;
+import asdf.serialization : deserialize;
 
 import sparkles.wired_bench.fingerprint : Fingerprint;
+import sparkles.wired_bench.twitter : Twitter, TwitterStats, statsOf;
 
 /// Adapter over asdf's `parseJson` and its binary `Asdf` document.
 struct AsdfEngine
@@ -51,6 +53,20 @@ struct AsdfEngine
         accumulateAsdf(doc, f);
         return f;
     }
+
+    /// Typed decode through the binary tape.
+    void decodeTwitter(const(char)[] text)
+    {
+        twitter = deserialize!Twitter(text);
+    }
+
+    /// Checksum of the held decoded document.
+    TwitterStats twitterStats() const @safe pure nothrow @nogc
+    {
+        return statsOf(twitter);
+    }
+
+    private Twitter twitter;
 }
 
 /// Accumulates one `Asdf` subtree into `f`.
