@@ -44,10 +44,12 @@ configuration "application" {
     dependency "yyjson" path="bindings/yyjson"
     versions "BenchYyjson"
 
-    // simdjson (DOM + On-Demand) and rapidjson, via the extern "C" shim;
-    // wired-bench-cpp-shim.pc carries the full link recipe.
+    // simdjson (DOM + On-Demand) and rapidjson via the extern "C" shim, and
+    // serde_json + simd-json + sonic-rs via the Rust staticlib; the
+    // wired-bench-cpp-shim.pc / wired-bench-rs.pc files carry the link
+    // recipes.
     dependency "wired-bench-shim" path="bindings/shim"
-    versions "BenchCpp"
+    versions "BenchCpp" "BenchRust"
 }
 
 // Fast-iteration config: D engines only — no native libraries, no ImportC

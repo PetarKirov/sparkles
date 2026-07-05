@@ -1,0 +1,22 @@
+[package]
+name = "wired-bench-rs"
+version = "0.1.0"
+edition = "2021"
+license = "BSL-1.0"
+description = "Rust JSON engines (serde_json, simd-json, sonic-rs) behind the wired runtime bench C ABI"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+serde = "1"
+serde_json = "1"
+simd-json = "0.17"
+sonic-rs = "0.5"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+# No unwinding may cross the FFI boundary; fallible paths return error codes,
+# so a panic is a bug and aborting the process is the correct response.
+panic = "abort"

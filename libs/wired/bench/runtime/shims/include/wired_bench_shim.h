@@ -79,9 +79,46 @@ int            jb_rj_fingerprint(jb_rj_ctx *ctx, jb_fingerprint *out);
 const char    *jb_rj_serialize(jb_rj_ctx *ctx, size_t *len);
 const char    *jb_rj_error(const jb_rj_ctx *ctx);
 
+/* ---- Rust engines (libwired_bench_rs.a; shims/rust) ---------------------
+ * Same conventions. Engine specifics:
+ *   jb_serde_*  — serde_json: parse = from_slice::<Value>, held in the ctx.
+ *   jb_simdj_*  — simd-json: parse = copy into a reused scratch Vec (timed;
+ *                 the library requires &mut [u8] for in-situ de-escaping) +
+ *                 to_borrowed_value with reused Buffers, then dropped. The
+ *                 document for fingerprint/serialize is re-parsed lazily as
+ *                 an OwnedValue from a pristine copy, outside any timed op.
+ *   jb_sonic_*  — sonic-rs: parse = from_slice::<sonic_rs::Value>.        */
+typedef struct jb_serde_ctx jb_serde_ctx;
+jb_serde_ctx  *jb_serde_new(void);
+void           jb_serde_free(jb_serde_ctx *ctx);
+int            jb_serde_parse(jb_serde_ctx *ctx, const char *data, size_t len);
+void           jb_serde_doc_free(jb_serde_ctx *ctx);
+int            jb_serde_fingerprint(jb_serde_ctx *ctx, jb_fingerprint *out);
+const char    *jb_serde_serialize(jb_serde_ctx *ctx, size_t *len);
+const char    *jb_serde_error(const jb_serde_ctx *ctx);
+
+typedef struct jb_simdj_ctx jb_simdj_ctx;
+jb_simdj_ctx  *jb_simdj_new(void);
+void           jb_simdj_free(jb_simdj_ctx *ctx);
+int            jb_simdj_parse(jb_simdj_ctx *ctx, const char *data, size_t len);
+void           jb_simdj_doc_free(jb_simdj_ctx *ctx);
+int            jb_simdj_fingerprint(jb_simdj_ctx *ctx, jb_fingerprint *out);
+const char    *jb_simdj_serialize(jb_simdj_ctx *ctx, size_t *len);
+const char    *jb_simdj_error(const jb_simdj_ctx *ctx);
+
+typedef struct jb_sonic_ctx jb_sonic_ctx;
+jb_sonic_ctx  *jb_sonic_new(void);
+void           jb_sonic_free(jb_sonic_ctx *ctx);
+int            jb_sonic_parse(jb_sonic_ctx *ctx, const char *data, size_t len);
+void           jb_sonic_doc_free(jb_sonic_ctx *ctx);
+int            jb_sonic_fingerprint(jb_sonic_ctx *ctx, jb_fingerprint *out);
+const char    *jb_sonic_serialize(jb_sonic_ctx *ctx, size_t *len);
+const char    *jb_sonic_error(const jb_sonic_ctx *ctx);
+
 /* Engine/version provenance for the report header, e.g.
  * "simdjson 4.2.2; rapidjson 1.1.0". Static storage. */
 const char *jb_cpp_versions(void);
+const char *jb_rs_versions(void);
 
 #ifdef __cplusplus
 } /* extern "C" */

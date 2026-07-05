@@ -7,7 +7,7 @@ targetPath "build"
 
 dflags "-preview=in" "-preview=dip1000"
 
-libs "wired-bench-cpp-shim"
+libs "wired-bench-cpp-shim" "wired-bench-rs"
 
 configuration "library" {
     targetType "sourceLibrary"
