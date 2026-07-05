@@ -9,6 +9,8 @@ module sparkles.test_runner.reporting;
 import core.interpolation : InterpolationFooter, InterpolationHeader;
 import core.time : Duration;
 
+import sparkles.base.text.grapheme : byGraphemeCluster, visibleWidth;
+
 import sparkles.test_runner.bench : BenchStats;
 import sparkles.test_runner.ctfe_trace : CtfeTestCost;
 import sparkles.test_runner.model : Test, TestLocation, TestResult, Thrown;
@@ -21,6 +23,28 @@ private enum bool hasCoreCliUi = __traits(compiles, {
     import sparkles.core_cli.ui.osc_link : oscLink;
     import sparkles.core_cli.ui.table : drawTable;
 });
+
+/// Likewise for `core-cli`'s terminal-size query, used to width-truncate result
+/// lines. Absent in `base`'s own test build (no `core-cli` there), where it
+/// degrades to `0` = unknown = no truncation.
+private enum bool hasCoreCliTermSize = __traits(compiles, {
+    import sparkles.core_cli.term_size : terminalWidth;
+});
+
+/// Terminal width in cells via `core-cli` when available, else `0` (unknown →
+/// callers skip truncation). `0` is also the value on a non-tty (piped output),
+/// so redirected runs stay byte-identical to the untruncated form.
+package uint detectTerminalWidth()
+{
+    static if (hasCoreCliTermSize)
+    {
+        import sparkles.core_cli.term_size : terminalWidth;
+
+        return terminalWidth();
+    }
+    else
+        return 0;
+}
 
 /// Renders a styled IES with ANSI escapes when `colored`, plain text otherwise.
 package string render(Args...)(
@@ -89,15 +113,92 @@ unittest
     assert(formatLocation(TestLocation.init, false) is null);
 }
 
+/// The tail of a dotted `moduleName` fitting in `budget` terminal cells
+/// *including* a leading `…`, snapped to start at a `.` segment boundary when
+/// possible. Widths are cells (via `visibleWidth`) and the cut lands on a
+/// grapheme boundary, so a wide glyph is never split. Returns `moduleName`
+/// unchanged when `budget` is too small to keep a useful tail.
+private string truncateModulePath(string moduleName, size_t budget) @safe
+{
+    import std.string : indexOf;
+
+    if (budget < 2)
+        return moduleName;
+    const cap = budget - 1; // reserve one cell for the ellipsis
+
+    // Byte offset and cell width of each grapheme cluster.
+    size_t[] offsets;
+    size_t[] widths;
+    size_t offset = 0, total = 0;
+    foreach (cluster; moduleName.byGraphemeCluster)
+    {
+        offsets ~= offset;
+        widths ~= cluster.width;
+        offset += cluster.slice.length;
+        total += cluster.width;
+    }
+
+    if (total <= cap)
+        return moduleName; // already fits (callers only truncate on overflow)
+
+    // Drop leading clusters until the suffix fits `cap` cells.
+    size_t startIdx = 0, remaining = total;
+    while (startIdx < offsets.length && remaining > cap)
+    {
+        remaining -= widths[startIdx];
+        startIdx++;
+    }
+    if (startIdx >= offsets.length)
+        return moduleName; // nothing fits; don't emit a lone "…"
+
+    size_t start = offsets[startIdx];
+    // Snap forward past the first '.' at or after `start` so the tail shows
+    // whole trailing segments (`…text.grapheme`, not `…xt.grapheme`).
+    const dot = moduleName[start .. $].indexOf('.');
+    if (dot >= 0 && start + dot + 1 < moduleName.length)
+        start += dot + 1;
+    return "…" ~ moduleName[start .. $];
+}
+
+/// Renders a result line via `build(moduleName)`, shortening the module path to
+/// fit `width` cells when the full line overflows. `width == 0` (unknown /
+/// non-tty) disables truncation. Only the plain module string is shortened —
+/// before it is styled — so ANSI escapes stay intact.
+private string fitWidth(scope string delegate(string) @safe build,
+    string moduleName, uint width) @safe
+{
+    auto line = build(moduleName);
+    if (width == 0)
+        return line;
+    const lineWidth = visibleWidth(line);
+    if (lineWidth <= width)
+        return line;
+    const overhead = lineWidth - visibleWidth(moduleName); // non-module cells
+    if (width <= overhead + 1) // no room for "…" plus at least one cell
+        return line;
+    return build(truncateModulePath(moduleName, width - overhead));
+}
+
 /// The per-test result line: ` ✓ module name` / ` ✗ module name`, plus
-/// duration and location when `verbose`.
-string formatResultLine(in TestResult result, bool colored, bool verbose) @safe
+/// duration and location when `verbose`. `width` (cells; `0` = unknown)
+/// truncates the module path on the compact, non-verbose line when it would
+/// overflow the terminal.
+string formatResultLine(in TestResult result, bool colored, bool verbose, uint width = 0) @safe
 {
     const test = result.test;
-    const moduleName = test.moduleName;
-    auto line = result.succeeded
-        ? render(colored, i" {green ✓} {dim $(moduleName)} $(test.name)")
-        : render(colored, i" {bold.red ✗} {dim $(moduleName)} {bold $(test.name)}");
+    const name = test.name;
+    const succeeded = result.succeeded;
+
+    string build(string moduleName) @safe
+    {
+        return succeeded
+            ? render(colored, i" {green ✓} {dim $(moduleName)} $(name)")
+            : render(colored, i" {bold.red ✗} {dim $(moduleName)} {bold $(name)}");
+    }
+
+    // Truncation applies only to the compact (non-verbose) line. `.idup` drops
+    // the conservative `return scope` on `moduleName` (it is GC-backed already).
+    auto line = verbose ? build(test.moduleName) : fitWidth(&build, test.moduleName.idup, width);
 
     if (verbose)
     {
@@ -130,12 +231,35 @@ unittest
     assert(formatResultLine(result, false, false) == " ✗ pkg.mod case");
 }
 
-/// The line reported for an `@ctfe` test: it already passed during
-/// compilation, so the runtime run only records that fact.
-string formatCtfeLine(in Test test, bool colored) @safe
+@("formatResultLine.truncation")
+@safe
+unittest
 {
-    const moduleName = test.moduleName;
-    return render(colored, i" {cyan ⚙} {dim $(moduleName)} $(test.name) {dim (compile time)}");
+    const result = TestResult(
+        test: Test(fullName: "sparkles.base.text.grapheme.__unittest_L1_C1", name: "case"),
+        succeeded: true,
+    );
+    // Wide terminal and unknown width (0): full module path, no truncation.
+    assert(formatResultLine(result, false, false, 80) == " ✓ sparkles.base.text.grapheme case");
+    assert(formatResultLine(result, false, false, 0) == " ✓ sparkles.base.text.grapheme case");
+    // Narrow: module truncated at a '.' boundary with a leading '…'.
+    assert(formatResultLine(result, false, false, 24) == " ✓ …text.grapheme case");
+    // Too narrow to keep a useful tail: leave the line unmangled.
+    assert(formatResultLine(result, false, false, 6) == " ✓ sparkles.base.text.grapheme case");
+    // Verbose is never truncated.
+    assert(formatResultLine(result, false, true, 10) ==
+        " ✓ sparkles.base.text.grapheme case (0.0ns)");
+}
+
+/// The line reported for an `@ctfe` test: it already passed during
+/// compilation, so the runtime run only records that fact. `width` truncates
+/// the module path as in `formatResultLine`.
+string formatCtfeLine(in Test test, bool colored, uint width = 0) @safe
+{
+    const name = test.name;
+    string build(string moduleName) @safe =>
+        render(colored, i" {cyan ⚙} {dim $(moduleName)} $(name) {dim (compile time)}");
+    return fitWidth(&build, test.moduleName.idup, width);
 }
 
 @("formatCtfeLine.plain")
@@ -148,11 +272,12 @@ unittest
 
 /// The line reported for an `@ctfe` test whose compile-time evaluation
 /// failed; the compiler's error trail is printed separately above.
-string formatCtfeFailedLine(in Test test, bool colored) @safe
+string formatCtfeFailedLine(in Test test, bool colored, uint width = 0) @safe
 {
-    const moduleName = test.moduleName;
-    return render(colored,
-        i" {bold.red ✗} {dim $(moduleName)} {bold $(test.name)} {dim (compile time)}");
+    const name = test.name;
+    string build(string moduleName) @safe =>
+        render(colored, i" {bold.red ✗} {dim $(moduleName)} {bold $(name)} {dim (compile time)}");
+    return fitWidth(&build, test.moduleName.idup, width);
 }
 
 @("formatCtfeFailedLine.plain")
@@ -346,36 +471,12 @@ string formatCtfeTraceTable(in CtfeTestCost[] costs, bool colored) @system // re
 }
 
 /// Fallback tabular rendering: two-space-separated left-aligned columns.
-/// Column widths ignore ANSI escapes so colored cells stay aligned.
+/// Column widths are measured in terminal cells via
+/// `sparkles.base.text.visibleWidth`, so ANSI escapes count zero and wide CJK /
+/// emoji / combining clusters are sized correctly (matching `drawTable`).
 package string alignColumns(in string[][] cells) @safe
 {
     import std.algorithm.comparison : max;
-
-    static size_t visibleLength(string cell) @safe
-    {
-        size_t length;
-        for (size_t i = 0; i < cell.length;)
-        {
-            if (cell[i] == '\x1b')
-            {
-                i++;
-                if (i < cell.length && cell[i] == '[')
-                {
-                    i++;
-                    while (i < cell.length && !(cell[i] >= '@' && cell[i] <= '~'))
-                        i++;
-                    if (i < cell.length)
-                        i++;
-                }
-                continue;
-            }
-            // One column per code point (non-continuation UTF-8 byte).
-            if ((cell[i] & 0xC0) != 0x80)
-                length++;
-            i++;
-        }
-        return length;
-    }
 
     size_t[] widths;
     foreach (row; cells)
@@ -383,7 +484,7 @@ package string alignColumns(in string[][] cells) @safe
         {
             if (i == widths.length)
                 widths ~= 0;
-            widths[i] = max(widths[i], visibleLength(cell));
+            widths[i] = max(widths[i], visibleWidth(cell));
         }
 
     string result;
@@ -393,7 +494,7 @@ package string alignColumns(in string[][] cells) @safe
         {
             result ~= cell;
             if (i + 1 < row.length)
-                foreach (_; visibleLength(cell) .. widths[i] + 2)
+                foreach (_; visibleWidth(cell) .. widths[i] + 2)
                     result ~= ' ';
         }
         result ~= '\n';
@@ -408,4 +509,15 @@ unittest
     assert(alignColumns([["a", "bb"], ["ccc", "d"]]) ==
         "a    bb\n" ~
         "ccc  d\n");
+}
+
+/// Wide (CJK) cells align by terminal cells, not bytes — proving the
+/// `visibleWidth` switch (byte-length would over-pad the `世界` column).
+@("alignColumns.wideCells")
+@safe
+unittest
+{
+    assert(alignColumns([["世界", "z"], ["x", "y"]]) ==
+        "世界  z\n" ~
+        "x     y\n");
 }
