@@ -153,6 +153,10 @@
             # (libs/wired/bench/runtime; its --data-dir flag overrides this).
             export WIRED_BENCH_DATA=${config.packages.wired-bench-data}
 
+            # JSONTestSuite conformance corpus for the wired native JSON
+            # reader (dub test :wired skips those tests when unset).
+            export JSON_TEST_SUITE=${config.packages.json-test-suite}
+
             ${benchIsaHook}
 
             # PyD-embedded Python (text-conformance Layer 10): make libpython
