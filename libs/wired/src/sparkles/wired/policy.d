@@ -18,7 +18,10 @@ module sparkles.wired.policy;
 
 import std.traits : getUDAs, TemplateArgsOf, TemplateOf;
 
-import sparkles.base.text.case_style : CaseStyle, convertCase;
+// `CaseStyle` is part of the public `@WireCase` surface (`@WireCase(CaseStyle.…)`),
+// so re-export it; `convertCase` stays an internal resolution helper.
+public import sparkles.base.text.case_style : CaseStyle;
+import sparkles.base.text.case_style : convertCase;
 
 /// The sentinel format: an untagged `@Wire*` UDA applies under every format.
 struct AnyFormat
