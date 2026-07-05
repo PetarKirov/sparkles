@@ -12,13 +12,16 @@ import std.exception : enforce;
 
 import sparkles.bench_shim;
 
-import sparkles.wired_bench.engines.shim_support : shimError, toFingerprint;
+import sparkles.wired_bench.engines.shim_support : shimError, toFingerprint,
+    toTwitterStats;
 import sparkles.wired_bench.fingerprint : Fingerprint;
+import sparkles.wired_bench.twitter : TwitterStats;
 
-/// Adapter over one Rust shim engine (the eight-function `jb_<id>_*` shape).
+/// Adapter over one Rust shim engine (the ten-function `jb_<id>_*` shape).
 struct RustShimEngine(string id, Ctx, alias ctxNew, alias ctxFree,
     alias parseFn, alias validateFn, alias docFreeFn, alias fingerprintFn,
-    alias serializeFn, alias errorFn, string noteText = "")
+    alias serializeFn, alias decodeFn, alias statsFn, alias errorFn,
+    string noteText = "")
 {
     enum name = id;
     static if (noteText.length)
@@ -76,27 +79,44 @@ struct RustShimEngine(string id, Ctx, alias ctxNew, alias ctxFree,
         enforce(fingerprintFn(ctx, &c) == 0, shimError(errorFn(ctx)));
         return toFingerprint(c);
     }
+
+    /// Typed decode into the shim-held partial Twitter struct.
+    void decodeTwitter(scope const(char)[] text) @trusted
+    {
+        enforce(decodeFn(ctx, text.ptr, text.length) == 0,
+            shimError(errorFn(ctx)));
+    }
+
+    /// Checksum of the held decoded document.
+    TwitterStats twitterStats() @trusted
+    {
+        jb_twitter_stats c;
+        enforce(statsFn(ctx, &c) == 0, shimError(errorFn(ctx)));
+        return toTwitterStats(c);
+    }
 }
 
 /// serde_json — `from_slice::<Value>` / `to_writer`; validate =
-/// `from_slice::<IgnoredAny>`.
+/// `from_slice::<IgnoredAny>`; decode = `from_slice::<Twitter>`.
 alias SerdeJsonEngine = RustShimEngine!("serde_json", jb_serde_ctx,
     jb_serde_new, jb_serde_free, jb_serde_parse, jb_serde_validate,
     jb_serde_doc_free, jb_serde_fingerprint, jb_serde_serialize,
-    jb_serde_error);
+    jb_serde_decode, jb_serde_twitter_stats, jb_serde_error);
 
 /// simd-json — parse = required mutable copy + borrowed value with reused
 /// buffers (then dropped); the verify/serialize document re-parses untimed;
-/// validate = `to_tape` (stage 1 + 2, no values).
+/// validate = `to_tape` (stage 1 + 2, no values); decode = its serde
+/// front-end over the scratch copy.
 alias SimdJsonEngine = RustShimEngine!("simd-json", jb_simdj_ctx,
     jb_simdj_new, jb_simdj_free, jb_simdj_parse, jb_simdj_validate,
     jb_simdj_doc_free, jb_simdj_fingerprint, jb_simdj_serialize,
-    jb_simdj_error,
+    jb_simdj_decode, jb_simdj_twitter_stats, jb_simdj_error,
     "parse = &mut copy + borrowed value (doc for verify re-parsed untimed)");
 
 /// sonic-rs — `from_slice::<Value>` / `to_writer` (own SIMD writer);
-/// validate = `from_slice::<IgnoredAny>` (SIMD container skip).
+/// validate = `from_slice::<IgnoredAny>` (SIMD container skip); decode =
+/// `from_slice::<Twitter>` (no tape, no DOM in between — sonic's pitch).
 alias SonicRsEngine = RustShimEngine!("sonic-rs", jb_sonic_ctx,
     jb_sonic_new, jb_sonic_free, jb_sonic_parse, jb_sonic_validate,
     jb_sonic_doc_free, jb_sonic_fingerprint, jb_sonic_serialize,
-    jb_sonic_error);
+    jb_sonic_decode, jb_sonic_twitter_stats, jb_sonic_error);

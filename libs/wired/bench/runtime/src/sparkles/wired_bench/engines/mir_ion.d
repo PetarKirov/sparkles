@@ -13,6 +13,7 @@ import mir.deser.json : deserializeJson;
 import mir.ser.json : serializeJson;
 
 import sparkles.wired_bench.fingerprint : Fingerprint;
+import sparkles.wired_bench.twitter : Twitter, TwitterStats, statsOf;
 
 /// Adapter over `mir.deser.json` / `mir.ser.json` with a `JsonAlgebraic` DOM.
 struct MirIonEngine
@@ -49,6 +50,20 @@ struct MirIonEngine
         accumulateMir(doc, f);
         return f;
     }
+
+    /// Typed decode straight into the target struct (mir's signature path).
+    void decodeTwitter(const(char)[] text)
+    {
+        twitter = deserializeJson!Twitter(text);
+    }
+
+    /// Checksum of the held decoded document.
+    TwitterStats twitterStats() const @safe pure nothrow @nogc
+    {
+        return statsOf(twitter);
+    }
+
+    private Twitter twitter;
 }
 
 /// Accumulates one `JsonAlgebraic` subtree into `f`.

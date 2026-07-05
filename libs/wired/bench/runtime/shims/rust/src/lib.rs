@@ -13,6 +13,7 @@ use std::ffi::CString;
 mod serde_engine;
 mod simdjson_engine;
 mod sonic_engine;
+mod twitter;
 mod versions;
 
 /// Mirrors `jb_fingerprint` in the shim header (field-for-field).

@@ -5,10 +5,12 @@ use std::ffi::{c_char, c_int};
 
 use sonic_rs::{JsonContainerTrait, JsonValueTrait, Value};
 
+use crate::twitter::{stats_of, JbTwitterStats, Twitter};
 use crate::{input_slice, ErrorSlot, JbFingerprint};
 
 pub struct JbSonicCtx {
     doc: Option<Value>,
+    twitter: Option<Twitter>,
     rendered: Vec<u8>,
     error: ErrorSlot,
 }
@@ -57,6 +59,7 @@ fn accumulate(v: &Value, f: &mut JbFingerprint) {
 pub extern "C" fn jb_sonic_new() -> *mut JbSonicCtx {
     Box::into_raw(Box::new(JbSonicCtx {
         doc: None,
+        twitter: None,
         rendered: Vec::new(),
         error: ErrorSlot::new(),
     }))
@@ -158,6 +161,47 @@ pub unsafe extern "C" fn jb_sonic_serialize(
             ctx.error.fail(e);
             std::ptr::null()
         }
+    }
+}
+
+/// Typed decode straight into the target struct — sonic's signature path
+/// (no tape, no DOM in between).
+///
+/// # Safety
+/// `ctx` as above; `data`/`len` must describe a valid buffer.
+#[no_mangle]
+pub unsafe extern "C" fn jb_sonic_decode(
+    ctx: *mut JbSonicCtx,
+    data: *const c_char,
+    len: usize,
+) -> c_int {
+    let ctx = &mut *ctx;
+    match sonic_rs::from_slice::<Twitter>(input_slice(data, len)) {
+        Ok(t) => {
+            ctx.twitter = Some(t);
+            0
+        }
+        Err(e) => {
+            ctx.twitter = None;
+            ctx.error.fail(e)
+        }
+    }
+}
+
+/// # Safety
+/// `ctx` as above; `out` must point to a writable `jb_twitter_stats`.
+#[no_mangle]
+pub unsafe extern "C" fn jb_sonic_twitter_stats(
+    ctx: *mut JbSonicCtx,
+    out: *mut JbTwitterStats,
+) -> c_int {
+    let ctx = &mut *ctx;
+    match &ctx.twitter {
+        Some(t) => {
+            *out = stats_of(t);
+            0
+        }
+        None => ctx.error.fail("twitter_stats: no decoded document"),
     }
 }
 

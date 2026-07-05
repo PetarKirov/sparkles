@@ -64,6 +64,12 @@ struct JsoniopipeEngine
         accumulateJiop(doc, f);
         return f;
     }
+
+    // No typed-decode row: jsoniopipe's `deserialize` keeps JSON string
+    // escapes (`\/`, `\n`, …) raw in string fields — even over a mutable
+    // chain — so its decoded document differs from every other engine's
+    // (the TwitterStats verification catches it). Its DOM path decodes
+    // escapes correctly; the divergence is specific to typed deserialize.
 }
 
 /// Accumulates one jsoniopipe DOM subtree into `f`.

@@ -12,6 +12,7 @@ use std::ffi::{c_char, c_int};
 
 use simd_json::{Buffers, OwnedValue};
 
+use crate::twitter::{stats_of, JbTwitterStats, Twitter};
 use crate::{input_slice, ErrorSlot, JbFingerprint};
 
 pub struct JbSimdjCtx {
@@ -19,6 +20,7 @@ pub struct JbSimdjCtx {
     pristine: Vec<u8>, // untouched copy for the lazy owned re-parse
     buffers: Buffers,
     owned: Option<OwnedValue>,
+    twitter: Option<Twitter>,
     rendered: Vec<u8>,
     error: ErrorSlot,
 }
@@ -82,6 +84,7 @@ pub extern "C" fn jb_simdj_new() -> *mut JbSimdjCtx {
         pristine: Vec::new(),
         buffers: Buffers::default(),
         owned: None,
+        twitter: None,
         rendered: Vec::new(),
         error: ErrorSlot::new(),
     }))
@@ -202,6 +205,52 @@ pub unsafe extern "C" fn jb_simdj_serialize(
             ctx.error.fail(e);
             std::ptr::null()
         }
+    }
+}
+
+/// Typed decode via simd-json's serde front-end; the required mutable copy
+/// into the reused scratch buffer is part of the timed op.
+///
+/// # Safety
+/// `ctx` as above; `data`/`len` must describe a valid buffer.
+#[no_mangle]
+pub unsafe extern "C" fn jb_simdj_decode(
+    ctx: *mut JbSimdjCtx,
+    data: *const c_char,
+    len: usize,
+) -> c_int {
+    let ctx = &mut *ctx;
+    ctx.scratch.clear();
+    ctx.scratch.extend_from_slice(input_slice(data, len));
+    match simd_json::serde::from_slice_with_buffers::<Twitter>(
+        &mut ctx.scratch,
+        &mut ctx.buffers,
+    ) {
+        Ok(t) => {
+            ctx.twitter = Some(t);
+            0
+        }
+        Err(e) => {
+            ctx.twitter = None;
+            ctx.error.fail(e)
+        }
+    }
+}
+
+/// # Safety
+/// `ctx` as above; `out` must point to a writable `jb_twitter_stats`.
+#[no_mangle]
+pub unsafe extern "C" fn jb_simdj_twitter_stats(
+    ctx: *mut JbSimdjCtx,
+    out: *mut JbTwitterStats,
+) -> c_int {
+    let ctx = &mut *ctx;
+    match &ctx.twitter {
+        Some(t) => {
+            *out = stats_of(t);
+            0
+        }
+        None => ctx.error.fail("twitter_stats: no decoded document"),
     }
 }
 

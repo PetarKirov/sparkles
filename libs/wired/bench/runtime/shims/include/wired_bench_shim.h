@@ -45,6 +45,21 @@ typedef struct jb_fingerprint {
     double   number_sum;     /* compared with relative tolerance */
 } jb_fingerprint;
 
+/* Cross-engine checksum of the typed `decode` op (the partial Twitter
+ * struct; see the D-side twitter.d for the canonical definition). All sums
+ * are 64-bit and WRAP on overflow — part of the contract. */
+typedef struct jb_twitter_stats {
+    uint64_t status_count;
+    uint64_t id_sum;
+    uint64_t user_id_sum;
+    uint64_t followers_sum;
+    uint64_t retweet_sum;
+    uint64_t favorite_sum;
+    uint64_t text_bytes;
+    uint64_t screen_name_bytes;
+    uint64_t created_at_bytes;
+} jb_twitter_stats;
+
 /* ---- simdjson, DOM front-end (dom::parser tape, reused across parses) --- */
 typedef struct jb_sj_dom_ctx jb_sj_dom_ctx;
 jb_sj_dom_ctx *jb_sj_dom_new(void);
@@ -68,6 +83,10 @@ int            jb_sj_od_parse_walk(jb_sj_od_ctx *ctx, const char *data,
  * the cost profile of a lazy parser over untouched fields (weaker than a
  * full well-formedness check: numbers/strings stay unvalidated). */
 int            jb_sj_od_validate(jb_sj_od_ctx *ctx, const char *data, size_t len);
+/* Typed decode: hand-written On-Demand extraction into the partial Twitter
+ * structs, held by the context (unread fields are lazily skipped). */
+int            jb_sj_od_decode(jb_sj_od_ctx *ctx, const char *data, size_t len);
+int            jb_sj_od_twitter_stats(jb_sj_od_ctx *ctx, jb_twitter_stats *out);
 const char    *jb_sj_od_error(const jb_sj_od_ctx *ctx);
 
 /* ---- rapidjson (kParseFullPrecisionFlag always, for cross-engine number
@@ -103,6 +122,8 @@ int            jb_serde_validate(jb_serde_ctx *ctx, const char *data, size_t len
 void           jb_serde_doc_free(jb_serde_ctx *ctx);
 int            jb_serde_fingerprint(jb_serde_ctx *ctx, jb_fingerprint *out);
 const char    *jb_serde_serialize(jb_serde_ctx *ctx, size_t *len);
+int            jb_serde_decode(jb_serde_ctx *ctx, const char *data, size_t len);
+int            jb_serde_twitter_stats(jb_serde_ctx *ctx, jb_twitter_stats *out);
 const char    *jb_serde_error(const jb_serde_ctx *ctx);
 
 typedef struct jb_simdj_ctx jb_simdj_ctx;
@@ -114,6 +135,9 @@ int            jb_simdj_validate(jb_simdj_ctx *ctx, const char *data, size_t len
 void           jb_simdj_doc_free(jb_simdj_ctx *ctx);
 int            jb_simdj_fingerprint(jb_simdj_ctx *ctx, jb_fingerprint *out);
 const char    *jb_simdj_serialize(jb_simdj_ctx *ctx, size_t *len);
+/* Typed decode via simd-json's serde front-end (mutable copy included). */
+int            jb_simdj_decode(jb_simdj_ctx *ctx, const char *data, size_t len);
+int            jb_simdj_twitter_stats(jb_simdj_ctx *ctx, jb_twitter_stats *out);
 const char    *jb_simdj_error(const jb_simdj_ctx *ctx);
 
 typedef struct jb_sonic_ctx jb_sonic_ctx;
@@ -125,6 +149,8 @@ int            jb_sonic_validate(jb_sonic_ctx *ctx, const char *data, size_t len
 void           jb_sonic_doc_free(jb_sonic_ctx *ctx);
 int            jb_sonic_fingerprint(jb_sonic_ctx *ctx, jb_fingerprint *out);
 const char    *jb_sonic_serialize(jb_sonic_ctx *ctx, size_t *len);
+int            jb_sonic_decode(jb_sonic_ctx *ctx, const char *data, size_t len);
+int            jb_sonic_twitter_stats(jb_sonic_ctx *ctx, jb_twitter_stats *out);
 const char    *jb_sonic_error(const jb_sonic_ctx *ctx);
 
 /* Engine/version provenance for the report header, e.g.
