@@ -310,7 +310,7 @@ FParsec is the **de-facto standard parser-combinator library for F#/.NET**, matu
 [angstrom]: ./ocaml-angstrom.md
 [repo]: https://github.com/stephan-tolksdorf/fparsec
 [repo-readme]: https://github.com/stephan-tolksdorf/fparsec/blob/master/readme.md
-[site]: https://www.quanttec.com/fparsec/
+[site]: https://web.archive.org/web/20260611142234/http://www.quanttec.com/fparsec/
 [fsi-primitives]: https://github.com/stephan-tolksdorf/fparsec/blob/master/FParsec/Primitives.fsi
 [fsi-charparsers]: https://github.com/stephan-tolksdorf/fparsec/blob/master/FParsec/CharParsers.fsi
 [fsi-error]: https://github.com/stephan-tolksdorf/fparsec/blob/master/FParsec/Error.fsi

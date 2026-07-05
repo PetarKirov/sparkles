@@ -480,11 +480,11 @@ GTK4 removed `GdkWindow` and the X11 escape hatches wxGTK relies on (it forces C
 [commit]: https://github.com/wxWidgets/wxWidgets/commit/f12b247d26b6a1f2d48e88f2892c51988acbb578
 [readme]: https://github.com/wxWidgets/wxWidgets/blob/master/README.md
 [license]: https://github.com/wxWidgets/wxWidgets/blob/master/docs/licence.txt
-[wx-manual]: https://docs.wxwidgets.org/3.2/
-[wx-toplevel]: https://docs.wxwidgets.org/3.2/classwx_top_level_window.html
-[wx-evtloop]: https://docs.wxwidgets.org/3.2/classwx_event_loop_base.html
-[wx-highdpi]: https://docs.wxwidgets.org/3.2/overview_high_dpi.html
-[wx-nativewindow]: https://docs.wxwidgets.org/3.2/classwx_native_window.html
+[wx-manual]: https://web.archive.org/web/20250514161534/https://docs.wxwidgets.org/3.2/
+[wx-toplevel]: https://web.archive.org/web/20250323112235/https://docs.wxwidgets.org/3.2/classwx_top_level_window.html
+[wx-evtloop]: https://web.archive.org/web/20250208031531/https://docs.wxwidgets.org/3.2/classwx_event_loop_base.html
+[wx-highdpi]: https://web.archive.org/web/20250428195429/https://docs.wxwidgets.org/3.2/overview_high_dpi.html
+[wx-nativewindow]: https://web.archive.org/web/20250428094713/https://docs.wxwidgets.org/3.2/classwx_native_window.html
 [win32-msgloop]: https://learn.microsoft.com/en-us/windows/win32/winmsg/about-messages-and-message-queues
 [wm-dpichanged]: https://learn.microsoft.com/en-us/windows/win32/hidpi/wm-dpichanged
 [win32-clipboard]: https://learn.microsoft.com/en-us/windows/win32/dataxchg/clipboard-operations
