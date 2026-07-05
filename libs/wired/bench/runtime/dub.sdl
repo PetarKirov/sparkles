@@ -22,6 +22,8 @@ dependency "mir-ion" version="~>2.3"
 versions "BenchMirIon"
 dependency "asdf" version="~>0.8.0"
 versions "BenchAsdf"
+dependency "jsoniopipe" version="~>0.2.7"
+versions "BenchJsoniopipe"
 
 // The canonical benchmarking build: release codegen tuned to the host CPU.
 // Foreign engines are nix-built with ISA presets (see nix/packages/); the

@@ -29,5 +29,15 @@ version (BenchAsdf)
 else
     private alias AsdfEngines = AliasSeq!();
 
+version (BenchJsoniopipe)
+{
+    public import sparkles.wired_bench.engines.jsoniopipe_json : JsoniopipeEngine;
+
+    private alias JsoniopipeEngines = AliasSeq!JsoniopipeEngine;
+}
+else
+    private alias JsoniopipeEngines = AliasSeq!();
+
 /// Every engine compiled into this build, baseline first.
-alias AllEngines = AliasSeq!(StdJsonEngine, MirIonEngines, AsdfEngines);
+alias AllEngines = AliasSeq!(StdJsonEngine, MirIonEngines, AsdfEngines,
+    JsoniopipeEngines);
