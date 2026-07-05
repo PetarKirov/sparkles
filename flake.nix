@@ -59,6 +59,7 @@
         ./nix/packages/text-wasm.nix
         ./nix/packages/uwidth-rs.nix
         ./nix/packages/wired-bench-data.nix
+        ./nix/packages/wired-bench-yyjson.nix
         ./nix/checks/pre-commit.nix
         ./nix/shells/default.nix
         ./nix/shells/android.nix

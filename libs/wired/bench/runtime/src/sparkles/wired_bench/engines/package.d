@@ -38,6 +38,15 @@ version (BenchJsoniopipe)
 else
     private alias JsoniopipeEngines = AliasSeq!();
 
+version (BenchYyjson)
+{
+    public import sparkles.wired_bench.engines.yyjson_json : YyjsonEngine;
+
+    private alias YyjsonEngines = AliasSeq!YyjsonEngine;
+}
+else
+    private alias YyjsonEngines = AliasSeq!();
+
 /// Every engine compiled into this build, baseline first.
 alias AllEngines = AliasSeq!(StdJsonEngine, MirIonEngines, AsdfEngines,
-    JsoniopipeEngines);
+    JsoniopipeEngines, YyjsonEngines);

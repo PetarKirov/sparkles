@@ -38,6 +38,11 @@ buildType "bench" {
 // one line away from off.
 configuration "application" {
     targetType "executable"
+
+    // yyjson: ImportC binding; the ISA-preset build's yyjson.pc (on the
+    // devshell's PKG_CONFIG_PATH) provides both cflags and -lyyjson.
+    dependency "yyjson" path="bindings/yyjson"
+    versions "BenchYyjson"
 }
 
 // Fast-iteration config: D engines only — no native libraries, no ImportC
