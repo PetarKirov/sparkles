@@ -20,6 +20,8 @@ dependency "sparkles:wired"    path="../../../.."
 // `versions` gate so a frontend incompatibility is one line away from off.
 dependency "mir-ion" version="~>2.3"
 versions "BenchMirIon"
+dependency "asdf" version="~>0.8.0"
+versions "BenchAsdf"
 
 // The canonical benchmarking build: release codegen tuned to the host CPU.
 // Foreign engines are nix-built with ISA presets (see nix/packages/); the
