@@ -153,6 +153,14 @@ struct OpAccept
     int listenFd;
 }
 
+/// Multishot accept: one armed submission posts a completion per connection
+/// (`CQE_F_MORE` set until the last) with no re-arm syscall (SPEC §4.3).
+struct OpAcceptMultishot
+{
+    enum kind = OpKind.acceptMultishot;
+    int listenFd;
+}
+
 /// Outbound connect; the address is copied into the operand store.
 struct OpConnect
 {
