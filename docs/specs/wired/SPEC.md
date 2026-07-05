@@ -965,8 +965,165 @@ struct Toml {}
 enum Mode { fastPath, slowPath }      // and as-written under any other format
 ```
 
+## 11. The native JSON engine
+
+> [!NOTE]
+> This section specifies the engine that replaces `std.json` inside
+> `sparkles.wired.json` (delivered by PLAN.md M7–M14; performance evidence in
+> [bench-baseline.md](./bench-baseline.md)). Sections 11.1–11.5 are additive —
+> they describe new surface. Section 11.6 lists the **breaking** changes to
+> §1/§4/§9 that land with the final switch-over milestone; until then the
+> `std.json`-based surface remains as specified above.
+
+### 11.1 Modules
+
+`sparkles.wired.json` becomes a package (the public import path is unchanged):
+
+| Module                         | Contents                                                                             |
+| ------------------------------ | ------------------------------------------------------------------------------------ |
+| `sparkles.wired.json`          | Public re-exports (`package.d`)                                                      |
+| `sparkles.wired.json.codec`    | `Json` marker, the policy-driven encode/decode walks, file helpers                   |
+| `sparkles.wired.json.document` | `JsonKind`, `JsonDocument`, `JsonValue`, `JsonMember`, array/object iteration ranges |
+| `sparkles.wired.json.reader`   | `JsonReadOptions`, `JsonParseResult`, `parseJsonDocument`                            |
+| `sparkles.wired.json.writer`   | `JsonWriteOptions`, JSON token emission, `writeJson` (document → text)               |
+
+The number and UTF-8 machinery lives in `sparkles.base.text`
+(`float_conv`, `utf8`) — format-agnostic and reusable outside JSON.
+
+### 11.2 Document model
+
+`parseJsonDocument` produces an immutable **`JsonDocument`**: one contiguous
+arena of 16-byte value cells plus one string pool holding every string
+unescaped and NUL-terminated. Values are exposed through **`JsonValue`** — a
+copyable, `@safe`, 8-byte borrowed view whose lifetime is tied to the
+document under `dip1000` (`return scope`); a view or string slice must not
+outlive its document.
+
+```d
+enum JsonKind : ubyte { none, null_, bool_, integer, uinteger, floating,
+                        string_, rawNumber, array, object }
+
+struct JsonDocument(Allocator = Mallocator) // owning, non-copyable, movable
+{
+    bool valid() const;
+    JsonValue root() return scope const;
+}
+
+struct JsonValue // borrowed view
+{
+    JsonKind kind() const;
+    bool boolean() const;            long integer() const;
+    ulong uinteger() const;          double floating() const;
+    double asDouble() const;         // any number kind, converting
+    const(char)[] str() return scope const;   // NUL byte follows the slice
+    const(char)[] raw() return scope const;   // rawNumber token text
+    size_t length() const;           // array/object member count
+    JsonArrayRange byElement() return scope const;
+    JsonObjectRange byKeyValue() return scope const;   // front: JsonMember
+    JsonValue objectGet(scope const(char)[] key) return scope const;
+}
+```
+
+- Iteration is forward-only through the ranges; there is no `opIndex`
+  (container element access is sequential by design — the cell layout stores
+  extents, not child pointers).
+- Memory comes from a `std.experimental.allocator` allocator type parameter
+  (default `Mallocator`); over the default the whole parse path is
+  `@safe pure nothrow @nogc` and a destroyed document frees everything —
+  no GC involvement at any point.
+- Number materialization: integer-shaped tokens become `integer` when the
+  value fits `long`, else `uinteger` when it fits `ulong`, else `floating`;
+  fraction/exponent tokens become `floating` via a correctly-rounded
+  decimal-to-binary conversion; magnitude overflow saturates to ±infinity.
+  Under `JsonReadOptions.rawNumbers` every number is kept as its verbatim
+  token text (`rawNumber`) instead.
+
+### 11.3 Reader
+
+```d
+struct JsonReadOptions
+{
+    bool rawNumbers   = false;  // keep numbers as raw token text
+    bool validateUtf8 = true;   // strict RFC 8259: reject invalid UTF-8
+    uint maxDepth     = 1024;   // nesting limit (depthExceeded beyond)
+}
+
+JsonParseResult!Allocator parseJsonDocument
+    (JsonReadOptions opts = JsonReadOptions.init, Allocator = Mallocator)
+    (scope const(char)[] text);
+```
+
+- Options are a compile-time parameter: each combination specializes the
+  reader (dead branches vanish); the default is **strict RFC 8259** —
+  invalid UTF-8, trailing commas, comments, `inf`/`nan` literals, BOMs,
+  malformed numbers (`01`, `1.`, `.5`), and trailing content are all
+  rejected.
+- The input needs no padding or NUL termination and is never modified; the
+  reader takes its own padded copy (which then becomes the string pool).
+- `JsonParseResult` carries either the document or a
+  `ParseError {code, offset, context}` from `sparkles.base.text.errors`
+  (byte offset into the input; `hasValue`/`hasError`/`value`/`error`
+  accessors, mirroring `Expected`).
+- Parse failures never throw and never allocate on the error path.
+
+### 11.4 Writer
+
+```d
+struct JsonWriteOptions { bool pretty = false; }
+
+ref Writer writeJson(JsonWriteOptions opts = JsonWriteOptions.init, Writer)
+    (JsonValue root, return ref Writer w);
+```
+
+Token emission uses shortest-round-trip double formatting
+(`parse(write(x)) == x` bit-exactly) and table-driven integer formatting
+from `sparkles.base.text`. Escape policy: the two-character escapes plus
+`\uXXXX` for other control characters; `/` is never escaped. Pretty mode is
+2-space indent, `": "` separator, LF newlines.
+
+### 11.5 Conformance
+
+Under default options the reader accepts every `y_*` file and rejects every
+`n_*` file of the JSONTestSuite corpus, and never crashes on `i_*` files;
+the corpus is pinned in the repository (devshell `$JSON_TEST_SUITE`) and
+exercised by `dub test :wired`.
+
+### 11.6 Pending surface changes (land with the switch-over milestone)
+
+The following **breaking** revisions replace parts of §1, §4, and §9 when
+the native engine becomes the public surface; they are collected here so
+the end state is reviewable up front:
+
+1. **`JsonError` replaces `Exception` library-wide.** Every result becomes
+   `Expected!(T, JsonError)`. `JsonError` is a value type carrying: the
+   stage (parse/decode/encode/file-read/file-write), a code, the parse byte
+   offset, the value path, the target type, and the reason; its
+   `toString(Writer)` renders the exact message contract of §9 (parse-stage
+   messages add `at line L column C (byte N)`). No throwing wrappers exist;
+   error construction does not allocate from the GC.
+2. **`toJSON` returns text, not `JSONValue`**:
+   `Expected!(JsonString, JsonError) toJSON(T)(const T value)` with
+   `alias JsonString = SmallBuffer!(char, N)` (minified). The writer-based
+   form is primary: `Expected!(void, JsonError) writeJSON(T, Writer)(const T, ref Writer)`.
+   Decoding is text-based: `Expected!(T, JsonError) fromJSON(T)(scope const(char)[] text)`
+   plus a `fromJSON!T(JsonValue)` subtree form. A transitional
+   `fromJSON!T(JSONValue)` compatibility shim (via `JSONValue.toString`)
+   remains for one release.
+3. **Key order**: aggregate fields are emitted in declaration order;
+   associative-array keys are emitted sorted lexicographically. (§4.2's
+   "keys emitted in sorted order (a `std.json` property)" no longer
+   applies; every §-example output changes accordingly.)
+4. **File helpers** use the native writer with the pretty format of §11.4;
+   `JSONOptions.doNotEscapeSlashes` disappears (its behavior — `/` never
+   escaped — is simply the writer's default).
+5. **`JSONValue` passthrough (§4.2)** remains supported as the _owned_
+   generic-JSON escape hatch: decoding converts the subtree into a
+   `JSONValue`; encoding streams it. `NaN`/infinity inside a passed-through
+   `JSONValue` is an encode error (resolves open-issue O3 strictly).
+
 ---
 
 → [PLAN.md](./PLAN.md) — delivery milestones
 → [open-issues.md](./open-issues.md) — unresolved specification questions
+→ [bench-baseline.md](./bench-baseline.md) — the performance evidence for §11
 → [`sparkles:base`](../../libs/base/index.md) — the text/case primitives this builds on
