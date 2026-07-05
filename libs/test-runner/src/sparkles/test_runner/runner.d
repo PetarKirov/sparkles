@@ -42,8 +42,9 @@ import sparkles.test_runner.discovery : discoverTests, moduleOf;
 import sparkles.test_runner.driver : detectCompiler, DriverOptions, runCtfeTests;
 import sparkles.test_runner.execution : executeTest;
 import sparkles.test_runner.model : matchesFilter, Test, TestResult;
-import sparkles.test_runner.reporting : formatBenchTable, formatCtfeFailedLine,
-    formatCtfeLine, formatResultLine, formatSummary, formatThrown, RunTotals;
+import sparkles.test_runner.reporting : detectTerminalWidth, formatBenchTable,
+    formatCtfeFailedLine, formatCtfeLine, formatResultLine, formatSummary,
+    formatThrown, RunTotals;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Runtime entry point
@@ -197,7 +198,10 @@ private UnitTestResult runnerMain()
         return UnitTestResult(0, 0, false, false);
     }
 
-    const colored = useColors(options.noColours);
+    const colored = prepareConsole(options.noColours);
+    // Cells available for the compact result lines; `0` (unknown / piped) skips
+    // truncation so redirected output stays byte-identical.
+    const width = detectTerminalWidth();
 
     auto discovered = discoverTests!(dub_test_root.allModules)();
     // Hide the runner's own tests unless requested — or unless the tested
@@ -217,7 +221,7 @@ private UnitTestResult runnerMain()
         return runCtfeTraceMode(tests, options, colored);
     if (options.betterC || options.wasm)
         return runDriverModes(tests, options);
-    return runDefaultMode(tests, options, colored);
+    return runDefaultMode(tests, options, colored, width);
 }
 
 /// The driver options shared by the @ctfe, `--better-c`, and `--wasm` modes.
@@ -237,7 +241,7 @@ private DriverOptions toDriverOptions(const RunnerOptions options)
 /// (`__ctfeWrite` text, error trails), and updates `totals`.
 private void runCtfeStage(
     in Test[] ctfeTests, in Test[] allTests, in RunnerOptions options,
-    bool colored, ref RunTotals totals)
+    bool colored, uint width, ref RunTotals totals)
 {
     import std.algorithm.searching : canFind;
     import std.stdio : stderr, stdout;
@@ -263,12 +267,12 @@ private void runCtfeStage(
             && (!outcome.failedNames.length || outcome.failedNames.canFind(test.name));
         if (failed)
         {
-            stdout.writeln(formatCtfeFailedLine(test, colored));
+            stdout.writeln(formatCtfeFailedLine(test, colored, width));
             totals.failed++;
         }
         else
         {
-            stdout.writeln(formatCtfeLine(test, colored));
+            stdout.writeln(formatCtfeLine(test, colored, width));
             totals.ctfePassed++;
         }
     }
@@ -384,7 +388,7 @@ private UnitTestResult listTests(Test[] tests, bool colored)
 
 /// The default mode: evaluate the selected `@ctfe` tests through the probe
 /// compile, run every regular test in parallel, and count skipped benchmarks.
-private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bool colored)
+private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bool colored, uint width)
 {
     import core.atomic : atomicOp;
     import std.algorithm.iteration : filter;
@@ -400,7 +404,7 @@ private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bo
             totals.benchSkipped++;
 
     runCtfeStage(tests.filter!(t => t.traits.isCtfe).array, tests,
-        options, colored, totals);
+        options, colored, width, totals);
 
     auto runnable = tests
         .filter!(t => !t.traits.isCtfe && !t.traits.isBenchmark)
@@ -415,7 +419,7 @@ private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bo
         {
             const result = executeTest(test);
 
-            auto output = formatResultLine(result, colored, options.verbose) ~ "\n";
+            auto output = formatResultLine(result, colored, options.verbose, width) ~ "\n";
             foreach (thrown; result.thrown)
                 output ~= formatThrown(thrown, colored, options.verbose);
             stdout.lockingTextWriter.put(output);
@@ -468,20 +472,48 @@ private UnitTestResult runBenchMode(Test[] tests, bool colored)
     return UnitTestResult(rows.length + failed, rows.length, false, false);
 }
 
-/// Colors are on for a tty unless `--no-colours` or `$NO_COLOR` is set.
-private bool useColors(bool noColours)
+/// Prepares the console and reports whether colored output should be used.
+/// Colors are off when `--no-colours`/`$NO_COLOR` is set or stdout is not a
+/// terminal. On Windows this additionally sets the output code page to UTF-8
+/// (so `✓ ✗ ⚙` render even without colours) and enables virtual-terminal
+/// processing (so ANSI escapes are interpreted rather than printed literally);
+/// colours stay off when stdout is redirected or VT can't be enabled.
+private bool prepareConsole(bool noColours)
 {
     import std.process : environment;
 
-    if (noColours || environment.get("NO_COLOR", "").length)
-        return false;
+    const disabled = noColours || environment.get("NO_COLOR", "").length != 0;
 
     version (Posix)
     {
         import core.sys.posix.unistd : isatty, STDOUT_FILENO;
 
+        if (disabled)
+            return false;
         return isatty(STDOUT_FILENO) != 0;
     }
+    else version (Windows)
+    {
+        import core.sys.windows.windows : DWORD,
+            ENABLE_VIRTUAL_TERMINAL_PROCESSING, GetConsoleMode, GetStdHandle,
+            INVALID_HANDLE_VALUE, SetConsoleMode, SetConsoleOutputCP,
+            STD_OUTPUT_HANDLE;
+
+        enum uint CP_UTF8 = 65_001;
+        SetConsoleOutputCP(CP_UTF8);
+
+        if (disabled)
+            return false;
+
+        auto handle = GetStdHandle(STD_OUTPUT_HANDLE);
+        if (handle is null || handle == INVALID_HANDLE_VALUE)
+            return false;
+        DWORD mode;
+        // Fails when stdout is redirected (not a console) — the non-tty check.
+        if (!GetConsoleMode(handle, &mode))
+            return false;
+        return SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0;
+    }
     else
-        return true;
+        return !disabled;
 }
