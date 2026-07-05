@@ -3,64 +3,91 @@
 ## The seam: druntime's extended module unit tester
 
 `dub test` generates a `dub_test_root` module whose `allModules` alias lists
-the tested package's modules. The runner's `runner.d` (active only in
-unittest builds) walks that list with `__traits(getUnitTests)` — module level
-plus aggregates — and registers a `Runtime.extendedModuleUnitTester`, the
-same seam silly used. Its `shared static this` is `@standalone`: under the
-in-tree integration, `dub_test_root` imports the runner's modules back, and
+the tested package's modules. The shim's `discovery` (active only in unittest
+builds) walks that list with `__traits(getUnitTests)` — module level plus
+aggregates — and `register` installs a `Runtime.extendedModuleUnitTester`, the
+same seam silly used. That `shared static this` is `@standalone`: under the
+in-tree integration `dub_test_root` imports the shim's modules back, and
 without the attribute druntime rejects the module-constructor cycle.
 
-## Why consumers use `sourcePaths`, not a dependency
+## Two packages: a thin shim and a prebuilt impl
 
 The runner renders through `sparkles.base` (styled templates, `@nogc`
-duration writers) and optionally `sparkles.core_cli` (tables, OSC 8 links) —
-but `base` and `core-cli` also want the runner in their own
-`configuration "unittest"`. dub rejects that package-level cycle (its cycle
-detection unions dependencies across all configurations), so in-tree
-consumers compile the runner in directly:
+duration writers) and optionally `sparkles.core_cli` (tables, OSC 8 links), and
+pulls in `std.regex` (filtering) and `std.parallelism` (the pool). Compiling
+all of that into every consumer's test binary — the original source-inclusion
+integration — cost ~2.8s on every `dub test`. So the runner is split:
+
+- **`sparkles:test-runner`** — a `sourceLibrary` shim. Only `discovery` and
+  `register` compile into each test binary; between them they import just the
+  data-only `model`, `attributes`, and `std.traits`/`std.meta`. No `base`,
+  `std.regex`, or `std.parallelism`.
+- **`sparkles:test-runner-impl`** — a prebuilt `library` holding the CLI
+  dispatch (`runner_impl`), `execution`, `reporting`, the `--better-c`/`--wasm`
+  drivers, and benchmarking. Built once, linked by everyone.
+
+The seam between them is one `extern(C)` function:
+
+```d
+extern (C) void sparkles_test_runner_run(
+    Test* tests, size_t count, bool hostIsRunner, uint* executed, uint* passed);
+```
+
+`register` discovers the tests, then _calls_ this — a direct call forces the
+linker to pull in the impl (so its `shared static this` runs) while the local
+`extern(C)` prototype means the consumer never _imports_, and so never parses,
+the heavy modules. That parse-avoidance is what drops a consumer's `dub test`
+to ~0.8s, near a vanilla build. The library is built with `-allinst` so every
+template instance it references (notably `std.uni`, via base's grapheme-aware
+width) is emitted on its side of the link.
+
+Most consumers — external and in-tree — just `dependency "sparkles:test-runner"`.
+The exception is the impl's own dependency closure: `base`, `core-cli`, and
+`test-utils` (dub's cycle detection unions across configs, and
+impl → `core-cli` → `test-utils`) cannot depend on it, so they source-include
+both packages:
 
 ```sdl
-importPaths "src" "../test-runner/src"   # attributes importable in all builds
+importPaths "src" "../test-runner/src" "../test-runner-impl/src"
 
 configuration "unittest" {
-    sourcePaths "../test-runner/src"      # runner compiled into test builds
+    sourcePaths "../test-runner/src" "../test-runner-impl/src"
 }
 ```
 
-Two consequences are handled explicitly:
+Three consequences are handled explicitly:
 
 - `core-cli` can never be in `base`'s test build, so all `core_cli` use is
   gated with `__traits(compiles, import …)` and degrades gracefully
   (space-aligned tables, plain `file:line`). This is ordinary Design by
   Introspection, applied to the build graph.
-- The runner's modules land in every host's `allModules`, so its own tests
-  are discoverable everywhere. They are hidden unless `--self-test` is given
-  or the tested package _is_ the runner — decided from `allModules` module
-  names plus the test-binary name, because a host whose only D modules are
+- The shim's modules land in every host's `allModules`, so its own tests are
+  discoverable everywhere. They are hidden unless `--self-test` is given or the
+  tested package _is_ the runner — decided from `allModules` module names plus
+  the test-binary name, because a host whose only D modules are
   `package.d`s/ImportC shims (e.g. `ghostty`) has an `allModules` that looks
   identical to the runner's own.
+- The runner tests itself in two suites: `dub test :test-runner-impl`
+  self-hosts (its `unittest` config source-includes the shim) to exercise the
+  heavy modules, and `dub test :test-runner` runs the shim's own discovery
+  tests through the linked impl.
 
-The manifest still declares real `base`/`core-cli` dependencies: they serve
-`dub test :test-runner` and external consumers, where no cycle exists.
+## `@ctfe`: a probe compile as the executor
 
-## `@ctfe`: static assert as the executor
-
-At module scope, `runner.d` expands
-
-```d
-static foreach (m; dub_test_root.allModules)
-    static foreach (test; __traits(getUnitTests, moduleOf!m))
-        static if (hasUDA!(test, ctfe))
-            static assert(ctfePasses!test, …);
-```
-
-where `ctfePasses` is an immediately-invoked CTFE lambda calling the test.
-Compilation _is_ the test run: a failure is a compile error with the CTFE
-call stack, and reaching runtime proves every `@ctfe` test passed. Because
-each forced evaluation shows up in LDC's `-ftime-trace` as a
-`Ctfe: call __unittest_LN_CM` event carrying the test's `file:line`,
-`--ctfe-trace` can attribute compile-time cost per test (the 100+ MB trace
-is scanned linearly instead of parsed as JSON).
+`@ctfe` tests are not run in the test binary. After `-i`/`-e` filtering, the
+impl generates a probe program that imports the selected tests' modules, picks
+them out by reflection, and forces each through CTFE with
+`static assert(ctfePasses!test)` — where `ctfePasses` is an immediately-invoked
+CTFE lambda calling the test. It compiles the probe with `$DC -o- -unittest`:
+semantic analysis only, so CTFE runs but nothing is codegen'd or linked.
+Compilation _is_ the test run — a failure is a compile error with the CTFE call
+stack, naming the test. Doing this at run time rather than during the test
+build is what lets `-i`/`-e` decide which tests evaluate while `--help`/`--list`
+evaluate none, so a failing `@ctfe` test can never break the build. With
+`--ctfe-trace` the probe adds LDC's `-ftime-trace`; each forced evaluation is a
+`Ctfe: call __unittest_LN_CM` event carrying the test's `file:line`, so
+compile-time cost is attributed per test (the 100+ MB trace is scanned linearly
+instead of parsed as JSON).
 
 ## `@betterC`/`@wasm`: reflection-driven extraction
 

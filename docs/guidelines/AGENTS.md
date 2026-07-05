@@ -7,7 +7,8 @@ includes it. Keep it accurate — a stale fact here propagates into every agent'
 ## Project Overview
 
 `sparkles` is a D monorepo of CLI/library utilities. The root `dub.sdl` declares
-ten sub-packages:
+these sub-packages (plus the internal `sparkles:test-runner-impl` implementation
+library backing `sparkles:test-runner` — see the runner integration notes below):
 
 | Sub-package            | Path               | What it is                                                                                                                                           |
 | ---------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -92,10 +93,13 @@ sparkles/
 │   │   ├── operations.d, ranges.d, parsing.d, traits.d, any.d
 │   │   ├── purl.d, vers.d          # pURL / VERS interop
 │   │   └── testing.d               # checkRoundTrip / checkRejects / checkAscending
-│   ├── test-runner/src/sparkles/test_runner/
+│   ├── test-runner/src/sparkles/test_runner/   # the shim (sourceLibrary, compiled into consumers)
+│   │   ├── discovery.d             # compile-time unittest discovery → Test[]
+│   │   └── register.d              # extendedModuleUnitTester hook + extern(C) seam
+│   ├── test-runner-impl/src/sparkles/test_runner/  # prebuilt impl library (internal)
+│   │   ├── runner_impl.d           # extern(C) entry, CLI, mode dispatch
 │   │   ├── attributes.d            # @betterC / @ctfe / @wasm / @benchmark marker UDAs
-│   │   ├── runner.d                # extendedModuleUnitTester hook, CLI, mode dispatch
-│   │   ├── discovery.d, model.d    # compile-time discovery; Test/TestResult data model
+│   │   ├── model.d, filter.d       # Test/TestResult data model; regex include/exclude
 │   │   ├── execution.d, reporting.d # parallel execution; styled result rendering
 │   │   ├── bench.d                 # benchIter/blackBox, auto-scaling measurement
 │   │   ├── extract.d, driver.d     # unittest-body extraction; -betterC/wasm drivers
@@ -191,10 +195,32 @@ runner CTFE-evaluates the selected ones through a probe compiled with
 filters control which tests execute and a failing `@ctfe` test can't break
 the test build, `--help`, or `--list`.
 
-Every sub-package integrates the runner via `sourcePaths`/`importPaths` in
-`dub.sdl` (a dub dependency would be a package-level cycle for `base` and
-`core-cli`) — copy the block from any existing `configuration "unittest"`
-when adding a new sub-package.
+The runner is two packages: `sparkles:test-runner` is a thin `sourceLibrary`
+shim (discovery + registration) compiled into each test binary, and
+`sparkles:test-runner-impl` is the prebuilt implementation library it links
+across an `extern(C)` seam. This keeps a consumer's `dub test` close to a
+vanilla build (the heavy modules are compiled once, not per-consumer).
+
+A new sub-package integrates the runner one of two ways:
+
+- **Default (fast path)** — add `dependency "sparkles:test-runner" path="../.."`
+  to `configuration "unittest"` (apps use the appropriate relative path). This
+  is also the recipe external projects use. Copy the block from `libs/versions`.
+- **Cycle-safe path** — `base`, `core-cli`, and `test-utils` are in the impl
+  library's dependency closure (dub's cycle detection unions across configs:
+  impl → `core-cli` → `test-utils`), so they cannot depend on it. They
+  source-include both packages instead:
+
+  ```sdl
+  importPaths "src" "../test-runner/src" "../test-runner-impl/src"
+  configuration "unittest" {
+      sourcePaths "../test-runner/src" "../test-runner-impl/src"
+  }
+  ```
+
+The `@ctfe`/`@betterC`/`@wasm`/`@benchmark` attributes live in the impl
+package. A module that imports them in a non-`unittest` build (e.g. `base`'s
+`readers.d`) must put `../test-runner-impl/src` on its top-level `importPaths`.
 
 > [!WARNING]
 > **The runner does not discover unittests that live only in `package.d`**
@@ -654,8 +680,10 @@ A quick scan of the gotchas above plus a few more:
 
 - `expected` (`~>0.4.1`) — `Expected!(T, E)` error handling; **runtime** dep of
   `base` and `versions`.
-- `sparkles:test-runner` (in-tree) — unittest runner; integrated via
-  `sourcePaths`/`importPaths` in each `configuration "unittest"`.
+- `sparkles:test-runner` (in-tree) — unittest runner; a thin shim most
+  packages pull as a `dependency`, backed by the prebuilt
+  `sparkles:test-runner-impl` library (`base`/`core-cli`/`test-utils`
+  source-include both — see the integration note above).
 - `delta` — diff tool used by test diff output; system dependency via Nix.
 
 D dependencies are managed via `dub.sdl` (pinned in `dub.selections.json` /
