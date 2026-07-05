@@ -818,5 +818,5 @@ units set to `1`) and conclude it for all — the strategy runtime unit systems 
 [zapata]: https://arxiv.org/abs/2108.08703
 [jonsson]: https://arxiv.org/abs/2108.02106
 [jmv]: https://arxiv.org/abs/0710.1313
-[baez-dolan]: https://ncatlab.org/johnbaez/show/Doctrines+of+algebraic+geometry
+[baez-dolan]: https://web.archive.org/web/20241206095525/https://ncatlab.org/johnbaez/show/Doctrines+of+algebraic+geometry
 [vysoky]: https://arxiv.org/abs/2105.02534
