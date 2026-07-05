@@ -12,7 +12,8 @@ module sparkles.event_horizon.backend.uring;
 
 version (linux)  :  // io_uring is Linux-only; peer backends land in M10/M11.
 
-import during : AcceptFlags, CancelFlags, CQEFlags, FsyncFlags, MsgFlags, Operation,
+import during : AcceptFlags, CancelFlags, CQE_BUFFER_SHIFT, CQEFlags, FsyncFlags,
+    MsgFlags, Operation,
     SetupFlags, SubmissionEntry, TimeoutFlags, Uring, io_uring_getevents_arg,
     prepAccept, prepClose, prepConnect, prepFsync, prepMultishotAccept, prepNop,
     prepOpenat, prepRW, prepRead, prepReadFixed, prepRecv, prepRecvMsg, prepSend,
@@ -25,8 +26,8 @@ import sparkles.event_horizon.backend.probe;
 import sparkles.event_horizon.errors;
 import sparkles.event_horizon.op : CompletionFlags, KernelTimespec, OpAccept,
     OpAcceptMultishot, OpClose, OpConnect, OpFsync, OpNop, OpOpenAt, OpRead,
-    OpRecv, OpRecvFrom, OpSend, OpSendTo, OpSlot, OpStatx, OpTimeout, OpToken,
-    OpWaitid, OpWrite, SockAddr;
+    OpRecv, OpRecvFrom, OpRecvSelect, OpSend, OpSendTo, OpSlot, OpStatx,
+    OpTimeout, OpToken, OpWaitid, OpWrite, SockAddr;
 
 import core.stdc.errno : ETIME;
 
@@ -172,6 +173,20 @@ struct UringBackend
             e.prepSend(fd, bytes, MsgFlags.NONE);
             e.user_data = ud;
         })(op.fd, slot.pinned[], token.raw);
+        return true;
+    }
+
+    /// Lowers a buffer-selecting receive (`IOSQE_BUFFER_SELECT` + `buf_group`):
+    /// no buffer at submit; the kernel picks one from the provided ring and
+    /// reports its id in the completion flags (SPEC §6.4).
+    bool trySubmit(in OpRecvSelect op, OpToken token, ref OpSlot) @safe nothrow @nogc
+    {
+        if (_io.full)
+            return false;
+        _io.putWith!((ref SubmissionEntry e, int fd, ushort gid, uint maxLen, ulong ud) {
+            e.prepRecv(fd, gid, maxLen, MsgFlags.NONE);
+            e.user_data = ud;
+        })(op.fd, op.group.value, op.maxLen, token.raw);
         return true;
     }
 
@@ -465,6 +480,39 @@ struct UringBackend
                 "unregisterBuffers failed")
             : ioOk();
     }
+
+    /// Registers a provided buffer ring (`REGISTER_PBUF_RING`) for group
+    /// `gid` at the page-aligned `ringAddr` with `entries` slots (SPEC §6.4).
+    IoResult!void registerBufRing(ushort gid, uint entries, void* ringAddr)
+        @trusted nothrow @nogc
+    {
+        import during : io_uring_buf_reg;
+
+        io_uring_buf_reg reg;
+        reg.ring_addr = cast(ulong) ringAddr;
+        reg.ring_entries = entries;
+        reg.bgid = gid;
+        const r = _io.registerBufRing(reg);
+        return r < 0
+            ? ioErr!void(-r, OpKind.none, IoErrorStage.registration,
+                "registerBufRing failed")
+            : ioOk();
+    }
+
+    /// Releases the provided buffer ring for group `gid`.
+    IoResult!void unregisterBufRing(ushort gid) @trusted nothrow @nogc
+    {
+        const r = _io.unregisterBufRing(gid);
+        return r < 0
+            ? ioErr!void(-r, OpKind.none, IoErrorStage.registration,
+                "unregisterBufRing failed")
+            : ioOk();
+    }
+
+    /// Recovers the kernel-selected buffer id from a completion's raw flags
+    /// (the upper 16 bits, `CQE_BUFFER_SHIFT`).
+    static ushort selectedBufferId(uint rawFlags) @safe pure nothrow @nogc
+        => cast(ushort) (rawFlags >> CQE_BUFFER_SHIFT);
 
 private:
     int setupMode(LoopMode mode, uint sqEntries) @safe nothrow @nogc

@@ -12,7 +12,7 @@ import core.lifetime : move;
 import std.experimental.allocator : dispose, makeArray, stateSize;
 import std.experimental.allocator.mallocator : Mallocator;
 
-import sparkles.event_horizon.buffer : Buf;
+import sparkles.event_horizon.buffer : Buf, BufGroupId;
 import sparkles.event_horizon.errors : IoResult, OpKind, fromRes;
 
 /// What kind of slot a completion routes to (packed into the token's top
@@ -145,6 +145,17 @@ struct OpRecvFrom
     Buf buf;
 }
 
+/// Buffer-selecting receive (SPEC §6.4): no buffer at submit; the kernel
+/// picks one from the provided ring `group`, capped at `maxLen`, and the
+/// completion carries a ring-leased `Buf`.
+struct OpRecvSelect
+{
+    enum kind = OpKind.recvSelect;
+    int fd;
+    BufGroupId group;
+    uint maxLen;
+}
+
 /// Accept one connection; the completion `res` is the new fd. The peer
 /// address is fetched on demand (`getpeername`), not stored per slot.
 struct OpAccept
@@ -261,6 +272,7 @@ struct Completion
     CompletionFlags flags; /// portable completion flags
     Buf buf;               /// the buffer moving back out (may be empty)
     SockAddr peer;         /// datagram source (`recvFrom` only)
+    ushort bufferId;       /// selected ring buffer id (`recvSelect`; valid when `flags.bufferSelected`)
 
     /// The typed view of `res`.
     IoResult!uint result() @safe pure nothrow @nogc => fromRes(res, kind);
