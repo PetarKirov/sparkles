@@ -58,6 +58,7 @@
         ./nix/packages/default.nix
         ./nix/packages/text-wasm.nix
         ./nix/packages/uwidth-rs.nix
+        ./nix/packages/wired-bench-data.nix
         ./nix/checks/pre-commit.nix
         ./nix/shells/default.nix
         ./nix/shells/android.nix

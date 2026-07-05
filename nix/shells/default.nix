@@ -106,6 +106,10 @@
             ${envExports}
             export GITHUB_TOKEN="$(gh auth token)"
 
+            # Pinned corpora for the wired runtime JSON bench
+            # (libs/wired/bench/runtime; its --data-dir flag overrides this).
+            export WIRED_BENCH_DATA=${config.packages.wired-bench-data}
+
             # PyD-embedded Python (text-conformance Layer 10): make libpython
             # linkable and let the embedded interpreter find wcwidth + the stdlib.
             export LIBRARY_PATH="${pythonEnv}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
