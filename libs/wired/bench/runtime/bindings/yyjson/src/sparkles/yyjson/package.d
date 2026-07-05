@@ -6,4 +6,4 @@ ImportC. The header (and the `-lyyjson` link flag) resolve through the
 */
 module sparkles.yyjson;
 
-public import sparkles.yyjson.c;
+public import sparkles.yyjson.yyjson_c;

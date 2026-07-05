@@ -43,6 +43,11 @@ configuration "application" {
     // devshell's PKG_CONFIG_PATH) provides both cflags and -lyyjson.
     dependency "yyjson" path="bindings/yyjson"
     versions "BenchYyjson"
+
+    // simdjson (DOM + On-Demand) and rapidjson, via the extern "C" shim;
+    // wired-bench-cpp-shim.pc carries the full link recipe.
+    dependency "wired-bench-shim" path="bindings/shim"
+    versions "BenchCpp"
 }
 
 // Fast-iteration config: D engines only — no native libraries, no ImportC

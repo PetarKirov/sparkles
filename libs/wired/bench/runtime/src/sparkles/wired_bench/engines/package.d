@@ -47,6 +47,33 @@ version (BenchYyjson)
 else
     private alias YyjsonEngines = AliasSeq!();
 
+version (BenchCpp)
+{
+    public import sparkles.wired_bench.engines.rapidjson_json : RapidjsonEngine;
+    public import sparkles.wired_bench.engines.simdjson_dom : SimdjsonDomEngine;
+    public import sparkles.wired_bench.engines.simdjson_ondemand
+        : SimdjsonOndemandEngine;
+
+    private alias CppEngines = AliasSeq!(SimdjsonDomEngine,
+        SimdjsonOndemandEngine, RapidjsonEngine);
+}
+else
+    private alias CppEngines = AliasSeq!();
+
 /// Every engine compiled into this build, baseline first.
 alias AllEngines = AliasSeq!(StdJsonEngine, MirIonEngines, AsdfEngines,
-    JsoniopipeEngines, YyjsonEngines);
+    JsoniopipeEngines, YyjsonEngines, CppEngines);
+
+/// Foreign-toolchain version/provenance lines for the report header.
+string[] engineVersions()
+{
+    string[] lines;
+    version (BenchCpp)
+    {
+        import sparkles.bench_shim : jb_cpp_versions;
+        import sparkles.wired_bench.engines.shim_support : shimError;
+
+        lines ~= (() @trusted => shimError(jb_cpp_versions()))();
+    }
+    return lines;
+}

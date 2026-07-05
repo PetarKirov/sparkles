@@ -47,8 +47,10 @@
       # below ($WIRED_BENCH_ISA + PKG_CONFIG_PATH). One pkgconfig search dir
       # per preset, grown by each bench engine module (yyjson, C++/Rust shims).
       benchIsaPresets = import ../packages/wired-bench-isa-presets.nix pkgs;
-      benchPkgsFor =
-        preset: with config.packages; [ config.packages."wired-bench-yyjson-${preset.attr}" ];
+      benchPkgsFor = preset: [
+        config.packages."wired-bench-yyjson-${preset.attr}"
+        config.packages."wired-bench-cpp-shim-${preset.attr}"
+      ];
       benchPcPath = preset: lib.makeSearchPath "lib/pkgconfig" (benchPkgsFor preset);
       benchIsaHook =
         if builtins.length benchIsaPresets == 2 then
@@ -114,6 +116,12 @@
             # Rust unicode-width oracle helper (Layer 9), built from the in-tree
             # crate under the harness's oracles/ dir.
             config.packages.uwidth-rs
+
+            # wired runtime JSON bench: the cpp shim's `Requires: simdjson`
+            # resolves against this simdjson.pc (generic build — simdjson
+            # dispatches SIMD kernels at runtime, unlike the preset-built
+            # engines wired up via the benchIsaHook below).
+            pkgs.simdjson
 
             # Python + wcwidth for the PyD-embedded Layer 10.
             pythonEnv
