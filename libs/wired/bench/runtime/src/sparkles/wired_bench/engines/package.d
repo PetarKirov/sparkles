@@ -20,5 +20,14 @@ version (BenchMirIon)
 else
     private alias MirIonEngines = AliasSeq!();
 
+version (BenchAsdf)
+{
+    public import sparkles.wired_bench.engines.asdf_json : AsdfEngine;
+
+    private alias AsdfEngines = AliasSeq!AsdfEngine;
+}
+else
+    private alias AsdfEngines = AliasSeq!();
+
 /// Every engine compiled into this build, baseline first.
-alias AllEngines = AliasSeq!(StdJsonEngine, MirIonEngines);
+alias AllEngines = AliasSeq!(StdJsonEngine, MirIonEngines, AsdfEngines);
