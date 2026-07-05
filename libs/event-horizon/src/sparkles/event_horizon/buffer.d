@@ -89,6 +89,16 @@ struct Buf
     /// Where the memory came from.
     BufOrigin origin() const @safe pure nothrow @nogc => _origin;
 
+    /// `true` when this buffer is a registered-buffer slot — lowering then
+    /// selects the `READ_FIXED`/`WRITE_FIXED` opcodes automatically.
+    bool isRegistered() const @safe pure nothrow @nogc
+        => _origin == BufOrigin.registered;
+
+    /// The registered-buffer index (`buf_index`) for a registered `Buf`.
+    ushort bufIndex() const @safe pure nothrow @nogc
+    in (_origin == BufOrigin.registered, "not a registered buffer")
+        => _slot;
+
     /// `true` for an empty (released or default) handle.
     bool empty() const @safe pure nothrow @nogc => _origin == BufOrigin.none;
 
@@ -236,6 +246,11 @@ struct BufferPool(Allocator = Mallocator)
             cast(void) alloc.dispose(_slab[0 .. cast(size_t) _count * _bufSize]);
             cast(void) alloc.dispose(_freeList[0 .. _count]);
         }
+        if (_registered.length)
+        {
+            cast(void) alloc.dispose(_registered);
+            _registered = null;
+        }
         // Field-by-field for the same reason as Buf.release.
         _slab = null;
         _freeList = null;
@@ -244,9 +259,45 @@ struct BufferPool(Allocator = Mallocator)
         _freeCount = 0;
     }
 
-    ~this() @safe nothrow @nogc
+    ~this() @safe
     {
         destroy();
+    }
+
+    /**
+    Registers every slot as a kernel-pinned buffer (`REGISTER_BUFFERS`) on
+    `backend` when it supports them, so acquired `Buf`s carry
+    `BufOrigin.registered` and the read/write lowerings pick the FIXED
+    opcodes automatically (SPEC §6.3). Idempotent-safe to skip: on a backend
+    without the capability the pool stays a plain pool — same API, honest
+    degradation (recorded in caps). Must run before any buffer is acquired.
+    */
+    IoResult!void register(Backend)(ref Backend backend) @trusted
+    in (_registered.length == 0, "already registered")
+    in (_freeCount == _count, "register before acquiring")
+    {
+        static if (__traits(hasMember, Backend, "caps")
+            && __traits(hasMember, Backend, "registerBuffers"))
+        {
+            if (!backend.caps().registeredBuffers)
+                return ioOk(); // capability absent: stay a plain pool
+
+            auto iovecs = alloc.makeArray!(ubyte[])(_count);
+            if (iovecs is null)
+                return ioErr!void(12 /* ENOMEM */, OpKind.none,
+                    IoErrorStage.registration, "iovec table allocation failed");
+            foreach (i; 0 .. _count)
+                iovecs[i] = _slab[cast(size_t) i * _bufSize
+                    .. cast(size_t) (i + 1) * _bufSize];
+            auto r = backend.registerBuffers(iovecs);
+            if (r.hasError)
+            {
+                cast(void) alloc.dispose(iovecs);
+                return r;
+            }
+            _registered = iovecs;
+        }
+        return ioOk();
     }
 
     /// Hands out one buffer; `ENOBUFS` when the pool is exhausted.
@@ -262,7 +313,7 @@ struct BufferPool(Allocator = Mallocator)
         b._ptr = _slab + cast(size_t) slot * _bufSize;
         b._len = 0;
         b._cap = _bufSize;
-        b._origin = BufOrigin.pool;
+        b._origin = _registered.length ? BufOrigin.registered : BufOrigin.pool;
         b._slot = slot;
         b._owner = &this;
         b._recycleFn = &recycleShim;
@@ -291,6 +342,7 @@ package:
 private:
     ubyte* _slab;
     ushort* _freeList;
+    ubyte[][] _registered; // non-empty once the slab is kernel-registered
     uint _bufSize;
     uint _count;
     uint _freeCount;
