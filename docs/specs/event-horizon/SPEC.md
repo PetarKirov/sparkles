@@ -268,9 +268,12 @@ each `trySubmit(op, token)` fills the next SQE via the matching `prepXxx`
 helper and sets `user_data = token.raw`. `Buf.origin == registered` selects
 `prepReadFixed`/`prepWriteFixed` automatically — "fixed" is an optimization
 the user never spells. `submitAndWait` uses `EXT_ARG` inline timespecs when
-negotiated. (Known substrate defect: `during` 0.5.0's `prepCancel`
-default-flag path is mis-typed; the backend hand-rolls the `ASYNC_CANCEL` SQE
-until upstream tags a fix.)
+negotiated. (Known substrate defects in `during` 0.5.0, worked around in the
+backend until upstream tags fixes: `prepCancel`'s default-flag path is
+mis-typed, so the `ASYNC_CANCEL` SQE is hand-rolled; and
+`submitAndWait(want, args)` silently drops `args` when the submission queue
+is empty — a deadline wait would block unboundedly — so the backend flushes
+and calls `wait(want, args)` explicitly.)
 
 kqueue (M10) synthesizes completions: readiness arms a non-blocking syscall
 performed by the backend at reap time; regular-file ops go to a small worker
