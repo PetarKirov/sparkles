@@ -6,7 +6,7 @@ license "BSL-1.0"
 
 targetPath "build"
 
-importPaths "src" "../test-runner/src"
+importPaths "src"
 
 dflags "-preview=in" "-preview=dip1000"
 
@@ -18,7 +18,9 @@ configuration "library" {
 }
 
 configuration "unittest" {
-    sourcePaths "../test-runner/src"
+    // Fast path: depend on the runner shim (pulls the prebuilt impl library),
+    // so `dub test` recompiles only this package, not the runner sources.
+    dependency "sparkles:test-runner" path="../.."
     dependency "sparkles:base" path="../.."
 
     dflags "-checkaction=context" "-allinst"

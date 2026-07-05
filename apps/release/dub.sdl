@@ -8,7 +8,6 @@ targetType "executable"
 targetName "release"
 targetPath "build"
 
-importPaths "src" "../../libs/test-runner/src"
 mainSourceFile "src/app.d"
 
 dflags "-preview=in" "-preview=dip1000"
@@ -26,7 +25,7 @@ configuration "unittest" {
     targetType "library"
     excludedSourceFiles "src/app.d"
 
-    sourcePaths "../../libs/test-runner/src"
+    dependency "sparkles:test-runner" path="../.."
 
     dflags "-checkaction=context" "-allinst"
 }

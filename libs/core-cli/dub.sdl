@@ -11,7 +11,7 @@ dependency "sparkles:base" path="../.."
 targetType "library"
 targetPath "build"
 
-importPaths "src" "../test-runner/src"
+importPaths "src" "../test-runner/src" "../test-runner-impl/src"
 
 configuration "library" {
     targetType "library"
@@ -21,7 +21,9 @@ configuration "library" {
 configuration "unittest" {
     excludedSourceFiles "src/app.d"
 
-    sourcePaths "../test-runner/src"
+    // `core-cli` is imported by the impl (UI niceties), so it cannot depend on
+    // the impl library — it source-includes the shim and the impl instead.
+    sourcePaths "../test-runner/src" "../test-runner-impl/src"
     dependency "sparkles:test-utils" path="../.."
 
     dflags "-checkaction=context" "-allinst"

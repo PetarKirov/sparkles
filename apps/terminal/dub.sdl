@@ -6,8 +6,6 @@ license "BSL-1.0"
 targetType "executable"
 targetPath "build"
 
-importPaths "src" "../../libs/test-runner/src"
-
 dflags "-preview=in" "-preview=dip1000"
 
 dependency "raylib-d" version="~>6.0.1"
@@ -25,7 +23,7 @@ configuration "unittest" {
     targetType "library"
     excludedSourceFiles "src/app.d"
 
-    sourcePaths "../../libs/test-runner/src"
+    dependency "sparkles:test-runner" path="../.."
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
