@@ -17,46 +17,31 @@
  *       exercised in their special environments by `--better-c` / `--wasm`.
  * )
  */
-module sparkles.test_runner.runner;
+module sparkles.test_runner.runner_impl;
 
-version (unittest):
-
-static if (!__traits(compiles, () { static import dub_test_root; }))
-{
-    static assert(false,
-        "Couldn't find 'dub_test_root'. Make sure you are running tests with `dub test`.");
-}
-else
-{
-    static import dub_test_root;
-}
-
-import core.attribute : standalone;
 import core.runtime : Runtime, UnitTestResult;
 import core.time : Duration, MonoTime;
 
-import std.traits : fullyQualifiedName;
-
 import sparkles.test_runner.bench : BenchConfig, BenchStats, runBenchmark;
-import sparkles.test_runner.discovery : discoverTests, moduleOf;
 import sparkles.test_runner.driver : detectCompiler, DriverOptions, runCtfeTests;
 import sparkles.test_runner.execution : executeTest;
-import sparkles.test_runner.model : matchesFilter, Test, TestResult;
+import sparkles.test_runner.filter : matchesFilter;
+import sparkles.test_runner.model : Test, TestResult;
 import sparkles.test_runner.reporting : detectTerminalWidth, formatBenchTable,
     formatCtfeFailedLine, formatCtfeLine, formatResultLine, formatSummary,
     formatThrown, RunTotals;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Runtime entry point
+// Entry point — called across the extern(C) seam by the registration shim,
+// which has already discovered the tests and computed `hostIsRunner`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-// `@standalone` breaks the ctor-ordering cycle with the generated
-// `dub_test_root` module (which imports this module back when the runner is
-// compiled in via `sourcePaths`); this ctor only assigns a druntime global.
-@standalone
-shared static this() @system
+extern (C) void sparkles_test_runner_run(
+    Test* testsPtr, size_t count, bool hostIsRunner, uint* executed, uint* passed)
 {
-    Runtime.extendedModuleUnitTester = &runnerMain;
+    const result = runnerMain(testsPtr[0 .. count], hostIsRunner);
+    *executed = cast(uint) result.executed;
+    *passed = cast(uint) result.passed;
 }
 
 private struct RunnerOptions
@@ -81,7 +66,7 @@ private struct RunnerOptions
 /// Whether `test` belongs to the runner itself. In-monorepo hosts compile the
 /// runner via `sourcePaths`, which puts its modules into `allModules`; hide
 /// their tests unless `--self-test` is given or the tested package $(I is)
-/// the runner (see `hostIsRunner`).
+/// the runner.
 private bool isSelfTest(in Test test) @safe pure nothrow @nogc
 {
     enum prefix = "sparkles.test_runner.";
@@ -89,44 +74,22 @@ private bool isSelfTest(in Test test) @safe pure nothrow @nogc
         && test.fullName[0 .. prefix.length] == prefix;
 }
 
-private template isRunnerModule(alias m)
+/// Whether this test build is `dub test :test-runner` (whose suite $(I is) the
+/// runner's own tests). `hostIsRunner` (every module belongs to the runner) is
+/// the compile-time half, computed by the registration shim and passed in; the
+/// test-binary-name check is the runtime half.
+private bool testingRunnerItself(bool hostIsRunner)
 {
-    import std.algorithm.searching : startsWith;
+    import std.algorithm.searching : canFind;
+    import std.path : baseName;
 
-    enum isRunnerModule =
-        fullyQualifiedName!(moduleOf!m).startsWith("sparkles.test_runner");
-}
-
-/// Whether every module in the test build belongs to the runner. Necessary
-/// but not sufficient for "the tested package is the runner": a host whose
-/// only D modules are `package.d`s (excluded from `allModules`) or ImportC
-/// shims looks the same, so `testingRunnerItself` also checks the test-binary
-/// name at runtime.
-private enum bool hostIsRunner =
-    imported!"std.meta".allSatisfy!(isRunnerModule, dub_test_root.allModules);
-
-private template imported(string moduleName)
-{
-    mixin("import imported = ", moduleName, ";");
-}
-
-/// Whether this test build is `dub test :test-runner` (whose suite $(I is)
-/// the runner's own tests).
-private bool testingRunnerItself()
-{
-    static if (!hostIsRunner)
+    if (!hostIsRunner)
         return false;
-    else
-    {
-        import std.algorithm.searching : canFind;
-        import std.path : baseName;
-
-        auto args = Runtime.args;
-        return args.length && args[0].baseName.canFind("test-runner");
-    }
+    auto args = Runtime.args;
+    return args.length && args[0].baseName.canFind("test-runner");
 }
 
-private UnitTestResult runnerMain()
+private UnitTestResult runnerMain(Test[] discovered, bool hostIsRunner)
 {
     import std.algorithm.iteration : filter;
     import std.array : array;
@@ -203,10 +166,9 @@ private UnitTestResult runnerMain()
     // truncation so redirected output stays byte-identical.
     const width = detectTerminalWidth();
 
-    auto discovered = discoverTests!(dub_test_root.allModules)();
     // Hide the runner's own tests unless requested — or unless the tested
     // package is the runner itself, in which case they are the test suite.
-    if (!options.selfTest && !testingRunnerItself)
+    if (!options.selfTest && !testingRunnerItself(hostIsRunner))
         discovered = discovered.filter!(t => !t.isSelfTest).array;
 
     auto tests = discovered

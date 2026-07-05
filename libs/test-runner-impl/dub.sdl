@@ -1,0 +1,39 @@
+name "test-runner-impl"
+description "Implementation library for sparkles:test-runner (internal — depend on sparkles:test-runner instead)"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+
+// `-allinst` makes the prebuilt library self-contained: it emits every
+// template instance it references (notably `std.uni`, via base's grapheme-aware
+// width), so a consumer linking `impl.a` — whose own build may not re-instantiate
+// them — resolves cleanly.
+dflags "-preview=in" "-preview=dip1000" "-allinst"
+
+// The heavy runner machinery: CLI dispatch, execution, reporting, drivers,
+// benchmarking. Built once as a prebuilt library and reached across a thin
+// `extern(C)` seam by the `sparkles:test-runner` shim, so consumers never
+// recompile it. In-monorepo `base`/`core-cli` cannot depend on this package
+// (dub rejects the resulting cycle); they source-include it instead.
+dependency "sparkles:base" path="../.."
+dependency "sparkles:core-cli" path="../.."
+
+targetType "library"
+
+configuration "library" {
+    targetType "library"
+}
+
+configuration "unittest" {
+    // Self-host: source-include the shim (registration + discovery) so the
+    // implementation's own tests run through the sparkles runner.
+    sourcePaths "src" "../test-runner/src"
+    importPaths "src" "../test-runner/src"
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}

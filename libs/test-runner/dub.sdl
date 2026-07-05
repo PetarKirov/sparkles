@@ -8,20 +8,23 @@ targetPath "build"
 
 dflags "-preview=in" "-preview=dip1000"
 
-// These dependencies serve `dub test :test-runner` and *external* consumers
-// (which pull this package as a regular dependency). In-monorepo consumers —
-// including `sparkles:base` and `sparkles:core-cli` themselves — must NOT
-// depend on this package (dub rejects the resulting package-level cycle);
-// instead their `configuration "unittest"` adds the runner sources directly:
+// The registration shim: only `discovery` (compile-time reflection over the
+// tested package's modules) and `register` (the druntime hook + a thin
+// `extern(C)` seam) compile into each consumer's test binary. The heavy
+// machinery lives in the prebuilt `sparkles:test-runner-impl` library, so a
+// consumer's `dub test` stays close to a vanilla build — an external project
+// pulls this package as one dependency and gets both automatically.
 //
-//     sourcePaths "../test-runner/src"
-//     importPaths "../test-runner/src"
+// In-monorepo `base`/`core-cli` cannot depend on this package (dub rejects the
+// resulting cycle: impl → base); their `configuration "unittest"` instead
+// source-includes both the shim and the impl:
 //
-// The runner hard-imports `sparkles.base` (in-tree hosts provide it from
-// their own dependency closure) and detects `sparkles.core_cli` niceties by
-// introspection, degrading gracefully when absent (e.g. in base's own tests).
-dependency "sparkles:base" path="../.."
-dependency "sparkles:core-cli" path="../.."
+//     sourcePaths "../test-runner/src" "../test-runner-impl/src"
+//     importPaths "../test-runner/src" "../test-runner-impl/src"
+//
+// Every other in-monorepo consumer depends on this package like an external
+// one (`dependency "sparkles:test-runner" path="../.."`).
+dependency "sparkles:test-runner-impl" path="../.."
 
 targetType "sourceLibrary"
 
@@ -30,6 +33,7 @@ configuration "library" {
 }
 
 configuration "unittest" {
+    // The shim's own tests (discovery) run through the linked impl library.
     targetType "library"
 
     dflags "-checkaction=context" "-allinst"

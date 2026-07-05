@@ -6,7 +6,9 @@ license "BSL-1.0"
 
 targetPath "build"
 
-importPaths "src" "../test-runner/src"
+// `attributes` (imported unconditionally by modules with `@betterC` tests) now
+// lives in the impl package, so it must be on `importPaths` in every config.
+importPaths "src" "../test-runner/src" "../test-runner-impl/src"
 
 dflags "-preview=in" "-preview=dip1000"
 
@@ -19,7 +21,9 @@ configuration "library" {
 }
 
 configuration "unittest" {
-    sourcePaths "../test-runner/src"
+    // `base`/`core-cli` cannot depend on the impl library (cycle: impl → base),
+    // so they source-include both the shim and the impl.
+    sourcePaths "../test-runner/src" "../test-runner-impl/src"
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
