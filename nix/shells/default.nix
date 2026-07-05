@@ -50,6 +50,7 @@
       benchPkgsFor = preset: [
         config.packages."wired-bench-yyjson-${preset.attr}"
         config.packages."wired-bench-cpp-shim-${preset.attr}"
+        config.packages."wired-bench-rs-${preset.attr}"
       ];
       benchPcPath = preset: lib.makeSearchPath "lib/pkgconfig" (benchPkgsFor preset);
       benchIsaHook =

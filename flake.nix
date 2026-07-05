@@ -61,6 +61,7 @@
         ./nix/packages/wired-bench-data.nix
         ./nix/packages/wired-bench-yyjson.nix
         ./nix/packages/wired-bench-cpp-shim.nix
+        ./nix/packages/wired-bench-rs.nix
         ./nix/checks/pre-commit.nix
         ./nix/shells/default.nix
         ./nix/shells/android.nix

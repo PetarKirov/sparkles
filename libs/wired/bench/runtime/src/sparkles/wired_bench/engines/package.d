@@ -60,9 +60,20 @@ version (BenchCpp)
 else
     private alias CppEngines = AliasSeq!();
 
+version (BenchRust)
+{
+    public import sparkles.wired_bench.engines.rust_engines : SerdeJsonEngine,
+        SimdJsonEngine, SonicRsEngine;
+
+    private alias RustEngines = AliasSeq!(SerdeJsonEngine, SimdJsonEngine,
+        SonicRsEngine);
+}
+else
+    private alias RustEngines = AliasSeq!();
+
 /// Every engine compiled into this build, baseline first.
 alias AllEngines = AliasSeq!(StdJsonEngine, MirIonEngines, AsdfEngines,
-    JsoniopipeEngines, YyjsonEngines, CppEngines);
+    JsoniopipeEngines, YyjsonEngines, CppEngines, RustEngines);
 
 /// Foreign-toolchain version/provenance lines for the report header.
 string[] engineVersions()
@@ -74,6 +85,13 @@ string[] engineVersions()
         import sparkles.wired_bench.engines.shim_support : shimError;
 
         lines ~= (() @trusted => shimError(jb_cpp_versions()))();
+    }
+    version (BenchRust)
+    {
+        import sparkles.bench_shim : jb_rs_versions;
+        import sparkles.wired_bench.engines.shim_support : shimError;
+
+        lines ~= (() @trusted => shimError(jb_rs_versions()))();
     }
     return lines;
 }
