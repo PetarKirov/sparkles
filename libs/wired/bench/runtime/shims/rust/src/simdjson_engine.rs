@@ -126,6 +126,26 @@ pub unsafe extern "C" fn jb_simdj_parse(
     }
 }
 
+/// Stage 1 + 2 without value building: `to_tape` over the scratch copy
+/// (the required mutable copy is part of the timed op).
+///
+/// # Safety
+/// `ctx` as above; `data`/`len` must describe a valid buffer.
+#[no_mangle]
+pub unsafe extern "C" fn jb_simdj_validate(
+    ctx: *mut JbSimdjCtx,
+    data: *const c_char,
+    len: usize,
+) -> c_int {
+    let ctx = &mut *ctx;
+    ctx.scratch.clear();
+    ctx.scratch.extend_from_slice(input_slice(data, len));
+    match simd_json::to_tape_with_buffers(&mut ctx.scratch, &mut ctx.buffers) {
+        Ok(_) => 0,
+        Err(e) => ctx.error.fail(e),
+    }
+}
+
 /// # Safety
 /// `ctx` as above.
 #[no_mangle]

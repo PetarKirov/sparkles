@@ -7,6 +7,8 @@
 
 #include <rapidjson/document.h>
 #include <rapidjson/error/en.h>
+#include <rapidjson/memorystream.h>
+#include <rapidjson/reader.h>
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
 
@@ -123,6 +125,28 @@ int jb_rj_parse_insitu(jb_rj_ctx *ctx, const char *data, size_t len)
         return ctx->check_parse();
     } catch (...) {
         return ctx->fail("unexpected exception in jb_rj_parse_insitu");
+    }
+}
+
+int jb_rj_validate(jb_rj_ctx *ctx, const char *data, size_t len)
+{
+    try {
+        // SAX Reader over a length-bounded stream driving a null handler:
+        // full validation (full-precision numbers included), nothing built.
+        rapidjson::MemoryStream ms(data, len);
+        rapidjson::EncodedInputStream<rapidjson::UTF8<>, rapidjson::MemoryStream>
+            is(ms);
+        rapidjson::Reader reader;
+        rapidjson::BaseReaderHandler<> handler;
+        rapidjson::ParseResult ok =
+            reader.Parse<parseFlags>(is, handler);
+        if (!ok) {
+            ctx->error = rapidjson::GetParseError_En(ok.Code());
+            return 1;
+        }
+        return 0;
+    } catch (...) {
+        return ctx->fail("unexpected exception in jb_rj_validate");
     }
 }
 

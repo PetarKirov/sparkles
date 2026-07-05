@@ -211,6 +211,27 @@ void walk_ondemand(ondemand::value v, jb_fingerprint &f)
     }
 }
 
+// Traverses containers without decoding scalars: the unread values are
+// skipped by the iterator machinery — the cost profile of a lazy parser
+// over untouched fields.
+void skip_ondemand(ondemand::value v, uint64_t &containers)
+{
+    switch (v.type()) {
+    case ondemand::json_type::array:
+        containers++;
+        for (ondemand::value e : v.get_array())
+            skip_ondemand(e, containers);
+        break;
+    case ondemand::json_type::object:
+        containers++;
+        for (ondemand::field kv : v.get_object())
+            skip_ondemand(kv.value(), containers);
+        break;
+    default:
+        break; // scalars stay raw
+    }
+}
+
 } // namespace
 
 struct jb_sj_od_ctx {
@@ -260,6 +281,27 @@ int jb_sj_od_parse_walk(jb_sj_od_ctx *ctx, const char *data, size_t len,
         return 1;
     } catch (...) {
         ctx->error = "unexpected exception in jb_sj_od_parse_walk";
+        return 1;
+    }
+}
+
+int jb_sj_od_validate(jb_sj_od_ctx *ctx, const char *data, size_t len)
+{
+    try {
+        if (ctx->padded.size() < len + SIMDJSON_PADDING)
+            ctx->padded.resize(len + SIMDJSON_PADDING);
+        std::memcpy(ctx->padded.data(), data, len);
+
+        auto doc = ctx->parser.iterate(
+            padded_string_view(ctx->padded.data(), len, ctx->padded.size()));
+        uint64_t containers = 0;
+        skip_ondemand(doc.get_value(), containers);
+        return 0;
+    } catch (const std::exception &e) {
+        ctx->error = e.what();
+        return 1;
+    } catch (...) {
+        ctx->error = "unexpected exception in jb_sj_od_validate";
         return 1;
     }
 }
