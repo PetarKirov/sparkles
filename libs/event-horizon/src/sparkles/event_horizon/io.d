@@ -311,8 +311,8 @@ unittest
 
     static immutable payload = cast(immutable ubyte[]) "fiber echo";
 
-    BufferPool pool;
-    assert(!BufferPool.create(pool, 2, 256).hasError);
+    BufferPool!() pool;
+    assert(!BufferPool!().create(pool, 2, 256).hasError);
 
     bool verified;
     auto r = s.run(() @trusted {
@@ -372,4 +372,90 @@ unittest
     auto r = s.run(() { assert(!sleep(s, 5.msecs).hasError); });
     assert(!r.hasError);
     assert(MonoTime.currTime - before >= 5.msecs);
+}
+
+@("io.steadyState.zeroAllocations")
+@safe
+unittest
+{
+    import core.lifetime : move;
+    import core.memory : GC;
+
+    import std.experimental.allocator.building_blocks.stats_collector
+        : Options, StatsCollector;
+    import std.experimental.allocator.mallocator : Mallocator;
+
+    import sparkles.event_horizon.buffer : BufferPool;
+
+    // The allocator-adoption gate (guideline §17: numbers, not vibes): after
+    // setup, the echo hot path must perform ZERO allocations — none through
+    // the instrumented pool allocator, none on the GC heap.
+    alias Counted = StatsCollector!(Mallocator, Options.numAllocate);
+
+    Sched s;
+    if (Sched.create(s).hasError)
+        return; // SKIP: io_uring unavailable
+    scope (exit) s.destroy();
+
+    int[2] fds;
+    if ((() @trusted {
+        import core.sys.posix.unistd : socketpair_ = pipe;
+
+        return socketpair_(fds);
+    })() != 0)
+        return;
+    auto rd = FileHandle(fds[0]);
+    auto wr = FileHandle(fds[1]);
+    scope (exit)
+    {
+        rd.close();
+        wr.close();
+    }
+
+    BufferPool!Counted pool;
+    assert(!BufferPool!Counted.create(pool, Counted(), 2, 256).hasError);
+    const setupAllocs = pool.alloc.numAllocate;
+
+    enum rounds = 200;
+    ulong gcBefore, gcAfter;
+    auto r = s.run(() @trusted {
+        // Writer fiber: pumps `rounds` payloads through the pipe.
+        cast(void) s.spawn(() {
+            auto b = pool.acquire();
+            assert(b.hasValue);
+            auto buf = move(b.value);
+            foreach (_; 0 .. rounds)
+            {
+                buf.length = 32;
+                auto w = write(wr, move(buf));
+                buf = move(w.buf);
+                assert(!w.res.hasError);
+            }
+        });
+
+        // Reader (root fiber): warm up one round, then measure.
+        auto b = pool.acquire();
+        assert(b.hasValue);
+        auto buf = move(b.value);
+        auto warm = read(rd, move(buf));
+        buf = move(warm.buf);
+        assert(!warm.res.hasError);
+
+        gcBefore = GC.allocatedInCurrentThread();
+        const poolBefore = pool.alloc.numAllocate;
+        foreach (_; 1 .. rounds)
+        {
+            auto got = read(rd, move(buf));
+            buf = move(got.buf);
+            assert(!got.res.hasError && got.res.value > 0);
+        }
+        gcAfter = GC.allocatedInCurrentThread();
+        assert(pool.alloc.numAllocate == poolBefore,
+            "the pool allocator must be untouched at steady state");
+    });
+    assert(!r.hasError);
+    assert(gcAfter == gcBefore,
+        "the steady-state echo hot path must not touch the GC");
+    assert(pool.alloc.numAllocate == setupAllocs,
+        "only setup draws from the allocator");
 }

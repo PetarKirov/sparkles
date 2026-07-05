@@ -14,6 +14,8 @@ import core.stdc.errno : EAGAIN, ECANCELED, ENOBUFS, ETIME;
 import core.lifetime : move;
 import core.time : Duration, MonoTime;
 
+import std.experimental.allocator.mallocator : Mallocator;
+
 import sparkles.event_horizon.backend.concept;
 import sparkles.event_horizon.backend.probe : BackendCaps;
 import sparkles.event_horizon.buffer : Buf;
@@ -45,9 +47,11 @@ version (linux)
 }
 
 /**
-The tier-A event loop over a completion backend (SPEC §5.1).
+The tier-A event loop over a completion backend (SPEC §5.1), generic over
+the `Allocator` its op-slot slab draws from (the composable-allocator
+guidelines; `Mallocator` default).
 */
-struct EventLoop(Backend)
+struct EventLoop(Backend, Allocator = Mallocator)
 if (isCompletionBackend!Backend)
 {
     @disable this(this);
@@ -328,7 +332,7 @@ private:
     }
 
     Backend _backend;
-    OpSlab _slab;
+    OpSlab!Allocator _slab;
     bool _open;
     bool _dispatching;
     bool _stopRequested;
@@ -517,8 +521,8 @@ unittest
     })();
     assert(wrote == payload.length);
 
-    BufferPool pool;
-    assert(!BufferPool.create(pool, 1, 64).hasError);
+    BufferPool!() pool;
+    assert(!BufferPool!().create(pool, 1, 64).hasError);
 
     static struct Seen
     {
