@@ -18,7 +18,10 @@ the raw snapshot is
 
 Every engine reproduced the `std.json` structural fingerprint on every
 corpus, and the `TwitterStats` checksum on the decode op, before being
-timed. Throughputs are MB/s over the median iteration.
+timed. Throughputs are MB/s over the median iteration. Hardware counters
+come from a separate `perf_event_open` counting pass per op (kernel+user;
+the LLC pair was dropped because the NMI watchdog holds one of Zen 4's six
+PMCs and a multiplexed group only yields rotation-scaled estimates).
 
 ## The headline: typed decode (twitter.json)
 
@@ -56,6 +59,44 @@ struct:
 ¹ asdf's tape keeps numbers textual (decoded on access), which flatters its
 parse column — most visible on float-heavy canada, where engines that
 materialize doubles pay for exact parsing.
+
+## Hardware counters (twitter.json)
+
+The "why" behind the tables above — per input byte, over the counting pass:
+
+| Engine             | op     |  IPC | cyc/B | ins/B | br-miss% | faults/iter |
+| ------------------ | ------ | ---: | ----: | ----: | -------: | ----------: |
+| std.json           | parse  | 2.43 | 37.97 | 92.42 |     0.67 |       171.8 |
+| wired              | decode | 2.33 | 40.17 | 93.70 |     0.79 |       211.2 |
+| mir-ion            | decode | 3.10 |  2.89 |  8.93 |     0.20 |           0 |
+| serde_json         | decode | 3.29 |  3.63 | 11.94 |     0.27 |           0 |
+| sonic-rs           | decode | 4.00 |  2.35 |  9.39 |     0.09 |           0 |
+| asdf               | parse  | 1.67 |  2.84 |  4.74 |     1.22 |           0 |
+| yyjson             | parse  | 3.68 |  1.26 |  4.64 |     0.13 |           0 |
+| simdjson DOM       | parse  | 3.44 |  0.96 |  3.29 |     0.15 |           0 |
+| simdjson On-Demand | decode | 3.49 |  0.68 |  2.38 |     0.12 |           0 |
+
+What the counters add to the findings:
+
+- **The 48× decode gap is an instruction-budget gap, not an IPC gap.**
+  wired burns 93.7 instructions per byte where simdjson On-Demand spends
+  2.38 (≈ 39×), while IPC differs only 2.3 vs 3.5 (≈ 1.5×). The
+  replacement parser must _do less work per byte_ — fewer instructions —
+  not merely schedule the same work better.
+- **Branch discipline is visible and worth ~0.5–1 IPC.** The fast engines
+  (yyjson, sonic-rs, simdjson) all sit at ~0.1% branch misses; std.json
+  and wired sit at 0.7–0.8%, serde_json's eager parse at 1.6%. yyjson's
+  documented branch-layout work shows up exactly as advertised.
+- **asdf's ceiling is its tape walk**: the lowest IPC in the field (1.67)
+  and the highest miss rate among the fast engines (1.2%) — a
+  dependent-chained, branchy traversal — caps an otherwise tiny
+  instruction budget (4.7 ins/B).
+- **Page faults are the GC signature.** GC-backed engines (std.json,
+  wired, asdf's tape buffers) fault 100–300×/iteration in whichever
+  counting pass catches the GC heap growing (the exact rows vary run to
+  run); every native engine sits at 0 after warmup, always. An arena- or
+  reuse-oriented document representation eliminates this class of cost
+  outright.
 
 Other ops in brief (twitter): **validate** — simdjson-OD structural skip
 6 798, serde_json `IgnoredAny` 2 731, simd-json `to_tape` 2 571, sonic-rs
