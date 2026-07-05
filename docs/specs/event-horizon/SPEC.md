@@ -350,7 +350,8 @@ struct OpToken
 struct OpHandle { /* wraps an OpToken */ }
 ```
 
-Slots live in a fixed slab allocated at loop creation (`pureMalloc`; default
+Slots live in a fixed slab allocated at loop creation through the loop's
+`Allocator` parameter (`makeArray!OpSlot`; default `Mallocator`; default
 capacity `2 × cqEntries`). A slot holds the completion target (callback +
 context — tier B stores its fiber-resume trampoline in the same fields), the
 lifetime state, the **cancel provenance** (interrupt vs linked timeout,
@@ -425,7 +426,7 @@ struct LoopConfig
 /// runOnce's report: what ended the iteration.
 enum RunStatus : ubyte { dispatched, timedOut, stopped, drained }
 
-struct EventLoop(Backend = UringBackend)
+struct EventLoop(Backend = UringBackend, Allocator = Mallocator)
 if (isCompletionBackend!Backend)
 {
     @disable this(this);
@@ -551,10 +552,18 @@ struct BufResult(Buf)
 
 ### 6.3 Pools and registered buffers
 
-`BufferPool` carves same-size `Buf`s out of one contiguous slab. When the
-backend supports registered buffers the slab is registered once and every
-`Buf` carries its slot index; lowering then selects the FIXED opcodes purely
-from `Buf.origin`. On a backend without the capability the pool works
+`BufferPool!(Allocator = Mallocator)` carves same-size `Buf`s out of one
+contiguous slab drawn through a composable allocator (the
+[allocator guidelines](../../guidelines/allocators/index.md) §4 recipe:
+`stateSize` embed, monostate default, attributes inferred; slabs via
+`makeArray`/`dispose`). The slot-index structure stays bespoke — slot indices
+are the `buf_index`/`bid` currency, which a plain `FreeList` cannot provide.
+Pools destined for buffer registration draw from page-aligned parents
+(`MmapAllocator`/`AscendingPageAllocator`); `AffixAllocator` intrusive
+refcounts are reserved for the `SEND_ZC` ownership split (open-issues O6).
+When the backend supports registered buffers the slab is registered once and
+every `Buf` carries its slot index; lowering then selects the FIXED opcodes
+purely from `Buf.origin`. On a backend without the capability the pool works
 identically, unregistered (recorded in caps — same API, honest degradation).
 
 ### 6.4 Provided buffer rings
@@ -1178,6 +1187,15 @@ Re-exported from `sparkles.event_horizon` (`package.d`):
 | Schedules    | `recurs`, `spaced`, `exponential`, `jittered`, `upTo`, `retry`, `repeat`, `timeout`, `race`                                                                                                                       |
 | Topology     | `LoopGroup`, `LoopGroupConfig`, `Topology`                                                                                                                                                                        |
 | Veneer (M12) | `succeed`, `effect`, `map`, `andThen`, `zipPar`, `withRetry`, `withTimeout`, `run`                                                                                                                                |
+
+Memory-management policy (normative): allocating types follow the
+[composable-allocator guidelines](../../guidelines/allocators/index.md) —
+generic over an `Allocator` template parameter (`stateSize` embed idiom,
+`Mallocator` default, duck-typed so `RCIAllocator` works for runtime choice),
+slabs via `makeArray`/`dispose`. All library allocations are setup-phase; the
+M8 gate proves the steady-state hot path allocation-free with a
+`StatsCollector`-instrumented pool plus a `GC.allocatedInCurrentThread`
+delta assertion.
 
 Attribute policy (normative): non-template functions carry explicit
 `@safe`/`pure`/`nothrow`/`@nogc` where true; templates and anything generic

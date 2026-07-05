@@ -7,8 +7,21 @@ memory. The kernel holds the pointer from submission to the terminal
 completion, so the bytes must not move or be freed in that window; that is
 why `SmallBuffer` (whose small-buffer optimization relocates the payload on
 struct moves) is banned as the tier-A transfer currency.
+
+Memory management follows the
+[composable-allocator guidelines](../../../../../docs/guidelines/allocators/index.md):
+the pool is generic over an `Allocator` (the §4 recipe — `stateSize` embed,
+`Mallocator` default, attributes inferred) and draws its backing slab through
+`makeArray`/`dispose`. The slot-index structure stays bespoke: slot indices
+are the `buf_index`/`bid` currency for `READ_FIXED` and provided rings, which
+a plain `FreeList` cannot provide. Page-aligned parents
+(`MmapAllocator`/`AscendingPageAllocator`) suit pools destined for buffer
+registration.
 */
 module sparkles.event_horizon.buffer;
+
+import std.experimental.allocator : dispose, makeArray, stateSize;
+import std.experimental.allocator.mallocator : Mallocator;
 
 import sparkles.event_horizon.errors : IoErrorStage, IoResult, OpKind, ioErr, ioOk;
 
@@ -31,6 +44,11 @@ struct BufGroupId
 
 /// Deleter for foreign memory: called once when the handle is released.
 alias BufDeleter = void function(ubyte* ptr, size_t capacity) nothrow @nogc;
+
+/// Type-erased pool-recycle hook: pools are generic over their allocator,
+/// so the handle routes releases through a function pointer instead of a
+/// concrete pool type.
+alias BufRecycleFn = void function(void* owner, ushort slot) nothrow @nogc;
 
 /**
 Move-only owned buffer handle — the thing that "moves in and comes back"
@@ -103,8 +121,8 @@ struct Buf
                 break;
             case BufOrigin.pool:
             case BufOrigin.registered:
-                if (_owner !is null)
-                    (cast(BufferPool*) _owner).recycle(_slot);
+                if (_recycleFn !is null)
+                    _recycleFn(_owner, _slot);
                 break;
             case BufOrigin.ringLease:
                 // Ring replenishment lands with provided rings (M8).
@@ -123,6 +141,7 @@ struct Buf
         _slot = 0;
         _group = BufGroupId.init;
         _owner = null;
+        _recycleFn = null;
         _deleter = null;
     }
 
@@ -136,67 +155,86 @@ package:
     uint _len;
     uint _cap;
     BufOrigin _origin;
-    ushort _slot;         // pool slot index (pool/registered origins)
-    BufGroupId _group;    // ring-lease group (M8)
-    void* _owner;         // owning pool (release routing)
-    BufDeleter _deleter;  // foreign origin only
+    ushort _slot;             // pool slot index (pool/registered origins)
+    BufGroupId _group;        // ring-lease group (M8)
+    void* _owner;             // owning pool (release routing)
+    BufRecycleFn _recycleFn;  // type-erased recycle into the owner
+    BufDeleter _deleter;      // foreign origin only
 }
 
 /**
-Fixed pool of same-size buffers carved out of one contiguous `pureMalloc`
-slab (SPEC §6.3). When the backend supports registered buffers the slab is
-registered once and every `Buf` carries its slot index; lowering then picks
-the FIXED opcodes purely from `Buf.origin` — the user never spells "fixed".
-(Registration wiring lands in M8; until then every pool `Buf` has
+Fixed pool of same-size buffers carved out of one contiguous slab drawn from
+`Allocator` (SPEC §6.3) — the guideline-§4 generic-library shape: monostate
+allocators cost zero bytes (`stateSize` idiom), stateful ones are passed to
+`create` and embedded. When the backend supports registered buffers the slab
+is registered once and every `Buf` carries its slot index; lowering then
+picks the FIXED opcodes purely from `Buf.origin` — the user never spells
+"fixed". (Registration wiring lands in M8; until then every pool `Buf` has
 `BufOrigin.pool`.)
 */
-struct BufferPool
+struct BufferPool(Allocator = Mallocator)
 {
     @disable this(this);
 
+    // The standard state idiom: a monostate allocator costs zero bytes.
+    static if (stateSize!Allocator)
+        Allocator alloc;
+    else
+        alias alloc = Allocator.instance;
+
     /// Allocates `count × bufSize` bytes; all-or-nothing.
     static IoResult!void create(out BufferPool pool, uint count, uint bufSize)
-        @trusted nothrow @nogc
     in (count > 0 && count <= ushort.max, "pool slot count must fit a ushort")
     in (bufSize > 0)
     {
-        import core.memory : pureCalloc, pureMalloc;
+        return pool.initialize(count, bufSize);
+    }
 
-        const slabBytes = cast(size_t) count * bufSize;
-        auto slab = cast(ubyte*) pureMalloc(slabBytes);
+    /// ditto — with a stateful allocator instance.
+    static if (stateSize!Allocator)
+        static IoResult!void create(out BufferPool pool, Allocator alloc,
+            uint count, uint bufSize)
+        in (count > 0 && count <= ushort.max, "pool slot count must fit a ushort")
+        in (bufSize > 0)
+        {
+            import core.lifetime : move;
+
+            pool.alloc = move(alloc);
+            return pool.initialize(count, bufSize);
+        }
+
+    private IoResult!void initialize(uint count, uint bufSize) @trusted
+    {
+        auto slab = alloc.makeArray!ubyte(cast(size_t) count * bufSize);
         if (slab is null)
             return ioErr!void(12 /* ENOMEM */, OpKind.none, IoErrorStage.setup,
                 "buffer pool slab allocation failed");
-        auto free = cast(ushort*) pureMalloc(count * ushort.sizeof);
+        auto free = alloc.makeArray!ushort(count);
         if (free is null)
         {
-            import core.memory : pureFree;
-
-            pureFree(slab);
+            cast(void) alloc.dispose(slab);
             return ioErr!void(12 /* ENOMEM */, OpKind.none, IoErrorStage.setup,
                 "buffer pool free-list allocation failed");
         }
 
-        pool._slab = slab;
-        pool._bufSize = bufSize;
-        pool._count = count;
-        pool._freeList = free;
-        pool._freeCount = count;
+        _slab = slab.ptr;
+        _bufSize = bufSize;
+        _count = count;
+        _freeList = free.ptr;
+        _freeCount = count;
         foreach (i; 0 .. count)
             free[i] = cast(ushort) (count - 1 - i); // pop order: 0, 1, 2, …
         return ioOk();
     }
 
     /// Frees the slab. All buffers must have been released back.
-    void destroy() @trusted nothrow @nogc
+    void destroy() @trusted
     in (_slab is null || _freeCount == _count, "buffers still checked out")
     {
-        import core.memory : pureFree;
-
         if (_slab !is null)
         {
-            pureFree(_slab);
-            pureFree(_freeList);
+            cast(void) alloc.dispose(_slab[0 .. cast(size_t) _count * _bufSize]);
+            cast(void) alloc.dispose(_freeList[0 .. _count]);
         }
         // Field-by-field for the same reason as Buf.release.
         _slab = null;
@@ -227,7 +265,14 @@ struct BufferPool
         b._origin = BufOrigin.pool;
         b._slot = slot;
         b._owner = &this;
+        b._recycleFn = &recycleShim;
         return ioOk(move(b));
+    }
+
+    /// The type-erased recycle hook `Buf.release` routes through.
+    private static void recycleShim(void* owner, ushort slot) @trusted nothrow @nogc
+    {
+        (cast(BufferPool*) owner).recycle(slot);
     }
 
     /// Buffers currently available.
@@ -263,8 +308,8 @@ static assert(isOwnedIoBuf!Buf);
 @safe nothrow @nogc
 unittest
 {
-    BufferPool pool;
-    auto created = BufferPool.create(pool, 4, 512);
+    BufferPool!() pool;
+    auto created = BufferPool!().create(pool, 4, 512);
     assert(!created.hasError);
     assert(pool.available == 4);
 
@@ -289,8 +334,8 @@ unittest
 {
     import core.lifetime : move;
 
-    BufferPool pool;
-    assert(!BufferPool.create(pool, 1, 64).hasError);
+    BufferPool!() pool;
+    assert(!BufferPool!().create(pool, 1, 64).hasError);
 
     auto first = pool.acquire();
     assert(first.hasValue);
@@ -312,8 +357,8 @@ unittest
 {
     import core.lifetime : move;
 
-    BufferPool pool;
-    assert(!BufferPool.create(pool, 2, 64).hasError);
+    BufferPool!() pool;
+    assert(!BufferPool!().create(pool, 2, 64).hasError);
 
     auto r = pool.acquire();
     auto a = move(r.value);

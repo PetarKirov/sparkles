@@ -282,3 +282,18 @@ recognized gap.
 
 **Leaning:** (B) — the consumer's needs should shape it; the cancel-function
 dispatch in M5 must simply not preclude additional park types.
+
+## O21 — How far the `Allocator` parameters spread
+
+**Where:** SPEC §4.2, §6.3, §13 (memory-management policy).
+
+`BufferPool`, `OpSlab`, and `EventLoop` are generic over their allocator
+(M8). Unplumbed: `SchedOptions` (the fiber slab stays GC by design, but a
+future arena+`addRange` knob would enter here) and `LoopGroupConfig` (M9 —
+per-worker allocators for thread-per-core NUMA locality are the interesting
+case).
+
+**Options:** (A) stop at the three current types until M9's `LoopGroupConfig`
+forces the question; (B) plumb `Sched`/`LoopGroup` now.
+
+**Leaning:** (A) — M9 decides with real per-worker requirements on the table.
