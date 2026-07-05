@@ -11,5 +11,14 @@ import std.meta : AliasSeq;
 
 public import sparkles.wired_bench.engines.std_json : StdJsonEngine;
 
+version (BenchMirIon)
+{
+    public import sparkles.wired_bench.engines.mir_ion : MirIonEngine;
+
+    private alias MirIonEngines = AliasSeq!MirIonEngine;
+}
+else
+    private alias MirIonEngines = AliasSeq!();
+
 /// Every engine compiled into this build, baseline first.
-alias AllEngines = AliasSeq!(StdJsonEngine);
+alias AllEngines = AliasSeq!(StdJsonEngine, MirIonEngines);

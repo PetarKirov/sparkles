@@ -15,6 +15,12 @@ dependency "sparkles:base"     path="../../../.."
 dependency "sparkles:core-cli" path="../../../.."
 dependency "sparkles:wired"    path="../../../.."
 
+// D engines (pure-D dub packages; exact versions pinned in
+// dub.selections.json). Each engine's adapter sits behind the matching
+// `versions` gate so a frontend incompatibility is one line away from off.
+dependency "mir-ion" version="~>2.3"
+versions "BenchMirIon"
+
 // The canonical benchmarking build: release codegen tuned to the host CPU.
 // Foreign engines are nix-built with ISA presets (see nix/packages/); the
 // D side has no sandbox purity constraint, so it gets true native codegen.
