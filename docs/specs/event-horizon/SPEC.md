@@ -732,10 +732,17 @@ struct JoinHandle(T, E = IoError)
 }
 ```
 
-Spawn bodies are `scope` delegates stored beyond the call — the one place the
-library deliberately out-argues dip1000, confined to a single documented
-`@trusted` point: the join guarantees the child terminates before the
-captured frame dies.
+Spawn bodies are **ordinary delegates, not `scope`**: a child runs after the
+spawning call returns, so a capturing closure's frame must be heap-allocated
+(the compiler does this automatically for non-`scope` delegate parameters).
+The tempting `scope`-plus-`@trusted` storage trick is unsound — the captured
+frame is typically the scope _body_ lambda's, which dies when the body
+returns while children still run during the join (verified with
+AddressSanitizer during M5). Allocation-free spawning uses a non-capturing
+delegate: a member delegate over caller-frame state (`JoinHandle.runShell`
+is the blessed pattern) or a function pointer. The library's documented
+dip1000 escapes are the address-pinned intrusive structures (`CancelContext`
+trees, handles), whose lifetime the join guarantees.
 
 ### 8.2 The cancellation tree
 
@@ -1175,8 +1182,8 @@ Re-exported from `sparkles.event_horizon` (`package.d`):
 Attribute policy (normative): non-template functions carry explicit
 `@safe`/`pure`/`nothrow`/`@nogc` where true; templates and anything generic
 over a backend, buffer, capability, or callable let attributes infer;
-`@trusted` appears only on minimal syscall-edge lambdas and the one
-documented spawn-capture point (§8.1). Ref-returning accessors use bare
+`@trusted` appears only on minimal syscall-edge lambdas and the documented
+address-pinning seams (§8.1). Ref-returning accessors use bare
 `return` (ReturnRef) — adjacent `return scope` means ReturnScope and is
 reserved for functions returning pointer-carrying values (`Buf.opSlice`);
 template inference masks the difference, non-templates do not. Unittests
