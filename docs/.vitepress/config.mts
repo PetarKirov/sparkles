@@ -113,6 +113,10 @@ export default withMermaid(
               link: '/guidelines/d-language-features/',
             },
             {
+              text: 'Composable Memory Allocators',
+              link: '/guidelines/allocators/',
+            },
+            {
               text: 'Code Style',
               collapsed: true,
               items: [
