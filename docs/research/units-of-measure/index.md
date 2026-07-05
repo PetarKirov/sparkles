@@ -295,7 +295,8 @@ current-as-of-review (July 2026).</sub>
 - **"I'm designing the Sparkles units library."** [concepts][concepts] →
   [kennedy-types][kennedy] + [type-system-mechanisms][mech] → [d-quantities][dq] →
   [comparison § Part IV][comparison-sparkles] (the Sparkles delta and open decisions)
-  → the runnable [prototypes](#runnable-prototypes).
+  → the runnable [prototypes](#runnable-prototypes) and their
+  [side-by-side evaluation][proto-eval] (what to take from each).
 - **"I want the mathematics."** [concepts][concepts] → [whitney][whitney] →
   [tensor-of-lines][tensor] → [torsor-representation][torsor] →
   [hart-multidimensional][hart] → [comparison § Part II][comparison-graded] (the
@@ -319,6 +320,8 @@ current-as-of-review (July 2026).</sub>
   primitive / exponent-ring / semantic-vs-syntactic splits.
 - **[Comparison][comparison]** — the formalizations reconciled, the graded-algebra
   hypothesis tested, the at-a-glance matrix, the consensus, and the Sparkles delta.
+- **[Prototype evaluation][proto-eval]** — the thirteen runnable D probes compared
+  across the design axes, with what a Sparkles units library should take from each.
 
 ---
 
@@ -383,6 +386,7 @@ are:
 <!-- Synthesis -->
 
 [comparison]: ./comparison.md
+[proto-eval]: ./prototypes.md
 [comparison-matrix]: ./comparison.md#at-a-glance-matrix
 [comparison-exp]: ./comparison.md#2-the-exponent-domain-in-practice
 [comparison-kinds]: ./comparison.md#4-kinds
