@@ -1,77 +1,59 @@
 # Composable Memory Allocators (`std.experimental.allocator`)
 
-This is a technical survey of Phobos' [`std.experimental.allocator`][alloc-docs]
-— D's composable, capability-driven memory-allocation framework — written as a
-guideline for allocation-conscious code in this repository. The package is the
-canonical large-scale application of the
-[Design by Introspection](../design-by-introspection-01-guidelines.md) style
-sparkles follows: every allocator advertises its capabilities **by which methods
-it defines**, and combinators detect those capabilities statically and adapt.
-Studying it is studying DbI at production scale.
+Phobos' [`std.experimental.allocator`][alloc-docs] is D's composable,
+capability-driven memory-allocation framework — and the canonical large-scale
+application of the [Design by Introspection](../design-by-introspection-01-guidelines.md)
+style sparkles follows: every allocator advertises its capabilities **by which
+methods it defines**, and everything above it detects those capabilities
+statically and adapts. This guideline is organized by use case first — pick
+your entry point in [§1](#_1-which-api-layer-do-i-need) — followed by a full
+technical survey of the package. Every behaviour shown is demonstrated by a
+runnable example that CI compiles, runs, and diffs against the printed output.
 
-Everything below is grounded in the Phobos sources (cited as
-`std/experimental/allocator/<file>:<line>`, pinned at phobos commit `6be6c3809`,
-July 2026) and in runnable snippets verified by `ci --verify` against the repo
+<details>
+<summary><strong>Grounding, versions & stability caveats</strong></summary>
+
+All quotes and claims in this document are cited to the Phobos sources as
+`std/experimental/allocator/<file>:<line>`, pinned at phobos commit
+`6be6c3809` (July 2026). The runnable snippets are verified by
+`ci --verify --files docs/guidelines/allocators/index.md` against the repo
 toolchain (LDC 1.41, DMD 2.111 frontend).
 
-> [!IMPORTANT]
-> The package has lived in `std.experimental` since 2015 (DMD 2.069) and is
-> Phobos' most battle-tested "experimental" module — but the _experimental_
-> label is real: parts of the documentation lag the code (the docs still say
-> `theAllocator` is an [`IAllocator`][IAllocator]; it is actually an
-> [`RCIAllocator`][RCIAllocator]), the mid-level `typed` module has a latent
-> compile error for `shared` types ([§16](#_16-typedallocator-layer-2)), and the
-> API may still change. The low-level building blocks and the `make`/`dispose`
-> family are the stable, widely-used core.
+The package has lived in `std.experimental` since 2015 (DMD 2.069) and is
+Phobos' most battle-tested "experimental" module — but the _experimental_
+label is real:
+
+- Parts of the documentation lag the code: the docs still say `theAllocator`
+  is an [`IAllocator`][IAllocator]; it is actually an
+  [`RCIAllocator`][RCIAllocator].
+- The mid-level `typed` module has two latent compile errors
+  ([§20](#_20-typedallocator-layer-2)).
+- The API may still change before (if ever) leaving `std.experimental`.
+
+The low-level building blocks and the `make`/`dispose` family are the stable,
+widely-used core.
+
+</details>
 
 ---
 
-## Background: four layers and two design commitments
+## Part I — Guidelines by use case
 
-The package DDoc lays out a four-layer architecture
-(`package.d:73-121`):
+## 1. Which API layer do I need?
 
-1. **High-level, dynamically-typed** — [`theAllocator`][theAllocator] /
-   [`processAllocator`][processAllocator] globals, the [`IAllocator`][IAllocator]
-   interface, and type-aware helpers [`make`][make], [`makeArray`][makeArray],
-   [`dispose`][dispose]. "This layer is all needed for most casual uses."
-2. **Mid-level, statically-typed routing** — [`TypedAllocator`][TypedAllocator]
-   dispatches by the _type_ being allocated ([§16](#_16-typedallocator-layer-2)).
-3. **Low-level building blocks** — "Lego-like pieces that can be used to
-   assemble application-specific allocators. The real allocation smarts are
-   occurring at this level" (`package.d:102-114`).
-4. **Core heap sources** — [`GCAllocator`][GCAllocator],
-   [`Mallocator`][Mallocator], [`MmapAllocator`][MmapAllocator]. "Most custom
-   allocators would ultimately obtain memory from one of these core allocators."
+| You are writing …                                                            | Reach for                                                              | Start at                                                                                                                    |
+| :--------------------------------------------------------------------------- | :--------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------- |
+| application code that needs objects and arrays off a chosen allocator        | [`make`][make] / [`dispose`][dispose] / [`theAllocator`][theAllocator] | [§2](#_2-application-authors-make-dispose-and-friends), [§3](#_3-application-authors-theallocator-and-runtime-polymorphism) |
+| a library that is allocation-conscious but generic over the allocator        | an `Allocator` template parameter + capability probing                 | [§4](#_4-generic-libraries-accept-any-allocator)                                                                            |
+| performance-critical infrastructure — arenas, zero-copy network buffer pools | assembled building blocks                                              | [§5](#_5-high-performance-libraries-arenas-and-buffer-pools), [§18](#_18-case-study-a-jemalloc-style-composite)             |
+| a manager for a foreign address space (GPU heaps, registered buffers)        | building blocks as host-side bookkeepers                               | [§6](#_6-showcase-sub-allocating-gpu-device-memory)                                                                         |
+| your own allocator                                                           | the two-member static protocol                                         | [§8](#_8-the-static-allocator-protocol), [§21](#_21-writing-your-own-allocator)                                             |
 
-Two design commitments shape every API in the package
-(`building_blocks/package.d:5-32`):
-
-**Untyped `void[]` with client-tracked sizes.** Allocators "deal exclusively in
-`void[]` and have no notion of what type the memory allocated would be destined
-for". Unlike `malloc`, the _client_ passes the allocated size back on
-deallocation — "Storing the size in the allocator has significant negative
-performance implications, and is virtually always redundant because client code
-needs knowledge of the allocated size in order to avoid buffer overruns." (See
-the equivalent C++ [sized-deallocation proposal N3536][n3536].) This is why the
-currency is `void[]` — a pointer _and_ a length — "as opposed to `void*`".
-
-**Capability by presence.** Only two members are required of an allocator:
-`alignment` and `allocate`. Everything else is optional, and — crucially —
-
-> "Allocators should NOT implement unsupported methods to always fail. For
-> example, an allocator that lacks the capability to implement `alignedAllocate`
-> should not define it at all (as opposed to defining it to always return `null`
-> or throw an exception). The missing implementation statically informs other
-> components about the allocator's capabilities and allows them to make design
-> decisions accordingly." — `building_blocks/package.d:23-32`
-
-Combinators probe with `__traits(hasMember, Allocator, "expand")` and compose
-only what exists. This is precisely the
-[optional-primitives pattern](../design-by-introspection-01-guidelines.md) the
-DbI guidelines describe — an absent method is _information_, not a defect.
-
-Finally, the package's performance doctrine (`package.d:220-225`):
+Two doctrines from the package documentation frame everything below. First,
+adoption is **opt-in and incremental**: the framework is not wired into `new`
+or array literals (`package.d:125-128`), and the default allocator is the GC —
+using `make`/`dispose` changes nothing until you deliberately install or pass
+a different allocator. Second, the performance rule (`package.d:220-225`):
 
 > "statically-typed assembled allocators are almost always faster than
 > allocators that go through `IAllocator`. An important rule of thumb is:
@@ -79,270 +61,13 @@ Finally, the package's performance doctrine (`package.d:220-225`):
 
 ---
 
-## 1. The static allocator protocol
+## 2. Application authors: `make`, `dispose` and friends
 
-The full protocol is specified in the DDoc of
-[`std.experimental.allocator.building_blocks`][bb-docs]
-(`building_blocks/package.d:34-136`). Condensed, with postconditions:
-
-| Primitive                                             | Required | Semantics (postcondition)                                                                                                                    |
-| :---------------------------------------------------- | :------- | :------------------------------------------------------------------------------------------------------------------------------------------- |
-| `uint alignment`                                      | **yes**  | Minimum alignment of all returned blocks (`> 0`). May be a statically-known `enum`.                                                          |
-| `void[] allocate(size_t s)`                           | **yes**  | Returns `s` bytes or `null`. For `s == 0`, "may return any empty slice (including `null`)". (`result is null \|\| result.length == s`)       |
-| `size_t goodAllocSize(size_t n)`                      | no       | Actual bytes a request for `n` would consume (internal fragmentation). Default: `n` rounded up to a multiple of `alignment`. (`result >= n`) |
-| `void[] alignedAllocate(size_t s, uint a)`            | no       | Like `allocate`, aligned to at least `a` (a power of 2).                                                                                     |
-| `void[] allocateAll()`                                | no       | Offers _all_ remaining memory; usually defined by fixed-size allocators; best-effort if memory is already managed.                           |
-| `bool expand(ref void[] b, size_t delta)`             | no       | Grow `b` in place. `delta == 0` always succeeds; `expand(null, delta > 0)` is `false`. On failure `b` is unchanged.                          |
-| `bool reallocate(ref void[] b, size_t s)`             | no       | Resize, possibly moving. Default free-function implementation composes `expand` + `allocate` + `deallocate`.                                 |
-| `bool alignedReallocate(ref void[] b, size_t, uint)`  | no       | `reallocate` preserving an `alignedAllocate` alignment.                                                                                      |
-| `Ternary owns(void[] b)`                              | no       | Define **"only if it can decide on ownership precisely and fast"**. `owns(null)` is `Ternary.no`.                                            |
-| `Ternary resolveInternalPointer(void* p, ref void[])` | no       | Maps an interior pointer to its enclosing block.                                                                                             |
-| `bool deallocate(void[] b)`                           | no       | `deallocate(null)` does nothing and returns `true`. An allocator that cannot deallocate "should not define this primitive at all".           |
-| `bool deallocateAll()`                                | no       | Frees everything (postcondition: `empty`). "If an allocator implements this method, it must specify whether its destructor calls it, too."   |
-| `Ternary empty()`                                     | no       | `yes` iff no memory is currently allocated.                                                                                                  |
-| `static Allocator instance`                           | no       | For _monostate_ allocators (all state global — `malloc`, the GC). "An allocator should not hold state and define `instance` simultaneously." |
-
-Because capability is presence, the capability matrix of a set of allocators is
-itself computable with `__traits(hasMember)` — the same probe every combinator
-in the package uses internally:
-
-```d
-#!/usr/bin/env dub
-/+ dub.sdl:
-    name "allocator_capabilities"
-+/
-import std.stdio : writef, writefln, writeln;
-import std.meta : AliasSeq;
-import std.experimental.allocator.gc_allocator : GCAllocator;
-import std.experimental.allocator.mallocator : Mallocator, AlignedMallocator;
-import std.experimental.allocator.mmap_allocator : MmapAllocator;
-import std.experimental.allocator.building_blocks.null_allocator : NullAllocator;
-
-alias As = AliasSeq!(GCAllocator, Mallocator, AlignedMallocator, MmapAllocator, NullAllocator);
-static immutable names = ["GC", "Malloc", "AlignedM", "Mmap", "Null"];
-static immutable prims = [
-    "alignedAllocate", "allocateAll", "expand", "reallocate", "alignedReallocate",
-    "owns", "resolveInternalPointer", "deallocate", "deallocateAll", "empty",
-];
-
-void main()
-{
-    writef("%-24s", "primitive");
-    foreach (n; names)
-        writef("%-10s", n);
-    writeln;
-    static foreach (prim; prims)
-    {{
-        writef("%-24s", prim);
-        static foreach (A; As)
-            writef("%-10s", __traits(hasMember, A, prim) ? "yes" : "-");
-        writeln;
-    }}
-}
-```
-
-```ansi
-primitive               GC        Malloc    AlignedM  Mmap      Null
-alignedAllocate         -         -         yes       -         yes
-allocateAll             -         -         -         -         yes
-expand                  yes       -         -         -         yes
-reallocate              yes       yes       yes       -         yes
-alignedReallocate       -         -         yes       -         yes
-owns                    -         -         -         -         yes
-resolveInternalPointer  yes       -         -         -         yes
-deallocate              yes       yes       yes       yes       yes
-deallocateAll           -         -         -         -         yes
-empty                   -         -         -         -         yes
-```
-
-The matrix _is_ the documentation: `Mallocator` cannot tell you what it owns
-(the C heap keeps no such books — `building_blocks/package.d:100-105`), the GC
-can resolve interior pointers (it must, to scan), and
-[`NullAllocator`][NullAllocator] implements _everything_ because every operation
-is trivially a no-op.
-
----
-
-## 2. `Ternary`: three-state answers
-
-Queries that an allocator may answer imprecisely return
-[`std.typecons.Ternary`][Ternary] — `yes`, `no`, or `unknown` — rather than
-`bool`:
-
-- `owns` and `empty` return `yes`/`no` from static allocators that define them.
-- At the **runtime interface boundary** ([§6](#_6-theallocator-processallocator-runtime-polymorphism)),
-  `unknown` gains a second meaning: "the wrapped allocator does not implement
-  this primitive at all" (`package.d:309-311`). A static allocator never
-  returns `unknown` for `owns`; an [`RCIAllocator`][RCIAllocator] wrapping
-  `Mallocator` does.
-- Convention: `owns(null)` is `Ternary.no` — "no allocator owns the `null`
-  slice" (`building_blocks/package.d:104-105`).
-
-> [!WARNING]
-> Don't `writeln` a `Ternary` directly — it prints its internal encoding
-> (`Ternary(2)` for `yes`). Compare against `Ternary.yes` / `Ternary.no`
-> explicitly, which also reads better.
-
----
-
-## 3. A minimal allocator from scratch
-
-The whole protocol contract for a _new_ allocator is two members. Everything
-above the protocol — [`make`][make], [`makeArray`][makeArray], the default
-[`goodAllocSize`][goodAllocSize] — works with any type that satisfies it, by
-duck typing (`package.d:198-225`):
-
-```d
-#!/usr/bin/env dub
-/+ dub.sdl:
-    name "allocator_minimal"
-+/
-import std.stdio : writeln;
-import std.experimental.allocator : make, makeArray, platformAlignment;
-
-/// A bump allocator over an embedded buffer.
-struct StackArena(size_t capacity)
-{
-    enum uint alignment = platformAlignment;
-
-    private align(platformAlignment) ubyte[capacity] _store;
-    private size_t _used;
-
-    void[] allocate(size_t n) @safe pure nothrow @nogc return scope
-    {
-        const rounded = roundUp(n);
-        if (n == 0 || rounded > capacity - _used)
-            return null;
-        auto b = _store[_used .. _used + n];
-        _used += rounded;
-        return b;
-    }
-
-    /// LIFO deallocation, Region-style: only the last allocation can be undone.
-    bool deallocate(void[] b) @trusted pure nothrow @nogc
-    {
-        if (b is null)
-            return true;
-        if (b.ptr + roundUp(b.length) !is _store.ptr + _used)
-            return false;
-        _used -= roundUp(b.length);
-        return true;
-    }
-
-    private static size_t roundUp(size_t n) @safe pure nothrow @nogc
-        => (n + alignment - 1) & ~(size_t(alignment) - 1);
-}
-
-struct Point { int x, y; }
-
-void main()
-{
-    StackArena!1024 arena;
-
-    auto p = arena.make!Point(3, 4);
-    auto xs = arena.makeArray!int(4, 9);
-    writeln(*p);
-    writeln(xs);
-
-    // Exhaustion: allocate returns null, and make maps that to a null pointer.
-    auto q = arena.make!(ubyte[2048]);
-    writeln("overcommitted make returns null: ", q is null);
-}
-```
-
-```ansi
-Point(3, 4)
-[9, 9, 9, 9]
-overcommitted make returns null: true
-```
-
-> [!NOTE]
-> Why does the example define `deallocate` when the protocol requires only two
-> members? Because the _high-level_ API is stricter than the protocol:
-> `make`'s constructor-failure cleanup instantiates `alloc.deallocate(m)`
-> unconditionally (`package.d:1199-1212`), so an allocator without
-> `deallocate` fails to compile under `make` — every allocator that ships with
-> Phobos defines it, even `Region` (for which it only undoes the last
-> allocation). A truly two-member allocator works with `allocate`, the free
-> functions, and manual `emplace`, but not with `make`.
-
-Notes for allocator authors:
-
-- **Reuse the free-function defaults.** The module provides free functions
-  [`goodAllocSize`][goodAllocSize], `reallocate` and `alignedReallocate`
-  (`common.d:142-457`) implemented in terms of the primitives you do define.
-  They deliberately _never_ call a member of the same name, so your own member
-  `reallocate` can call the free function as its fallback without recursion
-  (`common.d:400-403`).
-- **`stateSize` drives composition** (`common.d:34-49`): an empty non-nested
-  struct has `stateSize == 0` and is treated as _stateless_; combinators then
-  use `A.instance` instead of storing a member. The idiom throughout the
-  package is `static if (stateSize!A) A parent; else alias parent = A.instance;`.
-- Phobos has an executable conformance spec, `testAllocator`
-  (`common.d:537-671`) — it is `package`-visibility so you cannot call it from
-  user code, but it is worth reading: it hard-asserts, among much else, that
-  `allocate(0) is null` and that `expand(b, 0)` always succeeds.
-
----
-
-## 4. Heap sources
-
-The four "layer 4" allocators plus the composition terminator:
-
-| Allocator                                | `alignment`                              | Implements (beyond `allocate`)                                                         | Notes                                                                                                                                                                                                                                                |
-| :--------------------------------------- | :--------------------------------------- | :------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`GCAllocator`][GCAllocator]             | [`platformAlignment`][platformAlignment] | `expand`, `reallocate`, `resolveInternalPointer`, `deallocate`, custom `goodAllocSize` | Default backing of `theAllocator`. "`deallocate` and `reallocate` are `@system` because they may move memory around, leaving dangling pointers" (`gc_allocator.d:25-29`).                                                                            |
-| [`Mallocator`][Mallocator]               | `platformAlignment`                      | `reallocate`, `deallocate`                                                             | "Somewhat paradoxically, `malloc` is `@safe` but that's only useful to safe programs that can afford to leak memory" (`mallocator.d:23-28`).                                                                                                         |
-| [`AlignedMallocator`][AlignedMallocator] | `platformAlignment` (default)            | `alignedAllocate`, `alignedReallocate`, `reallocate`, `deallocate`                     | `posix_memalign` / `_aligned_malloc`. On Posix `alignedReallocate` is _emulated_ by allocate-copy-free (`mallocator.d:228-234`) — and plain `reallocate` loses a custom alignment (`mallocator.d:217-221`).                                          |
-| [`MmapAllocator`][MmapAllocator]         | `4096` (hardcoded)                       | `deallocate`                                                                           | Raw `mmap`/`VirtualAlloc`; "usually intended for allocating large chunks to be managed by fine-granular allocators" (`mmap_allocator.d:11-14`).                                                                                                      |
-| [`NullAllocator`][NullAllocator]         | `64 * 1024`                              | _every_ primitive, as a no-op/failure                                                  | The composition terminator. Its huge advertised alignment exists "because `NullAllocator` never actually needs to honor this alignment and because composite allocators using it shouldn't be unnecessarily constrained" (`null_allocator.d:17-23`). |
-
-All five are monostate — `static shared instance` — and their methods are
-`shared`, so any thread may use them. `GCAllocator` defines a _custom_
-`goodAllocSize` mirroring the GC's real size classes, a step function rather
-than mere alignment rounding:
-
-```d
-#!/usr/bin/env dub
-/+ dub.sdl:
-    name "allocator_heap_sources"
-+/
-import std.stdio : writefln;
-import std.experimental.allocator.gc_allocator : GCAllocator;
-import std.experimental.allocator.mallocator : Mallocator;
-import std.experimental.allocator : goodAllocSize;
-
-void main()
-{
-    // GCAllocator: pow2 size classes up to a page, then page multiples
-    // (gc_allocator.d:96-112). Mallocator has no member goodAllocSize, so the
-    // free-function default kicks in: round up to alignment.
-    foreach (n; [size_t(1), 16, 17, 100, 4096, 4097, 16_385])
-        writefln("n=%6s  GC->%6s  malloc-default->%6s",
-            n, GCAllocator.instance.goodAllocSize(n),
-            goodAllocSize(Mallocator.instance, n));
-}
-```
-
-```ansi
-n=     1  GC->    16  malloc-default->    16
-n=    16  GC->    16  malloc-default->    16
-n=    17  GC->    32  malloc-default->    32
-n=   100  GC->   128  malloc-default->   112
-n=  4096  GC->  4096  malloc-default->  4096
-n=  4097  GC->  8192  malloc-default->  4112
-n= 16385  GC-> 20480  malloc-default-> 16400
-```
-
-`goodAllocSize` is what lets size-aware containers (like `SmallBuffer`'s
-growth policy) claim the slack the allocator would waste anyway.
-
----
-
-## 5. The high-level API: `make`, `makeArray`, `dispose` & friends
-
-These free functions accept _any_ allocator — static building block or
-`RCIAllocator` — and bridge from untyped `void[]` to typed objects.
+These free functions accept _any_ allocator — a static building block, a
+monostate `instance`, or an `RCIAllocator` handle — and bridge from untyped
+`void[]` to typed objects. For most application code, they plus
+[`theAllocator`][theAllocator] ([§3](#_3-application-authors-theallocator-and-runtime-polymorphism))
+are the whole API.
 
 ### `make` — allocate + construct
 
@@ -366,7 +91,8 @@ class/interface reference, or array. The class overload finds the block for the
 **dynamic** type via `typeid(obj).initializer.length` (`package.d:2440`) — so
 disposing a derived object through a base reference runs the full destructor
 chain _and_ frees the correctly-sized block. The example proves both, using a
-byte counter as witness:
+byte-counting allocator wrapper ([`StatsCollector`][StatsCollector],
+[§17](#_17-metadata-and-instrumentation)) as witness:
 
 ```d
 #!/usr/bin/env dub
@@ -483,7 +209,7 @@ grid: [[0, 0, 0], [0, 0, 42]]
 
 ---
 
-## 6. `theAllocator`, `processAllocator` & runtime polymorphism
+## 3. Application authors: `theAllocator` and runtime polymorphism
 
 The dynamic layer erases a static allocator behind the [`IAllocator`][IAllocator]
 (or `ISharedAllocator`) interface, managed by the reference-counted handle
@@ -576,7 +302,575 @@ only the wrapper remains: true
 
 ---
 
-## 7. Regions: bump-the-pointer allocation
+## 4. Generic libraries: accept any allocator
+
+An allocation-conscious library should not choose an allocator — it should be
+_generic_ over one, the way every combinator in the package is. The recipe:
+
+- **Take the allocator as a template parameter** and rely on duck typing —
+  anything with `alignment` + `allocate` qualifies, from `Mallocator.instance`
+  to a seven-deep composite to an `RCIAllocator` handle chosen at runtime.
+- **Embed state with the `stateSize` idiom** (`common.d:34-49`). A monostate
+  allocator (`stateSize!A == 0`) is embedded as `alias alloc = A.instance` and
+  costs **zero bytes**; a stateful one becomes a member. This is the idiom
+  every Phobos building block uses internally:
+
+  ```d
+  static if (stateSize!Allocator) Allocator alloc;
+  else alias alloc = Allocator.instance;
+  ```
+
+- **Probe optional capabilities with `__traits(hasMember, …)`** and adapt —
+  use `expand` when the allocator has it, fall back to allocate-copy-deallocate
+  when it doesn't. An absent method is _information_, not an error
+  ([§8](#_8-the-static-allocator-protocol)).
+- **Ask for `goodAllocSize`** before growing: the allocator was going to round
+  your request up anyway; claiming the slack turns the next append into a
+  no-op ([§10](#_10-heap-sources) shows the GC's step function).
+- **Let attributes infer.** Exactly as the
+  [sparkles attribute guidelines](../code-style.md) prescribe for templates:
+  your type is as `@safe pure nothrow @nogc` as the allocator it is
+  instantiated with — forcing attributes would reject legitimate allocators.
+- **Store the allocator you were constructed with** and use it for the type's
+  whole lifetime — never re-read `theAllocator` mid-life
+  ([§3](#_3-application-authors-theallocator-and-runtime-polymorphism)).
+
+All six rules in ~40 lines — a growable byte sink that is state-free over
+monostate allocators, and grows _in place_ whenever the allocator can:
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "allocator_generic_library"
++/
+import std.stdio : writeln;
+import std.experimental.allocator : goodAllocSize, stateSize;
+import std.experimental.allocator.building_blocks.region : Region;
+import std.experimental.allocator.mallocator : Mallocator;
+
+/// A minimal growable byte sink, generic over its allocator — the shape an
+/// allocation-conscious library type takes.
+struct ByteSink(Allocator)
+{
+    // The standard state idiom: a stateless allocator costs zero bytes.
+    static if (stateSize!Allocator)
+        Allocator alloc;
+    else
+        alias alloc = Allocator.instance;
+
+    private void[] store;
+    private size_t used;
+
+    // Attributes are deliberately inferred: the sink is exactly as @safe /
+    // nothrow / @nogc as the allocator it is instantiated with.
+    void put(scope const(ubyte)[] bytes)
+    {
+        reserve(used + bytes.length);
+        () @trusted { (cast(ubyte[]) store)[used .. used + bytes.length] = bytes[]; }();
+        used += bytes.length;
+    }
+
+    private void reserve(size_t need)
+    {
+        if (store.length >= need)
+            return;
+        // Claim the slack the allocator would round up to anyway ...
+        const want = goodAllocSize(alloc,
+            need > 2 * store.length ? need : 2 * store.length);
+        // ... and grow in place when the allocator is *capable* of it:
+        static if (__traits(hasMember, Allocator, "expand"))
+            if (store.ptr !is null && alloc.expand(store, want - store.length))
+                return;
+        auto fresh = alloc.allocate(want);
+        if (fresh is null)
+            assert(0, "out of memory");
+        () @trusted { (cast(ubyte[]) fresh)[0 .. used] = cast(ubyte[]) store[0 .. used]; }();
+        static if (__traits(hasMember, Allocator, "deallocate"))
+            alloc.deallocate(store);
+        store = fresh;
+    }
+}
+
+void main()
+{
+    // Monostate allocator: the sink carries no allocator state at all.
+    ByteSink!Mallocator m;
+    writeln("state-free over a monostate allocator: ",
+        ByteSink!Mallocator.sizeof == (void[]).sizeof + size_t.sizeof);
+
+    m.put(cast(const ubyte[]) "Hello, ");
+    auto before = m.store.ptr;
+    foreach (i; 0 .. 10)
+        m.put(cast(const ubyte[]) "allocators! ");
+    writeln("Mallocator sink moved while growing:  ", m.store.ptr !is before);
+    writeln("content survives the moves: ", cast(const char[]) m.store[0 .. 18]);
+
+    // Stateful allocator: the sink owns a Region member; its store is always
+    // the region's most recent allocation, so expand always works in place.
+    auto r = ByteSink!(Region!Mallocator)(Region!Mallocator(1024 * 1024));
+    r.put(cast(const ubyte[]) "Hello, ");
+    before = r.store.ptr;
+    foreach (i; 0 .. 10)
+        r.put(cast(const ubyte[]) "allocators! ");
+    writeln("Region sink grew in place via expand: ", r.store.ptr is before);
+}
+```
+
+```ansi
+state-free over a monostate allocator: true
+Mallocator sink moved while growing:  true
+content survives the moves: Hello, allocators!
+Region sink grew in place via expand: true
+```
+
+The same `ByteSink` instantiated over `Mallocator` is `@nogc`-capable and
+moves when it grows; over a `Region` it never moves (a region can always
+extend its most recent allocation, [§11](#_11-regions-bump-the-pointer-allocation));
+over `GCAllocator` it would ride the GC's `expand`. The library wrote none of
+that logic — it fell out of capability probing.
+
+---
+
+## 5. High-performance libraries: arenas and buffer pools
+
+When a library owns a hot allocation pattern, it should assemble a specific
+allocator for it instead of hitting a general-purpose heap. Two patterns cover
+most of the ground: **arenas** (allocate fast, free everything at once) and
+**pools** (recycle same-shaped buffers forever).
+
+### Arenas: batch lifetime
+
+For per-request / per-frame / per-parse lifetimes, bump allocation is
+unbeatable — one pointer increment per allocation, one reset per batch:
+
+- [`Region!Mallocator(size)`][Region] — one contiguous chunk, freed by its
+  destructor; `deallocateAll` resets it for the next batch
+  ([§11](#_11-regions-bump-the-pointer-allocation)).
+- [`InSituRegion!(size)`][InSituRegion] — the arena _is_ the struct, typically
+  on the stack; `StackFront` backs it with the GC for overflow
+  ([§16](#_16-combinators-routing-requests)).
+- `AllocatorList!(n => Region!Mallocator(max(n, chunk)))` — a **growable**
+  arena: exhausting one region lazily spawns the next
+  ([§16](#_16-combinators-routing-requests)); `mmapRegionList(bytes)` from
+  [`showcase`][showcase] is the preassembled mmap-backed version.
+- [`KRRegion`][KRRegion] — when the batch needs _occasional_ frees but you
+  still want region speed ([§14](#_14-krregion-the-kernighan-ritchie-heap)).
+- [`ScopedAllocator`][ScopedAllocator] — when individual objects need real
+  `deallocate` but everything must die with the scope regardless
+  ([§17](#_17-metadata-and-instrumentation)).
+
+### Buffer pools: zero-copy networking
+
+Network I/O wants the opposite lifetime shape: fixed-size buffers that
+outlive scopes — a buffer handed to the kernel (an `io_uring` submission, a
+registered-buffer send) must stay alive until the completion arrives, long
+after the code that filled it returned. The building blocks compose into
+exactly this:
+
+- [`FreeList!(Parent, 0, bufSize)`][FreeList] makes acquire/release an O(1)
+  pointer pop/push — no allocator round-trip per packet
+  ([§12](#_12-free-lists)). [`SharedFreeList`][SharedFreeList] is the
+  cross-thread variant for when completions land on another thread
+  ([§19](#_19-sharing-memory-across-threads)).
+- [`AffixAllocator!(…, uint)`][AffixAllocator] puts a **reference count
+  inside each buffer's own allocation** — no side table, no GC — so ownership
+  can be split between the application and in-flight kernel operations
+  ([§17](#_17-metadata-and-instrumentation)).
+- For `O_DIRECT` or `io_uring` registered buffers that must be page-aligned,
+  draw the pool's backing memory from [`MmapAllocator`][MmapAllocator] or
+  [`AscendingPageAllocator`][AscendingPageAllocator]
+  ([§15](#_15-ascendingpageallocator-pages-monotonically)).
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "allocator_packet_pool"
++/
+import std.stdio : writeln;
+import std.experimental.allocator.building_blocks.affix_allocator : AffixAllocator;
+import std.experimental.allocator.building_blocks.free_list : FreeList;
+import std.experimental.allocator.mallocator : Mallocator;
+
+enum packetSize = 64 * 1024;
+
+/// Fixed-size recycled buffers with an intrusive refcount: the freelist
+/// makes acquire/release O(1) pointer pops, the affix puts the refcount
+/// *inside* the buffer's own allocation (no side table).
+struct PacketPool
+{
+    alias A = AffixAllocator!(FreeList!(Mallocator, 0, packetSize), uint);
+    private A impl;
+
+    void[] acquire()
+    {
+        auto b = impl.allocate(packetSize);
+        impl.prefix(b) = 1;
+        return b;
+    }
+
+    void retain(void[] b) { ++impl.prefix(b); }
+
+    void release(void[] b)
+    {
+        if (--impl.prefix(b) == 0)
+            impl.deallocate(b); // back onto the freelist, not to malloc
+    }
+
+    uint refs(void[] b) => impl.prefix(b);
+}
+
+void main()
+{
+    PacketPool pool;
+
+    auto p = pool.acquire();
+    writeln("fresh packet: refs = ", pool.refs(p));
+
+    // Zero-copy send: the kernel (or io_uring completion) holds a reference
+    // while the app may already be done with the buffer.
+    pool.retain(p);
+    writeln("submitted to the kernel: refs = ", pool.refs(p));
+    pool.release(p); // app drops its reference
+    writeln("app released: refs = ", pool.refs(p));
+    auto recycled = p.ptr;
+    pool.release(p); // completion arrives -> refcount 0 -> recycled
+
+    auto q = pool.acquire();
+    writeln("next acquire reuses the same buffer: ", q.ptr is recycled);
+}
+```
+
+```ansi
+fresh packet: refs = 1
+submitted to the kernel: refs = 2
+app released: refs = 1
+next acquire reuses the same buffer: true
+```
+
+For a general-purpose heap built from these same pieces — size-segregated
+freelists in the style of jemalloc — see the case study in
+[§18](#_18-case-study-a-jemalloc-style-composite).
+
+---
+
+## 6. Showcase: sub-allocating GPU device memory
+
+The untyped protocol has a consequence that is easy to miss: because
+allocators traffic in `(pointer, length)` pairs and several building blocks
+**never dereference the memory they manage**, they can manage an address
+space the host cannot touch at all — GPU device memory being the prime case.
+
+Vulkan makes this necessary: implementations cap the number of live
+`VkDeviceMemory` objects (`maxMemoryAllocationCount` is commonly 4096) and
+driver allocations are expensive, so real engines allocate a few large heaps
+and **sub-allocate**: each buffer or image is bound at an _offset_ into a heap
+via `vkBindBufferMemory` / `vkBindImageMemory` (see the
+[Vulkan memory-allocation guide][vk-memory]). The allocator's bookkeeping
+must therefore live on the host — exactly the [`BitmappedBlock`][BitmappedBlock]
+design, whose selling point is that "bookkeeping data [is] separated from the
+payload … deallocation does not touch memory around the payload"
+(`bitmapped_block.d:1166-1171`, [§13](#_13-bitmappedblock-fixed-blocks-one-bit-each)).
+
+The trick: instantiate a `BitmappedBlock` over [`MmapAllocator`][MmapAllocator]
+so its payload range is **plain virtual address space that is never read or
+written** — `mmap` commits pages only on first touch, and `allocate` /
+`deallocate` / `owns` only ever compute with the payload pointers. The only
+host memory actually dirtied is the bitmap. A returned slice then _denotes_ a
+device region: its length is the size, and `ptr - base` is the
+`VkDeviceMemory` offset:
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "allocator_device_pool"
++/
+import std.stdio : writefln;
+import std.experimental.allocator.building_blocks.bitmapped_block : BitmappedBlock;
+import std.experimental.allocator.mmap_allocator : MmapAllocator;
+
+enum blockSize = 64 * 1024;        // sub-allocation granularity we choose
+enum heapSize = 32 * 1024 * 1024;  // one VkDeviceMemory allocation
+
+void main()
+{
+    // Host-side bookkeeping for a 32 MB device heap: 512 blocks tracked by
+    // a 64-byte bitmap; the payload range is never-touched virtual memory.
+    auto pool = BitmappedBlock!(blockSize, 8, MmapAllocator)(heapSize);
+
+    auto imageA = pool.allocate(1000 * 1024);
+    const base = imageA.ptr; // empty pool + first fit -> offset 0
+    auto imageB = pool.allocate(130 * 1024);
+    auto imageC = pool.allocate(2000 * 1024);
+
+    size_t offsetKB(void[] region) => (region.ptr - base) / 1024;
+
+    // In real code: vkBindImageMemory(device, image, deviceMemory, offset)
+    writefln("image A: offset %4d KB, size %4d KB", offsetKB(imageA), imageA.length / 1024);
+    writefln("image B: offset %4d KB, size %4d KB", offsetKB(imageB), imageB.length / 1024);
+    writefln("image C: offset %4d KB, size %4d KB", offsetKB(imageC), imageC.length / 1024);
+
+    // Free B (say, a destroyed render target); its 3 blocks coalesce back.
+    pool.deallocate(imageB);
+
+    // A new 150 KB image is first-fit placed into B's hole.
+    auto imageD = pool.allocate(150 * 1024);
+    writefln("image D: offset %4d KB, size %4d KB  (reuses B's hole: %s)",
+        offsetKB(imageD), imageD.length / 1024, imageD.ptr is imageB.ptr);
+}
+```
+
+```ansi
+image A: offset    0 KB, size 1000 KB
+image B: offset 1024 KB, size  130 KB
+image C: offset 1216 KB, size 2000 KB
+image D: offset 1024 KB, size  150 KB  (reuses B's hole: true)
+```
+
+Mapping this onto a real renderer:
+
+- **One pool per `VkDeviceMemory`** (per memory type); wrap the set in an
+  [`AllocatorList`][AllocatorList] whose factory calls `vkAllocateMemory` for
+  a fresh heap when the existing pools are full
+  ([§16](#_16-combinators-routing-requests)) — the same growable-arena shape
+  as host-side code.
+- **Pick `blockSize` ≥ `bufferImageGranularity`** and the alignment
+  requirements from `vkGetImageMemoryRequirements`; block-granular placement
+  then satisfies them by construction.
+- **Per-frame transient resources** don't need the bitmap at all: a
+  `BorrowedRegion` over the same never-touched range gives bump-the-pointer
+  offsets and a single `deallocateAll` at frame end
+  ([§11](#_11-regions-bump-the-pointer-allocation)).
+
+> [!WARNING]
+> Only metadata-level primitives are usable on a foreign address space:
+> `allocate`, `deallocate`, `deallocateAll`, `expand`, `owns`,
+> `goodAllocSize`. **`reallocate` is off-limits** — on a move it `memcpy`s
+> through the payload pointers (`bitmapped_block.d:704-751`), which here would
+> dereference device "addresses" the host cannot touch. Likewise, nothing
+> above the untyped layer (`make`, `makeArray`) makes sense for memory the
+> CPU cannot write.
+
+The same technique manages any foreign or offset-addressed space: sub-ranges
+of `io_uring` registered buffers, shared-memory segments, or record offsets
+in an append-only file. Prior art for the GPU case is AMD's
+[VulkanMemoryAllocator][vma] library — the same host-side-metadata,
+block-and-offset design, in ~20k lines of C++.
+
+---
+
+## Part II — Technical survey
+
+The rest of the document is the bottom-up reference behind Part I: the
+protocol, each building block with its documented semantics and costs, the
+combinators, and the sharp edges — every claim cited to the sources and
+demonstrated by a verified example.
+
+## 7. The architecture: four layers, two commitments
+
+The package DDoc lays out a four-layer architecture
+(`package.d:73-121`):
+
+1. **High-level, dynamically-typed** — [`theAllocator`][theAllocator] /
+   [`processAllocator`][processAllocator] globals, the [`IAllocator`][IAllocator]
+   interface, and type-aware helpers [`make`][make], [`makeArray`][makeArray],
+   [`dispose`][dispose]. "This layer is all needed for most casual uses."
+2. **Mid-level, statically-typed routing** — [`TypedAllocator`][TypedAllocator]
+   dispatches by the _type_ being allocated ([§20](#_20-typedallocator-layer-2)).
+3. **Low-level building blocks** — "Lego-like pieces that can be used to
+   assemble application-specific allocators. The real allocation smarts are
+   occurring at this level" (`package.d:102-114`).
+4. **Core heap sources** — [`GCAllocator`][GCAllocator],
+   [`Mallocator`][Mallocator], [`MmapAllocator`][MmapAllocator]. "Most custom
+   allocators would ultimately obtain memory from one of these core allocators."
+
+Two design commitments shape every API in the package
+(`building_blocks/package.d:5-32`):
+
+**Untyped `void[]` with client-tracked sizes.** Allocators "deal exclusively in
+`void[]` and have no notion of what type the memory allocated would be destined
+for". Unlike `malloc`, the _client_ passes the allocated size back on
+deallocation — "Storing the size in the allocator has significant negative
+performance implications, and is virtually always redundant because client code
+needs knowledge of the allocated size in order to avoid buffer overruns." (See
+the equivalent C++ [sized-deallocation proposal N3536][n3536].) This is why the
+currency is `void[]` — a pointer _and_ a length — "as opposed to `void*`".
+
+**Capability by presence.** Only two members are required of an allocator:
+`alignment` and `allocate`. Everything else is optional, and — crucially —
+
+> "Allocators should NOT implement unsupported methods to always fail. For
+> example, an allocator that lacks the capability to implement `alignedAllocate`
+> should not define it at all (as opposed to defining it to always return `null`
+> or throw an exception). The missing implementation statically informs other
+> components about the allocator's capabilities and allows them to make design
+> decisions accordingly." — `building_blocks/package.d:23-32`
+
+Combinators probe with `__traits(hasMember, Allocator, "expand")` and compose
+only what exists. This is precisely the
+[optional-primitives pattern](../design-by-introspection-01-guidelines.md) the
+DbI guidelines describe — an absent method is _information_, not a defect.
+
+## 8. The static allocator protocol
+
+The full protocol is specified in the DDoc of
+[`std.experimental.allocator.building_blocks`][bb-docs]
+(`building_blocks/package.d:34-136`). Condensed, with postconditions:
+
+| Primitive                                             | Required | Semantics (postcondition)                                                                                                                    |
+| :---------------------------------------------------- | :------- | :------------------------------------------------------------------------------------------------------------------------------------------- |
+| `uint alignment`                                      | **yes**  | Minimum alignment of all returned blocks (`> 0`). May be a statically-known `enum`.                                                          |
+| `void[] allocate(size_t s)`                           | **yes**  | Returns `s` bytes or `null`. For `s == 0`, "may return any empty slice (including `null`)". (`result is null \|\| result.length == s`)       |
+| `size_t goodAllocSize(size_t n)`                      | no       | Actual bytes a request for `n` would consume (internal fragmentation). Default: `n` rounded up to a multiple of `alignment`. (`result >= n`) |
+| `void[] alignedAllocate(size_t s, uint a)`            | no       | Like `allocate`, aligned to at least `a` (a power of 2).                                                                                     |
+| `void[] allocateAll()`                                | no       | Offers _all_ remaining memory; usually defined by fixed-size allocators; best-effort if memory is already managed.                           |
+| `bool expand(ref void[] b, size_t delta)`             | no       | Grow `b` in place. `delta == 0` always succeeds; `expand(null, delta > 0)` is `false`. On failure `b` is unchanged.                          |
+| `bool reallocate(ref void[] b, size_t s)`             | no       | Resize, possibly moving. Default free-function implementation composes `expand` + `allocate` + `deallocate`.                                 |
+| `bool alignedReallocate(ref void[] b, size_t, uint)`  | no       | `reallocate` preserving an `alignedAllocate` alignment.                                                                                      |
+| `Ternary owns(void[] b)`                              | no       | Define **"only if it can decide on ownership precisely and fast"**. `owns(null)` is `Ternary.no`.                                            |
+| `Ternary resolveInternalPointer(void* p, ref void[])` | no       | Maps an interior pointer to its enclosing block.                                                                                             |
+| `bool deallocate(void[] b)`                           | no       | `deallocate(null)` does nothing and returns `true`. An allocator that cannot deallocate "should not define this primitive at all".           |
+| `bool deallocateAll()`                                | no       | Frees everything (postcondition: `empty`). "If an allocator implements this method, it must specify whether its destructor calls it, too."   |
+| `Ternary empty()`                                     | no       | `yes` iff no memory is currently allocated.                                                                                                  |
+| `static Allocator instance`                           | no       | For _monostate_ allocators (all state global — `malloc`, the GC). "An allocator should not hold state and define `instance` simultaneously." |
+
+Because capability is presence, the capability matrix of a set of allocators is
+itself computable with `__traits(hasMember)` — the same probe every combinator
+in the package uses internally:
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "allocator_capabilities"
++/
+import std.stdio : writef, writefln, writeln;
+import std.meta : AliasSeq;
+import std.experimental.allocator.gc_allocator : GCAllocator;
+import std.experimental.allocator.mallocator : Mallocator, AlignedMallocator;
+import std.experimental.allocator.mmap_allocator : MmapAllocator;
+import std.experimental.allocator.building_blocks.null_allocator : NullAllocator;
+
+alias As = AliasSeq!(GCAllocator, Mallocator, AlignedMallocator, MmapAllocator, NullAllocator);
+static immutable names = ["GC", "Malloc", "AlignedM", "Mmap", "Null"];
+static immutable prims = [
+    "alignedAllocate", "allocateAll", "expand", "reallocate", "alignedReallocate",
+    "owns", "resolveInternalPointer", "deallocate", "deallocateAll", "empty",
+];
+
+void main()
+{
+    writef("%-24s", "primitive");
+    foreach (n; names)
+        writef("%-10s", n);
+    writeln;
+    static foreach (prim; prims)
+    {{
+        writef("%-24s", prim);
+        static foreach (A; As)
+            writef("%-10s", __traits(hasMember, A, prim) ? "yes" : "-");
+        writeln;
+    }}
+}
+```
+
+```ansi
+primitive               GC        Malloc    AlignedM  Mmap      Null
+alignedAllocate         -         -         yes       -         yes
+allocateAll             -         -         -         -         yes
+expand                  yes       -         -         -         yes
+reallocate              yes       yes       yes       -         yes
+alignedReallocate       -         -         yes       -         yes
+owns                    -         -         -         -         yes
+resolveInternalPointer  yes       -         -         -         yes
+deallocate              yes       yes       yes       yes       yes
+deallocateAll           -         -         -         -         yes
+empty                   -         -         -         -         yes
+```
+
+The matrix _is_ the documentation: `Mallocator` cannot tell you what it owns
+(the C heap keeps no such books — `building_blocks/package.d:100-105`), the GC
+can resolve interior pointers (it must, to scan), and
+[`NullAllocator`][NullAllocator] implements _everything_ because every operation
+is trivially a no-op.
+
+---
+
+## 9. `Ternary`: three-state answers
+
+Queries that an allocator may answer imprecisely return
+[`std.typecons.Ternary`][Ternary] — `yes`, `no`, or `unknown` — rather than
+`bool`:
+
+- `owns` and `empty` return `yes`/`no` from static allocators that define them.
+- At the **runtime interface boundary** ([§3](#_3-application-authors-theallocator-and-runtime-polymorphism)),
+  `unknown` gains a second meaning: "the wrapped allocator does not implement
+  this primitive at all" (`package.d:309-311`). A static allocator never
+  returns `unknown` for `owns`; an [`RCIAllocator`][RCIAllocator] wrapping
+  `Mallocator` does.
+- Convention: `owns(null)` is `Ternary.no` — "no allocator owns the `null`
+  slice" (`building_blocks/package.d:104-105`).
+
+> [!WARNING]
+> Don't `writeln` a `Ternary` directly — it prints its internal encoding
+> (`Ternary(2)` for `yes`). Compare against `Ternary.yes` / `Ternary.no`
+> explicitly, which also reads better.
+
+---
+
+## 10. Heap sources
+
+The four "layer 4" allocators plus the composition terminator:
+
+| Allocator                                | `alignment`                              | Implements (beyond `allocate`)                                                         | Notes                                                                                                                                                                                                                                                |
+| :--------------------------------------- | :--------------------------------------- | :------------------------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`GCAllocator`][GCAllocator]             | [`platformAlignment`][platformAlignment] | `expand`, `reallocate`, `resolveInternalPointer`, `deallocate`, custom `goodAllocSize` | Default backing of `theAllocator`. "`deallocate` and `reallocate` are `@system` because they may move memory around, leaving dangling pointers" (`gc_allocator.d:25-29`).                                                                            |
+| [`Mallocator`][Mallocator]               | `platformAlignment`                      | `reallocate`, `deallocate`                                                             | "Somewhat paradoxically, `malloc` is `@safe` but that's only useful to safe programs that can afford to leak memory" (`mallocator.d:23-28`).                                                                                                         |
+| [`AlignedMallocator`][AlignedMallocator] | `platformAlignment` (default)            | `alignedAllocate`, `alignedReallocate`, `reallocate`, `deallocate`                     | `posix_memalign` / `_aligned_malloc`. On Posix `alignedReallocate` is _emulated_ by allocate-copy-free (`mallocator.d:228-234`) — and plain `reallocate` loses a custom alignment (`mallocator.d:217-221`).                                          |
+| [`MmapAllocator`][MmapAllocator]         | `4096` (hardcoded)                       | `deallocate`                                                                           | Raw `mmap`/`VirtualAlloc`; "usually intended for allocating large chunks to be managed by fine-granular allocators" (`mmap_allocator.d:11-14`).                                                                                                      |
+| [`NullAllocator`][NullAllocator]         | `64 * 1024`                              | _every_ primitive, as a no-op/failure                                                  | The composition terminator. Its huge advertised alignment exists "because `NullAllocator` never actually needs to honor this alignment and because composite allocators using it shouldn't be unnecessarily constrained" (`null_allocator.d:17-23`). |
+
+All five are monostate — `static shared instance` — and their methods are
+`shared`, so any thread may use them. `GCAllocator` defines a _custom_
+`goodAllocSize` mirroring the GC's real size classes, a step function rather
+than mere alignment rounding:
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "allocator_heap_sources"
++/
+import std.stdio : writefln;
+import std.experimental.allocator.gc_allocator : GCAllocator;
+import std.experimental.allocator.mallocator : Mallocator;
+import std.experimental.allocator : goodAllocSize;
+
+void main()
+{
+    // GCAllocator: pow2 size classes up to a page, then page multiples
+    // (gc_allocator.d:96-112). Mallocator has no member goodAllocSize, so the
+    // free-function default kicks in: round up to alignment.
+    foreach (n; [size_t(1), 16, 17, 100, 4096, 4097, 16_385])
+        writefln("n=%6s  GC->%6s  malloc-default->%6s",
+            n, GCAllocator.instance.goodAllocSize(n),
+            goodAllocSize(Mallocator.instance, n));
+}
+```
+
+```ansi
+n=     1  GC->    16  malloc-default->    16
+n=    16  GC->    16  malloc-default->    16
+n=    17  GC->    32  malloc-default->    32
+n=   100  GC->   128  malloc-default->   112
+n=  4096  GC->  4096  malloc-default->  4096
+n=  4097  GC->  8192  malloc-default->  4112
+n= 16385  GC-> 20480  malloc-default-> 16400
+```
+
+`goodAllocSize` is what lets size-aware containers (like `SmallBuffer`'s
+growth policy) claim the slack the allocator would waste anyway.
+
+---
+
+## 11. Regions: bump-the-pointer allocation
 
 [`Region`][Region] "allocates memory straight from one contiguous chunk. There
 is no deallocation, and once the region is full, allocation requests return
@@ -649,7 +943,7 @@ stack-allocated: 2001, left: 2095
 
 ---
 
-## 8. Free lists
+## 12. Free lists
 
 [`FreeList!(Parent, min, max)`][FreeList] keeps a singly-linked list of
 previously freed blocks: "Allocation requests between `min` and `max` bytes are
@@ -700,7 +994,7 @@ Variants:
   "if an owning allocator above manages sizes", i.e. under a
   [`Segregator`][Segregator] or [`Bucketizer`][Bucketizer]
   (`free_list.d:21-26`) — that is exactly the jemalloc pattern in
-  [§14](#_14-case-study-a-jemalloc-style-composite).
+  [§18](#_18-case-study-a-jemalloc-style-composite).
 - **[`ContiguousFreeList`][ContiguousFreeList]** pre-threads the list through
   _one_ parent block: "better cache locality because items are closer to one
   another … The disadvantages are its pay upfront model … and a hard limit on
@@ -713,7 +1007,7 @@ Variants:
 
 ---
 
-## 9. `BitmappedBlock`: fixed blocks, one bit each
+## 13. `BitmappedBlock`: fixed blocks, one bit each
 
 [`BitmappedBlock!(blockSize, alignment, Parent)`][BitmappedBlock] carves one
 contiguous chunk into equal blocks and tracks each with a single bit. "The
@@ -781,7 +1075,7 @@ Related variants:
 
 ---
 
-## 10. `KRRegion`: the Kernighan-Ritchie heap
+## 14. `KRRegion`: the Kernighan-Ritchie heap
 
 [`KRRegion`][KRRegion] is the classic first-fit allocator from K&R's _The C
 Programming Language_ §8.7, with a twist: it starts life as a plain region and
@@ -847,7 +1141,7 @@ Facts to keep in mind (`kernighan_ritchie.d:43-96`):
 
 ---
 
-## 11. `AscendingPageAllocator`: pages, monotonically
+## 15. `AscendingPageAllocator`: pages, monotonically
 
 [`AscendingPageAllocator`][AscendingPageAllocator] reserves a large _virtual_
 range up front and hands out page-rounded allocations at strictly increasing
@@ -898,7 +1192,7 @@ crash-on-use-after-free guarantee is worth a page per allocation.
 
 ---
 
-## 12. Combinators: routing requests
+## 16. Combinators: routing requests
 
 The compositional heart of the package. Each combinator routes by a different
 **discriminator**, and places different demands on its children:
@@ -1006,7 +1300,7 @@ destructor (`showcase.d:53-84`).
 
 ---
 
-## 13. Metadata and instrumentation
+## 17. Metadata and instrumentation
 
 ### `AffixAllocator`: metadata around every block
 
@@ -1123,7 +1417,7 @@ empty: true
 
 ---
 
-## 14. Case study: a jemalloc-style composite
+## 18. Case study: a jemalloc-style composite
 
 The package DDoc's flagship example (`building_blocks/package.d:138-176`)
 assembles a general-purpose heap "modeled after [jemalloc][jemalloc], which
@@ -1193,7 +1487,7 @@ the same tree, which is why the client-supplies-the-size protocol matters.
 
 ---
 
-## 15. Sharing memory across threads
+## 19. Sharing memory across threads
 
 The design doc is explicit about the threading model
 (`building_blocks/package.d:178-200`):
@@ -1208,7 +1502,7 @@ The design doc is explicit about the threading model
   across threads (by casting the obtained buffer to `shared`), and later
   deallocating it in a different thread … is illegal."
 
-What exists for cross-thread use: the monostate heap sources ([§4](#_4-heap-sources))
+What exists for cross-thread use: the monostate heap sources ([§10](#_10-heap-sources))
 are all `shared`; `processAllocator` / `RCISharedAllocator` at the dynamic
 layer; and dedicated shared building blocks — [`SharedFreeList`][SharedFreeList],
 `SharedRegion` / `SharedBorrowedRegion` (lock-free CAS bump),
@@ -1222,7 +1516,7 @@ compose accordingly.
 
 ---
 
-## 16. `TypedAllocator` (layer 2)
+## 20. `TypedAllocator` (layer 2)
 
 [`TypedAllocator!(Primary, Policies...)`][TypedAllocator] routes allocations to
 different untyped allocators "depending on the static properties of the types
@@ -1309,7 +1603,107 @@ made through the GC primary: Node(null, 0)
 
 ---
 
-## 17. Attribute reality: `@safe`, `@nogc`, `nothrow`, `pure`
+## 21. Writing your own allocator
+
+The whole protocol contract for a _new_ allocator is two members. Everything
+above the protocol — [`make`][make], [`makeArray`][makeArray], the default
+[`goodAllocSize`][goodAllocSize] — works with any type that satisfies it, by
+duck typing (`package.d:198-225`):
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "allocator_minimal"
++/
+import std.stdio : writeln;
+import std.experimental.allocator : make, makeArray, platformAlignment;
+
+/// A bump allocator over an embedded buffer.
+struct StackArena(size_t capacity)
+{
+    enum uint alignment = platformAlignment;
+
+    private align(platformAlignment) ubyte[capacity] _store;
+    private size_t _used;
+
+    void[] allocate(size_t n) @safe pure nothrow @nogc return scope
+    {
+        const rounded = roundUp(n);
+        if (n == 0 || rounded > capacity - _used)
+            return null;
+        auto b = _store[_used .. _used + n];
+        _used += rounded;
+        return b;
+    }
+
+    /// LIFO deallocation, Region-style: only the last allocation can be undone.
+    bool deallocate(void[] b) @trusted pure nothrow @nogc
+    {
+        if (b is null)
+            return true;
+        if (b.ptr + roundUp(b.length) !is _store.ptr + _used)
+            return false;
+        _used -= roundUp(b.length);
+        return true;
+    }
+
+    private static size_t roundUp(size_t n) @safe pure nothrow @nogc
+        => (n + alignment - 1) & ~(size_t(alignment) - 1);
+}
+
+struct Point { int x, y; }
+
+void main()
+{
+    StackArena!1024 arena;
+
+    auto p = arena.make!Point(3, 4);
+    auto xs = arena.makeArray!int(4, 9);
+    writeln(*p);
+    writeln(xs);
+
+    // Exhaustion: allocate returns null, and make maps that to a null pointer.
+    auto q = arena.make!(ubyte[2048]);
+    writeln("overcommitted make returns null: ", q is null);
+}
+```
+
+```ansi
+Point(3, 4)
+[9, 9, 9, 9]
+overcommitted make returns null: true
+```
+
+> [!NOTE]
+> Why does the example define `deallocate` when the protocol requires only two
+> members? Because the _high-level_ API is stricter than the protocol:
+> `make`'s constructor-failure cleanup instantiates `alloc.deallocate(m)`
+> unconditionally (`package.d:1199-1212`), so an allocator without
+> `deallocate` fails to compile under `make` — every allocator that ships with
+> Phobos defines it, even `Region` (for which it only undoes the last
+> allocation). A truly two-member allocator works with `allocate`, the free
+> functions, and manual `emplace`, but not with `make`.
+
+Notes for allocator authors:
+
+- **Reuse the free-function defaults.** The module provides free functions
+  [`goodAllocSize`][goodAllocSize], `reallocate` and `alignedReallocate`
+  (`common.d:142-457`) implemented in terms of the primitives you do define.
+  They deliberately _never_ call a member of the same name, so your own member
+  `reallocate` can call the free function as its fallback without recursion
+  (`common.d:400-403`).
+- **`stateSize` drives composition** (`common.d:34-49`): an empty non-nested
+  struct has `stateSize == 0` and is treated as _stateless_; combinators then
+  use `A.instance` instead of storing a member. The idiom throughout the
+  package is `static if (stateSize!A) A parent; else alias parent = A.instance;`.
+- Phobos has an executable conformance spec, `testAllocator`
+  (`common.d:537-671`) — it is `package`-visibility so you cannot call it from
+  user code, but it is worth reading: it hard-asserts, among much else, that
+  `allocate(0) is null` and that `expand(b, 0)` always succeeds.
+
+---
+
+## 22. Attribute reality: `@safe`, `@nogc`, `nothrow`, `pure`
 
 The package follows the same discipline as
 [sparkles' attribute guidelines](../code-style.md): concrete non-templated
@@ -1335,50 +1729,53 @@ _infer_ from the composed parts. What that means in practice:
   a `@safe`-by-construction example.
 - The `theAllocator`/`processAllocator` **setters are `@system`** on purpose —
   installing an allocator is a global, safety-relevant act
-  ([§6](#_6-theallocator-processallocator-runtime-polymorphism)).
+  ([§3](#_3-application-authors-theallocator-and-runtime-polymorphism)).
 
 ---
 
-## 18. Pitfalls checklist
+## 23. Pitfalls checklist
 
 - [ ] `Region`/`SbrkRegion` `deallocate` frees **only the last allocation**;
-      `expand` works only on the last block ([§7](#_7-regions-bump-the-pointer-allocation)).
+      `expand` works only on the last block ([§11](#_11-regions-bump-the-pointer-allocation)).
 - [ ] Never copy a live region/bump allocator — duplicated bookkeeping hands
-      out the same memory twice ([§7](#_7-regions-bump-the-pointer-allocation)).
+      out the same memory twice ([§11](#_11-regions-bump-the-pointer-allocation)).
 - [ ] `KRRegion` needs a **word-aligned** buffer (assert at construction) and
-      has a two-word minimum block ([§10](#_10-krregion-the-kernighan-ritchie-heap)).
+      has a two-word minimum block ([§14](#_14-krregion-the-kernighan-ritchie-heap)).
 - [ ] `makeArray!char(n)` gives `0xFF` bytes (`char.init`), not zeroes
-      ([§5](#_5-the-high-level-api-make-makearray-dispose-friends)).
+      ([§2](#_2-application-authors-make-dispose-and-friends)).
 - [ ] `make!(T[])` returns a pointer to an _empty array_ — use `makeArray`
-      ([§5](#_5-the-high-level-api-make-makearray-dispose-friends)).
+      ([§2](#_2-application-authors-make-dispose-and-friends)).
 - [ ] `expand(null, delta > 0)` and `expandArray` on a null array are `false`
-      by specification ([§1](#_1-the-static-allocator-protocol)).
+      by specification ([§8](#_8-the-static-allocator-protocol)).
 - [ ] Allocating with one allocator and deallocating with another is UB — set
       `theAllocator`/`processAllocator` once, early; containers should store
-      their allocator ([§6](#_6-theallocator-processallocator-runtime-polymorphism)).
+      their allocator ([§3](#_3-application-authors-theallocator-and-runtime-polymorphism)).
 - [ ] `allocatorObject(a)` **moves** `a` in; pass stateful allocators by
-      pointer to keep access ([§6](#_6-theallocator-processallocator-runtime-polymorphism)).
+      pointer to keep access ([§3](#_3-application-authors-theallocator-and-runtime-polymorphism)).
 - [ ] `allocate(0)` returns `null` in every Phobos allocator; don't treat
-      `null` from a zero-size request as failure ([§1](#_1-the-static-allocator-protocol)).
+      `null` from a zero-size request as failure ([§8](#_8-the-static-allocator-protocol)).
 - [ ] `deallocate`'s `bool` mostly encodes _capability_, not per-call success —
       probe support with `deallocate(null)` at the dynamic layer
-      ([§6](#_6-theallocator-processallocator-runtime-polymorphism)).
+      ([§3](#_3-application-authors-theallocator-and-runtime-polymorphism)).
 - [ ] `AlignedMallocator`: plain `reallocate` silently drops a custom
       alignment; Posix `alignedReallocate` is allocate-copy-free
-      ([§4](#_4-heap-sources)).
+      ([§10](#_10-heap-sources)).
 - [ ] `Bucketizer` sizes outside `[min, max]` are illegal — front it with a
-      `Segregator` ([§12](#_12-combinators-routing-requests)).
+      `Segregator` ([§16](#_16-combinators-routing-requests)).
 - [ ] `FreeList!(0, unbounded)` skips all size checks — only under a
-      size-segregating parent ([§8](#_8-free-lists)).
+      size-segregating parent ([§12](#_12-free-lists)).
 - [ ] `TypedAllocator` cannot allocate `shared` types (missing
-      `AllocFlag.forSharing`) ([§16](#_16-typedallocator-layer-2)).
+      `AllocFlag.forSharing`) ([§20](#_20-typedallocator-layer-2)).
+- [ ] When building blocks manage a _foreign_ address space, `reallocate` and
+      anything typed (`make`, `makeArray`) are off-limits — metadata-only
+      primitives only ([§6](#_6-showcase-sub-allocating-gpu-device-memory)).
 - [ ] Docs lag code in places: `theAllocator` is an `RCIAllocator`, not an
       `IAllocator`; `allocateZeroed` exists but is undocumented and
       `package`-visibility.
 
 ---
 
-## 19. Cheat sheet: which building block when
+## 24. Cheat sheet: which building block when
 
 | Need                                                   | Reach for                                                                                      |
 | :----------------------------------------------------- | :--------------------------------------------------------------------------------------------- |
@@ -1397,6 +1794,7 @@ _infer_ from the composed parts. What that means in practice:
 | Leak-checking, sizing, profiling                       | [`StatsCollector`][StatsCollector]                                                             |
 | Scope-tied cleanup of many allocations                 | [`ScopedAllocator`][ScopedAllocator]                                                           |
 | O(1) deallocation across many sub-allocators           | [`AlignedBlockList`][AlignedBlockList]                                                         |
+| Sub-allocating a foreign address space (GPU heaps)     | [`BitmappedBlock`][BitmappedBlock] / `BorrowedRegion` over never-touched virtual memory        |
 
 ---
 
@@ -1416,6 +1814,9 @@ _infer_ from the composed parts. What that means in practice:
 - [jemalloc][jemalloc] — the model for the size-segregated composite.
 - Kedia et al., [_Simple, Fast and Safe Manual Memory Management_][kedia-paper]
   (PLDI 2017) — the design `AscendingPageAllocator` cites.
+- The [Vulkan memory-allocation guide][vk-memory] and AMD's
+  [VulkanMemoryAllocator][vma] — the device-memory sub-allocation problem and
+  its canonical host-side-bookkeeping solution.
 
 <!-- References -->
 
@@ -1463,3 +1864,5 @@ _infer_ from the composed parts. What that means in practice:
 [cppcon-talk]: https://www.youtube.com/watch?v=LIb3L4vKZ7U
 [jemalloc]: https://jemalloc.net/
 [kedia-paper]: https://web.archive.org/web/20250815142733/https://www.microsoft.com/en-us/research/wp-content/uploads/2017/03/kedia2017mem.pdf
+[vma]: https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator
+[vk-memory]: https://docs.vulkan.org/guide/latest/memory_allocation.html
