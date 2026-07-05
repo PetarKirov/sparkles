@@ -9,6 +9,9 @@ module sparkles.event_horizon.op;
 
 import core.lifetime : move;
 
+import std.experimental.allocator : dispose, makeArray, stateSize;
+import std.experimental.allocator.mallocator : Mallocator;
+
 import sparkles.event_horizon.buffer : Buf;
 import sparkles.event_horizon.errors : IoResult, OpKind, fromRes;
 
@@ -340,48 +343,47 @@ struct OpSlot
 }
 
 /**
-Fixed-capacity slot slab, allocated once (`pureMalloc`) at loop creation.
-Resolution is one indexed load plus a generation compare; a stale token
-(recycled slot) never resolves.
+Fixed-capacity slot slab, allocated once at loop creation from `Allocator`
+(the guideline-§4 generic-library shape: `stateSize` embed, `Mallocator`
+default, attributes inferred). Resolution is one indexed load plus a
+generation compare; a stale token (recycled slot) never resolves.
 */
-struct OpSlab
+struct OpSlab(Allocator = Mallocator)
 {
     @disable this(this);
 
+    // The standard state idiom: a monostate allocator costs zero bytes.
+    static if (stateSize!Allocator)
+        Allocator alloc;
+    else
+        alias alloc = Allocator.instance;
+
     /// Allocates `capacity` slots; all-or-nothing.
-    IoResult!void initialize(uint capacity) @trusted nothrow @nogc
+    IoResult!void initialize(uint capacity) @trusted
     in (_slots is null, "already initialized")
     in (capacity > 0)
     {
-        import core.memory : pureMalloc;
         import sparkles.event_horizon.errors : IoErrorStage, ioErr, ioOk;
 
-        auto mem = cast(OpSlot*) pureMalloc(capacity * OpSlot.sizeof);
+        auto mem = alloc.makeArray!OpSlot(capacity);
         if (mem is null)
             return ioErr!void(12 /* ENOMEM */, OpKind.none, IoErrorStage.setup,
                 "op slab allocation failed");
-        _slots = mem;
+        _slots = mem.ptr;
         _capacity = capacity;
         _liveCount = 0;
         foreach (i; 0 .. capacity)
-        {
-            import core.lifetime : emplace;
-
-            emplace(&_slots[i]);
             _slots[i].nextFree = i + 1 == capacity ? uint.max : i + 1;
-        }
         _freeHead = 0;
         return ioOk();
     }
 
     /// Frees the slab; every slot must have been released.
-    void terminate() @trusted nothrow @nogc
+    void terminate() @trusted
     in (_slots is null || _liveCount == 0, "op slots still in flight")
     {
-        import core.memory : pureFree;
-
         if (_slots !is null)
-            pureFree(_slots);
+            cast(void) alloc.dispose(_slots[0 .. _capacity]);
         _slots = null;
         _capacity = 0;
         _liveCount = 0;
@@ -497,7 +499,7 @@ unittest
 @safe nothrow @nogc
 unittest
 {
-    OpSlab slab;
+    OpSlab!() slab;
     assert(!slab.initialize(2).hasError);
     assert(slab.capacity == 2);
     assert(slab.liveCount == 0);
@@ -526,7 +528,7 @@ unittest
 @safe nothrow @nogc
 unittest
 {
-    OpSlab slab;
+    OpSlab!() slab;
     assert(!slab.initialize(1).hasError);
     const a = slab.acquire(OpKind.nop, OpClass.user, null, null);
     assert(a);
@@ -544,10 +546,10 @@ unittest
 {
     import sparkles.event_horizon.buffer : BufferPool;
 
-    BufferPool pool;
-    assert(!BufferPool.create(pool, 1, 64).hasError);
+    BufferPool!() pool;
+    assert(!BufferPool!().create(pool, 1, 64).hasError);
 
-    OpSlab slab;
+    OpSlab!() slab;
     assert(!slab.initialize(1).hasError);
 
     const t = slab.acquire(OpKind.read, OpClass.user, null, null);

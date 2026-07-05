@@ -47,7 +47,7 @@ static immutable ubyte[] payload = cast(immutable ubyte[]) "event horizon \xF0\x
 struct EchoCtx
 {
     DefaultLoop* loop;
-    BufferPool* pool;
+    BufferPool!()* pool;
     int clientFd = -1;
     int serverFd = -1;
     bool echoed;
@@ -164,8 +164,8 @@ int main()
     assert(clientFd >= 0);
     scope (exit) close(clientFd);
 
-    BufferPool pool;
-    submitOrDie(BufferPool.create(pool, 4, 4096), "pool create");
+    BufferPool!() pool;
+    submitOrDie(BufferPool!().create(pool, 4, 4096), "pool create");
 
     EchoCtx ctx;
     ctx.loop = &loop;
