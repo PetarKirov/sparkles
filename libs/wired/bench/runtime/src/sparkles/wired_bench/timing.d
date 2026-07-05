@@ -66,12 +66,17 @@ in (samples.length > 0)
 }
 
 /// Throughput in MB/s (decimal megabytes, the JSON-benchmark convention)
-/// of `bytes` processed per `ns` nanoseconds. A sub-tick measurement
-/// (`ns == 0`, possible only for degenerate micro-ops) reports infinity.
+/// of `bytes` processed per `ns` nanoseconds, rounded to 3 decimals so
+/// `--json` snapshots stay short, diffable, and formatter-stable. A
+/// sub-tick measurement (`ns == 0`, possible only for degenerate
+/// micro-ops) reports infinity.
 double mbPerSec(ulong bytes, long ns) @safe pure nothrow @nogc
 in (ns >= 0)
 {
-    return ns > 0 ? (bytes * 1e9) / (ns * 1e6) : double.infinity;
+    import std.math : round;
+
+    return ns > 0 ? round((bytes * 1e9) / (ns * 1e6) * 1000) / 1000
+        : double.infinity;
 }
 
 @("timing.measureOp.respectsMinIters")
