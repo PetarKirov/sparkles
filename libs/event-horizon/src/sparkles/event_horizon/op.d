@@ -166,6 +166,59 @@ struct OpTimeout
     KernelTimespec rel; /// relative expiry
 }
 
+// The pointer operands below (paths, statx/siginfo out-buffers) follow the
+// kernel-stable rule of SPEC §4.1: the memory must stay valid until the
+// terminal completion. At tier B the verbs keep them on the parked frame
+// (the §6.5 argument); tier-A callers own the lifetime explicitly.
+
+/// Opens a file relative to `dirFd` (`AT_FDCWD` for absolute/cwd paths);
+/// the completion `res` is the new fd. `path` is NUL-terminated.
+struct OpOpenAt
+{
+    enum kind = OpKind.openAt;
+    int dirFd;
+    const(char)* path;
+    int flags;
+    uint mode;
+}
+
+/// Closes a descriptor through the ring.
+struct OpClose
+{
+    enum kind = OpKind.close;
+    int fd;
+}
+
+/// Flushes a file's data (and metadata) to storage.
+struct OpFsync
+{
+    enum kind = OpKind.fsync;
+    int fd;
+}
+
+/// Stats a path; the kernel writes into caller-owned `statxBuf` (a
+/// `struct statx` mirror, see `fs.Statx`).
+struct OpStatx
+{
+    enum kind = OpKind.statx;
+    int dirFd;
+    const(char)* path;
+    int flags;
+    uint mask;
+    void* statxBuf;
+}
+
+/// Reaps a child process (`WAITID`); the kernel writes the caller-owned
+/// `siginfo_t`.
+struct OpWaitid
+{
+    enum kind = OpKind.waitid;
+    int idType;    /// `idtype_t` (`P_PID`, …)
+    uint id;       /// pid / pgid per `idType`
+    void* siginfo; /// `siginfo_t*` out-buffer
+    int options;   /// `WEXITED`, …
+}
+
 /// DbI trait: exactly what submission accepts — any struct naming its
 /// portable `OpKind`.
 enum bool isOpDesc(Op) = __traits(compiles, { enum OpKind k = Op.kind; });
