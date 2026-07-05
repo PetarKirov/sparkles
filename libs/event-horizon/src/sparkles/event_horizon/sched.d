@@ -20,6 +20,9 @@ import core.thread.fiber : Fiber;
 import core.time : Duration;
 
 import sparkles.event_horizon.buffer : Buf;
+import sparkles.event_horizon.capability : SpawnOptions;
+import sparkles.event_horizon.cause : CancelContext, FiberContext, Interrupt,
+    InterruptKind, cancelTree, interruptRequested;
 import sparkles.event_horizon.errors;
 import sparkles.event_horizon.loop : DefaultLoop, LoopConfig, RunStatus;
 import sparkles.event_horizon.op;
@@ -43,6 +46,10 @@ package:
     Sched* owner;        /// the scheduler this fiber is pinned to
     FiberTask nextReady; /// intrusive ready-queue link
     FiberTask nextFree;  /// intrusive free-list link
+    FiberContext ectx;   /// the effects-visible slice (SPEC §8)
+    bool enqueued;       /// ready-queue membership (dedupes multiple wakes)
+    OpToken awaitToken;  /// the op this fiber is parked on (cancel target)
+    Throwable pendingDefect; /// escaped Throwable with no scope to route to
 
     // The park/wake mailbox: written by the completion trampoline, read
     // after `park()` returns.
@@ -61,16 +68,38 @@ package:
     void rebind(void delegate() body_) nothrow
     {
         _body = body_;
+        ectx = FiberContext.init;
+        ectx.taskBacklink = (() @trusted => cast(void*) this)();
+        awaitToken = OpToken.init;
+        pendingDefect = null;
         reset();
     }
 
 private:
     void delegate() _body;
 
+    /// The fiber shell (SPEC §8.6): runs the body, catches an escaping
+    /// `Throwable` as a defect, and hands both to the scope's exit hook.
     void shell()
     {
-        if (_body !is null)
-            _body();
+        Throwable defect;
+        try
+        {
+            if (_body !is null)
+                _body();
+        }
+        catch (Throwable t)
+            defect = t;
+
+        const fn = ectx.onExitFn;
+        if (fn !is null)
+        {
+            auto ctx = ectx.onExitCtx;
+            ectx.onExitFn = null;
+            (() @trusted => fn(ctx, &ectx, defect))();
+        }
+        else
+            pendingDefect = defect; // no scope: `resume` rethrows it
     }
 }
 
@@ -142,25 +171,80 @@ struct Sched
     ref DefaultLoop loop() return @safe pure nothrow @nogc => _loop;
 
     /**
-    Spawns a fiber running `body_`, bound to this scheduler. Steady-state
-    `@nogc` via the slab; `ENOBUFS` when it is exhausted.
+    Spawns a fiber running `body_`, bound to this scheduler.
 
-    The `scope` capture is the library's one documented dip1000 escape
-    (SPEC §8.1): the caller must outlive the fiber — `run` guarantees it
-    for the root, and scopes (M5) guarantee it for children.
+    `body_` is an ordinary delegate — NOT `scope`: it runs after this call
+    returns, so a capturing closure's frame must be heap-allocated (the
+    compiler does this automatically). ASan-verified: a `scope` parameter
+    here lets the closure frame stay on a stack that dies before the child
+    runs. Allocation-free spawns pass a non-capturing delegate (a member
+    delegate like `JoinHandle.runShell`, or a function pointer).
     */
-    IoResult!void spawn(scope void delegate() body_) @trusted nothrow
+    IoResult!void spawn(void delegate() body_) @trusted nothrow
+    {
+        return spawnFiber(null, SpawnOptions.init, body_) is null
+            ? ioErr!void(ENOBUFS, OpKind.none, IoErrorStage.submit,
+                "fiber slab exhausted")
+            : ioOk();
+    }
+
+    // ── the fiber-executor concept (drives scope_.Scope; SPEC §10.3) ─────
+
+    /// The running fiber's effects-visible context.
+    FiberContext* currentContext() @safe nothrow @nogc
+    in (_running !is null, "not on a scheduler fiber")
+        => &_running.ectx;
+
+    /// Spawns a child bound to `node` (may be null for an unscoped fiber —
+    /// `run`'s root); enqueued, never run inline; `null` = slab exhausted.
+    FiberContext* spawnFiber(scope CancelContext* node, in SpawnOptions opts,
+        void delegate() body_) @trusted nothrow
     {
         auto t = _freeHead;
         if (t is null)
-            return ioErr!void(ENOBUFS, OpKind.none, IoErrorStage.submit,
-                "fiber slab exhausted");
+            return null;
         _freeHead = t.nextFree;
         t.nextFree = null;
-        t.rebind(cast(void delegate()) body_);
+        t.rebind(body_);
+        t.ectx.daemon = opts.daemon;
+        if (node !is null)
+            node.addFiber(&t.ectx);
         ++_liveFibers;
         enqueue(t);
-        return ioOk();
+        return &t.ectx;
+    }
+
+    /// Suspends the current fiber until exactly one `wake`.
+    void park() @trusted nothrow @nogc
+    in (_running !is null, "park outside a scheduler fiber")
+    {
+        Fiber.yield();
+    }
+
+    /// Makes a parked fiber runnable (same-thread; cross-worker wakes are
+    /// an M9 concern).
+    void wake(FiberContext* f) @trusted nothrow @nogc
+    {
+        auto task = cast(FiberTask) f.taskBacklink;
+        task.wakeKind = WakeKind.manual;
+        enqueue(task);
+    }
+
+    /// Arms a one-shot deadline: expiry cancels `node`'s subtree with
+    /// `InterruptKind.deadline` (SPEC §8.3). The token disarms it.
+    ulong armDeadline(CancelContext* node, Duration timeout) @trusted nothrow
+    {
+        auto h = _loop.submitAfter(timeout, &onDeadline, cast(void*) node);
+        return h.hasError ? 0 : h.value.token.raw;
+    }
+
+    /// Disarms a deadline; a no-op for an already-fired or invalid token.
+    void disarmDeadline(ulong token) @safe nothrow
+    {
+        if (token == 0)
+            return;
+        OpHandle h = {token: OpToken(token)};
+        cast(void) _loop.cancel(h);
     }
 
     /// Fibers spawned and not yet finished.
@@ -208,15 +292,30 @@ struct Sched
     */
     package AwaitOutcome await(Op)(Op op)
     {
+        import core.stdc.errno : ECANCELED;
+
         auto task = _running;
         assert(task !is null, "await outside a scheduler fiber");
+
+        // Checkpoint (SPEC §7.3 step 1): a cancelled scope does no new work.
+        if (interruptRequested(task.ectx))
+            return AwaitOutcome(-ECANCELED);
 
         auto submitted = _loop.submit(move(op), &onCqe, cast(void*) task);
         if (submitted.hasError)
             return AwaitOutcome(-submitted.error.errnoValue);
 
+        // Arm the one-shot in-flight cancel function (SPEC §8.4): it submits
+        // ASYNC_CANCEL for this op; the single wake stays the terminal CQE.
+        task.awaitToken = submitted.value.token;
+        task.ectx.cancelFn = &cancelInFlight;
+        task.ectx.cancelCtx = cast(void*) task;
+
         park();
         assert(task.wakeKind == WakeKind.cqe);
+        task.ectx.cancelFn = null; // completion won: disarm
+        task.ectx.cancelCtx = null;
+        task.awaitToken = OpToken.init;
         return AwaitOutcome(task.wakeRes, task.wakeFlags,
             move(task.wakeBuf), task.wakePeer);
     }
@@ -249,13 +348,34 @@ private:
         task.owner.enqueue(task);
     }
 
-    static void park() @trusted nothrow @nogc
+    /// The one-shot in-flight cancel function (SPEC §8.5): submit
+    /// `ASYNC_CANCEL` for the awaited op — do NOT wake the fiber; the wake
+    /// is always the terminal CQE (`-ECANCELED`, or the real result if
+    /// completion won the race).
+    static void cancelInFlight(void* p, Interrupt) nothrow @nogc
     {
-        Fiber.yield();
+        auto task = (() @trusted => cast(FiberTask) p)();
+        OpHandle h = {token: task.awaitToken};
+        if (h)
+        {
+            auto r = task.owner._loop.cancel(h);
+        }
+    }
+
+    /// The deadline-timer callback: expiry sweeps the node's subtree.
+    static void onDeadline(void* p, ref Completion done) nothrow @nogc
+    {
+        if (done.res != 0)
+            return; // the deadline was disarmed (-ECANCELED): no sweep
+        auto node = (() @trusted => cast(CancelContext*) p)();
+        cancelTree(node, Interrupt(InterruptKind.deadline));
     }
 
     void enqueue(FiberTask t) @safe nothrow @nogc
     {
+        if (t.enqueued)
+            return; // several children may wake one joiner
+        t.enqueued = true;
         t.nextReady = null;
         if (_readyTail is null)
             _readyHead = _readyTail = t;
@@ -275,6 +395,7 @@ private:
         if (_readyHead is null)
             _readyTail = null;
         t.nextReady = null;
+        t.enqueued = false;
         return t;
     }
 
@@ -283,14 +404,17 @@ private:
         _running = t;
         auto thrown = t.call(Fiber.Rethrow.no);
         _running = null;
-        if (thrown !is null)
-            throw thrown; // M5 routes this into Cause.die
+        assert(thrown is null, "the fiber shell catches all Throwables");
         if (t.state == Fiber.State.TERM)
         {
             --_liveFibers;
             t._body = null;
+            auto defect = t.pendingDefect;
+            t.pendingDefect = null;
             t.nextFree = _freeHead;
             _freeHead = t;
+            if (defect !is null)
+                throw defect; // a scope-less fiber's defect surfaces here
         }
     }
 
