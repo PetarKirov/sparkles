@@ -117,6 +117,23 @@ BufResult!B recv(B)(ref Stream s, B buf) if (isOwnedIoBuf!B)
 BufResult!B send(B)(ref Stream s, B buf) if (isOwnedIoBuf!B)
     => rw!(OpSend, Yes.sized)(s.fd, move(buf));
 
+/// Hot receive path (SPEC §6.4): the kernel picks a buffer from `ring` at
+/// completion — nothing is committed while idle. The returned `Buf` is a
+/// ring lease (origin `ringLease`); releasing it republishes the slot to
+/// the kernel with no syscall. `maxLen` caps the receive at the ring's
+/// buffer size.
+IoResult!Buf recvSelect(Ring)(ref Stream s, ref Ring ring, uint maxLen)
+{
+    import sparkles.event_horizon.op : OpRecvSelect;
+
+    auto o = currentSched().await(OpRecvSelect(s.fd, ring.group, maxLen));
+    if (o.res < 0)
+        return ioErr!Buf(-o.res, OpKind.recvSelect);
+    if (o.res == 0)
+        return ioOk(Buf.init); // EOF: no buffer leased
+    return ioOk(ring.lease(o.bufferId, cast(uint) o.res));
+}
+
 /// Parks until a connection arrives; the result is the connected stream.
 IoResult!Stream accept(ref Listener l)
 {
@@ -458,4 +475,78 @@ unittest
         "the steady-state echo hot path must not touch the GC");
     assert(pool.alloc.numAllocate == setupAllocs,
         "only setup draws from the allocator");
+}
+
+@("io.providedBufferRing.leaseRecvRepublish")
+@safe
+unittest
+{
+    import core.lifetime : move;
+
+    import sparkles.event_horizon.buffer : BufGroupId, BufOrigin, BufRing;
+
+    Sched s;
+    if (Sched.create(s).hasError)
+        return; // SKIP: io_uring unavailable
+    scope (exit) s.destroy();
+
+    if (!s.loop().caps().bufRing)
+        return; // SKIP: provided buffer rings unsupported
+
+    // A connected socketpair: recv on one end via a ring-selected buffer.
+    int[2] sv;
+    if ((() @trusted {
+        import core.sys.posix.sys.socket : AF_UNIX, SOCK_STREAM, socketpair;
+
+        return socketpair(AF_UNIX, SOCK_STREAM, 0, sv);
+    })() != 0)
+        return;
+    scope (exit) () @trusted {
+        import core.sys.posix.unistd : close;
+
+        close(sv[0]);
+        close(sv[1]);
+    }();
+
+    // A 4-slot provided buffer ring of 128-byte buffers, registered.
+    BufRing!() ring;
+    assert(!BufRing!().create(ring, BufGroupId(7), 4, 128).hasError);
+    assert(!(() @trusted => s.loop().registerBufRing(ring.group.value,
+        ring.entries, ring.ringAddr))().hasError);
+    scope (exit) cast(void) s.loop().unregisterBufRing(ring.group.value);
+
+    static immutable payload = cast(immutable ubyte[]) "provided ring buffer";
+
+    bool ok;
+    ushort firstBid = ushort.max;
+    auto r = s.run(() @trusted {
+        auto stream = Stream(sv[0]);
+
+        // Write from the peer, then recv into a kernel-selected buffer.
+        (() @trusted {
+            import core.sys.posix.unistd : write;
+
+            write(sv[1], payload.ptr, payload.length);
+        })();
+        auto got = recvSelect(stream, ring, 128);
+        assert(got.hasValue);
+        assert(got.value.origin == BufOrigin.ringLease);
+        assert(got.value.length == payload.length);
+        ok = got.value[] == payload[];
+        firstBid = got.value.ringLeaseId;
+        got.value.release(); // republish the slot to the kernel
+
+        // A second recv reuses the ring (the republished slot is available).
+        (() @trusted {
+            import core.sys.posix.unistd : write;
+
+            write(sv[1], payload.ptr, payload.length);
+        })();
+        auto again = recvSelect(stream, ring, 128);
+        assert(again.hasValue && again.value.length == payload.length);
+        again.value.release();
+    });
+    assert(!r.hasError);
+    assert(ok, "the ring-leased buffer carried the payload");
+    assert(firstBid < 4);
 }

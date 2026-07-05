@@ -99,6 +99,11 @@ struct Buf
     in (_origin == BufOrigin.registered, "not a registered buffer")
         => _slot;
 
+    /// The provided-ring buffer id (`bid`) for a ring-leased `Buf`.
+    ushort ringLeaseId() const @safe pure nothrow @nogc
+    in (_origin == BufOrigin.ringLease, "not a ring lease")
+        => _slot;
+
     /// `true` for an empty (released or default) handle.
     bool empty() const @safe pure nothrow @nogc => _origin == BufOrigin.none;
 
@@ -135,8 +140,11 @@ struct Buf
                     _recycleFn(_owner, _slot);
                 break;
             case BufOrigin.ringLease:
-                // Ring replenishment lands with provided rings (M8).
-                assert(0, "ring leases are not implemented until M8");
+                // Releasing a ring lease republishes the slot to the kernel
+                // by advancing the ring's producer tail (no syscall).
+                if (_recycleFn !is null)
+                    _recycleFn(_owner, _slot);
+                break;
             case BufOrigin.foreign:
                 if (_deleter !is null)
                     _deleter(_ptr, _cap);
@@ -348,6 +356,182 @@ private:
     uint _freeCount;
 }
 
+/// A provided-buffer-ring slot — a library-owned mirror of the kernel's
+/// `io_uring_buf` (16 bytes, ABI-exact) so `buffer.d` stays backend-agnostic.
+struct UringBufSlot
+{
+    ulong addr;  /// buffer address
+    uint len;    /// buffer length
+    ushort bid;  /// buffer id
+    ushort resv; /// reserved; slot 0's `resv` overlays the ring's producer tail
+}
+
+static assert(UringBufSlot.sizeof == 16);
+
+/**
+A provided buffer ring (SPEC §6.4): the kernel picks a buffer from this ring
+only when data actually arrives — a `recvSelect` op commits no buffer while
+idle, the completion carries the chosen buffer id, and releasing that
+ring-leased `Buf` republishes the slot by advancing the ring's producer tail
+(no syscall). This decouples buffer count from connection count — the C10K
+enabler.
+
+The ring itself is page-aligned (a kernel requirement); the backing store is
+drawn from `Allocator` (page-aligned parents suit registration). `entries`
+must be a power of two.
+*/
+struct BufRing(Allocator = Mallocator)
+{
+    @disable this(this);
+
+    static if (stateSize!Allocator)
+        Allocator alloc;
+    else
+        alias alloc = Allocator.instance;
+
+    /// Allocates the page-aligned ring and its backing store; publishes all
+    /// `entries` buffers. Register it with the loop separately (the backend
+    /// call needs the ring address).
+    static IoResult!void create(out BufRing ring, BufGroupId group,
+        uint entries, uint bufSize)
+    in ((entries & (entries - 1)) == 0, "entries must be a power of two")
+    in (entries > 0 && entries <= ushort.max && bufSize > 0)
+    {
+        return ring.initialize(group, entries, bufSize);
+    }
+
+    /// ditto — with a stateful allocator instance.
+    static if (stateSize!Allocator)
+        static IoResult!void create(out BufRing ring, Allocator alloc,
+            BufGroupId group, uint entries, uint bufSize)
+        {
+            import core.lifetime : move;
+
+            ring.alloc = move(alloc);
+            return ring.initialize(group, entries, bufSize);
+        }
+
+    private IoResult!void initialize(BufGroupId group, uint entries, uint bufSize)
+        @trusted
+    {
+        import std.experimental.allocator.mallocator : AlignedMallocator;
+
+        // The ring must be page-aligned (IORING_REGISTER_PBUF_RING).
+        auto ringMem = AlignedMallocator.instance.alignedAllocate(
+            UringBufSlot.sizeof * entries, 4096);
+        if (ringMem is null)
+            return ioErr!void(12 /* ENOMEM */, OpKind.none,
+                IoErrorStage.registration, "buffer ring allocation failed");
+        auto store = alloc.makeArray!ubyte(cast(size_t) entries * bufSize);
+        if (store is null)
+        {
+            cast(void) AlignedMallocator.instance.deallocate(ringMem);
+            return ioErr!void(12 /* ENOMEM */, OpKind.none,
+                IoErrorStage.registration, "buffer ring store allocation failed");
+        }
+
+        _ring = cast(UringBufSlot*) ringMem.ptr;
+        _store = store.ptr;
+        _group = group;
+        _entries = entries;
+        _bufSize = bufSize;
+        _mask = entries - 1;
+
+        // Publish all buffers, then set the tail (slot 0's resv) last.
+        foreach (ushort i; 0 .. cast(ushort) entries)
+        {
+            _ring[i].addr = cast(ulong) &_store[cast(size_t) i * bufSize];
+            _ring[i].len = bufSize;
+            _ring[i].bid = i;
+        }
+        publishTail(cast(ushort) entries);
+        _tail = cast(ushort) entries;
+        return ioOk();
+    }
+
+    /// Frees the ring and store. Unregister from the loop first.
+    void destroy() @trusted
+    {
+        import std.experimental.allocator.mallocator : AlignedMallocator;
+
+        if (_ring !is null)
+        {
+            cast(void) AlignedMallocator.instance.deallocate(
+                _ring[0 .. _entries]);
+            cast(void) alloc.dispose(_store[0 .. cast(size_t) _entries * _bufSize]);
+        }
+        _ring = null;
+        _store = null;
+        _entries = 0;
+        _bufSize = 0;
+    }
+
+    ~this() @safe
+    {
+        destroy();
+    }
+
+    /// The group id (`bgid`).
+    BufGroupId group() const @safe pure nothrow @nogc => _group;
+
+    /// The ring's base address (for the backend's `registerBufRing`).
+    void* ringAddr() @system nothrow @nogc => _ring;
+
+    /// The number of ring entries.
+    uint entries() const @safe pure nothrow @nogc => _entries;
+
+    /// Builds the ring-leased `Buf` for a completion that selected buffer
+    /// `bid`, carrying `len` valid bytes. Releasing it republishes the slot.
+    Buf lease(ushort bid, uint len) @trusted nothrow @nogc
+    in (bid < _entries)
+    {
+        Buf b;
+        b._ptr = &_store[cast(size_t) bid * _bufSize];
+        b._len = len <= _bufSize ? len : _bufSize;
+        b._cap = _bufSize;
+        b._origin = BufOrigin.ringLease;
+        b._slot = bid;
+        b._group = _group;
+        b._owner = &this;
+        b._recycleFn = &republishShim;
+        return b;
+    }
+
+package:
+    /// Republishes buffer `bid` at the producer tail, then advances it.
+    void republish(ushort bid) @trusted nothrow @nogc
+    {
+        const pos = _tail & _mask;
+        _ring[pos].addr = cast(ulong) &_store[cast(size_t) bid * _bufSize];
+        _ring[pos].len = _bufSize;
+        _ring[pos].bid = bid;
+        ++_tail;
+        publishTail(_tail); // release store — the kernel reads this last
+    }
+
+private:
+    static void republishShim(void* owner, ushort bid) @trusted nothrow @nogc
+    {
+        (cast(BufRing*) owner).republish(bid);
+    }
+
+    void publishTail(ushort tail) @trusted nothrow @nogc
+    {
+        import core.atomic : MemoryOrder, atomicStore;
+
+        // The tail overlays slot 0's `resv` field (offset 14).
+        atomicStore!(MemoryOrder.rel)(_ring[0].resv, tail);
+    }
+
+    UringBufSlot* _ring; // page-aligned; slot 0's resv is the producer tail
+    ubyte* _store;
+    BufGroupId _group;
+    uint _entries;
+    uint _bufSize;
+    ushort _tail;
+    uint _mask;
+}
+
 /// Owned-buffer requirement for the tier-B generic verbs (SPEC §6.5): a
 /// slice of memory that stays put while the buffer $(I value) is not moved.
 enum bool isOwnedIoBuf(B) = __traits(compiles, (ref B b) {
@@ -443,4 +627,61 @@ unittest
         // b is empty; only c's release may fire the deleter.
     }
     assert(deletions == 1);
+}
+
+@("buffer.bufRing.leaseRepublishBookkeeping")
+@safe nothrow @nogc
+unittest
+{
+    import core.lifetime : move;
+
+    // Pure ring bookkeeping (no kernel): lease → republish advances the tail
+    // and rewrites the slot, so the ring is a correct SPSC producer.
+    BufRing!() ring;
+    assert(!BufRing!().create(ring, BufGroupId(3), 4, 64).hasError);
+    assert(ring.entries == 4);
+    assert(ring.group.value == 3);
+
+    auto a = ring.lease(2, 40);
+    assert(a.origin == BufOrigin.ringLease);
+    assert(a.ringLeaseId == 2);
+    assert(a.length == 40 && a.capacity == 64);
+    a.release(); // republishes slot 2 at the producer tail
+
+    auto b = ring.lease(0, 64);
+    assert(b.length == 64);
+    b.release();
+}
+
+@("buffer.pool.gracefulDegradationWithoutCaps")
+@safe nothrow @nogc
+unittest
+{
+    import core.lifetime : move;
+
+    // Caps fault injection (open-issues O5): a backend reporting
+    // registeredBuffers = false must leave the pool a plain pool — the
+    // graceful-degradation path, exercised on any kernel.
+    static struct MockCaps
+    {
+        bool registeredBuffers;
+    }
+
+    static struct MockBackend
+    {
+        MockCaps _caps;
+        ref const(MockCaps) caps() const return => _caps;
+        IoResult!void registerBuffers(scope ubyte[][]) => ioOk();
+    }
+
+    BufferPool!() pool;
+    assert(!BufferPool!().create(pool, 2, 64).hasError);
+
+    MockBackend noCaps; // registeredBuffers stays false
+    assert(!pool.register(noCaps).hasError);
+
+    auto b = pool.acquire();
+    assert(b.hasValue);
+    assert(b.value.origin == BufOrigin.pool, "no caps -> plain pool, not registered");
+    assert(!b.value.isRegistered);
 }

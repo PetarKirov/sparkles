@@ -109,6 +109,14 @@ if (isCompletionBackend!Backend)
     /// Releases the registered-buffer table.
     IoResult!void unregisterBuffers() => _backend.unregisterBuffers();
 
+    /// Registers a provided buffer ring for group `gid` (SPEC §6.4);
+    /// `BufRing.register`-style callers drive this.
+    IoResult!void registerBufRing(ushort gid, uint entries, void* ringAddr)
+        => _backend.registerBufRing(gid, entries, ringAddr);
+
+    /// Releases the provided buffer ring for group `gid`.
+    IoResult!void unregisterBufRing(ushort gid) => _backend.unregisterBufRing(gid);
+
     /**
     Submits `op` with a completion callback (SPEC §5.2). Owned buffers move
     into the op slot and come back via `Completion.buf`; on a submission
@@ -309,6 +317,11 @@ private:
         // A timer's expiry is its success, not an error.
         if (slot.kind == OpKind.timeout && raw.res == -ETIME)
             done.res = 0;
+
+        // A buffer-selecting recv: recover the kernel-chosen buffer id from
+        // the raw flags (SPEC §6.4); the caller leases it from the ring.
+        if (flags & CompletionFlags.bufferSelected)
+            done.bufferId = Backend.selectedBufferId(raw.rawFlags);
 
         if (isFinal)
             done.buf = move(slot.pinned);

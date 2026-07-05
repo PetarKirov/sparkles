@@ -568,12 +568,16 @@ identically, unregistered (recorded in caps — same API, honest degradation).
 
 ### 6.4 Provided buffer rings
 
-`BufRing` hands the kernel a ring of buffers; a `recvSelect` op commits no
-buffer while idle — the completion carries a ring-leased `Buf`
-(`flags.bufferSelected`), and releasing that `Buf` replenishes the ring tail
-without a syscall. This decouples buffer count from connection count. On
-kqueue/IOCP the backend draws from the pool at completion-synthesis time —
-the API and the decoupling survive.
+`BufRing!(Allocator = Mallocator)` hands the kernel a ring of buffers (a
+page-aligned ring plus a backing store drawn through the allocator); a
+`recvSelect` op commits no buffer while idle — the completion carries the
+kernel-chosen buffer id (`flags.bufferSelected`), and the tier-B
+`recvSelect` verb `lease`s a ring-lease `Buf` from it. Releasing that `Buf`
+republishes the slot at the ring's producer tail (a release-store on the
+overlaid tail field) without a syscall — the ring is a single-producer
+(app) / single-consumer (kernel) SPSC ring. This decouples buffer count from
+connection count. On kqueue/IOCP the backend draws from the pool at
+completion-synthesis time — the API and the decoupling survive.
 
 ### 6.5 Tier-B generic buffers
 
