@@ -111,10 +111,10 @@ _Loop-side_ modules may import anything.
 | `scope_`                         | effects-side | `Scope`, `withScope`, `withDeadline`, `protect`, `checkCancellation`, `JoinHandle` (§8)                                              |
 | `schedule`                       | effects-side | `Schedule` values + `retry`/`repeat`/`timeout`/`race` drivers (§10.4)                                                                |
 | `clock`                          | effects-side | `isClock` + `TestClock` (§10.3)                                                                                                      |
-| `net`                            | effects-side | `isNet`, `isByteStream`, `SockAddr` helpers (`ipv4`, …) + `SimNet` (§10.3)                                                           |
+| `net`                            | effects-side | `SockAddr` + helpers (`ipv4`, …), `isNet`, `isByteStream` + `SimNet` (§10.3)                                                         |
 | `testing`                        | effects-side | `TestSched` (deterministic executor) + `advanceAndSettle` (§10.3)                                                                    |
 | `buffer`                         | loop-side    | `Buf`, `BufOrigin`, `BufGroupId`, `BufResult`, `BufferPool`, `BufRing`, `isOwnedIoBuf` (§6)                                          |
-| `op`                             | loop-side    | op descriptors, `SockAddr`, `KernelTimespec`, `OpToken`, `OpClass`, `OpSlot`/`OpSlab`, `Completion`, `OpCallback` (§4)               |
+| `op`                             | loop-side    | op descriptors, `KernelTimespec`, `OpToken`, `OpClass`, `OpSlot`/`OpSlab`, `Completion`, `OpCallback` (§4); re-exports `SockAddr`    |
 | `handle`                         | loop-side    | `LoopHandle` — opt-in type-erased loop access for loop-side plumbing and `-betterC` users (§5.5)                                     |
 | `backend.concept`                | loop-side    | `isCompletionBackend` + optional-capability traits, `RawCompletion`, `BackendConfig`, `Waker` (§3.1)                                 |
 | `backend.probe`                  | loop-side    | `BackendCaps`, `LoopMode`, `ModePolicy`, `probeSystem` (§3.2–3.4)                                                                    |
@@ -323,11 +323,11 @@ struct OpRecvSelect { enum kind = OpKind.recvSelect; int fd; BufGroupId group; u
 enum bool isOpDesc(Op) = __traits(compiles, { enum OpKind k = Op.kind; });
 ```
 
-`SockAddr` (a 128-byte `sockaddr_storage`-sized POD plus a length) and
-`KernelTimespec` (a `__kernel_timespec` mirror) are **library-owned PODs
-defined in `op`** — peer backends satisfy the concept without importing
-`during`. Address construction helpers (`ipv4`, `ipv6`, `unixSocket`) live in
-`net` (effects-side address vocabulary).
+`SockAddr` (a 128-byte `sockaddr_storage`-sized POD plus a length) lives in
+`net` with its construction helpers (`ipv4`, …) — effects-side address
+vocabulary usable by test doubles — and is re-exported by `op`;
+`KernelTimespec` (a `__kernel_timespec` mirror) is a library-owned POD in
+`op`. Peer backends satisfy the concept without importing `during`.
 
 `accept` returns the new fd only; the peer address is fetched on demand
 (`getpeername`) rather than inflating every op slot by a `sockaddr_storage`.

@@ -70,14 +70,10 @@ struct KernelTimespec
     long tv_nsec; /// nanoseconds
 }
 
-/// A `sockaddr_storage`-sized POD plus its length — library-owned (SPEC
-/// §4.1). Address construction helpers (`ipv4`, …) live in `net` (M6);
-/// tier-A callers may fill `storage` with any raw `sockaddr`.
-struct SockAddr
-{
-    ubyte[128] storage; /// raw sockaddr bytes
-    uint len;           /// valid length of `storage`
-}
+/// The address POD lives effects-side with its helpers (`ipv4`, …) and is
+/// re-exported here for tier-A callers, which may fill `storage` with any
+/// raw `sockaddr`.
+public import sparkles.event_horizon.net : SockAddr;
 
 // ── descriptors (SPEC §4.1) ─────────────────────────────────────────────────
 // A descriptor may contain (a) values copied into the SQE, (b) an owned Buf
