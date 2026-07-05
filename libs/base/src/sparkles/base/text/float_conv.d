@@ -509,6 +509,323 @@ private Pow10Entry[maxExp10 - minExp10 + 1] generatePow10Table() @safe pure noth
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Tier 3: the exact big-decimal slow path
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+Converts a decimal literal to the correctly-rounded nearest `double`
+exactly, with no fast-path preconditions — the tier that settles every
+input `tryFastDouble` punts (true ties, subnormals, overflow boundaries,
+>19-digit truncations).
+
+`intDigits`/`fracDigits` are the digit runs on either side of the decimal
+point (either may be empty, both may carry leading zeros);
+`explicitExp10` is the literal's exponent part. The algorithm is the
+classic arbitrary-precision decimal-shift fallback (Go `strconv`,
+originally David Gay): scale the decimal by powers of two until it sits
+in `[1, 2)`, then read off the 53-bit mantissa with exact rounding
+information. Fixed storage, `@nogc`, CTFE-capable.
+*/
+double slowDouble(scope const(char)[] intDigits, scope const(char)[] fracDigits,
+    int explicitExp10) @safe pure nothrow @nogc
+{
+    BigDecimal d;
+    d.set(intDigits, fracDigits, explicitExp10);
+
+    // Obvious saturation (also bounds the shifting below).
+    if (d.count == 0 || d.pointPos < -330)
+        return 0.0;
+    if (d.pointPos > 310)
+        return double.infinity;
+
+    // Bits contributed by shifting by 10^k: powtab[k] = floor(k·log2(10)).
+    static immutable int[9] powtab = [1, 3, 6, 9, 13, 16, 19, 23, 26];
+
+    int exp2 = 0;
+    // Scale down to below 1 (pointPos ≤ 0)…
+    while (d.pointPos > 0)
+    {
+        const idx = d.pointPos >= powtab.length ? powtab.length - 1 : d.pointPos;
+        const n = powtab[idx];
+        d.shiftRight(n);
+        exp2 += n;
+    }
+    // …then up into [0.5, 1): pointPos == 0 with a first digit ≥ 5.
+    while (d.pointPos < 0 || (d.pointPos == 0 && d.digit(0) < 5))
+    {
+        const mag = -d.pointPos;
+        const idx = mag >= powtab.length ? powtab.length - 1 : mag;
+        const n = mag == 0 ? 1 : powtab[idx];
+        d.shiftLeft(n);
+        exp2 -= n;
+    }
+    exp2--; // [0.5, 1) → [1, 2)
+
+    // Clamp into the subnormal range when below the smallest normal exponent.
+    enum minNormalExp2 = -1022;
+    if (exp2 < minNormalExp2)
+    {
+        const n = minNormalExp2 - exp2;
+        d.shiftRight(n);
+        exp2 += n;
+    }
+    if (exp2 > 1023)
+        return double.infinity;
+
+    // Extract mantissa: shift the value into [2^52, 2^53) and round.
+    d.shiftLeft(53);
+    ulong mantissa = d.roundedInteger();
+    if (mantissa >= (1UL << 53)) // rounding carried
+    {
+        mantissa >>= 1;
+        exp2++;
+        if (exp2 > 1023)
+            return double.infinity;
+    }
+    if (mantissa < (1UL << 52)) // subnormal (leading bit not reached)
+        return bitsToDouble(mantissa); // exponent field 0
+    return bitsToDouble((cast(ulong)(exp2 + 1023) << 52)
+        | (mantissa & ((1UL << 52) - 1)));
+}
+
+/// Arbitrary-precision decimal for the slow path: up to `capacity`
+/// significant digits (beyond that only a sticky "truncated" bit matters
+/// for rounding), a decimal-point position, and exact power-of-two shifts.
+private struct BigDecimal
+{
+    // 800 digits cover every exactly-representable double (the longest
+    // exact decimal expansion of a subnormal is 767 significant digits).
+    enum capacity = 800;
+
+    ubyte[capacity] digits; // values 0..9, most significant first
+    int count;              // significant digits stored
+    int pointPos;           // decimal point sits after digits[0 .. pointPos]
+    bool truncated;         // nonzero digits beyond capacity were dropped
+
+    ubyte digit(size_t i) const @safe pure nothrow @nogc
+        => i < count ? digits[i] : 0;
+
+    /// Loads from integer/fraction digit runs and an explicit exponent.
+    void set(scope const(char)[] intPart, scope const(char)[] fracPart,
+        int explicitExp10) @safe pure nothrow @nogc
+    {
+        count = 0;
+        truncated = false;
+        int firstExp = 0; // pointPos before the explicit exponent
+        bool seenSignificant = false;
+
+        foreach (i; 0 .. intPart.length)
+        {
+            const ubyte v = cast(ubyte)(intPart[i] - '0');
+            if (!seenSignificant)
+            {
+                if (v == 0)
+                    continue;
+                seenSignificant = true;
+                firstExp = cast(int)(intPart.length - i); // digits before '.'
+            }
+            store(v);
+        }
+        foreach (i; 0 .. fracPart.length)
+        {
+            const ubyte v = cast(ubyte)(fracPart[i] - '0');
+            if (!seenSignificant)
+            {
+                if (v == 0)
+                    continue;
+                seenSignificant = true;
+                firstExp = -cast(int) i; // value = 0.00…digits
+            }
+            store(v);
+        }
+
+        while (count > 0 && digits[count - 1] == 0)
+            count--; // trailing zeros carry no information
+        pointPos = count == 0 ? 0 : firstExp + explicitExp10;
+    }
+
+    private void store(ubyte v) @safe pure nothrow @nogc
+    {
+        if (count < capacity)
+            digits[count++] = v;
+        else if (v != 0)
+            truncated = true;
+    }
+
+    private void trimZeros() @safe pure nothrow @nogc
+    {
+        // Leading zeros shift the whole window (and the point) left…
+        int lead = 0;
+        while (lead < count && digits[lead] == 0)
+            lead++;
+        if (lead > 0)
+        {
+            foreach (i; 0 .. count - lead)
+                digits[i] = digits[i + lead];
+            count -= lead;
+            pointPos -= lead;
+        }
+        // …trailing zeros just shrink the window.
+        while (count > 0 && digits[count - 1] == 0)
+            count--;
+        if (count == 0)
+            pointPos = 0;
+    }
+
+    /// Divides by 2^n exactly (Go strconv's `rightShift`, ≤60 bits/step).
+    void shiftRight(int n) @safe pure nothrow @nogc
+    {
+        while (n > 0)
+        {
+            const step = n > 60 ? 60 : n;
+            shiftRightUpTo60(step);
+            n -= step;
+        }
+    }
+
+    private void shiftRightUpTo60(int k) @safe pure nothrow @nogc
+    {
+        size_t r = 0; // read index
+        ulong n = 0;
+
+        // Pick up enough digits to cover the divisor.
+        while ((n >> k) == 0)
+        {
+            if (r >= count)
+            {
+                if (n == 0)
+                {
+                    count = 0;
+                    pointPos = 0;
+                    return;
+                }
+                while ((n >> k) == 0)
+                {
+                    n *= 10;
+                    r++;
+                }
+                break;
+            }
+            n = n * 10 + digits[r];
+            r++;
+        }
+        pointPos -= cast(int) r - 1;
+
+        const mask = (1UL << k) - 1;
+        size_t w = 0; // write index
+        while (r < count)
+        {
+            const c = digits[r];
+            r++;
+            const dig = n >> k;
+            n &= mask;
+            if (w < capacity)
+                digits[w++] = cast(ubyte) dig;
+            else if (dig != 0)
+                truncated = true;
+            n = n * 10 + c;
+        }
+        while (n > 0)
+        {
+            const dig = n >> k;
+            n &= mask;
+            if (w < capacity)
+                digits[w++] = cast(ubyte) dig;
+            else if (dig != 0)
+                truncated = true;
+            n *= 10;
+        }
+        count = cast(int) w;
+        trimZeros();
+    }
+
+    /// Multiplies by 2^n exactly.
+    void shiftLeft(int n) @safe pure nothrow @nogc
+    {
+        while (n > 0)
+        {
+            const step = n > 60 ? 60 : n;
+            shiftLeftUpTo60(step);
+            n -= step;
+        }
+    }
+
+    private void shiftLeftUpTo60(int n) @safe pure nothrow @nogc
+    {
+        if (count == 0)
+            return;
+        // Multiply digit string by 2^n, least significant first.
+        // Result grows by at most delta digits: ceil(n·log10(2)) + 1.
+        const delta = cast(int)((cast(long) n * 30_103) / 100_000) + 1;
+
+        ubyte[capacity + 20] outDigits; // room for the growth before trim
+        ulong carry = 0;
+        int outLen = count + delta;
+        foreach_reverse (i; 0 .. outLen)
+        {
+            const srcIdx = i - delta;
+            const d = srcIdx >= 0 && srcIdx < count ? digits[srcIdx] : 0;
+            const v = (cast(ulong) d << n) + carry;
+            outDigits[i] = cast(ubyte)(v % 10);
+            carry = v / 10;
+        }
+        assert(carry == 0, "delta bound must absorb the carry");
+
+        // Trim leading zeros (delta may overshoot by one digit).
+        int lead = 0;
+        while (lead < outLen && outDigits[lead] == 0)
+            lead++;
+        int newCount = outLen - lead;
+        bool newTruncated = truncated;
+        if (newCount > capacity)
+        {
+            foreach (i; capacity .. newCount)
+                if (outDigits[lead + i] != 0)
+                    newTruncated = true;
+            newCount = capacity;
+        }
+        foreach (i; 0 .. newCount)
+            digits[i] = outDigits[lead + i];
+        // Trailing zeros away.
+        while (newCount > 0 && digits[newCount - 1] == 0)
+            newCount--;
+        pointPos += delta - lead;
+        count = newCount;
+        truncated = newTruncated;
+    }
+
+    /// The integer part rounded to nearest, ties to even — exact, because
+    /// the fraction digits (plus the sticky truncation bit) are available.
+    ulong roundedInteger() const @safe pure nothrow @nogc
+    {
+        if (pointPos < 0)
+            return 0; // below 0.1 — strictly under one half
+        ulong value = 0;
+        foreach (i; 0 .. pointPos)
+            value = value * 10 + digit(i);
+
+        // Decide the fraction: > ½ rounds up, < ½ down, exactly ½ to even.
+        bool roundUp = false;
+        const first = digit(pointPos);
+        if (first > 5)
+            roundUp = true;
+        else if (first == 5)
+        {
+            bool exactlyHalf = !truncated;
+            if (exactlyHalf)
+                foreach (i; pointPos + 1 .. count)
+                    if (digits[i] != 0)
+                    {
+                        exactlyHalf = false;
+                        break;
+                    }
+            roundUp = exactlyHalf ? (value & 1) != 0 : true;
+        }
+        return value + (roundUp ? 1 : 0);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Cursor reader (general grammar; the JSON reader fuses its own loop)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -519,9 +836,9 @@ past it on success.
 
 Inputs with more than 19 significant digits are decided by bracketing
 (converting both the truncated significand and its successor — when both
-round to the same `double`, that value is proven correct). The rare inputs
-only the exact big-integer tier can settle report `numericOverflow` until
-`slowDouble` lands (tier 3, next milestone).
+round to the same `double`, that value is proven correct); everything the
+fast tiers punt is settled exactly by $(LREF slowDouble). Every
+well-formed literal therefore succeeds with the correctly-rounded value.
 */
 ParseExpected!double readDecimalFloat(ref scope const(char)[] s)
     @safe pure nothrow @nogc
@@ -649,9 +966,9 @@ ParseExpected!double readDecimalFloat(ref scope const(char)[] s)
             && doubleToBits(lowV) == doubleToBits(highV);
         value = lowV;
     }
-    if (!decided)
-        return parseErr!double(ParseErrorCode.numericOverflow, 0,
-            "value requires the exact conversion tier");
+    if (!decided) // tier 3: exact, no preconditions
+        value = slowDouble(s[intStart .. intEnd],
+            fracStart == 0 ? null : s[fracStart .. fracEnd], explicitExp);
 
     s = s[i .. $];
     return parseOk(negative ? -value : value);
@@ -751,11 +1068,37 @@ unittest
     assert(conv(299_792_458, 0) == 299_792_458.0);
     assert(conv(602_214_076, 15) == 6.02214076e23);
 
-    // Deliberate punts — decided by the exact tier in the next milestone:
-    // subnormals, and true ties like 2^53 + 1 (must round to even …992).
+    // Deliberate fast-tier punts (subnormals, true ties) — settled
+    // exactly by slowDouble:
     double r;
     assert(!tryFastDouble(5, -324, r));
     assert(!tryFastDouble(9_007_199_254_740_993, 0, r));
+}
+
+@("float_conv.slowDouble.exactPins")
+unittest
+{
+    // The smallest subnormal, exactly (5e-324 ≈ 2^-1074).
+    assert(doubleToBits(slowDouble("5", null, -324)) == 1);
+    assert(doubleToBits(slowDouble(null, "5", -323)) == 1); // "0.5e-323"
+    // Below half the smallest subnormal → 0; above → rounds up to it.
+    assert(slowDouble("2", null, -324) is 0.0);
+    assert(doubleToBits(slowDouble("3", null, -324)) == 1);
+    // 2^53 + 1 is a true tie → even (…992).
+    assert(slowDouble("9007199254740993", null, 0) == 9_007_199_254_740_992.0);
+    // 2^53 + 3 ties to even upward (…996).
+    assert(slowDouble("9007199254740995", null, 0) == 9_007_199_254_740_996.0);
+    // The infamous largest-subnormal constant (the "PHP hang" number)
+    // 2.2250738585072011e-308 → the max subnormal bit pattern.
+    assert(doubleToBits(slowDouble("2", "2250738585072011", -308))
+        == 0x000F_FFFF_FFFF_FFFF);
+    // Overflow saturates.
+    assert(slowDouble("2", null, 308) == double.infinity);
+    assert(slowDouble("17976931348623157", null, 292) == double.max);
+    assert(slowDouble("17976931348623159", null, 292) == double.infinity);
+    // Long exact expansions (the 767-digit case is what capacity covers):
+    assert(slowDouble("1", null, 0) == 1.0);
+    assert(slowDouble(null, "1", 0) == 0.1);
 }
 
 @("float_conv.tryFastDouble.ctfeMatchesRuntime")
@@ -805,10 +1148,9 @@ unittest
     assert(read("123456789012345678901234567890") == 1.2345678901234568e29);
     assert(read("0.3") == 0.3);
 
-    // The canonical halfway literal 1e23 punts to the exact tier (next
-    // milestone) — it must fail loudly rather than round wrongly.
-    const(char)[] halfway = "1e23";
-    assert(readDecimalFloat(halfway).hasError);
+    // The canonical halfway literal: the fast tiers punt it, the exact
+    // tier settles it (ties to even → the …611392 neighbor).
+    assert(doubleToBits(read("1e23")) == 0x44B5_2D02_C7E1_4AF6);
 
     const(char)[] s = "1.5rest";
     assert(readDecimalFloat(s).value == 1.5);
@@ -841,21 +1183,16 @@ version (linux)
     }
 
     char[64] buf;
-    size_t settled;
     foreach (iter; 0 .. 20_000)
     {
         const sig = next(state) >> (next(state) % 40); // vary digit counts
-        const exp = cast(int)(next(state) % 641) - 320;
+        const exp = cast(int)(next(state) % 691) - 345; // hits both saturations
         const len = snprintf(buf.ptr, buf.length, "%llue%d", sig, exp);
         const(char)[] text = buf[0 .. len];
 
         auto ours = readDecimalFloat(text);
-        if (ours.hasError)
-            continue; // needs tier 3 (exact); not a correctness failure
-        settled++;
+        assert(ours.hasValue); // with tier 3, every literal resolves
         const oracle = strtod(buf.ptr, null);
         assert(doubleToBits(ours.value) == doubleToBits(oracle));
     }
-    // The fast tiers must settle the overwhelming majority.
-    assert(settled > 19_000);
 }
