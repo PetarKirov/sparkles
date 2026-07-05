@@ -86,8 +86,15 @@ struct NoGcHook
 alias IoResult(T) = Expected!(T, IoError, NoGcHook);
 
 /// Constructs a successful $(LREF IoResult) carrying `value`.
-IoResult!T ioOk(T)(T value) @safe pure nothrow @nogc
-    => ok!(IoError, NoGcHook)(value);
+/// (Attributes infer, and the payload is forwarded: a move-only payload
+/// with a non-trivial destructor — `Buf` — must neither be rejected by a
+/// forced `pure`/`@safe` nor copied on the way in.)
+IoResult!T ioOk(T)(auto ref T value)
+{
+    import core.lifetime : forward;
+
+    return ok!(IoError, NoGcHook)(forward!value);
+}
 
 /// ditto — success with no payload (`IoResult!void`).
 /// (Explicitly attributed: as a non-template it cannot infer them.)
@@ -95,15 +102,14 @@ IoResult!void ioOk() @safe pure nothrow @nogc
     => ok!(IoError, NoGcHook)();
 
 /// Constructs a failed $(LREF IoResult)`!T` carrying `error`. `T` is
-/// explicit (there is no value to infer it from).
-IoResult!T ioErr(T)(IoError error) @safe pure nothrow @nogc
+/// explicit (there is no value to infer it from); attributes infer.
+IoResult!T ioErr(T)(IoError error)
     => err!(T, NoGcHook)(error);
 
 /// ditto — the common `errno` + op form:
 /// `return ioErr!uint(EAGAIN, OpKind.send, IoErrorStage.submit);`
 IoResult!T ioErr(T)(int errnoValue, OpKind op,
     IoErrorStage stage = IoErrorStage.completion, string context = null)
-    @safe pure nothrow @nogc
     => err!(T, NoGcHook)(IoError(errnoValue, op, stage, context));
 
 /// The single point where a raw completion `res` (`>= 0` payload — byte
