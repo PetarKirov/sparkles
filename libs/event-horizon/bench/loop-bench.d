@@ -29,6 +29,7 @@ import std.stdio : writefln;
 import sparkles.event_horizon.backend.concept : BackendConfig;
 import sparkles.event_horizon.loop : DefaultLoop, LoopConfig, RunStatus;
 import sparkles.event_horizon.op : Completion, OpNop;
+import sparkles.event_horizon.sched : Sched;
 
 enum batch = 128;
 enum minRunTime = 500.msecs;
@@ -82,10 +83,38 @@ int main()
 
     assert(completions == batchedOps + pingPongOps);
 
+    // ── fiber await ping-pong (tier B vs tier A overhead) ───────────────
+    // Same one-op-per-enter round-trip, but through the fiber seam:
+    // submit + park + CQE + enqueue + resume per op.
+    loop.destroy();
+    Sched sched;
+    ulong fiberOps;
+    Duration fiberElapsed;
+    if (!Sched.create(sched).hasError)
+    {
+        auto r = sched.run(() {
+            import sparkles.event_horizon.io : nop;
+
+            const fiberStart = MonoTime.currTime;
+            while (MonoTime.currTime - fiberStart < minRunTime)
+            {
+                assert(!nop(sched).hasError);
+                ++fiberOps;
+            }
+            fiberElapsed = MonoTime.currTime - fiberStart;
+        });
+        assert(!r.hasError);
+        sched.destroy();
+    }
+
     writefln("batched   (x%d): %10.0f ops/s", batch,
         opsPerSecond(batchedOps, batchedElapsed));
     writefln("ping-pong (x1) : %10.0f ops/s (%.0f ns/op)",
         opsPerSecond(pingPongOps, pingPongElapsed),
         pingPongElapsed.total!"nsecs" / cast(double) pingPongOps);
+    if (fiberOps > 0)
+        writefln("fiber     (x1) : %10.0f ops/s (%.0f ns/op — await/park/resume over ping-pong)",
+            opsPerSecond(fiberOps, fiberElapsed),
+            fiberElapsed.total!"nsecs" / cast(double) fiberOps);
     return 0;
 }
