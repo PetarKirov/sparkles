@@ -618,6 +618,18 @@ export default withMermaid(
               ],
             },
             {
+              text: 'Event Horizon',
+              collapsed: false,
+              items: [
+                { text: 'Specification', link: '/specs/event-horizon/SPEC' },
+                { text: 'Delivery Plan', link: '/specs/event-horizon/PLAN' },
+                {
+                  text: 'Open Issues',
+                  link: '/specs/event-horizon/open-issues',
+                },
+              ],
+            },
+            {
               text: 'Hue',
               collapsed: false,
               items: [
