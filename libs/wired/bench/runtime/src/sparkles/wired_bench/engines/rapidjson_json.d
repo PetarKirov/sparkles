@@ -52,6 +52,13 @@ struct RapidjsonEngine
             shimError(jb_rj_error(ctx)));
     }
 
+    /// SAX Reader driving a null handler: full validation, nothing built.
+    void validate(scope const(char)[] text) @trusted
+    {
+        enforce(jb_rj_validate(ctx, text.ptr, text.length) == 0,
+            shimError(jb_rj_error(ctx)));
+    }
+
     /// Clears the document and releases the pool allocator's chunks.
     void freeDoc() @trusted
     {

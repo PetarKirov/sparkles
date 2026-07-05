@@ -92,6 +92,24 @@ pub unsafe extern "C" fn jb_sonic_parse(
     }
 }
 
+/// SIMD-skip validation building nothing: `from_slice::<IgnoredAny>` drives
+/// sonic's parser, which skips ignored values with its SIMD container skip.
+///
+/// # Safety
+/// `ctx` as above; `data`/`len` must describe a valid buffer.
+#[no_mangle]
+pub unsafe extern "C" fn jb_sonic_validate(
+    ctx: *mut JbSonicCtx,
+    data: *const c_char,
+    len: usize,
+) -> c_int {
+    let ctx = &mut *ctx;
+    match sonic_rs::from_slice::<serde::de::IgnoredAny>(input_slice(data, len)) {
+        Ok(_) => 0,
+        Err(e) => ctx.error.fail(e),
+    }
+}
+
 /// # Safety
 /// `ctx` as above.
 #[no_mangle]

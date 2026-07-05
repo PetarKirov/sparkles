@@ -64,6 +64,10 @@ jb_sj_od_ctx  *jb_sj_od_new(void);
 void           jb_sj_od_free(jb_sj_od_ctx *ctx);
 int            jb_sj_od_parse_walk(jb_sj_od_ctx *ctx, const char *data,
     size_t len, jb_fingerprint *out);
+/* Structural skip: containers are traversed, scalars are never decoded —
+ * the cost profile of a lazy parser over untouched fields (weaker than a
+ * full well-formedness check: numbers/strings stay unvalidated). */
+int            jb_sj_od_validate(jb_sj_od_ctx *ctx, const char *data, size_t len);
 const char    *jb_sj_od_error(const jb_sj_od_ctx *ctx);
 
 /* ---- rapidjson (kParseFullPrecisionFlag always, for cross-engine number
@@ -74,6 +78,8 @@ void           jb_rj_free(jb_rj_ctx *ctx);
 int            jb_rj_parse(jb_rj_ctx *ctx, const char *data, size_t len);
 /* Copies into a context scratch buffer (timed), then ParseInsitu. */
 int            jb_rj_parse_insitu(jb_rj_ctx *ctx, const char *data, size_t len);
+/* SAX Reader driving a null handler: full validation, nothing built. */
+int            jb_rj_validate(jb_rj_ctx *ctx, const char *data, size_t len);
 void           jb_rj_doc_free(jb_rj_ctx *ctx);
 int            jb_rj_fingerprint(jb_rj_ctx *ctx, jb_fingerprint *out);
 const char    *jb_rj_serialize(jb_rj_ctx *ctx, size_t *len);
@@ -92,6 +98,8 @@ typedef struct jb_serde_ctx jb_serde_ctx;
 jb_serde_ctx  *jb_serde_new(void);
 void           jb_serde_free(jb_serde_ctx *ctx);
 int            jb_serde_parse(jb_serde_ctx *ctx, const char *data, size_t len);
+/* from_slice::<IgnoredAny>: full validation, nothing built. */
+int            jb_serde_validate(jb_serde_ctx *ctx, const char *data, size_t len);
 void           jb_serde_doc_free(jb_serde_ctx *ctx);
 int            jb_serde_fingerprint(jb_serde_ctx *ctx, jb_fingerprint *out);
 const char    *jb_serde_serialize(jb_serde_ctx *ctx, size_t *len);
@@ -101,6 +109,8 @@ typedef struct jb_simdj_ctx jb_simdj_ctx;
 jb_simdj_ctx  *jb_simdj_new(void);
 void           jb_simdj_free(jb_simdj_ctx *ctx);
 int            jb_simdj_parse(jb_simdj_ctx *ctx, const char *data, size_t len);
+/* to_tape over the scratch copy (timed): stage 1 + 2, no value building. */
+int            jb_simdj_validate(jb_simdj_ctx *ctx, const char *data, size_t len);
 void           jb_simdj_doc_free(jb_simdj_ctx *ctx);
 int            jb_simdj_fingerprint(jb_simdj_ctx *ctx, jb_fingerprint *out);
 const char    *jb_simdj_serialize(jb_simdj_ctx *ctx, size_t *len);
@@ -110,6 +120,8 @@ typedef struct jb_sonic_ctx jb_sonic_ctx;
 jb_sonic_ctx  *jb_sonic_new(void);
 void           jb_sonic_free(jb_sonic_ctx *ctx);
 int            jb_sonic_parse(jb_sonic_ctx *ctx, const char *data, size_t len);
+/* from_slice::<IgnoredAny>: SIMD-skip validation, nothing built. */
+int            jb_sonic_validate(jb_sonic_ctx *ctx, const char *data, size_t len);
 void           jb_sonic_doc_free(jb_sonic_ctx *ctx);
 int            jb_sonic_fingerprint(jb_sonic_ctx *ctx, jb_fingerprint *out);
 const char    *jb_sonic_serialize(jb_sonic_ctx *ctx, size_t *len);

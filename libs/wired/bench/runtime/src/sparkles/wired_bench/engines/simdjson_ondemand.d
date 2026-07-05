@@ -49,6 +49,15 @@ struct SimdjsonOndemandEngine
         lastWalk = toFingerprint(c);
     }
 
+    /// Structural skip: containers traversed, scalars never decoded — the
+    /// cost profile of a lazy parser over untouched fields (weaker than a
+    /// full well-formedness check).
+    void validate(scope const(char)[] text) @trusted
+    {
+        enforce(jb_sj_od_validate(ctx, text.ptr, text.length) == 0,
+            shimError(jb_sj_od_error(ctx)));
+    }
+
     /// The fingerprint computed by the walk `parse` already performed.
     Fingerprint fingerprint() const @safe pure nothrow @nogc
     {

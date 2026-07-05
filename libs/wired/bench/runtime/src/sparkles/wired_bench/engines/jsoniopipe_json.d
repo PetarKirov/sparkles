@@ -8,6 +8,7 @@ module sparkles.wired_bench.engines.jsoniopipe_json;
 version (BenchJsoniopipe):
 
 import iopipe.json.dom : JSONType, JSONValue, parseJSON;
+import iopipe.json.parser : JSONToken, jsonTokenizer;
 import iopipe.json.serialize : serialize;
 
 import sparkles.wired_bench.fingerprint : Fingerprint;
@@ -35,6 +36,18 @@ struct JsoniopipeEngine
     {
         doc = JV.init;
         rendered = null;
+    }
+
+    /// Tokenizer drain — the streaming parser's natural strength: every
+    /// token is scanned and checked, no value is materialized.
+    void validate(const(char)[] text)
+    {
+        import std.exception : enforce;
+
+        auto tokenizer = text.jsonTokenizer;
+        for (auto item = tokenizer.next; item.token != JSONToken.EOF;
+            item = tokenizer.next)
+            enforce(item.token != JSONToken.Error, "invalid JSON token");
     }
 
     /// The held document as minified JSON.
