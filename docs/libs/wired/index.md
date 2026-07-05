@@ -1,13 +1,15 @@
 # `sparkles:wired` — JSON serialization
 
 `sparkles:wired` maps D values to and from JSON by **structural introspection** —
-no annotations, schemas, or code generation. Point `fromJSON!T` / `toJSON` at any
-supported type and the mapping is derived from the type at compile time.
+the mapping is derived from each type at compile time, with no schemas or code
+generation, and optional `@Wire*` attributes to tune wire names, casing, and
+representation.
 
-Deserialization is [`Expected`](../../guidelines/idioms/expected/index.md)-based: a non-throwing
-core (`tryFromJSON`) with a thin throwing convenience wrapper (`fromJSON`) on top.
-The library builds on `std.json` for parsing and printing, and on `sparkles:base`'s
-shared enum-name policy for `@StringRepresentation`.
+Both directions are [`Expected`](../../guidelines/idioms/expected/index.md)-based and
+**never throw**: `toJSON` returns an `Expected!(JSONValue, Exception)` and `fromJSON!T`
+returns an `Expected!(T, Exception)`, so a failure is a value you branch on rather
+than an exception you catch. The library builds on `std.json` for parsing and
+printing.
 
 ## Installation
 
@@ -16,7 +18,8 @@ shared enum-name policy for `@StringRepresentation`.
 ## Decode JSON — `fromJSON`
 
 `fromJSON!T` reads a `std.json.JSONValue` and reconstructs a `T`, recursing through
-arrays, objects, and nested aggregates:
+arrays, objects, and nested aggregates. It returns an `Expected!(T, Exception)`
+whose `.value` holds the decoded result on success:
 
 ```d
 #!/usr/bin/env dub
@@ -38,7 +41,7 @@ struct Server
 void main()
 {
     auto json = parseJSON(`{ "host": "localhost", "port": 8080, "tags": ["web", "edge"] }`);
-    Server server = json.fromJSON!Server;
+    Server server = json.fromJSON!Server.value;
     writeln(server);
 }
 ```
@@ -49,8 +52,9 @@ Server("localhost", 8080, ["web", "edge"])
 
 ## Encode values — `toJSON`
 
-`toJSON` is the inverse: it walks a value and produces a `JSONValue`, which
-`std.json` renders (object keys are emitted in sorted order):
+`toJSON` is the inverse: it walks a value and produces an
+`Expected!(JSONValue, Exception)`, whose `.value` `std.json` renders (object keys
+are emitted in sorted order):
 
 ```d
 #!/usr/bin/env dub
@@ -71,7 +75,7 @@ struct Server
 void main()
 {
     auto server = Server("localhost", 8080, ["web", "edge"]);
-    writeln(server.toJSON.toPrettyString);
+    writeln(server.toJSON.value.toPrettyString);
 }
 ```
 
@@ -86,13 +90,13 @@ void main()
 }
 ```
 
-## Errors as values — `tryFromJSON`
+## Errors as values
 
-`fromJSON` throws on malformed input, which is convenient at an application
-boundary. Underneath it sits `tryFromJSON`, which **never throws**: it returns an
-[`Expected!(T, Exception)`](../../guidelines/idioms/expected/index.md) so you can branch on
-success or inspect the failure as data. Decode errors carry a precise message —
-including, for enums, the set of names that _would_ have matched:
+Because decoding never throws, malformed input surfaces as the `Exception` payload
+of the returned [`Expected!(T, Exception)`](../../guidelines/idioms/expected/index.md) —
+branch on `hasValue` / `hasError` and inspect the failure as data. Decode errors
+carry a precise message, including, for enums, the set of names that _would_ have
+matched:
 
 ```d
 #!/usr/bin/env dub
@@ -102,17 +106,17 @@ including, for enums, the set of names that _would_ have matched:
 +/
 import std.json : parseJSON;
 import std.stdio : writeln;
-import sparkles.wired : tryFromJSON;
+import sparkles.wired : fromJSON;
 
 enum Mode { off, on, automatic }
 
 void main()
 {
-    // tryFromJSON never throws — it returns Expected!(T, Exception).
-    auto good = parseJSON(`"on"`).tryFromJSON!Mode;
+    // fromJSON never throws — it returns Expected!(T, Exception).
+    auto good = parseJSON(`"on"`).fromJSON!Mode;
     writeln("value: ", good.hasValue, " ", good.value);
 
-    auto bad = parseJSON(`"sideways"`).tryFromJSON!Mode;
+    auto bad = parseJSON(`"sideways"`).fromJSON!Mode;
     writeln("error: ", bad.hasError);
     writeln("       ", bad.error.msg);
 }
@@ -121,31 +125,32 @@ void main()
 ```ansi
 value: true on
 error: true
-       Cannot deserialize Mode from JSON string "sideways" (expected one of: off, on, automatic)
+       Cannot decode Mode at $ from JSON string "sideways": expected one of: off, on, automatic
 ```
 
 ## API
 
-| Symbol                                                 | Description                                                                                                                |
-| ------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| `tryFromJSON!T(JSONValue)` → `Expected!(T, Exception)` | Decode without throwing; a failure is captured as the `Exception` payload. The non-throwing foundation of the decode side. |
-| `fromJSON!T(JSONValue)` → `T`                          | Decode, rethrowing the captured `Exception` on failure. A thin wrapper over `tryFromJSON`.                                 |
-| `toJSON(value)` → `JSONValue`                          | Encode a value into a `JSONValue` (the inverse of `fromJSON`).                                                             |
-| `readJSONFile!T(string path)` → `T`                    | Read, parse, and decode a file; throws a styled, contextual `Exception` at the failing stage.                              |
-| `writeJSONFile(value, path, bool compact = false)`     | Encode and write to `path`, creating parent directories; `compact` writes a single line instead of pretty JSON.            |
-| `@StringRepresentation("…")`                           | Enum-member UDA overriding that member's JSON wire name (re-exported from `sparkles:base`).                                |
+| Symbol                                                                            | Description                                                                                         |
+| --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `toJSON(value)` → `Expected!(JSONValue, Exception)`                               | Encode a value; a failure is captured as the `Exception` payload (never throws).                    |
+| `fromJSON!T(JSONValue)` → `Expected!(T, Exception)`                               | Decode a value; a failure is captured as the `Exception` payload (never throws).                    |
+| `readJSONFile!T(string path)` → `Expected!(T, Exception)`                         | Read, parse, and decode a file; the error identifies the failing stage (read, parse, decode).       |
+| `writeJSONFile(value, path, bool compact = false)` → `Expected!(void, Exception)` | Encode and write to `path` atomically, creating parent directories; `compact` writes a single line. |
+| `@WireName("…")`                                                                  | Field / enum-member UDA overriding the JSON wire name.                                              |
+| `@WireCase(CaseStyle.…)`                                                          | Recase field / member names (e.g. `snakeCase`, `kebabCase`).                                        |
+| `@WireRepr(Repr.…)`                                                               | Serialize an enum by member `name` (default) or underlying `value`.                                 |
 
 ## Supported types
 
 The same structural mapping covers a broad range of types, in both directions:
 
 - **Scalars** — `bool`, `string`, `char`, integral and floating-point types
-- **Enums** — by member name, or a `@StringRepresentation` override
+- **Enums** — by member name, or a `@WireName` / `@WireCase` / `@WireRepr` override
 - **Arrays / slices** — of any supported element type
 - **Associative arrays** — keyed by `string` or by an enum
 - **Aggregates** (`struct`) — field by field, under their member names
 - **`SumType`** — encoded as its active variant; decoding tries each variant in turn
-- **`Nullable!T`** — JSON `null` ⇄ the empty value
+- **`Nullable!T` / `Optional!T`** — JSON `null` ⇄ the empty value
 - **`Ternary`** — JSON `null` / `true` / `false`
 - **`SysTime`** — an ISO-8601 extended string
 - **`JSONValue`** — passed through unchanged
@@ -180,8 +185,8 @@ alias Cell = SumType!(int, string);
 
 void show(T)(string label, T value)
 {
-    auto json = value.toJSON;     // encode
-    auto back = json.fromJSON!T;  // decode again
+    auto json = value.toJSON.value;     // encode → JSONValue
+    auto back = json.fromJSON!T.value;  // decode again → T
     writefln("%-12s %-28s round-trips=%s", label, json.toString, back == value);
 }
 
@@ -217,12 +222,12 @@ Nullable     7                            round-trips=true
 Ternary      null                         round-trips=true
 ```
 
-## Enum wire names — `@StringRepresentation`
+## Enum wire names — `@WireName`
 
-By default an enum member maps to its source name. Annotate it with
-`@StringRepresentation` (re-exported from `sparkles:base`) to decouple the JSON
-spelling from the D identifier — useful for kebab-case or otherwise non-identifier
-wire names. Both directions honour the override:
+By default an enum member maps to its source name. Annotate it with `@WireName` to
+decouple the JSON spelling from the D identifier — useful for kebab-case or
+otherwise non-identifier wire names. (For a whole-enum recasing rule, reach for
+`@WireCase` instead.) Both directions honour the override:
 
 ```d
 #!/usr/bin/env dub
@@ -232,18 +237,18 @@ wire names. Both directions honour the override:
 +/
 import std.json : parseJSON;
 import std.stdio : writeln;
-import sparkles.wired : fromJSON, toJSON, StringRepresentation;
+import sparkles.wired : fromJSON, toJSON, WireName;
 
 enum Level
 {
-    @StringRepresentation("low") low,
-    @StringRepresentation("high-priority") high,
+    @WireName("low") low,
+    @WireName("high-priority") high,
 }
 
 void main()
 {
-    writeln(Level.high.toJSON);                                   // custom wire name
-    writeln(parseJSON(`"high-priority"`).fromJSON!Level == Level.high);
+    writeln(Level.high.toJSON.value);                                  // custom wire name
+    writeln(parseJSON(`"high-priority"`).fromJSON!Level.value == Level.high);
 }
 ```
 
