@@ -1807,6 +1807,10 @@ export default withMermaid(
                       text: 'Comparison',
                       link: '/research/units-of-measure/comparison',
                     },
+                    {
+                      text: 'Prototype Evaluation',
+                      link: '/research/units-of-measure/prototypes',
+                    },
                   ],
                 },
               ],

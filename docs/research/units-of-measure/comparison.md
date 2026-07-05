@@ -641,7 +641,9 @@ unit-in-type lazy conversion ([`quantity-unit-in-type.d`][ex-unit]), engineered 
 ([`quantity-polymorphism.d`][ex-poly]), an open dimension basis
 ([`quantity-open-basis.d`][ex-open]), and logarithmic units
 ([`quantity-logarithmic.d`][ex-log]) — plus the linear-algebra composition that the next
-subsection draws out ([`quantity-vector-composition.d`][ex-compose]).
+subsection draws out ([`quantity-vector-composition.d`][ex-compose]). A
+[side-by-side evaluation of all thirteen][proto-eval] — the design axes, an at-a-glance
+matrix, and what a Sparkles library should take from each — is collected separately.
 
 What the findings imply, without designing anything:
 
@@ -789,6 +791,7 @@ the kind ladder — are syntheses of per-page findings, attributed inline.
 [ex-open]: ./examples/quantity-open-basis.d
 [ex-log]: ./examples/quantity-logarithmic.d
 [ex-compose]: ./examples/quantity-vector-composition.d
+[proto-eval]: ./prototypes.md
 
 <!-- Repo guidelines -->
 
