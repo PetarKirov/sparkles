@@ -24,6 +24,11 @@ enum ParseErrorCode
     widthMismatch,       /// a fixed-width field did not meet its width
     nonCanonicalTrailing,/// unused trailing bits in a final encoded group were not zero
     paddingMismatch,     /// padding count did not match the final encoded group's length
+    invalidEscape,       /// a string escape sequence was malformed
+    invalidSurrogate,    /// a UTF-16 surrogate escape was lone or mispaired
+    invalidUtf8,         /// a byte sequence was not well-formed UTF-8
+    depthExceeded,       /// nesting exceeded the parser's depth limit
+    trailingContent,     /// input continued after a complete value
 }
 
 /// Structured parse error: a $(LREF ParseErrorCode) plus the byte offset
@@ -96,4 +101,20 @@ unittest
     assert(!bad.hasValue);
     assert(bad.error.code == ParseErrorCode.numericOverflow);
     assert(bad.error.offset == 3);
+}
+
+@("text.errors.structuredTextCodes")
+@safe pure nothrow @nogc
+unittest
+{
+    // The structured-text additions (JSON and friends) travel like any
+    // other code, with a borrowed CTFE context.
+    auto bad = parseErr!char(ParseErrorCode.invalidSurrogate, 7,
+        "high surrogate not followed by a low surrogate");
+    assert(bad.error.code == ParseErrorCode.invalidSurrogate);
+    assert(bad.error.offset == 7);
+    assert(bad.error.context.length > 0);
+
+    auto deep = parseErr!void(ParseErrorCode.depthExceeded, 0);
+    assert(deep.hasError);
 }
