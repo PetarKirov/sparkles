@@ -40,6 +40,40 @@
       # backend (ffmpeg + audio/video codecs, ~140 MiB of closure) that we never
       # touch — drop it. `.dev` still carries the pkg-config the binding needs.
       notcursesCore = pkgs.notcurses.override { multimediaSupport = false; };
+
+      # ISA presets for the nix-built engines of the wired runtime JSON bench:
+      # the sandbox forbids -march=native, so each native engine is built once
+      # per preset and the best one the host supports is picked at shell entry
+      # below ($WIRED_BENCH_ISA + PKG_CONFIG_PATH). One pkgconfig search dir
+      # per preset, grown by each bench engine module (yyjson, C++/Rust shims).
+      benchIsaPresets = import ../packages/wired-bench-isa-presets.nix pkgs;
+      benchPkgsFor =
+        preset: with config.packages; [ config.packages."wired-bench-yyjson-${preset.attr}" ];
+      benchPcPath = preset: lib.makeSearchPath "lib/pkgconfig" (benchPkgsFor preset);
+      benchIsaHook =
+        if builtins.length benchIsaPresets == 2 then
+          # x86_64: runtime pick between the v4 and v2 presets.
+          let
+            v2 = builtins.elemAt benchIsaPresets 0;
+            v4 = builtins.elemAt benchIsaPresets 1;
+          in
+          ''
+            if grep -q avx512f /proc/cpuinfo 2>/dev/null; then
+              export WIRED_BENCH_ISA=${v4.isa}
+              export PKG_CONFIG_PATH=${benchPcPath v4}''${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}
+            else
+              export WIRED_BENCH_ISA=${v2.isa}
+              export PKG_CONFIG_PATH=${benchPcPath v2}''${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}
+            fi
+          ''
+        else
+          let
+            only = builtins.head benchIsaPresets;
+          in
+          ''
+            export WIRED_BENCH_ISA=${only.isa}
+            export PKG_CONFIG_PATH=${benchPcPath only}''${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}
+          '';
       mkSparklesShell =
         greeting:
         pkgs.mkShell {
@@ -109,6 +143,8 @@
             # Pinned corpora for the wired runtime JSON bench
             # (libs/wired/bench/runtime; its --data-dir flag overrides this).
             export WIRED_BENCH_DATA=${config.packages.wired-bench-data}
+
+            ${benchIsaHook}
 
             # PyD-embedded Python (text-conformance Layer 10): make libpython
             # linkable and let the embedded interpreter find wcwidth + the stdlib.
