@@ -66,6 +66,7 @@
         ./nix/packages/ts-grammars.nix
         ./nix/packages/uwidth-rs.nix
         ./nix/packages/wired-bench-data.nix
+        ./nix/packages/json-test-suite.nix
         ./nix/packages/wired-bench-yyjson.nix
         ./nix/packages/wired-bench-cpp-shim.nix
         ./nix/packages/wired-bench-rs.nix
