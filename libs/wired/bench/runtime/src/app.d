@@ -29,8 +29,9 @@ import sparkles.core_cli.help_formatting : HelpInfo;
 import sparkles.wired_bench.config : BenchOptions;
 import sparkles.wired_bench.data : loadDatasets, resolveDataDir;
 import sparkles.wired_bench.engines : AllEngines, engineVersions;
+import sparkles.wired_bench.perf : PerfGroup;
 import sparkles.wired_bench.report : BenchReport, collectEnvInfo, dumpJson,
-    reportEnvironment, reportResults;
+    reportEnvironment, reportPerf, reportResults;
 import sparkles.wired_bench.runner : runAll;
 
 int main(string[] args)
@@ -43,16 +44,23 @@ int main(string[] args)
             ~ "meaningless; use `dub run -b bench`");
 
     const datasets = loadDatasets(opts.datasetNames, resolveDataDir(opts.dataDir));
+
+    auto perf = PerfGroup.tryOpen(!opts.noPerf);
+    scope (exit)
+        perf.close();
+
     auto env = collectEnvInfo();
     {
         import std.string : join;
 
         env.engines = engineVersions().join("; ");
+        env.perf = opts.noPerf ? "disabled (--no-perf)" : perf.status;
     }
     reportEnvironment(env, datasets);
 
-    auto results = runAll!AllEngines(datasets, opts);
+    auto results = runAll!AllEngines(datasets, opts, perf);
     reportResults(results, datasets);
+    reportPerf(results, datasets);
 
     if (opts.json.length)
     {

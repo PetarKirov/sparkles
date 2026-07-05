@@ -46,6 +46,24 @@ adapter supports.
 | `validate`     | raw bytes → well-formedness verdict, materializing nothing. Only engines with a genuinely cheaper-than-parse path get a row (rapidjson SAX null-handler, serde/sonic `IgnoredAny`, simd-json `to_tape`, simdjson On-Demand structural skip, jsoniopipe tokenizer drain) — for the rest it would equal `parse`. |
 | `decode`       | raw bytes → a shared partial Twitter struct — the typed-deserialization pipeline (`twitter.json` only). This is the op closest to wired's real workload.                                                                                                                                                       |
 
+## Hardware counters
+
+On Linux the harness opens one `perf_event_open(2)` counter group (cycles,
+instructions, branches, branch-misses, LLC references/misses, page faults)
+and gives every op a dedicated **counting pass**, separate from the
+wall-clock measurement: only the timed body sits inside the
+`ENABLE`/`DISABLE` window, so the per-iteration ioctls never pollute the
+medians and document-release work is never counted. A per-dataset table
+reports IPC, cycles/byte, instructions/byte, branch- and LLC-miss rates,
+and page faults per iteration — the "why" behind the throughput table.
+
+A short calibration at startup detects whether the full group co-schedules
+on the free PMCs; if it would multiplex (the NMI watchdog usually holds one
+counter), the LLC pair is dropped rather than reported as rotation-scaled
+estimates — the header's `perf` row says so. `--no-perf` skips the pass;
+`--perf-iters` sizes it. Kernels that refuse `perf_event_open`
+(`perf_event_paranoid`, seccomp) and non-Linux hosts just lose the columns.
+
 ## Verification
 
 Before an engine is timed on a dataset, it must reproduce the `std.json`

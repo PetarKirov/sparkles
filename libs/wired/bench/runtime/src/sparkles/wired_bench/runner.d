@@ -10,10 +10,13 @@ module sparkles.wired_bench.runner;
 
 import core.memory : GC;
 
+import std.typecons : Nullable;
+
 import sparkles.wired_bench.config : BenchOptions;
 import sparkles.wired_bench.data : Dataset;
 import sparkles.wired_bench.fingerprint : Fingerprint, diffFingerprints,
     referenceFingerprint;
+import sparkles.wired_bench.perf : PerfGroup, PerfStats;
 import sparkles.wired_bench.timing : OpStats, mbPerSec, measureOp;
 import sparkles.wired_bench.traits;
 import sparkles.wired_bench.twitter : TwitterStats, diffTwitterStats,
@@ -37,11 +40,14 @@ struct OpResult
     double mbPerSec = 0; /// throughput derived from the median
     string notes;     /// engine caveats (from `E.notes`)
     string error;     /// non-empty = the engine failed; timing fields are zero
+    Nullable!PerfStats perf; /// hardware counters (empty when unavailable)
 }
 
 /// Runs every selected engine over every dataset, appending rows in
-/// registry order (the `std.json` baseline rows first per dataset).
-OpResult[] runAll(Engines...)(const Dataset[] datasets, const BenchOptions opts)
+/// registry order (the `std.json` baseline rows first per dataset). The
+/// counter group is shared across the whole run (reset per counting pass).
+OpResult[] runAll(Engines...)(const Dataset[] datasets, const BenchOptions opts,
+    ref PerfGroup perf)
 {
     OpResult[] results;
     foreach (ds; datasets)
@@ -52,7 +58,7 @@ OpResult[] runAll(Engines...)(const Dataset[] datasets, const BenchOptions opts)
             if (opts.engineEnabled(E.name))
             {
                 try
-                    runEngine!E(ds, reference, opts, results);
+                    runEngine!E(ds, reference, opts, perf, results);
                 catch (Exception e)
                     results ~= failedRow(ds.name, E.name, "-", e.msg);
                 GC.collect();
@@ -70,7 +76,7 @@ OpResult[] runAll(Engines...)(const Dataset[] datasets, const BenchOptions opts)
 /// An engine may also be decode-only (`canDecodeTwitter` without
 /// `isJsonEngine`, e.g. the `wired` row) — it gets only the decode path.
 void runEngine(E)(const Dataset ds, in Fingerprint reference, const BenchOptions opts,
-    ref OpResult[] results)
+    ref PerfGroup perf, ref OpResult[] results)
 if (isJsonEngine!E || canDecodeTwitter!E)
 {
     E e;
@@ -82,7 +88,17 @@ if (isJsonEngine!E || canDecodeTwitter!E)
             e.teardown();
     }
 
-    const cfg = opts.timing;
+    // Wall-clock measurement plus (when counters are available) the
+    // separate counting pass; only `timed` runs inside the enabled window.
+    OpResult measuredRow(Timed, Between)(string op, ulong bytes,
+        scope Timed timed, scope Between between)
+    {
+        const stats = measureOp(timed, between, opts.timing);
+        auto r = row!E(ds.name, op, bytes, stats);
+        if (perf.available && opts.perfIters > 0)
+            r.perf = perf.count(timed, between, opts.perfIters);
+        return r;
+    }
 
     static if (isJsonEngine!E)
     {
@@ -102,35 +118,27 @@ if (isJsonEngine!E || canDecodeTwitter!E)
         }
 
         if (opts.opEnabled("parse"))
-        {
-            const stats = measureOp(() { e.parse(ds.text); },
-                () { freeDocOf(e); }, cfg);
-            results ~= row!E(ds.name, "parse", ds.text.length, stats);
-        }
+            results ~= measuredRow("parse", ds.text.length,
+                () { e.parse(ds.text); }, () { freeDocOf(e); });
 
         static if (hasParseInsitu!E)
             if (opts.opEnabled("insitu"))
-            {
-                const stats = measureOp(() { e.parseInsitu(ds.text); },
-                    () { freeDocOf(e); }, cfg);
-                results ~= row!E(ds.name, "parse-insitu", ds.text.length, stats);
-            }
+                results ~= measuredRow("parse-insitu", ds.text.length,
+                    () { e.parseInsitu(ds.text); }, () { freeDocOf(e); });
 
         static if (hasValidate!E)
             if (opts.opEnabled("validate"))
-            {
-                const stats = measureOp(() { e.validate(ds.text); }, () {}, cfg);
-                results ~= row!E(ds.name, "validate", ds.text.length, stats);
-            }
+                results ~= measuredRow("validate", ds.text.length,
+                    () { e.validate(ds.text); }, () {});
 
         static if (hasSerialize!E)
             if (opts.opEnabled("serialize"))
             {
                 e.parse(ds.text); // the document under serialization; untimed
                 const outBytes = e.serialize().length;
-                const stats = measureOp(() { cast(void) e.serialize(); }, () {}, cfg);
+                results ~= measuredRow("serialize", outBytes,
+                    () { cast(void) e.serialize(); }, () {});
                 freeDocOf(e);
-                results ~= row!E(ds.name, "serialize", outBytes, stats);
             }
     }
 
@@ -150,8 +158,8 @@ if (isJsonEngine!E || canDecodeTwitter!E)
                     return;
                 }
             }
-            const stats = measureOp(() { e.decodeTwitter(ds.text); }, () {}, cfg);
-            results ~= row!E(ds.name, "decode", ds.text.length, stats);
+            results ~= measuredRow("decode", ds.text.length,
+                () { e.decodeTwitter(ds.text); }, () {});
         }
 }
 
@@ -210,8 +218,9 @@ private OpResult failedRow(string dataset, string engine, string op, string erro
     opts.minTimeMs = 0;
     opts.warmup = 1;
 
+    auto perf = PerfGroup.tryOpen(false);
     OpResult[] results;
-    runEngine!FakeEngine(ds, referenceFingerprint(ds.text), opts, results);
+    runEngine!FakeEngine(ds, referenceFingerprint(ds.text), opts, perf, results);
 
     const ops = results.map!(r => r.op).array;
     assert(ops.canFind("parse") && ops.canFind("serialize"));
@@ -233,8 +242,9 @@ private OpResult failedRow(string dataset, string engine, string op, string erro
     const ds = Dataset("mini", `{"a": 1}`);
     BenchOptions opts;
 
+    auto perf = PerfGroup.tryOpen(false);
     OpResult[] results;
-    runEngine!LyingEngine(ds, referenceFingerprint(ds.text), opts, results);
+    runEngine!LyingEngine(ds, referenceFingerprint(ds.text), opts, perf, results);
 
     assert(results.length == 1);
     assert(results[0].op == "verify");
