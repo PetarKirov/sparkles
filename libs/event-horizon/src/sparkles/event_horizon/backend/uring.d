@@ -12,13 +12,18 @@ module sparkles.event_horizon.backend.uring;
 
 version (linux)  :  // io_uring is Linux-only; peer backends land in M10/M11.
 
-import during : SetupFlags, SubmissionEntry, Uring, io_uring_getevents_arg, prepNop, setup;
+import during : AcceptFlags, CancelFlags, CQEFlags, MsgFlags, Operation, SetupFlags,
+    SubmissionEntry, TimeoutFlags, Uring, io_uring_getevents_arg, prepAccept,
+    prepConnect, prepNop, prepRW, prepRead, prepRecv, prepRecvMsg, prepSend,
+    prepSendMsg, prepTimeout, prepWrite, setup;
 import during : DuringTimespec = KernelTimespec;
 
 import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion;
 import sparkles.event_horizon.backend.probe;
 import sparkles.event_horizon.errors;
-import sparkles.event_horizon.op : KernelTimespec, OpNop, OpToken;
+import sparkles.event_horizon.op : CompletionFlags, KernelTimespec, OpAccept,
+    OpConnect, OpNop, OpRead, OpRecv, OpRecvFrom, OpSend, OpSendTo, OpSlot,
+    OpTimeout, OpToken, OpWrite, SockAddr;
 
 import core.stdc.errno : ETIME;
 
@@ -84,9 +89,14 @@ struct UringBackend
     ref const(BackendCaps) caps() const return @safe pure nothrow @nogc
         => _caps;
 
-    /// Lowers a NOP; `false` when the submission queue is full (the loop
-    /// owns the flush-and-retry policy, SPEC §5.2).
-    bool trySubmit(in OpNop, OpToken token) @safe nothrow @nogc
+    // ── lowering overload set (SPEC §3.5) ───────────────────────────────
+    // Every overload returns `false` when the submission queue is full (the
+    // loop owns the flush-and-retry policy, SPEC §5.2). The loop has already
+    // moved owned buffers into `slot.pinned` and address/timespec operands
+    // into `slot.operands` — the SQE points only at slot-stable memory.
+
+    /// Lowers a NOP.
+    bool trySubmit(in OpNop, OpToken token, ref OpSlot) @safe nothrow @nogc
     {
         if (_io.full)
             return false;
@@ -95,6 +105,170 @@ struct UringBackend
             e.user_data = ud;
         })(token.raw);
         return true;
+    }
+
+    /// Lowers a positioned read into the pinned buffer's full capacity.
+    bool trySubmit(in OpRead op, OpToken token, ref OpSlot slot) @safe nothrow @nogc
+    {
+        if (_io.full)
+            return false;
+        _io.putWith!((ref SubmissionEntry e, int fd, ubyte[] space, ulong off, ulong ud) {
+            e.prepRead(fd, space, cast(long) off);
+            e.user_data = ud;
+        })(op.fd, slot.pinned.space(), op.offset, token.raw);
+        return true;
+    }
+
+    /// Lowers a positioned write of the pinned buffer's valid bytes.
+    bool trySubmit(in OpWrite op, OpToken token, ref OpSlot slot) @safe nothrow @nogc
+    {
+        if (_io.full)
+            return false;
+        _io.putWith!((ref SubmissionEntry e, int fd, const(ubyte)[] bytes, ulong off, ulong ud) {
+            e.prepWrite(fd, bytes, cast(long) off);
+            e.user_data = ud;
+        })(op.fd, slot.pinned[], op.offset, token.raw);
+        return true;
+    }
+
+    /// Lowers a socket receive into the pinned buffer's full capacity.
+    bool trySubmit(in OpRecv op, OpToken token, ref OpSlot slot) @safe nothrow @nogc
+    {
+        if (_io.full)
+            return false;
+        _io.putWith!((ref SubmissionEntry e, int fd, ubyte[] space, ulong ud) {
+            e.prepRecv(fd, space, MsgFlags.NONE);
+            e.user_data = ud;
+        })(op.fd, slot.pinned.space(), token.raw);
+        return true;
+    }
+
+    /// Lowers a socket send of the pinned buffer's valid bytes.
+    bool trySubmit(in OpSend op, OpToken token, ref OpSlot slot) @safe nothrow @nogc
+    {
+        if (_io.full)
+            return false;
+        _io.putWith!((ref SubmissionEntry e, int fd, const(ubyte)[] bytes, ulong ud) {
+            e.prepSend(fd, bytes, MsgFlags.NONE);
+            e.user_data = ud;
+        })(op.fd, slot.pinned[], token.raw);
+        return true;
+    }
+
+    /// Lowers an accept; the kernel writes the peer address into the slot's
+    /// operand store (discarded — SPEC §4.1 fetches peers on demand).
+    bool trySubmit(in OpAccept op, OpToken token, ref OpSlot slot) @trusted nothrow @nogc
+    {
+        import core.sys.posix.sys.socket : sockaddr, socklen_t;
+
+        if (_io.full)
+            return false;
+        slot.operands.addr.len = cast(uint) slot.operands.addr.storage.length;
+        _io.putWith!((ref SubmissionEntry e, int fd, ref OpSlot s, ulong ud) {
+            e.prepAccept(fd, *cast(sockaddr*) s.operands.addr.storage.ptr,
+                *cast(socklen_t*) &s.operands.addr.len, AcceptFlags.NONE);
+            e.user_data = ud;
+        })(op.listenFd, slot, token.raw);
+        return true;
+    }
+
+    /// Lowers a connect; the address was copied into the operand store.
+    bool trySubmit(in OpConnect op, OpToken token, ref OpSlot slot) @trusted nothrow @nogc
+    {
+        import core.sys.posix.sys.socket : sockaddr;
+
+        if (_io.full)
+            return false;
+        slot.operands.addr = op.addr;
+        _io.putWith!((ref SubmissionEntry e, int fd, ref OpSlot s, ulong ud) {
+            e.prepConnect(fd, *cast(const(sockaddr)*) s.operands.addr.storage.ptr);
+            // prepConnect derives the length from the ADDR type; patch the
+            // real sockaddr length in afterwards.
+            e.off = s.operands.addr.len;
+            e.user_data = ud;
+        })(op.fd, slot, token.raw);
+        return true;
+    }
+
+    /// Lowers a datagram send via `SENDMSG` (msghdr/iovec in the slot).
+    bool trySubmit(in OpSendTo op, OpToken token, ref OpSlot slot) @trusted nothrow @nogc
+    {
+        if (_io.full)
+            return false;
+        slot.operands.msg.hdr = typeof(slot.operands.msg.hdr).init;
+        slot.peerOut = op.to;
+        slot.operands.msg.iov.iov_base = cast(void*) slot.pinned[].ptr;
+        slot.operands.msg.iov.iov_len = slot.pinned.length;
+        slot.operands.msg.hdr.msg_name = slot.peerOut.storage.ptr;
+        slot.operands.msg.hdr.msg_namelen = slot.peerOut.len;
+        slot.operands.msg.hdr.msg_iov = &slot.operands.msg.iov;
+        slot.operands.msg.hdr.msg_iovlen = 1;
+        _io.putWith!((ref SubmissionEntry e, int fd, ref OpSlot s, ulong ud) {
+            e.prepSendMsg(fd, s.operands.msg.hdr, MsgFlags.NONE);
+            e.user_data = ud;
+        })(op.fd, slot, token.raw);
+        return true;
+    }
+
+    /// Lowers a datagram receive via `RECVMSG`; the source address lands in
+    /// `slot.peerOut` and is copied into the completion.
+    bool trySubmit(in OpRecvFrom op, OpToken token, ref OpSlot slot) @trusted nothrow @nogc
+    {
+        if (_io.full)
+            return false;
+        slot.operands.msg.hdr = typeof(slot.operands.msg.hdr).init;
+        slot.peerOut = SockAddr.init;
+        slot.operands.msg.iov.iov_base = cast(void*) slot.pinned.space().ptr;
+        slot.operands.msg.iov.iov_len = slot.pinned.capacity;
+        slot.operands.msg.hdr.msg_name = slot.peerOut.storage.ptr;
+        slot.operands.msg.hdr.msg_namelen = cast(uint) slot.peerOut.storage.length;
+        slot.operands.msg.hdr.msg_iov = &slot.operands.msg.iov;
+        slot.operands.msg.hdr.msg_iovlen = 1;
+        _io.putWith!((ref SubmissionEntry e, int fd, ref OpSlot s, ulong ud) {
+            e.prepRecvMsg(fd, s.operands.msg.hdr, MsgFlags.NONE);
+            e.user_data = ud;
+        })(op.fd, slot, token.raw);
+        return true;
+    }
+
+    /// Lowers a relative timer (in-ring `TIMEOUT`); the timespec lives in
+    /// the operand store (layout-identical to during's).
+    bool trySubmit(in OpTimeout op, OpToken token, ref OpSlot slot) @trusted nothrow @nogc
+    {
+        if (_io.full)
+            return false;
+        slot.operands.ts = op.rel;
+        _io.putWith!((ref SubmissionEntry e, ref OpSlot s, ulong ud) {
+            e.prepTimeout(*cast(DuringTimespec*) &s.operands.ts, 0, TimeoutFlags.REL);
+            e.user_data = ud;
+        })(slot, token.raw);
+        return true;
+    }
+
+    /// Submits an `ASYNC_CANCEL` keyed on `target.raw`, tagged with the
+    /// internal `cancelSlot` token. Hand-rolled: during 0.5.0's `prepCancel`
+    /// default-flag path is mis-typed (SPEC §3.5).
+    bool trySubmitCancel(OpToken cancelSlot, OpToken target) @trusted nothrow @nogc
+    {
+        if (_io.full)
+            return false;
+        _io.putWith!((ref SubmissionEntry e, ulong targetRaw, ulong ud) {
+            e.prepRW(Operation.ASYNC_CANCEL, -1, cast(void*) targetRaw);
+            e.cancel_flags = CancelFlags.init;
+            e.user_data = ud;
+        })(target.raw, cancelSlot.raw);
+        return true;
+    }
+
+    /// Maps raw uring CQE flags onto the portable projection.
+    CompletionFlags mapFlags(uint rawFlags) const @safe pure nothrow @nogc
+    {
+        CompletionFlags f;
+        if (rawFlags & CQEFlags.MORE)
+            f |= CompletionFlags.more;
+        if (rawFlags & CQEFlags.BUFFER)
+            f |= CompletionFlags.bufferSelected;
+        return f;
     }
 
     /// Pushes queued SQEs to the kernel without waiting; the count consumed.
@@ -213,8 +387,9 @@ unittest
     // path calls (the non-templates are explicitly attributed above).
     // (Not `pure`: during's refcounted Uring destructor is impure.)
     UringBackend b;
+    OpSlot dummySlot;
     static assert(is(typeof(() @safe nothrow @nogc {
-        cast(void) b.trySubmit(OpNop(), OpToken.init);
+        cast(void) b.trySubmit(OpNop(), OpToken.init, dummySlot);
     })));
 }
 
@@ -223,6 +398,7 @@ unittest
 unittest
 {
     UringBackend b;
+    OpSlot dummySlot;
     if (!openOrSkip(b))
         return; // SKIP: io_uring unavailable on this host
     scope (exit) b.close();
@@ -242,12 +418,13 @@ unittest
 unittest
 {
     UringBackend b;
+    OpSlot dummySlot;
     if (!openOrSkip(b))
         return; // SKIP
     scope (exit) b.close();
 
     const token = OpToken.pack(1, 1, OpClass.user);
-    assert(b.trySubmit(OpNop(), token));
+    assert(b.trySubmit(OpNop(), token, dummySlot));
 
     auto waited = b.submitAndWait(1, null);
     assert(waited.hasValue && waited.value == 1);
@@ -268,6 +445,7 @@ unittest
 unittest
 {
     UringBackend b;
+    OpSlot dummySlot;
     if (!openOrSkip(b))
         return; // SKIP
     scope (exit) b.close();
@@ -287,6 +465,7 @@ unittest
 unittest
 {
     UringBackend b;
+    OpSlot dummySlot;
     auto cfg = BackendConfig();
     cfg.sqEntries = 4;
     auto opened = b.open(cfg);
@@ -298,7 +477,7 @@ unittest
     uint queued;
     foreach (i; 0 .. 8)
     {
-        if (!b.trySubmit(OpNop(), OpToken.pack(cast(uint) i, 1, OpClass.user)))
+        if (!b.trySubmit(OpNop(), OpToken.pack(cast(uint) i, 1, OpClass.user), dummySlot))
             break;
         ++queued;
     }

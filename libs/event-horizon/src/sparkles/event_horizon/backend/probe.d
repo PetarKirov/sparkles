@@ -164,7 +164,7 @@ version (linux)
                 OpKind.recv: Operation.RECV,
                 OpKind.recvSelect: Operation.RECV,
                 OpKind.send: Operation.SEND,
-                OpKind.sendTo: Operation.SEND,
+                OpKind.sendTo: Operation.SENDMSG,
                 OpKind.recvFrom: Operation.RECVMSG,
                 OpKind.accept: Operation.ACCEPT,
                 OpKind.acceptMultishot: Operation.ACCEPT,

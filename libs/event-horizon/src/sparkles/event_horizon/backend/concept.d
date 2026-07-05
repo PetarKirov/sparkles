@@ -14,7 +14,7 @@ module sparkles.event_horizon.backend.concept;
 import std.traits : lvalueOf;
 
 import sparkles.event_horizon.errors : IoResult, OpKind;
-import sparkles.event_horizon.op : KernelTimespec, OpNop, OpToken;
+import sparkles.event_horizon.op : KernelTimespec, OpNop, OpSlot, OpToken;
 
 /// What the backend hands the loop per completion — the raw
 /// `(user_data, res, flags)` triple; the loop resolves the token and builds
@@ -36,14 +36,17 @@ struct BackendConfig
 }
 
 /**
-Per-descriptor submission capability; the backend owns the lowering.
+Per-descriptor submission capability; the backend owns the lowering and
+receives the op's slot (`ref OpSlot`) — the loop has already moved owned
+buffers into `slot.pinned` and kernel-stable operands into `slot.operands`,
+so the SQE points only at slot-stable memory (SPEC §4.1).
 
-The probe passes an rvalue: descriptors carrying an owned buffer are
+The probe passes an rvalue op: descriptors carrying an owned buffer are
 move-only, so submission moves the op — an lvalue probe would statically
 reject every buffer-carrying op (SPEC §3.1).
 */
 enum bool canSubmitOp(B, Op) = __traits(compiles, {
-    bool r = lvalueOf!B.trySubmit(Op.init, OpToken.init);
+    bool r = lvalueOf!B.trySubmit(Op.init, OpToken.init, lvalueOf!OpSlot);
 });
 
 /**
@@ -55,7 +58,7 @@ enum bool isCompletionBackend(B) = __traits(compiles, {
     BackendConfig cfg;
     IoResult!void o = lvalueOf!B.open(cfg);
     auto caps = lvalueOf!B.caps();
-    bool queued = lvalueOf!B.trySubmit(OpNop(), OpToken.init); // false = SQ full
+    bool queued = lvalueOf!B.trySubmit(OpNop(), OpToken.init, lvalueOf!OpSlot); // false = SQ full
     IoResult!uint f = lvalueOf!B.flush();
     IoResult!uint w = lvalueOf!B.submitAndWait(1u, cast(const(KernelTimespec)*) null);
     uint n = lvalueOf!B.reap((ref const RawCompletion c) {});  // non-blocking drain

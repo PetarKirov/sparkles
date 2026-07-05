@@ -50,6 +50,11 @@ struct Buf
     in (lo <= hi && hi <= _len, "slice out of bounds")
         => _ptr[lo .. hi];
 
+    /// Full-capacity view for receive paths: the kernel fills it, and the
+    /// caller sets `length` from the completion's byte count.
+    inout(ubyte)[] space() inout return scope @trusted pure nothrow @nogc
+        => _ptr[0 .. _cap];
+
     /// Valid bytes (set from the completion `res` on receive paths).
     uint length() const @safe pure nothrow @nogc => _len;
 
