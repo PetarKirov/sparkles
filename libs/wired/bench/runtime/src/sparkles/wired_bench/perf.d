@@ -17,21 +17,43 @@ degrades gracefully: perf columns are simply absent.
 */
 module sparkles.wired_bench.perf;
 
+import std.math : isNaN;
+import std.typecons : Nullable, nullable;
+
+import sparkles.wired : WireConvert;
+
+// In memory an unavailable event is `nan`; on the wire it must be JSON
+// `null` (wired rightly refuses to encode NaN). wired's own @WireConvert
+// maps between the two — dogfooding §8 of its spec. Public: the wired
+// backend calls the converters from its own module.
+Nullable!double nanToNull(double v) @safe pure nothrow @nogc
+{
+    return v.isNaN ? Nullable!double() : nullable(v);
+}
+
+/// ditto
+double nullToNan(Nullable!double n) @safe pure nothrow @nogc
+{
+    return n.isNull ? double.nan : n.get;
+}
+
+private alias nanAsNull = WireConvert!(nanToNull, nullToNan);
+
 /// Per-iteration counter averages of one op's counting pass. Values are
 /// rounded to 3 decimals (JSON snapshot stability); `nan` = the event
-/// could not be opened on this machine.
+/// could not be opened on this machine (JSON `null` in `--json` dumps).
 struct PerfStats
 {
-    ulong iters;                /// counting-pass iterations
-    double cycles = 0;          /// CPU cycles per iteration
-    double instructions = 0;    /// retired instructions per iteration
-    double branches = 0;        /// branch instructions per iteration
-    double branchMisses = 0;    /// mispredicted branches per iteration
-    double cacheReferences = 0; /// LLC references per iteration
-    double cacheMisses = 0;     /// LLC misses per iteration
-    double pageFaults = 0;      /// page faults per iteration
-    double scale = 1;           /// counter running/enabled ratio (1 = clean)
-    bool userOnly;              /// true = kernel-side counting was refused
+    ulong iters;                           /// counting-pass iterations
+    @nanAsNull double cycles = 0;          /// CPU cycles per iteration
+    @nanAsNull double instructions = 0;    /// retired instructions per iteration
+    @nanAsNull double branches = 0;        /// branch instructions per iteration
+    @nanAsNull double branchMisses = 0;    /// mispredicted branches per iteration
+    @nanAsNull double cacheReferences = 0; /// LLC references per iteration
+    @nanAsNull double cacheMisses = 0;     /// LLC misses per iteration
+    @nanAsNull double pageFaults = 0;      /// page faults per iteration
+    double scale = 1;                      /// counter running/enabled ratio (1 = clean)
+    bool userOnly;                         /// true = kernel-side counting was refused
 }
 
 /// Instructions per cycle.
@@ -222,6 +244,26 @@ private double round3(double v) @safe pure nothrow @nogc
 
     const PerfStats empty;
     assert(empty.ipc.isNaN && empty.branchMissPercent.isNaN);
+}
+
+@("perf.PerfStats.nanEncodesAsNull")
+@system unittest
+{
+    import std.math : isNaN;
+    import sparkles.wired : fromJSON, toJSON;
+
+    PerfStats p;
+    p.cycles = 1234.5;
+    p.cacheReferences = double.nan; // LLC pair dropped on this machine
+
+    const encoded = p.toJSON;
+    assert(encoded.hasValue, "NaN must encode as JSON null, not fail");
+    assert(encoded.value["cacheReferences"].isNull);
+
+    const back = encoded.value.fromJSON!PerfStats;
+    assert(back.hasValue);
+    assert(back.value.cycles == 1234.5);
+    assert(back.value.cacheReferences.isNaN);
 }
 
 version (linux)
