@@ -46,12 +46,13 @@ Gate: unittests + the callback echo example verified by
 
 ## M4 — Fiber scheduler + direct-style I/O (tier B)
 
-`sched.d` + `io.d` + `handle.d`: the fiber run queue over the callback core —
+`sched.d` + `io.d`: the fiber run queue over the callback core —
 suspend/resume keyed by op slots, `spawn`, fiber pooling (`Fiber.reset`
 recycling) — and the same I/O surface in direct style (SPEC §7). Direct-style
 echo-server example (README-able). Base prerequisite: a `length` setter
 (grow-with-default) on `SmallBuffer` in `sparkles:base`, used by the spec
-overview example.
+overview example. (`handle.d` — the erased `LoopHandle` — is deferred to its
+first consumer, the M12 veneer; tiers B/C hold the concrete loop.)
 
 Gate: both echo styles green; fiber-vs-callback overhead measured in the bench.
 
