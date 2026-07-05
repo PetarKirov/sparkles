@@ -14,18 +14,19 @@ version (linux)  :  // io_uring is Linux-only; peer backends land in M10/M11.
 
 import during : AcceptFlags, CancelFlags, CQEFlags, FsyncFlags, MsgFlags, Operation,
     SetupFlags, SubmissionEntry, TimeoutFlags, Uring, io_uring_getevents_arg,
-    prepAccept, prepClose, prepConnect, prepFsync, prepNop, prepOpenat, prepRW,
-    prepRead, prepRecv, prepRecvMsg, prepSend, prepSendMsg, prepStatx,
-    prepTimeout, prepWaitid, prepWrite, setup;
+    prepAccept, prepClose, prepConnect, prepFsync, prepMultishotAccept, prepNop,
+    prepOpenat, prepRW, prepRead, prepReadFixed, prepRecv, prepRecvMsg, prepSend,
+    prepSendMsg, prepStatx, prepTimeout, prepWaitid, prepWrite, prepWriteFixed,
+    setup;
 import during : DuringTimespec = KernelTimespec;
 
 import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion;
 import sparkles.event_horizon.backend.probe;
 import sparkles.event_horizon.errors;
 import sparkles.event_horizon.op : CompletionFlags, KernelTimespec, OpAccept,
-    OpClose, OpConnect, OpFsync, OpNop, OpOpenAt, OpRead, OpRecv, OpRecvFrom,
-    OpSend, OpSendTo, OpSlot, OpStatx, OpTimeout, OpToken, OpWaitid, OpWrite,
-    SockAddr;
+    OpAcceptMultishot, OpClose, OpConnect, OpFsync, OpNop, OpOpenAt, OpRead,
+    OpRecv, OpRecvFrom, OpSend, OpSendTo, OpSlot, OpStatx, OpTimeout, OpToken,
+    OpWaitid, OpWrite, SockAddr;
 
 import core.stdc.errno : ETIME;
 
@@ -109,27 +110,44 @@ struct UringBackend
         return true;
     }
 
-    /// Lowers a positioned read into the pinned buffer's full capacity.
+    /// Lowers a positioned read into the pinned buffer's full capacity;
+    /// a registered buffer automatically selects `READ_FIXED` (SPEC §6.3).
     bool trySubmit(in OpRead op, OpToken token, ref OpSlot slot) @safe nothrow @nogc
     {
         if (_io.full)
             return false;
-        _io.putWith!((ref SubmissionEntry e, int fd, ubyte[] space, ulong off, ulong ud) {
-            e.prepRead(fd, space, cast(long) off);
-            e.user_data = ud;
-        })(op.fd, slot.pinned.space(), op.offset, token.raw);
+        if (slot.pinned.isRegistered)
+            _io.putWith!((ref SubmissionEntry e, int fd, ubyte[] space,
+                    ushort bufIdx, ulong off, ulong ud) {
+                e.prepReadFixed(fd, cast(long) off, space, bufIdx);
+                e.user_data = ud;
+            })(op.fd, slot.pinned.space(), slot.pinned.bufIndex, op.offset, token.raw);
+        else
+            _io.putWith!((ref SubmissionEntry e, int fd, ubyte[] space, ulong off, ulong ud) {
+                e.prepRead(fd, space, cast(long) off);
+                e.user_data = ud;
+            })(op.fd, slot.pinned.space(), op.offset, token.raw);
         return true;
     }
 
-    /// Lowers a positioned write of the pinned buffer's valid bytes.
+    /// Lowers a positioned write of the pinned buffer's valid bytes;
+    /// a registered buffer automatically selects `WRITE_FIXED`.
     bool trySubmit(in OpWrite op, OpToken token, ref OpSlot slot) @safe nothrow @nogc
     {
         if (_io.full)
             return false;
-        _io.putWith!((ref SubmissionEntry e, int fd, const(ubyte)[] bytes, ulong off, ulong ud) {
-            e.prepWrite(fd, bytes, cast(long) off);
-            e.user_data = ud;
-        })(op.fd, slot.pinned[], op.offset, token.raw);
+        if (slot.pinned.isRegistered)
+            _io.putWith!((ref SubmissionEntry e, int fd, ubyte[] bytes,
+                    ushort bufIdx, ulong off, ulong ud) {
+                e.prepWriteFixed(fd, cast(long) off, bytes, bufIdx);
+                e.user_data = ud;
+            })(op.fd, cast(ubyte[]) slot.pinned[], slot.pinned.bufIndex,
+                op.offset, token.raw);
+        else
+            _io.putWith!((ref SubmissionEntry e, int fd, const(ubyte)[] bytes, ulong off, ulong ud) {
+                e.prepWrite(fd, bytes, cast(long) off);
+                e.user_data = ud;
+            })(op.fd, slot.pinned[], op.offset, token.raw);
         return true;
     }
 
@@ -168,6 +186,25 @@ struct UringBackend
         slot.operands.addr.len = cast(uint) slot.operands.addr.storage.length;
         _io.putWith!((ref SubmissionEntry e, int fd, ref OpSlot s, ulong ud) {
             e.prepAccept(fd, *cast(sockaddr*) s.operands.addr.storage.ptr,
+                *cast(socklen_t*) &s.operands.addr.len, AcceptFlags.NONE);
+            e.user_data = ud;
+        })(op.listenFd, slot, token.raw);
+        return true;
+    }
+
+    /// Lowers a multishot accept: one armed SQE posts a completion per
+    /// connection (`CQE_F_MORE`) until cancelled — no re-arm syscall
+    /// (SPEC §4.3). The peer address store is shared across the stream.
+    bool trySubmit(in OpAcceptMultishot op, OpToken token, ref OpSlot slot)
+        @trusted nothrow @nogc
+    {
+        import core.sys.posix.sys.socket : sockaddr, socklen_t;
+
+        if (_io.full)
+            return false;
+        slot.operands.addr.len = cast(uint) slot.operands.addr.storage.length;
+        _io.putWith!((ref SubmissionEntry e, int fd, ref OpSlot s, ulong ud) {
+            e.prepMultishotAccept(fd, *cast(sockaddr*) s.operands.addr.storage.ptr,
                 *cast(socklen_t*) &s.operands.addr.len, AcceptFlags.NONE);
             e.user_data = ud;
         })(op.listenFd, slot, token.raw);
@@ -406,6 +443,27 @@ struct UringBackend
             case OpKind.recv, OpKind.recvSelect: return _caps.multishotRecv;
             default: return false;
         }
+    }
+
+    /// Pins `slabs` as registered buffers (`REGISTER_BUFFERS`), so
+    /// `READ_FIXED`/`WRITE_FIXED` skip per-op page pinning (SPEC §6.3).
+    IoResult!void registerBuffers(scope ubyte[][] slabs) @trusted nothrow @nogc
+    {
+        const r = _io.registerBuffers(slabs);
+        return r < 0
+            ? ioErr!void(-r, OpKind.none, IoErrorStage.registration,
+                "registerBuffers failed")
+            : ioOk();
+    }
+
+    /// Releases the registered-buffer table.
+    IoResult!void unregisterBuffers() @trusted nothrow @nogc
+    {
+        const r = _io.unregisterBuffers();
+        return r < 0
+            ? ioErr!void(-r, OpKind.none, IoErrorStage.registration,
+                "unregisterBuffers failed")
+            : ioOk();
     }
 
 private:

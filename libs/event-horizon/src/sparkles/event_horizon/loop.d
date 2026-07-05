@@ -101,6 +101,14 @@ if (isCompletionBackend!Backend)
     /// The negotiated capability surface (SPEC §3.3).
     ref const(BackendCaps) caps() const return => _backend.caps();
 
+    /// Registers `slabs` as kernel-pinned buffers on the backend
+    /// (`BufferPool.register` drives this; SPEC §6.3).
+    IoResult!void registerBuffers(scope ubyte[][] slabs)
+        => _backend.registerBuffers(slabs);
+
+    /// Releases the registered-buffer table.
+    IoResult!void unregisterBuffers() => _backend.unregisterBuffers();
+
     /**
     Submits `op` with a completion callback (SPEC §5.2). Owned buffers move
     into the op slot and come back via `Completion.buf`; on a submission
@@ -607,4 +615,175 @@ unittest
     auto status = loop.runOnce();
     assert(status.hasValue && status.value == RunStatus.drained);
     assert(!loop.run().hasError);
+}
+
+@("loop.registeredBuffers.fixedReadPath")
+@safe nothrow @nogc
+unittest
+{
+    import sparkles.event_horizon.buffer : BufferPool, BufOrigin;
+
+    DefaultLoop loop;
+    if (!createOrSkip(loop))
+        return; // SKIP
+    scope (exit) loop.destroy();
+
+    if (!loop.caps().registeredBuffers)
+        return; // SKIP: registered buffers unsupported
+
+    BufferPool!() pool;
+    assert(!BufferPool!().create(pool, 2, 64).hasError);
+    assert(!pool.register(loop).hasError);
+    scope (exit) cast(void) loop.unregisterBuffers();
+
+    // Acquired buffers now carry the registered origin — lowering picks
+    // READ_FIXED automatically.
+    auto acquired = pool.acquire();
+    assert(acquired.hasValue);
+    assert(acquired.value.origin == BufOrigin.registered);
+    assert(acquired.value.bufIndex < 2);
+
+    int[2] fds;
+    if ((() @trusted {
+        import core.sys.posix.unistd : pipe;
+
+        return pipe(fds);
+    })() != 0)
+        return;
+    scope (exit) () @trusted {
+        import core.sys.posix.unistd : close;
+
+        close(fds[0]);
+        close(fds[1]);
+    }();
+
+    static immutable payload = cast(immutable ubyte[]) "fixed buffer";
+    const wrote = (() @trusted {
+        import core.sys.posix.unistd : write;
+
+        return write(fds[1], payload.ptr, payload.length);
+    })();
+    assert(wrote == payload.length);
+
+    static struct Seen
+    {
+        int calls;
+        uint bytes;
+        bool ok;
+    }
+
+    static void onRead(void* ctx, ref Completion done) nothrow @nogc
+    {
+        auto seen = cast(Seen*) ctx;
+        ++seen.calls;
+        auto r = done.result;
+        if (r.hasError)
+            return;
+        seen.bytes = r.value;
+        seen.ok = done.buf[] == payload[];
+    }
+
+    Seen seen;
+    auto h = (() @trusted => loop.submit(
+        OpRead(fds[0], move(acquired.value), ulong.max), &onRead, &seen))();
+    assert(h.hasValue);
+    assert(!loop.run().hasError);
+    assert(seen.calls == 1 && seen.bytes == payload.length && seen.ok,
+        "READ_FIXED delivered the bytes through the registered buffer");
+}
+
+@("loop.multishotAccept.streamsConnections")
+@safe nothrow @nogc
+unittest
+{
+    DefaultLoop loop;
+    if (!createOrSkip(loop))
+        return; // SKIP
+    scope (exit) loop.destroy();
+
+    if (!loop.caps().multishotAccept)
+        return; // SKIP
+
+    // A loopback listener.
+    int listenFd;
+    ushort port;
+    if (!(() @trusted {
+        import core.sys.posix.arpa.inet : htonl, ntohs;
+        import core.sys.posix.netinet.in_ : INADDR_LOOPBACK, sockaddr_in;
+        import core.sys.posix.sys.socket;
+
+        listenFd = socket(AF_INET, SOCK_STREAM, 0);
+        if (listenFd < 0)
+            return false;
+        sockaddr_in a;
+        a.sin_family = AF_INET;
+        a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        if (bind(listenFd, cast(sockaddr*) &a, a.sizeof) != 0
+            || listen(listenFd, 8) != 0)
+            return false;
+        socklen_t len = a.sizeof;
+        getsockname(listenFd, cast(sockaddr*) &a, &len);
+        port = ntohs(a.sin_port);
+        return true;
+    })())
+        return;
+    scope (exit) () @trusted {
+        import core.sys.posix.unistd : close;
+
+        close(listenFd);
+    }();
+
+    static struct Accepts
+    {
+        int count;
+        bool sawMore;
+        DefaultLoop* loop;
+        OpHandle handle;
+    }
+
+    static void onAccept(void* ctx, ref Completion done) nothrow @nogc
+    {
+        auto a = cast(Accepts*) ctx;
+        if (done.res < 0)
+            return;
+        ++a.count;
+        if (!done.isFinal)
+            a.sawMore = true; // CQE_F_MORE: the armed op stays live
+        (() @trusted {
+            import core.sys.posix.unistd : close;
+
+            close(done.res); // close the accepted connection
+        })();
+        if (a.count >= 2)
+            a.loop.cancel(a.handle); // stop the multishot stream
+    }
+
+    Accepts accepts;
+    accepts.loop = &loop;
+    auto h = (() @trusted => loop.submit(
+        OpAcceptMultishot(listenFd), &onAccept, &accepts))();
+    assert(h.hasValue);
+    accepts.handle = h.value;
+
+    // Two clients connect; one armed accept serves both.
+    foreach (_; 0 .. 2)
+        (() @trusted {
+            import core.sys.posix.arpa.inet : htonl, htons;
+            import core.sys.posix.netinet.in_ : INADDR_LOOPBACK, sockaddr_in;
+            import core.sys.posix.sys.socket;
+            import core.sys.posix.unistd : close;
+
+            const c = socket(AF_INET, SOCK_STREAM, 0);
+            sockaddr_in a;
+            a.sin_family = AF_INET;
+            a.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+            a.sin_port = htons(port);
+            cast(void) connect(c, cast(sockaddr*) &a, a.sizeof);
+            close(c);
+        })();
+
+    assert(!loop.run().hasError);
+    assert(accepts.count == 2, "one armed accept served both connections");
+    assert(accepts.sawMore, "non-final completions carry CQE_F_MORE");
+    assert(loop.inFlight == 0);
 }
