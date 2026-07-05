@@ -58,6 +58,7 @@ package:
     CompletionFlags wakeFlags;
     Buf wakeBuf;
     SockAddr wakePeer;
+    ushort wakeBufferId;
 
     this(size_t stackSize, size_t guardPageSize) nothrow
     {
@@ -121,6 +122,7 @@ package struct AwaitOutcome
     CompletionFlags flags;
     Buf buf;
     SockAddr peer;
+    ushort bufferId;
 }
 
 /**
@@ -317,7 +319,7 @@ struct Sched
         task.ectx.cancelCtx = null;
         task.awaitToken = OpToken.init;
         return AwaitOutcome(task.wakeRes, task.wakeFlags,
-            move(task.wakeBuf), task.wakePeer);
+            move(task.wakeBuf), task.wakePeer, task.wakeBufferId);
     }
 
     /// Cooperative reschedule: requeue the current fiber and yield the CPU.
@@ -345,6 +347,7 @@ private:
         task.wakeFlags = done.flags;
         task.wakeBuf = move(done.buf);
         task.wakePeer = done.peer;
+        task.wakeBufferId = done.bufferId;
         task.owner.enqueue(task);
     }
 
