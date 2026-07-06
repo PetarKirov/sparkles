@@ -12,7 +12,9 @@ allocation.
 */
 module sparkles.event_horizon.sched;
 
-version (Posix)  :  // rides DefaultLoop; peer backends via backend.select
+version (Posix) version = EhSchedStack;
+version (Windows) version = EhSchedStack;
+version (EhSchedStack)  :  // rides DefaultLoop; peer backends via backend.select
 
 import core.lifetime : move;
 import core.stdc.errno : EAGAIN, ENOBUFS;
@@ -232,21 +234,27 @@ struct Sched
         enqueue(task);
     }
 
-    /// Arms a one-shot deadline: expiry cancels `node`'s subtree with
-    /// `InterruptKind.deadline` (SPEC §8.3). The token disarms it.
-    ulong armDeadline(CancelContext* node, Duration timeout) @trusted nothrow
+    // Deadlines need the loop's timer, which exists only when the backend
+    // lowers OpTimeout (io_uring/kqueue; not the current IOCP data path). On
+    // a timer-less backend, withDeadline/timeout are simply unavailable.
+    static if (__traits(hasMember, DefaultLoop, "submitAfter"))
     {
-        auto h = _loop.submitAfter(timeout, &onDeadline, cast(void*) node);
-        return h.hasError ? 0 : h.value.token.raw;
-    }
+        /// Arms a one-shot deadline: expiry cancels `node`'s subtree with
+        /// `InterruptKind.deadline` (SPEC §8.3). The token disarms it.
+        ulong armDeadline(CancelContext* node, Duration timeout) @trusted nothrow
+        {
+            auto h = _loop.submitAfter(timeout, &onDeadline, cast(void*) node);
+            return h.hasError ? 0 : h.value.token.raw;
+        }
 
-    /// Disarms a deadline; a no-op for an already-fired or invalid token.
-    void disarmDeadline(ulong token) @safe nothrow
-    {
-        if (token == 0)
-            return;
-        OpHandle h = {token: OpToken(token)};
-        cast(void) _loop.cancel(h);
+        /// Disarms a deadline; a no-op for an already-fired or invalid token.
+        void disarmDeadline(ulong token) @safe nothrow
+        {
+            if (token == 0)
+                return;
+            OpHandle h = {token: OpToken(token)};
+            cast(void) _loop.cancel(h);
+        }
     }
 
     /// Fibers spawned and not yet finished.

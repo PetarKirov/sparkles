@@ -42,7 +42,9 @@ enum RunStatus : ubyte
 /// backend is chosen per platform in `backend.select` (`UringBackend` on
 /// Linux, `KqueueBackend` on macOS, `IocpBackend` on Windows; the
 /// `EventHorizonLibkqueue` override forces kqueue on Linux).
-version (Posix)
+version (Posix) version = EhDefaultLoop;
+version (Windows) version = EhDefaultLoop;
+version (EhDefaultLoop)
 {
     import sparkles.event_horizon.backend.select : DefaultBackend;
 
@@ -161,20 +163,26 @@ if (isCompletionBackend!Backend)
         return ioOk(OpHandle(token));
     }
 
-    /// Arms a relative timer (in-ring `TIMEOUT`, SPEC §5.3); the callback
-    /// fires with `res == 0` on expiry.
-    IoResult!OpHandle submitAfter(Duration rel, OpCallback cb, void* ctx = null)
+    // Timers exist only when the backend can lower `OpTimeout` (io_uring's
+    // in-ring TIMEOUT, kqueue's EVFILT_TIMER); a backend without them (the
+    // current IOCP data path) simply doesn't expose the timer API.
+    static if (canSubmitOp!(Backend, OpTimeout))
     {
-        long secs, nsecs;
-        rel.split!("seconds", "nsecs")(secs, nsecs);
-        return submit(OpTimeout(KernelTimespec(secs, nsecs)), cb, ctx);
-    }
+        /// Arms a relative timer (in-ring `TIMEOUT`, SPEC §5.3); the callback
+        /// fires with `res == 0` on expiry.
+        IoResult!OpHandle submitAfter(Duration rel, OpCallback cb, void* ctx = null)
+        {
+            long secs, nsecs;
+            rel.split!("seconds", "nsecs")(secs, nsecs);
+            return submit(OpTimeout(KernelTimespec(secs, nsecs)), cb, ctx);
+        }
 
-    /// ditto, absolute against `now()`.
-    IoResult!OpHandle submitAt(MonoTime deadline, OpCallback cb, void* ctx = null)
-    {
-        const rel = deadline - now();
-        return submitAfter(rel > Duration.zero ? rel : Duration.zero, cb, ctx);
+        /// ditto, absolute against `now()`.
+        IoResult!OpHandle submitAt(MonoTime deadline, OpCallback cb, void* ctx = null)
+        {
+            const rel = deadline - now();
+            return submitAfter(rel > Duration.zero ? rel : Duration.zero, cb, ctx);
+        }
     }
 
     /**
@@ -346,6 +354,9 @@ private:
             done.buf.length = cast(uint) raw.res <= done.buf.capacity
                 ? cast(uint) raw.res : done.buf.capacity;
 
+        // The datagram source address is read from the POSIX msghdr the
+        // RECVMSG lowering filled (peer backends without recvmsg skip this).
+        version (Posix)
         if (slot.kind == OpKind.recvFrom)
         {
             done.peer = slot.peerOut;
