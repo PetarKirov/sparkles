@@ -24,7 +24,6 @@ configuration "unittest" {
     dependency "sparkles:base" path="../.."
 
     dflags "-checkaction=context" "-allinst"
-    dflags "-ftime-trace" "-ftime-trace-file=$PACKAGE_DIR/build/trace.json" "--ftime-trace-granularity=0" platform="ldc"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
     dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
     lflags "--export-dynamic" platform="linux-ldc"
