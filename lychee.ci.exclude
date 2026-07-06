@@ -56,3 +56,5 @@
 ^https?://docs\.vulkan\.org/
 # bugs.kde.org (KDE Bugzilla) times out under GitHub Actions' concurrency
 ^https?://bugs\.kde\.org/
+# https://waf.io/ times out under GitHub Actions' concurrency
+^https?://(www\.)?waf\.io/
