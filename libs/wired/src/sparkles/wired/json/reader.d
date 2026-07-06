@@ -87,6 +87,14 @@ if (stateSize!Allocator != 0)
 
 private enum ulong maxCellSize = (1UL << 56) - 1;
 
+/// Branch-expectation hint (folds away when the backend lacks it).
+private pragma(inline, true) bool unlikely()(bool cond)
+{
+    import core.builtins : expect;
+
+    return expect(cond, false);
+}
+
 private void parseInto(JsonReadOptions opts, Allocator)(
     ref JsonParseResult!Allocator result, scope const(char)[] text)
 {
@@ -141,7 +149,7 @@ private void parseInto(JsonReadOptions opts, Allocator)(
     // Returns the new cell's index, or size_t.max on allocation failure.
     size_t appendCell(JsonKind kind, ulong size = 0)
     {
-        if (cellCount == cells.length)
+        if (unlikely(cellCount == cells.length))
         {
             doc.cellCount = cellCount;
             if (!doc.growCells())
@@ -193,18 +201,17 @@ private void parseInto(JsonReadOptions opts, Allocator)(
     }
 
     // ── string scanning (shared by keys and values) ──────────────────────
-    // Parses the string whose opening quote sits at `i`; on success `i`
-    // is past the closing quote and (strStart, strLen) locate the
-    // unescaped, NUL-terminated bytes in the pool. On failure fail()
+    // Parses the string whose opening quote sits at `i` and appends its
+    // cell; on success `i` is past the closing quote. On failure fail()
     // has run and false returns.
-    bool parseString(out size_t strStart, out size_t strLen)
+    bool parseString(JsonKind kind = JsonKind.string_)()
     {
         const openQuote = i;
         i++; // past '"'
         const start = i;
         const scan = scanStringBody(pool, i);
         size_t j = scan.stop;
-        if (j >= n)
+        if (unlikely(j >= n))
         {
             fail(ParseErrorCode.unexpectedEnd, openQuote);
             return false;
@@ -217,10 +224,8 @@ private void parseInto(JsonReadOptions opts, Allocator)(
                     return false;
             }
             pool[j] = '\0';
-            strStart = start;
-            strLen = j - start;
             i = j + 1;
-            return true;
+            return appendStringCell(start, j - start, kind);
         }
         if (pool[j] != '\\')
         {
@@ -363,10 +368,8 @@ private void parseInto(JsonReadOptions opts, Allocator)(
                 return false;
         }
         pool[dst] = '\0';
-        strStart = start;
-        strLen = dst - start;
         i = src + 1; // past closing quote
-        return true;
+        return appendStringCell(start, dst - start, kind);
     }
 
 
@@ -394,7 +397,7 @@ private void parseInto(JsonReadOptions opts, Allocator)(
         {
             k++;
             taken = 1;
-            if (p[k] >= '0' && p[k] <= '9')
+            if (unlikely(p[k] >= '0' && p[k] <= '9'))
             {
                 fail(ParseErrorCode.leadingZero, tokenStart);
                 return false;
@@ -436,9 +439,9 @@ private void parseInto(JsonReadOptions opts, Allocator)(
                 return false;
             }
         }
-        // Integer digits beyond the 19-digit accumulator.
+        // Integer digits beyond the 19-digit accumulator (cold).
         size_t intExtra = 0;
-        while (p[k] >= '0' && p[k] <= '9')
+        while (unlikely(p[k] >= '0' && p[k] <= '9'))
         {
             intExtra++;
             k++;
@@ -648,10 +651,7 @@ value: // parse one value at pool[i]
         const c0 = pool[i];
         if (c0 == '"') // most frequent first (string-heavy JSON)
         {
-            size_t start, len;
-            if (!parseString(start, len))
-                return;
-            if (!appendStringCell(start, len))
+            if (!parseString!()())
                 return;
             goto afterValue;
         }
@@ -761,14 +761,8 @@ objectKey: // parse `"key" :` then its value
             if (!appendStringCell(start, quick))
                 return;
         }
-        else
-        {
-            size_t start, len;
-            if (!parseString(start, len))
-                return;
-            if (!appendStringCell(start, len))
-                return;
-        }
+        else if (!parseString!()())
+            return;
     }
     skipWs(pool, i);
     if (i >= n || pool[i] != ':')
@@ -787,7 +781,7 @@ afterValue: // a value completed; count it, then continue its container
         goto endCheck;
     cells[parent].tag += 1UL << 8; // one more member
     skipWs(pool, i);
-    if (i >= n)
+    if (unlikely(i >= n))
     {
         fail(ParseErrorCode.unexpectedEnd, i);
         return;
