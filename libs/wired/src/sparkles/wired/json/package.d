@@ -9,3 +9,4 @@ module sparkles.wired.json;
 
 public import sparkles.wired.json.codec;
 public import sparkles.wired.json.document;
+public import sparkles.wired.json.reader;
