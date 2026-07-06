@@ -96,6 +96,292 @@ private pragma(inline, true) bool unlikely()(bool cond)
     return expect(cond, false);
 }
 
+/// Failure channel of $(LREF scanNumber) — written only on the error
+/// path, so the kernel's hot path carries no stores for it.
+private struct NumberError
+{
+    ParseErrorCode code;
+    size_t offset;
+    string context;
+}
+
+// ── number scanning (fused grammar + accumulation) ──────────────────────
+// Standalone pointer kernel with a register-narrow interface (yyjson's
+// read_number discipline): keeping it out of the grammar loop's nested
+// scope keeps the loop's captured state out of the kernel's register
+// allocation. `p` is the padded pool base — the ≥ 8 zero bytes
+// terminate every digit run, so the hot loops carry no bounds checks
+// (the same invariant as the scan seams). The parsed value cell is
+// stored straight into `*cell`; returns the index just past the token,
+// or 0 with `*err` filled on failure.
+private size_t scanNumber(JsonReadOptions opts)(
+    const(char)* p, size_t tokenStart, JsonCell* cell, NumberError* err) @system
+{
+    size_t k = tokenStart;
+    bool negative = false;
+    if (p[k] == '-')
+    {
+        negative = true;
+        k++;
+    }
+
+    // Integer part (strict: no leading zeros, at least one digit).
+    const intStart = k;
+    ulong sig = 0;
+    size_t taken = 0;
+    if (p[k] == '0')
+    {
+        k++;
+        taken = 1;
+        if (unlikely(p[k] >= '0' && p[k] <= '9'))
+        {
+            *err = NumberError(ParseErrorCode.leadingZero, tokenStart);
+            return 0;
+        }
+    }
+    else
+    {
+        // Accumulate up to 19 digits: eight per SWAR gulp while the
+        // budget allows (long ids), then unrolled two at a time.
+        while (taken + 8 <= 18)
+        {
+            const w = loadWord(p + k);
+            if (!allDigits8(w))
+                break;
+            sig = sig * 100_000_000 + eightDigits(w);
+            taken += 8;
+            k += 8;
+        }
+        while (taken < 18)
+        {
+            const uint d0 = cast(uint)(p[k] - '0');
+            if (d0 > 9)
+                break;
+            const uint d1 = cast(uint)(p[k + 1] - '0');
+            if (d1 > 9)
+            {
+                sig = sig * 10 + d0;
+                taken++;
+                k++;
+                break;
+            }
+            sig = sig * 100 + d0 * 10 + d1;
+            taken += 2;
+            k += 2;
+        }
+        if (taken == 18)
+        {
+            const uint d = cast(uint)(p[k] - '0');
+            if (d <= 9)
+            {
+                sig = sig * 10 + d;
+                taken++;
+                k++;
+            }
+        }
+        if (taken == 0)
+        {
+            *err = NumberError(ParseErrorCode.unexpectedCharacter, k);
+            return 0;
+        }
+    }
+    // Integer digits beyond the 19-digit accumulator (cold).
+    size_t intExtra = 0;
+    while (unlikely(p[k] >= '0' && p[k] <= '9'))
+    {
+        intExtra++;
+        k++;
+    }
+    const intEnd = k;
+
+    // Fraction.
+    size_t fracStart = 0, fracEnd = 0, fracTaken = 0;
+    bool fracExtraNonzero = false;
+    if (p[k] == '.')
+    {
+        k++;
+        fracStart = k;
+        if (intExtra == 0)
+        {
+            // The budget bound is hoisted so the loops carry a single
+            // moving index.
+            const fs = k;
+            const budgetEnd = k + (19 - taken);
+            // Eight fraction digits per SWAR gulp first — the dominant
+            // shape in geo data (canada: 2-3 integer digits then 15-17
+            // fraction digits).
+            while (k + 8 <= budgetEnd)
+            {
+                const w = loadWord(p + k);
+                if (!allDigits8(w))
+                    break;
+                sig = sig * 100_000_000 + eightDigits(w);
+                k += 8;
+            }
+            while (k + 2 <= budgetEnd)
+            {
+                const uint d0 = cast(uint)(p[k] - '0');
+                if (d0 > 9)
+                    break;
+                const uint d1 = cast(uint)(p[k + 1] - '0');
+                if (d1 > 9)
+                {
+                    sig = sig * 10 + d0;
+                    k++;
+                    break;
+                }
+                sig = sig * 100 + d0 * 10 + d1;
+                k += 2;
+            }
+            if (k < budgetEnd)
+            {
+                const uint d = cast(uint)(p[k] - '0');
+                if (d <= 9)
+                {
+                    sig = sig * 10 + d;
+                    k++;
+                }
+            }
+            fracTaken = k - fs;
+            taken += fracTaken;
+        }
+        while (p[k] >= '0' && p[k] <= '9')
+        {
+            fracExtraNonzero |= p[k] != '0';
+            k++;
+        }
+        fracEnd = k;
+        if (fracEnd == fracStart)
+        {
+            *err = NumberError(ParseErrorCode.unexpectedCharacter, k,
+                "digit required after decimal point");
+            return 0;
+        }
+    }
+
+    // Exponent.
+    int explicitExp = 0;
+    bool hasExp = false;
+    if ((p[k] | 0x20) == 'e')
+    {
+        hasExp = true;
+        k++;
+        bool expNeg = false;
+        if (p[k] == '+' || p[k] == '-')
+        {
+            expNeg = p[k] == '-';
+            k++;
+        }
+        ulong e = 0;
+        size_t eDigits = 0;
+        while (eDigits < 10)
+        {
+            const uint d = cast(uint)(p[k] - '0');
+            if (d > 9)
+                break;
+            e = e * 10 + d;
+            eDigits++;
+            k++;
+        }
+        if (eDigits == 0)
+        {
+            *err = NumberError(ParseErrorCode.unexpectedCharacter, k,
+                "digit required in exponent");
+            return 0;
+        }
+        while (p[k] >= '0' && p[k] <= '9') // absurd exponents saturate
+            k++;
+        if (e > 400)
+            e = 400;
+        explicitExp = expNeg ? -cast(int) e : cast(int) e;
+    }
+
+    static if (opts.rawNumbers)
+    {
+        *cell = JsonCell(JsonKind.rawNumber, k - tokenStart);
+        cell.bits = cast(ulong)(p + tokenStart);
+        return k;
+    }
+    else
+    {
+        const isInt = fracStart == 0 && !hasExp;
+        if (isInt && intExtra == 0) // ≤19 digits: exact
+        {
+            if (!negative)
+            {
+                const kind = sig <= long.max
+                    ? JsonKind.integer : JsonKind.uinteger;
+                *cell = JsonCell(kind);
+                cell.bits = sig;
+                return k;
+            }
+            if (sig == 0) // "-0": preserve the sign (yyjson behavior)
+            {
+                *cell = JsonCell(JsonKind.floating);
+                cell.bits = doubleToBits(-0.0);
+                return k;
+            }
+            if (sig <= 1UL << 63) // down to long.min
+            {
+                *cell = JsonCell(JsonKind.integer);
+                cell.bits = 0 - sig;
+                return k;
+            }
+            // Below long.min: floating (≤19-digit ulong → double is a
+            // single correct rounding).
+            *cell = JsonCell(JsonKind.floating);
+            cell.bits = doubleToBits(-cast(double) sig);
+            return k;
+        }
+        if (isInt && intExtra == 1)
+        {
+            // The 20-digit u64 tail: one extra digit may still fit.
+            const d = cast(uint)(p[intEnd - 1] - '0');
+            if (sig < ulong.max / 10
+                || (sig == ulong.max / 10 && d <= ulong.max % 10))
+            {
+                const wide = sig * 10 + d;
+                const kind = negative ? JsonKind.floating
+                    : wide <= long.max ? JsonKind.integer : JsonKind.uinteger;
+                *cell = JsonCell(kind);
+                cell.bits = negative
+                    ? doubleToBits(-cast(double) wide) : wide;
+                return k;
+            }
+        }
+
+        // Floating path (fraction / exponent / oversized integer).
+        // Conservative truncation: extra integer digits might be all
+        // zeros (still exact), but claiming truncation just routes
+        // through bracketing or slowDouble — exact either way.
+        const truncated = intExtra != 0 || fracExtraNonzero;
+        const exp10 = explicitExp + cast(int) intExtra - cast(int) fracTaken;
+
+        double value;
+        bool decided;
+        if (!truncated)
+            decided = tryFastDouble(sig, exp10, value);
+        else
+        {
+            // Bracket: if sig and sig+1 round identically, the true
+            // in-between value must round there too.
+            double lowV, highV;
+            decided = tryFastDouble(sig, exp10, lowV)
+                && tryFastDouble(sig + 1, exp10, highV)
+                && doubleToBits(lowV) == doubleToBits(highV);
+            value = lowV;
+        }
+        if (!decided)
+            value = slowDouble(p[intStart .. intEnd],
+                fracStart == 0 ? null : p[fracStart .. fracEnd],
+                explicitExp);
+
+        *cell = JsonCell(JsonKind.floating);
+        cell.bits = doubleToBits(negative ? -value : value);
+        return k;
+    }
+}
+
 private void parseInto(JsonReadOptions opts, Allocator)(
     ref JsonParseResult!Allocator result, scope const(char)[] text)
 {
@@ -362,268 +648,6 @@ private void parseInto(JsonReadOptions opts, Allocator)(
     }
 
 
-    // ── number scanning (fused grammar + accumulation) ───────────────────
-    // Pointer-based kernel: the ≥8-byte zero padding terminates every
-    // digit run, so the hot loops carry no bounds checks. @trusted with
-    // the same invariant as the scan seams.
-    bool parseNumber() @trusted
-    {
-        auto p = pool.ptr;
-        const tokenStart = i;
-        size_t k = i;
-        bool negative = false;
-        if (p[k] == '-')
-        {
-            negative = true;
-            k++;
-        }
-
-        // Integer part (strict: no leading zeros, at least one digit).
-        const intStart = k;
-        ulong sig = 0;
-        size_t taken = 0;
-        if (p[k] == '0')
-        {
-            k++;
-            taken = 1;
-            if (unlikely(p[k] >= '0' && p[k] <= '9'))
-            {
-                fail(ParseErrorCode.leadingZero, tokenStart);
-                return false;
-            }
-        }
-        else
-        {
-            // Accumulate up to 19 digits: eight per SWAR gulp while the
-            // budget allows (long ids; the pool padding keeps the loads
-            // in bounds), then unrolled two at a time.
-            while (taken + 8 <= 18)
-            {
-                const w = loadWord(p + k);
-                if (!allDigits8(w))
-                    break;
-                sig = sig * 100_000_000 + eightDigits(w);
-                taken += 8;
-                k += 8;
-            }
-            while (taken < 18)
-            {
-                const uint d0 = cast(uint)(p[k] - '0');
-                if (d0 > 9)
-                    break;
-                const uint d1 = cast(uint)(p[k + 1] - '0');
-                if (d1 > 9)
-                {
-                    sig = sig * 10 + d0;
-                    taken++;
-                    k++;
-                    break;
-                }
-                sig = sig * 100 + d0 * 10 + d1;
-                taken += 2;
-                k += 2;
-            }
-            if (taken == 18)
-            {
-                const uint d = cast(uint)(p[k] - '0');
-                if (d <= 9)
-                {
-                    sig = sig * 10 + d;
-                    taken++;
-                    k++;
-                }
-            }
-            if (taken == 0)
-            {
-                fail(ParseErrorCode.unexpectedCharacter, k);
-                return false;
-            }
-        }
-        // Integer digits beyond the 19-digit accumulator (cold).
-        size_t intExtra = 0;
-        while (unlikely(p[k] >= '0' && p[k] <= '9'))
-        {
-            intExtra++;
-            k++;
-        }
-        const intEnd = k;
-
-        // Fraction.
-        size_t fracStart = 0, fracEnd = 0, fracTaken = 0;
-        bool fracExtraNonzero = false;
-        if (p[k] == '.')
-        {
-            k++;
-            fracStart = k;
-            if (intExtra == 0)
-            {
-                // Two digits per iteration, mirroring the integer loop;
-                // the budget bound is hoisted so the loop carries a
-                // single moving index.
-                const fs = k;
-                const budgetEnd = k + (19 - taken);
-                // Eight fraction digits per SWAR gulp first — the
-                // dominant shape in geo data (canada: 2-3 integer digits
-                // then 15-17 fraction digits).
-                while (k + 8 <= budgetEnd)
-                {
-                    const w = loadWord(p + k);
-                    if (!allDigits8(w))
-                        break;
-                    sig = sig * 100_000_000 + eightDigits(w);
-                    k += 8;
-                }
-                while (k + 2 <= budgetEnd)
-                {
-                    const uint d0 = cast(uint)(p[k] - '0');
-                    if (d0 > 9)
-                        break;
-                    const uint d1 = cast(uint)(p[k + 1] - '0');
-                    if (d1 > 9)
-                    {
-                        sig = sig * 10 + d0;
-                        k++;
-                        break;
-                    }
-                    sig = sig * 100 + d0 * 10 + d1;
-                    k += 2;
-                }
-                if (k < budgetEnd)
-                {
-                    const uint d = cast(uint)(p[k] - '0');
-                    if (d <= 9)
-                    {
-                        sig = sig * 10 + d;
-                        k++;
-                    }
-                }
-                fracTaken = k - fs;
-                taken += fracTaken;
-            }
-            while (p[k] >= '0' && p[k] <= '9')
-            {
-                fracExtraNonzero |= p[k] != '0';
-                k++;
-            }
-            fracEnd = k;
-            if (fracEnd == fracStart)
-            {
-                fail(ParseErrorCode.unexpectedCharacter, k,
-                    "digit required after decimal point");
-                return false;
-            }
-        }
-
-        // Exponent.
-        int explicitExp = 0;
-        bool hasExp = false;
-        if ((p[k] | 0x20) == 'e')
-        {
-            hasExp = true;
-            k++;
-            bool expNeg = false;
-            if (p[k] == '+' || p[k] == '-')
-            {
-                expNeg = p[k] == '-';
-                k++;
-            }
-            ulong e = 0;
-            size_t eDigits = 0;
-            while (eDigits < 10)
-            {
-                const uint d = cast(uint)(p[k] - '0');
-                if (d > 9)
-                    break;
-                e = e * 10 + d;
-                eDigits++;
-                k++;
-            }
-            if (eDigits == 0)
-            {
-                fail(ParseErrorCode.unexpectedCharacter, k,
-                    "digit required in exponent");
-                return false;
-            }
-            while (p[k] >= '0' && p[k] <= '9') // absurd exponents saturate
-                k++;
-            if (e > 400)
-                e = 400;
-            explicitExp = expNeg ? -cast(int) e : cast(int) e;
-        }
-        i = k;
-
-        static if (opts.rawNumbers)
-        {
-            return appendStringCell(tokenStart, i - tokenStart, JsonKind.rawNumber);
-        }
-        else
-        {
-            const isInt = fracStart == 0 && !hasExp;
-            if (isInt && intExtra == 0) // ≤19 digits: exact
-            {
-                if (!negative)
-                {
-                    const kind = sig <= long.max
-                        ? JsonKind.integer : JsonKind.uinteger;
-                    return appendScalar(kind, sig);
-                }
-                if (sig == 0) // "-0": preserve the sign (yyjson behavior)
-                    return appendScalar(JsonKind.floating, doubleToBits(-0.0));
-                if (sig <= 1UL << 63) // down to long.min
-                    return appendScalar(JsonKind.integer, 0 - sig);
-                // Below long.min: floating (≤19-digit ulong → double is
-                // a single correct rounding).
-                return appendScalar(JsonKind.floating,
-                    doubleToBits(-cast(double) sig));
-            }
-            if (isInt && intExtra == 1)
-            {
-                // The 20-digit u64 tail: one extra digit may still fit.
-                const d = cast(uint)(p[intEnd - 1] - '0');
-                if (sig < ulong.max / 10
-                    || (sig == ulong.max / 10 && d <= ulong.max % 10))
-                {
-                    const wide = sig * 10 + d;
-                    if (negative)
-                        return appendScalar(JsonKind.floating,
-                            doubleToBits(-cast(double) wide));
-                    const kind = wide <= long.max
-                        ? JsonKind.integer : JsonKind.uinteger;
-                    return appendScalar(kind, wide);
-                }
-            }
-
-            // Floating path (fraction / exponent / oversized integer).
-            // Conservative truncation: extra integer digits might be all
-            // zeros (still exact), but claiming truncation just routes
-            // through bracketing or slowDouble — exact either way.
-            const truncated = intExtra != 0 || fracExtraNonzero;
-            const exp10 = explicitExp + cast(int) intExtra - cast(int) fracTaken;
-
-            double value;
-            bool decided;
-            if (!truncated)
-                decided = tryFastDouble(sig, exp10, value);
-            else
-            {
-                // Bracket: if sig and sig+1 round identically, the true
-                // in-between value must round there too.
-                double lowV, highV;
-                decided = tryFastDouble(sig, exp10, lowV)
-                    && tryFastDouble(sig + 1, exp10, highV)
-                    && doubleToBits(lowV) == doubleToBits(highV);
-                value = lowV;
-            }
-            if (!decided)
-                value = slowDouble(pool[intStart .. intEnd],
-                    fracStart == 0 ? null : pool[fracStart .. fracEnd],
-                    explicitExp);
-
-            return appendScalar(JsonKind.floating,
-                doubleToBits(negative ? -value : value));
-        }
-    }
-
     // ── literals ─────────────────────────────────────────────────────────
     bool parseLiteral(string lit)(JsonKind kind, ulong payload)
     {
@@ -686,9 +710,23 @@ value: // parse one value at pool[i]
                     return;
                 goto afterValue;
             }
-            if (!parseNumber())
-                return;
-            goto afterValue;
+            {
+                // The number kernel is a file-scope function (see
+                // scanNumber) so the grammar loop's live state stays out
+                // of its register allocation; @trusted on the padded
+                // pool and the pre-sized arena slot.
+                NumberError nerr;
+                const end = (() @trusted => scanNumber!opts(pool.ptr, i,
+                    cells.ptr + cellCount, &nerr))();
+                if (end == 0)
+                {
+                    fail(nerr.code, nerr.offset, nerr.context);
+                    return;
+                }
+                cellCount++;
+                i = end;
+                goto afterValue;
+            }
         }
         {
             const isObject = c0 == '{';
