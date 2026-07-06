@@ -23,7 +23,7 @@ import sparkles.base.text.float_conv : bitsToDouble, doubleToBits, readDigits,
     slowDouble, tryFastDouble;
 import sparkles.base.text.utf8 : indexOfInvalidUtf8;
 import sparkles.wired.json.document : JsonCell, JsonDocument, JsonKind;
-import sparkles.wired.json.scan : scanStringBody, skipWs;
+import sparkles.wired.json.scan : loadWord, scanStringBody, skipWs, StringScan;
 
 /// Compile-time reader configuration (SPEC §11.3). Each combination
 /// specializes the reader; dead option branches vanish.
@@ -106,25 +106,13 @@ private void parseInto(JsonReadOptions opts, Allocator)(
         return;
     }
 
-    static if (opts.validateUtf8)
-    {
-        // Ill-formed bytes outside strings are syntax errors anyway, so
-        // one whole-input pass is both simplest and strictest.
-        const badAt = indexOfInvalidUtf8(text);
-        if (badAt != text.length)
-        {
-            fail(ParseErrorCode.invalidUtf8, badAt);
-            return;
-        }
-    }
-
     // Cell estimate: ~1 cell / 6 bytes minified, ~1 / 16 pretty
     // (whitespace-heavy). Underestimates grow ×1.5.
     const looksPretty = text.length >= 2 && (text[0] == '{' || text[0] == '[')
         && (text[1] == '\n' || text[1] == ' ' || text[1] == '\r' || text[1] == '\t');
     const cellEstimate = text.length / (looksPretty ? 16 : 6) + 4;
 
-    if (!result.document.acquire(cellEstimate, text.length + 4))
+    if (!result.document.acquire(cellEstimate, text.length + 8))
     {
         fail(ParseErrorCode.outOfMemory, 0);
         return;
@@ -133,23 +121,35 @@ private void parseInto(JsonReadOptions opts, Allocator)(
     auto doc = () @trusted { return &result.document; }();
     auto pool = doc.pool;
     pool[0 .. text.length] = text[];
-    pool[text.length .. text.length + 4] = '\0';
+    pool[text.length .. text.length + 8] = '\0';
 
     const n = text.length; // content length; padding beyond
     size_t i = 0;
 
     // ── cell append / container machinery (threaded parent) ─────────────
+    // Hot state lives in locals — stores through `pool` would otherwise
+    // force conservative reloads of every document field on each append;
+    // the document is synced at growth and on completion.
+    auto cells = doc.cells;
+    size_t cellCount = 0;
+
     enum size_t noParent = size_t.max;
     size_t parent = noParent;
+    bool parentIsObject = false; // cells[parent].kind cached (hot loop)
     uint depth = 0;
 
     // Returns the new cell's index, or size_t.max on allocation failure.
     size_t appendCell(JsonKind kind, ulong size = 0)
     {
-        if (doc.cellCount == doc.cells.length && !doc.growCells())
-            return size_t.max;
-        const idx = doc.cellCount++;
-        doc.cells[idx] = JsonCell(kind, size);
+        if (cellCount == cells.length)
+        {
+            doc.cellCount = cellCount;
+            if (!doc.growCells())
+                return size_t.max;
+            cells = doc.cells;
+        }
+        const idx = cellCount++;
+        cells[idx] = JsonCell(kind, size);
         return idx;
     }
 
@@ -162,7 +162,7 @@ private void parseInto(JsonReadOptions opts, Allocator)(
             fail(ParseErrorCode.outOfMemory, i);
             return false;
         }
-        doc.cells[idx].bits = payload;
+        cells[idx].bits = payload;
         return true;
     }
 
@@ -176,9 +176,20 @@ private void parseInto(JsonReadOptions opts, Allocator)(
             return false;
         }
         () @trusted {
-            doc.cells[idx].bits = cast(ulong)(pool.ptr + start);
+            cells[idx].bits = cast(ulong)(pool.ptr + start);
         }();
         return true;
+    }
+
+
+    // Validates the UTF-8 of pool[from .. to] (a string's decoded bytes).
+    bool validateSpan(size_t from, size_t to)
+    {
+        const bad = indexOfInvalidUtf8(pool[from .. to]);
+        if (bad == to - from)
+            return true;
+        fail(ParseErrorCode.invalidUtf8, from + bad);
+        return false;
     }
 
     // ── string scanning (shared by keys and values) ──────────────────────
@@ -191,7 +202,8 @@ private void parseInto(JsonReadOptions opts, Allocator)(
         const openQuote = i;
         i++; // past '"'
         const start = i;
-        const j = scanStringBody(pool[0 .. n], i);
+        const scan = scanStringBody(pool, i);
+        size_t j = scan.stop;
         if (j >= n)
         {
             fail(ParseErrorCode.unexpectedEnd, openQuote);
@@ -199,6 +211,11 @@ private void parseInto(JsonReadOptions opts, Allocator)(
         }
         if (pool[j] == '"') // fast lane: no escapes
         {
+            static if (opts.validateUtf8)
+            {
+                if (scan.sawHigh && !validateSpan(start, j))
+                    return false;
+            }
             pool[j] = '\0';
             strStart = start;
             strLen = j - start;
@@ -212,7 +229,9 @@ private void parseInto(JsonReadOptions opts, Allocator)(
             return false;
         }
 
-        // Escape lane: unescape in place (dst ≤ src always).
+        // Escape lane: unescape in place (dst ≤ src always); clean
+        // segments between escapes move as one bulk copy over the same
+        // SWAR scan as the fast lane.
         size_t dst = j;
         size_t src = j;
         while (true)
@@ -233,8 +252,36 @@ private void parseInto(JsonReadOptions opts, Allocator)(
             }
             if (c != '\\')
             {
-                pool[dst++] = c;
-                src++;
+                // Bulk-move the clean run up to the next stop byte.
+                // dst ≤ src and copying forward word-by-word is overlap-
+                // safe for a leftward move; ≥8 padding bytes keep the
+                // word loads in bounds. Escape-dense strings have tiny
+                // segments — avoid the memmove call for them.
+                const seg = scanStringBody(pool, src).stop - src;
+                () @trusted {
+                    auto d = pool.ptr + dst;
+                    auto q = pool.ptr + src;
+                    if (src - dst >= 8)
+                    {
+                        // Word copies rounded up to 8: the ≤7-byte
+                        // overshoot lands in the dead zone between the
+                        // shrunken destination and the unconsumed source
+                        // (gap ≥ 8 guarantees it), and pool padding keeps
+                        // the loads in bounds.
+                        size_t k = 0;
+                        do
+                        {
+                            memcpyWord(d + k, q + k);
+                            k += 8;
+                        }
+                        while (k < seg);
+                    }
+                    else
+                        foreach (k; 0 .. seg)
+                            d[k] = q[k];
+                }();
+                dst += seg;
+                src += seg;
                 continue;
             }
 
@@ -310,12 +357,18 @@ private void parseInto(JsonReadOptions opts, Allocator)(
                 return false;
             }
         }
+        static if (opts.validateUtf8)
+        {
+            if (!validateSpan(start, dst))
+                return false;
+        }
         pool[dst] = '\0';
         strStart = start;
         strLen = dst - start;
         i = src + 1; // past closing quote
         return true;
     }
+
 
     // ── number scanning (fused grammar + accumulation) ───────────────────
     bool parseNumber()
@@ -489,23 +542,32 @@ private void parseInto(JsonReadOptions opts, Allocator)(
     }
 
     // ── literals ─────────────────────────────────────────────────────────
-    bool parseLiteral(string lit, JsonKind kind, ulong payload)
+    bool parseLiteral(string lit)(JsonKind kind, ulong payload)
     {
-        // The zero padding makes 4/5-byte comparisons safe near the end.
-        foreach (k, ch; lit)
+        // One unaligned 32-bit compare ("true"/"null"/"alse" after 'f');
+        // the zero padding makes the loads safe near the end.
+        enum tail = lit.length == 5 ? lit[1 .. 5] : lit;
+        enum uint word = tail[0] | tail[1] << 8 | tail[2] << 16
+            | cast(uint) tail[3] << 24;
+        const at = i + (lit.length == 5 ? 1 : 0);
+        const got = (() @trusted {
+            import core.stdc.string : memcpy;
+
+            uint w;
+            memcpy(&w, pool.ptr + at, 4);
+            return w;
+        })();
+        if (got != word)
         {
-            if (pool[i + k] != ch)
-            {
-                fail(ParseErrorCode.unexpectedCharacter, i);
-                return false;
-            }
+            fail(ParseErrorCode.unexpectedCharacter, i);
+            return false;
         }
         i += lit.length;
         return appendScalar(kind, payload);
     }
 
     // ── the grammar loop ─────────────────────────────────────────────────
-    skipWs(pool[0 .. n], i);
+    skipWs(pool, i);
 
 value: // parse one value at pool[i]
     if (i >= n)
@@ -531,10 +593,11 @@ value: // parse one value at pool[i]
                 fail(ParseErrorCode.outOfMemory, i);
                 return;
             }
-            doc.cells[idx].bits = parent; // threaded parent
+            cells[idx].bits = parent; // threaded parent
             parent = idx;
+            parentIsObject = isObject;
             i++;
-            skipWs(pool[0 .. n], i);
+            skipWs(pool, i);
             if (i < n && pool[i] == (isObject ? '}' : ']'))
             {
                 i++;
@@ -554,15 +617,15 @@ value: // parse one value at pool[i]
             goto afterValue;
         }
     case 't':
-        if (!parseLiteral("true", JsonKind.bool_, 1))
+        if (!parseLiteral!"true"(JsonKind.bool_, 1))
             return;
         goto afterValue;
     case 'f':
-        if (!parseLiteral("false", JsonKind.bool_, 0))
+        if (!parseLiteral!"false"(JsonKind.bool_, 0))
             return;
         goto afterValue;
     case 'n':
-        if (!parseLiteral("null", JsonKind.null_, 0))
+        if (!parseLiteral!"null"(JsonKind.null_, 0))
             return;
         goto afterValue;
     default:
@@ -586,7 +649,7 @@ objectKey: // parse `"key" :` then its value
         if (!appendStringCell(start, len))
             return;
     }
-    skipWs(pool[0 .. n], i);
+    skipWs(pool, i);
     if (i >= n || pool[i] != ':')
     {
         fail(i >= n ? ParseErrorCode.unexpectedEnd
@@ -595,26 +658,26 @@ objectKey: // parse `"key" :` then its value
         return;
     }
     i++;
-    skipWs(pool[0 .. n], i);
+    skipWs(pool, i);
     goto value;
 
 afterValue: // a value completed; count it, then continue its container
     if (parent == noParent)
         goto endCheck;
-    doc.cells[parent].tag += 1UL << 8; // one more member
-    skipWs(pool[0 .. n], i);
+    cells[parent].tag += 1UL << 8; // one more member
+    skipWs(pool, i);
     if (i >= n)
     {
         fail(ParseErrorCode.unexpectedEnd, i);
         return;
     }
     {
-        const isObject = doc.cells[parent].kind == JsonKind.object;
+        const isObject = parentIsObject;
         const c = pool[i];
         if (c == ',')
         {
             i++;
-            skipWs(pool[0 .. n], i);
+            skipWs(pool, i);
             if (isObject)
                 goto objectKey;
             goto value;
@@ -632,20 +695,34 @@ afterValue: // a value completed; count it, then continue its container
 closeContainer: // finalize cells[parent], pop the threaded parent
     {
         const idx = parent;
-        parent = cast(size_t) doc.cells[idx].bits;
-        doc.cells[idx].bits = doc.cellCount - idx;
+        parent = cast(size_t) cells[idx].bits;
+        parentIsObject = parent != noParent
+            && cells[parent].kind == JsonKind.object;
+        cells[idx].bits = cellCount - idx;
         depth--;
         goto afterValue;
     }
 
 endCheck:
-    skipWs(pool[0 .. n], i);
+    skipWs(pool, i);
     if (i != n)
     {
         fail(ParseErrorCode.trailingContent, i);
         return;
     }
-    // Success: document.cellCount nonzero ⇒ hasValue.
+    doc.cellCount = cellCount; // success: nonzero ⇒ hasValue
+}
+
+/// Copies one 8-byte word (used by the escape lane's segment moves;
+/// callers guarantee in-bounds via the pool padding).
+private void memcpyWord(char* d, const(char)* q) @system pure nothrow @nogc
+{
+    pragma(inline, true);
+    import core.stdc.string : memcpy;
+
+    ulong x;
+    memcpy(&x, q, 8);
+    memcpy(d, &x, 8);
 }
 
 /// Reads exactly 4 hex digits at `src`, advancing it.
