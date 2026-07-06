@@ -14,6 +14,7 @@ public import sparkles.event_horizon.schedule;
 public import sparkles.event_horizon.clock;
 public import sparkles.event_horizon.net;
 public import sparkles.event_horizon.buffer;
+public import sparkles.event_horizon.effect;
 public import sparkles.event_horizon.op;
 
 version (linux)
