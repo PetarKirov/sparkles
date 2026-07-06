@@ -57,8 +57,8 @@ On a 50 000-file / 2 551-directory tree (best of 3):
 | **event-horizon (work-stealing fibers)**                   | ~0.104 s | ~15×  |
 
 **This is the honest, load-bearing finding, not a footnote.** The
-work-stealing engine _loses badly_ on this workload, and the reason is
-architectural and was anticipated by the plan:
+work-stealing engine _loses badly_ on this workload, for a reason anticipated
+by the plan and then **isolated by measurement**:
 
 1. **`getdents` has no io_uring opcode.** The directory read is an ordinary
    syscall, so there is nothing for a fiber to _await_. A stackful fiber earns
@@ -66,13 +66,18 @@ architectural and was anticipated by the plan:
    sub-microsecond syscall that never parks, the fiber's 64 KiB stack alloc,
    context switch, and GC-stack registration are pure overhead. `taskPool`
    (and Rust rayon, the incumbent winner) carry each unit of work as a
-   lightweight closure on a thread — no per-task stack.
-2. **One global injection queue with a mutex.** Every directory does a
-   lock/unlock to submit its subdirectories; 2 551 submits + pulls contend on
-   one lock. rayon uses per-worker deques with work-stealing only on empty —
-   near-zero contention. event-horizon's per-worker-deque + `MSG_RING`-targeted
-   stealing is [open-issue O2](./open-issues.md); until it lands, the global
-   queue is the bottleneck this benchmark exposes.
+   lightweight closure on a thread — no per-task stack. **This dominates.**
+2. **Queue contention was _not_ the cause.** The plan hypothesized a second
+   contributor — a single global injection queue with a mutex — so the pool
+   was rebuilt with per-worker Chase-Lev-style deques (owner pushes/pops its
+   tail, thieves steal from the head; [open-issue O2](./open-issues.md),
+   done). The walker time did **not** move (~0.103 s before and after),
+   proving the fiber-per-task cost in (1) is the whole story here and the
+   queue was never the bottleneck for this workload. The deques still matter
+   for correctness and for scaling submit-heavy workloads to many cores — they
+   just don't help a fiber-bound one. Running CPU-bound tasks _without_ a fiber
+   (a closure directly on the worker) is what would close this gap, and is the
+   real remaining work for this workload class.
 
 The takeaway is a **correct characterization of the tool**: the work-stealing
 fiber scheduler is built for _async-I/O fan-out_ — thousands of connections
