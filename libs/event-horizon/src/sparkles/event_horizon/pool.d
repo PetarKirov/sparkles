@@ -26,8 +26,8 @@ module sparkles.event_horizon.pool;
 
 version (Posix)  :  // rides Sched; CPU pinning is linux-guarded internally
 
-import core.atomic : atomicFetchAdd, atomicFetchSub, atomicLoad, atomicOp,
-    atomicStore, MemoryOrder;
+import core.atomic : atomicFence, atomicFetchAdd, atomicFetchSub, atomicLoad,
+    atomicOp, atomicStore, cas, MemoryOrder;
 import core.sync.mutex : Mutex;
 import core.thread : Thread;
 import core.time : Duration, usecs;
@@ -101,7 +101,8 @@ struct WorkStealingPool
         // by another worker's allocation would deadlock the group. Disable
         // the collector for the pool's lifetime (setup allocations only;
         // the hot path is @nogc). A GC-safe blocking wait — the proper fix —
-        // is tracked in open-issues O22.
+        // is tracked in open-issues O22. (Enabling it for cpuBound mode was
+        // tried — the STW pauses cost more than the heap-growth mmaps saved.)
         GC.disable();
         scope (exit) GC.enable();
 
@@ -123,6 +124,7 @@ struct WorkStealingPool
             import sparkles.event_horizon.io : sleep, yieldNow;
 
             t_workerId = id; // so submit() from a task lands on this worker
+            t_rng = (id + 1) * 2_654_435_761u | 1u; // seed the steal RNG (non-zero)
             if (cfg.pinToCpu)
                 pinToCpu(id);
 
@@ -287,10 +289,14 @@ private:
                 idle = 0;
                 continue; // straight back to draining — nothing to yield to
             }
-            // A brief spin (cheap re-steal attempts, low pickup latency) then
+            // A brief SMT-friendly spin (cheap re-steal attempts, low pickup
+            // latency, PAUSE yields the core to the busy sibling) then
             // exponential sleep so idle workers stop contending on peers.
             if (idle < cpuSpinRounds)
-                Thread.yield();
+            {
+                foreach (_; 0 .. 32)
+                    cpuRelax();
+            }
             else
             {
                 const shift = idle - cpuSpinRounds < maxBackoffShift
@@ -323,10 +329,21 @@ private:
     /// from the next worker so thieves spread out.
     bool trySteal(uint id, out Job job) @trusted
     {
-        foreach (i; 1 .. _workers)
+        // Randomized scan start so thieves spread across victims instead of
+        // all piling onto the lowest-numbered loaded deque.
+        const start = nextRand() % _workers;
+        foreach (i; 0 .. _workers)
         {
-            const victim = (id + i) % _workers;
-            if (_deques[victim].stealHead(job))
+            const victim = (start + i) % _workers;
+            if (victim == id)
+                continue;
+            // Cheap relaxed pre-filter: skip an obviously-empty peer without
+            // paying stealHead's seq_cst fence + CAS.
+            if (_deques[victim].maybeEmpty())
+                continue;
+            // Batch steal: take half of the victim onto our own deque, run one
+            // now. `id` is always a valid worker here (thieves are workers).
+            if (_deques[victim].stealBatch(job, _deques[id]))
                 return true;
         }
         return false;
@@ -378,6 +395,39 @@ private:
 /// task lands on that task's own worker.
 private int t_workerId = -1;
 
+/// Per-worker xorshift RNG state for randomized victim selection — thieves that
+/// all scan in the same order pile CAS retries onto the same loaded deques,
+/// which is what balloons the instruction count at high worker counts (the
+/// wide-tree case in `benchmarks.md` §2). A random scan start spreads them.
+private uint t_rng = 0;
+
+private uint nextRand() @safe nothrow @nogc
+{
+    uint x = t_rng;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    t_rng = x;
+    return x;
+}
+
+/// An SMT-friendly spin hint: the x86 `PAUSE` instruction tells the core this
+/// is a spin-wait, so it yields pipeline/cache resources to the *sibling*
+/// hyperthread — the opposite of `sched_yield`, which keeps this SMT lane hot
+/// and starves the busy sibling. Decisive on this 16-core/32-thread part where
+/// beating rayon means running 32 workers (both SMT lanes) without the idle
+/// ones robbing the busy ones. No syscall.
+private void cpuRelax() @trusted nothrow @nogc
+{
+    version (D_InlineAsm_X86_64)
+        asm nothrow @nogc { rep; nop; } // F3 90 = PAUSE
+    else version (D_InlineAsm_X86)
+        asm nothrow @nogc { rep; nop; }
+    else
+    {
+    } // other ISAs: a plain retry loop (no relax hint)
+}
+
 /// One unit of work: its body plus whether it runs inline (CPU-bound,
 /// `submitBlocking`) or as a fiber (`submit`).
 private struct Job
@@ -386,53 +436,144 @@ private struct Job
     bool inline_;
 }
 
-/// A per-worker work-stealing deque: the owner pushes/pops its tail (LIFO,
-/// for locality), thieves steal from the head (FIFO). A single mutex guards
-/// it — uncontended in the common case (only the owner touches it), contended
-/// only during a steal. GC-backed storage is fine here (pool infrastructure).
+/// A per-worker **lock-free Chase-Lev work-stealing deque**: the owner
+/// pushes/pops its tail (`bottom`, LIFO for locality), thieves steal from the
+/// head (`top`, FIFO), and no path takes a lock. This is what lets the pool
+/// scale to many workers without the mutex the previous version used — under
+/// the old design an idle worker's steal-scan locked every peer's mutex, and
+/// the instruction count ballooned with worker count (`benchmarks.md` §2, the
+/// wide-tree case). Single owner, many thieves — the pool's invariant (only the
+/// owning worker calls `push`/`popTail`; any worker may `stealHead`).
+///
+/// The backing buffer sits behind an atomic pointer so a grow (owner-only, on a
+/// full push) is safe against concurrent steals: a thief reads whichever buffer
+/// it loaded and both index element `i` at `i & mask`, so the read is correct
+/// from either, and the old buffer stays GC-alive while a thief references it.
+/// `Job` holds a GC delegate, so GC-backed buffers also keep closures alive.
 private final class Deque
 {
-    import core.sync.mutex : Mutex;
+    private static final class Buf
+    {
+        Job[] items;
+        size_t mask;
+        this(size_t n) @safe nothrow
+        {
+            items = new Job[n];
+            mask = n - 1;
+        }
+    }
 
-    private Mutex _m;
-    private Job[] _items;
+    private shared long _top;     // steal end — thieves CAS to claim
+    private shared long _bottom;  // owner end
+    private shared(Buf) _buf;     // atomic pointer to the current backing buffer
+
+    private enum size_t initialCap = 64;
 
     this() @trusted nothrow
     {
-        _m = new Mutex;
+        atomicStore(_buf, cast(shared) new Buf(initialCap));
     }
 
-    /// Owner: push onto the tail.
+    private static Buf loadBuf(ref shared(Buf) b) @trusted nothrow
+        => cast(Buf) atomicLoad!(MemoryOrder.acq)(b);
+
+    /// Owner: push onto the tail (growing the ring if it is full).
     void push(Job j) @trusted nothrow
     {
-        _m.lock_nothrow();
-        _items ~= j;
-        _m.unlock_nothrow();
+        const b = atomicLoad!(MemoryOrder.raw)(_bottom);
+        const t = atomicLoad!(MemoryOrder.acq)(_top);
+        auto buf = loadBuf(_buf);
+        if (b - t >= cast(long) buf.items.length)
+            buf = grow(buf, b, t);
+        buf.items[b & buf.mask] = j;
+        atomicFence(); // the slot write must precede the bottom publish
+        atomicStore!(MemoryOrder.rel)(_bottom, b + 1);
+    }
+
+    // Owner-only: double the ring, copying the live range [t, b). Element i
+    // keeps its `i & mask` position (with the new, wider mask), so a thief that
+    // reads either buffer at `t & mask` still finds element t.
+    private Buf grow(Buf old, long b, long t) @trusted nothrow
+    {
+        auto next = new Buf(old.items.length * 2);
+        for (long i = t; i < b; ++i)
+            next.items[i & next.mask] = old.items[i & old.mask];
+        atomicStore!(MemoryOrder.rel)(_buf, cast(shared) next);
+        return next;
     }
 
     /// Owner: pop from the tail (LIFO). `false` when empty.
     bool popTail(out Job j) @trusted nothrow
     {
-        _m.lock_nothrow();
-        scope (exit) _m.unlock_nothrow();
-        if (_items.length == 0)
+        const b = atomicLoad!(MemoryOrder.raw)(_bottom) - 1;
+        auto buf = loadBuf(_buf);
+        atomicStore!(MemoryOrder.raw)(_bottom, b);
+        atomicFence(); // seq_cst between the bottom store and the top load
+        const t = atomicLoad!(MemoryOrder.raw)(_top);
+        if (t <= b)
+        {
+            j = buf.items[b & buf.mask];
+            if (t == b)
+            {
+                // Last element: race the thieves for it.
+                if (!cas(&_top, t, t + 1))
+                {
+                    atomicStore!(MemoryOrder.raw)(_bottom, b + 1);
+                    return false;
+                }
+                atomicStore!(MemoryOrder.raw)(_bottom, b + 1);
+            }
+            return true;
+        }
+        atomicStore!(MemoryOrder.raw)(_bottom, b + 1); // was empty
+        return false;
+    }
+
+    /// Thief: steal from the head (FIFO). `false` when empty or the race lost.
+    bool stealHead(out Job j) @trusted nothrow
+    {
+        const t = atomicLoad!(MemoryOrder.acq)(_top);
+        atomicFence(); // seq_cst so a concurrent owner pop is observed
+        const b = atomicLoad!(MemoryOrder.acq)(_bottom);
+        if (t < b)
+        {
+            auto buf = loadBuf(_buf);
+            j = buf.items[t & buf.mask];
+            return cas(&_top, t, t + 1); // false = another thief won
+        }
+        return false;
+    }
+
+    /// Thief: steal roughly HALF the victim's queue in one CAS — `out first` is
+    /// returned to run now, the rest are pushed onto `mine` (the thief's own
+    /// deque). Batch stealing spreads a burst of work in O(log n) steals
+    /// instead of O(n), the difference between event-horizon's and rayon's
+    /// parallel scaling on wide fan-out (`benchmarks.md` §2). `false` = empty or
+    /// the CAS race lost.
+    bool stealBatch(out Job first, Deque mine) @trusted nothrow
+    {
+        const t = atomicLoad!(MemoryOrder.acq)(_top);
+        atomicFence();
+        const b = atomicLoad!(MemoryOrder.acq)(_bottom);
+        const n = b - t;
+        if (n <= 0)
             return false;
-        j = _items[$ - 1];
-        _items = _items[0 .. $ - 1];
+        const k = n < 2 ? 1 : cast(long)((n + 1) / 2); // take half, at least one
+        auto buf = loadBuf(_buf);
+        // One CAS claims the whole range [t, t+k); losers retry via the scan.
+        if (!cas(&_top, t, t + k))
+            return false;
+        first = buf.items[t & buf.mask];
+        foreach (i; t + 1 .. t + k)
+            mine.push(buf.items[i & buf.mask]);
         return true;
     }
 
-    /// Thief: steal from the head (FIFO). `false` when empty.
-    bool stealHead(out Job j) @trusted nothrow
-    {
-        _m.lock_nothrow();
-        scope (exit) _m.unlock_nothrow();
-        if (_items.length == 0)
-            return false;
-        j = _items[0];
-        _items = _items[1 .. $];
-        return true;
-    }
+    /// A relaxed, lock-free emptiness hint for the steal-scan pre-filter — lets
+    /// an idle worker skip an obviously-empty peer without the seq_cst fence.
+    bool maybeEmpty() @trusted nothrow
+        => atomicLoad!(MemoryOrder.raw)(_bottom)
+            - atomicLoad!(MemoryOrder.raw)(_top) <= 0;
 }
 
 @("pool.workStealing.distributesTasksAcrossWorkers")

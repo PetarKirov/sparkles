@@ -62,11 +62,14 @@ int main(string[] argv)
 
     string root;
     bool perf;
+    bool noPin;
     uint workers;
     foreach (arg; argv[1 .. $])
     {
         if (arg == "--perf")
             perf = true;
+        else if (arg == "--no-pin")
+            noPin = true;
         else if (arg.startsWith("--workers="))
             workers = arg["--workers=".length .. $].to!uint;
         else
@@ -74,7 +77,7 @@ int main(string[] argv)
     }
     if (root.length == 0)
     {
-        stderr.writefln("usage: %s <root> [--perf] [--workers=N]", argv[0]);
+        stderr.writefln("usage: %s <root> [--perf] [--no-pin] [--workers=N]", argv[0]);
         return 2;
     }
 
@@ -82,6 +85,7 @@ int main(string[] argv)
     LoopGroupConfig cfg;
     cfg.topology = Topology.workStealing;
     cfg.cpuBound = typeof(cfg.cpuBound).yes; // ring-less: the walk never parks on I/O
+    cfg.pinToCpu = noPin ? typeof(cfg.pinToCpu).no : typeof(cfg.pinToCpu).yes;
     cfg.workers = workers; // 0 = one per online CPU
     if (WorkStealingPool.start(pool, cfg).hasError)
     {
@@ -136,6 +140,13 @@ void submitDir(ref WorkStealingPool p, string path)
 }
 
 /// Walks one directory: count it, count its files, submit its subdirectories.
+///
+/// Reads the whole directory and **closes it before submitting any subtree**
+/// (rather than submitting inside the read loop). This keeps the directory fd
+/// held for the shortest possible window: submitted subtrees are stolen and
+/// opened concurrently, so submitting mid-read piles many dir fds open at once
+/// — measured as extra kernel (inode/dcache) contention that inflated system
+/// time on wide trees (`benchmarks.md` §2). Matches rayon's read-all-then-recurse.
 void walkDir(ref WorkStealingPool p, string path) @trusted
 {
     atomicFetchAdd!(MemoryOrder.raw)(g_dirs, 1L);
@@ -143,9 +154,9 @@ void walkDir(ref WorkStealingPool p, string path) @trusted
     DIR* dir = opendir(path.toStringz);
     if (dir is null)
         return;
-    scope (exit) closedir(dir);
 
     long localFiles;
+    string[] subdirs;
     for (;;)
     {
         dirent* entry = readdir(dir);
@@ -178,12 +189,15 @@ void walkDir(ref WorkStealingPool p, string path) @trusted
         {
             if (full is null)
                 full = path ~ "/" ~ cast(string) entry.d_name[0 .. nameLen].idup;
-            submitDir(p, full); // a new task for the subtree
+            subdirs ~= full;
         }
         else
             ++localFiles;
     }
+    closedir(dir); // close BEFORE fanning out — minimizes concurrently-open fds
     atomicFetchAdd!(MemoryOrder.raw)(g_files, localFiles);
+    foreach (sub; subdirs)
+        submitDir(p, sub); // a new task per subtree, now that our fd is released
 }
 
 version (unittest)
