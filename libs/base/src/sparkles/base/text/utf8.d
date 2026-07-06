@@ -21,11 +21,14 @@ import sparkles.base.text.errors : ParseErrorCode, ParseExpected, parseErr,
 Returns the index of the first byte of the first ill-formed UTF-8 sequence
 in `s`, or `s.length` when the whole slice is well-formed.
 
-Scalar implementation: a word-at-a-time ASCII skip, then per-sequence
-validation — the common lead classes check both continuations with one
-16-bit masked compare; only the window-constrained leads (`E0 ED F0 F4`)
-branch to exact range checks. (A DFA was measured slower here: its
-serial load-to-load dependency loses to well-predicted branches.)
+Scalar implementation: a word-at-a-time ASCII skip and a pairwise 3-byte
+lane (two adjacent lead+continuation+continuation shapes validated with a
+single masked compare on one u64 load — the dominant pattern in CJK
+text), then per-sequence validation — the common lead classes check both
+continuations with one 16-bit masked compare; only the window-constrained
+leads (`E0 ED F0 F4`) branch to exact range checks. (A DFA was measured
+slower here: its serial load-to-load dependency loses to well-predicted
+branches.)
 */
 size_t indexOfInvalidUtf8(scope const(char)[] s) @safe pure nothrow @nogc
 {
@@ -34,7 +37,8 @@ size_t indexOfInvalidUtf8(scope const(char)[] s) @safe pure nothrow @nogc
 
     while (i < n)
     {
-        // ASCII fast lane: skip 8 bytes per iteration while no high bit.
+        // Word lanes: skip 8 ASCII bytes or two unconstrained 3-byte
+        // sequences per iteration.
         if (!__ctfe)
         {
             while (i + 8 <= n)
@@ -46,9 +50,27 @@ size_t indexOfInvalidUtf8(scope const(char)[] s) @safe pure nothrow @nogc
                     memcpy(&w, s.ptr + i, 8);
                     return w;
                 })();
-                if (word & 0x8080_8080_8080_8080)
-                    break;
-                i += 8;
+                if (!(word & 0x8080_8080_8080_8080))
+                {
+                    i += 8;
+                    continue;
+                }
+                // Pairwise 3-byte lane: bytes 0..5 shaped as two
+                // lead(E0..EF) + continuation + continuation sequences in
+                // one masked compare. Only the unconstrained leads
+                // (E1..EC, EE, EF) qualify; E0/ED (overlong/surrogate
+                // windows) fall through to the exact checks below.
+                if ((word & 0x0000_C0C0_F0C0_C0F0) == 0x0000_8080_E080_80E0)
+                {
+                    const b0 = cast(ubyte) word;
+                    const b3 = cast(ubyte)(word >> 24);
+                    if (b0 != 0xE0 && b0 != 0xED && b3 != 0xE0 && b3 != 0xED)
+                    {
+                        i += 6;
+                        continue;
+                    }
+                }
+                break;
             }
         }
         if (i >= n)
@@ -194,6 +216,51 @@ unittest
         assert(r.hasError);
         assert(r.error.code == ParseErrorCode.invalidUtf8);
         assert(r.error.offset == c.errorAt);
+    }
+}
+
+@("utf8.pairwiseLane.longRuns")
+@safe pure nothrow @nogc
+unittest
+{
+    // Strings of ≥ 8 bytes exercise the pairwise two-sequences-per-word
+    // lane (short ones never reach it).
+    static immutable string[] valid = [
+        "こんにちは、世界のみなさん", // pure 3-byte run
+        "日本語のテキストです",
+        "가나다라마바사아자차", // Hangul: EA/EB leads
+        "abc漢字かな交じりtext", // mixed ASCII/CJK at odd alignments
+        "अनुच्छेद१", // Devanagari: E0 leads force the exact-check fallback
+        "����", // EF leads
+    ];
+    foreach (s; valid)
+        assert(indexOfInvalidUtf8(s) == s.length, s);
+
+    // Ill-formed sequences behind runs of valid pairs: the reported
+    // offset must be exact whichever pair slot the bad lead lands in.
+    static immutable sur0 = "あいう\xED\xA0\x80えお"; // ED in pair slot 0
+    assert(indexOfInvalidUtf8(sur0) == 9);
+    static immutable sur3 = "あいうえ\xE3\x81\x82\xED\xBF\xBFかき"; // slot 3
+    assert(indexOfInvalidUtf8(sur3) == 15);
+    static immutable overlong = "\xE0\x9F\xBFあいうえお"; // E0 window
+    assert(indexOfInvalidUtf8(overlong) == 0);
+    static immutable truncated = "かきくけこさしす\xE3\x81";
+    assert(indexOfInvalidUtf8(truncated) == 24);
+}
+
+@("utf8.pairwiseLane.corruptionSweep")
+@safe pure nothrow @nogc
+unittest
+{
+    // Corrupt every byte of a pure 3-byte-sequence run in turn; the error
+    // must always land on the start of the damaged sequence.
+    static immutable string base = "あいうえおかきくけこ"; // 30 bytes
+    char[30] buf;
+    foreach (pos; 0 .. base.length)
+    {
+        buf[] = base[];
+        buf[pos] = '\xFF';
+        assert(indexOfInvalidUtf8(buf[]) == pos - (pos % 3));
     }
 }
 
