@@ -297,3 +297,23 @@ case).
 forces the question; (B) plumb `Sched`/`LoopGroup` now.
 
 **Leaning:** (A) — M9 decides with real per-worker requirements on the table.
+
+## O22 — GC stop-the-world vs threads blocked in `io_uring_enter`
+
+**Where:** SPEC §11 (`WorkStealingPool.run`).
+
+A GC collection stops the world by signal-suspending every thread; a worker
+parked in `io_uring_enter` (`io_cqring_wait`) cannot be suspended cleanly,
+so a collection triggered by another worker's allocation can deadlock the
+group. M9c disables the collector for the pool's lifetime (`GC.disable`) —
+sound because all pool allocations are setup-phase and the hot path is
+`@nogc`, but it forfeits collection during long runs.
+
+**Options:** (A) keep `GC.disable` for v1 (bounded-work pools); (B) a
+GC-safe blocking wait — register an in-ring cancellation the suspend signal
+handler triggers, or use `thread_suspendHandler`-aware waiting so a
+collection can proceed; (C) an arena allocator for task closures so the pool
+never touches the GC at all.
+
+**Leaning:** (A) now; (B)/(C) when a long-lived pool with steady allocation
+is a real workload.

@@ -252,6 +252,9 @@ struct Sched
     /// Fibers spawned and not yet finished.
     uint liveFibers() const @safe pure nothrow @nogc => _liveFibers;
 
+    /// The fiber-slab capacity (`spawn` fails past it).
+    uint maxFibers() const @safe pure nothrow @nogc => _opts.maxFibers;
+
     /**
     Runs `root` as a fiber and drives the loop until every fiber has
     finished and no op is in flight. A `Throwable` escaping a fiber body is
