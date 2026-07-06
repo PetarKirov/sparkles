@@ -9,6 +9,7 @@ import std.exception : enforce;
 
 import sparkles.wired.json.document : JsonKind, JsonValue;
 import sparkles.wired.json.reader : JsonParseResult, parseJsonDocument;
+import sparkles.wired.json.writer : writeJson;
 
 import sparkles.wired_bench.fingerprint : Fingerprint;
 import sparkles.wired_bench.twitter : Twitter, TwitterStats, TwitterStatus,
@@ -39,6 +40,15 @@ struct WiredNativeEngine
     void teardown() @safe
     {
         freeDoc();
+    }
+
+    /// The held document as minified JSON (buffer owned by the engine,
+    /// valid until the next call).
+    const(char)[] serialize() @safe
+    {
+        rendered.clear();
+        writeJson(result.document.root, rendered);
+        return rendered[];
     }
 
     /// Structural fingerprint of the held document.
@@ -84,6 +94,10 @@ struct WiredNativeEngine
     }
 
     private Twitter twitter;
+
+    import std.array : Appender;
+
+    private Appender!(char[]) rendered;
 }
 
 /// Accumulates one view subtree into `f`.
