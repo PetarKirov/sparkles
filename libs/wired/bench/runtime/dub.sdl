@@ -36,7 +36,11 @@ versions "BenchJsoniopipe"
 // D side has no sandbox purity constraint, so it gets true native codegen.
 buildType "bench" {
     buildOptions "releaseMode" "optimize" "inline"
-    dflags "-mcpu=native" platform="ldc"
+    // -O3 + cross-module inlining: without the latter, separately
+    // compiled pragma(inline, true) primitives (scan seams, float_conv
+    // kernels) stay opaque calls in the hot loops — measured 15%+ on
+    // number-heavy datasets.
+    dflags "-mcpu=native" "-O3" "-enable-cross-module-inlining" platform="ldc"
 }
 
 // All engines. Foreign-language engines join this configuration milestone by
