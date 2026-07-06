@@ -1,10 +1,13 @@
 # `sparkles:wired` — runtime JSON benchmark baseline
 
 _The evidence base for replacing `std.json` inside `sparkles:wired` with a
-state-of-the-art JSON parser. Numbers from the harness at
+state-of-the-art JSON parser — and the scoreboard for the native engine
+that replaced it (SPEC §11). Numbers from the harness at
 [`libs/wired/bench/runtime`](../../../libs/wired/bench/runtime/README.md);
-the raw snapshot is
-[`results/2026-07-05-ryzen9-7940hx-x86-64-v4.json`](../../../libs/wired/bench/runtime/results/2026-07-05-ryzen9-7940hx-x86-64-v4.json)._
+the canonical snapshot is
+[`results/2026-07-06-ryzen9-7940hx-x86-64-v4-level-field.json`](../../../libs/wired/bench/runtime/results/2026-07-06-ryzen9-7940hx-x86-64-v4-level-field.json)
+(the original pre-engine snapshot from 2026-07-05 is kept alongside; its
+conclusions all survive the re-measurement below)._
 
 ## Environment
 
@@ -15,6 +18,7 @@ the raw snapshot is
 | Shim ISA preset | `x86-64-v4` (simdjson: runtime dispatch, icelake kernel)                                                                                          |
 | Engines         | simdjson 4.6.0, rapidjson 1.1.0, yyjson 0.12.0, serde_json 1.0.150, simd-json 0.17.0, sonic-rs 0.5.8, mir-ion 2.3.5, asdf 0.8.0, jsoniopipe 0.2.7 |
 | Corpora         | twitter.json 632 KB (strings), citm_catalog.json 1.7 MB (structure), canada.json 2.2 MB (floats), github_events.json 65 KB (small-doc)            |
+| Allocator       | glibc, trim/mmap thresholds raised to 64 MiB at harness startup (see the measurement note below)                                                  |
 
 Every engine reproduced the `std.json` structural fingerprint on every
 corpus, and the `TwitterStats` checksum on the decode op, before being
@@ -23,38 +27,58 @@ come from a separate `perf_event_open` counting pass per op (kernel+user;
 the LLC pair was dropped because the NMI watchdog holds one of Zen 4's six
 PMCs and a multiplexed group only yields rotation-scaled estimates).
 
+> [!IMPORTANT]
+> **The allocator field is levelled.** By default glibc trims multi-MB
+> blocks back to the kernel on `free`, so a parse-in-a-loop refaults its
+> whole document arena every iteration — and _which_ engine paid depended
+> on allocation-pattern luck (one block coalescing to the heap top vs
+> two), not parser quality: at short time budgets, or for engines with an
+> unlucky pattern, this understated throughput by up to 2×. The harness
+> now raises `M_TRIM_THRESHOLD`/`M_MMAP_THRESHOLD` at startup (the same
+> effect as the jemalloc/mimalloc swaps common in parser benchmarking),
+> making page faults a first-iteration cost for every engine equally. The
+> original 2026-07-05 numbers were taken at the default 2 s budgets where
+> steady state was mostly reached, so they match the levelled numbers
+> within noise — but the levelled field is also budget-stable, and it is
+> what removed the "cold pages dominate short budgets" caveat this
+> document previously carried.
+
 ## The headline: typed decode (twitter.json)
 
 The op closest to wired's real workload — raw text → a partial Twitter
-struct:
+struct. `wired-native` is the shipped codec path (`fromJSON!Twitter`
+through the arena engine, policy layer included); the 155 MB/s `std.json`
+row is the pipeline it retired (the original `wired` row measured
+159 MB/s — the DbI layer was already free).
 
-| Engine                           |    MB/s | × wired today |
-| -------------------------------- | ------: | ------------: |
-| **wired (parseJSON + fromJSON)** | **159** |       **1.0** |
-| std.json manual extraction       |     157 |           1.0 |
-| mir-ion                          |   1 740 |          10.9 |
-| serde_json                       |   1 896 |          11.9 |
-| asdf                             |   1 994 |          12.5 |
-| sonic-rs                         |   2 069 |          13.0 |
-| simd-json                        |   2 101 |          13.2 |
-| yyjson (accessor walk)           |   3 518 |          22.1 |
-| simdjson On-Demand               |   7 590 |      **47.7** |
+| Engine                          |      MB/s | × the retired pipeline |
+| ------------------------------- | --------: | ---------------------: |
+| std.json (the retired pipeline) |       155 |                    1.0 |
+| **wired-native (`fromJSON`)**   | **1 481** |                **9.6** |
+| mir-ion                         |     1 696 |                   10.9 |
+| serde_json                      |     1 881 |                   12.1 |
+| asdf                            |     1 965 |                   12.7 |
+| simd-json                       |     2 029 |                   13.1 |
+| sonic-rs                        |     2 088 |                   13.5 |
+| yyjson (accessor walk)          |     3 406 |                   22.0 |
+| simdjson On-Demand              |     7 554 |                   48.7 |
 
 ## Parse (full DOM/tape, immutable input)
 
 | Engine                         | twitter | citm_catalog | canada | github_events |
 | ------------------------------ | ------: | -----------: | -----: | ------------: |
-| std.json                       |     163 |          143 |     78 |           174 |
-| jsoniopipe                     |     320 |          297 |    106 |           387 |
-| serde_json                     |     425 |          779 |    496 |           540 |
-| mir-ion                        |     498 |          441 |    185 |           505 |
-| rapidjson (full precision)     |     909 |        1 588 |    365 |           883 |
-| simd-json                      |   1 102 |        1 021 |    457 |         1 431 |
-| sonic-rs                       |   2 044 |        1 935 |  1 283 |         2 421 |
-| asdf ¹                         |   2 724 |        2 428 |  1 045 |         3 208 |
-| yyjson                         |   4 022 |        3 966 |  1 360 |         4 257 |
-| simdjson DOM                   |   5 320 |        5 575 |  1 449 |         5 815 |
-| simdjson On-Demand (full walk) |   4 230 |        4 386 |  1 146 |         4 897 |
+| std.json                       |     162 |          142 |     81 |           173 |
+| jsoniopipe                     |     321 |          298 |    120 |           382 |
+| serde_json                     |     420 |          791 |    494 |           527 |
+| mir-ion                        |     510 |          431 |     86 |           499 |
+| rapidjson (full precision)     |     914 |        1 593 |    362 |           886 |
+| simd-json                      |   1 082 |        1 019 |    450 |         1 435 |
+| **wired-native**               |   1 732 |        2 497 |    807 |         2 360 |
+| sonic-rs                       |   2 052 |        1 921 |  1 268 |         2 412 |
+| asdf ¹                         |   2 788 |        2 528 |  1 055 |         3 193 |
+| yyjson                         |   3 853 |        3 977 |  1 367 |         4 020 |
+| simdjson On-Demand (full walk) |   4 207 |        4 389 |  1 142 |         4 825 |
+| simdjson DOM                   |   5 343 |        5 639 |  1 451 |         5 921 |
 
 ¹ asdf's tape keeps numbers textual (decoded on access), which flatters its
 parse column — most visible on float-heavy canada, where engines that
@@ -64,117 +88,117 @@ materialize doubles pay for exact parsing.
 
 The "why" behind the tables above — per input byte, over the counting pass:
 
-| Engine             | op     |  IPC | cyc/B | ins/B | br-miss% | faults/iter |
-| ------------------ | ------ | ---: | ----: | ----: | -------: | ----------: |
-| std.json           | parse  | 2.43 | 37.97 | 92.42 |     0.67 |       171.8 |
-| wired              | decode | 2.33 | 40.17 | 93.70 |     0.79 |       211.2 |
-| mir-ion            | decode | 3.10 |  2.89 |  8.93 |     0.20 |           0 |
-| serde_json         | decode | 3.29 |  3.63 | 11.94 |     0.27 |           0 |
-| sonic-rs           | decode | 4.00 |  2.35 |  9.39 |     0.09 |           0 |
-| asdf               | parse  | 1.67 |  2.84 |  4.74 |     1.22 |           0 |
-| yyjson             | parse  | 3.68 |  1.26 |  4.64 |     0.13 |           0 |
-| simdjson DOM       | parse  | 3.44 |  0.96 |  3.29 |     0.15 |           0 |
-| simdjson On-Demand | decode | 3.49 |  0.68 |  2.38 |     0.12 |           0 |
+| Engine             | op       |  IPC | cyc/B | ins/B | br-miss% | faults/iter |
+| ------------------ | -------- | ---: | ----: | ----: | -------: | ----------: |
+| std.json           | parse    | 2.40 | 38.69 | 92.88 |     0.73 |       171.8 |
+| wired-native       | parse    | 4.14 |  2.85 | 11.81 |     0.10 |           0 |
+| wired-native       | decode   | 3.85 |  3.33 | 12.81 |     0.10 |           0 |
+| wired-native       | validate | 5.36 |  3.37 | 18.08 |     0.12 |           0 |
+| mir-ion            | decode   | 2.89 |  3.10 |  8.93 |     0.50 |           0 |
+| serde_json         | decode   | 4.47 |  2.67 | 11.94 |     0.19 |           0 |
+| sonic-rs           | decode   | 3.91 |  2.40 |  9.39 |     0.12 |           0 |
+| asdf               | parse    | 1.28 |  4.33 |  5.54 |     1.99 |           0 |
+| yyjson             | parse    | 3.47 |  1.34 |  4.64 |     0.13 |           0 |
+| yyjson             | decode   | 3.39 |  1.48 |  5.04 |     0.13 |           0 |
+| simdjson DOM       | parse    | 3.47 |  0.95 |  3.29 |     0.15 |           0 |
+| simdjson On-Demand | decode   | 3.50 |  0.68 |  2.38 |     0.11 |           0 |
 
-What the counters add to the findings:
+What the counters add:
 
-- **The 48× decode gap is an instruction-budget gap, not an IPC gap.**
-  wired burns 93.7 instructions per byte where simdjson On-Demand spends
-  2.38 (≈ 39×), while IPC differs only 2.3 vs 3.5 (≈ 1.5×). The
-  replacement parser must _do less work per byte_ — fewer instructions —
-  not merely schedule the same work better.
-- **Branch discipline is visible and worth ~0.5–1 IPC.** The fast engines
-  (yyjson, sonic-rs, simdjson) all sit at ~0.1% branch misses; std.json
-  and wired sit at 0.7–0.8%, serde_json's eager parse at 1.6%. yyjson's
-  documented branch-layout work shows up exactly as advertised.
-- **asdf's ceiling is its tape walk**: the lowest IPC in the field (1.67)
-  and the highest miss rate among the fast engines (1.2%) — a
-  dependent-chained, branchy traversal — caps an otherwise tiny
-  instruction budget (4.7 ins/B).
-- **Page faults are the GC signature.** GC-backed engines (std.json,
-  wired, asdf's tape buffers) fault 100–300×/iteration in whichever
-  counting pass catches the GC heap growing (the exact rows vary run to
-  run); every native engine sits at 0 after warmup, always. An arena- or
-  reuse-oriented document representation eliminates this class of cost
-  outright.
+- **The instruction budget is the whole game.** std.json burned 92.9
+  instructions per byte; the native engine spends 11.8 on the same corpus
+  at 4.1 IPC (against yyjson's 4.6 ins/B and simdjson On-Demand's 2.38).
+  The remaining gap to the scalar frontier is instructions to remove, not
+  IPC to find — wired-native already runs the highest IPC in the field.
+- **Branch discipline arrived.** The engine's rounds took twitter parse to
+  0.10% branch misses — at or below every foreign engine — via the
+  frequency-ordered dispatch, the fused member hop, and predictable scan
+  lanes.
+- **Page faults are the GC signature, and the allocator's.** std.json
+  still faults ~172×/iteration (GC heap growth); every native-arena
+  engine, wired-native included, sits at 0 on the levelled field.
+- **asdf's ceiling is its tape walk**: the lowest IPC in the field (1.28)
+  and the highest miss rate (2.0%) — a dependent-chained, branchy
+  traversal — caps an otherwise tiny instruction budget.
 
 Other ops in brief (twitter): **validate** — simdjson-OD structural skip
-6 798, serde_json `IgnoredAny` 2 731, simd-json `to_tape` 2 571, sonic-rs
-2 211, rapidjson SAX 1 051, jsoniopipe drain 678. **serialize** — yyjson
-5 026, sonic-rs 2 445, simdjson-DOM 2 078, serde_json 1 630, std.json 179.
+6 790, serde_json `IgnoredAny` 2 747, simd-json 2 290, sonic-rs 2 204,
+wired-native `validateJson` 1 457 (materializing nothing; guarded byte
+loops, SWAR treatment pending), rapidjson SAX 1 066, jsoniopipe drain 662.
+**serialize** — yyjson 5 264, sonic-rs 2 333, simdjson-DOM 2 128,
+serde_json 1 614, wired-native 609 (26.2 ins/B — unoptimized, the next
+M15 target), std.json 181.
 
 ## Findings
 
-1. **wired is parser-bound, not mapping-bound.** The `fromJSON` DbI layer
-   costs nothing measurable (159 vs 157 MB/s for hand-written extraction);
-   `std.json.parseJSON` is the whole bottleneck. Replacing the parser lifts
-   wired directly.
-2. **The state of the art is 10–48× away.** Every serious engine decodes
-   typed structs at 1.7–2.1 GB/s; going through a compact DOM first
-   (yyjson, 3.5 GB/s) or lazy extraction (simdjson On-Demand, 7.6 GB/s)
-   goes further. A wired parser at 1.5 GB/s twitter-decode (~10×) is a
-   realistic v1 bar; the lazy design points at 3+ GB/s.
+1. **wired was parser-bound, not mapping-bound — confirmed twice.** The
+   original run showed the `fromJSON` DbI layer costing nothing (159 vs
+   157 MB/s for hand-written extraction); the native engine confirmed it
+   from the other side: the full codec decode (1 481 MB/s) measures
+   _faster_ than a hand-written view walk did, because the single-pass
+   struct decode beats repeated member lookups.
+2. **The state of the art was 10–48× away; the native engine closed it to
+   ~2.3×.** Typed decode went 155 → 1 481 MB/s (9.6×), between simd-json
+   and mir-ion in absolute terms, with yyjson's accessor walk at 3 406 and
+   simdjson On-Demand at 7 554 still ahead.
 3. **SIMD is one road, not the only one.** yyjson — deliberately scalar
-   C — parses at 4 GB/s on structure/string corpora and 1.36 GB/s on
-   floats, beating every SIMD engine except simdjson. Careful scalar D
-   (branch layout, arena document, deferred number decode) gets most of the
-   way; a vectorized structural scan (simdjson/sonic style) buys the rest.
+   C — parses at 3.9–4.0 GB/s on structure/string corpora. The native
+   engine's scalar rounds (SWAR scan lanes, pointer number kernel,
+   branch-layout work) reached 1.7–2.5 GB/s parse with the top IPC in the
+   field; the rest of the scalar gap is instruction diet, and the
+   vectorized structural scan remains iteration 2.
 4. **Laziness is the biggest single lever for typed decode.** simdjson
    On-Demand extracts the twitter subset at 7.6 GB/s because untouched
-   fields are skipped, not parsed — and its skip-only "validate" runs at
-   6.8–8.0 GB/s. wired's decode always knows the target struct, so an
-   on-demand cursor (rather than a DOM) fits wired's shape exactly.
+   fields are skipped, not parsed. wired's decode always knows the target
+   struct, so an on-demand cursor (rather than a DOM) remains the
+   long-term shape for wired's decode path.
 5. **Float parsing is its own battleground.** canada.json compresses every
-   ranking: exact double parsing (Eisel–Lemire in simdjson/serde/yyjson;
-   rapidjson needs `kParseFullPrecisionFlag` to even qualify) costs ~3× the
-   throughput of the string-heavy corpora. A replacement parser needs a
-   first-class fast-float path from day one.
-6. **The D ecosystem today doesn't reach the bar.** mir-ion (0.2–0.5 GB/s
-   parse; 1.7 GB/s decode) and asdf (fast tape, but lazy numbers and a
-   dated codebase) are solid but 2–4× behind the C/C++/Rust frontier on
-   comparable work; jsoniopipe's typed deserialize additionally leaves
-   string escapes undecoded (caught by the checksum verification, excluded
-   from the decode op).
-7. **Allocation and copies dominate the tail.** The immutable-input
-   contract makes engines pay their real ingestion cost: simd-json's
-   required `&mut` copy halves its parse column, and rapidjson's in-situ
-   variant beats its copying parse by 33% on twitter. A wired parser should
-   parse from `const(char)[]` without requiring caller copies, and keep its
-   own scratch reusable.
+   ranking: exact double parsing costs ~3× the throughput of the
+   string-heavy corpora for every materializing engine. The native
+   engine's tiered float path (Clinger → Eisel–Lemire with one `i128`
+   multiply → exact big-decimal) sits at 807 MB/s vs yyjson's 1 367.
+6. **The D ecosystem didn't reach the bar — now it does.** mir-ion
+   (0.1–0.5 GB/s parse; 1.7 GB/s decode) and asdf (fast tape, lazy
+   numbers, dated codebase) were 2–4× behind the frontier; jsoniopipe's
+   typed deserialize leaves string escapes undecoded (caught by the
+   checksum verification, excluded from the decode op). wired-native now
+   out-parses every D engine except asdf's number-deferring tape — with
+   strict RFC 8259 conformance and eager exact numbers.
+7. **Copies are real cost; faults were noise.** On the levelled field
+   rapidjson's in-situ variant still beats its copying parse by 31%
+   (1 197 vs 914 — a true memcpy cost), and simd-json's required `&mut`
+   copy still halves its parse column; but yyjson's insitu advantage
+   collapsed to noise (3 915 vs 3 853) — what looked like copy cost was
+   mostly fault cost. Engines should still parse from `const(char)[]`
+   without demanding caller copies.
+8. **Control the allocator or it benchmarks you.** glibc's trim behavior
+   made multi-MB-arena engines refault every page each iteration at short
+   budgets, understating them by up to 2× depending on allocation-pattern
+   luck. Any parse-in-a-loop comparison needs raised trim/mmap thresholds
+   (or a jemalloc/mimalloc swap) before its numbers mean anything.
 
-## Post-engine checkpoint (2026-07-06)
+## The scalar exit gate (M15)
 
-The native engine (SPEC §11, M7–M14) plus the first M15 optimization
-rounds, measured on the same rig with the allocator field levelled (the
-harness now raises glibc's trim/mmap thresholds at startup — by default
-multi-MB document arenas are re-faulted every iteration, and who paid
-depended on allocation-pattern luck; yyjson's twitter parse rose from
-1.5 to 3.9 GB/s on the level field too). Snapshot:
-`results/2026-07-06-ryzen9-7940hx-x86-64-v4-post-engine.json`.
+The plan's iteration-1 exit gate is wired-native parse **and** decode
+within ±10% of the yyjson rows. Standing on this snapshot:
 
-| corpus (parse, MB/s) | std.json | wired-native | yyjson | ±10% gate |
-| -------------------- | -------- | ------------ | ------ | --------- |
-| twitter              | ~160     | 1755         | ~3930  | 3537      |
-| citm_catalog         | ~290     | 2504         | ~3944  | 3550      |
-| canada               | ~72      | 785          | ~1358  | 1222      |
-| github_events        | ~170     | 2360         | ~4461  | 4015      |
+| corpus (parse, MB/s) | wired-native | yyjson | ±10% gate | at    |
+| -------------------- | -----------: | -----: | --------: | ----- |
+| twitter              |        1 732 |  3 853 |     3 468 | 0.50× |
+| citm_catalog         |        2 497 |  3 977 |     3 579 | 0.70× |
+| canada               |          807 |  1 367 |     1 230 | 0.66× |
+| github_events        |        2 360 |  4 020 |     3 618 | 0.65× |
 
-Typed decode (twitter, the row this project exists for): **1518 MB/s
-through the full wired codec** (`fromJSON!Twitter` — policy layer
-included, measured faster than a hand-written view walk) vs 157 MB/s for
-the retired std.json pipeline — a 9.7× end-to-end improvement — and
-yyjson's accessor-walk decode at ~3450. Text-level validation
-(`validateJson`, materializing nothing): twitter 1440, canada 1534 MB/s.
-
-Instruction budget: twitter parse is at 12.4 ins/B against yyjson's 4.6
-(from std.json's 92.6) with zero steady-state page faults on both — the
-remaining ~2× to the scalar exit gate is pure instruction diet in the
-string lane and the container machinery, the target of the continuing
-M15 rounds. Findings that shaped these rounds: the four-multiply u128
-decomposition never folds (now one LLVM `i128 mul`); a UTF-8 DFA loses
-to well-predicted branches on uniform CJK; per-word validation fusing
-loses to the two-pass scan; and glibc trim behavior can dominate — and
-mislead — any parse-in-a-loop benchmark that doesn't control for it.
+Typed decode (twitter): wired-native 1 481 vs yyjson 3 406 (0.43×).
+Landed rounds: the pointer number kernel, single-`i128`-mul Eisel–Lemire,
+masked UTF-8 sequence checks, frequency-ordered dispatch, the fused
+object-member hop, the short-key fast path, and the levelled allocator
+field. Negative results kept for the record: a UTF-8 DFA loses to
+well-predicted branches on uniform CJK; fusing validation into the scan
+loses to the two-pass; the four-multiply u128 decomposition never folds.
+The remaining gap is string-lane and container-machinery instruction
+diet (plus the untouched serializer); the SIMD structural scan is
+iteration 2.
 
 ## Reproducing
 
@@ -184,8 +208,7 @@ dub run -b bench -- --json=results/$(date -I)-<host>-$WIRED_BENCH_ISA.json
 ```
 
 Two consecutive default-budget runs on the machine above agreed within ~5%
-on every spot-checked row. Keep the default `--min-time-ms`: short budgets
-under-report allocation-heavy paths (yyjson's copying parse measured
-1.6 GB/s at a 300 ms budget vs 4.0 GB/s at the default 2 s — cold pages
-dominate the first few thousand iterations). Numbers are machine- and
-preset-specific; compare only within one snapshot.
+on every spot-checked row, and with the levelled allocator the numbers are
+budget-stable (the previous "cold pages dominate short budgets" caveat was
+the glibc trim behavior of finding 8, now controlled at startup). Numbers
+are machine- and preset-specific; compare only within one snapshot.
