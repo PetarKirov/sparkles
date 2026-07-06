@@ -49,7 +49,6 @@ struct WorkStealingPool
     {
         pool._cfg = cfg;
         pool._workers = cfg.workers != 0 ? cfg.workers : totalCPUs;
-        pool._mutex = new Mutex;
         pool._started = true;
         return ioOk();
     }
@@ -90,12 +89,21 @@ struct WorkStealingPool
         atomicStore(_pending, 0L);
         atomicStore(_done, false);
 
+        // One deque per worker (Chase-Lev-style split: the owner pushes/pops
+        // its tail, thieves steal from the head). A worker touches its own
+        // deque almost exclusively — the global-mutex contention that the
+        // walker benchmark exposed (open-issues O2) is gone.
+        _deques = new Deque[_workers];
+        foreach (ref d; _deques)
+            d = new Deque;
+
         auto cfg = _cfg;
 
         void runWorker(uint id) @trusted
         {
-            import sparkles.event_horizon.io : sleep;
+            import sparkles.event_horizon.io : sleep, yieldNow;
 
+            t_workerId = id; // so submit() from a task lands on this worker
             SchedOptions opts;
             opts.maxFibers = cfg.maxFibers;
             LoopConfig loopCfg;
@@ -109,17 +117,19 @@ struct WorkStealingPool
                 pinToCpu(id);
 
             sched.run(() {
-                // The worker's root fiber: drain the shared queue, spawn
-                // pulled tasks locally (pinned), then wait on a short in-ring
-                // timer and re-check — until shutdown. The timer means this
-                // fiber's single ring wait covers both the task fibers' CQEs
-                // and the re-check tick; a missed signal is impossible.
+                // The worker's root fiber: spawn from its own deque (stealing
+                // when empty), then either yield to run those fibers and
+                // re-check immediately (had work) or back off on a short timer
+                // (idle) — until shutdown.
                 for (;;)
                 {
-                    drainQueue(sched);
+                    const didWork = workUntilIdle(sched, id);
                     if (atomicLoad(_done))
                         break;
-                    cast(void) sleep(sched, pollInterval);
+                    if (didWork)
+                        cast(void) yieldNow(sched);
+                    else
+                        cast(void) sleep(sched, pollInterval);
                 }
             });
         }
@@ -147,51 +157,59 @@ struct WorkStealingPool
     /**
     Submits a task to the pool. Safe to call from any thread (including from
     inside a running task). The task body is a plain delegate; its closure
-    context is GC-heap so it survives crossing to another worker.
+    context is GC-heap so it survives crossing to another worker. Submitted
+    onto the calling worker's own deque (locality); the seed thread is worker
+    0.
     */
     void submit(void delegate() task) @trusted nothrow
     {
         atomicOp!"+="(_pending, 1);
-        _mutex.lock_nothrow();
-        _queue ~= task;
-        _mutex.unlock_nothrow();
+        const w = (t_workerId >= 0 && t_workerId < _workers) ? t_workerId : 0;
+        _deques[w].push(task);
     }
 
 private:
-    /// Pulls queued tasks and spawns them onto `sched` (pinned locally),
-    /// bounded so one worker cannot hog the queue or overrun its fiber slab.
-    /// A task that cannot be spawned (slab full) is re-queued, never dropped
-    /// — dropping was the deadlock: its `pending` count would never clear.
-    void drainQueue(ref Sched sched) @trusted
+    /// Spawns tasks onto `sched` — from this worker's own deque first, then
+    /// stealing from peers when it is empty — bounded so one worker cannot
+    /// overrun its fiber slab. Returns whether it spawned anything (so the
+    /// caller can yield vs back off). A task that cannot be spawned (slab
+    /// full) is pushed back onto the local deque, never dropped.
+    bool workUntilIdle(ref Sched sched, uint id) @trusted
     {
-        // Leave headroom so the worker's own root fiber and in-flight ops
-        // are never starved; the rest of the queue waits for the next tick
-        // or another worker.
+        // Leave headroom so the worker's own root fiber and in-flight ops are
+        // never starved.
         const budget = sched.maxFibers > sched.liveFibers + 8
             ? sched.maxFibers - sched.liveFibers - 8 : 0;
         uint spawned;
         while (spawned < budget)
         {
-            _mutex.lock_nothrow();
-            void delegate() task;
-            if (_queue.length > 0)
-            {
-                task = _queue[0];
-                _queue = _queue[1 .. $];
-            }
-            _mutex.unlock_nothrow();
+            auto task = _deques[id].popTail();
             if (task is null)
-                return;
-
+                task = trySteal(id); // local empty: steal from a peer
+            if (task is null)
+                break; // nothing anywhere right now
             if (!spawnWrapped(sched, task))
             {
-                // Slab momentarily full: put it back and let the next tick
-                // (or another worker) take it.
-                requeueFront(task);
-                return;
+                _deques[id].push(task); // slab momentarily full: keep it local
+                break;
             }
             ++spawned;
         }
+        return spawned > 0;
+    }
+
+    /// Steals one task from a peer's deque head (FIFO), scanning round-robin
+    /// from the next worker so thieves spread out.
+    void delegate() trySteal(uint id) @trusted
+    {
+        foreach (i; 1 .. _workers)
+        {
+            const victim = (id + i) % _workers;
+            auto task = _deques[victim].stealHead();
+            if (task !is null)
+                return task;
+        }
+        return null;
     }
 
     /// Spawns one wrapped task; `task` is a by-value parameter so each
@@ -207,16 +225,7 @@ private:
         }).hasError;
     }
 
-    /// Puts a task back at the front of the queue (re-queue on spawn failure).
-    void requeueFront(void delegate() task) @trusted nothrow
-    {
-        _mutex.lock_nothrow();
-        _queue = task ~ _queue;
-        _mutex.unlock_nothrow();
-    }
-
-    /// Sets the shutdown flag; workers observe it at their next re-check tick
-    /// (within `pollInterval`).
+    /// Sets the shutdown flag; workers observe it at their next re-check tick.
     void broadcastShutdown() @trusted nothrow
     {
         atomicStore(_done, true);
@@ -238,11 +247,64 @@ private:
 
     LoopGroupConfig _cfg;
     uint _workers;
-    Mutex _mutex;
-    void delegate()[] _queue;
+    Deque[] _deques;
     shared long _pending;
     shared bool _done;
     bool _started;
+}
+
+/// The set of the current thread's worker id (`-1` off a worker thread; the
+/// seed thread defaults to worker 0). Thread-local so `submit` from inside a
+/// task lands on that task's own worker.
+private int t_workerId = -1;
+
+/// A per-worker work-stealing deque: the owner pushes/pops its tail (LIFO,
+/// for locality), thieves steal from the head (FIFO). A single mutex guards
+/// it — uncontended in the common case (only the owner touches it), contended
+/// only during a steal. GC-backed storage is fine here (pool infrastructure).
+private final class Deque
+{
+    import core.sync.mutex : Mutex;
+
+    private Mutex _m;
+    private void delegate()[] _items;
+
+    this() @trusted nothrow
+    {
+        _m = new Mutex;
+    }
+
+    /// Owner: push onto the tail.
+    void push(void delegate() t) @trusted nothrow
+    {
+        _m.lock_nothrow();
+        _items ~= t;
+        _m.unlock_nothrow();
+    }
+
+    /// Owner: pop from the tail (LIFO).
+    void delegate() popTail() @trusted nothrow
+    {
+        _m.lock_nothrow();
+        scope (exit) _m.unlock_nothrow();
+        if (_items.length == 0)
+            return null;
+        auto t = _items[$ - 1];
+        _items = _items[0 .. $ - 1];
+        return t;
+    }
+
+    /// Thief: steal from the head (FIFO).
+    void delegate() stealHead() @trusted nothrow
+    {
+        _m.lock_nothrow();
+        scope (exit) _m.unlock_nothrow();
+        if (_items.length == 0)
+            return null;
+        auto t = _items[0];
+        _items = _items[1 .. $];
+        return t;
+    }
 }
 
 @("pool.workStealing.distributesTasksAcrossWorkers")
