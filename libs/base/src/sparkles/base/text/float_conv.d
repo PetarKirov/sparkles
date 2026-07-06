@@ -221,9 +221,15 @@ private static immutable double[23] exactPow10 = () {
     return t;
 }();
 
-/// The exponent range with a defined table entry. Outside it the value
-/// saturates regardless of a ≤19-digit significand: `sig × 10^-343 <
-/// 2^-1075` rounds to zero, `sig × 10^309 > double.max` to infinity.
+/// Exponent bounds of the power-of-ten table (shared by the reader and
+/// the Schubfach writer, which needs the wider positive range).
+private enum int tableMinExp10 = -343;
+/// ditto
+private enum int tableMaxExp10 = 324;
+
+/// The reader's saturation bounds: outside them the value saturates
+/// regardless of a ≤19-digit significand (`sig × 10^-343 < 2^-1075` rounds
+/// to zero, `sig × 10^309 > double.max` to infinity).
 private enum int minExp10 = -342;
 /// ditto
 private enum int maxExp10 = 308;
@@ -285,7 +291,7 @@ in (sig10 != 0 && minExp10 <= exp10 && exp10 <= maxExp10)
     const long retExp2Base = ((217_706 * cast(long) exp10) >> 16) + 64 + 1023;
     long retExp2 = retExp2Base - lz;
 
-    const entry = pow10Sig128[exp10 - minExp10];
+    const entry = pow10Sig128[exp10 - tableMinExp10];
     auto x = mul64x64(w, entry.hi);
 
     // If the 9 bits feeding mantissa+rounding are all ones, the truncated
@@ -340,16 +346,17 @@ private struct Pow10Entry
 }
 
 /**
-For each `q` in `[minExp10, maxExp10]`: the top 128 bits of the binary
-expansion of `10^q`, normalized to `[2^127, 2^128)`. Positive powers are
-truncated; negative powers (infinite binary expansions) are rounded up —
-the reference Eisel–Lemire convention. The power-of-two factor lives in
-the exponent formula.
+For each `q` in `[tableMinExp10, tableMaxExp10]`: the top 128 bits of the
+binary expansion of `10^q`, normalized to `[2^127, 2^128)` and truncated
+(never rounded up) — the yyjson convention, which both the Eisel–Lemire
+reader and the Schubfach writer build on (the writer applies its own +1
+ceiling adjustment). The power-of-two factor lives in the exponent
+formulas.
 
 Generated at CTFE by exact big-integer arithmetic (`5^|q|` grows to ~800
 bits).
 */
-private static immutable Pow10Entry[maxExp10 - minExp10 + 1] pow10Sig128 =
+private static immutable Pow10Entry[tableMaxExp10 - tableMinExp10 + 1] pow10Sig128 =
     generatePow10Table();
 
 // --- CTFE big-integer scratch: little-endian base-2^32 limbs -----------------
@@ -408,8 +415,9 @@ private Pow10Entry bigTop128(const uint[] a) @safe pure nothrow @nogc
     return Pow10Entry(hi, lo);
 }
 
-/// `ceil(2^(bitLength(d) + 127) / d)` as 128 normalized bits — restoring
-/// long division producing one quotient bit per step.
+/// `floor(2^(bitLength(d) + 127) / d)` as 128 normalized bits — restoring
+/// long division producing one quotient bit per step (truncated, per the
+/// table convention).
 private Pow10Entry bigReciprocal128(const uint[] d) @safe pure nothrow
 {
     // After the numerator's top bitLength(d) bits (value 2^(bitLength-1),
@@ -469,39 +477,27 @@ private Pow10Entry bigReciprocal128(const uint[] d) @safe pure nothrow
             lo = (lo << 1) | bit;
     }
 
-    bool nonZeroRem = false;
-    foreach (limb; rem)
-        if (limb)
-        {
-            nonZeroRem = true;
-            break;
-        }
-    if (nonZeroRem) // round up (cannot overflow past 2^128 for d = 5^q > 1)
-    {
-        lo += 1;
-        if (lo == 0)
-            hi += 1;
-    }
     return Pow10Entry(hi, lo);
 }
 
-private Pow10Entry[maxExp10 - minExp10 + 1] generatePow10Table() @safe pure nothrow
+private Pow10Entry[tableMaxExp10 - tableMinExp10 + 1] generatePow10Table()
+    @safe pure nothrow
 {
-    Pow10Entry[maxExp10 - minExp10 + 1] table;
+    Pow10Entry[tableMaxExp10 - tableMinExp10 + 1] table;
 
     // q ≥ 0: top 128 bits of 5^q (10^q = 5^q × 2^q).
     uint[] pow5 = [1u];
-    foreach (q; 0 .. maxExp10 + 1)
+    foreach (q; 0 .. tableMaxExp10 + 1)
     {
-        table[q - minExp10] = bigTop128(pow5);
+        table[q - tableMinExp10] = bigTop128(pow5);
         pow5 = bigMulSmall(pow5, 5);
     }
 
-    // q < 0: normalized, rounded-up 128-bit reciprocal of 5^|q|.
+    // q < 0: normalized, truncated 128-bit reciprocal of 5^|q|.
     pow5 = [5u];
-    foreach (q; 1 .. -minExp10 + 1)
+    foreach (q; 1 .. -tableMinExp10 + 1)
     {
-        table[-q - minExp10] = bigReciprocal128(pow5);
+        table[-q - tableMinExp10] = bigReciprocal128(pow5);
         pow5 = bigMulSmall(pow5, 5);
     }
 
@@ -826,6 +822,460 @@ private struct BigDecimal
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Shortest round-trip formatting (Schubfach, the yyjson formulation)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Digit pairs "00".."99" — the branchlut table shared by the integer and
+/// float writers.
+package static immutable char[200] digitPairs = () {
+    char[200] t;
+    foreach (i; 0 .. 100)
+    {
+        t[i * 2] = cast(char)('0' + i / 10);
+        t[i * 2 + 1] = cast(char)('0' + i % 10);
+    }
+    return t;
+}();
+
+/// Count of trailing decimal zeros for 0..99 (0 itself counts as 2).
+private static immutable ubyte[100] decTrailingZeros = () {
+    ubyte[100] t;
+    foreach (i; 0 .. 100)
+        t[i] = i == 0 ? 2 : (i % 10 == 0 ? 1 : 0);
+    return t;
+}();
+
+/// `a × b + add` as a full 128-bit result.
+private U128 mulAdd64(ulong a, ulong b, ulong add) @safe pure nothrow @nogc
+{
+    auto p = mul64x64(a, b);
+    p.lo += add;
+    if (p.lo < add)
+        p.hi++;
+    return p;
+}
+
+/// The high 64 bits of `(hi:lo) × cp`, rounded to odd (sticky low bit).
+private ulong roundToOdd128(ulong hi, ulong lo, ulong cp) @safe pure nothrow @nogc
+{
+    const x = mul64x64(cp, lo);
+    const y = mulAdd64(cp, hi, x.hi);
+    return y.hi | (y.lo > 1);
+}
+
+/**
+Converts a nonzero finite `double` (given as its raw IEEE-754 fields and
+decoded significand/exponent) to the shortest decimal significand and
+exponent that round-trip: `sigDec × 10^expDec` re-parses to exactly the
+input. `sigDec` may carry trailing zeros — the digit renderer trims them.
+
+Port of yyjson's `f64_bin_to_dec`: a full-precision fast path that settles
+most values with one 128-bit multiply, falling back to the Schubfach
+algorithm (Raffaello Giulietti, "The Schubfach way to render doubles",
+2022) for the boundary cases.
+*/
+private void f64ToDecimal(ulong sigRaw, uint expRaw, ulong sigBin, int expBin,
+    out ulong sigDec, out int expDec) @safe pure nothrow @nogc
+{
+    // Fast path: for regular spacing, compare the value and its half-ulp
+    // neighborhood in one fixed-point picture and pick among 4 candidates
+    // (trim-and-round-down / round-down / round-up / trim-and-round-up).
+    while (sigRaw != 0) // (single-iteration: `break` = fall to Schubfach)
+    {
+        // k = floor(expBin × log10(2)); h = expBin + floor(log2(10) × -k)
+        const int k = (expBin * 315_653) >> 20;
+        const int h = expBin + ((-k * 217_707) >> 16); // h ∈ [0, 3]
+        const entry = pow10Sig128[-k - tableMinExp10];
+
+        const cb = sigBin << (h + 1);
+        auto s = mul64x64(cb, entry.lo);
+        const p = mulAdd64(cb, entry.hi, s.hi);
+        const sHi = p.hi;
+        const sLo = p.lo;
+        const mod = sHi % 10;
+        const dec = sHi - mod;
+
+        // Shift right 4 so one ulp's digit and the half-ulp fit u64.
+        const c = (mod << 60) | (sLo >> 4);
+        const halfUlp = entry.hi >> (4 - h);
+
+        const w1Inside = sLo >= (1UL << 63);
+        if (sLo == (1UL << 63))
+            break;
+        const u0Inside = halfUlp >= c;
+        if (halfUlp == c)
+            break;
+        const t0 = 10UL << 60;
+        const t1 = c + halfUlp;
+        const w0Inside = t1 >= t0;
+        if (t0 - t1 <= 1)
+            break;
+
+        const trim = u0Inside | w0Inside;
+        const addTen = w0Inside ? 10 : 0;
+        const addOne = mod + (w1Inside ? 1 : 0);
+        sigDec = dec + (trim ? addTen : addOne);
+        expDec = k;
+        return;
+    }
+
+    // Schubfach: prove the shortest candidate via the rounding interval
+    // [cbl, cbr] (scaled ×4), computed with round-to-odd products.
+    const bool irregular = sigRaw == 0 && expRaw > 1;
+    const bool isEven = (sigBin & 1) == 0;
+    const cbl = 4 * sigBin - 2 + (irregular ? 1 : 0);
+    const cb = 4 * sigBin;
+    const cbr = 4 * sigBin + 2;
+
+    // k = floor(expBin×log10(2) + (irregular ? log10(3/4) : 0));
+    // h = expBin + floor(log2(10) × -k) + 1;  (h ∈ [1, 4])
+    const int k = cast(int)(expBin * 315_653L - (irregular ? 131_237 : 0)) >> 20;
+    const int h = expBin + ((-k * 217_707) >> 16) + 1;
+    Pow10Entry entry = pow10Sig128[-k - tableMinExp10];
+    entry.lo += 1; // ceiling adjustment over the truncated table
+
+    const vbl = roundToOdd128(entry.hi, entry.lo, cbl << h);
+    const vb = roundToOdd128(entry.hi, entry.lo, cb << h);
+    const vbr = roundToOdd128(entry.hi, entry.lo, cbr << h);
+    const lower = vbl + (isEven ? 0 : 1);
+    const upper = vbr - (isEven ? 0 : 1);
+
+    const s = vb / 4;
+    if (s >= 10)
+    {
+        const sp = s / 10;
+        const u0Inside = lower <= 40 * sp;
+        const w0Inside = upper >= 40 * sp + 40;
+        if (u0Inside != w0Inside)
+        {
+            sigDec = sp * 10 + (w0Inside ? 10 : 0);
+            expDec = k;
+            return;
+        }
+    }
+    const u1Inside = lower <= 4 * s;
+    const w1Inside = upper >= 4 * s + 4;
+    const mid = 4 * s + 2;
+    const roundUp = vb > mid || (vb == mid && (s & 1) != 0);
+    sigDec = s + (u1Inside != w1Inside ? (w1Inside ? 1 : 0) : (roundUp ? 1 : 0));
+    expDec = k;
+}
+
+// --- Digit renderers (yyjson's branchlut writers, pointer-based) -------------
+
+private char* putPair(char* buf, uint v) @system pure nothrow @nogc
+{
+    buf[0 .. 2] = digitPairs[v * 2 .. v * 2 + 2];
+    return buf + 2;
+}
+
+private char* writeU32Len8(uint val, char* buf) @system pure nothrow @nogc
+{
+    const aabb = cast(uint)((cast(ulong) val * 109_951_163) >> 40); // val / 1e4
+    const ccdd = val - aabb * 10_000;
+    const aa = (aabb * 5243) >> 19; // aabb / 100
+    const cc = (ccdd * 5243) >> 19;
+    putPair(buf + 0, aa);
+    putPair(buf + 2, aabb - aa * 100);
+    putPair(buf + 4, cc);
+    putPair(buf + 6, ccdd - cc * 100);
+    return buf + 8;
+}
+
+private char* writeU32Len1to8(uint val, char* buf) @system pure nothrow @nogc
+{
+    if (val < 100)
+    {
+        const lz = val < 10;
+        buf[0 .. 2] = digitPairs[val * 2 + lz .. val * 2 + lz + 2];
+        return buf + 2 - lz;
+    }
+    if (val < 10_000)
+    {
+        const aa = (val * 5243) >> 19;
+        const lz = aa < 10;
+        buf[0 .. 2] = digitPairs[aa * 2 + lz .. aa * 2 + lz + 2];
+        buf -= lz;
+        putPair(buf + 2, val - aa * 100);
+        return buf + 4;
+    }
+    if (val < 1_000_000)
+    {
+        const aa = cast(uint)((cast(ulong) val * 429_497) >> 32); // val / 1e4
+        const bbcc = val - aa * 10_000;
+        const bb = (bbcc * 5243) >> 19;
+        const lz = aa < 10;
+        buf[0 .. 2] = digitPairs[aa * 2 + lz .. aa * 2 + lz + 2];
+        buf -= lz;
+        putPair(buf + 2, bb);
+        putPair(buf + 4, bbcc - bb * 100);
+        return buf + 6;
+    }
+    {
+        const aabb = cast(uint)((cast(ulong) val * 109_951_163) >> 40);
+        const ccdd = val - aabb * 10_000;
+        const aa = (aabb * 5243) >> 19;
+        const cc = (ccdd * 5243) >> 19;
+        const lz = aa < 10;
+        buf[0 .. 2] = digitPairs[aa * 2 + lz .. aa * 2 + lz + 2];
+        buf -= lz;
+        putPair(buf + 2, aabb - aa * 100);
+        putPair(buf + 4, cc);
+        putPair(buf + 6, ccdd - cc * 100);
+        return buf + 8;
+    }
+}
+
+package char* writeU64Len1to16(ulong val, char* buf) @system pure nothrow @nogc
+{
+    if (val < 100_000_000)
+        return writeU32Len1to8(cast(uint) val, buf);
+    const hgh = val / 100_000_000;
+    const low = cast(uint)(val - hgh * 100_000_000);
+    buf = writeU32Len1to8(cast(uint) hgh, buf);
+    return writeU32Len8(low, buf);
+}
+
+private char* writeU64Len1to17(ulong val, char* buf) @system pure nothrow @nogc
+{
+    if (val >= 100_000_000UL * 10_000_000) // 16-17 digits
+    {
+        const hgh = val / 100_000_000;
+        const low = cast(uint)(val - hgh * 100_000_000);
+        const one = cast(uint)(hgh / 100_000_000);
+        const mid = cast(uint)(hgh - cast(ulong) one * 100_000_000);
+        *buf = cast(char)('0' + one);
+        buf += one > 0;
+        buf = writeU32Len8(mid, buf);
+        return writeU32Len8(low, buf);
+    }
+    if (val >= 100_000_000) // 9-15 digits
+    {
+        const hgh = val / 100_000_000;
+        const low = cast(uint)(val - hgh * 100_000_000);
+        buf = writeU32Len1to8(cast(uint) hgh, buf);
+        return writeU32Len8(low, buf);
+    }
+    return writeU32Len1to8(cast(uint) val, buf);
+}
+
+/// 16-17 digits with trailing zeros trimmed (digits named abbccddeeffgghhii).
+private char* writeU64Len16to17Trim(ulong val, char* buf) @system pure nothrow @nogc
+{
+    const abbccddee = cast(uint)(val / 100_000_000);
+    const ffgghhii = cast(uint)(val - cast(ulong) abbccddee * 100_000_000);
+    const abbcc = abbccddee / 10_000;
+    const ddee = abbccddee - abbcc * 10_000;
+    const abb = cast(uint)((cast(ulong) abbcc * 167_773) >> 24); // abbcc / 100
+    const a = (abb * 41) >> 12; // abb / 100
+    const bb = abb - a * 100;
+    const cc = abbcc - abb * 100;
+    buf[0] = cast(char)('0' + a);
+    buf += a > 0;
+    putPair(buf + 0, bb);
+    putPair(buf + 2, cc);
+
+    if (ffgghhii)
+    {
+        const dd = (ddee * 5243) >> 19;
+        const ee = ddee - dd * 100;
+        const ffgg = cast(uint)((cast(ulong) ffgghhii * 109_951_163) >> 40);
+        const hhii = ffgghhii - ffgg * 10_000;
+        const ff = (ffgg * 5243) >> 19;
+        const gg = ffgg - ff * 100;
+        putPair(buf + 4, dd);
+        putPair(buf + 6, ee);
+        putPair(buf + 8, ff);
+        putPair(buf + 10, gg);
+        if (hhii)
+        {
+            const hh = (hhii * 5243) >> 19;
+            const ii = hhii - hh * 100;
+            putPair(buf + 12, hh);
+            putPair(buf + 14, ii);
+            const tz = ii ? decTrailingZeros[ii] : decTrailingZeros[hh] + 2;
+            return buf + 16 - tz;
+        }
+        const tz = gg ? decTrailingZeros[gg] : decTrailingZeros[ff] + 2;
+        return buf + 12 - tz;
+    }
+    if (ddee)
+    {
+        const dd = (ddee * 5243) >> 19;
+        const ee = ddee - dd * 100;
+        putPair(buf + 4, dd);
+        putPair(buf + 6, ee);
+        const tz = ee ? decTrailingZeros[ee] : decTrailingZeros[dd] + 2;
+        return buf + 8 - tz;
+    }
+    const tz = cc ? decTrailingZeros[cc]
+        : decTrailingZeros[bb] + decTrailingZeros[cc];
+    return buf + 4 - tz;
+}
+
+/// Exponent suffix in `e-324` … `e308`.
+private char* writeF64Exp(int exp, char* buf) @system pure nothrow @nogc
+{
+    buf[0 .. 2] = "e-";
+    buf += 2 - (exp >= 0);
+    uint e = exp < 0 ? -exp : exp;
+    if (e < 100)
+    {
+        const lz = e < 10;
+        buf[0 .. 2] = digitPairs[e * 2 + lz .. e * 2 + lz + 2];
+        return buf + 2 - lz;
+    }
+    const hi = (e * 656) >> 16; // e / 100
+    const lo = e - hi * 100;
+    buf[0] = cast(char)('0' + hi);
+    putPair(buf + 1, lo);
+    return buf + 3;
+}
+
+/// Number of trailing zero bits (defined for `x != 0`).
+private int trailingZeros(ulong x) @safe pure nothrow @nogc
+in (x != 0)
+{
+    import core.bitop : bsf;
+
+    return bsf(x);
+}
+
+/**
+Formats `value` into `buf` as the shortest decimal representation that
+re-parses to the identical bits (round-to-nearest, ties-to-even), and
+returns the number of characters written.
+
+The notation follows ECMAScript `Number.prototype.toString()` with two
+deviations (the yyjson conventions): `-0.0` keeps its sign, and integral
+values keep a trailing `.0` so the text stays unambiguously
+floating-point. Non-finite values render as `nan`, `inf`, and `-inf` —
+callers with stricter grammars (JSON) must reject those upstream.
+
+Runtime only (not CTFE-callable); needs `buf.length ≥ 40`.
+*/
+size_t formatShortestDouble(scope char[] buf, double value) @trusted pure nothrow @nogc
+in (buf.length >= 40)
+{
+    enum sigMask = (1UL << 52) - 1;
+    const raw = doubleToBits(value);
+    const sigRaw = raw & sigMask;
+    const expRaw = cast(uint)(raw >> 52) & 0x7FF;
+    const sign = raw >> 63;
+
+    char* start = &buf[0];
+    char* p = start;
+
+    if (expRaw == 0x7FF) // inf / nan
+    {
+        if (sigRaw)
+        {
+            buf[0 .. 3] = "nan";
+            return 3;
+        }
+        if (sign)
+        {
+            buf[0 .. 4] = "-inf";
+            return 4;
+        }
+        buf[0 .. 3] = "inf";
+        return 3;
+    }
+
+    *p = '-';
+    p += sign;
+
+    if ((raw << 1) == 0) // ±0
+    {
+        p[0 .. 3] = "0.0";
+        return (p - start) + 3;
+    }
+
+    ulong sigDec;
+    int expDec;
+    if (expRaw != 0) // normal
+    {
+        const sigBin = sigRaw | (1UL << 52);
+        const expBin = cast(int) expRaw - 1023 - 52;
+
+        // Small integral values: exact, render directly.
+        if (-52 <= expBin && expBin <= 0 && trailingZeros(sigBin) >= -expBin)
+        {
+            p = writeU64Len1to16(sigBin >> -expBin, p);
+            p[0 .. 2] = ".0";
+            return (p - start) + 2;
+        }
+
+        f64ToDecimal(sigRaw, expRaw, sigBin, expBin, sigDec, expDec);
+
+        const int sigLen = 16 + (sigDec >= 100_000_000UL * 100_000_000);
+        const int dotOfs = sigLen + expDec; // decimal point vs first digit
+
+        if (-6 < dotOfs && dotOfs <= 21) // plain notation
+        {
+            // Zero-fill first: the fill provides both the "0.000…" prefix
+            // and the zeros between trimmed digits and the dot (e.g. 1e20
+            // renders one digit but needs "100000000000000000000.0").
+            p[0 .. 32] = '0';
+
+            const noPreZero = dotOfs > 0; // 1.234 / 1234.0 vs 0.001234
+            const preOfs = noPreZero ? 0 : 2 - dotOfs;
+            char* numHdr = p + preOfs;
+            char* numEnd = writeU64Len16to17Trim(sigDec, numHdr);
+
+            if (noPreZero) // open a one-byte gap for the dot
+            {
+                char* numSep = numHdr + dotOfs;
+                char[16] tmp = numSep[0 .. 16];
+                numSep[1 .. 17] = tmp;
+                numEnd++;
+            }
+            p[noPreZero ? dotOfs : 1] = '.';
+
+            char* dotEnd = p + dotOfs + 2; // covers the ".0" tail
+            char* end = dotEnd > numEnd ? dotEnd : numEnd;
+            return end - start;
+        }
+        else // scientific
+        {
+            char* end = writeU64Len16to17Trim(sigDec, p + 1);
+            end -= end == p + 2; // "2." → "2" (drop lone trailing dot slot)
+            expDec += sigLen - 1;
+            p[0] = p[1];
+            p[1] = '.';
+            end = writeF64Exp(expDec, end);
+            return end - start;
+        }
+    }
+    else // subnormal — always scientific
+    {
+        f64ToDecimal(sigRaw, expRaw, sigRaw, 1 - 1023 - 52, sigDec, expDec);
+        char* end = writeU64Len1to17(sigDec, p + 1);
+        p[0] = p[1];
+        p[1] = '.';
+        expDec += cast(int)(end - p) - 2;
+        while (end[-1] == '0')
+            end--;
+        end -= end[-1] == '.'; // "2.e-321" → "2e-321"
+        end = writeF64Exp(expDec, end);
+        return end - start;
+    }
+}
+
+/**
+Writes the shortest round-trip representation of `value` (see
+$(LREF formatShortestDouble)) to any output range.
+*/
+void writeShortestDouble(Writer)(ref Writer w, double value)
+{
+    import std.range.primitives : put;
+
+    char[40] buf = void;
+    const len = formatShortestDouble(buf[], value);
+    put(w, buf[0 .. len]);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Cursor reader (general grammar; the JSON reader fuses its own loop)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1009,15 +1459,16 @@ unittest
 unittest
 {
     // 10^0 → 5^0 = 1 normalized: 2^127.
-    const one = pow10Sig128[0 - minExp10];
+    const one = pow10Sig128[0 - tableMinExp10];
     assert(one.hi == 1UL << 63 && one.lo == 0);
     // 10^1 → 5 normalized: 0xA000…
-    const ten = pow10Sig128[1 - minExp10];
+    const ten = pow10Sig128[1 - tableMinExp10];
     assert(ten.hi == 0xA000_0000_0000_0000 && ten.lo == 0);
-    // 10^-1 → the classic 0xCCCC…CD rounded-up reciprocal.
-    const tenth = pow10Sig128[-1 - minExp10];
+    // 10^-1 → the truncated 0xCCCC… reciprocal (no round-up: the yyjson
+    // convention; the Schubfach writer applies its own +1).
+    const tenth = pow10Sig128[-1 - tableMinExp10];
     assert(tenth.hi == 0xCCCC_CCCC_CCCC_CCCC);
-    assert(tenth.lo == 0xCCCC_CCCC_CCCC_CCCD);
+    assert(tenth.lo == 0xCCCC_CCCC_CCCC_CCCC);
 }
 
 @("float_conv.readDigits.unrolledRuns")
@@ -1104,14 +1555,20 @@ unittest
 @("float_conv.tryFastDouble.ctfeMatchesRuntime")
 unittest
 {
-    // The CTFE path (pure integer Eisel–Lemire) must produce bit-identical
-    // results to the runtime tiers.
+    // The full tier chain runs at CTFE (tier 1 is skipped there, so the
+    // integer tiers do all the work) and must produce results
+    // bit-identical to the runtime path.
     static double conv(ulong sig, int exp)
     {
         double r;
-        const ok = tryFastDouble(sig, exp, r);
-        assert(ok);
-        return r;
+        if (tryFastDouble(sig, exp, r))
+            return r;
+        // Punt → exact tier: render the significand digits.
+        char[20] digits;
+        size_t n = digits.length;
+        for (ulong v = sig; v != 0; v /= 10)
+            digits[--n] = cast(char)('0' + v % 10);
+        return slowDouble(digits[n .. $], null, exp);
     }
 
     enum ctA = conv(314_159_265_358_979, -14);
@@ -1120,6 +1577,8 @@ unittest
     assert(ctB == 2.5);
     enum ctC = conv(123_456_789_012_345_678, -30);
     assert(doubleToBits(ctC) == doubleToBits(conv(123_456_789_012_345_678, -30)));
+    enum ctD = conv(9_007_199_254_740_993, 0); // true tie via slowDouble
+    assert(ctD == 9_007_199_254_740_992.0);
 }
 
 @("float_conv.readDecimalFloat.grammar")
@@ -1162,6 +1621,145 @@ unittest
     assert(readDecimalFloat(dot).hasError); // digits required after '.'
     const(char)[] noExp = "1e";
     assert(readDecimalFloat(noExp).hasError);
+}
+
+@("float_conv.formatShortestDouble.pins")
+@safe pure nothrow @nogc
+unittest
+{
+    static void check(double v, string expected) @safe pure nothrow @nogc
+    {
+        import sparkles.base.lifetime : recycledErrorInstance;
+        import core.exception : AssertError;
+
+        char[40] buf = void;
+        const len = formatShortestDouble(buf[], v);
+        if (buf[0 .. len] != expected)
+            throw (() @trusted => recycledErrorInstance!AssertError(
+                "formatShortestDouble mismatch"))();
+    }
+
+    check(0.0, "0.0");
+    check(-0.0, "-0.0");
+    check(1.0, "1.0");
+    check(-1.0, "-1.0");
+    check(1.5, "1.5");
+    check(0.1, "0.1");
+    check(0.3, "0.3");
+    check(1234.0, "1234.0");
+    check(3.141592653589793, "3.141592653589793");
+    check(1e20, "100000000000000000000.0");
+    check(1e21, "1e21");
+    check(1e22, "1e22");
+    check(123.456, "123.456");
+    check(0.000001, "0.000001");
+    check(1e-7, "1e-7");
+    check(-2.5e-3, "-0.0025");
+    check(double.max, "1.7976931348623157e308");
+    check(double.min_normal, "2.2250738585072014e-308");
+    check(bitsToDouble(1), "5e-324"); // smallest subnormal
+    check(bitsToDouble(0x000F_FFFF_FFFF_FFFF), "2.225073858507201e-308");
+    check(9007199254740992.0, "9007199254740992.0"); // 2^53
+    check(double.infinity, "inf");
+    check(-double.infinity, "-inf");
+    check(double.nan, "nan");
+    check(1.0 / 3.0, "0.3333333333333333");
+    check(2.0 / 3.0, "0.6666666666666666");
+    check(6.02214076e23, "6.02214076e23");
+    check(1.5e-9, "1.5e-9");
+}
+
+@("float_conv.formatShortestDouble.roundTripCorpus")
+@safe unittest
+{
+    // The self-oracle: format → exact parse → identical bits, over random
+    // bit patterns spanning every exponent regime (subnormals included).
+    ulong state = 0xDEAD_BEEF_CAFE_F00D;
+    ulong next()
+    {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        return state;
+    }
+
+    char[40] buf = void;
+    foreach (i; 0 .. 100_000)
+    {
+        ulong bits = next();
+        if (((bits >> 52) & 0x7FF) == 0x7FF)
+            bits &= ~(0x7FFUL << 52); // skip inf/nan: force a finite exponent
+        // Weight some iterations toward subnormals and tiny exponents.
+        if (i % 7 == 0)
+            bits &= ~(0x7F0UL << 52);
+        const v = bitsToDouble(bits);
+
+        const len = (() @trusted => formatShortestDouble(buf[], v))();
+        const(char)[] text = buf[0 .. len];
+        auto back = readDecimalFloat(text);
+        assert(back.hasValue);
+        assert(text.length == 0); // fully consumed
+        assert(doubleToBits(back.value) == bits);
+    }
+}
+
+version (linux)
+@("float_conv.formatShortestDouble.shortestVsPrintf")
+@system unittest
+{
+    import core.stdc.stdio : snprintf;
+
+    // Shortest-ness spot check: for every value, no representation with
+    // fewer significant digits may round-trip (compare against %.*g).
+    ulong state = 0x0123_4567_89AB_CDEF;
+    ulong next()
+    {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        return state;
+    }
+
+    char[64] ours = void, theirs = void;
+    foreach (i; 0 .. 2_000)
+    {
+        ulong bits = next();
+        if (((bits >> 52) & 0x7FF) == 0x7FF)
+            bits &= ~(0x7FFUL << 52);
+        const v = bitsToDouble(bits);
+        const len = formatShortestDouble(ours[], v);
+
+        // Count significant digits: the digit string before any exponent,
+        // with leading and trailing zeros stripped (neither carries
+        // round-trip information — "1e20" renders as "1000…0.0").
+        char[24] digits = void;
+        size_t nd;
+        foreach (c; ours[0 .. len])
+        {
+            if (c == 'e')
+                break;
+            if (c >= '0' && c <= '9')
+                digits[nd++] = c;
+        }
+        size_t lead;
+        while (lead < nd && digits[lead] == '0')
+            lead++;
+        while (nd > lead && digits[nd - 1] == '0')
+            nd--;
+        const sigDigits = nd - lead;
+
+        // One digit fewer must NOT round-trip.
+        if (sigDigits > 1 && v != 0)
+        {
+            const tlen = snprintf(theirs.ptr, theirs.length, "%.*g",
+                cast(int)(sigDigits - 1), v);
+            const(char)[] ttext = theirs[0 .. tlen];
+            auto back = readDecimalFloat(ttext);
+            assert(back.hasValue);
+            assert(doubleToBits(back.value) != bits,
+                "a shorter representation round-trips — not shortest");
+        }
+    }
 }
 
 version (linux)
