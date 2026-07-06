@@ -22,9 +22,15 @@ unittest { /* evaluated during compilation — a failure is a compile error */ }
 unittest { /* measured with auto-scaling iterations via --bench */ }
 ```
 
+## The whole runner on one page
+
+New here, or want a single reference to keep open? **[The guide](./guide.md)**
+covers integration, writing tests, running and filtering, every attribute, and
+the full CLI — end to end, on one page.
+
 ## How this documentation is organised
 
-These docs follow the [Diátaxis](https://diataxis.fr/) framework.
+The rest of these docs follow the [Diátaxis](https://diataxis.fr/) framework.
 
 ### [Tutorial](./tutorial/getting-started.md)
 
