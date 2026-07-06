@@ -179,6 +179,60 @@ $ dub test -- --bench --perf
 ╰────────────┴───────┴─────────────┴─┴─────┴────────────┴─────────┴────────────╯
 ```
 
+#### `benchCase` — matrix benchmarks (many rows from one test)
+
+`benchIter` measures one thing. To benchmark a **matrix** — several
+implementations across several inputs — call `benchCase` repeatedly inside one
+`@benchmark` body; each call emits its own row. The plain-D loop (and a
+`static foreach` over a compile-time engine list) _is_ the matrix — the runner
+never learns about "engines" or "ops":
+
+```d
+import sparkles.test_runner.bench : benchCase, Metric, Unit;
+
+@("json.parse") @benchmark
+unittest
+{
+    static foreach (Engine; Engines)
+        foreach (ds; datasets)
+        {
+            Engine e;
+            benchCase(
+                name:    Engine.name ~ "/" ~ ds.name,
+                timed:   () => e.parse(ds.text),   // measured; its result flows to `after`
+                after:   (ref doc) { enforce(doc.matches(reference), "mismatch"); e.free(doc); },
+                metrics: [Metric(Unit("B"), ds.text.length, Metric.Mode.rate)],  // → a B/s column
+            );
+        }
+}
+```
+
+- **`timed`** is the measured body; its return value flows to **`after`**, which
+  runs _untimed_ after every iteration to **verify + release** the result.
+- **`after` picks the failure granularity**: `throw` on a mismatch → the whole
+  benchmark test fails; return an [`Expected`](../../guidelines/idioms/expected/index.md)
+  error → only _this_ case becomes an error row and the rest of the matrix
+  continues. A case with nothing to release/verify passes a no-op (`() {}` for a
+  `void` body).
+- **`metrics`** attach throughput columns: `Metric(unit, amount, mode)` with
+  `mode` `rate` (`amount ÷ iteration-time` → `<unit>/s`) or `level` (as-is).
+  Units are open-basis names — `"B"`, `"req"`, `"tweet"`, `"frame"` — vocabulary
+  aligned to the forthcoming `sparkles:quantities` library.
+
+`benchCase` times each call individually (so the result can be released between
+iterations), which suits µs-and-up operations; keep `benchIter` for the finest
+micro-benchmarks. One `@benchmark` can emit many rows, and `--perf` adds its
+counter columns to each:
+
+```console
+$ dub test -- --bench --perf
+╭─────────────────┬───────┬─────────────┬──────────┬─────┬────────────┬─────────╮
+│ benchmark       │ iters │ median/iter │ B/s      │ IPC │ instr/iter │ br-miss │
+│ simdjson/twitter│ 1     │ 41.7µs      │ 15.14G   │ 3.1 │ 118.4k     │ 0.71%   │
+│ stdjson/twitter │ 1     │ 611.0µs     │ 1.03G    │ 1.8 │ 2.44M      │ 2.90%   │
+╰─────────────────┴───────┴─────────────┴──────────┴─────┴────────────┴─────────╯
+```
+
 Attributes compose: `@betterC @wasm` opts one test into both extra
 environments.
 
