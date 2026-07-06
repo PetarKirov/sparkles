@@ -83,14 +83,52 @@ source tree (33 k directories), `hyperfine -N --warmup 5 -r 30`:
 | event-horizon (all cores default) | 69.8 ± 3.4 ms     | 1.03× faster     |
 
 **event-horizon beats rayon** — 16 % faster at its optimum, still ahead at the
-all-cores default, and far more stable (±1.1 ms vs rayon's ±5.8 ms). On a
-denser synthetic tree (250 k files, 100 per directory) the margin widens to
-**1.9×**, using half the CPU (104 ms vs 206 ms) — rayon parallelizes per _entry_
-(`into_par_iter` over each directory's files), which is pure overhead when
-directories are large; event-horizon parallelizes per _directory_, a coarser
-grain that amortizes far better. (On a pathologically sparse tree — 10 files per
-directory — the tasks are too tiny to amortize and rayon's structured fork-join
-edges it back; that case is dominated by measurement noise on a ~5 ms run.)
+all-cores default, and far more stable (±1.1 ms vs rayon's ±5.8 ms).
+
+### Across tree shapes — and the syscalls that explain it
+
+One tree is one data point. `walk-bench.sh` sweeps the two axes a parallel
+walker actually cares about — **breadth** (fan-out) and **depth** (nesting),
+plus files-per-directory — over synthetic trees built by `gen-tree.d`, and puts
+`strace -f -c` syscall counts next to the wall-clock so a win or loss is
+_explained_, not just stated. Hot cache, `hyperfine -N -r 20`:
+
+| shape (breadth×depth, dirs / files) | rust-rayon | d-taskpool | **event-horizon 16w** | eh vs rayon |
+| ----------------------------------- | ---------- | ---------- | --------------------- | ----------- |
+| wide `100×2` (10 k / 101 k)         | 15.5 ms    | 21.8 ms    | 17.6 ms               | 0.88× ↓     |
+| deep `3×9` (30 k / 89 k)            | 71.8 ms    | 124.6 ms   | **51.8 ms**           | **1.39×**   |
+| balanced `6×5` (9 k / 93 k)         | 34.3 ms    | 38.5 ms    | **14.7 ms**           | **2.34×**   |
+| dense `10×3` (1 k / 222 k)          | 20.8 ms    | 19.3 ms    | **5.5 ms**            | **3.79×**   |
+
+event-horizon wins on three of four shapes — decisively when directories hold
+real work (dense 3.8×, balanced 2.3×) — and beats the D `taskPool` baseline
+everywhere. The **syscall counts say why**: on the deep tree all three issue the
+_identical_ file syscalls (59 048 `getdents64`, ~29 560 `openat`), so the walk
+itself is the same; what differs is coordination —
+
+| walker (deep tree)    | getdents64 | openat | futex  | sched_yield | → time      |
+| --------------------- | ---------- | ------ | ------ | ----------- | ----------- |
+| rust-rayon            | 59 048     | 29 560 | 313    | 2 635       | 71.8 ms     |
+| d-taskpool            | 59 049     | 29 571 | 13 560 | 24 420      | 124.6 ms    |
+| **event-horizon 16w** | 59 048     | 29 570 | **83** | **823**     | **51.8 ms** |
+
+event-horizon's cpuBound pool makes **two orders of magnitude fewer futex calls**
+than the D `taskPool` and a third of rayon's yields — the per-worker deque +
+inline execution keeps threads off the kernel. The one loss is coherent, not
+noise: on the **wide** tree each directory holds 100 entries, and rayon
+parallelizes those entries _within_ a directory (`into_par_iter`), while
+event-horizon processes them serially inside one per-directory task — so very
+wide directories favor rayon's intra-directory split, while narrow/deep or
+work-dense trees favor event-horizon's lower-overhead per-directory tasking. The
+real-tree 1.16× above sits where real source trees do: mostly moderate
+directories, so the gap narrows toward the I/O-bound floor.
+
+> **Cold cache.** The harness also takes a hot-vs-cold axis (`--prepare` drops
+> the page/dentry/inode cache before each run). Evicting directory metadata
+> needs `drop_caches`, which is **root-only** — set `EH_BENCH_DROP` (or run the
+> harness as root) to record the cold column, where a proactor's ability to keep
+> many metadata reads in flight could tell a different story. On an unprivileged
+> host the harness runs hot-only and says so.
 
 ### How it got here — and what the earlier loss taught
 
@@ -191,17 +229,22 @@ it wins.
 Reproduce:
 
 ```bash
-# race the walker against rust-rayon on any real source tree
-eh=libs/event-horizon/bench/walk-event-horizon.d
-dub build --single "$eh"
+cd libs/event-horizon/bench
+
+# the full multi-axis matrix: tree shapes × hot/cold cache × syscall counts
+# (needs hyperfine + strace + jq on PATH — nix shell nixpkgs#{hyperfine,strace,jq})
+./walk-bench.sh                       # wide / deep / balanced / dense
+./walk-bench.sh --quick               # two small shapes, fast
+EH_BENCH_DROP='sudo sh -c "echo 3 > /proc/sys/vm/drop_caches"' ./walk-bench.sh  # + cold column
+
+# one-off race against rust-rayon on any real source tree
+dub build --single walk-event-horizon.d
 hyperfine -N --warmup 5 \
   "walk-rust-rayon ~/src" \
-  "libs/event-horizon/bench/build/walk_event_horizon ~/src --workers=16"
+  "build/walk_event_horizon ~/src --workers=16"
 
 # hardware counters for the per-worker-setup story (page faults vs workers):
-for w in 1 2 8 32; do
-  libs/event-horizon/bench/build/walk_event_horizon ~/src --perf --workers=$w
-done
+for w in 1 2 8 32; do build/walk_event_horizon ~/src --perf --workers=$w; done
 ```
 
 ## 3. Scope of the full cross-runtime matrix (PLAN M14)
