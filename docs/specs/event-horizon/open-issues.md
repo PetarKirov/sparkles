@@ -348,5 +348,10 @@ I/O) so a CPU-only batch pays no ring tax; (C) a separate ring-less CPU pool
 (effectively `std.parallelism.taskPool`) for `submitBlocking`-only workloads;
 (D) a global-quiescence scheme that isn't a single hot atomic.
 
-**Leaning:** (A) for v1 — the pool is an async-I/O executor by design; (B) is
-the cleanest real fix if CPU batches become a first-class use.
+**Resolved (2026-07-06):** shipped option (C) as `LoopGroupConfig.cpuBound` —
+workers become plain threads running `submitBlocking` tasks inline, no
+per-worker ring or fibers. Plus relaxed (`MemoryOrder.raw`) counters. Result:
+the walker now BEATS rust-rayon on a real source tree (1.16× at 16 workers,
+1.9× on a dense synthetic tree), and scaling turned positive. See
+`benchmarks.md` §2. The default (async, per-worker rings) is unchanged — it is
+the right tool for long-lived async-I/O fan-out.
