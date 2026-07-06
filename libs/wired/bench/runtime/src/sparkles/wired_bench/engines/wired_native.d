@@ -11,7 +11,7 @@ import sparkles.wired.json.codec : fromJSON;
 import sparkles.wired.json.document : JsonKind, JsonValue;
 import sparkles.wired.json.reader : isValidJson, JsonParseResult,
     parseJsonDocument;
-import sparkles.wired.json.writer : writeJson;
+import sparkles.wired.json.writer : JsonSink, writeJson;
 
 import sparkles.wired_bench.fingerprint : Fingerprint;
 import sparkles.wired_bench.twitter : Twitter, TwitterStats, TwitterStatus,
@@ -86,9 +86,10 @@ struct WiredNativeEngine
 
     private Twitter twitter;
 
-    import std.array : Appender;
-
-    private Appender!(char[]) rendered;
+    // The reusable serialization sink: writeJson recognizes JsonSink and
+    // takes its reserve-then-raw-store walk. clear() keeps the capacity,
+    // so the steady-state serialize loop allocates nothing.
+    private JsonSink rendered;
 }
 
 /// Accumulates one view subtree into `f`.
