@@ -18,7 +18,12 @@ internally the view is wrapped as a foreign `Buf` for the tier-A slot.
 */
 module sparkles.event_horizon.io;
 
-version (Posix)  :  // POSIX sockets; the ops route through the selected backend
+// The verbs are backend-agnostic (they route ops through the selected
+// backend); the only platform-specific piece is handle `close` (POSIX
+// `close` vs winsock `closesocket`, guarded below).
+version (Posix) version = EhIoStack;
+version (Windows) version = EhIoStack;
+version (EhIoStack)  :
 
 import core.lifetime : move;
 import core.time : Duration;
@@ -42,14 +47,23 @@ struct Stream
     int fd = -1;
 
     /// Explicit close (handles are copyable views; exactly one owner
-    /// should close).
+    /// should close). Winsock sockets close via `closesocket`.
     void close() @trusted nothrow @nogc
     {
         if (fd < 0)
             return;
-        import core.sys.posix.unistd : close_ = close;
+        version (Windows)
+        {
+            import core.sys.windows.winsock2 : closesocket;
 
-        close_(fd);
+            closesocket(fd);
+        }
+        else
+        {
+            import core.sys.posix.unistd : close_ = close;
+
+            close_(fd);
+        }
         fd = -1;
     }
 }
@@ -134,33 +148,51 @@ IoResult!Buf recvSelect(Ring)(ref Stream s, ref Ring ring, uint maxLen)
     return ioOk(ring.lease(o.bufferId, cast(uint) o.res));
 }
 
-/// Parks until a connection arrives; the result is the connected stream.
-IoResult!Stream accept(ref Listener l)
+// accept/connect/sleep exist only when the selected backend can lower their
+// ops (SPEC §3.1 — absence degrades, never breaks). io_uring and kqueue do;
+// the current IOCP data path does not (AcceptEx/ConnectEx/timer remain), so on
+// Windows these verbs are simply absent and callers set connections up
+// synchronously. `DefaultBackend` is the fiber tier's backend (`Sched` rides
+// `DefaultLoop`).
+private import sparkles.event_horizon.backend.concept : canSubmitOp;
+private import sparkles.event_horizon.backend.select : DefaultBackend;
+
+static if (canSubmitOp!(DefaultBackend, OpAccept))
 {
-    auto o = currentSched().await(OpAccept(l.fd));
-    if (o.res < 0)
-        return ioErr!Stream(-o.res, OpKind.accept);
-    return ioOk(Stream(o.res));
+    /// Parks until a connection arrives; the result is the connected stream.
+    IoResult!Stream accept(ref Listener l)
+    {
+        auto o = currentSched().await(OpAccept(l.fd));
+        if (o.res < 0)
+            return ioErr!Stream(-o.res, OpKind.accept);
+        return ioOk(Stream(o.res));
+    }
 }
 
-/// Parks until the connect completes.
-IoResult!void connect(ref Stream s, in SockAddr addr)
+static if (canSubmitOp!(DefaultBackend, OpConnect))
 {
-    auto o = currentSched().await(OpConnect(s.fd, addr));
-    if (o.res < 0)
-        return ioErr!void(-o.res, OpKind.connect);
-    return ioOk();
+    /// Parks until the connect completes.
+    IoResult!void connect(ref Stream s, in SockAddr addr)
+    {
+        auto o = currentSched().await(OpConnect(s.fd, addr));
+        if (o.res < 0)
+            return ioErr!void(-o.res, OpKind.connect);
+        return ioOk();
+    }
 }
 
-/// Parks the calling fiber for `d` (an in-ring timer, not a thread sleep).
-IoResult!void sleep(ref Sched s, Duration d)
+static if (canSubmitOp!(DefaultBackend, OpTimeout))
 {
-    long secs, nsecs;
-    d.split!("seconds", "nsecs")(secs, nsecs);
-    auto o = s.await(OpTimeout(KernelTimespec(secs, nsecs)));
-    if (o.res < 0)
-        return ioErr!void(-o.res, OpKind.timeout);
-    return ioOk();
+    /// Parks the calling fiber for `d` (an in-ring timer, not a thread sleep).
+    IoResult!void sleep(ref Sched s, Duration d)
+    {
+        long secs, nsecs;
+        d.split!("seconds", "nsecs")(secs, nsecs);
+        auto o = s.await(OpTimeout(KernelTimespec(secs, nsecs)));
+        if (o.res < 0)
+            return ioErr!void(-o.res, OpKind.timeout);
+        return ioOk();
+    }
 }
 
 /// Cooperative reschedule (a checkpoint once M5's cancellation lands).

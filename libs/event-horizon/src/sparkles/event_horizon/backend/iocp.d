@@ -12,11 +12,15 @@ call is issued immediately in `trySubmit` and either completes inline or
 posts to the port later. `submitAndWait` therefore only waits (`flush` is a
 no-op), and the deadline maps to the `GetQueuedCompletionStatus` timeout.
 
-Status: the data-path (`recv`/`send`/`nop`) completion machinery is
-verified end-to-end under Wine by libs/event-horizon/scripts/verify-iocp-wine.sh. Async accept/connect
-(`AcceptEx`/`ConnectEx`, which need the extension-function pointers loaded via
-`WSAIoctl`) and the full `EventLoop!IocpBackend` wiring are the remaining M11
-work; the concept conformance holds today.
+Status: verified under Wine two ways — the raw backend's data path
+(`scripts/verify-iocp-wine.sh`) and the full `EventLoop!IocpBackend` fiber echo
+(`scripts/verify-iocp-loop-wine.sh`: tier-A loop + tier-B fibers + the io
+recv/send verbs, sockets lazily associated with the port on first use). The
+connection setup there is synchronous — async accept/connect via
+`AcceptEx`/`ConnectEx` (extension pointers loaded via `WSAIoctl`) and an IOCP
+timer for `OpTimeout` are the remaining refinements; io_uring/kqueue lower
+those, so on Windows the accept/connect/sleep verbs are simply absent
+(SPEC §3.1 — absence degrades, never breaks).
 */
 module sparkles.event_horizon.backend.iocp;
 
@@ -73,6 +77,7 @@ extern (Windows) nothrow @nogc
         void* lpCompletionRoutine);
     int PostQueuedCompletionStatus(HANDLE port, DWORD bytes, ULONG_PTR key,
         OVERLAPPED* ov);
+    int CloseHandle(HANDLE h); // @nogc-declared here (winbase's isn't marked)
 
     // Synchronous socket setup used only to build a connected pair for tests.
     SOCKET socket(int af, int type, int protocol);
@@ -156,10 +161,8 @@ struct IocpBackend
     }
 
     /// Closes the port and winsock.
-    void close() @trusted nothrow
+    void close() @trusted nothrow @nogc
     {
-        import core.sys.windows.winbase : CloseHandle;
-
         if (_ops.ptr !is null)
         {
             pureFree(_ops.ptr);
@@ -176,6 +179,17 @@ struct IocpBackend
     /// The negotiated capabilities (IOCP: natively completion-based).
     ref const(BackendCaps) caps() const return @safe pure nothrow @nogc => _caps;
 
+    /// Maps raw completion flags to the portable set. IOCP delivers one
+    /// completion per op — no `MORE`/buffer-select flags.
+    import sparkles.event_horizon.op : CompletionFlags;
+
+    CompletionFlags mapFlags(uint) const @safe pure nothrow @nogc
+        => CompletionFlags.init;
+
+    /// Never called (IOCP sets no buffer-select flag); present for the
+    /// dispatch's static shape.
+    static ushort selectedBufferId(uint) @safe pure nothrow @nogc => 0;
+
     /// Associates a socket with the completion port (call once per socket).
     IoResult!void register(SOCKET s) @trusted nothrow
     {
@@ -183,6 +197,21 @@ struct IocpBackend
             return ioErr!void(WSAGetLastError(), OpKind.none, IoErrorStage.registration,
                 "CreateIoCompletionPort(assoc) failed");
         return ioOk();
+    }
+
+    /// Lazily associates a socket the first time an op targets it — so the
+    /// generic loop's verbs (which never call `register`) still work. A
+    /// verification-grade fixed set; a real backend would use a hash set.
+    private void ensureRegistered(SOCKET s) @trusted nothrow @nogc
+    {
+        foreach (i; 0 .. _regCount)
+            if (_regged[i] == s)
+                return;
+        if (_regCount < _regged.length)
+        {
+            CreateIoCompletionPort(cast(HANDLE) s, _port, 0, 0);
+            _regged[_regCount++] = s;
+        }
     }
 
     // ── lowering: issue the winsock async call immediately ──────────────────
@@ -201,6 +230,7 @@ struct IocpBackend
     /// A socket receive into the pinned buffer's capacity (`WSARecv`).
     bool trySubmit(in OpRecv o, OpToken token, ref OpSlot slot) @trusted nothrow
     {
+        ensureRegistered(cast(SOCKET) o.fd);
         auto op = acquire();
         if (op is null)
             return false;
@@ -212,8 +242,6 @@ struct IocpBackend
         if (rc == SOCKET_ERROR && WSAGetLastError() != WSA_IO_PENDING)
         {
             release(op);
-            // A synchronous failure still needs a completion so the callback
-            // fires; post an error completion carrying -errno via a sentinel.
             return false;
         }
         return true;
@@ -222,6 +250,7 @@ struct IocpBackend
     /// A socket send of the pinned buffer's valid bytes (`WSASend`).
     bool trySubmit(in OpSend o, OpToken token, ref OpSlot slot) @trusted nothrow
     {
+        ensureRegistered(cast(SOCKET) o.fd);
         auto op = acquire();
         if (op is null)
             return false;
@@ -330,6 +359,8 @@ private:
     import core.memory : pureFree, pureMalloc;
 
     HANDLE _port;
+    SOCKET[64] _regged; // lazily-associated sockets (verification-grade set)
+    uint _regCount;
     IocpOp[] _ops;
     uint _cap;
     uint _freeHead = uint.max;
