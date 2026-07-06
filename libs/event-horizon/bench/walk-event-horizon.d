@@ -2,6 +2,7 @@
 /+ dub.sdl:
     name "walk_event_horizon"
     dependency "sparkles:event-horizon" path="../../.."
+    dependency "eh-bench-perf" path="perf"
     platforms "linux"
     targetPath "build"
     buildType "release"
@@ -27,7 +28,15 @@
  *     <N> file(s)
  *     <M> directories(s)
  *
- * Usage: `walk-event-horizon <root>`
+ * Usage: `walk-event-horizon <root> [--perf] [--workers=N]`
+ *
+ * `--perf` opens a `perf_event_open` counter group with `inherit=1` (so the
+ * pool's worker threads are counted too) around the whole walk and prints the
+ * totals — instructions, cycles, IPC, and PAGE FAULTS — to stderr, keeping
+ * stdout on the walker output contract. Comparing page faults across
+ * `--workers` counts is the direct evidence for the per-worker-setup-weight
+ * finding (`benchmarks.md` §2): each worker builds its own io_uring ring +
+ * fiber stacks, so faults scale with the worker count.
  */
 module walk_event_horizon;
 
@@ -48,16 +57,31 @@ shared long g_dirs;
 version (unittest) {} else
 int main(string[] argv)
 {
-    if (argv.length < 2)
+    import std.algorithm : startsWith;
+    import std.conv : to;
+
+    string root;
+    bool perf;
+    uint workers;
+    foreach (arg; argv[1 .. $])
     {
-        stderr.writefln("usage: %s <root>", argv[0]);
+        if (arg == "--perf")
+            perf = true;
+        else if (arg.startsWith("--workers="))
+            workers = arg["--workers=".length .. $].to!uint;
+        else
+            root = arg;
+    }
+    if (root.length == 0)
+    {
+        stderr.writefln("usage: %s <root> [--perf] [--workers=N]", argv[0]);
         return 2;
     }
-    const root = argv[1];
 
     WorkStealingPool pool;
     LoopGroupConfig cfg;
     cfg.topology = Topology.workStealing;
+    cfg.workers = workers; // 0 = one per online CPU
     if (WorkStealingPool.start(pool, cfg).hasError)
     {
         stderr.writefln("SKIP: io_uring unavailable");
@@ -65,13 +89,42 @@ int main(string[] argv)
     }
     scope (exit) pool.shutdown();
 
-    pool.run((ref WorkStealingPool p) {
-        submitDir(p, root);
-    });
+    void walk()
+    {
+        pool.run((ref WorkStealingPool p) { submitDir(p, root); });
+    }
+
+    if (perf)
+        walkUnderPerf(&walk, pool.workerCount);
+    else
+        walk();
 
     writefln("%d file(s)", atomicLoad(g_files));
     writefln("%d directories(s)", atomicLoad(g_dirs));
     return 0;
+}
+
+/// Runs `walk` once under a whole-process counter group (`inherit=1` folds in
+/// the worker threads) and prints the totals to stderr.
+version (unittest) {} else
+void walkUnderPerf(scope void delegate() walk, uint workers)
+{
+    import perf : PerfGroup;
+
+    auto pg = PerfGroup.tryOpen(true, /*inherit=*/true);
+    if (!pg.available)
+    {
+        stderr.writefln("perf: %s", pg.status);
+        walk();
+        return;
+    }
+    scope (exit) pg.close();
+
+    const s = pg.count(walk, () {}, 1); // one iteration: the whole walk
+    stderr.writefln("perf (%s, %u workers, inherit): "
+        ~ "%.0f instrs, %.0f cycles, IPC %.2f, %.0f page faults",
+        pg.status, workers, s.instructions, s.cycles,
+        s.cycles > 0 ? s.instructions / s.cycles : 0.0, s.pageFaults);
 }
 
 /// Submits one directory-walk task; captures `path` by value.

@@ -2,6 +2,7 @@
 /+ dub.sdl:
     name "event_horizon_loop_bench"
     dependency "sparkles:event-horizon" path="../../.."
+    dependency "eh-bench-perf" path="perf"
     platforms "linux"
     targetPath "build"
     buildType "release"
@@ -186,7 +187,105 @@ int main()
         writefln("read fixed     : %10.0f reads/s (%.2fx — REGISTER_BUFFERS + READ_FIXED)",
             fixedReads, fixedReads / plainReads);
     }
+
+    perfPasses(cfg);
     return 0;
+}
+
+/// A dedicated hardware-counter pass per tier — the "why" behind the ns/op
+/// numbers (instructions/op, IPC, branch/LLC-miss rates, page faults/op).
+void perfPasses(LoopConfig cfg)
+{
+    import perf : PerfGroup, PerfRow, perOp, printPerfTable;
+
+    auto pg = PerfGroup.tryOpen(true);
+    if (!pg.available)
+    {
+        import std.stdio : writefln;
+
+        writefln("\nhardware counters: %s", pg.status);
+        return;
+    }
+    scope (exit) pg.close();
+
+    // Each timed body runs `inner` ops so the ~2-ioctl measurement floor
+    // amortizes; the reported counters are then true per-op (perOp divides).
+    PerfRow[] rows;
+    enum inner = 256;
+    enum outer = 2000;
+
+    // Tier A: NOP ping-pong — one submit + one runOnce (one io_uring_enter).
+    {
+        DefaultLoop l;
+        if (!DefaultLoop.create(l, cfg).hasError)
+        {
+            ulong c;
+            rows ~= PerfRow("nop-pingpong", pg.count(() {
+                foreach (_; 0 .. inner)
+                {
+                    cast(void) l.submit(OpNop(), &onNop, &c);
+                    cast(void) l.runOnce();
+                }
+            }, () {}, outer).perOp(inner));
+            l.destroy();
+        }
+    }
+
+    // Tier B: fiber await NOP — submit + park + CQE + enqueue + resume.
+    {
+        Sched s;
+        if (!Sched.create(s).hasError)
+        {
+            cast(void) s.run(() {
+                import sparkles.event_horizon.io : nop;
+
+                rows ~= PerfRow("fiber-await", pg.count(() {
+                    foreach (_; 0 .. inner)
+                        cast(void) nop(s);
+                }, () {}, outer).perOp(inner));
+            });
+            s.destroy();
+        }
+    }
+
+    // Tier C: the Effect veneer — a pure map/map chain (no I/O), against the
+    // same chain written directly, to isolate the Outcome-boxing cost.
+    {
+        Sched s;
+        if (!Sched.create(s).hasError)
+        {
+            cast(void) s.run(() {
+                import sparkles.event_horizon.effect : map, run, succeed;
+                import sparkles.event_horizon.scope_ : withScope;
+
+                cast(void) withScope!((ref sc) {
+                    static struct EmptyCtx {}
+                    EmptyCtx ctx;
+                    rows ~= PerfRow("effect-direct", pg.count(() {
+                        foreach (_; 0 .. inner)
+                        {
+                            int v = 2;
+                            v = v * 10;
+                            v = v + 1;
+                            assert(v == 21);
+                        }
+                    }, () {}, outer).perOp(inner));
+                    rows ~= PerfRow("effect-veneer", pg.count(() {
+                        foreach (_; 0 .. inner)
+                        {
+                            auto o = run(succeed(2).map!(x => x * 10)
+                                .map!(x => x + 1), sc, ctx);
+                            assert(o.value == 21);
+                        }
+                    }, () {}, outer).perOp(inner));
+                })(s);
+            });
+            s.destroy();
+        }
+    }
+
+    const status = pg.status;
+    printPerfTable(rows, status);
 }
 
 /// A small anonymous temp file with a page of content; `-1` on failure.
