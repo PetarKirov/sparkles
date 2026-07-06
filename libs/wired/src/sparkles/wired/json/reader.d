@@ -454,16 +454,36 @@ private void parseInto(JsonReadOptions opts, Allocator)(
             fracStart = k;
             if (intExtra == 0)
             {
-                const budget = 19 - taken;
-                while (fracTaken < budget)
+                // Two digits per iteration, mirroring the integer loop;
+                // the budget bound is hoisted so the loop carries a
+                // single moving index.
+                const fs = k;
+                const budgetEnd = k + (19 - taken);
+                while (k + 2 <= budgetEnd)
+                {
+                    const uint d0 = cast(uint)(p[k] - '0');
+                    if (d0 > 9)
+                        break;
+                    const uint d1 = cast(uint)(p[k + 1] - '0');
+                    if (d1 > 9)
+                    {
+                        sig = sig * 10 + d0;
+                        k++;
+                        break;
+                    }
+                    sig = sig * 100 + d0 * 10 + d1;
+                    k += 2;
+                }
+                if (k < budgetEnd)
                 {
                     const uint d = cast(uint)(p[k] - '0');
-                    if (d > 9)
-                        break;
-                    sig = sig * 10 + d;
-                    fracTaken++;
-                    k++;
+                    if (d <= 9)
+                    {
+                        sig = sig * 10 + d;
+                        k++;
+                    }
                 }
+                fracTaken = k - fs;
                 taken += fracTaken;
             }
             while (p[k] >= '0' && p[k] <= '9')
