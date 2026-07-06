@@ -95,33 +95,52 @@ _explained_, not just stated. Hot cache, `hyperfine -N -r 20`:
 
 | shape (breadth×depth, dirs / files) | rust-rayon | d-taskpool | **event-horizon 16w** | eh vs rayon |
 | ----------------------------------- | ---------- | ---------- | --------------------- | ----------- |
-| wide `100×2` (10 k / 101 k)         | 15.5 ms    | 21.8 ms    | 17.6 ms               | 0.88× ↓     |
-| deep `3×9` (30 k / 89 k)            | 71.8 ms    | 124.6 ms   | **51.8 ms**           | **1.39×**   |
-| balanced `6×5` (9 k / 93 k)         | 34.3 ms    | 38.5 ms    | **14.7 ms**           | **2.34×**   |
-| dense `10×3` (1 k / 222 k)          | 20.8 ms    | 19.3 ms    | **5.5 ms**            | **3.79×**   |
+| wide `100×2` (10 k / 101 k)         | 19.8 ms    | 18.8 ms    | **16.2 ms**           | **1.22×**   |
+| deep `3×9` (30 k / 89 k)            | 71.2 ms    | 120.0 ms   | **51.6 ms**           | **1.38×**   |
+| balanced `6×5` (9 k / 93 k)         | 29.5 ms    | 39.8 ms    | **14.3 ms**           | **2.07×**   |
+| dense `10×3` (1 k / 222 k)          | 21.7 ms    | 24.0 ms    | **5.1 ms**            | **4.26×**   |
 
-event-horizon wins on three of four shapes — decisively when directories hold
-real work (dense 3.8×, balanced 2.3×) — and beats the D `taskPool` baseline
+event-horizon wins on **all four shapes** — from 1.22× on the awkward wide-shallow
+case to 4.3× when directories hold real work — and beats the D `taskPool` baseline
 everywhere. The **syscall counts say why**: on the deep tree all three issue the
 _identical_ file syscalls (59 048 `getdents64`, ~29 560 `openat`), so the walk
 itself is the same; what differs is coordination —
 
 | walker (deep tree)    | getdents64 | openat | futex  | sched_yield | → time      |
 | --------------------- | ---------- | ------ | ------ | ----------- | ----------- |
-| rust-rayon            | 59 048     | 29 560 | 313    | 2 635       | 71.8 ms     |
-| d-taskpool            | 59 049     | 29 571 | 13 560 | 24 420      | 124.6 ms    |
-| **event-horizon 16w** | 59 048     | 29 570 | **83** | **823**     | **51.8 ms** |
+| rust-rayon            | 59 048     | 29 560 | 349    | 3 097       | 71.2 ms     |
+| d-taskpool            | 59 048     | 29 571 | 10 632 | 24 058      | 120.0 ms    |
+| **event-horizon 16w** | 59 048     | 29 571 | **55** | **573**     | **51.6 ms** |
 
 event-horizon's cpuBound pool makes **two orders of magnitude fewer futex calls**
-than the D `taskPool` and a third of rayon's yields — the per-worker deque +
-inline execution keeps threads off the kernel. The one loss is coherent, not
-noise: on the **wide** tree each directory holds 100 entries, and rayon
-parallelizes those entries _within_ a directory (`into_par_iter`), while
-event-horizon processes them serially inside one per-directory task — so very
-wide directories favor rayon's intra-directory split, while narrow/deep or
-work-dense trees favor event-horizon's lower-overhead per-directory tasking. The
-real-tree 1.16× above sits where real source trees do: mostly moderate
-directories, so the gap narrows toward the I/O-bound floor.
+than the D `taskPool` and a fraction of rayon's yields — the lock-free deque +
+inline execution keeps threads off the kernel entirely.
+
+**Winning the wide case took work** (it started as a 0.88× _loss_). Wide-shallow
+trees are the hardest for a work-stealing pool: shallow means little depth to
+overlap, and a burst of same-level tasks must spread across cores _fast_ or the
+owning worker drains them alone. Four changes closed it, each measured:
+
+1. **Lock-free Chase-Lev deques** replaced the per-deque mutex — an idle worker's
+   steal-scan no longer locks every peer, so instruction count stops ballooning
+   with worker count (it was 415 M → 945 M across 8→32 workers; the 8→16 balloon
+   is now flat).
+2. **Randomized victim selection** — thieves start their scan at a random peer
+   instead of all piling onto the lowest-numbered loaded deque.
+3. **Batch (steal-half) stealing** — a thief takes _half_ the victim's queue in
+   one CAS, so a burst spreads in O(log n) steals instead of O(n).
+4. **`PAUSE`-based idle spin** instead of `sched_yield` — on this 16-core /
+   32-thread part, an idle worker's spin must yield core resources to its busy
+   SMT sibling, which is exactly what `PAUSE` does and `sched_yield` does not.
+
+Single-threaded, event-horizon's walker is already **1.08× faster than rayon**
+(300 ms vs 323 ms on a 22 k-dir tree) — the walker itself is efficient; the whole
+contest is parallel scaling, and the four changes above are what let the pool
+scale. Honest edge of the envelope: on a _2×-larger_ wide tree (22 k dirs, 453 k
+files) rayon's mature splitter still edges ahead (~1.4×) — at that scale its
+eager divide-and-conquer distributes a wide fan-out better than pull-based
+stealing. The real-tree 1.16× above sits where real source trees do: mostly
+moderate directories.
 
 #### Hot vs cold cache — and why "cold" is a measurement minefield
 
