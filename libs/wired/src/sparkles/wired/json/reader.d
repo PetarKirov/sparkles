@@ -23,7 +23,8 @@ import sparkles.base.text.float_conv : bitsToDouble, doubleToBits, readDigits,
     slowDouble, tryFastDouble;
 import sparkles.base.text.utf8 : indexOfInvalidUtf8;
 import sparkles.wired.json.document : JsonCell, JsonDocument, JsonKind;
-import sparkles.wired.json.scan : loadWord, scanStringBody, skipWs, StringScan;
+import sparkles.wired.json.scan : allDigits8, eightDigits, loadWord,
+    scanStringBody, skipWs, StringScan;
 
 /// Compile-time reader configuration (SPEC §11.3). Each combination
 /// specializes the reader; dead option branches vanish.
@@ -405,7 +406,18 @@ private void parseInto(JsonReadOptions opts, Allocator)(
         }
         else
         {
-            // Accumulate up to 19 digits, unrolled two at a time.
+            // Accumulate up to 19 digits: eight per SWAR gulp while the
+            // budget allows (long ids; the pool padding keeps the loads
+            // in bounds), then unrolled two at a time.
+            while (taken + 8 <= 18)
+            {
+                const w = loadWord(p + k);
+                if (!allDigits8(w))
+                    break;
+                sig = sig * 100_000_000 + eightDigits(w);
+                taken += 8;
+                k += 8;
+            }
             while (taken < 18)
             {
                 const uint d0 = cast(uint)(p[k] - '0');
@@ -462,6 +474,17 @@ private void parseInto(JsonReadOptions opts, Allocator)(
                 // single moving index.
                 const fs = k;
                 const budgetEnd = k + (19 - taken);
+                // Eight fraction digits per SWAR gulp first — the
+                // dominant shape in geo data (canada: 2-3 integer digits
+                // then 15-17 fraction digits).
+                while (k + 8 <= budgetEnd)
+                {
+                    const w = loadWord(p + k);
+                    if (!allDigits8(w))
+                        break;
+                    sig = sig * 100_000_000 + eightDigits(w);
+                    k += 8;
+                }
                 while (k + 2 <= budgetEnd)
                 {
                     const uint d0 = cast(uint)(p[k] - '0');

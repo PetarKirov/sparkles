@@ -54,6 +54,55 @@ struct StringScan
     bool sawHigh;
 }
 
+/// True when all eight bytes of `w` are ASCII digits (`'0'..'9'`) — the
+/// gate for $(LREF eightDigits). Two masked compares: every high nibble
+/// must be 3, and adding 6 to a low nibble may not carry out of it.
+bool allDigits8(ulong w)
+{
+    pragma(inline, true);
+    enum ulong hi = 0xF0F0_F0F0_F0F0_F0F0;
+    return ((w & hi) | (((w + 0x0606_0606_0606_0606) & hi) >> 4))
+        == 0x3333_3333_3333_3333;
+}
+
+/// Converts eight ASCII digits packed little-endian in `w` (first digit
+/// in the lowest byte) to their numeric value in three multiplies
+/// (Lemire's SWAR reduction) — callers must have gated on
+/// $(LREF allDigits8). Replaces eight steps of a serial
+/// `sig = sig * 10 + d` chain in the reader's number kernel.
+uint eightDigits(ulong w)
+{
+    pragma(inline, true);
+    w -= 0x3030_3030_3030_3030;
+    w = w * 10 + (w >> 8); // bytes 0,2,4,6 become adjacent-digit pairs
+    const lo = (w & 0x0000_00FF_0000_00FF) * 0x000F_4240_0000_0064;
+    const hi = ((w >> 16) & 0x0000_00FF_0000_00FF) * 0x0000_2710_0000_0001;
+    return cast(uint)((lo + hi) >> 32);
+}
+
+@("scan.eightDigits.swarConversion")
+@safe pure nothrow @nogc
+unittest
+{
+    static ulong word(in char[8] s)
+    {
+        ulong w = 0;
+        foreach_reverse (c; s)
+            w = w << 8 | c;
+        return w;
+    }
+
+    assert(allDigits8(word("12345678")) && eightDigits(word("12345678")) == 12_345_678);
+    assert(allDigits8(word("00000000")) && eightDigits(word("00000000")) == 0);
+    assert(allDigits8(word("99999999")) && eightDigits(word("99999999")) == 99_999_999);
+    assert(allDigits8(word("09182736")) && eightDigits(word("09182736")) == 9_182_736);
+    assert(!allDigits8(word("1234567e")));
+    assert(!allDigits8(word("12345.78")));
+    assert(!allDigits8(word("1234567\0")));
+    assert(!allDigits8(word("/2345678"))); // '/': just below '0'
+    assert(!allDigits8(word(":2345678"))); // ':': just above '9'
+}
+
 /// Scans a string body from `i` (just after the opening quote) to the
 /// first quote, backslash, or control byte (< 0x20) in the reader's
 /// padded pool. SWAR: eight bytes per iteration via the classic
