@@ -1036,6 +1036,64 @@ package char* writeU64Len1to16(ulong val, char* buf) @system pure nothrow @nogc
     return writeU32Len8(low, buf);
 }
 
+private char* writeU32Len4(uint val, char* buf) @system pure nothrow @nogc
+{
+    const aa = (val * 5243) >> 19; // val / 100
+    putPair(buf + 0, aa);
+    putPair(buf + 2, val - aa * 100);
+    return buf + 4;
+}
+
+private char* writeU32Len5to8(uint val, char* buf) @system pure nothrow @nogc
+{
+    if (val < 1_000_000)
+    {
+        const aa = cast(uint)((cast(ulong) val * 429_497) >> 32); // val / 1e4
+        const bbcc = val - aa * 10_000;
+        const bb = (bbcc * 5243) >> 19;
+        const lz = aa < 10;
+        buf[0 .. 2] = digitPairs[aa * 2 + lz .. aa * 2 + lz + 2];
+        buf -= lz;
+        putPair(buf + 2, bb);
+        putPair(buf + 4, bbcc - bb * 100);
+        return buf + 6;
+    }
+    const aabb = cast(uint)((cast(ulong) val * 109_951_163) >> 40);
+    const ccdd = val - aabb * 10_000;
+    const aa = (aabb * 5243) >> 19;
+    const cc = (ccdd * 5243) >> 19;
+    const lz = aa < 10;
+    buf[0 .. 2] = digitPairs[aa * 2 + lz .. aa * 2 + lz + 2];
+    buf -= lz;
+    putPair(buf + 2, aabb - aa * 100);
+    putPair(buf + 4, cc);
+    putPair(buf + 6, ccdd - cc * 100);
+    return buf + 8;
+}
+
+/// Any `ulong`, 1..20 digits — the branchlut integer writer (yyjson's
+/// `write_u64`): two digits per lookup, division only at 8-digit strides.
+package char* writeU64Digits(ulong val, char* buf) @system pure nothrow @nogc
+{
+    if (val < 100_000_000) // 1-8 digits
+        return writeU32Len1to8(cast(uint) val, buf);
+    if (val < 100_000_000UL * 100_000_000) // 9-16 digits
+    {
+        const hgh = val / 100_000_000;
+        const low = cast(uint)(val - hgh * 100_000_000);
+        buf = writeU32Len1to8(cast(uint) hgh, buf);
+        return writeU32Len8(low, buf);
+    }
+    // 17-20 digits
+    const tmp = val / 100_000_000;
+    const low = cast(uint)(val - tmp * 100_000_000);
+    const hgh = cast(uint)(tmp / 10_000);
+    const mid = cast(uint)(tmp - cast(ulong) hgh * 10_000);
+    buf = writeU32Len5to8(hgh, buf);
+    buf = writeU32Len4(mid, buf);
+    return writeU32Len8(low, buf);
+}
+
 private char* writeU64Len1to17(ulong val, char* buf) @system pure nothrow @nogc
 {
     if (val >= 100_000_000UL * 10_000_000) // 16-17 digits
