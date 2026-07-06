@@ -22,13 +22,14 @@
  */
 module event_horizon_loop_bench;
 
+import core.lifetime : move;
 import core.time : Duration, MonoTime, msecs;
 
 import std.stdio : writefln;
 
 import sparkles.event_horizon.backend.concept : BackendConfig;
 import sparkles.event_horizon.loop : DefaultLoop, LoopConfig, RunStatus;
-import sparkles.event_horizon.op : Completion, OpNop;
+import sparkles.event_horizon.op : Completion, OpNop, OpRead;
 import sparkles.event_horizon.sched : Sched;
 
 enum batch = 128;
@@ -107,6 +108,24 @@ int main()
         sched.destroy();
     }
 
+    // ── Tier 3: registered vs plain buffer read throughput ──────────────
+    // A back-to-back file read loop with plain pool buffers vs registered
+    // buffers (READ_FIXED skips per-op get_user_pages). Honest caveat: for a
+    // single small cached read the pin cost is noise, so this tracks ~1.0x —
+    // the registration win is real only under many-buffer / high-concurrency
+    // load (measured by the M14 cross-runtime echo bench). Kept here as a
+    // regression tracker that the fixed path stays at least as fast.
+    double plainReads = 0, fixedReads = 0;
+    {
+        auto tmp = makeTempFile();
+        if (tmp >= 0)
+        {
+            plainReads = readThroughput(tmp, false);
+            fixedReads = readThroughput(tmp, true);
+            (() @trusted { import core.sys.posix.unistd : close; close(tmp); })();
+        }
+    }
+
     writefln("batched   (x%d): %10.0f ops/s", batch,
         opsPerSecond(batchedOps, batchedElapsed));
     writefln("ping-pong (x1) : %10.0f ops/s (%.0f ns/op)",
@@ -116,5 +135,71 @@ int main()
         writefln("fiber     (x1) : %10.0f ops/s (%.0f ns/op — await/park/resume over ping-pong)",
             opsPerSecond(fiberOps, fiberElapsed),
             fiberElapsed.total!"nsecs" / cast(double) fiberOps);
+    if (plainReads > 0)
+    {
+        writefln("read plain     : %10.0f reads/s", plainReads);
+        writefln("read fixed     : %10.0f reads/s (%.2fx — REGISTER_BUFFERS + READ_FIXED)",
+            fixedReads, fixedReads / plainReads);
+    }
     return 0;
+}
+
+/// A small anonymous temp file with a page of content; `-1` on failure.
+int makeTempFile() @trusted
+{
+    import core.stdc.stdio : tmpfile, fileno;
+    import core.sys.posix.unistd : write;
+
+    auto fp = tmpfile();
+    if (fp is null)
+        return -1;
+    const fd = fileno(fp);
+    ubyte[4096] page = 0;
+    cast(void) write(fd, page.ptr, page.length);
+    return fd;
+}
+
+/// Back-to-back 4 KiB reads at offset 0 for `minRunTime`; reads/second.
+double readThroughput(int fd, bool registered) @trusted
+{
+    import sparkles.event_horizon.buffer : BufferPool;
+
+    DefaultLoop loop;
+    if (DefaultLoop.create(loop).hasError)
+        return 0;
+    scope (exit) loop.destroy();
+
+    BufferPool!() pool;
+    if (BufferPool!().create(pool, 1, 4096).hasError)
+        return 0;
+    if (registered)
+    {
+        if (!loop.caps().registeredBuffers)
+            return 0;
+        if (pool.register(loop).hasError)
+            return 0;
+    }
+    scope (exit) if (registered) cast(void) loop.unregisterBuffers();
+
+    static ulong done;
+    static void onRead(void* ctx, ref Completion c) nothrow @nogc
+    {
+        ++*cast(ulong*) ctx;
+    }
+
+    done = 0;
+    ulong count;
+    const start = MonoTime.currTime;
+    while (MonoTime.currTime - start < minRunTime)
+    {
+        auto b = pool.acquire();
+        if (b.hasError)
+            break;
+        auto h = loop.submit(OpRead(fd, move(b.value), 0), &onRead, &done);
+        if (h.hasError)
+            break;
+        cast(void) loop.runOnce();
+        ++count;
+    }
+    return count / ((MonoTime.currTime - start).total!"nsecs" / 1e9);
 }
