@@ -325,3 +325,24 @@ never touches the GC at all.
 
 **Leaning:** (A) now; (B)/(C) when a long-lived pool with steady allocation
 is a real workload.
+
+## O23 — Pool per-worker setup weight vs short batch workloads
+
+**Where:** SPEC §11 (`WorkStealingPool`), `benchmarks.md` §2.
+
+Each worker creates its own `io_uring` ring + thread + scheduler. That cost is
+designed to amortize over a long-lived server, but for a short CPU-bound batch
+(the polyglot-walks walker: ~50 ms) fanned out to all cores it dominates —
+measured optimum is 2–4 workers, and the all-CPUs default is the _worst_ point
+on the scaling curve. Falsified en route: fiber-per-task overhead
+(`submitBlocking` inline — no change), queue-mutex contention (per-worker
+deques — no change), idle-scan thrash (exponential backoff — marginal).
+
+**Options:** (A) document it (done) and let callers pick a worker count that
+fits the workload; (B) lazily create rings (only when a worker first parks on
+I/O) so a CPU-only batch pays no ring tax; (C) a separate ring-less CPU pool
+(effectively `std.parallelism.taskPool`) for `submitBlocking`-only workloads;
+(D) a global-quiescence scheme that isn't a single hot atomic.
+
+**Leaning:** (A) for v1 — the pool is an async-I/O executor by design; (B) is
+the cleanest real fix if CPU batches become a first-class use.
