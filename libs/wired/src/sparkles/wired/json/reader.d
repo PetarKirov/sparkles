@@ -786,6 +786,273 @@ private void memcpyWord(char* d, const(char)* q) @system pure nothrow @nogc
     memcpy(d, &x, 8);
 }
 
+/**
+Validates that `text` is a single well-formed RFC 8259 JSON document —
+the same strict grammar as $(LREF parseJsonDocument), materializing
+nothing: no input copy, no arena, no unescaping (SPEC §11.5). Roughly
+the parse loop minus every store, over the original (unpadded) input.
+*/
+ParseError validateJson(scope const(char)[] text) @safe pure nothrow @nogc
+{
+    // Non-failure sentinel: code emptyInput + offset max (never produced
+    // for real errors, which use offset < length or == length).
+    enum size_t none = size_t.max;
+
+    const n = text.length;
+    if (n == 0)
+        return ParseError(ParseErrorCode.emptyInput, 0);
+
+    size_t i = 0;
+    uint depth = 0;
+    // Container kinds as a bit stack: 1 = object, 0 = array (bounded
+    // only by input size — one ulong word per 64 levels).
+    ulong[16] kindStack; // 1024 levels — matches the reader's default cap
+    bool parentIsObject = false;
+
+    void skipWsG() @safe pure nothrow @nogc
+    {
+        while (i < n && (text[i] == ' ' || text[i] == '\t'
+                || text[i] == '\n' || text[i] == '\r'))
+            i++;
+    }
+
+    // Validates the string whose opening quote sits at `i`; advances past
+    // the closing quote. Returns the error offset or `none`.
+    size_t checkString() @safe pure nothrow @nogc
+    {
+        const openQuote = i;
+        i++;
+        while (true)
+        {
+            if (i >= n)
+                return openQuote; // unterminated
+            const c = text[i];
+            if (c == '"')
+            {
+                i++;
+                return none;
+            }
+            if (c < 0x20)
+                return i;
+            if (c >= 0x80)
+            {
+                import sparkles.base.text.utf8 : utf8SequenceLength;
+
+                const len = utf8SequenceLength(text, i);
+                if (len == 0)
+                    return i;
+                i += len;
+                continue;
+            }
+            if (c != '\\')
+            {
+                i++;
+                continue;
+            }
+            // Escape.
+            i++;
+            if (i >= n)
+                return openQuote;
+            const e = text[i];
+            i++;
+            switch (e)
+            {
+            case '"', '\\', '/', 'b', 'f', 'n', 'r', 't':
+                break;
+            case 'u':
+                uint cp;
+                if (!readHex4(text, n, i, cp))
+                    return i - 2;
+                if (cp >= 0xD800 && cp <= 0xDBFF)
+                {
+                    if (i + 1 < n && text[i] == '\\' && text[i + 1] == 'u')
+                    {
+                        i += 2;
+                        uint low;
+                        if (!readHex4(text, n, i, low))
+                            return i - 2;
+                        if (low < 0xDC00 || low > 0xDFFF)
+                            return i - 6;
+                    }
+                    else
+                        return i - 6;
+                }
+                else if (cp >= 0xDC00 && cp <= 0xDFFF)
+                    return i - 6;
+                break;
+            default:
+                return i - 2;
+            }
+        }
+    }
+
+    // Validates the number starting at `i` (guarded — no padding here).
+    size_t checkNumber() @safe pure nothrow @nogc
+    {
+        const tokenStart = i;
+        if (text[i] == '-')
+            i++;
+        if (i >= n)
+            return tokenStart;
+        if (text[i] == '0')
+        {
+            i++;
+            if (i < n && text[i] >= '0' && text[i] <= '9')
+                return tokenStart; // leading zero
+        }
+        else
+        {
+            if (text[i] < '1' || text[i] > '9')
+                return i;
+            while (i < n && text[i] >= '0' && text[i] <= '9')
+                i++;
+        }
+        if (i < n && text[i] == '.')
+        {
+            i++;
+            if (i >= n || text[i] < '0' || text[i] > '9')
+                return i;
+            while (i < n && text[i] >= '0' && text[i] <= '9')
+                i++;
+        }
+        if (i < n && (text[i] == 'e' || text[i] == 'E'))
+        {
+            i++;
+            if (i < n && (text[i] == '+' || text[i] == '-'))
+                i++;
+            if (i >= n || text[i] < '0' || text[i] > '9')
+                return i;
+            while (i < n && text[i] >= '0' && text[i] <= '9')
+                i++;
+        }
+        return none;
+    }
+
+    size_t checkLiteral(string lit)() @safe pure nothrow @nogc
+    {
+        if (n - i < lit.length || text[i .. i + lit.length] != lit)
+            return i;
+        i += lit.length;
+        return none;
+    }
+
+    skipWsG();
+
+value:
+    if (i >= n)
+        return ParseError(ParseErrorCode.unexpectedEnd, i);
+    {
+        const c0 = text[i];
+        if (c0 == '"')
+        {
+            const bad = checkString();
+            if (bad != none)
+                return ParseError(ParseErrorCode.unexpectedCharacter, bad,
+                    "invalid string");
+            goto afterValue;
+        }
+        if (c0 == '{' || c0 == '[')
+        {
+            if (depth >= 1024)
+                return ParseError(ParseErrorCode.depthExceeded, i);
+            const bit = 1UL << (depth & 63);
+            if (c0 == '{')
+                kindStack[depth >> 6] |= bit;
+            else
+                kindStack[depth >> 6] &= ~bit;
+            parentIsObject = c0 == '{';
+            depth++;
+            i++;
+            skipWsG();
+            if (i < n && text[i] == (parentIsObject ? '}' : ']'))
+            {
+                i++;
+                goto closeContainer;
+            }
+            if (parentIsObject)
+                goto objectKey;
+            goto value;
+        }
+        size_t bad;
+        if (c0 == 't')
+            bad = checkLiteral!"true"();
+        else if (c0 == 'f')
+            bad = checkLiteral!"false"();
+        else if (c0 == 'n')
+            bad = checkLiteral!"null"();
+        else
+            bad = checkNumber();
+        if (bad != none)
+            return ParseError(ParseErrorCode.unexpectedCharacter, bad);
+        goto afterValue;
+    }
+
+objectKey:
+    if (i >= n || text[i] != '"')
+        return ParseError(i >= n ? ParseErrorCode.unexpectedEnd
+                : ParseErrorCode.unexpectedCharacter, i,
+            "object key must be a string");
+    {
+        const bad = checkString();
+        if (bad != none)
+            return ParseError(ParseErrorCode.unexpectedCharacter, bad,
+                "invalid string");
+    }
+    skipWsG();
+    if (i >= n || text[i] != ':')
+        return ParseError(i >= n ? ParseErrorCode.unexpectedEnd
+                : ParseErrorCode.unexpectedCharacter, i,
+            "':' expected after object key");
+    i++;
+    skipWsG();
+    goto value;
+
+afterValue:
+    if (depth == 0)
+        goto endCheck;
+    skipWsG();
+    if (i >= n)
+        return ParseError(ParseErrorCode.unexpectedEnd, i);
+    {
+        const c = text[i];
+        if (c == ',')
+        {
+            i++;
+            skipWsG();
+            if (parentIsObject)
+                goto objectKey;
+            goto value;
+        }
+        if (c == (parentIsObject ? '}' : ']'))
+        {
+            i++;
+            goto closeContainer;
+        }
+        return ParseError(ParseErrorCode.unexpectedCharacter, i,
+            "',' or container close expected");
+    }
+
+closeContainer:
+    depth--;
+    parentIsObject = depth > 0
+        && (kindStack[(depth - 1) >> 6] & (1UL << ((depth - 1) & 63))) != 0;
+    goto afterValue;
+
+endCheck:
+    skipWsG();
+    if (i != n)
+        return ParseError(ParseErrorCode.trailingContent, i);
+    return ParseError(ParseErrorCode.emptyInput, none); // the ok sentinel
+}
+
+/// Whether a $(LREF validateJson) result means "well-formed".
+bool isValidJson(const ParseError e) @safe pure nothrow @nogc
+    => e.code == ParseErrorCode.emptyInput && e.offset == size_t.max;
+
+/// Convenience: one-call well-formedness check.
+bool isValidJson(scope const(char)[] text) @safe pure nothrow @nogc
+    => isValidJson(validateJson(text));
+
 /// Reads exactly 4 hex digits at `src`, advancing it.
 private bool readHex4(scope const(char)[] pool, size_t n, ref size_t src,
     out uint value) @safe pure nothrow @nogc
@@ -1175,4 +1442,43 @@ unittest
     auto r = parseJsonDocument(`{"region": [1, 2, 3]}`, RegionRef(&region));
     assert(r.hasValue);
     assert(r.document.root.objectGet("region").length == 3);
+}
+
+@("reader.validateJson.grammar")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(isValidJson(`{"a": [1, true, "x\n", 2.5e-3, null], "b": {}}`));
+    assert(isValidJson(` 42 `));
+    assert(isValidJson(`"😀 ユニコード"`));
+    assert(isValidJson(`[[[[[]]]]]`));
+
+    assert(!isValidJson(``));
+    assert(!isValidJson(`{`));
+    assert(!isValidJson(`[1,]`));
+    assert(!isValidJson(`{"a":}`));
+    assert(!isValidJson(`01`));
+    assert(!isValidJson(`1.`));
+    assert(!isValidJson(`"\uD800"`));
+    assert(!isValidJson("\"\xFF\"")); // ill-formed UTF-8
+    assert(!isValidJson(`1 2`));
+    assert(!isValidJson(`tru`));
+
+    // Error positions surface like the parser's.
+    const e = validateJson(`{"a": 01}`);
+    assert(!isValidJson(e));
+    assert(e.offset == 6);
+}
+
+@("reader.validateJson.agreesWithParser")
+@safe pure nothrow @nogc
+unittest
+{
+    static immutable string[] cases = [
+        `{"k": [1, "two", 3.0, true, null]}`, `[]`, `{}`, `"s"`, `0`,
+        `-0.5e10`, `[{"a":{"b":[[]]}}]`, `{`, `}`, `[1 2]`, `nul`,
+        `"unterminated`, `1e`, `--1`, `[,]`, `18446744073709551615`,
+    ];
+    foreach (c; cases)
+        assert(isValidJson(c) == parseJsonDocument(c).hasValue);
 }
