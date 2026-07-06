@@ -1,5 +1,5 @@
 /**
-JSON backend for `sparkles:wired`.
+JSON codec for `sparkles:wired`.
 
 Defines the `Json` format marker and the `Expected`-based encode/decode surface
 (`toJSON` / `fromJSON`), driving enum, aggregate, and container handling through
@@ -7,11 +7,11 @@ the `sparkles.wired.policy` resolvers under the `Json` tag. Encoding and decodin
 never throw — a failure is captured as the `Exception` payload of the returned
 `Expected` (`docs/specs/wired/SPEC.md` §4, §9).
 
-This is the incremental backend: scalars, enums, arrays, and aggregates are wired
-up; the remaining supported types (`SumType`, null-aware wrappers, `SysTime`,
-`@WireConvert`, associative arrays) land alongside the type walk.
+This module holds the value ⇄ wire-representation walks and the file helpers;
+its siblings in `sparkles.wired.json` hold the native engine (document model,
+reader, writer — SPEC §11).
 */
-module sparkles.wired.json;
+module sparkles.wired.json.codec;
 
 import std.datetime.systime : SysTime;
 import std.json : JSONValue, JSONType, parseJSON;
