@@ -256,11 +256,13 @@ private double round3(double v) @safe pure nothrow @nogc
     p.cycles = 1234.5;
     p.cacheReferences = double.nan; // LLC pair dropped on this machine
 
-    const encoded = p.toJSON;
+    auto encoded = p.toJSON;
     assert(encoded.hasValue, "NaN must encode as JSON null, not fail");
-    assert(encoded.value["cacheReferences"].isNull);
+    import std.algorithm.searching : canFind;
 
-    const back = encoded.value.fromJSON!PerfStats;
+    assert(encoded.value[].canFind(`"cacheReferences":null`));
+
+    const back = fromJSON!PerfStats(encoded.value[]);
     assert(back.hasValue);
     assert(back.value.cycles == 1234.5);
     assert(back.value.cacheReferences.isNaN);

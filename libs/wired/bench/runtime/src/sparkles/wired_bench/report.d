@@ -211,11 +211,17 @@ string formatNs(long ns) @safe pure
 /// Writes the `--json` dump, dogfooding `sparkles.wired`.
 void dumpJson(in BenchReport report, string path)
 {
+    import std.array : appender;
     import std.exception : enforce;
     import sparkles.wired.json : writeJSONFile;
 
     auto result = writeJSONFile(report, path);
-    enforce(!result.hasError, result.hasError ? result.error.msg : "");
+    if (result.hasError)
+    {
+        auto msg = appender!string;
+        result.error.toString(msg);
+        enforce(false, msg[]);
+    }
 }
 
 @("report.formatNs.units")
