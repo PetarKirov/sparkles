@@ -84,13 +84,29 @@ WALKERS["event-horizon-16w"]="$EH __ARG__ --workers=16"
 WALKERS["event-horizon-32w"]="$EH __ARG__"
 ORDER=("rust-rayon" "d-taskpool" "event-horizon-16w" "event-horizon-32w")
 
-# ── cold-cache availability probe ────────────────────────────────────────────
-COLD_OK=0
-if eval "$DROP" >/dev/null 2>&1; then COLD_OK=1; fi
-if [ $COLD_OK -eq 1 ]; then
-  echo "cold cache: available (drop = $DROP)"
+# ── cold-cache availability + validity probe ─────────────────────────────────
+# Two traps `drop_caches` walks into, both detected from the fixture's fs:
+#   tmpfs — RAM-backed, drop_caches is a no-op → no cold is possible.
+#   zfs   — metadata lives in the ARC, which drop_caches does NOT evict; the
+#           column then reflects cold-START (drop_caches also repages the
+#           executables, penalizing the larger dynamically-linked binary), not
+#           a cold-from-disk directory walk. Honest label > misleading number.
+FSTYPE="$(findmnt -no FSTYPE --target "$WORK" 2>/dev/null || echo unknown)"
+COLD_OK=0; COLD_KIND="valid"
+case "$FSTYPE" in
+  tmpfs) COLD_KIND="tmpfs-noop" ;;
+  zfs)   COLD_KIND="zfs-arc" ;;
+esac
+if [ "$COLD_KIND" != "tmpfs-noop" ] && eval "$DROP" >/dev/null 2>&1; then COLD_OK=1; fi
+
+if [ "$COLD_KIND" = "tmpfs-noop" ]; then
+  echo "cold cache: N/A — fixture is on tmpfs ($WORK); drop_caches cannot evict RAM. Set \$EH_BENCH_WORK to a disk-backed path."
+elif [ $COLD_OK -eq 0 ]; then
+  echo "cold cache: UNAVAILABLE (drop failed — needs root; set \$EH_BENCH_DROP). Running hot only."
+elif [ "$COLD_KIND" = "zfs-arc" ]; then
+  echo "cold cache: PARTIAL — fixture fs is ZFS. drop_caches flushes the VFS cache but NOT the ZFS ARC (metadata stays warm) and repages the binaries, so 'cold' here means cold-START, not cold-disk. Interpret accordingly."
 else
-  echo "cold cache: UNAVAILABLE (drop command failed — needs root; set \$EH_BENCH_DROP). Running hot only."
+  echo "cold cache: available on $FSTYPE (drop = $DROP)"
 fi
 
 cmd_for() { # walker-name, root  -> full command line
@@ -168,3 +184,7 @@ done
 echo
 echo "note: syscall counts are from a strace -f -c pass (counts are timing-independent);"
 echo "      wall-clock is hyperfine -N ($REPS reps). event-horizon uses the cpuBound pool."
+if [ "$COLD_KIND" = "zfs-arc" ] && [ $COLD_OK -eq 1 ]; then
+  echo "      cold column = cold-START on ZFS (ARC keeps metadata warm; drop_caches"
+  echo "      also repages binaries — the larger dynamically-linked D binary pays more)."
+fi

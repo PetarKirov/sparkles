@@ -123,12 +123,38 @@ work-dense trees favor event-horizon's lower-overhead per-directory tasking. The
 real-tree 1.16× above sits where real source trees do: mostly moderate
 directories, so the gap narrows toward the I/O-bound floor.
 
-> **Cold cache.** The harness also takes a hot-vs-cold axis (`--prepare` drops
-> the page/dentry/inode cache before each run). Evicting directory metadata
-> needs `drop_caches`, which is **root-only** — set `EH_BENCH_DROP` (or run the
-> harness as root) to record the cold column, where a proactor's ability to keep
-> many metadata reads in flight could tell a different story. On an unprivileged
-> host the harness runs hot-only and says so.
+#### Hot vs cold cache — and why "cold" is a measurement minefield
+
+The harness takes a hot-vs-cold axis (`--prepare` runs `drop_caches` before each
+timed run; root-only, so it degrades to hot-only with a note when unprivileged).
+Chasing a clean cold number surfaced two traps worth recording, both now
+detected from the fixture's filesystem:
+
+- **tmpfs → no cold exists.** A fixture under a RAM-backed `/tmp` can't be
+  evicted; `drop_caches` is a no-op. The harness detects tmpfs and says so
+  (`EH_BENCH_WORK=<disk path>` to fix).
+- **ZFS → `drop_caches` is not cold.** On ZFS the directory metadata lives in
+  the **ARC**, a cache _separate from the Linux page cache_ that `drop_caches`
+  does **not** evict. Measured: with a 583 MB ARC, the "cold" walk ran at ~20 ms,
+  not the ~100 ms+ a from-disk metadata scan would cost — the ARC served it. So
+  the number isn't cold-disk. Worse, `drop_caches=3` _also_ evicts the
+  executables, and the first post-drop run re-pages them — which penalizes
+  event-horizon's 1.1 MB **dynamically-linked** binary (8 libs incl.
+  phobos/druntime) far more than rayon's 756 KB **static** one:
+
+  | walker (balanced, ZFS)   | hot     | "cold"  | Δ          |
+  | ------------------------ | ------- | ------- | ---------- |
+  | rust-rayon (static)      | 24.1 ms | 19.3 ms | ~0 (noise) |
+  | **event-horizon** (dyn.) | 4.0 ms  | 10.0 ms | **+6 ms**  |
+
+  That Δ is **cold-start** (re-paging the D runtime), not cold-filesystem — the
+  ARC kept the metadata warm for both. rayon shows no Δ because its static binary
+  barely re-pages and the ARC serves its metadata too. The honest reading:
+  event-horizon wins steady-state (hot) by 2–6×, but carries a ~6 ms
+  cold-_start_ tax from its larger dynamically-linked runtime — relevant for a
+  one-shot CLI, irrelevant for a long-lived process. A genuine cold-_disk_ walk
+  needs ARC eviction (no clean unprivileged knob on ZFS) or an ext4/xfs/btrfs
+  fixture, where `drop_caches` is real; the harness prints which regime it is in.
 
 ### How it got here — and what the earlier loss taught
 
