@@ -15,7 +15,8 @@ dub test :base -- -l                 # list tests without running them
 
 `-i`/`-e` are regular expressions matched against
 `<fully.qualified.symbol> <test name>` — so both `-i "smallbuffer"` (module)
-and `-i "SmallBuffer.basic"` (name UDA) work. When both are given, `-i` wins.
+and `-i "SmallBuffer.basic"` (name UDA) work. When both are given they combine:
+a test must match `-i` **and** not match `-e`.
 
 ## Listing
 

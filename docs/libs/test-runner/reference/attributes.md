@@ -47,8 +47,12 @@ The test is a benchmark.
 - Skipped by normal runs (counted in the summary); measured by `--bench`.
 - `iterations` pins the per-sample count; `0` (default) auto-scales it until
   a sample takes long enough to time reliably.
-- Combine with `benchIter` (measure a sub-section) and `blackBox`
-  (optimizer barrier) from `sparkles.test_runner.bench`.
+- The whole body is the measured unit by default. From
+  `sparkles.test_runner.bench`: `benchIter` measures a sub-section, `benchCase`
+  emits many rows from one test (a matrix, with `Metric` throughput columns),
+  and `blackBox` is the optimizer barrier.
+- `--perf` adds Linux `perf_event` hardware-counter columns (IPC,
+  instructions/iter, cache/branch miss rates) to the `--bench` table.
 
 ## Combining
 
