@@ -16,7 +16,7 @@ bounds task pick-up latency but cannot lose a wakeup.
 */
 module sparkles.event_horizon.pool;
 
-version (linux)  :  // rides the linux Sched; generalizes with M10
+version (Posix)  :  // rides Sched; CPU pinning is linux-guarded internally
 
 import core.atomic : atomicLoad, atomicOp, atomicStore, MemoryOrder;
 import core.sync.mutex : Mutex;
@@ -222,14 +222,18 @@ private:
         atomicStore(_done, true);
     }
 
-    /// CPU pinning for a worker (best-effort).
+    /// CPU pinning for a worker (best-effort; Linux only for now).
     static void pinToCpu(uint cpu) @trusted nothrow @nogc
     {
-        import core.sys.linux.sched : CPU_SET, cpu_set_t, sched_setaffinity;
+        version (linux)
+        {
+            import core.sys.linux.sched : CPU_SET, cpu_set_t, sched_setaffinity;
 
-        cpu_set_t set;
-        CPU_SET(cpu % totalCPUs, &set);
-        cast(void) sched_setaffinity(0, cpu_set_t.sizeof, &set);
+            cpu_set_t set;
+            CPU_SET(cpu % totalCPUs, &set);
+            cast(void) sched_setaffinity(0, cpu_set_t.sizeof, &set);
+        }
+        // Non-Linux: unpinned (platform pinning primitive is a follow-up).
     }
 
     LoopGroupConfig _cfg;

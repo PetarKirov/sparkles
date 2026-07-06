@@ -18,7 +18,7 @@ internally the view is wrapped as a foreign `Buf` for the tier-A slot.
 */
 module sparkles.event_horizon.io;
 
-version (linux)  :  // rides the linux Sched; generalizes with M10
+version (Posix)  :  // POSIX sockets; the ops route through the selected backend
 
 import core.lifetime : move;
 import core.time : Duration;

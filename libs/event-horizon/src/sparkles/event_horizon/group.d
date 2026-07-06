@@ -9,7 +9,7 @@ M9 ships the `single` topology (one loop on the calling thread); the
 */
 module sparkles.event_horizon.group;
 
-version (linux)  :  // rides the linux Sched; generalizes with M10
+version (Posix)  :  // rides Sched; CPU pinning is linux-guarded internally
 
 import core.lifetime : move;
 import core.time : Duration, seconds;
@@ -230,6 +230,8 @@ private:
             CPU_SET(cpu % totalCPUs, &set);
             cast(void) sched_setaffinity(0, cpu_set_t.sizeof, &set);
         }
+        // Non-Linux: CPU pinning via the platform primitive is a follow-up;
+        // the topology still works, just unpinned.
     }
 
     Sched _sched;
