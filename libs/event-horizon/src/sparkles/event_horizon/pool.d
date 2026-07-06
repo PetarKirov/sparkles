@@ -1,18 +1,21 @@
 /**
 The work-stealing task pool (SPEC §11, M9c): N workers, each owning its own
-ring and scheduler, draining a shared injection queue of $(I never-started)
+ring and scheduler plus a private work-stealing deque of $(I never-started)
 tasks — the only stealable unit (a started fiber is pinned to its worker for
 life; migrating one is undefined under LDC's TLS-address caching, so only
-queued task bodies migrate). Whichever worker pulls a task runs it as a local
-fiber, pinned thereafter.
+queued task bodies migrate). A worker pushes/pops its own deque tail (LIFO,
+for locality) and steals from a peer's head (FIFO) only when its own is empty,
+so the common case is uncontended. `submit` runs a task as a local fiber
+(it may park on I/O); `submitBlocking` runs a CPU-bound task inline (no fiber).
 
-An idle worker waits on a short in-ring `TIMEOUT`, so its one
-`io_uring_enter` wait covers both CQE arrivals and the re-check tick — a
-robust, lost-wakeup-free "single wait point". Event-driven wakeup (an in-ring
-`FUTEX_WAIT` on kernel ≥ 6.7, or an eventfd nudge) is the latency
-optimization tracked in open-issues O2; targeted per-worker-deque stealing
-over `MSG_RING` is the same refinement. Correctness first: the poll interval
-bounds task pick-up latency but cannot lose a wakeup.
+An idle worker sleeps with exponential backoff on a short in-ring `TIMEOUT`,
+so its one `io_uring_enter` wait covers both CQE arrivals and the re-check
+tick — a robust, lost-wakeup-free "single wait point" that also keeps an
+over-provisioned pool from thrashing. Event-driven wakeup (in-ring
+`FUTEX_WAIT` ≥ 6.7, or `MSG_RING`-targeted stealing) is the latency
+optimization in open-issues O2. NB `benchmarks.md` §2: per-worker setup
+(a ring + thread each) makes this pool a poor fit for short CPU-bound batches
+fanned out to every core — it is built to amortize over a long-lived server.
 */
 module sparkles.event_horizon.pool;
 
@@ -33,6 +36,11 @@ import sparkles.event_horizon.sched : Sched, SchedOptions;
 /// The idle re-check interval (open-issues O2: event-driven wakeup replaces
 /// this polling as a latency optimization).
 private enum Duration pollInterval = 200.usecs;
+
+/// Idle backoff cap: an idle worker sleeps up to pollInterval << this (200us
+/// << 5 = 6.4 ms), then holds. Bounds both steal-scan thrash and the wake-up
+/// latency for new work / shutdown.
+private enum uint maxBackoffShift = 5;
 
 /**
 A running work-stealing pool. Non-copyable; owns its worker threads and the
@@ -117,19 +125,32 @@ struct WorkStealingPool
                 pinToCpu(id);
 
             sched.run(() {
-                // The worker's root fiber: spawn from its own deque (stealing
-                // when empty), then either yield to run those fibers and
-                // re-check immediately (had work) or back off on a short timer
-                // (idle) — until shutdown.
+                // The worker's root fiber: run from its own deque (stealing
+                // when empty), then either yield to run spawned fibers and
+                // re-check immediately (had work) or sleep with EXPONENTIAL
+                // BACKOFF (idle) — until shutdown. The backoff is what keeps an
+                // over-provisioned pool (more workers than the workload needs)
+                // from thrashing: idle workers quiet down instead of
+                // steal-scanning every peer and hammering the shared counter
+                // (the negative scaling the walker exposed).
+                uint idle;
                 for (;;)
                 {
                     const didWork = workUntilIdle(sched, id);
                     if (atomicLoad(_done))
                         break;
                     if (didWork)
+                    {
+                        idle = 0;
                         cast(void) yieldNow(sched);
+                    }
                     else
-                        cast(void) sleep(sched, pollInterval);
+                    {
+                        const shift = idle < maxBackoffShift ? idle : maxBackoffShift;
+                        cast(void) sleep(sched, pollInterval * (1 << shift));
+                        if (idle < maxBackoffShift)
+                            ++idle;
+                    }
                 }
             });
         }
@@ -163,63 +184,89 @@ struct WorkStealingPool
     */
     void submit(void delegate() task) @trusted nothrow
     {
-        atomicOp!"+="(_pending, 1);
-        const w = (t_workerId >= 0 && t_workerId < _workers) ? t_workerId : 0;
-        _deques[w].push(task);
+        enqueue(Job(task, false));
+    }
+
+    /**
+    Submits a $(I CPU-bound) task that runs $(B inline) on the worker — no
+    fiber, no ring round-trip. Use this for work that never parks on I/O (a
+    parallel compute/traversal fan-out, like `std.parallelism.taskPool`): it
+    skips the per-task fiber's 64 KiB stack + context switch, which for
+    sub-microsecond tasks is the whole cost (see `benchmarks.md` §2). A task
+    submitted this way must NOT call the tier-B I/O verbs (there is no fiber to
+    suspend); use `submit` for those.
+    */
+    void submitBlocking(void delegate() task) @trusted nothrow
+    {
+        enqueue(Job(task, true));
     }
 
 private:
-    /// Spawns tasks onto `sched` — from this worker's own deque first, then
-    /// stealing from peers when it is empty — bounded so one worker cannot
-    /// overrun its fiber slab. Returns whether it spawned anything (so the
-    /// caller can yield vs back off). A task that cannot be spawned (slab
-    /// full) is pushed back onto the local deque, never dropped.
-    bool workUntilIdle(ref Sched sched, uint id) @trusted
+    /// Enqueues a job onto the calling worker's own deque (locality); the
+    /// seed thread is worker 0.
+    void enqueue(Job job) @trusted nothrow
     {
-        // Leave headroom so the worker's own root fiber and in-flight ops are
-        // never starved.
-        const budget = sched.maxFibers > sched.liveFibers + 8
-            ? sched.maxFibers - sched.liveFibers - 8 : 0;
-        uint spawned;
-        while (spawned < budget)
-        {
-            auto task = _deques[id].popTail();
-            if (task is null)
-                task = trySteal(id); // local empty: steal from a peer
-            if (task is null)
-                break; // nothing anywhere right now
-            if (!spawnWrapped(sched, task))
-            {
-                _deques[id].push(task); // slab momentarily full: keep it local
-                break;
-            }
-            ++spawned;
-        }
-        return spawned > 0;
+        atomicOp!"+="(_pending, 1);
+        const w = (t_workerId >= 0 && t_workerId < _workers) ? t_workerId : 0;
+        _deques[w].push(job);
     }
 
-    /// Steals one task from a peer's deque head (FIFO), scanning round-robin
+    /// Runs jobs — from this worker's own deque first, then stealing from
+    /// peers when it is empty. `submitBlocking` jobs run inline (no fiber);
+    /// `submit` jobs spawn a fiber (bounded by the slab, so one worker cannot
+    /// overrun it). Returns whether it did anything. An async job that cannot
+    /// be spawned (slab full) is pushed back onto the local deque, never
+    /// dropped.
+    bool workUntilIdle(ref Sched sched, uint id) @trusted
+    {
+        const budget = sched.maxFibers > sched.liveFibers + 8
+            ? sched.maxFibers - sched.liveFibers - 8 : 0;
+        uint did;
+        for (;;)
+        {
+            Job job;
+            if (!_deques[id].popTail(job) && !trySteal(id, job))
+                break; // nothing anywhere right now
+            if (job.inline_)
+            {
+                job.body_(); // CPU-bound: run synchronously on this worker
+                if (atomicOp!"-="(_pending, 1) == 0)
+                    broadcastShutdown();
+            }
+            else
+            {
+                if (did >= budget || !spawnWrapped(sched, job.body_))
+                {
+                    _deques[id].push(job); // slab full / budget hit: keep local
+                    break;
+                }
+            }
+            ++did;
+        }
+        return did > 0;
+    }
+
+    /// Steals one job from a peer's deque head (FIFO), scanning round-robin
     /// from the next worker so thieves spread out.
-    void delegate() trySteal(uint id) @trusted
+    bool trySteal(uint id, out Job job) @trusted
     {
         foreach (i; 1 .. _workers)
         {
             const victim = (id + i) % _workers;
-            auto task = _deques[victim].stealHead();
-            if (task !is null)
-                return task;
+            if (_deques[victim].stealHead(job))
+                return true;
         }
-        return null;
+        return false;
     }
 
-    /// Spawns one wrapped task; `task` is a by-value parameter so each
-    /// spawned closure binds its own delegate (a by-reference capture of a
-    /// loop variable would share one heap cell — the D loop-capture bug).
-    /// Returns `false` when the fiber slab is exhausted.
-    bool spawnWrapped(ref Sched sched, void delegate() task) @trusted
+    /// Spawns one wrapped async task; `body_` is by value so each spawned
+    /// closure binds its own delegate (a by-reference capture of a loop
+    /// variable would share one heap cell — the D loop-capture bug). Returns
+    /// `false` when the fiber slab is exhausted.
+    bool spawnWrapped(ref Sched sched, void delegate() body_) @trusted
     {
         return !sched.spawn(() {
-            task();
+            body_();
             if (atomicOp!"-="(_pending, 1) == 0)
                 broadcastShutdown();
         }).hasError;
@@ -258,6 +305,14 @@ private:
 /// task lands on that task's own worker.
 private int t_workerId = -1;
 
+/// One unit of work: its body plus whether it runs inline (CPU-bound,
+/// `submitBlocking`) or as a fiber (`submit`).
+private struct Job
+{
+    void delegate() body_;
+    bool inline_;
+}
+
 /// A per-worker work-stealing deque: the owner pushes/pops its tail (LIFO,
 /// for locality), thieves steal from the head (FIFO). A single mutex guards
 /// it — uncontended in the common case (only the owner touches it), contended
@@ -267,7 +322,7 @@ private final class Deque
     import core.sync.mutex : Mutex;
 
     private Mutex _m;
-    private void delegate()[] _items;
+    private Job[] _items;
 
     this() @trusted nothrow
     {
@@ -275,35 +330,35 @@ private final class Deque
     }
 
     /// Owner: push onto the tail.
-    void push(void delegate() t) @trusted nothrow
+    void push(Job j) @trusted nothrow
     {
         _m.lock_nothrow();
-        _items ~= t;
+        _items ~= j;
         _m.unlock_nothrow();
     }
 
-    /// Owner: pop from the tail (LIFO).
-    void delegate() popTail() @trusted nothrow
+    /// Owner: pop from the tail (LIFO). `false` when empty.
+    bool popTail(out Job j) @trusted nothrow
     {
         _m.lock_nothrow();
         scope (exit) _m.unlock_nothrow();
         if (_items.length == 0)
-            return null;
-        auto t = _items[$ - 1];
+            return false;
+        j = _items[$ - 1];
         _items = _items[0 .. $ - 1];
-        return t;
+        return true;
     }
 
-    /// Thief: steal from the head (FIFO).
-    void delegate() stealHead() @trusted nothrow
+    /// Thief: steal from the head (FIFO). `false` when empty.
+    bool stealHead(out Job j) @trusted nothrow
     {
         _m.lock_nothrow();
         scope (exit) _m.unlock_nothrow();
         if (_items.length == 0)
-            return null;
-        auto t = _items[0];
+            return false;
+        j = _items[0];
         _items = _items[1 .. $];
-        return t;
+        return true;
     }
 }
 
