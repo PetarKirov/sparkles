@@ -46,6 +46,14 @@ mechanism-agnostic until then.
 **Leaning:** futex parking for "any work available" + `MSG_RING` for targeted
 completion/fd handoff; eventfd only inside the kqueue/IOCP backends.
 
+**Update:** the per-worker Chase-Lev-style deques landed (`pool.d`: owner
+push/pop tail, thieves steal head), replacing the single global mutex-guarded
+queue. Measured on the polyglot-walks walker: **no change** (~0.103 s) — the
+mutex was never that workload's bottleneck; the fiber-per-task cost is (see
+`benchmarks.md` §2). The deques still cut contention for submit-heavy,
+many-core workloads. Idle parking still polls a short in-ring timer;
+futex/`MSG_RING`-driven wakeups + targeted stealing remain.
+
 ## O3 — betterC reach of tier A
 
 **Where:** SPEC §5.
