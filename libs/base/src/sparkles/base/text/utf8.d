@@ -21,10 +21,11 @@ import sparkles.base.text.errors : ParseErrorCode, ParseExpected, parseErr,
 Returns the index of the first byte of the first ill-formed UTF-8 sequence
 in `s`, or `s.length` when the whole slice is well-formed.
 
-Scalar implementation: a word-at-a-time ASCII skip, then classified
-range checks per lead byte (the shortest-form and surrogate constraints
-are folded into the second-byte ranges, so each sequence costs one
-branch per byte plus one classification).
+Scalar implementation: a word-at-a-time ASCII skip, then per-sequence
+validation — the common lead classes check both continuations with one
+16-bit masked compare; only the window-constrained leads (`E0 ED F0 F4`)
+branch to exact range checks. (A DFA was measured slower here: its
+serial load-to-load dependency loses to well-predicted branches.)
 */
 size_t indexOfInvalidUtf8(scope const(char)[] s) @safe pure nothrow @nogc
 {
@@ -39,9 +40,10 @@ size_t indexOfInvalidUtf8(scope const(char)[] s) @safe pure nothrow @nogc
             while (i + 8 <= n)
             {
                 const word = (() @trusted {
-                    ulong w = 0;
-                    foreach (k; 0 .. 8) // byte-wise load; LLVM fuses to one mov
-                        w |= cast(ulong) s.ptr[i + k] << (8 * k);
+                    import core.stdc.string : memcpy;
+
+                    ulong w;
+                    memcpy(&w, s.ptr + i, 8);
                     return w;
                 })();
                 if (word & 0x8080_8080_8080_8080)
@@ -81,48 +83,41 @@ in (i < s.length && s[i] >= 0x80)
     const n = s.length;
     const c = s[i];
 
-    ubyte need; // continuation bytes after the lead
-    ubyte lo = 0x80, hi = 0xBF; // allowed range for the first continuation
-    if (c >= 0xC2 && c <= 0xDF)
-        need = 1;
-    else if (c >= 0xE0 && c <= 0xEF)
+    if (c >= 0xC2 && c <= 0xDF) // 2-byte
     {
-        need = 2;
-        if (c == 0xE0)
-            lo = 0xA0; // overlong
-        else if (c == 0xED)
-            hi = 0x9F; // surrogates
-    }
-    else if (c >= 0xF0 && c <= 0xF4)
-    {
-        need = 3;
-        if (c == 0xF0)
-            lo = 0x90; // overlong
-        else if (c == 0xF4)
-            hi = 0x8F; // above U+10FFFF
-    }
-    else
-        return 0; // 0x80..0xC1 (bare continuation / overlong lead), 0xF5..0xFF
-
-    if (n - i <= need)
-        return 0; // truncated sequence
-
-    const b1 = s[i + 1];
-    if (b1 < lo || b1 > hi)
-        return 0;
-    if (need >= 2)
-    {
-        const b2 = s[i + 2];
-        if (b2 < 0x80 || b2 > 0xBF)
+        if (n - i <= 1 || (s[i + 1] & 0xC0) != 0x80)
             return 0;
+        return 2;
     }
-    if (need >= 3)
+    if (c >= 0xE0 && c <= 0xEF) // 3-byte
     {
-        const b3 = s[i + 3];
-        if (b3 < 0x80 || b3 > 0xBF)
+        if (n - i <= 2)
             return 0;
+        // Both continuations in one masked compare; the constrained
+        // leads (E0: no overlongs, ED: no surrogates) take exact checks.
+        const uint w = s[i + 1] | (uint(s[i + 2]) << 8);
+        if ((w & 0xC0C0) != 0x8080)
+            return 0;
+        if (c == 0xE0 && s[i + 1] < 0xA0)
+            return 0;
+        if (c == 0xED && s[i + 1] > 0x9F)
+            return 0;
+        return 3;
     }
-    return need + 1;
+    if (c >= 0xF0 && c <= 0xF4) // 4-byte
+    {
+        if (n - i <= 3)
+            return 0;
+        const uint w = s[i + 1] | (uint(s[i + 2]) << 8) | (uint(s[i + 3]) << 16);
+        if ((w & 0xC0C0C0) != 0x808080)
+            return 0;
+        if (c == 0xF0 && s[i + 1] < 0x90) // overlongs
+            return 0;
+        if (c == 0xF4 && s[i + 1] > 0x8F) // above U+10FFFF
+            return 0;
+        return 4;
+    }
+    return 0; // 0x80..0xC1 (bare continuation / overlong lead), 0xF5..0xFF
 }
 
 /**
