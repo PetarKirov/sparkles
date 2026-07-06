@@ -698,11 +698,57 @@ objectKey: // parse `"key" :` then its value
         return;
     }
     {
-        size_t start, len;
-        if (!parseString(start, len))
-            return;
-        if (!appendStringCell(start, len))
-            return;
+        // Short-key fast path: keys are overwhelmingly ≤15 bytes of
+        // escape-free ASCII — find the quote in two word loads and skip
+        // the general machinery (which remains the fallback).
+        const quick = (() @trusted {
+            enum ulong ones = 0x0101_0101_0101_0101;
+            enum ulong highs = 0x8080_8080_8080_8080;
+            auto p = pool.ptr + i + 1;
+            static ulong stopsOf(ulong x)
+            {
+                const q = x ^ 0x2222_2222_2222_2222; // '"'
+                const b = x ^ 0x5C5C_5C5C_5C5C_5C5C; // '\\'
+                return ((q - ones) & ~q & highs)
+                    | ((b - ones) & ~b & highs)
+                    | ((x - 0x2020_2020_2020_2020) & ~x & highs)
+                    | (x & highs);
+            }
+
+            import core.bitop : bsf;
+
+            const x0 = loadWord(p);
+            const s0 = stopsOf(x0);
+            if (s0 != 0)
+            {
+                const at = bsf(s0) / 8;
+                return p[at] == '"' ? at : size_t.max;
+            }
+            const x1 = loadWord(p + 8);
+            const s1 = stopsOf(x1);
+            if (s1 != 0)
+            {
+                const at = 8 + bsf(s1) / 8;
+                return p[at] == '"' ? at : size_t.max;
+            }
+            return size_t.max; // long/escaped/non-ASCII key: general path
+        })();
+        if (quick != size_t.max)
+        {
+            const start = i + 1;
+            pool[start + quick] = '\0';
+            i = start + quick + 1;
+            if (!appendStringCell(start, quick))
+                return;
+        }
+        else
+        {
+            size_t start, len;
+            if (!parseString(start, len))
+                return;
+            if (!appendStringCell(start, len))
+                return;
+        }
     }
     skipWs(pool, i);
     if (i >= n || pool[i] != ':')
