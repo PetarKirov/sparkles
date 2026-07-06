@@ -83,6 +83,8 @@ void reportEnvironment(in EnvInfo env, const Dataset[] datasets)
     if (env.cpu.length)
         rows ~= ["cpu", env.cpu];
     rows ~= ["shim isa", env.isaPreset.length ? env.isaPreset : "(not set — outside the devshell?)"];
+    version (linux)
+        rows ~= ["malloc", "trim/mmap thresholds 64 MiB (level allocator field)"];
     if (env.engines.length)
         rows ~= ["engines", env.engines];
     if (env.perf.length)
