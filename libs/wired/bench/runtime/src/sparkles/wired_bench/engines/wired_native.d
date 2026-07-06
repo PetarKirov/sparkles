@@ -9,7 +9,8 @@ import std.exception : enforce;
 
 import sparkles.wired.json.codec : fromJSON;
 import sparkles.wired.json.document : JsonKind, JsonValue;
-import sparkles.wired.json.reader : JsonParseResult, parseJsonDocument;
+import sparkles.wired.json.reader : isValidJson, JsonParseResult,
+    parseJsonDocument;
 import sparkles.wired.json.writer : writeJson;
 
 import sparkles.wired_bench.fingerprint : Fingerprint;
@@ -41,6 +42,13 @@ struct WiredNativeEngine
     void teardown() @safe
     {
         freeDoc();
+    }
+
+    /// Full-input well-formedness check materializing nothing
+    /// (read-only over the original text — no copy, no arena).
+    void validate(scope const(char)[] text) @safe
+    {
+        enforce(isValidJson(text), "wired-native validate failed");
     }
 
     /// The held document as minified JSON (buffer owned by the engine,

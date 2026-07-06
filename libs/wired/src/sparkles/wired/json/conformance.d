@@ -20,7 +20,7 @@ version (unittest):
     import std.process : environment;
     import std.stdio : stderr;
 
-    import sparkles.wired.json.reader : parseJsonDocument;
+    import sparkles.wired.json.reader : isValidJson, parseJsonDocument;
 
     const root = environment.get("JSON_TEST_SUITE");
     if (root is null)
@@ -39,6 +39,13 @@ version (unittest):
 
         const result = parseJsonDocument(bytes);
         const parsed = result.hasValue;
+
+        // The text-level validator must agree with the parser everywhere.
+        if (isValidJson(bytes) != parsed)
+        {
+            failures++;
+            stderr.writefln!"  validator/parser disagree: %s"(name);
+        }
 
         switch (name[0])
         {
