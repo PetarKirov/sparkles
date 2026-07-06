@@ -9,7 +9,7 @@ library overview, see [`sparkles:base`](../../libs/base/index.md)._
 
 `sparkles:wired` maps D values to and from a serialized representation across
 pluggable **formats**. A format is selected at the call site; **JSON** ships as
-the first concrete format, built on `std.json`.
+the first concrete format, built on wired's own arena engine (§11).
 
 The mapping is derived by structural introspection — no schema, no registration,
 no code generation — and is configurable per format with a small family of
@@ -30,10 +30,10 @@ struct Server { string host; ushort port; string[] tags; }
 void main()
 {
     auto s = Server("localhost", 8080, ["web", "edge"]);
-    auto json = s.toJSON;                       // value → Expected!(JSONValue, Exception)
-    writeln(json.value.toString);               // object keys emitted sorted
-    auto roundTrip = json.value.fromJSON!Server;
-    writeln(roundTrip.value == s);              // JSONValue → value (round-trips)
+    auto json = s.toJSON;                  // value → Expected!(JsonString, JsonError)
+    writeln(json.value[]);                 // struct fields in declaration order
+    auto roundTrip = fromJSON!Server(json.value[]);
+    writeln(roundTrip.value == s);         // text → value (round-trips)
 }
 ```
 
@@ -91,22 +91,25 @@ back to the `AnyFormat` form, then to the built-in default.
 `sparkles.wired.json` (re-exported from `sparkles.wired`) serializes under the
 `Json` format. Its surface:
 
-| Symbol                                                                          | Description                                                                |
-| ------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `toJSON(value) → Expected!(JSONValue, Exception)`                               | Encode without throwing; a failure is captured as the `Exception` payload. |
-| `fromJSON!T(JSONValue) → Expected!(T, Exception)`                               | Decode without throwing; a failure is captured as the `Exception` payload. |
-| `readJSONFile!T(string path) → Expected!(T, Exception)`                         | Read, parse, and decode a file without throwing.                           |
-| `writeJSONFile(value, path, bool compact = false) → Expected!(void, Exception)` | Encode and write a file without throwing.                                  |
+| Symbol                                                                          | Description                                                                   |
+| ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| `writeJSON(value, ref writer) → Expected!(void, JsonError)`                     | Stream JSON into any output range — the primary encode form (§11.6).          |
+| `toJSON(value) → Expected!(JsonString, JsonError)`                              | Encode to minified text (`JsonString` = `SmallBuffer!(char, 256)`).           |
+| `fromJSON!T(text) → Expected!(T, JsonError)`                                    | Parse + decode JSON text; also accepts a parsed `JsonValue` subtree.          |
+| `fromJSON!T(JSONValue) → Expected!(T, JsonError)`                               | One-release compatibility shim: renders the value, decodes via the text path. |
+| `readJSONFile!T(string path) → Expected!(T, JsonError)`                         | Read, parse, and decode a file without throwing.                              |
+| `writeJSONFile(value, path, bool compact = false) → Expected!(void, JsonError)` | Encode and write a file without throwing.                                     |
 
 ### 4.1 File helpers
 
-`readJSONFile!T(path)` reads UTF-8 text from `path`, parses it with
-`std.json.parseJSON`, then decodes with `fromJSON!T`. It performs no path
+`readJSONFile!T(path)` reads UTF-8 text from `path`, parses it with the
+native engine, then decodes with `fromJSON!T`. It performs no path
 expansion and uses no search paths.
 
-Failures are returned as `Expected!(T, Exception)` errors. The error message
-identifies the failing stage (read, parse, or decode) and preserves the original
-exception as the cause where one exists.
+Failures are returned as `Expected!(T, JsonError)` errors. I/O failures are
+`fileRead`-stage errors; parse and decode failures keep their stage and
+value path, with the file path recorded so the rendered message carries the
+file context (§9).
 
 `writeJSONFile(value, path, compact = false)` encodes `value` with `toJSON`,
 recursively creates any missing parent directories of `path`, and writes UTF-8
@@ -115,16 +118,16 @@ temporary file in the same directory and then renamed onto `path`, so a partial
 or failed write never truncates or corrupts an existing file — after the call,
 `path` holds either its previous contents or the fully written new contents.
 
-- `compact == false` renders with
-  `json.toPrettyString(JSONOptions.doNotEscapeSlashes)`.
-- `compact == true` renders with `json.toString(JSONOptions.doNotEscapeSlashes)`.
-- Both modes append exactly one final Unix newline (`\n`) after the rendered JSON
-  text.
+- `compact == false` renders pretty (§11.4: 2-space indent, `": "`
+  separator, LF newlines).
+- `compact == true` renders minified.
+- `/` is never escaped in either mode; both append exactly one final Unix
+  newline (`\n`) after the rendered JSON text.
 
-Failures are returned as `Expected!(void, Exception)` errors. The error message
-identifies the failing stage (encode, create parent directories, or write and
-rename) and preserves the original exception as the cause where one exists. A
-failure during writing leaves any existing file at `path` unchanged.
+Failures are returned as `Expected!(void, JsonError)` errors identifying the
+failing stage (encode, or `fileWrite` for directory creation / write /
+rename). A failure during writing leaves any existing file at `path`
+unchanged.
 
 ### 4.2 Supported types
 
@@ -176,9 +179,9 @@ alias Cell = SumType!(int, string);
 
 void show(T)(string label, T value)
 {
-    auto json = value.toJSON.value;     // encode
-    auto back = json.fromJSON!T.value;  // decode again
-    writefln("%-12s %-28s round-trips=%s", label, json.toString, back == value);
+    auto text = value.toJSON.value;          // encode to minified text
+    auto back = fromJSON!T(text[]).value;    // decode again
+    writefln("%-12s %-28s round-trips=%s", label, text[], back == value);
 }
 
 void main()
@@ -208,15 +211,15 @@ enum         "hearts"                     round-trips=true
 enum[]       ["spades","hearts"]          round-trips=true
 int[string]  {"a":1,"b":2}                round-trips=true
 int[Suit]    {"hearts":2,"spades":1}      round-trips=true
-struct       {"rank":10,"suit":"hearts"}  round-trips=true
+struct       {"suit":"hearts","rank":10}  round-trips=true
 SumType      "text"                       round-trips=true
 Nullable     7                            round-trips=true
 Optional     7                            round-trips=true
 Ternary      null                         round-trips=true
 ```
 
-JSON object keys are emitted in sorted order (a `std.json` property), so struct
-fields and AA keys appear alphabetically regardless of declaration order.
+Struct fields are emitted in declaration order; associative-array keys are
+emitted sorted lexicographically (§11.6), so output is deterministic.
 
 ### 4.3 Scalar and array mapping
 
@@ -309,8 +312,8 @@ Structural aggregate support covers `struct` instance storage fields:
 
 - Static fields are ignored.
 - Methods, properties, aliases, nested types, and `alias this` are ignored.
-- Field declaration order is used for policy resolution, collision checks, and
-  diagnostics; JSON output still sorts object keys when rendered by `std.json`.
+- Field declaration order is used for policy resolution, collision checks,
+  diagnostics, and the JSON output order (§11.6).
 
 Visibility is respected. A field is serializable only when the backend's
 generated code can legally access it through D's normal visibility rules from
@@ -359,7 +362,6 @@ wire shape when a stable discriminator is required.
     name "wired_variant_match"
     dependency "sparkles:wired" version="*"
 +/
-import std.json : parseJSON;
 import std.stdio : writeln;
 import std.sumtype : SumType, match;
 import sparkles.wired : fromJSON, WireMatch;
@@ -372,7 +374,7 @@ struct Row
 
 void main()
 {
-    auto r = parseJSON(`{"cell": 42}`).fromJSON!Row.value;
+    auto r = fromJSON!Row(`{"cell": 42}`).value;
     r.cell.match!(
         (int i)    => writeln("int ", i),
         (double d) => writeln("double ", d),
@@ -683,7 +685,7 @@ enum Mode
 
 void main()
 {
-    writeln([Mode.fastPath, Mode.boostMode].toJSON.value.toString);
+    writeln([Mode.fastPath, Mode.boostMode].toJSON.value[]);
 }
 ```
 
@@ -756,8 +758,8 @@ enum Priority { low = 1, high = 5 }
 void main()
 {
     auto json = Priority.high.toJSON.value;     // serialized under Json → by value
-    writeln(json.toString);
-    writeln(json.fromJSON!Priority.value == Priority.high);
+    writeln(json[]);
+    writeln(fromJSON!Priority(json[]).value == Priority.high);
 }
 ```
 
@@ -787,9 +789,9 @@ wrappers. Type-level converters apply whenever that exact annotated type is
 encoded or decoded.
 
 On encode, the backend calls `toWire(value)` and then encodes the returned wire
-value normally under the active format. If `toWire` returns
-`Expected!(Value, Exception)`, the wire type is `Value`; otherwise, the wire type
-is the plain return type of `toWire`.
+value normally under the active format. If `toWire` returns an
+`Expected!(Value, E)`, the wire type is `Value`; otherwise, the wire type is
+the plain return type of `toWire`.
 
 On decode, the backend infers the wire type from `toWire` for the annotated
 source type, decodes into that type, then returns `fromWire(raw)`. `fromWire` is
@@ -802,14 +804,14 @@ Converter functions must expose ordinary failures without throwing. A `toWire`
 or `fromWire` callable is supported only if either:
 
 - the selected call is `nothrow` and returns a plain value; or
-- it returns `Expected!(Value, Exception)`.
+- it returns an `Expected` (any error payload with a message).
 
-An `Expected`-returning converter is unwrapped by the backend. Success continues
-with `Value`; failure is propagated as the enclosing `toJSON` or `fromJSON`
-error at the converter's current path. A converter call that is neither
-`nothrow` nor `Expected`-returning is compile-time unsupported. Returned
-`Expected` types whose error payload is not `Exception` are also unsupported.
-Throwing converters are not a supported failure mechanism.
+An `Expected`-returning converter is unwrapped by the backend. Success
+continues with `Value`; failure is propagated as the enclosing encode or
+decode `JsonError` at the converter's current path, with the converter
+error's message as the reason. A converter call that is neither `nothrow`
+nor `Expected`-returning is compile-time unsupported. Throwing converters
+are not a supported failure mechanism.
 
 `WireConvert` owns the boundary it is attached to. Field `WireCase` and
 `WireRepr` policies are not forwarded through a converter to the transformed
@@ -850,8 +852,8 @@ void main()
 {
     auto t = Timer(1500.msecs);
     auto json = t.toJSON.value;
-    writeln(json.toString);                 // Duration encoded as its millisecond count
-    writeln(json.fromJSON!Timer.value == t); // round-trips back to a Duration
+    writeln(json[]);                        // Duration encoded as its millisecond count
+    writeln(fromJSON!Timer(json[]).value == t); // round-trips back to a Duration
 }
 ```
 
@@ -862,10 +864,14 @@ true
 
 ## 9. Errors
 
-Encoding, decoding, and file I/O are `Expected`-based. The error vocabulary is
-generic and lives in `sparkles.base.text.errors`; the JSON backend's `toJSON`,
-`fromJSON`, `readJSONFile`, and `writeJSONFile` carry failures as `Exception`
-payloads. The JSON backend does not provide throwing wrapper functions.
+Encoding, decoding, and file I/O are `Expected`-based. Failures are carried
+as `JsonError` — a plain value type recording the failing stage (parse,
+decode, encode, file read/write), the value path, the target type, the
+JSON kind actually found (with a compact value summary where cheap), and
+the reason; parse-stage errors add the input line/column. Construction
+never allocates from the GC, and `toString(Writer)` renders the message
+contract below. The JSON backend does not provide throwing wrapper
+functions.
 
 Decode error messages must include enough context to identify the failing value:
 
@@ -915,7 +921,6 @@ prepend file context while preserving the nested error path.
     name "wired_errors"
     dependency "sparkles:wired" version="*"
 +/
-import std.json : parseJSON;
 import std.stdio : writeln;
 import sparkles.wired : fromJSON;
 
@@ -923,13 +928,13 @@ enum Mode { off, on, automatic }
 
 void main()
 {
-    // fromJSON never throws — it returns Expected!(T, Exception).
-    auto good = parseJSON(`"on"`).fromJSON!Mode;
+    // fromJSON never throws — it returns Expected!(T, JsonError).
+    auto good = fromJSON!Mode(`"on"`);
     writeln("value: ", good.hasValue, " ", good.value);
 
-    auto bad = parseJSON(`"sideways"`).fromJSON!Mode;
+    auto bad = fromJSON!Mode(`"sideways"`);
     writeln("error: ", bad.hasError);
-    writeln("       ", bad.error.msg);
+    writeln("       ", bad.error);
 }
 ```
 
@@ -944,7 +949,8 @@ error: true
 A consumer of one format imports the package module:
 
 ```d
-import sparkles.wired;   // toJSON, fromJSON, readJSONFile, writeJSONFile, Json,
+import sparkles.wired;   // toJSON, fromJSON, writeJSON, readJSONFile,
+                         // writeJSONFile, JsonString, JsonError, Json,
                          // AnyFormat, WireName, WireCase, WireRepr,
                          // WireTarget, WireOptional, WireConvert, WireMatch,
                          // Repr, CaseStyle, WireSkip, WireInvalid
@@ -968,12 +974,11 @@ enum Mode { fastPath, slowPath }      // and as-written under any other format
 ## 11. The native JSON engine
 
 > [!NOTE]
-> This section specifies the engine that replaces `std.json` inside
-> `sparkles.wired.json` (delivered by PLAN.md M7–M14; performance evidence in
-> [bench-baseline.md](./bench-baseline.md)). Sections 11.1–11.5 are additive —
-> they describe new surface. Section 11.6 lists the **breaking** changes to
-> §1/§4/§9 that land with the final switch-over milestone; until then the
-> `std.json`-based surface remains as specified above.
+> This section specifies the engine behind the JSON backend (delivered by
+> PLAN.md M7–M14; performance evidence in
+> [bench-baseline.md](./bench-baseline.md)). The switch-over of §11.6 has
+> **landed**: §1/§4/§9 above already describe the JsonError-based surface,
+> and §11.6 remains as the change record.
 
 ### 11.1 Modules
 
