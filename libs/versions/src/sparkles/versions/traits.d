@@ -220,34 +220,41 @@ private alias rangeTypeOf(S) = S.Range;
 version (unittest)
 {
     import sparkles.versions.parsing : NoGcHook, ParseError, ParseErrorCode;
-    import sparkles.versions.parsing : parseOk, parseErr;
+    import sparkles.versions.parsing : parseErr;
+}
 
-    // A minimal conforming version + scheme used to exercise the traits
-    // without depending on a concrete scheme module.
-    private struct ProbeVersion
+// A minimal conforming version + scheme used to exercise the traits without
+// depending on a concrete scheme module. Defined unconditionally (not under
+// `version (unittest)`) so its non-template methods land in the library build —
+// see the note on `U3` in ranges.d. A downstream `-unittest` consumer
+// instantiates `Expected!ProbeVersion`, whose TypeInfo references
+// `opEquals`/`toHash`, and a unittest-only definition would leave them
+// undefined at link time on DMD (LDC papers over it with weak symbols).
+private struct ProbeVersion
+{
+    import sparkles.versions.parsing : parseOk;
+
+    uint major, minor, patch;
+    alias Version = ProbeVersion;
+    enum string purlType = "probe";
+    enum string[] components = ["major", "minor", "patch"];
+
+    int opCmp(in ProbeVersion o) const @safe pure nothrow @nogc
+        => compareComponents(this, o);
+    bool opEquals(in ProbeVersion o) const @safe pure nothrow @nogc
+        => opCmp(o) == 0;
+    size_t toHash() const @safe pure nothrow @nogc
+        => major ^ minor ^ patch;
+    void toString(W)(ref W w) const
     {
-        uint major, minor, patch;
-        alias Version = ProbeVersion;
-        enum string purlType = "probe";
-        enum string[] components = ["major", "minor", "patch"];
-
-        int opCmp(in ProbeVersion o) const @safe pure nothrow @nogc
-            => compareComponents(this, o);
-        bool opEquals(in ProbeVersion o) const @safe pure nothrow @nogc
-            => opCmp(o) == 0;
-        size_t toHash() const @safe pure nothrow @nogc
-            => major ^ minor ^ patch;
-        void toString(W)(ref W w) const
-        {
-            import std.range.primitives : put;
-            put(w, "probe");
-        }
-
-        ulong orderKey() const @safe pure nothrow @nogc => major;
-
-        static ParseExpected!ProbeVersion parse(string)
-            => parseOk(ProbeVersion.init);
+        import std.range.primitives : put;
+        put(w, "probe");
     }
+
+    ulong orderKey() const @safe pure nothrow @nogc => major;
+
+    static ParseExpected!ProbeVersion parse(string)
+        => parseOk(ProbeVersion.init);
 }
 
 @("traits.isVersion.probe")
