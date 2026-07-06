@@ -1,0 +1,27 @@
+name "http"
+description "HTTP/1.1 building blocks over sparkles:event-horizon"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+targetType "library"
+
+dflags "-preview=in" "-preview=dip1000"
+
+dependency "sparkles:base" path="../.."
+dependency "sparkles:event-horizon" path="../.."
+dependency "expected" version="~>0.4.1"
+
+configuration "library" {
+    targetType "library"
+}
+
+configuration "unittest" {
+    dependency "silly" version="~>1.1.1"
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
