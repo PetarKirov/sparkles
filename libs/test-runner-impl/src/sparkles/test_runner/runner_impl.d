@@ -53,6 +53,7 @@ private struct RunnerOptions
     bool noColours;
     bool list;
     bool bench;
+    bool perf;
     string ctfeTrace;
     bool betterC;
     bool wasm;
@@ -121,6 +122,10 @@ private UnitTestResult runnerMain(Test[] discovered, bool hostIsRunner)
         "bench",
             "Run @benchmark tests instead of regular tests",
             &options.bench,
+        "perf",
+            "With --bench: collect hardware performance counters per benchmark " ~
+            "(Linux perf_event; IPC, instructions, cache/branch miss rates)",
+            &options.perf,
         "ctfe-trace",
             "Evaluate @ctfe tests under LDC -ftime-trace (writing the trace " ~
             "to the given file) and report per-test CTFE cost",
@@ -199,7 +204,7 @@ private UnitTestResult runnerMain(Test[] discovered, bool hostIsRunner)
     if (options.list)
         return listTests(tests, colored);
     if (options.bench)
-        return runBenchMode(tests, colored);
+        return runBenchMode(tests, options, colored);
     if (options.ctfeTrace.length)
         return runCtfeTraceMode(tests, options, colored);
     if (options.betterC || options.wasm)
@@ -434,10 +439,19 @@ private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bo
 }
 
 /// `--bench`: measure every `@benchmark` test serially and print the table.
-private UnitTestResult runBenchMode(Test[] tests, bool colored)
+/// With `--perf`, a hardware-counter counting pass runs per benchmark and the
+/// table gains IPC / instruction / miss-rate columns.
+private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool colored)
 {
     import std.algorithm.iteration : filter;
-    import std.stdio : stdout;
+    import std.stdio : stderr, stdout;
+    import sparkles.test_runner.perf : PerfGroup;
+
+    auto perf = PerfGroup.tryOpen(options.perf);
+    scope (exit)
+        perf.close();
+    if (options.perf && !perf.available)
+        stderr.writeln("--perf: hardware counters ", perf.status());
 
     BenchStats[] rows;
     size_t failed;
@@ -445,7 +459,7 @@ private UnitTestResult runBenchMode(Test[] tests, bool colored)
     foreach (test; tests.filter!(t => t.traits.isBenchmark))
     {
         auto outcome = runBenchmark(test,
-            BenchConfig(iterations: test.traits.benchIterations));
+            BenchConfig(iterations: test.traits.benchIterations), perf);
         if (outcome.result.succeeded)
         {
             rows ~= outcome.stats;
