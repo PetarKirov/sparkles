@@ -40,7 +40,7 @@
  */
 module walk_event_horizon;
 
-import core.atomic : atomicOp, atomicLoad;
+import core.atomic : atomicFetchAdd, atomicLoad, MemoryOrder;
 import core.stdc.string : strlen;
 import core.sys.posix.dirent : closedir, DIR, dirent, DT_DIR, DT_UNKNOWN, opendir, readdir;
 import core.sys.posix.sys.stat : lstat, S_IFDIR, S_IFMT, stat_t;
@@ -81,6 +81,7 @@ int main(string[] argv)
     WorkStealingPool pool;
     LoopGroupConfig cfg;
     cfg.topology = Topology.workStealing;
+    cfg.cpuBound = typeof(cfg.cpuBound).yes; // ring-less: the walk never parks on I/O
     cfg.workers = workers; // 0 = one per online CPU
     if (WorkStealingPool.start(pool, cfg).hasError)
     {
@@ -137,7 +138,7 @@ void submitDir(ref WorkStealingPool p, string path)
 /// Walks one directory: count it, count its files, submit its subdirectories.
 void walkDir(ref WorkStealingPool p, string path) @trusted
 {
-    atomicOp!"+="(g_dirs, 1L);
+    atomicFetchAdd!(MemoryOrder.raw)(g_dirs, 1L);
 
     DIR* dir = opendir(path.toStringz);
     if (dir is null)
@@ -182,7 +183,7 @@ void walkDir(ref WorkStealingPool p, string path) @trusted
         else
             ++localFiles;
     }
-    atomicOp!"+="(g_files, localFiles);
+    atomicFetchAdd!(MemoryOrder.raw)(g_files, localFiles);
 }
 
 version (unittest)

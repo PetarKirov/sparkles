@@ -13,15 +13,21 @@ so its one `io_uring_enter` wait covers both CQE arrivals and the re-check
 tick — a robust, lost-wakeup-free "single wait point" that also keeps an
 over-provisioned pool from thrashing. Event-driven wakeup (in-ring
 `FUTEX_WAIT` ≥ 6.7, or `MSG_RING`-targeted stealing) is the latency
-optimization in open-issues O2. NB `benchmarks.md` §2: per-worker setup
-(a ring + thread each) makes this pool a poor fit for short CPU-bound batches
-fanned out to every core — it is built to amortize over a long-lived server.
+optimization in open-issues O2.
+
+For CPU-bound fan-out (no I/O parking), `LoopGroupConfig.cpuBound` drops the
+per-worker ring + fibers entirely: workers become plain threads running
+`submitBlocking` tasks inline (the rayon shape). This is what lets the pool
+BEAT rust-rayon on the polyglot-walks benchmark (`benchmarks.md` §2) — the
+per-worker io_uring setup that made the default a poor fit for a short batch
+is simply not built.
 */
 module sparkles.event_horizon.pool;
 
 version (Posix)  :  // rides Sched; CPU pinning is linux-guarded internally
 
-import core.atomic : atomicLoad, atomicOp, atomicStore, MemoryOrder;
+import core.atomic : atomicFetchAdd, atomicFetchSub, atomicLoad, atomicOp,
+    atomicStore, MemoryOrder;
 import core.sync.mutex : Mutex;
 import core.thread : Thread;
 import core.time : Duration, usecs;
@@ -41,6 +47,11 @@ private enum Duration pollInterval = 200.usecs;
 /// << 5 = 6.4 ms), then holds. Bounds both steal-scan thrash and the wake-up
 /// latency for new work / shutdown.
 private enum uint maxBackoffShift = 5;
+
+/// CPU-mode idle tuning: spin (Thread.yield) this many rounds for low-latency
+/// steal pickup before sleeping, then sleep cpuBackoffBase << shift.
+private enum uint cpuSpinRounds = 64;
+private enum Duration cpuBackoffBase = 20.usecs;
 
 /**
 A running work-stealing pool. Non-copyable; owns its worker threads and the
@@ -112,6 +123,19 @@ struct WorkStealingPool
             import sparkles.event_horizon.io : sleep, yieldNow;
 
             t_workerId = id; // so submit() from a task lands on this worker
+            if (cfg.pinToCpu)
+                pinToCpu(id);
+
+            // CPU-bound mode: a plain thread + deque, no io_uring ring and no
+            // fibers — the rayon shape. This is what beats a thread pool of
+            // closures on a short CPU batch: none of the per-worker ring mmap
+            // + fiber-stack page faults that dominate otherwise.
+            if (cfg.cpuBound)
+            {
+                runWorkerCpu(id);
+                return;
+            }
+
             SchedOptions opts;
             opts.maxFibers = cfg.maxFibers;
             LoopConfig loopCfg;
@@ -120,9 +144,6 @@ struct WorkStealingPool
             if (Sched.create(sched, opts, loopCfg).hasError)
                 return;
             scope (exit) sched.destroy();
-
-            if (cfg.pinToCpu)
-                pinToCpu(id);
 
             sched.run(() {
                 // The worker's root fiber: run from its own deque (stealing
@@ -206,7 +227,9 @@ private:
     /// seed thread is worker 0.
     void enqueue(Job job) @trusted nothrow
     {
-        atomicOp!"+="(_pending, 1);
+        // Relaxed: the counter only needs atomicity, not ordering — the
+        // _done store/load (seq_cst) provides the shutdown barrier.
+        atomicFetchAdd!(MemoryOrder.raw)(_pending, 1);
         const w = (t_workerId >= 0 && t_workerId < _workers) ? t_workerId : 0;
         _deques[w].push(job);
     }
@@ -230,7 +253,7 @@ private:
             if (job.inline_)
             {
                 job.body_(); // CPU-bound: run synchronously on this worker
-                if (atomicOp!"-="(_pending, 1) == 0)
+                if (atomicFetchSub!(MemoryOrder.raw)(_pending, 1) == 1)
                     broadcastShutdown();
             }
             else
@@ -241,6 +264,56 @@ private:
                     break;
                 }
             }
+            ++did;
+        }
+        return did > 0;
+    }
+
+    /// The CPU-bound worker loop (no `Sched`, no ring, no fibers): drain the
+    /// local deque + steal, run each job inline, back off when idle. This is
+    /// the rayon-shaped path.
+    void runWorkerCpu(uint id) @trusted
+    {
+        import core.thread : Thread;
+
+        uint idle;
+        for (;;)
+        {
+            const didWork = drainCpu(id);
+            if (atomicLoad(_done))
+                break;
+            if (didWork)
+            {
+                idle = 0;
+                continue; // straight back to draining — nothing to yield to
+            }
+            // A brief spin (cheap re-steal attempts, low pickup latency) then
+            // exponential sleep so idle workers stop contending on peers.
+            if (idle < cpuSpinRounds)
+                Thread.yield();
+            else
+            {
+                const shift = idle - cpuSpinRounds < maxBackoffShift
+                    ? idle - cpuSpinRounds : maxBackoffShift;
+                Thread.sleep(cpuBackoffBase * (1 << shift));
+            }
+            ++idle;
+        }
+    }
+
+    /// Runs every job currently reachable (own deque then steals) inline;
+    /// returns whether it ran anything.
+    bool drainCpu(uint id) @trusted
+    {
+        uint did;
+        for (;;)
+        {
+            Job job;
+            if (!_deques[id].popTail(job) && !trySteal(id, job))
+                break;
+            job.body_(); // inline — no fiber
+            if (atomicFetchSub!(MemoryOrder.raw)(_pending, 1) == 1)
+                broadcastShutdown();
             ++did;
         }
         return did > 0;
@@ -267,7 +340,7 @@ private:
     {
         return !sched.spawn(() {
             body_();
-            if (atomicOp!"-="(_pending, 1) == 0)
+            if (atomicFetchSub!(MemoryOrder.raw)(_pending, 1) == 1)
                 broadcastShutdown();
         }).hasError;
     }
@@ -413,6 +486,42 @@ unittest
     assert(atomicLoad(completed) == tasks, "every submitted task ran to completion");
     assert(atomicLoad(worker0Tasks) < tasks,
         "work distributed across workers, not all on the seeding thread");
+}
+
+@("pool.workStealing.cpuBoundInlineFanOut")
+@system
+unittest
+{
+    import core.atomic : atomicFetchAdd, atomicLoad, MemoryOrder;
+
+    // CPU-bound mode: ring-less workers running inline tasks (the rayon shape;
+    // no io_uring, so it never SKIPs). A recursive binary fan-out exercises
+    // submit-from-task, cross-worker stealing, and the relaxed pending
+    // counter's termination — every task must run exactly once.
+    WorkStealingPool pool;
+    LoopGroupConfig cfg;
+    cfg.topology = Topology.workStealing;
+    cfg.workers = 4;
+    cfg.cpuBound = typeof(cfg.cpuBound).yes;
+    assert(!WorkStealingPool.start(pool, cfg).hasError);
+    scope (exit) pool.shutdown();
+
+    shared uint ran;
+
+    void fan(ref WorkStealingPool p, uint depth)
+    {
+        atomicFetchAdd!(MemoryOrder.raw)(ran, 1);
+        if (depth == 0)
+            return;
+        auto pp = &p;
+        p.submitBlocking(() { fan(*pp, depth - 1); });
+        p.submitBlocking(() { fan(*pp, depth - 1); });
+    }
+
+    enum depth = 12; // 2^13 - 1 = 8191 tasks
+    pool.run((ref WorkStealingPool p) { fan(p, depth); });
+
+    assert(atomicLoad(ran) == (1 << (depth + 1)) - 1, "every task ran exactly once");
 }
 
 version (unittest)
