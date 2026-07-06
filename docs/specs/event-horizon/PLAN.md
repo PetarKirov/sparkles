@@ -126,10 +126,13 @@ files via a small worker pool (regular files have no readiness); scheduler
 parking via `os_sync_wait_on_address`; the same public API at both tiers.
 Verified on `mac-bsn` (built via `ldc2` directly).
 
-Gate: the kqueue data-path (recv/send readiness synthesis, EVFILT_READ/WRITE ->
-syscall -> completion) verified green on real macOS (Darwin 25.3.0) via
-backend/kqueue.d + scripts/verify-kqueue-macos.sh. Async accept/connect + timers
-(EVFILT_TIMER) + full EventLoop!KqueueBackend wiring remain (loop portability refactor).
+Gate met: the FULL EventLoop!KqueueBackend integration (tier-A loop + tier-B
+fibers + accept/connect/recv/send verbs) verified green two ways — the data path
+on real macOS (Darwin 25.3.0, scripts/verify-kqueue-macos.sh), and a complete
+fiber TCP echo on Linux over mheily/libkqueue (scripts/verify-kqueue-linux.sh).
+The loop-portability refactor (loop/sched/io/scope/live/group/pool → version(Posix),
+DefaultBackend selection in backend/select.d) landed to enable it. Regular-file
+worker pool + native EV_DELETE cancel remain as refinements.
 
 ## M11 — IOCP backend (Windows, Wine-tested)
 

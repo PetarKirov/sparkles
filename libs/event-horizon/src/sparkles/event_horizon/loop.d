@@ -38,12 +38,15 @@ enum RunStatus : ubyte
     drained,    /// no live ops and no timers — nothing to wait for
 }
 
-/// The platform default backend's loop (tier A's public front door).
-version (linux)
+/// The platform default backend's loop (tier A's public front door). The
+/// backend is chosen per platform in `backend.select` (`UringBackend` on
+/// Linux, `KqueueBackend` on macOS, `IocpBackend` on Windows; the
+/// `EventHorizonLibkqueue` override forces kqueue on Linux).
+version (Posix)
 {
-    import sparkles.event_horizon.backend.uring : UringBackend;
+    import sparkles.event_horizon.backend.select : DefaultBackend;
 
-    alias DefaultLoop = EventLoop!UringBackend;
+    alias DefaultLoop = EventLoop!DefaultBackend;
 }
 
 /**
@@ -101,21 +104,31 @@ if (isCompletionBackend!Backend)
     /// The negotiated capability surface (SPEC §3.3).
     ref const(BackendCaps) caps() const return => _backend.caps();
 
-    /// Registers `slabs` as kernel-pinned buffers on the backend
-    /// (`BufferPool.register` drives this; SPEC §6.3).
-    IoResult!void registerBuffers(scope ubyte[][] slabs)
-        => _backend.registerBuffers(slabs);
+    // Registered-buffer / provided-ring passthroughs exist only when the
+    // backend supports them (io_uring); peer backends that don't advertise
+    // them simply don't expose these methods (SPEC §3.1 — absence degrades,
+    // never breaks).
+    static if (__traits(hasMember, Backend, "registerBuffers"))
+    {
+        /// Registers `slabs` as kernel-pinned buffers on the backend
+        /// (`BufferPool.register` drives this; SPEC §6.3).
+        IoResult!void registerBuffers(scope ubyte[][] slabs)
+            => _backend.registerBuffers(slabs);
 
-    /// Releases the registered-buffer table.
-    IoResult!void unregisterBuffers() => _backend.unregisterBuffers();
+        /// Releases the registered-buffer table.
+        IoResult!void unregisterBuffers() => _backend.unregisterBuffers();
+    }
 
-    /// Registers a provided buffer ring for group `gid` (SPEC §6.4);
-    /// `BufRing.register`-style callers drive this.
-    IoResult!void registerBufRing(ushort gid, uint entries, void* ringAddr)
-        => _backend.registerBufRing(gid, entries, ringAddr);
+    static if (__traits(hasMember, Backend, "registerBufRing"))
+    {
+        /// Registers a provided buffer ring for group `gid` (SPEC §6.4);
+        /// `BufRing.register`-style callers drive this.
+        IoResult!void registerBufRing(ushort gid, uint entries, void* ringAddr)
+            => _backend.registerBufRing(gid, entries, ringAddr);
 
-    /// Releases the provided buffer ring for group `gid`.
-    IoResult!void unregisterBufRing(ushort gid) => _backend.unregisterBufRing(gid);
+        /// Releases the provided buffer ring for group `gid`.
+        IoResult!void unregisterBufRing(ushort gid) => _backend.unregisterBufRing(gid);
+    }
 
     /**
     Submits `op` with a completion callback (SPEC §5.2). Owned buffers move

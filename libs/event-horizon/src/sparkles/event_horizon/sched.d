@@ -12,7 +12,7 @@ allocation.
 */
 module sparkles.event_horizon.sched;
 
-version (linux)  :  // rides DefaultLoop; the seam generalizes with M10
+version (Posix)  :  // rides DefaultLoop; peer backends via backend.select
 
 import core.lifetime : move;
 import core.stdc.errno : EAGAIN, ENOBUFS;

@@ -10,7 +10,7 @@ ring ops, so they cannot live effects-side.
 */
 module sparkles.event_horizon.live;
 
-version (linux)  :  // rides the linux Sched; generalizes with M10
+version (Posix)  :  // POSIX sockets; rides the selected backend
 
 import core.time : Duration, MonoTime;
 
