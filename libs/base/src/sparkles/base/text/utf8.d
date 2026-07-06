@@ -58,53 +58,71 @@ size_t indexOfInvalidUtf8(scope const(char)[] s) @safe pure nothrow @nogc
             i++;
             continue;
         }
-
-        // Multi-byte lead: the second-byte window encodes the overlong /
-        // surrogate / max-code-point constraints (Unicode Table 3-7).
-        ubyte need; // continuation bytes after the lead
-        ubyte lo = 0x80, hi = 0xBF; // allowed range for the first continuation
-        if (c >= 0xC2 && c <= 0xDF)
-            need = 1;
-        else if (c >= 0xE0 && c <= 0xEF)
-        {
-            need = 2;
-            if (c == 0xE0)
-                lo = 0xA0; // overlong
-            else if (c == 0xED)
-                hi = 0x9F; // surrogates
-        }
-        else if (c >= 0xF0 && c <= 0xF4)
-        {
-            need = 3;
-            if (c == 0xF0)
-                lo = 0x90; // overlong
-            else if (c == 0xF4)
-                hi = 0x8F; // above U+10FFFF
-        }
-        else
-            return i; // 0x80..0xC1 (bare continuation / overlong lead), 0xF5..0xFF
-
-        if (n - i <= need)
-            return i; // truncated sequence
-
-        const b1 = s[i + 1];
-        if (b1 < lo || b1 > hi)
+        const len = utf8SequenceLength(s, i);
+        if (len == 0)
             return i;
-        if (need >= 2)
-        {
-            const b2 = s[i + 2];
-            if (b2 < 0x80 || b2 > 0xBF)
-                return i;
-        }
-        if (need >= 3)
-        {
-            const b3 = s[i + 3];
-            if (b3 < 0x80 || b3 > 0xBF)
-                return i;
-        }
-        i += need + 1;
+        i += len;
     }
     return n;
+}
+
+/**
+Validates the single UTF-8 sequence whose lead byte sits at `s[i]`
+(`s[i] ≥ 0x80`) and returns its byte length (2–4), or `0` when the
+sequence is ill-formed or truncated. The shortest-form, surrogate, and
+U+10FFFF constraints are folded into the second-byte window
+(Unicode Table 3-7). Building block for scanners that validate strings
+inline (e.g. the wired JSON reader's string lanes).
+*/
+size_t utf8SequenceLength(scope const(char)[] s, size_t i) @safe pure nothrow @nogc
+in (i < s.length && s[i] >= 0x80)
+{
+    pragma(inline, true);
+    const n = s.length;
+    const c = s[i];
+
+    ubyte need; // continuation bytes after the lead
+    ubyte lo = 0x80, hi = 0xBF; // allowed range for the first continuation
+    if (c >= 0xC2 && c <= 0xDF)
+        need = 1;
+    else if (c >= 0xE0 && c <= 0xEF)
+    {
+        need = 2;
+        if (c == 0xE0)
+            lo = 0xA0; // overlong
+        else if (c == 0xED)
+            hi = 0x9F; // surrogates
+    }
+    else if (c >= 0xF0 && c <= 0xF4)
+    {
+        need = 3;
+        if (c == 0xF0)
+            lo = 0x90; // overlong
+        else if (c == 0xF4)
+            hi = 0x8F; // above U+10FFFF
+    }
+    else
+        return 0; // 0x80..0xC1 (bare continuation / overlong lead), 0xF5..0xFF
+
+    if (n - i <= need)
+        return 0; // truncated sequence
+
+    const b1 = s[i + 1];
+    if (b1 < lo || b1 > hi)
+        return 0;
+    if (need >= 2)
+    {
+        const b2 = s[i + 2];
+        if (b2 < 0x80 || b2 > 0xBF)
+            return 0;
+    }
+    if (need >= 3)
+    {
+        const b3 = s[i + 3];
+        if (b3 < 0x80 || b3 > 0xBF)
+            return 0;
+    }
+    return need + 1;
 }
 
 /**
