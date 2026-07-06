@@ -40,6 +40,27 @@ Readings:
   The registration path is kept as a regression tracker; the win belongs to
   the (future) concurrent-echo matrix.
 
+### Hardware counters — the "why" behind the ns/op
+
+`loop-bench.d` also runs a dedicated `perf_event_open(2)` counting pass per
+tier (`libs/event-horizon/bench/perf/`, adapted from the wired runtime bench).
+Each timed body runs 256 inner ops so the ~2-ioctl measurement floor
+amortizes; the reported numbers are true per-op:
+
+| benchmark       | instrs/op | IPC  | cycles/op | notes                                    |
+| --------------- | --------- | ---- | --------- | ---------------------------------------- |
+| `nop-pingpong`  | ~3 760    | 1.17 | ~3 210    | the `io_uring_enter` round-trip          |
+| `fiber-await`   | ~4 900    | 1.21 | ~4 050    | **+~1 140 instrs** for the tier-B seam   |
+| `effect-direct` | ~31       | 0.93 | ~33       | three int ops written directly           |
+| `effect-veneer` | ~1 050    | 1.95 | ~535      | **+~1 015 instrs** Outcome-boxing / node |
+
+Now the tier costs are exact, not inferred from wall-clock: the fiber
+park/resume seam is **~1 140 retired instructions** over the raw callback loop,
+and the `Effect!T` veneer's three-node pure chain is **~1 015 instructions**
+of `Outcome` construction over the direct version (IPC 1.95 — it is
+well-pipelined compute, not stalls). Counters degrade gracefully: absent off
+Linux or under `perf_event_paranoid`.
+
 ## 2. polyglot-walks: work-stealing vs a thread-pool of closures
 
 `libs/event-horizon/bench/walk-event-horizon.d` implements the
@@ -81,12 +102,37 @@ The **scaling sweep** found it. Time vs worker count on the same tree:
 | time    | .036s | .023s | .023s | .03s | .05s | .10s         |
 
 The optimum is 2–4 workers; past that it degrades monotonically, and the
-default (all 32 CPUs) lands on the **worst** point. The dominant cost is
-**per-worker setup weight**: each worker creates its own `io_uring` ring +
-thread + scheduler, so spinning up 32 of them for a ~50 ms batch job is mostly
-ring-creation overhead. That machinery is _built to be amortized_ over a
-long-running server handling millions of ops — it is dead weight for a small
-one-shot batch fanned out to every core.
+default (all 32 CPUs) lands on the **worst** point.
+
+**Hardware counters make the cause unambiguous.** `walk-event-horizon --perf
+--workers=N` opens a `perf_event_open` group with `inherit=1` (so the worker
+threads are counted) around the whole walk. Same 50 k-file tree, varying only
+the worker count:
+
+| workers | instructions | cycles    | IPC  | **page faults** |
+| ------- | ------------ | --------- | ---- | --------------- |
+| 1       | ~122 M       | ~170 M    | 0.72 | **751**         |
+| 2       | ~136 M       | ~202 M    | 0.67 | 1 122           |
+| 8       | ~304 M       | ~780 M    | 0.39 | 3 441           |
+| 32      | ~700 M+      | ~2 000 M+ | 0.32 | **12 744**      |
+
+Three signals, one conclusion — it is **per-worker setup weight**, not the
+work itself:
+
+- **Page faults scale ~linearly with workers** (751 → 12 744, ~17×; ~370 per
+  worker). The same directory tree is walked every time, so those faults are
+  not the data — they are each worker mmapping its own `io_uring` ring and
+  fiber stacks.
+- **Cycles balloon ~12×** and instructions ~6× for identical work — pure
+  coordination overhead (steal-scanning, the shared completion counter,
+  ring/thread setup).
+- **IPC collapses 0.72 → 0.32** — cross-core cache-line bouncing on the shared
+  atomics and deque metadata.
+
+That machinery is _built to be amortized_ over a long-running server handling
+millions of ops — it is dead weight for a small one-shot batch fanned out to
+every core. (A cold first invocation shows ~4× the steady-state instruction
+count from page-in; the numbers above are steady-state, best of three.)
 
 The takeaway is a **correct characterization of the tool**, now backed by the
 sweep: the work-stealing engine is for _async-I/O fan-out on a long-lived
