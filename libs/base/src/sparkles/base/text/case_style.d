@@ -196,15 +196,28 @@ string convertCase(CaseStyle style)(string ident)
             return s;
         }
 
-        static struct StringSink
+        version (D_BetterC)
         {
-            string s;
-            void put(char c) { s ~= c; }
+            // Under `-betterC` — the runner's `@betterC` extraction imports
+            // modules (e.g. `sparkles.base.text.readers`) that reach this via a
+            // CTFE `enum`, so the `if (__ctfe)` branch above always returns here.
+            // The runtime writer path depends on `std.utf.byCodeUnit`, which is
+            // not instantiable for a narrow `string` in a `-betterC` build, so it
+            // is elided; a runtime call would be a bug.
+            assert(0, "convertCase has no runtime path under -betterC (CTFE only)");
         }
+        else
+        {
+            static struct StringSink
+            {
+                string s;
+                void put(char c) { s ~= c; }
+            }
 
-        StringSink sink;
-        writeConvertedCase!style(sink, ident);
-        return sink.s;
+            StringSink sink;
+            writeConvertedCase!style(sink, ident);
+            return sink.s;
+        }
     }
 }
 
