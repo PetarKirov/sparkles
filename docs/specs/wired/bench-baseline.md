@@ -192,13 +192,24 @@ within ±10% of the yyjson rows. Standing on this snapshot:
 Typed decode (twitter): wired-native 1 481 vs yyjson 3 406 (0.43×).
 Landed rounds: the pointer number kernel, single-`i128`-mul Eisel–Lemire,
 masked UTF-8 sequence checks, frequency-ordered dispatch, the fused
-object-member hop, the short-key fast path, and the levelled allocator
-field. Negative results kept for the record: a UTF-8 DFA loses to
-well-predicted branches on uniform CJK; fusing validation into the scan
-loses to the two-pass; the four-multiply u128 decomposition never folds.
-The remaining gap is string-lane and container-machinery instruction
-diet (plus the untouched serializer); the SIMD structural scan is
-iteration 2.
+object-member hop, the short-key fast path, direct-append string cells,
+two-at-a-time fraction digits, and the levelled allocator field.
+
+**Iteration 1 (scalar) has plateaued.** Three structurally different
+attempts to close the remaining ~2× all measured flat or negative, each
+kept for the record: a UTF-8 DFA loses to well-predicted branches on
+uniform CJK (serial load chain); fusing validation into the scan loses
+to the two-pass (per-word bookkeeping exceeds the second pass); the
+yyjson-shape context-specialized goto machine — the C playbook's core
+trick — regresses twitter/citm 7–11% under LLVM's block layout (canada
++9%), and explicit `expect` hints recover none of it. The engine sits at
+11.8 ins/B with the field's best IPC (4.1) and branch-miss rate (0.10%):
+the work per byte is efficiently scheduled — there is simply more of it
+than yyjson's single-visit string machine performs. Closing the gate
+means iteration 2: the SIMD structural pass (the `scan.d` seams exist
+for exactly this), whose batch classification also collapses the
+scan/validate double visit that defines the scalar architecture. The
+untouched serializer (609 MB/s, 26 ins/B) is independent headroom.
 
 ## Reproducing
 
