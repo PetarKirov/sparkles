@@ -12,7 +12,7 @@ import core.time : Duration;
 import sparkles.base.text.grapheme : byGraphemeCluster, visibleWidth;
 import sparkles.base.text.width : Align;
 
-import sparkles.test_runner.bench : BenchStats;
+import sparkles.test_runner.bench : BenchStats, Metric;
 import sparkles.test_runner.ctfe_trace : CtfeTestCost;
 import sparkles.test_runner.model : Test, TestLocation, TestResult, Thrown;
 
@@ -387,11 +387,13 @@ unittest
         "Summary: 3 passed, 1 failed, 2 compile-time, 1 benchmarks (run with --bench) in 12.0ms");
 }
 
-/// The benchmark report as a table: name, iterations/sample, median, ±MAD,
-/// min, and max ns-per-iteration. When any row carries `--perf` counters, the
-/// table gains IPC, instructions/iter, and branch/cache miss-rate columns (an
-/// unavailable counter renders as an em dash). Rendered with `core-cli`'s
-/// `drawTable` when available, plain space-aligned columns otherwise.
+/// The benchmark report as a table: name, iterations/sample, median, ±MAD, min,
+/// and max ns-per-iteration. Client `Metric`s add one throughput/level column
+/// per distinct `(unit, mode)`, and `--perf` counters add IPC, instructions/iter,
+/// and branch/cache miss-rate columns — both grown only when present, with an em
+/// dash where a row lacks a value. A row with an `error` (a case whose `after`
+/// reported failure) renders the message in place of its timings. Rendered with
+/// `core-cli`'s `drawTable` when available, plain space-aligned columns otherwise.
 string formatBenchTable(in BenchStats[] rows, bool colored) @system // drawTable is @system
 {
     import core.time : nsecs;
@@ -422,20 +424,37 @@ string formatBenchTable(in BenchStats[] rows, bool colored) @system // drawTable
         return value.isNaN ? "—" : format!"%.*f%s"(decimals, value, suffix);
     }
 
-    // A large per-iteration count with a k/M suffix (instructions/iter).
-    static string big(double value) @safe
+    // SI-prefixed magnitude (1000-base) for a metric/instruction count. This is
+    // the seam that later delegates to `sparkles.quantities`' quantity formatting.
+    static string scaled(double value) @safe
     {
         import std.format : format;
-        import std.math : isNaN;
+        import std.math : abs, isNaN;
 
         if (value.isNaN)
             return "—";
-        if (value >= 1_000_000)
-            return format!"%.2fM"(value / 1_000_000);
-        if (value >= 1_000)
-            return format!"%.1fk"(value / 1_000);
-        return format!"%.0f"(value);
+        const a = abs(value);
+        if (a >= 1e12)
+            return format!"%.2fT"(value / 1e12);
+        if (a >= 1e9)
+            return format!"%.2fG"(value / 1e9);
+        if (a >= 1e6)
+            return format!"%.2fM"(value / 1e6);
+        if (a >= 1e3)
+            return format!"%.2fk"(value / 1e3);
+        return format!"%.3g"(value);
     }
+
+    // The distinct metric columns, in first-seen order across the rows.
+    static struct MetricKey { string symbol; Metric.Mode mode; }
+    MetricKey[] metricKeys;
+    foreach (ref row; rows)
+        foreach (ref m; row.metrics)
+        {
+            const key = MetricKey(m.unit.symbol, m.mode);
+            if (!metricKeys.any!(k => k == key))
+                metricKeys ~= key;
+        }
 
     const showPerf = rows.any!(r => !r.perf.isNull);
 
@@ -447,6 +466,11 @@ string formatBenchTable(in BenchStats[] rows, bool colored) @system // drawTable
         render(colored, i"{bold min}"),
         render(colored, i"{bold max}"),
     ];
+    foreach (key; metricKeys)
+    {
+        const label = key.mode == Metric.Mode.rate ? key.symbol ~ "/s" : key.symbol;
+        header ~= render(colored, i"{bold $(label)}");
+    }
     if (showPerf)
         header ~= [
             render(colored, i"{bold IPC}"),
@@ -455,9 +479,21 @@ string formatBenchTable(in BenchStats[] rows, bool colored) @system // drawTable
             render(colored, i"{bold cache-miss}"),
         ];
 
+    const totalCols = header.length;
+
     string[][] cells = [header];
     foreach (ref row; rows)
     {
+        if (row.error.length)
+        {
+            // Error row: the message stands in for the timings; dashes elsewhere.
+            string[] errCols = [row.name, "—", render(colored, i"{red $(row.error)}")];
+            while (errCols.length < totalCols)
+                errCols ~= "—";
+            cells ~= errCols;
+            continue;
+        }
+
         string[] cols = [
             row.name,
             row.iterations.to!string,
@@ -466,6 +502,20 @@ string formatBenchTable(in BenchStats[] rows, bool colored) @system // drawTable
             ns(row.nsPerIterMin),
             ns(row.nsPerIterMax),
         ];
+        foreach (key; metricKeys)
+        {
+            string cell = "—";
+            foreach (ref m; row.metrics)
+                if (m.unit.symbol == key.symbol && m.mode == key.mode)
+                {
+                    const value = key.mode == Metric.Mode.rate
+                        ? (row.nsPerIterMedian > 0 ? m.amount * 1e9 / row.nsPerIterMedian : double.nan)
+                        : m.amount;
+                    cell = scaled(value);
+                    break;
+                }
+            cols ~= cell;
+        }
         if (showPerf)
         {
             if (row.perf.isNull)
@@ -475,7 +525,7 @@ string formatBenchTable(in BenchStats[] rows, bool colored) @system // drawTable
                 const p = row.perf.get;
                 cols ~= [
                     fixed(p.ipc, 2),
-                    big(p.instructions),
+                    scaled(p.instructions),
                     fixed(p.branchMissPercent, 2, "%"),
                     fixed(p.cacheMissPercent, 2, "%"),
                 ];

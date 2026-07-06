@@ -460,24 +460,28 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     {
         auto outcome = runBenchmark(test,
             BenchConfig(iterations: test.traits.benchIterations), perf);
-        if (outcome.result.succeeded)
-        {
-            rows ~= outcome.stats;
-            continue;
-        }
+        rows ~= outcome.rows; // includes any per-case error rows
 
-        failed++;
-        stdout.write(formatResultLine(outcome.result, colored, true), "\n");
-        foreach (thrown; outcome.result.thrown)
-            stdout.write(formatThrown(thrown, colored, true));
+        if (!outcome.result.succeeded)
+        {
+            failed++;
+            stdout.write(formatResultLine(outcome.result, colored, true), "\n");
+            foreach (thrown; outcome.result.thrown)
+                stdout.write(formatThrown(thrown, colored, true));
+        }
     }
+
+    size_t errorRows;
+    foreach (ref row; rows)
+        if (row.error.length)
+            errorRows++;
 
     if (rows.length)
         stdout.write(formatBenchTable(rows, colored));
     else if (!failed)
         stdout.writeln("no @benchmark tests found");
 
-    return UnitTestResult(rows.length + failed, rows.length, false, false);
+    return UnitTestResult(rows.length + failed, rows.length - errorRows, false, false);
 }
 
 /// Whether `sparkles:core-cli` is in the tested package's dependency closure

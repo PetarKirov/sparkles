@@ -94,7 +94,34 @@ struct BenchConfig
     uint perfMaxIters = 100_000;
 }
 
-/// Summary statistics of one benchmark, in nanoseconds per iteration.
+/// A unit of measure for a benchmark metric. A forward-compatible stand-in for
+/// `sparkles.quantities`' runtime unit — today just the symbol (its identity).
+/// Domain counts ("tweet", "frame", "req") are open-basis units minted by name;
+/// "B"/"s" map to SI base dimensions once the quantities library lands.
+struct Unit
+{
+    string symbol; /// "B", "req", "tweet", "s"
+}
+
+/// A measurement attached to a benchmark case: `amount` units of work per timed
+/// iteration. Reported as a per-second `rate` (`amount ÷ iteration-time`, a
+/// quantity of dimension `unit·s⁻¹`) or as a per-iteration `level` (as-is).
+struct Metric
+{
+    /// How the runner reports `amount`.
+    enum Mode
+    {
+        rate, /// `amount ÷ iteration-time` → `<unit>/s`
+        level, /// the per-iteration `amount`, as-is
+    }
+
+    Unit unit;
+    double amount;
+    Mode mode;
+}
+
+/// Summary statistics of one benchmark row, in nanoseconds per iteration. A row
+/// with a non-empty `error` is a failure row (its timing fields are unset).
 struct BenchStats
 {
     string name;
@@ -104,7 +131,9 @@ struct BenchStats
     double nsPerIterDeviation = 0; /// median absolute deviation
     double nsPerIterMin = 0;
     double nsPerIterMax = 0;
+    Metric[] metrics; /// client throughput / level metrics (empty = none)
     Nullable!PerfStats perf; /// hardware counters under `--perf` (empty otherwise)
+    string error; /// non-empty = an error row (a case whose `after` reported failure)
 }
 
 /// The median of a sorted, non-empty slice.
@@ -222,46 +251,53 @@ auto measure(DG)(scope DG run, in BenchConfig config)
 private struct BenchContext
 {
     BenchConfig config;
-    bool used;
-    ulong iterations;
-    double[] nsPerIter;
-    PerfGroup* perf;      /// null / unavailable = no counting pass
-    PerfStats perfStats;
-    bool perfMeasured;
+    string testName;   /// row name for benchIter / whole-body measurement
+    bool used;         /// a benchIter/benchCase measured — skip whole-body
+    BenchStats[] rows; /// one per benchIter/benchCase call (or whole-body)
+    PerfGroup* perf;   /// null / unavailable = no counting pass
 }
 
 private BenchContext* activeBenchContext; // thread-local, set by runBenchmark
 
-/// Runs the perf counting pass over `run` when the context has an available
-/// counter group, storing the per-iteration counters. The counting pass reuses
-/// the timing's auto-scaled iteration count, capped by `perfMaxIters`.
-private void measurePerf(DG)(BenchContext* context, scope DG run)
+/// The counting-pass iteration count for a measurement: the timing's iteration
+/// count, capped so a cheap op's huge count does not make the (ioctl-bracketed)
+/// counting pass slow.
+private uint perfIters(ulong iterations, in BenchConfig config) @safe pure nothrow @nogc
 {
     import std.algorithm.comparison : min;
 
-    if (context.perf is null || !context.perf.available)
-        return;
-    const iters = cast(uint) min(context.iterations, context.config.perfMaxIters);
-    context.perfStats = context.perf.count(run, () {}, iters ? iters : 1);
-    context.perfMeasured = true;
+    const n = min(iterations, config.perfMaxIters);
+    return cast(uint)(n ? n : 1);
+}
+
+/// The perf counting pass for a measurement, when a counter group is available:
+/// `timed` is bracketed by the counters, `between` runs uncounted.
+private Nullable!PerfStats countIf(Timed, Between)(
+    BenchContext* context, scope Timed timed, scope Between between, ulong iterations)
+{
+    Nullable!PerfStats perf;
+    if (context.perf !is null && context.perf.available)
+        perf = context.perf.count(timed, between, perfIters(iterations, context.config));
+    return perf;
 }
 
 /// Measures `run` inside a `@benchmark unittest`, excluding the surrounding
-/// setup code from the timing. Outside a `--bench` run (e.g. when another
-/// runner executes the test), `run` is invoked exactly once.
+/// setup from the timing, and records one row named after the test. Outside a
+/// `--bench` run (e.g. another runner executes the test), `run` runs once.
 void benchIter(DG)(scope DG run)
 if (is(typeof(run()) == void))
 {
-    if (auto context = activeBenchContext)
+    auto context = activeBenchContext;
+    if (context is null)
     {
-        context.used = true;
-        auto measured = measure(run, context.config);
-        context.iterations = measured.iterations;
-        context.nsPerIter = measured.nsPerIter;
-        measurePerf(context, run);
-    }
-    else
         run();
+        return;
+    }
+    context.used = true;
+    auto m = measure(run, context.config);
+    auto row = computeStats(context.testName, m.iterations, m.nsPerIter);
+    row.perf = countIf(context, run, () {}, m.iterations);
+    context.rows ~= row;
 }
 
 @("benchIter.inertOutsideBenchRuns")
@@ -273,44 +309,184 @@ unittest
     assert(calls == 1);
 }
 
-/// The outcome of one `--bench` execution: statistics on success, a failed
-/// `TestResult` when the test threw.
+// ─────────────────────────────────────────────────────────────────────────────
+// Multi-row cases (`benchCase`)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// One timed call plus its untimed `after`: the elapsed nanoseconds and an
+/// error message (empty = ok) when `after` reported a soft (`Expected`) failure.
+private struct DriveResult
+{
+    long ns;
+    string error;
+}
+
+/// Renders the error an `after` callback returned in an `Expected`.
+private string errorText(V)(V v)
+{
+    static if (is(typeof(v.error.describe()) : string))
+        return v.error.describe();
+    else static if (is(typeof(v.error) : string))
+        return v.error;
+    else
+    {
+        import std.conv : text;
+
+        return v.error.text;
+    }
+}
+
+/// Invokes a no-argument `after` (for a `void`-returning `timed`). A `void`
+/// return throws on failure; an `Expected` return yields a soft error message.
+private string invokeAfter(After)(scope After after)
+{
+    static if (is(typeof(after()) == void))
+    {
+        after();
+        return null;
+    }
+    else
+    {
+        auto v = after();
+        return v.hasError ? errorText(v) : null;
+    }
+}
+
+/// Invokes a result-taking `after(ref Res)`. Same throw-vs-`Expected` contract.
+private string invokeAfter(Res, After)(scope After after, ref Res result)
+{
+    static if (is(typeof(after(result)) == void))
+    {
+        after(result);
+        return null;
+    }
+    else
+    {
+        auto v = after(result);
+        return v.hasError ? errorText(v) : null;
+    }
+}
+
+/// Times one `timed()` call and runs `after` untimed on its result.
+private DriveResult driveOnce(Timed, After)(scope Timed timed, scope After after)
+{
+    static if (is(typeof(timed()) == void))
+    {
+        const t0 = MonoTime.currTime;
+        timed();
+        const ns = (MonoTime.currTime - t0).total!"nsecs";
+        return DriveResult(ns, invokeAfter(after));
+    }
+    else
+    {
+        const t0 = MonoTime.currTime;
+        auto r = timed();
+        const ns = (MonoTime.currTime - t0).total!"nsecs";
+        return DriveResult(ns, invokeAfter(after, r));
+    }
+}
+
+/// Measures one named case inside a `@benchmark` body and records a row; call it
+/// repeatedly (over engines × datasets, say) to emit a matrix. `timed` is the
+/// measured body — its result flows to `after`, which runs untimed after every
+/// iteration to verify + release it. `after` may `throw` (→ the whole benchmark
+/// test fails) or return an `Expected` error (→ this case becomes an error row
+/// and the others continue). A case with nothing to release/verify passes a
+/// no-op `after` (`(ref r) {}`, or `() {}` for a `void` body). `metrics` attach
+/// throughput / level columns.
+///
+/// Uses per-call timing — each `timed()` timed alone, `after` between — so the
+/// result can be released before the next iteration; suited to µs-and-up ops.
+void benchCase(Timed, After)(
+    string name, scope Timed timed, scope After after, Metric[] metrics = null)
+{
+    import std.algorithm.iteration : map;
+    import std.array : array;
+
+    auto context = activeBenchContext;
+    if (context is null) // executed outside a --bench run: one probe, for correctness
+    {
+        cast(void) driveOnce(timed, after);
+        return;
+    }
+
+    // Probe once so an `after` throw/error surfaces before the measurement loop.
+    {
+        const probe = driveOnce(timed, after);
+        if (probe.error.length)
+        {
+            context.rows ~= BenchStats(name: name, error: probe.error);
+            return;
+        }
+    }
+    context.used = true;
+
+    // Per-call timing: collect until both the sample count and time budget met.
+    long[] samples;
+    long totalNs;
+    const minTotal = context.config.minSampleTime.total!"nsecs";
+    while (samples.length < context.config.sampleCount || totalNs < minTotal)
+    {
+        const d = driveOnce(timed, after);
+        if (d.error.length)
+        {
+            context.rows ~= BenchStats(name: name, error: d.error);
+            return;
+        }
+        samples ~= d.ns;
+        totalNs += d.ns;
+    }
+
+    auto row = computeStats(name, 1, samples.map!(s => double(s)).array);
+    row.metrics = metrics;
+
+    // Counting pass: bracket `timed` only; `after` releases the result uncounted.
+    static if (is(typeof(timed()) == void))
+        row.perf = countIf(context, timed, () { cast(void) invokeAfter(after); }, samples.length);
+    else
+    {
+        typeof(timed()) last;
+        row.perf = countIf(context,
+            () { last = timed(); }, () { cast(void) invokeAfter(after, last); }, samples.length);
+    }
+    context.rows ~= row;
+}
+
+/// The outcome of one `@benchmark` execution: the rows it emitted (one per
+/// `benchIter`/`benchCase`, or one for a whole-body benchmark) and the test's
+/// pass/fail `TestResult` (a thrown body fails; its rows may be partial).
 struct BenchOutcome
 {
-    BenchStats stats;
+    BenchStats[] rows;
     TestResult result;
 }
 
-/// Runs one `@benchmark` test: invokes the test once with an active bench
-/// context; if it did not call `benchIter`, the whole body is measured as
-/// the iteration unit (the probe invocation doubling as warmup).
+/// Runs one `@benchmark` test with an active context so `benchIter`/`benchCase`
+/// record rows; a body that calls neither is measured whole as a single row.
 package(sparkles.test_runner)
 BenchOutcome runBenchmark(Test test, in BenchConfig config, ref PerfGroup perf)
 {
     import sparkles.test_runner.execution : executeTest;
 
     BenchOutcome outcome;
-    auto context = BenchContext(config: config, perf: &perf);
+    auto context = BenchContext(config: config, testName: test.name, perf: &perf);
 
     activeBenchContext = &context;
     scope (exit)
         activeBenchContext = null;
 
     outcome.result = executeTest(test);
+    outcome.rows = context.rows;
     if (!outcome.result.succeeded)
-        return outcome;
+        return outcome; // rows collected before a throw are kept
 
-    if (!context.used)
+    if (!context.used) // no benchIter/benchCase — measure the whole body
     {
-        auto measured = measure({ test.ptr(); }, config);
-        context.iterations = measured.iterations;
-        context.nsPerIter = measured.nsPerIter;
-        measurePerf(&context, { test.ptr(); });
+        auto m = measure({ test.ptr(); }, config);
+        auto row = computeStats(test.name, m.iterations, m.nsPerIter);
+        row.perf = countIf(&context, { test.ptr(); }, () {}, m.iterations);
+        outcome.rows ~= row;
     }
-
-    outcome.stats = computeStats(test.name, context.iterations, context.nsPerIter);
-    if (context.perfMeasured)
-        outcome.stats.perf = context.perfStats;
     return outcome;
 }
 
@@ -329,10 +505,10 @@ unittest
     auto perf = PerfGroup.tryOpen(false);
     auto outcome = runBenchmark(Test(fullName: "m.b", name: "b", ptr: &body_), config, perf);
     assert(outcome.result.succeeded);
-    assert(outcome.stats.iterations == 4);
-    assert(outcome.stats.samples == 3);
-    assert(outcome.stats.nsPerIterMedian >= 0);
-    assert(outcome.stats.perf.isNull); // no counters requested
+    assert(outcome.rows[0].iterations == 4);
+    assert(outcome.rows[0].samples == 3);
+    assert(outcome.rows[0].nsPerIterMedian >= 0);
+    assert(outcome.rows[0].perf.isNull); // no counters requested
 }
 
 @("runBenchmark.benchIterBody")
@@ -351,8 +527,8 @@ unittest
     auto perf = PerfGroup.tryOpen(false);
     auto outcome = runBenchmark(Test(fullName: "m.bi", name: "bi", ptr: &body_), config, perf);
     assert(outcome.result.succeeded);
-    assert(outcome.stats.iterations == 8);
-    assert(outcome.stats.samples == 2);
+    assert(outcome.rows[0].iterations == 8);
+    assert(outcome.rows[0].samples == 2);
 }
 
 @("runBenchmark.failure")
@@ -392,6 +568,104 @@ unittest
     const config = BenchConfig(iterations: 200, sampleCount: 2, minSampleTime: 1.usecs);
     auto outcome = runBenchmark(Test(fullName: "m.p", name: "p", ptr: &body_), config, perf);
     assert(outcome.result.succeeded);
-    assert(!outcome.stats.perf.isNull);
-    assert(outcome.stats.perf.get.instructions > 0);
+    assert(!outcome.rows[0].perf.isNull);
+    assert(outcome.rows[0].perf.get.instructions > 0);
+}
+
+@("benchCase.demo")
+@benchmark @safe
+unittest
+{
+    // Dogfoods benchCase: one @benchmark emits a row per size, each with an
+    // element-throughput metric. Skipped by default; measured under `--bench`.
+    import std.conv : text;
+
+    foreach (size; [64, 256, 1024])
+        benchCase(
+            name: text("sum/", size),
+            timed: () { size_t s; foreach (i; 0 .. size) s += i; blackBox(s); },
+            after: () {}, // nothing to release
+            metrics: [Metric(unit: Unit("elem"), amount: double(size), mode: Metric.Mode.rate)],
+        );
+}
+
+@("benchCase.emitsRowsWithMetrics")
+@system
+unittest
+{
+    import core.time : usecs;
+    import std.conv : text;
+
+    static void body_()
+    {
+        foreach (i; 0 .. 3)
+        {
+            const n = (i + 1) * 200;
+            benchCase(
+                name: text("case", i),
+                timed: () { foreach (j; 0 .. n) blackBox(j); },
+                after: () {}, // nothing to release/verify
+                metrics: [Metric(unit: Unit("B"), amount: double(n), mode: Metric.Mode.rate)],
+            );
+        }
+    }
+
+    auto perf = PerfGroup.tryOpen(false);
+    const config = BenchConfig(sampleCount: 2, minSampleTime: 1.usecs);
+    auto outcome = runBenchmark(Test(fullName: "m.mc", name: "mc", ptr: &body_), config, perf);
+    assert(outcome.result.succeeded);
+    assert(outcome.rows.length == 3);
+    assert(outcome.rows[0].name == "case0" && outcome.rows[0].error.length == 0);
+    assert(outcome.rows[0].metrics.length == 1);
+    assert(outcome.rows[0].metrics[0].unit.symbol == "B");
+    assert(outcome.rows[2].name == "case2");
+}
+
+@("benchCase.expectedErrorIsIsolatedRow")
+@system
+unittest
+{
+    import core.time : usecs;
+    import expected : Expected, err, ok;
+
+    alias Res = Expected!(bool, string);
+    static Res check(int r) => r == 5 ? ok!string(true) : err!bool("expected 5");
+
+    static void body_()
+    {
+        // A soft (Expected) failure becomes an error row; the matrix continues.
+        benchCase(name: "bad", timed: () => 3, after: (ref int r) => check(r));
+        benchCase(name: "good", timed: () => 5, after: (ref int r) => check(r));
+    }
+
+    auto perf = PerfGroup.tryOpen(false);
+    const config = BenchConfig(sampleCount: 1, minSampleTime: 1.usecs);
+    auto outcome = runBenchmark(Test(fullName: "m.er", name: "er", ptr: &body_), config, perf);
+    assert(outcome.result.succeeded);
+    assert(outcome.rows.length == 2);
+    assert(outcome.rows[0].name == "bad" && outcome.rows[0].error == "expected 5");
+    assert(outcome.rows[1].name == "good" && outcome.rows[1].error.length == 0);
+}
+
+@("benchCase.afterThrowFailsWholeTest")
+@system
+unittest
+{
+    import core.time : usecs;
+
+    static void body_()
+    {
+        // A throwing `after` (a hard mismatch) aborts the whole benchmark test.
+        benchCase(
+            name: "boom",
+            timed: () { int[] result; return result; },
+            after: (ref int[] r) { assert(r.length == 1, "empty result"); },
+        );
+    }
+
+    auto perf = PerfGroup.tryOpen(false);
+    auto outcome = runBenchmark(Test(fullName: "m.bt", name: "bt", ptr: &body_),
+        BenchConfig(sampleCount: 1, minSampleTime: 1.usecs), perf);
+    assert(!outcome.result.succeeded);
+    assert(outcome.result.thrown.length == 1);
 }
