@@ -91,10 +91,19 @@ int main()
     Sched sched;
     ulong fiberOps;
     Duration fiberElapsed;
+    // Tier C: a pure map/map chain via the Effect veneer vs the same math
+    // written directly — the M12 overhead metric. The interpreter is a
+    // compile-time fold (static dispatch, no instruction loop), so the cost
+    // is not dispatch but the Outcome value constructed per node; measured at
+    // ~30-40 ns/node, it is dwarfed by any real I/O leaf (μs scale).
+    ulong directOps, veneerOps;
+    Duration directElapsed, veneerElapsed;
     if (!Sched.create(sched).hasError)
     {
         auto r = sched.run(() {
+            import sparkles.event_horizon.effect : effectOf, run, succeed, map;
             import sparkles.event_horizon.io : nop;
+            import sparkles.event_horizon.scope_ : withScope;
 
             const fiberStart = MonoTime.currTime;
             while (MonoTime.currTime - fiberStart < minRunTime)
@@ -103,6 +112,33 @@ int main()
                 ++fiberOps;
             }
             fiberElapsed = MonoTime.currTime - fiberStart;
+
+            // Direct-style pure map/chain baseline vs the veneer, same shape.
+            cast(void) withScope!((ref sc) {
+                static struct EmptyCtx { }
+                EmptyCtx ctx;
+
+                const dStart = MonoTime.currTime;
+                while (MonoTime.currTime - dStart < minRunTime)
+                {
+                    int v = 2;
+                    v = v * 10;
+                    v = v + 1;
+                    assert(v == 21);
+                    ++directOps;
+                }
+                directElapsed = MonoTime.currTime - dStart;
+
+                const vStart = MonoTime.currTime;
+                while (MonoTime.currTime - vStart < minRunTime)
+                {
+                    auto eff = succeed(2).map!(x => x * 10).map!(x => x + 1);
+                    auto o = run(eff, sc, ctx);
+                    assert(o.value == 21);
+                    ++veneerOps;
+                }
+                veneerElapsed = MonoTime.currTime - vStart;
+            })(sched);
         });
         assert(!r.hasError);
         sched.destroy();
@@ -135,6 +171,15 @@ int main()
         writefln("fiber     (x1) : %10.0f ops/s (%.0f ns/op — await/park/resume over ping-pong)",
             opsPerSecond(fiberOps, fiberElapsed),
             fiberElapsed.total!"nsecs" / cast(double) fiberOps);
+    if (veneerOps > 0)
+    {
+        const dns = directElapsed.total!"nsecs" / cast(double) directOps;
+        const vns = veneerElapsed.total!"nsecs" / cast(double) veneerOps;
+        writefln("effect direct  : %10.0f ops/s (%.2f ns/op)",
+            opsPerSecond(directOps, directElapsed), dns);
+        writefln("effect veneer  : %10.0f ops/s (%.2f ns/op — %.2f ns overhead, compile-time fold)",
+            opsPerSecond(veneerOps, veneerElapsed), vns, vns - dns);
+    }
     if (plainReads > 0)
     {
         writefln("read plain     : %10.0f reads/s", plainReads);
