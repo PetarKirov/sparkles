@@ -50,17 +50,22 @@ version (Posix)
 /// failed. A synchronous one-shot query, distinct from the async
 /// `setTermWindowSizeHandler` above. Callers use `0` to mean "unknown, don't
 /// wrap/truncate".
-ushort terminalWidth() @trusted nothrow @nogc
+ushort terminalWidth() @safe nothrow @nogc
 {
     version (Posix)
     {
         import core.sys.posix.sys.ioctl : ioctl, winsize, TIOCGWINSZ;
         import core.sys.posix.unistd : STDOUT_FILENO;
 
-        winsize s;
-        if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &s) != 0)
-            return 0;
-        return s.ws_col;
+        // The ioctl and its out-parameter are one unsafe unit; scope trust to
+        // it (capturing nothing, so no `@nogc` closure) and hand back a plain
+        // `ushort`.
+        return () @trusted {
+            winsize s;
+            if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &s) != 0)
+                return ushort(0);
+            return s.ws_col;
+        }();
     }
     else version (Windows)
     {
@@ -68,14 +73,17 @@ ushort terminalWidth() @trusted nothrow @nogc
             GetConsoleScreenBufferInfo, GetStdHandle, INVALID_HANDLE_VALUE,
             STD_OUTPUT_HANDLE;
 
-        auto handle = GetStdHandle(STD_OUTPUT_HANDLE);
-        if (handle is null || handle == INVALID_HANDLE_VALUE)
-            return 0;
-        CONSOLE_SCREEN_BUFFER_INFO info;
-        if (!GetConsoleScreenBufferInfo(handle, &info))
-            return 0;
-        const width = info.srWindow.Right - info.srWindow.Left + 1;
-        return width > 0 ? cast(ushort) width : 0;
+        // Same: the handle lookup and console query are the unsafe unit.
+        return () @trusted {
+            auto handle = GetStdHandle(STD_OUTPUT_HANDLE);
+            if (handle is null || handle == INVALID_HANDLE_VALUE)
+                return ushort(0);
+            CONSOLE_SCREEN_BUFFER_INFO info;
+            if (!GetConsoleScreenBufferInfo(handle, &info))
+                return ushort(0);
+            const width = info.srWindow.Right - info.srWindow.Left + 1;
+            return width > 0 ? cast(ushort) width : ushort(0);
+        }();
     }
     else
         return 0;
