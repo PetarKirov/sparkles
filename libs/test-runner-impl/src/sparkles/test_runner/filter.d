@@ -3,8 +3,9 @@ module sparkles.test_runner.filter;
 import sparkles.test_runner.model : Test;
 
 /// Whether `test` passes the include/exclude regular expression filters.
-/// Matching is against `fullName ~ " " ~ name` (silly's convention). Include
-/// wins when both are set.
+/// Matching is against `fullName ~ " " ~ name` (silly's convention). When both
+/// are set they combine (silly's semantics): the test must match `include` and
+/// must not match `exclude`.
 bool matchesFilter(in Test test, string include, string exclude) @safe
 {
     import std.regex : matchFirst;
@@ -13,9 +14,11 @@ bool matchesFilter(in Test test, string include, string exclude) @safe
         return true;
 
     const haystack = test.fullName ~ " " ~ test.name;
-    if (include.length)
-        return !haystack.matchFirst(include).empty;
-    return haystack.matchFirst(exclude).empty;
+    if (include.length && haystack.matchFirst(include).empty)
+        return false;
+    if (exclude.length && !haystack.matchFirst(exclude).empty)
+        return false;
+    return true;
 }
 
 @("matchesFilter.basic") @safe
@@ -25,4 +28,8 @@ unittest
     assert(t.matchesFilter(null, null));
     assert(t.matchesFilter("SmallBuffer", null));
     assert(!t.matchesFilter(null, "SmallBuffer"));
+    // Include and exclude combine: matches include but excluded → skipped.
+    assert(!t.matchesFilter("SmallBuffer", "append"));
+    // Matches include and not excluded → run.
+    assert(t.matchesFilter("SmallBuffer", "Buffer.remove"));
 }
