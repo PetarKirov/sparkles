@@ -126,7 +126,10 @@ files via a small worker pool (regular files have no readiness); scheduler
 parking via `os_sync_wait_on_address`; the same public API at both tiers.
 Verified on `mac-bsn` (built via `ldc2` directly).
 
-Gate: echo + agent-tooling examples green on macOS.
+Gate: the kqueue data-path (recv/send readiness synthesis, EVFILT_READ/WRITE ->
+syscall -> completion) verified green on real macOS (Darwin 25.3.0) via
+backend/kqueue.d + scripts/verify-kqueue-macos.sh. Async accept/connect + timers
+(EVFILT_TIMER) + full EventLoop!KqueueBackend wiring remain (loop portability refactor).
 
 ## M11 — IOCP backend (Windows, Wine-tested)
 

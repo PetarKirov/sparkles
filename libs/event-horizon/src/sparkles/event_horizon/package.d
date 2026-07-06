@@ -22,6 +22,11 @@ version (Windows)
     public import sparkles.event_horizon.backend.iocp;
 }
 
+version (OSX)
+{
+    public import sparkles.event_horizon.backend.kqueue;
+}
+
 version (linux)
 {
     public import sparkles.event_horizon.backend.probe;
