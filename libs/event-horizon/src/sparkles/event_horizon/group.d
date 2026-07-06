@@ -47,6 +47,12 @@ struct LoopGroupConfig
     Flag!"pinToCpu" pinToCpu = Yes.pinToCpu;  /// sched_setaffinity per worker
     Flag!"futexPark" futexPark = Yes.futexPark; /// in-ring futex idle parking (>= 6.7)
     uint maxFibers = 256;                /// fiber-slab size per worker
+    /// `WorkStealingPool` only: skip the per-worker io_uring ring + fiber
+    /// scheduler entirely — workers are plain threads running `submitBlocking`
+    /// tasks inline (the rayon/`taskPool` shape). Removes the per-worker ring
+    /// mmap + fiber-stack page faults that dominate a CPU-bound batch
+    /// (`benchmarks.md` §2). Async `submit` is unavailable in this mode.
+    Flag!"cpuBound" cpuBound = No.cpuBound;
     // OPEN (open-issues O21): a per-worker Allocator knob lands here.
 }
 

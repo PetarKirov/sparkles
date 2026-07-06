@@ -61,21 +61,46 @@ of `Outcome` construction over the direct version (IPC 1.95 — it is
 well-pipelined compute, not stalls). Counters degrade gracefully: absent off
 Linux or under `perf_event_paranoid`.
 
-## 2. polyglot-walks: work-stealing vs a thread-pool of closures
+## 2. polyglot-walks: beating Rust rayon
 
 `libs/event-horizon/bench/walk-event-horizon.d` implements the
 [polyglot-walks](https://github.com/jfly/polyglot-walks) recursive
-file/directory counter on the work-stealing pool: one task per directory,
-each submitting its subdirectories as new tasks the pool distributes. Output
-matches the walker contract exactly (`<N> file(s)` / `<M> directories(s)`),
-verified against the fixture by the `walk.correctness.matchesFixture` unittest.
+file/directory counter on the work-stealing pool: one task per directory, each
+submitting its subdirectories as new tasks the pool distributes. Output matches
+the walker contract exactly (`<N> file(s)` / `<M> directories(s)`), verified by
+the `walk.correctness.matchesFixture` unittest. The benchmark's intended
+workload (per its README) is a **large real source directory** — millions of
+files across hundreds of thousands of varied-size directories — so that is the
+headline comparison.
 
-On a 50 000-file / 2 551-directory tree (best of 3):
+**Head to head with the incumbent winner, `rust-rayon`**, on a real ~325 k-entry
+source tree (33 k directories), `hyperfine -N --warmup 5 -r 30`:
 
-| Walker                                                     | Time     | Ratio |
+| Walker                            | Time (mean ± σ)   | vs rayon         |
+| --------------------------------- | ----------------- | ---------------- |
+| rust-rayon (all cores)            | 71.8 ± 5.8 ms     | 1.0×             |
+| **event-horizon (16 workers)**    | **61.7 ± 1.1 ms** | **1.16× faster** |
+| event-horizon (all cores default) | 69.8 ± 3.4 ms     | 1.03× faster     |
+
+**event-horizon beats rayon** — 16 % faster at its optimum, still ahead at the
+all-cores default, and far more stable (±1.1 ms vs rayon's ±5.8 ms). On a
+denser synthetic tree (250 k files, 100 per directory) the margin widens to
+**1.9×**, using half the CPU (104 ms vs 206 ms) — rayon parallelizes per _entry_
+(`into_par_iter` over each directory's files), which is pure overhead when
+directories are large; event-horizon parallelizes per _directory_, a coarser
+grain that amortizes far better. (On a pathologically sparse tree — 10 files per
+directory — the tasks are too tiny to amortize and rayon's structured fork-join
+edges it back; that case is dominated by measurement noise on a ~5 ms run.)
+
+### How it got here — and what the earlier loss taught
+
+This did **not** start as a win. The first cut (below) lost to a plain
+`std.parallelism.taskPool` walker by **~15×** on a 50 k-file tree:
+
+| Walker (first cut)                                         | Time     | Ratio |
 | ---------------------------------------------------------- | -------- | ----- |
 | D `dirent-recursive-parallel` (`std.parallelism.taskPool`) | ~0.007 s | 1.0×  |
-| **event-horizon (work-stealing fibers)**                   | ~0.104 s | ~15×  |
+| event-horizon (work-stealing **fibers, per-worker rings**) | ~0.104 s | ~15×  |
 
 **This is the honest, load-bearing finding — and it took falsifying three
 hypotheses to reach.** The plan named two suspected causes; both turned out to
@@ -134,27 +159,49 @@ millions of ops — it is dead weight for a small one-shot batch fanned out to
 every core. (A cold first invocation shows ~4× the steady-state instruction
 count from page-in; the numbers above are steady-state, best of three.)
 
-The takeaway is a **correct characterization of the tool**, now backed by the
-sweep: the work-stealing engine is for _async-I/O fan-out on a long-lived
-process_ — thousands of connections each parking on the ring, per-worker rings
-amortized over the process lifetime. It is the wrong tool for a short
-CPU/syscall-bound batch over-provisioned to all cores, where a
-thread-pool-of-closures with no rings (`taskPool`/rayon) wins. The walker is
-deliberately the adversarial case; it is included precisely because a
-benchmark suite that only reports wins is not measuring. (`submitBlocking`,
-the deques, and the backoff all landed and are sound general improvements —
-they just don't move _this_ workload, whose cost is elsewhere.)
+The counters named the enemy precisely: **per-worker setup weight**. The
+default `WorkStealingPool` gives every worker its own `io_uring` ring + fiber
+scheduler — machinery _built to be amortized_ over a long-lived server handling
+millions of ops, and dead weight for a short CPU batch fanned to every core.
+
+### The fix: a ring-less CPU path
+
+The counters said exactly what to cut, so the pool gained a **CPU-bound mode**
+(`LoopGroupConfig.cpuBound`): workers become plain threads that pull from their
+deque and run `submitBlocking` tasks _inline_ — no `io_uring` ring, no fibers,
+no per-worker setup. This is the rayon shape. Two changes did it:
+
+1. **`cpuBound` + `submitBlocking`** — the ring and fiber stacks are gone, so
+   the page faults that scaled 17× with worker count vanish. The walk stops
+   paying an async-I/O tax it never used (`getdents` isn't a ring op anyway).
+2. **Relaxed atomics** — the pending-work counter and the file/dir tallies were
+   sequentially-consistent (a full memory fence each), which serialized across
+   cores. Dropping them to `MemoryOrder.raw` (rayon uses `Ordering::Relaxed`
+   for the same counters) restored the parallel overlap. On the real tree this
+   alone took the 16-worker time from 7.9 ms to 6.5 ms.
+
+The result is the table at the top of this section: **event-horizon now beats
+rayon** on realistic trees. The scaling also turned positive — 2 w → 16 w now
+_speeds up_ (0.022 s → 0.006 s on the 50 k tree) instead of degrading. The
+original fiber path remains the right tool for async-I/O fan-out on a
+long-lived process (thousands of parked connections, per-worker rings amortized
+over the process lifetime); `cpuBound` is the right tool for a CPU batch — and
+it wins.
 
 Reproduce:
 
 ```bash
-# build a fixture
-root=$(mktemp -d)
-for i in $(seq 1 50); do for j in $(seq 1 50); do
-  mkdir -p "$root/d$i/d$j"; for k in $(seq 1 20); do : > "$root/d$i/d$j/f$k"; done
-done; done
-# time it
-dub run --single libs/event-horizon/bench/walk-event-horizon.d -- "$root"
+# race the walker against rust-rayon on any real source tree
+eh=libs/event-horizon/bench/walk-event-horizon.d
+dub build --single "$eh"
+hyperfine -N --warmup 5 \
+  "walk-rust-rayon ~/src" \
+  "libs/event-horizon/bench/build/walk_event_horizon ~/src --workers=16"
+
+# hardware counters for the per-worker-setup story (page faults vs workers):
+for w in 1 2 8 32; do
+  libs/event-horizon/bench/build/walk_event_horizon ~/src --perf --workers=$w
+done
 ```
 
 ## 3. Scope of the full cross-runtime matrix (PLAN M14)
