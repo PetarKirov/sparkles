@@ -171,6 +171,27 @@ private UnitTestResult runnerMain(Test[] discovered, bool hostIsRunner)
     if (!options.selfTest && !testingRunnerItself(hostIsRunner))
         discovered = discovered.filter!(t => !t.isSelfTest).array;
 
+    // Validate the user-supplied patterns once up front: a malformed regex
+    // would otherwise throw `RegexException` out of this unittest hook and crash
+    // the run with a raw stack trace instead of a readable message.
+    {
+        import std.regex : regex, RegexException;
+        import std.stdio : stderr;
+
+        try
+        {
+            if (options.include.length)
+                cast(void) regex(options.include);
+            if (options.exclude.length)
+                cast(void) regex(options.exclude);
+        }
+        catch (RegexException e)
+        {
+            stderr.writeln("invalid --include/--exclude regular expression: ", e.msg);
+            return UnitTestResult(1, 0, false, false);
+        }
+    }
+
     auto tests = discovered
         .filter!(t => t.matchesFilter(options.include, options.exclude))
         .array;
