@@ -180,6 +180,17 @@ auto ctx(Caps...)(Caps caps) if (allSatisfy!(isCapability, Caps))
     return r;
 }
 
+/// Canonicalizing alias: sorts capabilities by label so `Ctx!(Net, Clock)`
+/// and `Ctx!(Clock, Net)` are one instantiation (bounds template bloat —
+/// open-issues O12). The blessed row constructor.
+template CtxOf(Caps...)
+{
+    import std.meta : staticSort;
+
+    enum labelLess(A, B) = A.capName < B.capName;
+    alias CtxOf = Ctx!(staticSort!(labelLess, Caps));
+}
+
 /// Structural row check for template constraints:
 /// `void f(C)(ref C ctx) if (hasCaps!(C, "net", "clock"))` — a callee
 /// constrained on a subset accepts any superset row unchanged.

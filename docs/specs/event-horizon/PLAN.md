@@ -116,7 +116,8 @@ measure thread-per-core vs work-stealing tail latency/throughput on the echo
 bench.
 
 Gate: both topologies selectable via loop-group config; the SPEC §1 example
-unparked and green under `--verify`; benchmarks committed.
+unparked and green under `--verify` (done — single topology + live.d/Env);
+benchmarks committed.
 
 ## M10 — kqueue backend (macOS)
 

@@ -30,9 +30,8 @@ Tier A is the substrate the other tiers build on _and_ a supported public API
 blocking-looking code with no function coloring. Tier C is a thin monadic
 veneer whose combinators are defined in terms of tier B (§12).
 
-The target ergonomics, end to end (tier B):
-
-<!-- md-example-skip: sparkles:event-horizon not implemented until M9 (LoopGroup + live Env row) -->
+The target ergonomics, end to end (tier B) — a self-contained loopback echo
+over the live capability row (`env.net`) and a structured scope:
 
 ```d
 #!/usr/bin/env dub
@@ -41,53 +40,83 @@ The target ergonomics, end to end (tier B):
     dependency "sparkles:event-horizon" version="*"
 +/
 import core.lifetime : move;
+import std.stdio : writeln;
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.event_horizon;
 
 void main()
 {
     LoopGroup group;
-    auto started = LoopGroup.start(group,
-        LoopGroupConfig(topology: Topology.single));
-    if (started.hasError)
-        assert(false, started.error.context);
+    if (LoopGroup.start(group, LoopGroupConfig(topology: Topology.single)).hasError)
+        assert(false, "io_uring unavailable");
+    scope (exit) group.shutdown();
+
+    bool echoed;
     group.run((ref RootScope sc, ref Env env) {
-        auto listener = env.net.listen(ipv4("127.0.0.1", 8080)).value;
+        // Bind on an ephemeral loopback port; a daemon serves one client.
+        auto listener = env.net.listen(ipv4("127.0.0.1", 0)).value;
+        const port = listener.boundPort;
+
         sc.spawnDaemon({
-            for (;;)
-            {
-                auto conn = listener.accept;      // parks; resumes on CQE
-                if (conn.hasError)
-                    break;                        // interrupted / closed
-                sc.spawn(() => echo(conn.value)); // child bound to sc
-            }
+            auto conn = listener.accept;          // parks; resumes on CQE
+            if (conn.hasValue)
+                echo(conn.value);                 // serve the connection
         });
-        // … run until a shutdown condition, then:
-        sc.cancel(Interrupt(InterruptKind.shutdown));
-    });                                           // joins/cancels all children
+
+        // The client: connect, send, receive the echo, verify.
+        auto client = env.net.connect(ipv4("127.0.0.1", port)).value;
+        scope (exit) client.close();
+        SmallBuffer!(ubyte, 64) msg;
+        msg ~= cast(const(ubyte)[]) "hello, event horizon";
+        client = client.sendAll(move(msg));
+
+        SmallBuffer!(ubyte, 64) back;
+        back.length = 64;
+        auto got = client.recv(move(back));       // parks until the echo
+        echoed = !got.res.hasError && got.res.value == 20;
+
+        listener.close();
+        sc.cancel(Interrupt(InterruptKind.shutdown)); // reap the daemon
+    });
+
+    writeln(echoed ? "ok: echoed 20 bytes" : "echo failed");
 }
 
 void echo(Stream conn)
 {
     scope (exit) conn.close();                    // runs even on Interrupt
     SmallBuffer!(ubyte, 4096) buf;
-    buf.length = 4096;                            // grow-with-default (M4 base prerequisite)
-    for (;;)
-    {
-        auto r = conn.recv(move(buf));            // buffer moves in …
-        buf = move(r.buf);                        // … and comes back
-        if (r.res.hasError || r.res.value == 0)
-            return;                               // error / interrupt / EOF
-        auto w = conn.send(move(buf), 0, r.res.value);
-        buf = move(w.buf);
-        if (w.res.hasError)
-            return;
-    }
+    buf.length = 4096;                            // grow-with-default (base helper)
+    auto r = conn.recv(move(buf));                // buffer moves in …
+    buf = move(r.buf);                            // … and comes back
+    if (r.res.hasError || r.res.value == 0)
+        return;                                   // error / interrupt / EOF
+    buf.length = r.res.value;
+    cast(void) conn.send(move(buf));              // echo it back
+}
+
+// Small helpers used above (part of the library surface):
+ushort boundPort(ref Listener l) @trusted
+{
+    import core.sys.posix.arpa.inet : ntohs;
+    import core.sys.posix.netinet.in_ : sockaddr_in;
+    import core.sys.posix.sys.socket : getsockname, sockaddr, socklen_t;
+
+    sockaddr_in a;
+    socklen_t len = a.sizeof;
+    getsockname(l.fd, cast(sockaddr*) &a, &len);
+    return ntohs(a.sin_port);
+}
+
+Stream sendAll(Buf)(Stream s, Buf buf)
+{
+    auto w = s.send(move(buf));
+    return s;
 }
 ```
 
 ```[Output]
-
+ok: echoed 20 bytes
 ```
 
 ## 2. Package and module layout
