@@ -48,6 +48,11 @@
 # Actions' shared IPs — same pattern as web.archive.org, retries don't help
 # (live + 200 locally; monorepo-tooling/dagger/index.md cites the Dagger docs)
 ^https?://docs\.dagger\.io/
+# math.ucr.edu (John Baez's site) refuses *connections* from GitHub Actions'
+# shared IPs (TCP-level "Connection refused", never retried) — same pattern as
+# web.archive.org above (live + HTTP 200 locally; units-of-measure/theory/
+# torsor-representation.md cites Baez's torsors essay)
+^https?://math\.ucr\.edu/
 # dickgrune.com (Parsing Techniques, 1st & 2nd editions) times out under GitHub
 # Actions' concurrency (live + 200 locally; cited across parsing/theory/*.md)
 ^https?://(www\.)?dickgrune\.com/
