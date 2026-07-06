@@ -23,7 +23,6 @@ export default withMermaid(
       /\/text-conformance\//,
       /\/libs\/base\/src\//,
       /\/libs\/wired\/bench\//,
-      /\/specs\/event-horizon\//,
       /\/research\/application-packaging\/grounding\//,
       // The twoslash showcase is a static gallery generated into docs/public/ at
       // build time (docs/scripts/build-twoslash-showcase.sh), not a markdown page.
