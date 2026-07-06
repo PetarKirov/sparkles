@@ -34,8 +34,28 @@ import sparkles.wired_bench.report : BenchReport, collectEnvInfo, dumpJson,
     reportEnvironment, reportPerf, reportResults;
 import sparkles.wired_bench.runner : runAll;
 
+version (linux)
+    private extern (C) int mallopt(int, int) nothrow @nogc;
+
 int main(string[] args)
 {
+    version (linux)
+    {
+        // Level the allocator field for every engine: by default glibc
+        // trims multi-MB blocks back to the kernel on free, so a
+        // parse-in-a-loop refaults its whole document arena every
+        // iteration — and whether an engine pays depends on allocation-
+        // pattern luck (one block vs two), not parser quality. Raising
+        // the trim/mmap thresholds (standard practice in parser
+        // benchmarking; jemalloc/mimalloc swaps do the same implicitly)
+        // makes page faults a first-iteration cost for all engines
+        // equally. Disclosed in the report environment header.
+        enum M_TRIM_THRESHOLD = -1;
+        enum M_MMAP_THRESHOLD = -3;
+        mallopt(M_TRIM_THRESHOLD, 64 * 1024 * 1024);
+        mallopt(M_MMAP_THRESHOLD, 64 * 1024 * 1024);
+    }
+
     const opts = args.parseCliArgs!BenchOptions(
         HelpInfo("runtime-bench", "Runtime JSON benchmark for sparkles:wired."));
 
