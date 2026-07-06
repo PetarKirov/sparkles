@@ -469,24 +469,27 @@ struct Ranges(V) if (isVersion!V)
 // Tests
 // ---------------------------------------------------------------------------
 
-version (unittest)
-{
-    import sparkles.versions.traits : isVersionRange;
+version (unittest) import sparkles.versions.traits : isVersionRange;
 
-    // A minimal conforming version: a single unsigned coordinate. Concrete
-    // enough to exercise the interval algebra and `toString`.
-    private struct U3
+// A minimal conforming version: a single unsigned coordinate. Concrete enough
+// to exercise the interval algebra and `toString`. Defined unconditionally (not
+// under `version (unittest)`) so its non-template methods land in the library
+// build: the tests below instantiate `Interval!U3`, and a downstream package
+// importing this module under `-unittest` picks up those instantiations — whose
+// TypeInfo references `U3.opEquals`/`toHash`. A unittest-only `U3` never puts
+// those in `versions.a`, so DMD leaves them undefined at link time (LDC only
+// papers over it with weak symbols).
+private struct U3
+{
+    uint v;
+    int opCmp(in U3 o) const @safe pure nothrow @nogc
+        => v < o.v ? -1 : (v > o.v ? 1 : 0);
+    bool opEquals(in U3 o) const @safe pure nothrow @nogc => v == o.v;
+    size_t toHash() const @safe pure nothrow @nogc => v;
+    void toString(W)(ref W w) const
     {
-        uint v;
-        int opCmp(in U3 o) const @safe pure nothrow @nogc
-            => v < o.v ? -1 : (v > o.v ? 1 : 0);
-        bool opEquals(in U3 o) const @safe pure nothrow @nogc => v == o.v;
-        size_t toHash() const @safe pure nothrow @nogc => v;
-        void toString(W)(ref W w) const
-        {
-            import sparkles.base.text.writers : writeInteger;
-            writeInteger(w, v);
-        }
+        import sparkles.base.text.writers : writeInteger;
+        writeInteger(w, v);
     }
 }
 
