@@ -74,7 +74,8 @@ dub test -- -l                  # list discovered tests, with attribute markers
 
 `-i`/`-e` are regular expressions matched against
 `<fully.qualified.symbol> <test name>`, so both `-i "geometry"` (module) and
-`-i "area.rectangle"` (name) work. When both are given, `-i` wins. Under a
+`-i "area.rectangle"` (name) work. When both are given they combine: a test
+must match `-i` and not match `-e`. Under a
 terminal, `-v` locations become OSC 8 hyperlinks and long lines are truncated
 to the terminal width (both require `sparkles:core-cli` in the closure).
 
@@ -241,25 +242,25 @@ environments.
 Everything after `--` in `dub test -- <options>`. Full table:
 [CLI reference](./reference/cli.md).
 
-| Option                     | Description                                                        |
-| -------------------------- | ------------------------------------------------------------------ |
-| `-i`, `--include REGEX`    | Run only tests whose `fullName name` matches                       |
-| `-e`, `--exclude REGEX`    | Skip tests whose `fullName name` matches (ignored when `-i` given) |
-| `-v`, `--verbose`          | Durations, `[file:line]` locations, full stack traces              |
-| `-t`, `--threads N`        | Worker threads; `0` (default) auto-detects, `1` is single-thread   |
-| `-l`, `--list`             | List discovered tests with their attribute markers                 |
-| `--no-colours`             | Disable colour (also honours `$NO_COLOR` and non-tty stdout)       |
-| `--bench`                  | Measure `@benchmark` tests                                         |
-| `--perf`                   | With `--bench`: add hardware perf counters (Linux `perf_event`)    |
-| `--better-c`               | Extract and run `@betterC` tests under `-betterC`                  |
-| `--wasm`                   | Cross-compile and run `@wasm` tests on `wasm32`                    |
-| `--ctfe-trace FILE`        | Evaluate `@ctfe` tests under LDC `-ftime-trace`; per-test cost     |
-| `--self-test`              | Also run the runner's own unittests                                |
-| `--compiler DC`            | Compiler for `@ctfe`/`--better-c`/`--wasm` (`$DC`, then ldc2/dmd)  |
-| `-I`, `--import-path DIR`  | Extra import path for extraction/probe compiles (repeatable)       |
-| `--include-import PATTERN` | Compile matching modules into `--better-c`/`--wasm` (repeatable)   |
-| `--keep`                   | Keep generated program/probe files                                 |
-| `-h`, `--help`             | Option summary                                                     |
+| Option                     | Description                                                                            |
+| -------------------------- | -------------------------------------------------------------------------------------- |
+| `-i`, `--include REGEX`    | Run only tests whose `fullName name` matches                                           |
+| `-e`, `--exclude REGEX`    | Skip tests whose `fullName name` matches; combines with `-i` (match `-i` and not `-e`) |
+| `-v`, `--verbose`          | Durations, `[file:line]` locations, full stack traces                                  |
+| `-t`, `--threads N`        | Worker threads; `0` (default) auto-detects, `1` is single-thread                       |
+| `-l`, `--list`             | List discovered tests with their attribute markers                                     |
+| `--no-colours`             | Disable colour (also honours `$NO_COLOR` and non-tty stdout)                           |
+| `--bench`                  | Measure `@benchmark` tests                                                             |
+| `--perf`                   | With `--bench`: add hardware perf counters (Linux `perf_event`)                        |
+| `--better-c`               | Extract and run `@betterC` tests under `-betterC`                                      |
+| `--wasm`                   | Cross-compile and run `@wasm` tests on `wasm32`                                        |
+| `--ctfe-trace FILE`        | Evaluate `@ctfe` tests under LDC `-ftime-trace`; per-test cost                         |
+| `--self-test`              | Also run the runner's own unittests                                                    |
+| `--compiler DC`            | Compiler for `@ctfe`/`--better-c`/`--wasm` (`$DC`, then ldc2/dmd)                      |
+| `-I`, `--import-path DIR`  | Extra import path for extraction/probe compiles (repeatable)                           |
+| `--include-import PATTERN` | Compile matching modules into `--better-c`/`--wasm` (repeatable)                       |
+| `--keep`                   | Keep generated program/probe files                                                     |
+| `-h`, `--help`             | Option summary                                                                         |
 
 **Exit status:** non-zero when any test fails, in every mode — safe for CI and
 `git bisect run`.

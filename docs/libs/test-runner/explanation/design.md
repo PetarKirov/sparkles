@@ -124,6 +124,24 @@ thread-local context, so the same test degrades to a single invocation under
 any other runner. `blackBox` is the optimizer barrier (empty asm under LDC,
 volatile store elsewhere).
 
+`benchCase` extends this to a **matrix**: one `@benchmark` body calls it per
+(engine, dataset, …) and each call becomes its own row, so the combinatorics
+stay in plain-D loops rather than in the runner. It times each call individually
+— the price of letting an untimed `after` release the timed body's result
+before the next iteration — and `after` chooses the failure granularity (a
+`throw` fails the whole test; an `Expected` error isolates a single error row).
+`Metric` columns report throughput as `amount ÷ time`, with a vocabulary (a
+named `Unit`; rate = quantity ÷ time) aligned to the forthcoming
+`sparkles:quantities` library.
+
+`--perf` adds a **second pass** dedicated to hardware counters: a
+`perf_event_open` group (pure D over `core.sys.linux.perf_event` — no ImportC)
+brackets only the timed body with `ENABLE`/`DISABLE` ioctls, so the
+per-iteration syscalls never pollute the wall-clock medians. Unavailable
+counters — a paranoid kernel, or the last-level-cache pair dropped to avoid PMU
+multiplexing — degrade to `—` rather than failing, and off Linux the pass is
+skipped entirely.
+
 ## Inherited limitation
 
 Like silly, discovery sees only `dub_test_root.allModules`, which excludes

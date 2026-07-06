@@ -4,26 +4,27 @@ Everything after `--` in `dub test :pkg -- <options>` goes to the runner.
 
 ## Selection and output
 
-| Option            | Description                                                                |
-| ----------------- | -------------------------------------------------------------------------- |
-| `-i`, `--include` | Run only tests whose `fullName name` matches the regular expression        |
-| `-e`, `--exclude` | Skip tests whose `fullName name` matches (ignored when `-i` is given)      |
-| `-v`, `--verbose` | Durations, `[file:line]` locations, full stack traces                      |
-| `-t`, `--threads` | Worker threads; `0` (default) auto-detects, `1` runs single-threaded       |
-| `--no-colours`    | Disable colored output (also honors `$NO_COLOR` and non-tty stdout)        |
-| `-l`, `--list`    | List discovered tests with `@ctfe`/`@benchmark`/`@betterC`/`@wasm` markers |
-| `--self-test`     | Also run the test runner's own unittests                                   |
-| `-h`, `--help`    | Option summary                                                             |
+| Option            | Description                                                                                              |
+| ----------------- | -------------------------------------------------------------------------------------------------------- |
+| `-i`, `--include` | Run only tests whose `fullName name` matches the regular expression                                      |
+| `-e`, `--exclude` | Skip tests whose `fullName name` matches; combines with `-i` (a test must match `-i` and not match `-e`) |
+| `-v`, `--verbose` | Durations, `[file:line]` locations, full stack traces                                                    |
+| `-t`, `--threads` | Worker threads; `0` (default) auto-detects, `1` runs single-threaded                                     |
+| `--no-colours`    | Disable colored output (also honors `$NO_COLOR` and non-tty stdout)                                      |
+| `-l`, `--list`    | List discovered tests with `@ctfe`/`@benchmark`/`@betterC`/`@wasm` markers                               |
+| `--self-test`     | Also run the test runner's own unittests                                                                 |
+| `-h`, `--help`    | Option summary                                                                                           |
 
 ## Modes
 
-| Option              | Description                                                              |
-| ------------------- | ------------------------------------------------------------------------ |
-| _(none)_            | Run regular tests in parallel; evaluate selected `@ctfe` tests via CTFE  |
-| `--bench`           | Measure `@benchmark` tests (serial); print the statistics table          |
-| `--better-c`        | Extract `@betterC` tests, compile with `-betterC`, run without druntime  |
-| `--wasm`            | Extract `@wasm` tests, cross-compile to `wasm32`, run in a wasm runtime  |
-| `--ctfe-trace FILE` | Evaluate `@ctfe` tests under LDC `-ftime-trace` and report per-test cost |
+| Option              | Description                                                                                                                     |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| _(none)_            | Run regular tests in parallel; evaluate selected `@ctfe` tests via CTFE                                                         |
+| `--bench`           | Measure `@benchmark` tests (serial); print the statistics table                                                                 |
+| `--perf`            | With `--bench`: add hardware perf counters per benchmark (Linux `perf_event`) — IPC, instructions/iter, cache/branch miss rates |
+| `--better-c`        | Extract `@betterC` tests, compile with `-betterC`, run without druntime                                                         |
+| `--wasm`            | Extract `@wasm` tests, cross-compile to `wasm32`, run in a wasm runtime                                                         |
+| `--ctfe-trace FILE` | Evaluate `@ctfe` tests under LDC `-ftime-trace` and report per-test cost                                                        |
 
 `@ctfe` tests are evaluated by a probe program compiled with `-o- -unittest`
 (semantic analysis only) after `-i`/`-e` filtering, so only the selected
