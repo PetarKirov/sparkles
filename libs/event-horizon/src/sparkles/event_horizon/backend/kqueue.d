@@ -14,24 +14,35 @@ kevent `udata`, so a ready event maps straight back to the op's `user_data`
 token. `nop` is synthesized inline (no fd), the same way IOCP posts to its
 port.
 
-Status: the data-path (`recv`/`send`/`nop`) completion synthesis is verified
-on macOS (Darwin) by `scripts/verify-kqueue-macos.sh`. Async connect
-(non-blocking `connect` + `EVFILT_WRITE`), accept, timers (`EVFILT_TIMER`),
-and the full `EventLoop!KqueueBackend` wiring are the remaining M10 work; the
-concept conformance holds today.
+Op coverage: `nop`, `recv`/`send`, `read`/`write`, `accept`, non-blocking
+`connect` (`EVFILT_WRITE` + `SO_ERROR`), and timers (`EVFILT_TIMER`). The full
+`EventLoop!KqueueBackend` integration — tier-A loop + tier-B fibers + the
+`io` verbs — is verified two ways: the data path on real macOS
+(`scripts/verify-kqueue-macos.sh`), and the whole stack via a fiber-echo on
+Linux over mheily/libkqueue (`scripts/verify-kqueue-linux.sh`). The
+regular-file worker pool and native cancellation (`EV_DELETE` on the target
+registration) are the remaining refinements.
 */
 module sparkles.event_horizon.backend.kqueue;
 
-version (OSX)  :  // kqueue peer backend (BSD/macOS).
+// The kqueue backend is macOS/BSD-native; `EventHorizonLibkqueue` also builds
+// it on Linux over mheily/libkqueue (an epoll shim), so the full
+// `EventLoop!KqueueBackend` integration can be tested on Linux CI.
+version (OSX)
+    version = EventHorizonKqueue;
+version (EventHorizonLibkqueue)
+    version = EventHorizonKqueue;
 
-import core.stdc.errno : EAGAIN, errno;
-import core.sys.posix.sys.socket : recv, send;
+version (EventHorizonKqueue)  :
+
+import core.stdc.errno : EAGAIN, ECANCELED, EINPROGRESS, errno;
+import core.sys.posix.sys.socket : accept, connect, recv, send;
 
 import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion;
 import sparkles.event_horizon.backend.probe : BackendCaps, BackendId, LoopMode;
 import sparkles.event_horizon.errors;
-import sparkles.event_horizon.op : KernelTimespec, OpNop, OpRecv, OpSend, OpSlot,
-    OpToken;
+import sparkles.event_horizon.op : KernelTimespec, OpAccept, OpConnect, OpNop,
+    OpRead, OpRecv, OpSend, OpSlot, OpTimeout, OpToken, OpWrite;
 
 // ── minimal kqueue bindings (the exact BSD struct layout) ───────────────────
 
@@ -63,7 +74,9 @@ struct timespec
 
 enum short EVFILT_READ = -1;
 enum short EVFILT_WRITE = -2;
+enum short EVFILT_TIMER = -7;
 enum ushort EV_ADD = 0x0001;
+enum ushort EV_DELETE = 0x0002;
 enum ushort EV_ONESHOT = 0x0010;
 enum ushort EV_ERROR = 0x4000;
 
@@ -71,10 +84,11 @@ enum ushort EV_ERROR = 0x4000;
 struct KqOp
 {
     ulong token;   // the op's user_data
-    int fd;        // socket
-    ubyte* buf;    // recv/send buffer
+    int fd;        // socket / timer ident
+    ubyte* buf;    // recv/send/read/write buffer (null for accept/connect/timer)
     uint len;      // buffer length
     OpKindLocal kind;
+    short filter;  // the registered filter (for EV_DELETE on cancel)
     uint nextFree; // freelist link (uint.max = none)
 }
 
@@ -82,6 +96,11 @@ enum OpKindLocal : ubyte
 {
     recv,
     send,
+    read_,
+    write_,
+    accept_,
+    connect_,
+    timer,
 }
 
 public:
@@ -92,7 +111,7 @@ struct KqueueBackend
     @disable this(this);
 
     /// Creates the kqueue and the pending-op slab.
-    IoResult!void open(in BackendConfig cfg) @trusted nothrow
+    IoResult!void open(in BackendConfig cfg) @trusted nothrow @nogc
     {
         import core.memory : pureMalloc;
 
@@ -125,7 +144,7 @@ struct KqueueBackend
     }
 
     /// Closes the kqueue and frees the slab.
-    void close() @trusted nothrow
+    void close() @trusted nothrow @nogc
     {
         import core.memory : pureFree;
 
@@ -143,6 +162,17 @@ struct KqueueBackend
 
     /// The negotiated capabilities (kqueue: readiness-synthesized proactor).
     ref const(BackendCaps) caps() const return @safe pure nothrow @nogc => _caps;
+
+    /// Maps raw completion flags to the portable set. kqueue synthesizes one
+    /// completion per op, so there are no `MORE`/buffer-select flags.
+    import sparkles.event_horizon.op : CompletionFlags;
+
+    CompletionFlags mapFlags(uint) const @safe pure nothrow @nogc
+        => CompletionFlags.init;
+
+    /// Never called (kqueue sets no buffer-select flag); present for the
+    /// dispatch's static shape.
+    static ushort selectedBufferId(uint) @safe pure nothrow @nogc => 0;
 
     // ── lowering: register readiness interest, remember the op ──────────────
 
@@ -163,7 +193,7 @@ struct KqueueBackend
             return false;
         auto space = slot.pinned.space();
         *op = KqOp(token.raw, o.fd, space.ptr, cast(uint) space.length,
-            OpKindLocal.recv, uint.max);
+            OpKindLocal.recv, EVFILT_READ, uint.max);
         return armFilter(op, EVFILT_READ);
     }
 
@@ -175,8 +205,85 @@ struct KqueueBackend
             return false;
         auto bytes = slot.pinned[];
         *op = KqOp(token.raw, o.fd, cast(ubyte*) bytes.ptr, cast(uint) bytes.length,
-            OpKindLocal.send, uint.max);
+            OpKindLocal.send, EVFILT_WRITE, uint.max);
         return armFilter(op, EVFILT_WRITE);
+    }
+
+    /// A positioned read (pipe/socket): `EVFILT_READ` + `read`.
+    bool trySubmit(in OpRead o, OpToken token, ref OpSlot slot) @trusted nothrow
+    {
+        auto op = acquire();
+        if (op is null)
+            return false;
+        auto space = slot.pinned.space();
+        *op = KqOp(token.raw, o.fd, space.ptr, cast(uint) space.length,
+            OpKindLocal.read_, EVFILT_READ, uint.max);
+        return armFilter(op, EVFILT_READ);
+    }
+
+    /// A positioned write (pipe/socket): `EVFILT_WRITE` + `write`.
+    bool trySubmit(in OpWrite o, OpToken token, ref OpSlot slot) @trusted nothrow
+    {
+        auto op = acquire();
+        if (op is null)
+            return false;
+        auto bytes = slot.pinned[];
+        *op = KqOp(token.raw, o.fd, cast(ubyte*) bytes.ptr, cast(uint) bytes.length,
+            OpKindLocal.write_, EVFILT_WRITE, uint.max);
+        return armFilter(op, EVFILT_WRITE);
+    }
+
+    /// Accept: register `EVFILT_READ` on the listener; on readiness `accept`.
+    bool trySubmit(in OpAccept o, OpToken token, ref OpSlot) @trusted nothrow
+    {
+        auto op = acquire();
+        if (op is null)
+            return false;
+        *op = KqOp(token.raw, o.listenFd, null, 0, OpKindLocal.accept_,
+            EVFILT_READ, uint.max);
+        return armFilter(op, EVFILT_READ);
+    }
+
+    /// Connect: start a non-blocking `connect`; if it is still in progress,
+    /// register `EVFILT_WRITE` and check `SO_ERROR` on writability. `addr` is
+    /// consumed synchronously here, so the descriptor may die immediately.
+    bool trySubmit(in OpConnect o, OpToken token, ref OpSlot) @trusted nothrow
+    {
+        import core.sys.posix.netinet.in_ : sockaddr;
+
+        setNonBlocking(o.fd);
+        const rc = connect(o.fd, cast(const sockaddr*) o.addr.storage.ptr, o.addr.len);
+        if (rc == 0)
+        {
+            if (_synthCount >= _synth.length)
+                return false;
+            _synth[_synthCount++] = RawCompletion(token.raw, 0, 0); // connected inline
+            return true;
+        }
+        if (errno != EINPROGRESS)
+        {
+            if (_synthCount >= _synth.length)
+                return false;
+            _synth[_synthCount++] = RawCompletion(token.raw, -errno, 0);
+            return true;
+        }
+        auto op = acquire();
+        if (op is null)
+            return false;
+        *op = KqOp(token.raw, o.fd, null, 0, OpKindLocal.connect_, EVFILT_WRITE, uint.max);
+        return armFilter(op, EVFILT_WRITE);
+    }
+
+    /// A relative timer via `EVFILT_TIMER` (unique ident from the op index).
+    bool trySubmit(in OpTimeout o, OpToken token, ref OpSlot) @trusted nothrow
+    {
+        auto op = acquire();
+        if (op is null)
+            return false;
+        const ident = cast(int)(_timerBase + (op - _ops.ptr));
+        *op = KqOp(token.raw, ident, null, 0, OpKindLocal.timer, EVFILT_TIMER, uint.max);
+        const ms = o.rel.tv_sec * 1000 + o.rel.tv_nsec / 1_000_000;
+        return armTimer(op, ms < 0 ? 0 : ms);
     }
 
     /// No changelist to flush separately — registration happens inline.
@@ -211,14 +318,7 @@ struct KqueueBackend
             auto op = cast(KqOp*) evs[i].udata;
             if (op is null)
                 continue;
-            int res;
-            if (evs[i].flags & EV_ERROR)
-                res = -cast(int) evs[i].data;
-            else if (op.kind == OpKindLocal.recv)
-                res = syscallResult(recv(op.fd, op.buf, op.len, 0));
-            else
-                res = syscallResult(send(op.fd, op.buf, op.len, 0));
-            _ready[_readyCount++] = RawCompletion(op.token, res, 0);
+            _ready[_readyCount++] = RawCompletion(op.token, performOp(op, evs[i]), 0);
             release(op);
         }
         return ioOk(cast(uint) _readyCount);
@@ -250,6 +350,38 @@ struct KqueueBackend
     bool trySubmitCancel(OpToken, OpToken) @safe nothrow @nogc => true;
 
 private:
+    /// Performs the actual syscall for a now-ready op; returns the completion
+    /// `res` (bytes / new fd / 0 / -errno).
+    int performOp(KqOp* op, ref const kevent_t ev) @trusted nothrow
+    {
+        import core.sys.posix.sys.socket : getsockopt, socklen_t, SO_ERROR, SOL_SOCKET,
+            sockaddr;
+        import core.sys.posix.unistd : read, write;
+
+        if (ev.flags & EV_ERROR)
+            return -cast(int) ev.data;
+        final switch (op.kind)
+        {
+            case OpKindLocal.recv:
+                return syscallResult(recv(op.fd, op.buf, op.len, 0));
+            case OpKindLocal.send:
+                return syscallResult(send(op.fd, op.buf, op.len, 0));
+            case OpKindLocal.read_:
+                return syscallResult(read(op.fd, op.buf, op.len));
+            case OpKindLocal.write_:
+                return syscallResult(write(op.fd, op.buf, op.len));
+            case OpKindLocal.accept_:
+                return syscallResult(accept(op.fd, null, null));
+            case OpKindLocal.connect_:
+                int err;
+                socklen_t elen = err.sizeof;
+                getsockopt(op.fd, SOL_SOCKET, SO_ERROR, &err, &elen);
+                return err == 0 ? 0 : -err;
+            case OpKindLocal.timer:
+                return 0; // expiry is success (the loop maps timeout res)
+        }
+    }
+
     bool armFilter(KqOp* op, short filter) @trusted nothrow
     {
         kevent_t change;
@@ -264,6 +396,32 @@ private:
         }
         ++_pendCount;
         return true;
+    }
+
+    bool armTimer(KqOp* op, long ms) @trusted nothrow
+    {
+        kevent_t change;
+        change.ident = cast(size_t) op.fd; // the unique timer ident
+        change.filter = EVFILT_TIMER;
+        change.flags = EV_ADD | EV_ONESHOT;
+        change.data = cast(ptrdiff_t) ms; // milliseconds (kqueue default unit)
+        change.udata = op;
+        if (kevent(_kq, &change, 1, null, 0, null) < 0)
+        {
+            release(op);
+            return false;
+        }
+        ++_pendCount;
+        return true;
+    }
+
+    static void setNonBlocking(int fd) @trusted nothrow
+    {
+        import core.sys.posix.fcntl : F_GETFL, F_SETFL, fcntl, O_NONBLOCK;
+
+        const fl = fcntl(fd, F_GETFL, 0);
+        if (fl >= 0)
+            fcntl(fd, F_SETFL, fl | O_NONBLOCK);
     }
 
     static int syscallResult(ptrdiff_t r) @safe pure nothrow @nogc
@@ -288,6 +446,8 @@ private:
     }
 
     enum size_t maxBatch = 128;
+    // Timer idents live in a high range so they never collide with fds.
+    enum uint _timerBase = 0x4000_0000;
 
     int _kq = -1;
     KqOp[] _ops;
