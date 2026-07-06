@@ -19,6 +19,8 @@
             inherit root;
             fileset = fs.unions [
               (fs.fileFilter (f: f.hasExt "d") (root + "/libs/base/src"))
+              # base.text imports the runner's attributes (in the impl package).
+              (fs.fileFilter (f: f.hasExt "d") (root + "/libs/test-runner-impl/src"))
               (root + "/libs/base/wasm")
             ];
           };
@@ -37,7 +39,7 @@
             runHook preBuild
 
             ldc2 -mtriple=wasm32-wasip1 -O2 \
-              -I=libs/base/src -i=sparkles \
+              -I=libs/base/src -I=libs/test-runner-impl/src -i=sparkles \
               -L--export=spk_buf_ptr -L--export=spk_buf_cap \
               -L--export=spk_visible_width -L--export=spk_segment \
               libs/base/wasm/spk_text_wasm.d -of=spk-text.wasm
