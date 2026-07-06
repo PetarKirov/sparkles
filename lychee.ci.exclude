@@ -58,3 +58,12 @@
 ^https?://bugs\.kde\.org/
 # https://waf.io/ times out under GitHub Actions' concurrency
 ^https?://(www\.)?waf\.io/
+# Stable external references that intermittently time out under GitHub Actions'
+# shared network / concurrency (0 real errors — checked locally, they resolve):
+# GDC Vault talks, HAL papers, the React Native docs, the D "garden" playground,
+# and the malven.co CSS-grid guide.
+^https?://([^/]+\.)?gdcvault\.com/
+^https?://([^/]+\.)?hal\.science/
+^https?://([^/]+\.)?reactnative\.dev/
+^https?://garden\.dlang\.io/
+^https?://grid\.malven\.co/
