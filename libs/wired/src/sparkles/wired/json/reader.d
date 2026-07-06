@@ -96,9 +96,10 @@ private pragma(inline, true) bool unlikely()(bool cond)
     return expect(cond, false);
 }
 
-/// Failure channel of $(LREF scanNumber) — written only on the error
-/// path, so the kernel's hot path carries no stores for it.
-private struct NumberError
+/// Failure channel of the file-scope token kernels ($(LREF scanNumber),
+/// $(LREF scanString)) — written only on the error path, so the hot
+/// paths carry no stores for it.
+private struct ScanError
 {
     ParseErrorCode code;
     size_t offset;
@@ -115,7 +116,7 @@ private struct NumberError
 // stored straight into `*cell`; returns the index just past the token,
 // or 0 with `*err` filled on failure.
 private size_t scanNumber(JsonReadOptions opts)(
-    const(char)* p, size_t tokenStart, JsonCell* cell, NumberError* err) @system
+    const(char)* p, size_t tokenStart, JsonCell* cell, ScanError* err) @system
 {
     size_t k = tokenStart;
     bool negative = false;
@@ -135,7 +136,7 @@ private size_t scanNumber(JsonReadOptions opts)(
         taken = 1;
         if (unlikely(p[k] >= '0' && p[k] <= '9'))
         {
-            *err = NumberError(ParseErrorCode.leadingZero, tokenStart);
+            *err = ScanError(ParseErrorCode.leadingZero, tokenStart);
             return 0;
         }
     }
@@ -181,7 +182,7 @@ private size_t scanNumber(JsonReadOptions opts)(
         }
         if (taken == 0)
         {
-            *err = NumberError(ParseErrorCode.unexpectedCharacter, k);
+            *err = ScanError(ParseErrorCode.unexpectedCharacter, k);
             return 0;
         }
     }
@@ -253,7 +254,7 @@ private size_t scanNumber(JsonReadOptions opts)(
         fracEnd = k;
         if (fracEnd == fracStart)
         {
-            *err = NumberError(ParseErrorCode.unexpectedCharacter, k,
+            *err = ScanError(ParseErrorCode.unexpectedCharacter, k,
                 "digit required after decimal point");
             return 0;
         }
@@ -285,7 +286,7 @@ private size_t scanNumber(JsonReadOptions opts)(
         }
         if (eDigits == 0)
         {
-            *err = NumberError(ParseErrorCode.unexpectedCharacter, k,
+            *err = ScanError(ParseErrorCode.unexpectedCharacter, k,
                 "digit required in exponent");
             return 0;
         }
@@ -382,6 +383,194 @@ private size_t scanNumber(JsonReadOptions opts)(
     }
 }
 
+// ── string scanning (shared by keys and values) ─────────────────────────
+// Standalone kernel, same discipline as scanNumber: keeping it out of
+// the grammar loop's nested scope keeps the loop's captured state out
+// of the string lane's register allocation. `pool` is the padded
+// mutable pool (content + 8 zero bytes; escapes unescape in place,
+// dst ≤ src always). The string cell whose opening quote sits at
+// `openQuote` is stored into `*cell`; returns the index just past the
+// closing quote, or 0 with `*err` filled on failure.
+private size_t scanString(JsonReadOptions opts)(
+    scope char[] pool, size_t openQuote, JsonCell* cell, ScanError* err) @system
+{
+    const n = pool.length - 8; // content length; padding beyond
+    size_t i = openQuote + 1; // past '"'
+    const start = i;
+    const scan = scanStringBody(pool, i);
+    size_t j = scan.stop;
+    if (unlikely(j >= n))
+    {
+        *err = ScanError(ParseErrorCode.unexpectedEnd, openQuote);
+        return 0;
+    }
+    if (pool[j] == '"') // fast lane: no escapes
+    {
+        static if (opts.validateUtf8)
+        {
+            if (scan.sawHigh)
+            {
+                const bad = indexOfInvalidUtf8(pool[start .. j]);
+                if (bad != j - start)
+                {
+                    *err = ScanError(ParseErrorCode.invalidUtf8, start + bad);
+                    return 0;
+                }
+            }
+        }
+        pool[j] = '\0';
+        *cell = JsonCell(JsonKind.string_, j - start);
+        cell.bits = cast(ulong)(pool.ptr + start);
+        return j + 1;
+    }
+    if (pool[j] != '\\')
+    {
+        *err = ScanError(ParseErrorCode.unexpectedCharacter, j,
+            "control character inside string");
+        return 0;
+    }
+
+    // Escape lane: unescape in place (dst ≤ src always); clean
+    // segments between escapes move as one bulk copy over the same
+    // SWAR scan as the fast lane.
+    size_t dst = j;
+    size_t src = j;
+    while (true)
+    {
+        if (src >= n)
+        {
+            *err = ScanError(ParseErrorCode.unexpectedEnd, openQuote);
+            return 0;
+        }
+        const c = pool[src];
+        if (c == '"')
+            break;
+        if (c < 0x20)
+        {
+            *err = ScanError(ParseErrorCode.unexpectedCharacter, src,
+                "control character inside string");
+            return 0;
+        }
+        if (c != '\\')
+        {
+            // Bulk-move the clean run up to the next stop byte.
+            // dst ≤ src and copying forward word-by-word is overlap-
+            // safe for a leftward move; ≥8 padding bytes keep the
+            // word loads in bounds. Escape-dense strings have tiny
+            // segments — avoid the memmove call for them.
+            const seg = scanStringBody(pool, src).stop - src;
+            auto d = pool.ptr + dst;
+            auto q = pool.ptr + src;
+            if (src - dst >= 8)
+            {
+                // Word copies rounded up to 8: the ≤7-byte overshoot
+                // lands in the dead zone between the shrunken
+                // destination and the unconsumed source (gap ≥ 8
+                // guarantees it), and pool padding keeps the loads in
+                // bounds.
+                size_t k = 0;
+                do
+                {
+                    memcpyWord(d + k, q + k);
+                    k += 8;
+                }
+                while (k < seg);
+            }
+            else
+                foreach (k; 0 .. seg)
+                    d[k] = q[k];
+            dst += seg;
+            src += seg;
+            continue;
+        }
+
+        const escAt = src;
+        src++;
+        if (src >= n)
+        {
+            *err = ScanError(ParseErrorCode.unexpectedEnd, escAt);
+            return 0;
+        }
+        const e = pool[src];
+        src++;
+        switch (e)
+        {
+        case '"', '\\', '/':
+            pool[dst++] = e;
+            break;
+        case 'b':
+            pool[dst++] = '\b';
+            break;
+        case 'f':
+            pool[dst++] = '\f';
+            break;
+        case 'n':
+            pool[dst++] = '\n';
+            break;
+        case 'r':
+            pool[dst++] = '\r';
+            break;
+        case 't':
+            pool[dst++] = '\t';
+            break;
+        case 'u':
+            uint cp;
+            if (!readHex4(pool, n, src, cp))
+            {
+                *err = ScanError(ParseErrorCode.invalidEscape, escAt);
+                return 0;
+            }
+            if (cp >= 0xD800 && cp <= 0xDBFF) // high surrogate
+            {
+                if (src + 1 < n && pool[src] == '\\' && pool[src + 1] == 'u')
+                {
+                    src += 2;
+                    uint low;
+                    if (!readHex4(pool, n, src, low))
+                    {
+                        *err = ScanError(ParseErrorCode.invalidEscape, escAt);
+                        return 0;
+                    }
+                    if (low < 0xDC00 || low > 0xDFFF)
+                    {
+                        *err = ScanError(ParseErrorCode.invalidSurrogate, escAt);
+                        return 0;
+                    }
+                    cp = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
+                }
+                else
+                {
+                    *err = ScanError(ParseErrorCode.invalidSurrogate, escAt);
+                    return 0;
+                }
+            }
+            else if (cp >= 0xDC00 && cp <= 0xDFFF) // lone low surrogate
+            {
+                *err = ScanError(ParseErrorCode.invalidSurrogate, escAt);
+                return 0;
+            }
+            dst += encodeUtf8(pool, dst, cp);
+            break;
+        default:
+            *err = ScanError(ParseErrorCode.invalidEscape, escAt);
+            return 0;
+        }
+    }
+    static if (opts.validateUtf8)
+    {
+        const bad = indexOfInvalidUtf8(pool[start .. dst]);
+        if (bad != dst - start)
+        {
+            *err = ScanError(ParseErrorCode.invalidUtf8, start + bad);
+            return 0;
+        }
+    }
+    pool[dst] = '\0';
+    *cell = JsonCell(JsonKind.string_, dst - start);
+    cell.bits = cast(ulong)(pool.ptr + start);
+    return src + 1; // past closing quote
+}
+
 private void parseInto(JsonReadOptions opts, Allocator)(
     ref JsonParseResult!Allocator result, scope const(char)[] text)
 {
@@ -465,187 +654,10 @@ private void parseInto(JsonReadOptions opts, Allocator)(
     }
 
 
-    // Validates the UTF-8 of pool[from .. to] (a string's decoded bytes).
-    bool validateSpan(size_t from, size_t to)
-    {
-        const bad = indexOfInvalidUtf8(pool[from .. to]);
-        if (bad == to - from)
-            return true;
-        fail(ParseErrorCode.invalidUtf8, from + bad);
-        return false;
-    }
-
-    // ── string scanning (shared by keys and values) ──────────────────────
-    // Parses the string whose opening quote sits at `i` and appends its
-    // cell; on success `i` is past the closing quote. On failure fail()
-    // has run and false returns.
-    bool parseString(JsonKind kind = JsonKind.string_)()
-    {
-        const openQuote = i;
-        i++; // past '"'
-        const start = i;
-        const scan = scanStringBody(pool, i);
-        size_t j = scan.stop;
-        if (unlikely(j >= n))
-        {
-            fail(ParseErrorCode.unexpectedEnd, openQuote);
-            return false;
-        }
-        if (pool[j] == '"') // fast lane: no escapes
-        {
-            static if (opts.validateUtf8)
-            {
-                if (scan.sawHigh && !validateSpan(start, j))
-                    return false;
-            }
-            pool[j] = '\0';
-            i = j + 1;
-            return appendStringCell(start, j - start, kind);
-        }
-        if (pool[j] != '\\')
-        {
-            fail(ParseErrorCode.unexpectedCharacter, j,
-                "control character inside string");
-            return false;
-        }
-
-        // Escape lane: unescape in place (dst ≤ src always); clean
-        // segments between escapes move as one bulk copy over the same
-        // SWAR scan as the fast lane.
-        size_t dst = j;
-        size_t src = j;
-        while (true)
-        {
-            if (src >= n)
-            {
-                fail(ParseErrorCode.unexpectedEnd, openQuote);
-                return false;
-            }
-            const c = pool[src];
-            if (c == '"')
-                break;
-            if (c < 0x20)
-            {
-                fail(ParseErrorCode.unexpectedCharacter, src,
-                    "control character inside string");
-                return false;
-            }
-            if (c != '\\')
-            {
-                // Bulk-move the clean run up to the next stop byte.
-                // dst ≤ src and copying forward word-by-word is overlap-
-                // safe for a leftward move; ≥8 padding bytes keep the
-                // word loads in bounds. Escape-dense strings have tiny
-                // segments — avoid the memmove call for them.
-                const seg = scanStringBody(pool, src).stop - src;
-                () @trusted {
-                    auto d = pool.ptr + dst;
-                    auto q = pool.ptr + src;
-                    if (src - dst >= 8)
-                    {
-                        // Word copies rounded up to 8: the ≤7-byte
-                        // overshoot lands in the dead zone between the
-                        // shrunken destination and the unconsumed source
-                        // (gap ≥ 8 guarantees it), and pool padding keeps
-                        // the loads in bounds.
-                        size_t k = 0;
-                        do
-                        {
-                            memcpyWord(d + k, q + k);
-                            k += 8;
-                        }
-                        while (k < seg);
-                    }
-                    else
-                        foreach (k; 0 .. seg)
-                            d[k] = q[k];
-                }();
-                dst += seg;
-                src += seg;
-                continue;
-            }
-
-            const escAt = src;
-            src++;
-            if (src >= n)
-            {
-                fail(ParseErrorCode.unexpectedEnd, escAt);
-                return false;
-            }
-            const e = pool[src];
-            src++;
-            switch (e)
-            {
-            case '"', '\\', '/':
-                pool[dst++] = e;
-                break;
-            case 'b':
-                pool[dst++] = '\b';
-                break;
-            case 'f':
-                pool[dst++] = '\f';
-                break;
-            case 'n':
-                pool[dst++] = '\n';
-                break;
-            case 'r':
-                pool[dst++] = '\r';
-                break;
-            case 't':
-                pool[dst++] = '\t';
-                break;
-            case 'u':
-                uint cp;
-                if (!readHex4(pool, n, src, cp))
-                {
-                    fail(ParseErrorCode.invalidEscape, escAt);
-                    return false;
-                }
-                if (cp >= 0xD800 && cp <= 0xDBFF) // high surrogate
-                {
-                    if (src + 1 < n && pool[src] == '\\' && pool[src + 1] == 'u')
-                    {
-                        src += 2;
-                        uint low;
-                        if (!readHex4(pool, n, src, low))
-                        {
-                            fail(ParseErrorCode.invalidEscape, escAt);
-                            return false;
-                        }
-                        if (low < 0xDC00 || low > 0xDFFF)
-                        {
-                            fail(ParseErrorCode.invalidSurrogate, escAt);
-                            return false;
-                        }
-                        cp = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
-                    }
-                    else
-                    {
-                        fail(ParseErrorCode.invalidSurrogate, escAt);
-                        return false;
-                    }
-                }
-                else if (cp >= 0xDC00 && cp <= 0xDFFF) // lone low surrogate
-                {
-                    fail(ParseErrorCode.invalidSurrogate, escAt);
-                    return false;
-                }
-                dst += encodeUtf8(pool, dst, cp);
-                break;
-            default:
-                fail(ParseErrorCode.invalidEscape, escAt);
-                return false;
-            }
-        }
-        static if (opts.validateUtf8)
-        {
-            if (!validateSpan(start, dst))
-                return false;
-        }
-        pool[dst] = '\0';
-        i = src + 1; // past closing quote
-        return appendStringCell(start, dst - start, kind);
-    }
+    // String tokens go through the file-scope scanString kernel; the
+    // shared rare-path error channel lives here so the hot call sites
+    // carry no per-call initialization.
+    ScanError serr;
 
 
     // ── literals ─────────────────────────────────────────────────────────
@@ -686,8 +698,15 @@ value: // parse one value at pool[i]
         const c0 = pool[i];
         if (c0 == '"') // most frequent first (string-heavy JSON)
         {
-            if (!parseString!()())
+            const end = (() @trusted => scanString!opts(pool, i,
+                cells.ptr + cellCount, &serr))();
+            if (end == 0)
+            {
+                fail(serr.code, serr.offset, serr.context);
                 return;
+            }
+            cellCount++;
+            i = end;
             goto afterValue;
         }
         if (c0 != '{' && c0 != '[')
@@ -715,12 +734,11 @@ value: // parse one value at pool[i]
                 // scanNumber) so the grammar loop's live state stays out
                 // of its register allocation; @trusted on the padded
                 // pool and the pre-sized arena slot.
-                NumberError nerr;
                 const end = (() @trusted => scanNumber!opts(pool.ptr, i,
-                    cells.ptr + cellCount, &nerr))();
+                    cells.ptr + cellCount, &serr))();
                 if (end == 0)
                 {
-                    fail(nerr.code, nerr.offset, nerr.context);
+                    fail(serr.code, serr.offset, serr.context);
                     return;
                 }
                 cellCount++;
@@ -805,8 +823,18 @@ objectKey: // parse `"key" :` then its value
             if (!appendStringCell(start, quick))
                 return;
         }
-        else if (!parseString!()())
-            return;
+        else
+        {
+            const end = (() @trusted => scanString!opts(pool, i,
+                cells.ptr + cellCount, &serr))();
+            if (end == 0)
+            {
+                fail(serr.code, serr.offset, serr.context);
+                return;
+            }
+            cellCount++;
+            i = end;
+        }
     }
     skipWs(pool, i);
     if (i >= n || pool[i] != ':')
