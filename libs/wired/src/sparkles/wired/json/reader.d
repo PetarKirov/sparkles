@@ -371,25 +371,30 @@ private void parseInto(JsonReadOptions opts, Allocator)(
 
 
     // ── number scanning (fused grammar + accumulation) ───────────────────
-    bool parseNumber()
+    // Pointer-based kernel: the ≥8-byte zero padding terminates every
+    // digit run, so the hot loops carry no bounds checks. @trusted with
+    // the same invariant as the scan seams.
+    bool parseNumber() @trusted
     {
+        auto p = pool.ptr;
         const tokenStart = i;
+        size_t k = i;
         bool negative = false;
-        if (pool[i] == '-')
+        if (p[k] == '-')
         {
             negative = true;
-            i++;
+            k++;
         }
 
         // Integer part (strict: no leading zeros, at least one digit).
-        const intStart = i;
+        const intStart = k;
         ulong sig = 0;
         size_t taken = 0;
-        if (pool[i] == '0')
+        if (p[k] == '0')
         {
-            i++;
+            k++;
             taken = 1;
-            if (pool[i] >= '0' && pool[i] <= '9')
+            if (p[k] >= '0' && p[k] <= '9')
             {
                 fail(ParseErrorCode.leadingZero, tokenStart);
                 return false;
@@ -397,46 +402,79 @@ private void parseInto(JsonReadOptions opts, Allocator)(
         }
         else
         {
-            const got = readDigits(pool[i .. $], sig);
-            if (got == 0)
+            // Accumulate up to 19 digits, unrolled two at a time.
+            while (taken < 18)
             {
-                fail(ParseErrorCode.unexpectedCharacter, i);
+                const uint d0 = cast(uint)(p[k] - '0');
+                if (d0 > 9)
+                    break;
+                const uint d1 = cast(uint)(p[k + 1] - '0');
+                if (d1 > 9)
+                {
+                    sig = sig * 10 + d0;
+                    taken++;
+                    k++;
+                    break;
+                }
+                sig = sig * 100 + d0 * 10 + d1;
+                taken += 2;
+                k += 2;
+            }
+            if (taken == 18)
+            {
+                const uint d = cast(uint)(p[k] - '0');
+                if (d <= 9)
+                {
+                    sig = sig * 10 + d;
+                    taken++;
+                    k++;
+                }
+            }
+            if (taken == 0)
+            {
+                fail(ParseErrorCode.unexpectedCharacter, k);
                 return false;
             }
-            i += got;
-            taken = got;
         }
         // Integer digits beyond the 19-digit accumulator.
         size_t intExtra = 0;
-        while (pool[i] >= '0' && pool[i] <= '9')
+        while (p[k] >= '0' && p[k] <= '9')
         {
             intExtra++;
-            i++;
+            k++;
         }
-        const intEnd = i;
+        const intEnd = k;
 
         // Fraction.
         size_t fracStart = 0, fracEnd = 0, fracTaken = 0;
         bool fracExtraNonzero = false;
-        if (pool[i] == '.')
+        if (p[k] == '.')
         {
-            i++;
-            fracStart = i;
+            k++;
+            fracStart = k;
             if (intExtra == 0)
             {
-                fracTaken = readDigits(pool[i .. $], sig, 19 - taken);
+                const budget = 19 - taken;
+                while (fracTaken < budget)
+                {
+                    const uint d = cast(uint)(p[k] - '0');
+                    if (d > 9)
+                        break;
+                    sig = sig * 10 + d;
+                    fracTaken++;
+                    k++;
+                }
                 taken += fracTaken;
-                i += fracTaken;
             }
-            while (pool[i] >= '0' && pool[i] <= '9')
+            while (p[k] >= '0' && p[k] <= '9')
             {
-                fracExtraNonzero |= pool[i] != '0';
-                i++;
+                fracExtraNonzero |= p[k] != '0';
+                k++;
             }
-            fracEnd = i;
+            fracEnd = k;
             if (fracEnd == fracStart)
             {
-                fail(ParseErrorCode.unexpectedCharacter, i,
+                fail(ParseErrorCode.unexpectedCharacter, k,
                     "digit required after decimal point");
                 return false;
             }
@@ -445,29 +483,40 @@ private void parseInto(JsonReadOptions opts, Allocator)(
         // Exponent.
         int explicitExp = 0;
         bool hasExp = false;
-        if (pool[i] == 'e' || pool[i] == 'E')
+        if ((p[k] | 0x20) == 'e')
         {
             hasExp = true;
-            i++;
+            k++;
             bool expNeg = false;
-            if (pool[i] == '+' || pool[i] == '-')
+            if (p[k] == '+' || p[k] == '-')
             {
-                expNeg = pool[i] == '-';
-                i++;
+                expNeg = p[k] == '-';
+                k++;
             }
             ulong e = 0;
-            const eDigits = readDigits!10(pool[i .. $], e);
+            size_t eDigits = 0;
+            while (eDigits < 10)
+            {
+                const uint d = cast(uint)(p[k] - '0');
+                if (d > 9)
+                    break;
+                e = e * 10 + d;
+                eDigits++;
+                k++;
+            }
             if (eDigits == 0)
             {
-                fail(ParseErrorCode.unexpectedCharacter, i,
+                fail(ParseErrorCode.unexpectedCharacter, k,
                     "digit required in exponent");
                 return false;
             }
-            i += eDigits;
+            while (p[k] >= '0' && p[k] <= '9') // absurd exponents saturate
+                k++;
             if (e > 400)
-                e = 400; // saturates identically beyond
+                e = 400;
             explicitExp = expNeg ? -cast(int) e : cast(int) e;
         }
+        i = k;
 
         static if (opts.rawNumbers)
         {
@@ -496,7 +545,7 @@ private void parseInto(JsonReadOptions opts, Allocator)(
             if (isInt && intExtra == 1)
             {
                 // The 20-digit u64 tail: one extra digit may still fit.
-                const d = cast(uint)(pool[intEnd - 1] - '0');
+                const d = cast(uint)(p[intEnd - 1] - '0');
                 if (sig < ulong.max / 10
                     || (sig == ulong.max / 10 && d <= ulong.max % 10))
                 {
