@@ -56,36 +56,48 @@ On a 50 000-file / 2 551-directory tree (best of 3):
 | D `dirent-recursive-parallel` (`std.parallelism.taskPool`) | ~0.007 s | 1.0×  |
 | **event-horizon (work-stealing fibers)**                   | ~0.104 s | ~15×  |
 
-**This is the honest, load-bearing finding, not a footnote.** The
-work-stealing engine _loses badly_ on this workload, for a reason anticipated
-by the plan and then **isolated by measurement**:
+**This is the honest, load-bearing finding — and it took falsifying three
+hypotheses to reach.** The plan named two suspected causes; both turned out to
+be wrong, and a scaling sweep found the real one:
 
-1. **`getdents` has no io_uring opcode.** The directory read is an ordinary
-   syscall, so there is nothing for a fiber to _await_. A stackful fiber earns
-   its keep by suspending cheaply across async I/O latency; when the task is a
-   sub-microsecond syscall that never parks, the fiber's 64 KiB stack alloc,
-   context switch, and GC-stack registration are pure overhead. `taskPool`
-   (and Rust rayon, the incumbent winner) carry each unit of work as a
-   lightweight closure on a thread — no per-task stack. **This dominates.**
-2. **Queue contention was _not_ the cause.** The plan hypothesized a second
-   contributor — a single global injection queue with a mutex — so the pool
-   was rebuilt with per-worker Chase-Lev-style deques (owner pushes/pops its
-   tail, thieves steal from the head; [open-issue O2](./open-issues.md),
-   done). The walker time did **not** move (~0.103 s before and after),
-   proving the fiber-per-task cost in (1) is the whole story here and the
-   queue was never the bottleneck for this workload. The deques still matter
-   for correctness and for scaling submit-heavy workloads to many cores — they
-   just don't help a fiber-bound one. Running CPU-bound tasks _without_ a fiber
-   (a closure directly on the worker) is what would close this gap, and is the
-   real remaining work for this workload class.
+1. **Hypothesis: fiber-per-task overhead.** `getdents` has no io_uring opcode,
+   so the directory read never parks — a stackful fiber's 64 KiB stack +
+   context switch would be pure overhead. Tested by adding
+   `pool.submitBlocking` (runs the task inline on the worker, no fiber) and
+   pointing the walker at it. Result: **no change** (~0.10 s). Not the cause.
+2. **Hypothesis: global-queue mutex contention.** The single injection queue
+   was rebuilt as per-worker Chase-Lev-style deques (owner push/pop tail,
+   thieves steal head; [O2](./open-issues.md)). Result: **no change**
+   (~0.103 s). Not the cause.
+3. **Hypothesis: idle workers thrashing.** Added exponential idle backoff so
+   over-provisioned workers quiet down instead of steal-scanning every peer.
+   Result: **marginal** (0.101 → 0.097 s) — helps CPU/power when
+   over-provisioned, but not the wall-clock cause.
 
-The takeaway is a **correct characterization of the tool**: the work-stealing
-fiber scheduler is built for _async-I/O fan-out_ — thousands of connections
-each parking on the ring — where suspension amortizes over I/O latency and the
-proactor does real work. It is the wrong tool for CPU/syscall-bound parallel
-fan-out with sub-microsecond tasks, where a thread-pool-of-closures wins. A
-walker is deliberately the adversarial case; it is included precisely because
-a benchmark suite that only reports wins is not measuring.
+The **scaling sweep** found it. Time vs worker count on the same tree:
+
+| workers | 1     | 2     | 4     | 8    | 16   | 32 (default) |
+| ------- | ----- | ----- | ----- | ---- | ---- | ------------ |
+| time    | .036s | .023s | .023s | .03s | .05s | .10s         |
+
+The optimum is 2–4 workers; past that it degrades monotonically, and the
+default (all 32 CPUs) lands on the **worst** point. The dominant cost is
+**per-worker setup weight**: each worker creates its own `io_uring` ring +
+thread + scheduler, so spinning up 32 of them for a ~50 ms batch job is mostly
+ring-creation overhead. That machinery is _built to be amortized_ over a
+long-running server handling millions of ops — it is dead weight for a small
+one-shot batch fanned out to every core.
+
+The takeaway is a **correct characterization of the tool**, now backed by the
+sweep: the work-stealing engine is for _async-I/O fan-out on a long-lived
+process_ — thousands of connections each parking on the ring, per-worker rings
+amortized over the process lifetime. It is the wrong tool for a short
+CPU/syscall-bound batch over-provisioned to all cores, where a
+thread-pool-of-closures with no rings (`taskPool`/rayon) wins. The walker is
+deliberately the adversarial case; it is included precisely because a
+benchmark suite that only reports wins is not measuring. (`submitBlocking`,
+the deques, and the backoff all landed and are sound general improvements —
+they just don't move _this_ workload, whose cost is elsewhere.)
 
 Reproduce:
 

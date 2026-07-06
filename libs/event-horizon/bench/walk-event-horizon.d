@@ -78,7 +78,7 @@ int main(string[] argv)
 void submitDir(ref WorkStealingPool p, string path)
 {
     auto pool = &p;
-    pool.submit(() { walkDir(*pool, path); });
+    pool.submitBlocking(() { walkDir(*pool, path); });
 }
 
 /// Walks one directory: count it, count its files, submit its subdirectories.
