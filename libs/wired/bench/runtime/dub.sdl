@@ -1,29 +1,22 @@
 name "wired-runtime-bench"
-description "Runtime JSON benchmark: std.json baseline vs D/C/C++/Rust engines"
+description "Runtime JSON benchmark: std.json baseline vs D engines, on sparkles:test-runner"
 authors "Petar Kirov"
 copyright "Copyright © 2026, Petar Kirov"
 license "BSL-1.0"
 
-targetType "executable"
-targetName "runtime-bench"
+targetType "library"
 targetPath "build"
-mainSourceFile "src/app.d"
 
 dflags "-preview=in" "-preview=dip1000"
-
-// The perf_event_open helper *defines* functions, so its .c must be
-// compiled as a real source (emitted + linked), not merely imported for
-// declarations (the icu-binding precedent). Compiles to an empty module
-// off Linux (#ifdef __linux__).
-cSourcePaths "src"
 
 dependency "sparkles:base"     path="../../../.."
 dependency "sparkles:core-cli" path="../../../.."
 dependency "sparkles:wired"    path="../../../.."
 
-// D engines (pure-D dub packages; exact versions pinned in
-// dub.selections.json). Each engine's adapter sits behind the matching
-// `versions` gate so a frontend incompatibility is one line away from off.
+// D engines (pure-D dub packages; pinned in dub.selections.json). Each adapter
+// sits behind its `versions` gate so a frontend incompatibility is one line
+// away from off. Foreign engines (yyjson/C++/Rust) need nix-built shims and are
+// off by default — re-add their `versions` + path deps to run them under nix.
 dependency "mir-ion" version="~>2.3"
 versions "BenchMirIon"
 dependency "asdf" version="~>0.8.0"
@@ -31,48 +24,12 @@ versions "BenchAsdf"
 dependency "jsoniopipe" version="~>0.2.7"
 versions "BenchJsoniopipe"
 
-// The canonical benchmarking build: release codegen tuned to the host CPU.
-// Foreign engines are nix-built with ISA presets (see nix/packages/); the
-// D side has no sandbox purity constraint, so it gets true native codegen.
-buildType "bench" {
-    buildOptions "releaseMode" "optimize" "inline"
-    // -O3 + cross-module inlining: without the latter, separately
-    // compiled pragma(inline, true) primitives (scan seams, float_conv
-    // kernels) stay opaque calls in the hot loops — measured 15%+ on
-    // number-heavy datasets.
-    dflags "-mcpu=native" "-O3" "-enable-cross-module-inlining" platform="ldc"
-}
-
-// All engines. Foreign-language engines join this configuration milestone by
-// milestone; each stays behind its own `versions` gate so a broken engine is
-// one line away from off.
-configuration "application" {
-    targetType "executable"
-
-    // yyjson: ImportC binding; the ISA-preset build's yyjson.pc (on the
-    // devshell's PKG_CONFIG_PATH) provides both cflags and -lyyjson.
-    dependency "yyjson" path="bindings/yyjson"
-    versions "BenchYyjson"
-
-    // simdjson (DOM + On-Demand) and rapidjson via the extern "C" shim, and
-    // serde_json + simd-json + sonic-rs via the Rust staticlib; the
-    // wired-bench-cpp-shim.pc / wired-bench-rs.pc files carry the link
-    // recipes.
-    dependency "wired-bench-shim" path="bindings/shim"
-    versions "BenchCpp" "BenchRust"
-}
-
-// Fast-iteration config: D engines only — no native libraries, no ImportC
-// shims. Also the bisect tool when a link problem appears in `application`.
-configuration "d-only" {
-    targetType "executable"
-}
-
 configuration "unittest" {
-    targetType "library"
-    excludedSourceFiles "src/app.d"
-
-    dependency "silly" version="~>1.1.1"
+    // The benchmark is a set of `@benchmark unittest`s run through
+    // sparkles:test-runner (`dub test -- --bench`, with `--perf` for hardware
+    // counters) — replacing the standalone app + silly + the private perf
+    // backend. Corpora load from `$WIRED_BENCH_DATA` at run time.
+    dependency "sparkles:test-runner" path="../../../.."
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
