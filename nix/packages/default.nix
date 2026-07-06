@@ -36,12 +36,17 @@
             (fs.fileFilter isDubManifest root)
           ]
           # D source files for the ci/release apps and their direct dependencies.
+          # `base`/`core-cli` import the runner's `@…` attributes (in the impl
+          # package) unconditionally, so its source must be present even in these
+          # non-unittest library builds.
           ++ map (path: fs.fileFilter (file: file.hasExt "d") (fromRoot path)) [
             "apps/ci/src"
             "apps/release/src"
             "libs/base/src"
             "libs/core-cli/src"
             "libs/versions/src"
+            "libs/test-runner/src"
+            "libs/test-runner-impl/src"
           ]
         );
       };

@@ -61,6 +61,10 @@
               # `dependency "sparkles:<lib>" path="../../.."`.
               (fs.fileFilter (file: file.hasExt "d") (fromRoot "libs/base/src"))
               (fs.fileFilter (file: file.hasExt "d") (fromRoot info.librarySrcRel))
+              # `base` imports the runner's attributes (in the impl package)
+              # unconditionally, so its source must be present.
+              (fs.fileFilter (file: file.hasExt "d") (fromRoot "libs/test-runner/src"))
+              (fs.fileFilter (file: file.hasExt "d") (fromRoot "libs/test-runner-impl/src"))
               # The full `examples/` subtree — this brings in the shared
               # `views/` string-import assets alongside the script itself.
               (fromRoot info.examplesRel)
