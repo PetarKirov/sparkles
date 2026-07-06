@@ -28,6 +28,7 @@ export default withMermaid(
     srcExclude: [
       '**/research/parsing/grounding/**',
       '**/research/units-of-measure/grounding/**',
+      '**/research/iroh/prompt.md',
     ],
 
     markdown: {
@@ -846,6 +847,101 @@ export default withMermaid(
                 {
                   text: 'Other Implementations',
                   link: '/research/algebraic-effects/other-implementations',
+                },
+              ],
+            },
+            {
+              text: 'Iroh (P2P / QUIC)',
+              link: '/research/iroh/',
+              collapsed: true,
+              items: [
+                {
+                  text: 'Concepts & Vocabulary',
+                  link: '/research/iroh/concepts',
+                },
+                {
+                  text: 'Foundations',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Identity & Cryptography',
+                      link: '/research/iroh/identity-crypto',
+                    },
+                    {
+                      text: 'Wire Formats & Serialization',
+                      link: '/research/iroh/wire-serialization',
+                    },
+                    {
+                      text: 'QUIC Transport (noq)',
+                      link: '/research/iroh/quic-transport',
+                    },
+                  ],
+                },
+                {
+                  text: 'Connectivity',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Endpoint & Protocol Router',
+                      link: '/research/iroh/endpoint',
+                    },
+                    {
+                      text: 'The Multipath Socket',
+                      link: '/research/iroh/socket',
+                    },
+                    {
+                      text: 'NAT Traversal & Address Discovery',
+                      link: '/research/iroh/nat-traversal',
+                    },
+                    {
+                      text: 'The Relay Protocol',
+                      link: '/research/iroh/relay',
+                    },
+                    {
+                      text: 'Address Lookup (Discovery)',
+                      link: '/research/iroh/discovery',
+                    },
+                    {
+                      text: 'Net Report & Interface Watching',
+                      link: '/research/iroh/net-report',
+                    },
+                  ],
+                },
+                {
+                  text: 'Data Protocols',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Blobs: Content-Addressed Transfer',
+                      link: '/research/iroh/blobs',
+                    },
+                    {
+                      text: 'BLAKE3 Verified Streaming (bao-tree)',
+                      link: '/research/iroh/bao-tree',
+                    },
+                    {
+                      text: 'Document Sync (iroh-docs)',
+                      link: '/research/iroh/docs-sync',
+                    },
+                    {
+                      text: 'Epidemic Broadcast (iroh-gossip)',
+                      link: '/research/iroh/gossip',
+                    },
+                  ],
+                },
+                {
+                  text: 'D Migration',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Tokio Concurrency Inventory',
+                      link: '/research/iroh/concurrency',
+                    },
+                    {
+                      text: 'D Architecture Migration',
+                      link: '/research/iroh/d-architecture-migration',
+                    },
+                  ],
                 },
               ],
             },
