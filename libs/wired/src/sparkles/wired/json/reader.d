@@ -115,13 +115,16 @@ private void parseInto(JsonReadOptions opts, Allocator)(
         return;
     }
 
-    // Cell estimate: ~1 cell / 6 bytes minified, ~1 / 16 pretty
-    // (whitespace-heavy). Underestimates grow ×1.5.
-    const looksPretty = text.length >= 2 && (text[0] == '{' || text[0] == '[')
-        && (text[1] == '\n' || text[1] == ' ' || text[1] == '\r' || text[1] == '\t');
-    const cellEstimate = text.length / (looksPretty ? 16 : 6) + 4;
+    // Worst-case cell bound — there is no growth path; appends in the
+    // hot loop are checkless stores. Proof sketch: every cell's first
+    // byte is distinct input (≤ 1 cell/byte), and among closed values
+    // sibling cells are comma-separated while closed containers pair an
+    // opener with a closer (≤ len/2 cells + 1 per still-open container,
+    // and opens are capped at maxDepth before the next one appends).
+    const worst = text.length / 2 + opts.maxDepth;
+    const cellCapacity = (text.length < worst ? text.length : worst) + 4;
 
-    if (!result.document.acquire(cellEstimate, text.length + 8))
+    if (!result.document.acquire(cellCapacity, text.length + 8))
     {
         fail(ParseErrorCode.outOfMemory, 0);
         return;
@@ -138,7 +141,7 @@ private void parseInto(JsonReadOptions opts, Allocator)(
     // ── cell append / container machinery (threaded parent) ─────────────
     // Hot state lives in locals — stores through `pool` would otherwise
     // force conservative reloads of every document field on each append;
-    // the document is synced at growth and on completion.
+    // the document is synced on completion.
     auto cells = doc.cells;
     size_t cellCount = 0;
 
@@ -147,46 +150,31 @@ private void parseInto(JsonReadOptions opts, Allocator)(
     bool parentIsObject = false; // cells[parent].kind cached (hot loop)
     uint depth = 0;
 
-    // Returns the new cell's index, or size_t.max on allocation failure.
-    size_t appendCell(JsonKind kind, ulong size = 0)
+    // The arena is pre-sized to the worst case (see cellCapacity), so
+    // every append is a checkless store + bump — @trusted on that bound.
+    size_t appendCell(JsonKind kind, ulong size = 0) @trusted
     {
-        if (unlikely(cellCount == cells.length))
-        {
-            doc.cellCount = cellCount;
-            if (!doc.growCells())
-                return size_t.max;
-            cells = doc.cells;
-        }
         const idx = cellCount++;
-        cells[idx] = JsonCell(kind, size);
+        cells.ptr[idx] = JsonCell(kind, size);
         return idx;
     }
 
-    // Appends a scalar cell with a u64/i64/f64 payload; false on OOM.
-    bool appendScalar(JsonKind kind, ulong payload)
+    // Appends a scalar cell with a u64/i64/f64 payload (always true —
+    // the bool shape matches the grammar loop's return discipline).
+    bool appendScalar(JsonKind kind, ulong payload) @trusted
     {
-        const idx = appendCell(kind);
-        if (idx == size_t.max)
-        {
-            fail(ParseErrorCode.outOfMemory, i);
-            return false;
-        }
-        cells[idx].bits = payload;
+        const idx = cellCount++;
+        cells.ptr[idx] = JsonCell(kind);
+        cells.ptr[idx].bits = payload;
         return true;
     }
 
     bool appendStringCell(size_t start, size_t len,
-        JsonKind kind = JsonKind.string_)
+        JsonKind kind = JsonKind.string_) @trusted
     {
-        const idx = appendCell(kind, len);
-        if (idx == size_t.max)
-        {
-            fail(ParseErrorCode.outOfMemory, i);
-            return false;
-        }
-        () @trusted {
-            cells[idx].bits = cast(ulong)(pool.ptr + start);
-        }();
+        const idx = cellCount++;
+        cells.ptr[idx] = JsonCell(kind, len);
+        cells.ptr[idx].bits = cast(ulong)(pool.ptr + start);
         return true;
     }
 
@@ -711,11 +699,6 @@ value: // parse one value at pool[i]
             }
             depth++;
             const idx = appendCell(isObject ? JsonKind.object : JsonKind.array);
-            if (idx == size_t.max)
-            {
-                fail(ParseErrorCode.outOfMemory, i);
-                return;
-            }
             cells[idx].bits = parent; // threaded parent
             parent = idx;
             parentIsObject = isObject;
@@ -1471,12 +1454,13 @@ unittest
     assert(idx == 3);
 }
 
-@("reader.arena.growthAcrossEstimate")
+@("reader.arena.densestCellPacking")
 @safe pure nothrow @nogc
 unittest
 {
-    // A dense array of tiny values defeats the 1-cell-per-6-bytes
-    // estimate, forcing at least one growCells round-trip.
+    // A dense array of tiny values is the tightest real packing
+    // (2 bytes per cell) — it must fit the worst-case pre-sized arena
+    // with no growth path.
     enum count = 512;
     char[2 + 2 * count] text = void;
     text[0] = '[';
