@@ -17,9 +17,10 @@ Status: verified under Wine two ways — the raw backend's data path
 (`scripts/verify-iocp-loop-wine.sh`: tier-A loop + tier-B fibers + the io
 verbs). accept (`AcceptEx`), connect (`ConnectEx`, extension pointers loaded
 via `WSAIoctl`), recv and send all run through the loop — full parity with the
-kqueue backend; sockets are lazily associated with the port on first use. Only
-an IOCP timer for `OpTimeout` remains, so the `sleep` verb and deadlines are
-absent on Windows for now (SPEC §3.1 — absence degrades, never breaks).
+kqueue backend; sockets are lazily associated with the port on first use.
+`OpTimeout` is driven off the completion-port wait timeout (no threadpool), so
+`sleep`, deadlines, `timeout`, and schedules work on Windows too — the peer
+backend is at full parity with io_uring for the socket + timer surface.
 */
 module sparkles.event_horizon.backend.iocp;
 
@@ -35,7 +36,7 @@ import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion;
 import sparkles.event_horizon.backend.probe : BackendCaps, BackendId, LoopMode;
 import sparkles.event_horizon.errors;
 import sparkles.event_horizon.op : KernelTimespec, OpAccept, OpConnect, OpNop,
-    OpRecv, OpSend, OpSlot, OpToken;
+    OpRecv, OpSend, OpSlot, OpTimeout, OpToken;
 
 // ── minimal winsock2 / IOCP bindings (only what the data path needs) ────────
 
@@ -77,6 +78,7 @@ extern (Windows) nothrow @nogc
     int PostQueuedCompletionStatus(HANDLE port, DWORD bytes, ULONG_PTR key,
         OVERLAPPED* ov);
     int CloseHandle(HANDLE h); // @nogc-declared here (winbase's isn't marked)
+    ulong GetTickCount64(); // monotonic milliseconds since boot
 
     // Socket setup + the async accept/connect machinery.
     SOCKET socket(int af, int type, int protocol);
@@ -328,6 +330,18 @@ struct IocpBackend
         return true;
     }
 
+    /// A relative timer, driven off the completion-port wait timeout (no
+    /// threadpool): the deadline is tracked and its completion synthesized
+    /// when it expires. `res` is 0 on expiry.
+    bool trySubmit(in OpTimeout o, OpToken token, ref OpSlot) @trusted nothrow @nogc
+    {
+        if (_timerCount >= _timers.length)
+            return false;
+        const ms = o.rel.tv_sec * 1000 + o.rel.tv_nsec / 1_000_000;
+        _timers[_timerCount++] = Timer(token.raw, GetTickCount64() + (ms < 0 ? 0 : ms));
+        return true;
+    }
+
     /// Async accept via `AcceptEx`: pre-create the accept socket, associate it
     /// with the port, and issue AcceptEx. On completion `res` is the new fd.
     bool trySubmit(in OpAccept o, OpToken token, ref OpSlot) @trusted nothrow
@@ -406,25 +420,48 @@ struct IocpBackend
     {
         if (want == 0)
             return ioOk(0u);
-        const timeout = deadline is null
-            ? INFINITE
-            : cast(DWORD)((deadline.tv_sec * 1000) + (deadline.tv_nsec / 1_000_000));
+
+        // The wait timeout is the min of the caller's deadline and the
+        // earliest pending timer, so GQCS wakes when a timer is due.
+        ulong waitMs = deadline is null
+            ? ulong.max
+            : cast(ulong)(deadline.tv_sec * 1000 + deadline.tv_nsec / 1_000_000);
+        const now = GetTickCount64();
+        foreach (i; 0 .. _timerCount)
+        {
+            const rem = _timers[i].deadlineMs > now ? _timers[i].deadlineMs - now : 0;
+            if (rem < waitMs)
+                waitMs = rem;
+        }
+        const timeout = waitMs == ulong.max ? INFINITE
+            : (waitMs > uint.max ? uint.max : cast(DWORD) waitMs);
+
         DWORD bytes;
         ULONG_PTR key;
         OVERLAPPED* ov;
         const ok = GetQueuedCompletionStatus(_port, &bytes, &key, &ov, timeout);
-        if (ov is null)
-            return ioOk(0u); // timeout with nothing dequeued
-        // Stash the dequeued completion for reap().
-        _pending = ovToCompletion(ov, bytes, ok != FALSE);
-        _hasPending = true;
-        return ioOk(1u);
+        if (ov !is null)
+        {
+            _pending = ovToCompletion(ov, bytes, ok != FALSE);
+            _hasPending = true;
+        }
+        expireTimers(); // synthesize any timers now due
+        return ioOk((_hasPending ? 1u : 0u) + _synthCount);
     }
 
-    /// Non-blocking drain: the stashed completion plus any others queued.
+    /// Non-blocking drain: the stashed completion, expired timers, plus any
+    /// others already queued on the port.
     uint reap(Sink)(scope Sink sink) @trusted
     {
         uint n;
+        expireTimers();
+        foreach (i; 0 .. _synthCount)
+        {
+            const c = _synth[i];
+            sink(c);
+            ++n;
+        }
+        _synthCount = 0;
         if (_hasPending)
         {
             sink(_pending);
@@ -453,6 +490,21 @@ struct IocpBackend
     bool trySubmitCancel(OpToken, OpToken) @safe nothrow @nogc => true;
 
 private:
+    /// Moves any now-due timers into the synthesized-completion buffer.
+    void expireTimers() @trusted nothrow @nogc
+    {
+        const now = GetTickCount64();
+        uint w;
+        foreach (i; 0 .. _timerCount)
+        {
+            if (_timers[i].deadlineMs <= now && _synthCount < _synth.length)
+                _synth[_synthCount++] = RawCompletion(_timers[i].token, 0, 0);
+            else
+                _timers[w++] = _timers[i]; // keep the still-pending ones
+        }
+        _timerCount = w;
+    }
+
     RawCompletion ovToCompletion(OVERLAPPED* ov, DWORD bytes, bool ok) @trusted nothrow
     {
         auto op = cast(IocpOp*) ov; // ov is the first field of IocpOp
@@ -512,11 +564,21 @@ private:
 
     import core.memory : pureFree, pureMalloc;
 
+    static struct Timer
+    {
+        ulong token;
+        ulong deadlineMs; // absolute GetTickCount64
+    }
+
     HANDLE _port;
     LPFN_ACCEPTEX _acceptEx;
     LPFN_CONNECTEX _connectEx;
     SOCKET[64] _regged; // lazily-associated sockets (verification-grade set)
     uint _regCount;
+    Timer[64] _timers;
+    uint _timerCount;
+    RawCompletion[64] _synth; // synthesized (timer) completions awaiting reap
+    uint _synthCount;
     IocpOp[] _ops;
     uint _cap;
     uint _freeHead = uint.max;
