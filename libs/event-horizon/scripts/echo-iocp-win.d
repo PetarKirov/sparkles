@@ -9,7 +9,8 @@ import core.lifetime : move;
 import std.stdio : writefln, writeln;
 
 import sparkles.base.smallbuffer : SmallBuffer;
-import sparkles.event_horizon.io : Listener, Stream, accept, connect, recv, send;
+import core.time : msecs;
+import sparkles.event_horizon.io : Listener, Stream, accept, connect, recv, send, sleep;
 import sparkles.event_horizon.net : SockAddr;
 import sparkles.event_horizon.sched : Sched;
 
@@ -80,6 +81,8 @@ int main()
         });
 
         // Client fiber (root): connect through the loop (ConnectEx).
+        // Exercise a timer through the loop (the IOCP OpTimeout path).
+        cast(void) sleep(sched, 5.msecs);
         auto client = Stream(cast(int) socket(AF_INET, SOCK_STREAM, 0));
         scope (exit) client.close();
         if (client.connect(addr).hasError)
