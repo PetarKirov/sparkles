@@ -102,5 +102,11 @@ Engine milestones, each independently green:
 - **M13** — **breaking** switch-over to the native surface and `JsonError`
   (SPEC §11.6); `ci --verify` over the revised examples.
 - **M14** — retire the `std.json` walk; port the test suite.
-- **M15+** — optimization rounds. Exit gate: `wired-native` parse **and**
+- **M15+** — optimization rounds (in progress; checkpoint in
+  [bench-baseline.md](./bench-baseline.md)). Landed: the pointer number
+  kernel, single-`i128`-mul Eisel–Lemire, masked UTF-8 sequence checks,
+  frequency-ordered dispatch, the levelled-allocator bench field, and
+  `validateJson` (the text-level validate op). Standing: twitter parse
+  1755 / decode 1518 MB/s vs yyjson 3930 / 3450 — decode is 9.7× the
+  retired std.json pipeline. Exit gate: `wired-native` parse **and**
   decode within ±10% of the yyjson rows on the runtime bench.
