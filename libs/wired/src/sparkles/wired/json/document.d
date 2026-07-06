@@ -108,7 +108,20 @@ struct JsonDocument(Allocator = Mallocator)
     package char[] pool; /// string pool (padded input copy)
 
     @disable this(this);
-    @disable void opAssign(ref JsonDocument);
+
+    /// Move-assignment (by-value parameter = rvalues only, since copying
+    /// is disabled): swap ownership; the temporary's destructor frees the
+    /// previous blocks.
+    void opAssign(JsonDocument rhs)
+    {
+        import std.algorithm.mutation : swap;
+
+        static if (stateSize!Allocator)
+            swap(alloc, rhs.alloc);
+        swap(cells, rhs.cells);
+        swap(cellCount, rhs.cellCount);
+        swap(pool, rhs.pool);
+    }
 
     /// Whether the document holds a parsed value.
     bool valid() const @safe pure nothrow @nogc
