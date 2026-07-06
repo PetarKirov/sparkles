@@ -142,6 +142,40 @@ Other ops in brief (twitter): **validate** — simdjson-OD structural skip
    parse from `const(char)[]` without requiring caller copies, and keep its
    own scratch reusable.
 
+## Post-engine checkpoint (2026-07-06)
+
+The native engine (SPEC §11, M7–M14) plus the first M15 optimization
+rounds, measured on the same rig with the allocator field levelled (the
+harness now raises glibc's trim/mmap thresholds at startup — by default
+multi-MB document arenas are re-faulted every iteration, and who paid
+depended on allocation-pattern luck; yyjson's twitter parse rose from
+1.5 to 3.9 GB/s on the level field too). Snapshot:
+`results/2026-07-06-ryzen9-7940hx-x86-64-v4-post-engine.json`.
+
+| corpus (parse, MB/s) | std.json | wired-native | yyjson | ±10% gate |
+| -------------------- | -------- | ------------ | ------ | --------- |
+| twitter              | ~160     | 1755         | ~3930  | 3537      |
+| citm_catalog         | ~290     | 2504         | ~3944  | 3550      |
+| canada               | ~72      | 785          | ~1358  | 1222      |
+| github_events        | ~170     | 2360         | ~4461  | 4015      |
+
+Typed decode (twitter, the row this project exists for): **1518 MB/s
+through the full wired codec** (`fromJSON!Twitter` — policy layer
+included, measured faster than a hand-written view walk) vs 157 MB/s for
+the retired std.json pipeline — a 9.7× end-to-end improvement — and
+yyjson's accessor-walk decode at ~3450. Text-level validation
+(`validateJson`, materializing nothing): twitter 1440, canada 1534 MB/s.
+
+Instruction budget: twitter parse is at 12.4 ins/B against yyjson's 4.6
+(from std.json's 92.6) with zero steady-state page faults on both — the
+remaining ~2× to the scalar exit gate is pure instruction diet in the
+string lane and the container machinery, the target of the continuing
+M15 rounds. Findings that shaped these rounds: the four-multiply u128
+decomposition never folds (now one LLVM `i128 mul`); a UTF-8 DFA loses
+to well-predicted branches on uniform CJK; per-word validation fusing
+loses to the two-pass scan; and glibc trim behavior can dominate — and
+mislead — any parse-in-a-loop benchmark that doesn't control for it.
+
 ## Reproducing
 
 ```sh
