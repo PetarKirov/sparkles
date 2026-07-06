@@ -27,6 +27,7 @@ enum ParseErrorCode
     invalidUtf8,         /// a byte sequence was not well-formed UTF-8
     depthExceeded,       /// nesting exceeded the parser's depth limit
     trailingContent,     /// input continued after a complete value
+    outOfMemory,         /// the parser's allocator failed
 }
 
 /// Structured parse error: a $(LREF ParseErrorCode) plus the byte offset

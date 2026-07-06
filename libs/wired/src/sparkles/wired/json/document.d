@@ -52,18 +52,12 @@ payload.
 package struct JsonCell
 {
     ulong tag;
-    union Payload
-    {
-        long i64;
-        ulong u64;
-        double f64;
-        immutable(char)* str; /// into the document's pool
-        size_t extent; /// containers: cells to the next sibling (incl. self)
-    }
-
-    Payload payload;
-
-    static assert(Payload.sizeof == 8);
+    /// The 8-byte payload, kind-dependent: i64/u64/f64 scalar bits, a
+    /// pool pointer (strings), or the container extent. Stored as plain
+    /// bits — a union with a pointer member would make every access
+    /// `@system`; instead the few pointer reinterpretations live in
+    /// small `@trusted` kernels.
+    ulong bits;
 
     this(JsonKind kind, ulong size = 0) @safe pure nothrow @nogc
     {
@@ -82,8 +76,13 @@ package struct JsonCell
     {
         const k = kind;
         return k == JsonKind.array || k == JsonKind.object
-            ? payload.extent : 1;
+            ? cast(size_t) bits : 1;
     }
+
+    /// The pool bytes of a string/rawNumber cell.
+    const(char)[] text() const @trusted pure nothrow @nogc
+    in (kind == JsonKind.string_ || kind == JsonKind.rawNumber)
+        => (cast(immutable(char)*) bits)[0 .. size];
 }
 
 static assert(JsonCell.sizeof == 16);
@@ -175,7 +174,10 @@ struct JsonDocument(Allocator = Mallocator)
 
         static if (__traits(hasMember, Allocator, "expand"))
         {
-            if (alloc.expand(block, newBytes - oldBytes))
+            const expanded = () @trusted {
+                return alloc.expand(block, newBytes - oldBytes);
+            }();
+            if (expanded)
             {
                 cells = () @trusted {
                     return (cast(JsonCell*) block.ptr)[0 .. block.length / JsonCell.sizeof];
@@ -185,7 +187,10 @@ struct JsonDocument(Allocator = Mallocator)
         }
         static if (__traits(hasMember, Allocator, "reallocate"))
         {
-            if (alloc.reallocate(block, newBytes))
+            const reallocated = () @trusted {
+                return alloc.reallocate(block, newBytes);
+            }();
+            if (reallocated)
             {
                 cells = () @trusted {
                     return (cast(JsonCell*) block.ptr)[0 .. block.length / JsonCell.sizeof];
@@ -234,22 +239,26 @@ struct JsonValue
     /// `true`/`false` payload.
     bool boolean() const scope @trusted pure nothrow @nogc
     in (kind == JsonKind.bool_)
-        => cell.payload.u64 != 0;
+        => cell.bits != 0;
 
     /// Integer payload (`JsonKind.integer`).
     long integer() const scope @trusted pure nothrow @nogc
     in (kind == JsonKind.integer)
-        => cell.payload.i64;
+        => cast(long) cell.bits;
 
     /// Unsigned payload (`JsonKind.uinteger`: fits `ulong` but not `long`).
     ulong uinteger() const scope @trusted pure nothrow @nogc
     in (kind == JsonKind.uinteger)
-        => cell.payload.u64;
+        => cell.bits;
 
     /// Floating payload (`JsonKind.floating`).
     double floating() const scope @trusted pure nothrow @nogc
     in (kind == JsonKind.floating)
-        => cell.payload.f64;
+    {
+        import sparkles.base.text.float_conv : bitsToDouble;
+
+        return bitsToDouble(cell.bits);
+    }
 
     /// Any number kind, converted to `double`.
     double asDouble() const scope @safe pure nothrow @nogc
@@ -273,12 +282,12 @@ struct JsonValue
     /// document's pool. Borrowed from the document.
     const(char)[] str() const return scope @trusted pure nothrow @nogc
     in (kind == JsonKind.string_)
-        => cell.payload.str[0 .. cell.size];
+        => cell.text;
 
     /// Verbatim number token text (`JsonKind.rawNumber`).
     const(char)[] raw() const return scope @trusted pure nothrow @nogc
     in (kind == JsonKind.rawNumber)
-        => cell.payload.str[0 .. cell.size];
+        => cell.text;
 
     /// Array element count / object member count.
     size_t length() const scope @trusted pure nothrow @nogc
@@ -347,7 +356,7 @@ struct JsonObjectRange
     in (!empty)
     {
         assert(cur.kind == JsonKind.string_, "object key must be a string cell");
-        return JsonMember(cur.payload.str[0 .. cur.size], JsonValue(cur + 1));
+        return JsonMember(cur.text, JsonValue(cur + 1));
     }
 
     void popFront() scope @trusted pure nothrow @nogc
@@ -371,25 +380,25 @@ version (unittest)
     {
         assert(doc.acquire(16, 8));
         doc.pool[0 .. 4] = "a\0b\0";
-        auto keyA = (() => doc.pool.ptr)(); // immutable view of pool slots
         auto c = doc.cells;
 
+        import sparkles.base.text.float_conv : doubleToBits;
+
         c[0] = JsonCell(JsonKind.object, 2);
-        c[0].payload.extent = 9;
+        c[0].bits = 9; // extent
         c[1] = JsonCell(JsonKind.string_, 1); // "a"
-        c[1].payload.str = cast(immutable(char)*) doc.pool.ptr;
+        c[1].bits = cast(ulong) doc.pool.ptr;
         c[2] = JsonCell(JsonKind.integer);
-        c[2].payload.i64 = 1;
+        c[2].bits = 1;
         c[3] = JsonCell(JsonKind.string_, 1); // "b"
-        c[3].payload.str = cast(immutable(char)*)(doc.pool.ptr + 2);
+        c[3].bits = cast(ulong)(doc.pool.ptr + 2);
         c[4] = JsonCell(JsonKind.array, 3);
-        c[4].payload.extent = 4;
+        c[4].bits = 4; // extent
         c[5] = JsonCell(JsonKind.bool_);
-        c[5].payload.u64 = 1;
+        c[5].bits = 1;
         c[6] = JsonCell(JsonKind.null_);
         c[7] = JsonCell(JsonKind.floating);
-        c[7].payload.f64 = 2.5;
-        c[8] = JsonCell(JsonKind.string_, 1); // trailing sibling probe: unused
+        c[7].bits = doubleToBits(2.5);
         c[8] = JsonCell(JsonKind.none);
         doc.cellCount = 9;
     }
@@ -408,7 +417,7 @@ unittest
     assert(cell.extent == 1); // scalar/string extent is implicit
 
     auto arr = JsonCell(JsonKind.array, 100);
-    arr.payload.extent = 42;
+    arr.bits = 42;
     assert(arr.size == 100);
     assert(arr.extent == 42);
 
@@ -575,9 +584,9 @@ version (unittest)
     {
         auto c = doc.cells;
         c[0] = JsonCell(JsonKind.array, 1);
-        c[0].payload.extent = 2;
+        c[0].bits = 2; // extent
         c[1] = JsonCell(JsonKind.bool_);
-        c[1].payload.u64 = 0;
+        c[1].bits = 0;
         doc.cellCount = 2;
     }
 }
