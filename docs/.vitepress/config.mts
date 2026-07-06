@@ -20,7 +20,6 @@ export default withMermaid(
       /\/text-conformance\//,
       /\/libs\/base\/src\//,
       /\/libs\/wired\/bench\//,
-      /\/specs\/event-horizon\//,
     ],
 
     // The parsing and units-of-measure grounding ledgers are internal QA
