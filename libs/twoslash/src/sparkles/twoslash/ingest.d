@@ -36,11 +36,25 @@ JsonResult!TwoslashReturn fromTwoslashJson(JSONValue root)
 /// Parses and decodes a twoslash JSON payload from a string, without throwing.
 JsonResult!TwoslashReturn parseTwoslash(scope const(char)[] json)
 {
+    import expected : err;
+    import sparkles.base.text.errors : ParseErrorCode;
+    import sparkles.wired.json.error : JsonError, JsonStage;
+
     JSONValue root;
     try
         root = parseJSON(json);
     catch (Exception e)
-        return JsonResult!TwoslashReturn(new Exception("twoslash: invalid JSON: " ~ e.msg));
+    {
+        // `std.json` reports the failure as a thrown exception with no
+        // machine-readable detail, so carry its text as the parse-stage
+        // reason; wired's own reader is the path that fills in line/column.
+        JsonError parseFailed = {
+            stage: JsonStage.parse,
+            code: ParseErrorCode.unexpectedCharacter,
+            reason: "twoslash: invalid JSON: " ~ e.msg,
+        };
+        return err!TwoslashReturn(parseFailed);
+    }
     return fromTwoslashJson(root);
 }
 
@@ -132,7 +146,7 @@ version (unittest)
 unittest
 {
     auto res = parseTwoslash(sampleJson);
-    assert(!res.hasError, res.hasError ? res.error.msg : "");
+    assert(!res.hasError, res.hasError ? res.error.toString : "");
     const tw = res.value;
 
     assert(tw.code == "const a = 1\nconst b = a\n");

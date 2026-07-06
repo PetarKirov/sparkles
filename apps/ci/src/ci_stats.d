@@ -209,7 +209,7 @@ Result!T fetchAndDeserializeJson(T)(
         auto dom = parseJSON(responseText);
         auto decoded = fromJSON!T(dom);
         if (decoded.hasError)
-            return failure!T("JSON decode error: " ~ decoded.error.msg);
+            return failure!T("JSON decode error: " ~ decoded.error.toString);
 
         return success(decoded.value);
     }

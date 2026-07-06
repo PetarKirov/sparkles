@@ -1,8 +1,8 @@
 /++
 The string↔typed JSON boundary: `std.json.parseJSON` throws on malformed input
-and `sparkles:wired` reports decode errors as `Exception`s; these helpers fold
-both into the tool's $(REF Result, result) channel so callers stay
-exception-free (SPEC §10).
+and `sparkles:wired` reports decode/encode failures as a structured
+`JsonError`; these helpers fold both into the tool's $(REF Result, result)
+channel so callers stay exception-free (SPEC §10).
 +/
 module sparkles.release.json_utils;
 
@@ -32,7 +32,7 @@ Result!T decodeJson(T)(string raw)
         return failure!T(dom.error);
     auto decoded = fromJSON!T(dom.value);
     if (decoded.hasError)
-        return failure!T(decoded.error.msg);
+        return failure!T(decoded.error.toString);
     return success(decoded.value);
 }
 
@@ -40,12 +40,21 @@ Result!T decodeJson(T)(string raw)
 /// (token-efficient for agent prompts), pretty for human-readable artifacts.
 Result!string encodeJson(T)(in T value, bool pretty = false)
 {
-    import sparkles.wired : toJSON;
+    import std.array : appender;
+    import sparkles.wired : writeJSON;
+    import sparkles.wired.json.writer : JsonWriteOptions;
 
-    auto encoded = toJSON(value);
+    // `writeJSON` is the writer-based primary form and takes its layout as a
+    // compile-time option, so the runtime `pretty` flag picks between two
+    // instantiations. Pretty is wired's SPEC §11.4 layout: 2-space indent,
+    // `": "` separator, LF.
+    auto buf = appender!string;
+    auto encoded = pretty
+        ? writeJSON!(JsonWriteOptions(pretty: true))(value, buf)
+        : writeJSON!(JsonWriteOptions.init)(value, buf);
     if (encoded.hasError)
-        return failure!string(encoded.error.msg);
-    return success(pretty ? encoded.value.toPrettyString : encoded.value.toString);
+        return failure!string(encoded.error.toString);
+    return success(buf[]);
 }
 
 // ---------------------------------------------------------------------------
@@ -77,5 +86,7 @@ Result!string encodeJson(T)(in T value, bool pretty = false)
     assert(decodeJson!Point(`not json`).hasError);
 
     assert(encodeJson(Point(1, 2)).value == `{"x":1,"y":2}`);
-    assert(encodeJson(Point(1, 2), pretty: true).value == "{\n    \"x\": 1,\n    \"y\": 2\n}");
+    // Pretty is wired's SPEC §11.4 layout — 2-space indent, `": "`, LF (the
+    // old expectation was std.json's 4-space `toPrettyString`).
+    assert(encodeJson(Point(1, 2), pretty: true).value == "{\n  \"x\": 1,\n  \"y\": 2\n}");
 }
