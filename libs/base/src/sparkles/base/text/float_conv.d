@@ -117,11 +117,36 @@ struct U128
     ulong lo; /// least-significant 64 bits
 }
 
-/// Full 64×64 → 128-bit unsigned multiply. CTFE-compatible; LLVM folds
-/// this standard four-multiply decomposition into a single widening `mul`
-/// (bare `ucent` is deprecated as of D 2.111).
+/// Full 64×64 → 128-bit unsigned multiply. On LDC the body is one LLVM
+/// `i128 mul` (a single widening `mul`/`umulh` pair — the four-multiply
+/// decomposition demonstrably does not fold); elsewhere and at CTFE the
+/// portable decomposition runs (bare `ucent` is deprecated as of D 2.111).
 U128 mul64x64(ulong a, ulong b) @safe pure nothrow @nogc
 {
+    pragma(inline, true);
+    version (LDC)
+    {
+        if (!__ctfe)
+        {
+            import ldc.llvmasm : __ir_pure;
+
+            // LLVM CSEs the two identical multiplies into one.
+            const lo = __ir_pure!(`
+                %a = zext i64 %0 to i128
+                %b = zext i64 %1 to i128
+                %m = mul i128 %a, %b
+                %t = trunc i128 %m to i64
+                ret i64 %t`, ulong)(a, b);
+            const hi = __ir_pure!(`
+                %a = zext i64 %0 to i128
+                %b = zext i64 %1 to i128
+                %m = mul i128 %a, %b
+                %s = lshr i128 %m, 64
+                %t = trunc i128 %s to i64
+                ret i64 %t`, ulong)(a, b);
+            return U128(hi, lo);
+        }
+    }
     const aLo = a & 0xFFFF_FFFF, aHi = a >> 32;
     const bLo = b & 0xFFFF_FFFF, bHi = b >> 32;
     const p00 = aLo * bLo;
@@ -250,6 +275,7 @@ accumulation); `exp10` is the decimal exponent of its last digit.
 bool tryFastDouble(ulong sig10, int exp10, out double result)
     @safe pure nothrow @nogc
 {
+    pragma(inline, true);
     if (sig10 == 0 || exp10 < minExp10)
     {
         result = 0;
@@ -284,6 +310,7 @@ private bool eiselLemire(ulong sig10, int exp10, out double result)
     @safe pure nothrow @nogc
 in (sig10 != 0 && minExp10 <= exp10 && exp10 <= maxExp10)
 {
+    pragma(inline, true);
     const lz = leadingZeros(sig10);
     const w = sig10 << lz;
 
