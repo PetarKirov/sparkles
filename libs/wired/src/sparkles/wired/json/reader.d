@@ -624,12 +624,43 @@ value: // parse one value at pool[i]
         fail(ParseErrorCode.unexpectedEnd, i);
         return;
     }
-    switch (pool[i])
     {
-    case '{':
-    case '[':
+        const c0 = pool[i];
+        if (c0 == '"') // most frequent first (string-heavy JSON)
         {
-            const isObject = pool[i] == '{';
+            size_t start, len;
+            if (!parseString(start, len))
+                return;
+            if (!appendStringCell(start, len))
+                return;
+            goto afterValue;
+        }
+        if (c0 != '{' && c0 != '[')
+        {
+            if (c0 == 't')
+            {
+                if (!parseLiteral!"true"(JsonKind.bool_, 1))
+                    return;
+                goto afterValue;
+            }
+            if (c0 == 'f')
+            {
+                if (!parseLiteral!"false"(JsonKind.bool_, 0))
+                    return;
+                goto afterValue;
+            }
+            if (c0 == 'n')
+            {
+                if (!parseLiteral!"null"(JsonKind.null_, 0))
+                    return;
+                goto afterValue;
+            }
+            if (!parseNumber())
+                return;
+            goto afterValue;
+        }
+        {
+            const isObject = c0 == '{';
             if (depth >= opts.maxDepth)
             {
                 fail(ParseErrorCode.depthExceeded, i);
@@ -656,31 +687,6 @@ value: // parse one value at pool[i]
                 goto objectKey;
             goto value;
         }
-    case '"':
-        {
-            size_t start, len;
-            if (!parseString(start, len))
-                return;
-            if (!appendStringCell(start, len))
-                return;
-            goto afterValue;
-        }
-    case 't':
-        if (!parseLiteral!"true"(JsonKind.bool_, 1))
-            return;
-        goto afterValue;
-    case 'f':
-        if (!parseLiteral!"false"(JsonKind.bool_, 0))
-            return;
-        goto afterValue;
-    case 'n':
-        if (!parseLiteral!"null"(JsonKind.null_, 0))
-            return;
-        goto afterValue;
-    default:
-        if (!parseNumber())
-            return;
-        goto afterValue;
     }
 
 objectKey: // parse `"key" :` then its value
@@ -725,6 +731,12 @@ afterValue: // a value completed; count it, then continue its container
         const c = pool[i];
         if (c == ',')
         {
+            // Minified object hot path: `,"` starts the next key.
+            if (isObject && pool[i + 1] == '"')
+            {
+                i++;
+                goto objectKey;
+            }
             i++;
             skipWs(pool, i);
             if (isObject)
