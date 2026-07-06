@@ -1,20 +1,21 @@
 /**
 JSON codec for `sparkles:wired`.
 
-Defines the `Json` format marker and the `Expected`-based encode/decode surface
-(`toJSON` / `fromJSON`), driving enum, aggregate, and container handling through
-the `sparkles.wired.policy` resolvers under the `Json` tag. Encoding and decoding
-never throw — a failure is captured as the `Exception` payload of the returned
-`Expected` (`docs/specs/wired/SPEC.md` §4, §9).
+Defines the `Json` format marker and the `Expected`-based encode/decode
+surface (`toJSON` / `fromJSON` / `writeJSON`), driving enum, aggregate, and
+container handling through the `sparkles.wired.policy` resolvers under the
+`Json` tag. Encoding and decoding never throw — a failure is captured as
+the `JsonError` payload of the returned `Expected`
+(`docs/specs/wired/SPEC.md` §9, §11.6).
 
-This module holds the value ⇄ wire-representation walks and the file helpers;
-its siblings in `sparkles.wired.json` hold the native engine (document model,
-reader, writer — SPEC §11).
+The codec runs on the native arena engine (document model, reader, writer —
+SPEC §11); `std.json.JSONValue` remains only as the owned generic-JSON
+passthrough type (§4.2) and a one-release `fromJSON` compatibility shim.
 */
 module sparkles.wired.json.codec;
 
 import std.datetime.systime : SysTime;
-import std.json : JSONValue, JSONType, parseJSON;
+import std.json : JSONType, JSONValue;
 import std.sumtype : isSumType, match, SumType;
 import std.traits : isFloatingPoint, isIntegral, isSomeChar, OriginalType,
     TemplateArgsOf, Unqual;
@@ -33,214 +34,40 @@ struct Json
 {
 }
 
-/// Alias for the encode/decode result: a value or an `Exception` describing the
-/// failure — the backend never throws (§9).
-alias JsonResult(T) = Expected!(T, Exception);
+/// Alias for the encode/decode result: a value or a `JsonError` describing
+/// the failure — the backend never throws (§9, §11.6).
+alias JsonResult(T) = Expected!(T, JsonError);
 
-private JsonResult!T fail(T)(string msg) => err!T(new Exception(msg));
-
-/// Internal walk result: a value or an `Exception`, with none of `Expected`'s
-/// hook and introspection machinery — one `Expected!(T, Exception)` drags in
-/// roughly 25–30 nested instantiations per distinct `T`. The recursive walk
-/// passes `Res` and the public entry points convert at the boundary, so the
-/// `Expected` cost is paid once per public call type instead of once per node
-/// type. §9 still holds: nothing here throws.
-private struct Res(T)
-{
-    Exception error;
-    T value;
-}
-
-private Res!T resOk(T)(T value) => Res!T(null, value);
-private Res!T resFail(T)(string msg) => Res!T(new Exception(msg));
-
-/// Converts an internal `Res` into the public `Expected`-based result.
-private JsonResult!T toResult(T)(Res!T r)
-    => r.error is null ? ok!Exception(r.value) : err!T(r.error);
+/// The text type `toJSON` returns: small documents stay in the inline
+/// buffer, larger ones spill to `pureMalloc` — no GC either way.
+alias JsonString = SmallBuffer!(char, 256);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Encoding
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Encodes `value` into a `JSONValue` under the `Json` format, without throwing.
-JsonResult!JSONValue toJSON(T)(const T value)
-    => encodeImpl(value).toResult;
-
-/// The recursive encode walk, on the lightweight `Res` channel.
-private Res!JSONValue encodeImpl(T)(const T value)
+/// Encodes `value` as minified JSON text under the `Json` format, without
+/// throwing (§11.6). The writer-based $(LREF writeJSON) is the primary
+/// form; this convenience wrapper renders into a $(LREF JsonString).
+Expected!(JsonString, JsonError) toJSON(T)(const T value)
 {
-    alias U = Unqual!T;
-
-    static if (is(U == JSONValue))
-    {
-        JSONValue v = value; // mutable copy of the passed-through value
-        return resOk(v);
-    }
-
-    else static if (hasConvert!(Json, U))
-        return encodeVia!(convertOf!(Json, U), U)(value);
-
-    else static if (is(U == bool) || is(U == string))
-        return resOk(JSONValue(value));
-
-    else static if (is(U == enum))
-        return encodeEnumWith!(U, resolveRepr!(Json, U), resolveCaseStyle!(Json, U))(value);
-
-    else static if (isIntegral!U)
-        return resOk(JSONValue(value));
-
-    else static if (isFloatingPoint!U)
-    {
-        import std.math : isFinite;
-
-        if (!isFinite(value))
-            return resFail!JSONValue(
-                "Cannot encode " ~ T.stringof ~ " at $: NaN and infinity are not representable in JSON");
-        return resOk(JSONValue(value));
-    }
-
-    else static if (is(U == E[], E))
-    {
-        static if (isSomeChar!E)
-            return resOk(JSONValue(value.idup));
-        else
-        {
-            JSONValue[] arr;
-            foreach (e; value)
-            {
-                auto r = encodeImpl(e);
-                if (r.error !is null)
-                    return r;
-                arr ~= r.value;
-            }
-            return resOk(JSONValue(arr));
-        }
-    }
-
-    else static if (is(U == V[K], V, K))
-        return encodeAA(value);
-
-    else static if (is(U == Nullable!N, N))
-    {
-        if (value.isNull)
-            return resOk(JSONValue(null));
-        return encodeImpl(value.get);
-    }
-
-    else static if (is(U == Optional!N, N))
-    {
-        if (value.empty)
-            return resOk(JSONValue(null));
-        return encodeImpl(value.front);
-    }
-
-    else static if (is(U == Ternary))
-    {
-        if (value == Ternary.unknown)
-            return resOk(JSONValue(null));
-        return resOk(JSONValue(value == Ternary.yes));
-    }
-
-    else static if (is(U == SysTime))
-        return resOk(JSONValue(value.toUTC.toISOExtString));
-
-    else static if (isSumType!U)
-        return value.match!(v => encodeImpl(v));
-
-    else static if (is(U == struct))
-        return encodeStruct(value);
-
-    else
-        static assert(false, "wired: unsupported type for toJSON: " ~ T.stringof);
-}
-
-private Res!JSONValue encodeEnumWith(E, Repr repr, CaseStyle style)(const E value)
-if (is(E == enum))
-{
-    static if (repr == Repr.value)
-        return encodeImpl(cast(OriginalType!E) value);
-    else
-    {
-        alias names = wireNames!(Json, E, style);
-        static foreach (i, m; __traits(allMembers, E))
-            if (value == __traits(getMember, E, m))
-                return resOk(JSONValue(names[i]));
-
-        return resFail!JSONValue(
-            "Cannot encode " ~ E.stringof ~ " at $: value is not a declared member");
-    }
-}
-
-/// Encodes a struct field by field, dispatching each on its policy inline —
-/// converts, then the field's value-slot enum policy at the field and one
-/// wrapper level, then the type-level walk. The dispatch lives in the loop body
-/// (rather than a per-field helper template) so a plain field costs no
-/// per-field instantiation and policy-carrying fields share the value-keyed
-/// `encodeEnumWith`/`encodeEnumArray` instantiations.
-private Res!JSONValue encodeStruct(T)(const T value)
-if (is(T == struct))
-{
-    alias policies = fieldPolicies!(Json, T);
-
-    JSONValue[string] obj;
-    static foreach (i; 0 .. policies.length)
-    {{
-        alias V = typeof(T.tupleof[i]);
-
-        // The §5.4 encode-omission test for this field's skip policy.
-        static if (policies[i].skip == WireSkip.never)
-            enum bool omitted = false;
-        else static if (policies[i].skip == WireSkip.whenDefault)
-            const bool omitted = value.tupleof[i] == T.init.tupleof[i];
-        else
-            const bool omitted = isEmptyValue(value.tupleof[i]);
-
-        if (!omitted)
-        {
-            static if (policies[i].hasConvert)
-                auto r = encodeVia!(convertOf!(Json, T.tupleof[i]), V)(value.tupleof[i]);
-            else static if (is(V == enum))
-                auto r = encodeEnumWith!(V,
-                    policies[i].reprFor(WireTarget.all, resolveRepr!(Json, V)),
-                    policies[i].caseFor(WireTarget.all, resolveCaseStyle!(Json, V)))(
-                    value.tupleof[i]);
-            else static if (is(V == E[], E) && is(E == enum))
-                auto r = encodeEnumArray!(E,
-                    policies[i].reprFor(WireTarget.value, resolveRepr!(Json, E)),
-                    policies[i].caseFor(WireTarget.value, resolveCaseStyle!(Json, E)))(
-                    value.tupleof[i]);
-            else
-                auto r = encodeImpl(value.tupleof[i]);
-
-            if (r.error !is null)
-                return r;
-            obj[policies[i].key] = r.value;
-        }
-    }}
-    return resOk(JSONValue(obj));
-}
-
-private Res!JSONValue encodeEnumArray(E, Repr repr, CaseStyle style)(const E[] values)
-if (is(E == enum))
-{
-    JSONValue[] arr;
-    foreach (e; values)
-    {
-        auto r = encodeEnumWith!(E, repr, style)(e);
-        if (r.error !is null)
-            return r;
-        arr ~= r.value;
-    }
-    return resOk(JSONValue(arr));
+    JsonString buf;
+    auto r = encodeNative!(JsonWriteOptions.init)(value, buf, 0);
+    if (r.failed)
+        return err!JsonString(r.error);
+    return ok!JsonError(buf);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // File helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Reads UTF-8 from `path`, parses it, and decodes it into a `T` — without
-/// throwing (§4.1). The error identifies the failing stage (read, parse, decode).
-JsonResult!T readJSONFile(T)(string path)
+/// Reads UTF-8 from `path`, parses it with the native engine, and decodes
+/// it into a `T` — without throwing (§4.1). The error identifies the
+/// failing stage: I/O failures are `fileRead`-stage errors; parse and
+/// decode failures keep their stage and path, with the file recorded for
+/// the rendered message.
+Expected!(T, JsonError) readJSONFile(T)(string path)
 {
     import std.file : readText;
 
@@ -248,38 +75,56 @@ JsonResult!T readJSONFile(T)(string path)
     try
         text = readText(path);
     catch (Exception e)
-        return fail!T("Cannot read " ~ path ~ ": " ~ e.msg);
+    {
+        JsonError fe;
+        fe.stage = JsonStage.fileRead;
+        fe.filePath ~= path;
+        fe.reason = e.msg;
+        return err!T(fe);
+    }
 
-    JSONValue json;
-    try
-        json = parseJSON(text);
-    catch (Exception e)
-        return fail!T("Cannot parse " ~ path ~ ": " ~ e.msg);
-
-    auto r = fromJSON!T(json);
+    auto r = fromJSON!T(text);
     if (r.hasError)
-        return fail!T("Cannot decode " ~ path ~ ": " ~ r.error.msg);
+    {
+        auto fe = r.error;
+        fe.filePath ~= path;
+        return err!T(fe);
+    }
     return r;
 }
 
-/// Encodes `value` and writes it to `path` atomically (temp file in the same
-/// directory + rename) with a trailing newline, creating missing parent
-/// directories — without throwing (§4.1). `compact` selects single-line vs pretty
-/// rendering; both use `doNotEscapeSlashes`.
-JsonResult!void writeJSONFile(T)(const T value, string path, bool compact = false)
+/// Encodes `value` and writes it to `path` atomically (temp file in the
+/// same directory + rename) with a trailing newline, creating missing
+/// parent directories — without throwing (§4.1). `compact` selects
+/// single-line vs pretty rendering (SPEC §11.4: 2-space indent, `": "`,
+/// LF).
+Expected!(void, JsonError) writeJSONFile(T)(const T value, string path,
+    bool compact = false)
 {
+    import std.array : appender;
     import std.file : mkdirRecurse, rename, write;
-    import std.json : JSONOptions;
     import std.path : dirName;
 
-    auto enc = toJSON(value);
+    auto buf = appender!string;
+    auto enc = compact
+        ? writeJSON!(JsonWriteOptions.init)(value, buf)
+        : writeJSON!(JsonWriteOptions(pretty: true))(value, buf);
     if (enc.hasError)
-        return err!void(enc.error);
+    {
+        auto fe = enc.error;
+        fe.filePath ~= path;
+        return err!void(fe);
+    }
+    buf ~= '\n';
 
-    string text = compact
-        ? enc.value.toString(JSONOptions.doNotEscapeSlashes)
-        : enc.value.toPrettyString(JSONOptions.doNotEscapeSlashes);
-    text ~= "\n";
+    JsonError ioError(string reason)
+    {
+        JsonError fe;
+        fe.stage = JsonStage.fileWrite;
+        fe.filePath ~= path;
+        fe.reason = reason;
+        return fe;
+    }
 
     const dir = path.dirName;
     try
@@ -288,154 +133,43 @@ JsonResult!void writeJSONFile(T)(const T value, string path, bool compact = fals
             mkdirRecurse(dir);
     }
     catch (Exception e)
-        return err!void(new Exception(
-            "Cannot create parent directory of " ~ path ~ ": " ~ e.msg));
+        return err!void(ioError(e.msg));
 
     const tmp = path ~ ".wired-tmp";
     try
     {
-        write(tmp, text);
+        write(tmp, buf[]);
         rename(tmp, path);
     }
     catch (Exception e)
-        return err!void(new Exception("Cannot write " ~ path ~ ": " ~ e.msg));
+        return err!void(ioError(e.msg));
 
-    return ok!Exception();
+    return ok!JsonError();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Decoding
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Decodes a `JSONValue` into a `T` under the `Json` format, without throwing.
-JsonResult!T fromJSON(T)(JSONValue json)
-    => decodeImpl!T(json).toResult;
-
-/// The recursive decode walk, on the lightweight `Res` channel.
-private Res!T decodeImpl(T)(JSONValue json)
+/// Decodes a `JSONValue` into a `T` — the one-release compatibility shim
+/// (§11.6): the value is rendered to text and decoded by the native
+/// engine, so behavior matches `fromJSON!T(text)` exactly.
+Expected!(T, JsonError) fromJSON(T)(JSONValue json)
 {
-    alias U = Unqual!T;
+    import std.json : JSONOptions;
 
-    static if (is(U == JSONValue))
-        return resOk(json);
-
-    else static if (hasConvert!(Json, U))
-        return decodeVia!(convertOf!(Json, U), U)(json);
-
-    else static if (is(U == bool))
+    string text;
+    try
+        text = json.toString(JSONOptions.doNotEscapeSlashes);
+    catch (Exception e)
     {
-        if (json.type != JSONType.true_ && json.type != JSONType.false_)
-            return resFail!T("Cannot decode bool at $: expected a JSON boolean");
-        return resOk(json.boolean);
+        JsonError fe;
+        fe.stage = JsonStage.encode;
+        fe.targetType = "JSONValue";
+        fe.reason = "value is not representable as JSON text";
+        return err!T(fe);
     }
-
-    else static if (is(U == string))
-    {
-        if (json.type != JSONType.string)
-            return resFail!T("Cannot decode string at $: expected a JSON string");
-        return resOk(json.str);
-    }
-
-    else static if (is(U == enum))
-        return decodeEnumWith!(U, resolveRepr!(Json, U), resolveCaseStyle!(Json, U))(json);
-
-    else static if (isIntegral!U)
-        return decodeIntegral!T(json);
-
-    else static if (isFloatingPoint!U)
-    {
-        switch (json.type)
-        {
-            case JSONType.float_:   return resOk(cast(T) json.floating);
-            case JSONType.integer:  return resOk(cast(T) json.integer);
-            case JSONType.uinteger: return resOk(cast(T) json.uinteger);
-            default:
-                return resFail!T("Cannot decode " ~ T.stringof ~ " at $: expected a JSON number");
-        }
-    }
-
-    else static if (is(U == E[], E))
-    {
-        static if (isSomeChar!E)
-        {
-            auto s = decodeImpl!string(json);
-            if (s.error !is null)
-                return Res!T(s.error);
-            import std.conv : to;
-            return resOk(s.value.to!U);
-        }
-        else
-        {
-            if (json.type != JSONType.array)
-                return resFail!T("Cannot decode " ~ T.stringof ~ " at $: expected a JSON array");
-            U result;
-            foreach (elem; json.array)
-            {
-                auto r = decodeImpl!E(elem);
-                if (r.error !is null)
-                    return Res!T(r.error);
-                result ~= r.value;
-            }
-            return resOk(result);
-        }
-    }
-
-    else static if (is(U == V[K], V, K))
-        return decodeAA!U(json);
-
-    else static if (is(U == Nullable!N, N))
-    {
-        if (json.type == JSONType.null_)
-            return resOk(U.init);
-        auto r = decodeImpl!N(json);
-        if (r.error !is null)
-            return Res!T(r.error);
-        return resOk(U(r.value));
-    }
-
-    else static if (is(U == Optional!N, N))
-    {
-        if (json.type == JSONType.null_)
-            return resOk(U.init);
-        auto r = decodeImpl!N(json);
-        if (r.error !is null)
-            return Res!T(r.error);
-        return resOk(some(r.value));
-    }
-
-    else static if (is(U == Ternary))
-    {
-        switch (json.type)
-        {
-            case JSONType.null_:  return resOk(Ternary.unknown);
-            case JSONType.true_:  return resOk(Ternary.yes);
-            case JSONType.false_: return resOk(Ternary.no);
-            default:
-                return resFail!T("Cannot decode Ternary at $: expected null, true, or false");
-        }
-    }
-
-    else static if (is(U == SysTime))
-    {
-        if (json.type != JSONType.string)
-            return resFail!T("Cannot decode SysTime at $: expected a JSON string");
-        if (!hasZoneOffset(json.str))
-            return resFail!T(
-                "Cannot decode SysTime at $: timestamp must include an explicit UTC marker or offset");
-        try
-            return resOk(SysTime.fromISOExtString(json.str).toUTC);
-        catch (Exception e)
-            return resFail!T("Cannot decode SysTime at $: " ~ e.msg);
-    }
-
-    else static if (isSumType!U)
-        return decodeSumType!(U, MatchStrategy.exactlyOne)(json);
-
-    else static if (is(U == struct))
-        return decodeStruct!T(json);
-
-    else
-        static assert(false, "wired: unsupported type for fromJSON: " ~ T.stringof);
+    return fromJSON!T(text);
 }
 
 /// True when an ISO-8601 extended timestamp carries an explicit zone — a `Z` or a
@@ -451,182 +185,6 @@ private bool hasZoneOffset(string s)
         return false;
     const time = s[t + 1 .. $];
     return time.canFind('Z') || time.canFind('+') || time.canFind('-');
-}
-
-/// Decodes a `SumType` by probing each variant (declaration order). `exactlyOne`
-/// requires a single match (zero → no-match, many → ambiguity); `first` takes the
-/// first success (§4.7).
-private Res!ST decodeSumType(ST, MatchStrategy strat)(JSONValue json)
-if (isSumType!ST)
-{
-    alias Types = TemplateArgsOf!ST;
-
-    static if (strat == MatchStrategy.first)
-    {
-        static foreach (V; Types)
-        {{
-            auto r = decodeImpl!V(json);
-            if (r.error is null)
-                return resOk(ST(r.value));
-        }}
-        return resFail!ST("Cannot decode " ~ ST.stringof ~ " at $: no variant matched");
-    }
-    else
-    {
-        ST result;
-        size_t matches = 0;
-        static foreach (V; Types)
-        {{
-            auto r = decodeImpl!V(json);
-            if (r.error is null)
-            {
-                matches++;
-                result = ST(r.value);
-            }
-        }}
-        if (matches == 1)
-            return resOk(result);
-        if (matches == 0)
-            return resFail!ST("Cannot decode " ~ ST.stringof ~ " at $: no variant matched");
-        return resFail!ST(
-            "Cannot decode " ~ ST.stringof ~ " at $: ambiguous — multiple variants matched");
-    }
-}
-
-private Res!T decodeIntegral(T)(JSONValue json)
-{
-    static if (__traits(isUnsigned, T))
-    {
-        if (json.type == JSONType.uinteger)
-        {
-            if (json.uinteger > T.max)
-                return resFail!T("Cannot decode " ~ T.stringof ~ " at $: value out of range");
-            return resOk(cast(T) json.uinteger);
-        }
-        if (json.type == JSONType.integer)
-        {
-            if (json.integer < 0 || json.integer > T.max)
-                return resFail!T("Cannot decode " ~ T.stringof ~ " at $: value out of range");
-            return resOk(cast(T) json.integer);
-        }
-    }
-    else
-    {
-        if (json.type == JSONType.integer)
-        {
-            if (json.integer < T.min || json.integer > T.max)
-                return resFail!T("Cannot decode " ~ T.stringof ~ " at $: value out of range");
-            return resOk(cast(T) json.integer);
-        }
-        if (json.type == JSONType.uinteger)
-        {
-            if (json.uinteger > T.max)
-                return resFail!T("Cannot decode " ~ T.stringof ~ " at $: value out of range");
-            return resOk(cast(T) json.uinteger);
-        }
-    }
-    return resFail!T("Cannot decode " ~ T.stringof ~ " at $: expected an integer");
-}
-
-private Res!E decodeEnumWith(E, Repr repr, CaseStyle style)(JSONValue json)
-if (is(E == enum))
-{
-    static if (repr == Repr.value)
-    {
-        auto orig = decodeImpl!(OriginalType!E)(json);
-        if (orig.error !is null)
-            return Res!E(orig.error);
-        auto member = enumFromValue!E(orig.value);
-        if (member.hasError)
-            return resFail!E("Cannot decode " ~ E.stringof ~ " at $: " ~ member.error.context);
-        return resOk(member.value);
-    }
-    else
-    {
-        if (json.type != JSONType.string)
-            return resFail!E("Cannot decode " ~ E.stringof ~ " at $: expected a JSON string");
-
-        alias names = wireNames!(Json, E, style);
-        static foreach (i, m; __traits(allMembers, E))
-            if (json.str == names[i])
-                return resOk(__traits(getMember, E, m));
-
-        return resFail!E(
-            "Cannot decode " ~ E.stringof ~ " at $ from JSON string \"" ~ json.str
-            ~ "\": expected one of: " ~ nameList!(E, style));
-    }
-}
-
-/// Decodes a struct field by field, dispatching each on its policy inline —
-/// see `encodeStruct` for why the dispatch is not a per-field helper template.
-private Res!T decodeStruct(T)(JSONValue json)
-if (is(T == struct))
-{
-
-    if (json.type != JSONType.object)
-        return resFail!T("Cannot decode " ~ T.stringof ~ " at $: expected a JSON object");
-
-    alias policies = fieldPolicies!(Json, T);
-    T result;
-    static foreach (i; 0 .. policies.length)
-    {{
-        alias V = typeof(T.tupleof[i]);
-
-        if (auto p = policies[i].key in json.object)
-        {
-            static if (policies[i].hasConvert)
-                auto r = decodeVia!(convertOf!(Json, T.tupleof[i]), V)(*p);
-            else static if (is(V == enum))
-                auto r = decodeEnumWith!(V,
-                    policies[i].reprFor(WireTarget.all, resolveRepr!(Json, V)),
-                    policies[i].caseFor(WireTarget.all, resolveCaseStyle!(Json, V)))(*p);
-            else static if (is(V == E[], E) && is(E == enum))
-                auto r = decodeEnumArray!(E,
-                    policies[i].reprFor(WireTarget.value, resolveRepr!(Json, E)),
-                    policies[i].caseFor(WireTarget.value, resolveCaseStyle!(Json, E)))(*p);
-            else static if (isSumType!V)
-                auto r = decodeSumType!(V, policies[i].match)(*p);
-            else
-                auto r = decodeImpl!V(*p);
-
-            if (r.error !is null)
-            {
-                // A present but invalid value under `useDefault` leaves the field
-                // at its default (§5.4); otherwise the failure propagates.
-                static if (!(policies[i].optional
-                    && policies[i].onInvalid == WireInvalid.useDefault))
-                    return Res!T(r.error);
-            }
-            else
-                result.tupleof[i] = r.value;
-        }
-        else static if (isNullAware!V || policies[i].optional)
-        {
-            // A missing null-aware or @WireOptional field decodes to its default,
-            // which the `T result;` default already holds (§4.5, §5.4).
-        }
-        else
-            return resFail!T(
-                "Cannot decode " ~ T.stringof ~ " at $." ~ policies[i].key
-                ~ ": missing required field");
-    }}
-    return resOk(result);
-}
-
-private Res!(E[]) decodeEnumArray(E, Repr repr, CaseStyle style)(JSONValue json)
-if (is(E == enum))
-{
-    if (json.type != JSONType.array)
-        return resFail!(E[])("Cannot decode " ~ (E[]).stringof ~ " at $: expected a JSON array");
-    E[] result;
-    foreach (elem; json.array)
-    {
-        auto r = decodeEnumWith!(E, repr, style)(elem);
-        if (r.error !is null)
-            return Res!(E[])(r.error);
-        result ~= r.value;
-    }
-    return resOk(result);
 }
 
 /// True for the null-aware wrapper types whose empty value maps to JSON `null`
@@ -654,89 +212,6 @@ private bool isEmptyValue(V)(const V value)
 private enum bool isExpectedLike(X) =
     __traits(hasMember, X, "hasValue") && __traits(hasMember, X, "hasError")
     && __traits(hasMember, X, "value") && __traits(hasMember, X, "error");
-
-/// Encodes `value` through the resolved `@WireConvert` `Conv`: `toWire(value)` is
-/// encoded normally; an `Expected`-returning `toWire` is unwrapped, its failure
-/// propagated (§8).
-private Res!JSONValue encodeVia(alias Conv, V)(const V value)
-{
-    auto wire = Conv.to(value);
-    static if (isExpectedLike!(typeof(wire)))
-    {
-        if (wire.hasError)
-            return Res!JSONValue(wire.error);
-        return encodeImpl(wire.value);
-    }
-    else
-        return encodeImpl(wire);
-}
-
-/// Decodes into `V` through the resolved `@WireConvert` `Conv`: the wire type is
-/// inferred from `toWire`'s return for `V`, decoded, then passed to `fromWire`
-/// (§8). A serialize-only converter (no `fromWire`) is unsupported at compile time.
-private Res!V decodeVia(alias Conv, V)(JSONValue json)
-{
-    static assert(!is(Conv.from == void),
-        "wired: a serialize-only @WireConvert cannot decode " ~ V.stringof);
-
-    alias Raw = typeof(Conv.to(V.init));
-    static if (isExpectedLike!Raw)
-        alias WireT = typeof(Raw.init.value);
-    else
-        alias WireT = Raw;
-
-    auto raw = decodeImpl!WireT(json);
-    if (raw.error !is null)
-        return Res!V(raw.error);
-
-    auto back = Conv.from(raw.value);
-    static if (isExpectedLike!(typeof(back)))
-    {
-        if (back.hasError)
-            return Res!V(back.error);
-        return resOk(back.value);
-    }
-    else
-        return resOk(back);
-}
-
-private Res!JSONValue encodeAA(T)(const T value)
-if (is(T == V[K], V, K))
-{
-    alias V = typeof(T.init.values[0]);
-    JSONValue[string] obj;
-    foreach (k, ref v; value)
-    {
-        auto rv = encodeImpl(v);
-        if (rv.error !is null)
-            return rv;
-        obj[aaKeyText(k)] = rv.value;
-    }
-    return resOk(JSONValue(obj));
-}
-
-private Res!T decodeAA(T)(JSONValue json)
-if (is(T == V[K], V, K))
-{
-    alias V = typeof(T.init.values[0]);
-    alias K = typeof(T.init.keys[0]);
-
-    if (json.type != JSONType.object)
-        return resFail!T("Cannot decode " ~ T.stringof ~ " at $: expected a JSON object");
-
-    T result;
-    foreach (keyStr, jval; json.object)
-    {
-        auto k = aaKeyParse!K(keyStr);
-        if (k.error !is null)
-            return Res!T(k.error);
-        auto rv = decodeImpl!V(jval);
-        if (rv.error !is null)
-            return Res!T(rv.error);
-        result[k.value] = rv.value;
-    }
-    return resOk(result);
-}
 
 /// The JSON object-key text for an associative-array key: a `string` verbatim,
 /// or an enum by its resolved name / underlying-value text (§7).
@@ -771,50 +246,6 @@ private string aaKeyText(K)(K k)
         static assert(false, "wired: associative-array keys must be string or enum, not " ~ K.stringof);
 }
 
-/// Parses an associative-array key from its JSON object-key text — the inverse of
-/// $(LREF aaKeyText).
-private Res!K aaKeyParse(K)(string keyStr)
-{
-    static if (is(K == string))
-        return resOk(keyStr);
-    else static if (is(K == enum))
-    {
-        enum repr = resolveRepr!(Json, K);
-        static if (repr == Repr.name)
-        {
-            enum style = resolveCaseStyle!(Json, K);
-            alias names = wireNames!(Json, K, style);
-            static foreach (i, m; __traits(allMembers, K))
-                if (keyStr == names[i])
-                    return resOk(__traits(getMember, K, m));
-            return resFail!K(
-                "Cannot decode " ~ K.stringof ~ " key \"" ~ keyStr
-                ~ "\": expected one of: " ~ nameList!(K, style));
-        }
-        else
-        {
-            import std.conv : to, ConvException;
-
-            OriginalType!K orig;
-            static if (is(OriginalType!K == string))
-                orig = keyStr;
-            else
-            {
-                try
-                    orig = keyStr.to!(OriginalType!K);
-                catch (ConvException e)
-                    return resFail!K("Cannot decode " ~ K.stringof ~ " key \"" ~ keyStr ~ "\": " ~ e.msg);
-            }
-            auto member = enumFromValue!K(orig);
-            if (member.hasError)
-                return resFail!K("Cannot decode " ~ K.stringof ~ " key \"" ~ keyStr ~ "\": " ~ member.error.context);
-            return resOk(member.value);
-        }
-    }
-    else
-        static assert(false, "wired: associative-array keys must be string or enum, not " ~ K.stringof);
-}
-
 /// The comma-joined resolved member names of `E` under `Json` at case `style`,
 /// for the `"expected one of: …"` decode-error context.
 private template nameList(E, CaseStyle style)
@@ -843,11 +274,13 @@ if (is(E == enum))
 // (no per-node `Expected`), inline per-field dispatch, and the one-pass
 // `fieldPolicies` table.
 
+import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.wired.json.document : JsonKind, JsonValue;
 import sparkles.wired.json.error : JsonError, JsonStage, kindText,
     parseStageError;
 import sparkles.wired.json.reader : parseJsonDocument;
-import sparkles.wired.json.writer : writeJsonString;
+import sparkles.wired.json.writer : JsonWriteOptions, newlineIndent,
+    writeJsonString;
 
 /// Decodes JSON text straight into a `T` — parse (arena engine) + native
 /// view walk, no intermediate `JSONValue`. The `JsonError` renders the
@@ -872,12 +305,14 @@ Expected!(T, JsonError) fromJSON(T)(scope JsonValue view)
     return ok!JsonError(r.value);
 }
 
-/// Streams `value` as minified JSON into any output range — the primary
-/// encode API (SPEC §11.6): no intermediate document, no GC on the
-/// success path beyond what `T`'s own iteration requires.
-Expected!(void, JsonError) writeJSON(T, Writer)(const T value, ref Writer w)
+/// Streams `value` as JSON into any output range — the primary encode
+/// API (SPEC §11.6): no intermediate document, no GC on the success path
+/// beyond what `T`'s own iteration requires. `opts` selects minified
+/// (default) or pretty rendering at compile time.
+Expected!(void, JsonError) writeJSON(JsonWriteOptions opts = JsonWriteOptions.init,
+    T, Writer)(const T value, ref Writer w)
 {
-    auto r = encodeNative(value, w);
+    auto r = encodeNative!opts(value, w, 0);
     if (r.failed)
         return err!void(r.error);
     return ok!JsonError();
@@ -1470,17 +905,18 @@ private JsonError encodeError(T)(string reason)
 
 /// The recursive native encode walk (mirrors `encodeImpl`, but streams
 /// tokens instead of building a tree).
-private EncRes encodeNative(T, Writer)(const T value, ref Writer w)
+private EncRes encodeNative(JsonWriteOptions opts, T, Writer)(
+    const T value, ref Writer w, uint depth)
 {
     import std.range.primitives : put;
 
     alias U = Unqual!T;
 
     static if (is(U == JSONValue))
-        return writeStdJson(value, w);
+        return writeStdJson!opts(value, w, depth);
 
     else static if (hasConvert!(Json, U))
-        return encodeViaNative!(convertOf!(Json, U), U)(value, w);
+        return encodeViaNative!(convertOf!(Json, U), U, opts)(value, w, depth);
 
     else static if (is(U == bool))
     {
@@ -1497,6 +933,7 @@ private EncRes encodeNative(T, Writer)(const T value, ref Writer w)
     else static if (is(U == enum))
         return encodeEnumNative!(U, resolveRepr!(Json, U),
             resolveCaseStyle!(Json, U))(value, w);
+
 
     else static if (isIntegral!U)
     {
@@ -1534,25 +971,34 @@ private EncRes encodeNative(T, Writer)(const T value, ref Writer w)
         }
         else
         {
+            if (value.length == 0)
+            {
+                put(w, "[]");
+                return encOk();
+            }
             put(w, '[');
             foreach (i, ref e; value)
             {
                 if (i)
                     put(w, ',');
-                auto r = encodeNative(e, w);
+                static if (opts.pretty)
+                    newlineIndent(w, depth + 1);
+                auto r = encodeNative!opts(e, w, depth + 1);
                 if (r.failed)
                 {
                     r.error.prependIndex(i);
                     return r;
                 }
             }
+            static if (opts.pretty)
+                newlineIndent(w, depth);
             put(w, ']');
             return encOk();
         }
     }
 
     else static if (is(U == V[K], V, K))
-        return encodeAANative(value, w);
+        return encodeAANative!opts(value, w, depth);
 
     else static if (is(U == Nullable!N, N))
     {
@@ -1561,7 +1007,7 @@ private EncRes encodeNative(T, Writer)(const T value, ref Writer w)
             put(w, "null");
             return encOk();
         }
-        return encodeNative(value.get, w);
+        return encodeNative!opts(value.get, w, depth);
     }
 
     else static if (is(U == Optional!N, N))
@@ -1571,7 +1017,7 @@ private EncRes encodeNative(T, Writer)(const T value, ref Writer w)
             put(w, "null");
             return encOk();
         }
-        return encodeNative(value.front, w);
+        return encodeNative!opts(value.front, w, depth);
     }
 
     else static if (is(U == Ternary))
@@ -1588,10 +1034,10 @@ private EncRes encodeNative(T, Writer)(const T value, ref Writer w)
     }
 
     else static if (isSumType!U)
-        return value.match!(v => encodeNative(v, w));
+        return value.match!(v => encodeNative!opts(v, w, depth));
 
     else static if (is(U == struct))
-        return encodeStructNative(value, w);
+        return encodeStructNative!opts(value, w, depth);
 
     else
         static assert(false, "wired: unsupported type for writeJSON: " ~ T.stringof);
@@ -1602,7 +1048,9 @@ private EncRes encodeEnumNative(E, Repr repr, CaseStyle style, Writer)(
 if (is(E == enum))
 {
     static if (repr == Repr.value)
-        return encodeNative(cast(OriginalType!E) value, w);
+        // Scalar payload: depth and pretty layout cannot apply.
+        return encodeNative!(JsonWriteOptions.init)(
+            cast(OriginalType!E) value, w, 0);
     else
     {
         alias names = wireNames!(Json, E, style);
@@ -1618,7 +1066,8 @@ if (is(E == enum))
 
 /// Struct fields stream in declaration order (SPEC §11.6), skip policies
 /// applied inline exactly as in the tree-building walk.
-private EncRes encodeStructNative(T, Writer)(const T value, ref Writer w)
+private EncRes encodeStructNative(JsonWriteOptions opts, T, Writer)(
+    const T value, ref Writer w, uint depth)
 if (is(T == struct))
 {
     import std.range.primitives : put;
@@ -1643,12 +1092,17 @@ if (is(T == struct))
             if (!first)
                 put(w, ',');
             first = false;
+            static if (opts.pretty)
+                newlineIndent(w, depth + 1);
             writeJsonString(w, policies[i].key);
-            put(w, ':');
+            static if (opts.pretty)
+                put(w, ": ");
+            else
+                put(w, ':');
 
             static if (policies[i].hasConvert)
-                auto r = encodeViaNative!(convertOf!(Json, T.tupleof[i]), V)(
-                    value.tupleof[i], w);
+                auto r = encodeViaNative!(convertOf!(Json, T.tupleof[i]), V, opts)(
+                    value.tupleof[i], w, depth + 1);
             else static if (is(V == enum))
                 auto r = encodeEnumNative!(V,
                     policies[i].reprFor(WireTarget.all, resolveRepr!(Json, V)),
@@ -1660,7 +1114,7 @@ if (is(T == struct))
                     policies[i].caseFor(WireTarget.value, resolveCaseStyle!(Json, E)))(
                     value.tupleof[i], w);
             else
-                auto r = encodeNative(value.tupleof[i], w);
+                auto r = encodeNative!opts(value.tupleof[i], w, depth + 1);
 
             if (r.failed)
             {
@@ -1669,6 +1123,11 @@ if (is(T == struct))
             }
         }
     }}
+    static if (opts.pretty)
+    {
+        if (!first) // any member emitted
+            newlineIndent(w, depth);
+    }
     put(w, '}');
     return encOk();
 }
@@ -1695,22 +1154,24 @@ if (is(E == enum))
     return encOk();
 }
 
-private EncRes encodeViaNative(alias Conv, V, Writer)(const V value, ref Writer w)
+private EncRes encodeViaNative(alias Conv, V,
+    JsonWriteOptions opts, Writer)(const V value, ref Writer w, uint depth)
 {
     auto wire = Conv.to(value);
     static if (isExpectedLike!(typeof(wire)))
     {
         if (wire.hasError)
             return EncRes(true, encodeError!V(wire.error.msg));
-        return encodeNative(wire.value, w);
+        return encodeNative!opts(wire.value, w, depth);
     }
     else
-        return encodeNative(wire, w);
+        return encodeNative!opts(wire, w, depth);
 }
 
 /// Associative arrays stream with lexicographically sorted keys
 /// (SPEC §11.6 — deterministic output independent of hash order).
-private EncRes encodeAANative(T, Writer)(const T value, ref Writer w)
+private EncRes encodeAANative(JsonWriteOptions opts, T, Writer)(
+    const T value, ref Writer w, uint depth)
 if (is(T == V[K], V, K))
 {
     import std.algorithm.sorting : sort;
@@ -1730,27 +1191,40 @@ if (is(T == V[K], V, K))
         pairs ~= Pair(aaKeyText(k), k);
     pairs.sort!((a, b) => a.text < b.text);
 
+    if (pairs.length == 0)
+    {
+        put(w, "{}");
+        return encOk();
+    }
     put(w, '{');
     foreach (i, ref p; pairs)
     {
         if (i)
             put(w, ',');
+        static if (opts.pretty)
+            newlineIndent(w, depth + 1);
         writeJsonString(w, p.text);
-        put(w, ':');
-        auto r = encodeNative(value[p.key], w);
+        static if (opts.pretty)
+            put(w, ": ");
+        else
+            put(w, ':');
+        auto r = encodeNative!opts(value[p.key], w, depth + 1);
         if (r.failed)
         {
             r.error.prependKey(p.text);
             return r;
         }
     }
+    static if (opts.pretty)
+        newlineIndent(w, depth);
     put(w, '}');
     return encOk();
 }
 
 /// Streams a passed-through `JSONValue` (§4.2). Object keys sort; a NaN
 /// or infinity inside is an encode error (resolves O3 strictly).
-private EncRes writeStdJson(Writer)(const JSONValue v, ref Writer w)
+private EncRes writeStdJson(JsonWriteOptions opts, Writer)(
+    const JSONValue v, ref Writer w, uint depth)
 {
     import std.algorithm.sorting : sort;
     import std.math : isFinite;
@@ -1790,18 +1264,27 @@ private EncRes writeStdJson(Writer)(const JSONValue v, ref Writer w)
         return encOk();
     case JSONType.array:
         {
+            if (v.arrayNoRef.length == 0)
+            {
+                put(w, "[]");
+                return encOk();
+            }
             put(w, '[');
             foreach (i, ref const e; v.arrayNoRef)
             {
                 if (i)
                     put(w, ',');
-                auto r = writeStdJson(e, w);
+                static if (opts.pretty)
+                    newlineIndent(w, depth + 1);
+                auto r = writeStdJson!opts(e, w, depth + 1);
                 if (r.failed)
                 {
                     r.error.prependIndex(i);
                     return r;
                 }
             }
+            static if (opts.pretty)
+                newlineIndent(w, depth);
             put(w, ']');
             return encOk();
         }
@@ -1813,47 +1296,72 @@ private EncRes writeStdJson(Writer)(const JSONValue v, ref Writer w)
             foreach (k, ref const _; obj)
                 keys ~= k;
             keys.sort();
+            if (keys.length == 0)
+            {
+                put(w, "{}");
+                return encOk();
+            }
             put(w, '{');
             foreach (i, k; keys)
             {
                 if (i)
                     put(w, ',');
+                static if (opts.pretty)
+                    newlineIndent(w, depth + 1);
                 writeJsonString(w, k);
-                put(w, ':');
-                auto r = writeStdJson(obj[k], w);
+                static if (opts.pretty)
+                    put(w, ": ");
+                else
+                    put(w, ':');
+                auto r = writeStdJson!opts(obj[k], w, depth + 1);
                 if (r.failed)
                 {
                     r.error.prependKey(k);
                     return r;
                 }
             }
+            static if (opts.pretty)
+                newlineIndent(w, depth);
             put(w, '}');
             return encOk();
         }
     }
 }
 
+version (unittest)
+{
+    /// `toJSON` text for assertions (asserts the encode succeeded).
+    private string jsonText(T)(const T value)
+    {
+        auto r = toJSON(value);
+        assert(!r.hasError);
+        return r.value[].idup;
+    }
+}
+
 @("wired.json.scalars")
 @safe unittest
 {
-    assert(toJSON(true).value == JSONValue(true));
-    assert(toJSON("hi").value == JSONValue("hi"));
-    assert(toJSON(42).value == JSONValue(42));
-    assert(toJSON(3.5).value == JSONValue(3.5));
+    assert(jsonText(true) == "true");
+    assert(jsonText("hi") == `"hi"`);
+    assert(jsonText(42) == "42");
+    assert(jsonText(3.5) == "3.5");
 
-    assert(fromJSON!bool(JSONValue(true)).value == true);
-    assert(fromJSON!string(JSONValue("hi")).value == "hi");
-    assert(fromJSON!int(JSONValue(42)).value == 42);
-    assert(fromJSON!double(JSONValue(3.5)).value == 3.5);
+    assert(fromJSON!bool("true").value == true);
+    assert(fromJSON!string(`"hi"`).value == "hi");
+    assert(fromJSON!int("42").value == 42);
+    assert(fromJSON!double("3.5").value == 3.5);
 
-    assert(fromJSON!int(JSONValue("42")).hasError);
-    assert(fromJSON!ubyte(JSONValue(300)).hasError);
-    assert(fromJSON!bool(JSONValue(1)).hasError);
+    assert(fromJSON!int(`"42"`).hasError);
+    assert(fromJSON!ubyte("300").hasError);
+    assert(fromJSON!bool("1").hasError);
 
-    // JSONValue passes through unchanged in both directions.
+    // JSONValue passes through in both directions (§4.2), object keys
+    // rendered sorted.
     auto raw = JSONValue(["k": JSONValue(1)]);
-    assert(toJSON(raw).value == raw);
-    assert(fromJSON!JSONValue(raw).value == raw);
+    assert(jsonText(raw) == `{"k":1}`);
+    assert(fromJSON!JSONValue(`{"k":1}`).value == raw);
+    assert(fromJSON!JSONValue(raw).value == raw); // compat shim
 }
 
 @("wired.json.floatRejectsNaN")
@@ -1873,34 +1381,35 @@ private EncRes writeStdJson(Writer)(const JSONValue v, ref Writer w)
         @WireName!Json("turbo") slowPath,
     }
 
-    assert(toJSON(Mode.fastPath).value == JSONValue("fast_path"));
-    assert(toJSON(Mode.slowPath).value == JSONValue("turbo"));
-    assert(fromJSON!Mode(JSONValue("fast_path")).value == Mode.fastPath);
-    assert(fromJSON!Mode(JSONValue("turbo")).value == Mode.slowPath);
-    assert(fromJSON!Mode(JSONValue("nope")).hasError);
+    assert(jsonText(Mode.fastPath) == `"fast_path"`);
+    assert(jsonText(Mode.slowPath) == `"turbo"`);
+    assert(fromJSON!Mode(`"fast_path"`).value == Mode.fastPath);
+    assert(fromJSON!Mode(`"turbo"`).value == Mode.slowPath);
+    assert(fromJSON!Mode(`"nope"`).hasError);
 
     @WireRepr!Json(Repr.value)
     enum Priority { low = 1, high = 5 }
 
-    assert(toJSON(Priority.high).value == JSONValue(5));
-    assert(fromJSON!Priority(JSONValue(5)).value == Priority.high);
-    assert(fromJSON!Priority(JSONValue(2)).hasError);
+    assert(jsonText(Priority.high) == "5");
+    assert(fromJSON!Priority("5").value == Priority.high);
+    assert(fromJSON!Priority("2").hasError);
 }
 
 @("wired.json.arrays")
-@system unittest
+@safe unittest
 {
-    assert(toJSON([1, 2, 3]).value == JSONValue([1, 2, 3]));
-    assert(fromJSON!(int[])(JSONValue([1, 2, 3])).value == [1, 2, 3]);
-    assert(fromJSON!(int[])(JSONValue(4)).hasError);
+    assert(jsonText([1, 2, 3]) == "[1,2,3]");
+    assert(fromJSON!(int[])("[1,2,3]").value == [1, 2, 3]);
+    assert(fromJSON!(int[])("4").hasError);
 
     enum Suit { spades, hearts }
-    assert(toJSON([Suit.spades, Suit.hearts]).value == JSONValue(["spades", "hearts"]));
-    assert(fromJSON!(Suit[])(JSONValue(["hearts", "spades"])).value == [Suit.hearts, Suit.spades]);
+    assert(jsonText([Suit.spades, Suit.hearts]) == `["spades","hearts"]`);
+    assert(fromJSON!(Suit[])(`["hearts","spades"]`).value
+        == [Suit.hearts, Suit.spades]);
 }
 
 @("wired.json.aggregate")
-@system unittest
+@safe unittest
 {
     static struct Server
     {
@@ -1909,20 +1418,18 @@ private EncRes writeStdJson(Writer)(const JSONValue v, ref Writer w)
     }
 
     auto s = Server("localhost", 8080);
-    auto json = toJSON(s).value;
-    assert(json.type == JSONType.object);
-    assert(json["host"] == JSONValue("localhost"));
-    assert(json["port"] == JSONValue(8080));
-
-    assert(fromJSON!Server(json).value == s);
+    const text = jsonText(s); // fields in declaration order (§11.6)
+    assert(text == `{"host":"localhost","port":8080}`);
+    assert(fromJSON!Server(text).value == s);
 
     // Missing required field is a decode error naming the path.
-    auto bad = fromJSON!Server(parseObject(`{"host":"x"}`));
+    auto bad = fromJSON!Server(`{"host":"x"}`);
     assert(bad.hasError);
+    assert(bad.error.path[] == ".port");
 }
 
 @("wired.json.aggregateFieldPolicy")
-@system unittest
+@safe unittest
 {
     struct Toml {}
 
@@ -1934,14 +1441,13 @@ private EncRes writeStdJson(Writer)(const JSONValue v, ref Writer w)
     }
 
     auto c = Config("h", 3);
-    auto json = toJSON(c).value;
-    assert(json["db_host"] == JSONValue("h"));     // field WireName wins
-    assert(json["retry_count"] == JSONValue(3));    // aggregate snake_case recasing
-    assert(fromJSON!Config(json).value == c);
+    const text = jsonText(c);
+    assert(text == `{"db_host":"h","retry_count":3}`); // WireName + recasing
+    assert(fromJSON!Config(text).value == c);
 }
 
 @("wired.json.fieldEnumOverride")
-@system unittest
+@safe unittest
 {
     enum Mode { fastPath, slowPath }
 
@@ -1950,29 +1456,27 @@ private EncRes writeStdJson(Writer)(const JSONValue v, ref Writer w)
         @WireCase!Json(CaseStyle.kebabCase) Mode m;
     }
 
-    // The field-level WireCase overrides the (absent) type policy for the enum.
-    assert(toJSON(S(Mode.fastPath)).value["m"] == JSONValue("fast-path"));
-    assert(fromJSON!S(toJSON(S(Mode.slowPath)).value).value == S(Mode.slowPath));
+    // The field-level WireCase overrides the (absent) type policy.
+    assert(jsonText(S(Mode.fastPath)) == `{"m":"fast-path"}`);
+    assert(fromJSON!S(jsonText(S(Mode.slowPath))).value == S(Mode.slowPath));
 }
 
 @("wired.json.nullableAndTernary")
-@system unittest
+@safe unittest
 {
-    // Nullable round-trips through JSON null / value.
-    assert(toJSON(Nullable!int.init).value == JSONValue(null));
-    assert(toJSON(Nullable!int(7)).value == JSONValue(7));
-    assert(fromJSON!(Nullable!int)(JSONValue(null)).value.isNull);
-    assert(fromJSON!(Nullable!int)(JSONValue(7)).value.get == 7);
+    assert(jsonText(Nullable!int.init) == "null");
+    assert(jsonText(Nullable!int(7)) == "7");
+    assert(fromJSON!(Nullable!int)("null").value.isNull);
+    assert(fromJSON!(Nullable!int)("7").value.get == 7);
 
-    // Ternary ⇄ null/true/false.
-    assert(toJSON(Ternary.unknown).value == JSONValue(null));
-    assert(toJSON(Ternary.yes).value == JSONValue(true));
-    assert(fromJSON!Ternary(JSONValue(null)).value == Ternary.unknown);
-    assert(fromJSON!Ternary(JSONValue(false)).value == Ternary.no);
+    assert(jsonText(Ternary.unknown) == "null");
+    assert(jsonText(Ternary.yes) == "true");
+    assert(fromJSON!Ternary("null").value == Ternary.unknown);
+    assert(fromJSON!Ternary("false").value == Ternary.no);
 
     // A missing null-aware field decodes to its empty value.
     static struct S { int a; Nullable!int b; Ternary c; }
-    auto r = fromJSON!S(parseObject(`{"a":1}`));
+    auto r = fromJSON!S(`{"a":1}`);
     assert(r.value.a == 1 && r.value.b.isNull && r.value.c == Ternary.unknown);
 }
 
@@ -1980,61 +1484,60 @@ private EncRes writeStdJson(Writer)(const JSONValue v, ref Writer w)
 @system unittest
 {
     auto t = SysTime.fromISOExtString("2026-07-01T12:30:00Z");
-    auto json = toJSON(t).value;
-    assert(json.type == JSONType.string);
-    assert(fromJSON!SysTime(json).value == t.toUTC);
+    const text = jsonText(t);
+    assert(text == `"2026-07-01T12:30:00Z"`);
+    assert(fromJSON!SysTime(text).value == t.toUTC);
 
     // Offsetless timestamps are rejected.
-    assert(fromJSON!SysTime(JSONValue("2026-07-01T12:30:00")).hasError);
+    assert(fromJSON!SysTime(`"2026-07-01T12:30:00"`).hasError);
 }
 
 @("wired.json.sumType")
-@system unittest
+@system unittest // -checkaction=context assert rendering of SumType is @system
 {
     alias Cell = SumType!(int, string);
 
-    assert(toJSON(Cell(42)).value == JSONValue(42));
-    assert(toJSON(Cell("hi")).value == JSONValue("hi"));
-    assert(fromJSON!Cell(JSONValue(42)).value == Cell(42));
-    assert(fromJSON!Cell(JSONValue("hi")).value == Cell("hi"));
+    assert(jsonText(Cell(42)) == "42");
+    assert(jsonText(Cell("hi")) == `"hi"`);
+    assert(fromJSON!Cell("42").value == Cell(42));
+    assert(fromJSON!Cell(`"hi"`).value == Cell("hi"));
 
     // exactlyOne (default) rejects when no variant matches.
-    assert(fromJSON!Cell(JSONValue(true)).hasError);
+    assert(fromJSON!Cell("true").hasError);
 
     // Field-level @(WireMatch.first) picks the first matching arm.
     static struct Row
     {
         @(WireMatch.first!Json) SumType!(int, double) cell;
     }
-    auto r = fromJSON!Row(parseObject(`{"cell":42}`));
+    auto r = fromJSON!Row(`{"cell":42}`);
     assert(r.value.cell == SumType!(int, double)(42));
 }
 
 @("wired.json.associativeArrays")
-@system unittest
+@safe unittest
 {
-    // String-keyed AA.
-    auto m = ["a": 1, "b": 2];
-    assert(fromJSON!(int[string])(toJSON(m).value).value == m);
+    // String-keyed AA — keys render sorted (§11.6).
+    auto m = ["b": 2, "a": 1];
+    assert(jsonText(m) == `{"a":1,"b":2}`);
+    assert(fromJSON!(int[string])(jsonText(m)).value == m);
 
     // Enum-keyed AA by member name (default).
     enum Suit { spades, hearts }
     auto byName = [Suit.spades: 1, Suit.hearts: 2];
-    auto jn = toJSON(byName).value;
-    assert(jn["spades"] == JSONValue(1) && jn["hearts"] == JSONValue(2));
-    assert(fromJSON!(int[Suit])(jn).value == byName);
+    assert(jsonText(byName) == `{"hearts":2,"spades":1}`);
+    assert(fromJSON!(int[Suit])(jsonText(byName)).value == byName);
 
     // Enum-keyed AA by underlying value.
     @WireRepr!Json(Repr.value)
     enum Priority { low = 1, high = 5 }
     auto byVal = [Priority.low: "lo", Priority.high: "hi"];
-    auto jv = toJSON(byVal).value;
-    assert(jv["1"] == JSONValue("lo") && jv["5"] == JSONValue("hi"));
-    assert(fromJSON!(string[Priority])(jv).value == byVal);
+    assert(jsonText(byVal) == `{"1":"lo","5":"hi"}`);
+    assert(fromJSON!(string[Priority])(jsonText(byVal)).value == byVal);
 }
 
 @("wired.json.wireConvert")
-@system unittest
+@safe unittest
 {
     import core.time : Duration, msecs;
 
@@ -2045,13 +1548,13 @@ private EncRes writeStdJson(Writer)(const JSONValue v, ref Writer w)
     }
 
     auto t = Timer(1500.msecs);
-    auto json = toJSON(t).value;
-    assert(json["timeout"] == JSONValue(1500)); // Duration encoded as its ms count
-    assert(fromJSON!Timer(json).value == t);     // round-trips back to a Duration
+    const text = jsonText(t);
+    assert(text == `{"timeout":1500}`); // Duration as its ms count
+    assert(fromJSON!Timer(text).value == t);
 }
 
 @("wired.json.wireOptional")
-@system unittest
+@safe unittest
 {
     static struct S
     {
@@ -2061,16 +1564,13 @@ private EncRes writeStdJson(Writer)(const JSONValue v, ref Writer w)
     }
 
     // Encode omission.
-    auto j = toJSON(S(Nullable!int.init, 0, Nullable!int.init)).value;
-    assert("a" !in j.object);        // empty Nullable omitted
-    assert("b" !in j.object);        // int 0 == default, omitted
-    assert(j["c"].type == JSONType.null_); // never → emitted as null
-
-    auto j2 = toJSON(S(Nullable!int(5), 7, Nullable!int.init)).value;
-    assert(j2["a"] == JSONValue(5) && j2["b"] == JSONValue(7));
+    assert(jsonText(S(Nullable!int.init, 0, Nullable!int.init))
+        == `{"c":null}`); // a and b omitted, c emitted as null
+    assert(jsonText(S(Nullable!int(5), 7, Nullable!int.init))
+        == `{"a":5,"b":7,"c":null}`);
 
     // Decode: missing optional fields fall back to defaults.
-    auto r = fromJSON!S(parseObject(`{}`));
+    auto r = fromJSON!S(`{}`);
     assert(r.value.a.isNull && r.value.b == 0 && r.value.c.isNull);
 
     // onInvalid: a present but invalid value falls back to the default.
@@ -2078,35 +1578,35 @@ private EncRes writeStdJson(Writer)(const JSONValue v, ref Writer w)
     {
         @WireOptional(onInvalid: WireInvalid.useDefault) int x;
     }
-    auto ri = fromJSON!T(parseObject(`{"x":"not-a-number"}`));
+    auto ri = fromJSON!T(`{"x":"not-a-number"}`);
     assert(ri.hasValue && ri.value.x == 0);
 
     // Without useDefault (default reject), the same input is an error.
     static struct T2 { @WireOptional() int x; }
-    assert(fromJSON!T2(parseObject(`{"x":"nope"}`)).hasError);
+    assert(fromJSON!T2(`{"x":"nope"}`).hasError);
 
     // whenDefault on an Optional field compares by emptiness and contents.
     static struct O
     {
         @WireOptional(WireSkip.whenDefault) Optional!string tag;
     }
-    assert("tag" !in toJSON(O.init).value.object); // empty == default → omitted
-    assert(toJSON(O(some("x"))).value["tag"] == JSONValue("x"));
+    assert(jsonText(O.init) == "{}"); // empty == default → omitted
+    assert(jsonText(O(some("x"))) == `{"tag":"x"}`);
 }
 
 @("wired.json.optional")
-@system unittest
+@safe unittest
 {
     import optional : no, some, Optional;
 
-    assert(toJSON(no!int).value == JSONValue(null));
-    assert(toJSON(some(7)).value == JSONValue(7));
-    assert(fromJSON!(Optional!int)(JSONValue(null)).value.empty);
-    assert(fromJSON!(Optional!int)(JSONValue(7)).value.front == 7);
+    assert(jsonText(no!int) == "null");
+    assert(jsonText(some(7)) == "7");
+    assert(fromJSON!(Optional!int)("null").value.empty);
+    assert(fromJSON!(Optional!int)("7").value.front == 7);
 
     // A missing Optional field decodes to empty (none).
     static struct S { int a; Optional!int b; }
-    auto r = fromJSON!S(parseObject(`{"a":1}`));
+    auto r = fromJSON!S(`{"a":1}`);
     assert(r.value.a == 1 && r.value.b.empty);
 }
 
@@ -2122,18 +1622,20 @@ private EncRes writeStdJson(Writer)(const JSONValue v, ref Writer w)
     scope(exit) if (path.exists) remove(path);
 
     assert(!writeJSONFile(Cfg("localhost", 8080), path).hasError);
-    assert(readText(path)[$ - 1] == '\n'); // trailing newline
+    const written = readText(path);
+    assert(written == "{\n  \"host\": \"localhost\",\n  \"port\": 8080\n}\n");
 
     auto r = readJSONFile!Cfg(path);
     assert(r.hasValue && r.value == Cfg("localhost", 8080));
 
-    // Missing file → read-stage error.
-    assert(readJSONFile!Cfg(buildPath(tempDir, "wired-does-not-exist.json")).hasError);
-}
+    // Compact form is single-line.
+    assert(!writeJSONFile(Cfg("h", 1), path, true).hasError);
+    assert(readText(path) == "{\"host\":\"h\",\"port\":1}\n");
 
-version (unittest) private JSONValue parseObject(string s)
-{
-    return parseJSON(s);
+    // Missing file → read-stage error naming the file.
+    auto missing = readJSONFile!Cfg(buildPath(tempDir, "wired-does-not-exist.json"));
+    assert(missing.hasError);
+    assert(missing.error.stage == JsonStage.fileRead);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2345,13 +1847,15 @@ version (unittest)
     assert(writeJSON(nanned, bad).hasError);
 }
 
-@("wired.native.oldAndNewDecodeAgree")
-@system unittest // the old walk reaches std.json's @system .object property
+@("wired.native.shimAgreesWithTextPath")
+@system unittest // JSONValue construction via parseJSON is @system-adjacent
 {
-    // The same document through the std.json walk and the native walk
-    // must produce identical values.
+    // The same document through the JSONValue compat shim and the text
+    // path must produce identical values.
     const text = `{"host":"h","port":80,"tags":["a"],"mode":"automatic",` ~
         `"timeout":null,"retries":9}`;
+    import std.json : parseJSON;
+
     auto viaOld = parseJSON(text).fromJSON!NServer;
     auto viaNew = fromJSON!NServer(text);
     assert(viaOld.hasValue && viaNew.hasValue);

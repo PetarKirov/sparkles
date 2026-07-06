@@ -663,13 +663,14 @@ private void printSplitReceipt(
 /// an encode failure yields an explanatory stub instead of aborting anything).
 private string planJson(in ReleasePlan plan)
 {
-    import std.json : JSONValue;
-    import sparkles.wired : toJSON;
+    import sparkles.release.json_utils : encodeJson;
 
-    auto encoded = toJSON(plan);
+    // `toJSON` yields minified `JsonString` text now, so the pretty rendering
+    // goes through `encodeJson`'s `writeJSON` path rather than a JSONValue.
+    auto encoded = encodeJson(plan, pretty: true);
     if (encoded.hasError)
         return `{"error": "could not encode the plan"}`;
-    return encoded.value.toPrettyString;
+    return encoded.value;
 }
 
 /// Runs the pre-flight checks as a live checklist: each check is a task row,

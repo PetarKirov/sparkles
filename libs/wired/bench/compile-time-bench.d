@@ -134,7 +134,7 @@ int main(string[] args)
         // Dogfood sparkles:wired to serialize the benchmark's own results.
         auto encoded = toJSON(results);
         enforce(encoded.hasValue, "wired failed to encode metrics");
-        File(opts.json, "w").writeln(encoded.value.toPrettyString);
+        File(opts.json, "w").writeln(encoded.value[]);
         writefln!"\nmetrics written to %s"(opts.json);
     }
     if (opts.keep)
@@ -182,14 +182,12 @@ string generate(string workload, string moduleName, uint size)
     }
 }
 
-/// The encode + decode instantiation anchor for the root type. The encode
-/// parameter is `const`, not `in`: the encoded `JSONValue` legitimately aliases
-/// string slices of the input, so a dip1000 `scope` parameter cannot flow into
-/// the returned result.
+/// The encode + decode instantiation anchor for the root type — the
+/// public surface a consumer instantiates (text-based, SPEC §11.6).
 private string anchor(string type)
 {
-    return "\nJsonResult!JSONValue enc(const " ~ type ~ " v) => toJSON(v);\n"
-        ~ "JsonResult!" ~ type ~ " dec(JSONValue j) => fromJSON!" ~ type ~ "(j);\n";
+    return "\nauto enc(const " ~ type ~ " v) => toJSON(v);\n"
+        ~ "auto dec(const(char)[] t) => fromJSON!" ~ type ~ "(t);\n";
 }
 
 /// One struct, `size` scalar/string fields; every 4th field renamed, every 6th

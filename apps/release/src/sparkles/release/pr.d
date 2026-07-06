@@ -191,7 +191,7 @@ Result!(PrRef[]) parseAssociationReply(string json, const(string)[] shas) @syste
         auto decoded = fromJSON!GqlCommitObj(repo[aliasName]);
         if (decoded.hasError)
             return failure!(PrRef[])(
-                "gh graphql reply for " ~ sha ~ ": " ~ decoded.error.msg);
+                "gh graphql reply for " ~ sha ~ ": " ~ decoded.error.toString);
 
         PrRef r = PrRef(sha: sha, number: 0);
         foreach (node; decoded.value.prs.nodes)

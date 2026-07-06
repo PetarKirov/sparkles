@@ -141,6 +141,19 @@ struct JsonError
 
     // ── rendering (SPEC §9 / §11.6) ───────────────────────────────────────
 
+    /// The rendered message as a GC string — the standard companion to the
+    /// writer form below, for the boundaries where a caller needs a `string`
+    /// (an `Exception` message, a `Result!string` channel). The writer form
+    /// stays the `@nogc` primary; this one allocates only when called.
+    string toString() const
+    {
+        import std.array : appender;
+
+        auto w = appender!string;
+        this.toString(w);
+        return w[];
+    }
+
     /// Renders the human-readable message; the fragments (path syntax,
     /// target type, kind, reason) are the contract, exact wording is not.
     void toString(Writer)(ref Writer w) const

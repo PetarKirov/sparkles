@@ -118,7 +118,7 @@ private void writeJsonValue(JsonWriteOptions opts, Writer)(
     }
 }
 
-private void newlineIndent(Writer)(ref Writer w, uint depth)
+package void newlineIndent(Writer)(ref Writer w, uint depth)
 {
     put(w, '\n');
     foreach (_; 0 .. depth)

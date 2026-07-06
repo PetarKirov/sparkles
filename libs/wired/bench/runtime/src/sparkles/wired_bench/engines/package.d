@@ -10,7 +10,6 @@ module sparkles.wired_bench.engines;
 import std.meta : AliasSeq;
 
 public import sparkles.wired_bench.engines.std_json : StdJsonEngine;
-public import sparkles.wired_bench.engines.wired_json : WiredEngine;
 public import sparkles.wired_bench.engines.wired_native : WiredNativeEngine;
 
 version (BenchMirIon)
@@ -73,10 +72,11 @@ version (BenchRust)
 else
     private alias RustEngines = AliasSeq!();
 
-/// Every engine compiled into this build, baseline first (`wired` is the
-/// decode-only std.json row this benchmark exists to replace;
-/// `wired-native` is its replacement — SPEC §11).
-alias AllEngines = AliasSeq!(StdJsonEngine, WiredEngine, WiredNativeEngine,
+/// Every engine compiled into this build, baseline first. The old `wired`
+/// row (std.json parse + the retired Exception walk, 157 MB/s decode) is
+/// gone with that walk — bench-baseline.md preserves its numbers;
+/// `wired-native` is the product row (SPEC §11).
+alias AllEngines = AliasSeq!(StdJsonEngine, WiredNativeEngine,
     MirIonEngines, AsdfEngines, JsoniopipeEngines, YyjsonEngines, CppEngines,
     RustEngines);
 

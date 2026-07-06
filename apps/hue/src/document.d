@@ -83,7 +83,7 @@ struct DocumentPipeline
             case twoslash:
                 auto twRes = loadTwoslashFile(path);
                 if (twRes.hasError)
-                    throw new Exception(twRes.error.msg);
+                    throw new Exception(twRes.error.toString);
                 Document doc = {
                     path: path, title: baseName(path), kind: twoslash,
                     source: twRes.value.code, lang: "typescript",
