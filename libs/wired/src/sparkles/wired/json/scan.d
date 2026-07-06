@@ -6,33 +6,94 @@ bodies here; signatures are the contract.
 */
 module sparkles.wired.json.scan;
 
+/// One unaligned 64-bit load — the memcpy idiom guarantees a single mov
+/// with no alignment assumption.
+package ulong loadWord(const(char)* p) @system pure nothrow @nogc
+{
+    pragma(inline, true);
+    import core.stdc.string : memcpy;
+
+    ulong x;
+    memcpy(&x, p, 8);
+    return x;
+}
+
 @safe pure nothrow @nogc package:
 
 /// Advances `i` past insignificant whitespace (RFC 8259: space, tab,
-/// LF, CR). The buffer's zero padding terminates every scan.
-void skipWs(scope const(char)[] s, ref size_t i)
+/// LF, CR) in the reader's padded pool. The four zero bytes of padding
+/// terminate the walk (NUL is not whitespace), so the hot loop carries
+/// no bounds check.
+void skipWs(scope const(char)[] paddedPool, ref size_t i)
+in (paddedPool.length >= 8 && paddedPool[$ - 1] == '\0')
 {
-    while (i < s.length)
-    {
-        const c = s[i];
-        if (c != ' ' && c != '\t' && c != '\n' && c != '\r')
-            return;
-        i++;
-    }
+    pragma(inline, true);
+    i = (() @trusted {
+        auto p = paddedPool.ptr;
+        size_t j = i;
+        while (p[j] == ' ' || p[j] == '\t' || p[j] == '\n' || p[j] == '\r')
+        {
+            j++;
+            // Pretty-printed runs: skip 8 spaces at a time (padding keeps
+            // the word loads in bounds; NUL is not a space, so the walk
+            // terminates).
+            while (loadWord(p + j) == 0x2020_2020_2020_2020)
+                j += 8;
+        }
+        return j;
+    })();
+}
+
+/// The result of a string-body scan: the index of the first structural
+/// stop byte (quote, backslash, or control) and whether any byte ≥ 0x80
+/// was seen on the way (may over-report bytes near the stop — callers
+/// use it only to skip UTF-8 validation of pure-ASCII spans).
+struct StringScan
+{
+    size_t stop;
+    bool sawHigh;
 }
 
 /// Scans a string body from `i` (just after the opening quote) to the
-/// first quote, backslash, or control byte (< 0x20), returning its
-/// index. The pool's zero padding guarantees termination (NUL is a
-/// control byte).
-size_t scanStringBody(scope const(char)[] s, size_t i)
+/// first quote, backslash, or control byte (< 0x20) in the reader's
+/// padded pool. SWAR: eight bytes per iteration via the classic
+/// zero-byte/less-than masks; the ≥ 8 zero-padding bytes both terminate
+/// the walk (NUL is a control byte) and keep every word load in bounds.
+StringScan scanStringBody(scope const(char)[] paddedPool, size_t i)
+in (paddedPool.length >= 8 && paddedPool[$ - 1] == '\0')
 {
-    while (i < s.length)
-    {
-        const c = s[i];
-        if (c == '"' || c == '\\' || c < 0x20)
-            break;
-        i++;
-    }
-    return i;
+    pragma(inline, true);
+    return (() @trusted {
+        enum ulong ones = 0x0101_0101_0101_0101;
+        enum ulong highs = 0x8080_8080_8080_8080;
+
+        auto p = paddedPool.ptr;
+        size_t j = i;
+        ulong seenHigh = 0;
+        while (true)
+        {
+            // One unaligned 64-bit load; in bounds while j ≤ content
+            // length (the padding NUL stops the loop at the boundary).
+            const x = loadWord(p + j);
+
+            const q = x ^ 0x2222_2222_2222_2222; // '"'
+            const b = x ^ 0x5C5C_5C5C_5C5C_5C5C; // '\\'
+            const zq = (q - ones) & ~q & highs; // zero-byte detect
+            const zb = (b - ones) & ~b & highs;
+            const ctl = (x - 0x2020_2020_2020_2020) & ~x & highs; // < 0x20
+            const stops = zq | zb | ctl;
+            if (stops != 0)
+            {
+                import core.bitop : bsf;
+
+                const at = j + bsf(stops) / 8;
+                // High bytes strictly before the stop still count.
+                const mask = ~0UL >> (63 - bsf(stops));
+                seenHigh |= x & highs & (mask >> 8);
+                return StringScan(at, seenHigh != 0);
+            }
+            seenHigh |= x & highs;
+            j += 8;
+        }
+    })();
 }
