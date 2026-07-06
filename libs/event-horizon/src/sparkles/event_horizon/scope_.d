@@ -39,9 +39,21 @@ address-pinned: children hold pointers into it for the whole of `withScope`
 — sound because the join guarantees every child terminates before the frame
 dies. Constructed only by `withScope`/`withDeadline`.
 */
+/// The scope concept (SPEC §8.1): a structured-concurrency nursery carrying a
+/// typed error channel, over which the tier-C drivers (`effect.run`) are
+/// generic.
+enum bool isScope(Sc) = is(Sc.ErrorType)
+    && __traits(hasMember, Sc, "spawn")
+    && __traits(hasMember, Sc, "fork")
+    && __traits(hasMember, Sc, "cancel")
+    && __traits(hasMember, Sc, "fail");
+
 struct Scope(X, E = IoError)
 if (isFiberExecutor!X)
 {
+    /// The typed-error channel this scope carries (for generic drivers).
+    alias ErrorType = E;
+
     @disable this();
     @disable this(this);
 
