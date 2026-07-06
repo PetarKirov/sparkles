@@ -61,20 +61,36 @@ struct LoopGroup
     /// hard error (SPEC §3.4 — no epoll fallback).
     static IoResult!void start(out LoopGroup group, in LoopGroupConfig cfg = LoopGroupConfig())
     {
-        // M9a: only the single topology is wired; the others assert until
-        // their milestones land, so callers fail loudly, not silently.
-        assert(cfg.topology == Topology.single,
-            "threadPerCore/workStealing land in M9b/M9c");
+        // workStealing lands in M9c; single and threadPerCore are wired.
+        assert(cfg.topology != Topology.workStealing,
+            "workStealing lands in M9c");
 
-        SchedOptions opts;
-        opts.maxFibers = cfg.maxFibers;
-        LoopConfig loopCfg;
-        loopCfg.backend.sqEntries = cfg.sqEntries;
-        auto r = Sched.create(group._sched, opts, loopCfg);
-        if (r.hasError)
-            return r;
+        group._cfg = cfg;
+        if (cfg.topology == Topology.single)
+        {
+            // The single topology's one worker is created eagerly on the
+            // calling thread; thread-per-core creates each worker's Sched on
+            // its own thread (Sched/ring/fiber are thread-affine).
+            SchedOptions opts;
+            opts.maxFibers = cfg.maxFibers;
+            LoopConfig loopCfg;
+            loopCfg.backend.sqEntries = cfg.sqEntries;
+            auto r = Sched.create(group._sched, opts, loopCfg);
+            if (r.hasError)
+                return r;
+        }
         group._started = true;
         return ioOk();
+    }
+
+    /// Worker threads for the thread-per-core topology (0 = one per online CPU).
+    uint workerCount() const @safe pure nothrow @nogc
+    {
+        import std.parallelism : totalCPUs;
+
+        if (_cfg.topology == Topology.single)
+            return 1;
+        return _cfg.workers != 0 ? _cfg.workers : totalCPUs;
     }
 
     /// Tears down the group's workers.
@@ -82,7 +98,8 @@ struct LoopGroup
     {
         if (_started)
         {
-            _sched.destroy();
+            if (_cfg.topology == Topology.single)
+                _sched.destroy();
             _started = false;
         }
     }
@@ -136,11 +153,87 @@ struct LoopGroup
             return outcomeOk!IoError(move(value));
     }
 
+    /**
+    Runs `main` on every worker, share-nothing (SPEC §11 thread-per-core):
+    each worker owns its own ring, scheduler, and live `Env`, and there is no
+    shared mutable state — cross-worker coordination is the app's, over its
+    own channels. Worker 0 runs on the calling thread; the rest run on pinned
+    threads. Blocks until all workers' root scopes join.
+
+    `main` receives the worker id, its root scope, and its `Env`. It is called
+    concurrently on every worker, so anything it closes over must be safe to
+    share (typically `shared`/atomic counters or nothing).
+    */
+    void runEach(scope void delegate(uint workerId, ref RootScope root, ref Env env) main)
+    {
+        import core.thread : Thread;
+
+        const n = workerCount();
+        auto cfg = _cfg;
+
+        void runWorker(uint id) @trusted
+        {
+            SchedOptions opts;
+            opts.maxFibers = cfg.maxFibers;
+            LoopConfig loopCfg;
+            loopCfg.backend.sqEntries = cfg.sqEntries;
+            Sched sched;
+            if (Sched.create(sched, opts, loopCfg).hasError)
+                return; // a worker whose ring won't open is silently skipped
+            scope (exit) sched.destroy();
+
+            if (cfg.pinToCpu)
+                pinToCpu(id);
+
+            auto env = Env(RingClock(&sched), RingNet(&sched));
+            sched.run(() {
+                cast(void) withScope!((ref RootScope sc) {
+                    main(id, sc, env);
+                }, IoError)(sched);
+            });
+        }
+
+        // A by-value factory: `id` is a fresh function parameter per call, so
+        // each thread's closure captures its own worker id (a plain
+        // `() => runWorker(id)` over the loop variable would capture one
+        // shared reference — the classic D loop-capture bug).
+        Thread makeWorker(uint id)
+        {
+            return new Thread(() => runWorker(id));
+        }
+
+        // Workers 1..n-1 on their own threads; worker 0 on this thread.
+        Thread[] threads;
+        foreach (uint id; 1 .. n)
+        {
+            auto t = makeWorker(id);
+            t.start();
+            threads ~= t;
+        }
+        runWorker(0);
+        foreach (t; threads)
+            t.join();
+    }
+
     /// The worker's scheduler (single topology: the only one).
     ref Sched worker() return @safe nothrow @nogc => _sched;
 
 private:
+    static void pinToCpu(uint cpu) @trusted nothrow @nogc
+    {
+        version (linux)
+        {
+            import core.sys.linux.sched : CPU_SET, cpu_set_t, sched_setaffinity;
+            import std.parallelism : totalCPUs;
+
+            cpu_set_t set;
+            CPU_SET(cpu % totalCPUs, &set);
+            cast(void) sched_setaffinity(0, cpu_set_t.sizeof, &set);
+        }
+    }
+
     Sched _sched;
+    LoopGroupConfig _cfg;
     bool _started;
 }
 
@@ -241,4 +334,35 @@ private ushort boundPort(int fd) @trusted nothrow @nogc
     socklen_t len = a.sizeof;
     getsockname(fd, cast(sockaddr*) &a, &len);
     return ntohs(a.sin_port);
+}
+
+@("group.threadPerCore.shareNothingWorkers")
+@system
+unittest
+{
+    import core.atomic : atomicOp;
+    import core.time : msecs;
+
+    LoopGroup group;
+    LoopGroupConfig cfg;
+    cfg.topology = Topology.threadPerCore;
+    cfg.workers = 4;
+    if (LoopGroup.start(group, cfg).hasError)
+        return; // SKIP: io_uring unavailable
+    scope (exit) group.shutdown();
+    assert(group.workerCount == 4);
+
+    shared uint ran;
+    shared ulong idMask;
+    group.runEach((uint id, ref root, ref env) {
+        // Each worker drives its own ring — the live clock's in-ring TIMEOUT
+        // sleep proves it — then records that it ran (share-nothing but for
+        // the atomic tallies).
+        cast(void) env.clock.sleep(1.msecs);
+        atomicOp!"+="(ran, 1);
+        atomicOp!"|="(idMask, 1UL << id);
+    });
+
+    assert(ran == 4, "every worker ran its own root on its own ring");
+    assert(idMask == 0b1111, "all four worker ids distinct");
 }
