@@ -1,0 +1,97 @@
+/**
+`runtime-bench` — runtime JSON benchmark for `sparkles:wired`.
+
+Compares JSON engines across D (`std.json` baseline, mir-ion, asdf,
+jsoniopipe), C (yyjson via ImportC), C++ (simdjson DOM + On-Demand,
+rapidjson via an `extern "C"` shim), and Rust (serde_json, simd-json,
+sonic-rs via a staticlib shim) over the canonical benchmark corpora, to
+establish the performance targets for replacing `std.json` inside
+`sparkles:wired`.
+
+Every engine must reproduce the `std.json` structural fingerprint of each
+dataset before its timings are trusted. Ops: `parse`, `parse-insitu`,
+`serialize`, `validate`, `decode` — each engine only gets the rows its
+adapter's capabilities (design-by-introspection traits) support.
+
+Run (canonical — release codegen tuned to the host CPU):
+---
+dub run -b bench -- [--datasets=twitter,canada] [--engines=std.json,yyjson]
+    [--ops=parse,serialize] [--min-time-ms=2000] [--json=FILE]
+---
+*/
+module sparkles.wired_bench.app;
+
+import std.stdio : stderr, writefln, writeln;
+
+import sparkles.core_cli.args : parseCliArgs;
+import sparkles.core_cli.help_formatting : HelpInfo;
+
+import sparkles.wired_bench.config : BenchOptions;
+import sparkles.wired_bench.data : loadDatasets, resolveDataDir;
+import sparkles.wired_bench.engines : AllEngines, engineVersions;
+import sparkles.wired_bench.perf : PerfGroup;
+import sparkles.wired_bench.report : BenchReport, collectEnvInfo, dumpJson,
+    reportEnvironment, reportPerf, reportResults;
+import sparkles.wired_bench.runner : runAll;
+
+version (linux)
+    private extern (C) int mallopt(int, int) nothrow @nogc;
+
+int main(string[] args)
+{
+    version (linux)
+    {
+        // Level the allocator field for every engine: by default glibc
+        // trims multi-MB blocks back to the kernel on free, so a
+        // parse-in-a-loop refaults its whole document arena every
+        // iteration — and whether an engine pays depends on allocation-
+        // pattern luck (one block vs two), not parser quality. Raising
+        // the trim/mmap thresholds (standard practice in parser
+        // benchmarking; jemalloc/mimalloc swaps do the same implicitly)
+        // makes page faults a first-iteration cost for all engines
+        // equally. Disclosed in the report environment header.
+        enum M_TRIM_THRESHOLD = -1;
+        enum M_MMAP_THRESHOLD = -3;
+        mallopt(M_TRIM_THRESHOLD, 64 * 1024 * 1024);
+        mallopt(M_MMAP_THRESHOLD, 64 * 1024 * 1024);
+    }
+
+    const opts = args.parseCliArgs!BenchOptions(
+        HelpInfo("runtime-bench", "Runtime JSON benchmark for sparkles:wired."));
+
+    version (assert)
+        stderr.writeln("warning: assert-enabled build — benchmark numbers are "
+            ~ "meaningless; use `dub run -b bench`");
+
+    const datasets = loadDatasets(opts.datasetNames, resolveDataDir(opts.dataDir));
+
+    auto perf = PerfGroup.tryOpen(!opts.noPerf);
+    scope (exit)
+        perf.close();
+
+    auto env = collectEnvInfo();
+    {
+        import std.string : join;
+
+        env.engines = engineVersions().join("; ");
+        env.perf = opts.noPerf ? "disabled (--no-perf)" : perf.status;
+    }
+    reportEnvironment(env, datasets);
+
+    auto results = runAll!AllEngines(datasets, opts, perf);
+    reportResults(results, datasets);
+    reportPerf(results, datasets);
+
+    if (opts.json.length)
+    {
+        dumpJson(BenchReport(env, results), opts.json);
+        writefln!"\nreport written to %s"(opts.json);
+    }
+
+    // A verification failure poisons the whole comparison — reflect it in
+    // the exit status so scripted runs can't miss it.
+    foreach (r; results)
+        if (r.error.length)
+            return 1;
+    return 0;
+}

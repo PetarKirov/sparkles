@@ -1,0 +1,14 @@
+name "yyjson"
+description "ImportC bindings for yyjson — scoped to the wired runtime bench"
+authors "Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+
+dflags "-preview=in" "-preview=dip1000"
+
+libs "yyjson"
+
+configuration "library" {
+    targetType "sourceLibrary"
+}

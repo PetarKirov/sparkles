@@ -76,3 +76,38 @@ The `docs/libs/wired/` guide; the VitePress sidebar entry for this spec; and
 `nix run .#ci -- --verify` over [SPEC.md](./SPEC.md) and the guide.
 
 Gate: every spec example runs and matches; `npm run docs:build` is clean.
+
+## M6–M15 — the native JSON engine (SPEC §11)
+
+Replaces `std.json` with wired's own scalar engine (yyjson-class; the
+performance case is [bench-baseline.md](./bench-baseline.md); SIMD is a
+later iteration). Prep: M6a spec (§11), M6b `ParseErrorCode` additions,
+M6c JSONTestSuite pin. Reusable primitives in `sparkles:base` (A1–A6):
+tiered decimal→double conversion (unrolled digit loop, pow10 fast path,
+Eisel–Lemire, bigint fallback), Schubfach shortest-round-trip double
+formatting, branchlut integer formatting, scalar UTF-8 validation, and the
+`float-conv` spec page.
+
+Engine milestones, each independently green:
+
+- **M7** — split `sparkles.wired.json` into a package (pure move).
+- **M8** — arena document model (`JsonDocument`/`JsonValue`,
+  allocator-generic per the composable-allocators guideline).
+- **M9** — strict RFC 8259 reader. Gate: JSONTestSuite clean + number pins.
+- **M10** — `wired-native` row in the runtime bench. Gate: twitter parse
+  ≥ 1 GB/s, fingerprints match every corpus.
+- **M11** — streaming writer (+ bench serialize op, round-trip invariants).
+- **M12** — native decode/encode walks (`JsonError`-based) + text-level
+  API. Gate: twitter decode ≥ 1 GB/s, compile-time bench not regressed.
+- **M13** — **breaking** switch-over to the native surface and `JsonError`
+  (SPEC §11.6); `ci --verify` over the revised examples.
+- **M14** — retire the `std.json` walk; port the test suite.
+- **M15+** — optimization rounds (in progress; the gate table lives in
+  [bench-baseline.md](./bench-baseline.md)). Landed: the pointer number
+  kernel, single-`i128`-mul Eisel–Lemire, masked UTF-8 sequence checks,
+  frequency-ordered dispatch, the short-key fast path, the levelled-
+  allocator bench field, and `validateJson` (the text-level validate op).
+  Standing on the canonical level-field snapshot: twitter parse 1 732 /
+  decode 1 481 MB/s vs yyjson 3 853 / 3 406 — decode is 9.6× the retired
+  std.json pipeline. Exit gate: `wired-native` parse **and** decode
+  within ±10% of the yyjson rows on the runtime bench.

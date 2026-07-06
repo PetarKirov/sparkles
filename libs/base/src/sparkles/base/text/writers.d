@@ -49,16 +49,30 @@ if (__traits(isUnsigned, T))
 {
     import std.range.primitives : put;
 
-    T value = val;  // Local mutable copy
-    char[sizeForUnsignedNumberBuffer!T] buf = void;
-    ubyte i = buf.length - 1;
-    while (value >= 10)
+    if (__ctfe)
     {
-        buf[i--] = cast(char)('0' + value % 10);
-        value /= 10;
+        // Portable per-digit loop (the branchlut path below is
+        // pointer-based and therefore not CTFE-executable).
+        T value = val;
+        char[sizeForUnsignedNumberBuffer!T] buf = void;
+        ubyte i = buf.length - 1;
+        while (value >= 10)
+        {
+            buf[i--] = cast(char)('0' + value % 10);
+            value /= 10;
+        }
+        buf[i] = cast(char)('0' + value);
+        put(w, buf[i .. $]);
+        return;
     }
-    buf[i] = cast(char)('0' + value);
-    put(w, buf[i .. $]);
+
+    // Branchlut fast path: two digits per table lookup, division only at
+    // 8-digit strides (shared with the float writer in text.float_conv).
+    import sparkles.base.text.float_conv : writeU64Digits;
+
+    char[20] buf = void;
+    const len = (() @trusted => writeU64Digits(val, &buf[0]) - &buf[0])();
+    put(w, buf[0 .. len]);
 }
 
 private template sizeForUnsignedNumberBuffer(T)
@@ -151,6 +165,56 @@ unittest
     import sparkles.base.smallbuffer : checkWriter;
 
     checkWriter!((ref b) => writeInteger(b, 42))("42");
+}
+
+@("writeInteger.branchlutStrideBoundaries")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.smallbuffer : checkWriter;
+
+    // The branchlut writer switches strategy at 100 / 10^4 / 10^6 / 10^8 /
+    // 10^16 — pin one value on each side of every boundary, plus the
+    // 20-digit extremes.
+    checkWriter!((ref b) => writeInteger(b, 9u))("9");
+    checkWriter!((ref b) => writeInteger(b, 10u))("10");
+    checkWriter!((ref b) => writeInteger(b, 99u))("99");
+    checkWriter!((ref b) => writeInteger(b, 100u))("100");
+    checkWriter!((ref b) => writeInteger(b, 9_999u))("9999");
+    checkWriter!((ref b) => writeInteger(b, 10_000u))("10000");
+    checkWriter!((ref b) => writeInteger(b, 999_999u))("999999");
+    checkWriter!((ref b) => writeInteger(b, 1_000_000u))("1000000");
+    checkWriter!((ref b) => writeInteger(b, 99_999_999u))("99999999");
+    checkWriter!((ref b) => writeInteger(b, 100_000_000u))("100000000");
+    checkWriter!((ref b) => writeInteger(b, 9_999_999_999_999_999UL))("9999999999999999");
+    checkWriter!((ref b) => writeInteger(b, 10_000_000_000_000_000UL))("10000000000000000");
+    checkWriter!((ref b) => writeInteger(b, ulong.max))("18446744073709551615");
+    checkWriter!((ref b) => writeInteger(b, long.max))("9223372036854775807");
+    checkWriter!((ref b) => writeInteger(b, long.min))("-9223372036854775808");
+    checkWriter!((ref b) => writeInteger(b, int.min))("-2147483648");
+    checkWriter!((ref b) => writeInteger(b, ubyte.max))("255");
+}
+
+@("writeInteger.ctfeMatchesRuntime")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    // The CTFE per-digit path and the runtime branchlut path must agree.
+    static char[32] render(ulong v)
+    {
+        char[32] r = 0;
+        SmallBuffer!(char, 24) b;
+        writeInteger(b, v);
+        r[0 .. b[].length] = b[];
+        return r;
+    }
+
+    enum ctfe = render(18_446_744_073_709_551_615UL);
+    assert(ctfe == render(18_446_744_073_709_551_615UL));
+    enum ctfeSmall = render(7);
+    assert(ctfeSmall == render(7));
 }
 
 @("writeInteger.negative")

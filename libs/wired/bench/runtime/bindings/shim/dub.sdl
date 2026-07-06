@@ -1,0 +1,14 @@
+name "wired-bench-shim"
+description "ImportC bindings for the foreign-engine shims of the wired runtime bench"
+authors "Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+
+dflags "-preview=in" "-preview=dip1000"
+
+libs "wired-bench-cpp-shim" "wired-bench-rs"
+
+configuration "library" {
+    targetType "sourceLibrary"
+}

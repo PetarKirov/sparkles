@@ -26,12 +26,14 @@ Package module re-exporting `lifetime`, `logger`, `prettyprint`,
 The package re-exports `text.writers`, `text.readers`, `text.enums`, and
 `text.errors`.
 
-| Module                       | Description                                                  |
-| ---------------------------- | ------------------------------------------------------------ |
-| `sparkles.base.text.writers` | Integer, float, duration, byte, escape, and value writers.   |
-| `sparkles.base.text.readers` | Slice-advance parsers such as `readInteger` and `readUntil`. |
-| `sparkles.base.text.enums`   | Enum text helpers such as `StringRepresentation`.            |
-| `sparkles.base.text.errors`  | `ParseErrorCode`, `ParseError`, and `ParseExpected!T`.       |
+| Module                          | Description                                                                                                                                                  |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `sparkles.base.text.writers`    | Integer, float, duration, byte, escape, and value writers.                                                                                                   |
+| `sparkles.base.text.readers`    | Slice-advance parsers such as `readInteger` and `readUntil`.                                                                                                 |
+| `sparkles.base.text.enums`      | Enum text helpers such as `StringRepresentation`.                                                                                                            |
+| `sparkles.base.text.errors`     | `ParseErrorCode`, `ParseError`, and `ParseExpected!T`.                                                                                                       |
+| `sparkles.base.text.float_conv` | Exact decimal ⇄ `double`: correctly-rounded `readDecimalFloat`, shortest round-trip `formatShortestDouble` ([spec](../../../specs/base/text/float-conv.md)). |
+| `sparkles.base.text.utf8`       | UTF-8 well-formedness: `indexOfInvalidUtf8`, `validateUtf8`.                                                                                                 |
 
 ## `sparkles.base.term_style`
 

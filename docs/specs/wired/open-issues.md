@@ -50,15 +50,15 @@ through a supported wrapper is fine, and calling out any shape that is not.
 
 **Leaning:** (A), pending a check that no wrapper combination self-instantiates.
 
-## O3 — `JSONValue` passthrough of non-conforming data
+## O3 — `JSONValue` passthrough of non-conforming data — RESOLVED (strict)
 
 **Where:** SPEC §4.2 (`JSONValue` "passed through unchanged").
 
-A `JSONValue` field is passed through verbatim, so it can carry values that the
-rest of the library would reject — e.g. a float `NaN`/infinity, or a structure
-that would not survive re-decoding into a typed target. It should be explicit
-whether passthrough is intentionally unchecked (the escape hatch for raw JSON) or
-whether any validation applies.
+Resolved by the native-engine switch-over (SPEC §11.6): passthrough is the
+$(I owned) generic-JSON escape hatch — decoding materializes the subtree,
+encoding streams it with sorted keys — and a `NaN`/infinity inside a
+passed-through value is an encode-stage `JsonError`, exactly like a typed
+float field.
 
 **Options:** (A) confirm passthrough is intentionally unchecked and document it as
 the raw-JSON escape hatch; (B) apply the same scalar-validity checks (e.g. reject
@@ -87,27 +87,16 @@ the `whenDefault` `== .init` rule proves too blunt for arrays/maps.
 the AA/array case explicit. `whenDefault` now compares against the field's
 declared default (resolved O5), so the initializer interaction is symmetric.
 
-## O8 — Numeric round-trip fidelity (unsigned range, float precision)
+## O8 — Numeric round-trip fidelity (unsigned range, float precision) — RESOLVED
 
 **Where:** SPEC §4.3.
 
-Two under-specified numeric edges:
-
-- **Unsigned above `long.max`.** §4.3 says integral types map to "JSON integer
-  numbers," but `std.json` distinguishes `integer` (`long`) from `uinteger`
-  (`ulong`). Encoding `ulong.max` yields a `uinteger`; decoding a `ulong` must
-  accept both `integer` and `uinteger` and range-check. State that the full
-  `ulong` range round-trips.
-- **Floating-point precision.** Nothing guarantees a `double` round-trips
-  bit-exactly; `std.json`'s float formatting is not stated to be shortest
-  round-trippable. `3.5` is exact, but arbitrary doubles may not be.
-
-**Options:** (A) guarantee full unsigned range and a shortest-round-trippable
-float contract (implement to it); (B) document known limitations without a hard
-float guarantee.
-
-**Leaning:** (A) for unsigned range (clear correctness); check what `std.json`
-actually guarantees for floats before choosing (A) vs (B) there.
+Resolved by the native engine: the reader classifies integer tokens as
+`long` when they fit, `ulong` otherwise (the full `ulong` range
+round-trips, range-checked at decode), and floats convert with
+correctly-rounded parsing plus shortest-round-trip formatting
+(`docs/specs/base/text/float-conv.md`) — `parse(format(x))` is bit-exact
+for every finite `double`.
 
 ## O10 — No `deny-unknown-fields` strictness option
 
