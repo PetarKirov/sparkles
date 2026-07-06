@@ -1,6 +1,10 @@
 # CI-only lychee exclusions for endpoints that are flaky under GitHub Actions
 ^https://developers\.redhat\.com/articles/2023/10/03/beyond-loom-weaving-new-concurrency-patterns/?$
 ^https?://(www\.)?unison-lang\.org/
+# unison.cloud (the Unison Cloud docs) times out under GitHub Actions' shared
+# network — companion to unison-lang.org above; both are cited from
+# docs/research/algebraic-effects/unison.md
+^https?://(www\.)?unison\.cloud/
 # ocaml.org is slow under CI (timeouts on /p/ package pages, /manual/, /releases/)
 ^https?://ocaml\.org/
 ^https://www\.happycoders\.eu/java/scoped-values/?$
