@@ -115,9 +115,9 @@ SPEC §1 overview example). Benchmark futex-wake vs `MSG_RING` vs eventfd;
 measure thread-per-core vs work-stealing tail latency/throughput on the echo
 bench.
 
-Gate: both topologies selectable via loop-group config; the SPEC §1 example
-unparked and green under `--verify` (done — single topology + live.d/Env);
-benchmarks committed.
+Gate: all three topologies selectable via loop-group config (done — single +
+thread-per-core via `LoopGroup.runEach` + work-stealing via `WorkStealingPool`);
+the SPEC §1 example unparked and green under `--verify`; benchmarks committed.
 
 ## M10 — kqueue backend (macOS)
 

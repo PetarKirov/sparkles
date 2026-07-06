@@ -24,6 +24,7 @@ version (linux)
     public import sparkles.event_horizon.io;
     public import sparkles.event_horizon.live;
     public import sparkles.event_horizon.group;
+    public import sparkles.event_horizon.pool;
     public import sparkles.event_horizon.fs;
     public import sparkles.event_horizon.proc;
     public import sparkles.event_horizon.signals;
