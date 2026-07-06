@@ -150,8 +150,9 @@ struct JsonDocument(Allocator = Mallocator)
     // ── package construction interface (used by the reader) ──────────────
 
     /// Allocates the two blocks; returns false on allocator failure.
-    /// `goodAllocSize` slack is claimed for the arena — the reader's
-    /// estimate is a lower bound, so free capacity is pure win.
+    /// The reader passes a worst-case `cellCapacity` (its appends carry
+    /// no capacity checks); `goodAllocSize` slack is still claimed for
+    /// the arena.
     package bool acquire(size_t cellCapacity, size_t poolBytes)
     {
         import std.experimental.allocator.common : goodAllocSize;
@@ -176,59 +177,6 @@ struct JsonDocument(Allocator = Mallocator)
         return true;
     }
 
-    /// Grows the cell arena ×1.5, preferring in-place `expand`, falling
-    /// back to `reallocate` (cell indices — not pointers — thread the
-    /// parser state, so a moving reallocation needs no fixups).
-    package bool growCells()
-    {
-        const oldBytes = cells.length * JsonCell.sizeof;
-        const newBytes = oldBytes + oldBytes / 2;
-        auto block = () @trusted { return cast(void[]) cells; }();
-
-        static if (__traits(hasMember, Allocator, "expand"))
-        {
-            const expanded = () @trusted {
-                return alloc.expand(block, newBytes - oldBytes);
-            }();
-            if (expanded)
-            {
-                cells = () @trusted {
-                    return (cast(JsonCell*) block.ptr)[0 .. block.length / JsonCell.sizeof];
-                }();
-                return true;
-            }
-        }
-        static if (__traits(hasMember, Allocator, "reallocate"))
-        {
-            const reallocated = () @trusted {
-                return alloc.reallocate(block, newBytes);
-            }();
-            if (reallocated)
-            {
-                cells = () @trusted {
-                    return (cast(JsonCell*) block.ptr)[0 .. block.length / JsonCell.sizeof];
-                }();
-                return true;
-            }
-            return false;
-        }
-        else
-        {
-            // allocate + copy + deallocate
-            auto fresh = alloc.allocate(newBytes);
-            if (fresh is null)
-                return false;
-            () @trusted {
-                fresh[0 .. oldBytes] = block[];
-            }();
-            static if (__traits(hasMember, Allocator, "deallocate"))
-                () @trusted { alloc.deallocate(block); }();
-            cells = () @trusted {
-                return (cast(JsonCell*) fresh.ptr)[0 .. fresh.length / JsonCell.sizeof];
-            }();
-            return true;
-        }
-    }
 }
 
 /**
@@ -545,14 +493,9 @@ unittest
         assert(doc.acquire(8, 64));
         assert(allocs == 2); // one arena + one pool, exactly
         assert(liveBytes >= 8 * JsonCell.sizeof + 64);
-
-        // Grow the arena; the document stays at 2 live blocks.
-        const before = doc.cells.length;
-        assert(doc.growCells());
-        assert(doc.cells.length > before);
     }
     // Destruction frees everything: zero leaked bytes, one deallocate per
-    // live block (realloc reuses the arena block).
+    // live block.
     assert(liveBytes == 0);
     assert(deallocs == 2);
 }
@@ -583,8 +526,6 @@ unittest
         (() @trusted => assembleSample2(doc))();
         assert(doc.valid);
         assert(doc.root.kind == JsonKind.array);
-        // In-place expand works at the top of the region.
-        assert(doc.growCells());
     }
     // Region memory reclaims when `region` goes out of scope.
 }
