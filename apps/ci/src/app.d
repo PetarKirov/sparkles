@@ -704,6 +704,7 @@ private string[] standaloneExampleGlobs()
         "libs/build-primitives/examples/*.d",
         "libs/core-cli/examples/*.d",
         "libs/event-horizon/examples/*.d",
+        "libs/http/examples/*.d",
         "docs/research/async-io/io-uring/examples/*.d",
         "docs/research/units-of-measure/examples/*.d",
         "docs/research/cpu-pmu/examples/*.d",
