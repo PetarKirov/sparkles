@@ -440,6 +440,10 @@ export default withMermaid(
                   text: 'Open Issues',
                   link: '/specs/event-horizon/open-issues',
                 },
+                {
+                  text: 'Benchmarks',
+                  link: '/specs/event-horizon/benchmarks',
+                },
               ],
             },
             {
