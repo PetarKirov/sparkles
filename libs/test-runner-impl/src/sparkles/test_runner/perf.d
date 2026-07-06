@@ -126,7 +126,7 @@ version (linux)
         /// pair) co-schedules on this machine's free PMCs — a multiplexed
         /// group yields only rotation-scaled estimates, so the LLC pair is
         /// dropped rather than reported inaccurately.
-        static PerfGroup tryOpen(bool enabled)
+        static PerfGroup tryOpen(bool enabled) @safe
         {
             PerfGroup g;
             if (!enabled)
@@ -145,7 +145,7 @@ version (linux)
 
         /// Opens the group with kernel+user counting, falling back to
         /// user-only; `true` when at least the cycles leader opened.
-        private bool openGroup(bool withCache)
+        private bool openGroup(bool withCache) @safe
         {
             fds[] = -1;
             if (tryOpenAt(excludeKernel: false, withCache: withCache))
@@ -157,7 +157,7 @@ version (linux)
             return false;
         }
 
-        private bool tryOpenAt(bool excludeKernel, bool withCache)
+        private bool tryOpenAt(bool excludeKernel, bool withCache) @safe
         {
             nOpen = 0;
             userOnly = excludeKernel;
@@ -202,7 +202,7 @@ version (linux)
         }
 
         /// The group's running/enabled ratio over a ~2 ms spin.
-        private double calibratedScale()
+        private double calibratedScale() @safe
         {
             import core.time : MonoTime, msecs;
 
@@ -216,7 +216,7 @@ version (linux)
             return stats.scale;
         }
 
-        private void closeFds()
+        private void closeFds() @safe
         {
             foreach (ref fd; fds)
             {
@@ -227,7 +227,7 @@ version (linux)
             nOpen = 0;
         }
 
-        void close()
+        void close() @safe
         {
             if (opened)
             {
@@ -293,7 +293,7 @@ version (linux)
             return s;
         }
 
-        private void groupIoctl(uint request)
+        private void groupIoctl(uint request) @safe
         {
             import core.stdc.config : c_ulong;
 

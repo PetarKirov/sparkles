@@ -164,6 +164,21 @@ $ dub test -- --bench
 ╰────────────────┴─────────┴─────────────┴────────┴────────┴────────╯
 ```
 
+Add `--perf` for hardware performance counters (Linux `perf_event`): a separate
+counting pass brackets each benchmark's timed body — so the counter ioctls never
+perturb the ns/iter numbers — and the table gains IPC, instructions/iter, and
+branch/cache miss-rate columns. A counter that can't be opened (a paranoid kernel,
+or the last-level-cache pair dropped to avoid PMU multiplexing) shows as `—`; off
+Linux the flag is inert.
+
+```console
+$ dub test -- --bench --perf
+╭────────────┬───────┬─────────────┬─┬─────┬────────────┬─────────┬────────────╮
+│ benchmark  │ iters │ median/iter │…│ IPC │ instr/iter │ br-miss │ cache-miss │
+│ sort.bench │ 2048  │ 41.7µs      │…│ 2.9 │ 118.4k     │ 0.71%   │ 3.20%      │
+╰────────────┴───────┴─────────────┴─┴─────┴────────────┴─────────┴────────────╯
+```
+
 Attributes compose: `@betterC @wasm` opts one test into both extra
 environments.
 
@@ -181,6 +196,7 @@ Everything after `--` in `dub test -- <options>`. Full table:
 | `-l`, `--list`             | List discovered tests with their attribute markers                 |
 | `--no-colours`             | Disable colour (also honours `$NO_COLOR` and non-tty stdout)       |
 | `--bench`                  | Measure `@benchmark` tests                                         |
+| `--perf`                   | With `--bench`: add hardware perf counters (Linux `perf_event`)    |
 | `--better-c`               | Extract and run `@betterC` tests under `-betterC`                  |
 | `--wasm`                   | Cross-compile and run `@wasm` tests on `wasm32`                    |
 | `--ctfe-trace FILE`        | Evaluate `@ctfe` tests under LDC `-ftime-trace`; per-test cost     |

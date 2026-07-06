@@ -388,12 +388,17 @@ unittest
 }
 
 /// The benchmark report as a table: name, iterations/sample, median, ±MAD,
-/// min, and max ns-per-iteration. Rendered with `core-cli`'s `drawTable` when
-/// available, plain space-aligned columns otherwise.
+/// min, and max ns-per-iteration. When any row carries `--perf` counters, the
+/// table gains IPC, instructions/iter, and branch/cache miss-rate columns (an
+/// unavailable counter renders as an em dash). Rendered with `core-cli`'s
+/// `drawTable` when available, plain space-aligned columns otherwise.
 string formatBenchTable(in BenchStats[] rows, bool colored) @system // drawTable is @system
 {
     import core.time : nsecs;
+    import std.algorithm.searching : any;
     import std.conv : to;
+
+    import sparkles.test_runner.perf : branchMissPercent, cacheMissPercent, ipc;
 
     static string ns(double value) @safe
     {
@@ -407,16 +412,53 @@ string formatBenchTable(in BenchStats[] rows, bool colored) @system // drawTable
             : formatDuration(nsecs(value.lrint));
     }
 
-    string[][] cells = [[
+    // A counter cell at fixed precision; `nan` (unavailable event — dropped LLC
+    // pair, paranoid kernel) renders as an em dash.
+    static string fixed(double value, int decimals, string suffix = "") @safe
+    {
+        import std.format : format;
+        import std.math : isNaN;
+
+        return value.isNaN ? "—" : format!"%.*f%s"(decimals, value, suffix);
+    }
+
+    // A large per-iteration count with a k/M suffix (instructions/iter).
+    static string big(double value) @safe
+    {
+        import std.format : format;
+        import std.math : isNaN;
+
+        if (value.isNaN)
+            return "—";
+        if (value >= 1_000_000)
+            return format!"%.2fM"(value / 1_000_000);
+        if (value >= 1_000)
+            return format!"%.1fk"(value / 1_000);
+        return format!"%.0f"(value);
+    }
+
+    const showPerf = rows.any!(r => !r.perf.isNull);
+
+    string[] header = [
         render(colored, i"{bold benchmark}"),
         render(colored, i"{bold iters}"),
         render(colored, i"{bold median/iter}"),
         render(colored, i"{bold ±dev}"),
         render(colored, i"{bold min}"),
         render(colored, i"{bold max}"),
-    ]];
+    ];
+    if (showPerf)
+        header ~= [
+            render(colored, i"{bold IPC}"),
+            render(colored, i"{bold instr/iter}"),
+            render(colored, i"{bold br-miss}"),
+            render(colored, i"{bold cache-miss}"),
+        ];
+
+    string[][] cells = [header];
     foreach (ref row; rows)
-        cells ~= [
+    {
+        string[] cols = [
             row.name,
             row.iterations.to!string,
             ns(row.nsPerIterMedian),
@@ -424,6 +466,23 @@ string formatBenchTable(in BenchStats[] rows, bool colored) @system // drawTable
             ns(row.nsPerIterMin),
             ns(row.nsPerIterMax),
         ];
+        if (showPerf)
+        {
+            if (row.perf.isNull)
+                cols ~= ["—", "—", "—", "—"];
+            else
+            {
+                const p = row.perf.get;
+                cols ~= [
+                    fixed(p.ipc, 2),
+                    big(p.instructions),
+                    fixed(p.branchMissPercent, 2, "%"),
+                    fixed(p.cacheMissPercent, 2, "%"),
+                ];
+            }
+        }
+        cells ~= cols;
+    }
 
     // benchmark name left; iters right; the four timing columns align on the
     // decimal point (same-unit values line up; mixed units still read right).

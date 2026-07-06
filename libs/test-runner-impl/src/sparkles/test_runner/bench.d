@@ -27,8 +27,11 @@ module sparkles.test_runner.bench;
 
 import core.time : Duration, MonoTime, msecs;
 
+import std.typecons : Nullable;
+
 import sparkles.test_runner.attributes : benchmark, ctfe;
 import sparkles.test_runner.model : Test, TestResult;
+import sparkles.test_runner.perf : PerfGroup, PerfStats;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Optimizer barrier
@@ -84,6 +87,11 @@ struct BenchConfig
 
     /// Number of samples to collect.
     uint sampleCount = 32;
+
+    /// Cap on the perf counting-pass iterations. Kept separate from the timing
+    /// sample so a cheap op's huge auto-scaled count does not make the (ioctl-
+    /// bracketed) counting pass slow; counters stabilize well before this.
+    uint perfMaxIters = 100_000;
 }
 
 /// Summary statistics of one benchmark, in nanoseconds per iteration.
@@ -96,6 +104,7 @@ struct BenchStats
     double nsPerIterDeviation = 0; /// median absolute deviation
     double nsPerIterMin = 0;
     double nsPerIterMax = 0;
+    Nullable!PerfStats perf; /// hardware counters under `--perf` (empty otherwise)
 }
 
 /// The median of a sorted, non-empty slice.
@@ -216,9 +225,26 @@ private struct BenchContext
     bool used;
     ulong iterations;
     double[] nsPerIter;
+    PerfGroup* perf;      /// null / unavailable = no counting pass
+    PerfStats perfStats;
+    bool perfMeasured;
 }
 
 private BenchContext* activeBenchContext; // thread-local, set by runBenchmark
+
+/// Runs the perf counting pass over `run` when the context has an available
+/// counter group, storing the per-iteration counters. The counting pass reuses
+/// the timing's auto-scaled iteration count, capped by `perfMaxIters`.
+private void measurePerf(DG)(BenchContext* context, scope DG run)
+{
+    import std.algorithm.comparison : min;
+
+    if (context.perf is null || !context.perf.available)
+        return;
+    const iters = cast(uint) min(context.iterations, context.config.perfMaxIters);
+    context.perfStats = context.perf.count(run, () {}, iters ? iters : 1);
+    context.perfMeasured = true;
+}
 
 /// Measures `run` inside a `@benchmark unittest`, excluding the surrounding
 /// setup code from the timing. Outside a `--bench` run (e.g. when another
@@ -232,6 +258,7 @@ if (is(typeof(run()) == void))
         auto measured = measure(run, context.config);
         context.iterations = measured.iterations;
         context.nsPerIter = measured.nsPerIter;
+        measurePerf(context, run);
     }
     else
         run();
@@ -258,12 +285,12 @@ struct BenchOutcome
 /// context; if it did not call `benchIter`, the whole body is measured as
 /// the iteration unit (the probe invocation doubling as warmup).
 package(sparkles.test_runner)
-BenchOutcome runBenchmark(Test test, in BenchConfig config)
+BenchOutcome runBenchmark(Test test, in BenchConfig config, ref PerfGroup perf)
 {
     import sparkles.test_runner.execution : executeTest;
 
     BenchOutcome outcome;
-    auto context = BenchContext(config: config);
+    auto context = BenchContext(config: config, perf: &perf);
 
     activeBenchContext = &context;
     scope (exit)
@@ -278,9 +305,12 @@ BenchOutcome runBenchmark(Test test, in BenchConfig config)
         auto measured = measure({ test.ptr(); }, config);
         context.iterations = measured.iterations;
         context.nsPerIter = measured.nsPerIter;
+        measurePerf(&context, { test.ptr(); });
     }
 
     outcome.stats = computeStats(test.name, context.iterations, context.nsPerIter);
+    if (context.perfMeasured)
+        outcome.stats.perf = context.perfStats;
     return outcome;
 }
 
@@ -296,11 +326,13 @@ unittest
     }
 
     const config = BenchConfig(iterations: 4, sampleCount: 3, minSampleTime: 1.usecs);
-    auto outcome = runBenchmark(Test(fullName: "m.b", name: "b", ptr: &body_), config);
+    auto perf = PerfGroup.tryOpen(false);
+    auto outcome = runBenchmark(Test(fullName: "m.b", name: "b", ptr: &body_), config, perf);
     assert(outcome.result.succeeded);
     assert(outcome.stats.iterations == 4);
     assert(outcome.stats.samples == 3);
     assert(outcome.stats.nsPerIterMedian >= 0);
+    assert(outcome.stats.perf.isNull); // no counters requested
 }
 
 @("runBenchmark.benchIterBody")
@@ -316,7 +348,8 @@ unittest
     }
 
     const config = BenchConfig(iterations: 8, sampleCount: 2, minSampleTime: 1.usecs);
-    auto outcome = runBenchmark(Test(fullName: "m.bi", name: "bi", ptr: &body_), config);
+    auto perf = PerfGroup.tryOpen(false);
+    auto outcome = runBenchmark(Test(fullName: "m.bi", name: "bi", ptr: &body_), config, perf);
     assert(outcome.result.succeeded);
     assert(outcome.stats.iterations == 8);
     assert(outcome.stats.samples == 2);
@@ -332,7 +365,33 @@ unittest
         assert(zero == 1, "bench setup failed");
     }
 
-    auto outcome = runBenchmark(Test(fullName: "m.f", name: "f", ptr: &failing), BenchConfig());
+    auto perf = PerfGroup.tryOpen(false);
+    auto outcome = runBenchmark(Test(fullName: "m.f", name: "f", ptr: &failing), BenchConfig(), perf);
     assert(!outcome.result.succeeded);
     assert(outcome.result.thrown.length == 1);
+}
+
+@("runBenchmark.capturesPerf")
+@system
+unittest
+{
+    import core.time : usecs;
+
+    static ulong sink;
+    static void body_()
+    {
+        benchIter({ foreach (i; 0 .. 1000) sink += i * i; });
+    }
+
+    auto perf = PerfGroup.tryOpen(true);
+    scope (exit)
+        perf.close();
+    if (!perf.available) // paranoid/sandboxed kernels refuse; not a failure
+        return;
+
+    const config = BenchConfig(iterations: 200, sampleCount: 2, minSampleTime: 1.usecs);
+    auto outcome = runBenchmark(Test(fullName: "m.p", name: "p", ptr: &body_), config, perf);
+    assert(outcome.result.succeeded);
+    assert(!outcome.stats.perf.isNull);
+    assert(outcome.stats.perf.get.instructions > 0);
 }
