@@ -40,16 +40,27 @@ bool isInPath(string name) @safe
     import std.path : buildPath, pathSeparator;
     import std.process : environment;
 
+    // `isFile` guards against a searchable directory of the same name;
+    // `isExecutable` ensures the file can actually be run.
+    static bool runnable(scope const(char)[] candidate) @safe
+        => candidate.exists && candidate.isFile && isExecutable(candidate);
+
     const pathVar = environment.get("PATH", "");
     foreach (dir; pathVar.splitter(pathSeparator))
     {
         if (dir.length == 0)
             continue;
-        const candidate = dir.buildPath(name);
-        // `isFile` guards against a searchable directory of the same name;
-        // `isExecutable` ensures the file can actually be run.
-        if (candidate.exists && candidate.isFile && isExecutable(candidate))
+        if (runnable(dir.buildPath(name)))
             return true;
+        version (Windows)
+        {
+            // On Windows the runnable file is usually `name.exe`/`.cmd`/…, not
+            // the bare `name`; try each PATHEXT extension in turn.
+            const pathExt = environment.get("PATHEXT", ".COM;.EXE;.BAT;.CMD");
+            foreach (ext; pathExt.splitter(';'))
+                if (ext.length && runnable(dir.buildPath(name ~ ext)))
+                    return true;
+        }
     }
     return false;
 }
@@ -100,59 +111,65 @@ CapturedResult runCaptured(
     string workDir = null,
 ) @safe
 {
-    return () @trusted {
-        import std.conv : text;
-        import std.file : tempDir, readText, remove, write;
-        import std.path : buildPath;
-        import std.process : spawnProcess, wait, thisProcessID, Config;
-        import std.stdio : File, stdin;
-        import core.atomic : atomicOp;
+    import std.conv : text;
+    import std.file : tempDir, read, remove, write;
+    import std.path : buildPath;
+    import std.process : spawnProcess, wait, thisProcessID, Config;
+    import std.stdio : File, stdin;
+    import core.atomic : atomicOp;
 
-        static shared size_t counter;
-        const id = atomicOp!"+="(counter, 1);
-        const base = buildPath(tempDir,
-            text("sparkles-run-", thisProcessID, "-", id));
-        const outPath = base ~ ".out";
-        const errPath = base ~ ".err";
-        const inPath = base ~ ".in";
-        const haveStdin = stdinText !is null;
+    static shared size_t counter;
+    const id = atomicOp!"+="(counter, 1);
+    const base = buildPath(tempDir,
+        text("sparkles-run-", thisProcessID, "-", id));
+    const outPath = base ~ ".out";
+    const errPath = base ~ ".err";
+    const inPath = base ~ ".in";
+    const haveStdin = stdinText !is null;
 
-        CapturedResult result;
-        try
-        {
-            if (haveStdin)
-                write(inPath, stdinText);
+    CapturedResult result;
+    try
+    {
+        if (haveStdin)
+            write(inPath, stdinText);
 
+        auto outFile = File(outPath, "w");
+        auto errFile = File(errPath, "w");
+
+        // The only unsafe surface is the `stdin` global and `spawnProcess`/
+        // `wait`; wrap just those, leaving the file/string bookkeeping `@safe`.
+        result.status = () @trusted {
             auto inFile = haveStdin ? File(inPath, "r") : stdin;
-            auto outFile = File(outPath, "w");
-            auto errFile = File(errPath, "w");
-
             auto pid = spawnProcess(
                 args, inFile, outFile, errFile, null, Config.none, workDir);
-            result.status = wait(pid);
+            return wait(pid);
+        }();
 
-            outFile.close();
-            errFile.close();
-            if (haveStdin)
-                inFile.close();
+        outFile.close();
+        errFile.close();
 
-            result.stdout = readText(outPath);
-            result.stderr = readText(errPath);
-        }
-        catch (Exception e)
+        // Read raw bytes — not `readText`, whose UTF-8 validation would throw on
+        // non-UTF-8 child output (e.g. a Latin-1 git author name) and be
+        // misreported below as a spawn failure. `runCaptured` must never throw,
+        // so it forwards whatever bytes the child produced. Reinterpreting the
+        // fresh, uniquely-owned buffer as an immutable string is sound; the cast
+        // is the only unsafe op, so it alone is trusted.
+        result.stdout = (() @trusted => cast(string) read(outPath))();
+        result.stderr = (() @trusted => cast(string) read(errPath))();
+    }
+    catch (Exception e)
+    {
+        result.status = 127;
+        result.stderr = e.msg;
+    }
+
+    foreach (p; [outPath, errPath, inPath])
+        try
+            remove(p);
+        catch (Exception)
         {
-            result.status = 127;
-            result.stderr = e.msg;
-        }
-
-        foreach (p; [outPath, errPath, inPath])
-            try
-                remove(p);
-            catch (Exception)
-            {
-            }                                // best-effort cleanup
-        return result;
-    }();
+        }                                // best-effort cleanup
+    return result;
 }
 
 @("process_utils.isInPath")
