@@ -7,6 +7,7 @@ module sparkles.wired_bench.engines.wired_native;
 
 import std.exception : enforce;
 
+import sparkles.wired.json.codec : fromJSON;
 import sparkles.wired.json.document : JsonKind, JsonValue;
 import sparkles.wired.json.reader : JsonParseResult, parseJsonDocument;
 import sparkles.wired.json.writer : writeJson;
@@ -59,32 +60,14 @@ struct WiredNativeEngine
         return f;
     }
 
-    /// Typed decode: parse + view-walk extraction into the D structs
-    /// (string fields are duplicated out of the document, like every
-    /// other engine's owned strings).
+    /// Typed decode through the full wired codec (fromJSON!Twitter over
+    /// the native engine) — this row measures exactly what a wired user
+    /// gets, policy layer included.
     void decodeTwitter(scope const(char)[] text) @safe
     {
-        parse(text);
-        auto statuses = result.document.root.objectGet("statuses");
-        enforce(statuses.kind == JsonKind.array, "decode: no statuses array");
-
-        twitter = Twitter.init;
-        twitter.statuses.reserve(statuses.length);
-        foreach (st; statuses.byElement)
-        {
-            auto user = st.objectGet("user");
-            twitter.statuses ~= TwitterStatus(
-                st.objectGet("created_at").str.idup,
-                st.objectGet("id").integer,
-                st.objectGet("text").str.idup,
-                TwitterUser(
-                    user.objectGet("id").integer,
-                    user.objectGet("screen_name").str.idup,
-                    user.objectGet("followers_count").integer),
-                st.objectGet("retweet_count").integer,
-                st.objectGet("favorite_count").integer);
-        }
-        freeDoc();
+        auto r = fromJSON!Twitter(text);
+        enforce(!r.hasError, "wired-native typed decode failed");
+        twitter = r.value;
     }
 
     /// Checksum of the held decoded document.
