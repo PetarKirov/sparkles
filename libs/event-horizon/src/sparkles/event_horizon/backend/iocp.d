@@ -2,7 +2,7 @@
 The Windows peer backend: I/O Completion Ports (SPEC §3.5, PLAN M11). IOCP
 is natively completion-based — the exact shape the `isCompletionBackend`
 concept was designed around — so the mapping is direct: each async winsock
-call (`WSARecv`/`WSASend`, and `AcceptEx`/`ConnectEx`) carries an
+call (`WSARecv`/`WSASend`/`AcceptEx`/`ConnectEx`) carries an
 `OVERLAPPED` embedded in a backend-owned op context; `GetQueuedCompletionStatus`
 returns that `OVERLAPPED*`, from which the op's `user_data` token and the
 transferred byte count are recovered into a `RawCompletion`.
@@ -35,8 +35,8 @@ import core.sys.windows.basetsd : ULONG_PTR;
 import sparkles.event_horizon.backend.concept : BackendConfig, RawCompletion;
 import sparkles.event_horizon.backend.probe : BackendCaps, BackendId, LoopMode;
 import sparkles.event_horizon.errors;
-import sparkles.event_horizon.op : KernelTimespec, OpNop, OpRecv, OpSend, OpSlot,
-    OpToken;
+import sparkles.event_horizon.op : KernelTimespec, OpAccept, OpConnect, OpNop,
+    OpRecv, OpSend, OpSlot, OpToken;
 
 // ── minimal winsock2 / IOCP bindings (only what the data path needs) ────────
 
@@ -79,20 +79,54 @@ extern (Windows) nothrow @nogc
         OVERLAPPED* ov);
     int CloseHandle(HANDLE h); // @nogc-declared here (winbase's isn't marked)
 
-    // Synchronous socket setup used only to build a connected pair for tests.
+    // Socket setup + the async accept/connect machinery.
     SOCKET socket(int af, int type, int protocol);
+    SOCKET WSASocketW(int af, int type, int protocol, void* protocolInfo,
+        uint group, DWORD dwFlags);
     int bind(SOCKET s, const void* addr, int namelen);
     int listen(SOCKET s, int backlog);
     SOCKET accept(SOCKET s, void* addr, int* addrlen);
     int connect(SOCKET s, const void* addr, int namelen);
     int getsockname(SOCKET s, void* addr, int* namelen);
+    int setsockopt(SOCKET s, int level, int optname, const void* optval, int optlen);
+    int WSAIoctl(SOCKET s, DWORD code, void* inBuf, DWORD inLen, void* outBuf,
+        DWORD outLen, DWORD* bytesReturned, OVERLAPPED* ov, void* completion);
     ushort htons(ushort hostshort);
     uint htonl(uint hostlong);
     ushort ntohs(ushort netshort);
+
+    // The AcceptEx/ConnectEx extension functions, resolved at runtime.
+    alias LPFN_ACCEPTEX = int function(SOCKET listenSock, SOCKET acceptSock,
+        void* outputBuffer, DWORD recvDataLength, DWORD localAddrLength,
+        DWORD remoteAddrLength, DWORD* bytesReceived, OVERLAPPED* ov) nothrow @nogc;
+    alias LPFN_CONNECTEX = int function(SOCKET s, const void* name, int namelen,
+        void* sendBuffer, DWORD sendDataLength, DWORD* bytesSent,
+        OVERLAPPED* ov) nothrow @nogc;
 }
+
+struct GUID
+{
+    uint data1;
+    ushort data2;
+    ushort data3;
+    ubyte[8] data4;
+}
+
+// {b5367df1-cbac-11cf-95ca-00805f48a192} / {25a207b9-ddf3-4660-8ee9-76e58c74063e}
+enum GUID WSAID_ACCEPTEX =
+    GUID(0xb5367df1, 0xcbac, 0x11cf, [0x95, 0xca, 0x00, 0x80, 0x5f, 0x48, 0xa1, 0x92]);
+enum GUID WSAID_CONNECTEX =
+    GUID(0x25a207b9, 0xddf3, 0x4660, [0x8e, 0xe9, 0x76, 0xe5, 0x8c, 0x74, 0x06, 0x3e]);
+enum DWORD SIO_GET_EXTENSION_FUNCTION_POINTER = 0xc800_0006;
 
 enum int AF_INET = 2;
 enum int SOCK_STREAM = 1;
+enum int IPPROTO_TCP = 6;
+enum int SOL_SOCKET = 0xffff;
+enum int SO_UPDATE_ACCEPT_CONTEXT = 0x700B;
+enum int SO_UPDATE_CONNECT_CONTEXT = 0x7010;
+enum DWORD WSA_FLAG_OVERLAPPED = 0x01;
+enum uint INADDR_ANY = 0;
 enum uint INADDR_LOOPBACK = 0x7f00_0001;
 
 struct sockaddr_in
@@ -106,13 +140,24 @@ struct sockaddr_in
 enum int WSA_IO_PENDING = 997;
 enum int SOCKET_ERROR = -1;
 
+enum IoKind : ubyte
+{
+    data,     // recv/send: res is the byte count
+    accept,   // AcceptEx: res is the new socket fd
+    connect,  // ConnectEx: res is 0 / -errno
+}
+
 /// A backend-owned op context. `ov` is first so `OVERLAPPED*` casts back to it.
 struct IocpOp
 {
     OVERLAPPED ov;
-    ulong token;    // the op's user_data
-    WSABUF buf;     // recv/send buffer descriptor
-    uint nextFree;  // freelist link (uint.max = none)
+    ulong token;        // the op's user_data
+    WSABUF buf;         // recv/send buffer descriptor
+    IoKind kind;
+    SOCKET sock;        // accept: the new socket; connect: the fd (for SO_UPDATE_*)
+    SOCKET listenSock;  // accept: the listener (for SO_UPDATE_ACCEPT_CONTEXT)
+    ubyte[64] addrBuf;  // AcceptEx local+remote address output
+    uint nextFree;      // freelist link (uint.max = none)
     bool inUse;
 }
 
@@ -155,9 +200,26 @@ struct IocpBackend
         }
         _freeHead = 0;
 
+        // Load the AcceptEx / ConnectEx extension pointers (a bootstrap socket
+        // is needed for the WSAIoctl query).
+        const boot = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+        if (boot != INVALID_SOCKET)
+        {
+            loadExt(boot, WSAID_ACCEPTEX, cast(void**) &_acceptEx);
+            loadExt(boot, WSAID_CONNECTEX, cast(void**) &_connectEx);
+            closesocket(boot);
+        }
+
         _caps.backend = BackendId.iocp;
         _caps.mode = LoopMode.cooperative;
         return ioOk();
+    }
+
+    private void loadExt(SOCKET s, GUID guid, void** target) @trusted nothrow @nogc
+    {
+        DWORD bytes;
+        cast(void) WSAIoctl(s, SIO_GET_EXTENSION_FUNCTION_POINTER,
+            &guid, GUID.sizeof, target, (void*).sizeof, &bytes, null, null);
     }
 
     /// Closes the port and winsock.
@@ -267,6 +329,71 @@ struct IocpBackend
         return true;
     }
 
+    /// Async accept via `AcceptEx`: pre-create the accept socket, associate it
+    /// with the port, and issue AcceptEx. On completion `res` is the new fd.
+    bool trySubmit(in OpAccept o, OpToken token, ref OpSlot) @trusted nothrow
+    {
+        if (_acceptEx is null)
+            return false;
+        const listenSock = cast(SOCKET) o.listenFd;
+        ensureRegistered(listenSock);
+        const acceptSock = WSASocketW(AF_INET, SOCK_STREAM, IPPROTO_TCP, null, 0,
+            WSA_FLAG_OVERLAPPED);
+        if (acceptSock == INVALID_SOCKET)
+            return false;
+        ensureRegistered(acceptSock);
+        auto op = acquire();
+        if (op is null)
+        {
+            closesocket(acceptSock);
+            return false;
+        }
+        op.token = token.raw;
+        op.kind = IoKind.accept;
+        op.sock = acceptSock;
+        op.listenSock = listenSock;
+        DWORD received;
+        // localAddrLength/remoteAddrLength = sizeof(sockaddr_in)+16 = 32.
+        const rc = _acceptEx(listenSock, acceptSock, op.addrBuf.ptr, 0, 32, 32,
+            &received, &op.ov);
+        if (rc == 0 && WSAGetLastError() != WSA_IO_PENDING)
+        {
+            closesocket(acceptSock);
+            release(op);
+            return false;
+        }
+        return true;
+    }
+
+    /// Async connect via `ConnectEx`: the socket must be bound first. On
+    /// completion `res` is 0 / -errno.
+    bool trySubmit(in OpConnect o, OpToken token, ref OpSlot) @trusted nothrow
+    {
+        if (_connectEx is null)
+            return false;
+        const s = cast(SOCKET) o.fd;
+        // ConnectEx requires a bound socket; bind to the wildcard address.
+        sockaddr_in local;
+        local.sin_family = AF_INET;
+        local.sin_addr = htonl(INADDR_ANY);
+        cast(void) bind(s, &local, sockaddr_in.sizeof);
+        ensureRegistered(s);
+        auto op = acquire();
+        if (op is null)
+            return false;
+        op.token = token.raw;
+        op.kind = IoKind.connect;
+        op.sock = s;
+        DWORD sent;
+        const rc = _connectEx(s, o.addr.storage.ptr, o.addr.len, null, 0, &sent, &op.ov);
+        if (rc == 0 && WSAGetLastError() != WSA_IO_PENDING)
+        {
+            release(op);
+            return false;
+        }
+        return true;
+    }
+
     /// No submission queue on IOCP — calls issue inline. `flush` is a no-op.
     IoResult!uint flush() @safe nothrow @nogc => ioOk(0u);
 
@@ -331,9 +458,37 @@ private:
     {
         auto op = cast(IocpOp*) ov; // ov is the first field of IocpOp
         const token = op.token;
+        int res;
+        final switch (op.kind)
+        {
+            case IoKind.data:
+                res = ok ? cast(int) bytes : -5 /* EIO */;
+                break;
+            case IoKind.accept:
+                if (ok)
+                {
+                    // Inherit the listener's properties; res is the new fd.
+                    setsockopt(op.sock, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT,
+                        &op.listenSock, SOCKET.sizeof);
+                    res = cast(int) op.sock;
+                }
+                else
+                {
+                    closesocket(op.sock);
+                    res = -5;
+                }
+                break;
+            case IoKind.connect:
+                if (ok)
+                {
+                    setsockopt(op.sock, SOL_SOCKET, SO_UPDATE_CONNECT_CONTEXT, null, 0);
+                    res = 0;
+                }
+                else
+                    res = -111 /* ECONNREFUSED */;
+                break;
+        }
         release(op);
-        // IOCP reports failure via ok==false; map to a generic -EIO for now.
-        const int res = ok ? cast(int) bytes : -5 /* EIO */;
         return RawCompletion(token, res, 0);
     }
 
@@ -359,6 +514,8 @@ private:
     import core.memory : pureFree, pureMalloc;
 
     HANDLE _port;
+    LPFN_ACCEPTEX _acceptEx;
+    LPFN_CONNECTEX _connectEx;
     SOCKET[64] _regged; // lazily-associated sockets (verification-grade set)
     uint _regCount;
     IocpOp[] _ops;

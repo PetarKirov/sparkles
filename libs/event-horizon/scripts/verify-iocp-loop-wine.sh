@@ -3,8 +3,8 @@
 # loop-integration gate for the IOCP peer backend. Where verify-iocp-wine.sh
 # drives the raw backend's data path, this drives the whole stack — tier-A loop
 # + tier-B fiber scheduler + the io recv/send verbs — through the IOCP backend
-# on one completion port. The connection is established synchronously (AcceptEx/
-# ConnectEx are a documented follow-up); the data path is fully async.
+# on one completion port. accept (AcceptEx), connect (ConnectEx), recv and send
+# ALL run through the loop + fibers — full parity with the kqueue backend.
 #
 # Must run inside a win32 dev shell whose ldc2 is LLD-integrated (see
 # verify-iocp-wine.sh for the prerequisite):
