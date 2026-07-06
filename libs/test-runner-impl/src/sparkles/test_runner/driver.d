@@ -37,16 +37,23 @@ struct DriverOutcome
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Whether an executable is reachable through `$PATH`.
+///
+/// A local re-implementation rather than `sparkles.core_cli.process_utils.isInPath`:
+/// this module is source-compiled into `base`'s test build, which has no
+/// `core-cli` dependency (the impl-library cycle is `impl → base`).
 private bool inPath(string name) @safe
 {
     import std.algorithm.iteration : splitter;
-    import std.file : exists;
-    import std.path : buildPath;
+    import std.file : exists, isFile;
+    import std.path : buildPath, pathSeparator;
     import std.process : environment;
 
-    foreach (dir; environment.get("PATH", "").splitter(':'))
-        if (dir.length && buildPath(dir, name).exists)
+    foreach (dir; environment.get("PATH", "").splitter(pathSeparator))
+    {
+        const candidate = buildPath(dir, name);
+        if (dir.length && candidate.exists && candidate.isFile)
             return true;
+    }
     return false;
 }
 
@@ -182,7 +189,10 @@ ExtractedTest[] extractTests(in Test[] tests)
 
         extracted ~= ExtractedTest(
             name: test.name,
-            moduleName: test.moduleName,
+            // Strip aggregate qualifiers so a test nested in a struct/class emits
+            // `import pkg.mod;`, not `import pkg.mod.Aggregate;` (mirrors the @ctfe
+            // path, which also uses probeModuleName).
+            moduleName: probeModuleName(test),
             file: test.location.file,
             line: test.location.line,
             functionAttributes: test.traits.functionAttributes,
