@@ -317,6 +317,10 @@ group. M9c disables the collector for the pool's lifetime (`GC.disable`) —
 sound because all pool allocations are setup-phase and the hot path is
 `@nogc`, but it forfeits collection during long runs.
 
+**Empirically confirmed load-bearing** (2026-07-06): removing `GC.disable`
+and stress-running the pool fails ~1 run in 40 (vs 0/40 with it) — so this is
+a real interaction, not defensive paranoia, and the workaround stays for v1.
+
 **Options:** (A) keep `GC.disable` for v1 (bounded-work pools); (B) a
 GC-safe blocking wait — register an in-ring cancellation the suspend signal
 handler triggers, or use `thread_suspendHandler`-aware waiting so a

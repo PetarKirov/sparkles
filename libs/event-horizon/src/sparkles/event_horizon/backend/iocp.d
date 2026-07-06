@@ -148,6 +148,85 @@ enum IoKind : ubyte
     connect,  // ConnectEx: res is 0 / -errno
 }
 
+/// An open-addressing hash set of registered sockets (`INVALID_SOCKET` is the
+/// empty sentinel — never a real socket). Grows at 75% load; `pureMalloc`-
+/// backed so the backend stays GC-free.
+struct RegSet
+{
+    import core.memory : pureFree, pureMalloc;
+
+    private SOCKET* _slots;
+    private size_t _cap;
+    private size_t _count;
+
+    void initialize(size_t cap) @trusted nothrow @nogc
+    {
+        _cap = cap; // power of two
+        _slots = cast(SOCKET*) pureMalloc(cap * SOCKET.sizeof);
+        if (_slots !is null)
+            foreach (i; 0 .. _cap)
+                _slots[i] = INVALID_SOCKET;
+        _count = 0;
+    }
+
+    void terminate() @trusted nothrow @nogc
+    {
+        if (_slots !is null)
+            pureFree(_slots);
+        _slots = null;
+        _cap = 0;
+        _count = 0;
+    }
+
+    bool contains(SOCKET s) const @trusted nothrow @nogc
+    {
+        if (_slots is null)
+            return false;
+        auto i = cast(size_t) s & (_cap - 1);
+        while (_slots[i] != INVALID_SOCKET)
+        {
+            if (_slots[i] == s)
+                return true;
+            i = (i + 1) & (_cap - 1);
+        }
+        return false;
+    }
+
+    void add(SOCKET s) @trusted nothrow @nogc
+    {
+        if (_slots is null)
+            return;
+        if ((_count + 1) * 4 >= _cap * 3) // 75% load → grow
+            grow();
+        auto i = cast(size_t) s & (_cap - 1);
+        while (_slots[i] != INVALID_SOCKET)
+        {
+            if (_slots[i] == s)
+                return;
+            i = (i + 1) & (_cap - 1);
+        }
+        _slots[i] = s;
+        ++_count;
+    }
+
+    private void grow() @trusted nothrow @nogc
+    {
+        auto old = _slots;
+        const oldCap = _cap;
+        initialize(_cap * 2);
+        if (_slots is null)
+        {
+            _slots = old; // OOM: keep the old table (correctness > growth)
+            _cap = oldCap;
+            return;
+        }
+        foreach (i; 0 .. oldCap)
+            if (old[i] != INVALID_SOCKET)
+                add(old[i]);
+        pureFree(old);
+    }
+}
+
 /// A backend-owned op context. `ov` is first so `OVERLAPPED*` casts back to it.
 struct IocpOp
 {
@@ -211,6 +290,8 @@ struct IocpBackend
             closesocket(boot);
         }
 
+        _regSet.initialize(64);
+
         _caps.backend = BackendId.iocp;
         _caps.mode = LoopMode.cooperative;
         return ioOk();
@@ -236,6 +317,7 @@ struct IocpBackend
             CloseHandle(_port);
             _port = null;
         }
+        _regSet.terminate();
         WSACleanup();
     }
 
@@ -263,18 +345,15 @@ struct IocpBackend
     }
 
     /// Lazily associates a socket the first time an op targets it — so the
-    /// generic loop's verbs (which never call `register`) still work. A
-    /// verification-grade fixed set; a real backend would use a hash set.
+    /// generic loop's verbs (which never call `register`) still work. Tracked
+    /// in an open-addressing hash set (grows unbounded; O(1) amortized), so a
+    /// server with thousands of connections registers each exactly once.
     private void ensureRegistered(SOCKET s) @trusted nothrow @nogc
     {
-        foreach (i; 0 .. _regCount)
-            if (_regged[i] == s)
-                return;
-        if (_regCount < _regged.length)
-        {
-            CreateIoCompletionPort(cast(HANDLE) s, _port, 0, 0);
-            _regged[_regCount++] = s;
-        }
+        if (_regSet.contains(s))
+            return;
+        CreateIoCompletionPort(cast(HANDLE) s, _port, 0, 0);
+        _regSet.add(s);
     }
 
     // ── lowering: issue the winsock async call immediately ──────────────────
@@ -573,8 +652,7 @@ private:
     HANDLE _port;
     LPFN_ACCEPTEX _acceptEx;
     LPFN_CONNECTEX _connectEx;
-    SOCKET[64] _regged; // lazily-associated sockets (verification-grade set)
-    uint _regCount;
+    RegSet _regSet; // lazily-associated sockets (open-addressing hash set)
     Timer[64] _timers;
     uint _timerCount;
     RawCompletion[64] _synth; // synthesized (timer) completions awaiting reap
