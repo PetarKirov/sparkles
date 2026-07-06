@@ -15,12 +15,11 @@ no-op), and the deadline maps to the `GetQueuedCompletionStatus` timeout.
 Status: verified under Wine two ways — the raw backend's data path
 (`scripts/verify-iocp-wine.sh`) and the full `EventLoop!IocpBackend` fiber echo
 (`scripts/verify-iocp-loop-wine.sh`: tier-A loop + tier-B fibers + the io
-recv/send verbs, sockets lazily associated with the port on first use). The
-connection setup there is synchronous — async accept/connect via
-`AcceptEx`/`ConnectEx` (extension pointers loaded via `WSAIoctl`) and an IOCP
-timer for `OpTimeout` are the remaining refinements; io_uring/kqueue lower
-those, so on Windows the accept/connect/sleep verbs are simply absent
-(SPEC §3.1 — absence degrades, never breaks).
+verbs). accept (`AcceptEx`), connect (`ConnectEx`, extension pointers loaded
+via `WSAIoctl`), recv and send all run through the loop — full parity with the
+kqueue backend; sockets are lazily associated with the port on first use. Only
+an IOCP timer for `OpTimeout` remains, so the `sleep` verb and deadlines are
+absent on Windows for now (SPEC §3.1 — absence degrades, never breaks).
 */
 module sparkles.event_horizon.backend.iocp;
 
