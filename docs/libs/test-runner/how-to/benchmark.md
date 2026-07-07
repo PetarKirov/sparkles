@@ -111,3 +111,56 @@ dub test :base -- --bench --perf
 A counter that can't be opened — a paranoid kernel (`perf_event_paranoid`), or
 the last-level-cache pair dropped to avoid PMU multiplexing — shows as `—`; off
 Linux the flag is inert.
+
+## Choosing columns: the metric catalog
+
+Every measured column — client `metrics`, the perf counters, and the counters
+below — is a named entry in a _catalog_. `--list-metrics` (or `--metrics=?`)
+prints it, with each metric's **class** (`quantitative` = safe to report vs
+`diagnostic` = explains only) and source:
+
+```bash
+dub test :base -- --bench --list-metrics
+```
+
+`--metrics=LIST` then picks the columns: a comma-separated list, a `*`-suffixed
+glob, or `all`.
+
+```bash
+dub test :base -- --bench --perf --metrics=ipc,cache-miss   # just these two
+dub test :base -- --bench --perf --metrics=all              # every available column
+```
+
+With no `--metrics`, the standard columns show (identical to before this feature).
+
+## I/O-bound signals: Tier-0 counters and `--syscalls`
+
+For code that touches the kernel, two cheap sources answer "where is the time
+going off-CPU":
+
+- **Tier-0 counters** (no privilege): `getrusage` + `/proc/self/io` — syscall
+  counts (`syscr`, `syscw`), page faults (`minflt`, `majflt`), context switches
+  (`vol-cs` = blocked on I/O, `invol-cs` = preempted), bytes through the syscall
+  layer vs the block device (`rchar`/`wchar` vs `rd-bytes`/`wr-bytes`), and the
+  derived page-cache-hit rate (`cache-hit`). They are opt-in columns — select any
+  and one extra `/proc`-snapshot pass runs, so plain runs pay nothing:
+
+  ```bash
+  dub test :base -- --bench --metrics=syscr,majflt,cache-hit
+  ```
+
+- **`--syscalls`** — the `strace -c` view, in-process (Linux perf tracepoints).
+  Bare adds a `syscalls` total column; `--syscalls=futex,sched_yield` adds one
+  `sc:<name>` column per named syscall:
+
+  ```bash
+  dub test :base -- --bench --syscalls=futex,sched_yield
+  ```
+
+  This reads tracepoint ids from `tracefs`, which is **root-only on most
+  systems**, and needs `perf_event_paranoid ≤ 1`; where either is missing the
+  counters degrade to unavailable (a stderr note, columns omitted) and the run
+  still passes.
+
+On CPU-bound, in-memory benchmarks these read ≈0 — they earn their keep on
+I/O-bound code.
