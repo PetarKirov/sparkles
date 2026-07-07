@@ -12,8 +12,9 @@ import core.time : Duration;
 import sparkles.base.text.grapheme : byGraphemeCluster, visibleWidth;
 import sparkles.base.text.width : Align;
 
-import sparkles.test_runner.bench : BenchStats, Metric;
+import sparkles.test_runner.bench : BenchStats;
 import sparkles.test_runner.ctfe_trace : CtfeTestCost;
+import sparkles.test_runner.metrics : MetricClass, MetricDescriptor;
 import sparkles.test_runner.model : Test, TestLocation, TestResult, Thrown;
 
 /// Whether `sparkles:core-cli` is in the tested package's dependency closure.
@@ -394,13 +395,12 @@ unittest
 /// dash where a row lacks a value. A row with an `error` (a case whose `after`
 /// reported failure) renders the message in place of its timings. Rendered with
 /// `core-cli`'s `drawTable` when available, plain space-aligned columns otherwise.
-string formatBenchTable(in BenchStats[] rows, bool colored) @system // drawTable is @system
+string formatBenchTable(in BenchStats[] rows, bool colored, string metricFilter = null) @system // drawTable is @system
 {
     import core.time : nsecs;
-    import std.algorithm.searching : any;
     import std.conv : to;
 
-    import sparkles.test_runner.perf : branchMissPercent, cacheMissPercent, ipc;
+    import sparkles.test_runner.metrics : formatCell, rowCells, visibleMetrics;
 
     static string ns(double value) @safe
     {
@@ -414,49 +414,9 @@ string formatBenchTable(in BenchStats[] rows, bool colored) @system // drawTable
             : formatDuration(nsecs(value.lrint));
     }
 
-    // A counter cell at fixed precision; `nan` (unavailable event — dropped LLC
-    // pair, paranoid kernel) renders as an em dash.
-    static string fixed(double value, int decimals, string suffix = "") @safe
-    {
-        import std.format : format;
-        import std.math : isNaN;
-
-        return value.isNaN ? "—" : format!"%.*f%s"(decimals, value, suffix);
-    }
-
-    // SI-prefixed magnitude (1000-base) for a metric/instruction count. This is
-    // the seam that later delegates to `sparkles.quantities`' quantity formatting.
-    static string scaled(double value) @safe
-    {
-        import std.format : format;
-        import std.math : abs, isNaN;
-
-        if (value.isNaN)
-            return "—";
-        const a = abs(value);
-        if (a >= 1e12)
-            return format!"%.2fT"(value / 1e12);
-        if (a >= 1e9)
-            return format!"%.2fG"(value / 1e9);
-        if (a >= 1e6)
-            return format!"%.2fM"(value / 1e6);
-        if (a >= 1e3)
-            return format!"%.2fk"(value / 1e3);
-        return format!"%.3g"(value);
-    }
-
-    // The distinct metric columns, in first-seen order across the rows.
-    static struct MetricKey { string symbol; Metric.Mode mode; }
-    MetricKey[] metricKeys;
-    foreach (ref row; rows)
-        foreach (ref m; row.metrics)
-        {
-            const key = MetricKey(m.unit.symbol, m.mode);
-            if (!metricKeys.any!(k => k == key))
-                metricKeys ~= key;
-        }
-
-    const showPerf = rows.any!(r => !r.perf.isNull);
+    // The visible metric columns (client + perf) via the metric catalog; the
+    // default (null) filter reproduces the legacy column set byte-for-byte.
+    auto columns = visibleMetrics(rows, metricFilter);
 
     string[] header = [
         render(colored, i"{bold benchmark}"),
@@ -466,18 +426,8 @@ string formatBenchTable(in BenchStats[] rows, bool colored) @system // drawTable
         render(colored, i"{bold min}"),
         render(colored, i"{bold max}"),
     ];
-    foreach (key; metricKeys)
-    {
-        const label = key.mode == Metric.Mode.rate ? key.symbol ~ "/s" : key.symbol;
-        header ~= render(colored, i"{bold $(label)}");
-    }
-    if (showPerf)
-        header ~= [
-            render(colored, i"{bold IPC}"),
-            render(colored, i"{bold instr/iter}"),
-            render(colored, i"{bold br-miss}"),
-            render(colored, i"{bold cache-miss}"),
-        ];
+    foreach (ref col; columns)
+        header ~= render(colored, i"{bold $(col.header)}");
 
     const totalCols = header.length;
 
@@ -502,34 +452,17 @@ string formatBenchTable(in BenchStats[] rows, bool colored) @system // drawTable
             ns(row.nsPerIterMin),
             ns(row.nsPerIterMax),
         ];
-        foreach (key; metricKeys)
+        auto rc = rowCells(row);
+        foreach (ref col; columns)
         {
-            string cell = "—";
-            foreach (ref m; row.metrics)
-                if (m.unit.symbol == key.symbol && m.mode == key.mode)
+            string cell = "—"; // this row does not carry this metric
+            foreach (ref mc; rc)
+                if (mc.name == col.name)
                 {
-                    const value = key.mode == Metric.Mode.rate
-                        ? (row.nsPerIterMedian > 0 ? m.amount * 1e9 / row.nsPerIterMedian : double.nan)
-                        : m.amount;
-                    cell = scaled(value);
+                    cell = formatCell(mc);
                     break;
                 }
             cols ~= cell;
-        }
-        if (showPerf)
-        {
-            if (row.perf.isNull)
-                cols ~= ["—", "—", "—", "—"];
-            else
-            {
-                const p = row.perf.get;
-                cols ~= [
-                    fixed(p.ipc, 2),
-                    scaled(p.instructions),
-                    fixed(p.branchMissPercent, 2, "%"),
-                    fixed(p.cacheMissPercent, 2, "%"),
-                ];
-            }
         }
         cells ~= cols;
     }
@@ -539,6 +472,58 @@ string formatBenchTable(in BenchStats[] rows, bool colored) @system // drawTable
     return renderCells(cells,
         [Align.left, Align.right, Align.decimal, Align.decimal, Align.decimal, Align.decimal],
         headerRows: 1);
+}
+
+@("formatBenchTable.metricColumns")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.typecons : Nullable;
+    import sparkles.test_runner.bench : Metric, Unit;
+    import sparkles.test_runner.perf : PerfStats;
+
+    BenchStats row;
+    row.name = "a";
+    row.iterations = 1;
+    row.nsPerIterMedian = 1_000_000.0;
+    row.metrics = [Metric(Unit("B"), 1000.0, Metric.Mode.rate)];
+    PerfStats p;
+    p.cycles = 100;
+    p.instructions = 200;
+    row.perf = p;
+
+    // Default: client rate + the four default perf columns; not the opt-in extras.
+    const def = formatBenchTable([row], false);
+    assert(def.canFind("B/s") && def.canFind("IPC") && def.canFind("cache-miss"));
+    assert(!def.canFind("cycles/iter"));
+
+    // A glob filter narrows to the requested columns.
+    const filtered = formatBenchTable([row], false, "ipc,cycles");
+    assert(filtered.canFind("IPC") && filtered.canFind("cycles/iter"));
+    assert(!filtered.canFind("B/s") && !filtered.canFind("cache-miss"));
+}
+
+/// The `--list-metrics` report: every catalog metric with its column label,
+/// class (quantitative/diagnostic), source, and whether it is producible now.
+string formatMetricCatalog(in MetricDescriptor[] cat, bool colored) @system // renderCells
+{
+    string[][] cells = [[
+        render(colored, i"{bold metric}"),
+        render(colored, i"{bold column}"),
+        render(colored, i"{bold class}"),
+        render(colored, i"{bold source}"),
+        render(colored, i"{bold available}"),
+    ]];
+    foreach (ref d; cat)
+        cells ~= [
+            d.name,
+            d.header,
+            d.cls == MetricClass.quantitative ? "quantitative" : "diagnostic",
+            d.source,
+            d.available ? "yes" : "no",
+        ];
+    return renderCells(cells);
 }
 
 /// Renders table cells with `core-cli`'s `drawTable` when available, plain

@@ -28,8 +28,8 @@ import sparkles.test_runner.execution : executeTest;
 import sparkles.test_runner.filter : matchesFilter;
 import sparkles.test_runner.model : Test, TestResult;
 import sparkles.test_runner.reporting : detectTerminalWidth, formatBenchTable,
-    formatCtfeFailedLine, formatCtfeLine, formatResultLine, formatSummary,
-    formatThrown, RunTotals;
+    formatCtfeFailedLine, formatCtfeLine, formatMetricCatalog, formatResultLine,
+    formatSummary, formatThrown, RunTotals;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Entry point — called across the extern(C) seam by the registration shim,
@@ -54,6 +54,8 @@ private struct RunnerOptions
     bool list;
     bool bench;
     bool perf;
+    string metrics;
+    bool listMetrics;
     string ctfeTrace;
     bool betterC;
     bool wasm;
@@ -126,6 +128,13 @@ private UnitTestResult runnerMain(Test[] discovered, bool hostIsRunner)
             "With --bench: collect hardware performance counters per benchmark " ~
             "(Linux perf_event; IPC, instructions, cache/branch miss rates)",
             &options.perf,
+        "metrics",
+            "With --bench: comma-separated metric columns to show (glob with '*'; " ~
+            "'all' = every available; '?'/'help' = list them). Default: standard columns",
+            &options.metrics,
+        "list-metrics",
+            "With --bench: list the available metric columns (name, class, source) and exit",
+            &options.listMetrics,
         "ctfe-trace",
             "Evaluate @ctfe tests under LDC -ftime-trace (writing the trace " ~
             "to the given file) and report per-test CTFE cost",
@@ -453,6 +462,23 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     if (options.perf && !perf.available)
         stderr.writeln("--perf: hardware counters ", perf.status());
 
+    // --list-metrics (also --metrics=? / --metrics=help): print the catalog and
+    // exit. A dedicated probe reports true perf availability regardless of --perf;
+    // client metrics can't be listed without running, so they're just noted.
+    if (options.listMetrics || options.metrics == "?" || options.metrics == "help")
+    {
+        import sparkles.test_runner.metrics : perfFamily;
+
+        auto probe = PerfGroup.tryOpen(true);
+        scope (exit)
+            probe.close();
+        stdout.write(formatMetricCatalog(perfFamily(probe.available), colored));
+        if (!probe.available)
+            stderr.writeln("--list-metrics: hardware counters ", probe.status());
+        stdout.writeln("client throughput/level metrics are defined per @benchmark and appear when present.");
+        return UnitTestResult(0, 0, false, false);
+    }
+
     BenchStats[] rows;
     size_t failed;
 
@@ -477,7 +503,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
             errorRows++;
 
     if (rows.length)
-        stdout.write(formatBenchTable(rows, colored));
+        stdout.write(formatBenchTable(rows, colored, options.metrics));
     else if (!failed)
         stdout.writeln("no @benchmark tests found");
 
