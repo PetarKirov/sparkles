@@ -200,6 +200,15 @@ extra `/proc`-snapshot counting pass, so plain runs pay nothing. On CPU-bound,
 in-memory benchmarks these read ≈0; they earn their keep on code that touches the
 kernel.
 
+For a per-syscall breakdown — the `strace -c` view, in-process — add `--syscalls`:
+bare adds a `syscalls` total column, and `--syscalls=futex,sched_yield` adds one
+`sc:<name>` column per named syscall (a separate perf-tracepoint counting pass, so
+timings stay clean). The named tracepoints are exact; the total also sees the
+pass's own bookkeeping. This reads the tracepoint ids from `tracefs`, which is
+**root-only on most systems**, and needs `perf_event_paranoid ≤ 1`; where either is
+missing the counters degrade to unavailable (a stderr note, columns omitted) and
+the run still passes.
+
 #### `benchCase` — matrix benchmarks (many rows from one test)
 
 `benchIter` measures one thing. To benchmark a **matrix** — several
@@ -272,6 +281,7 @@ Everything after `--` in `dub test -- <options>`. Full table:
 | `--no-colours`             | Disable colour (also honours `$NO_COLOR` and non-tty stdout)                           |
 | `--bench`                  | Measure `@benchmark` tests                                                             |
 | `--perf`                   | With `--bench`: add hardware perf counters (Linux `perf_event`)                        |
+| `--syscalls[=LIST]`        | With `--bench`: count syscalls/iter (perf tracepoints); bare = total, `=a,b` per-name  |
 | `--metrics=LIST`           | With `--bench`: pick metric columns (glob, `all`, or `?`/`help` to list)               |
 | `--list-metrics`           | With `--bench`: list available metric columns (name, class, source) and exit           |
 | `--better-c`               | Extract and run `@betterC` tests under `-betterC`                                      |

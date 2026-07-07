@@ -54,6 +54,7 @@ private struct RunnerOptions
     bool list;
     bool bench;
     bool perf;
+    string syscalls;
     string metrics;
     bool listMetrics;
     string ctfeTrace;
@@ -101,6 +102,11 @@ private UnitTestResult runnerMain(Test[] discovered, bool hostIsRunner)
 
     RunnerOptions options;
     auto args = Runtime.args;
+    // `--syscalls` takes an optional value (bare = total only), which std.getopt
+    // can't express directly; rewrite a bare occurrence to the `*` sentinel.
+    foreach (ref arg; args)
+        if (arg == "--syscalls")
+            arg = "--syscalls=*";
     auto getoptResult = args.getopt(
         config.caseSensitive,
         "i|include",
@@ -128,6 +134,10 @@ private UnitTestResult runnerMain(Test[] discovered, bool hostIsRunner)
             "With --bench: collect hardware performance counters per benchmark " ~
             "(Linux perf_event; IPC, instructions, cache/branch miss rates)",
             &options.perf,
+        "syscalls",
+            "With --bench: count syscalls per iteration (Linux perf tracepoints). " ~
+            "Bare adds a total column; =futex,sched_yield adds one column each",
+            &options.syscalls,
         "metrics",
             "With --bench: comma-separated metric columns to show (glob with '*'; " ~
             "'all' = every available; '?'/'help' = list them). Default: standard columns",
@@ -452,10 +462,13 @@ private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bo
 /// table gains IPC / instruction / miss-rate columns.
 private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool colored)
 {
-    import std.algorithm.iteration : filter;
+    import std.algorithm.iteration : filter, splitter;
+    import std.array : array;
     import std.stdio : stderr, stdout;
-    import sparkles.test_runner.metrics : perfFamily, selectsSource, tier0Family;
+    import sparkles.test_runner.metrics : perfFamily, selectsSource, syscallFamily,
+        tier0Family;
     import sparkles.test_runner.perf : PerfGroup;
+    import sparkles.test_runner.syscalls : SyscallGroup;
     import sparkles.test_runner.tier0 : Tier0Group;
 
     auto perf = PerfGroup.tryOpen(options.perf);
@@ -471,6 +484,16 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     scope (exit)
         tier0.close();
 
+    // --syscalls: null = off, "*" = total only (bare flag), else a name list.
+    const wantSyscalls = options.syscalls.length > 0;
+    const syscallNames = (options.syscalls == "*" || !wantSyscalls)
+        ? null : options.syscalls.splitter(',').array;
+    auto syscalls = SyscallGroup.tryOpen(wantSyscalls, syscallNames);
+    scope (exit)
+        syscalls.close();
+    if (wantSyscalls && !syscalls.available)
+        stderr.writeln("--syscalls: syscall counters ", syscalls.status());
+
     // --list-metrics (also --metrics=? / --metrics=help): print the catalog and
     // exit. Dedicated probes report true availability regardless of the flags;
     // client metrics can't be listed without running, so they're just noted.
@@ -479,7 +502,12 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         auto perfProbe = PerfGroup.tryOpen(true);
         scope (exit)
             perfProbe.close();
-        auto cat = perfFamily(perfProbe.available) ~ tier0Family(Tier0Group.tryOpen(true).available);
+        auto syscallProbe = SyscallGroup.tryOpen(true, null);
+        scope (exit)
+            syscallProbe.close();
+        auto cat = perfFamily(perfProbe.available)
+            ~ tier0Family(Tier0Group.tryOpen(true).available)
+            ~ syscallFamily(syscallProbe.available);
         stdout.write(formatMetricCatalog(cat, colored));
         if (!perfProbe.available)
             stderr.writeln("--list-metrics: hardware counters ", perfProbe.status());
@@ -493,7 +521,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     foreach (test; tests.filter!(t => t.traits.isBenchmark))
     {
         auto outcome = runBenchmark(test,
-            BenchConfig(iterations: test.traits.benchIterations), perf, tier0);
+            BenchConfig(iterations: test.traits.benchIterations), perf, tier0, syscalls);
         rows ~= outcome.rows; // includes any per-case error rows
 
         if (!outcome.result.succeeded)

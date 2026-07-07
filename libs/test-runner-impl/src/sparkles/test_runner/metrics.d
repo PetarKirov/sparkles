@@ -21,6 +21,7 @@ module sparkles.test_runner.metrics;
 import sparkles.test_runner.bench : BenchStats, Metric, Unit;
 import sparkles.test_runner.perf : branchMissPercent, cacheMissPercent, ipc,
     PerfStats;
+import sparkles.test_runner.syscalls : SyscallStats;
 import sparkles.test_runner.tier0 : cacheHitPercent, Tier0Stats;
 
 /// Whether a metric perturbs the measurement. Only `quantitative` metrics may
@@ -167,6 +168,31 @@ MetricDescriptor[] tier0Family(bool available) @safe pure nothrow
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// The syscall family: perf-tracepoint counts (dynamic names from `--syscalls`)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Projects one `SyscallStats` to its named cells: the `syscalls` total plus one
+/// `syscalls:<name>` per requested tracepoint (`nan` where it couldn't be opened).
+MetricCell[] syscallCells(in SyscallStats s) @safe pure nothrow
+{
+    MetricCell[] cells;
+    cells.reserve(1 + s.named.length);
+    cells ~= MetricCell("syscalls", "syscalls", s.total, MetricFormat.count,
+        MetricClass.quantitative);
+    foreach (i, name; s.named)
+        cells ~= MetricCell("syscalls:" ~ name, "sc:" ~ name, s.counts[i],
+            MetricFormat.count, MetricClass.quantitative);
+    return cells;
+}
+
+/// The syscall total as a descriptor (for `--list-metrics`), with the given
+/// availability. Per-syscall columns are dynamic (named via `--syscalls`) and
+/// appear in the table when present, not in the static listing.
+MetricDescriptor[] syscallFamily(bool available) @safe pure nothrow
+    => [MetricDescriptor("syscalls", "syscalls", MetricFormat.count,
+        MetricClass.quantitative, "syscall", available, true)];
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Client metrics: a unit symbol is the (mint-by-name) column label; a `rate`
 // metric divides its amount by iteration-time (the ÷time yielding `unit·s⁻¹`).
 // ─────────────────────────────────────────────────────────────────────────────
@@ -204,6 +230,8 @@ MetricCell[] rowCells(in BenchStats row) @safe pure nothrow
         cells ~= perfCells(row.perf.get);
     if (!row.tier0.isNull)
         cells ~= tier0Cells(row.tier0.get);
+    if (!row.syscalls.isNull)
+        cells ~= syscallCells(row.syscalls.get);
     return cells;
 }
 
@@ -231,6 +259,13 @@ MetricDescriptor[] catalog(in BenchStats[] rows) @safe pure nothrow
     result ~= perfFamily(perfAvail);
     const tier0Avail = rows.any!(r => !r.tier0.isNull);
     result ~= tier0Family(tier0Avail);
+    // syscall columns are dynamic (names from --syscalls); add those that appear.
+    foreach (ref row; rows)
+        if (!row.syscalls.isNull)
+            foreach (ref c; syscallCells(row.syscalls.get))
+                if (!result.any!(d => d.name == c.name))
+                    result ~= MetricDescriptor(c.name, c.header, c.format, c.cls,
+                        "syscall", true, true);
     return result;
 }
 
@@ -431,6 +466,31 @@ unittest
     assert(cells.map!(c => c.name).array[0] == "syscr");
     assert(cells[$ - 1].name == "cache-hit" && cells[$ - 1].value == 87.5);
     assert(cells[3].name == "majflt" && cells[3].value == 3);
+}
+
+@("metrics.syscalls.projectionAndDefault")
+@safe
+unittest
+{
+    import std.algorithm.iteration : map;
+    import std.array : array;
+
+    SyscallStats s;
+    s.total = 88.7;
+    s.named = ["futex", "sched_yield"];
+    s.counts = [55.0, double.nan]; // sched_yield tracepoint unavailable → nan
+
+    const cells = syscallCells(s);
+    assert(cells.map!(c => c.name).array == ["syscalls", "syscalls:futex", "syscalls:sched_yield"]);
+    assert(cells[0].value == 88.7 && cells[1].header == "sc:futex" && cells[1].value == 55.0);
+
+    // syscall columns are default-visible when present (unlike tier0).
+    BenchStats row;
+    row.name = "walk";
+    row.nsPerIterMedian = 1000.0;
+    row.syscalls = s;
+    assert(visibleMetrics([row], null).map!(d => d.name).array
+        == ["syscalls", "syscalls:futex", "syscalls:sched_yield"]);
 }
 
 @("metrics.catalog.noPerfNoColumns")
