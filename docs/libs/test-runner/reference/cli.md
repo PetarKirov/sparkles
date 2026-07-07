@@ -17,16 +17,17 @@ Everything after `--` in `dub test :pkg -- <options>` goes to the runner.
 
 ## Modes
 
-| Option              | Description                                                                                                                      |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| _(none)_            | Run regular tests in parallel; evaluate selected `@ctfe` tests via CTFE                                                          |
-| `--bench`           | Measure `@benchmark` tests (serial); print the statistics table                                                                  |
-| `--perf`            | With `--bench`: add hardware perf counters per benchmark (Linux `perf_event`) — IPC, instructions/iter, cache/branch miss rates  |
-| `--metrics=LIST`    | With `--bench`: choose metric columns (comma list; glob with `*`; `all` = every available; `?`/`help` = list). Default: standard |
-| `--list-metrics`    | With `--bench`: list the available metric columns (name, class, source) and exit                                                 |
-| `--better-c`        | Extract `@betterC` tests, compile with `-betterC`, run without druntime                                                          |
-| `--wasm`            | Extract `@wasm` tests, cross-compile to `wasm32`, run in a wasm runtime                                                          |
-| `--ctfe-trace FILE` | Evaluate `@ctfe` tests under LDC `-ftime-trace` and report per-test cost                                                         |
+| Option              | Description                                                                                                                                                                   |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| _(none)_            | Run regular tests in parallel; evaluate selected `@ctfe` tests via CTFE                                                                                                       |
+| `--bench`           | Measure `@benchmark` tests (serial); print the statistics table                                                                                                               |
+| `--perf`            | With `--bench`: add hardware perf counters per benchmark (Linux `perf_event`) — IPC, instructions/iter, cache/branch miss rates                                               |
+| `--syscalls[=LIST]` | With `--bench`: count syscalls/iteration (perf tracepoints); bare = total column, `=futex,…` adds one each. Needs readable tracefs + `perf_event_paranoid ≤ 1` (usually root) |
+| `--metrics=LIST`    | With `--bench`: choose metric columns (comma list; glob with `*`; `all` = every available; `?`/`help` = list). Default: standard                                              |
+| `--list-metrics`    | With `--bench`: list the available metric columns (name, class, source) and exit                                                                                              |
+| `--better-c`        | Extract `@betterC` tests, compile with `-betterC`, run without druntime                                                                                                       |
+| `--wasm`            | Extract `@wasm` tests, cross-compile to `wasm32`, run in a wasm runtime                                                                                                       |
+| `--ctfe-trace FILE` | Evaluate `@ctfe` tests under LDC `-ftime-trace` and report per-test cost                                                                                                      |
 
 `@ctfe` tests are evaluated by a probe program compiled with `-o- -unittest`
 (semantic analysis only) after `-i`/`-e` filtering, so only the selected
