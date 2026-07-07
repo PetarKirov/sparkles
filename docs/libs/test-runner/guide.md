@@ -189,6 +189,17 @@ columns to show — a comma-separated list of names, a `*`-suffixed glob (e.g.
 extras like `cycles`/`branches`/`page-faults`). With no `--metrics`, the standard
 columns show.
 
+For I/O-bound benchmarks, the catalog also carries cheap **Tier-0** counters that
+need no `perf_event` and no privilege (`getrusage` + `/proc/self/io`, tagged
+`quantitative`): syscall counts (`syscr`, `syscw`), page faults (`minflt`,
+`majflt`), context switches (`vol-cs` = blocked on I/O, `invol-cs` = preempted),
+bytes through the syscall layer vs the block device (`rchar`/`wchar` vs
+`rd-bytes`/`wr-bytes`), and the derived page-cache-hit rate (`cache-hit`). They are
+opt-in columns — selecting any (e.g. `--metrics=syscr,majflt,cache-hit`) runs one
+extra `/proc`-snapshot counting pass, so plain runs pay nothing. On CPU-bound,
+in-memory benchmarks these read ≈0; they earn their keep on code that touches the
+kernel.
+
 #### `benchCase` — matrix benchmarks (many rows from one test)
 
 `benchIter` measures one thing. To benchmark a **matrix** — several

@@ -21,6 +21,7 @@ module sparkles.test_runner.metrics;
 import sparkles.test_runner.bench : BenchStats, Metric, Unit;
 import sparkles.test_runner.perf : branchMissPercent, cacheMissPercent, ipc,
     PerfStats;
+import sparkles.test_runner.tier0 : cacheHitPercent, Tier0Stats;
 
 /// Whether a metric perturbs the measurement. Only `quantitative` metrics may
 /// feed a reported/gated number; `diagnostic` ones explain, in a separate region.
@@ -112,6 +113,60 @@ MetricDescriptor[] perfFamily(bool available) @safe pure nothrow
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// The tier0 family: cheap /proc counters (all quantitative, opt-in columns)
+// ─────────────────────────────────────────────────────────────────────────────
+
+private struct Tier0Info
+{
+    string name;
+    string header;
+    MetricFormat format;
+}
+
+/// The Tier-0 counters as catalog columns. All opt-in (not in the default set):
+/// selected via `--metrics`; the derived `cache-hit` is a percentage.
+private static immutable Tier0Info[11] tier0Infos = [
+    Tier0Info("syscr", "syscr", MetricFormat.count),
+    Tier0Info("syscw", "syscw", MetricFormat.count),
+    Tier0Info("minflt", "min-flt", MetricFormat.count),
+    Tier0Info("majflt", "maj-flt", MetricFormat.count),
+    Tier0Info("vol-cs", "vol-cs", MetricFormat.count),
+    Tier0Info("invol-cs", "invol-cs", MetricFormat.count),
+    Tier0Info("rchar", "rchar", MetricFormat.count),
+    Tier0Info("wchar", "wchar", MetricFormat.count),
+    Tier0Info("rd-bytes", "rd-bytes", MetricFormat.count),
+    Tier0Info("wr-bytes", "wr-bytes", MetricFormat.count),
+    Tier0Info("cache-hit", "cache-hit", MetricFormat.percent),
+];
+
+/// Projects one `Tier0Stats` to its named cells, in `tier0Infos` order.
+MetricCell[] tier0Cells(in Tier0Stats t) @safe pure nothrow
+{
+    const double[11] values = [
+        t.syscr, t.syscw, t.minflt, t.majflt, t.volCs, t.involCs,
+        t.rdChars, t.wrChars, t.rdBytes, t.wrBytes, cacheHitPercent(t),
+    ];
+    MetricCell[] cells;
+    cells.reserve(tier0Infos.length);
+    foreach (i, ref info; tier0Infos)
+        cells ~= MetricCell(info.name, info.header, values[i], info.format,
+            MetricClass.quantitative);
+    return cells;
+}
+
+/// The tier0 family as descriptors (for `--list-metrics`), with the given
+/// availability — no rows needed. All opt-in (`isDefault = false`).
+MetricDescriptor[] tier0Family(bool available) @safe pure nothrow
+{
+    MetricDescriptor[] result;
+    result.reserve(tier0Infos.length);
+    foreach (ref info; tier0Infos)
+        result ~= MetricDescriptor(info.name, info.header, info.format,
+            MetricClass.quantitative, "tier0", available, false);
+    return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Client metrics: a unit symbol is the (mint-by-name) column label; a `rate`
 // metric divides its amount by iteration-time (the ÷time yielding `unit·s⁻¹`).
 // ─────────────────────────────────────────────────────────────────────────────
@@ -140,13 +195,15 @@ MetricCell[] clientCells(in Metric[] metrics, double nsPerIterMedian) @safe pure
     return cells;
 }
 
-/// Every metric cell of one row: client columns first (in call order), then the
-/// perf columns when the row carries counters — the legacy column grouping.
+/// Every metric cell of one row: client columns first (in call order), then perf,
+/// then tier0 — each present only when the row carries that source.
 MetricCell[] rowCells(in BenchStats row) @safe pure nothrow
 {
     auto cells = clientCells(row.metrics, row.nsPerIterMedian);
     if (!row.perf.isNull)
         cells ~= perfCells(row.perf.get);
+    if (!row.tier0.isNull)
+        cells ~= tier0Cells(row.tier0.get);
     return cells;
 }
 
@@ -172,7 +229,43 @@ MetricDescriptor[] catalog(in BenchStats[] rows) @safe pure nothrow
         }
     const perfAvail = rows.any!(r => !r.perf.isNull);
     result ~= perfFamily(perfAvail);
+    const tier0Avail = rows.any!(r => !r.tier0.isNull);
+    result ~= tier0Family(tier0Avail);
     return result;
+}
+
+/// The catalog metric names belonging to a static family (`perf` or `tier0`);
+/// used to decide whether a `--metrics` filter would select any of them.
+private string[] familyNames(string source) @safe pure nothrow
+{
+    string[] names;
+    if (source == "perf")
+        foreach (ref info; perfInfos)
+            names ~= info.name;
+    else if (source == "tier0")
+        foreach (ref info; tier0Infos)
+            names ~= info.name;
+    return names;
+}
+
+/// Whether a `--metrics` filter would select any metric of `source` — the gate
+/// for opening that source's (opt-in) counting pass. `all` selects every source;
+/// the default (empty) filter selects none of the opt-in families.
+bool selectsSource(string metricFilter, string source) @safe
+{
+    import std.algorithm.iteration : splitter;
+    import std.algorithm.searching : any;
+    import std.array : array;
+
+    if (metricFilter == "all")
+        return true;
+    if (metricFilter.length == 0)
+        return false;
+    auto patterns = metricFilter.splitter(',').array;
+    foreach (name; familyNames(source))
+        if (patterns.any!(p => matchesMetricGlob(name, p)))
+            return true;
+    return false;
 }
 
 /// Whether `name` matches `pattern`: a trailing `*` is a prefix match, otherwise
@@ -313,6 +406,31 @@ unittest
     // `all` adds the opt-in perf extras; a glob narrows to one family.
     assert(visibleMetrics([withPerf], "all").map!(d => d.name).canFind("cycles"));
     assert(visibleMetrics([withPerf], "ipc,cycles").map!(d => d.name).array == ["ipc", "cycles"]);
+}
+
+@("metrics.tier0.selectionAndProjection")
+@safe
+unittest
+{
+    import std.algorithm.iteration : map;
+    import std.array : array;
+
+    // selectsSource gates the (opt-in) tier0 pass: default off, `all` on, and a
+    // matching glob on; a perf-only filter leaves tier0 off.
+    assert(!selectsSource("", "tier0"));
+    assert(selectsSource("all", "tier0"));
+    assert(selectsSource("majflt,cache-hit", "tier0"));
+    assert(selectsSource("syscalls:*", "tier0") == false);
+    assert(!selectsSource("ipc", "tier0") && selectsSource("ipc", "perf"));
+
+    Tier0Stats t;
+    t.rdChars = 4096;
+    t.rdBytes = 512; // 1 - 512/4096 = 87.5% cache hit
+    t.majflt = 3;
+    const cells = tier0Cells(t);
+    assert(cells.map!(c => c.name).array[0] == "syscr");
+    assert(cells[$ - 1].name == "cache-hit" && cells[$ - 1].value == 87.5);
+    assert(cells[3].name == "majflt" && cells[3].value == 3);
 }
 
 @("metrics.catalog.noPerfNoColumns")
