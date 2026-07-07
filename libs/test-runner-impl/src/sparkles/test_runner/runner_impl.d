@@ -454,7 +454,9 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
 {
     import std.algorithm.iteration : filter;
     import std.stdio : stderr, stdout;
+    import sparkles.test_runner.metrics : perfFamily, selectsSource, tier0Family;
     import sparkles.test_runner.perf : PerfGroup;
+    import sparkles.test_runner.tier0 : Tier0Group;
 
     auto perf = PerfGroup.tryOpen(options.perf);
     scope (exit)
@@ -462,19 +464,25 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     if (options.perf && !perf.available)
         stderr.writeln("--perf: hardware counters ", perf.status());
 
+    // Tier-0 /proc counters are opt-in via --metrics (no default columns, no
+    // perms); open their pass only when the filter selects one.
+    const wantTier0 = selectsSource(options.metrics, "tier0");
+    auto tier0 = Tier0Group.tryOpen(wantTier0);
+    scope (exit)
+        tier0.close();
+
     // --list-metrics (also --metrics=? / --metrics=help): print the catalog and
-    // exit. A dedicated probe reports true perf availability regardless of --perf;
+    // exit. Dedicated probes report true availability regardless of the flags;
     // client metrics can't be listed without running, so they're just noted.
     if (options.listMetrics || options.metrics == "?" || options.metrics == "help")
     {
-        import sparkles.test_runner.metrics : perfFamily;
-
-        auto probe = PerfGroup.tryOpen(true);
+        auto perfProbe = PerfGroup.tryOpen(true);
         scope (exit)
-            probe.close();
-        stdout.write(formatMetricCatalog(perfFamily(probe.available), colored));
-        if (!probe.available)
-            stderr.writeln("--list-metrics: hardware counters ", probe.status());
+            perfProbe.close();
+        auto cat = perfFamily(perfProbe.available) ~ tier0Family(Tier0Group.tryOpen(true).available);
+        stdout.write(formatMetricCatalog(cat, colored));
+        if (!perfProbe.available)
+            stderr.writeln("--list-metrics: hardware counters ", perfProbe.status());
         stdout.writeln("client throughput/level metrics are defined per @benchmark and appear when present.");
         return UnitTestResult(0, 0, false, false);
     }
@@ -485,7 +493,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     foreach (test; tests.filter!(t => t.traits.isBenchmark))
     {
         auto outcome = runBenchmark(test,
-            BenchConfig(iterations: test.traits.benchIterations), perf);
+            BenchConfig(iterations: test.traits.benchIterations), perf, tier0);
         rows ~= outcome.rows; // includes any per-case error rows
 
         if (!outcome.result.succeeded)
