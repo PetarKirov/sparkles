@@ -180,6 +180,15 @@ $ dub test -- --bench --perf
 ╰────────────┴───────┴─────────────┴─┴─────┴────────────┴─────────┴────────────╯
 ```
 
+Every measured column — client throughput/level metrics and the perf counters —
+is a named entry in a metric _catalog_. `--list-metrics` (or `--metrics=?`) prints
+it: each metric's column label, its class (`quantitative` = safe to report, vs
+`diagnostic` = explains only), and its source. `--metrics=LIST` then picks which
+columns to show — a comma-separated list of names, a `*`-suffixed glob (e.g.
+`--metrics=ipc,cache-miss`), or `all` for every available column (including opt-in
+extras like `cycles`/`branches`/`page-faults`). With no `--metrics`, the standard
+columns show.
+
 #### `benchCase` — matrix benchmarks (many rows from one test)
 
 `benchIter` measures one thing. To benchmark a **matrix** — several
@@ -252,6 +261,8 @@ Everything after `--` in `dub test -- <options>`. Full table:
 | `--no-colours`             | Disable colour (also honours `$NO_COLOR` and non-tty stdout)                           |
 | `--bench`                  | Measure `@benchmark` tests                                                             |
 | `--perf`                   | With `--bench`: add hardware perf counters (Linux `perf_event`)                        |
+| `--metrics=LIST`           | With `--bench`: pick metric columns (glob, `all`, or `?`/`help` to list)               |
+| `--list-metrics`           | With `--bench`: list available metric columns (name, class, source) and exit           |
 | `--better-c`               | Extract and run `@betterC` tests under `-betterC`                                      |
 | `--wasm`                   | Cross-compile and run `@wasm` tests on `wasm32`                                        |
 | `--ctfe-trace FILE`        | Evaluate `@ctfe` tests under LDC `-ftime-trace`; per-test cost                         |
