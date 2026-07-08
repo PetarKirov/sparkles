@@ -288,6 +288,48 @@ void main()
 ╰────────┴────────┴──────╯
 ```
 
+Cells can span columns and rows, columns can be aligned, and separators and
+glyphs are configurable (`TableProps` / the `stylePresets` registry). Both the
+dense `Cell[][]` form and a sparse `Placement[]` form are accepted:
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "readme_table_spans"
+    dependency "sparkles:core-cli" version="*"
++/
+
+import std.stdio : write;
+
+import sparkles.core_cli.ui.table;
+import sparkles.base.text.width : Align;
+
+void main()
+{
+    drawTable([
+        [Cell("Quarterly Sales", colSpan: 3)],
+        [Cell("Region"), Cell("Q1"), Cell("Q2")],
+        [Cell("North"), Cell("1200"), Cell("1350")],
+        [Cell("South"), Cell("98"), Cell("110")],
+    ], TableProps(
+        columnAligns: [Align.left, Align.right, Align.right],
+        rowSeparators: true,
+    )).write;
+}
+```
+
+```[Output]
+╭──────────────────────╮
+│ Quarterly Sales      │
+├────────┬──────┬──────┤
+│ Region │   Q1 │   Q2 │
+├────────┼──────┼──────┤
+│ North  │ 1200 │ 1350 │
+├────────┼──────┼──────┤
+│ South  │   98 │  110 │
+╰────────┴──────┴──────╯
+```
+
 #### Boxes
 
 ```d
