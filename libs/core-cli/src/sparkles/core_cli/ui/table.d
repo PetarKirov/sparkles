@@ -2,7 +2,7 @@ module sparkles.core_cli.ui.table;
 
 import std.array : array, appender;
 import std.algorithm : map, all, maxElement, sort;
-import std.algorithm.comparison : max;
+import std.algorithm.comparison : max, min;
 import std.range : iota;
 
 import sparkles.base.text.grapheme : visibleWidth;
@@ -85,6 +85,17 @@ struct TableProps
     bool border           = true; /// Draw the outer frame.
     bool columnSeparators = true; /// Draw interior vertical `│` lines.
     bool rowSeparators    = false;/// Draw interior horizontal `─` rules.
+
+    /// Total table width cap in columns, **including** separators and borders, or 0
+    /// for no cap (expand to fit — today's behaviour). When set, columns are shrunk
+    /// largest-first and their content wraps so no rendered line exceeds it. Feed it
+    /// the terminal width (e.g. via `sparkles.core_cli.term_size`) to fit output.
+    size_t maxWidth = 0;
+
+    /// Per-column max **content** width (excluding separators/gutters); a `0` entry or
+    /// a short/empty array means that column is unbounded. Content over a column's cap
+    /// wraps.
+    size_t[] columnMaxWidths = null;
 }
 
 /// Named glyph presets, selectable as `TableProps(glyphs: stylePresets["ascii"])`.
@@ -258,13 +269,25 @@ private size_t contentBand(in Anchor a) @safe pure nothrow @nogc => a.row;
 
 /// Per-column content widths: per-column max of extent-1 anchors (== the legacy
 /// `columnWidths` base case), then grow member columns so every colspan cell fits.
+/// The intrinsic width of a cell's content: the widest of its own lines (content may
+/// carry embedded `\n`), so a multi-line cell is not sized by its newline-joined length.
+private size_t naturalWidth(string content) @safe pure nothrow
+{
+    import std.string : lineSplitter;
+
+    size_t m = 0;
+    foreach (seg; content.lineSplitter)
+        m = max(m, visibleWidth(seg));
+    return m;
+}
+
 private size_t[] resolveColumnWidths(in SlotGrid g, in TableProps p) @safe pure nothrow
 {
     const sepW = p.columnSeparators ? 1 : 0;
     auto w = new size_t[g.numCols];
     foreach (ref a; g.anchors)
         if (a.colSpan == 1)
-            w[a.col] = max(w[a.col], visibleWidth(a.content));
+            w[a.col] = max(w[a.col], naturalWidth(a.content));
 
     // Satisfy colspan cells ascending by span then position: columns only grow, so
     // one pass leaves every spanning cell fitting its final member-column widths.
@@ -277,7 +300,7 @@ private size_t[] resolveColumnWidths(in SlotGrid g, in TableProps p) @safe pure 
     foreach (a; spanning)
     {
         const n = a.colSpan;
-        const vw = visibleWidth(a.content);
+        const vw = naturalWidth(a.content);
         const absorbed = (2 + sepW) * (n - 1); // gutters + separators the span covers
         const required = vw > absorbed ? vw - absorbed : 0;
         size_t cur = 0;
@@ -290,6 +313,39 @@ private size_t[] resolveColumnWidths(in SlotGrid g, in TableProps p) @safe pure 
             const extra = deficit % n;
             foreach (k; 0 .. n)
                 w[a.col + k] += base + (k < extra ? 1 : 0);
+        }
+    }
+
+    // Per-column caps: content over a column's max wraps instead of widening it.
+    foreach (c; 0 .. g.numCols)
+        if (c < p.columnMaxWidths.length && p.columnMaxWidths[c] > 0)
+            w[c] = min(w[c], p.columnMaxWidths[c]);
+
+    // Total-width cap: shrink the widest column by 1 until the whole table fits
+    // `maxWidth` (frame included), flooring each column at 1. Trimmed columns wrap.
+    if (p.maxWidth > 0)
+    {
+        const borderW = p.border ? 1 : 0;
+        const frame = 2 * g.numCols + sepW * (g.numCols - 1) + 2 * borderW;
+        for (;;)
+        {
+            size_t total = frame;
+            foreach (c; 0 .. g.numCols)
+                total += w[c];
+            if (total <= p.maxWidth)
+                break;
+            // Widest column (leftmost on a tie) that can still lose a column.
+            size_t widest = 0;
+            bool any = false;
+            foreach (c; 0 .. g.numCols)
+                if (w[c] > 1 && (!any || w[c] > w[widest]))
+                {
+                    widest = c;
+                    any = true;
+                }
+            if (!any)
+                break; // every column already at its floor of 1
+            w[widest] -= 1;
         }
     }
     return w;
@@ -384,50 +440,111 @@ private string separatorLine(in SlotGrid g, in size_t[] w, in TableProps p, size
     return line[];
 }
 
-/// One text line for grid row `r` (single-line bands for now): each anchor's field
-/// (` <aligned-content> ` in its content band, ` <blank> ` in covered bands),
-/// separated by interior verticals where a real boundary sits.
-private string bodyBand(in SlotGrid g, in size_t[] w, in TableProps p, size_t r)
+/// Wrap every anchor's content into its `contentField` width, splitting on `\n` and
+/// soft-wrapping long lines with the shared `sparkles.base.text.wrap` engine (the same
+/// one `drawBox` uses). Trailing spaces left at a wrap point are trimmed so a wrapped
+/// line never exceeds the field. Returns one line list per anchor (empty content → a
+/// single blank line), indexed like `SlotGrid.anchors`.
+private string[][] wrapCells(in SlotGrid g, in size_t[] w, in TableProps p)
 {
+    import sparkles.base.text.wrap : byWrappedLine, WhitespaceMode, WrapOptions;
+    import std.string : lineSplitter, stripRight;
+
     const sepW = p.columnSeparators ? 1 : 0;
-    auto line = appender!string;
-    if (p.border)
-        line ~= p.glyphs.verticalLine;
-    size_t c = 0;
-    while (c < g.numCols)
+    auto result = new string[][](g.anchors.length);
+    foreach (i, ref a; g.anchors)
     {
-        const a = g.anchors[owner(g, r, c)];
         const f = contentField(a, w, sepW);
-        line ~= ' ';
-        if (r == contentBand(a))
-            alignField(line, a.content, f, Align.left);
-        else
-            foreach (_; 0 .. f)
-                line ~= ' ';
-        line ~= ' ';
-        c += a.colSpan;
-        if (c < g.numCols && vSeg(g, p, r, c))
-            line ~= p.glyphs.verticalLine;
+        string[] lines;
+        foreach (seg; a.content.lineSplitter)
+        {
+            if (f == 0)
+            {
+                lines ~= "";
+                continue;
+            }
+            bool any = false;
+            foreach (wl; seg.byWrappedLine(
+                    WrapOptions(width: f, whitespace: WhitespaceMode.preserve)))
+            {
+                any = true;
+                lines ~= wl.stripRight.idup;
+            }
+            if (!any)
+                lines ~= "";
+        }
+        if (lines.length == 0)
+            lines ~= ""; // empty content still occupies one blank line
+        result[i] = lines;
     }
-    if (p.border)
-        line ~= p.glyphs.verticalLine;
-    line ~= '\n';
-    return line[];
+    return result;
 }
 
-/// Render a resolved grid: top border, then each body band (with interior rules
-/// between bands when `rowSeparators`), then the bottom border.
+/// Per grid-row text height: the max wrapped-line count among the row's cells (≥ 1).
+/// Rowspan cells (`rowSpan >= 2`) are handled in the span phase; here every anchor is
+/// extent-1, so it contributes its lines to its own row.
+private size_t[] resolveRowHeights(in SlotGrid g, in string[][] lines) @safe pure nothrow
+{
+    auto h = new size_t[g.numRows];
+    foreach (ref x; h)
+        x = 1;
+    foreach (i, ref a; g.anchors)
+        if (a.rowSpan == 1)
+            h[a.row] = max(h[a.row], lines[i].length);
+    return h;
+}
+
+/// Render all text lines of grid row `r` (its height is `heights[r]`). Each anchor
+/// emits its wrapped line for the current text line in its content band, or a blank
+/// field otherwise, separated by interior verticals where a real boundary sits.
+private string bodyRow(in SlotGrid g, in size_t[] w, in string[][] lines,
+    in size_t[] heights, in TableProps p, size_t r)
+{
+    const sepW = p.columnSeparators ? 1 : 0;
+    auto out_ = appender!string;
+    foreach (t; 0 .. heights[r])
+    {
+        if (p.border)
+            out_ ~= p.glyphs.verticalLine;
+        size_t c = 0;
+        while (c < g.numCols)
+        {
+            const idx = owner(g, r, c);
+            const a = g.anchors[idx];
+            const f = contentField(a, w, sepW);
+            out_ ~= ' ';
+            if (r == contentBand(a) && t < lines[idx].length)
+                alignField(out_, lines[idx][t], f, Align.left);
+            else
+                foreach (_; 0 .. f)
+                    out_ ~= ' ';
+            out_ ~= ' ';
+            c += a.colSpan;
+            if (c < g.numCols && vSeg(g, p, r, c))
+                out_ ~= p.glyphs.verticalLine;
+        }
+        if (p.border)
+            out_ ~= p.glyphs.verticalLine;
+        out_ ~= '\n';
+    }
+    return out_[];
+}
+
+/// Render a resolved grid: top border, then each (multi-line) body row with interior
+/// rules between rows when `rowSeparators`, then the bottom border.
 private string drawGrid(in SlotGrid g, in TableProps p)
 {
     if (g.numRows == 0 || g.numCols == 0)
         return "";
     auto w = resolveColumnWidths(g, p);
+    auto lines = wrapCells(g, w, p);
+    auto heights = resolveRowHeights(g, lines);
     auto out_ = appender!string;
     if (p.border)
         out_ ~= separatorLine(g, w, p, 0);
     foreach (r; 0 .. g.numRows)
     {
-        out_ ~= bodyBand(g, w, p, r);
+        out_ ~= bodyRow(g, w, lines, heights, p, r);
         if (r + 1 < g.numRows && p.rowSeparators)
             out_ ~= separatorLine(g, w, p, r + 1);
     }
@@ -612,4 +729,80 @@ version (unittest) private void checkRender(string actual, string expected)
     glyphs.topLeft = '*';
     glyphs.topRight = '*';
     assert(drawTable([["x"]], TableProps(glyphs: glyphs)) == "*───*\n│ x │\n╰───╯\n");
+}
+
+@("drawTable.wrap.columnMaxWidth")
+@system unittest
+{
+    // A cell over its column cap wraps to multiple lines; the row grows and the
+    // shorter neighbour pads with blank lines.
+    checkRender(drawTable([["hello world", "x"]], TableProps(columnMaxWidths: [5, 0])),
+        "╭───────┬───╮\n" ~
+        "│ hello │ x │\n" ~
+        "│ world │   │\n" ~
+        "╰───────┴───╯\n");
+}
+
+@("drawTable.wrap.embeddedNewline")
+@system unittest
+{
+    // An embedded '\n' splits a cell into lines, and sizes the column by its widest
+    // line (1 here, not the newline-joined length).
+    checkRender(drawTable([["a\nb", "c"]]),
+        "╭───┬───╮\n" ~
+        "│ a │ c │\n" ~
+        "│ b │   │\n" ~
+        "╰───┴───╯\n");
+}
+
+@("drawTable.wrap.maxWidthShrinks")
+@system unittest
+{
+    import std.string : splitLines;
+    import sparkles.base.text.grapheme : visibleWidth;
+
+    // maxWidth shrinks the widest columns (largest-first) until the whole table fits,
+    // wrapping the trimmed content. No rendered line exceeds the cap.
+    const rendered = drawTable([["aaaa", "bbbb"]], TableProps(maxWidth: 11));
+    checkRender(rendered,
+        "╭────┬────╮\n" ~
+        "│ aa │ bb │\n" ~
+        "│ aa │ bb │\n" ~
+        "╰────┴────╯\n");
+    foreach (l; rendered.splitLines)
+        assert(l.visibleWidth <= 11);
+}
+
+@("drawTable.wrap.maxWidthParity")
+@system unittest
+{
+    import std.string : splitLines;
+    import sparkles.base.text.grapheme : visibleWidth;
+
+    // A wide table squeezed to several widths: every line stays within the cap and
+    // all lines share a width (bands and rules agree even after shrink + wrap).
+    string[][] cells = [
+        ["Alpha", "a longer description here", "42"],
+        ["Beta", "short", "7"],
+    ];
+    foreach (cap; [40, 30, 24, 18])
+    {
+        const rendered = drawTable(cells, TableProps(maxWidth: cap));
+        const lines = rendered.splitLines;
+        foreach (l; lines)
+        {
+            assert(l.visibleWidth <= cap);
+            assert(l.visibleWidth == lines[0].visibleWidth);
+        }
+    }
+}
+
+@("drawTable.wrap.disabledByDefault")
+@system unittest
+{
+    import std.string : splitLines;
+
+    // With no caps a long cell expands the column (no wrapping) — one body row.
+    const rendered = drawTable([["a fairly long single cell", "x"]]);
+    assert(rendered.splitLines.length == 3); // top + one row + bottom
 }
