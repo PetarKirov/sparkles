@@ -66,9 +66,9 @@ the trace is written to the given file, and the cost is attributed per test:
 
 ```console
 $ dub test :my-package -- --ctfe-trace build/trace.json
-╭───────────────────┬───────────────────────┬───────────╮
-│ @ctfe test        │ location              │ CTFE time │
-│ caseFold.ascii    │ src/my/text.d:148     │ 6.0ms     │
-╰───────────────────┴───────────────────────┴───────────╯
+╭────────────────┬───────────────────┬───────────╮
+│ @ctfe test     │ location          │ CTFE time │
+│ caseFold.ascii │ src/my/text.d:148 │     6.0ms │
+╰────────────────┴───────────────────┴───────────╯
 total CTFE time attributed to @ctfe tests: 6.0ms
 ```

@@ -121,8 +121,8 @@ unittest
 ```console
 $ dub test :my-package -- --bench
 ╭────────────────────┬───────┬─────────────┬────────┬────────┬────────╮
-│ benchmark          │ iters │ median/iter │ ±dev   │ min    │ max    │
-│ area.polygon.bench │ 8192  │ 512.40ns    │ 3.10ns │ 508.11 │ 530.02 │
+│ benchmark          │ iters │ median/iter │   ±dev │    min │    max │
+│ area.polygon.bench │  8192 │    512.40ns │ 3.10ns │ 508.11 │ 530.02 │
 ╰────────────────────┴───────┴─────────────┴────────┴────────┴────────╯
 ```
 
