@@ -87,6 +87,37 @@ struct TableProps
     bool rowSeparators    = false;/// Draw interior horizontal `─` rules.
 }
 
+/// Named glyph presets, selectable as `TableProps(glyphs: stylePresets["ascii"])`.
+/// Seeded with `rounded` (the default, `== TableGlyphs.init`), `square`, `ascii`,
+/// `double`, and `heavy`; callers may register or override their own entries. Thread
+/// local (each thread gets the built-ins), so reads stay `@safe`.
+TableGlyphs[string] stylePresets;
+
+static this()
+{
+    stylePresets["rounded"] = TableGlyphs.init;
+    stylePresets["square"] = TableGlyphs(
+        topLeft: '┌', topRight: '┐', bottomLeft: '└', bottomRight: '┘',
+        horizontalLine: '─', verticalLine: '│',
+        teeDown: '┬', teeUp: '┴', teeRight: '├', teeLeft: '┤', cross: '┼',
+        cornerTL: '┌', cornerTR: '┐', cornerBL: '└', cornerBR: '┘');
+    stylePresets["ascii"] = TableGlyphs(
+        topLeft: '+', topRight: '+', bottomLeft: '+', bottomRight: '+',
+        horizontalLine: '-', verticalLine: '|',
+        teeDown: '+', teeUp: '+', teeRight: '+', teeLeft: '+', cross: '+',
+        cornerTL: '+', cornerTR: '+', cornerBL: '+', cornerBR: '+');
+    stylePresets["double"] = TableGlyphs(
+        topLeft: '╔', topRight: '╗', bottomLeft: '╚', bottomRight: '╝',
+        horizontalLine: '═', verticalLine: '║',
+        teeDown: '╦', teeUp: '╩', teeRight: '╠', teeLeft: '╣', cross: '╬',
+        cornerTL: '╔', cornerTR: '╗', cornerBL: '╚', cornerBR: '╝');
+    stylePresets["heavy"] = TableGlyphs(
+        topLeft: '┏', topRight: '┓', bottomLeft: '┗', bottomRight: '┛',
+        horizontalLine: '━', verticalLine: '┃',
+        teeDown: '┳', teeUp: '┻', teeRight: '┣', teeLeft: '┫', cross: '╋',
+        cornerTL: '┏', cornerTR: '┓', cornerBL: '┗', cornerBR: '┛');
+}
+
 /// One content object anchored at `(row, col)` covering a `rowSpan × colSpan`
 /// rectangle of slots. `implicit` marks a filler synthesized for a slot no authored
 /// cell covers (keeps the grid fully populated).
@@ -210,11 +241,12 @@ private SlotGrid resolveGrid(in Cell[][] rows) @safe pure nothrow
 private size_t owner(in SlotGrid g, size_t r, size_t c) @safe pure nothrow @nogc
     => g.slotOwner[r * g.numCols + c];
 
-/// The visible-column field a cell occupies: its member column widths plus the
-/// `3*(colSpan-1)` columns absorbed from the interior separators + gutters it spans.
-private size_t contentField(in Anchor a, in size_t[] w) @safe pure nothrow @nogc
+/// The visible-column field a cell occupies: its member column widths plus, per
+/// merged boundary, the two gutters and the `sepW` separator column it absorbs
+/// (`sepW == 1` with column separators on, else 0).
+private size_t contentField(in Anchor a, in size_t[] w, size_t sepW) @safe pure nothrow @nogc
 {
-    size_t f = 3 * (a.colSpan - 1);
+    size_t f = (2 + sepW) * (a.colSpan - 1);
     foreach (c; a.col .. a.col + a.colSpan)
         f += w[c];
     return f;
@@ -228,6 +260,7 @@ private size_t contentBand(in Anchor a) @safe pure nothrow @nogc => a.row;
 /// `columnWidths` base case), then grow member columns so every colspan cell fits.
 private size_t[] resolveColumnWidths(in SlotGrid g, in TableProps p) @safe pure nothrow
 {
+    const sepW = p.columnSeparators ? 1 : 0;
     auto w = new size_t[g.numCols];
     foreach (ref a; g.anchors)
         if (a.colSpan == 1)
@@ -245,7 +278,8 @@ private size_t[] resolveColumnWidths(in SlotGrid g, in TableProps p) @safe pure 
     {
         const n = a.colSpan;
         const vw = visibleWidth(a.content);
-        const required = vw > 3 * (n - 1) ? vw - 3 * (n - 1) : 0;
+        const absorbed = (2 + sepW) * (n - 1); // gutters + separators the span covers
+        const required = vw > absorbed ? vw - absorbed : 0;
         size_t cur = 0;
         foreach (c; a.col .. a.col + n)
             cur += w[c];
@@ -331,15 +365,21 @@ private dchar junctionGlyph(in SlotGrid g, in TableProps p, size_t i, size_t j) 
 /// lattice row `i`: junctions interleaved with per-column fills.
 private string separatorLine(in SlotGrid g, in size_t[] w, in TableProps p, size_t i)
 {
+    // A lattice column is 1 char wide only when its line is drawn: the outer two
+    // follow `border`, the interior ones `columnSeparators`. A zero-width lattice is
+    // skipped in both bands and rules, so the two always share the same width.
     auto line = appender!string;
     foreach (j; 0 .. g.numCols)
     {
-        line ~= junctionGlyph(g, p, i, j);
+        const latticeDrawn = j == 0 ? p.border : p.columnSeparators;
+        if (latticeDrawn)
+            line ~= junctionGlyph(g, p, i, j);
         const fillCh = hSeg(g, p, i, j) ? p.glyphs.horizontalLine : ' ';
         foreach (_; 0 .. w[j] + 2)
             line ~= fillCh;
     }
-    line ~= junctionGlyph(g, p, i, g.numCols);
+    if (p.border)
+        line ~= junctionGlyph(g, p, i, g.numCols);
     line ~= '\n';
     return line[];
 }
@@ -349,6 +389,7 @@ private string separatorLine(in SlotGrid g, in size_t[] w, in TableProps p, size
 /// separated by interior verticals where a real boundary sits.
 private string bodyBand(in SlotGrid g, in size_t[] w, in TableProps p, size_t r)
 {
+    const sepW = p.columnSeparators ? 1 : 0;
     auto line = appender!string;
     if (p.border)
         line ~= p.glyphs.verticalLine;
@@ -356,7 +397,7 @@ private string bodyBand(in SlotGrid g, in size_t[] w, in TableProps p, size_t r)
     while (c < g.numCols)
     {
         const a = g.anchors[owner(g, r, c)];
-        const f = contentField(a, w);
+        const f = contentField(a, w, sepW);
         line ~= ' ';
         if (r == contentBand(a))
             alignField(line, a.content, f, Align.left);
@@ -466,4 +507,109 @@ unittest
         "│ \x1b[32mOK\x1b[39m      │ Good  │\n" ~
         "│ \x1b[33mWarning\x1b[39m │ Check │\n" ~
         "╰─────────┴───────╯\n");
+}
+
+version (unittest) private void checkRender(string actual, string expected)
+{
+    import sparkles.test_utils : diffWithTool, DiffTools;
+    import std.stdio : writeln;
+
+    if (actual != expected)
+    {
+        diffWithTool(actual, expected, false, DiffTools.deltaUserConfig).writeln;
+        assert(0, "table render mismatch");
+    }
+}
+
+@("drawTable.presets.ascii")
+@system unittest
+{
+    import sparkles.test_utils.string : outdent;
+
+    checkRender(drawTable([["ab", "c"], ["d", "ef"]], TableProps(glyphs: stylePresets["ascii"])),
+        "+----+----+\n" ~
+        "| ab | c  |\n" ~
+        "| d  | ef |\n" ~
+        "+----+----+\n");
+}
+
+@("drawTable.presets.registry")
+@system unittest
+{
+    // The default glyphs are the rounded preset, and every built-in style is seeded.
+    assert(stylePresets["rounded"] == TableGlyphs.init);
+    foreach (name; ["rounded", "square", "ascii", "double", "heavy"])
+        assert(name in stylePresets);
+
+    // Each style's own corner/junction glyphs reach the output.
+    assert(drawTable([["x", "y"]], TableProps(glyphs: stylePresets["double"]))
+        == "╔═══╦═══╗\n║ x ║ y ║\n╚═══╩═══╝\n");
+    assert(drawTable([["x", "y"]], TableProps(glyphs: stylePresets["heavy"]))
+        == "┏━━━┳━━━┓\n┃ x ┃ y ┃\n┗━━━┻━━━┛\n");
+    assert(drawTable([["x", "y"]], TableProps(glyphs: stylePresets["square"]))
+        == "┌───┬───┐\n│ x │ y │\n└───┴───┘\n");
+}
+
+@("drawTable.separators.rowSeparators")
+@system unittest
+{
+    checkRender(drawTable([["ab", "c"], ["d", "ef"]], TableProps(rowSeparators: true)),
+        "╭────┬────╮\n" ~
+        "│ ab │ c  │\n" ~
+        "├────┼────┤\n" ~
+        "│ d  │ ef │\n" ~
+        "╰────┴────╯\n");
+}
+
+@("drawTable.separators.noColumnSeparators")
+@system unittest
+{
+    // No interior verticals: the boundary lattice is zero-width, so the frame rules
+    // are solid and columns abut with their gutters. Every line stays the same width.
+    checkRender(drawTable([["ab", "c"], ["d", "ef"]], TableProps(columnSeparators: false)),
+        "╭────────╮\n" ~
+        "│ ab  c  │\n" ~
+        "│ d   ef │\n" ~
+        "╰────────╯\n");
+}
+
+@("drawTable.separators.noBorder")
+@system unittest
+{
+    // No outer frame: only the interior column separators remain.
+    checkRender(drawTable([["ab", "c"], ["d", "ef"]], TableProps(border: false)),
+        " ab │ c  \n" ~
+        " d  │ ef \n");
+}
+
+@("drawTable.separators.widthParityAllToggles")
+@system unittest
+{
+    import std.string : splitLines;
+    import sparkles.base.text.grapheme : visibleWidth;
+
+    // Bands and rules must share a width in every toggle combination.
+    string[][] cells = [["ab", "c", "xyz"], ["d", "ef", "g"]];
+    foreach (border; [false, true])
+        foreach (colSep; [false, true])
+            foreach (rowSep; [false, true])
+            {
+                const rendered = drawTable(cells,
+                    TableProps(border: border, columnSeparators: colSep, rowSeparators: rowSep));
+                const lines = rendered.splitLines;
+                foreach (l; lines)
+                    assert(l.visibleWidth == lines[0].visibleWidth,
+                        "width parity broken for a toggle combination");
+            }
+}
+
+@("drawTable.glyphs.customOverride")
+@system unittest
+{
+    // A per-field override on top of a preset takes effect (double-line frame but an
+    // ASCII '+' cross would only show with interior rules; here override the corners).
+    auto glyphs = stylePresets["rounded"];
+    glyphs.topLeft = '*';
+    glyphs.topRight = '*';
+    assert(drawTable([["x"]], TableProps(glyphs: glyphs)) == "*───*\n│ x │\n╰───╯\n");
 }
