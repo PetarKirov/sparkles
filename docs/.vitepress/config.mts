@@ -414,6 +414,13 @@ export default withMermaid(
               ],
             },
             {
+              text: 'Core-CLI',
+              collapsed: false,
+              items: [
+                { text: 'drawTable spec', link: '/specs/core-cli/table' },
+              ],
+            },
+            {
               text: 'Parsing (proposal)',
               collapsed: true,
               items: [
