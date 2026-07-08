@@ -9,8 +9,8 @@ dub test :base -- --bench
 
 ```console
 ╭────────────────┬─────────┬─────────────┬────────┬────────┬────────╮
-│ benchmark      │ iters   │ median/iter │ ±dev   │ min    │ max    │
-│ medianOf.bench │ 2097152 │ 1.86ns      │ 0.02ns │ 1.84ns │ 1.97ns │
+│ benchmark      │   iters │ median/iter │   ±dev │    min │    max │
+│ medianOf.bench │ 2097152 │      1.86ns │ 0.02ns │ 1.84ns │ 1.97ns │
 ╰────────────────┴─────────┴─────────────┴────────┴────────┴────────╯
 ```
 

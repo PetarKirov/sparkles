@@ -467,11 +467,15 @@ string formatBenchTable(in BenchStats[] rows, bool colored, string metricFilter 
         cells ~= cols;
     }
 
-    // benchmark name left; iters right; the four timing columns align on the
-    // decimal point (same-unit values line up; mixed units still read right).
-    return renderCells(cells,
-        [Align.left, Align.right, Align.decimal, Align.decimal, Align.decimal, Align.decimal],
-        headerRows: 1);
+    // Column 0 (benchmark name) is textual; every other column is numeric —
+    // timings, iteration counts, and metric values — so right-align them, with
+    // the four timing columns aligned on the decimal point (same-unit values
+    // line up; mixed units still read right).
+    auto aligns = new Align[totalCols];
+    aligns[] = Align.right;
+    aligns[0] = Align.left;
+    aligns[2 .. 6] = Align.decimal;
+    return renderCells(cells, aligns, headerRows: 1);
 }
 
 @("formatBenchTable.metricColumns")
@@ -523,7 +527,7 @@ string formatMetricCatalog(in MetricDescriptor[] cat, bool colored) @system // r
             d.source,
             d.available ? "yes" : "no",
         ];
-    return renderCells(cells);
+    return renderCells(cells, headerRows: 1);
 }
 
 /// Renders table cells with `core-cli`'s `drawTable` when available, plain
@@ -572,6 +576,7 @@ string formatCtfeTraceTable(in CtfeTestCost[] costs, bool colored) @system // re
         if (cost.durUs > 0)
             totalUs += cost.durUs;
     }
+    // The CTFE-time column is numeric; the test name and location are textual.
     return renderCells(cells, [Align.left, Align.left, Align.right], headerRows: 1)
         ~ render(colored, i"{bold total CTFE time attributed to @ctfe tests:} $(formatDuration(totalUs.usecs))\n");
 }

@@ -159,10 +159,10 @@ unittest
 
 ```console
 $ dub test -- --bench
-╭────────────────┬─────────┬─────────────┬────────┬────────┬────────╮
-│ benchmark      │ iters   │ median/iter │ ±dev   │ min    │ max    │
-│ sort.bench     │ 2048    │ 41.7µs      │ 0.3µs  │ 41.1µs │ 43.0µs │
-╰────────────────┴─────────┴─────────────┴────────┴────────┴────────╯
+╭────────────┬───────┬─────────────┬───────┬────────┬────────╮
+│ benchmark  │ iters │ median/iter │  ±dev │    min │    max │
+│ sort.bench │  2048 │      41.7µs │ 0.3µs │ 41.1µs │ 43.0µs │
+╰────────────┴───────┴─────────────┴───────┴────────┴────────╯
 ```
 
 Add `--perf` for hardware performance counters (Linux `perf_event`): a separate
@@ -176,7 +176,7 @@ Linux the flag is inert.
 $ dub test -- --bench --perf
 ╭────────────┬───────┬─────────────┬─┬─────┬────────────┬─────────┬────────────╮
 │ benchmark  │ iters │ median/iter │…│ IPC │ instr/iter │ br-miss │ cache-miss │
-│ sort.bench │ 2048  │ 41.7µs      │…│ 2.9 │ 118.4k     │ 0.71%   │ 3.20%      │
+│ sort.bench │  2048 │      41.7µs │…│ 2.9 │     118.4k │   0.71% │      3.20% │
 ╰────────────┴───────┴─────────────┴─┴─────┴────────────┴─────────┴────────────╯
 ```
 
@@ -256,11 +256,11 @@ counter columns to each:
 
 ```console
 $ dub test -- --bench --perf
-╭─────────────────┬───────┬─────────────┬──────────┬─────┬────────────┬─────────╮
-│ benchmark       │ iters │ median/iter │ B/s      │ IPC │ instr/iter │ br-miss │
-│ simdjson/twitter│ 1     │ 41.7µs      │ 15.14G   │ 3.1 │ 118.4k     │ 0.71%   │
-│ stdjson/twitter │ 1     │ 611.0µs     │ 1.03G    │ 1.8 │ 2.44M      │ 2.90%   │
-╰─────────────────┴───────┴─────────────┴──────────┴─────┴────────────┴─────────╯
+╭──────────────────┬───────┬─────────────┬────────┬─────┬────────────┬─────────╮
+│ benchmark        │ iters │ median/iter │    B/s │ IPC │ instr/iter │ br-miss │
+│ simdjson/twitter │     1 │      41.7µs │ 15.14G │ 3.1 │     118.4k │   0.71% │
+│ stdjson/twitter  │     1 │     611.0µs │  1.03G │ 1.8 │      2.44M │   2.90% │
+╰──────────────────┴───────┴─────────────┴────────┴─────┴────────────┴─────────╯
 ```
 
 Attributes compose: `@betterC @wasm` opts one test into both extra
