@@ -5,6 +5,8 @@ import std.algorithm : map, all, maxElement, sort;
 import std.algorithm.comparison : max, min;
 import std.range : iota;
 
+import expected : Expected, ok, err;
+
 import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.base.text.width : Align, alignField;
 
@@ -215,6 +217,31 @@ struct Placement
     size_t rowSpan = 1;/// Number of rows this cell spans.
 }
 
+/// What kind of table-model error `validateTable` found.
+enum TableErrorKind
+{
+    overlap,            /// Two cells cover the same slot.
+    rowSpanOutOfBounds, /// A rowspan extended past the last authored row (clamped).
+}
+
+/// A table-model error. `drawTable` renders a malformed table deterministically anyway
+/// (first-writer-wins on overlap, rowspans clamped); `validateTable` surfaces these for
+/// callers that want to reject one. `row`/`col` locate the offending slot or anchor.
+struct TableError
+{
+    TableErrorKind kind;
+    size_t row;
+    size_t col;
+    string message;
+}
+
+/// A resolved grid together with any table-model errors found while placing it.
+private struct Resolved
+{
+    SlotGrid grid;
+    TableError[] errors;
+}
+
 private Cell[][] toCells(in string[][] rows) @safe pure nothrow
 {
     auto out_ = new Cell[][](rows.length);
@@ -229,11 +256,13 @@ private Cell[][] toCells(in string[][] rows) @safe pure nothrow
 
 /// Place cells on the grid with the HTML "forming a table" cursor: walk row-major,
 /// skip already-covered slots, claim each anchor's rectangle (first-writer-wins),
-/// clamp rowspans past the last row, then fill every uncovered slot with an implicit
-/// empty anchor so the grid is fully populated (always renderable).
-private SlotGrid resolveGrid(in Cell[][] rows) @safe pure nothrow
+/// clamp rowspans past the last authored row, then fill every uncovered slot with an
+/// implicit empty anchor so the grid is fully populated (always renderable). Overlaps
+/// and clamped rowspans are recorded as `TableError`s.
+private Resolved resolveGrid(in Cell[][] rows) @safe pure nothrow
 {
     Anchor[] anchors;
+    TableError[] errors;
     bool[][] occ;
     size_t[][] owner; // anchor index + 1; 0 == empty
     occ.length = rows.length;
@@ -254,6 +283,7 @@ private SlotGrid resolveGrid(in Cell[][] rows) @safe pure nothrow
         }
     }
 
+    const numRows = rows.length;
     foreach (r, row; rows)
     {
         size_t c = 0;
@@ -271,11 +301,17 @@ private SlotGrid resolveGrid(in Cell[][] rows) @safe pure nothrow
             const rs = cell.rowSpan < 1 ? 1 : cell.rowSpan;
             const idx = anchors.length;
             anchors ~= Anchor(r, c, rs, cs, cell.content, false);
+            if (r + rs > numRows)
+                errors ~= TableError(TableErrorKind.rowSpanOutOfBounds, r, c,
+                    "rowspan extends past the last row");
             foreach (dr; 0 .. rs)
                 foreach (dc; 0 .. cs)
                 {
                     ensure(r + dr, c + dc);
-                    if (!occ[r + dr][c + dc]) // first-writer-wins on overlap
+                    if (occ[r + dr][c + dc]) // first-writer-wins; record the collision
+                        errors ~= TableError(TableErrorKind.overlap, r + dr, c + dc,
+                            "cell overlaps another");
+                    else
                     {
                         occ[r + dr][c + dc] = true;
                         owner[r + dr][c + dc] = idx + 1;
@@ -286,16 +322,17 @@ private SlotGrid resolveGrid(in Cell[][] rows) @safe pure nothrow
         }
     }
 
-    return finalizeGrid(anchors, occ, owner, max(rows.length, occ.length), numCols);
+    return Resolved(finalizeGrid(anchors, occ, owner, numRows, numCols), errors);
 }
 
 /// The sparse authoring form: each `Placement` claims its rectangle at its own
 /// `(row, col)` (no cursor). Same first-writer-wins overlap handling, rowspan clamp,
 /// and implicit sparse-fill as the dense path, producing an identical `SlotGrid` — so
 /// both feed the one renderer. Grid dimensions are inferred from the max extents used.
-private SlotGrid resolveGrid(in Placement[] placements) @safe pure nothrow
+private Resolved resolveGrid(in Placement[] placements) @safe pure nothrow
 {
     Anchor[] anchors;
+    TableError[] errors;
     bool[][] occ;
     size_t[][] owner; // anchor index + 1; 0 == empty
     size_t numRows, numCols;
@@ -324,7 +361,10 @@ private SlotGrid resolveGrid(in Placement[] placements) @safe pure nothrow
             foreach (dc; 0 .. cs)
             {
                 ensure(pl.row + dr, pl.col + dc);
-                if (!occ[pl.row + dr][pl.col + dc]) // first-writer-wins on overlap
+                if (occ[pl.row + dr][pl.col + dc]) // first-writer-wins; record collision
+                    errors ~= TableError(TableErrorKind.overlap, pl.row + dr, pl.col + dc,
+                        "cell overlaps another");
+                else
                 {
                     occ[pl.row + dr][pl.col + dc] = true;
                     owner[pl.row + dr][pl.col + dc] = idx + 1;
@@ -334,7 +374,7 @@ private SlotGrid resolveGrid(in Placement[] placements) @safe pure nothrow
         numCols = max(numCols, pl.col + cs);
     }
 
-    return finalizeGrid(anchors, occ, owner, max(numRows, occ.length), numCols);
+    return Resolved(finalizeGrid(anchors, occ, owner, max(numRows, occ.length), numCols), errors);
 }
 
 /// Clamp any rowspan past the last row, fill every uncovered slot with an implicit
@@ -708,15 +748,17 @@ private string drawGrid(in SlotGrid g, in TableProps p)
 string drawTable(string[][] cells, TableProps props = TableProps.init)
 in (hasRectangularShape(cells))
 {
-    return drawGrid(resolveGrid(toCells(cells)), props);
+    return drawGrid(resolveGrid(toCells(cells)).grid, props);
 }
 
 /// Render a dense `Cell[][]` (cells may carry `colSpan`/`rowSpan`) as a boxed table.
 /// Covered slots are omitted from the following cells (rows may be ragged); the
-/// placement cursor recovers their positions. See `Cell`.
+/// placement cursor recovers their positions. Malformed tables (overlap, over-long
+/// rowspans) still render deterministically — use `validateTable` to detect them.
+/// See `Cell`.
 string drawTable(Cell[][] cells, TableProps props = TableProps.init)
 {
-    return drawGrid(resolveGrid(cells), props);
+    return drawGrid(resolveGrid(cells).grid, props);
 }
 
 /// Render a sparse `Placement[]` (order-independent cells naming their own
@@ -724,7 +766,18 @@ string drawTable(Cell[][] cells, TableProps props = TableProps.init)
 /// dense forms, so it renders identically. See `Placement`.
 string drawTable(Placement[] cells, TableProps props = TableProps.init)
 {
-    return drawGrid(resolveGrid(cells), props);
+    return drawGrid(resolveGrid(cells).grid, props);
+}
+
+/// Validate a table's cell placement, returning the first table-model error (overlap
+/// or an over-long rowspan) or `true` when the table is well-formed. `drawTable`
+/// renders either way; call this first when a malformed table should be rejected.
+/// Works with the dense `Cell[][]` or sparse `Placement[]` form.
+Expected!(bool, TableError) validateTable(T)(in T[] cells)
+if (is(T == Cell[]) || is(T == Placement))
+{
+    auto r = resolveGrid(cells);
+    return r.errors.length ? err!bool(r.errors[0]) : ok!TableError(true);
 }
 
 unittest
@@ -1150,4 +1203,43 @@ version (unittest) private void checkRender(string actual, string expected)
         "│ b │ mid │\n" ~
         "│ c │     │\n" ~
         "╰───┴─────╯\n");
+}
+
+@("drawTable.validate.wellFormed")
+@system unittest
+{
+    // A well-formed table validates, in both authoring forms.
+    assert(validateTable([[Cell("a"), Cell("b")], [Cell("c"), Cell("d")]]).hasValue);
+    assert(validateTable([Placement(0, 0, "a"), Placement(1, 1, "b")]).hasValue);
+}
+
+@("drawTable.validate.overlap")
+@system unittest
+{
+    // Two placements claiming the same slot is a detected overlap — but drawTable
+    // still renders deterministically (first-writer-wins).
+    auto placements = [
+        Placement(0, 0, "A", colSpan: 2),
+        Placement(0, 1, "B"), // collides with A's second column
+    ];
+    auto v = validateTable(placements);
+    assert(v.hasError);
+    assert(v.error.kind == TableErrorKind.overlap);
+    assert(v.error.row == 0 && v.error.col == 1);
+    // Rendering does not throw and keeps the first writer (A) in the shared slot.
+    const rendered = drawTable(placements);
+    assert(rendered.length > 0);
+}
+
+@("drawTable.validate.rowSpanOutOfBounds")
+@system unittest
+{
+    // A rowspan past the last authored row is flagged and clamped.
+    auto v = validateTable([[Cell("x", rowSpan: 3)], [Cell("y")]]);
+    assert(v.hasError);
+    assert(v.error.kind == TableErrorKind.rowSpanOutOfBounds);
+    // Clamped to the two rows: renders without extra empty bands.
+    import std.string : splitLines;
+
+    assert(drawTable([[Cell("x", rowSpan: 3)], [Cell("y")]]).splitLines.length == 4);
 }
