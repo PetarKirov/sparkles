@@ -76,9 +76,13 @@ struct TableGlyphs
     dchar cornerTL = '┌', cornerTR = '┐', cornerBL = '└', cornerBR = '┘';
 }
 
+/// Vertical alignment of a cell's content within its (possibly multi-line or rowspan)
+/// height. `inherit` defers to the column/table default.
+enum VAlign { inherit, top, middle, bottom }
+
 /// Table rendering configuration. Defaults reproduce the pre-overhaul rendering
 /// byte-for-byte: rounded glyphs, column separators on, row separators off, outer
-/// border on.
+/// border on, left/top alignment.
 struct TableProps
 {
     TableGlyphs glyphs;            /// Box-drawing glyph set.
@@ -96,6 +100,46 @@ struct TableProps
     /// a short/empty array means that column is unbounded. Content over a column's cap
     /// wraps.
     size_t[] columnMaxWidths = null;
+
+    /// Horizontal alignment. `columnAligns[c]` (when in range and not `inherit`)
+    /// overrides `defaultAlign` for column `c`.
+    Align    defaultAlign  = Align.left;
+    Align[]  columnAligns   = null; /// ditto
+    /// Vertical alignment (governs rowspan / multi-line cells). `columnVAligns[c]`
+    /// (when in range and not `inherit`) overrides `defaultVAlign` for column `c`.
+    VAlign   defaultVAlign = VAlign.top;
+    VAlign[] columnVAligns  = null; /// ditto
+}
+
+/// The effective horizontal alignment for column `c`: the per-column override if set,
+/// else the table default (`inherit` resolves to `left`).
+private Align effectiveAlign(size_t c, in TableProps p) @safe pure nothrow @nogc
+{
+    if (c < p.columnAligns.length && p.columnAligns[c] != Align.inherit)
+        return p.columnAligns[c];
+    return p.defaultAlign == Align.inherit ? Align.left : p.defaultAlign;
+}
+
+/// The effective vertical alignment for column `c` (`inherit` resolves to `top`).
+private VAlign effectiveVAlign(size_t c, in TableProps p) @safe pure nothrow @nogc
+{
+    if (c < p.columnVAligns.length && p.columnVAligns[c] != VAlign.inherit)
+        return p.columnVAligns[c];
+    return p.defaultVAlign == VAlign.inherit ? VAlign.top : p.defaultVAlign;
+}
+
+/// Blank lines above a content block of `l` lines placed in a field of `hh` lines.
+private size_t padTop(size_t hh, size_t l, VAlign va) @safe pure nothrow @nogc
+{
+    if (hh <= l)
+        return 0;
+    final switch (va)
+    {
+        case VAlign.inherit:
+        case VAlign.top:    return 0;
+        case VAlign.middle: return (hh - l) / 2;
+        case VAlign.bottom: return hh - l;
+    }
 }
 
 /// Named glyph presets, selectable as `TableProps(glyphs: stylePresets["ascii"])`.
@@ -606,15 +650,21 @@ private string bodyRow(in SlotGrid g, in size_t[] w, in string[][] lines,
             const idx = owner(g, r, c);
             const a = g.anchors[idx];
             const f = contentField(a, w, sepW);
-            // This anchor's local content-line index at row r, text line t: the sum of
-            // the heights of its bands above r, plus t. For an extent-1 cell that is
-            // just t; a rowspan cell's content flows down across its stacked bands.
+            // This anchor's line index at row r, text line t: the sum of the heights
+            // of its bands above r, plus t. For an extent-1 cell that is just t; a
+            // rowspan cell's content flows down across its stacked bands.
             size_t li = t;
             foreach (rr; a.row .. r)
                 li += heights[rr];
+            // Vertical alignment shifts the content block down within the anchor's
+            // combined height; horizontal alignment is applied per line.
+            size_t hh = 0;
+            foreach (rr; a.row .. a.row + a.rowSpan)
+                hh += heights[rr];
+            const top = padTop(hh, lines[idx].length, effectiveVAlign(a.col, p));
             out_ ~= ' ';
-            if (li < lines[idx].length)
-                alignField(out_, lines[idx][li], f, Align.left);
+            if (li >= top && li - top < lines[idx].length)
+                alignField(out_, lines[idx][li - top], f, effectiveAlign(a.col, p));
             else
                 foreach (_; 0 .. f)
                     out_ ~= ' ';
@@ -1049,4 +1099,55 @@ version (unittest) private void checkRender(string actual, string expected)
         "│ a │   │\n" ~
         "│   │ d │\n" ~
         "╰───┴───╯\n");
+}
+
+@("drawTable.align.perColumnHorizontal")
+@system unittest
+{
+    // Column 0 right-aligned, column 1 centered.
+    checkRender(drawTable([["a", "bb"], ["ccc", "d"]],
+            TableProps(columnAligns: [Align.right, Align.center])),
+        "╭─────┬────╮\n" ~
+        "│   a │ bb │\n" ~
+        "│ ccc │ d  │\n" ~
+        "╰─────┴────╯\n");
+}
+
+@("drawTable.align.shortArrayFallsBackToDefault")
+@system unittest
+{
+    // A short columnAligns array: column 0 uses its entry, column 1 the default.
+    checkRender(drawTable([["a", "bb"], ["ccc", "d"]],
+            TableProps(defaultAlign: Align.right, columnAligns: [Align.left])),
+        "╭─────┬────╮\n" ~
+        "│ a   │ bb │\n" ~
+        "│ ccc │  d │\n" ~
+        "╰─────┴────╯\n");
+}
+
+@("drawTable.align.verticalBottomOnRowSpan")
+@system unittest
+{
+    // A rowSpan cell bottom-aligned sits in its lower band.
+    checkRender(drawTable([
+            [Cell("M", rowSpan: 2), Cell("x")],
+            [Cell("y")],
+        ], TableProps(columnVAligns: [VAlign.bottom])),
+        "╭───┬───╮\n" ~
+        "│   │ x │\n" ~
+        "│ M │ y │\n" ~
+        "╰───┴───╯\n");
+}
+
+@("drawTable.align.verticalMiddleInWrappedRow")
+@system unittest
+{
+    // A short cell middle-aligned within a row made 3 lines tall by a wrapped sibling.
+    checkRender(drawTable([[Cell("a\nb\nc"), Cell("mid")]],
+            TableProps(columnVAligns: [VAlign.top, VAlign.middle])),
+        "╭───┬─────╮\n" ~
+        "│ a │     │\n" ~
+        "│ b │ mid │\n" ~
+        "│ c │     │\n" ~
+        "╰───┴─────╯\n");
 }
