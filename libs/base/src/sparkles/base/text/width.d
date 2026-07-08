@@ -166,3 +166,123 @@ int graphemeClusterWidth(in dchar[] cluster) @safe pure nothrow @nogc
     // ZWJ family sequence -> 2 (woman + ZWJ + girl).
     assert(graphemeClusterWidth("\U0001F469\u200D\U0001F467"d) == 2);
 }
+
+/// Horizontal alignment of text within a fixed-width field. `inherit` means "defer
+/// to a caller-supplied default" (e.g. a table column's default alignment) and is
+/// treated as `left` if it reaches `alignField` unresolved.
+enum Align { inherit, left, center, right }
+
+/// Pad `content` to `width` visible columns into the output range `w`, per `align_`.
+///
+/// The pad amount is `width - visibleWidth(content)` (clamped at 0), distributed by
+/// `align_`: `left`/`inherit` put it after the content, `right` before, `center`
+/// splits it (floor left, remainder right). Padding is measured in terminal cells via
+/// `visibleWidth`, so ANSI escapes cost nothing and CJK/emoji clusters count 2 \u2014
+/// styled content aligns by what the reader sees. Content already at or wider than
+/// `width` is emitted unpadded (never truncated). Only the pad is added; the content
+/// bytes pass through verbatim. Attributes infer from `Writer`.
+ref Writer alignField(Writer)(
+    return ref Writer w, scope const(char)[] content, size_t width, Align align_)
+{
+    import std.range.primitives : put;
+    import sparkles.base.text.grapheme : visibleWidth;
+
+    const vw = visibleWidth(content);
+    const pad = width > vw ? width - vw : 0;
+
+    size_t lead, trail;
+    final switch (align_)
+    {
+        case Align.inherit:
+        case Align.left:   trail = pad;                        break;
+        case Align.right:  lead = pad;                         break;
+        case Align.center: lead = pad / 2; trail = pad - lead; break;
+    }
+
+    foreach (_; 0 .. lead)
+        put(w, ' ');
+    put(w, content);
+    foreach (_; 0 .. trail)
+        put(w, ' ');
+    return w;
+}
+
+/// Convenience overload returning a freshly GC-allocated `string`. Prefer the
+/// output-range form in `@nogc` code.
+string alignField(scope const(char)[] content, size_t width, Align align_) @safe
+{
+    import std.array : appender;
+
+    auto w = appender!string;
+    alignField(w, content, width, align_);
+    return w[];
+}
+
+@("width.alignField.horizontal")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    SmallBuffer!(char, 64) b;
+    alignField(b, "hi", 5, Align.left);
+    assert(b[] == "hi   ");
+
+    b.clear();
+    alignField(b, "hi", 5, Align.right);
+    assert(b[] == "   hi");
+
+    b.clear();
+    alignField(b, "hi", 5, Align.center); // pad 3 -> 1 left, 2 right
+    assert(b[] == " hi  ");
+
+    b.clear();
+    alignField(b, "hi", 6, Align.center); // pad 4 -> 2 left, 2 right
+    assert(b[] == "  hi  ");
+
+    b.clear();
+    alignField(b, "hi", 5, Align.inherit); // inherit == left
+    assert(b[] == "hi   ");
+}
+
+@("width.alignField.zeroPadAndOverflow")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    SmallBuffer!(char, 64) b;
+    alignField(b, "hello", 5, Align.center); // already exact -> no pad
+    assert(b[] == "hello");
+
+    b.clear();
+    alignField(b, "toolong", 3, Align.right); // wider than field -> verbatim, no truncation
+    assert(b[] == "toolong");
+}
+
+@("width.alignField.styledAndWide")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    // ANSI escapes cost nothing: "OK" is 2 visible cells, padded to 5.
+    SmallBuffer!(char, 64) b;
+    alignField(b, "\x1b[32mOK\x1b[39m", 5, Align.left);
+    assert(b[] == "\x1b[32mOK\x1b[39m   ");
+
+    // A CJK ideograph is 2 cells wide, so width-5 leaves 3 pad.
+    b.clear();
+    alignField(b, "\u4E16", 5, Align.right);
+    assert(b[] == "   \u4E16");
+}
+
+@("width.alignField.stringFormMatchesRange")
+@safe unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    foreach (a; [Align.left, Align.center, Align.right, Align.inherit])
+    {
+        SmallBuffer!(char, 64) b;
+        alignField(b, "abc", 7, a);
+        assert(alignField("abc", 7, a) == b[]);
+    }
+}
