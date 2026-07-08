@@ -159,6 +159,18 @@ struct Cell
     size_t rowSpan = 1;/// Number of rows this cell spans.
 }
 
+/// A cell for the sparse authoring form `Placement[]`: it names its own `(row, col)`
+/// and extent, so placements are order-independent and never need filler for the gaps
+/// (uncovered slots become implicit blanks). Equivalent in power to `Cell[][]`.
+struct Placement
+{
+    size_t row;        /// Anchor row (0-based).
+    size_t col;        /// Anchor column (0-based).
+    string content;    /// Cell text (may contain `\n`; wraps to the column width).
+    size_t colSpan = 1;/// Number of columns this cell spans.
+    size_t rowSpan = 1;/// Number of rows this cell spans.
+}
+
 private Cell[][] toCells(in string[][] rows) @safe pure nothrow
 {
     auto out_ = new Cell[][](rows.length);
@@ -230,8 +242,64 @@ private SlotGrid resolveGrid(in Cell[][] rows) @safe pure nothrow
         }
     }
 
-    const numRows = max(rows.length, occ.length);
-    foreach (ref a; anchors) // clamp rowspans that ran past the last row
+    return finalizeGrid(anchors, occ, owner, max(rows.length, occ.length), numCols);
+}
+
+/// The sparse authoring form: each `Placement` claims its rectangle at its own
+/// `(row, col)` (no cursor). Same first-writer-wins overlap handling, rowspan clamp,
+/// and implicit sparse-fill as the dense path, producing an identical `SlotGrid` — so
+/// both feed the one renderer. Grid dimensions are inferred from the max extents used.
+private SlotGrid resolveGrid(in Placement[] placements) @safe pure nothrow
+{
+    Anchor[] anchors;
+    bool[][] occ;
+    size_t[][] owner; // anchor index + 1; 0 == empty
+    size_t numRows, numCols;
+
+    void ensure(size_t r, size_t c) @safe pure nothrow
+    {
+        if (r >= occ.length)
+        {
+            occ.length = r + 1;
+            owner.length = r + 1;
+        }
+        if (c >= occ[r].length)
+        {
+            occ[r].length = c + 1;
+            owner[r].length = c + 1;
+        }
+    }
+
+    foreach (pl; placements)
+    {
+        const cs = pl.colSpan < 1 ? 1 : pl.colSpan;
+        const rs = pl.rowSpan < 1 ? 1 : pl.rowSpan;
+        const idx = anchors.length;
+        anchors ~= Anchor(pl.row, pl.col, rs, cs, pl.content, false);
+        foreach (dr; 0 .. rs)
+            foreach (dc; 0 .. cs)
+            {
+                ensure(pl.row + dr, pl.col + dc);
+                if (!occ[pl.row + dr][pl.col + dc]) // first-writer-wins on overlap
+                {
+                    occ[pl.row + dr][pl.col + dc] = true;
+                    owner[pl.row + dr][pl.col + dc] = idx + 1;
+                }
+            }
+        numRows = max(numRows, pl.row + rs);
+        numCols = max(numCols, pl.col + cs);
+    }
+
+    return finalizeGrid(anchors, occ, owner, max(numRows, occ.length), numCols);
+}
+
+/// Clamp any rowspan past the last row, fill every uncovered slot with an implicit
+/// empty anchor, and build the slot→anchor map. Shared by both `resolveGrid` overloads
+/// so dense and sparse inputs produce the same fully-populated (always renderable) grid.
+private SlotGrid finalizeGrid(Anchor[] anchors, bool[][] occ, size_t[][] owner,
+    size_t numRows, size_t numCols) @safe pure nothrow
+{
+    foreach (ref a; anchors)
         if (a.row + a.rowSpan > numRows)
             a.rowSpan = numRows - a.row;
 
@@ -601,6 +669,14 @@ string drawTable(Cell[][] cells, TableProps props = TableProps.init)
     return drawGrid(resolveGrid(cells), props);
 }
 
+/// Render a sparse `Placement[]` (order-independent cells naming their own
+/// `(row, col)` and extent) as a boxed table. Lowers to the same slot grid as the
+/// dense forms, so it renders identically. See `Placement`.
+string drawTable(Placement[] cells, TableProps props = TableProps.init)
+{
+    return drawGrid(resolveGrid(cells), props);
+}
+
 unittest
 {
     import sparkles.test_utils.string : outdent;
@@ -937,4 +1013,40 @@ version (unittest) private void checkRender(string actual, string expected)
         "│ a │ b │ c │\n" ~
         "│ d │   │   │\n" ~
         "╰───┴───┴───╯\n");
+}
+
+@("drawTable.sparse.matchesDense")
+@system unittest
+{
+    // The same table authored sparsely renders identically to the dense form, and
+    // placement order does not matter.
+    const dense = drawTable([
+            [Cell("Summary", colSpan: 2)],
+            [Cell("a"), Cell("b")],
+        ]);
+    assert(drawTable([
+            Placement(0, 0, "Summary", colSpan: 2),
+            Placement(1, 0, "a"),
+            Placement(1, 1, "b"),
+        ]) == dense);
+    // Reordered placements resolve the same (order-independent).
+    assert(drawTable([
+            Placement(1, 1, "b"),
+            Placement(1, 0, "a"),
+            Placement(0, 0, "Summary", colSpan: 2),
+        ]) == dense);
+}
+
+@("drawTable.sparse.gapsBecomeBlanks")
+@system unittest
+{
+    // A never-addressed slot becomes an implicit blank cell.
+    checkRender(drawTable([
+            Placement(0, 0, "a"),
+            Placement(1, 1, "d"),
+        ]),
+        "╭───┬───╮\n" ~
+        "│ a │   │\n" ~
+        "│   │ d │\n" ~
+        "╰───┴───╯\n");
 }
