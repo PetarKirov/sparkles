@@ -148,12 +148,15 @@ private struct SlotGrid
     size_t[] slotOwner; // [r*numCols + c] -> index into anchors
 }
 
-/// `string[][]` sugar → extent-1 `Cell`-equivalent rows for the resolver.
-private struct Cell
+/// A table cell for the dense authoring form `Cell[][]`. `colSpan`/`rowSpan` (default
+/// 1) make it cover a rectangle of grid slots; the slots it covers are **omitted**
+/// from the following cells of this and later rows (the placement cursor skips them).
+/// A plain `string[][]` is sugar for extent-1 cells.
+struct Cell
 {
-    string content;
-    size_t colSpan = 1;
-    size_t rowSpan = 1;
+    string content;    /// Cell text (may contain `\n`; wraps to the column width).
+    size_t colSpan = 1;/// Number of columns this cell spans.
+    size_t rowSpan = 1;/// Number of rows this cell spans.
 }
 
 private Cell[][] toCells(in string[][] rows) @safe pure nothrow
@@ -262,10 +265,6 @@ private size_t contentField(in Anchor a, in size_t[] w, size_t sepW) @safe pure 
         f += w[c];
     return f;
 }
-
-/// Which grid row band holds a (possibly rowspan) anchor's content. Top-align for
-/// now; the seam vertical alignment slots into later.
-private size_t contentBand(in Anchor a) @safe pure nothrow @nogc => a.row;
 
 /// Per-column content widths: per-column max of extent-1 anchors (== the legacy
 /// `columnWidths` base case), then grow member columns so every colspan cell fits.
@@ -480,9 +479,10 @@ private string[][] wrapCells(in SlotGrid g, in size_t[] w, in TableProps p)
     return result;
 }
 
-/// Per grid-row text height: the max wrapped-line count among the row's cells (≥ 1).
-/// Rowspan cells (`rowSpan >= 2`) are handled in the span phase; here every anchor is
-/// extent-1, so it contributes its lines to its own row.
+/// Per grid-row text height (≥ 1): the max wrapped-line count among extent-1 cells,
+/// then grown so every rowspan cell's lines fit across its bands' combined height
+/// (ascending by span; rows only grow, so one pass satisfies all — like the colspan
+/// width distribution).
 private size_t[] resolveRowHeights(in SlotGrid g, in string[][] lines) @safe pure nothrow
 {
     auto h = new size_t[g.numRows];
@@ -491,6 +491,32 @@ private size_t[] resolveRowHeights(in SlotGrid g, in string[][] lines) @safe pur
     foreach (i, ref a; g.anchors)
         if (a.rowSpan == 1)
             h[a.row] = max(h[a.row], lines[i].length);
+
+    size_t[] spanning;
+    foreach (i, ref a; g.anchors)
+        if (a.rowSpan >= 2)
+            spanning ~= i;
+    spanning.sort!((x, y) => g.anchors[x].rowSpan != g.anchors[y].rowSpan
+            ? g.anchors[x].rowSpan < g.anchors[y].rowSpan
+            : (g.anchors[x].row != g.anchors[y].row ? g.anchors[x].row < g.anchors[y].row
+                : g.anchors[x].col < g.anchors[y].col));
+    foreach (i; spanning)
+    {
+        const a = g.anchors[i];
+        const need = lines[i].length;
+        const k = a.rowSpan;
+        size_t cur = 0;
+        foreach (rr; a.row .. a.row + k)
+            cur += h[rr];
+        if (need > cur)
+        {
+            const deficit = need - cur;
+            const base = deficit / k;
+            const extra = deficit % k;
+            foreach (t; 0 .. k)
+                h[a.row + t] += base + (t < extra ? 1 : 0);
+        }
+    }
     return h;
 }
 
@@ -512,9 +538,15 @@ private string bodyRow(in SlotGrid g, in size_t[] w, in string[][] lines,
             const idx = owner(g, r, c);
             const a = g.anchors[idx];
             const f = contentField(a, w, sepW);
+            // This anchor's local content-line index at row r, text line t: the sum of
+            // the heights of its bands above r, plus t. For an extent-1 cell that is
+            // just t; a rowspan cell's content flows down across its stacked bands.
+            size_t li = t;
+            foreach (rr; a.row .. r)
+                li += heights[rr];
             out_ ~= ' ';
-            if (r == contentBand(a) && t < lines[idx].length)
-                alignField(out_, lines[idx][t], f, Align.left);
+            if (li < lines[idx].length)
+                alignField(out_, lines[idx][li], f, Align.left);
             else
                 foreach (_; 0 .. f)
                     out_ ~= ' ';
@@ -559,6 +591,14 @@ string drawTable(string[][] cells, TableProps props = TableProps.init)
 in (hasRectangularShape(cells))
 {
     return drawGrid(resolveGrid(toCells(cells)), props);
+}
+
+/// Render a dense `Cell[][]` (cells may carry `colSpan`/`rowSpan`) as a boxed table.
+/// Covered slots are omitted from the following cells (rows may be ragged); the
+/// placement cursor recovers their positions. See `Cell`.
+string drawTable(Cell[][] cells, TableProps props = TableProps.init)
+{
+    return drawGrid(resolveGrid(cells), props);
 }
 
 unittest
@@ -805,4 +845,96 @@ version (unittest) private void checkRender(string actual, string expected)
     // With no caps a long cell expands the column (no wrapping) — one body row.
     const rendered = drawTable([["a fairly long single cell", "x"]]);
     assert(rendered.splitLines.length == 3); // top + one row + bottom
+}
+
+@("drawTable.span.colSpanHeader")
+@system unittest
+{
+    // A colSpan-2 header wider than its two columns widens them evenly and drops the
+    // top ┬ under the span (bottom keeps ┴ where the body row splits).
+    checkRender(drawTable([
+            [Cell("Summary", colSpan: 2)],
+            [Cell("a"), Cell("b")],
+        ]),
+        "╭─────────╮\n" ~
+        "│ Summary │\n" ~
+        "│ a  │ b  │\n" ~
+        "╰────┴────╯\n");
+}
+
+@("drawTable.span.colSpanNarrow")
+@system unittest
+{
+    // A colSpan-2 cell narrower than its columns does not widen them; the top ┬ is
+    // still suppressed by the span, the bottom ┴ stays.
+    checkRender(drawTable([
+            [Cell("hi", colSpan: 2)],
+            [Cell("long"), Cell("wide")],
+        ]),
+        "╭─────────────╮\n" ~
+        "│ hi          │\n" ~
+        "│ long │ wide │\n" ~
+        "╰──────┴──────╯\n");
+}
+
+@("drawTable.span.rowSpan")
+@system unittest
+{
+    // A rowSpan-2 cell fills both bands; its right neighbour keeps the interior │ in
+    // both, and the ├/┤ only notch the right column when row separators are on.
+    checkRender(drawTable([
+            [Cell("L", rowSpan: 2), Cell("top")],
+            [Cell("bot")],
+        ]),
+        "╭───┬─────╮\n" ~
+        "│ L │ top │\n" ~
+        "│   │ bot │\n" ~
+        "╰───┴─────╯\n");
+}
+
+@("drawTable.span.rowSpanWithRowSeparators")
+@system unittest
+{
+    // With row separators, the interior rule notches around the rowSpan cell (┤ … ├
+    // become │ where the span crosses), leaving its column continuous.
+    checkRender(drawTable([
+            [Cell("L", rowSpan: 2), Cell("top")],
+            [Cell("bot")],
+        ], TableProps(rowSeparators: true)),
+        "╭───┬─────╮\n" ~
+        "│ L │ top │\n" ~
+        "│   ├─────┤\n" ~
+        "│   │ bot │\n" ~
+        "╰───┴─────╯\n");
+}
+
+@("drawTable.span.block")
+@system unittest
+{
+    // A 2×2 block anchored top-left, with two single cells filling the right column
+    // and a fully-split final row (no row separators, so no interior rule).
+    checkRender(drawTable([
+            [Cell("BB", colSpan: 2, rowSpan: 2), Cell("x")],
+            [Cell("y")],
+            [Cell("a"), Cell("b"), Cell("c")],
+        ]),
+        "╭───────┬───╮\n" ~
+        "│ BB    │ x │\n" ~
+        "│       │ y │\n" ~
+        "│ a │ b │ c │\n" ~
+        "╰───┴───┴───╯\n");
+}
+
+@("drawTable.span.raggedRows")
+@system unittest
+{
+    // Ragged rows: a short row's missing trailing cells become implicit blanks.
+    checkRender(drawTable([
+            [Cell("a"), Cell("b"), Cell("c")],
+            [Cell("d")],
+        ]),
+        "╭───┬───┬───╮\n" ~
+        "│ a │ b │ c │\n" ~
+        "│ d │   │   │\n" ~
+        "╰───┴───┴───╯\n");
 }
