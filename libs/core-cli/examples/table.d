@@ -6,8 +6,9 @@
 +/
 
 import sparkles.core_cli.ui.demo : Section, runDemo;
-import sparkles.core_cli.ui.table : drawTable;
+import sparkles.core_cli.ui.table : drawTable, Cell, Placement, TableProps, stylePresets;
 import sparkles.base.styled_template : styledText;
+import sparkles.base.text.width : Align;
 
 void main()
 {
@@ -97,6 +98,48 @@ void main()
                     [styledText(i"{green OK}"), "Short"],
                     [styledText(i"{yellow WARN}"), "Medium length text here"],
                 ].drawTable,
+            ),
+            Section(
+                header: "Column & Row Spans",
+                content: drawTable([
+                    [Cell("Quarterly Sales", colSpan: 3)],
+                    [Cell("Region"), Cell("Q1"), Cell("Q2")],
+                    [Cell("North"), Cell("1200"), Cell("1350")],
+                    [Cell("South"), Cell("98"), Cell("110")],
+                ], TableProps(
+                    columnAligns: [Align.left, Align.right, Align.right],
+                    rowSeparators: true,
+                )),
+            ),
+            Section(
+                header: "Per-Column Alignment",
+                content: drawTable([
+                    ["left", "center", "right"],
+                    ["a", "b", "c"],
+                    ["longer", "middle", "end"],
+                ], TableProps(columnAligns: [Align.left, Align.center, Align.right])),
+            ),
+            Section(
+                header: "Glyph Presets (double, ascii)",
+                content: drawTable([["x", "y"], ["1", "2"]],
+                    TableProps(glyphs: stylePresets["double"]))
+                    ~ drawTable([["x", "y"], ["1", "2"]],
+                        TableProps(glyphs: stylePresets["ascii"])),
+            ),
+            Section(
+                header: "Content Wrapping (maxWidth)",
+                content: drawTable([
+                    ["id", "description"],
+                    ["1", "A fairly long description that wraps to fit the width cap"],
+                ], TableProps(maxWidth: 40)),
+            ),
+            Section(
+                header: "Sparse Placement",
+                content: drawTable([
+                    Placement(0, 0, "diagonal"),
+                    Placement(1, 1, "layout"),
+                    Placement(2, 2, "cells"),
+                ]),
             ),
         ],
     );
