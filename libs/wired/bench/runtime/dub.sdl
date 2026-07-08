@@ -27,8 +27,8 @@ versions "BenchJsoniopipe"
 configuration "unittest" {
     // The benchmark is a set of `@benchmark unittest`s run through
     // sparkles:test-runner (`dub test -- --bench`, with `--perf` for hardware
-    // counters) — replacing the standalone app + silly + the private perf
-    // backend. Corpora load from `$WIRED_BENCH_DATA` at run time.
+    // counters)
+    // Corpora load from `$WIRED_BENCH_DATA` at run time.
     dependency "sparkles:test-runner" path="../../../.."
 
     dflags "-checkaction=context" "-allinst"

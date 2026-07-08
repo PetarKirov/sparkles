@@ -2,7 +2,11 @@
 	"fileVersion": 1,
 	"versions": {
 		"expected": "0.4.1",
+		"icu": {"path":"bindings/icu"},
+		"notcurses": {"path":"bindings/notcurses"},
+		"pyd": {"version":"bdba4ca50d0329780c5317c1a06f8afd4032535b","repository":"git+https://github.com/ariovistus/pyd.git"},
 		"silly": "1.1.1",
-		"sparkles": {"path":"../../../../"}
+		"sparkles": {"path":"../../../../"},
+		"utf8proc": {"path":"bindings/utf8proc"}
 	}
 }
