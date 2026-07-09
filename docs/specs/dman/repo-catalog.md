@@ -7,21 +7,32 @@ dependency cycle — scanning and cataloging sit above `VcsRepo`._
 
 ## Scan
 
-A marker-based walk that finds `.git` directories from one or more roots,
-honouring `.gitignore`, exclude globs, a max depth, and sensible default
-exclusions, run in parallel on the `event-horizon` loop. It reuses the existing
-gitignore-aware repo walker (`walkGitRepository` from the TUI-widgets tree).
-Worktrees created under the default `<repo>-<branch>` layout are discovered as
-ordinary repos and linked back to their main checkout by shared git-dir.
+A marker-based walk from one or more roots, honouring `.gitignore`, exclude
+globs, a max depth, and sensible default exclusions, run in parallel on the
+`event-horizon` loop. It reuses the existing gitignore-aware repo walker
+(`walkGitRepository` from the TUI-widgets tree). The marker set is **`.git` _and_
+`.jj/`** ([D8](./DECISIONS.md), [Designing for jj](./jj-model.md)): a colocated
+repo (both present) is deduped to **one** jj-authoritative `RepoRef`, and a
+non-colocated jj repo (`.jj/` only, its git store hidden at `.jj/repo/store/git`)
+would be missed by a `.git`-only scan. `.jj/repo` is a directory in a primary
+workspace but a file pointer in secondary workspaces (linked back to the
+primary); the walker never descends into `.jj/`. Worktrees under the default
+`<repo>-<branch>` layout are discovered as ordinary repos and linked to their
+main checkout (by shared git-dir, or by the shared `.jj/repo` store for jj
+workspaces).
 
 ## Catalog & registry
 
 ```d
+enum VcsKind { git, jj }
+
 struct RepoRef {
     string          path;              // canonical absolute path
     string          name;             // display name
+    VcsKind         backend;          // git | jj  (per-repo, from the marker)
+    bool            colocated;        // .jj/ beside .git/
     string[]        remotes;          // remote URLs (order-independent identity)
-    Nullable!string workspace;        // optional grouping (later)
+    Nullable!string group;            // optional grouping label (not a jj "workspace")
     SysTime         lastScanned;
 }
 ```

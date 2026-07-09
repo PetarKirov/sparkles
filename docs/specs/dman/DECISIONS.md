@@ -151,17 +151,31 @@ sparkles-idiomatically an ImportC binding to the bundled amalgamation (the
 
 ## D8 — VCS backend abstraction depth
 
-**Decision (Accepted — recommended default, 2026-07-09):** build a **minimal,
-Git-shaped `VcsRepo` interface** now — only v1's real operations, Git as the sole
-implementation, jj-aware naming but no speculative generalization.
+**Decision (Accepted, 2026-07-09):** a **capability-based (Design-by-Introspection)
+multi-backend `VcsRepo` abstraction**, designed _now_ from a deep read of jj's
+model — a common core both backends fill plus capability-gated optional operations
+(staging, operation-log/undo, first-class conflicts, workspace-stale, change-ids),
+with backend-pluggable output decode. **Git is v1's sole implementation**; jj lands
+at P3. Grounded in [Designing for Jujutsu](./jj-model.md).
 
-**Rationale:** jujutsu's model (bookmarks, colocated workspaces, change vs
-branch) is best abstracted against a concrete second backend, not guessed at.
-A focused interface shaped by real v1 needs avoids the wrong abstraction.
+**Rationale:** requested a jj research pass before committing to the abstraction.
+It showed jj diverges from git structurally (two commit identities, no current
+branch, no index, refs with 0..N targets, first-class conflicts, an operation
+log, workspaces ≠ worktrees) — so a naive fat git-shaped trait would bake in wrong
+assumptions, while a purely git-specific interface would force a large P3 rework.
+Capability-by-presence (the sparkles house idiom) resolves both: design the whole
+shape now from real jj knowledge, expose backend-specific power as detected
+capabilities. It also confirmed **subprocess, not `jj-lib`** ([D4](./DECISIONS.md))
+and validated [D5](./DECISIONS.md) — jj reads decode through `wired` from `-T
+json()` templates, the same `run!T` path as `gh --json`.
 
-**Implications:** the interface generalizes when the jj backend lands (P3); until
-then, avoid a premature multi-backend provider trait. See
-[VCS backend](./vcs-backend.md).
+**Implications:** the data model widens (opaque `commitId` + optional `changeId`;
+refs that may be unnamed/multi-target; per-remote bound-valued ahead/behind;
+capability-gated `staged`/conflicts/stale; nullable `currentBranch` + a working
+revision); the repo scanner keys on `.git` **and** `.jj/` with backend-kind
+tagging and colocated dedup; jj-only verbs (`op`/`undo`, workspace-stale,
+track/untrack) are capability-gated. (Supersedes the earlier provisional "minimal
+Git-shaped" default.) See [VCS backend § Designing for jj](./vcs-backend.md#designing-for-jj-the-p3-backend).
 
 ---
 
