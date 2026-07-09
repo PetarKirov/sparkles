@@ -448,6 +448,34 @@ private DriveResult driveErased(scope void delegate() runTimed, scope string del
     return DriveResult(ns, runAfter is null ? null : runAfter());
 }
 
+/// Whether the per-call timing loop should collect another sample. It stops once
+/// both the sample count and the time budget are met — except a sub-nanosecond op
+/// on a coarse clock can round every per-call delta to `0`, so `totalNs` never
+/// reaches the budget: once the sample count is met with the clock not advancing
+/// at all, the budget is unreachable and sampling stops (rather than spinning
+/// forever, the analogue of `measure`'s `iterations < 1UL << 40` cap).
+private bool keepSampling(size_t samples, long totalNs, in BenchConfig config)
+    @safe pure nothrow @nogc
+{
+    if (samples >= config.sampleCount && totalNs == 0)
+        return false;
+    return samples < config.sampleCount || totalNs < config.minSampleTime.total!"nsecs";
+}
+
+@("bench.keepSampling.zeroProgressTerminates")
+@safe pure nothrow @nogc
+unittest
+{
+    import core.time : msecs;
+
+    const config = BenchConfig(sampleCount: 32, minSampleTime: 5.msecs);
+    assert(keepSampling(0, 0, config));               // need samples
+    assert(keepSampling(32, 100, config));            // clock advancing, budget unmet
+    assert(!keepSampling(32, 0, config));             // zero progress → stop, no hang
+    assert(!keepSampling(32, 5.msecs.total!"nsecs", config)); // both met
+    assert(keepSampling(4, 0, config));               // count unmet → keep, even at 0 ns
+}
+
 /// A `Setup`/`Teardown` argument as a plain `void delegate()` (`null` when absent).
 /// A `@safe` delegate converts to the `@system` slot (the erased case is measured
 /// on the runner side, not from a `@safe` body); a delegate value passes through so
@@ -578,11 +606,11 @@ BenchStats measureCase(BenchContext* context, RegisteredCase c)
             return BenchStats(name: c.name, labels: c.labels, error: probe.error);
     }
 
-    // Per-call timing: collect until both the sample count and time budget met.
+    // Per-call timing: collect until both the sample count and time budget met
+    // (or the clock stalls at 0 ns — see `keepSampling`).
     long[] samples;
     long totalNs;
-    const minTotal = context.config.minSampleTime.total!"nsecs";
-    while (samples.length < context.config.sampleCount || totalNs < minTotal)
+    while (keepSampling(samples.length, totalNs, context.config))
     {
         const d = driveErased(c.runTimed, c.runAfter);
         if (d.error.length)
