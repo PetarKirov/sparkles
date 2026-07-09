@@ -1,34 +1,37 @@
 # `sparkles:dman` — TUI Shell
 
-_The interactive terminal UI — the biggest net-new piece of v1 (P2). Grounded in
-the sparkles `tui-libraries` + `ui-layout` research, which explicitly recommends
-a from-scratch immediate-mode framework, and in the prior-art interaction model.
-For where this sits, see [Architecture § TUI shell](./architecture.md#the-tui-shell--the-biggest-net-new-piece);
+_The interactive terminal UI — the biggest net-new piece of v1 (P2). Built on the
+sparkles `tui-libraries` + `ui-layout` research (a from-scratch cell-diff renderer
+with box-flow layout) and an **MVU / Elm core** ([D10](./DECISIONS.md)). For where
+this sits, see [Architecture § TUI shell](./architecture.md#the-tui-shell--the-biggest-net-new-piece);
 for the data it renders, see [VCS backend](./vcs-backend.md)._
 
-## Design center (adopted from the research)
+## Design center
 
-The sparkles TUI/layout research already picks a direction, and dman adopts it as
-its first consumer:
-
-- **Immediate-mode, built from scratch in D** — the app rebuilds the frame each
-  tick; the framework diffs and flushes. A C binding would forfeit `@nogc` / UFCS
-  / CTFE, and the research shows the whole thing is a few thousand lines.
-- **Double-buffer + cell-level diff** — render into a flat cell `Buffer`, diff
-  against the previous frame, emit only changed cells. Reuses the existing `@nogc`
-  grapheme/width/ANSI engine.
+- **MVU core, built from scratch in D** ([D10](./DECISIONS.md)) — the shell is a
+  `Model` (immutable state), a `Msg` sum type (every input / resize / async
+  completion), a **pure `update(Model, Msg) → Model`**, and a **pure
+  `view(Model) → Buffer`**. The runtime renders `view`, waits for an event, maps
+  it to a `Msg`, and folds it in. Pure `update`/`view` make the whole shell
+  **unit-testable** — drive a `Msg` sequence, assert on the `Model` or the frame —
+  matching dman's capability/test-double posture.
+- **Immediate-mode, cell-diff rendering** — `view` rebuilds the frame each tick
+  into a flat cell `Buffer`; the framework diffs against the previous frame and
+  flushes only changed cells. Reuses the existing `@nogc` grapheme/width/ANSI
+  engine.
 - **Box-flow layout, not a constraint solver** — Ratatui-style `Rect` splitting +
   i3-style `splith`/`splitv`/`tabbed` modes, borrowing Taffy's
   `Length`/`Percent`/`Auto`/`Fr` sizing vocabulary. A constraint solver
   (Cassowary/Kiwi) solves cross-hierarchy alignment dman does not need.
-- **Does not own the event loop** — dman drives it (on `event-horizon`; see below).
+- **Does not own the event loop** — dman drives it (on `event-horizon`; see
+  below), feeding events in as `Msg`s.
 
-## `sparkles:tui` — the framework ([D10](./DECISIONS.md))
+## `sparkles:tui` — the render substrate
 
-A new package, phased; dman v1 needs Phases 1–3. It builds on `core-cli`'s
-existing `@nogc` grapheme/width renderers (the one-shot `drawTree`/`drawTable`/
-`wrap` are adapted to target a cell `Buffer` instead of a string — immediate-mode
-is their natural extension).
+A new package, phased; dman v1 needs Phases 1–3. The MVU core sits on a cell-diff
+render substrate that reuses `core-cli`'s `@nogc` grapheme/width renderers (the
+one-shot `drawTree`/`drawTable`/`wrap` are adapted to target a cell `Buffer`
+instead of a string — a `view` is their natural home).
 
 ```d
 struct Cell   { SmallBuffer!(char, 8) grapheme; CellStyle style; Color fg, bg; }
@@ -36,7 +39,7 @@ struct Buffer { Cell[] cells; ushort cols, rows; }        // flat grid, SmallBuf
 
 struct Terminal(Backend) {                                // Backend = ANSI writer / test sink
     Buffer current, previous;
-    void draw(scope void delegate(ref Buffer) render) {
+    void draw(scope void delegate(ref Buffer) render) {   // render = a view(model) call
         render(current);
         current.diffFlush(previous, backend);             // emit only changed cells
         swap(current, previous);
@@ -48,9 +51,10 @@ enum isWidget(T) = is(typeof((T w, Rect area, ref Buffer b) => w.render(area, b)
 // optional refinements: isStatefulWidget!T, hasScrollable!T, hasFocusable!T
 ```
 
-**Widget state is three-layer** (from the tree-view case study): immutable data,
-a separate `State` (selection / opened set / scroll offset), and a renderer.
-`flatten` is a pure free function over flat, index-based nodes:
+**Widget state is three-layer** (from the tree-view case study): immutable data, a
+separate `State` (selection / opened set / scroll offset), and a renderer. Under
+MVU the `State` structs live **inside the `Model`**; `flatten` is a pure free
+function over flat, index-based nodes:
 
 ```d
 struct TreeNode  { string label; int parent, firstChild, nextSibling; }  // cache-friendly, @nogc
@@ -62,38 +66,45 @@ auto flatten(scope const TreeNode[] nodes, scope const TreeState st);     // →
 handles scroll. Layout is box-flow combinators (`vBox`/`hBox`/`split` with
 `Length`/`Min`/`Ratio`).
 
-## The dman shell — interaction model
+## The dman shell — MVU
 
-State adapts the prior art, with its implicit flag-cascade promoted to an explicit
-priority-ordered `InputMode`:
+The shell is a `Model`, a `Msg` sum type, a pure `update`, and a pure `view`:
 
 ```d
-enum InputMode { normal, search, confirm, help }          // priority: help > confirm > search > normal
-
-struct DmanTui {
-    TreeState        tree;         // repos → worktrees → branches
+struct Model {
+    TreeState        tree;         // repos → worktrees → branches (widget states live here)
     size_t           cursor;       // into the FILTERED view
     bool[BranchId]   marks;        // multi-select, indexes the BASE list
-    size_t           scroll;
-    ushort           viewportH;    // written by the renderer, read by scroll math next frame
+    ushort           viewportH;    // reported back by view, read by update next frame
     FilterMode       filter;
     SortMode         sort;
     SearchState      search;       // query + caret + autocomplete
-    InputMode        mode;
+    InputMode        mode;         // normal | search | confirm | help (a field, not a cascade)
     ActionLogEntry[] log;          // dry-run / delete results
     bool             quit;
 }
+
+// every input, resize, and async completion is a message
+alias Msg = SumType!(Key, Resize, BranchesLoaded, ScanDone, PrFetched, Tick /*, … */);
+
+Model update(Model m, Msg msg);          // pure; dispatches on m.mode
+void  view(in Model m, return ref Buffer b);  // pure render of the model to the frame
 ```
 
-**Screen regions** (a dynamic vertical layout so optional bars collapse):
+`update` is where the interaction lives: it dispatches on `mode` (so a key means
+different things in `normal` vs `search` vs a `confirm` modal), transitions the
+model, and folds in async results (`BranchesLoaded`, `ScanDone`, `PrFetched`)
+without a separate code path.
+
+**`view` — screen regions** (a dynamic vertical layout so optional bars collapse):
 header → optional search bar → optional filter tabs → content (the repo/worktree/
 branch tree + a detail pane, e.g. a 70/30 split) → optional action log → footer;
 modals (confirm, help) `Clear` a centered rect and render on top. The cursor row
 and marked rows are highlighted; scrolling is edge-triggered off `viewportH`.
 
-**Keymap** (per-mode tables, adapting the prior art): `j`/`k` + arrows navigate,
-`Space` marks, `a` select-all-safe, `c` clear, `f` toggle force, `d` toggle
-dry-run, `s` cycle sort, `Tab`/`1`–`4` filter, `/` search, `Enter` confirm,
+**Keymap** (a key `Msg` is interpreted per `mode` in `update`): `j`/`k` + arrows
+navigate, `Space` marks, `a` select-all-safe, `c` clear, `f` toggle force, `d`
+toggle dry-run, `s` cycle sort, `Tab`/`1`–`4` filter, `/` search, `Enter` confirm,
 `?` help, `q`/`Esc` quit/back.
 
 ## Destructive-op safety & selection
@@ -135,34 +146,34 @@ dry-run, `s` cycle sort, `Tab`/`1`–`4` filter, `/` search, `Enter` confirm,
 
 ## Event loop on `event-horizon`
 
-The loop is driven by `event-horizon`'s `runOnce`, **not** a blocking poll — the
-dman-specific improvement over the prior art:
+The MVU runtime is driven by `event-horizon`'s `runOnce`, **not** a blocking
+poll — the dman-specific improvement over the prior art:
 
 ```d
-// schematic — the loop multiplexes input, timers, resize, and async completions
+// schematic — the loop turns inputs, timers, resize, and async completions into Msgs
 env.run((ref Sched s) {
-    // stdin readable via the ring → decode keys/mouse → tui.dispatch(ev)
-    // SIGWINCH via signals → tui.relayout()
-    // concurrent git / scan / PR / watch completions feed tui state
-    // redraw on: input | resize | state change | a capped tick, then diff+flush
+    // stdin readable via the ring → decode keys/mouse → Msg
+    // SIGWINCH via signals → Resize Msg;  concurrent git/scan/PR/watch → *Loaded Msgs
+    // model = update(model, msg);  then draw(view(model)) → diff + flush
 });
 ```
 
-Because async work runs _on the same loop_, the UI stays responsive while
-branches load, a scan runs, or PR status is fetched — none of it blocks the
-frame. Setup/teardown bracket the loop (raw-mode + alternate-screen enter/exit;
-`SIGWINCH` → resize → relayout; a single `quit` flag exits).
+Because async work runs _on the same loop_ and arrives as ordinary `Msg`s, the UI
+stays responsive while branches load, a scan runs, or PR status is fetched — none
+of it blocks the frame, and there is no separate async-vs-input path. Setup/
+teardown bracket the loop (raw-mode + alternate-screen enter/exit; `SIGWINCH` →
+resize; `model.quit` exits).
 
 ## Phasing (dman-relevant)
 
-- **P2a** — `sparkles:tui` core: `Cell`/`Buffer`/`Backend`/`Terminal`
+- **P2a** — `sparkles:tui` render substrate: `Cell`/`Buffer`/`Backend`/`Terminal`
   double-buffer + cell-diff, and the box-flow layout combinators.
 - **P2b** — core widgets: `List`+`ListState`, `Table`+`TableState`,
   `Tree`+`TreeState`, `Viewport`, `Paragraph` — adapting the existing one-shot
   renderers to write into a `Buffer`.
-- **P2c** — the dman shell: app state, `InputMode`, keymap, panes, and modals on
-  the `event-horizon` loop; the branch-management UX (classification, multi-select
-  safe/force delete, dry-run, action log, filter/sort/search).
-- **Deferred** — an optional MVU overlay (pure `update` + a message `SumType`) and
-  reactive/incremental rendering as optimizations; mouse; the Kitty keyboard
-  protocol. The research keeps immediate-mode the core and these as opt-in layers.
+- **P2c** — the dman shell as **MVU**: the `Model`, the `Msg` sum type, pure
+  `update`/`view`, panes, and modals on the `event-horizon` loop; the
+  branch-management UX (classification, multi-select safe/force delete, dry-run,
+  action log, filter/sort/search).
+- **Deferred** — reactive/incremental rendering (partial `view` recompute) as an
+  optimization; mouse; the Kitty keyboard protocol.
