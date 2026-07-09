@@ -24,6 +24,7 @@ import sparkles.test_runner.model : Test, TestLocation, TestResult, Thrown;
 private enum bool hasCoreCliUi = __traits(compiles, {
     import sparkles.core_cli.ui.osc_link : oscLink;
     import sparkles.core_cli.ui.table : drawTable;
+    import sparkles.core_cli.ui.progress : ProgressLine;
 });
 
 /// Likewise for `core-cli`'s terminal-size query, used to width-truncate result
@@ -393,33 +394,33 @@ unittest
 /// per distinct `(unit, mode)`, and `--perf` counters add IPC, instructions/iter,
 /// and branch/cache miss-rate columns — both grown only when present, with an em
 /// dash where a row lacks a value. A row with an `error` (a case whose `after`
-/// reported failure) renders the message in place of its timings. Rendered with
-/// `core-cli`'s `drawTable` when available, plain space-aligned columns otherwise.
-string formatBenchTable(in BenchStats[] rows, bool colored, string metricFilter = null) @system // drawTable is @system
+/// reported failure) renders the message in place of its timings.
+///
+/// Grouping and sorting are orthogonal. `sortBy` (`"name"`, a metric column
+/// name, or empty/`"median/iter"`) orders rows. `groupBy` (a `--group-by` spec:
+/// comma-separated name-segment indices) splits the output into one table **per
+/// group**: each is titled `benchmark: <group>` over an `implementation:` stub
+/// column that lists just the varying segment(s) (the shared group prefix is
+/// dropped — DRY), and rows are ordered within the group by `sortBy`. Empty
+/// `groupBy` renders the single flat table (byte-identical to the legacy form).
+/// See `sparkles.test_runner.metrics.sortOrder`. Rendered with `core-cli`'s
+/// `drawTable` when available, plain space-aligned columns otherwise.
+string formatBenchTable(in BenchStats[] rows, bool colored, string metricFilter = null,
+    string sortBy = null, string groupBy = null) @system // drawTable is @system
 {
-    import core.time : nsecs;
-    import std.conv : to;
+    import sparkles.test_runner.metrics : groupKeyOf, parseGroupSegments, sortOrder,
+        variantLabel, visibleMetrics;
 
-    import sparkles.test_runner.metrics : formatCell, rowCells, visibleMetrics;
+    const segs = parseGroupSegments(groupBy);
+    auto order = sortOrder(rows, sortBy, segs);
 
-    static string ns(double value) @safe
-    {
-        import std.format : format;
-        import std.math.rounding : lrint;
-
-        // Sub-microsecond values keep fractional nanoseconds (fast operations
-        // are often < 1ns/iter); larger ones use the µs/ms/s auto-units.
-        return value < 1_000
-            ? format!"%.2fns"(value)
-            : formatDuration(nsecs(value.lrint));
-    }
-
-    // The visible metric columns (client + perf) via the metric catalog; the
-    // default (null) filter reproduces the legacy column set byte-for-byte.
+    // The visible metric columns (client + perf) via the metric catalog.
+    // Row order doesn't affect column selection; the default (null) filter
+    // reproduces the legacy column set byte-for-byte.
     auto columns = visibleMetrics(rows, metricFilter);
 
-    string[] header = [
-        render(colored, i"{bold benchmark}"),
+    // The fixed numeric headers plus one label per visible metric column.
+    string[] valueHeaders = [
         render(colored, i"{bold iters}"),
         render(colored, i"{bold median/iter}"),
         render(colored, i"{bold ±dev}"),
@@ -427,30 +428,39 @@ string formatBenchTable(in BenchStats[] rows, bool colored, string metricFilter 
         render(colored, i"{bold max}"),
     ];
     foreach (ref col; columns)
-        header ~= render(colored, i"{bold $(col.header)}");
+        valueHeaders ~= render(colored, i"{bold $(col.header)}");
 
-    const totalCols = header.length;
+    const totalCols = 1 + valueHeaders.length; // + the stub (name/implementation) column
 
-    string[][] cells = [header];
-    foreach (ref row; rows)
+    // Column 0 (the stub) is textual; every value column is numeric, so
+    // right-align them, with the four timing columns aligned on the decimal
+    // point (same-unit values line up; mixed units still read right).
+    auto aligns = new Align[totalCols];
+    aligns[] = Align.right;
+    aligns[0] = Align.left;
+    aligns[2 .. 6] = Align.decimal;
+
+    // The value cells of one row (everything right of the stub column): timings
+    // then metric cells, or — for an error row — the message padded with dashes.
+    string[] valueCells(in BenchStats row) @system
     {
+        import std.conv : to;
+        import sparkles.test_runner.metrics : formatCell, rowCells;
+
         if (row.error.length)
         {
-            // Error row: the message stands in for the timings; dashes elsewhere.
-            string[] errCols = [row.name, "—", render(colored, i"{red $(row.error)}")];
-            while (errCols.length < totalCols)
+            string[] errCols = ["—", render(colored, i"{red $(row.error)}")];
+            while (errCols.length < valueHeaders.length)
                 errCols ~= "—";
-            cells ~= errCols;
-            continue;
+            return errCols;
         }
 
         string[] cols = [
-            row.name,
             row.iterations.to!string,
-            ns(row.nsPerIterMedian),
-            ns(row.nsPerIterDeviation),
-            ns(row.nsPerIterMin),
-            ns(row.nsPerIterMax),
+            benchNs(row.nsPerIterMedian),
+            benchNs(row.nsPerIterDeviation),
+            benchNs(row.nsPerIterMin),
+            benchNs(row.nsPerIterMax),
         ];
         auto rc = rowCells(row);
         foreach (ref col; columns)
@@ -464,18 +474,44 @@ string formatBenchTable(in BenchStats[] rows, bool colored, string metricFilter 
                 }
             cols ~= cell;
         }
-        cells ~= cols;
+        return cols;
     }
 
-    // Column 0 (benchmark name) is textual; every other column is numeric —
-    // timings, iteration counts, and metric values — so right-align them, with
-    // the four timing columns aligned on the decimal point (same-unit values
-    // line up; mixed units still read right).
-    auto aligns = new Align[totalCols];
-    aligns[] = Align.right;
-    aligns[0] = Align.left;
-    aligns[2 .. 6] = Align.decimal;
-    return renderCells(cells, aligns, headerRows: 1);
+    // Ungrouped: the single flat table, stub column headed "benchmark".
+    if (segs.length == 0)
+    {
+        string[][] cells = [render(colored, i"{bold benchmark}") ~ valueHeaders];
+        foreach (idx; order)
+            cells ~= rows[idx].name ~ valueCells(rows[idx]);
+        return renderCells(cells, aligns, headerRows: 1);
+    }
+
+    // Grouped: one table per contiguous run of equal group key. Each table's
+    // stub header spans two rows — `benchmark: <group>` over `implementation:` —
+    // and each data row's stub is just the varying segment(s).
+    string result;
+    size_t i = 0;
+    while (i < order.length)
+    {
+        const key = groupKeyOf(rows[order[i]].name, segs);
+        GridCell[][] grid = [
+            // Header band: a rowspan-2 stub cell, value headers spanning it too.
+            [GridCell(render(colored, i"{dim benchmark:} {bold $(key)}") ~ "\n"
+                    ~ render(colored, i"{dim implementation:}"), rowSpan: 2)]
+                ~ toGridRow(valueHeaders, rowSpan: 2),
+            [], // the second header row is fully covered by the rowspans above
+        ];
+        while (i < order.length && groupKeyOf(rows[order[i]].name, segs) == key)
+        {
+            const row = rows[order[i]];
+            grid ~= GridCell(variantLabel(row.name, segs)) ~ toGridRow(valueCells(row));
+            i++;
+        }
+        if (result.length)
+            result ~= "\n";
+        result ~= renderCellGrid(grid, aligns, headerRows: 2);
+    }
+    return result;
 }
 
 @("formatBenchTable.metricColumns")
@@ -506,6 +542,32 @@ unittest
     const filtered = formatBenchTable([row], false, "ipc,cycles");
     assert(filtered.canFind("IPC") && filtered.canFind("cycles/iter"));
     assert(!filtered.canFind("B/s") && !filtered.canFind("cache-miss"));
+}
+
+@("formatBenchTable.grouped")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.string : indexOf;
+
+    BenchStats[3] rows;
+    rows[0] = BenchStats(name: "asdf/canada/parse", iterations: 1, nsPerIterMedian: 30);
+    rows[1] = BenchStats(name: "mir-ion/canada/parse", iterations: 1, nsPerIterMedian: 10);
+    rows[2] = BenchStats(name: "asdf/twitter/parse", iterations: 1, nsPerIterMedian: 20);
+
+    // --group-by=1,2 → one table per (dataset, op); the stub header carries the
+    // group title and an `implementation:` label, and rows list just the engine.
+    const rendered = formatBenchTable(rows, false, null, null, "1,2");
+    assert(rendered.canFind("benchmark: canada/parse"));
+    assert(rendered.canFind("benchmark: twitter/parse"));
+    assert(rendered.canFind("implementation:"));
+    // The group prefix is dropped from the data column (DRY): engine name only.
+    assert(rendered.canFind("mir-ion") && !rendered.canFind("mir-ion/canada"));
+    // Two tables → two top borders.
+    assert(rendered.indexOf("╭") != rendered.indexOf("╭", rendered.indexOf("╭") + 1));
+    // Within the canada group, the faster engine (mir-ion, 10) precedes asdf (30).
+    assert(rendered.indexOf("mir-ion") < rendered.indexOf("asdf"));
 }
 
 /// The `--list-metrics` report: every catalog metric with its column label,
@@ -549,6 +611,76 @@ package string renderCells(
     }
     else
         return alignColumns(cells, aligns);
+}
+
+/// A duration/count formatted for a benchmark timing column: sub-microsecond
+/// values keep fractional nanoseconds (fast operations are often < 1ns/iter),
+/// larger ones use the µs/ms/s auto-units.
+private string benchNs(double value) @safe
+{
+    import core.time : nsecs;
+    import std.format : format;
+    import std.math.rounding : lrint;
+
+    return value < 1_000
+        ? format!"%.2fns"(value)
+        : formatDuration(nsecs(value.lrint));
+}
+
+/// A span-capable table cell, decoupled from `core-cli`'s `Cell` so the type is
+/// usable even in builds without `core-cli` (where it degrades to plain text).
+package struct GridCell
+{
+    string content;
+    size_t colSpan = 1;
+    size_t rowSpan = 1;
+}
+
+/// Lifts a row of plain strings to `GridCell`s, all sharing `rowSpan` (used to
+/// make value headers span the two-row group-table header band).
+private GridCell[] toGridRow(in string[] contents, size_t rowSpan = 1) @safe
+{
+    import std.algorithm.iteration : map;
+    import std.array : array;
+
+    return contents.map!(c => GridCell(c, rowSpan: rowSpan)).array;
+}
+
+/// Renders a span-capable `GridCell[][]` grid via `core-cli`'s `drawTable` when
+/// available (honoring spans, `headerRows`, and per-column alignment), or a
+/// plain space-aligned fallback that ignores spans otherwise.
+private string renderCellGrid(GridCell[][] grid, in Align[] aligns, size_t headerRows) @system
+{
+    static if (hasCoreCliUi)
+    {
+        import sparkles.core_cli.ui.table : Cell, drawTable, TableProps;
+
+        auto cells = new Cell[][](grid.length);
+        foreach (r, row; grid)
+        {
+            cells[r] = new Cell[row.length];
+            foreach (c, gc; row)
+                cells[r][c] = Cell(gc.content, colSpan: gc.colSpan, rowSpan: gc.rowSpan);
+        }
+
+        return drawTable(cells, TableProps(headerRows: headerRows, columnAligns: aligns.dup));
+    }
+    else
+    {
+        // No span support in the fallback: emit each cell's text, dropping empty
+        // (fully covered) rows so the plain output stays rectangular.
+        string[][] flat;
+        foreach (row; grid)
+        {
+            if (row.length == 0)
+                continue;
+            string[] r;
+            foreach (gc; row)
+                r ~= gc.content;
+            flat ~= r;
+        }
+        return alignColumns(flat);
+    }
 }
 
 /// The `--ctfe-trace` report: compile-time cost of each `@ctfe` test.
@@ -656,4 +788,117 @@ unittest
     assert(alignColumns([["1.5"], ["12.25"]], [Align.decimal]) ==
         "  1.5\n" ~
         "12.25\n");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Live benchmark progress (stderr, POSIX)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Whether a live spinner should animate: stderr is an interactive terminal and
+/// colours aren't disabled (`--no-colours` / `$NO_COLOR`). POSIX-only — `false`
+/// elsewhere. Independent of stdout, so results piped to a file still show
+/// progress on the terminal.
+package bool stderrIsTty(bool noColours)
+{
+    import std.process : environment;
+
+    if (noColours || environment.get("NO_COLOR", "").length != 0)
+        return false;
+    version (Posix)
+    {
+        import core.sys.posix.unistd : isatty, STDERR_FILENO;
+
+        return isatty(STDERR_FILENO) != 0;
+    }
+    else
+        return false;
+}
+
+/// Raw, unbuffered write to stderr's fd — `@nogc nothrow` (unlike
+/// `std.stdio.stderr.write`), so it is callable from the `@safe nothrow @nogc`
+/// progress hook. No-op on non-POSIX.
+private void writeStderr(scope const(char)[] s) @trusted nothrow @nogc
+{
+    version (Posix)
+    {
+        import core.sys.posix.unistd : write, STDERR_FILENO;
+
+        if (s.length)
+            cast(void) write(STDERR_FILENO, s.ptr, s.length);
+    }
+}
+
+/// `s` truncated to at most `maxBytes`, backing off any partial trailing UTF-8
+/// sequence (continuation bytes are `0b10xxxxxx`). Bounds a pathological case
+/// name so the redrawn spinner line can't blow far past the terminal width.
+private const(char)[] clampBytes(return scope const(char)[] s, size_t maxBytes)
+    @safe pure nothrow @nogc
+{
+    if (s.length <= maxBytes)
+        return s;
+    size_t n = maxBytes;
+    while (n > 0 && (s[n] & 0xC0) == 0x80)
+        n--;
+    return s[0 .. n];
+}
+
+/// Live single-line benchmark progress on stderr: redraws
+/// `⠹ 12/40 mir-ion/canada/parse` in place as each case begins. `tick` is the
+/// `@safe nothrow @nogc` seam handed to `runBenchmark` as `onCaseStart` (so it
+/// never constrains a benchmark body's attributes); it reuses `core-cli`'s
+/// `ProgressLine` when available and is a no-op without `core-cli` (base's own
+/// bench build) or when `!active`.
+package struct BenchProgress
+{
+    import core.time : MonoTime;
+
+    size_t total;            /// case denominator from the enumerate pass
+    bool active;             /// stderr is an interactive tty (colours on)
+    private size_t done;
+    private size_t frame;
+    private MonoTime started;
+
+    /// Advance to the next case and redraw the line.
+    void tick(scope const(char)[] name) @safe nothrow @nogc
+    {
+        if (!active)
+            return;
+        done++;
+        frame++;
+
+        static if (hasCoreCliUi)
+        {
+            import sparkles.base.smallbuffer : SmallBuffer;
+            import sparkles.base.term_control : CtlSeq;
+            import sparkles.core_cli.ui.progress : ProgressLine;
+
+            if (started == MonoTime.init)
+                started = MonoTime.currTime;
+            const shown = done > total ? done : total; // never render done > total
+
+            SmallBuffer!(char, 256) buf;
+            buf ~= cast(string) CtlSeq.carriageReturn;
+            buf ~= cast(string) CtlSeq.eraseLine;
+            auto line = ProgressLine(frame, done, shown, true, MonoTime.currTime - started);
+            line.toString(buf);
+            buf ~= ' ';
+            buf ~= clampBytes(name, 80);
+            writeStderr(buf[]);
+        }
+    }
+
+    /// Erase the spinner line (before printing a table, and at the end).
+    void clear() @safe nothrow @nogc
+    {
+        if (!active)
+            return;
+        static if (hasCoreCliUi)
+        {
+            import sparkles.base.term_control : CtlSeq;
+
+            enum eraseSeq = cast(string) CtlSeq.carriageReturn
+                ~ cast(string) CtlSeq.eraseLine;
+            writeStderr(eraseSeq);
+        }
+    }
 }

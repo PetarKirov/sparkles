@@ -235,6 +235,231 @@ MetricCell[] rowCells(in BenchStats row) @safe pure nothrow
     return cells;
 }
 
+/// The sort key's value for `--sort-by`: `"name"` compares the benchmark name;
+/// anything else looks up that metric cell's `value` via `rowCells` (`nan` when
+/// the row lacks it, e.g. an error row or a column another row doesn't carry).
+private double sortValue(in BenchStats row, string sortBy) @safe pure nothrow
+{
+    foreach (ref c; rowCells(row))
+        if (c.name == sortBy)
+            return c.value;
+    return double.nan;
+}
+
+/// Parses a `--group-by` spec — a comma-separated list of 0-based segment
+/// indices into the `/`-delimited benchmark name — into those indices. Blank
+/// and non-numeric tokens are skipped, so `""` (the default) yields no segments
+/// = no grouping. E.g. `"1,2"` groups `"engine/dataset/op"` names by
+/// `(dataset, op)`, leaving `engine` as the compared variable.
+size_t[] parseGroupSegments(string spec) @safe
+{
+    import std.algorithm.iteration : splitter;
+    import std.conv : ConvException, to;
+
+    size_t[] segments;
+    foreach (token; spec.splitter(','))
+    {
+        if (token.length == 0)
+            continue;
+        try
+            segments ~= token.to!size_t;
+        catch (ConvException)
+        {
+        }
+    }
+    return segments;
+}
+
+@("metrics.parseGroupSegments.indicesAndJunk")
+@safe
+unittest
+{
+    assert(parseGroupSegments("") == []);
+    assert(parseGroupSegments("1,2") == [1, 2]);
+    assert(parseGroupSegments("0, ,x,3") == [0, 3]); // blanks/non-numeric skipped
+}
+
+/// The group key of a benchmark `name`: the selected `/`-delimited `segments`
+/// joined with `/`. `segments` empty → `""` (every row in one group = no
+/// grouping). A segment index past the name's end contributes an empty part.
+string groupKeyOf(string name, in size_t[] segments) @safe
+{
+    import std.array : split;
+
+    if (segments.length == 0)
+        return "";
+    auto parts = name.split('/');
+    string key;
+    foreach (n, s; segments)
+    {
+        if (n)
+            key ~= "/";
+        if (s < parts.length)
+            key ~= parts[s];
+    }
+    return key;
+}
+
+/// The variant (implementation) label of a benchmark `name` under grouping: the
+/// `/`-delimited segments *not* in `segments`, joined with `/`. For
+/// `"engine/dataset/op"` grouped by `[1, 2]` this is `"engine"` — the varying
+/// dimension, with the shared group prefix dropped (DRY, since the group name is
+/// shown once in the table title). Falls back to the whole `name` when nothing
+/// is left (e.g. every segment is a group segment).
+string variantLabel(string name, in size_t[] segments) @safe
+{
+    import std.algorithm.searching : canFind;
+    import std.array : split;
+
+    auto parts = name.split('/');
+    string label;
+    foreach (i, part; parts)
+        if (!segments.canFind(i))
+            label ~= label.length ? "/" ~ part : part;
+    return label.length ? label : name;
+}
+
+@("metrics.variantLabel.dropsGroupSegments")
+@safe
+unittest
+{
+    assert(variantLabel("asdf/canada/parse", [1, 2]) == "asdf");
+    assert(variantLabel("a/b/c", [1]) == "a/c");
+    assert(variantLabel("solo", [0]) == "solo"); // nothing left → whole name
+}
+
+@("metrics.groupKeyOf.selectsSegments")
+@safe
+unittest
+{
+    assert(groupKeyOf("asdf/twitter/parse", [1, 2]) == "twitter/parse");
+    assert(groupKeyOf("asdf/twitter/parse", []) == "");
+    assert(groupKeyOf("asdf/twitter/parse", [0]) == "asdf");
+    assert(groupKeyOf("no-slash", [1]) == ""); // index past the end → empty part
+}
+
+/// The display order for benchmark `rows`, as a permutation of `[0 .. rows.length)`
+/// — an index array rather than a copied/re-sorted `BenchStats[]`, since `BenchStats`
+/// carries mutable slice fields (`metrics`, nested `syscalls.counts`) that a `const`
+/// row can't cheaply detach from.
+///
+/// Grouping and sorting are orthogonal. `groupSegments` (from `parseGroupSegments`)
+/// partitions rows by the named `/`-delimited name segments and keeps each group
+/// contiguous, with groups ordered by their key (alphabetical); empty = no grouping.
+/// `sortBy` then orders rows *within* each group: `"name"` (alphabetical),
+/// empty/`"median/iter"` (ascending median ns/iter — the default), or any other
+/// metric column name (ascending value, via `rowCells`; rows missing it sort last).
+/// Ties keep discovery order (stable sort).
+size_t[] sortOrder(in BenchStats[] rows, string sortBy, in size_t[] groupSegments = null) @safe
+{
+    import std.algorithm.mutation : SwapStrategy;
+    import std.algorithm.sorting : sort;
+    import std.array : array;
+    import std.math.traits : isNaN;
+    import std.range : iota;
+
+    // The within-group comparator selected by `sortBy`.
+    bool within(size_t i, size_t j)
+    {
+        if (sortBy == "name")
+            return rows[i].name < rows[j].name;
+        if (sortBy.length == 0 || sortBy == "median/iter")
+            return rows[i].nsPerIterMedian < rows[j].nsPerIterMedian;
+        const vi = sortValue(rows[i], sortBy), vj = sortValue(rows[j], sortBy);
+        return !isNaN(vi) && (isNaN(vj) || vi < vj);
+    }
+
+    // Precompute group keys (all `""` when not grouping → the group comparison
+    // is a no-op and `within` alone decides the order).
+    auto keys = new string[rows.length];
+    foreach (k, ref row; rows)
+        keys[k] = groupKeyOf(row.name, groupSegments);
+
+    auto order = iota(rows.length).array;
+    order.sort!((i, j) {
+        if (keys[i] != keys[j])
+            return keys[i] < keys[j];
+        return within(i, j);
+    }, SwapStrategy.stable);
+    return order;
+}
+
+@("metrics.sortOrder.nameAndMedian")
+@safe
+unittest
+{
+    import std.algorithm.iteration : map;
+    import std.array : array;
+
+    BenchStats b, a;
+    a.name = "b-slow";
+    a.nsPerIterMedian = 20;
+    b.name = "a-fast";
+    b.nsPerIterMedian = 10;
+    const rows = [a, b];
+
+    auto names(string sortBy) => sortOrder(rows, sortBy).map!(i => rows[i].name).array;
+
+    assert(names("name") == ["a-fast", "b-slow"]);
+    assert(names(null) == ["a-fast", "b-slow"]);
+    assert(names("median/iter") == ["a-fast", "b-slow"]);
+}
+
+@("metrics.sortOrder.groupByThenSortWithin")
+@safe
+unittest
+{
+    import std.algorithm.iteration : map;
+    import std.array : array;
+
+    // "engine/dataset/op" rows; group by (dataset, op) = segments [1, 2].
+    BenchStats[4] rows;
+    rows[0] = BenchStats(name: "asdf/twitter/parse", nsPerIterMedian: 30);
+    rows[1] = BenchStats(name: "mir-ion/canada/parse", nsPerIterMedian: 10);
+    rows[2] = BenchStats(name: "mir-ion/twitter/parse", nsPerIterMedian: 20);
+    rows[3] = BenchStats(name: "asdf/canada/parse", nsPerIterMedian: 40);
+
+    auto names(string sortBy, in size_t[] segs)
+        => sortOrder(rows, sortBy, segs).map!(i => rows[i].name).array;
+
+    // Groups ordered by key (canada before twitter); within each, default sort
+    // (median ascending) ranks the engines fastest-first — orthogonal axes.
+    assert(names("median/iter", [1, 2]) == [
+        "mir-ion/canada/parse", "asdf/canada/parse",   // canada: 10, 40
+        "mir-ion/twitter/parse", "asdf/twitter/parse", // twitter: 20, 30
+    ]);
+    // Same grouping, but sort engines by name within each group instead.
+    assert(names("name", [1, 2]) == [
+        "asdf/canada/parse", "mir-ion/canada/parse",
+        "asdf/twitter/parse", "mir-ion/twitter/parse",
+    ]);
+    // No grouping: pure median order across everything.
+    assert(names("median/iter", null) == [
+        "mir-ion/canada/parse", "mir-ion/twitter/parse",
+        "asdf/twitter/parse", "asdf/canada/parse",
+    ]);
+}
+
+@("metrics.sortOrder.byMetricNameMissingLast")
+@safe
+unittest
+{
+    import std.algorithm.iteration : map;
+    import std.array : array;
+    import sparkles.test_runner.bench : Metric, Unit;
+
+    BenchStats withMetric, without;
+    withMetric.name = "has-ipc";
+    withMetric.nsPerIterMedian = 1000;
+    withMetric.metrics = [Metric(Unit("op"), 5.0, Metric.Mode.level)];
+    without.name = "no-ipc";
+    without.nsPerIterMedian = 1000;
+
+    const rows = [without, withMetric];
+    const order = sortOrder(rows, "op");
+    assert(order.map!(i => rows[i].name).array == ["has-ipc", "no-ipc"]);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Catalog + selection
 // ─────────────────────────────────────────────────────────────────────────────
