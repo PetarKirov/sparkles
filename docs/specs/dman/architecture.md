@@ -38,7 +38,9 @@ dman builds on `event-horizon` from the start ([D3](./DECISIONS.md)): the
 `io_uring` loop is the substrate for _all_ I/O, not just the eventual networking.
 
 - **Subprocesses** — every `git` / `jj` / `nix` invocation is spawned and reaped
-  on the loop via the `proc` capability (concurrent, non-blocking).
+  on the loop via the `proc` capability (concurrent, non-blocking); the
+  [scan pipeline](./repo-catalog.md#scan-pipeline) fans out per-item work under a
+  bounded cap, paired back by index.
 - **File-watching** — repo / worktree / branch change detection via `watch`
   (inotify through the ring).
 - **TUI frame loop** — the interactive UI drives the loop with `runOnce`, which
@@ -129,3 +131,15 @@ concepts supply repo scan/catalog, workspace grouping, worktree isolation, the
 portable repo-layout descriptor, and a symmetric provider-behind-RPC distributed
 model; `mcl host` supplies drop-in D for host scan/enumerate/parallel-SSH; a
 monorepo-tooling survey supplies the dub-overlay orchestration layer.
+
+## Structure & extension
+
+- **Shared-crate factoring, up front.** The VCS layer, the `sparkles:tui`
+  framework, and the cross-cutting host helpers live in shared libraries, not the
+  app — the natural sparkles monorepo shape — so they're reusable and dman stays
+  thin. (A prior-art lesson: a shared crate set up but never populated means
+  nothing ends up reusable.)
+- **Documented extension points.** Because the `VcsRepo` abstraction is
+  capability-based and meant to grow (jj at P3; new statuses/columns/subcommands),
+  adding a backend / status / column / verb follows a maintained recipe, keeping
+  the design easy to extend rather than a template to reverse-engineer.

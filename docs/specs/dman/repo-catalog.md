@@ -21,6 +21,19 @@ primary); the walker never descends into `.jj/`. Worktrees under the default
 main checkout (by shared git-dir, or by the shared `.jj/repo` store for jj
 workspaces).
 
+## Scan pipeline
+
+Per-item work (per-branch classification, per-repo/worktree status, PR enrichment)
+runs as a **bounded concurrent fan-out** on the `event-horizon` loop, in two
+phases: cache hits are served **synchronously first** (cheap, local); only misses
+are collected and fanned out under a concurrency cap, paired back by index
+(completion order ≠ spawn order); and all persistence **writes happen afterward on
+a single writer** — no shared-state locking during concurrency. Heavy per-item
+detail (commit metadata, ahead/behind, PR status) loads **lazily** — only for
+visible/highlighted rows, paginated to the viewport — so startup stays fast on
+large repos/catalogs. After a batch mutation the catalog is **re-scanned** and the
+view rebuilt so state never goes stale mid-session.
+
 ## Catalog & registry
 
 ```d
