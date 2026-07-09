@@ -18,7 +18,7 @@ Successor design for `drawTable`, driven by the survey in
 | Glyphs            | A `TableGlyphs` struct embedded in `TableProps`, plus a mutable `TableGlyphs[string] stylePresets` registry (rounded/square/ascii/double/heavy, caller-extensible)            |
 | Horizontal align  | Per-column (`TableProps.columnAligns`), `Align{inherit,left,center,right}`                                                                                                    |
 | Vertical align    | Per-column (`TableProps.columnVAligns`), `VAlign{inherit,top,middle,bottom}`, built now                                                                                       |
-| Separators        | Independent toggles: `border`, `columnSeparators`, `rowSeparators`                                                                                                            |
+| Separators        | Independent toggles: `border`, `columnSeparators`, `rowSeparators`; plus `headerRows` / `headerCols` counts for a distinct rule after the header rows / stub columns          |
 | Wrapping / fit    | Per-column max content width **+** total-table `maxWidth` (separators & borders included); cells wrap on `\n` and width via `sparkles.base.text.wrap`; rows become multi-line |
 | Default rendering | Byte-identical to the pre-overhaul output (`maxWidth == 0` ⇒ expand to fit)                                                                                                   |
 | Overlap / OOB     | Detected as a "table model error"; render is always deterministic; `validateTable` surfaces errors as `Expected`                                                              |
@@ -78,6 +78,11 @@ struct TableProps {
     bool border           = true; // outer frame
     bool columnSeparators = true; // interior │
     bool rowSeparators    = false;// interior ─ rules
+    // header/stub emphasis: a distinct rule (glyphs.headerRow / headerCol, heavy by
+    // default) after N leading header rows / stub columns. 0 ⇒ none. Independent of
+    // row/columnSeparators; the stub rule is width-budgeted even with columns off.
+    size_t headerRows = 0;
+    size_t headerCols = 0;
     // width caps + wrapping (0 / empty ⇒ unbounded, expand to fit; today's behaviour)
     size_t   maxWidth        = 0;    // total table width incl. separators & borders
     size_t[] columnMaxWidths = null; // per-column max CONTENT width (excludes separators)
@@ -147,7 +152,8 @@ interior verticals: `contentField(A) = Σ colWidth[span] + 3*(n−1)`.
 2. **Per-column caps** — `w[c] = min(w[c], columnMaxWidths[c])` where set; over-wide content
    wraps rather than overflowing.
 3. **Total `maxWidth`** — content budget = `maxWidth − frame`, where
-   `frame = (border?2:0) + (numCols−1)*(columnSeparators?1:0) + 2*numCols` gutters. If
+   `frame = (border?2:0) + Σ_{j=1..numCols−1} sepWidth(j) + 2*numCols` gutters
+   (`sepWidth(j) = 1` iff `columnSeparators` or `j` is the stub rule `headerCols`). If
    `Σ w[c]` exceeds the budget, shrink columns largest-first (trim the widest by 1, floor 1)
    until they fit — the standard terminal fit-to-width policy. `maxWidth == 0` skips steps
    2–3 and the table expands to fit exactly as today.
@@ -180,13 +186,19 @@ Model the table as a lattice of vertical boundaries `j ∈ 0..numCols` and horiz
 boundaries `i ∈ 0..numRows`. Two predicates carry the toggles and detect spans:
 
 ```
-vSeg(r,j): j∈{0,numCols} ? border : !columnSeparators ? false : owner(r,j-1)!=owner(r,j)  // false ⇒ colspan crosses
-hSeg(i,c): i∈{0,numRows} ? border : !rowSeparators   ? false : owner(i-1,c)!=owner(i,c)    // false ⇒ rowspan crosses
+vSeg(r,j): j∈{0,numCols} ? border : (!columnSeparators && !isHeaderCol(j)) ? false : owner(r,j-1)!=owner(r,j)  // false ⇒ colspan crosses
+hSeg(i,c): i∈{0,numRows} ? border : (!rowSeparators    && !isHeaderRow(i)) ? false : owner(i-1,c)!=owner(i,c)    // false ⇒ rowspan crosses
 ```
+
+(`isHeaderRow(i) = headerRows>0 && i==headerRows && i<numRows`, and `isHeaderCol`
+symmetrically — the emphasized rules draw even when their bool toggle is off.)
 
 The 4-arm mask at `(i,j)` is `up=vSeg(i-1,j)`, `down=vSeg(i,j)`, `left=hSeg(i,j-1)`,
 `right=hSeg(i,j)` (bounds-guarded). The four extreme table corners use the rounded frame
-glyphs; every other intersection maps purely from the mask (square interior corners):
+glyphs; every other intersection maps purely from the mask (square interior corners),
+selecting the glyph from one of four sets by whether the junction sits on a header row,
+a stub column, both, or neither — the emphasized sets (`glyphs.headerRow` / `headerCol`
+/ `headerBoth`) default to heavy glyphs so the rule stands out:
 
 | U D L R        | glyph              | U D L R      | glyph        |
 | -------------- | ------------------ | ------------ | ------------ |
@@ -215,7 +227,8 @@ Padding is always computed on `visibleWidth`, so ANSI/CJK/grapheme content align
 
 ## 4. Backward compatibility (hard requirement)
 
-Default `TableProps` (rounded glyphs, `columnSeparators` on, `rowSeparators` off, `border`
+Default `TableProps` (rounded glyphs, `columnSeparators` on, `rowSeparators` off,
+`headerRows`/`headerCols` = 0, `border`
 on, left-align, `maxWidth == 0`, no spans) must reproduce the pre-overhaul bytes exactly:
 the `<content><pad>` cell format, `┬`/`┴` top/bottom junctions, no interior rules, and a
 trailing newline on every line. Guaranteed by: (1) the natural-width step being literally
@@ -266,8 +279,8 @@ pure geometry helpers (`vSeg`, `hSeg`, `junctionGlyph`, `contentField`, `padTop`
 11. Per-column horizontal align L/C/R (+ `inherit`→default, short/empty arrays), even/odd
     center split, on ANSI-styled and CJK content.
 12. Vertical align top/middle/bottom on rowSpan≥2 and on short cells in taller wrapped rows.
-13. Toggle matrix: all 8 combinations of `border`/`columnSeparators`/`rowSeparators`; band↔
-    rule width parity in each.
+13. Toggle matrix: all combinations of `border`/`columnSeparators`/`rowSeparators`
+    (× `headerRows`/`headerCols` ∈ {0,1}); band↔rule width parity in each.
 14. Glyph presets: each `stylePresets[...]` renders a golden; `stylePresets["rounded"] ==
 TableGlyphs.init`; a custom registered `TableGlyphs` and per-field overrides take effect.
 15. Sparse `Placement[]` renders identically to the equivalent dense `Cell[][]`;

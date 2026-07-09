@@ -192,6 +192,21 @@ void main()
                 content: drawTable(toggleSample, TableProps(rowSeparators: true)),
             ),
             //
+            // 10b. Header row & stub column separators (distinct emphasis rules)
+            //
+            Section(
+                header: "Header row separator (headerRows: 1 — distinct heavy rule under the header)",
+                content: drawTable(sample, TableProps(headerRows: 1)),
+            ),
+            Section(
+                header: "Stub column separator (headerCols: 1, columnSeparators off — heavy ┃ after the stub)",
+                content: drawTable(sample, TableProps(headerCols: 1, columnSeparators: false)),
+            ),
+            Section(
+                header: "Header row + stub column (headerRows: 1, headerCols: 1 — ╋ where the rules cross)",
+                content: drawTable(sample, TableProps(headerRows: 1, headerCols: 1)),
+            ),
+            //
             // 11. Width caps & wrapping — sparkles.base.text robustness
             //
             Section(

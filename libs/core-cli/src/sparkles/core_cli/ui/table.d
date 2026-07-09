@@ -68,6 +68,17 @@ unittest
 // span-ready even though this overload only produces extent-1 anchors.
 // ---------------------------------------------------------------------------
 
+/// Interior junction glyphs for one emphasized rule (a heavy header row, a heavy
+/// stub column, or their heavy crossing). Only the emphasized axis's arms are
+/// heavy; the mask→glyph mapping matches `junctionGlyph`. Selected via
+/// `TableProps.headerRows` / `headerCols`.
+struct EmphasisGlyphs
+{
+    dchar horizontalLine, verticalLine;
+    dchar teeDown, teeUp, teeRight, teeLeft, cross;
+    dchar cornerTL, cornerTR, cornerBL, cornerBR;
+}
+
 /// The configurable box-drawing glyph set. Defaults are the rounded frame plus the
 /// square interior corners spans create; every field is a caller-overridable `dchar`.
 struct TableGlyphs
@@ -76,6 +87,22 @@ struct TableGlyphs
     dchar horizontalLine = '─', verticalLine = '│';
     dchar teeDown = '┬', teeUp = '┴', teeRight = '├', teeLeft = '┤', cross = '┼';
     dchar cornerTL = '┌', cornerTR = '┐', cornerBL = '└', cornerBR = '┘';
+
+    /// Header-ROW rule: heavy horizontal, light vertical (`┝━━┿━━┥`).
+    EmphasisGlyphs headerRow = EmphasisGlyphs(
+        horizontalLine: '━', verticalLine: '│',
+        teeDown: '┯', teeUp: '┷', teeRight: '┝', teeLeft: '┥', cross: '┿',
+        cornerTL: '┍', cornerTR: '┑', cornerBL: '┕', cornerBR: '┙');
+    /// Header/stub COLUMN rule: heavy vertical, light horizontal (`┰ ┃ ╂ ┸`).
+    EmphasisGlyphs headerCol = EmphasisGlyphs(
+        horizontalLine: '─', verticalLine: '┃',
+        teeDown: '┰', teeUp: '┸', teeRight: '┠', teeLeft: '┨', cross: '╂',
+        cornerTL: '┎', cornerTR: '┒', cornerBL: '┖', cornerBR: '┚');
+    /// Where a header row and stub column rule cross: heavy both (`╋`).
+    EmphasisGlyphs headerBoth = EmphasisGlyphs(
+        horizontalLine: '━', verticalLine: '┃',
+        teeDown: '┳', teeUp: '┻', teeRight: '┣', teeLeft: '┫', cross: '╋',
+        cornerTL: '┏', cornerTR: '┓', cornerBL: '┗', cornerBR: '┛');
 }
 
 /// Vertical alignment of a cell's content within its (possibly multi-line or rowspan)
@@ -91,6 +118,17 @@ struct TableProps
     bool border           = true; /// Draw the outer frame.
     bool columnSeparators = true; /// Draw interior vertical `│` lines.
     bool rowSeparators    = false;/// Draw interior horizontal `─` rules.
+
+    /// Number of leading header rows: a distinct rule (the `glyphs.headerRow` set,
+    /// heavy by default) is drawn after this many rows. `0` (default) draws no
+    /// header rule. Independent of `rowSeparators`; when both apply to the same
+    /// boundary the header glyphs win, so the header rule still stands out.
+    size_t headerRows = 0;
+    /// Number of leading stub / row-header columns: a distinct vertical rule (the
+    /// `glyphs.headerCol` set, heavy by default) is drawn after this many columns.
+    /// `0` (default) draws no stub rule. Independent of `columnSeparators` — the
+    /// stub rule is drawn and width-budgeted even when column separators are off.
+    size_t headerCols = 0;
 
     /// Total table width cap in columns, **including** separators and borders, or 0
     /// for no cap (expand to fit — today's behaviour). When set, columns are shrunk
@@ -144,35 +182,86 @@ private size_t padTop(size_t hh, size_t l, VAlign va) @safe pure nothrow @nogc
     }
 }
 
+/// The names of the built-in glyph presets, in a stable order (`rounded` first).
+immutable string[] builtinPresetNames = [
+    "rounded", "square", "ascii", "double", "heavy"
+];
+
+/// The built-in glyph preset for `name` (one of `builtinPresetNames`); an unknown
+/// name falls back to the `rounded` default. Pure and self-contained, so it works
+/// **without** the module constructor that seeds `stylePresets` — e.g. in a wasm
+/// build where `static this()` module ctors do not run.
+TableGlyphs presetGlyphs(string name) @safe pure nothrow
+{
+    switch (name)
+    {
+        // square keeps the built-in heavy-mix emphasis defaults (its light frame
+        // reads the heavy header/stub rules correctly).
+        case "square":
+            return TableGlyphs(
+                topLeft: '┌', topRight: '┐', bottomLeft: '└', bottomRight: '┘',
+                horizontalLine: '─', verticalLine: '│',
+                teeDown: '┬', teeUp: '┴', teeRight: '├', teeLeft: '┤', cross: '┼',
+                cornerTL: '┌', cornerTR: '┐', cornerBL: '└', cornerBR: '┘');
+        // ascii: the '===' header-row convention is the only distinct emphasis
+        // available; the stub column reuses the body '|'/'+' (no heavier ascii glyph).
+        case "ascii":
+            enum EmphasisGlyphs asciiEmph = EmphasisGlyphs(
+                horizontalLine: '-', verticalLine: '|',
+                teeDown: '+', teeUp: '+', teeRight: '+', teeLeft: '+', cross: '+',
+                cornerTL: '+', cornerTR: '+', cornerBL: '+', cornerBR: '+');
+            enum EmphasisGlyphs asciiHeaderRow = EmphasisGlyphs(
+                horizontalLine: '=', verticalLine: '|',
+                teeDown: '+', teeUp: '+', teeRight: '+', teeLeft: '+', cross: '+',
+                cornerTL: '+', cornerTR: '+', cornerBL: '+', cornerBR: '+');
+            return TableGlyphs(
+                topLeft: '+', topRight: '+', bottomLeft: '+', bottomRight: '+',
+                horizontalLine: '-', verticalLine: '|',
+                teeDown: '+', teeUp: '+', teeRight: '+', teeLeft: '+', cross: '+',
+                cornerTL: '+', cornerTR: '+', cornerBL: '+', cornerBR: '+',
+                headerRow: asciiHeaderRow, headerCol: asciiEmph, headerBoth: asciiHeaderRow);
+        // double & heavy have no heavier form, so their emphasis rules reuse the body
+        // glyphs (drawn, but not visually heavier).
+        case "double":
+            enum EmphasisGlyphs doubleEmph = EmphasisGlyphs(
+                horizontalLine: '═', verticalLine: '║',
+                teeDown: '╦', teeUp: '╩', teeRight: '╠', teeLeft: '╣', cross: '╬',
+                cornerTL: '╔', cornerTR: '╗', cornerBL: '╚', cornerBR: '╝');
+            return TableGlyphs(
+                topLeft: '╔', topRight: '╗', bottomLeft: '╚', bottomRight: '╝',
+                horizontalLine: '═', verticalLine: '║',
+                teeDown: '╦', teeUp: '╩', teeRight: '╠', teeLeft: '╣', cross: '╬',
+                cornerTL: '╔', cornerTR: '╗', cornerBL: '╚', cornerBR: '╝',
+                headerRow: doubleEmph, headerCol: doubleEmph, headerBoth: doubleEmph);
+        case "heavy":
+            enum EmphasisGlyphs heavyEmph = EmphasisGlyphs(
+                horizontalLine: '━', verticalLine: '┃',
+                teeDown: '┳', teeUp: '┻', teeRight: '┣', teeLeft: '┫', cross: '╋',
+                cornerTL: '┏', cornerTR: '┓', cornerBL: '┗', cornerBR: '┛');
+            return TableGlyphs(
+                topLeft: '┏', topRight: '┓', bottomLeft: '┗', bottomRight: '┛',
+                horizontalLine: '━', verticalLine: '┃',
+                teeDown: '┳', teeUp: '┻', teeRight: '┣', teeLeft: '┫', cross: '╋',
+                cornerTL: '┏', cornerTR: '┓', cornerBL: '┗', cornerBR: '┛',
+                headerRow: heavyEmph, headerCol: heavyEmph, headerBoth: heavyEmph);
+        case "rounded":
+        default:
+            return TableGlyphs.init;
+    }
+}
+
 /// Named glyph presets, selectable as `TableProps(glyphs: stylePresets["ascii"])`.
-/// Seeded with `rounded` (the default, `== TableGlyphs.init`), `square`, `ascii`,
-/// `double`, and `heavy`; callers may register or override their own entries. Thread
-/// local (each thread gets the built-ins), so reads stay `@safe`.
+/// Seeded from `presetGlyphs` with `rounded` (the default, `== TableGlyphs.init`),
+/// `square`, `ascii`, `double`, and `heavy`; callers may register or override their
+/// own entries. Thread local (each thread gets the built-ins), so reads stay `@safe`.
+/// Prefer `presetGlyphs(name)` where a pure lookup that needs no module ctor helps
+/// (e.g. a wasm build).
 TableGlyphs[string] stylePresets;
 
 static this()
 {
-    stylePresets["rounded"] = TableGlyphs.init;
-    stylePresets["square"] = TableGlyphs(
-        topLeft: '┌', topRight: '┐', bottomLeft: '└', bottomRight: '┘',
-        horizontalLine: '─', verticalLine: '│',
-        teeDown: '┬', teeUp: '┴', teeRight: '├', teeLeft: '┤', cross: '┼',
-        cornerTL: '┌', cornerTR: '┐', cornerBL: '└', cornerBR: '┘');
-    stylePresets["ascii"] = TableGlyphs(
-        topLeft: '+', topRight: '+', bottomLeft: '+', bottomRight: '+',
-        horizontalLine: '-', verticalLine: '|',
-        teeDown: '+', teeUp: '+', teeRight: '+', teeLeft: '+', cross: '+',
-        cornerTL: '+', cornerTR: '+', cornerBL: '+', cornerBR: '+');
-    stylePresets["double"] = TableGlyphs(
-        topLeft: '╔', topRight: '╗', bottomLeft: '╚', bottomRight: '╝',
-        horizontalLine: '═', verticalLine: '║',
-        teeDown: '╦', teeUp: '╩', teeRight: '╠', teeLeft: '╣', cross: '╬',
-        cornerTL: '╔', cornerTR: '╗', cornerBL: '╚', cornerBR: '╝');
-    stylePresets["heavy"] = TableGlyphs(
-        topLeft: '┏', topRight: '┓', bottomLeft: '┗', bottomRight: '┛',
-        horizontalLine: '━', verticalLine: '┃',
-        teeDown: '┳', teeUp: '┻', teeRight: '┣', teeLeft: '┫', cross: '╋',
-        cornerTL: '┏', cornerTR: '┓', cornerBL: '┗', cornerBR: '┛');
+    foreach (name; builtinPresetNames)
+        stylePresets[name] = presetGlyphs(name);
 }
 
 /// One content object anchored at `(row, col)` covering a `rowSpan × colSpan`
@@ -407,12 +496,29 @@ private SlotGrid finalizeGrid(Anchor[] anchors, bool[][] occ, size_t[][] owner,
 private size_t owner(in SlotGrid g, size_t r, size_t c) @safe pure nothrow @nogc
     => g.slotOwner[r * g.numCols + c];
 
+/// Is interior lattice row `i` the header-row rule (drawn after `headerRows` rows)?
+/// Guarded to an interior boundary so `headerRows >= numRows` is a silent no-op.
+private bool isHeaderRow(in TableProps p, size_t i, size_t numRows) @safe pure nothrow @nogc
+    => p.headerRows > 0 && i == p.headerRows && i < numRows;
+
+/// Is interior boundary `j` the stub-column rule (drawn after `headerCols` columns)?
+private bool isHeaderCol(in TableProps p, size_t j, size_t numCols) @safe pure nothrow @nogc
+    => p.headerCols > 0 && j == p.headerCols && j < numCols;
+
+/// Width (0 or 1) of interior boundary `j` (`1 .. numCols-1`): a lattice column
+/// exists where column separators are on, or where the stub rule sits. With
+/// `headerCols == 0` this collapses to `columnSeparators ? 1 : 0`.
+private size_t sepWidth(in TableProps p, size_t j, size_t numCols) @safe pure nothrow @nogc
+    => (p.columnSeparators || isHeaderCol(p, j, numCols)) ? 1 : 0;
+
 /// The visible-column field a cell occupies: its member column widths plus, per
-/// merged boundary, the two gutters and the `sepW` separator column it absorbs
-/// (`sepW == 1` with column separators on, else 0).
-private size_t contentField(in Anchor a, in size_t[] w, size_t sepW) @safe pure nothrow @nogc
+/// merged boundary, the two gutters and the separator column it absorbs (`sepWidth`
+/// per internal boundary — 1 with column separators on or at the stub rule, else 0).
+private size_t contentField(in Anchor a, in size_t[] w, in TableProps p, size_t numCols) @safe pure nothrow @nogc
 {
-    size_t f = (2 + sepW) * (a.colSpan - 1);
+    size_t f = 2 * (a.colSpan - 1);
+    foreach (k; 1 .. a.colSpan)
+        f += sepWidth(p, a.col + k, numCols);
     foreach (c; a.col .. a.col + a.colSpan)
         f += w[c];
     return f;
@@ -434,7 +540,6 @@ private size_t naturalWidth(string content) @safe pure nothrow
 
 private size_t[] resolveColumnWidths(in SlotGrid g, in TableProps p) @safe pure nothrow
 {
-    const sepW = p.columnSeparators ? 1 : 0;
     auto w = new size_t[g.numCols];
     foreach (ref a; g.anchors)
         if (a.colSpan == 1)
@@ -452,7 +557,10 @@ private size_t[] resolveColumnWidths(in SlotGrid g, in TableProps p) @safe pure 
     {
         const n = a.colSpan;
         const vw = naturalWidth(a.content);
-        const absorbed = (2 + sepW) * (n - 1); // gutters + separators the span covers
+        // gutters + the separator columns (per internal boundary) the span covers
+        size_t absorbed = 2 * (n - 1);
+        foreach (k; 1 .. n)
+            absorbed += sepWidth(p, a.col + k, g.numCols);
         const required = vw > absorbed ? vw - absorbed : 0;
         size_t cur = 0;
         foreach (c; a.col .. a.col + n)
@@ -477,7 +585,10 @@ private size_t[] resolveColumnWidths(in SlotGrid g, in TableProps p) @safe pure 
     if (p.maxWidth > 0)
     {
         const borderW = p.border ? 1 : 0;
-        const frame = 2 * g.numCols + sepW * (g.numCols - 1) + 2 * borderW;
+        size_t interiorSep = 0;
+        foreach (j; 1 .. g.numCols)
+            interiorSep += sepWidth(p, j, g.numCols);
+        const frame = 2 * g.numCols + interiorSep + 2 * borderW;
         for (;;)
         {
             size_t total = frame;
@@ -503,25 +614,26 @@ private size_t[] resolveColumnWidths(in SlotGrid g, in TableProps p) @safe pure 
 }
 
 /// Is a vertical grid segment drawn on boundary `j` within band `r`? Frame edges
-/// follow `border`; interior verticals follow `columnSeparators` and vanish where a
-/// colspan crosses (the same anchor owns both sides).
+/// follow `border`; interior verticals follow `columnSeparators` (or the stub rule
+/// at `headerCols`) and vanish where a colspan crosses (the same anchor owns both
+/// sides).
 private bool vSeg(in SlotGrid g, in TableProps p, size_t r, size_t j) @safe pure nothrow @nogc
 {
     if (j == 0 || j == g.numCols)
         return p.border;
-    if (!p.columnSeparators)
+    if (!p.columnSeparators && !isHeaderCol(p, j, g.numCols))
         return false;
     return owner(g, r, j - 1) != owner(g, r, j);
 }
 
 /// Is a horizontal grid segment drawn on rule `i` within column `c`? Frame edges
-/// follow `border`; interior rules follow `rowSeparators` and vanish where a rowspan
-/// crosses.
+/// follow `border`; interior rules follow `rowSeparators` (or the header rule at
+/// `headerRows`) and vanish where a rowspan crosses.
 private bool hSeg(in SlotGrid g, in TableProps p, size_t i, size_t c) @safe pure nothrow @nogc
 {
     if (i == 0 || i == g.numRows)
         return p.border;
-    if (!p.rowSeparators)
+    if (!p.rowSeparators && !isHeaderRow(p, i, g.numRows))
         return false;
     return owner(g, i - 1, c) != owner(g, i, c);
 }
@@ -550,21 +662,37 @@ private dchar junctionGlyph(in SlotGrid g, in TableProps p, size_t i, size_t j) 
         return p.glyphs.bottomRight;
     }
 
+    // Pick the interior glyph set: heavy along whichever emphasized rule(s) this
+    // junction sits on (header row, stub column, or both), else the normal light
+    // set assembled from the flat fields.
+    const hdrRow = isHeaderRow(p, i, g.numRows);
+    const hdrCol = isHeaderCol(p, j, g.numCols);
+    const EmphasisGlyphs set =
+        (hdrRow && hdrCol) ? p.glyphs.headerBoth
+        : hdrRow ? p.glyphs.headerRow
+        : hdrCol ? p.glyphs.headerCol
+        : EmphasisGlyphs(
+            horizontalLine: p.glyphs.horizontalLine, verticalLine: p.glyphs.verticalLine,
+            teeDown: p.glyphs.teeDown, teeUp: p.glyphs.teeUp, teeRight: p.glyphs.teeRight,
+            teeLeft: p.glyphs.teeLeft, cross: p.glyphs.cross,
+            cornerTL: p.glyphs.cornerTL, cornerTR: p.glyphs.cornerTR,
+            cornerBL: p.glyphs.cornerBL, cornerBR: p.glyphs.cornerBR);
+
     const m = (u << 3) | (d << 2) | (l << 1) | r;
     final switch (m)
     {
         case 0b0000: return ' ';
-        case 0b0001: case 0b0010: case 0b0011: return p.glyphs.horizontalLine;
-        case 0b0100: case 0b1000: case 0b1100: return p.glyphs.verticalLine;
-        case 0b0101: return p.glyphs.cornerTL; // down + right
-        case 0b0110: return p.glyphs.cornerTR; // down + left
-        case 0b1001: return p.glyphs.cornerBL; // up + right
-        case 0b1010: return p.glyphs.cornerBR; // up + left
-        case 0b0111: return p.glyphs.teeDown;
-        case 0b1011: return p.glyphs.teeUp;
-        case 0b1101: return p.glyphs.teeRight;
-        case 0b1110: return p.glyphs.teeLeft;
-        case 0b1111: return p.glyphs.cross;
+        case 0b0001: case 0b0010: case 0b0011: return set.horizontalLine;
+        case 0b0100: case 0b1000: case 0b1100: return set.verticalLine;
+        case 0b0101: return set.cornerTL; // down + right
+        case 0b0110: return set.cornerTR; // down + left
+        case 0b1001: return set.cornerBL; // up + right
+        case 0b1010: return set.cornerBR; // up + left
+        case 0b0111: return set.teeDown;
+        case 0b1011: return set.teeUp;
+        case 0b1101: return set.teeRight;
+        case 0b1110: return set.teeLeft;
+        case 0b1111: return set.cross;
     }
 }
 
@@ -573,15 +701,18 @@ private dchar junctionGlyph(in SlotGrid g, in TableProps p, size_t i, size_t j) 
 private string separatorLine(in SlotGrid g, in size_t[] w, in TableProps p, size_t i)
 {
     // A lattice column is 1 char wide only when its line is drawn: the outer two
-    // follow `border`, the interior ones `columnSeparators`. A zero-width lattice is
-    // skipped in both bands and rules, so the two always share the same width.
+    // follow `border`, the interior ones `sepWidth` (column separators or a stub
+    // rule). A zero-width lattice is skipped in both bands and rules, so the two
+    // always share the same width.
+    const hdrRow = isHeaderRow(p, i, g.numRows);
+    const fillGlyph = hdrRow ? p.glyphs.headerRow.horizontalLine : p.glyphs.horizontalLine;
     auto line = appender!string;
     foreach (j; 0 .. g.numCols)
     {
-        const latticeDrawn = j == 0 ? p.border : p.columnSeparators;
+        const latticeDrawn = j == 0 ? p.border : sepWidth(p, j, g.numCols) > 0;
         if (latticeDrawn)
             line ~= junctionGlyph(g, p, i, j);
-        const fillCh = hSeg(g, p, i, j) ? p.glyphs.horizontalLine : ' ';
+        const fillCh = hSeg(g, p, i, j) ? fillGlyph : ' ';
         foreach (_; 0 .. w[j] + 2)
             line ~= fillCh;
     }
@@ -601,11 +732,10 @@ private string[][] wrapCells(in SlotGrid g, in size_t[] w, in TableProps p)
     import sparkles.base.text.wrap : byWrappedLine, WhitespaceMode, WrapOptions;
     import std.string : lineSplitter, stripRight;
 
-    const sepW = p.columnSeparators ? 1 : 0;
     auto result = new string[][](g.anchors.length);
     foreach (i, ref a; g.anchors)
     {
-        const f = contentField(a, w, sepW);
+        const f = contentField(a, w, p, g.numCols);
         string[] lines;
         foreach (seg; a.content.lineSplitter)
         {
@@ -678,7 +808,6 @@ private size_t[] resolveRowHeights(in SlotGrid g, in string[][] lines) @safe pur
 private string bodyRow(in SlotGrid g, in size_t[] w, in string[][] lines,
     in size_t[] heights, in TableProps p, size_t r)
 {
-    const sepW = p.columnSeparators ? 1 : 0;
     auto out_ = appender!string;
     foreach (t; 0 .. heights[r])
     {
@@ -689,7 +818,7 @@ private string bodyRow(in SlotGrid g, in size_t[] w, in string[][] lines,
         {
             const idx = owner(g, r, c);
             const a = g.anchors[idx];
-            const f = contentField(a, w, sepW);
+            const f = contentField(a, w, p, g.numCols);
             // This anchor's line index at row r, text line t: the sum of the heights
             // of its bands above r, plus t. For an extent-1 cell that is just t; a
             // rowspan cell's content flows down across its stacked bands.
@@ -711,7 +840,8 @@ private string bodyRow(in SlotGrid g, in size_t[] w, in string[][] lines,
             out_ ~= ' ';
             c += a.colSpan;
             if (c < g.numCols && vSeg(g, p, r, c))
-                out_ ~= p.glyphs.verticalLine;
+                out_ ~= isHeaderCol(p, c, g.numCols)
+                    ? p.glyphs.headerCol.verticalLine : p.glyphs.verticalLine;
         }
         if (p.border)
             out_ ~= p.glyphs.verticalLine;
@@ -735,7 +865,7 @@ private string drawGrid(in SlotGrid g, in TableProps p)
     foreach (r; 0 .. g.numRows)
     {
         out_ ~= bodyRow(g, w, lines, heights, p, r);
-        if (r + 1 < g.numRows && p.rowSeparators)
+        if (r + 1 < g.numRows && (p.rowSeparators || (p.headerRows > 0 && r + 1 == p.headerRows)))
             out_ ~= separatorLine(g, w, p, r + 1);
     }
     if (p.border)
@@ -897,6 +1027,115 @@ version (unittest) private void checkRender(string actual, string expected)
         "╰────┴────╯\n");
 }
 
+@("drawTable.separators.headerRows")
+@system unittest
+{
+    // headerRows: 1 draws a distinct (heavy) rule after the first row only — no
+    // other interior rules, and the header glyphs (┝━┿━┥) stand apart from the frame.
+    checkRender(drawTable([["ab", "c"], ["d", "ef"], ["g", "hi"]], TableProps(headerRows: 1)),
+        "╭────┬────╮\n" ~
+        "│ ab │ c  │\n" ~
+        "┝━━━━┿━━━━┥\n" ~
+        "│ d  │ ef │\n" ~
+        "│ g  │ hi │\n" ~
+        "╰────┴────╯\n");
+}
+
+@("drawTable.separators.headerCols")
+@system unittest
+{
+    // headerCols: 1 with column separators off draws only the stub rule (heavy
+    // vertical ┃, ┰/┸ ticks on the frame), width-budgeted so parity holds.
+    checkRender(drawTable([["ab", "c"], ["d", "ef"]],
+            TableProps(headerCols: 1, columnSeparators: false)),
+        "╭────┰────╮\n" ~
+        "│ ab ┃ c  │\n" ~
+        "│ d  ┃ ef │\n" ~
+        "╰────┸────╯\n");
+}
+
+@("drawTable.separators.headerColsWithColumnSeparators")
+@system unittest
+{
+    // With column separators on, the stub boundary (after col 0) is heavy while the
+    // remaining interior boundary stays light.
+    checkRender(drawTable([["a", "b", "c"], ["d", "e", "f"]], TableProps(headerCols: 1)),
+        "╭───┰───┬───╮\n" ~
+        "│ a ┃ b │ c │\n" ~
+        "│ d ┃ e │ f │\n" ~
+        "╰───┸───┴───╯\n");
+}
+
+@("drawTable.separators.headerRowAndColCross")
+@system unittest
+{
+    // Header row and stub column together: the crossing junction is the heavy-both
+    // cross ╋, with heavy arms in each axis (┝/┥ ends, ┃ stub, ━ header fill).
+    checkRender(drawTable([["ab", "c"], ["d", "ef"]],
+            TableProps(headerRows: 1, headerCols: 1)),
+        "╭────┰────╮\n" ~
+        "│ ab ┃ c  │\n" ~
+        "┝━━━━╋━━━━┥\n" ~
+        "│ d  ┃ ef │\n" ~
+        "╰────┸────╯\n");
+}
+
+@("drawTable.separators.headerMultiRowMultiCol")
+@system unittest
+{
+    // headerRows: 2 / headerCols: 2 place the rules after the second row / column.
+    checkRender(drawTable([["a", "b", "c"], ["d", "e", "f"], ["g", "h", "i"]],
+            TableProps(headerRows: 2, headerCols: 2)),
+        "╭───┬───┰───╮\n" ~
+        "│ a │ b ┃ c │\n" ~
+        "│ d │ e ┃ f │\n" ~
+        "┝━━━┿━━━╋━━━┥\n" ~
+        "│ g │ h ┃ i │\n" ~
+        "╰───┴───┸───╯\n");
+}
+
+@("drawTable.separators.headerWithRowSeparators")
+@system unittest
+{
+    // The header rule stays heavy (┝━┿━┥) even amid light ├─┼─┤ row separators.
+    checkRender(drawTable([["ab", "c"], ["d", "ef"], ["g", "hi"]],
+            TableProps(headerRows: 1, rowSeparators: true)),
+        "╭────┬────╮\n" ~
+        "│ ab │ c  │\n" ~
+        "┝━━━━┿━━━━┥\n" ~
+        "│ d  │ ef │\n" ~
+        "├────┼────┤\n" ~
+        "│ g  │ hi │\n" ~
+        "╰────┴────╯\n");
+}
+
+@("drawTable.separators.headerAsciiPreset")
+@system unittest
+{
+    // The ascii preset uses the '===' convention for its header rule.
+    checkRender(drawTable([["ab", "c"], ["d", "ef"]],
+            TableProps(glyphs: stylePresets["ascii"], headerRows: 1)),
+        "+----+----+\n" ~
+        "| ab | c  |\n" ~
+        "+====+====+\n" ~
+        "| d  | ef |\n" ~
+        "+----+----+\n");
+}
+
+@("drawTable.separators.headerOutOfRange")
+@system unittest
+{
+    // headerRows / headerCols at or past the table dimensions are silent no-ops
+    // (the rule would coincide with the bottom/right border), so the render equals
+    // the default one.
+    string[][] cells = [["ab", "c"], ["d", "ef"]];
+    const base = drawTable(cells);
+    assert(drawTable(cells, TableProps(headerRows: 2)) == base);
+    assert(drawTable(cells, TableProps(headerRows: 9)) == base);
+    assert(drawTable(cells, TableProps(headerCols: 2)) == base);
+    assert(drawTable(cells, TableProps(headerCols: 9)) == base);
+}
+
 @("drawTable.separators.noColumnSeparators")
 @system unittest
 {
@@ -924,19 +1163,24 @@ version (unittest) private void checkRender(string actual, string expected)
     import std.string : splitLines;
     import sparkles.base.text.grapheme : visibleWidth;
 
-    // Bands and rules must share a width in every toggle combination.
+    // Bands and rules must share a width in every toggle combination, including the
+    // header-row / stub-column emphasis rules (a stub rule inserts a lattice column
+    // even with column separators off, so its width must be budgeted).
     string[][] cells = [["ab", "c", "xyz"], ["d", "ef", "g"]];
     foreach (border; [false, true])
         foreach (colSep; [false, true])
             foreach (rowSep; [false, true])
-            {
-                const rendered = drawTable(cells,
-                    TableProps(border: border, columnSeparators: colSep, rowSeparators: rowSep));
-                const lines = rendered.splitLines;
-                foreach (l; lines)
-                    assert(l.visibleWidth == lines[0].visibleWidth,
-                        "width parity broken for a toggle combination");
-            }
+                foreach (hRows; [0UL, 1UL])
+                    foreach (hCols; [0UL, 1UL])
+                    {
+                        const rendered = drawTable(cells, TableProps(
+                            border: border, columnSeparators: colSep, rowSeparators: rowSep,
+                            headerRows: hRows, headerCols: hCols));
+                        const lines = rendered.splitLines;
+                        foreach (l; lines)
+                            assert(l.visibleWidth == lines[0].visibleWidth,
+                                "width parity broken for a toggle combination");
+                    }
 }
 
 @("drawTable.glyphs.customOverride")
