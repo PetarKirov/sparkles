@@ -132,18 +132,19 @@ Linux the flag is inert.
 Every measured column — client `metrics`, the perf counters, and the counters
 below — is a named entry in a _catalog_. `--list-metrics` (or `--metrics=?`)
 prints it, with each metric's **class** (`quantitative` = safe to report vs
-`diagnostic` = explains only) and source:
+`diagnostic` = explains only) and source. It works with or without `--bench`:
 
 ```bash
-dub test :base -- --bench --list-metrics
+dub test :base -- --list-metrics
 ```
 
 `--metrics=LIST` then picks the columns: a comma-separated list, a `*`-suffixed
-glob, or `all`.
+glob, or `all`. Naming a perf metric (or `all`) opens the `--perf` pass on its
+own, so you don't need to add `--perf` as well:
 
 ```bash
-dub test :base -- --bench --perf --metrics=ipc,cache-miss   # just these two
-dub test :base -- --bench --perf --metrics=all              # every available column
+dub test :base -- --bench --metrics=ipc,cache-miss   # opens --perf for these two
+dub test :base -- --bench --metrics=all              # every available column
 ```
 
 With no `--metrics`, the standard columns show (identical to before this feature).
