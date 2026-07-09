@@ -1,8 +1,18 @@
+/++
+Terminal capability probing: the synchronous size query ($(LREF terminalSize))
+and resize notifications ($(LREF setTermWindowSizeHandler)).
+
+Per the `docs/specs/core-cli/tui-components` decision ledger this module is the
+single place the "what can this terminal do" *decision* is made; UI components
+stay pure producers that take explicit widths/flags.
++/
 module sparkles.core_cli.term_caps;
 
-// The SIGWINCH resize-notification machinery is POSIX-only; `terminalWidth`
+import sparkles.math : ScreenSize;
+
+// The SIGWINCH resize-notification machinery is POSIX-only; `terminalSize`
 // below is cross-platform. Guarding the POSIX import keeps the module
-// compilable on Windows (where the runner's width query still works).
+// compilable on Windows (where the runner's size query still works).
 version (Posix)
 {
     // TODO: upstream
@@ -11,7 +21,10 @@ version (Posix)
 
     import core.sys.posix.signal : signal;
 
-    alias Handler = void delegate(ushort width, ushort height) nothrow @nogc;
+    /// Resize callback: receives the new size on every SIGWINCH. Runs in signal
+    /// context, hence the `nothrow @nogc` requirement — keep handlers to
+    /// async-signal-safe work (storing the size, setting a flag).
+    alias Handler = void delegate(ScreenSize!ushort size) nothrow @nogc;
 
     @nogc nothrow
     void setTermWindowSizeHandler(Handler handler)
@@ -41,16 +54,17 @@ version (Posix)
         ioctl(STDIN_FILENO, TIOCGWINSZ, &s);
 
         assert (_handler, "No user-defined handler for SIGWINCH set");
-        _handler(s.ws_col, s.ws_row);
+        _handler(ScreenSize!ushort(s.ws_col, s.ws_row));
     }
 }
 
-/// Current terminal width in columns (cells), or `0` when it can't be
-/// determined — output not a tty, redirected to a pipe/file, or the OS query
-/// failed. A synchronous one-shot query, distinct from the async
+/// Current terminal size in cells (columns × rows). A `0` component means that
+/// axis can't be determined — output not a tty, redirected to a pipe/file, or
+/// the OS query failed; `ScreenSize!ushort.init` (0×0) is the fully-unknown
+/// value. A synchronous one-shot query, distinct from the async
 /// `setTermWindowSizeHandler` above. Callers use `0` to mean "unknown, don't
-/// wrap/truncate".
-ushort terminalWidth() @safe nothrow @nogc
+/// wrap/truncate/clamp".
+ScreenSize!ushort terminalSize() @safe nothrow @nogc
 {
     version (Posix)
     {
@@ -59,12 +73,12 @@ ushort terminalWidth() @safe nothrow @nogc
 
         // The ioctl and its out-parameter are one unsafe unit; scope trust to
         // it (capturing nothing, so no `@nogc` closure) and hand back a plain
-        // `ushort`.
+        // value.
         return () @trusted {
             winsize s;
             if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &s) != 0)
-                return ushort(0);
-            return s.ws_col;
+                return ScreenSize!ushort.init;
+            return ScreenSize!ushort(s.ws_col, s.ws_row);
         }();
     }
     else version (Windows)
@@ -77,25 +91,29 @@ ushort terminalWidth() @safe nothrow @nogc
         return () @trusted {
             auto handle = GetStdHandle(STD_OUTPUT_HANDLE);
             if (handle is null || handle == INVALID_HANDLE_VALUE)
-                return ushort(0);
+                return ScreenSize!ushort.init;
             CONSOLE_SCREEN_BUFFER_INFO info;
             if (!GetConsoleScreenBufferInfo(handle, &info))
-                return ushort(0);
+                return ScreenSize!ushort.init;
             const width = info.srWindow.Right - info.srWindow.Left + 1;
-            return width > 0 ? cast(ushort) width : ushort(0);
+            const height = info.srWindow.Bottom - info.srWindow.Top + 1;
+            if (width <= 0 || height <= 0)
+                return ScreenSize!ushort.init;
+            return ScreenSize!ushort(cast(ushort) width, cast(ushort) height);
         }();
     }
     else
-        return 0;
+        return ScreenSize!ushort.init;
 }
 
 /// The query is `@safe nothrow @nogc` and never throws; the value itself is
-/// environment-dependent (`0` under a piped `dub test`, the column count on a
+/// environment-dependent (0×0 under a piped `dub test`, the cell counts on a
 /// real terminal), so this only pins the contract.
-@("terminalWidth.callable")
+@("terminalSize.callable")
 @safe nothrow @nogc
 unittest
 {
-    const width = terminalWidth();
-    assert(width == 0 || width >= 1);
+    const size = terminalSize();
+    assert(size.width == 0 || size.width >= 1);
+    assert(size.height == 0 || size.height >= 1);
 }

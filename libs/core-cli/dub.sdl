@@ -12,7 +12,11 @@ dependency "expected" version="~>0.4.1"
 targetType "library"
 targetPath "build"
 
-importPaths "src" "../test-runner/src" "../test-runner-impl/src"
+// `../math/src` is import-only (all-template `Vector`/`ScreenSize`): a real
+// `dependency "sparkles:math"` would close a dub dependency cycle through
+// math's unittest config (math -> test-runner -> test-runner-impl -> core-cli),
+// the same reason the test-runner shim/impl are on importPaths here.
+importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../math/src"
 
 configuration "library" {
     targetType "library"
