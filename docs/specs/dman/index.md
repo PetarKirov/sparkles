@@ -27,6 +27,7 @@ the Git-first foundation lands.
 | [Feature requirements](./feature-requirements.md) | what dman does for its users — v1 capabilities and the later distributed features; non-goals                                |
 | [Architecture](./architecture.md)                 | how dman composes the sparkles stack, the async substrate, the VCS abstraction, the TUI shell, and building-block readiness |
 | [Command schema](./command-schema.md)             | the bidirectional, `wired`-based CLI/command pillar — one struct schema for both dman's own CLI and invoking git/jj/…       |
+| [CLI surface](./cli-surface.md)                   | the concrete `dman` command tree — repo/branch/worktree subcommands, scripting, machine output                              |
 | [VCS backend](./vcs-backend.md)                   | the per-repo layer — branch/worktree/status data model and the `VcsRepo` backend                                            |
 | [Repo catalog](./repo-catalog.md)                 | the cross-repo layer — scan → catalog → registry → selection, and persistence                                               |
 | [TUI shell](./tui-shell.md)                       | the interactive UI — the `sparkles:tui` immediate-mode framework and the dman shell's interaction model                     |
