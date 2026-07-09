@@ -81,6 +81,16 @@ arguments to real git (`parseKnownCli` collects unrecognized flags), so a thin
 `dman git …` wrapper — or accepting familiar git flags on dman's own verbs — costs
 no extra code. See [Command schema](./command-schema.md#testability--passthrough).
 
+## Maintenance & diagnostics
+
+- **Cache admin** — a stats-and-exit flag prints catalog/cache stats without
+  launching the UI; a force-refresh flag bypasses cache reads but still writes; a
+  TTL override (`0` = disable reads); plus dev recipes to show / open / clear the
+  store — the SQLite catalog is inspectable, not a black box.
+- **Benchmark & perf** — hidden diagnostic flags (force-sequential; fetch-then-exit
+  with timing before the UI) plus a committed benchmark harness make scan/enrich
+  regressions measurable.
+
 ## Backend dispatch & jj-only verbs (P3)
 
 The command tree above is backend-neutral: `dman branch`/`worktree`/`status`

@@ -114,6 +114,25 @@ dry-run, `s` cycle sort, `Tab`/`1`–`4` filter, `/` search, `Enter` confirm,
   disabled-needs-force / protected-no-checkbox) and "select all" operates only on
   the currently-selectable subset.
 
+## Interaction polish
+
+- **Search** is a real cursor-editable (multibyte-safe) text field with a
+  scrollable autocomplete dropdown ("N more above/below", auto-scroll to the
+  selection, auto-quote values containing spaces), driving an **extensible
+  `@field:value` query grammar** (`@author:`, `@status:`, `@pr:`, a `me` sentinel;
+  free text + field filters combine) — not a hardcoded author special-case.
+- **Dual-binding keymap** — every action bound both vim-style and standard
+  (`j`/`k` + arrows, `g`/`G`, `Ctrl-U`/`Ctrl-D`, `/` for search); collisions are
+  reassigned deliberately.
+- **State-aware footer** — the hint bar shows only currently-actionable keys and
+  highlights active toggles (force / dry-run) and feature-gated hints.
+- **Edge-only scrolling** — the cursor moves within the window; the list scrolls
+  only at the edges (off `viewportH`), never re-centering on each move.
+- **Robust lifecycle** — guaranteed raw-mode / alt-screen restore even on panic,
+  with the scriptable CLI as the escape hatch; a central **semantic color theme**
+  (role → color: accent / warning / danger / current / selected / success) defined
+  once in `sparkles:tui` and shared.
+
 ## Event loop on `event-horizon`
 
 The loop is driven by `event-horizon`'s `runOnce`, **not** a blocking poll — the
