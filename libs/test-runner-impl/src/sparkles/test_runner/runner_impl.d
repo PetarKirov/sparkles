@@ -22,8 +22,7 @@ module sparkles.test_runner.runner_impl;
 import core.runtime : Runtime, UnitTestResult;
 import core.time : Duration, MonoTime;
 
-import sparkles.test_runner.bench : BenchConfig, BenchStats, countBenchmarkCases,
-    runBenchmark;
+import sparkles.test_runner.bench : BenchConfig, BenchStats, runBenchmark;
 import sparkles.test_runner.driver : detectCompiler, DriverOptions, runCtfeTests;
 import sparkles.test_runner.execution : executeTest;
 import sparkles.test_runner.filter : matchesFilter;
@@ -58,7 +57,7 @@ private struct RunnerOptions
     string syscalls;
     string metrics;
     string sortBy;
-    string groupBy;
+    string[] groupBy;
     bool listMetrics;
     string ctfeTrace;
     bool betterC;
@@ -100,11 +99,14 @@ private UnitTestResult runnerMain(Test[] discovered, bool hostIsRunner)
 {
     import std.algorithm.iteration : filter;
     import std.array : array;
-    import std.getopt : config, getopt;
+    import std.getopt : arraySep, config, getopt;
     import std.stdio : stdout;
 
     RunnerOptions options;
     auto args = Runtime.args;
+    // Comma-separated array options (`--group-by=dataset,operation`, repeatable
+    // `-I` paths) split on `,` in addition to accumulating across occurrences.
+    arraySep = ",";
     // `--syscalls` takes an optional value (bare = total only), which std.getopt
     // can't express directly; rewrite a bare occurrence to the `*` sentinel.
     foreach (ref arg; args)
@@ -150,8 +152,9 @@ private UnitTestResult runnerMain(Test[] discovered, bool hostIsRunner)
             "(default: median/iter, ascending). Applied within --group-by groups",
             &options.sortBy,
         "group-by",
-            "With --bench: split into one table per group of the given 0-based " ~
-            "name segments, e.g. =1,2 groups 'engine/dataset/op' by (dataset, op)",
+            "With --bench: split into one table per group of the given case label " ~
+            "keys (comma-separated or repeated), e.g. =dataset,operation. " ~
+            "=all groups by every label; =list lists the available keys",
             &options.groupBy,
         "list-metrics",
             "With --bench: list the available metric columns (name, class, source) and exit",
@@ -526,50 +529,130 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         return UnitTestResult(0, 0, false, false);
     }
 
+    import std.algorithm.mutation : SwapStrategy;
+    import std.algorithm.sorting : sort;
+    import std.range : iota;
+    import sparkles.test_runner.bench : measureCase, registerBenchmark, RegisteredCase;
+    import sparkles.test_runner.execution : toThrown;
+    import std.algorithm.searching : canFind;
+    import sparkles.test_runner.metrics : groupKeyOf;
+
     auto benchTests = tests.filter!(t => t.traits.isBenchmark).array;
 
-    // Dry enumerate pass: run each body once with measurement skipped to learn
-    // the exact case total, so the live progress line can show `[done/total]`.
-    size_t total;
-    foreach (test; benchTests)
-        total += countBenchmarkCases(test);
+    // Register every @benchmark test's cases (running each body once, no
+    // measurement). Cases sharing a streaming key are measured and printed
+    // together — one table per group as it finishes.
+    static struct Sched
+    {
+        RegisteredCase c;
+        Test test;
+        BenchConfig config;
+        string key;
+    }
 
-    auto progress = BenchProgress(total: total,
-        active: stderrIsTty(options.noColours) && total > 0);
+    Sched[] all;
+    size_t failed;
+    BenchProgress progress; // inert (active=false) until populated after registration
+    void reportFailure(in TestResult result)
+    {
+        failed++;
+        progress.clear(); // erase any spinner before the failure lines (no-op if inert)
+        stdout.write(formatResultLine(result, colored, true), "\n");
+        foreach (thrown; result.thrown)
+            stdout.write(formatThrown(thrown, colored, true));
+    }
 
-    size_t totalRows, errorRows, failed;
-    bool first = true;
     foreach (test; benchTests)
     {
-        auto outcome = runBenchmark(test,
-            BenchConfig(iterations: test.traits.benchIterations), perf, tier0, syscalls,
-            &progress.tick);
-        progress.clear(); // erase the spinner before this test's output
+        const config = BenchConfig(iterations: test.traits.benchIterations);
+        auto reg = registerBenchmark(test, config);
+        if (!reg.result.succeeded)
+            reportFailure(reg.result); // still schedule the cases it did register
+        foreach (c; reg.cases)
+            all ~= Sched(c, test, config, null); // key resolved once label keys are known
+    }
 
-        if (!outcome.result.succeeded)
+    // The label keys available to --group-by: the sorted union across all cases.
+    bool[string] keySet;
+    foreach (ref s; all)
+        foreach (k; s.c.labels.byKey)
+            keySet[k] = true;
+    auto allKeys = keySet.keys.sort.release;
+
+    // --group-by=list/help/? : print the available label keys and exit.
+    if (options.groupBy == ["list"] || options.groupBy == ["help"] || options.groupBy == ["?"])
+    {
+        if (allKeys.length == 0)
+            stdout.writeln("no @benchmark labels to group by");
+        else
         {
-            failed++;
-            stdout.write(formatResultLine(outcome.result, colored, true), "\n");
-            foreach (thrown; outcome.result.thrown)
-                stdout.write(formatThrown(thrown, colored, true));
+            stdout.writeln("--group-by label keys (=all for every key, or a comma list):");
+            foreach (k; allKeys)
+                stdout.writeln("  ", k);
         }
+        return UnitTestResult(0, 0, false, false);
+    }
 
-        foreach (ref row; outcome.rows)
+    // Effective group keys: =all → every label key; else the given keys (empty =
+    // no grouping), warning for any key no registered case carries.
+    const(string)[] keys = options.groupBy;
+    if (options.groupBy == ["all"])
+        keys = allKeys;
+    foreach (k; keys)
+        if (!allKeys.canFind(k))
+            stderr.writeln("--group-by: no @benchmark case has label '", k, "'");
+
+    foreach (ref s; all)
+        s.key = keys.length ? groupKeyOf(s.c.labels, keys) : s.test.name;
+
+    // Schedule: contiguous by key, keys in ascending order (stable within a key).
+    auto order = iota(all.length).array;
+    order.sort!((i, j) => all[i].key < all[j].key, SwapStrategy.stable);
+
+    progress = BenchProgress(total: all.length,
+        active: stderrIsTty(options.noColours) && all.length > 0);
+
+    size_t totalRows, errorRows;
+    bool firstFlush = true;
+    BenchStats[] bucket;
+    string curKey;
+
+    void flush()
+    {
+        if (bucket.length == 0)
+            return;
+        progress.clear(); // erase the spinner before the table
+        if (!firstFlush)
+            stdout.write("\n"); // blank line between group tables
+        stdout.write(formatBenchTable(bucket, colored, options.metrics,
+            options.sortBy, keys));
+        stdout.flush(); // on screen before the next tick redraws the spinner below
+        firstFlush = false;
+        bucket = null;
+    }
+
+    foreach (idx; order)
+    {
+        auto s = all[idx];
+        if (bucket.length && s.key != curKey)
+            flush();
+        curKey = s.key;
+
+        // Spinner label: the group + the case name when grouping (`name` alone is
+        // just the varying dimension), else the case name.
+        progress.tick(keys.length ? s.key ~ "  " ~ s.c.name : s.c.name);
+        try
+        {
+            auto row = measureCase(s.c, s.config, perf, tier0, syscalls);
             if (row.error.length)
                 errorRows++;
-        totalRows += outcome.rows.length;
-
-        // Stream this test's table as soon as it finishes (one table per test).
-        if (outcome.rows.length)
-        {
-            if (!first)
-                stdout.write("\n");
-            stdout.write(formatBenchTable(outcome.rows, colored, options.metrics,
-                options.sortBy, options.groupBy));
-            stdout.flush(); // on screen before the next tick redraws the spinner below
-            first = false;
+            bucket ~= row;
+            totalRows++;
         }
+        catch (Throwable t)
+            reportFailure(TestResult(test: s.test, succeeded: false, thrown: toThrown(t)));
     }
+    flush();
     progress.clear();
 
     if (totalRows == 0 && !failed)

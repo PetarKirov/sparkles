@@ -225,20 +225,46 @@ unittest
 {
     static foreach (Engine; Engines)
         foreach (ds; datasets)
-        {
-            Engine e;
-            benchCase(
-                name:    Engine.name ~ "/" ~ ds.name,
-                timed:   () => e.parse(ds.text),   // measured; its result flows to `after`
-                after:   (ref doc) { enforce(doc.matches(reference), "mismatch"); e.free(doc); },
-                metrics: [Metric(Unit("B"), ds.text.length, Metric.Mode.rate)],  // → a B/s column
-            );
-        }
+            registerParse!Engine(ds);   // ds by value → each case captures its own copy
+}
+
+// One case per (Engine, ds), registered from its own frame so its closures
+// capture their own engine and `ds` — never a shared loop variable.
+void registerParse(Engine)(Dataset ds)
+{
+    auto e = new Engine;   // heap: this case owns it, kept alive until it runs
+    benchCase(
+        name:     Engine.name,              // the varying dimension (the implementation)
+        labels:   ["dataset": ds.name, "operation": "parse"],  // group/filter dimensions
+        setup:    () { e.setup(); },        // untimed, once before this case's samples
+        timed:    () => e.parse(ds.text),   // measured; its result flows to `after`
+        after:    (ref doc) { enforce(doc.matches(reference), "mismatch"); e.free(doc); },
+        teardown: () { e.teardown(); },     // untimed, once after this case's samples
+        metrics:  [Metric(Unit("B"), ds.text.length, Metric.Mode.rate)],  // → a B/s column
+    );
 }
 ```
 
+`--group-by=dataset,operation` then prints one table per `(dataset, operation)`
+group as it finishes, each comparing the engines (the `name`s); `--group-by=list`
+lists the label keys the run offers.
+
+> [!IMPORTANT]
+> Under `--bench`, `benchCase` **registers** the case and the runner measures it
+> later (grouped, so each table streams as its group finishes) — the closures run
+> _after_ the body returns. So each case must be self-contained: register it from a
+> helper that takes its varying state **by value** (a `foreach` loop variable is a
+> single shared slot once execution is deferred), give it its own state, and put
+> untimed per-case setup/release in **`setup`/`teardown`** (which bracket the case's
+> measurement) — never in code around the `benchCase` call, whose scope has long
+> exited by execution time. Outside `--bench` the case runs once immediately, for
+> correctness.
+
 - **`timed`** is the measured body; its return value flows to **`after`**, which
   runs _untimed_ after every iteration to **verify + release** the result.
+- **`setup`/`teardown`** (optional) run untimed once around this case's whole
+  measurement — for state built once and held across iterations (e.g. parse the
+  document a serialize case serializes, and release it after).
 - **`after` picks the failure granularity**: `throw` on a mismatch → the whole
   benchmark test fails; return an [`Expected`](../../guidelines/idioms/expected/index.md)
   error → only _this_ case becomes an error row and the rest of the matrix

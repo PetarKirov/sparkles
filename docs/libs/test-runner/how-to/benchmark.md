@@ -62,18 +62,33 @@ unittest
 {
     static foreach (Engine; Engines)
         foreach (ds; datasets)
-        {
-            Engine e;
-            benchCase(
-                name:    Engine.name ~ "/" ~ ds.name,
-                timed:   () => e.parse(ds.text),   // measured; its result flows to `after`
-                after:   (ref doc) { enforce(doc.matches(reference), "mismatch"); e.free(doc); },
-                metrics: [Metric(Unit("B"), ds.text.length, Metric.Mode.rate)],  // a B/s column
-            );
-        }
+            registerParse!Engine(ds);   // ds by value → each case captures its own copy
+}
+
+void registerParse(Engine)(Dataset ds)
+{
+    auto e = new Engine;   // heap: this case owns it, kept alive until it runs
+    benchCase(
+        name:    Engine.name,              // the varying dimension (the implementation)
+        labels:  ["dataset": ds.name, "operation": "parse"],  // group/filter dimensions
+        timed:   () => e.parse(ds.text),   // measured; its result flows to `after`
+        after:   (ref doc) { enforce(doc.matches(reference), "mismatch"); e.free(doc); },
+        metrics: [Metric(Unit("B"), ds.text.length, Metric.Mode.rate)],  // a B/s column
+    );
 }
 ```
 
+`--group-by=dataset,operation` splits the report into one streamed table per
+`(dataset, operation)` group, each comparing the engines by `name`. `=all` groups
+by every label key; `=list` prints the keys the run offers.
+
+- Under `--bench`, `benchCase` **registers** the case; the runner measures it
+  later (grouped, so each table streams as its group finishes). The closures run
+  after the body returns, so register each case from a helper taking its varying
+  state **by value** (a `foreach` variable is one shared slot under deferred
+  execution), give it its own state, and put untimed per-case setup/release in the
+  optional **`setup`/`teardown`** (which bracket the case's measurement) — not
+  around the call. Outside `--bench` the case runs once immediately.
 - **`timed`** returns a result that flows to **`after`**, which runs _untimed_
   after each iteration to verify and release it. `after` may **throw** (the whole
   benchmark test fails) or return an

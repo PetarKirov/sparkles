@@ -406,13 +406,12 @@ unittest
 /// See `sparkles.test_runner.metrics.sortOrder`. Rendered with `core-cli`'s
 /// `drawTable` when available, plain space-aligned columns otherwise.
 string formatBenchTable(in BenchStats[] rows, bool colored, string metricFilter = null,
-    string sortBy = null, string groupBy = null) @system // drawTable is @system
+    string sortBy = null, in string[] groupKeys = null) @system // drawTable is @system
 {
-    import sparkles.test_runner.metrics : groupKeyOf, parseGroupSegments, sortOrder,
-        variantLabel, visibleMetrics;
+    import sparkles.test_runner.metrics : groupKeyOf, labelKeyUnion, sortOrder,
+        visibleMetrics;
 
-    const segs = parseGroupSegments(groupBy);
-    auto order = sortOrder(rows, sortBy, segs);
+    auto order = sortOrder(rows, sortBy, groupKeys);
 
     // The visible metric columns (client + perf) via the metric catalog.
     // Row order doesn't affect column selection; the default (null) filter
@@ -430,18 +429,21 @@ string formatBenchTable(in BenchStats[] rows, bool colored, string metricFilter 
     foreach (ref col; columns)
         valueHeaders ~= render(colored, i"{bold $(col.header)}");
 
-    const totalCols = 1 + valueHeaders.length; // + the stub (name/implementation) column
+    // Per-column alignment for `stubCols` leading textual columns followed by
+    // the value columns: numeric values right-align, with the four timing
+    // columns aligned on the decimal point (same-unit values line up; mixed
+    // units still read right).
+    Align[] valueAligns(size_t stubCols)
+    {
+        auto aligns = new Align[stubCols + valueHeaders.length];
+        aligns[] = Align.right;
+        aligns[0 .. stubCols] = Align.left;
+        aligns[stubCols + 1 .. stubCols + 5] = Align.decimal;
+        return aligns;
+    }
 
-    // Column 0 (the stub) is textual; every value column is numeric, so
-    // right-align them, with the four timing columns aligned on the decimal
-    // point (same-unit values line up; mixed units still read right).
-    auto aligns = new Align[totalCols];
-    aligns[] = Align.right;
-    aligns[0] = Align.left;
-    aligns[2 .. 6] = Align.decimal;
-
-    // The value cells of one row (everything right of the stub column): timings
-    // then metric cells, or — for an error row — the message padded with dashes.
+    // The value cells of one row (everything right of the name/label columns):
+    // timings then metric cells, or — for an error row — the message padded.
     string[] valueCells(in BenchStats row) @system
     {
         import std.conv : to;
@@ -477,23 +479,39 @@ string formatBenchTable(in BenchStats[] rows, bool colored, string metricFilter 
         return cols;
     }
 
-    // Ungrouped: the single flat table, stub column headed "benchmark".
-    if (segs.length == 0)
+    // Ungrouped: one flat table. `name` alone isn't self-describing (rows may all
+    // read `asdf`/`jsoniopipe`), so a leading column per label key precedes the
+    // `benchmark` (name) column — rows without labels reproduce the legacy table.
+    if (groupKeys.length == 0)
     {
-        string[][] cells = [render(colored, i"{bold benchmark}") ~ valueHeaders];
+        const labelKeys = labelKeyUnion(rows);
+        string[] header;
+        foreach (key; labelKeys)
+            header ~= render(colored, i"{bold $(key)}");
+        header ~= render(colored, i"{bold benchmark}");
+        header ~= valueHeaders;
+
+        string[][] cells = [header];
         foreach (idx; order)
-            cells ~= rows[idx].name ~ valueCells(rows[idx]);
-        return renderCells(cells, aligns, headerRows: 1);
+        {
+            string[] labelCols;
+            foreach (key; labelKeys)
+                labelCols ~= rows[idx].labels.get(key, "");
+            cells ~= labelCols ~ rows[idx].name ~ valueCells(rows[idx]);
+        }
+        return renderCells(cells, valueAligns(labelKeys.length + 1), headerRows: 1);
     }
 
-    // Grouped: one table per contiguous run of equal group key. Each table's
-    // stub header spans two rows — `benchmark: <group>` over `implementation:` —
-    // and each data row's stub is just the varying segment(s).
+    // Grouped: one table per contiguous run of equal group key. Each table's stub
+    // header spans two rows — `benchmark: <group>` over `implementation:` — and
+    // each data row's stub is the `name` (the varying dimension).
+    auto aligns = valueAligns(1);
+
     string result;
     size_t i = 0;
     while (i < order.length)
     {
-        const key = groupKeyOf(rows[order[i]].name, segs);
+        const key = groupKeyOf(rows[order[i]].labels, groupKeys);
         GridCell[][] grid = [
             // Header band: a rowspan-2 stub cell, value headers spanning it too.
             [GridCell(render(colored, i"{dim benchmark:} {bold $(key)}") ~ "\n"
@@ -501,10 +519,10 @@ string formatBenchTable(in BenchStats[] rows, bool colored, string metricFilter 
                 ~ toGridRow(valueHeaders, rowSpan: 2),
             [], // the second header row is fully covered by the rowspans above
         ];
-        while (i < order.length && groupKeyOf(rows[order[i]].name, segs) == key)
+        while (i < order.length && groupKeyOf(rows[order[i]].labels, groupKeys) == key)
         {
             const row = rows[order[i]];
-            grid ~= GridCell(variantLabel(row.name, segs)) ~ toGridRow(valueCells(row));
+            grid ~= GridCell(row.name) ~ toGridRow(valueCells(row));
             i++;
         }
         if (result.length)
@@ -551,23 +569,52 @@ unittest
     import std.algorithm.searching : canFind;
     import std.string : indexOf;
 
-    BenchStats[3] rows;
-    rows[0] = BenchStats(name: "asdf/canada/parse", iterations: 1, nsPerIterMedian: 30);
-    rows[1] = BenchStats(name: "mir-ion/canada/parse", iterations: 1, nsPerIterMedian: 10);
-    rows[2] = BenchStats(name: "asdf/twitter/parse", iterations: 1, nsPerIterMedian: 20);
+    static BenchStats row(string engine, string dataset, double median)
+    {
+        return BenchStats(name: engine,
+            labels: ["dataset": dataset, "operation": "parse"], iterations: 1,
+            nsPerIterMedian: median);
+    }
 
-    // --group-by=1,2 → one table per (dataset, op); the stub header carries the
-    // group title and an `implementation:` label, and rows list just the engine.
-    const rendered = formatBenchTable(rows, false, null, null, "1,2");
+    BenchStats[3] rows = [
+        row("asdf", "canada", 30),
+        row("mir-ion", "canada", 10),
+        row("asdf", "twitter", 20),
+    ];
+
+    // --group-by=dataset,operation → one table per group; the stub header carries
+    // the group title and an `implementation:` label, rows list the engine `name`.
+    const rendered = formatBenchTable(rows, false, null, null, ["dataset", "operation"]);
     assert(rendered.canFind("benchmark: canada/parse"));
     assert(rendered.canFind("benchmark: twitter/parse"));
     assert(rendered.canFind("implementation:"));
-    // The group prefix is dropped from the data column (DRY): engine name only.
-    assert(rendered.canFind("mir-ion") && !rendered.canFind("mir-ion/canada"));
+    assert(rendered.canFind("mir-ion"));
     // Two tables → two top borders.
     assert(rendered.indexOf("╭") != rendered.indexOf("╭", rendered.indexOf("╭") + 1));
     // Within the canada group, the faster engine (mir-ion, 10) precedes asdf (30).
     assert(rendered.indexOf("mir-ion") < rendered.indexOf("asdf"));
+}
+
+@("formatBenchTable.flatLabelColumns")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    // Ungrouped: label keys become leading columns so the table stays
+    // self-describing when `name` alone is just the engine.
+    BenchStats[2] rows = [
+        BenchStats(name: "asdf", labels: ["dataset": "canada"], iterations: 1),
+        BenchStats(name: "mir-ion", labels: ["dataset": "twitter"], iterations: 1),
+    ];
+    const rendered = formatBenchTable(rows, false); // no --group-by
+    assert(rendered.canFind("dataset") && rendered.canFind("benchmark"));
+    assert(rendered.canFind("canada") && rendered.canFind("asdf"));
+    // A label-less row set reproduces the plain flat table (no leading columns).
+    BenchStats plain;
+    plain.name = "sum/64";
+    plain.iterations = 1;
+    assert(formatBenchTable([plain], false).canFind("benchmark"));
 }
 
 /// The `--list-metrics` report: every catalog metric with its column label,

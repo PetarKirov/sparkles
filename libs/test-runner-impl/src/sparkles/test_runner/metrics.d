@@ -246,96 +246,57 @@ private double sortValue(in BenchStats row, string sortBy) @safe pure nothrow
     return double.nan;
 }
 
-/// Parses a `--group-by` spec — a comma-separated list of 0-based segment
-/// indices into the `/`-delimited benchmark name — into those indices. Blank
-/// and non-numeric tokens are skipped, so `""` (the default) yields no segments
-/// = no grouping. E.g. `"1,2"` groups `"engine/dataset/op"` names by
-/// `(dataset, op)`, leaving `engine` as the compared variable.
-size_t[] parseGroupSegments(string spec) @safe
+/// The group key of a case from its `labels`: the values of the selected label
+/// `keys`, in order, joined with `/`. `keys` empty → `""` (every row in one group
+/// = no grouping). A key absent from `labels` contributes an empty part.
+string groupKeyOf(in string[string] labels, in string[] keys) @safe
 {
-    import std.algorithm.iteration : splitter;
-    import std.conv : ConvException, to;
-
-    size_t[] segments;
-    foreach (token; spec.splitter(','))
-    {
-        if (token.length == 0)
-            continue;
-        try
-            segments ~= token.to!size_t;
-        catch (ConvException)
-        {
-        }
-    }
-    return segments;
-}
-
-@("metrics.parseGroupSegments.indicesAndJunk")
-@safe
-unittest
-{
-    assert(parseGroupSegments("") == []);
-    assert(parseGroupSegments("1,2") == [1, 2]);
-    assert(parseGroupSegments("0, ,x,3") == [0, 3]); // blanks/non-numeric skipped
-}
-
-/// The group key of a benchmark `name`: the selected `/`-delimited `segments`
-/// joined with `/`. `segments` empty → `""` (every row in one group = no
-/// grouping). A segment index past the name's end contributes an empty part.
-string groupKeyOf(string name, in size_t[] segments) @safe
-{
-    import std.array : split;
-
-    if (segments.length == 0)
+    if (keys.length == 0)
         return "";
-    auto parts = name.split('/');
-    string key;
-    foreach (n, s; segments)
+    string result;
+    foreach (n, key; keys)
     {
         if (n)
-            key ~= "/";
-        if (s < parts.length)
-            key ~= parts[s];
+            result ~= "/";
+        if (auto v = key in labels)
+            result ~= *v;
     }
-    return key;
+    return result;
 }
 
-/// The variant (implementation) label of a benchmark `name` under grouping: the
-/// `/`-delimited segments *not* in `segments`, joined with `/`. For
-/// `"engine/dataset/op"` grouped by `[1, 2]` this is `"engine"` — the varying
-/// dimension, with the shared group prefix dropped (DRY, since the group name is
-/// shown once in the table title). Falls back to the whole `name` when nothing
-/// is left (e.g. every segment is a group segment).
-string variantLabel(string name, in size_t[] segments) @safe
-{
-    import std.algorithm.searching : canFind;
-    import std.array : split;
-
-    auto parts = name.split('/');
-    string label;
-    foreach (i, part; parts)
-        if (!segments.canFind(i))
-            label ~= label.length ? "/" ~ part : part;
-    return label.length ? label : name;
-}
-
-@("metrics.variantLabel.dropsGroupSegments")
+@("metrics.groupKeyOf.selectsLabels")
 @safe
 unittest
 {
-    assert(variantLabel("asdf/canada/parse", [1, 2]) == "asdf");
-    assert(variantLabel("a/b/c", [1]) == "a/c");
-    assert(variantLabel("solo", [0]) == "solo"); // nothing left → whole name
+    auto labels = ["dataset": "twitter", "operation": "parse"];
+    assert(groupKeyOf(labels, ["dataset", "operation"]) == "twitter/parse");
+    assert(groupKeyOf(labels, []) == "");
+    assert(groupKeyOf(labels, ["operation"]) == "parse");
+    assert(groupKeyOf(labels, ["missing"]) == ""); // absent key → empty part
 }
 
-@("metrics.groupKeyOf.selectsSegments")
+/// The sorted union of every label key present across `rows` — the set of keys a
+/// `--group-by` selection can name (and what `--group-by=all` / `=list` expand to).
+string[] labelKeyUnion(in BenchStats[] rows) @safe
+{
+    import std.algorithm.sorting : sort;
+
+    bool[string] seen;
+    foreach (ref row; rows)
+        foreach (key; row.labels.byKey)
+            seen[key] = true;
+    return seen.keys.sort.release;
+}
+
+@("metrics.labelKeyUnion.sortedDistinct")
 @safe
 unittest
 {
-    assert(groupKeyOf("asdf/twitter/parse", [1, 2]) == "twitter/parse");
-    assert(groupKeyOf("asdf/twitter/parse", []) == "");
-    assert(groupKeyOf("asdf/twitter/parse", [0]) == "asdf");
-    assert(groupKeyOf("no-slash", [1]) == ""); // index past the end → empty part
+    BenchStats[3] rows;
+    rows[0].labels = ["operation": "parse", "dataset": "twitter"];
+    rows[1].labels = ["dataset": "canada"];
+    rows[2].labels = null; // no labels
+    assert(labelKeyUnion(rows) == ["dataset", "operation"]);
 }
 
 /// The display order for benchmark `rows`, as a permutation of `[0 .. rows.length)`
@@ -343,14 +304,14 @@ unittest
 /// carries mutable slice fields (`metrics`, nested `syscalls.counts`) that a `const`
 /// row can't cheaply detach from.
 ///
-/// Grouping and sorting are orthogonal. `groupSegments` (from `parseGroupSegments`)
-/// partitions rows by the named `/`-delimited name segments and keeps each group
-/// contiguous, with groups ordered by their key (alphabetical); empty = no grouping.
-/// `sortBy` then orders rows *within* each group: `"name"` (alphabetical),
-/// empty/`"median/iter"` (ascending median ns/iter — the default), or any other
-/// metric column name (ascending value, via `rowCells`; rows missing it sort last).
-/// Ties keep discovery order (stable sort).
-size_t[] sortOrder(in BenchStats[] rows, string sortBy, in size_t[] groupSegments = null) @safe
+/// Grouping and sorting are orthogonal. `groupKeys` (label keys) partitions rows by
+/// their `labels` values under those keys and keeps each group contiguous, with
+/// groups ordered by their key (alphabetical); empty = no grouping. `sortBy` then
+/// orders rows *within* each group: `"name"` (alphabetical), empty/`"median/iter"`
+/// (ascending median ns/iter — the default), or any other metric column name
+/// (ascending value, via `rowCells`; rows missing it sort last). Ties keep
+/// discovery order (stable sort).
+size_t[] sortOrder(in BenchStats[] rows, string sortBy, in string[] groupKeys = null) @safe
 {
     import std.algorithm.mutation : SwapStrategy;
     import std.algorithm.sorting : sort;
@@ -373,7 +334,7 @@ size_t[] sortOrder(in BenchStats[] rows, string sortBy, in size_t[] groupSegment
     // is a no-op and `within` alone decides the order).
     auto keys = new string[rows.length];
     foreach (k, ref row; rows)
-        keys[k] = groupKeyOf(row.name, groupSegments);
+        keys[k] = groupKeyOf(row.labels, groupKeys);
 
     auto order = iota(rows.length).array;
     order.sort!((i, j) {
@@ -412,32 +373,36 @@ unittest
     import std.algorithm.iteration : map;
     import std.array : array;
 
-    // "engine/dataset/op" rows; group by (dataset, op) = segments [1, 2].
-    BenchStats[4] rows;
-    rows[0] = BenchStats(name: "asdf/twitter/parse", nsPerIterMedian: 30);
-    rows[1] = BenchStats(name: "mir-ion/canada/parse", nsPerIterMedian: 10);
-    rows[2] = BenchStats(name: "mir-ion/twitter/parse", nsPerIterMedian: 20);
-    rows[3] = BenchStats(name: "asdf/canada/parse", nsPerIterMedian: 40);
+    // name = engine; labels carry dataset/operation. Group by [dataset, operation].
+    static BenchStats row(string engine, string dataset, double median)
+    {
+        return BenchStats(name: engine,
+            labels: ["dataset": dataset, "operation": "parse"], nsPerIterMedian: median);
+    }
 
-    auto names(string sortBy, in size_t[] segs)
-        => sortOrder(rows, sortBy, segs).map!(i => rows[i].name).array;
+    BenchStats[4] rows = [
+        row("asdf", "twitter", 30),
+        row("mir-ion", "canada", 10),
+        row("mir-ion", "twitter", 20),
+        row("asdf", "canada", 40),
+    ];
+
+    auto names(string sortBy, in string[] keys)
+        => sortOrder(rows, sortBy, keys).map!(i => rows[i].name).array;
 
     // Groups ordered by key (canada before twitter); within each, default sort
     // (median ascending) ranks the engines fastest-first — orthogonal axes.
-    assert(names("median/iter", [1, 2]) == [
-        "mir-ion/canada/parse", "asdf/canada/parse",   // canada: 10, 40
-        "mir-ion/twitter/parse", "asdf/twitter/parse", // twitter: 20, 30
+    assert(names("median/iter", ["dataset", "operation"]) == [
+        "mir-ion", "asdf",  // canada: 10, 40
+        "mir-ion", "asdf",  // twitter: 20, 30
     ]);
     // Same grouping, but sort engines by name within each group instead.
-    assert(names("name", [1, 2]) == [
-        "asdf/canada/parse", "mir-ion/canada/parse",
-        "asdf/twitter/parse", "mir-ion/twitter/parse",
+    assert(names("name", ["dataset", "operation"]) == [
+        "asdf", "mir-ion",  // canada
+        "asdf", "mir-ion",  // twitter
     ]);
     // No grouping: pure median order across everything.
-    assert(names("median/iter", null) == [
-        "mir-ion/canada/parse", "mir-ion/twitter/parse",
-        "asdf/twitter/parse", "asdf/canada/parse",
-    ]);
+    assert(names("median/iter", null) == ["mir-ion", "mir-ion", "asdf", "asdf"]);
 }
 
 @("metrics.sortOrder.byMetricNameMissingLast")
