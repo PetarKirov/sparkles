@@ -289,8 +289,10 @@ void main()
 ```
 
 Cells can span columns and rows, columns can be aligned, and separators and
-glyphs are configurable (`TableProps` / the `stylePresets` registry). Both the
-dense `Cell[][]` form and a sparse `Placement[]` form are accepted:
+glyphs are configurable (`TableProps` / the `stylePresets` registry) — including
+`headerRows` / `headerCols` for a distinct rule setting off the header rows and
+the stub (row-header) column. Both the dense `Cell[][]` form and a sparse
+`Placement[]` form are accepted:
 
 ```d
 #!/usr/bin/env dub
@@ -313,7 +315,8 @@ void main()
         [Cell("South"), Cell("98"), Cell("110")],
     ], TableProps(
         columnAligns: [Align.left, Align.right, Align.right],
-        rowSeparators: true,
+        headerRows: 2, // banner + column-label row
+        headerCols: 1, // the Region stub column
     )).write;
 }
 ```
@@ -321,13 +324,11 @@ void main()
 ```[Output]
 ╭──────────────────────╮
 │ Quarterly Sales      │
-├────────┬──────┬──────┤
-│ Region │   Q1 │   Q2 │
-├────────┼──────┼──────┤
-│ North  │ 1200 │ 1350 │
-├────────┼──────┼──────┤
-│ South  │   98 │  110 │
-╰────────┴──────┴──────╯
+│ Region ┃   Q1 │   Q2 │
+┝━━━━━━━━╋━━━━━━┿━━━━━━┥
+│ North  ┃ 1200 │ 1350 │
+│ South  ┃   98 │  110 │
+╰────────┸──────┴──────╯
 ```
 
 #### Boxes
