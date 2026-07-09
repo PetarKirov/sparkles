@@ -236,7 +236,11 @@ private UnitTestResult runnerMain(Test[] discovered, bool hostIsRunner)
 
     if (options.list)
         return listTests(tests, colored);
-    if (options.bench)
+    // --list-metrics / --metrics=?/help print the catalog and exit; they are
+    // handled inside runBenchMode, so route there even without --bench (otherwise
+    // the flag is silently ignored and the whole suite runs).
+    if (options.bench || options.listMetrics
+        || options.metrics == "?" || options.metrics == "help")
         return runBenchMode(tests, options, colored);
     if (options.ctfeTrace.length)
         return runCtfeTraceMode(tests, options, colored);
