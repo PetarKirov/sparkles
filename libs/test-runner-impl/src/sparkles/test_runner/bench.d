@@ -513,7 +513,23 @@ private void delegate() toVoidDg(S)(S s)
     else static if (is(S : void delegate()))
         return s; // already a delegate (possibly null) — preserve it
     else
-        return () { s(); }; // function pointer → wrap into a delegate
+        // function pointer → wrap into a delegate, preserving a runtime null so
+        // measureCase's `!is null` guard still treats it as "no setup/teardown"
+        // (a non-null wrapper around a null fptr would call through null).
+        return s is null ? null : () { s(); };
+}
+
+@("bench.toVoidDg.preservesNull")
+@safe
+unittest
+{
+    assert(toVoidDg(null) is null);
+    void delegate() nullDg;
+    assert(toVoidDg(nullDg) is null); // null delegate preserved
+    void function() nullFp;
+    assert(toVoidDg(nullFp) is null); // null fptr → null, not a call-through wrapper
+    static void f() @safe {}
+    assert(toVoidDg(&f) !is null); // real fptr → wrapped
 }
 
 /// Type-erases a case's generic `timed`/`after` into a `RegisteredCase`'s uniform
