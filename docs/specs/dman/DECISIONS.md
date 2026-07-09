@@ -181,9 +181,9 @@ Git-shaped" default.) See [VCS backend § Designing for jj](./vcs-backend.md#des
 
 ## D9 — Worktree on-disk layout
 
-**Decision (Accepted — recommended default, 2026-07-09):** default to **sibling
-directories named `<repo>-<branch>`** next to the main checkout, configurable via
-a naming template.
+**Decision (Accepted, 2026-07-10):** default to **sibling directories named
+`<repo>-<branch>`** next to the main checkout, configurable via a naming template.
+(Consciously confirmed — it matches the requester's existing layout.)
 
 **Rationale:** matches the existing sparkles worktree convention (e.g.
 `sparkles-dman`, `sparkles-event-horizon`), so dman fits how the repos are
@@ -195,41 +195,36 @@ already laid out, and the repo scanner discovers worktrees as ordinary repos.
 convention can be selected instead. See
 [VCS backend § worktree model](./vcs-backend.md#worktree-model-net-new).
 
-> D7–D9 were adopted as the recommended defaults while the requester was away;
-> they are low-cost to revisit pre-1.0.
-
 ---
 
 ## D10 — TUI architecture
 
-**Decision (Accepted — recommended default, 2026-07-09):** build the interactive
-UI as a new **`sparkles:tui`** package following the sparkles TUI/layout research:
-**immediate-mode**, built from scratch in D, **double-buffer + cell-level diff**
-rendering, **box-flow layout** (not a constraint solver), a compile-time
-`isWidget!T` contract, and the three-layer (data / `State` / renderer) widget
-model. dman is its first consumer. The loop is driven by `event-horizon`'s
-`runOnce`, not a blocking poll.
+**Decision (Accepted, 2026-07-10):** build the interactive UI as a new
+**`sparkles:tui`** package with an **MVU / Elm core** — a `Model`, a `Msg` sum
+type, a pure `update(Model, Msg)`, and a pure `view(Model) → Buffer` — over the
+research's render substrate: **double-buffer + cell-level diff** rendering,
+**box-flow layout** (not a constraint solver), and a compile-time `isWidget!T`
+contract. dman is its first consumer; the loop is driven by `event-horizon`'s
+`runOnce` (events arrive as `Msg`s), not a blocking poll.
 
-**Rationale:** the sparkles research (`tui-libraries/comparison.md §8`,
-`ui-layout`, `tree-view-case-study.md`) already concludes this is the right
-design — immediate-mode maps to `@nogc`/UFCS/DbI with no vtables, cell-diff is the
-best perf/ergonomics balance, and box-flow beats a constraint solver for a cell
-grid. The Cell/Buffer/diff core is unavoidable for any interactive TUI, so making
-it a reusable package rather than a dman-local shell costs little and serves the
-later GPU-client/multiplexer work. Driving the loop from `event-horizon`
-([D3](./DECISIONS.md)) lets async git/scan/PR/watch run without freezing the UI —
-the one improvement over the prior art, whose loop is fully synchronous.
+**Rationale:** the **render substrate** follows the sparkles TUI/layout research
+(`tui-libraries/comparison.md §8`, `ui-layout`, `tree-view-case-study.md`) —
+immediate-mode cell-diff + box-flow map to `@nogc`/UFCS/DbI with no vtables and
+beat a constraint solver for a cell grid. For the **application architecture**,
+MVU was chosen over the research's default (imperative immediate-mode, with MVU as
+an optional overlay): pure `update`/`view` make the whole shell **unit-testable**
+— drive a `Msg` sequence, assert on the `Model`/frame — fitting dman's
+capability/test-double posture, and async results fold in as ordinary `Msg`s with
+no separate code path. The cost is more ceremony than direct mutation.
 
-**Implications:** P2 splits into P2a (`sparkles:tui` core + layout), P2b (core
+**Implications:** P2 splits into P2a (render substrate + layout), P2b (core
 widgets, adapting the existing one-shot `drawTree`/`drawTable`/`wrap` renderers to
-target a cell `Buffer`), and P2c (the dman shell: app state, an explicit
-`InputMode` state machine, keymap, panes, modals). MVU and reactive rendering are
-deferred optional overlays. Relates to the [D6](./DECISIONS.md) note about
-eventually splitting `core-cli` into `sparkles:tui` + `sparkles:command`: this
-creates `sparkles:tui`. See [TUI shell](./tui-shell.md).
-
-> D10 was likewise adopted on the requester's "continue", following their own
-> TUI/layout research; revisit if the framework-vs-dman-local scope should differ.
+target a cell `Buffer`), and P2c (the dman shell as MVU: `Model` / `Msg` / pure
+`update` / `view`, panes, modals). Widget `State` structs live inside the `Model`.
+Reactive/incremental rendering, mouse, and the Kitty keyboard protocol are
+deferred. Relates to the [D6](./DECISIONS.md) note about eventually splitting
+`core-cli` into `sparkles:tui` + `sparkles:command`: this creates `sparkles:tui`.
+See [TUI shell](./tui-shell.md).
 
 ---
 
