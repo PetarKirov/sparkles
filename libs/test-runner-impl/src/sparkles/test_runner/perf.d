@@ -58,11 +58,8 @@ struct PerfStats
 version (linux)
 {
     import core.sys.linux.perf_event : perf_event_attr, perf_event_open,
-        perf_type_id, perf_hw_id, perf_sw_ids, perf_event_read_format,
-        perf_event_ioc_flags, PERF_EVENT_IOC_DISABLE, PERF_EVENT_IOC_ENABLE,
-        PERF_EVENT_IOC_RESET;
-    import core.sys.posix.sys.ioctl : ioctl;
-    import core.sys.posix.unistd : posixClose = close, read;
+        perf_type_id, perf_hw_id, perf_sw_ids, perf_event_read_format;
+    import core.sys.posix.unistd : posixClose = close;
 
     /// One counted event. `type`/`config` are `perf_event_attr` field types;
     /// the values come from the `perf_type_id` / `perf_hw_id` / `perf_sw_ids`
@@ -245,49 +242,30 @@ version (linux)
             uint iters)
         in (iters > 0)
         {
-            groupIoctl(PERF_EVENT_IOC_RESET);
-            foreach (_; 0 .. iters)
-            {
-                groupIoctl(PERF_EVENT_IOC_ENABLE);
-                timed();
-                groupIoctl(PERF_EVENT_IOC_DISABLE);
-                between();
-            }
+            import sparkles.test_runner.perf_group : bracketCountingPass, readScaledGroup;
+
+            bracketCountingPass(fds[0], timed, between, iters);
 
             PerfStats s;
             s.iters = iters;
+            s.userOnly = userOnly;
 
-            // read_format group layout: nr, time_enabled, time_running, then
-            // one value per opened event in fds order.
-            ulong[3 + events.length] buf;
-            const want = cast(long)(ulong.sizeof * (3 + nOpen));
-            const got = (() @trusted => read(fds[0], buf.ptr, buf.sizeof))();
-            if (got < want)
+            // Group read: one scaled per-iteration value per opened counter, in
+            // fds order. A short read → counters unavailable (nan → em dash).
+            double[events.length] values;
+            if (!readScaledGroup(fds[0], nOpen, iters, s.scale, values[]))
             {
-                // A short/interrupted read yields no usable counts — surface the
-                // counters as unavailable (nan → em dash), not as real zeros.
                 s.cycles = s.instructions = s.branches = s.branchMisses
                     = s.cacheReferences = s.cacheMisses = s.pageFaults = double.nan;
                 return s;
             }
 
-            const enabled = buf[1], running = buf[2];
-            const ratio = (running > 0 && enabled > 0 && running < enabled)
-                ? double(enabled) / double(running) : 1.0;
-            s.scale = enabled > 0 ? round3(double(running) / double(enabled)) : 1.0;
-
+            // Map opened-counter slots back to the fixed fields; a dropped event
+            // (e.g. the LLC pair under multiplexing) reads nan.
             size_t slot;
             double[events.length] perIter;
             foreach (i; 0 .. events.length)
-            {
-                if (fds[i] < 0)
-                {
-                    perIter[i] = double.nan;
-                    continue;
-                }
-                perIter[i] = round3(double(buf[3 + slot]) * ratio / iters);
-                slot++;
-            }
+                perIter[i] = fds[i] < 0 ? double.nan : values[slot++];
             s.cycles = perIter[0];
             s.instructions = perIter[1];
             s.branches = perIter[2];
@@ -295,16 +273,7 @@ version (linux)
             s.cacheReferences = perIter[4];
             s.cacheMisses = perIter[5];
             s.pageFaults = perIter[6];
-            s.userOnly = userOnly;
             return s;
-        }
-
-        private void groupIoctl(uint request) @safe
-        {
-            import core.stdc.config : c_ulong;
-
-            (() @trusted => ioctl(fds[0], cast(c_ulong) request,
-                perf_event_ioc_flags.PERF_IOC_FLAG_GROUP))();
         }
     }
 }
@@ -326,14 +295,6 @@ else
         PerfStats count(Timed, Between)(scope Timed, scope Between, uint)
             => assert(false, "perf counters are Linux-only");
     }
-}
-
-/// Rounded to 3 decimals so counter columns and any snapshots stay short.
-private double round3(double v) @safe pure nothrow @nogc
-{
-    import std.math : round;
-
-    return round(v * 1000) / 1000;
 }
 
 @("perf.PerfStats.derivedMetrics")
