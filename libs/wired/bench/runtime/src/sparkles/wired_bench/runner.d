@@ -47,111 +47,181 @@ private void freeDocOf(E)(ref E e)
 @system
 unittest
 {
-    import core.memory : GC;
-
     const datasets = loadDatasets(defaultDatasets, resolveDataDir(null));
     foreach (ref ds; datasets)
     {
         const reference = referenceFingerprint(ds.text);
         static foreach (E; AllEngines)
-        {
-            benchEngine!E(ds, reference);
-            GC.collect();
-            GC.minimize();
-        }
+            registerEngine!E(ds, reference); // `ds` copied by value → fresh capture
     }
 }
 
-/// Emits the trait-supported op rows for one engine over one dataset. Setup and
-/// teardown (reusable parser state) bracket the whole engine×dataset, untimed.
-private void benchEngine(E)(in Dataset ds, const Fingerprint reference)
+/// Registers the trait-supported op cases for one engine over one dataset. Under
+/// `--bench` the cases run later, in a schedule the runner picks, so each must be
+/// self-contained: `ds` arrives by value (a fresh binding per call, not the shared
+/// loop variable), every case owns a heap engine, and all untimed setup/release
+/// lives in `setup`/`teardown` (which run around that case's measurement) — never
+/// bracketing the call, whose scope has long exited by execution time.
+private void registerEngine(E)(Dataset ds, Fingerprint reference)
 {
-    E e;
-    static if (hasSetup!E)
-        e.setup();
-    scope (exit)
-        static if (hasTeardown!E)
-            e.teardown();
-
     static if (isJsonEngine!E)
     {
-        // parse — the fingerprint check rides the (untimed) `after`, verified
-        // once; a mismatch turns this into an isolated error row.
-        {
-            bool verified;
-            benchCase(
-                name: E.name ~ "/" ~ ds.name ~ "/parse",
-                timed: () { e.parse(ds.text); },
-                after: () {
-                    string error;
-                    if (!verified)
-                    {
-                        verified = true;
-                        const fp = e.fingerprint();
-                        if (!reference.matches(fp))
-                            error = "fingerprint mismatch vs std.json:"
-                                ~ diffFingerprints(reference, fp);
-                    }
-                    freeDocOf(e);
-                    return error.length ? err!bool(error) : ok!string(true);
-                },
-                metrics: [bytes(ds.text.length)],
-            );
-        }
-
+        registerParse!E(ds, reference);
         static if (hasParseInsitu!E)
-            benchCase(
-                name: E.name ~ "/" ~ ds.name ~ "/parse-insitu",
-                timed: () { e.parseInsitu(ds.text); },
-                after: () { freeDocOf(e); },
-                metrics: [bytes(ds.text.length)],
-            );
-
+            registerParseInsitu!E(ds);
         static if (hasValidate!E)
-            benchCase(
-                name: E.name ~ "/" ~ ds.name ~ "/validate",
-                timed: () { e.validate(ds.text); },
-                after: () {},
-                metrics: [bytes(ds.text.length)],
-            );
-
+            registerValidate!E(ds);
         static if (hasSerialize!E)
-        {
-            e.parse(ds.text); // hold the document (untimed)
-            const outBytes = e.serialize().length; // output size (untimed)
-            benchCase(
-                name: E.name ~ "/" ~ ds.name ~ "/serialize",
-                timed: () { cast(void) e.serialize(); },
-                after: () {}, // the document persists across iterations
-                metrics: [bytes(outBytes)],
-            );
-            freeDocOf(e);
-        }
+            registerSerialize!E(ds);
     }
-
-    // Decode-only engines (e.g. `wired`) have no `parse`/`fingerprint`; the
-    // TwitterStats check rides `after`, again verified once.
+    // Decode-only engines (e.g. `wired`) have no `parse`/`fingerprint`.
     static if (canDecodeTwitter!E)
         if (ds.name == "twitter")
-        {
-            const expected = referenceTwitterStats(ds.text);
-            bool verified;
-            benchCase(
-                name: E.name ~ "/" ~ ds.name ~ "/decode",
-                timed: () { e.decodeTwitter(ds.text); },
-                after: () {
-                    string error;
-                    if (!verified)
-                    {
-                        verified = true;
-                        const actual = e.twitterStats();
-                        if (actual != expected)
-                            error = "twitter stats mismatch vs std.json:"
-                                ~ diffTwitterStats(expected, actual);
-                    }
-                    return error.length ? err!bool(error) : ok!string(true);
-                },
-                metrics: [bytes(ds.text.length)],
-            );
-        }
+            registerDecode!E(ds);
+}
+
+// Each op is registered from its own helper (a fresh frame per call), so its
+// closures capture their own engine and `ds` copy — never a shared loop variable.
+
+/// parse — the fingerprint check rides the (untimed) `after`, verified once; a
+/// mismatch turns this into an isolated error row. Each timed parse allocates a
+/// document that `after` releases.
+private void registerParse(E)(Dataset ds, Fingerprint reference)
+{
+    auto e = new E;
+    bool verified;
+    benchCase(
+        name: E.name,
+        timed: () { e.parse(ds.text); },
+        after: () {
+            string error;
+            if (!verified)
+            {
+                verified = true;
+                const fp = e.fingerprint();
+                if (!reference.matches(fp))
+                    error = "fingerprint mismatch vs std.json:"
+                        ~ diffFingerprints(reference, fp);
+            }
+            freeDocOf(*e);
+            return error.length ? err!bool(error) : ok!string(true);
+        },
+        metrics: [bytes(ds.text.length)],
+        labels: ["dataset": ds.name, "operation": "parse"],
+        setup: engineSetup(e),
+        teardown: engineTeardown(e),
+    );
+}
+
+private void registerParseInsitu(E)(Dataset ds)
+{
+    auto e = new E;
+    benchCase(
+        name: E.name,
+        timed: () { e.parseInsitu(ds.text); },
+        after: () { freeDocOf(*e); },
+        metrics: [bytes(ds.text.length)],
+        labels: ["dataset": ds.name, "operation": "parse-insitu"],
+        setup: engineSetup(e),
+        teardown: engineTeardown(e),
+    );
+}
+
+private void registerValidate(E)(Dataset ds)
+{
+    auto e = new E;
+    benchCase(
+        name: E.name,
+        timed: () { e.validate(ds.text); },
+        after: () {},
+        metrics: [bytes(ds.text.length)],
+        labels: ["dataset": ds.name, "operation": "validate"],
+        setup: engineSetup(e),
+        teardown: engineTeardown(e),
+    );
+}
+
+private void registerSerialize(E)(Dataset ds)
+{
+    // Output size for the metric: parse + serialize once now (untimed, released),
+    // since it is unknown until a document exists.
+    size_t outBytes;
+    {
+        auto probe = new E;
+        static if (hasSetup!E)
+            probe.setup();
+        probe.parse(ds.text);
+        outBytes = probe.serialize().length;
+        freeDocOf(*probe);
+        static if (hasTeardown!E)
+            probe.teardown();
+    }
+    auto e = new E;
+    benchCase(
+        name: E.name,
+        timed: () { cast(void) e.serialize(); },
+        after: () {}, // the document persists across iterations
+        metrics: [bytes(outBytes)],
+        labels: ["dataset": ds.name, "operation": "serialize"],
+        // Hold one parsed document across the whole case (untimed).
+        setup: () {
+            static if (hasSetup!E)
+                e.setup();
+            e.parse(ds.text);
+        },
+        teardown: () {
+            freeDocOf(*e);
+            static if (hasTeardown!E)
+                e.teardown();
+        },
+    );
+}
+
+private void registerDecode(E)(Dataset ds)
+{
+    auto e = new E;
+    const expected = referenceTwitterStats(ds.text);
+    bool verified;
+    benchCase(
+        name: E.name,
+        timed: () { e.decodeTwitter(ds.text); },
+        after: () {
+            string error;
+            if (!verified)
+            {
+                verified = true;
+                const actual = e.twitterStats();
+                if (actual != expected)
+                    error = "twitter stats mismatch vs std.json:"
+                        ~ diffTwitterStats(expected, actual);
+            }
+            return error.length ? err!bool(error) : ok!string(true);
+        },
+        metrics: [bytes(ds.text.length)],
+        labels: ["dataset": ds.name, "operation": "decode"],
+        setup: engineSetup(e),
+        teardown: engineTeardown(e),
+    );
+}
+
+/// A case `setup` that initializes the engine `*e` (untimed), or `null` when the
+/// engine needs no setup. Takes the heap engine by pointer so the returned closure
+/// shares the case's engine instance.
+private void delegate() engineSetup(E)(E* e)
+{
+    static if (hasSetup!E)
+        return () { e.setup(); };
+    else
+        return null;
+}
+
+/// A case `teardown` that tears the engine down (untimed), or `null` when the
+/// engine needs none. Document release is the timed op's per-iteration `after`
+/// (parse/-insitu) or the serialize case's own teardown — not here.
+private void delegate() engineTeardown(E)(E* e)
+{
+    static if (hasTeardown!E)
+        return () { e.teardown(); };
+    else
+        return null;
 }
