@@ -65,12 +65,10 @@ unittest
 version (linux)
 {
     import core.sys.linux.perf_event : perf_event_attr, perf_event_open,
-        perf_type_id, perf_event_read_format, PERF_EVENT_IOC_DISABLE,
-        PERF_EVENT_IOC_ENABLE, PERF_EVENT_IOC_RESET;
-    import core.sys.posix.sys.ioctl : ioctl;
-    import core.sys.posix.unistd : posixClose = close, read;
+        perf_type_id, perf_event_read_format;
+    import core.sys.posix.unistd : posixClose = close;
 
-    private enum maxNamed = 62; /// group read buffer is `ulong[3 + 1 + maxNamed]`
+    private enum maxNamed = 62; /// group read buffer is `double[1 + maxNamed]`
 
     /// Reads a tracepoint's numeric id from `tracefs`; `-1` if unavailable.
     long tracepointId(string group, string event) @safe
@@ -195,31 +193,16 @@ version (linux)
             }
         }
 
-        private void groupIoctl(uint request) @safe
-        {
-            import core.sys.linux.perf_event : perf_event_ioc_flags;
-
-            if (fds.length && fds[0] >= 0)
-                (() @trusted => ioctl(fds[0], request,
-                    perf_event_ioc_flags.PERF_IOC_FLAG_GROUP))();
-        }
-
-        /// The counting pass: `iters` iterations with only `timed()` counted
-        /// (`between()` runs outside the enabled window). Returns per-iteration
-        /// counts. The `named` tracepoints are exact; `total` also sees the
-        /// pass's own `DISABLE` ioctl, a fixed per-iteration overhead.
+        /// The counting pass: brackets each `timed()` with `ENABLE`/`DISABLE` so
+        /// `between()` runs uncounted, then reads the group. Returns per-iteration
+        /// counts; the `named` tracepoints are exact.
         SyscallStats count(Timed, Between)(scope Timed timed, scope Between between,
             uint iters)
         in (iters > 0)
         {
-            groupIoctl(PERF_EVENT_IOC_RESET);
-            foreach (_; 0 .. iters)
-            {
-                groupIoctl(PERF_EVENT_IOC_ENABLE);
-                timed();
-                groupIoctl(PERF_EVENT_IOC_DISABLE);
-                between();
-            }
+            import sparkles.test_runner.perf_group : bracketCountingPass, readScaledGroup;
+
+            bracketCountingPass(fds[0], timed, between, iters);
 
             SyscallStats s;
             s.iters = iters;
@@ -227,29 +210,21 @@ version (linux)
             s.counts = new double[](names_.length);
             s.counts[] = double.nan;
 
-            ulong[3 + 1 + maxNamed] buf;
-            const want = cast(long)(ulong.sizeof * (3 + nOpen));
-            const got = (() @trusted => read(fds[0], buf.ptr, buf.sizeof))();
-            if (got < want)
+            // One scaled per-iteration value per opened counter, in fds order; a
+            // short read → total unavailable (named counts stay nan).
+            double[1 + maxNamed] values;
+            if (!readScaledGroup(fds[0], nOpen, iters, s.scale, values[]))
             {
-                // Short read → the total is unavailable too (named counts are
-                // already nan-initialized), not a real zero.
                 s.total = double.nan;
                 return s;
             }
-
-            const enabled = buf[1], running = buf[2];
-            const ratio = (running > 0 && enabled > 0 && running < enabled)
-                ? double(enabled) / double(running) : 1.0;
-            s.scale = enabled > 0 ? round3(double(running) / double(enabled)) : 1.0;
 
             size_t slot;
             foreach (i, fd; fds)
             {
                 if (fd < 0)
                     continue;
-                const perIter = round3(double(buf[3 + slot]) * ratio / iters);
-                slot++;
+                const perIter = values[slot++];
                 if (i == 0)
                     s.total = perIter;
                 else
@@ -257,14 +232,6 @@ version (linux)
             }
             return s;
         }
-    }
-
-    /// Rounds to three decimals (kept in step with `perf.d`).
-    private double round3(double v) @safe pure nothrow @nogc
-    {
-        import std.math.rounding : round;
-
-        return round(v * 1000) / 1000;
     }
 
     @("syscalls.SyscallGroup.countGetpid")
