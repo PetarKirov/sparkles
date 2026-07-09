@@ -57,6 +57,7 @@
         ./nix/d-toolchain.nix
         ./nix/packages/default.nix
         ./nix/packages/text-wasm.nix
+        ./nix/packages/table-wasm.nix
         ./nix/packages/uwidth-rs.nix
         ./nix/packages/wired-bench-data.nix
         ./nix/packages/wired-bench-yyjson.nix

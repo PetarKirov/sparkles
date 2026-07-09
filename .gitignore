@@ -46,6 +46,10 @@ node_modules/
 docs/.vitepress/dist/
 docs/.vitepress/cache/
 
+# drawTable playground wasm: reproducible build artifact (nix build .#table-wasm),
+# rebuilt by docs:dev / docs:build via docs/scripts/build-wasm.sh
+docs/public/spk-table.wasm
+
 # Research sample-workspace build artifacts / dependency stores
 # (docs/research/monorepo-tooling/<tool>/sample/ holds source-only example
 # workspaces; these are what each tool generates if someone actually runs it)
