@@ -133,7 +133,7 @@ struct TableProps
     /// Total table width cap in columns, **including** separators and borders, or 0
     /// for no cap (expand to fit — today's behaviour). When set, columns are shrunk
     /// largest-first and their content wraps so no rendered line exceeds it. Feed it
-    /// the terminal width (e.g. via `sparkles.core_cli.term_size`) to fit output.
+    /// the terminal width (e.g. via `sparkles.core_cli.term_caps`) to fit output.
     size_t maxWidth = 0;
 
     /// Per-column max **content** width (excluding separators/gutters); a `0` entry or

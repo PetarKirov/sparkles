@@ -28,7 +28,7 @@ private enum bool hasCoreCliUi = __traits(compiles, {
 /// lines. Absent in `base`'s own test build (no `core-cli` there), where it
 /// degrades to `0` = unknown = no truncation.
 private enum bool hasCoreCliTermSize = __traits(compiles, {
-    import sparkles.core_cli.term_size : terminalWidth;
+    import sparkles.core_cli.term_caps : terminalWidth;
 });
 
 /// Terminal width in cells via `core-cli` when available, else `0` (unknown →
@@ -38,7 +38,7 @@ package uint detectTerminalWidth()
 {
     static if (hasCoreCliTermSize)
     {
-        import sparkles.core_cli.term_size : terminalWidth;
+        import sparkles.core_cli.term_caps : terminalWidth;
 
         return terminalWidth();
     }

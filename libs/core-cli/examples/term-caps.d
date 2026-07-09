@@ -1,16 +1,16 @@
 #!/usr/bin/env dub
 
 /+ dub.sdl:
-name "term-size"
+name "term-caps"
 dependency "sparkles:core-cli" path="../../.."
 targetPath "build"
 +/
 
-module term_size_example;
+module term_caps_example;
 
 // ci: build-only
 
-import sparkles.core_cli.term_size : setTermWindowSizeHandler;
+import sparkles.core_cli.term_caps : setTermWindowSizeHandler;
 import core.stdc.stdio : fflush, printf, stdout;
 import std.stdio : readln, writefln;
 
