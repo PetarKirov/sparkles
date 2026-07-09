@@ -222,6 +222,16 @@ export default withMermaid(
               ],
             },
             {
+              text: 'core-cli',
+              collapsed: false,
+              items: [
+                {
+                  text: 'drawTable playground',
+                  link: '/libs/core-cli/table',
+                },
+              ],
+            },
+            {
               text: 'test-runner',
               link: '/libs/test-runner/',
               collapsed: false,
