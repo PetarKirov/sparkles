@@ -941,10 +941,18 @@ unittest
 {
     import core.time : usecs;
 
+    // Register through a per-case helper so each deferred `timed` closure captures
+    // its own `i` — the "never a shared loop variable" contract benchCase documents
+    // (a bare `foreach (i; …)` capture would read one shared, post-loop `i`).
+    static void reg(int i)
+    {
+        benchCase(name: "c", timed: () { blackBox(i); }, after: () {});
+    }
+
     static void body_()
     {
         foreach (i; 0 .. 3)
-            benchCase(name: "c", timed: () { blackBox(i); }, after: () {});
+            reg(i);
     }
 
     // The progress hook is `@safe nothrow @nogc`; count via a struct-method
