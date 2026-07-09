@@ -408,8 +408,8 @@ unittest
 string formatBenchTable(in BenchStats[] rows, bool colored, string metricFilter = null,
     string sortBy = null, in string[] groupKeys = null) @system // drawTable is @system
 {
-    import sparkles.test_runner.metrics : groupKeyOf, labelKeyUnion, sortOrder,
-        visibleMetrics;
+    import sparkles.test_runner.metrics : groupKeyDisplay, groupKeyOf,
+        labelKeyUnion, sortOrder, visibleMetrics;
 
     auto order = sortOrder(rows, sortBy, groupKeys);
 
@@ -512,9 +512,10 @@ string formatBenchTable(in BenchStats[] rows, bool colored, string metricFilter 
     while (i < order.length)
     {
         const key = groupKeyOf(rows[order[i]].labels, groupKeys);
+        const shownKey = groupKeyDisplay(key); // US separator → '/' for the header
         GridCell[][] grid = [
             // Header band: a rowspan-2 stub cell, value headers spanning it too.
-            [GridCell(render(colored, i"{dim benchmark:} {bold $(key)}") ~ "\n"
+            [GridCell(render(colored, i"{dim benchmark:} {bold $(shownKey)}") ~ "\n"
                     ~ render(colored, i"{dim implementation:}"), rowSpan: 2)]
                 ~ toGridRow(valueHeaders, rowSpan: 2),
             [], // the second header row is fully covered by the rowspans above

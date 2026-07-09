@@ -246,9 +246,15 @@ private double sortValue(in BenchStats row, string sortBy) @safe pure nothrow
     return double.nan;
 }
 
+/// The unit-separator joining a group key's label values. `US` (`0x1f`) can't
+/// occur in a label value, so distinct label tuples never collide the way a
+/// printable separator (`/`) would when a value itself contains it; the reporter
+/// maps it back to `/` for display (see `groupKeyDisplay`).
+enum groupKeySep = "\x1f";
+
 /// The group key of a case from its `labels`: the values of the selected label
-/// `keys`, in order, joined with `/`. `keys` empty → `""` (every row in one group
-/// = no grouping). A key absent from `labels` contributes an empty part.
+/// `keys`, in order, joined with `groupKeySep`. `keys` empty → `""` (every row in
+/// one group = no grouping). A key absent from `labels` contributes an empty part.
 string groupKeyOf(in string[string] labels, in string[] keys) @safe
 {
     if (keys.length == 0)
@@ -257,11 +263,19 @@ string groupKeyOf(in string[string] labels, in string[] keys) @safe
     foreach (n, key; keys)
     {
         if (n)
-            result ~= "/";
+            result ~= groupKeySep;
         if (auto v = key in labels)
             result ~= *v;
     }
     return result;
+}
+
+/// A group key rendered for humans: `groupKeySep` → `/`.
+string groupKeyDisplay(string key) @safe pure nothrow
+{
+    import std.array : replace;
+
+    return key.replace(groupKeySep, "/");
 }
 
 @("metrics.groupKeyOf.selectsLabels")
@@ -269,10 +283,16 @@ string groupKeyOf(in string[string] labels, in string[] keys) @safe
 unittest
 {
     auto labels = ["dataset": "twitter", "operation": "parse"];
-    assert(groupKeyOf(labels, ["dataset", "operation"]) == "twitter/parse");
+    assert(groupKeyOf(labels, ["dataset", "operation"]) == "twitter" ~ groupKeySep ~ "parse");
+    assert(groupKeyDisplay(groupKeyOf(labels, ["dataset", "operation"])) == "twitter/parse");
     assert(groupKeyOf(labels, []) == "");
     assert(groupKeyOf(labels, ["operation"]) == "parse");
     assert(groupKeyOf(labels, ["missing"]) == ""); // absent key → empty part
+
+    // A '/' inside a value no longer collides distinct tuples (the bug the US
+    // separator fixes): {a:"x/y", b:"z"} vs {a:"x", b:"y/z"} stay distinct.
+    assert(groupKeyOf(["a": "x/y", "b": "z"], ["a", "b"])
+        != groupKeyOf(["a": "x", "b": "y/z"], ["a", "b"]));
 }
 
 /// The sorted union of every label key present across `rows` — the set of keys a

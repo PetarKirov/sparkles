@@ -544,7 +544,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         RegisteredCase;
     import sparkles.test_runner.execution : toThrown;
     import std.algorithm.searching : canFind;
-    import sparkles.test_runner.metrics : groupKeyOf;
+    import sparkles.test_runner.metrics : catalog, groupKeyDisplay, groupKeyOf;
 
     auto benchTests = tests.filter!(t => t.traits.isBenchmark).array;
 
@@ -614,6 +614,23 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     foreach (ref s; all)
         s.key = keys.length ? groupKeyOf(s.c.labels, keys) : s.test.name;
 
+    // Warn on a --sort-by that names no orderable column (mirrors --group-by), so
+    // a typo isn't silently ignored (it would fall back to discovery order). Valid:
+    // "name"/"median/iter"/empty, a catalog metric (client/perf/tier0), or a
+    // dynamic syscall column (sc:<name> / the "syscalls" total).
+    if (options.sortBy.length && options.sortBy != "name" && options.sortBy != "median/iter")
+    {
+        import std.algorithm.iteration : map;
+        import std.algorithm.searching : startsWith;
+
+        auto synthetic = all.map!(s => BenchStats(name: s.c.name, metrics: s.c.metrics)).array;
+        const known = catalog(synthetic).canFind!(d => d.name == options.sortBy)
+            || options.sortBy == "syscalls" || options.sortBy.startsWith("sc:");
+        if (!known)
+            stderr.writeln("--sort-by: no metric column named '", options.sortBy,
+                "' — rows keep their default order");
+    }
+
     // Schedule: contiguous by key, keys in ascending order (stable within a key).
     auto order = iota(all.length).array;
     order.sort!((i, j) => all[i].key < all[j].key, SwapStrategy.stable);
@@ -650,7 +667,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
 
         // Spinner label: the group + the case name when grouping (`name` alone is
         // just the varying dimension), else the case name.
-        progress.tick(keys.length ? s.key ~ "  " ~ s.c.name : s.c.name);
+        progress.tick(keys.length ? groupKeyDisplay(s.key) ~ "  " ~ s.c.name : s.c.name);
         try
         {
             auto row = measureCase(s.c, s.config, perf, tier0, syscalls);
