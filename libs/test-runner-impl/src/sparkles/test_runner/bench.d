@@ -127,6 +127,7 @@ struct Metric
 struct BenchStats
 {
     string name;
+    string[string] labels; /// orthogonal grouping dimensions (from the case's `labels`)
     ulong iterations; /// iterations per sample
     size_t samples;
     double nsPerIterMedian = 0;
@@ -252,29 +253,39 @@ auto measure(DG)(scope DG run, in BenchConfig config)
 // In-test measurement API (`benchIter`) and the runner-side driver
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// One benchmark case, captured by `benchCase`/`benchIter` and measured later by
+/// `measureCase`. The generic `timed`/`after` closures are type-erased to uniform
+/// delegates at registration, so a heterogeneous matrix collapses to a flat list
+/// the runner can freely filter, group, sort, and schedule before executing.
+///
+/// The delegates run at *execution* time, not registration — so their captured
+/// state must outlive the registering body (use `setup`/`teardown` for untimed
+/// per-case setup and release; capture fresh per-case values, never a shared loop
+/// variable).
+struct RegisteredCase
+{
+    string name;              /// row name (the varying dimension, e.g. an engine)
+    string[string] labels;    /// orthogonal dimensions for grouping, e.g. `["dataset": …]`
+    Metric[] metrics;         /// throughput / level columns
+    void delegate() setup;    /// untimed, once before measurement (null = none)
+    void delegate() runTimed; /// the measured body (value results stashed internally)
+    /// Untimed, after each measured call; `null`/`""` = ok, else an error message.
+    /// `null` selects batched timing (`benchIter` / whole-body — no per-call release).
+    string delegate() runAfter;
+    void delegate() teardown; /// untimed, once after measurement (null = none)
+}
+
 private struct BenchContext
 {
     BenchConfig config;
-    string testName;   /// row name for benchIter / whole-body measurement
-    bool used;         /// a benchIter/benchCase measured — skip whole-body
-    BenchStats[] rows; /// one per benchIter/benchCase call (or whole-body)
-    PerfGroup* perf;   /// null / unavailable = no perf counting pass
-    Tier0Group* tier0; /// null / unavailable = no tier0 counting pass
-    SyscallGroup* syscalls; /// null / unavailable = no syscall counting pass
-
-    /// Enumerate mode (see `countBenchmarkCases`): `benchIter`/`benchCase` record
-    /// only that a case exists (bumping `caseCount`) and skip all measurement, so
-    /// the runner can learn the case total before the real, progress-tracked pass.
-    bool enumerateOnly;
-    size_t caseCount;  /// enumerate: number of cases the body emitted
-
-    /// Real-run progress hook, invoked with the case name as each case starts
-    /// measuring (null = no reporting). Typed `@safe nothrow @nogc` so calling it
-    /// never constrains a benchmark body's own inferred attributes.
-    void delegate(scope const(char)[] name) @safe nothrow @nogc onCaseStart;
+    string testName;         /// row name for benchIter / whole-body measurement
+    RegisteredCase[] cases;  /// registration output (the body's benchCase/benchIter calls)
+    PerfGroup* perf;         /// null / unavailable = no perf counting pass
+    Tier0Group* tier0;       /// null / unavailable = no tier0 counting pass
+    SyscallGroup* syscalls;  /// null / unavailable = no syscall counting pass
 }
 
-private BenchContext* activeBenchContext; // thread-local, set by runBenchmark
+private BenchContext* activeBenchContext; // thread-local, set during registration
 
 /// The counting-pass iteration count for a measurement: the timing's iteration
 /// count, capped so a cheap op's huge count does not make the (ioctl-bracketed)
@@ -321,10 +332,11 @@ private Nullable!SyscallStats countSyscallsIf(Timed, Between)(
     return syscalls;
 }
 
-/// Measures `run` inside a `@benchmark unittest`, excluding the surrounding
-/// setup from the timing, and records one row named after the test. Outside a
-/// `--bench` run (e.g. another runner executes the test), `run` runs once.
-void benchIter(DG)(scope DG run)
+/// Registers a batched-timing case that measures `run` (excluding surrounding
+/// setup from the timing), named after the test. Under `--bench` the case is
+/// recorded and measured later; outside a `--bench` run (e.g. another runner
+/// executes the test) `run` runs once, for correctness.
+void benchIter(DG)(DG run, string[string] labels = null)
 if (is(typeof(run()) == void))
 {
     auto context = activeBenchContext;
@@ -333,21 +345,12 @@ if (is(typeof(run()) == void))
         run();
         return;
     }
-    if (context.enumerateOnly) // dry pass: just tally the case, don't measure
-    {
-        context.used = true;
-        context.caseCount++;
-        return;
-    }
-    context.used = true;
-    if (context.onCaseStart !is null)
-        context.onCaseStart(context.testName);
-    auto m = measure(run, context.config);
-    auto row = computeStats(context.testName, m.iterations, m.nsPerIter);
-    row.perf = countIf(context, run, () {}, m.iterations);
-    row.tier0 = countTier0If(context, run, () {}, m.iterations);
-    row.syscalls = countSyscallsIf(context, run, () {}, m.iterations);
-    context.rows ~= row;
+    // `runAfter: null` → batched measurement (a tight loop, no per-call release).
+    context.cases ~= RegisteredCase(
+        name: context.testName,
+        labels: labels,
+        runTimed: () { run(); },
+    );
 }
 
 @("benchIter.inertOutsideBenchRuns")
@@ -436,48 +439,144 @@ private DriveResult driveOnce(Timed, After)(scope Timed timed, scope After after
     }
 }
 
-/// Measures one named case inside a `@benchmark` body and records a row; call it
-/// repeatedly (over engines × datasets, say) to emit a matrix. `timed` is the
-/// measured body — its result flows to `after`, which runs untimed after every
-/// iteration to verify + release it. `after` may `throw` (→ the whole benchmark
-/// test fails) or return an `Expected` error (→ this case becomes an error row
-/// and the others continue). A case with nothing to release/verify passes a
-/// no-op `after` (`(ref r) {}`, or `() {}` for a `void` body). `metrics` attach
-/// throughput / level columns.
+/// Times one already-erased `runTimed()` call and runs `runAfter` untimed after.
+private DriveResult driveErased(scope void delegate() runTimed, scope string delegate() runAfter)
+{
+    const t0 = MonoTime.currTime;
+    runTimed();
+    const ns = (MonoTime.currTime - t0).total!"nsecs";
+    return DriveResult(ns, runAfter is null ? null : runAfter());
+}
+
+/// A `Setup`/`Teardown` argument as a plain `void delegate()` (`null` when absent).
+/// A `@safe` delegate converts to the `@system` slot (the erased case is measured
+/// on the runner side, not from a `@safe` body); a delegate value passes through so
+/// a runtime `null` (e.g. an engine with no setup) is preserved for `measureCase`'s
+/// null guard; a `function` pointer (a lambda capturing only globals) is wrapped.
+private void delegate() toVoidDg(S)(S s)
+{
+    static if (is(S == typeof(null)))
+        return null;
+    else static if (is(S : void delegate()))
+        return s; // already a delegate (possibly null) — preserve it
+    else
+        return () { s(); }; // function pointer → wrap into a delegate
+}
+
+/// Type-erases a case's generic `timed`/`after` into a `RegisteredCase`'s uniform
+/// delegates. A value-returning `timed` stashes its result in a shared slot that
+/// `runAfter` reads, so the value still flows to `after` across the erasure.
+private RegisteredCase makeCase(Timed, After)(string name, string[string] labels,
+    Timed timed, After after, Metric[] metrics, void delegate() setup, void delegate() teardown)
+{
+    RegisteredCase c;
+    c.name = name;
+    c.labels = labels;
+    c.metrics = metrics;
+    c.setup = setup;
+    c.teardown = teardown;
+    static if (is(typeof(timed()) == void))
+    {
+        c.runTimed = () { timed(); };
+        c.runAfter = () => invokeAfter(after);
+    }
+    else
+    {
+        typeof(timed()) last; // shared by both closures via the promoted frame
+        c.runTimed = () { last = timed(); };
+        c.runAfter = () => invokeAfter(after, last);
+    }
+    return c;
+}
+
+/// Registers one named case inside a `@benchmark` body; call it repeatedly (over
+/// engines × datasets, say) to emit a matrix. `timed` is the measured body — its
+/// result flows to `after`, which runs untimed after every iteration to verify +
+/// release it. `after` may `throw` (→ the whole benchmark test fails) or return an
+/// `Expected` error (→ this case becomes an error row and the others continue). A
+/// case with nothing to release/verify passes a no-op `after` (`(ref r) {}`, or
+/// `() {}` for a `void` body). `metrics` attach throughput / level columns.
+///
+/// Optional `setup`/`teardown` run untimed once around this case's measurement (at
+/// execution time) — put per-case state that a scheduled, deferred run needs there
+/// (e.g. parse the document a serialize case serializes, and release it after).
+///
+/// Optional `labels` name orthogonal dimensions of the case (e.g.
+/// `["dataset": "twitter", "operation": "serialize"]`); `--group-by` selects label
+/// keys to group and stream the report by, while `name` stays the varying
+/// dimension shown per row (typically the implementation being compared).
+///
+/// Under `--bench` the case is *registered* and measured later by the runner, so
+/// the closures run after the body returns: capture fresh per-case state (never a
+/// shared loop variable), and keep any state they need alive via `setup`. Outside
+/// a `--bench` run the case runs once immediately, for correctness.
 ///
 /// Uses per-call timing — each `timed()` timed alone, `after` between — so the
 /// result can be released before the next iteration; suited to µs-and-up ops.
-void benchCase(Timed, After)(
-    string name, scope Timed timed, scope After after, Metric[] metrics = null)
+void benchCase(Timed, After, Setup = typeof(null), Teardown = typeof(null))(
+    string name, Timed timed, After after, Metric[] metrics = null,
+    string[string] labels = null, Setup setup = null, Teardown teardown = null)
+{
+    auto context = activeBenchContext;
+    if (context is null) // outside a --bench run: run once, for correctness
+    {
+        static if (!is(Setup == typeof(null)))
+            if (setup !is null)
+                setup();
+        cast(void) driveOnce(timed, after);
+        static if (!is(Teardown == typeof(null)))
+            if (teardown !is null)
+                teardown();
+        return;
+    }
+    context.cases ~= makeCase(name, labels, timed, after, metrics,
+        toVoidDg(setup), toVoidDg(teardown));
+}
+
+/// Measures one registered case into a `BenchStats` row. `setup`/`teardown` bracket
+/// the whole measurement (untimed); a `runAfter`-reported soft error or a probe
+/// failure yields an error row. `null` `runAfter` selects batched timing (a tight
+/// `measure` loop, for `benchIter`/whole-body); otherwise per-call timing releases
+/// the result between calls. A thrown `runTimed`/`runAfter` propagates to the caller.
+package(sparkles.test_runner)
+BenchStats measureCase(RegisteredCase c, in BenchConfig config, ref PerfGroup perf,
+    ref Tier0Group tier0, ref SyscallGroup syscalls)
+{
+    auto ctx = BenchContext(config: config, perf: &perf, tier0: &tier0, syscalls: &syscalls);
+    return measureCase(&ctx, c);
+}
+
+/// ditto
+package(sparkles.test_runner)
+BenchStats measureCase(BenchContext* context, RegisteredCase c)
 {
     import std.algorithm.iteration : map;
     import std.array : array;
 
-    auto context = activeBenchContext;
-    if (context is null) // executed outside a --bench run: one probe, for correctness
-    {
-        cast(void) driveOnce(timed, after);
-        return;
-    }
-    if (context.enumerateOnly) // dry pass: just tally the case, don't measure
-    {
-        context.used = true;
-        context.caseCount++;
-        return;
-    }
-    if (context.onCaseStart !is null)
-        context.onCaseStart(name);
+    if (c.setup !is null)
+        c.setup();
+    scope (exit)
+        if (c.teardown !is null)
+            c.teardown();
 
-    // Probe once so an `after` throw/error surfaces before the measurement loop.
+    if (c.runAfter is null) // batched: benchIter / whole-body
     {
-        const probe = driveOnce(timed, after);
-        if (probe.error.length)
-        {
-            context.rows ~= BenchStats(name: name, error: probe.error);
-            return;
-        }
+        auto m = measure(c.runTimed, context.config);
+        auto row = computeStats(c.name, m.iterations, m.nsPerIter);
+        row.labels = c.labels;
+        row.metrics = c.metrics;
+        row.perf = countIf(context, c.runTimed, () {}, m.iterations);
+        row.tier0 = countTier0If(context, c.runTimed, () {}, m.iterations);
+        row.syscalls = countSyscallsIf(context, c.runTimed, () {}, m.iterations);
+        return row;
     }
-    context.used = true;
+
+    // Probe once so an `after` error surfaces before the measurement loop.
+    {
+        const probe = driveErased(c.runTimed, c.runAfter);
+        if (probe.error.length)
+            return BenchStats(name: c.name, labels: c.labels, error: probe.error);
+    }
 
     // Per-call timing: collect until both the sample count and time budget met.
     long[] samples;
@@ -485,38 +584,24 @@ void benchCase(Timed, After)(
     const minTotal = context.config.minSampleTime.total!"nsecs";
     while (samples.length < context.config.sampleCount || totalNs < minTotal)
     {
-        const d = driveOnce(timed, after);
+        const d = driveErased(c.runTimed, c.runAfter);
         if (d.error.length)
-        {
-            context.rows ~= BenchStats(name: name, error: d.error);
-            return;
-        }
+            return BenchStats(name: c.name, labels: c.labels, error: d.error);
         samples ~= d.ns;
         totalNs += d.ns;
     }
 
-    auto row = computeStats(name, 1, samples.map!(s => double(s)).array);
-    row.metrics = metrics;
+    auto row = computeStats(c.name, 1, samples.map!(s => double(s)).array);
+    row.labels = c.labels;
+    row.metrics = c.metrics;
 
-    // Counting pass: bracket `timed`; `after` releases the result (uncounted by
-    // perf, inside the tier0 window). Perf and tier0 pass over the same closures.
-    static if (is(typeof(timed()) == void))
-    {
-        auto release = () { cast(void) invokeAfter(after); };
-        row.perf = countIf(context, timed, release, samples.length);
-        row.tier0 = countTier0If(context, timed, release, samples.length);
-        row.syscalls = countSyscallsIf(context, timed, release, samples.length);
-    }
-    else
-    {
-        typeof(timed()) last;
-        auto run = () { last = timed(); };
-        auto release = () { cast(void) invokeAfter(after, last); };
-        row.perf = countIf(context, run, release, samples.length);
-        row.tier0 = countTier0If(context, run, release, samples.length);
-        row.syscalls = countSyscallsIf(context, run, release, samples.length);
-    }
-    context.rows ~= row;
+    // Counting pass: bracket `runTimed`; `runAfter` releases the result (uncounted
+    // by perf, inside the tier0 window). Each family passes over the same closures.
+    auto release = () { cast(void) c.runAfter(); };
+    row.perf = countIf(context, c.runTimed, release, samples.length);
+    row.tier0 = countTier0If(context, c.runTimed, release, samples.length);
+    row.syscalls = countSyscallsIf(context, c.runTimed, release, samples.length);
+    return row;
 }
 
 /// The outcome of one `@benchmark` execution: the rows it emitted (one per
@@ -528,60 +613,69 @@ struct BenchOutcome
     TestResult result;
 }
 
-/// Runs one `@benchmark` test with an active context so `benchIter`/`benchCase`
-/// record rows; a body that calls neither is measured whole as a single row.
-/// `onCaseStart` (optional) is invoked with each case's name as it begins
-/// measuring — the seam the runner drives its live progress line from.
+/// The result of running (registering) one `@benchmark` test body: the cases it
+/// registered and the body's pass/fail `TestResult` (a body that throws during
+/// registration fails and registers no — or partial — cases).
+package(sparkles.test_runner)
+struct Registration
+{
+    RegisteredCase[] cases;
+    TestResult result;
+}
+
+/// Runs one `@benchmark` test body to *register* its cases (via `benchIter`/
+/// `benchCase`), without measuring them. A body that registers none is treated as
+/// a single whole-body case named after the test (the body itself is the measured
+/// unit). Registration-time throws are caught into `result`.
+package(sparkles.test_runner)
+Registration registerBenchmark(Test test, in BenchConfig config)
+{
+    import sparkles.test_runner.execution : executeTest;
+
+    auto context = BenchContext(config: config, testName: test.name);
+    activeBenchContext = &context;
+    scope (exit)
+        activeBenchContext = null;
+
+    auto result = executeTest(test);
+    if (result.succeeded && context.cases.length == 0)
+        context.cases ~= RegisteredCase(name: test.name, runTimed: { test.ptr(); });
+    return Registration(context.cases, result);
+}
+
+/// Registers one `@benchmark` test then measures every case it emitted, in
+/// registration order. Kept for the single-test / non-streaming path (and the
+/// self-tests that read `rows` synchronously); the streaming runner registers
+/// across all tests first and schedules the cases itself. A case that throws
+/// during measurement fails the whole test (partial rows are kept).
 package(sparkles.test_runner)
 BenchOutcome runBenchmark(Test test, in BenchConfig config, ref PerfGroup perf,
     ref Tier0Group tier0, ref SyscallGroup syscalls,
     void delegate(scope const(char)[] name) @safe nothrow @nogc onCaseStart = null)
 {
-    import sparkles.test_runner.execution : executeTest;
+    import sparkles.test_runner.execution : toThrown;
 
+    auto reg = registerBenchmark(test, config);
     BenchOutcome outcome;
-    auto context = BenchContext(config: config, testName: test.name,
-        perf: &perf, tier0: &tier0, syscalls: &syscalls, onCaseStart: onCaseStart);
+    outcome.result = reg.result;
+    if (!reg.result.succeeded)
+        return outcome;
 
-    activeBenchContext = &context;
-    scope (exit)
-        activeBenchContext = null;
-
-    outcome.result = executeTest(test);
-    outcome.rows = context.rows;
-    if (!outcome.result.succeeded)
-        return outcome; // rows collected before a throw are kept
-
-    if (!context.used) // no benchIter/benchCase — measure the whole body
+    auto ctx = BenchContext(config: config, perf: &perf, tier0: &tier0, syscalls: &syscalls);
+    foreach (ref c; reg.cases)
     {
         if (onCaseStart !is null)
-            onCaseStart(test.name);
-        auto m = measure({ test.ptr(); }, config);
-        auto row = computeStats(test.name, m.iterations, m.nsPerIter);
-        row.perf = countIf(&context, { test.ptr(); }, () {}, m.iterations);
-        row.tier0 = countTier0If(&context, { test.ptr(); }, () {}, m.iterations);
-        row.syscalls = countSyscallsIf(&context, { test.ptr(); }, () {}, m.iterations);
-        outcome.rows ~= row;
+            onCaseStart(c.name);
+        try
+            outcome.rows ~= measureCase(&ctx, c);
+        catch (Throwable t)
+        {
+            outcome.result.succeeded = false;
+            outcome.result.thrown ~= toThrown(t);
+            return outcome; // a thrown case fails the test; keep partial rows
+        }
     }
     return outcome;
-}
-
-/// Enumerates `test`'s benchmark cases without measuring any of them, returning
-/// the case count (a whole-body benchmark counts as 1). Runs the body once under
-/// an `enumerateOnly` context so `benchIter`/`benchCase` only tally; the runner
-/// sums this across tests to get the exact denominator for its progress line.
-package(sparkles.test_runner)
-size_t countBenchmarkCases(Test test)
-{
-    import sparkles.test_runner.execution : executeTest;
-
-    auto context = BenchContext(testName: test.name, enumerateOnly: true);
-    activeBenchContext = &context;
-    scope (exit)
-        activeBenchContext = null;
-
-    cast(void) executeTest(test);
-    return context.used ? context.caseCount : 1; // whole-body = one case
 }
 
 @("runBenchmark.wholeBody")
@@ -680,15 +774,23 @@ unittest
 {
     // Dogfoods benchCase: one @benchmark emits a row per size, each with an
     // element-throughput metric. Skipped by default; measured under `--bench`.
+    // The per-case work is registered through a helper taking `size` by value, so
+    // each case's `timed` closure captures its own `size` (a loop-body variable is
+    // one shared slot under deferred execution — the register model's key contract).
     import std.conv : text;
 
-    foreach (size; [64, 256, 1024])
+    static void reg(int size) @safe
+    {
         benchCase(
             name: text("sum/", size),
             timed: () { size_t s; foreach (i; 0 .. size) s += i; blackBox(s); },
             after: () {}, // nothing to release
             metrics: [Metric(unit: Unit("elem"), amount: double(size), mode: Metric.Mode.rate)],
         );
+    }
+
+    foreach (size; [64, 256, 1024])
+        reg(size);
 }
 
 @("syscalls.demo")
@@ -737,16 +839,17 @@ unittest
     assert(outcome.rows[2].name == "case2");
 }
 
-@("countBenchmarkCases.matrixAndWholeBody")
+@("registerBenchmark.matrixAndWholeBody")
 @system
 unittest
 {
-    // A matrix body's cases are tallied without measuring; a body that calls
-    // neither benchCase nor benchIter counts as one whole-body case.
+    // Registration collects a matrix body's cases without measuring; a body that
+    // calls neither benchCase nor benchIter registers a single whole-body case.
     static void matrix()
     {
+        static void reg(int i) { benchCase(name: "c", timed: () { blackBox(i); }, after: () {}); }
         foreach (i; 0 .. 3)
-            benchCase(name: "c", timed: () { blackBox(i); }, after: () {});
+            reg(i);
     }
 
     static void whole()
@@ -757,8 +860,10 @@ unittest
         blackBox(s);
     }
 
-    assert(countBenchmarkCases(Test(fullName: "m.matrix", name: "matrix", ptr: &matrix)) == 3);
-    assert(countBenchmarkCases(Test(fullName: "m.whole", name: "whole", ptr: &whole)) == 1);
+    assert(registerBenchmark(Test(fullName: "m.matrix", name: "matrix", ptr: &matrix),
+            BenchConfig()).cases.length == 3);
+    auto wb = registerBenchmark(Test(fullName: "m.whole", name: "whole", ptr: &whole), BenchConfig());
+    assert(wb.cases.length == 1 && wb.cases[0].name == "whole");
 }
 
 @("runBenchmark.onCaseStartPerCase")
@@ -846,4 +951,70 @@ unittest
         BenchConfig(sampleCount: 1, minSampleTime: 1.usecs), perf, tier0, syscalls);
     assert(!outcome.result.succeeded);
     assert(outcome.result.thrown.length == 1);
+}
+
+@("measureCase.setupTeardownOnce")
+@system
+unittest
+{
+    import core.time : usecs;
+
+    // setup/teardown bracket the whole measurement (once each), while timed runs
+    // many times — the seam that lets a deferred, scheduled case set up and release
+    // its own state at execution time.
+    static size_t setups, teardowns, timeds;
+    setups = teardowns = timeds = 0;
+
+    static void body_()
+    {
+        benchCase(
+            name: "c",
+            timed: () { timeds++; blackBox(timeds); },
+            after: () {},
+            setup: () { setups++; },
+            teardown: () { teardowns++; },
+        );
+    }
+
+    auto perf = PerfGroup.tryOpen(false);
+    auto tier0 = Tier0Group.tryOpen(false);
+    auto syscalls = SyscallGroup.tryOpen(false, null);
+    auto outcome = runBenchmark(Test(fullName: "m.st", name: "st", ptr: &body_),
+        BenchConfig(sampleCount: 3, minSampleTime: 1.usecs), perf, tier0, syscalls);
+    assert(outcome.result.succeeded);
+    assert(setups == 1, "setup runs exactly once, not per iteration");
+    assert(teardowns == 1, "teardown runs exactly once, not per iteration");
+    assert(timeds > 1, "timed runs repeatedly");
+}
+
+@("measureCase.teardownRunsOnError")
+@system
+unittest
+{
+    import core.time : usecs;
+    import expected : err, ok;
+
+    // A soft error yields an error row; teardown still runs (it is scope-guarded),
+    // so a scheduled case never leaks its per-case state on the failure path.
+    static size_t teardowns;
+    teardowns = 0;
+
+    static void body_()
+    {
+        benchCase(
+            name: "bad",
+            timed: () {},
+            after: () => err!bool("boom"),
+            teardown: () { teardowns++; },
+        );
+    }
+
+    auto perf = PerfGroup.tryOpen(false);
+    auto tier0 = Tier0Group.tryOpen(false);
+    auto syscalls = SyscallGroup.tryOpen(false, null);
+    auto outcome = runBenchmark(Test(fullName: "m.te", name: "te", ptr: &body_),
+        BenchConfig(sampleCount: 1, minSampleTime: 1.usecs), perf, tier0, syscalls);
+    assert(outcome.result.succeeded);
+    assert(outcome.rows.length == 1 && outcome.rows[0].error == "boom");
+    assert(teardowns == 1, "teardown runs even when the case errors");
 }
