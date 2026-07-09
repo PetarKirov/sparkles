@@ -875,18 +875,45 @@ private void writeStderr(scope const(char)[] s) @trusted nothrow @nogc
     }
 }
 
-/// `s` truncated to at most `maxBytes`, backing off any partial trailing UTF-8
-/// sequence (continuation bytes are `0b10xxxxxx`). Bounds a pathological case
-/// name so the redrawn spinner line can't blow far past the terminal width.
-private const(char)[] clampBytes(return scope const(char)[] s, size_t maxBytes)
+/// Number of UTF-8 code points in `s` (bytes that are not continuation bytes,
+/// `0b10xxxxxx`). For the spinner prefix — digits, punctuation, one braille glyph,
+/// all single-cell — this equals its display width.
+private size_t codePointCount(scope const(char)[] s) @safe pure nothrow @nogc
+{
+    size_t n;
+    foreach (b; s)
+        if ((b & 0xC0) != 0x80)
+            n++;
+    return n;
+}
+
+/// `s` truncated to at most `maxCells` display columns, approximated as code
+/// points — exact for the ASCII case names / group keys the spinner shows — and
+/// backing off a partial trailing UTF-8 sequence. Keeps the redrawn line within
+/// the terminal so it never wraps and leaves an un-erased ghost row.
+private const(char)[] clampCells(return scope const(char)[] s, size_t maxCells)
     @safe pure nothrow @nogc
 {
-    if (s.length <= maxBytes)
-        return s;
-    size_t n = maxBytes;
-    while (n > 0 && (s[n] & 0xC0) == 0x80)
-        n--;
-    return s[0 .. n];
+    size_t cells, i;
+    while (i < s.length && cells < maxCells)
+    {
+        i++; // step over this code point's leading byte...
+        while (i < s.length && (s[i] & 0xC0) == 0x80)
+            i++; // ...and its continuation bytes
+        cells++;
+    }
+    return s[0 .. i];
+}
+
+@("reporting.clampCells")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(clampCells("hello", 80) == "hello");
+    assert(clampCells("hello", 3) == "hel");
+    assert(clampCells("hello", 0) == "");
+    assert(clampCells("aéb", 2) == "aé"); // é is 2 bytes / 1 cell, not split
+    assert(codePointCount("aéb") == 3);
 }
 
 /// Live single-line benchmark progress on stderr: redraws
@@ -901,6 +928,7 @@ package struct BenchProgress
 
     size_t total;            /// case denominator from the enumerate pass
     bool active;             /// stderr is an interactive tty (colours on)
+    uint width;              /// terminal width in cells (0 = unknown → fixed cap)
     private size_t done;
     private size_t frame;
     private MonoTime started;
@@ -922,14 +950,29 @@ package struct BenchProgress
             if (started == MonoTime.init)
                 started = MonoTime.currTime;
             const shown = done > total ? done : total; // never render done > total
+            const elapsed = MonoTime.currTime - started;
+
+            // Measure the (uncoloured) prefix so the label gets the terminal's
+            // remaining columns; clamp it there rather than to a fixed 80 that
+            // wraps a narrow terminal and leaves a ghost row the CR+eraseLine
+            // (one physical line) can't erase. width==0 (unknown/piped) keeps the
+            // old fixed cap, so nothing changes there.
+            SmallBuffer!(char, 64) plainPrefix;
+            ProgressLine(frame, done, shown, false, elapsed).toString(plainPrefix);
+            const prefixCells = codePointCount(plainPrefix[]);
+            const budget = width == 0
+                ? 80
+                : (width > prefixCells + 1 ? width - prefixCells - 1 : 0);
 
             SmallBuffer!(char, 256) buf;
             buf ~= cast(string) CtlSeq.carriageReturn;
             buf ~= cast(string) CtlSeq.eraseLine;
-            auto line = ProgressLine(frame, done, shown, true, MonoTime.currTime - started);
-            line.toString(buf);
-            buf ~= ' ';
-            buf ~= clampBytes(name, 80);
+            ProgressLine(frame, done, shown, true, elapsed).toString(buf);
+            if (budget > 0)
+            {
+                buf ~= ' ';
+                buf ~= clampCells(name, budget);
+            }
             writeStderr(buf[]);
         }
     }

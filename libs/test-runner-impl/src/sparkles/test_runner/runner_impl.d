@@ -619,7 +619,8 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     order.sort!((i, j) => all[i].key < all[j].key, SwapStrategy.stable);
 
     progress = BenchProgress(total: all.length,
-        active: stderrIsTty(options.noColours) && all.length > 0);
+        active: stderrIsTty(options.noColours) && all.length > 0,
+        width: detectTerminalWidth());
 
     size_t totalRows, errorRows;
     bool firstFlush = true;
