@@ -12,6 +12,12 @@ dflags "-preview=in" "-preview=dip1000"
 dependency "sparkles:base"     path="../../../.."
 dependency "sparkles:core-cli" path="../../../.."
 dependency "sparkles:wired"    path="../../../.."
+// Top-level, not just under `configuration "unittest"`: runner.d imports
+// sparkles.test_runner.* at module scope (and the non-template `bytes()` returns
+// its `Metric`), so it's an unconditional dependency of the package — declaring
+// it here keeps the manifest honest instead of relying on `dub` defaulting a
+// dep-less config to the unittest one.
+dependency "sparkles:test-runner" path="../../../.."
 
 // D engines (pure-D dub packages; pinned in dub.selections.json). Each adapter
 // sits behind its `versions` gate so a frontend incompatibility is one line
@@ -27,10 +33,7 @@ versions "BenchJsoniopipe"
 configuration "unittest" {
     // The benchmark is a set of `@benchmark unittest`s run through
     // sparkles:test-runner (`dub test -- --bench`, with `--perf` for hardware
-    // counters)
-    // Corpora load from `$WIRED_BENCH_DATA` at run time.
-    dependency "sparkles:test-runner" path="../../../.."
-
+    // counters). Corpora load from `$WIRED_BENCH_DATA` at run time.
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
     dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
