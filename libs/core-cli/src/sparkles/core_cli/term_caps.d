@@ -117,3 +117,146 @@ unittest
     assert(size.width == 0 || size.width >= 1);
     assert(size.height == 0 || size.height >= 1);
 }
+
+/// A standard stream, for tty queries.
+enum StdStream { stdin, stdout, stderr }
+
+/// Is `stream` attached to a terminal? POSIX: `isatty`; Windows: `GetConsoleMode`
+/// succeeds (it fails when the handle is redirected — the non-tty check).
+bool isTerminal(StdStream stream = StdStream.stdout) @trusted nothrow @nogc
+{
+    version (Posix)
+    {
+        import core.sys.posix.unistd : isatty, STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO;
+
+        final switch (stream)
+        {
+            case StdStream.stdin:  return isatty(STDIN_FILENO) != 0;
+            case StdStream.stdout: return isatty(STDOUT_FILENO) != 0;
+            case StdStream.stderr: return isatty(STDERR_FILENO) != 0;
+        }
+    }
+    else version (Windows)
+    {
+        import core.sys.windows.windows : DWORD, GetConsoleMode, GetStdHandle,
+            INVALID_HANDLE_VALUE, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE;
+
+        DWORD id;
+        final switch (stream)
+        {
+            case StdStream.stdin:  id = STD_INPUT_HANDLE;  break;
+            case StdStream.stdout: id = STD_OUTPUT_HANDLE; break;
+            case StdStream.stderr: id = STD_ERROR_HANDLE;  break;
+        }
+        auto handle = GetStdHandle(id);
+        if (handle is null || handle == INVALID_HANDLE_VALUE)
+            return false;
+        DWORD mode;
+        return GetConsoleMode(handle, &mode) != 0;
+    }
+    else
+        return false;
+}
+
+/// The query never throws and is `@nogc`; the value is environment-dependent.
+@("isTerminal.callable")
+@safe nothrow @nogc
+unittest
+{
+    cast(void) isTerminal();
+    cast(void) isTerminal(StdStream.stderr);
+}
+
+/// One-shot capability snapshot: the single place the color/glyph *decision* is
+/// made. Renderers stay pure producers taking explicit bools/options; apps call
+/// $(LREF detectTermCaps) once at startup and thread the fields through.
+struct TermCaps
+{
+    bool tty;                 /// stdout is attached to a terminal
+    bool colors;              /// emit SGR color/attribute escapes
+    bool unicode;             /// emit non-ASCII glyphs (box drawing, ✓/✗ marks)
+    ScreenSize!ushort size;   /// terminal size; `0` components mean unknown
+}
+
+/// Detects capabilities and prepares the console.
+///
+/// Colors are on only when stdout is a terminal and neither `noColors`,
+/// `$NO_COLOR`, nor `TERM=dumb` disables them; a non-empty, non-`"0"`
+/// `$CLICOLOR_FORCE` forces them on for a non-tty (but never overrides an
+/// explicit disable). On Windows this additionally sets the output code page to
+/// UTF-8 (so `✓ ✗ ⚙` render even without colors) and enables virtual-terminal
+/// processing (so ANSI escapes are interpreted rather than printed literally);
+/// colors stay off when stdout is redirected or VT can't be enabled.
+TermCaps detectTermCaps(bool noColors = false) @safe
+{
+    import std.process : environment;
+
+    TermCaps caps;
+    caps.tty = isTerminal(StdStream.stdout);
+    caps.size = terminalSize();
+
+    const forceVar = environment.get("CLICOLOR_FORCE", "");
+    const force = forceVar.length != 0 && forceVar != "0";
+    const disabled = noColors
+        || environment.get("NO_COLOR", "").length != 0
+        || environment.get("TERM", "") == "dumb";
+
+    version (Windows)
+    {
+        import core.sys.windows.windows : DWORD,
+            ENABLE_VIRTUAL_TERMINAL_PROCESSING, GetConsoleMode, GetStdHandle,
+            INVALID_HANDLE_VALUE, SetConsoleMode, SetConsoleOutputCP,
+            STD_OUTPUT_HANDLE;
+
+        enum uint CP_UTF8 = 65_001;
+        const vt = () @trusted {
+            SetConsoleOutputCP(CP_UTF8);
+            auto handle = GetStdHandle(STD_OUTPUT_HANDLE);
+            if (handle is null || handle == INVALID_HANDLE_VALUE)
+                return false;
+            DWORD mode;
+            if (!GetConsoleMode(handle, &mode))
+                return false;
+            return SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0;
+        }();
+        caps.unicode = true; // output code page is now UTF-8
+        caps.colors = !disabled && (force || (caps.tty && vt));
+    }
+    else
+    {
+        caps.unicode = localeIsUtf8();
+        caps.colors = !disabled && (force || caps.tty);
+    }
+    return caps;
+}
+
+/// UTF-8 locale heuristic: `LC_ALL` > `LC_CTYPE` > `LANG`, matching `utf-8` /
+/// `utf8` case-insensitively. No locale variable at all defaults to `true`
+/// (every modern terminal is UTF-8); only an explicit non-UTF-8 locale opts out.
+private bool localeIsUtf8() @safe
+{
+    import std.algorithm.searching : canFind;
+    import std.process : environment;
+    import std.uni : toLower;
+
+    foreach (name; ["LC_ALL", "LC_CTYPE", "LANG"])
+    {
+        const v = environment.get(name, "");
+        if (v.length == 0)
+            continue;
+        const lower = v.toLower;
+        return lower.canFind("utf-8") || lower.canFind("utf8");
+    }
+    return true;
+}
+
+/// `noColors: true` wins over everything (including `$CLICOLOR_FORCE`); the
+/// other fields are environment-dependent, so only their relations are pinned.
+@("detectTermCaps.contract")
+@safe
+unittest
+{
+    const caps = detectTermCaps(noColors: true);
+    assert(!caps.colors);
+    assert(caps.tty == isTerminal());
+}
