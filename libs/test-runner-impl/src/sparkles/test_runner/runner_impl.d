@@ -455,48 +455,41 @@ private UnitTestResult runBenchMode(Test[] tests, bool colored)
     return UnitTestResult(rows.length + failed, rows.length, false, false);
 }
 
+/// Whether `sparkles:core-cli` is in the tested package's dependency closure
+/// (see `reporting.d` for the pattern) — its `detectTermCaps` is the shared
+/// implementation of the console-preparation policy this runner used to inline.
+private enum bool hasCoreCliTermCaps = __traits(compiles, {
+    import sparkles.core_cli.term_caps : detectTermCaps;
+});
+
 /// Prepares the console and reports whether colored output should be used.
-/// Colors are off when `--no-colours`/`$NO_COLOR` is set or stdout is not a
-/// terminal. On Windows this additionally sets the output code page to UTF-8
-/// (so `✓ ✗ ⚙` render even without colours) and enables virtual-terminal
-/// processing (so ANSI escapes are interpreted rather than printed literally);
-/// colours stay off when stdout is redirected or VT can't be enabled.
+/// Delegates to `core-cli`'s `detectTermCaps` (colors off on `--no-colours` /
+/// `$NO_COLOR` / `TERM=dumb` / non-tty; Windows UTF-8 code page + VT enable).
+/// In `base`'s own test build (no `core-cli` there) a minimal inline fallback
+/// keeps the same `--no-colours`/`$NO_COLOR`/tty behaviour.
 private bool prepareConsole(bool noColours)
 {
-    import std.process : environment;
-
-    const disabled = noColours || environment.get("NO_COLOR", "").length != 0;
-
-    version (Posix)
+    static if (hasCoreCliTermCaps)
     {
-        import core.sys.posix.unistd : isatty, STDOUT_FILENO;
+        import sparkles.core_cli.term_caps : detectTermCaps;
 
-        if (disabled)
-            return false;
-        return isatty(STDOUT_FILENO) != 0;
-    }
-    else version (Windows)
-    {
-        import core.sys.windows.windows : DWORD,
-            ENABLE_VIRTUAL_TERMINAL_PROCESSING, GetConsoleMode, GetStdHandle,
-            INVALID_HANDLE_VALUE, SetConsoleMode, SetConsoleOutputCP,
-            STD_OUTPUT_HANDLE;
-
-        enum uint CP_UTF8 = 65_001;
-        SetConsoleOutputCP(CP_UTF8);
-
-        if (disabled)
-            return false;
-
-        auto handle = GetStdHandle(STD_OUTPUT_HANDLE);
-        if (handle is null || handle == INVALID_HANDLE_VALUE)
-            return false;
-        DWORD mode;
-        // Fails when stdout is redirected (not a console) — the non-tty check.
-        if (!GetConsoleMode(handle, &mode))
-            return false;
-        return SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING) != 0;
+        return detectTermCaps(noColours).colors;
     }
     else
-        return !disabled;
+    {
+        import std.process : environment;
+
+        const disabled = noColours || environment.get("NO_COLOR", "").length != 0;
+
+        version (Posix)
+        {
+            import core.sys.posix.unistd : isatty, STDOUT_FILENO;
+
+            if (disabled)
+                return false;
+            return isatty(STDOUT_FILENO) != 0;
+        }
+        else
+            return !disabled;
+    }
 }
