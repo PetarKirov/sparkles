@@ -14,7 +14,6 @@ import sparkles.test_runner.model : Test, TestResult, Thrown;
 /// indicates a genuinely broken process state and is re-thrown.
 TestResult executeTest(Test test)
 {
-    import core.exception : OutOfMemoryError;
     import core.time : MonoTime;
 
     auto result = TestResult(test: test);
@@ -28,36 +27,47 @@ TestResult executeTest(Test test)
         result.succeeded = true;
     }
     catch (Throwable t)
+        result.thrown = toThrown(t); // re-throws OutOfMemoryError
+
+    return result;
+}
+
+/// Converts a caught `Throwable` chain into `Thrown[]` (its full chain, each with
+/// stack trace). `OutOfMemoryError` signals a genuinely broken process and is
+/// re-thrown rather than recorded. Shared by `executeTest` and the benchmark
+/// driver, whose measurement of a registered case runs outside `executeTest`.
+package immutable(Thrown)[] toThrown(Throwable t)
+{
+    import core.exception : OutOfMemoryError;
+
+    if (cast(OutOfMemoryError) t)
+        throw t;
+
+    immutable(Thrown)[] result;
+    foreach (thrown; t)
     {
-        if (cast(OutOfMemoryError) t)
-            throw t;
-
-        foreach (thrown; t)
+        immutable(string)[] trace;
+        try
         {
-            immutable(string)[] trace;
-            try
-            {
-                // `info` is null for exceptions that were chained but never
-                // thrown (e.g. `new Exception("effect", new Exception("cause"))`).
-                if (thrown.info !is null)
-                    foreach (frame; thrown.info)
-                        trace ~= frame.idup;
-            }
-            catch (OutOfMemoryError)
-            {
-                trace ~= "<test-runner> failed to read the stack trace";
-            }
-
-            result.thrown ~= Thrown(
-                type: typeid(thrown).name,
-                message: thrown.message.idup,
-                file: thrown.file,
-                line: thrown.line,
-                info: trace,
-            );
+            // `info` is null for exceptions that were chained but never thrown
+            // (e.g. `new Exception("effect", new Exception("cause"))`).
+            if (thrown.info !is null)
+                foreach (frame; thrown.info)
+                    trace ~= frame.idup;
         }
-    }
+        catch (OutOfMemoryError)
+        {
+            trace ~= "<test-runner> failed to read the stack trace";
+        }
 
+        result ~= Thrown(
+            type: typeid(thrown).name,
+            message: thrown.message.idup,
+            file: thrown.file,
+            line: thrown.line,
+            info: trace,
+        );
+    }
     return result;
 }
 
