@@ -261,6 +261,17 @@ private struct BenchContext
     PerfGroup* perf;   /// null / unavailable = no perf counting pass
     Tier0Group* tier0; /// null / unavailable = no tier0 counting pass
     SyscallGroup* syscalls; /// null / unavailable = no syscall counting pass
+
+    /// Enumerate mode (see `countBenchmarkCases`): `benchIter`/`benchCase` record
+    /// only that a case exists (bumping `caseCount`) and skip all measurement, so
+    /// the runner can learn the case total before the real, progress-tracked pass.
+    bool enumerateOnly;
+    size_t caseCount;  /// enumerate: number of cases the body emitted
+
+    /// Real-run progress hook, invoked with the case name as each case starts
+    /// measuring (null = no reporting). Typed `@safe nothrow @nogc` so calling it
+    /// never constrains a benchmark body's own inferred attributes.
+    void delegate(scope const(char)[] name) @safe nothrow @nogc onCaseStart;
 }
 
 private BenchContext* activeBenchContext; // thread-local, set by runBenchmark
@@ -322,7 +333,15 @@ if (is(typeof(run()) == void))
         run();
         return;
     }
+    if (context.enumerateOnly) // dry pass: just tally the case, don't measure
+    {
+        context.used = true;
+        context.caseCount++;
+        return;
+    }
     context.used = true;
+    if (context.onCaseStart !is null)
+        context.onCaseStart(context.testName);
     auto m = measure(run, context.config);
     auto row = computeStats(context.testName, m.iterations, m.nsPerIter);
     row.perf = countIf(context, run, () {}, m.iterations);
@@ -440,6 +459,14 @@ void benchCase(Timed, After)(
         cast(void) driveOnce(timed, after);
         return;
     }
+    if (context.enumerateOnly) // dry pass: just tally the case, don't measure
+    {
+        context.used = true;
+        context.caseCount++;
+        return;
+    }
+    if (context.onCaseStart !is null)
+        context.onCaseStart(name);
 
     // Probe once so an `after` throw/error surfaces before the measurement loop.
     {
@@ -503,15 +530,18 @@ struct BenchOutcome
 
 /// Runs one `@benchmark` test with an active context so `benchIter`/`benchCase`
 /// record rows; a body that calls neither is measured whole as a single row.
+/// `onCaseStart` (optional) is invoked with each case's name as it begins
+/// measuring — the seam the runner drives its live progress line from.
 package(sparkles.test_runner)
 BenchOutcome runBenchmark(Test test, in BenchConfig config, ref PerfGroup perf,
-    ref Tier0Group tier0, ref SyscallGroup syscalls)
+    ref Tier0Group tier0, ref SyscallGroup syscalls,
+    void delegate(scope const(char)[] name) @safe nothrow @nogc onCaseStart = null)
 {
     import sparkles.test_runner.execution : executeTest;
 
     BenchOutcome outcome;
     auto context = BenchContext(config: config, testName: test.name,
-        perf: &perf, tier0: &tier0, syscalls: &syscalls);
+        perf: &perf, tier0: &tier0, syscalls: &syscalls, onCaseStart: onCaseStart);
 
     activeBenchContext = &context;
     scope (exit)
@@ -524,6 +554,8 @@ BenchOutcome runBenchmark(Test test, in BenchConfig config, ref PerfGroup perf,
 
     if (!context.used) // no benchIter/benchCase — measure the whole body
     {
+        if (onCaseStart !is null)
+            onCaseStart(test.name);
         auto m = measure({ test.ptr(); }, config);
         auto row = computeStats(test.name, m.iterations, m.nsPerIter);
         row.perf = countIf(&context, { test.ptr(); }, () {}, m.iterations);
@@ -532,6 +564,24 @@ BenchOutcome runBenchmark(Test test, in BenchConfig config, ref PerfGroup perf,
         outcome.rows ~= row;
     }
     return outcome;
+}
+
+/// Enumerates `test`'s benchmark cases without measuring any of them, returning
+/// the case count (a whole-body benchmark counts as 1). Runs the body once under
+/// an `enumerateOnly` context so `benchIter`/`benchCase` only tally; the runner
+/// sums this across tests to get the exact denominator for its progress line.
+package(sparkles.test_runner)
+size_t countBenchmarkCases(Test test)
+{
+    import sparkles.test_runner.execution : executeTest;
+
+    auto context = BenchContext(testName: test.name, enumerateOnly: true);
+    activeBenchContext = &context;
+    scope (exit)
+        activeBenchContext = null;
+
+    cast(void) executeTest(test);
+    return context.used ? context.caseCount : 1; // whole-body = one case
 }
 
 @("runBenchmark.wholeBody")
@@ -685,6 +735,64 @@ unittest
     assert(outcome.rows[0].metrics.length == 1);
     assert(outcome.rows[0].metrics[0].unit.symbol == "B");
     assert(outcome.rows[2].name == "case2");
+}
+
+@("countBenchmarkCases.matrixAndWholeBody")
+@system
+unittest
+{
+    // A matrix body's cases are tallied without measuring; a body that calls
+    // neither benchCase nor benchIter counts as one whole-body case.
+    static void matrix()
+    {
+        foreach (i; 0 .. 3)
+            benchCase(name: "c", timed: () { blackBox(i); }, after: () {});
+    }
+
+    static void whole()
+    {
+        size_t s;
+        foreach (i; 0 .. 10)
+            s += i;
+        blackBox(s);
+    }
+
+    assert(countBenchmarkCases(Test(fullName: "m.matrix", name: "matrix", ptr: &matrix)) == 3);
+    assert(countBenchmarkCases(Test(fullName: "m.whole", name: "whole", ptr: &whole)) == 1);
+}
+
+@("runBenchmark.onCaseStartPerCase")
+@system
+unittest
+{
+    import core.time : usecs;
+
+    static void body_()
+    {
+        foreach (i; 0 .. 3)
+            benchCase(name: "c", timed: () { blackBox(i); }, after: () {});
+    }
+
+    // The progress hook is `@safe nothrow @nogc`; count via a struct-method
+    // delegate so no GC closure is needed and the strict type is satisfied.
+    static struct Rec
+    {
+        size_t n;
+        void tick(scope const(char)[] name) @safe nothrow @nogc
+        {
+            n++;
+        }
+    }
+
+    Rec rec;
+    auto perf = PerfGroup.tryOpen(false);
+    auto tier0 = Tier0Group.tryOpen(false);
+    auto syscalls = SyscallGroup.tryOpen(false, null);
+    const config = BenchConfig(sampleCount: 1, minSampleTime: 1.usecs);
+    auto outcome = runBenchmark(Test(fullName: "m.b", name: "b", ptr: &body_),
+        config, perf, tier0, syscalls, &rec.tick);
+    assert(outcome.result.succeeded);
+    assert(rec.n == 3); // exactly one tick per case
 }
 
 @("benchCase.expectedErrorIsIsolatedRow")

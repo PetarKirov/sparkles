@@ -22,14 +22,15 @@ module sparkles.test_runner.runner_impl;
 import core.runtime : Runtime, UnitTestResult;
 import core.time : Duration, MonoTime;
 
-import sparkles.test_runner.bench : BenchConfig, BenchStats, runBenchmark;
+import sparkles.test_runner.bench : BenchConfig, BenchStats, countBenchmarkCases,
+    runBenchmark;
 import sparkles.test_runner.driver : detectCompiler, DriverOptions, runCtfeTests;
 import sparkles.test_runner.execution : executeTest;
 import sparkles.test_runner.filter : matchesFilter;
 import sparkles.test_runner.model : Test, TestResult;
-import sparkles.test_runner.reporting : detectTerminalWidth, formatBenchTable,
-    formatCtfeFailedLine, formatCtfeLine, formatMetricCatalog, formatResultLine,
-    formatSummary, formatThrown, RunTotals;
+import sparkles.test_runner.reporting : BenchProgress, detectTerminalWidth,
+    formatBenchTable, formatCtfeFailedLine, formatCtfeLine, formatMetricCatalog,
+    formatResultLine, formatSummary, formatThrown, RunTotals, stderrIsTty;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Entry point — called across the extern(C) seam by the registration shim,
@@ -56,6 +57,8 @@ private struct RunnerOptions
     bool perf;
     string syscalls;
     string metrics;
+    string sortBy;
+    string groupBy;
     bool listMetrics;
     string ctfeTrace;
     bool betterC;
@@ -142,6 +145,14 @@ private UnitTestResult runnerMain(Test[] discovered, bool hostIsRunner)
             "With --bench: comma-separated metric columns to show (glob with '*'; " ~
             "'all' = every available; '?'/'help' = list them). Default: standard columns",
             &options.metrics,
+        "sort-by",
+            "With --bench: sort rows by 'name' or a metric column name " ~
+            "(default: median/iter, ascending). Applied within --group-by groups",
+            &options.sortBy,
+        "group-by",
+            "With --bench: split into one table per group of the given 0-based " ~
+            "name segments, e.g. =1,2 groups 'engine/dataset/op' by (dataset, op)",
+            &options.groupBy,
         "list-metrics",
             "With --bench: list the available metric columns (name, class, source) and exit",
             &options.listMetrics,
@@ -515,14 +526,25 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         return UnitTestResult(0, 0, false, false);
     }
 
-    BenchStats[] rows;
-    size_t failed;
+    auto benchTests = tests.filter!(t => t.traits.isBenchmark).array;
 
-    foreach (test; tests.filter!(t => t.traits.isBenchmark))
+    // Dry enumerate pass: run each body once with measurement skipped to learn
+    // the exact case total, so the live progress line can show `[done/total]`.
+    size_t total;
+    foreach (test; benchTests)
+        total += countBenchmarkCases(test);
+
+    auto progress = BenchProgress(total: total,
+        active: stderrIsTty(options.noColours) && total > 0);
+
+    size_t totalRows, errorRows, failed;
+    bool first = true;
+    foreach (test; benchTests)
     {
         auto outcome = runBenchmark(test,
-            BenchConfig(iterations: test.traits.benchIterations), perf, tier0, syscalls);
-        rows ~= outcome.rows; // includes any per-case error rows
+            BenchConfig(iterations: test.traits.benchIterations), perf, tier0, syscalls,
+            &progress.tick);
+        progress.clear(); // erase the spinner before this test's output
 
         if (!outcome.result.succeeded)
         {
@@ -531,19 +553,29 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
             foreach (thrown; outcome.result.thrown)
                 stdout.write(formatThrown(thrown, colored, true));
         }
+
+        foreach (ref row; outcome.rows)
+            if (row.error.length)
+                errorRows++;
+        totalRows += outcome.rows.length;
+
+        // Stream this test's table as soon as it finishes (one table per test).
+        if (outcome.rows.length)
+        {
+            if (!first)
+                stdout.write("\n");
+            stdout.write(formatBenchTable(outcome.rows, colored, options.metrics,
+                options.sortBy, options.groupBy));
+            stdout.flush(); // on screen before the next tick redraws the spinner below
+            first = false;
+        }
     }
+    progress.clear();
 
-    size_t errorRows;
-    foreach (ref row; rows)
-        if (row.error.length)
-            errorRows++;
-
-    if (rows.length)
-        stdout.write(formatBenchTable(rows, colored, options.metrics));
-    else if (!failed)
+    if (totalRows == 0 && !failed)
         stdout.writeln("no @benchmark tests found");
 
-    return UnitTestResult(rows.length + failed, rows.length - errorRows, false, false);
+    return UnitTestResult(totalRows + failed, totalRows - errorRows, false, false);
 }
 
 /// Whether `sparkles:core-cli` is in the tested package's dependency closure
