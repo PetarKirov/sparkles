@@ -16,11 +16,13 @@
  *     `rchar` and `read_bytes` is the page-cache-hit signal, for free.
  * )
  *
- * All metrics are `quantitative`: the two snapshots bracket the same loop the
- * counter pass runs, so perturbation is a pair of cheap reads. Unlike `perf.d`'s
- * ioctl bracketing, these counters cannot pause, so the window is the whole
- * `timed()`+`between()` loop; for `benchIter` (whose `between` is a no-op) that
- * is exactly `timed`. Off Linux the group is permanently unavailable.
+ * All metrics are `quantitative`: each `timed()` call is bracketed by its own
+ * pair of cheap snapshots, so — like `perf.d`'s ioctl `ENABLE`/`DISABLE` — the
+ * untimed `between()` teardown (a `benchCase`'s result release) is excluded from
+ * the counted window. The snapshots cannot pause, so each one's own `/proc` read
+ * adds a small constant to `syscr`/`syscw` per iteration; the getrusage-sourced
+ * page-fault and context-switch columns are unaffected. Off Linux the group is
+ * permanently unavailable.
  */
 module sparkles.test_runner.tier0;
 
@@ -230,19 +232,45 @@ version (linux)
             return r;
         }
 
-        /// The counting pass: snapshots the counters around `iters` iterations of
-        /// `timed()` (with `between()` between). Returns per-iteration deltas.
+        /// The counting pass: brackets each `timed()` call with its own pair of
+        /// snapshots so `between()` runs outside the counted window, sums the
+        /// per-call deltas, and averages once. Returns per-iteration deltas; an
+        /// unavailable source reads `nan` (it propagates through the sum).
         Tier0Stats count(Timed, Between)(scope Timed timed, scope Between between, uint iters)
         in (iters > 0)
         {
-            const before = snapshot();
+            Tier0Stats sum; // running sum of per-call deltas (nan propagates)
             foreach (_; 0 .. iters)
             {
+                const start = snapshot();
                 timed();
-                between();
+                const end = snapshot();
+                between(); // untimed teardown, outside the start..end window
+                const one = deltaStats(start, end, 1); // this call's counts, with validity
+                sum.minflt += one.minflt;
+                sum.majflt += one.majflt;
+                sum.volCs += one.volCs;
+                sum.involCs += one.involCs;
+                sum.syscr += one.syscr;
+                sum.syscw += one.syscw;
+                sum.rdChars += one.rdChars;
+                sum.wrChars += one.wrChars;
+                sum.rdBytes += one.rdBytes;
+                sum.wrBytes += one.wrBytes;
             }
-            const after = snapshot();
-            return deltaStats(before, after, iters);
+            const inv = 1.0 / iters;
+            sum.iters = iters;
+            sum.minflt *= inv;
+            sum.majflt *= inv;
+            sum.volCs *= inv;
+            sum.involCs *= inv;
+            sum.syscr *= inv;
+            sum.syscw *= inv;
+            sum.rdChars *= inv;
+            sum.wrChars *= inv;
+            sum.rdBytes *= inv;
+            sum.wrBytes *= inv;
+            return sum;
         }
     }
 
@@ -284,6 +312,38 @@ version (linux)
         // On a normal Linux host both sources read; syscall count is non-negative.
         if (!s.syscw.isNaN)
             assert(s.syscw >= 0);
+    }
+
+    @("tier0.Tier0Group.countExcludesBetween")
+    @system
+    unittest
+    {
+        import std.conv : text;
+        import std.math : isNaN;
+
+        // Per-iteration bracketing must exclude the untimed `between` from the
+        // window. The same write counts when it runs as `timed` but not as
+        // `between`. Compare the two so process-wide noise from concurrent test
+        // threads (getrusage/proc are per-process) cancels and only the signal
+        // — one write/iter — remains.
+        auto g = Tier0Group.tryOpen(true);
+        if (!g.available)
+            return;
+        static void nop() {}
+        static void writeOnce()
+        {
+            import core.sys.posix.unistd : write;
+
+            char[1] c = ['x'];
+            () @trusted { write(2, c.ptr, 0); }(); // 0-length write: a syscall, no output
+        }
+
+        const inTimed = g.count(&writeOnce, &nop, 64); // write inside the window
+        const inBetween = g.count(&nop, &writeOnce, 64); // write outside the window
+        if (!inTimed.syscw.isNaN && !inBetween.syscw.isNaN)
+            assert(inTimed.syscw - inBetween.syscw > 0.5,
+                text("a write in timed must count but in between must not; timed=",
+                    inTimed.syscw, " between=", inBetween.syscw));
     }
 }
 else
