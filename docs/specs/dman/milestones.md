@@ -63,8 +63,16 @@ The prerequisite merges are dependencies, not incremental work:
   jj-shaped): root detection, default-branch, branch classification,
   ahead/behind, dirty state, worktree list/add/remove, `status --porcelain=v2`.
 - Repo scanner + catalog + registry; `repo scan/list/add/remove/show`; CWD-walk
-  selection. Everything works non-interactively first — valuable and testable
+  selection. The scan uses a **bounded concurrent fan-out** two-phase pipeline
+  (cheap-sync cache hits → concurrent misses on the loop → single-writer
+  writeback). Everything works non-interactively first — valuable and testable
   on its own.
+- The [config / settings model](./config.md) ([D14](./DECISIONS.md)) lands here
+  (policy-as-data protected patterns, trunk/remote/scan overrides) so nothing is
+  hardcoded from the start.
+- Worktree workflow primitives ([D13](./DECISIONS.md)): `enter`/`exec`,
+  branch-per-task naming, the 2-mode taxonomy, and the file-based context
+  descriptor.
 
 ### P2 — Interactive TUI ★
 
@@ -73,6 +81,13 @@ loop on `runOnce`, redraw/diff) over the one-shot renderers, then the
 branch-management UX (classification, multi-select safe/force delete, dry-run,
 action log, filters, sort, fuzzy/`@author` search), tree navigation, list/detail
 panes, and optional PR enrichment.
+
+### Workspaces — multi-repo grouping _(mid-phase)_
+
+The [`string[]` tags grouping model](./workspaces.md) ([D11](./DECISIONS.md)):
+`tags[0]` directory-group auto-detection, user-label tags, the order-independent
+group ID, and the `dman workspace` verbs. Layered on once the single-repo VCS core
+(P1) and TUI (P2) exist.
 
 ### P3 — Jujutsu backend
 
@@ -112,6 +127,19 @@ the strategic follow-on, and even then a minimal slice is the entry point.
   routing.
 - **P9** Vulkan/WebGPU client — new `sparkles:vulkan` + windowing layer; desktop
   (Wayland / Win32 / MoltenVK) → browser (WebGPU) → mobile (Android first).
+
+### Deferred subsystems
+
+Recorded, not built now:
+
+- **Filesystem snapshots** ([D12](./DECISIONS.md)) — a snapshot-provider subsystem
+  (a git-based provider capturing clean+dirty state under a private ref namespace;
+  OS-level CoW/ZFS backends) is a future phase; jj's op-log undo + worktrees +
+  delete-undo records cover the near term.
+- **Distributed extensions** — remote reproduction of a directory group's layout
+  from its portable descriptor; an offline deferred-registration queue (persist +
+  replay when a coordinator is reachable); and running the same provider/selection
+  logic across local, VM, and remote hosts. These attach to the P5–P7 phase.
 
 ## Key risks
 

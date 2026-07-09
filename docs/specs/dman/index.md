@@ -28,9 +28,11 @@ the Git-first foundation lands.
 | [Architecture](./architecture.md)                 | how dman composes the sparkles stack, the async substrate, the VCS abstraction, the TUI shell, and building-block readiness |
 | [Command schema](./command-schema.md)             | the bidirectional, `wired`-based CLI/command pillar — one struct schema for both dman's own CLI and invoking git/jj/…       |
 | [CLI surface](./cli-surface.md)                   | the concrete `dman` command tree — repo/branch/worktree subcommands, scripting, machine output                              |
+| [Config](./config.md)                             | the settings model — policy-as-data, overrides for every auto-detected assumption                                           |
 | [VCS backend](./vcs-backend.md)                   | the per-repo layer — branch/worktree/status data model and the `VcsRepo` backend                                            |
 | [Designing for jj](./jj-model.md)                 | how jj diverges from git and the capability-based abstraction the P3 backend needs                                          |
 | [Repo catalog](./repo-catalog.md)                 | the cross-repo layer — scan → catalog → registry → selection, and persistence                                               |
+| [Workspaces](./workspaces.md)                     | multi-repo grouping — `string[]` tags, the directory group, and workspace verbs                                             |
 | [TUI shell](./tui-shell.md)                       | the interactive UI — the `sparkles:tui` immediate-mode framework and the dman shell's interaction model                     |
 | [Milestones](./milestones.md)                     | the phased plan, dependency graph, and key risks                                                                            |
 | [Decisions](./DECISIONS.md)                       | the foundational decision log (ADR-style)                                                                                   |

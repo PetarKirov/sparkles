@@ -46,13 +46,34 @@ by capability, not implementation. For how it is built, see
 - **Add / remove / prune** worktrees under a chosen on-disk layout convention
   (sibling directories or a dedicated worktrees root; a per-task branch-naming
   scheme).
-- **Enter / exit** a worktree from the TUI or CLI (a shell-in-worktree UX).
+- **Enter / exec** — `enter` opens a shell in a worktree (recording its context);
+  `exec` runs a command in a worktree non-interactively (returning its exit code)
+  — composable primitives for scripts and automation.
+
+### Workspaces (multi-repo grouping)
+
+- **Tag repos** into workspaces (many-to-many): an auto-detected directory group
+  plus free-form labels, filterable in every listing.
+- **`dman workspace`** verbs to list / show / create / inspect members / delete.
+
+### Configuration
+
+- A **settings model** where policy is data and every auto-detected assumption is
+  overridable: protected-branch patterns, trunk, remote name, scan roots, worktree
+  naming, staleness threshold, cache TTL, theme, and keymap.
+
+### Safety
+
+- Destructive operations run through a **confirm step that shows the exact
+  command**, a **dry-run** preview, and an **action log** that continues on error
+  with a per-item outcome; **deletes are undoable** (recorded ref state).
 
 ### Surfaces & ergonomics
 
-- Every operation is available **non-interactively** (CI-friendly, `--yes` for
-  batch mutations) **and** through an **interactive, keyboard-driven TUI** that
-  is resize-aware.
+- Every operation is available **non-interactively** — genuinely prompt-free with
+  `--yes`, a reserved exit code when a repo can't be resolved — **and** through an
+  **interactive, keyboard-driven TUI** that is resize-aware, with a search field
+  supporting an extensible `@field:value` query grammar.
 - dman can act as a **thin Git passthrough**: git-style arguments are parsed and
   re-emitted to real `git`, so unknown flags pass through unchanged.
 

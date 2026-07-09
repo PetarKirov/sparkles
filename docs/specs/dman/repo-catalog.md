@@ -32,7 +32,7 @@ struct RepoRef {
     VcsKind         backend;          // git | jj  (per-repo, from the marker)
     bool            colocated;        // .jj/ beside .git/
     string[]        remotes;          // remote URLs (order-independent identity)
-    Nullable!string group;            // optional grouping label (not a jj "workspace")
+    string[]        tags;             // tags[0] = directory group; tags[1..] = user labels
     SysTime         lastScanned;
 }
 ```
@@ -42,6 +42,10 @@ struct RepoRef {
   stale catalog self-heals on the next scan).
 - **Registry** — the in-memory working set, live-updated by `watch` (a new scan
   or an on-disk change refreshes it without a manual reload).
+- **Tags** — many-to-many grouping (`--tag <t>` filters the catalog). `tags[0]`
+  is the auto-detected directory group; `tags[1..]` are free-form labels — see
+  [Workspaces](./workspaces.md). (Not to be confused with a jj _workspace_, which
+  is a checkout.)
 
 The `remotes` set (order-independent) is the repo's portable identity — the same
 notion the later cross-machine sync builds on.

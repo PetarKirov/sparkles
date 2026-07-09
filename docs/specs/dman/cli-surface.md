@@ -38,17 +38,21 @@ struct Dman {
 
 ## Commands → operations
 
-| Command                                                 | Does                     | Backend call                |
-| ------------------------------------------------------- | ------------------------ | --------------------------- |
-| `dman repo scan [--root DIR]… [--depth N]`              | discover + catalog repos | catalog scan                |
-| `dman repo list \| add \| remove \| show`               | manage the catalog       | catalog                     |
-| `dman branch list [--filter --sort --search]`           | classified branch list   | `VcsRepo.branches`          |
-| `dman branch show NAME`                                 | one branch's detail      | `VcsRepo.branches`          |
-| `dman branch delete NAME… [--force --dry-run --yes]`    | delete branches          | `VcsRepo.deleteBranch`      |
-| `dman branch create \| switch`                          | create / switch          | (git via schema)            |
-| `dman worktree list \| add \| remove \| prune \| enter` | worktree ops             | `VcsRepo.*Worktree*`        |
-| `dman status`                                           | repo status              | `VcsRepo.status`            |
-| `dman` (TTY) or `dman tui`                              | interactive UI           | [TUI shell](./tui-shell.md) |
+| Command                                                      | Does                        | Backend call                  |
+| ------------------------------------------------------------ | --------------------------- | ----------------------------- |
+| `dman repo scan [--root DIR]… [--depth N]`                   | discover + catalog repos    | catalog scan                  |
+| `dman repo list [--tag T] \| add \| remove \| show`          | manage the catalog          | catalog                       |
+| `dman repo tag add\|remove <tag>`                            | manage user tags            | catalog                       |
+| `dman workspace list \| show \| create \| members \| delete` | multi-repo groups           | [Workspaces](./workspaces.md) |
+| `dman branch list [--filter --sort --search]`                | classified branch list      | `VcsRepo.branches`            |
+| `dman branch show NAME`                                      | one branch's detail         | `VcsRepo.branches`            |
+| `dman branch delete NAME… [--force --dry-run --yes]`         | delete branches             | `VcsRepo.deleteBranch`        |
+| `dman branch create \| switch`                               | create / switch             | (git via schema)              |
+| `dman worktree list \| add \| remove \| prune`               | worktree ops                | `VcsRepo.*Worktree*`          |
+| `dman worktree enter NAME`                                   | cd in + record context      | [D13](./DECISIONS.md)         |
+| `dman worktree exec NAME -- CMD…`                            | run in worktree (exit code) | [D13](./DECISIONS.md)         |
+| `dman status`                                                | repo status                 | `VcsRepo.status`              |
+| `dman` (TTY) or `dman tui`                                   | interactive UI              | [TUI shell](./tui-shell.md)   |
 
 ## Scripting & machine output
 
