@@ -467,6 +467,7 @@ export default withMermaid(
                 { text: 'Command Schema', link: '/specs/dman/command-schema' },
                 { text: 'CLI Surface', link: '/specs/dman/cli-surface' },
                 { text: 'VCS Backend', link: '/specs/dman/vcs-backend' },
+                { text: 'Designing for jj', link: '/specs/dman/jj-model' },
                 { text: 'Repo Catalog', link: '/specs/dman/repo-catalog' },
                 { text: 'TUI Shell', link: '/specs/dman/tui-shell' },
                 { text: 'Milestones', link: '/specs/dman/milestones' },

@@ -72,7 +72,10 @@ configurable threshold and never changes the `status`.
 
 ## The `VcsRepo` backend
 
-A minimal, Git-first interface ([D8](./DECISIONS.md)) — every operation is a
+A **capability-based** interface ([D8](./DECISIONS.md); Design-by-Introspection),
+with **Git as v1's sole implementation** and jj added at P3 — a common core both
+backends fill, plus capability-gated optional operations (see
+[Designing for jj](#designing-for-jj-the-p3-backend)). Every operation is a
 command schema rendered → spawned via `event-horizon` `proc` → decoded, per
 [D4/D5](./DECISIONS.md); nothing hand-parses at the call site:
 
@@ -132,3 +135,41 @@ template; the repo scanner discovers them as ordinary repos. Operations:
 → decoded via `wired` into `PrInfo`. It is an opt-in column; its cache lives with
 the catalog persistence — see
 [Repo catalog § persistence](./repo-catalog.md#persistence).
+
+## Designing for jj (the P3 backend)
+
+jj (P3) diverges from git deeply enough that the interface above is
+**capability-based** rather than git-shaped. The full analysis is in
+[Designing for Jujutsu](./jj-model.md); the shape it imposes here:
+
+- **Output decode is backend-pluggable.** git reads parse porcelain
+  (`--porcelain=v2` / `for-each-ref --format`, the `%x1f`/`%x1e` parser); jj has
+  no porcelain, so its reads render a **template** (`jj … -T 'json(self)'
+--no-graph`) decoded through `wired` — the same `run!T` machinery, a different
+  collector. Both backends stay schema-driven command invocations.
+- **The data model widens** (each field git-only ⇒ capability-gated):
+  - `BranchInfo` → a **ref/bookmark** that may be **unnamed** (an anonymous head /
+    the working-copy change) and may resolve to **0..N targets** (`conflicted`);
+    `tipSha` becomes an opaque `commitId` with an optional stable `changeId`;
+    `upstream`/`ahead`/`behind` widen to a **per-remote tracked set** with
+    **bound-valued** (not scalar) ahead/behind.
+  - `RepoStatus` → `currentBranch` becomes nullable (jj has no current branch —
+    expose a separate **working revision**); `staged`/`unstaged`/`untracked`
+    become capability-gated (jj has no index); add `conflicted` and `stale`.
+  - `WorktreeInfo` → add a workspace **`name`** and a **`stale`** flag; `branch`
+    becomes truly optional (a workspace checks out a commit); `bare`/`detached`/
+    `locked`/`prunable` become git-only.
+  - `BranchStatus` classification becomes **backend-provided** (jj computes
+    "merged" as the `::trunk()` revset, "gone" via tracking state) and gains
+    jj-only buckets (anonymous head, divergent).
+- **Capability-gated operation groups** (present on jj, absent on git): the
+  **operation log + undo** (`jj op log` / `jj undo` → a real "undo the branch
+  delete" dman cannot offer on git), **first-class conflict** handling (a
+  three-way merge/rebase outcome + `jj resolve`), **workspace stale** repair, and
+  **track/untrack** + delete-vs-forget bookmark semantics.
+- **Worktree ops map to `jj workspace`** (not `git worktree`): `forget` keeps
+  files (dman deletes), there is no `remove`/`prune` (dman reconciles), and reads
+  pass `--ignore-working-copy` to avoid jj's snapshot-on-read side effect.
+
+v1 implements only the git capabilities; the interface is shaped so the jj
+backend slots in at P3 without reworking callers.

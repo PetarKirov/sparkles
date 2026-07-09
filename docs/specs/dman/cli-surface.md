@@ -73,3 +73,15 @@ Because the command schema parses _and_ renders, dman can forward git-style
 arguments to real git (`parseKnownCli` collects unrecognized flags), so a thin
 `dman git …` wrapper — or accepting familiar git flags on dman's own verbs — costs
 no extra code. See [Command schema](./command-schema.md#testability--passthrough).
+
+## Backend dispatch & jj-only verbs (P3)
+
+The command tree above is backend-neutral: `dman branch`/`worktree`/`status`
+dispatch to the per-repo backend the catalog recorded (git or jj), with an
+optional `--backend` override. When the jj backend lands ([D8](./DECISIONS.md),
+[Designing for jj](./jj-model.md)) it adds **capability-gated** verbs that have no
+git counterpart — `dman op log` / `dman undo` (real operation-log undo),
+`dman worktree update-stale`, and bookmark `track`/`untrack` + delete-vs-forget —
+hidden or erroring on git repos. On jj, `worktree` maps to `jj workspace` and
+`branch` to bookmarks; dman's `--dry-run` action log gains genuine one-command
+undo behind it.
