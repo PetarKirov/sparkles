@@ -465,6 +465,7 @@ export default withMermaid(
                 },
                 { text: 'Architecture', link: '/specs/dman/architecture' },
                 { text: 'Command Schema', link: '/specs/dman/command-schema' },
+                { text: 'CLI Surface', link: '/specs/dman/cli-surface' },
                 { text: 'VCS Backend', link: '/specs/dman/vcs-backend' },
                 { text: 'Repo Catalog', link: '/specs/dman/repo-catalog' },
                 { text: 'TUI Shell', link: '/specs/dman/tui-shell' },
