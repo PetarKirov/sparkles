@@ -231,7 +231,12 @@ version (linux)
             const want = cast(long)(ulong.sizeof * (3 + nOpen));
             const got = (() @trusted => read(fds[0], buf.ptr, buf.sizeof))();
             if (got < want)
+            {
+                // Short read → the total is unavailable too (named counts are
+                // already nan-initialized), not a real zero.
+                s.total = double.nan;
                 return s;
+            }
 
             const enabled = buf[1], running = buf[2];
             const ratio = (running > 0 && enabled > 0 && running < enabled)

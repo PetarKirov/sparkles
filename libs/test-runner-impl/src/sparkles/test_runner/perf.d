@@ -263,7 +263,13 @@ version (linux)
             const want = cast(long)(ulong.sizeof * (3 + nOpen));
             const got = (() @trusted => read(fds[0], buf.ptr, buf.sizeof))();
             if (got < want)
+            {
+                // A short/interrupted read yields no usable counts — surface the
+                // counters as unavailable (nan → em dash), not as real zeros.
+                s.cycles = s.instructions = s.branches = s.branchMisses
+                    = s.cacheReferences = s.cacheMisses = s.pageFaults = double.nan;
                 return s;
+            }
 
             const enabled = buf[1], running = buf[2];
             const ratio = (running > 0 && enabled > 0 && running < enabled)

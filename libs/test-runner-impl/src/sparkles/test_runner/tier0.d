@@ -42,10 +42,32 @@ struct Tier0Stats
 }
 
 /// Page-cache hit rate in percent: the fraction of bytes served without touching
-/// the block device (`1 − read_bytes ÷ rchar`). `nan` when nothing was read.
+/// the block device (`1 − read_bytes ÷ rchar`). `nan` when nothing was read (or
+/// `read_bytes` is unavailable). A cold read's kernel readahead can pull more from
+/// disk than userspace consumed (`read_bytes > rchar`), so the ratio is clamped to
+/// a 0% hit rate rather than reported as `nan` — the cold case the metric reveals.
 double cacheHitPercent(in Tier0Stats t) @safe pure nothrow @nogc
-    => t.rdChars > 0 && t.rdBytes >= 0 && t.rdBytes <= t.rdChars
-        ? (1 - t.rdBytes / t.rdChars) * 100 : double.nan;
+{
+    import std.algorithm.comparison : min;
+
+    return t.rdChars > 0 && t.rdBytes >= 0
+        ? (1 - min(t.rdBytes, t.rdChars) / t.rdChars) * 100 : double.nan;
+}
+
+@("tier0.cacheHitPercent")
+@safe pure nothrow @nogc
+unittest
+{
+    import std.math : isClose, isNaN;
+
+    assert(cacheHitPercent(Tier0Stats(rdChars: 4096, rdBytes: 0)).isClose(100));
+    assert(cacheHitPercent(Tier0Stats(rdChars: 4096, rdBytes: 1024)).isClose(75));
+    // Readahead: read_bytes > rchar → clamp to 0%, not nan.
+    assert(cacheHitPercent(Tier0Stats(rdChars: 4096, rdBytes: 8192)).isClose(0));
+    // Unknown block-device counter (nan) or nothing read → nan.
+    assert(cacheHitPercent(Tier0Stats(rdChars: 4096, rdBytes: double.nan)).isNaN);
+    assert(cacheHitPercent(Tier0Stats(rdChars: 0, rdBytes: 0)).isNaN);
+}
 
 /// Finds `key:` at a line start in a `/proc`-style `key:\tvalue` file and parses
 /// the trailing unsigned integer; `-1` when the key is absent or unparsable.
@@ -115,12 +137,34 @@ in (iters > 0)
         s.syscw = (b.syscw - a.syscw) * inv;
         s.rdChars = (b.rdChars - a.rdChars) * inv;
         s.wrChars = (b.wrChars - a.wrChars) * inv;
-        s.rdBytes = (b.rdBytes - a.rdBytes) * inv;
-        s.wrBytes = (b.wrBytes - a.wrBytes) * inv;
+        // read_bytes / write_bytes come from CONFIG_TASK_IO_ACCOUNTING, separate
+        // from rchar/syscr (CONFIG_TASK_XACCT): a kernel with the latter but not
+        // the former leaves these at -1 while ioOk is still true. Guard per field
+        // so an absent block-device counter reads nan, not a bogus 0-byte delta.
+        s.rdBytes = a.rdBytes >= 0 && b.rdBytes >= 0 ? (b.rdBytes - a.rdBytes) * inv : double.nan;
+        s.wrBytes = a.wrBytes >= 0 && b.wrBytes >= 0 ? (b.wrBytes - a.wrBytes) * inv : double.nan;
     }
     else
         s.syscr = s.syscw = s.rdChars = s.wrChars = s.rdBytes = s.wrBytes = double.nan;
     return s;
+}
+
+@("tier0.deltaStats.absentBlockDeviceFields")
+@safe pure nothrow @nogc
+unittest
+{
+    import std.math : isClose, isNaN;
+
+    // A kernel without CONFIG_TASK_IO_ACCOUNTING: rchar/syscr present, read_bytes/
+    // write_bytes absent (-1) — ioOk is still true.
+    const a = Tier0Reading(syscr: 10, syscw: 2, rdChars: 4096, wrChars: 0,
+        rdBytes: -1, wrBytes: -1, ioOk: true);
+    const b = Tier0Reading(syscr: 20, syscw: 4, rdChars: 8192, wrChars: 0,
+        rdBytes: -1, wrBytes: -1, ioOk: true);
+    const s = deltaStats(a, b, 2);
+    assert(s.syscr.isClose(5) && s.rdChars.isClose(2048));
+    assert(s.rdBytes.isNaN && s.wrBytes.isNaN, "absent block-device fields → nan");
+    assert(cacheHitPercent(s).isNaN, "cache-hit unknown when read_bytes absent");
 }
 
 /// A single instant's raw cumulative counters.
