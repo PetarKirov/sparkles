@@ -129,6 +129,31 @@ template; the repo scanner discovers them as ordinary repos. Operations:
 `addWorktree` (optionally creating the branch), `removeWorktree`,
 `pruneWorktrees`, and enter/exit (a shell in the worktree).
 
+## Worktree workflow ([D13](./DECISIONS.md))
+
+Composable, worktree-native primitives (no agent machinery):
+
+- **`enter` / `exec`** — `enter` changes into a worktree's directory and records
+  its context; `exec` runs a command in that context non-interactively and returns
+  the child's exit code. Each is a reusable primitive that scripts and automation
+  compose rather than reimplement.
+- **Branch-per-task naming** — a deterministic template maps a unit of work to a
+  branch and its worktree (the [D9](./DECISIONS.md) layout), giving a predictable
+  work → branch → worktree mapping.
+- **Working-copy mode** — a 2-mode taxonomy on each worktree record: `inPlace`
+  (work in the user's own checkout — isolation off, mutation explicit) vs
+  `isolatedWorktree` (the default sibling worktree). An `overlay` mode is reserved
+  for the deferred snapshot subsystem ([D12](./DECISIONS.md)).
+- **File-based context descriptor** — the branch/worktree context is published as
+  a small on-disk descriptor and resolved by a precedence chain (explicit flag →
+  descriptor file → auto-detect), robust where environment variables don't
+  propagate through nested / child processes.
+
+Three cross-cutting **host helpers** belong in the shared layer (reused by the PR
+column, opening forge pages, and tool detection): a remote-URL → `owner/repo` slug
+parser (HTTPS + SSH forms, directory-basename fallback), an "open URL in the
+browser" helper, and an "is external tool on PATH" probe.
+
 ## PR enrichment (optional)
 
 `gh pr list --head <branch> --state all --limit 1 --json number,state,title,url`

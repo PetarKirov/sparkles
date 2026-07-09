@@ -230,3 +230,91 @@ creates `sparkles:tui`. See [TUI shell](./tui-shell.md).
 
 > D10 was likewise adopted on the requester's "continue", following their own
 > TUI/layout research; revisit if the framework-vs-dman-local scope should differ.
+
+---
+
+_D11–D14 incorporate design points mined from prior art (the requester's own
+branch-cleanup TUI, referred to only as "the prior-art branch TUI", and a private
+reference product that is **never named or quoted** in these docs). Every concept
+is stated in neutral, independent terms._
+
+## D11 — Workspaces (multi-repo grouping)
+
+**Decision (Accepted, 2026-07-10):** model grouping as **`string[] tags`** per
+repo (many-to-many). **`tags[0]` is a reserved directory group** — the
+auto-detected parent-of-repo-roots directory — and `tags[1..]` are free-form user
+labels. A mid-phase feature, after the single-repo VCS core.
+
+**Rationale:** tags give cheap cross-cutting grouping (a repo in several
+workspaces at once) while `tags[0]` preserves the common "several repos side by
+side under one folder" layout without config. The directory group is the natural
+unit for the later distributed layout descriptor.
+
+**Implications:** `RepoRef` gains `string[] tags` (replacing the interim `group`
+field); ordered first-match auto-detection populates `tags[0]`; an
+order-independent hash of member remote URLs is the group ID; `dman workspace …`
+verbs + `dman repo tag …` + `--tag`/`--group`. See [Workspaces](./workspaces.md).
+
+## D12 — Filesystem snapshots (deferred)
+
+**Decision (Accepted, 2026-07-10):** a **filesystem-snapshot-provider subsystem is
+deferred** — noted as a future subsystem, not specified now.
+
+**Rationale:** near-term needs (safe experimentation, undo of a delete) are met by
+jj's operation-log undo and by dman's own delete/worktree undo records
+([D8](./DECISIONS.md), D13); a git-based snapshot provider (capture clean+dirty
+state under a private ref namespace via a temp index, read-only "seek", in-place
+mode) is attractive but a whole subsystem, and the OS-level backends (CoW / ZFS /
+btrfs / a privileged helper daemon) are heavier still.
+
+**Implications:** revisit as a dedicated later phase; the working-copy-mode
+taxonomy (D13) is kept to **two modes** now (in-place / isolated-worktree), with
+an overlay mode reserved for when snapshots land.
+
+## D13 — Branch-workflow primitives (worktree-native)
+
+**Decision (Accepted, 2026-07-10):** adopt composable **worktree-native**
+primitives: `dman worktree enter` (cd into the worktree + record its context) and
+`exec` (run a command non-interactively, returning the child exit code);
+**branch-per-task naming**; a **2-mode working-copy taxonomy**; and a **file-based
+context descriptor** (resolved by a documented precedence chain, robust where env
+vars don't propagate).
+
+**Rationale:** every step is a reusable primitive that scripts/automation compose
+rather than reimplement; a persisted on-disk context descriptor links a worktree
+to dman's state more reliably than environment variables.
+
+**Implications:** extends the worktree model ([VCS backend](./vcs-backend.md)) and
+the [CLI surface](./cli-surface.md); no agent machinery.
+
+## D14 — Config / settings model (early, policy-as-data)
+
+**Decision (Accepted, 2026-07-10):** ship a first-class settings model in v1:
+protected-branch **glob patterns** evaluated as policy, overrides for every
+auto-detected assumption (trunk, remote name, scan roots, worktree naming,
+staleness threshold), plus cache TTL / theme / keymap; layered CLI → env → file →
+default.
+
+**Rationale:** the prior art's single biggest recurring pain was hardcoded policy
+(a fixed protected set, an assumed `origin`, no config). Making policy data and
+every assumption overridable avoids that class of friction. See
+[Config](./config.md).
+
+## Folded refinements
+
+Also incorporated (each neutral, into the page noted): **safety** — the
+`gone → auto-force` delete nuance, the confirm-dialog info contract, a
+continue-on-error action log with optional export, and delete/worktree undo
+records ([tui-shell](./tui-shell.md), [vcs-backend](./vcs-backend.md));
+**CLI/security hardening** — the no-shell arg-vector invariant, structured
+detection errors + a reserved non-interactive exit code, a protected-branch write
+guard + tool preflight, and an output-drift/min-version guard + subdir
+canonicalize-then-walk-up ([repo-catalog](./repo-catalog.md),
+[vcs-backend](./vcs-backend.md), [cli-surface](./cli-surface.md)); **scan/perf** —
+bounded concurrent fan-out, a two-phase cheap-then-concurrent pipeline, lazy
+on-demand detail, and a benchmark harness + post-action re-scan
+([repo-catalog](./repo-catalog.md), [architecture](./architecture.md)); **TUI
+polish** — an editable search field + autocomplete + extensible `@field:value`
+grammar, stable-identity selection + edge-only scroll, a dual-binding keymap +
+state-aware footer, and terminal-restore-on-panic + a shared semantic color theme
+([tui-shell](./tui-shell.md)).
