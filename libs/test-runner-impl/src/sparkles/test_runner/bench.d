@@ -300,14 +300,62 @@ struct RegisteredCase
     void delegate() teardown; /// untimed, once after measurement (null = none)
 }
 
+/// The three counter sources bundled into one value, so the bench driver threads
+/// a single `CounterGroups` instead of three parallel params/pointers/fields (and
+/// a matching triple of `Nullable` result fields). Each source is opened
+/// independently; one not requested — or unavailable on this machine — contributes
+/// no columns. Adding a future source is one field plus one line in each of
+/// `open`/`close`/`countInto`, not a shotgun edit across every call site.
+struct CounterGroups
+{
+    PerfGroup perf;
+    Tier0Group tier0;
+    SyscallGroup syscalls;
+
+    /// Opens each requested source: `--perf` (`perfWanted`), a selected tier0
+    /// metric (`tier0Wanted`), and `--syscalls` (`syscallWanted` + `syscallNames`).
+    static CounterGroups open(bool perfWanted, bool tier0Wanted, bool syscallWanted,
+        const(string)[] syscallNames) @safe
+    {
+        CounterGroups g;
+        g.perf = PerfGroup.tryOpen(perfWanted);
+        g.tier0 = Tier0Group.tryOpen(tier0Wanted);
+        g.syscalls = SyscallGroup.tryOpen(syscallWanted, syscallNames);
+        return g;
+    }
+
+    /// An all-unavailable bundle: no counting passes (tests, non-counting runs).
+    static CounterGroups none() @safe => CounterGroups.open(false, false, false, null);
+
+    /// Releases every source's resources.
+    void close() @safe
+    {
+        perf.close();
+        tier0.close();
+        syscalls.close();
+    }
+
+    /// Runs each available source's counting pass over `timed`/`between` (the
+    /// iteration count capped once) and fills `row`'s perf/tier0/syscall fields.
+    void countInto(Timed, Between)(ref BenchStats row, scope Timed timed,
+        scope Between between, ulong iterations, in BenchConfig config)
+    {
+        const iters = perfIters(iterations, config);
+        if (perf.available)
+            row.perf = perf.count(timed, between, iters);
+        if (tier0.available)
+            row.tier0 = tier0.count(timed, between, iters);
+        if (syscalls.available)
+            row.syscalls = syscalls.count(timed, between, iters);
+    }
+}
+
 private struct BenchContext
 {
     BenchConfig config;
     string testName;         /// row name for benchIter / whole-body measurement
     RegisteredCase[] cases;  /// registration output (the body's benchCase/benchIter calls)
-    PerfGroup* perf;         /// null / unavailable = no perf counting pass
-    Tier0Group* tier0;       /// null / unavailable = no tier0 counting pass
-    SyscallGroup* syscalls;  /// null / unavailable = no syscall counting pass
+    CounterGroups* counters; /// null = no counting passes
 }
 
 private BenchContext* activeBenchContext; // thread-local, set during registration
@@ -321,40 +369,6 @@ private uint perfIters(ulong iterations, in BenchConfig config) @safe pure nothr
 
     const n = min(iterations, config.perfMaxIters);
     return cast(uint)(n ? n : 1);
-}
-
-/// The perf counting pass for a measurement, when a counter group is available:
-/// `timed` is bracketed by the counters, `between` runs uncounted.
-private Nullable!PerfStats countIf(Timed, Between)(
-    BenchContext* context, scope Timed timed, scope Between between, ulong iterations)
-{
-    Nullable!PerfStats perf;
-    if (context.perf !is null && context.perf.available)
-        perf = context.perf.count(timed, between, perfIters(iterations, context.config));
-    return perf;
-}
-
-/// The tier0 counting pass, when a tier0 metric was selected: `timed`+`between`
-/// bracketed by two cheap `/proc` snapshots. A separate pass from `countIf`, so
-/// each is paid for only when its metrics are requested.
-private Nullable!Tier0Stats countTier0If(Timed, Between)(
-    BenchContext* context, scope Timed timed, scope Between between, ulong iterations)
-{
-    Nullable!Tier0Stats tier0;
-    if (context.tier0 !is null && context.tier0.available)
-        tier0 = context.tier0.count(timed, between, perfIters(iterations, context.config));
-    return tier0;
-}
-
-/// The syscall counting pass, when `--syscalls` opened tracepoints: `timed`
-/// bracketed by the counters, `between` uncounted (mirrors `countIf`).
-private Nullable!SyscallStats countSyscallsIf(Timed, Between)(
-    BenchContext* context, scope Timed timed, scope Between between, ulong iterations)
-{
-    Nullable!SyscallStats syscalls;
-    if (context.syscalls !is null && context.syscalls.available)
-        syscalls = context.syscalls.count(timed, between, perfIters(iterations, context.config));
-    return syscalls;
 }
 
 /// Registers a batched-timing case that measures `run` (excluding surrounding
@@ -608,10 +622,9 @@ void benchCase(Timed, After, Setup = typeof(null), Teardown = typeof(null))(
 /// `measure` loop, for `benchIter`/whole-body); otherwise per-call timing releases
 /// the result between calls. A thrown `runTimed`/`runAfter` propagates to the caller.
 package(sparkles.test_runner)
-BenchStats measureCase(RegisteredCase c, in BenchConfig config, ref PerfGroup perf,
-    ref Tier0Group tier0, ref SyscallGroup syscalls)
+BenchStats measureCase(RegisteredCase c, in BenchConfig config, ref CounterGroups counters)
 {
-    auto ctx = BenchContext(config: config, perf: &perf, tier0: &tier0, syscalls: &syscalls);
+    auto ctx = BenchContext(config: config, counters: &counters);
     return measureCase(&ctx, c);
 }
 
@@ -634,9 +647,8 @@ BenchStats measureCase(BenchContext* context, RegisteredCase c)
         auto row = computeStats(c.name, m.iterations, m.nsPerIter);
         row.labels = c.labels;
         row.metrics = c.metrics;
-        row.perf = countIf(context, c.runTimed, () {}, m.iterations);
-        row.tier0 = countTier0If(context, c.runTimed, () {}, m.iterations);
-        row.syscalls = countSyscallsIf(context, c.runTimed, () {}, m.iterations);
+        if (context.counters !is null)
+            context.counters.countInto(row, c.runTimed, () {}, m.iterations, context.config);
         return row;
     }
 
@@ -664,12 +676,11 @@ BenchStats measureCase(BenchContext* context, RegisteredCase c)
     row.labels = c.labels;
     row.metrics = c.metrics;
 
-    // Counting pass: bracket `runTimed`; `runAfter` releases the result (uncounted
-    // by perf, inside the tier0 window). Each family passes over the same closures.
+    // Counting pass: bracket `runTimed`; `runAfter` releases the result between
+    // iterations (excluded from every source's window).
     auto release = () { cast(void) c.runAfter(); };
-    row.perf = countIf(context, c.runTimed, release, samples.length);
-    row.tier0 = countTier0If(context, c.runTimed, release, samples.length);
-    row.syscalls = countSyscallsIf(context, c.runTimed, release, samples.length);
+    if (context.counters !is null)
+        context.counters.countInto(row, c.runTimed, release, samples.length, context.config);
     return row;
 }
 
@@ -718,8 +729,7 @@ Registration registerBenchmark(Test test, in BenchConfig config)
 /// across all tests first and schedules the cases itself. A case that throws
 /// during measurement fails the whole test (partial rows are kept).
 package(sparkles.test_runner)
-BenchOutcome runBenchmark(Test test, in BenchConfig config, ref PerfGroup perf,
-    ref Tier0Group tier0, ref SyscallGroup syscalls,
+BenchOutcome runBenchmark(Test test, in BenchConfig config, ref CounterGroups counters,
     void delegate(scope const(char)[] name) @safe nothrow @nogc onCaseStart = null)
 {
     import sparkles.test_runner.execution : toThrown;
@@ -730,7 +740,7 @@ BenchOutcome runBenchmark(Test test, in BenchConfig config, ref PerfGroup perf,
     if (!reg.result.succeeded)
         return outcome;
 
-    auto ctx = BenchContext(config: config, perf: &perf, tier0: &tier0, syscalls: &syscalls);
+    auto ctx = BenchContext(config: config, counters: &counters);
     foreach (ref c; reg.cases)
     {
         if (onCaseStart !is null)
@@ -759,10 +769,8 @@ unittest
     }
 
     const config = BenchConfig(iterations: 4, sampleCount: 3, minSampleTime: 1.usecs);
-    auto perf = PerfGroup.tryOpen(false);
-    auto tier0 = Tier0Group.tryOpen(false);
-    auto syscalls = SyscallGroup.tryOpen(false, null);
-    auto outcome = runBenchmark(Test(fullName: "m.b", name: "b", ptr: &body_), config, perf, tier0, syscalls);
+    auto counters = CounterGroups.none;
+    auto outcome = runBenchmark(Test(fullName: "m.b", name: "b", ptr: &body_), config, counters);
     assert(outcome.result.succeeded);
     assert(outcome.rows[0].iterations == 4);
     assert(outcome.rows[0].samples == 3);
@@ -783,10 +791,8 @@ unittest
     }
 
     const config = BenchConfig(iterations: 8, sampleCount: 2, minSampleTime: 1.usecs);
-    auto perf = PerfGroup.tryOpen(false);
-    auto tier0 = Tier0Group.tryOpen(false);
-    auto syscalls = SyscallGroup.tryOpen(false, null);
-    auto outcome = runBenchmark(Test(fullName: "m.bi", name: "bi", ptr: &body_), config, perf, tier0, syscalls);
+    auto counters = CounterGroups.none;
+    auto outcome = runBenchmark(Test(fullName: "m.bi", name: "bi", ptr: &body_), config, counters);
     assert(outcome.result.succeeded);
     assert(outcome.rows[0].iterations == 8);
     assert(outcome.rows[0].samples == 2);
@@ -802,10 +808,8 @@ unittest
         assert(zero == 1, "bench setup failed");
     }
 
-    auto perf = PerfGroup.tryOpen(false);
-    auto tier0 = Tier0Group.tryOpen(false);
-    auto syscalls = SyscallGroup.tryOpen(false, null);
-    auto outcome = runBenchmark(Test(fullName: "m.f", name: "f", ptr: &failing), BenchConfig(), perf, tier0, syscalls);
+    auto counters = CounterGroups.none;
+    auto outcome = runBenchmark(Test(fullName: "m.f", name: "f", ptr: &failing), BenchConfig(), counters);
     assert(!outcome.result.succeeded);
     assert(outcome.result.thrown.length == 1);
 }
@@ -822,16 +826,14 @@ unittest
         benchIter({ foreach (i; 0 .. 1000) sink += i * i; });
     }
 
-    auto perf = PerfGroup.tryOpen(true);
-    auto tier0 = Tier0Group.tryOpen(false);
-    auto syscalls = SyscallGroup.tryOpen(false, null);
+    auto counters = CounterGroups.open(true, false, false, null);
     scope (exit)
-        perf.close();
-    if (!perf.available) // paranoid/sandboxed kernels refuse; not a failure
+        counters.close();
+    if (!counters.perf.available) // paranoid/sandboxed kernels refuse; not a failure
         return;
 
     const config = BenchConfig(iterations: 200, sampleCount: 2, minSampleTime: 1.usecs);
-    auto outcome = runBenchmark(Test(fullName: "m.p", name: "p", ptr: &body_), config, perf, tier0, syscalls);
+    auto outcome = runBenchmark(Test(fullName: "m.p", name: "p", ptr: &body_), config, counters);
     assert(outcome.result.succeeded);
     assert(!outcome.rows[0].perf.isNull);
     assert(outcome.rows[0].perf.get.instructions > 0);
@@ -895,11 +897,9 @@ unittest
         }
     }
 
-    auto perf = PerfGroup.tryOpen(false);
-    auto tier0 = Tier0Group.tryOpen(false);
-    auto syscalls = SyscallGroup.tryOpen(false, null);
+    auto counters = CounterGroups.none;
     const config = BenchConfig(sampleCount: 2, minSampleTime: 1.usecs);
-    auto outcome = runBenchmark(Test(fullName: "m.mc", name: "mc", ptr: &body_), config, perf, tier0, syscalls);
+    auto outcome = runBenchmark(Test(fullName: "m.mc", name: "mc", ptr: &body_), config, counters);
     assert(outcome.result.succeeded);
     assert(outcome.rows.length == 3);
     assert(outcome.rows[0].name == "case0" && outcome.rows[0].error.length == 0);
@@ -959,12 +959,10 @@ unittest
     }
 
     Rec rec;
-    auto perf = PerfGroup.tryOpen(false);
-    auto tier0 = Tier0Group.tryOpen(false);
-    auto syscalls = SyscallGroup.tryOpen(false, null);
+    auto counters = CounterGroups.none;
     const config = BenchConfig(sampleCount: 1, minSampleTime: 1.usecs);
     auto outcome = runBenchmark(Test(fullName: "m.b", name: "b", ptr: &body_),
-        config, perf, tier0, syscalls, &rec.tick);
+        config, counters, &rec.tick);
     assert(outcome.result.succeeded);
     assert(rec.n == 3); // exactly one tick per case
 }
@@ -986,11 +984,9 @@ unittest
         benchCase(name: "good", timed: () => 5, after: (ref int r) => check(r));
     }
 
-    auto perf = PerfGroup.tryOpen(false);
-    auto tier0 = Tier0Group.tryOpen(false);
-    auto syscalls = SyscallGroup.tryOpen(false, null);
+    auto counters = CounterGroups.none;
     const config = BenchConfig(sampleCount: 1, minSampleTime: 1.usecs);
-    auto outcome = runBenchmark(Test(fullName: "m.er", name: "er", ptr: &body_), config, perf, tier0, syscalls);
+    auto outcome = runBenchmark(Test(fullName: "m.er", name: "er", ptr: &body_), config, counters);
     assert(outcome.result.succeeded);
     assert(outcome.rows.length == 2);
     assert(outcome.rows[0].name == "bad" && outcome.rows[0].error == "expected 5");
@@ -1013,11 +1009,9 @@ unittest
         );
     }
 
-    auto perf = PerfGroup.tryOpen(false);
-    auto tier0 = Tier0Group.tryOpen(false);
-    auto syscalls = SyscallGroup.tryOpen(false, null);
+    auto counters = CounterGroups.none;
     auto outcome = runBenchmark(Test(fullName: "m.bt", name: "bt", ptr: &body_),
-        BenchConfig(sampleCount: 1, minSampleTime: 1.usecs), perf, tier0, syscalls);
+        BenchConfig(sampleCount: 1, minSampleTime: 1.usecs), counters);
     assert(!outcome.result.succeeded);
     assert(outcome.result.thrown.length == 1);
 }
@@ -1045,11 +1039,9 @@ unittest
         );
     }
 
-    auto perf = PerfGroup.tryOpen(false);
-    auto tier0 = Tier0Group.tryOpen(false);
-    auto syscalls = SyscallGroup.tryOpen(false, null);
+    auto counters = CounterGroups.none;
     auto outcome = runBenchmark(Test(fullName: "m.st", name: "st", ptr: &body_),
-        BenchConfig(sampleCount: 3, minSampleTime: 1.usecs), perf, tier0, syscalls);
+        BenchConfig(sampleCount: 3, minSampleTime: 1.usecs), counters);
     assert(outcome.result.succeeded);
     assert(setups == 1, "setup runs exactly once, not per iteration");
     assert(teardowns == 1, "teardown runs exactly once, not per iteration");
@@ -1078,11 +1070,9 @@ unittest
         );
     }
 
-    auto perf = PerfGroup.tryOpen(false);
-    auto tier0 = Tier0Group.tryOpen(false);
-    auto syscalls = SyscallGroup.tryOpen(false, null);
+    auto counters = CounterGroups.none;
     auto outcome = runBenchmark(Test(fullName: "m.te", name: "te", ptr: &body_),
-        BenchConfig(sampleCount: 1, minSampleTime: 1.usecs), perf, tier0, syscalls);
+        BenchConfig(sampleCount: 1, minSampleTime: 1.usecs), counters);
     assert(outcome.result.succeeded);
     assert(outcome.rows.length == 1 && outcome.rows[0].error == "boom");
     assert(teardowns == 1, "teardown runs even when the case errors");

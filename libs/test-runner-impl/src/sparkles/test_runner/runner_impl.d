@@ -22,7 +22,7 @@ module sparkles.test_runner.runner_impl;
 import core.runtime : Runtime, UnitTestResult;
 import core.time : Duration, MonoTime;
 
-import sparkles.test_runner.bench : BenchConfig, BenchStats, runBenchmark;
+import sparkles.test_runner.bench : BenchConfig, BenchStats, CounterGroups, runBenchmark;
 import sparkles.test_runner.driver : detectCompiler, DriverOptions, runCtfeTests;
 import sparkles.test_runner.execution : executeTest;
 import sparkles.test_runner.filter : matchesFilter;
@@ -489,32 +489,22 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     import sparkles.test_runner.syscalls : SyscallGroup;
     import sparkles.test_runner.tier0 : Tier0Group;
 
-    // Open the perf pass when --perf is given OR --metrics names a perf metric
-    // (mirrors the tier0 gating below), so `--metrics=ipc`/`=all` populate the
-    // perf columns rather than showing em dashes for a metric the user asked for.
+    // Which counting passes to open: --perf OR a --metrics perf metric (so
+    // `--metrics=ipc`/`=all` populate the perf columns, mirroring tier0); a
+    // --metrics tier0 metric (opt-in, no perms); and --syscalls (null = off,
+    // "*" = total only, else a name list).
     const wantPerf = options.perf || selectsSource(options.metrics, "perf");
-    auto perf = PerfGroup.tryOpen(wantPerf);
-    scope (exit)
-        perf.close();
-    if (wantPerf && !perf.available)
-        stderr.writeln("--perf: hardware counters ", perf.status());
-
-    // Tier-0 /proc counters are opt-in via --metrics (no default columns, no
-    // perms); open their pass only when the filter selects one.
     const wantTier0 = selectsSource(options.metrics, "tier0");
-    auto tier0 = Tier0Group.tryOpen(wantTier0);
-    scope (exit)
-        tier0.close();
-
-    // --syscalls: null = off, "*" = total only (bare flag), else a name list.
     const wantSyscalls = options.syscalls.length > 0;
     const syscallNames = (options.syscalls == "*" || !wantSyscalls)
         ? null : options.syscalls.splitter(',').array;
-    auto syscalls = SyscallGroup.tryOpen(wantSyscalls, syscallNames);
+    auto counters = CounterGroups.open(wantPerf, wantTier0, wantSyscalls, syscallNames);
     scope (exit)
-        syscalls.close();
-    if (wantSyscalls && !syscalls.available)
-        stderr.writeln("--syscalls: syscall counters ", syscalls.status());
+        counters.close();
+    if (wantPerf && !counters.perf.available)
+        stderr.writeln("--perf: hardware counters ", counters.perf.status());
+    if (wantSyscalls && !counters.syscalls.available)
+        stderr.writeln("--syscalls: syscall counters ", counters.syscalls.status());
 
     // --list-metrics (also --metrics=? / --metrics=help): print the catalog and
     // exit. Dedicated probes report true availability regardless of the flags;
@@ -670,7 +660,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         progress.tick(keys.length ? groupKeyDisplay(s.key) ~ "  " ~ s.c.name : s.c.name);
         try
         {
-            auto row = measureCase(s.c, s.config, perf, tier0, syscalls);
+            auto row = measureCase(s.c, s.config, counters);
             if (row.error.length)
                 errorRows++;
             bucket ~= row;
