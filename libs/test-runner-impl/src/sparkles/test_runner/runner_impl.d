@@ -485,10 +485,14 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     import sparkles.test_runner.syscalls : SyscallGroup;
     import sparkles.test_runner.tier0 : Tier0Group;
 
-    auto perf = PerfGroup.tryOpen(options.perf);
+    // Open the perf pass when --perf is given OR --metrics names a perf metric
+    // (mirrors the tier0 gating below), so `--metrics=ipc`/`=all` populate the
+    // perf columns rather than showing em dashes for a metric the user asked for.
+    const wantPerf = options.perf || selectsSource(options.metrics, "perf");
+    auto perf = PerfGroup.tryOpen(wantPerf);
     scope (exit)
         perf.close();
-    if (options.perf && !perf.available)
+    if (wantPerf && !perf.available)
         stderr.writeln("--perf: hardware counters ", perf.status());
 
     // Tier-0 /proc counters are opt-in via --metrics (no default columns, no
