@@ -30,7 +30,7 @@ import core.time : Duration, MonoTime, msecs;
 import std.typecons : Nullable;
 
 import sparkles.test_runner.attributes : benchmark, ctfe;
-import sparkles.test_runner.model : Test, TestResult;
+import sparkles.test_runner.model : Test, TestResult, Thrown;
 import sparkles.test_runner.perf : PerfGroup, PerfStats;
 import sparkles.test_runner.syscalls : SyscallGroup, SyscallStats;
 import sparkles.test_runner.tier0 : Tier0Group, Tier0Stats;
@@ -218,6 +218,31 @@ unittest
     assert(stats.nsPerIterDeviation == 1.0);
     assert(stats.samples == 3);
     assert(stats.iterations == 10);
+}
+
+/// An error-row `BenchStats` for a case whose measurement threw, so the streaming
+/// runner can surface the crash in its group table (like a soft `Expected` error)
+/// instead of dropping the row and aborting the matrix. `thrown` is the converted
+/// chain (`toThrown`, which already re-throws `OutOfMemoryError`).
+package(sparkles.test_runner)
+BenchStats errorRow(string name, string[string] labels, in Thrown[] thrown)
+{
+    import std.conv : text;
+
+    const msg = thrown.length ? text(thrown[0].type, ": ", thrown[0].message) : "threw";
+    return BenchStats(name: name, labels: labels, error: msg);
+}
+
+@("bench.errorRow.carriesNameLabelsMessage")
+@system
+unittest
+{
+    auto row = errorRow("wired/twitter/decode", ["dataset": "twitter"],
+        [Thrown(type: "object.Exception", message: "boom")]);
+    assert(row.name == "wired/twitter/decode");
+    assert(row.labels["dataset"] == "twitter");
+    assert(row.error == "object.Exception: boom");
+    assert(errorRow("c", null, null).error == "threw"); // empty chain fallback
 }
 
 /// Times `run` with the libtest protocol: doubles the per-sample iteration

@@ -540,7 +540,8 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     import std.algorithm.mutation : SwapStrategy;
     import std.algorithm.sorting : sort;
     import std.range : iota;
-    import sparkles.test_runner.bench : measureCase, registerBenchmark, RegisteredCase;
+    import sparkles.test_runner.bench : errorRow, measureCase, registerBenchmark,
+        RegisteredCase;
     import sparkles.test_runner.execution : toThrown;
     import std.algorithm.searching : canFind;
     import sparkles.test_runner.metrics : groupKeyOf;
@@ -658,7 +659,20 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
             totalRows++;
         }
         catch (Throwable t)
-            reportFailure(TestResult(test: s.test, succeeded: false, thrown: toThrown(t)));
+        {
+            // A hard throw during measurement: surface it as an error row in its
+            // group table (like a soft Expected error) so the matrix shows exactly
+            // which case crashed, and still print the trace. Counted once via the
+            // error-row path — not the separate `failed` tally. `toThrown`
+            // re-throws OutOfMemoryError, which must abort the run.
+            auto thrown = toThrown(t);
+            bucket ~= errorRow(s.c.name, s.c.labels, thrown);
+            errorRows++;
+            totalRows++;
+            progress.clear();
+            foreach (th; thrown)
+                stdout.write(formatThrown(th, colored, true));
+        }
     }
     flush();
     progress.clear();
