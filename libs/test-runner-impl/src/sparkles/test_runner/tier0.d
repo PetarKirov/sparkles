@@ -277,17 +277,17 @@ version (linux)
     /// Reads `/proc/self/io` into `buf` via a raw `open`/`read`/`close`; returns
     /// the filled slice (empty on failure). `std.file` reports size 0 for `/proc`,
     /// so a direct read is required.
-    private char[] readProcSelfIo(return scope char[] buf) @trusted
+    private char[] readProcSelfIo(return scope char[] buf) @safe
     {
         import core.sys.posix.fcntl : open, O_RDONLY;
         import core.sys.posix.unistd : read, close;
 
-        const fd = open("/proc/self/io", O_RDONLY);
+        const fd = (() @trusted => open("/proc/self/io", O_RDONLY))();
         if (fd < 0)
             return null;
         scope (exit)
-            close(fd);
-        const n = read(fd, buf.ptr, buf.length);
+            (() @trusted => close(fd))();
+        const n = (() @trusted => read(fd, buf.ptr, buf.length))();
         return n > 0 ? buf[0 .. n] : null;
     }
 
