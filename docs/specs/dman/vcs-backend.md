@@ -70,6 +70,27 @@ refs/remotes/origin/HEAD` (strip `origin/`) → first existing of `main` / `mast
 → `main`. **Staleness** is computed separately from `tipTime` against a
 configurable threshold and never changes the `status`.
 
+## Delete safety & command hardening
+
+- **`gone → auto-force`** — a branch whose upstream is gone auto-escalates to
+  force-delete even without global force mode, because squash/rebase merges leave
+  it "not fully merged" though it is actually safe (`safeMerged` is force-free;
+  `unmerged` still requires explicit force).
+- **Undo record** — a delete records the removed ref's SHA (and a removed-worktree
+  record) so it can be undone; on jj this rides the operation log
+  ([D8](./DECISIONS.md)), on git it is dman's own record.
+- **No-shell arg-vector invariant** — every git/jj call is an explicit argument
+  vector, never a formatted shell string, so a hostile ref/branch name cannot
+  inject. This is already the command-schema render shape ([D5](./DECISIONS.md)) —
+  stated here as a security invariant.
+- **Protected-branch write guard** — mutating commands refuse to run on a
+  protected/primary branch (patterns from [config](./config.md)).
+- **Tool preflight** — verify the required backend binary is on PATH (`isInPath`)
+  with an actionable message before invoking it.
+- **Output-drift guard** — pin a minimum VCS version and prefer stable machine
+  formats (git plumbing `--format` / `--porcelain`; jj `-T` templates) so parsing
+  doesn't break across tool versions.
+
 ## The `VcsRepo` backend
 
 A **capability-based** interface ([D8](./DECISIONS.md); Design-by-Introspection),

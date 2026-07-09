@@ -96,6 +96,24 @@ and marked rows are highlighted; scrolling is edge-triggered off `viewportH`.
 dry-run, `s` cycle sort, `Tab`/`1`–`4` filter, `/` search, `Enter` confirm,
 `?` help, `q`/`Esc` quit/back.
 
+## Destructive-op safety & selection
+
+- **Confirm contract** — a destructive action shows the count, the first N names
+  then "and X more", the **exact command** that will run (safe vs force variant),
+  and a warning line if any selection is unmerged — not a bare y/n.
+- **Dry-run** flows through the _same_ select → confirm → execute path (only the
+  terminal step differs — log "would …" vs run), available as a flag and a runtime
+  toggle so preview and real execution can't diverge.
+- **Action log** — batch ops continue on error, recording each item's
+  success/failure + reason with running counts, with optional export to a file.
+- **Undo** — the action log offers undo of a delete (backed by the recorded ref
+  state; a genuine one-command undo on jj — [D8](./DECISIONS.md)).
+- **Stable-identity selection** — the marked set is tracked by stable identity
+  (branch name / id), never by visible row index, so re-filtering/sorting can't
+  corrupt it; the selectable set is **mode-gated** (selected / selectable /
+  disabled-needs-force / protected-no-checkbox) and "select all" operates only on
+  the currently-selectable subset.
+
 ## Event loop on `event-horizon`
 
 The loop is driven by `event-horizon`'s `runOnce`, **not** a blocking poll — the

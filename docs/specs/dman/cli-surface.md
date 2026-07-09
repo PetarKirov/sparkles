@@ -61,9 +61,12 @@ struct Dman {
   renders, straight to a pipe. The struct field-names are the JSON keys
   ([D6](./DECISIONS.md)).
 - **Mutations** support `--dry-run` (show what would happen, write to the action
-  log) and `--yes` (skip confirmation), so branch/worktree cleanup scripts in CI.
-- **Exit codes** are structured and actionable (selection failures, protected-branch
-  refusals, and tool errors are distinct).
+  log) and `--yes` (skip confirmation). The non-interactive path is **genuinely
+  prompt-free** — no hidden prompt may block a `--yes` run — so branch/worktree
+  cleanup scripts work unattended in CI.
+- **Exit codes** are structured and actionable: distinct codes for selection
+  failures (a **reserved code** meaning "selection required"), protected-branch
+  refusals, and tool errors.
 
 ## Interactive vs non-interactive
 
