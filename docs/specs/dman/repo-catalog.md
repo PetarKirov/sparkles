@@ -52,15 +52,20 @@ notion the later cross-machine sync builds on.
 
 ## Selection
 
-Resolving the _active_ repo:
+Resolving the _active_ repo follows a **deterministic precedence**: (1) an
+explicit `--repo`/`--tag` selector, (2) else CWD walk-up, (3) then validation.
 
 - **CWD walk-up** — from the current directory, ascend to the enclosing repo
   root (the no-argument default).
-- **`--repo PATH|URL`** — an explicit path (canonicalised) or a remote URL
-  resolved to a catalog entry by `remotes`.
+- **`--repo PATH|URL`** — an explicit path or a remote URL. A path is **expanded
+  and canonicalised, then walked up** to the repo root, so `--repo ./sub/dir`
+  resolves exactly as if you had `cd`'d there; a URL is resolved to a catalog
+  entry by `remotes` (with an "add it first" hint if absent).
 
-Failures produce structured, actionable errors and a non-interactive exit code
-(so scripts and CI get a clean signal).
+Detection failures carry a **three-part contract** — the starting point, the
+markers/conditions checked, and a remediation hint — and, in non-interactive mode,
+a **reserved exit code** meaning "selection required" so scripts can branch on it
+(distinct from a generic error).
 
 ## Persistence
 
