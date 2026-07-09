@@ -713,21 +713,69 @@ private string renderCellGrid(GridCell[][] grid, in Align[] aligns, size_t heade
         return drawTable(cells, TableProps(headerRows: headerRows, columnAligns: aligns.dup));
     }
     else
+        return renderCellGridPlain(grid, headerRows);
+}
+
+/// The span-less plain rendering used when `core-cli`'s `drawTable` is absent
+/// (e.g. `base`'s own bench build). Emits each cell's text, dropping empty
+/// (fully covered) rows. A multi-line header cell — the grouped stub
+/// `"benchmark: <key>\nimplementation:"` — would otherwise put a newline inside a
+/// single `alignColumns` column and break the rectangular layout, so its leading
+/// lines are hoisted into a heading above the table and only the last line stays
+/// as the column header. Always compiled (not behind the `hasCoreCliUi`
+/// static-if) so it stays unit-testable in this package's own build.
+private string renderCellGridPlain(GridCell[][] grid, size_t headerRows) @safe
+{
+    import std.string : lastIndexOf;
+
+    string heading;
+    string[][] flat;
+    foreach (r, row; grid)
     {
-        // No span support in the fallback: emit each cell's text, dropping empty
-        // (fully covered) rows so the plain output stays rectangular.
-        string[][] flat;
-        foreach (row; grid)
+        if (row.length == 0)
+            continue; // fully covered by a rowspan above
+        string[] cells;
+        foreach (gc; row)
         {
-            if (row.length == 0)
-                continue;
-            string[] r;
-            foreach (gc; row)
-                r ~= gc.content;
-            flat ~= r;
+            string content = gc.content;
+            if (r < headerRows)
+            {
+                const nl = content.lastIndexOf('\n');
+                if (nl >= 0)
+                {
+                    heading ~= (heading.length ? "\n" : "") ~ content[0 .. nl];
+                    content = content[nl + 1 .. $];
+                }
+            }
+            cells ~= content;
         }
-        return alignColumns(flat);
+        flat ~= cells;
     }
+    return (heading.length ? heading ~ "\n" : "") ~ alignColumns(flat);
+}
+
+@("reporting.renderCellGridPlain.hoistsMultiLineStub")
+@safe
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import std.string : splitLines, startsWith;
+
+    // The grouped header is a rowspan-2 stub "benchmark: k\nimplementation:" over
+    // an empty (covered) second row. The plain fallback must hoist the group line
+    // above the table and keep every table row rectangular (no embedded newline).
+    GridCell[][] grid = [
+        [GridCell("benchmark: twitter\nimplementation:", rowSpan: 2), GridCell("iters", rowSpan: 2)],
+        [],
+        [GridCell("wired"), GridCell("5")],
+    ];
+    const rendered = renderCellGridPlain(grid, 2);
+    assert(rendered.startsWith("benchmark: twitter\n"), rendered);
+    auto lines = rendered.splitLines;
+    // The group heading is hoisted, not fused into a data column.
+    assert(!lines[1 .. $].canFind!(l => l.canFind("benchmark:")), rendered);
+    assert(lines.canFind!(l => l.canFind("implementation:")), rendered);
+    assert(lines.canFind!(l => l.canFind("wired")), rendered);
 }
 
 /// The `--ctfe-trace` report: compile-time cost of each `@ctfe` test.
