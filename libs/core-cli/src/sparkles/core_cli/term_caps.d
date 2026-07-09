@@ -1,4 +1,4 @@
-module sparkles.core_cli.term_size;
+module sparkles.core_cli.term_caps;
 
 // The SIGWINCH resize-notification machinery is POSIX-only; `terminalWidth`
 // below is cross-platform. Guarding the POSIX import keeps the module

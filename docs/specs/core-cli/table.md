@@ -260,7 +260,7 @@ pure geometry helpers (`vSeg`, `hSeg`, `junctionGlyph`, `contentField`, `padTop`
 - `wrapText` / `byWrappedLine` / `WrapOptions` / `WhitespaceMode` (`sparkles.base.text.wrap`)
   — the cell-wrapping engine (same one `box.d`/`header.d` use).
 - `expected` (`Expected`/`ok`/`err`) — `validateTable`'s error return.
-- `sparkles.core_cli.term_size` — apps derive `maxWidth` from the terminal.
+- `sparkles.core_cli.term_caps` — apps derive `maxWidth` from the terminal.
 
 ## 7. Test coverage
 

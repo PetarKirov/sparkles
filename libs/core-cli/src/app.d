@@ -27,7 +27,7 @@ void main(string[] args)
         "p|parallel", "Enable parallel verification", &parallel,
     );
 
-    import sparkles.core_cli.term_size : setTermWindowSizeHandler;
+    import sparkles.core_cli.term_caps : setTermWindowSizeHandler;
     setTermWindowSizeHandler((ushort width, ushort height) {
         import core.stdc.stdio : printf;
         printf("New window size: %dx%d\n", width, height);

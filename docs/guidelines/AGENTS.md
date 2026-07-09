@@ -85,7 +85,7 @@ sparkles/
 │   │   ├── common_dirs.d           # XDG / standard directory lookup
 │   │   ├── help_formatting.d       # --help output formatting
 │   │   ├── process_utils.d         # Process execution + RSS/CPU monitoring
-│   │   ├── term_size.d             # Terminal size detection
+│   │   ├── term_caps.d             # Terminal capability probing (size, tty, colors)
 │   │   ├── term_unstyle.d          # Strip ANSI escapes
 │   │   └── ui/                     # box.d, header.d, table.d, osc_link.d, demo.d
 │   ├── versions/src/sparkles/versions/
