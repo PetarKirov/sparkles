@@ -27,8 +27,8 @@ private enum bool hasCoreCliUi = __traits(compiles, {
 /// Likewise for `core-cli`'s terminal-size query, used to width-truncate result
 /// lines. Absent in `base`'s own test build (no `core-cli` there), where it
 /// degrades to `0` = unknown = no truncation.
-private enum bool hasCoreCliTermSize = __traits(compiles, {
-    import sparkles.core_cli.term_caps : terminalWidth;
+private enum bool hasCoreCliTermCaps = __traits(compiles, {
+    import sparkles.core_cli.term_caps : terminalSize;
 });
 
 /// Terminal width in cells via `core-cli` when available, else `0` (unknown →
@@ -36,11 +36,11 @@ private enum bool hasCoreCliTermSize = __traits(compiles, {
 /// so redirected runs stay byte-identical to the untruncated form.
 package uint detectTerminalWidth()
 {
-    static if (hasCoreCliTermSize)
+    static if (hasCoreCliTermCaps)
     {
-        import sparkles.core_cli.term_caps : terminalWidth;
+        import sparkles.core_cli.term_caps : terminalSize;
 
-        return terminalWidth();
+        return terminalSize().width;
     }
     else
         return 0;

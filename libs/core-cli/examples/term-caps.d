@@ -10,7 +10,8 @@ module term_caps_example;
 
 // ci: build-only
 
-import sparkles.core_cli.term_caps : setTermWindowSizeHandler;
+import sparkles.core_cli.term_caps : setTermWindowSizeHandler, terminalSize;
+import sparkles.math : ScreenSize;
 import core.stdc.stdio : fflush, printf, stdout;
 import std.stdio : readln, writefln;
 
@@ -40,13 +41,19 @@ string formatSmallSize(ushort w, ushort h)
 
 void main()
 {
-    setTermWindowSizeHandler((ushort w, ushort h)
+    // The synchronous query seeds the display; SIGWINCH keeps it fresh (the
+    // signal never fires at startup).
+    const initial = terminalSize();
+    printf("%d/%d", initial.width, initial.height);
+    fflush(stdout);
+
+    setTermWindowSizeHandler((ScreenSize!ushort size)
     {
         printf("\r         \r");
-        if (w < 5 && h < 4)
-            printf("%s", formatSmallSize(w, h).ptr);
+        if (size.width < 5 && size.height < 4)
+            printf("%s", formatSmallSize(size.width, size.height).ptr);
         else
-            printf("%d/%d", w, h);
+            printf("%d/%d", size.width, size.height);
         fflush(stdout);
     });
 

@@ -28,9 +28,10 @@ void main(string[] args)
     );
 
     import sparkles.core_cli.term_caps : setTermWindowSizeHandler;
-    setTermWindowSizeHandler((ushort width, ushort height) {
+    import sparkles.math : ScreenSize;
+    setTermWindowSizeHandler((ScreenSize!ushort size) {
         import core.stdc.stdio : printf;
-        printf("New window size: %dx%d\n", width, height);
+        printf("New window size: %dx%d\n", size.width, size.height);
     });
 
     foreach (i; 0 .. int.max)

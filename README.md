@@ -503,7 +503,7 @@ import sparkles.base.lifetime;
 **`term_unstyle`** -- Strip ANSI escape sequences from styled text. This lives in
 `sparkles:core-cli`.
 
-**`term_caps`** -- Detect terminal window resizes via `SIGWINCH`. This lives in
+**`term_caps`** -- Query the terminal size (`terminalSize`) and detect window resizes via `SIGWINCH`. This lives in
 `sparkles:core-cli`.
 
 ### Test Runner

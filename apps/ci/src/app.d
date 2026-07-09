@@ -118,23 +118,14 @@ import example_manifest : exampleRunsOnHost;
 /// Shared visible-column width for all UI chrome: `drawHeader` banners and the
 /// `drawBox` `minWidth`/`maxWidth`. Keeping these in lockstep makes headers and
 /// the boxes beneath them line up at a single, predictable width — capped at the
-/// terminal so chrome never overflows a window narrower than 120 columns.
-private size_t uiWidth() => min(120, terminalWidth());
-
-/// The current terminal width in columns, or 120 when stdout is not a tty (piped
-/// output, CI) or the `ioctl` query fails.
-private int terminalWidth()
+/// terminal so chrome never overflows a window narrower than 120 columns, and
+/// defaulting to 120 when stdout is not a tty (piped output, CI).
+private size_t uiWidth()
 {
-    version (Posix)
-    {
-        import core.sys.posix.sys.ioctl : ioctl, winsize, TIOCGWINSZ;
-        import core.sys.posix.unistd : STDOUT_FILENO;
+    import sparkles.core_cli.term_caps : terminalSize;
 
-        winsize ws;
-        if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0)
-            return ws.ws_col;
-    }
-    return 120;
+    const w = terminalSize().width;
+    return w == 0 ? 120 : min(120, w);
 }
 
 /// `BoxProps` for an example result box: a fixed `uiWidth` frame (long output
