@@ -454,6 +454,21 @@ export default withMermaid(
                 { text: 'Delivery Plan', link: '/specs/wired/PLAN' },
               ],
             },
+            {
+              text: 'Dman (design)',
+              collapsed: false,
+              items: [
+                { text: 'Overview', link: '/specs/dman/' },
+                {
+                  text: 'Feature Requirements',
+                  link: '/specs/dman/feature-requirements',
+                },
+                { text: 'Architecture', link: '/specs/dman/architecture' },
+                { text: 'Command Schema', link: '/specs/dman/command-schema' },
+                { text: 'Milestones', link: '/specs/dman/milestones' },
+                { text: 'Decisions', link: '/specs/dman/DECISIONS' },
+              ],
+            },
           ],
         },
         {
