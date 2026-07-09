@@ -73,18 +73,19 @@ version (linux)
     /// Reads a tracepoint's numeric id from `tracefs`; `-1` if unavailable.
     long tracepointId(string group, string event) @safe
     {
-        static long readId(string path) @trusted
+        static long readId(string path) @safe
         {
             import core.sys.posix.fcntl : open, O_RDONLY;
             import core.sys.posix.unistd : read, close;
 
-            const fd = open((path ~ "\0").ptr, O_RDONLY);
+            const cPath = path ~ "\0";
+            const fd = (() @trusted => open(cPath.ptr, O_RDONLY))();
             if (fd < 0)
                 return -1;
             scope (exit)
-                close(fd);
-            char[32] buf = void;
-            const n = read(fd, buf.ptr, buf.length);
+                (() @trusted => close(fd))();
+            char[32] buf;
+            const n = (() @trusted => read(fd, buf.ptr, buf.length))();
             return n > 0 ? parseTracepointId(buf[0 .. n]) : -1;
         }
 
