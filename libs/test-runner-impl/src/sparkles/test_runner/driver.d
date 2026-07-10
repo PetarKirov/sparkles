@@ -58,15 +58,38 @@ private bool inPath(string name) @safe
 }
 
 /// The D compiler to use: explicit choice, `$DC`, or the first of
-/// `ldc2`/`dmd` found in `$PATH` (empty string when none).
+/// `ldc2`/`dmd` found in `$PATH` (empty string when none). An explicit choice
+/// that doesn't resolve is reported on stderr and treated as "no compiler", so
+/// the caller's toolchain-missing skip fires instead of a raw
+/// `ProcessException` escaping from the spawn.
 string detectCompiler(string preferred) @safe
 {
     import std.process : environment;
 
+    static bool resolves(string compiler) @safe
+    {
+        import std.algorithm.searching : canFind;
+        import std.file : exists, isFile;
+
+        return compiler.canFind('/') || compiler.canFind('\\')
+            ? compiler.exists && compiler.isFile : inPath(compiler);
+    }
+
+    static string checked(string compiler, string origin) @safe
+    {
+        import std.stdio : stderr;
+
+        if (resolves(compiler))
+            return compiler;
+        // Minimal @trusted: only the __gshared stderr handle access is unsafe.
+        (() @trusted => stderr)().writeln(origin, ": compiler '", compiler, "' not found");
+        return null;
+    }
+
     if (preferred.length)
-        return preferred;
+        return checked(preferred, "--compiler");
     if (const dc = environment.get("DC", null))
-        return dc;
+        return checked(dc, "$DC");
     foreach (candidate; ["ldc2", "dmd"])
         if (inPath(candidate))
             return candidate;
@@ -217,9 +240,12 @@ private string makeWorkDir(string flavor)
 }
 
 /// Runs `command`, echoing it when `verbose`, and returns (status, output).
+/// A spawn failure (compiler binary vanished between the `detectCompiler`
+/// check and here, or an unlaunchable absolute path) becomes a failed result
+/// instead of a `ProcessException` stack trace.
 private auto run(const(string)[] command, bool verbose)
 {
-    import std.process : execute;
+    import std.process : execute, ProcessException;
     import std.stdio : stderr;
 
     if (verbose)
@@ -228,7 +254,11 @@ private auto run(const(string)[] command, bool verbose)
 
         stderr.writeln("$ ", command.join(" "));
     }
-    return execute(command);
+    try
+        return execute(command);
+    catch (ProcessException e)
+        return typeof(execute(command))(-1,
+            "failed to launch '" ~ command[0] ~ "': " ~ e.msg);
 }
 
 /// The extra `-i=<pattern>` flags requested with `--include-import` (e.g.
