@@ -22,23 +22,25 @@ the output re-render live.
 
 Every control corresponds to a field of `TableProps` (or the table data itself):
 
-| Control                                   | Maps to                                                                 |
-| ----------------------------------------- | ----------------------------------------------------------------------- |
-| **Grid** data                             | a dense `string[][]` (tab = column, newline = row)                      |
-| **Raw cells** → `Cell[][]`                | dense cells with `colSpan` / `rowSpan`                                  |
-| **Raw cells** → `Placement[]`             | sparse, order-independent cells that name their own `(row, col)`        |
-| border / columnSeparators / rowSeparators | the frame + interior separator toggles                                  |
-| headerRows / headerCols                   | a distinct **heavy** rule after N header rows / stub columns            |
-| preset                                    | `stylePresets["rounded" \| "square" \| "ascii" \| "double" \| "heavy"]` |
-| maxWidth                                  | total-width cap (frame included); columns shrink + wrap to fit          |
-| defaultAlign / per-column align           | `Align{left,center,right}` horizontal alignment                         |
-| defaultVAlign / per-column valign         | `VAlign{top,middle,bottom}` vertical alignment (rowspan / wrap)         |
-| per-column max width                      | `columnMaxWidths` — cap one column; its content wraps                   |
-| Advanced → raw spec                       | the exact JSON request; custom `glyphs` overrides go here               |
+| Control                                   | Maps to                                                                                                |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| **Grid** data                             | a dense `string[][]` (tab = column, newline = row)                                                     |
+| **Raw cells** → `Cell[][]`                | dense cells with `colSpan` / `rowSpan`                                                                 |
+| **Raw cells** → `Placement[]`             | sparse, order-independent cells that name their own `(row, col)`                                       |
+| border / columnSeparators / rowSeparators | the frame + interior separator toggles                                                                 |
+| headerRows / headerCols                   | a distinct **heavy** rule after N header rows / stub columns                                           |
+| preset                                    | `stylePresets["rounded" \| "square" \| "ascii" \| "double" \| "heavy"]`                                |
+| maxWidth                                  | total-width cap (frame included); columns shrink + wrap to fit                                         |
+| title / footer                            | frame `title` / `footer` spliced into the top & bottom border (`…`-truncated when narrow)              |
+| defaultAlign / per-column align           | `Align{left,center,right,decimal}` horizontal alignment (`decimal` aligns a numeric column on its dot) |
+| defaultVAlign / per-column valign         | `VAlign{top,middle,bottom}` vertical alignment (rowspan / wrap)                                        |
+| per-column max width                      | `columnMaxWidths` — cap one column; its content wraps                                                  |
+| Advanced → raw spec                       | the exact JSON request; custom `glyphs` overrides go here                                              |
 
 The **Samples** cover the headline features: styled + CJK/emoji content, column &
-row spans, sparse placement, and width-capped wrapping. **Show D code** prints the
-equivalent `drawTable(…, TableProps(…))` call.
+row spans, sparse placement, width-capped wrapping, and decimal alignment under a
+framed title/footer. **Show D code** prints the equivalent
+`drawTable(…, TableProps(…))` call.
 
 > [!NOTE]
 > Alignment in the browser depends on the page's monospace font rendering CJK and
@@ -46,14 +48,11 @@ equivalent `drawTable(…, TableProps(…))` call.
 > nudges the browser toward full-width metrics, but small visual differences from a
 > real terminal are a font-rendering artifact, not a `drawTable` bug.
 
-Beyond what the controls expose, `TableProps` also carries a frame **title** and
-**footer** (spliced into the borders like `drawBox`'s, ellipsis-truncated on
-narrow frames), `Align.decimal` (a numeric column aligns on its dot), and
-per-cell `halign`/`valign` overrides on `Cell`/`Placement` (e.g. a centered
-colspan banner). The same layout also renders lazily: `drawTableLines` (a
-forward range of lines, ready for a `LiveRegion` frame), `drawTableChunks`
-(cell-by-cell pacing), and a writer overload all emit `drawTable`'s exact
-bytes.
+Beyond what the controls expose, `Cell`/`Placement` also carry per-cell
+`halign`/`valign` overrides (e.g. a centered colspan banner). The same layout
+also renders lazily: `drawTableLines` (a forward range of lines, ready for a
+`LiveRegion` frame), `drawTableChunks` (cell-by-cell pacing), and a writer
+overload all emit `drawTable`'s exact bytes.
 
 For the full API — spans, alignment, glyph presets, custom glyphs, validation,
 streaming — see the module `libs/core-cli/src/sparkles/core_cli/ui/table/` and

@@ -158,6 +158,8 @@ private TableProps parseProps(const JSONValue j)
     p.headerRows = asSize(j, "headerRows", p.headerRows);
     p.headerCols = asSize(j, "headerCols", p.headerCols);
     p.maxWidth = asSize(j, "maxWidth", p.maxWidth);
+    p.title = asStr(j, "title", p.title);
+    p.footer = asStr(j, "footer", p.footer);
 
     p.glyphs = presetGlyphs(asStr(j, "preset", "rounded"));
     if ("glyphs" in j)
@@ -241,10 +243,11 @@ private Align toAlign(string s)
 {
     switch (s)
     {
-        case "left":   return Align.left;
-        case "center": return Align.center;
-        case "right":  return Align.right;
-        default:       return Align.inherit;
+        case "left":    return Align.left;
+        case "center":  return Align.center;
+        case "right":   return Align.right;
+        case "decimal": return Align.decimal;
+        default:        return Align.inherit;
     }
 }
 

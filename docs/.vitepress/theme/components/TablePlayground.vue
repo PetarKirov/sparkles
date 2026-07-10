@@ -73,7 +73,7 @@ onMounted(async () => {
 });
 
 // ---- Controls -----------------------------------------------------------
-type Al = 'inherit' | 'left' | 'center' | 'right';
+type Al = 'inherit' | 'left' | 'center' | 'right' | 'decimal';
 type VAl = 'inherit' | 'top' | 'middle' | 'bottom';
 
 const props = reactive({
@@ -83,6 +83,8 @@ const props = reactive({
   headerRows: 1,
   headerCols: 0,
   maxWidth: 0,
+  title: '',
+  footer: '',
   preset: 'rounded',
   defaultAlign: 'left' as Al,
   defaultVAlign: 'top' as VAl,
@@ -221,6 +223,23 @@ const samples: { label: string; apply: () => void }[] = [
       });
     },
   },
+  {
+    label: 'Decimal + title',
+    apply: () => {
+      dataMode.value = 'grid';
+      gridText.value =
+        'Item\tUnit price\tQty\nWidget\t3.5\t120\nGadget\t12.75\t8\nGizmo\t0.99\t1500';
+      Object.assign(props, {
+        headerRows: 1,
+        headerCols: 0,
+        preset: 'rounded',
+        title: 'Invoice',
+        footer: '3 line items',
+      });
+      // Align.decimal makes the price column line up on its decimal point.
+      colAligns.value = ['left', 'decimal', 'right'];
+    },
+  },
 ];
 
 // ---- Build spec + render -----------------------------------------------
@@ -243,6 +262,8 @@ function currentSpec() {
     p.columnVAligns = colVAligns.value.slice(0, n);
   if (colMaxW.value.slice(0, n).some(w => w > 0))
     p.columnMaxWidths = colMaxW.value.slice(0, n);
+  if (props.title) p.title = props.title;
+  if (props.footer) p.footer = props.footer;
 
   if (dataMode.value === 'grid')
     return { mode: 'dense', cells: gridCells.value, props: p };
@@ -292,6 +313,10 @@ watch(
 );
 
 function applySample(s: { apply: () => void }) {
+  // title/footer are frame decorations only the "Decimal + title" sample sets;
+  // clear them first so a set title doesn't bleed onto the samples that omit it.
+  props.title = '';
+  props.footer = '';
   s.apply();
   render();
 }
@@ -715,6 +740,8 @@ const dcode = computed(() => {
   if (props.headerRows) parts.push(`headerRows: ${props.headerRows}`);
   if (props.headerCols) parts.push(`headerCols: ${props.headerCols}`);
   if (props.maxWidth) parts.push(`maxWidth: ${props.maxWidth}`);
+  if (props.title) parts.push(`title: ${q(props.title)}`);
+  if (props.footer) parts.push(`footer: ${q(props.footer)}`);
   if (props.preset !== 'rounded')
     parts.push(`glyphs: stylePresets[${q(props.preset)}]`);
   if (props.defaultAlign !== 'left')
