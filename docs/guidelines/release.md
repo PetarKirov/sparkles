@@ -103,12 +103,13 @@ A checklist. Each step assumes the toolchain from `nix develop` / `direnv`.
 
    ```bash
    git push origin v0.5.0
-   gh release create v0.5.0 --notes-from-tag    # publishing fires Notify DUB Registry
+   gh release create v0.5.0 --notes-from-tag    # publishing fires the Release workflow
    ```
 
    Publishing the Release is what runs the
-   [`notify-dub-registry`](../../.github/workflows/notify-dub-registry.yml)
-   workflow that pings code.dlang.org for immediate ingestion (see below). The
+   [`release`](../../.github/workflows/release.yml)
+   workflow that pings code.dlang.org for immediate ingestion and pins the
+   release's `.#all` closure on Cachix (see below). The
    window between pushing the tag and publishing the Release is your last chance
    to delete a mistaken tag — but treat it as best-effort, not a safety net (the
    registry can ingest a pushed tag on its own before you publish).
@@ -200,7 +201,7 @@ version.
   So _any pushed tag_ eventually becomes a public version on its own schedule —
   which is why pushing the tag, not publishing the Release, is the real point of
   no return.
-- **The `notify-dub-registry` workflow just makes ingestion immediate.** On a
+- **The `release` workflow's registry ping just makes ingestion immediate.** On a
   _published_ GitHub Release it `POST`s the registry's update endpoint
   (`https://code.dlang.org/api/packages/sparkles/update`) so the new version
   appears in seconds instead of waiting for the background poll. Gating on the
@@ -219,6 +220,20 @@ version="~>0.5.0"`).
   release as soon as it's ingested. README examples keep `version="*"` precisely
   so end users always get the latest; in-repo files use `path=` instead (see
   [AGENTS.md § In-repo dub dependency paths](./AGENTS.md)).
+
+## Pinning the release closure on Cachix
+
+Besides the registry ping, the `release` workflow builds `.#all` (the
+aggregate from `nix/packages/all.nix`: the full dev shell, every package, and
+every standalone example) on each supported system, pushes it to the Cachix
+cache, and pins it under the stable name `latest-<system>` (e.g.
+`latest-x86_64-linux`). Cachix has no unpin command, so retention works by
+re-pinning: each release creates a new revision of the same pin, and
+`--keep-revisions 3` keeps the last three releases' closures pinned while
+older ones become garbage-collectable. Only the highest `v*` tag moves the
+pins, so re-publishing an old release (or the racing runs of a `release
+--split` chain) can't move them backwards. Current pins are listed at
+`https://app.cachix.org/cache/<cache>/pins`.
 
 ## Pitfalls checklist
 

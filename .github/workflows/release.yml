@@ -1,0 +1,105 @@
+name: Release
+
+# Runs when a GitHub Release is published:
+#
+#   * pokes code.dlang.org to ingest the new tag immediately, and
+#   * builds `.#all`, pushes it to the binary cache, and pins the release
+#     closure there so it survives cache garbage collection.
+on:
+  # Trigger on a *published* GitHub Release, not a bare tag push. This leaves a
+  # grace window between pushing the `vX.Y.Z` tag and publishing the Release in
+  # which a mistaken tag can be deleted before we nudge the registry. (Best
+  # effort: the registry's background scan can still ingest a pushed tag on its
+  # own — pushing the tag is the real point of no return.)
+  release:
+    types: [published]
+
+  # Allow re-running by hand: re-notify if the release-time call failed, or
+  # re-push/re-pin the cache (dispatching from a tag ref moves the pin;
+  # dispatching from a branch only warms the cache).
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Pokes code.dlang.org to ingest the new release immediately. The registry
+  # also background-scans registered repos on its own schedule, so this only
+  # *speeds up* ingestion — it is not what makes a tag public.
+  notify-dub-registry:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger code.dlang.org update
+        env:
+          # Optional. Set this repo secret only if the package was registered
+          # with an update secret; otherwise the empty default is accepted.
+          SECRET: ${{ secrets.DUB_REGISTRY_SECRET }}
+        run: |
+          curl --fail-with-body --silent --show-error \
+            --retry 3 --retry-delay 5 \
+            -X POST 'https://code.dlang.org/api/packages/sparkles/update' \
+            --data-urlencode "secret=${SECRET}"
+
+  # Build `.#all` (the aggregate from nix/packages/all.nix: the full dev
+  # shell, every package, and every standalone example), push it to the binary
+  # cache, and pin the closure under a stable per-system name so it survives
+  # cache garbage collection. Cachix has no unpin command (the public API only
+  # creates pins), so retention works by re-pinning: each release adds a new
+  # revision of the same pin and --keep-revisions drops the oldest, whose
+  # closure becomes garbage-collectable.
+  nix-build-pin:
+    name: Nix build, push & pin (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            system: x86_64-linux
+          - runner: macos-latest
+            system: aarch64-darwin
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          # Full history so the highest-tag guard below sees every tag.
+          fetch-depth: 0
+
+      - name: Setup Nix
+        uses: ./.github/actions/setup-nix
+        with:
+          push-to-cache: true
+          cachix-cache: ${{ vars.CACHIX_CACHE }}
+          cachix-auth-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          trusted-public-keys: ${{ vars.TRUSTED_PUBLIC_KEYS }}
+          substituters: ${{ vars.SUBSTITUTERS }}
+          use-nix-cache: true
+          nix-cache-key: nix-${{ runner.os }}-nixbuild-${{ hashFiles('**/flake.lock') }}
+          nix-cache-restore-prefixes: |
+            nix-${{ runner.os }}-nixbuild-
+            nix-${{ runner.os }}-
+
+      # Usually all cache hits: CI's nix-build job already built and pushed
+      # this commit's outputs before it reached main.
+      - name: Build devShells.full, all packages, and all examples
+        run: nix build --print-build-logs .#all
+
+      - name: Push & pin the release closure
+        env:
+          CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
+          CACHE: ${{ vars.CACHIX_CACHE }}
+        run: |
+          # `release --split` publishes a chain of releases whose runs race,
+          # and an old release can be re-published; only the highest tag may
+          # move the `latest-*` pin. (Plain `vX.Y.Z` tags version-sort fine.)
+          latest=$(git tag --list 'v*' --sort=-v:refname | head -n1)
+          if [ "$GITHUB_REF_NAME" != "$latest" ]; then
+            echo "::notice::$GITHUB_REF_NAME is not the highest tag ($latest); not moving the pin"
+            exit 0
+          fi
+          # The pin needs the path in the cache *now*; the cachix-action
+          # post-job hook only pushes after all steps have run.
+          out=$(readlink -f ./result)
+          cachix push "$CACHE" "$out"
+          cachix pin "$CACHE" "latest-${{ matrix.system }}" "$out" --keep-revisions 3
