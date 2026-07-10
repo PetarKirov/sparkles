@@ -985,35 +985,6 @@ private void writeStderr(scope const(char)[] s) @safe nothrow @nogc
 /// marks 0) — a code-point approximation lets a wide-glyph case name overflow
 /// the terminal, wrap, and leave a ghost row the one-line CR+erase can't
 /// clear. Never splits a cluster.
-private const(char)[] clampCells(return scope const(char)[] s, size_t maxCells)
-    @safe pure nothrow @nogc
-{
-    size_t cells, bytes;
-    foreach (c; s.byGraphemeCluster)
-    {
-        if (cells + c.width > maxCells)
-            break;
-        cells += c.width;
-        bytes += c.slice.length;
-    }
-    return s[0 .. bytes];
-}
-
-@("reporting.clampCells")
-@safe pure nothrow @nogc
-unittest
-{
-    assert(clampCells("hello", 80) == "hello");
-    assert(clampCells("hello", 3) == "hel");
-    assert(clampCells("hello", 0) == "");
-    assert(clampCells("aéb", 2) == "aé"); // é is 2 bytes / 1 cell, not split
-    // Wide glyphs cost 2 cells: a clamp mid-glyph drops the whole glyph.
-    assert(clampCells("測試x", 5) == "測試x");
-    assert(clampCells("測試x", 4) == "測試");
-    assert(clampCells("測試", 3) == "測");
-    assert(clampCells("a🚀b", 3) == "a🚀");
-}
-
 /// Live single-line benchmark progress on stderr: redraws
 /// `⠹ 12/40 mir-ion/canada/parse` in place as each case begins. `tick` is the
 /// `@safe nothrow @nogc` seam handed to `runBenchmark` as `onCaseStart` (so it
@@ -1043,6 +1014,7 @@ package struct BenchProgress
         {
             import sparkles.base.smallbuffer : SmallBuffer;
             import sparkles.base.term_control : CtlSeq;
+            import sparkles.base.text.width : truncateField;
             import sparkles.core_cli.ui.progress : ProgressLine;
 
             if (started == MonoTime.init)
@@ -1051,10 +1023,10 @@ package struct BenchProgress
             const elapsed = MonoTime.currTime - started;
 
             // Measure the (uncoloured) prefix so the label gets the terminal's
-            // remaining columns; clamp it there rather than to a fixed 80 that
-            // wraps a narrow terminal and leaves a ghost row the CR+eraseLine
-            // (one physical line) can't erase. width==0 (unknown/piped) keeps the
-            // old fixed cap, so nothing changes there.
+            // remaining columns; truncate it there rather than to a fixed 80
+            // that wraps a narrow terminal and leaves a ghost row the
+            // CR+eraseLine (one physical line) can't erase. width==0
+            // (unknown/piped) keeps the old fixed cap, so nothing changes there.
             SmallBuffer!(char, 64) plainPrefix;
             ProgressLine(frame, done, shown, false, elapsed).toString(plainPrefix);
             const prefixCells = visibleWidth(plainPrefix[]);
@@ -1069,24 +1041,26 @@ package struct BenchProgress
             if (budget > 0)
             {
                 buf ~= ' ';
-                buf ~= clampCells(name, budget);
+                // base's truncateField: cell-measured, never splits a cluster,
+                // `…`-marks an overlong case name (attributes infer, so the
+                // SmallBuffer keeps this seam `@safe nothrow @nogc`).
+                buf.truncateField(name, budget);
             }
             writeStderr(buf[]);
         }
     }
 
     /// Erase the spinner line (before printing a table, and at the end).
+    /// `CtlSeq` lives in `base`, so unlike `tick` (which needs `core-cli`'s
+    /// `ProgressLine`) this needs no capability gate.
     void clear() @safe nothrow @nogc
     {
+        import sparkles.base.term_control : CtlSeq;
+
         if (!active)
             return;
-        static if (hasCoreCliUi)
-        {
-            import sparkles.base.term_control : CtlSeq;
-
-            enum eraseSeq = cast(string) CtlSeq.carriageReturn
-                ~ cast(string) CtlSeq.eraseLine;
-            writeStderr(eraseSeq);
-        }
+        enum eraseSeq = cast(string) CtlSeq.carriageReturn
+            ~ cast(string) CtlSeq.eraseLine;
+        writeStderr(eraseSeq);
     }
 }
