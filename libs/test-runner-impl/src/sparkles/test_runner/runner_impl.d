@@ -29,7 +29,8 @@ import sparkles.test_runner.filter : matchesFilter;
 import sparkles.test_runner.model : Test, TestResult;
 import sparkles.test_runner.reporting : BenchProgress, detectTerminalWidth,
     formatBenchTable, formatCtfeFailedLine, formatCtfeLine, formatMetricCatalog,
-    formatResultLine, formatSummary, formatThrown, progressEnabled, RunTotals;
+    formatResultLine, formatSummary, formatThrown, progressEnabled, RunTotals,
+    TableGeometry;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Entry point — called across the extern(C) seam by the registration shim,
@@ -799,6 +800,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     bool firstFlush = true;
     BenchStats[] bucket;
     BenchStats[] measured; // run-long, for --bench-json (measurement order)
+    TableGeometry geometry; // run-long column floors: streamed tables only widen
     string curKey;
 
     void flush()
@@ -809,7 +811,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         if (!firstFlush)
             stdout.write("\n"); // blank line between group tables
         stdout.write(formatBenchTable(bucket, colored, options.metrics,
-            sortBy, keys));
+            sortBy, keys, &geometry));
         stdout.flush(); // on screen before the next tick redraws the spinner below
         firstFlush = false;
         bucket = null;
