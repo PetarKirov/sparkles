@@ -10,6 +10,7 @@ public import sparkles.build_primitives.dir_walk :
     dirEntriesFilter,
     walkGitRepository,
     readRepositoryGitIgnore,
+    repositoryGitIgnoreStack,
     hasEnterDir,
     hasLeaveDir,
     hasIncludeFile,
