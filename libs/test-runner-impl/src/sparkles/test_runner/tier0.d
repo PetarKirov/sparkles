@@ -19,10 +19,12 @@
  * All metrics are `quantitative`: each `timed()` call is bracketed by its own
  * pair of cheap snapshots, so — like `perf.d`'s ioctl `ENABLE`/`DISABLE` — the
  * untimed `between()` teardown (a `benchCase`'s result release) is excluded from
- * the counted window. The snapshots cannot pause, so each one's own `/proc` read
- * adds a small constant to `syscr`/`syscw` per iteration; the getrusage-sourced
- * page-fault and context-switch columns are unaffected. Off Linux the group is
- * permanently unavailable.
+ * the counted window. The snapshots cannot pause, so each bracket's own `/proc`
+ * read lands inside its window; `tryOpen` calibrates that per-bracket self-cost
+ * (median of several empty brackets) and `count` reports the workload net of it,
+ * clamped at zero — so a body that does no I/O reads ≈0, not the instrumentation
+ * constant. The getrusage-sourced page-fault and context-switch columns carry no
+ * per-bracket cost. Off Linux the group is permanently unavailable.
  */
 module sparkles.test_runner.tier0;
 
@@ -181,11 +183,13 @@ version (linux)
 {
     import core.sys.posix.sys.resource : getrusage, rusage, RUSAGE_SELF;
 
-    /// The Tier-0 counter group. Stateless (no fds): `count` snapshots the
-    /// cumulative counters before and after its own iteration loop.
+    /// The Tier-0 counter group. No fds; `count` snapshots the cumulative
+    /// counters around each iteration. Carries the calibrated per-bracket
+    /// self-cost of the snapshots themselves (see `calibrateSelfCost`).
     struct Tier0Group
     {
         private bool enabled;
+        private Tier0Stats selfCost; /// per-bracket snapshot cost; 0 = uncalibrated
 
         /// Whether Tier-0 counters will be collected (Linux and requested).
         bool available() const @safe pure nothrow @nogc => enabled;
@@ -194,10 +198,54 @@ version (linux)
         string status() const @safe pure nothrow
             => enabled ? "getrusage + /proc/self/io" : "not requested";
 
-        /// Enables collection when `enabled`; otherwise an unavailable group
-        /// (mirrors `PerfGroup.tryOpen(false)`), so the same call sites work.
-        static Tier0Group tryOpen(bool enabled) @safe pure nothrow @nogc
-            => Tier0Group(enabled);
+        /// Enables collection when `enabled` and calibrates the snapshot
+        /// self-cost; otherwise an unavailable group (mirrors
+        /// `PerfGroup.tryOpen(false)`), so the same call sites work.
+        static Tier0Group tryOpen(bool enabled) @safe
+        {
+            auto g = Tier0Group(enabled);
+            if (enabled)
+                g.selfCost = g.calibrateSelfCost();
+            return g;
+        }
+
+        /// The per-bracket cost of the bracketing snapshots themselves: each
+        /// `start`/`end` pair puts one `/proc/self/io` read (~1 `syscr`, a few
+        /// hundred `rchar` bytes) inside its own window. Measured as the median
+        /// of several empty brackets so `count` can subtract it. Page-fault and
+        /// context-switch fields stay 0 — they carry no steady-state bracket
+        /// cost, and subtracting sporadic noise would bias real counts.
+        private Tier0Stats calibrateSelfCost() @safe
+        {
+            import std.algorithm.sorting : sort;
+            import std.math : isNaN;
+
+            enum rounds = 9;
+            double[rounds] syscr, syscw, rdChars, wrChars;
+            foreach (i; 0 .. rounds)
+            {
+                const one = deltaStats(snapshot(), snapshot(), 1);
+                syscr[i] = one.syscr;
+                syscw[i] = one.syscw;
+                rdChars[i] = one.rdChars;
+                wrChars[i] = one.wrChars;
+            }
+
+            static double med(double[] v) @safe
+            {
+                if (v[0].isNaN)
+                    return 0; // source unavailable — nothing to subtract
+                v.sort;
+                return v[$ / 2];
+            }
+
+            Tier0Stats cost;
+            cost.syscr = med(syscr[]);
+            cost.syscw = med(syscw[]);
+            cost.rdChars = med(rdChars[]);
+            cost.wrChars = med(wrChars[]);
+            return cost;
+        }
 
         /// Nothing to release; present for surface parity with `PerfGroup`.
         void close() @safe pure nothrow @nogc {}
@@ -270,8 +318,37 @@ version (linux)
             sum.wrChars *= inv;
             sum.rdBytes *= inv;
             sum.wrBytes *= inv;
+            // Net of the brackets' own snapshot cost (calibrated at open):
+            // without this a no-I/O body reads ~1 syscr and a few hundred
+            // rchar bytes per iteration, and `cacheHitPercent`'s "nothing was
+            // read → nan" branch is unreachable (rchar always > 0).
+            sum.syscr = netOfCost(sum.syscr, selfCost.syscr);
+            sum.syscw = netOfCost(sum.syscw, selfCost.syscw);
+            sum.rdChars = netOfCost(sum.rdChars, selfCost.rdChars);
+            sum.wrChars = netOfCost(sum.wrChars, selfCost.wrChars);
             return sum;
         }
+    }
+
+    /// A counter net of its calibrated per-bracket cost, clamped at zero;
+    /// `nan` (source unavailable) passes through untouched.
+    package double netOfCost(double total, double cost) @safe pure nothrow @nogc
+    {
+        import std.algorithm.comparison : max;
+        import std.math : isNaN;
+
+        return total.isNaN ? total : max(0.0, total - cost);
+    }
+
+    @("tier0.netOfCost")
+    @safe pure nothrow @nogc
+    unittest
+    {
+        import std.math : isNaN;
+
+        assert(netOfCost(3.0, 1.0) == 2.0);
+        assert(netOfCost(0.5, 1.0) == 0.0, "clamped: never negative");
+        assert(netOfCost(double.nan, 1.0).isNaN, "unavailable stays unavailable");
     }
 
     /// Reads `/proc/self/io` into `buf` via a raw `open`/`read`/`close`; returns
@@ -344,6 +421,32 @@ version (linux)
             assert(inTimed.syscw - inBetween.syscw > 0.5,
                 text("a write in timed must count but in between must not; timed=",
                     inTimed.syscw, " between=", inBetween.syscw));
+    }
+
+    @("tier0.Tier0Group.selfCostSubtracted")
+    @system
+    unittest
+    {
+        import std.conv : text;
+        import std.math : isNaN;
+
+        // tryOpen calibrates the per-bracket snapshot cost; count reports net of
+        // it. A raw group (constructed without calibration, selfCost = 0) sees
+        // the gross ~1 syscr/iter instrumentation constant that the calibrated
+        // group subtracts. Compare the two so process-wide noise from parallel
+        // test threads (which only adds reads to both) doesn't flake the test.
+        auto calibrated = Tier0Group.tryOpen(true);
+        if (!calibrated.available)
+            return;
+        auto raw = Tier0Group(true); // bypasses calibration: gross counts
+        static void nop() {}
+        const net = calibrated.count(&nop, &nop, 64);
+        const gross = raw.count(&nop, &nop, 64);
+        if (net.syscr.isNaN || gross.syscr.isNaN)
+            return;
+        assert(gross.syscr > net.syscr + 0.5,
+            text("the calibrated group must subtract the bracket's own read; ",
+                "gross=", gross.syscr, " net=", net.syscr));
     }
 }
 else
