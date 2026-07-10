@@ -434,8 +434,66 @@ unittest
 /// See `sparkles.test_runner.metrics.sortOrder`/`groupKeyOf`. Rendered with
 /// `core-cli`'s `drawTable` when available, plain space-aligned columns
 /// otherwise.
+///
+/// All tables of one call share their column geometry (the union of their
+/// natural widths). `geometry`, when given, carries that geometry **across**
+/// calls: the streaming runner renders one table per group as it finishes, and
+/// the floors keep consecutive tables from re-deriving narrower columns —
+/// columns only widen during a run. The recorded header row is the signature:
+/// a table with different columns resets the carry instead of misapplying the
+/// floors positionally.
 string formatBenchTable(in BenchStats[] rows, bool colored, string metricFilter = null,
-    string sortBy = null, in string[] groupKeys = null) @system // drawTable is @system
+    string sortBy = null, in string[] groupKeys = null,
+    TableGeometry* geometry = null) @system // drawTable is @system
+{
+    auto models = buildBenchTables(rows, colored, metricFilter, sortBy, groupKeys);
+
+    size_t[] floors;
+    foreach (ref m; models)
+        floors = mergeWidths(floors, contentWidths(m.cells));
+    if (geometry !is null && models.length)
+    {
+        if (geometry.header != models[0].cells[0])
+            geometry.floors = null; // different columns: the carry is stale
+        geometry.floors = mergeWidths(geometry.floors, floors);
+        geometry.header = models[0].cells[0].dup;
+        floors = geometry.floors;
+    }
+
+    string result;
+    foreach (ref m; models)
+    {
+        if (result.length)
+            result ~= "\n";
+        result ~= renderCells(m.cells, m.aligns, headerRows: 1, title: m.title,
+            minWidths: floors);
+    }
+    return result;
+}
+
+/// One renderable bench table: the (possibly styled) `title` — empty for the
+/// flat table — the header row followed by the data rows, and the per-column
+/// alignment.
+package struct BenchTableModel
+{
+    string title;
+    string[][] cells; /// `[0]` is the header row
+    Align[] aligns;
+}
+
+/// Column geometry carried across `formatBenchTable` calls (caller-owned; see
+/// the `geometry` parameter above).
+package struct TableGeometry
+{
+    string[] header;  /// the header row the floors were derived under
+    size_t[] floors;  /// per-column content-width floors, in visible cells
+}
+
+/// The table models `formatBenchTable` renders — split out so a live view can
+/// render the same rows through `drawTableLines` with identical geometry.
+package BenchTableModel[] buildBenchTables(in BenchStats[] rows, bool colored,
+    string metricFilter = null, string sortBy = null, in string[] groupKeys = null)
+@system
 {
     import sparkles.test_runner.metrics : groupKeyDisplay, groupKeyOf,
         labelKeyUnion, sortOrder, visibleMetrics;
@@ -532,7 +590,7 @@ string formatBenchTable(in BenchStats[] rows, bool colored, string metricFilter 
                 labelCols ~= rows[idx].labels.get(key, "");
             cells ~= labelCols ~ rows[idx].name ~ valueCells(rows[idx]);
         }
-        return renderCells(cells, valueAligns(labelKeys.length + 1), headerRows: 1);
+        return [BenchTableModel(null, cells, valueAligns(labelKeys.length + 1))];
     }
 
     // Grouped: one table per contiguous run of equal group key. Each table's stub
@@ -555,7 +613,7 @@ string formatBenchTable(in BenchStats[] rows, bool colored, string metricFilter 
     foreach (key; restKeys)
         restHeaders ~= render(colored, i"{bold $(key)}");
 
-    string result;
+    BenchTableModel[] models;
     size_t i = 0;
     while (i < order.length)
     {
@@ -577,11 +635,37 @@ string formatBenchTable(in BenchStats[] rows, bool colored, string metricFilter 
             cells ~= row.name ~ restVals ~ valueCells(row);
             i++;
         }
-        if (result.length)
-            result ~= "\n";
-        result ~= renderCells(cells, aligns, headerRows: 1, title: title);
+        models ~= BenchTableModel(title, cells, aligns);
     }
-    return result;
+    return models;
+}
+
+/// Per-column visible content widths over a table's rows, header included
+/// (ANSI escapes cost zero cells).
+private size_t[] contentWidths(in string[][] cells) @safe
+{
+    import std.algorithm.comparison : max;
+
+    size_t[] widths;
+    foreach (row; cells)
+        foreach (i, cell; row)
+        {
+            if (i == widths.length)
+                widths ~= 0;
+            widths[i] = max(widths[i], visibleWidth(cell));
+        }
+    return widths;
+}
+
+/// Element-wise maximum of two width vectors (result spans the longer one).
+private size_t[] mergeWidths(in size_t[] a, in size_t[] b) @safe
+{
+    import std.algorithm.comparison : max;
+
+    auto merged = new size_t[max(a.length, b.length)];
+    foreach (i, ref w; merged)
+        w = max(i < a.length ? a[i] : 0, i < b.length ? b[i] : 0);
+    return merged;
 }
 
 @("formatBenchTable.metricColumns")
@@ -652,6 +736,50 @@ unittest
     // fallback deliberately degrades decimal to right alignment.
     static if (hasCoreCliUi)
         assert(fast == slow, rendered);
+}
+
+/// A `TableGeometry` threaded across calls keeps consecutive streamed tables
+/// on one column layout: the second (narrower) table renders under the first
+/// call's floors, so their lines share a visible width — instead of the
+/// naturally narrower layout it gets alone.
+@("formatBenchTable.geometryCarriesAcrossCalls")
+@system
+unittest
+{
+    import std.string : splitLines;
+
+    TableGeometry geom;
+    BenchStats[1] wide = [BenchStats(name: "a-rather-long-benchmark-name",
+        iterations: 123456, nsPerIterMedian: 1500)];
+    BenchStats[1] narrow = [BenchStats(name: "b", iterations: 1, nsPerIterMedian: 110)];
+
+    const first = formatBenchTable(wide[], false, null, null, null, &geom);
+    const second = formatBenchTable(narrow[], false, null, null, null, &geom);
+    assert(visibleWidth(first.splitLines[0]) == visibleWidth(second.splitLines[0]),
+        first ~ second);
+
+    const alone = formatBenchTable(narrow[], false);
+    assert(visibleWidth(alone.splitLines[0]) < visibleWidth(second.splitLines[0]));
+}
+
+/// A table with a different column set (here: an extra metric column) resets
+/// the carried floors instead of misapplying them positionally — the output
+/// matches a fresh render exactly.
+@("formatBenchTable.geometryResetsOnHeaderChange")
+@system
+unittest
+{
+    import sparkles.test_runner.bench : Metric, Unit;
+
+    TableGeometry geom;
+    BenchStats[1] plain = [BenchStats(name: "a-rather-long-benchmark-name",
+        iterations: 1, nsPerIterMedian: 110)];
+    cast(void) formatBenchTable(plain[], false, null, null, null, &geom);
+
+    BenchStats[1] withMetric = [BenchStats(name: "b", iterations: 1,
+        nsPerIterMedian: 110, metrics: [Metric(Unit("B"), 1000.0, Metric.Mode.rate)])];
+    assert(formatBenchTable(withMetric[], false, null, null, null, &geom)
+        == formatBenchTable(withMetric[], false));
 }
 
 @("formatBenchTable.grouped")
@@ -770,10 +898,12 @@ string formatMetricCatalog(in MetricDescriptor[] cat, bool colored) @system // r
 /// inside the capability gate), and the fallback honors right/decimal columns
 /// as plain right alignment. `title` (may be styled) is spliced into the top
 /// border — `╭──╼ benchmark: canada ╾──╮` — or, with no border to interrupt,
-/// hoisted as a heading line above the plain fallback.
+/// hoisted as a heading line above the plain fallback. `minWidths` floors the
+/// column content widths (`TableProps.columnMinWidths`; honored by the
+/// fallback too), letting consecutive streamed tables share their geometry.
 package string renderCells(
     string[][] cells, in Align[] aligns = null, size_t headerRows = 0,
-    string title = null)
+    string title = null, in size_t[] minWidths = null)
 @system // drawTable is @system
 {
     static if (hasCoreCliUi)
@@ -781,11 +911,12 @@ package string renderCells(
         import sparkles.core_cli.ui.table : drawTable, TableProps;
 
         return drawTable(cells, TableProps(
-            headerRows: headerRows, columnAligns: aligns.dup, title: title));
+            headerRows: headerRows, columnAligns: aligns.dup, title: title,
+            columnMinWidths: minWidths.dup));
     }
     else
     {
-        auto table = alignColumns(cells, aligns);
+        auto table = alignColumns(cells, aligns, minWidths);
         return title.length ? title ~ "\n" ~ table : table;
     }
 }
@@ -855,19 +986,12 @@ string formatCtfeTraceTable(in CtfeTestCost[] costs, bool colored) @system // re
 /// (decimal degrades to plain right — there is no shared dot position without
 /// the full grid). Column widths are measured in terminal cells via
 /// `sparkles.base.text.visibleWidth`, so ANSI escapes count zero and wide CJK /
-/// emoji / combining clusters are sized correctly (matching `drawTable`).
-package string alignColumns(in string[][] cells, in Align[] aligns = null) @safe
+/// emoji / combining clusters are sized correctly (matching `drawTable`), and
+/// `minWidths` floors them (matching `TableProps.columnMinWidths`).
+package string alignColumns(in string[][] cells, in Align[] aligns = null,
+    in size_t[] minWidths = null) @safe
 {
-    import std.algorithm.comparison : max;
-
-    size_t[] widths;
-    foreach (row; cells)
-        foreach (i, cell; row)
-        {
-            if (i == widths.length)
-                widths ~= 0;
-            widths[i] = max(widths[i], visibleWidth(cell));
-        }
+    auto widths = mergeWidths(contentWidths(cells), minWidths);
 
     bool rightish(size_t i)
         => i < aligns.length && (aligns[i] == Align.right || aligns[i] == Align.decimal);
@@ -925,6 +1049,22 @@ unittest
     assert(alignColumns([["1.5"], ["12.25"]], [Align.decimal]) ==
         "  1.5\n" ~
         "12.25\n");
+}
+
+/// `minWidths` floors widen a column past its natural width (the gap after a
+/// left column grows; a right column pads further); short/absent entries
+/// leave columns natural — mirroring `TableProps.columnMinWidths`.
+@("alignColumns.minWidthFloors")
+@safe
+unittest
+{
+    assert(alignColumns([["a", "b"], ["c", "d"]], null, [3]) ==
+        "a    b\n" ~
+        "c    d\n");
+    assert(alignColumns([["a", "22"], ["ccc", "4"]],
+            [Align.left, Align.right], [0, 4]) ==
+        "a      22\n" ~
+        "ccc     4\n");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
