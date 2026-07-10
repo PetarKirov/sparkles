@@ -93,10 +93,17 @@ in (source[open] == '{')
                 i = skipComment(source, i);
                 break;
             case '"':
-                // Wysiwyg (`r"…"`) and hex (`x"…"`) prefixes lex the same way
-                // from the quote; escapes are only special in regular strings.
-                i = skipString(source, i, '"',
-                    escapes: !(i > 0 && (source[i - 1] == 'r' || source[i - 1] == 'x')));
+                // `q"(…)"`-style delimited strings can contain unescaped quotes
+                // and braces; require the `q` to be its own token (not the tail
+                // of an identifier). Wysiwyg (`r"…"`) and hex (`x"…"`) prefixes
+                // lex the same way from the quote; escapes are only special in
+                // regular strings.
+                if (i > 0 && source[i - 1] == 'q'
+                    && (i < 2 || !isIdentChar(source[i - 2])))
+                    i = skipDelimitedString(source, i);
+                else
+                    i = skipString(source, i, '"',
+                        escapes: !(i > 0 && (source[i - 1] == 'r' || source[i - 1] == 'x')));
                 break;
             case '`':
                 i = skipString(source, i, '`', escapes: false);
@@ -169,6 +176,100 @@ private size_t skipString(string source, size_t i, char quote, bool escapes)
             i++;
     }
     return i;
+}
+
+private bool isIdentChar(char c) @safe pure nothrow @nogc
+{
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+        || (c >= '0' && c <= '9') || c == '_';
+}
+
+/// Advances past a delimited string literal `q"…"` starting at `i` (which
+/// points at the quote after the `q`). Handles the nesting bracket delimiters
+/// (`()`, `[]`, `{}`, `<>`), identifier (heredoc) delimiters
+/// (`q"EOS … EOS"`), and single-character punctuation delimiters (`q"/…/"`).
+/// Their bodies may contain unescaped quotes and braces, which would derail
+/// `matchingBrace`'s scan.
+private size_t skipDelimitedString(string source, size_t i) @safe pure nothrow @nogc
+{
+    i++; // past the opening quote
+    if (i >= source.length)
+        return i;
+    const d = source[i];
+
+    char closer = 0; // NB: char.init is 0xFF, which is truthy
+    switch (d)
+    {
+        case '(': closer = ')'; break;
+        case '[': closer = ']'; break;
+        case '{': closer = '}'; break;
+        case '<': closer = '>'; break;
+        default: break;
+    }
+    if (closer)
+    {
+        i++;
+        size_t depth = 1;
+        while (i < source.length && depth)
+        {
+            if (source[i] == d)
+                depth++;
+            else if (source[i] == closer)
+                depth--;
+            i++;
+        }
+        // The closing quote directly follows the matching closer.
+        return i < source.length && source[i] == '"' ? i + 1 : i;
+    }
+
+    if (isIdentChar(d) && !(d >= '0' && d <= '9'))
+    {
+        // Heredoc: `q"IDENT` … up to a line starting with `IDENT"`.
+        const start = i;
+        while (i < source.length && isIdentChar(source[i]))
+            i++;
+        const ident = source[start .. i];
+        while (i < source.length)
+        {
+            if (source[i] == '\n'
+                && i + 1 + ident.length < source.length
+                && source[i + 1 .. i + 1 + ident.length] == ident
+                && source[i + 1 + ident.length] == '"')
+                return i + 2 + ident.length;
+            i++;
+        }
+        return source.length;
+    }
+
+    // Single punctuation delimiter: ends at the delimiter followed by `"`.
+    i++;
+    while (i + 1 < source.length)
+    {
+        if (source[i] == d && source[i + 1] == '"')
+            return i + 2;
+        i++;
+    }
+    return source.length;
+}
+
+@("extract.matchingBrace.delimitedStrings")
+@safe pure
+unittest
+{
+    // A `}` (or an unescaped quote) inside a delimited string must not end the
+    // body scan early — each source below is one balanced block.
+    static void check(string src)
+    {
+        assert(matchingBrace(src, 0) == src.length - 1, src);
+    }
+
+    check(`{ auto s = q"(} unbalanced ")"; f(); }`);
+    check(`{ auto s = q"[brace } quote "]"; }`);
+    check(`{ auto s = q"(nested (parens) still })"; }`);
+    check("{ auto s = q\"/brace } quote \"/\"; }");
+    check("{ auto s = q\"EOS\nbrace } quote \"\nEOS\"; }");
+    // A `q` that ends an identifier is not a delimited-string prefix.
+    check(`{ auto freq = 1; auto s = "x"; }`);
 }
 
 @("extractUnittestBody.basic")
