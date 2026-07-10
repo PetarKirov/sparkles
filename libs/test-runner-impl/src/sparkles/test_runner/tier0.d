@@ -251,7 +251,7 @@ version (linux)
         void close() @safe pure nothrow @nogc {}
 
         /// Reads the cumulative counters now.
-        Tier0Reading snapshot() @safe
+        Tier0Reading snapshot() @safe nothrow @nogc
         {
             Tier0Reading r;
             rusage ru;
@@ -354,7 +354,7 @@ version (linux)
     /// Reads `/proc/self/io` into `buf` via a raw `open`/`read`/`close`; returns
     /// the filled slice (empty on failure). `std.file` reports size 0 for `/proc`,
     /// so a direct read is required.
-    private char[] readProcSelfIo(return scope char[] buf) @safe
+    private char[] readProcSelfIo(return scope char[] buf) @safe nothrow @nogc
     {
         import core.sys.posix.fcntl : open, O_RDONLY;
         import core.sys.posix.unistd : read, close;

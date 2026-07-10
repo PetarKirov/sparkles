@@ -225,7 +225,7 @@ unittest
 /// instead of dropping the row and aborting the matrix. `thrown` is the converted
 /// chain (`toThrown`, which already re-throws `OutOfMemoryError`).
 package(sparkles.test_runner)
-BenchStats errorRow(string name, string[string] labels, in Thrown[] thrown)
+BenchStats errorRow(string name, string[string] labels, in Thrown[] thrown) @safe
 {
     import std.conv : text;
 
@@ -545,7 +545,8 @@ private DriveResult driveOnce(Timed, After)(scope Timed timed, scope After after
 }
 
 /// Times one already-erased `runTimed()` call and runs `runAfter` untimed after.
-private DriveResult driveErased(scope void delegate() runTimed, scope string delegate() runAfter)
+private DriveResult driveErased(
+    scope void delegate() runTimed, scope string delegate() runAfter) @system
 {
     const t0 = MonoTime.currTime.ticks;
     runTimed();
@@ -734,7 +735,8 @@ void benchCase(Timed, After, Setup = typeof(null), Teardown = typeof(null))(
 /// `measure` loop, for `benchIter`/whole-body); otherwise per-call timing releases
 /// the result between calls. A thrown `runTimed`/`runAfter` propagates to the caller.
 package(sparkles.test_runner)
-BenchStats measureCase(RegisteredCase c, in BenchConfig config, ref CounterGroups counters)
+BenchStats measureCase(RegisteredCase c, in BenchConfig config,
+    ref CounterGroups counters) @system
 {
     auto ctx = BenchContext(config: config, counters: &counters);
     return measureCase(&ctx, c);
@@ -742,7 +744,7 @@ BenchStats measureCase(RegisteredCase c, in BenchConfig config, ref CounterGroup
 
 /// ditto
 package(sparkles.test_runner)
-BenchStats measureCase(BenchContext* context, RegisteredCase c)
+BenchStats measureCase(BenchContext* context, RegisteredCase c) @system
 {
     import std.algorithm.iteration : map;
     import std.array : array;
@@ -827,7 +829,7 @@ struct Registration
 /// a single whole-body case named after the test (the body itself is the measured
 /// unit). Registration-time throws are caught into `result`.
 package(sparkles.test_runner)
-Registration registerBenchmark(Test test, in BenchConfig config)
+Registration registerBenchmark(Test test, in BenchConfig config) @system
 {
     import sparkles.test_runner.execution : executeTest;
 
@@ -850,6 +852,7 @@ Registration registerBenchmark(Test test, in BenchConfig config)
 package(sparkles.test_runner)
 BenchOutcome runBenchmark(Test test, in BenchConfig config, ref CounterGroups counters,
     void delegate(scope const(char)[] name) @safe nothrow @nogc onCaseStart = null)
+    @system
 {
     import sparkles.test_runner.execution : toThrown;
 
