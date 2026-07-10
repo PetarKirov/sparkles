@@ -920,12 +920,14 @@ unittest
         reg(size);
 }
 
+version (linux)
 @("syscalls.demo")
 @benchmark @system
 unittest
 {
-    // Dogfoods --syscalls: each measured iteration issues exactly one getpid, so
-    // under `--bench --syscalls=getpid` the `sc:getpid` column reads ≈ 1.
+    // Dogfoods --syscalls (Linux-only, like the tracepoint counters it demos):
+    // each measured iteration issues exactly one getpid, so under
+    // `--bench --syscalls=getpid` the `sc:getpid` column reads ≈ 1.
     // Skipped by default; measured under --bench.
     import core.sys.posix.unistd : getpid;
 
