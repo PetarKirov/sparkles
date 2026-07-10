@@ -14,6 +14,11 @@ module table_bench_ticker_example;
 // (dots share a cell) and the relative column is a bar scaled against the
 // fastest result so far, recomputed every repaint.
 //
+// Layout is per-frame, so a growing table would re-derive its column widths
+// every repaint and visibly jump as longer names and the first bar arrive;
+// `TableProps.columnMinWidths` floors computed from the roster up front
+// (`stableMinWidths`) pin the geometry so no frame resizes.
+//
 // Measurement is interleaved, not threaded: iterations run in small batches
 // between repaints, so the work itself paces the animation. The numbers are
 // illustrative (a debug build, clock reads in the loop) — the demo is about
@@ -48,6 +53,9 @@ struct CliParams
     int intervalMs = 80;
 }
 
+/// Cells in the relative column's bar when at full (= fastest) length.
+enum fullBar = 12;
+
 /// A micro-workload: one call of `op` is one iteration; the returned value is
 /// folded into a sink so the work cannot be optimized away.
 struct Bench
@@ -76,10 +84,16 @@ void main(string[] args)
     const budget = dur!"msecs"(max(cli.budgetMs, 1));
     const frameSlice = dur!"msecs"(max(cli.intervalMs, 1));
 
+    auto benches = makeBenches();
+    // Pin the geometry before the first frame: without floors every repaint
+    // re-derives column widths from the rows present so far, so the table
+    // visibly jumps as longer names and the first bar arrive (flicker).
+    const minWidths = stableMinWidths(benches);
+
     BenchResult[] results;
     ulong sink;
     size_t spin;
-    foreach (bench; makeBenches())
+    foreach (bench; benches)
     {
         auto sw = StopWatch(AutoStart.yes);
         ulong iters;
@@ -94,20 +108,21 @@ void main(string[] args)
                 ++iters;
             }
             if (region.interactive)
-                region.update(frameLines(results, bench.name, spin++, cli.budgetMs));
+                region.update(frameLines(results, bench.name, spin++,
+                    cli.budgetMs, minWidths));
         }
         const elapsed = sw.peek;
         results ~= BenchResult(bench.name, iters,
             iters ? cast(double) elapsed.total!"nsecs" / iters : double.nan);
         if (region.interactive)
-            region.update(frameLines(results, null, spin, cli.budgetMs));
+            region.update(frameLines(results, null, spin, cli.budgetMs, minWidths));
     }
 
     // Piped runs saw no frames; print the final table once. The sink is part
     // of the output so the measured work stays observable.
     if (!region.interactive)
         write(drawTable(resultCells(results, null, 0),
-            frameProps(cli.budgetMs)));
+            frameProps(cli.budgetMs, minWidths)));
     if (sink == 0)
         write("(sink: 0)\n"); // practically never; keeps `sink` live
 
@@ -116,12 +131,29 @@ void main(string[] args)
 
 /// One frame: the results so far plus a spinner row for the in-flight
 /// benchmark (`inflight: null` once everything completed).
-string[] frameLines(BenchResult[] results, string inflight, size_t spin, int budgetMs)
+string[] frameLines(BenchResult[] results, string inflight, size_t spin,
+    int budgetMs, in size_t[] minWidths)
 {
     import std.array : array;
 
     return drawTableLines(resultCells(results, inflight, spin),
-        frameProps(budgetMs)).array;
+        frameProps(budgetMs, minWidths)).array;
+}
+
+/// Column-width floors that keep the live table's geometry constant across
+/// frames: the benchmark column already fits every roster name plus the
+/// spinner prefix, and the relative column fits the fastest row's full bar
+/// plus its `1.0×` label before the first result lands. The other columns are
+/// stable through their headers alone (`iterations` == `measuring…` == 10
+/// cells; `time/iter` covers `888.88µs`).
+size_t[] stableMinWidths(Bench[] benches)
+{
+    import sparkles.base.text.grapheme : visibleWidth;
+
+    size_t name;
+    foreach (ref b; benches)
+        name = max(name, visibleWidth(b.name));
+    return [name + 2, 0, 0, fullBar + 1 + visibleWidth("1.0×")];
 }
 
 /// ditto
@@ -152,13 +184,14 @@ string[][] resultCells(BenchResult[] results, string inflight, size_t spin)
 }
 
 /// ditto
-TableProps frameProps(int budgetMs)
+TableProps frameProps(int budgetMs, in size_t[] minWidths)
 {
     return TableProps(
         headerRows: 1,
         title: styledText(i"{bold Micro-benchmarks}"),
         footer: text("~", budgetMs, " ms budget each"),
         columnAligns: [Align.left, Align.right, Align.decimal, Align.left],
+        columnMinWidths: minWidths.dup,
     );
 }
 
@@ -181,7 +214,6 @@ string relativeBar(double ns, double fastest)
 {
     import std.math.exponential : log2;
 
-    enum fullBar = 12;
     const slowdown = ns / fastest;
     const cells = max(1, fullBar - cast(int) (log2(slowdown) * 1.25 + 0.5));
     string bar;
