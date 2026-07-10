@@ -47,5 +47,5 @@ equivalent `drawTable(…, TableProps(…))` call.
 > real terminal are a font-rendering artifact, not a `drawTable` bug.
 
 For the full API — spans, alignment, glyph presets, custom glyphs, validation — see
-the module `libs/core-cli/src/sparkles/core_cli/ui/table.d` and the runnable demo
+the module `libs/core-cli/src/sparkles/core_cli/ui/table/` and the runnable demo
 `libs/core-cli/examples/table.d`.
