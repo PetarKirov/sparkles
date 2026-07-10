@@ -4,6 +4,7 @@ import std.array : array, appender;
 import std.algorithm : map, all, maxElement, sort;
 import std.algorithm.comparison : max, min;
 import std.range : iota;
+import std.range.primitives : isOutputRange;
 
 import expected : Expected, ok, err;
 
@@ -833,6 +834,113 @@ string drawTable(Placement[] cells, TableProps props = TableProps.init)
     return drawGrid(resolveGrid(cells).grid, props);
 }
 
+/// The lazy line view of `drawTable`: **eager layout, lazy emission**. Table
+/// layout is two-pass (column widths scan all content), so unlike the
+/// fixed-width `drawBox` case the input can never be consumed lazily; what is
+/// lazy is emission — each rule / body text line is built on demand from the
+/// resolved layout.
+///
+/// A *forward* range of `string` lines **without** trailing newlines (ready for
+/// `LiveRegion.update`), with `.length`. Parity:
+/// `drawTableLines(c, p).map!(l => l ~ '\n').join == drawTable(c, p)`
+/// byte-for-byte (drawTable terminates every line, including the last), i.e.
+/// `drawTableLines(c, p).array == drawTable(c, p).splitLines`. An empty grid is
+/// an empty range (drawTable's historical `""`).
+auto drawTableLines(string[][] cells, TableProps props = TableProps.init)
+in (hasRectangularShape(cells))
+{
+    return tableLineRange(resolveGrid(toCells(cells)).grid, props);
+}
+
+/// ditto
+auto drawTableLines(Cell[][] cells, TableProps props = TableProps.init)
+{
+    return tableLineRange(resolveGrid(cells).grid, props);
+}
+
+/// ditto
+auto drawTableLines(Placement[] cells, TableProps props = TableProps.init)
+{
+    return tableLineRange(resolveGrid(cells).grid, props);
+}
+
+/// ditto
+private TableLineRange tableLineRange(SlotGrid g, TableProps p)
+{
+    auto lay = computeTableLayout(g, p);
+    return TableLineRange(lay, lineDescs(lay));
+}
+
+/// The range type of $(LREF drawTableLines). All state is value cursors over
+/// the immutable resolved layout, so `save` is a struct copy — usable twice
+/// (e.g. a `LiveRegion` re-render).
+struct TableLineRange
+{
+    private TableLayout _lay;
+    private LineDesc[] _descs;
+    private size_t _i;
+
+    /// Forward-range primitives.
+    bool empty() const @safe pure nothrow @nogc => _i >= _descs.length;
+
+    /// ditto
+    string front() const
+    in (!empty)
+        => renderLine(_lay, _descs[_i]);
+
+    /// ditto
+    void popFront() @safe pure nothrow @nogc
+    in (!empty)
+    {
+        _i++;
+    }
+
+    /// ditto
+    TableLineRange save() @safe pure nothrow @nogc => this;
+
+    /// Remaining line count (cheap: the descriptors are precomputed).
+    size_t length() const @safe pure nothrow @nogc => _descs.length - _i;
+}
+
+/// Output-range form: put exactly `drawTable`'s bytes into `w` (a composition
+/// convenience — internals still allocate during layout; this is not a `@nogc`
+/// path). Returns `w` for chaining.
+ref Writer drawTable(Writer)(return ref Writer w, string[][] cells,
+    TableProps props = TableProps.init)
+if (isOutputRange!(Writer, char))
+in (hasRectangularShape(cells))
+{
+    return putTable(w, tableLineRange(resolveGrid(toCells(cells)).grid, props));
+}
+
+/// ditto
+ref Writer drawTable(Writer)(return ref Writer w, Cell[][] cells,
+    TableProps props = TableProps.init)
+if (isOutputRange!(Writer, char))
+{
+    return putTable(w, tableLineRange(resolveGrid(cells).grid, props));
+}
+
+/// ditto
+ref Writer drawTable(Writer)(return ref Writer w, Placement[] cells,
+    TableProps props = TableProps.init)
+if (isOutputRange!(Writer, char))
+{
+    return putTable(w, tableLineRange(resolveGrid(cells).grid, props));
+}
+
+private ref Writer putTable(Writer)(return ref Writer w, TableLineRange lines)
+{
+    import std.range.primitives : put;
+
+    foreach (line; lines)
+    {
+        put(w, line);
+        put(w, '\n');
+    }
+    return w;
+}
+
 
 unittest
 {
@@ -1511,4 +1619,89 @@ version (unittest) private void checkRender(string actual, string expected)
     const plain = drawTable([["1", "22"], ["333", "4"]],
         TableProps(columnAligns: [Align.right, Align.right]));
     assert(t == plain);
+}
+
+@("drawTable.lines.joinEqualsString")
+@system unittest
+{
+    import std.algorithm.iteration : joiner, map;
+    import std.array : array;
+    import std.conv : to;
+    import std.string : splitLines;
+
+    // The parity matrix: every layout feature the eager renderer covers.
+    static void checkParity(T)(T cells, TableProps props)
+    {
+        const eager = drawTable(cells, props);
+        auto range = drawTableLines(cells, props);
+        assert(range.map!(l => l ~ '\n').joiner.to!string == eager);
+        assert(drawTableLines(cells, props).array == eager.splitLines);
+        assert(drawTableLines(cells, props).length == eager.splitLines.length);
+    }
+
+    checkParity([["a", "bb"], ["ccc", "d"]], TableProps.init);
+    checkParity([["a", "bb"], ["ccc", "d"]], TableProps(rowSeparators: true));
+    checkParity([["h1", "h2"], ["a", "b"]], TableProps(headerRows: 1, headerCols: 1));
+    checkParity([["a", "b"]], TableProps(border: false));
+    checkParity([["alpha", "beta"], ["1", "2"]],
+        TableProps(title: "Title", footer: "Foot"));
+    checkParity([["a", "b"]], TableProps(title: "T", footer: "F", border: false));
+    checkParity([["a long wrapping cell content here", "x"]],
+        TableProps(maxWidth: 18));
+    checkParity([["alpha", "beta"], ["1", "2"]],
+        TableProps(columnMaxWidths: [3, 0]));
+    checkParity([[Cell("span", colSpan: 2)], [Cell("a"), Cell("b")]], TableProps.init);
+    checkParity([[Cell("tall", rowSpan: 2), Cell("x")], [Cell("y")]],
+        TableProps(rowSeparators: true));
+    checkParity([["n", "value"], ["a", "1.5"], ["b", "12.25"]],
+        TableProps(headerRows: 1, columnAligns: [Align.left, Align.decimal]));
+    checkParity([
+        Placement(0, 0, "A", colSpan: 2),
+        Placement(1, 1, "B"),
+    ], TableProps.init);
+
+    // Empty grid: drawTable's historical "" -> an empty range.
+    string[][] none;
+    assert(drawTable(none) == "");
+    assert(drawTableLines(none).empty);
+}
+
+@("drawTable.lines.forwardRangeSave")
+@system unittest
+{
+    import std.array : array;
+
+    auto lines = drawTableLines([["a", "b"], ["c", "d"]],
+        TableProps(title: "T"));
+    auto saved = lines.save;
+    const first = lines.array;
+    const second = saved.array; // the saved copy traverses independently
+    assert(first == second);
+    assert(first.length == 4);
+}
+
+@("drawTable.writer.matchesString")
+@system unittest
+{
+    import std.array : appender;
+
+    static void checkWriterParity(T)(T cells, TableProps props)
+    {
+        auto w = appender!string;
+        drawTable(w, cells, props);
+        assert(w[] == drawTable(cells, props));
+    }
+
+    checkWriterParity([["a", "bb"], ["ccc", "d"]], TableProps.init);
+    checkWriterParity([["alpha", "beta"], ["1", "2"]],
+        TableProps(title: "Title", footer: "Foot", headerRows: 1));
+    checkWriterParity([[Cell("span", colSpan: 2)], [Cell("a"), Cell("b")]],
+        TableProps.init);
+    checkWriterParity([Placement(0, 0, "A", colSpan: 2), Placement(1, 1, "B")],
+        TableProps.init);
+
+    // Returns the writer by ref for chaining.
+    auto w = appender!string;
+    drawTable(w, [["x"]]).put("tail");
+    assert(w[] == drawTable([["x"]]) ~ "tail");
 }
