@@ -87,6 +87,9 @@ struct TableGlyphs
     dchar horizontalLine = '─', verticalLine = '│';
     dchar teeDown = '┬', teeUp = '┴', teeRight = '├', teeLeft = '┤', cross = '┼';
     dchar cornerTL = '┌', cornerTR = '┐', cornerBL = '└', cornerBR = '┘';
+    /// Decorations around a `TableProps.title`/`footer` spliced into the border
+    /// (`╭──╼ Title ╾─┬──╮`), matching `drawBox`'s frame decorations.
+    dchar titlePrefix = '╼', titleSuffix = '╾';
 
     /// Header-ROW rule: heavy horizontal, light vertical (`┝━━┿━━┥`).
     EmphasisGlyphs headerRow = EmphasisGlyphs(
@@ -140,6 +143,13 @@ struct TableProps
     /// a short/empty array means that column is unbounded. Content over a column's cap
     /// wraps.
     size_t[] columnMaxWidths = null;
+
+    /// Optional title/footer, spliced into the top/bottom border like `drawBox`'s
+    /// (`╭──╼ Title ╾─┬──╮`), truncated with `…` when the table is too narrow. May
+    /// carry ANSI styling (measured by visible width). With `border: false` they
+    /// render as plain lines above/below the rows.
+    string title = null;
+    string footer = null; /// ditto
 
     /// Horizontal alignment. `columnAligns[c]` (when in range and not `inherit`)
     /// overrides `defaultAlign` for column `c`.
@@ -219,6 +229,7 @@ TableGlyphs presetGlyphs(string name) @safe pure nothrow
                 horizontalLine: '-', verticalLine: '|',
                 teeDown: '+', teeUp: '+', teeRight: '+', teeLeft: '+', cross: '+',
                 cornerTL: '+', cornerTR: '+', cornerBL: '+', cornerBR: '+',
+                titlePrefix: '[', titleSuffix: ']',
                 headerRow: asciiHeaderRow, headerCol: asciiEmph, headerBoth: asciiHeaderRow);
         // double & heavy have no heavier form, so their emphasis rules reuse the body
         // glyphs (drawn, but not visually heavier).
@@ -232,6 +243,7 @@ TableGlyphs presetGlyphs(string name) @safe pure nothrow
                 horizontalLine: '═', verticalLine: '║',
                 teeDown: '╦', teeUp: '╩', teeRight: '╠', teeLeft: '╣', cross: '╬',
                 cornerTL: '╔', cornerTR: '╗', cornerBL: '╚', cornerBR: '╝',
+                titlePrefix: '╡', titleSuffix: '╞',
                 headerRow: doubleEmph, headerCol: doubleEmph, headerBoth: doubleEmph);
         case "heavy":
             enum EmphasisGlyphs heavyEmph = EmphasisGlyphs(
@@ -243,6 +255,7 @@ TableGlyphs presetGlyphs(string name) @safe pure nothrow
                 horizontalLine: '━', verticalLine: '┃',
                 teeDown: '┳', teeUp: '┻', teeRight: '┣', teeLeft: '┫', cross: '╋',
                 cornerTL: '┏', cornerTR: '┓', cornerBL: '┗', cornerBR: '┛',
+                titlePrefix: '┫', titleSuffix: '┣',
                 headerRow: heavyEmph, headerCol: heavyEmph, headerBoth: heavyEmph);
         case "rounded":
         default:
@@ -850,8 +863,44 @@ private string bodyRow(in SlotGrid g, in size_t[] w, in string[][] lines,
     return out_[];
 }
 
-/// Render a resolved grid: top border, then each (multi-line) body row with interior
-/// rules between rows when `rowSeparators`, then the bottom border.
+/// Splice `label`, wrapped in the title decorations, into a border `rule` (which
+/// ends in `\n`): `╭──╼ Label ╾─┬──╮`. The label is truncated with `…` when the
+/// rule is too narrow; junction glyphs under the label are simply covered (the
+/// same policy as `drawBox`, whose title also interrupts its top rule). `label`
+/// may be styled — it is measured by visible width and spliced opaquely between
+/// plain-`dchar` border runs.
+private string spliceIntoRule(string rule, string label, in TableProps p)
+{
+    import std.conv : to;
+    import sparkles.base.text.width : truncateField;
+
+    auto chars = rule[0 .. $ - 1].to!(dchar[]); // border glyphs are 1 cell each
+    enum lead = 3;         // corner + two fill cells before the decoration
+    enum decoration = 4;   // prefix + space … space + suffix
+    enum trail = 2;        // at least one fill cell + the closing corner
+    if (chars.length < lead + decoration + 1 + trail)
+        return rule; // too narrow for any label; keep the plain border
+
+    const maxLabel = chars.length - lead - decoration - trail;
+    const clamped = truncateField(label, maxLabel);
+    const labelWidth = visibleWidth(clamped);
+
+    auto out_ = appender!string;
+    out_ ~= chars[0 .. lead].to!string;
+    out_ ~= p.glyphs.titlePrefix;
+    out_ ~= ' ';
+    out_ ~= clamped;
+    out_ ~= ' ';
+    out_ ~= p.glyphs.titleSuffix;
+    out_ ~= chars[lead + decoration + labelWidth .. $].to!string;
+    out_ ~= '\n';
+    return out_[];
+}
+
+/// Render a resolved grid: top border (carrying `title` when set), then each
+/// (multi-line) body row with interior rules between rows when `rowSeparators`,
+/// then the bottom border (carrying `footer`). With `border: false` a title/
+/// footer degrade to plain lines above/below the rows.
 private string drawGrid(in SlotGrid g, in TableProps p)
 {
     if (g.numRows == 0 || g.numCols == 0)
@@ -861,7 +910,12 @@ private string drawGrid(in SlotGrid g, in TableProps p)
     auto heights = resolveRowHeights(g, lines);
     auto out_ = appender!string;
     if (p.border)
-        out_ ~= separatorLine(g, w, p, 0);
+    {
+        auto top = separatorLine(g, w, p, 0);
+        out_ ~= p.title.length ? spliceIntoRule(top, p.title, p) : top;
+    }
+    else if (p.title.length)
+        out_ ~= p.title ~ "\n";
     foreach (r; 0 .. g.numRows)
     {
         out_ ~= bodyRow(g, w, lines, heights, p, r);
@@ -869,7 +923,12 @@ private string drawGrid(in SlotGrid g, in TableProps p)
             out_ ~= separatorLine(g, w, p, r + 1);
     }
     if (p.border)
-        out_ ~= separatorLine(g, w, p, g.numRows);
+    {
+        auto bottom = separatorLine(g, w, p, g.numRows);
+        out_ ~= p.footer.length ? spliceIntoRule(bottom, p.footer, p) : bottom;
+    }
+    else if (p.footer.length)
+        out_ ~= p.footer ~ "\n";
     return out_[];
 }
 
@@ -908,6 +967,15 @@ if (is(T == Cell[]) || is(T == Placement))
 {
     auto r = resolveGrid(cells);
     return r.errors.length ? err!bool(r.errors[0]) : ok!TableError(true);
+}
+
+/// Every table-model error in placement order (empty = well-formed) — the
+/// all-errors sibling of `validateTable`, for callers that report rather than
+/// merely reject.
+TableError[] validateTableAll(T)(in T[] cells)
+if (is(T == Cell[]) || is(T == Placement))
+{
+    return resolveGrid(cells).errors;
 }
 
 unittest
@@ -1486,4 +1554,74 @@ version (unittest) private void checkRender(string actual, string expected)
     import std.string : splitLines;
 
     assert(drawTable([[Cell("x", rowSpan: 3)], [Cell("y")]]).splitLines.length == 4);
+}
+
+@("drawTable.validate.allErrors")
+@safe unittest
+{
+    // One overlap (c's colspan extends into b's rowspan-covered slot) + one
+    // out-of-bounds rowspan (d past the last authored row): validateTable
+    // reports only the first, validateTableAll both.
+    auto cells = [
+        [Cell("a"), Cell("b", rowSpan: 2)],
+        [Cell("c", colSpan: 2), Cell("d", rowSpan: 3)],
+    ];
+    assert(validateTable(cells).hasError);
+    const all = validateTableAll(cells);
+    assert(all.length == 2);
+    assert(all[0].kind == TableErrorKind.overlap);
+    assert(all[1].kind == TableErrorKind.rowSpanOutOfBounds);
+
+    assert(validateTableAll([[Cell("x")]]).length == 0);
+}
+
+@("drawTable.title.splicedIntoTopBorder")
+@system unittest
+{
+    import sparkles.test_utils.string : outdent;
+
+    checkRender(drawTable([["alpha", "beta"], ["1", "2"]],
+        TableProps(title: "T")), `
+        ╭──╼ T ╾┬──────╮
+        │ alpha │ beta │
+        │ 1     │ 2    │
+        ╰───────┴──────╯
+        `.outdent(2));
+}
+
+@("drawTable.titleFooter.truncateAndAscii")
+@system unittest
+{
+    import std.algorithm.searching : canFind, startsWith;
+    import std.string : splitLines;
+    import sparkles.base.text.grapheme : visibleWidth;
+
+    // A title wider than the table truncates with '…' instead of widening the
+    // frame; every line keeps the same width, and the footer is spliced with
+    // the same decorations.
+    const t = drawTable([["alpha", "beta"]],
+        TableProps(title: "a very long table title", footer: "f"));
+    const lines = t.splitLines;
+    assert(lines[0].canFind("…"));
+    assert(lines[$ - 1].canFind("╼ f ╾"));
+    foreach (line; lines)
+        assert(line.visibleWidth == lines[0].visibleWidth);
+
+    // The ascii preset swaps the decorations to [ ] (a frame narrower than
+    // the decorations keeps its plain border, so use wide-enough cells).
+    const ascii = drawTable([["alpha", "beta"]],
+        TableProps(title: "T", glyphs: presetGlyphs("ascii")));
+    assert(ascii.splitLines[0].startsWith("+--[ T ]"));
+}
+
+@("drawTable.titleFooter.borderlessDegradesToPlainLines")
+@system unittest
+{
+    import std.string : splitLines;
+
+    const t = drawTable([["a", "b"]],
+        TableProps(title: "Title", footer: "Footer", border: false));
+    // The body row keeps its right gutter (a trailing space), so compare per
+    // line rather than via an outdented literal.
+    assert(t.splitLines == ["Title", " a │ b ", "Footer"]);
 }
