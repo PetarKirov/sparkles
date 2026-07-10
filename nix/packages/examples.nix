@@ -164,8 +164,97 @@
           )
         ))
       ];
+
+      # Faithful port of ci's `parseStandaloneExampleMode` (apps/ci/src/app.d):
+      # skip the shebang and the inline `/+ dub.sdl: … +/` block, then scan the
+      # header comment — the first `// ci:` / `// run_md_examples:` directive
+      # decides the mode, and the header ends at the first non-comment line.
+      exampleMode =
+        examplePath:
+        let
+          step =
+            acc: rawLine:
+            let
+              line = lib.trim rawLine;
+              directive =
+                prefix:
+                acc
+                // {
+                  mode =
+                    if lib.toLower (lib.trim (lib.removePrefix prefix line)) == "build-only" then
+                      "build-only"
+                    else
+                      "run";
+                };
+            in
+            if acc.mode != null || line == "" || lib.hasPrefix "#!" line then
+              acc
+            else if acc.insideDubSdl then
+              acc // { insideDubSdl = !lib.hasPrefix "+/" line; }
+            else if lib.hasPrefix "/+ dub.sdl:" line then
+              acc // { insideDubSdl = true; }
+            else if lib.hasPrefix "// ci:" line then
+              directive "// ci:"
+            else if lib.hasPrefix "// run_md_examples:" line then
+              directive "// run_md_examples:"
+            else if !lib.hasPrefix "//" line then
+              acc // { mode = "run"; }
+            else
+              acc;
+          result = lib.foldl' step {
+            mode = null;
+            insideDubSdl = false;
+          } (lib.splitString "\n" (builtins.readFile examplePath));
+        in
+        if result.mode == null then "run" else result.mode;
+
+      # Every example paired with its derivation and ci-equivalent mode.
+      annotatedExamples = map (
+        path:
+        let
+          info = exampleInfo path;
+        in
+        {
+          label = "${info.libName}/${info.fileBase}";
+          mode = exampleMode path;
+          drv = examplesByLib.${info.libName}.${info.fileBase};
+        }
+      ) allExampleFiles;
     in
     {
       legacyPackages.examples = examplesByLib;
+
+      # Smoke-run every standalone example the way `ci --example-files` does:
+      # `// ci: build-only` examples are built (they are retained in the
+      # script's closure) but not executed; the rest run sequentially and any
+      # non-zero exit is collected into the final status.
+      packages.run-all-examples = pkgs.writeShellApplication {
+        name = "run-all-examples";
+        text = ''
+          failures=0
+          ${lib.concatMapStrings (
+            ex:
+            if ex.mode == "build-only" then
+              ''
+                echo "⊘ ${ex.label} — build-only, not run (${ex.drv})"
+                echo
+              ''
+            else
+              ''
+                echo "━━━ ${ex.label} ━━━"
+                if ! ${lib.getExe ex.drv}; then
+                  echo "✗ ${ex.label} failed"
+                  failures=$((failures + 1))
+                fi
+                echo
+              ''
+          ) annotatedExamples}
+          total=${
+            toString (builtins.length (builtins.filter (ex: ex.mode != "build-only") annotatedExamples))
+          }
+          echo "$((total - failures))/$total examples ran successfully"
+          [ "$failures" -eq 0 ]
+        '';
+      };
     };
 }

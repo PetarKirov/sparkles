@@ -148,3 +148,6 @@ jobs:
       # (push-to-cache: true).
       - name: Build & push devShells.full, all packages, and all examples
         run: nix build --print-build-logs .#all
+
+      - name: Run all runnable examples
+        run: nix run .#run-all-examples
