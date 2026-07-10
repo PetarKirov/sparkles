@@ -12,13 +12,14 @@ rationale read the [spec](./index.md); item numbers (A1…E5) refer to its §2._
 
 ## 1. Milestone overview
 
-| #      | Deliverable                                                                                                              | Items          | Depends on | Status                     |
-| ------ | ------------------------------------------------------------------------------------------------------------------------ | -------------- | ---------- | -------------------------- |
-| **M0** | Foundations finish: `term_caps.d`, `terminalSize()`, `truncateField`, theme/glyph hoist                                  | A1, A2, A4, A5 | —          | done (A4 naming pass open) |
-| **M1** | Terminal control + live rendering: `term_control`, live region, task list; adopt in `release` pre-flight/stages and `ci` | A3, D1–D3, D5  | M0         | done (`ci` adoption open)  |
-| **M2** | Interactive prompts + `release` adoption (bump select, publish confirm, receipt)                                         | C1–C4          | M0 (A1)    | done                       |
-| **M3** | Table follow-ups: consumer wiring, title/footer, streaming, validate-all overload                                        | B (table)      | M0 (A2)    | done except streaming      |
-| **M4** | Data display: meter/bar, tree view, horizontal composition                                                               | E1, E2, E4, D4 | M0         | done                       |
+| #      | Deliverable                                                                                                                                                                                      | Items          | Depends on | Status                     |
+| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------- | ---------- | -------------------------- |
+| **M0** | Foundations finish: `term_caps.d`, `terminalSize()`, `truncateField`, theme/glyph hoist                                                                                                          | A1, A2, A4, A5 | —          | done (A4 naming pass open) |
+| **M1** | Terminal control + live rendering: `term_control`, live region, task list; adopt in `release` pre-flight/stages and `ci`                                                                         | A3, D1–D3, D5  | M0         | done (`ci` adoption open)  |
+| **M2** | Interactive prompts + `release` adoption (bump select, publish confirm, receipt)                                                                                                                 | C1–C4          | M0 (A1)    | done                       |
+| **M3** | Table follow-ups: consumer wiring, title/footer, streaming, validate-all overload                                                                                                                | B (table)      | M0 (A2)    | done except streaming      |
+| **M4** | Data display: meter/bar, tree view, horizontal composition                                                                                                                                       | E1, E2, E4, D4 | M0         | done                       |
+| **M5** | Consumer adoption + table streaming: ci live builds/--test checklist, tail pane, decimal + bench wiring, table split + lines/writer/chunks, per-cell align, kvList, runner progress, naming pass | remainder      | M0–M4      | done                       |
 
 ## 2. Per-milestone detail
 
@@ -40,7 +41,7 @@ rationale read the [spec](./index.md); item numbers (A1…E5) refer to its §2._
 - [x] A4: `ui/theme.d` — `BorderStyle` selector shared by box/header/table (reusing
       the table preset registry), `StatusGlyphs` with ASCII fallbacks, `Semantic`
       roles, `makeTheme(TermCaps)`
-- [ ] A4 residue: unify the `colored`/`useColors`/`noColours` parameter spelling
+- [x] A4 residue (M5): unify the `colored`/`useColors`/`noColours` parameter spelling
       across `base`/`test-runner-impl`
 
 ### M1 — Terminal control + live rendering
@@ -56,9 +57,9 @@ rationale read the [spec](./index.md); item numbers (A1…E5) refer to its §2._
       never throws); the bounded tail _pane_ remains future work
 - [x] Consumer: `release` pre-flight + stages are live checklists; ci output lines
       pulse the spinner via `PreflightProgress.output`; skipped stages shown
-- [ ] D2 residue: retire the test runner's ad-hoc CR + erase-line framing in favour
+- [x] D2 residue, reality-checked in M5 (nothing to retire — the runner had no live progress at all; it gained one instead): retire the test runner's ad-hoc CR + erase-line framing in favour
       of `LiveRegion`
-- [ ] Consumer: `ci` per-example verification adopts the task list / progress bar
+- [x] Consumer (M5): `ci` per-example verification adopts the task list / progress bar
 
 ### M2 — Interactive prompts
 
@@ -79,11 +80,11 @@ rationale read the [spec](./index.md); item numbers (A1…E5) refer to its §2._
 - [x] `validateTableAll` (every error in placement order)
 - [x] Consumer wiring: `release` stats adopt `columnAligns`, `headerRows`, titles,
       and `maxWidth: terminalSize().width`
-- [ ] Bench + `ci` tables likewise (needs `TableProps` plumbing through
+- [x] Bench + `ci` tables likewise (M5) (needs `TableProps` plumbing through
       `renderCells`'s capability gate)
-- [ ] Lazy/streaming rendering (parity with `drawBoxLines`/`drawBoxChunks`)
-- [ ] As needed: per-cell align/valign override, `Align.decimal`, writer overload
-- [ ] Structural: split `table/grid.d` (pure resolution) from `table/render.d`
+- [x] Lazy/streaming rendering (M5) (parity with `drawBoxLines`/`drawBoxChunks`)
+- [x] As needed (M5): per-cell align/valign override, `Align.decimal`, writer overload
+- [x] Structural (M5): split `table/grid.d` (pure resolution) from `table/render.d`
       when streaming lands
 
 ### M4 — Data display
@@ -94,7 +95,7 @@ rationale read the [spec](./index.md); item numbers (A1…E5) refer to its §2._
       (tree-view case study); first consumer: `release` area breakdown guides
 - [x] E4 `ui/layout.d` — `hjoin`, visible-width line-zipping
 - [x] Consumer: `release` type breakdown gains a count-proportional bar column
-- [ ] E3 key-value convenience wrapper only if the borderless-table form proves
+- [x] E3 key-value convenience wrapper (M5: `kvList`) only if the borderless-table form proves
       clumsy
 
 ## 3. Deferred / explicitly out of scope
