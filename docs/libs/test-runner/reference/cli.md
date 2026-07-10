@@ -55,7 +55,15 @@ would fail. See
 | `--include-import PATTERN` | Compile matching imported modules in (`-i=PATTERN`; repeatable)  |
 | `--keep`                   | Keep the generated program files and print their location        |
 
+## Skipped tests
+
+A test may skip itself at runtime with `skipTest("reason")` (see
+[Skip tests at runtime](../how-to/skip-tests.md)): it renders as a yellow
+`⊘` line with the reason, adds a `, N skipped` segment to the summary, and
+never fails the run. Under `--bench`, a case-level skip is a yellow row in
+its table.
+
 ## Exit status
 
-`0` when everything passed (or a toolchain-missing mode was skipped);
-non-zero otherwise.
+`0` when everything passed or was skipped (`skipTest`, or a
+toolchain-missing mode); non-zero otherwise.

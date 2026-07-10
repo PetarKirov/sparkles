@@ -417,6 +417,11 @@ see [Design by Introspection Guidelines](./design-by-introspection-01-guidelines
 - At minimum, one public/DDoc-ed unit test (`///`) per function.
 - Keep tests in feature modules, **not** in `package.d` (see the test-runner
   warning above).
+- Environment-dependent tests (perf counters, root-only interfaces, toolchain
+  binaries) call `skipTest(reason)` from `sparkles.test_runner.skip` instead
+  of returning early — an early `return` counts a degraded environment as a
+  pass; a skip renders as a yellow `⊘` line plus an `N skipped` summary
+  segment and never fails the run.
 
 ### Test attributes
 

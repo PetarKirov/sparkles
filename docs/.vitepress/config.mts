@@ -271,6 +271,10 @@ export default withMermaid(
                       text: 'Benchmark with @benchmark',
                       link: '/libs/test-runner/how-to/benchmark',
                     },
+                    {
+                      text: 'Skip tests at runtime',
+                      link: '/libs/test-runner/how-to/skip-tests',
+                    },
                   ],
                 },
                 {
