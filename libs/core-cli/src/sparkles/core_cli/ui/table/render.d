@@ -98,6 +98,14 @@ struct TableProps
     /// wraps.
     size_t[] columnMaxWidths = null;
 
+    /// Per-column min **content** width (excluding separators/gutters); a `0` entry or
+    /// a short/empty array leaves that column at its natural width. A layout floor —
+    /// use it to keep a live/streaming table's geometry stable across re-renders while
+    /// content is still arriving. The caps win on conflict: a `columnMaxWidths` entry
+    /// below the floor still caps the column, and the total `maxWidth` shrink still
+    /// applies.
+    size_t[] columnMinWidths = null;
+
     /// Optional title/footer, spliced into the top/bottom border like `drawBox`'s
     /// (`╭──╼ Title ╾─┬──╮`), truncated with `…` when the table is too narrow. May
     /// carry ANSI styling (measured by visible width). With `border: false` they
@@ -355,6 +363,13 @@ private size_t[] resolveColumnWidths(
         if (a.colSpan == 1)
             w[a.col] = max(w[a.col],
                 naturalWidth(a.content) + (decimalPads.length ? decimalPads[i] : 0));
+
+    // Per-column floors, applied before the colspan distribution (columns only
+    // grow, so a floored column may already satisfy a spanning cell) and before
+    // the caps — columnMaxWidths and maxWidth still win, keeping fit guarantees.
+    foreach (c; 0 .. g.numCols)
+        if (c < p.columnMinWidths.length)
+            w[c] = max(w[c], p.columnMinWidths[c]);
 
     // Satisfy colspan cells ascending by span then position: columns only grow, so
     // one pass leaves every spanning cell fitting its final member-column widths.
@@ -1280,6 +1295,49 @@ version (unittest) private void checkRender(string actual, string expected)
         "╰───────┴───╯\n");
 }
 
+@("drawTable.width.columnMinWidths")
+@system unittest
+{
+    // A floor widens a narrow column (content aligns into the wider field);
+    // natural width above the floor is untouched, and a short array leaves the
+    // remaining columns natural.
+    checkRender(drawTable([["a", "b"]], TableProps(columnMinWidths: [5])),
+        "╭───────┬───╮\n" ~
+        "│ a     │ b │\n" ~
+        "╰───────┴───╯\n");
+    assert(drawTable([["abcdef", "b"]], TableProps(columnMinWidths: [3]))
+        == drawTable([["abcdef", "b"]]));
+
+    // The floor keeps a live table's geometry stable: rendering the early rows
+    // under the final widths matches the final table's column layout.
+    const wide = drawTable([["regex 200 e-mails", "1"]]);
+    const early = drawTable([["sort", "1"]],
+        TableProps(columnMinWidths: [17, 0]));
+    import std.string : splitLines;
+    import sparkles.base.text.grapheme : visibleWidth;
+    assert(early.splitLines[0].visibleWidth == wide.splitLines[0].visibleWidth);
+}
+
+@("drawTable.width.columnMinWidthsCapsStillWin")
+@system unittest
+{
+    import std.string : splitLines;
+    import sparkles.base.text.grapheme : visibleWidth;
+
+    // A columnMaxWidths entry below the floor still caps the column.
+    checkRender(drawTable([["ab"]],
+            TableProps(columnMinWidths: [8], columnMaxWidths: [4])),
+        "╭──────╮\n" ~
+        "│ ab   │\n" ~
+        "╰──────╯\n");
+
+    // The total maxWidth shrink also beats the floor, so fit-to-width holds.
+    const rendered = drawTable([["ab"]],
+        TableProps(columnMinWidths: [10], maxWidth: 9));
+    foreach (l; rendered.splitLines)
+        assert(l.visibleWidth == 9);
+}
+
 @("drawTable.wrap.embeddedNewline")
 @system unittest
 {
@@ -1692,6 +1750,8 @@ version (unittest) private void checkRender(string actual, string expected)
         TableProps(maxWidth: 18));
     checkParity([["alpha", "beta"], ["1", "2"]],
         TableProps(columnMaxWidths: [3, 0]));
+    checkParity([["a", "b"], ["c", "d"]],
+        TableProps(columnMinWidths: [6, 0]));
     checkParity([[Cell("span", colSpan: 2)], [Cell("a"), Cell("b")]], TableProps.init);
     checkParity([[Cell("tall", rowSpan: 2), Cell("x")], [Cell("y")]],
         TableProps(rowSeparators: true));
@@ -1935,6 +1995,7 @@ private struct TableChunkRange(bool lineBuffered)
     checkChunksParity([[Cell("tall", rowSpan: 2), Cell("x")], [Cell("y")]],
         TableProps.init);
     checkChunksParity([["long wrapping content", "x"]], TableProps(maxWidth: 14));
+    checkChunksParity([["a", "b"]], TableProps(columnMinWidths: [6, 4]));
     checkChunksParity([Placement(0, 0, "A", colSpan: 2), Placement(1, 1, "B")],
         TableProps.init);
 
