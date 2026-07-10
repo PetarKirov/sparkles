@@ -255,6 +255,70 @@ void main()
                 header: "validateTable (overlap): reports the error AND still renders deterministically",
                 content: validationNote ~ "\n\n" ~ drawTable(overlapping),
             ),
+            //
+            // 13. Title & footer — spliced into the frame like drawBox's
+            //
+            Section(
+                header: "Title/footer: spliced into the borders (truncated with … when narrow)",
+                content: drawTable([
+                    ["item", "qty"],
+                    ["nuts", "12"],
+                    ["bolts", "7"],
+                ], TableProps(title: styledText(i"{bold Inventory}"),
+                    footer: "2 kinds", headerRows: 1,
+                    columnAligns: [Align.left, Align.right])),
+            ),
+            //
+            // 14. Align.decimal — a column of numbers sharing a dot position
+            //
+            Section(
+                header: "Align.decimal: values align on the last '.' (dotless sit left of it)",
+                content: drawTable([
+                    ["benchmark", "median/iter"],
+                    ["parse", "1.25µs"],
+                    ["render", "23.5µs"],
+                    ["noop", "980ns"],
+                ], TableProps(headerRows: 1,
+                    columnAligns: [Align.left, Align.decimal])),
+            ),
+            //
+            // 15. Per-cell halign/valign — overrides beat the column default
+            //
+            Section(
+                header: "Per-cell align: a centered colspan banner over left/right columns",
+                content: drawTable([
+                    [Cell("Quarterly totals", colSpan: 2, halign: Align.center)],
+                    [Cell("north"), Cell("1200", halign: Align.right)],
+                    [Cell("south"), Cell("98", halign: Align.right)],
+                ]),
+            ),
+            //
+            // 16. Streaming views — lazy line/chunk emission (eager layout)
+            //
+            Section(
+                header: "drawTableLines: a forward range of lines (LiveRegion-ready), byte-identical joined",
+                content: streamingNote,
+            ),
         ],
     );
+}
+
+/// Demonstrates the streaming views: `drawTableLines` yields the same bytes as
+/// `drawTable` line by line (no trailing newlines — ready for a `LiveRegion`
+/// frame), and `drawTableChunks!false` reveals the table cell by cell.
+private string streamingNote()
+{
+    import std.algorithm.iteration : joiner, map;
+    import std.conv : text, to;
+    import std.range : enumerate;
+    import sparkles.core_cli.ui.table : drawTableChunks, drawTableLines;
+
+    auto cells = [["a", "b"], ["1", "2"]];
+    string out_;
+    foreach (i, line; drawTableLines(cells).enumerate)
+        out_ ~= text("line ", i, ": ", line, "\n");
+
+    const chunks = drawTableChunks!false(cells).map!(to!string).joiner(" ⏵ ").to!string;
+    out_ ~= "\ncell chunks: " ~ chunks;
+    return out_;
 }
