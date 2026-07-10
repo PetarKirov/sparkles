@@ -615,9 +615,47 @@ unittest
 /// Type-erases a case's generic `timed`/`after` into a `RegisteredCase`'s uniform
 /// delegates. A value-returning `timed` stashes its result in a shared slot that
 /// `runAfter` reads, so the value still flows to `after` across the erasure.
+/// Enforces `groupKeyOf`'s collision-freedom invariant at registration time:
+/// group-key parts are joined with the US control character (`metrics.d`'s
+/// `groupKeySep`), which therefore must not appear in a case name or label —
+/// throwing here fails the registering `@benchmark` body with a readable
+/// message instead of silently merging distinct groups later.
+private void validateGroupSafe(string name, in string[string] labels) @safe pure
+{
+    static bool clean(in char[] s) @safe pure nothrow @nogc
+    {
+        foreach (ch; s)
+            if (ch == '\x1f')
+                return false;
+        return true;
+    }
+
+    if (!clean(name))
+        throw new Exception(
+            "benchCase name contains the reserved group separator U+001F: " ~ name);
+    foreach (k, v; labels)
+        if (!clean(k) || !clean(v))
+            throw new Exception("benchCase '" ~ name
+                ~ "' label contains the reserved group separator U+001F: "
+                ~ k ~ "=" ~ v);
+}
+
+@("bench.validateGroupSafe")
+@safe pure
+unittest
+{
+    import std.exception : assertThrown;
+
+    validateGroupSafe("ok", ["dataset": "x/y"]); // '/' is fine — U+001F is not
+    assertThrown(validateGroupSafe("a\x1fb", null));
+    assertThrown(validateGroupSafe("ok", ["k": "a\x1fb"]));
+    assertThrown(validateGroupSafe("ok", ["a\x1fb": "v"]));
+}
+
 private RegisteredCase makeCase(Timed, After)(string name, string[string] labels,
     Timed timed, After after, Metric[] metrics, void delegate() setup, void delegate() teardown)
 {
+    validateGroupSafe(name, labels);
     RegisteredCase c;
     c.name = name;
     c.labels = labels;
