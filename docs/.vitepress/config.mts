@@ -29,6 +29,7 @@ export default withMermaid(
     srcExclude: [
       '**/research/parsing/grounding/**',
       '**/research/units-of-measure/grounding/**',
+      '**/research/cpu-pmu/grounding/**',
       '**/research/iroh/prompt.md',
     ],
 
@@ -1087,6 +1088,81 @@ export default withMermaid(
                     {
                       text: 'Comparison & Recommendations',
                       link: '/research/async-io/comparison',
+                    },
+                  ],
+                },
+              ],
+            },
+            {
+              text: 'CPU PMUs',
+              link: '/research/cpu-pmu/',
+              collapsed: true,
+              items: [
+                {
+                  text: 'Concepts',
+                  link: '/research/cpu-pmu/concepts',
+                },
+                {
+                  text: 'The Linux Stack',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'perf_event_open (the hub)',
+                      link: '/research/cpu-pmu/linux-perf-events',
+                    },
+                    {
+                      text: 'elfutils (code space)',
+                      link: '/research/cpu-pmu/elfutils',
+                    },
+                    {
+                      text: 'libtraceevent (event space)',
+                      link: '/research/cpu-pmu/libtraceevent',
+                    },
+                    {
+                      text: 'libnuma (topology)',
+                      link: '/research/cpu-pmu/libnuma',
+                    },
+                    {
+                      text: 'Precise Sampling (IBS/PEBS/SPE)',
+                      link: '/research/cpu-pmu/precise-sampling',
+                    },
+                  ],
+                },
+                {
+                  text: 'ISA Mappings',
+                  collapsed: true,
+                  items: [
+                    { text: 'ARMv8+', link: '/research/cpu-pmu/arm' },
+                    { text: 'RISC-V', link: '/research/cpu-pmu/riscv' },
+                  ],
+                },
+                {
+                  text: 'OS Backends',
+                  collapsed: true,
+                  items: [
+                    { text: 'Windows', link: '/research/cpu-pmu/windows' },
+                    { text: 'macOS', link: '/research/cpu-pmu/macos' },
+                  ],
+                },
+                {
+                  text: 'Event Naming & Encoding',
+                  link: '/research/cpu-pmu/event-naming',
+                },
+                {
+                  text: 'Synthesis',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Capability Comparison',
+                      link: '/research/cpu-pmu/comparison',
+                    },
+                    {
+                      text: 'sparkles Baseline',
+                      link: '/research/cpu-pmu/sparkles-baseline',
+                    },
+                    {
+                      text: 'Backend Proposal',
+                      link: '/research/cpu-pmu/backend-proposal',
                     },
                   ],
                 },
