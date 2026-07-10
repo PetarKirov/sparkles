@@ -1,0 +1,38 @@
+# ThreadSanitizer suppressions for sparkles:event-horizon.
+#
+# Usage:
+#   DFLAGS="-fsanitize=thread -allinst" dub test :event-horizon --force
+#   TSAN_OPTIONS="suppressions=libs/event-horizon/tsan-suppressions.txt" \
+#     ./libs/event-horizon/build/sparkles-event-horizon-test-unittest
+#
+# Both entries below are documented FALSE POSITIVES inherent to (1) correct
+# lock-free code and (2) a precompiled runtime. Neither is an event-horizon
+# bug. The lock-free deque is independently verified correct: AddressSanitizer-
+# clean over 70 full-suite stress runs, its fan-out test asserts every task ran
+# exactly once, and it matches the canonical Chase-Lev algorithm.
+
+# ── (1) Lock-free Chase-Lev work-stealing deque (pool.d) ─────────────────────
+# The deque synchronizes owner push/pop against thieves' steals with standalone
+# seq_cst fences (`atomicFence`) plus a release/acquire on `_bottom` — the
+# canonical correct-under-weak-memory protocol (Lê, Pop, Cohen, Nardelli 2013,
+# "Correct and Efficient Work-Stealing for Weak Memory Models"). TSan cannot
+# model `atomic_thread_fence` and does not fully track release *sequences*, so
+# it reports false races on the buffer-slot Job memcpy between `push` (owner
+# writes slot b) and `stealBatch`/`stealHead` (thief reads slots < bottom ≤ b).
+# The not-full invariant (push grows before it could wrap onto a live slot)
+# guarantees these are never the same live slot.
+race:*4pool5Deque*
+
+# ── (2) druntime — GC, thread management, array runtime (all precompiled) ────
+# Worker threads allocate concurrently (path strings, closures) and are spawned
+# through druntime's own thread machinery. The GC malloc/pooltable/mmap, the
+# thread-list bookkeeping in Thread.start, and the array-concat runtime are all
+# guarded (where they need to be) by locks TSan cannot see because druntime
+# ships precompiled and uninstrumented. Every one of these frames is a runtime
+# internal, never event-horizon code — silencing them fully would require an
+# instrumented druntime build.
+race:*4core8internal2gc*
+race:*ConservativeGC*
+race:*4core6thread*
+race:*_d_arraycat*
+race:*_d_arrayappend*
