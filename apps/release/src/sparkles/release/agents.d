@@ -182,6 +182,58 @@ string buildSegmentationRetryCoda(string error) @safe pure nothrow
         ~ "\nReply with ONLY the JSON object described above.";
 }
 
+/// The split-mode addition to a segment's notes prompt (SPEC §8.3): the
+/// segment's highlights (the notes cover ONLY these), compact context of the
+/// earlier segments' commits, and the WIP-omission instruction.
+string buildSegmentNotesSection(
+    const(string)[] highlights, const(string)[] priorContext) @safe pure
+{
+    import std.array : appender;
+
+    auto app = appender!string;
+    app.put("\n\nHighlights to document (cover ONLY these):\n");
+    if (highlights.length == 0)
+        app.put("- (none named — cover the completed, user-visible work only)\n");
+    foreach (h; highlights)
+    {
+        app.put("- ");
+        app.put(h);
+        app.put('\n');
+    }
+    if (priorContext.length)
+    {
+        app.put("\nContext — commits already released in earlier tags"
+            ~ " (reference only where a highlight completes work started"
+            ~ " there):\n");
+        foreach (line; priorContext)
+        {
+            app.put("  ");
+            app.put(line);
+            app.put('\n');
+        }
+    }
+    app.put("\nOmit incomplete/work-in-progress changes; they will be"
+        ~ " documented in the release where they complete.");
+    return app[];
+}
+
+/// Linux caps a single argv element at 128 KiB (`MAX_ARG_STRLEN`); prompts are
+/// delivered as one element, so the embedded `git log --stat` is capped well
+/// under it, leaving room for the fixed prompt parts.
+enum promptLogStatCap = 96 * 1024;
+
+/// Truncates `logStat` at a line boundary under `cap`, marking the elision.
+string capLogStat(string logStat, size_t cap = promptLogStatCap) @safe pure nothrow
+{
+    if (logStat.length <= cap)
+        return logStat;
+    size_t cut = cap;
+    while (cut > 0 && logStat[cut - 1] != '\n')
+        cut--;
+    return logStat[0 .. cut]
+        ~ "[... log truncated — the rest of the range did not fit the prompt]";
+}
+
 /// Builds the summarization prompt fed to the agent: it must emit *only* the
 /// annotated-tag body in the release-guide format.
 string buildAgentPrompt(string suggestedSubject, string range, string logStat)
@@ -265,6 +317,20 @@ string buildAgentPrompt(string suggestedSubject, string range, string logStat)
     assert(post.hasValue);
     assert(!post.value.canFind("pre-1.0"));
     assert(post.value.canFind(`a breaking change means "major"`));
+}
+
+@("agents.capLogStat.truncatesAtLineBoundary")
+@safe pure unittest
+{
+    import std.algorithm.searching : canFind, endsWith, startsWith;
+
+    assert(capLogStat("short", 100) == "short");
+
+    const big = "line one\nline two\nline three\n";
+    const capped = capLogStat(big, 12);
+    assert(capped.startsWith("line one\n"));
+    assert(!capped.canFind("line two"));
+    assert(capped.canFind("log truncated"));
 }
 
 @("agents.buildSegmentationRetryCoda")

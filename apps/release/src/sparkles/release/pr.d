@@ -209,7 +209,7 @@ Result!(PrRef[]) parseAssociationReply(string json, const(string)[] shas) @syste
 /// it, batching `gh api graphql` calls. `progress(done, total)` fires after
 /// each batch.
 Result!(PrRef[]) associatePrs(const(Commit)[] commitsOldestFirst, RepoSlug slug,
-    void delegate(size_t done, size_t total) @safe progress = null) @system
+    void delegate(size_t done, size_t total) progress = null) @system
 {
     import std.algorithm.comparison : min;
     import std.algorithm.iteration : map;
