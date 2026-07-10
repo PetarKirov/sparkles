@@ -99,6 +99,28 @@
           # build artifacts into the package's `targetPath "build"` directory.
           preBuild = ''chmod -R u+w "$NIX_BUILD_TOP"'';
 
+          # Phobos bakes store paths into every binary that must not leak into
+          # the runtime closure: assert/`__FILE__` strings referencing ldc's
+          # separate `include` output (~19 MiB; buildDubPackage scrubs and
+          # disallows only the compiler's `out` — same story as `release` in
+          # ./default.nix), plus the nixpkgs-patched `libcurl.so.4` dlopen
+          # path (which alone pulls the ~18 MiB openssl/krb5/nghttp tail) and
+          # the tzdata dir. The curl/tzdata paths are phobos *service* paths,
+          # but no example touches std.net.curl or named time zones — the
+          # run-all-examples runner exercises them all — so scrub and
+          # disallow all three. NB: `pkgs.curl.out` — libcurl's output; bare
+          # `pkgs.curl` coerces to the `-bin` output.
+          disallowedReferences = [
+            pkgs.ldc
+            pkgs.ldc.include
+            pkgs.curl.out
+            pkgs.tzdata
+          ];
+          postFixup = ''
+            find "$out" -type f -exec remove-references-to \
+              -t ${pkgs.ldc.include} -t ${pkgs.curl.out} -t ${pkgs.tzdata} '{}' +
+          '';
+
           # Override the default `dub build` invocation: the example carries
           # its own inline `dub.sdl` block, so we need `--single` mode against
           # the specific .d file instead of a package-rooted build.
