@@ -545,6 +545,27 @@ string[] syscallSelectorNames(string metricFilter) @safe
     return names;
 }
 
+/// The canonical column id for a `--sort-by` key: `sc:<name>` is the display
+/// header of the `syscalls:<name>` column id `sortValue` matches on, so both
+/// spellings are accepted and normalized to the id.
+string canonicalSortKey(string sortBy) @safe pure nothrow
+{
+    import std.algorithm.searching : startsWith;
+
+    enum display = "sc:", id = "syscalls:";
+    return sortBy.startsWith(display) ? id ~ sortBy[display.length .. $] : sortBy;
+}
+
+@("metrics.canonicalSortKey")
+@safe pure nothrow
+unittest
+{
+    assert(canonicalSortKey("sc:getpid") == "syscalls:getpid");
+    assert(canonicalSortKey("syscalls:getpid") == "syscalls:getpid");
+    assert(canonicalSortKey("median/iter") == "median/iter");
+    assert(canonicalSortKey("") == "");
+}
+
 @("metrics.syscallSelectorNames")
 @safe
 unittest
