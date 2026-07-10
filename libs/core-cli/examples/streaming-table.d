@@ -20,6 +20,9 @@ module streaming_table_example;
 //                     filling itself in
 //   * line            `drawTableChunks!true` — one chunk per rendered line,
 //                     like a classic query-result printer
+//   * race            both granularities at once, stacked in a LiveRegion —
+//                     one chunk each per tick, so the line-buffered pane
+//                     visibly finishes first (piped runs print both plainly)
 //
 // The rows come from one of two sources:
 //
@@ -37,6 +40,7 @@ module streaming_table_example;
 //
 //   dub run --single streaming-table.d
 //   dub run --single streaming-table.d -- --mode line --delay 120
+//   dub run --single streaming-table.d -- --mode race --delay 60
 //   dub run --single streaming-table.d -- --preset heavy --rows 12
 //   dub run --single streaming-table.d -- --pace width --delay 30
 //   dub run --single streaming-table.d -- --tee /tmp/fleet.txt --delay 0
@@ -62,7 +66,7 @@ struct CliParams
 {
     // Note: descriptions must avoid double quotes — parseCliArgs pastes them
     // into generated mixin code verbatim.
-    @CliOption("m|mode", "Chunk granularity: cell (one chunk per cell field) or line")
+    @CliOption("m|mode", "Chunk granularity: cell (one chunk per cell field), line, or race (line vs cell panes in a live region)")
     string mode = "cell";
 
     @CliOption("d|delay", "Animation delay per streamed chunk, in milliseconds")
@@ -132,9 +136,9 @@ void main(string[] args)
         "streaming-table",
         "Animated streaming drawTable demo (eager layout, lazy chunk emission)"));
 
-    if (!["cell", "line"].canFind(cli.mode))
+    if (!["cell", "line", "race"].canFind(cli.mode))
     {
-        stderr.writeln(`streaming-table: --mode must be "cell" or "line", not "`,
+        stderr.writeln(`streaming-table: --mode must be "cell", "line", or "race", not "`,
             cli.mode, `"`);
         exit(2);
     }
@@ -165,12 +169,65 @@ void main(string[] args)
     table.props.glyphs = presetGlyphs(cli.preset);
     table.props.maxWidth = cli.maxWidth;
 
+    if (cli.mode == "race")
+    {
+        runRace(table, cli.delayMs);
+        return;
+    }
+
     const streamed = cli.mode == "line"
         ? streamChunks(drawTableChunks!true(table.cells, table.props), delayFor)
         : streamChunks(drawTableChunks!false(table.cells, table.props), delayFor);
 
     if (cli.tee.length)
         teeAndCheck(cli.tee, table, streamed);
+}
+
+/// The dual-granularity race (`--mode race`): the same table streams twice in
+/// one `LiveRegion` — the top pane pulls line-buffered chunks, the bottom pane
+/// cell-buffered ones, one chunk from each per tick, so the coarser-grained
+/// pane visibly finishes first while both end byte-identical. Piped output
+/// skips the animation and prints both (identical) renders once.
+void runRace(DemoTable table, int delayMs)
+{
+    import std.string : splitLines;
+    import sparkles.core_cli.ui.live : stdoutLiveRegion;
+
+    const lineLabel =
+        styledText(i"{bold.cyan ── line-buffered (drawTableChunks!true) ──}");
+    const cellLabel =
+        styledText(i"{bold.magenta ── cell-buffered (drawTableChunks!false) ──}");
+
+    auto region = stdoutLiveRegion();
+    scope (exit) region.finish();
+
+    if (!region.interactive)
+    {
+        write(lineLabel, "\n", drawTable(table.cells, table.props), "\n",
+            cellLabel, "\n", drawTable(table.cells, table.props));
+        return;
+    }
+
+    auto linePane = drawTableChunks!true(table.cells, table.props);
+    auto cellPane = drawTableChunks!false(table.cells, table.props);
+    string lineBuf, cellBuf;
+    while (!linePane.empty || !cellPane.empty)
+    {
+        if (!linePane.empty)
+        {
+            lineBuf ~= linePane.front;
+            linePane.popFront;
+        }
+        if (!cellPane.empty)
+        {
+            cellBuf ~= cellPane.front;
+            cellPane.popFront;
+        }
+        region.update(
+            [lineLabel] ~ lineBuf.splitLines ~ [""]
+            ~ [cellLabel] ~ cellBuf.splitLines);
+        Thread.sleep(dur!"msecs"(delayMs));
+    }
 }
 
 /// Write each chunk as it is produced; the delay between chunks is the animation.
