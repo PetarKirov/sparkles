@@ -14,9 +14,11 @@ dub test :yourpkg -- --bench
 ╰────────────────┴─────────┴─────────────┴────────┴────────┴────────╯
 ```
 
-(Illustrative output. An assert-enabled build — dub's stock `unittest` build
-type — prints a warning: real numbers need an optimized unittest buildType,
-e.g. `buildOptions "unittests" "releaseMode" "optimize" "inline"` invoked as
+(Illustrative output. Timing and metric columns align on the decimal point,
+so mixed units — `391.00ns` next to `1.5µs` — still compare at a glance. An
+assert-enabled build — dub's stock `unittest` build type — prints a warning:
+real numbers need an optimized unittest buildType, e.g.
+`buildOptions "unittests" "releaseMode" "optimize" "inline"` invoked as
 `dub test -b <name>`.)
 
 ## Measurement protocol
@@ -89,7 +91,17 @@ void registerParse(Engine)(Dataset ds)
 
 `--group-by=dataset,operation` splits the report into one streamed table per
 `(dataset, operation)` group, each comparing the engines by `name`. `=all` groups
-by every label key; `=list` prints the keys the run offers.
+by every label key; `=list` prints the keys the run offers. The group name rides
+in the table's top border:
+
+```console
+╭──╼ benchmark: canada/parse ╾──────────┬────────┬────────┬────────╮
+│ implementation: │ iters │ median/iter │   ±dev │    min │    max │
+┝━━━━━━━━━━━━━━━━━┿━━━━━━━┿━━━━━━━━━━━━━┿━━━━━━━━┿━━━━━━━━┿━━━━━━━━┥
+│ mir-ion         │  4096 │      1.2µs  │ 0.01µs │  1.1µs │  1.3µs │
+│ asdf            │  4096 │      3.4µs  │ 0.02µs │  3.3µs │  3.6µs │
+╰─────────────────┴───────┴─────────────┴────────┴────────┴────────╯
+```
 
 - Under `--bench`, `benchCase` **registers** the case; the runner measures it
   later (grouped, so each table streams as its group finishes). The closures run

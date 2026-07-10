@@ -143,6 +143,23 @@ counters — a paranoid kernel, or the last-level-cache pair dropped to avoid PM
 multiplexing — degrade to `—` rather than failing, and off Linux the pass is
 skipped entirely.
 
+## Live progress: two displays, one policy
+
+The runner has two redraw-in-place displays. The default parallel run polls a
+`ProgressLine` beneath the streaming result lines through `core-cli`'s
+`LiveRegion` (stdout, gated `hasCoreCliLive`); `--bench` redraws a one-line
+spinner between measurements on **stderr** — `--bench > file` keeps results
+clean while progress stays on the terminal — through a raw-fd writer, because
+the tick is a `@safe nothrow @nogc` seam inside the measurement loop where
+`LiveRegion`'s GC delegates can't go. Both ask one policy, `progressEnabled`:
+an interactive terminal on the target stream and none of
+`--no-colours`/`$NO_COLOR`/`TERM=dumb`; and both bracket repaints in DEC-2026
+synchronized output, so a repaint lands as one flicker-free frame. The
+layering follows the build-graph gates above: what must always work comes from
+`base` (`CtlSeq` control sequences, `truncateField` cell-safe truncation),
+while `ProgressLine`, `LiveRegion`, and the `terminalSize`/`isTerminal`
+queries are `core-cli` and degrade to no display at all.
+
 ## Inherited limitation
 
 Like silly, discovery sees only `dub_test_root.allModules`, which excludes
