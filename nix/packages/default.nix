@@ -166,9 +166,16 @@
           pkgs.makeWrapper
         ];
 
-        # Keep the runtime closure honest (see the `ci` derivation for why
-        # clearing this matters for the wrapper PATH).
-        disallowedReferences = [ ];
+        # Unlike `ci`, `release` needs no D compiler at runtime, so the
+        # toolchain must not leak into the closure. `buildDubPackage` already
+        # scrubs and disallows the compiler's `out`, but the druntime/phobos
+        # *sources* live in ldc's separate `include` output, whose path gets
+        # baked into the binary via assert/`__FILE__` strings — scrub and
+        # disallow that output too (see postFixup).
+        disallowedReferences = [
+          pkgs.ldc
+          pkgs.ldc.include
+        ];
 
         preBuild = ''chmod -R u+w "$NIX_BUILD_TOP"'';
 
@@ -184,15 +191,20 @@
         postFixup =
           let
             path = lib.makeBinPath [
-              pkgs.git
+              # gitMinimal, not git: release only drives porcelain that the
+              # minimal build ships (log/push/tag/rev-parse/…, incl. the https
+              # remote helper), while full git drags perl and a whole CPython
+              # (via git-p4's shebang) into the closure — and `ci` below
+              # already bundles gitMinimal, so this shares its store path.
+              pkgs.gitMinimal
               pkgs.gh
               config.packages.ci
             ];
           in
           ''
-            install -Dm755 build/${finalAttrs.pname} $out/bin/${finalAttrs.pname}
             wrapProgram $out/bin/${finalAttrs.pname} \
               --prefix PATH : ${path}
+            find "$out" -type f -exec remove-references-to -t ${pkgs.ldc.include} '{}' +
           '';
 
         meta = {

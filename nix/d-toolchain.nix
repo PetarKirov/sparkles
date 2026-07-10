@@ -62,6 +62,15 @@
                         wrapProgram "$out/bin/$drv" --add-flags "-conf=${cleanLdcConfig}"
                       done
                     '';
+                    # Pass the real ldc's separate `include` output through the
+                    # wrapper: the closure scrubs in
+                    # nix/packages/{default,examples}.nix reference
+                    # `pkgs.ldc.include` (phobos sources leak into binaries via
+                    # assert/`__FILE__` strings) and must evaluate uniformly on
+                    # both platforms.
+                    passthru = {
+                      inherit (prev.ldc) include;
+                    };
                     meta = prev.ldc.meta // {
                       mainProgram = "ldc2";
                     };
