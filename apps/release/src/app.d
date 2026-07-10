@@ -40,7 +40,7 @@ import sparkles.release.notes : openInEditor, seedEditorBuffer, seedReviewBuffer
 import sparkles.release.preflight : runPreflight, PreflightProgress, PreflightResult;
 import sparkles.release.result : Result;
 import sparkles.release.stages : Stage, parseStage, stageAtLeast, stageToken;
-import sparkles.release.stats : tallyCommits, typeCounts, ReleaseStats, Commit, AuthorCount, FileStat, AreaStat, areaBreakdown;
+import sparkles.release.stats : tallyCommits, typeCounts, ReleaseStats, Commit, CommitTally, AuthorCount, FileStat, AreaStat, areaBreakdown;
 
 /// CLI options (validated string fields for the hyphenated/closed vocabularies;
 /// only `--log-level` is a real enum, which getopt binds directly).
@@ -147,8 +147,8 @@ private int run(CliParams cli)
     auto kind = firstRelease ? BumpKind.minor : suggestBump(rs.value.tally, current);
     if (!bumpOverride.isNull)
         kind = bumpOverride.get;
-    else if (!cli.auto_)
-        kind = promptBump(kind);
+    else
+        kind = promptBump(kind, current, rs.value.tally, cli.auto_, theme);
     const next = applyBump(current, kind);
     const tag = "v" ~ verStr(next);
     const suggestedSubject = tag ~ " — ";
@@ -174,7 +174,7 @@ private int run(CliParams cli)
         warning(i"Skipping pre-flight checks (--no-verify).");
 
     // ----- acquire the release notes (the annotated-tag body) -----
-    auto notesR = acquireNotes(cli, notesMode.get, suggestedSubject, fromRef);
+    auto notesR = acquireNotes(cli, notesMode.get, suggestedSubject, fromRef, theme);
     if (notesR.hasError)
         return fail(notesR.error);
     const notesBody = notesR.value;
@@ -184,8 +184,43 @@ private int run(CliParams cli)
         return 0;
     }
 
+    // ----- confirm before anything outward-facing (push, GitHub release) -----
+    if (stageAtLeast(stage.get, Stage.pushTag))
+    {
+        import sparkles.core_cli.prompts : confirm, PromptPolicy, stdioPromptIo;
+
+        auto go = confirm(
+            "About to " ~ describeOutwardStages(stage.get, tag) ~ ". Proceed?",
+            defaultYes: true,
+            policy: cli.auto_ ? PromptPolicy.takeDefault : PromptPolicy.interactive,
+            io: stdioPromptIo(),
+            theme: theme);
+        if (go.hasError)
+            return fail(go.error);
+        if (!go.value)
+        {
+            info(i"Aborted before any outward stage; no tag was created.");
+            return 0;
+        }
+    }
+
     // ----- execute the chosen stages -----
-    return executeStages(stage.get, tag, notesBody, theme);
+    const rc = executeStages(stage.get, tag, notesBody, theme);
+    if (rc == 0)
+        printReceipt(stage.get, tag, notesBody, theme);
+    return rc;
+}
+
+/// The outward-facing part of the pipeline, for the confirm gate: what will
+/// leave this machine if the user proceeds.
+private string describeOutwardStages(Stage stage, string tag) @safe pure
+{
+    string s = "push " ~ tag ~ " to origin";
+    if (stageAtLeast(stage, Stage.publishGhRelease))
+        s ~= " and publish a GitHub release (notify-dub-registry fires)";
+    else if (stageAtLeast(stage, Stage.createGhReleaseDraft))
+        s ~= " and create a draft GitHub release";
+    return s;
 }
 
 /// Runs the pre-flight checks as a live checklist: each check is a task row,
@@ -342,7 +377,8 @@ private Nullable!NotesMode resolveNotesMode(in CliParams cli) @safe pure nothrow
 }
 
 private Result!string acquireNotes(
-    in CliParams cli, NotesMode mode, string suggestedSubject, string fromRef)
+    in CliParams cli, NotesMode mode, string suggestedSubject, string fromRef,
+    in Theme theme)
 {
     import sparkles.release.result : success, failure;
 
@@ -358,7 +394,7 @@ private Result!string acquireNotes(
     }
 
     // Agent mode.
-    auto specR = pickAgent(cli);
+    auto specR = pickAgent(cli, theme);
     if (specR.hasError)
         return failure!string(specR.error);
     const spec = specR.value;
@@ -378,7 +414,7 @@ private Result!string acquireNotes(
     return success(stripComments(edited.value));
 }
 
-private Result!(AgentSpec) pickAgent(in CliParams cli)
+private Result!(AgentSpec) pickAgent(in CliParams cli, in Theme theme)
 {
     import sparkles.release.result : success, failure;
 
@@ -406,7 +442,7 @@ private Result!(AgentSpec) pickAgent(in CliParams cli)
             "--auto needs --agent; available: " ~ agentKeys(avail));
     }
 
-    return success(cast(AgentSpec) promptAgent(avail));
+    return success(cast(AgentSpec) promptAgent(avail, theme));
 }
 
 // ---------------------------------------------------------------------------
@@ -509,54 +545,101 @@ private string checkGhReady(Stage stage)
 // Interactive prompts
 // ---------------------------------------------------------------------------
 
-private BumpKind promptBump(BumpKind suggested)
+/// The bump select: every candidate shows its concrete next version, and the
+/// suggested one carries the tally that produced the policy suggestion. With
+/// `--auto` the suggestion is taken silently; on EOF the suggestion stands.
+private BumpKind promptBump(
+    BumpKind suggested, in SemVer current, in CommitTally tally, bool auto_,
+    in Theme theme)
 {
-    import std.string : strip, toLower;
+    import std.conv : text;
+    import sparkles.core_cli.prompts : PromptPolicy, select, SelectOption, stdioPromptIo;
 
-    const def = bumpName(suggested);
-    auto answer = ask("Version bump [" ~ def ~ "] (major/minor/patch): ").strip.toLower;
-    if (answer.length == 0)
-        return suggested;
-    auto parsed = parseBumpKind(answer);
-    return parsed.isNull ? suggested : parsed.get;
-}
+    static immutable kinds = [BumpKind.patch, BumpKind.minor, BumpKind.major];
 
-private AgentSpec promptAgent(const(AgentSpec)[] avail)
-{
-    import std.conv : text, to;
-    import std.string : strip;
-
-    writeln("Available agents:");
-    foreach (i, a; avail)
-        writeln("  " ~ (i + 1).text ~ ") " ~ a.key ~ " (" ~ a.binary ~ ")");
-
-    while (true)
+    SelectOption[] options;
+    size_t defaultIndex = 0;
+    foreach (i, k; kinds)
     {
-        auto answer = ask("Choose an agent [1]: ").strip;
-        if (answer.length == 0)
-            return cast(AgentSpec) avail[0];
-        try
+        string description;
+        if (k == suggested)
         {
-            const n = answer.to!size_t;
-            if (n >= 1 && n <= avail.length)
-                return cast(AgentSpec) avail[n - 1];
+            defaultIndex = i;
+            description = text("suggested: ", tally.feat, " feat, ", tally.fix,
+                " fix, ", tally.breaking, " breaking");
         }
-        catch (Exception)
-        {
-        }
-        writeln("Please enter a number between 1 and " ~ avail.length.text ~ ".");
+        options ~= SelectOption(
+            text(bumpName(k), "  v", verStr(current), " → v", verStr(applyBump(current, k))),
+            description);
     }
+
+    writeln();
+    auto choice = select("Version bump:", options, defaultIndex,
+        auto_ ? PromptPolicy.takeDefault : PromptPolicy.interactive,
+        stdioPromptIo(), theme);
+    return choice.hasValue ? kinds[choice.value] : suggested;
 }
 
-private string ask(string prompt)
+private AgentSpec promptAgent(const(AgentSpec)[] avail, in Theme theme)
 {
-    import std.stdio : readln;
+    import std.algorithm.iteration : map;
+    import std.array : array;
+    import sparkles.core_cli.prompts : PromptPolicy, select, SelectOption, stdioPromptIo;
+
+    auto options = avail.map!(a => SelectOption(a.key, a.binary)).array;
+    auto choice = select("Choose an agent:", options, 0,
+        PromptPolicy.interactive, stdioPromptIo(), theme);
+    return cast(AgentSpec) avail[choice.hasValue ? choice.value : 0];
+}
+
+/// The closing receipt: what was created, how far it went, and (when a GitHub
+/// release exists) a clickable link — with the natural next command as footer.
+private void printReceipt(Stage stage, string tag, string notesBody, in Theme theme)
+{
+    import std.string : lineSplitter;
+    import sparkles.core_cli.ui.osc_link : oscLink;
+    import sparkles.core_cli.ui.theme : Semantic;
+
+    string subject = tag;
+    foreach (line; notesBody.lineSplitter)
+    {
+        subject = line;
+        break;
+    }
+
+    string[] lines = [
+        "tag      " ~ tag ~ " (annotated)",
+        "subject  " ~ subject,
+    ];
+    if (stageAtLeast(stage, Stage.pushTag))
+        lines ~= "pushed   origin " ~ theme.mark(Semantic.success);
+    if (stageAtLeast(stage, Stage.createGhReleaseDraft))
+    {
+        const published = stageAtLeast(stage, Stage.publishGhRelease);
+        const url = ghReleaseUrl(tag);
+        lines ~= "release  " ~ (url.length ? oscLink(url, url) : "created")
+            ~ (published ? " (published)" : " (draft)");
+    }
+
+    const next = stage == Stage.publishGhRelease
+        ? cast(string) null
+        : "next: release --stage=" ~ stageToken(cast(Stage)(stage + 1));
+
+    writeln();
+    writeln(drawBox(lines,
+        theme.mark(Semantic.success) ~ " released " ~ tag,
+        BoxProps(footer: next)));
+    stdout.flush();
+}
+
+/// The GitHub release URL for `tag` via `gh` (empty when unavailable) — only
+/// called for stages where `checkGhReady` already verified `gh`.
+private string ghReleaseUrl(string tag)
+{
     import std.string : strip;
 
-        write(prompt);
-        stdout.flush();
-    auto line = readln();
-    return line is null ? "" : line.strip.idup;
+    auto r = runCaptured(["gh", "release", "view", tag, "--json", "url", "-q", ".url"]);
+    return r.succeeded ? r.stdout.strip : null;
 }
 
 // ---------------------------------------------------------------------------
