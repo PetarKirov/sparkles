@@ -10,18 +10,20 @@ includes it. Keep it accurate — a stale fact here propagates into every agent'
 these sub-packages (plus the internal `sparkles:test-runner-impl` implementation
 library backing `sparkles:test-runner` — see the runner integration notes below):
 
-| Sub-package            | Path               | What it is                                                                                                                                           |
-| ---------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ci`                   | `apps/ci`          | Repository CI helper: runs/verifies markdown examples, standalone examples, sub-package tests, and markdown link maintenance                         |
-| `release`              | `apps/release`     | Release automation: scans tags as SemVer, summarizes commits, suggests a bump, gathers notes ($EDITOR or a CLI LLM agent), tags and publishes        |
-| `terminal`             | `apps/terminal`    | Minimal raylib-based terminal emulator built on `sparkles:ghostty`                                                                                   |
-| `sparkles:base`        | `libs/base`        | Allocation-conscious foundation utilities: `SmallBuffer`, lifetime helpers, `@nogc` text readers/writers, terminal styling, styled IES, and logging  |
-| `sparkles:core-cli`    | `libs/core-cli`    | CLI argument parsing, help formatting, pretty-printing, UI components (table/box/header/OSC links), process utilities, terminal size/unstyle helpers |
-| `sparkles:ghostty`     | `libs/ghostty`     | D bindings + ImportC integration layer for `libghostty-vt` (Ghostty's terminal VT engine)                                                            |
-| `sparkles:math`        | `libs/math`        | Small math primitives for games/graphics (early stage)                                                                                               |
-| `sparkles:test-runner` | `libs/test-runner` | General-purpose `unittest` runner (silly successor): parallel runtime tests plus `@ctfe`, `@betterC`, `@wasm`, and `@benchmark` modes                |
-| `sparkles:test-utils`  | `libs/test-utils`  | Testing helpers: diff tools, temp-filesystem helpers, string helpers                                                                                 |
-| `sparkles:versions`    | `libs/versions`    | Design-by-Introspection versioning library (SemVer, DMD, CalVer, PyPI, Maven, Deb, …) with VERS/pURL interop                                         |
+| Sub-package              | Path                 | What it is                                                                                                                                           |
+| ------------------------ | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ci`                     | `apps/ci`            | Repository CI helper: runs/verifies markdown examples, standalone examples, sub-package tests, and markdown link maintenance                         |
+| `release`                | `apps/release`       | Release automation: scans tags as SemVer, summarizes commits, suggests a bump, gathers notes ($EDITOR or a CLI LLM agent), tags and publishes        |
+| `terminal`               | `apps/terminal`      | Minimal raylib-based terminal emulator built on `sparkles:ghostty`                                                                                   |
+| `sparkles:base`          | `libs/base`          | Allocation-conscious foundation utilities: `SmallBuffer`, lifetime helpers, `@nogc` text readers/writers, terminal styling, styled IES, and logging  |
+| `sparkles:core-cli`      | `libs/core-cli`      | CLI argument parsing, help formatting, pretty-printing, UI components (table/box/header/OSC links), process utilities, terminal size/unstyle helpers |
+| `sparkles:event-horizon` | `libs/event-horizon` | Completion-first (io_uring/kqueue/IOCP) event loop with a native algebraic-effect layer (three API tiers: callback, direct-style fibers, `Effect!T`) |
+| `sparkles:ghostty`       | `libs/ghostty`       | D bindings + ImportC integration layer for `libghostty-vt` (Ghostty's terminal VT engine)                                                            |
+| `sparkles:http`          | `libs/http`          | HTTP/1.1 building blocks (request parser + minimal server API) over `sparkles:event-horizon`                                                         |
+| `sparkles:math`          | `libs/math`          | Small math primitives for games/graphics (early stage)                                                                                               |
+| `sparkles:test-runner`   | `libs/test-runner`   | General-purpose `unittest` runner (silly successor): parallel runtime tests plus `@ctfe`, `@betterC`, `@wasm`, and `@benchmark` modes                |
+| `sparkles:test-utils`    | `libs/test-utils`    | Testing helpers: diff tools, temp-filesystem helpers, string helpers                                                                                 |
+| `sparkles:versions`      | `libs/versions`      | Design-by-Introspection versioning library (SemVer, DMD, CalVer, PyPI, Maven, Deb, …) with VERS/pURL interop                                         |
 
 Each library **should** be documented under `docs/libs/<name>/` as a
 [Diátaxis](https://diataxis.fr/) tree (`tutorial/`, `how-to/`, `reference/`,

@@ -20,7 +20,6 @@ export default withMermaid(
       /\/text-conformance\//,
       /\/libs\/base\/src\//,
       /\/libs\/wired\/bench\//,
-      /\/specs\/event-horizon\//,
     ],
 
     // The parsing and units-of-measure grounding ledgers are internal QA
@@ -428,6 +427,22 @@ export default withMermaid(
               collapsed: false,
               items: [
                 { text: 'drawTable spec', link: '/specs/core-cli/table' },
+              ],
+            },
+            {
+              text: 'Event Horizon',
+              collapsed: false,
+              items: [
+                { text: 'Specification', link: '/specs/event-horizon/SPEC' },
+                { text: 'Delivery Plan', link: '/specs/event-horizon/PLAN' },
+                {
+                  text: 'Open Issues',
+                  link: '/specs/event-horizon/open-issues',
+                },
+                {
+                  text: 'Benchmarks',
+                  link: '/specs/event-horizon/benchmarks',
+                },
               ],
             },
             {

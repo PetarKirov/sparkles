@@ -372,6 +372,37 @@ pure nothrow @nogc:
         put(elements);
     }
 
+    /**
+     * Sets the element count. Growing appends `T.init`-filled elements (one
+     * storage growth); shrinking drops elements from the back, reverting to
+     * inline storage when the new length fits (the `popBack` invariant).
+     */
+    @property void length(size_t newLength) @trusted
+    {
+        if (newLength == _length)
+            return;
+        if (newLength > _length)
+        {
+            T[] tail = ensureUniqueStorage(extraLen: newLength - _length);
+            tail[] = T.init;
+            _length = newLength;
+            return;
+        }
+        if (_length > N && newLength <= N)
+        {
+            // Crossing heap -> inline: copy survivors out first to keep the
+            // invariant `length <= N  <=>  inline`.
+            T[] b = _block;
+            T[N] tmp = void;
+            tmp[0 .. newLength] = b[0 .. newLength];
+            releaseStorage();
+            _inline[0 .. newLength] = tmp[0 .. newLength];
+            _length = newLength;
+            return;
+        }
+        _length = newLength;
+    }
+
     /// Removes the last element.
     void popBack() @trusted
     in (_length > 0, "Cannot pop from empty buffer")
@@ -888,6 +919,39 @@ unittest
     buf ~= iota(10, 16);             // re-grow onto a fresh heap block
     assert(buf.onHeap);
     assert(buf[] == [10, 11, 12, 13, 14, 15]);
+}
+
+@("SmallBuffer.length.setter")
+@safe pure nothrow @nogc
+unittest
+{
+    // Grow-with-default, inline and across the inline -> heap boundary.
+    SmallBuffer!(int, 4) buf;
+    buf ~= 7;
+    buf.length = 3;
+    assert(buf.length == 3);
+    assert(!buf.onHeap);
+    assert(buf[0] == 7 && buf[1] == 0 && buf[2] == 0);
+
+    buf.length = 6; // crosses onto the heap
+    assert(buf.length == 6);
+    assert(buf.onHeap);
+    assert(buf[0] == 7 && buf[5] == 0);
+
+    // Shrink on the heap, then across heap -> inline (content preserved).
+    buf[1] = 42;
+    buf.length = 5;
+    assert(buf.onHeap && buf.length == 5);
+    buf.length = 2;
+    assert(!buf.onHeap);
+    assert(buf.length == 2);
+    assert(buf[0] == 7 && buf[1] == 42);
+
+    // No-op and shrink-to-empty.
+    buf.length = 2;
+    assert(buf.length == 2);
+    buf.length = 0;
+    assert(buf.empty);
 }
 
 @("SmallBuffer.reserve")

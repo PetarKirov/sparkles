@@ -1,0 +1,12 @@
+name "eh-bench-perf"
+description "perf_event_open hardware-counter harness for the event-horizon benchmarks"
+license "BSL-1.0"
+
+targetType "library"
+dflags "-preview=in" "-preview=dip1000"
+
+// The perf_event_open helper *defines* functions, so its .c must be compiled
+// as a real source (emitted + linked), not merely imported for declarations.
+// Compiles to an empty module off Linux (#ifdef __linux__).
+cSourcePaths "src"
+sourcePaths "src"

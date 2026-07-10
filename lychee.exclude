@@ -76,5 +76,3 @@
 # links are valid canonical source citations, so exclude the flaky host rather than
 # rot-pin each tree URL.
 ^https?://cgit\.git\.savannah\.gnu\.org/
-# Ignore specs/event-horizon/ links until the feat/event-horizon branch is merged
-specs/event-horizon/
