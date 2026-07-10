@@ -234,14 +234,42 @@ Result!string repoRoot()
     return success(res.value.strip.idup);
 }
 
+/// The fetch URL of `remote` (default `origin`).
+Result!string remoteUrl(string remote = "origin")
+{
+    import std.string : strip;
+
+    auto res = git(["remote", "get-url", remote]);
+    if (res.hasError)
+        return res;
+    return success(res.value.strip.idup);
+}
+
+/// The number of commits reachable from `to` but not from `from` (e.g. how many
+/// tip commits are not on the remote default branch). Zero when `from` is
+/// unknown to the repository.
+Result!size_t countCommitsNotOn(string from, string to = "HEAD")
+{
+    import std.string : strip;
+
+    auto res = git(["rev-list", "--count", from ~ ".." ~ to]);
+    if (res.hasError)
+        return success(size_t(0));      // unknown ref (e.g. no origin/main)
+    return success(allDigits(res.value.strip));
+}
+
 // ---------------------------------------------------------------------------
 // Mutations
 // ---------------------------------------------------------------------------
 
-/// Creates an annotated tag whose body is read from `messageFile`.
-Result!void createAnnotatedTag(string tag, string messageFile)
+/// Creates an annotated tag whose body is read from `messageFile`, on `target`
+/// (`HEAD` when null/empty).
+Result!void createAnnotatedTag(string tag, string messageFile, string target = null)
 {
-    auto res = git(["tag", "-a", tag, "-F", messageFile]);
+    auto args = ["tag", "-a", tag, "-F", messageFile];
+    if (target.length)
+        args ~= target;
+    auto res = git(args);
     if (res.hasError)
         return failure!void(res.error);
     return success();
