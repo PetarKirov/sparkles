@@ -396,7 +396,18 @@ private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bo
     shared size_t passed, failed;
     const threads = options.threads ? options.threads : totalCPUs;
 
-    with (new TaskPool(threads - 1))
+    bool ranLive = false;
+    static if (hasCoreCliLive)
+    {
+        import sparkles.core_cli.term_caps : isTerminal;
+
+        if (isTerminal())
+        {
+            runParallelLive(runnable, options, colored, width, threads, passed, failed);
+            ranLive = true;
+        }
+    }
+    if (!ranLive) with (new TaskPool(threads - 1))
     {
         foreach (test; parallel(runnable))
         {
@@ -492,4 +503,93 @@ private bool prepareConsole(bool noColours)
         else
             return !disabled;
     }
+}
+
+/// Whether `core-cli`'s live-region components are importable (same pattern as
+/// `reporting.d`'s gates: `core-cli` cannot be a dub dependency of this package).
+private enum bool hasCoreCliLive = __traits(compiles, {
+    import sparkles.core_cli.ui.live : stdoutLiveRegion;
+    import sparkles.core_cli.ui.progress : ProgressLine;
+});
+
+static if (hasCoreCliLive)
+/// The tty variant of the parallel run: a polled `N/M` progress line under the
+/// streaming result lines. Workers never touch the terminal — they append their
+/// finished output to a mutex-guarded queue and bump an atomic counter; the
+/// main thread (no longer participating in the work) drains the queue through
+/// `printAbove` and repaints one `ProgressLine`, which is erased on completion
+/// so the permanent output matches the plain path.
+private void runParallelLive(
+    Test[] runnable, in RunnerOptions options, bool colored, uint width,
+    size_t threads, ref shared size_t passed, ref shared size_t failed)
+{
+    import core.atomic : atomicLoad, atomicOp;
+    import core.sync.mutex : Mutex;
+    import core.thread : Thread;
+    import core.time : MonoTime, msecs;
+    import std.array : appender;
+    import std.parallelism : task, TaskPool;
+    import std.string : lineSplitter;
+    import sparkles.core_cli.ui.live : stdoutLiveRegion;
+    import sparkles.core_cli.ui.progress : ProgressLine;
+
+    auto pool = new TaskPool(threads < 1 ? 1 : threads);
+    scope (exit)
+        pool.finish(true);
+
+    auto mutex = new Mutex;
+    string[] pendingOutput;
+    shared size_t completed;
+
+    void runOne(size_t idx)
+    {
+        const result = executeTest(runnable[idx]);
+        auto output = formatResultLine(result, colored, options.verbose, width) ~ "\n";
+        foreach (thrown; result.thrown)
+            output ~= formatThrown(thrown, colored, options.verbose);
+        synchronized (mutex)
+            pendingOutput ~= output;
+        atomicOp!"+="(result.succeeded ? passed : failed, size_t(1));
+        atomicOp!"+="(completed, size_t(1)); // after the queue append (see drain)
+    }
+
+    foreach (i; 0 .. runnable.length)
+        pool.put(task(&runOne, i));
+
+    auto region = stdoutLiveRegion();
+    scope (exit)
+        region.finish(keepFrame: false); // the summary follows; no lasting frame
+
+    const started = MonoTime.currTime;
+    size_t spin;
+    void drain()
+    {
+        string[] drained;
+        synchronized (mutex)
+        {
+            drained = pendingOutput;
+            pendingOutput = null;
+        }
+        foreach (block; drained)
+            foreach (line; block.lineSplitter)
+                region.printAbove(line);
+    }
+
+    for (;;)
+    {
+        drain();
+        const done = atomicLoad(completed);
+        auto bar = appender!string;
+        ProgressLine(frame: spin, done: done, total: runnable.length,
+            colored: colored, elapsed: MonoTime.currTime - started).toString(bar);
+        region.update([bar[]]);
+        if (done == runnable.length)
+            break;
+        spin++;
+        Thread.sleep(50.msecs);
+    }
+    // A worker may append between the final drain and the counter read; the
+    // append happens-before its counter increment, so one more drain after
+    // observing `completed == length` catches every straggler.
+    drain();
 }
