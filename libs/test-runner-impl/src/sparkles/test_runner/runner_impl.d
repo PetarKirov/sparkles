@@ -542,7 +542,7 @@ private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bo
         .filter!(t => !t.traits.isCtfe && !t.traits.isBenchmark)
         .array;
 
-    shared size_t passed, failed;
+    shared size_t passed, failed, skipped;
     const threads = options.threads ? options.threads : totalCPUs;
 
     bool ranLive = false;
@@ -567,13 +567,20 @@ private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bo
                 output ~= formatThrown(thrown, colored, options.verbose);
             stdout.lockingTextWriter.put(output);
 
-            atomicOp!"+="(result.succeeded ? passed : failed, size_t(1));
+            if (result.skipped)
+                atomicOp!"+="(skipped, size_t(1));
+            else
+                atomicOp!"+="(result.succeeded ? passed : failed, size_t(1));
         }
         finish(true);
     }
 
     totals.passed = passed;
     totals.failed += failed; // ctfe failures are already counted
+    // Skipped tests count in neither executed nor passed below (like
+    // benchSkipped), so a skip never fails the run — the yellow summary
+    // segment is the surfacing.
+    totals.skipped = skipped;
 
     stdout.writeln;
     stdout.writeln(formatSummary(totals, MonoTime.currTime - started, colored));
@@ -661,6 +668,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     import sparkles.test_runner.bench : errorRow, measureCase, registerBenchmark,
         RegisteredCase;
     import sparkles.test_runner.execution : toThrown;
+    import sparkles.test_runner.skip : TestSkipped;
     import std.algorithm.searching : canFind;
     import sparkles.test_runner.metrics : canonicalSortKey, catalog,
         groupKeyDisplay, groupKeyOf, unknownMetricSelectors;
@@ -694,6 +702,14 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     {
         const config = benchConfigFor(options.benchMinTime, test.traits.benchIterations);
         auto reg = registerBenchmark(test, config);
+        if (reg.result.skipped)
+        {
+            // A registration-time skipTest: the ⊘ line with its reason; the
+            // test contributes no rows and does not fail the run.
+            progress.clear();
+            stdout.write(formatResultLine(reg.result, colored, options.verbose), "\n");
+            continue;
+        }
         if (!reg.result.succeeded)
             reportFailure(reg.result); // still schedule the cases it did register
         foreach (c; reg.cases)
@@ -812,6 +828,19 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
             auto row = measureCase(s.c, s.config, counters);
             if (row.error.length)
                 errorRows++;
+            bucket ~= row;
+            measured ~= row;
+            totalRows++;
+        }
+        catch (TestSkipped sk)
+        {
+            // A measurement-time skipTest (an environment probe inside a
+            // deferred closure): a yellow skipped row, counted as neither
+            // passed-with-numbers nor failed — the run stays green.
+            import sparkles.test_runner.bench : errorCell;
+
+            auto row = BenchStats(name: s.c.name, labels: s.c.labels,
+                error: errorCell(sk.message.idup), skipped: true);
             bucket ~= row;
             measured ~= row;
             totalRows++;

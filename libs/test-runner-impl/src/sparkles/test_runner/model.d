@@ -86,6 +86,8 @@ struct TestResult
 {
     Test test;
     bool succeeded;
+    bool skipped; /// the body called `skipTest` — neither passed nor failed
+    string skipReason;
     Duration duration;
     immutable(Thrown)[] thrown;
 }
