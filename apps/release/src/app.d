@@ -338,7 +338,7 @@ private int runSplit(in CliParams cli, Stage stage, NotesMode notesMode, in Them
     auto promptR = buildSegmentationPrompt(rows, current);
     if (promptR.hasError)
         return fail(promptR.error);
-    sink.save("segmentation-prompt.md", promptR.value);
+    sink.save("segmentation-prompt.md", promptR.value.forArtifact);
 
     ReleasePlan plan;
     AgentReply reply;
@@ -350,8 +350,8 @@ private int runSplit(in CliParams cli, Stage stage, NotesMode notesMode, in Them
             // A corrective coda only makes sense after an *invalid reply*;
             // after a failed agent run the original prompt is retried as-is.
             const prompt = lastError.length
-                ? promptR.value ~ buildSegmentationRetryCoda(lastError)
-                : promptR.value;
+                ? promptR.value.forAgent ~ buildSegmentationRetryCoda(lastError)
+                : promptR.value.forAgent;
             info(i"Segmenting with $(spec.key) (attempt $(attempt))…");
             auto rawR = runAgent(spec, prompt);
             if (rawR.hasError)
@@ -359,12 +359,12 @@ private int runSplit(in CliParams cli, Stage stage, NotesMode notesMode, in Them
                 warning(i"$(rawR.error)");
                 continue;
             }
-            // A reply that (fence-stripped) parses as JSON is saved as the
-            // extracted `.json`; anything malformed stays raw `.txt`.
-            const extracted = stripJsonFence(rawR.value);
-            const isJson = parseJsonText(extracted).hasValue;
+            // A reply that (fence-stripped) parses as JSON is saved
+            // pretty-printed as `.json`; anything malformed stays raw `.txt`.
+            auto extractedDom = parseJsonText(stripJsonFence(rawR.value));
+            const isJson = extractedDom.hasValue;
             sink.save(text("segmentation-reply-", attempt, isJson ? ".json" : ".txt"),
-                isJson ? extracted : rawR.value);
+                isJson ? extractedDom.value.toPrettyString : rawR.value);
 
             auto parsed = parseSegmentReply(rawR.value);
             if (parsed.hasError)

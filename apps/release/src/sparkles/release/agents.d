@@ -101,16 +101,42 @@ Result!string runAgent(const AgentSpec a, string prompt)
     return success(notes.idup);
 }
 
+/// The two renderings of one segmentation prompt: the compact form sent to
+/// the agent (token-efficient) and the pretty form persisted as the
+/// `.result/segmentation-prompt.md` artifact (human-readable).
+struct SegmentationPrompt
+{
+    string forAgent;
+    string forArtifact;
+}
+
+/// The reply contract shown to the agent, in both densities.
+private enum compactReplySchema =
+    `{"segments": [{"boundary": "<full sha>", "theme": "<short theme>",`
+    ~ ` "bump": "patch|minor|major", "highlights": ["<completed work>"]}],`
+    ~ ` "remainderNote": "<optional>"}`;
+
+private enum prettyReplySchema =
+`{
+    "segments": [
+        {
+            "boundary": "<full sha>",
+            "theme": "<short theme>",
+            "bump": "patch|minor|major",
+            "highlights": ["<completed work>"]
+        }
+    ],
+    "remainderNote": "<optional>"
+}`;
+
 /// Builds the segmentation prompt (SPEC §7.1–§7.2): the bump-policy context
 /// for `current`, the reply contract, and the oldest-first commit list with
-/// its PR association embedded as compact JSON.
-Result!string buildSegmentationPrompt(
+/// its PR association embedded as JSON — compact toward the agent, pretty in
+/// the artifact rendering.
+Result!SegmentationPrompt buildSegmentationPrompt(
     const(SegmentInput)[] rows, in SemVer current) @system
 {
-    import std.conv : text;
-
     import sparkles.release.json_utils : encodeJson;
-    import sparkles.release.segment : verString;
 
     static struct PromptCommit
     {
@@ -131,9 +157,30 @@ Result!string buildSegmentationPrompt(
     foreach (i, ref row; rows)
         commits ~= PromptCommit(i: i, sha: row.sha, pr: row.prNumber,
             prTitle: row.prTitle, subject: row.subject);
-    auto inputJson = encodeJson(PromptInput(commits));
-    if (inputJson.hasError)
-        return failure!string("segmentation prompt: " ~ inputJson.error);
+
+    auto compact = encodeJson(PromptInput(commits));
+    if (compact.hasError)
+        return failure!SegmentationPrompt("segmentation prompt: " ~ compact.error);
+    auto pretty = encodeJson(PromptInput(commits), pretty: true);
+    if (pretty.hasError)
+        return failure!SegmentationPrompt("segmentation prompt: " ~ pretty.error);
+
+    return success(SegmentationPrompt(
+        forAgent: segmentationPromptText(
+            rows.length, current, compactReplySchema, compact.value),
+        forArtifact: segmentationPromptText(
+            rows.length, current, prettyReplySchema, pretty.value)));
+}
+
+/// The shared prompt skeleton — valid markdown (JSON rides in ```json
+/// fences), so the artifact rendering needs no post-processing.
+private string segmentationPromptText(
+    size_t commitCount, in SemVer current, string replySchema, string inputJson)
+    @safe pure
+{
+    import std.conv : text;
+
+    import sparkles.release.segment : verString;
 
     const policy = current.major == 0
         ? "- Bump policy (pre-1.0): a breaking change or a new feature means"
@@ -142,12 +189,10 @@ Result!string buildSegmentationPrompt(
         : "- Bump policy: a breaking change means \"major\"; a new feature"
             ~ " means \"minor\"; otherwise \"patch\".\n";
 
-    // The prompt doubles as the `.result/segmentation-prompt.md` artifact, so
-    // it is valid markdown: JSON travels in ```json fences.
-    return success(text(
+    return text(
         "You are planning retroactive releases for the D monorepo `sparkles`.\n",
         "The last released version is v", verString(current), ". Below are the ",
-        rows.length, " unreleased commits, OLDEST FIRST, as JSON; `pr` is the",
+        commitCount, " unreleased commits, OLDEST FIRST, as JSON; `pr` is the",
         " number of the merged PR that introduced each commit (0 = none).\n",
         "Split them into a chain of releases.\n\n",
         "Rules:\n\n",
@@ -171,13 +216,9 @@ Result!string buildSegmentationPrompt(
         policy,
         "\nReply with ONLY a JSON object of this exact shape — no prose around",
         " it:\n\n",
-        "```json\n",
-        `{"segments": [{"boundary": "<full sha>", "theme": "<short theme>",`,
-        ` "bump": "patch|minor|major", "highlights": ["<completed work>"]}],`,
-        ` "remainderNote": "<optional>"}`,
-        "\n```\n",
+        "```json\n", replySchema, "\n```\n",
         "\nInput:\n\n",
-        "```json\n", inputJson.value, "\n```\n"));
+        "```json\n", inputJson, "\n```\n");
 }
 
 /// The corrective coda appended (with the original prompt) when the agent's
@@ -311,23 +352,33 @@ string buildAgentPrompt(string suggestedSubject, string range, string logStat)
 
     auto pre = buildSegmentationPrompt(rows, SemVer(major: 0, minor: 4, patch: 0));
     assert(pre.hasValue);
-    assert(pre.value.canFind("v0.4.0"));
-    assert(pre.value.canFind("pre-1.0"));
-    assert(pre.value.canFind("OLDEST FIRST"));
-    assert(pre.value.canFind(`"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"`));
-    assert(pre.value.canFind(`"pr":47`));
-    assert(pre.value.canFind(`"remainderNote"`));
-    assert(pre.value.canFind("2 unreleased commits"));
-    // The prompt is saved as a markdown artifact: JSON rides in closed fences.
-    assert(pre.value.canFind("```json\n{\"segments\":"));
-    assert(pre.value.canFind("```json\n{\"commits\":"));
+    const agent = pre.value.forAgent;
+    assert(agent.canFind("v0.4.0"));
+    assert(agent.canFind("pre-1.0"));
+    assert(agent.canFind("OLDEST FIRST"));
+    assert(agent.canFind(`"pr":47`));
+    assert(agent.canFind(`"remainderNote"`));
+    assert(agent.canFind("2 unreleased commits"));
+    // Toward the agent the JSON stays compact (token-efficient)…
+    assert(agent.canFind(`"sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"`));
+    assert(agent.canFind("```json\n{\"segments\":"));
+    assert(agent.canFind("```json\n{\"commits\":"));
+
+    // …while the artifact rendering pretty-prints it for human review.
+    const artifact = pre.value.forArtifact;
+    assert(artifact.canFind("\"pr\": 47"));
+    assert(artifact.canFind("\"sha\": \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\""));
+    assert(artifact.canFind("```json\n{\n"));
+
+    // Both are valid markdown: two closed ```json fences each.
     import std.algorithm.searching : count;
-    assert(pre.value.count("```") == 4);
+    assert(agent.count("```") == 4);
+    assert(artifact.count("```") == 4);
 
     auto post = buildSegmentationPrompt(rows, SemVer(major: 1, minor: 0, patch: 0));
     assert(post.hasValue);
-    assert(!post.value.canFind("pre-1.0"));
-    assert(post.value.canFind(`a breaking change means "major"`));
+    assert(!post.value.forAgent.canFind("pre-1.0"));
+    assert(post.value.forAgent.canFind(`a breaking change means "major"`));
 }
 
 @("agents.capLogStat.truncatesAtLineBoundary")

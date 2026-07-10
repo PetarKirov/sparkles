@@ -368,10 +368,12 @@ Split mode persists its intermediate products for later review under the
 
 ````text
 .result/release-split/<yyyymmdd-HHMMSS>/
-├── segmentation-prompt.md          # valid markdown; JSON in ```json fences
-├── segmentation-reply-1.json       # per attempt (…-2 on retry): the
-│                                   # fence-stripped reply when it parses as
-│                                   # JSON, else the raw reply as …-N.txt
+├── segmentation-prompt.md          # valid markdown; JSON pretty-printed in
+│                                   # ```json fences (the agent itself gets
+│                                   # the compact, token-efficient rendering)
+├── segmentation-reply-1.json       # per attempt (…-2 on retry): the reply
+│                                   # pretty-printed when its fence-stripped
+│                                   # text parses as JSON, else raw as …-N.txt
 ├── plan.json                       # the validated ReleasePlan
 ├── notes-prompt-<tag>.txt
 └── notes-<tag>.txt                 # the body as tagged

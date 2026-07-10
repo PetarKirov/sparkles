@@ -36,15 +36,16 @@ Result!T decodeJson(T)(string raw)
     return success(decoded.value);
 }
 
-/// Encodes `value` as a compact JSON string via `sparkles:wired`.
-Result!string encodeJson(T)(in T value)
+/// Encodes `value` as a JSON string via `sparkles:wired` — compact by default
+/// (token-efficient for agent prompts), pretty for human-readable artifacts.
+Result!string encodeJson(T)(in T value, bool pretty = false)
 {
     import sparkles.wired : toJSON;
 
     auto encoded = toJSON(value);
     if (encoded.hasError)
         return failure!string(encoded.error.msg);
-    return success(encoded.value.toString);
+    return success(pretty ? encoded.value.toPrettyString : encoded.value.toString);
 }
 
 // ---------------------------------------------------------------------------
@@ -76,4 +77,5 @@ Result!string encodeJson(T)(in T value)
     assert(decodeJson!Point(`not json`).hasError);
 
     assert(encodeJson(Point(1, 2)).value == `{"x":1,"y":2}`);
+    assert(encodeJson(Point(1, 2), pretty: true).value == "{\n    \"x\": 1,\n    \"y\": 2\n}");
 }
