@@ -459,15 +459,16 @@ string formatBenchTable(in BenchStats[] rows, bool colored, string metricFilter 
         valueHeaders ~= render(colored, i"{bold $(col.header)}");
 
     // Per-column alignment for `stubCols` leading textual columns followed by
-    // the value columns: numeric values right-align, with the four timing
-    // columns aligned on the decimal point (same-unit values line up; mixed
-    // units still read right).
+    // the value columns: the integral iters column right-aligns; the timing and
+    // metric columns align on the decimal point (same-unit values line up;
+    // mixed units/magnitudes still read right). A metric column with no dotted
+    // value — a syscall count, or all em dashes — degrades to plain right.
     Align[] valueAligns(size_t stubCols)
     {
         auto aligns = new Align[stubCols + valueHeaders.length];
-        aligns[] = Align.right;
+        aligns[] = Align.decimal;
         aligns[0 .. stubCols] = Align.left;
-        aligns[stubCols + 1 .. stubCols + 5] = Align.decimal;
+        aligns[stubCols] = Align.right; // iters
         return aligns;
     }
 
@@ -613,6 +614,42 @@ unittest
     const filtered = formatBenchTable([row], false, "ipc,cycles");
     assert(filtered.canFind("IPC") && filtered.canFind("cycles/iter"));
     assert(!filtered.canFind("B/s") && !filtered.canFind("cache-miss"));
+}
+
+/// The timing columns align on the decimal point: with mixed units the dots
+/// of `110.00ns` and `1.5µs` land on the same terminal column, so magnitudes
+/// compare at a glance (`Align.decimal`, resolved per column by `drawTable`).
+@("formatBenchTable.decimalAlignedTimings")
+@system
+unittest
+{
+    import std.algorithm.iteration : splitter;
+    import std.algorithm.searching : canFind;
+    import std.string : indexOf;
+
+    BenchStats[2] rows = [
+        BenchStats(name: "fast", iterations: 1, nsPerIterMedian: 110),
+        BenchStats(name: "slow", iterations: 1, nsPerIterMedian: 1500),
+    ];
+    const rendered = formatBenchTable(rows[], false);
+
+    // Byte column of the value's decimal dot within its line. The two data
+    // lines are byte-identical up to the median cell (same-width names), so
+    // byte columns compare like terminal cells here.
+    ptrdiff_t dotColumn(string needle)
+    {
+        foreach (line; rendered.splitter('\n'))
+        {
+            const at = line.indexOf(needle);
+            if (at >= 0)
+                return at + needle.indexOf('.');
+        }
+        return -1;
+    }
+
+    const fast = dotColumn("110.00ns");
+    const slow = dotColumn("1.5µs");
+    assert(fast > 0 && fast == slow, rendered);
 }
 
 @("formatBenchTable.grouped")
