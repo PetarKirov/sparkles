@@ -553,7 +553,8 @@ private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bo
         // streamed result lines there.
         if (progressEnabled(options.noColours, stderrStream: false))
         {
-            runParallelLive(runnable, options, colored, width, threads, passed, failed);
+            runParallelLive(runnable, options, colored, width, threads,
+                passed, failed, skipped);
             ranLive = true;
         }
     }
@@ -973,7 +974,8 @@ static if (hasCoreCliLive)
 /// so the permanent output matches the plain path.
 private void runParallelLive(
     Test[] runnable, in RunnerOptions options, bool colored, uint width,
-    size_t threads, ref shared size_t passed, ref shared size_t failed)
+    size_t threads, ref shared size_t passed, ref shared size_t failed,
+    ref shared size_t skipped)
 {
     import core.atomic : atomicLoad, atomicOp;
     import core.sync.mutex : Mutex;
@@ -1001,7 +1003,12 @@ private void runParallelLive(
             output ~= formatThrown(thrown, colored, options.verbose);
         synchronized (mutex)
             pendingOutput ~= output;
-        atomicOp!"+="(result.succeeded ? passed : failed, size_t(1));
+        // Same three buckets as the plain path: a skip (yellow ⊘ line) counts
+        // in neither passed nor failed, so it never fails the run.
+        if (result.skipped)
+            atomicOp!"+="(skipped, size_t(1));
+        else
+            atomicOp!"+="(result.succeeded ? passed : failed, size_t(1));
         atomicOp!"+="(completed, size_t(1)); // after the queue append (see drain)
     }
 
