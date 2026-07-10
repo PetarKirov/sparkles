@@ -662,14 +662,14 @@ handling in [`drawTable`][table-src] (which already unstyles for width via `visi
 [sean-parent-gp]: ../sean-parent/generic-programming.md
 [dbi-guidelines]: ../../guidelines/design-by-introspection-01-guidelines.md
 [functional-guidelines]: ../../guidelines/functional-declarative-programming-guidelines.md
-[table-src]: ../../../libs/core-cli/src/sparkles/core_cli/ui/table.d
+[table-src]: ../../../libs/core-cli/src/sparkles/core_cli/ui/table/render.d
 
 ## External Sources
 
 [html-tables]: https://html.spec.whatwg.org/multipage/tables.html
 [tbl]: https://man7.org/linux/man-pages/man1/tbl.1.html
 [rst-tables]: https://docutils.sourceforge.io/docs/ref/rst/restructuredtext.html
-[latex-tables]: https://en.wikibooks.org/wiki/LaTeX/Tables
+[latex-tables]: http://web.archive.org/web/20260702082240/https://en.wikibooks.org/wiki/LaTeX/Tables
 [asciidoc-span]: https://docs.asciidoctor.org/asciidoc/latest/tables/span-cells/
 [gfm-tables]: https://github.github.com/gfm/
 [cli-table3]: https://github.com/cli-table/cli-table3

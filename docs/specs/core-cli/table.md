@@ -1,7 +1,7 @@
 # Spec: span-capable `drawTable` overhaul
 
 **Status:** accepted · **Date:** 2026-07-08 · **Scope:** `sparkles:core-cli`
-(`libs/core-cli/src/sparkles/core_cli/ui/table.d`) + a small `sparkles:base` addition.
+(`libs/core-cli/src/sparkles/core_cli/ui/table/`) + a small `sparkles:base` addition.
 
 Successor design for `drawTable`, driven by the survey in
 [`docs/research/tui-libraries/table-span-case-study.md`](../../research/tui-libraries/table-span-case-study.md)
