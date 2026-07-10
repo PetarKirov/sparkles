@@ -10,18 +10,19 @@ includes it. Keep it accurate — a stale fact here propagates into every agent'
 these sub-packages (plus the internal `sparkles:test-runner-impl` implementation
 library backing `sparkles:test-runner` — see the runner integration notes below):
 
-| Sub-package            | Path               | What it is                                                                                                                                                                                                          |
-| ---------------------- | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ci`                   | `apps/ci`          | Repository CI helper: runs/verifies markdown examples, standalone examples, sub-package tests, and markdown link maintenance                                                                                        |
-| `release`              | `apps/release`     | Release automation: scans tags as SemVer, summarizes commits, suggests a bump, gathers notes ($EDITOR or a CLI LLM agent), tags and publishes                                                                       |
-| `terminal`             | `apps/terminal`    | Minimal raylib-based terminal emulator built on `sparkles:ghostty`                                                                                                                                                  |
-| `sparkles:base`        | `libs/base`        | Allocation-conscious foundation utilities: `SmallBuffer`, lifetime helpers, `@nogc` text readers/writers, terminal styling, styled IES, and logging                                                                 |
-| `sparkles:core-cli`    | `libs/core-cli`    | CLI argument parsing, help formatting, UI components (table/box/header/tree/meter, live region + task list, OSC links, themes), interactive prompts, process utilities, terminal capability probing/unstyle helpers |
-| `sparkles:ghostty`     | `libs/ghostty`     | D bindings + ImportC integration layer for `libghostty-vt` (Ghostty's terminal VT engine)                                                                                                                           |
-| `sparkles:math`        | `libs/math`        | Small math primitives for games/graphics (early stage)                                                                                                                                                              |
-| `sparkles:test-runner` | `libs/test-runner` | General-purpose `unittest` runner (silly successor): parallel runtime tests plus `@ctfe`, `@betterC`, `@wasm`, and `@benchmark` modes                                                                               |
-| `sparkles:test-utils`  | `libs/test-utils`  | Testing helpers: diff tools, temp-filesystem helpers, string helpers                                                                                                                                                |
-| `sparkles:versions`    | `libs/versions`    | Design-by-Introspection versioning library (SemVer, DMD, CalVer, PyPI, Maven, Deb, …) with VERS/pURL interop                                                                                                        |
+| Sub-package                 | Path                    | What it is                                                                                                                                                                                                          |
+| --------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ci`                        | `apps/ci`               | Repository CI helper: runs/verifies markdown examples, standalone examples, sub-package tests, and markdown link maintenance                                                                                        |
+| `release`                   | `apps/release`          | Release automation: scans tags as SemVer, summarizes commits, suggests a bump, gathers notes ($EDITOR or a CLI LLM agent), tags and publishes                                                                       |
+| `terminal`                  | `apps/terminal`         | Minimal raylib-based terminal emulator built on `sparkles:ghostty`                                                                                                                                                  |
+| `sparkles:base`             | `libs/base`             | Allocation-conscious foundation utilities: `SmallBuffer`, lifetime helpers, `@nogc` text readers/writers, terminal styling, styled IES, and logging                                                                 |
+| `sparkles:build-primitives` | `libs/build-primitives` | Build-system and VCS primitives: `.gitignore` parsing/matching (nested + ancestor scopes) and a DbI-hook directory walker (`walkGitRepository`)                                                                     |
+| `sparkles:core-cli`         | `libs/core-cli`         | CLI argument parsing, help formatting, UI components (table/box/header/tree/meter, live region + task list, OSC links, themes), interactive prompts, process utilities, terminal capability probing/unstyle helpers |
+| `sparkles:ghostty`          | `libs/ghostty`          | D bindings + ImportC integration layer for `libghostty-vt` (Ghostty's terminal VT engine)                                                                                                                           |
+| `sparkles:math`             | `libs/math`             | Small math primitives for games/graphics (early stage)                                                                                                                                                              |
+| `sparkles:test-runner`      | `libs/test-runner`      | General-purpose `unittest` runner (silly successor): parallel runtime tests plus `@ctfe`, `@betterC`, `@wasm`, and `@benchmark` modes                                                                               |
+| `sparkles:test-utils`       | `libs/test-utils`       | Testing helpers: diff tools, temp-filesystem helpers, string helpers                                                                                                                                                |
+| `sparkles:versions`         | `libs/versions`         | Design-by-Introspection versioning library (SemVer, DMD, CalVer, PyPI, Maven, Deb, …) with VERS/pURL interop                                                                                                        |
 
 Each library **should** be documented under `docs/libs/<name>/` as a
 [Diátaxis](https://diataxis.fr/) tree (`tutorial/`, `how-to/`, `reference/`,
@@ -54,7 +55,7 @@ Cross-cutting guides live in `docs/guidelines/`:
 ```
 sparkles/
 ├── flake.nix                       # Nix flake (devshell, `ci` package, checks)
-├── dub.sdl                         # Root package; declares the 10 sub-packages
+├── dub.sdl                         # Root package; declares the 11 sub-packages
 ├── apps/
 │   ├── ci/                         # `ci` helper (executable sub-package)
 │   │   ├── src/app.d               # Markdown example runner / verifier, link maintenance
@@ -80,6 +81,9 @@ sparkles/
 │   │   ├── styled_template.d       # IES-based styled text processing
 │   │   ├── term_style.d            # Terminal styling/colors
 │   │   └── text/                   # @nogc text package: readers.d, writers.d, errors.d, package.d
+│   ├── build-primitives/src/sparkles/build_primitives/
+│   │   ├── gitignore.d             # .gitignore rule parsing/matching + GitIgnoreStack (nested/ancestor scopes)
+│   │   └── dir_walk.d              # DbI-hook directory walker; walkGitRepository / GitRepositoryFilter
 │   ├── core-cli/src/sparkles/core_cli/
 │   │   ├── args.d                  # CLI argument parsing (@CliOption, parseCliArgs)
 │   │   ├── common_dirs.d           # XDG / standard directory lookup
@@ -602,8 +606,8 @@ have the repo layout, so they keep `version="*"`.
 
 Conventional commits: `<type>(<scope>): <description>` (lowercase description).
 
-- **Scope** = a sub-package (`base`, `core-cli`, `versions`, `math`,
-  `test-runner`, `test-utils`, `ghostty`, `ci`, `release`, `terminal`) or an
+- **Scope** = a sub-package (`base`, `build-primitives`, `core-cli`, `versions`,
+  `math`, `test-runner`, `test-utils`, `ghostty`, `ci`, `release`, `terminal`) or an
   area (`nix`, `dub`, `guidelines`, `gh-actions`, `docs`, `research`).
 - **Type** — one of the following (one example each):
 
