@@ -161,12 +161,12 @@ default (yes).
 
 Ordered, cumulative:
 
-| Stage token               | Adds                                                              |
-| ------------------------- | ----------------------------------------------------------------- |
-| `create-tag`              | local annotated tag (body = the notes)                            |
-| `push-tag`                | `git push origin <tag>`                                           |
-| `create-gh-release-draft` | `gh release create <tag> --draft --notes-from-tag`                |
-| `publish-gh-release`      | `gh release edit <tag> --draft=false` (fires notify-dub-registry) |
+| Stage token               | Adds                                                               |
+| ------------------------- | ------------------------------------------------------------------ |
+| `create-tag`              | local annotated tag (body = the notes)                             |
+| `push-tag`                | `git push origin <tag>`                                            |
+| `create-gh-release-draft` | `gh release create <tag> --draft --notes-from-tag`                 |
+| `publish-gh-release`      | `gh release edit <tag> --draft=false` (fires the release workflow) |
 
 Execution renders all four rows up front as a live checklist; rows beyond the
 chosen stage are skipped with "beyond --stage". A failing stage stops the

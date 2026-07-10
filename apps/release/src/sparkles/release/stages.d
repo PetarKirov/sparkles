@@ -18,7 +18,7 @@ enum Stage
     createTag,            /// create the local annotated tag (default)
     pushTag,              /// also `git push origin <tag>`
     createGhReleaseDraft, /// also `gh release create --draft`
-    publishGhRelease,     /// also publish the GitHub release (fires notify-dub-registry)
+    publishGhRelease,     /// also publish the GitHub release (fires the release workflow)
 }
 
 /// Parses a `--stage` token; null on an unknown token.

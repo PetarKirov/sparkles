@@ -239,7 +239,7 @@ private string describeOutwardStages(Stage stage, string tag) @safe pure
 {
     string s = "push " ~ tag ~ " to origin";
     if (stageAtLeast(stage, Stage.publishGhRelease))
-        s ~= " and publish a GitHub release (notify-dub-registry fires)";
+        s ~= " and publish a GitHub release (the release workflow fires)";
     else if (stageAtLeast(stage, Stage.createGhReleaseDraft))
         s ~= " and create a draft GitHub release";
     return s;
@@ -613,7 +613,7 @@ private string describeOutwardStagesMulti(Stage stage, const(SegmentPlan)[] segs
         tags ~= (i ? ", " : "") ~ seg.tag;
     string s = text("push ", tags, " (", segs.length, " tags) to origin");
     if (stageAtLeast(stage, Stage.publishGhRelease))
-        s ~= " and publish their GitHub releases (notify-dub-registry fires)";
+        s ~= " and publish their GitHub releases (the release workflow fires)";
     else if (stageAtLeast(stage, Stage.createGhReleaseDraft))
         s ~= " and create their draft GitHub releases";
     return s;
@@ -1033,7 +1033,7 @@ private int executeStages(Stage chosen, string tag, string notesBody, in Theme t
         auto r = runCaptured(["gh", "release", "edit", tag, "--draft=false"]);
         if (r.status != 0)
             return failStage(publishId, "gh release publish failed: " ~ r.stderr);
-        tasks.succeed(publishId, "notify-dub-registry will fire");
+        tasks.succeed(publishId, "the release workflow will fire");
     }
     else
         tasks.skip(publishId, "beyond --stage");
