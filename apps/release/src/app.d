@@ -410,10 +410,35 @@ private Result!string acquireNotes(
     in CliParams cli, NotesMode mode, string suggestedSubject, string fromRef,
     in Theme theme)
 {
-    import sparkles.release.result : success, failure;
+    import sparkles.release.result : failure;
 
-    auto logStatR = logStatRange(fromRef, "HEAD");
+    const(AgentSpec)* spec = null;
+    AgentSpec picked;
+    if (mode == NotesMode.agent)
+    {
+        auto specR = pickAgent(cli, theme);
+        if (specR.hasError)
+            return failure!string(specR.error);
+        picked = specR.value;
+        spec = &picked;
+    }
+    return acquireNotesRange(mode, spec, suggestedSubject, fromRef, "HEAD",
+        null, cli.auto_);
+}
+
+/// The range-aware notes core both modes share: `fromRef..toRef` seeds the
+/// editor/agent, `spec` is the pre-picked agent (null in manual mode), and
+/// `extraPromptSection` is appended to the agent prompt (the split mode's
+/// highlights/deferral section; empty classically).
+private Result!string acquireNotesRange(
+    NotesMode mode, scope const(AgentSpec)* spec, string suggestedSubject,
+    string fromRef, string toRef, string extraPromptSection, bool auto_)
+{
+    import sparkles.release.result : success;
+
+    auto logStatR = logStatRange(fromRef, toRef);
     const logStat = logStatR.hasValue ? logStatR.value : "";
+    const range = fromRef.length ? fromRef ~ ".." ~ toRef : toRef;
 
     if (mode == NotesMode.manual)
     {
@@ -423,18 +448,15 @@ private Result!string acquireNotes(
         return success(stripComments(edited.value));
     }
 
-    // Agent mode.
-    auto specR = pickAgent(cli, theme);
-    if (specR.hasError)
-        return failure!string(specR.error);
-    const spec = specR.value;
+    assert(spec !is null, "agent mode needs a pre-picked agent");
     info(i"Summarizing $(spec.key) → release notes…");
 
-    auto generated = runAgent(spec, buildAgentPrompt(suggestedSubject, fromRef ~ "..HEAD", logStat));
+    auto generated = runAgent(*spec,
+        buildAgentPrompt(suggestedSubject, range, logStat) ~ extraPromptSection);
     if (generated.hasError)
         return generated;
 
-    if (cli.auto_)
+    if (auto_)
         return success(generated.value);     // verbatim; non-empty checked by runAgent
 
     // Interactive: let the user review/edit the agent output.
@@ -479,7 +501,11 @@ private Result!(AgentSpec) pickAgent(in CliParams cli, in Theme theme)
 // Stage execution
 // ---------------------------------------------------------------------------
 
-private int executeStages(Stage chosen, string tag, string notesBody, in Theme theme)
+/// Runs the tag/push/draft/publish checklist for one tag. `target` is the
+/// committish the annotated tag lands on (HEAD when null; the split mode
+/// passes each segment's boundary commit).
+private int executeStages(Stage chosen, string tag, string notesBody, in Theme theme,
+    string target = null)
 {
     import std.conv : text;
     import std.file : tempDir, write;
@@ -516,7 +542,7 @@ private int executeStages(Stage chosen, string tag, string notesBody, in Theme t
     }
 
     tasks.start(tagId);
-    auto tagR = createAnnotatedTag(tag, notesPath);
+    auto tagR = createAnnotatedTag(tag, notesPath, target);
     if (tagR.hasError)
         return failStage(tagId, tagR.error);
     tasks.succeed(tagId);
@@ -558,13 +584,17 @@ private int executeStages(Stage chosen, string tag, string notesBody, in Theme t
     return 0;
 }
 
-/// Returns an error string if `stage` needs `gh` but it is missing or unauthenticated.
-private string checkGhReady(Stage stage)
+/// Returns an error string if `gh` is needed but missing or unauthenticated:
+/// for GitHub stages, or unconditionally with `needGhAnyway` (the split mode
+/// needs `gh` for PR association even at `create-tag`).
+private string checkGhReady(Stage stage, bool needGhAnyway = false)
 {
-    if (!stageAtLeast(stage, Stage.createGhReleaseDraft))
+    if (!needGhAnyway && !stageAtLeast(stage, Stage.createGhReleaseDraft))
         return null;
     if (!isInPath("gh"))
-        return "stage `" ~ stageToken(stage) ~ "` needs the `gh` CLI, which is not on PATH";
+        return needGhAnyway
+            ? "--split needs the `gh` CLI, which is not on PATH"
+            : "stage `" ~ stageToken(stage) ~ "` needs the `gh` CLI, which is not on PATH";
     auto auth = runCaptured(["gh", "auth", "status"]);
     if (auth.status != 0)
         return "`gh` is not authenticated (run `gh auth login`)";
