@@ -399,27 +399,30 @@ version (linux)
         import std.math : isNaN;
 
         // Per-iteration bracketing must exclude the untimed `between` from the
-        // window. The same write counts when it runs as `timed` but not as
+        // window. The same writes count when they run as `timed` but not as
         // `between`. Compare the two so process-wide noise from concurrent test
-        // threads (getrusage/proc are per-process) cancels and only the signal
-        // — one write/iter — remains.
+        // threads (getrusage/proc are per-process) drops out of the DIFFERENCE
+        // only on average — the two count() passes run sequentially, so the
+        // signal (32 writes/iter) is sized to dwarf any realistic burst of
+        // cross-thread write syscalls rather than merely exceed it.
         auto g = Tier0Group.tryOpen(true);
         if (!g.available)
             return;
         static void nop() {}
-        static void writeOnce()
+        static void writeBurst()
         {
             import core.sys.posix.unistd : write;
 
             char[1] c = ['x'];
-            () @trusted { write(2, c.ptr, 0); }(); // 0-length write: a syscall, no output
+            foreach (_; 0 .. 32) // 0-length writes: syscalls, no output
+                () @trusted { write(2, c.ptr, 0); }();
         }
 
-        const inTimed = g.count(&writeOnce, &nop, 64); // write inside the window
-        const inBetween = g.count(&nop, &writeOnce, 64); // write outside the window
+        const inTimed = g.count(&writeBurst, &nop, 64); // writes inside the window
+        const inBetween = g.count(&nop, &writeBurst, 64); // writes outside the window
         if (!inTimed.syscw.isNaN && !inBetween.syscw.isNaN)
-            assert(inTimed.syscw - inBetween.syscw > 0.5,
-                text("a write in timed must count but in between must not; timed=",
+            assert(inTimed.syscw - inBetween.syscw > 16,
+                text("writes in timed must count but in between must not; timed=",
                     inTimed.syscw, " between=", inBetween.syscw));
     }
 
