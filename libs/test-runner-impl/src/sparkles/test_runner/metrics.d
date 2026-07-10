@@ -200,8 +200,32 @@ MetricDescriptor[] syscallFamily(bool available) @safe pure nothrow
 /// The column label / id for a client metric: `<sym>/s` for a rate, `<sym>` for a
 /// level. (The two-valued `Mode` stands in for the unit's time-exponent.) Taken
 /// by value (not `in`/`scope`) so the returned symbol slice may escape.
+/// Whether `name` is one of the runner's own column names: the static
+/// perf/tier0 families, or the dynamic syscall family's `syscalls` /
+/// `syscalls:<name>` ids (and their `sc:<name>` display headers).
+private bool isBuiltinMetricName(string name) @safe pure nothrow @nogc
+{
+    import std.algorithm.searching : startsWith;
+
+    foreach (ref info; perfInfos)
+        if (info.name == name)
+            return true;
+    foreach (ref info; tier0Infos)
+        if (info.name == name)
+            return true;
+    return name == "syscalls" || name.startsWith("syscalls:")
+        || name.startsWith("sc:");
+}
+
+/// The column name a client `Metric` mints: `<unit>/s` for rates, the unit
+/// symbol for levels. A name that would collide with a built-in column
+/// (`ipc`, `syscr`, `syscalls`, …) is disambiguated as `user.<name>`, so the
+/// built-in keeps its documented meaning and the client column stays visible.
 private string clientLabel(const Metric m) @safe pure nothrow
-    => m.mode == Metric.Mode.rate ? m.unit.symbol ~ "/s" : m.unit.symbol;
+{
+    const label = m.mode == Metric.Mode.rate ? m.unit.symbol ~ "/s" : m.unit.symbol;
+    return isBuiltinMetricName(label) ? "user." ~ label : label;
+}
 
 /// Projects client metrics to named cells; `rate` metrics become a per-second
 /// quantity via `amount ÷ iteration-time`, `level` metrics pass `amount` through.
@@ -773,6 +797,37 @@ unittest
     // `all` adds the opt-in perf extras; a glob narrows to one family.
     assert(visibleMetrics([withPerf], "all").map!(d => d.name).canFind("cycles"));
     assert(visibleMetrics([withPerf], "ipc,cycles").map!(d => d.name).array == ["ipc", "cycles"]);
+}
+
+@("metrics.catalog.clientNameCollisionPrefixed")
+@safe
+unittest
+{
+    import std.algorithm.iteration : filter;
+    import std.algorithm.searching : canFind;
+    import std.array : array;
+
+    // A client Metric whose label collides with a built-in column ("ipc") is
+    // minted as "user.ipc": the built-in keeps its documented meaning and the
+    // client value stays visible under the disambiguated name.
+    BenchStats row;
+    row.name = "a";
+    row.metrics = [Metric(Unit("ipc"), 7.0, Metric.Mode.level)];
+    PerfStats p;
+    p.cycles = 100;
+    p.instructions = 200;
+    row.perf = p;
+
+    const cat = catalog([row]);
+    auto client = cat.filter!(d => d.name == "user.ipc").array;
+    assert(client.length == 1 && client[0].source == "client");
+    auto builtin = cat.filter!(d => d.name == "ipc").array;
+    assert(builtin.length == 1 && builtin[0].source == "perf");
+
+    // The cells agree with the catalog names, so both columns render.
+    const cells = rowCells(row);
+    assert(cells.canFind!(c => c.name == "user.ipc" && c.value == 7.0));
+    assert(cells.canFind!(c => c.name == "ipc" && c.value == 2.0)); // 200/100
 }
 
 @("metrics.tier0.selectionAndProjection")
