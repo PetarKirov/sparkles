@@ -765,7 +765,8 @@ median=20ns/iter min=18 max=22 over 3 samples
 
 ## Examples
 
-Runnable examples are in [`libs/base/examples/`](libs/base/examples/) and
+Runnable examples are in [`libs/base/examples/`](libs/base/examples/),
+[`libs/build-primitives/examples/`](libs/build-primitives/examples/), and
 [`libs/core-cli/examples/`](libs/core-cli/examples/):
 
 ```bash
@@ -773,6 +774,8 @@ dub run --single libs/base/examples/logger.d
 dub run --single libs/base/examples/prettyprint.d
 dub run --single libs/base/examples/text-fields.d
 dub run --single libs/base/examples/term-control.d
+
+dub run --single libs/build-primitives/examples/gitignore_listing.d
 
 dub run --single libs/core-cli/examples/styled-template.d
 dub run --single libs/core-cli/examples/table.d
@@ -782,7 +785,7 @@ dub run --single libs/core-cli/examples/osc-link.d
 dub run --single libs/core-cli/examples/color.d
 dub run --single libs/core-cli/examples/theme.d
 dub run --single libs/core-cli/examples/meter.d
-dub run --single libs/core-cli/examples/tree.d
+dub run --single libs/core-cli/examples/tree.d -- [path] # gitignore-aware tree(1) clone
 dub run --single libs/core-cli/examples/layout.d
 dub run --single libs/core-cli/examples/prompts.d       # interactive
 dub run --single libs/core-cli/examples/live-tasklist.d # animated
