@@ -675,8 +675,25 @@ private size_t totalMemoryGiB()
 /// Executes every example concurrently, returning results in input order.
 /// Each build runs in its own `DUB_HOME` (see `executeExample`), so the parallel
 /// `dub run`s never race on a shared dependency artifact.
+///
+/// While the pool works, the main thread polls per-example status slots and
+/// repaints a live progress frame (built N/M + the currently-building examples)
+/// — the workers never touch the terminal, so the single-threaded `LiveRegion`
+/// is safe by construction. On a non-tty the frame is skipped entirely and the
+/// output is unchanged (the serial replay below remains the only output).
 private ExecutionResult[] executeExamplesParallel(Example[] examples, string repoRoot)
 {
+    import core.atomic : atomicLoad, atomicStore;
+    import core.thread : Thread;
+    import std.array : appender;
+    import std.parallelism : task;
+    import std.range : take;
+    import sparkles.core_cli.term_caps : detectTermCaps;
+    import sparkles.core_cli.ui.live : stdoutLiveRegion;
+    import sparkles.core_cli.ui.meter : ProgressBar;
+    import sparkles.core_cli.ui.progress : spinnerFrame;
+    import sparkles.core_cli.ui.theme : makeTheme, Semantic;
+
     auto results = new ExecutionResult[](examples.length);
 
     if (examples.length <= 1)
@@ -688,13 +705,62 @@ private ExecutionResult[] executeExamplesParallel(Example[] examples, string rep
 
     const jobs = exampleJobCount();
 
-    // `parallel` also drives work on the calling thread, so a pool of N worker
-    // threads yields N+1 concurrent builds — size it to honor `jobs` as the cap.
-    auto pool = new TaskPool(jobs <= 1 ? 0 : jobs - 1);
+    // The calling thread no longer participates in the work (it polls), so the
+    // pool holds all `jobs` workers.
+    auto pool = new TaskPool(jobs < 1 ? 1 : jobs);
     scope(exit) pool.finish(true);
 
-    foreach (i; pool.parallel(iota(examples.length), 1))
-        results[i] = executeExample(examples[i], repoRoot, i);
+    enum : size_t { statePending = 0, stateBuilding = 1, stateDone = 2 }
+    auto states = new shared(size_t)[](examples.length);
+
+    void runOne(size_t idx)
+    {
+        atomicStore(states[idx], stateBuilding);
+        results[idx] = executeExample(examples[idx], repoRoot, idx);
+        atomicStore(states[idx], stateDone);
+    }
+
+    foreach (i; 0 .. examples.length)
+        pool.put(task(&runOne, i));
+
+    auto region = stdoutLiveRegion();
+    scope (exit)
+        region.finish(keepFrame: false); // the serial replay is the real output
+    const theme = makeTheme(detectTermCaps());
+
+    size_t spin;
+    for (;;)
+    {
+        size_t completed;
+        string[] buildingNames;
+        foreach (i; 0 .. examples.length)
+        {
+            const s = atomicLoad(states[i]);
+            if (s == stateDone)
+                completed++;
+            else if (s == stateBuilding)
+                buildingNames ~= examples[i].name;
+        }
+
+        if (region.interactive)
+        {
+            auto bar = appender!string;
+            ProgressBar(done: completed, total: examples.length).toString(bar);
+            string[] frame = ["building examples " ~ bar[]];
+            enum size_t maxShown = 4;
+            foreach (name; buildingNames.take(maxShown))
+                frame ~= "  " ~ theme.paint(Semantic.accent, spinnerFrame(spin))
+                    ~ " " ~ name;
+            if (buildingNames.length > maxShown)
+                frame ~= i"  … and $(buildingNames.length - maxShown) more".text;
+            region.update(frame);
+        }
+
+        if (completed == examples.length)
+            break;
+        spin++;
+        Thread.sleep(100.msecs);
+    }
 
     return results;
 }
@@ -1133,6 +1199,16 @@ private int runDubTestsMode(bool failFast)
         .drawHeader(HeaderProps(style: HeaderStyle.banner, width: uiWidth()))
         .writeln("\n");
 
+    // On a tty a live checklist (with the running package's dub output in a
+    // bounded tail pane) replaces the per-package result boxes; piped output
+    // keeps today's box-per-package log byte-stable for CI.
+    {
+        import sparkles.core_cli.term_caps : isTerminal;
+
+        if (isTerminal())
+            return runDubTestsChecklist(repoRoot, subPackages, failFast);
+    }
+
     int failures = 0;
     size_t processed = 0;
     FailureReplay failureReplay;
@@ -1184,6 +1260,69 @@ private int runDubTestsMode(bool failFast)
     displaySummary(stoppedEarly ? processed : subPackages.length, failures);
     if (stoppedEarly)
         displayFailureReplay(failureReplay);
+    return failures > 0 ? 1 : 0;
+}
+
+/// The tty variant of `--test`: one checklist row per sub-package, the running
+/// package's dub output streaming through the bounded tail pane, failures
+/// graduating with their output tail, and fail-fast marking the rest skipped.
+private int runDubTestsChecklist(string repoRoot, string[] subPackages, bool failFast)
+{
+    import sparkles.core_cli.process_utils : runStreaming;
+    import sparkles.core_cli.term_caps : detectTermCaps;
+    import sparkles.core_cli.ui.live : stdoutLiveRegion;
+    import sparkles.core_cli.ui.tasklist : TaskReporter;
+    import sparkles.core_cli.ui.theme : makeTheme;
+
+    static string lastLines(string s, size_t n)
+    {
+        auto lines = s.lineSplitter.map!(l => l.to!string).array;
+        return (lines.length <= n ? lines : lines[$ - n .. $]).join("\n");
+    }
+
+    const theme = makeTheme(detectTermCaps());
+    auto region = stdoutLiveRegion();
+    scope (exit)
+        region.finish();
+    auto tasks = TaskReporter(&region, theme);
+
+    size_t[] ids;
+    foreach (pkg; subPackages)
+        ids ~= tasks.add("dub test :" ~ pkg.baseName);
+
+    int failures = 0;
+    size_t processed = 0;
+    foreach (i, pkg; subPackages)
+    {
+        const pkgName = pkg.baseName;
+        mkdirRecurse(buildPath(repoRoot, pkg, "build"));
+        auto testCmd = ["dub", "--root", repoRoot, "test", ":" ~ pkgName];
+        const dc = environment.get("DC", "");
+        if (dc.length)
+            testCmd ~= "--compiler=" ~ dc;
+
+        tasks.start(ids[i]);
+        auto result = runStreaming(testCmd,
+            (scope const(char)[] line) { tasks.output(ids[i], line); });
+        processed = i + 1;
+
+        if (result.status == 0)
+        {
+            tasks.succeed(ids[i]);
+            continue;
+        }
+        failures++;
+        tasks.fail(ids[i], lastLines(result.stdout, 12));
+        if (failFast)
+        {
+            foreach (j; i + 1 .. subPackages.length)
+                tasks.skip(ids[j], "fail-fast");
+            break;
+        }
+    }
+
+    region.finish();
+    displaySummary(processed, failures);
     return failures > 0 ? 1 : 0;
 }
 
