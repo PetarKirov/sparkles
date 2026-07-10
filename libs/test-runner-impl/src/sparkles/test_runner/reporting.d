@@ -428,7 +428,7 @@ unittest
 /// sort last under every order. `groupKeys` (case **label** keys, from
 /// `--group-by`) splits the output into one table **per group** of equal
 /// label values: each is titled `benchmark: <group>` over an
-/// `implementation:` stub column listing the row `name`, with a column per
+/// `implementation` stub column listing the row `name`, with a column per
 /// remaining (non-grouped) label key. Empty `groupKeys` renders the single
 /// flat table, label keys as leading columns, rows in ascending median order.
 /// See `sparkles.test_runner.metrics.sortOrder`/`groupKeyOf`. Rendered with
@@ -602,10 +602,10 @@ package BenchTableModel[] buildBenchTables(in BenchStats[] rows, bool colored,
         return [BenchTableModel(null, cells, valueAligns(labelKeys.length + 1))];
     }
 
-    // Grouped: one table per contiguous run of equal group key. Each table's stub
-    // header spans two rows — `benchmark: <group>` over `implementation:` — and
-    // each data row's stub is the `name` (the varying dimension). Label keys NOT
-    // in --group-by still discriminate rows (three `jsoniopipe` rows may be
+    // Grouped: one table per contiguous run of equal group key, titled
+    // `benchmark: <group>` over an `implementation` stub column whose rows are
+    // the `name` (the varying dimension). Label keys NOT in --group-by still
+    // discriminate rows (three `jsoniopipe` rows may be
     // parse/serialize/validate), so they get columns after the stub, exactly as
     // the ungrouped path prepends them.
     string[] restKeys;
@@ -630,10 +630,11 @@ package BenchTableModel[] buildBenchTables(in BenchStats[] rows, bool colored,
         const shownKey = groupKeyDisplay(key); // US separator → '/' for the header
         // The group name rides in the table title (spliced into the top border
         // by `drawTable`, hoisted as a heading line by the plain fallback), so
-        // the header is one ordinary row with `implementation:` as the stub.
+        // the header is one ordinary row — `implementation` is a header cell
+        // like any other (bold, no label colon).
         const title = render(colored, i"{dim benchmark:} {bold $(shownKey)}");
         string[][] cells = [
-            render(colored, i"{dim implementation:}") ~ restHeaders ~ valueHeaders,
+            render(colored, i"{bold implementation}") ~ restHeaders ~ valueHeaders,
         ];
         while (i < order.length && groupKeyOf(rows[order[i]].labels, groupKeys) == key)
         {
@@ -969,12 +970,13 @@ unittest
     ];
 
     // --group-by=dataset,operation → one table per group; the group name rides
-    // in the table title, `implementation:` heads the stub column, and rows
+    // in the table title, `implementation` heads the stub column, and rows
     // list the engine `name`.
     const rendered = formatBenchTable(rows, false, null, null, ["dataset", "operation"]);
     assert(rendered.canFind("benchmark: canada/parse"));
     assert(rendered.canFind("benchmark: twitter/parse"));
-    assert(rendered.canFind("implementation:"));
+    assert(rendered.canFind("implementation"));
+    assert(!rendered.canFind("implementation:"), "plain header cell, no label colon");
     assert(rendered.canFind("mir-ion"));
     // Two tables → two titled top borders (heading lines in the fallback).
     assert(rendered.indexOf("benchmark:")
