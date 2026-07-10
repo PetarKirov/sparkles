@@ -506,8 +506,23 @@ string formatBenchTable(in BenchStats[] rows, bool colored, string metricFilter 
 
     // Grouped: one table per contiguous run of equal group key. Each table's stub
     // header spans two rows — `benchmark: <group>` over `implementation:` — and
-    // each data row's stub is the `name` (the varying dimension).
-    auto aligns = valueAligns(1);
+    // each data row's stub is the `name` (the varying dimension). Label keys NOT
+    // in --group-by still discriminate rows (three `jsoniopipe` rows may be
+    // parse/serialize/validate), so they get columns after the stub, exactly as
+    // the ungrouped path prepends them.
+    string[] restKeys;
+    foreach (key; labelKeyUnion(rows))
+    {
+        import std.algorithm.searching : canFind;
+
+        if (!groupKeys.canFind(key))
+            restKeys ~= key;
+    }
+    auto aligns = valueAligns(1 + restKeys.length);
+
+    string[] restHeaders;
+    foreach (key; restKeys)
+        restHeaders ~= render(colored, i"{bold $(key)}");
 
     string result;
     size_t i = 0;
@@ -519,13 +534,18 @@ string formatBenchTable(in BenchStats[] rows, bool colored, string metricFilter 
             // Header band: a rowspan-2 stub cell, value headers spanning it too.
             [GridCell(render(colored, i"{dim benchmark:} {bold $(shownKey)}") ~ "\n"
                     ~ render(colored, i"{dim implementation:}"), rowSpan: 2)]
+                ~ toGridRow(restHeaders, rowSpan: 2)
                 ~ toGridRow(valueHeaders, rowSpan: 2),
             [], // the second header row is fully covered by the rowspans above
         ];
         while (i < order.length && groupKeyOf(rows[order[i]].labels, groupKeys) == key)
         {
             const row = rows[order[i]];
-            grid ~= GridCell(row.name) ~ toGridRow(valueCells(row));
+            string[] restVals;
+            foreach (k; restKeys)
+                restVals ~= row.labels.get(k, "");
+            grid ~= GridCell(row.name) ~ toGridRow(restVals)
+                ~ toGridRow(valueCells(row));
             i++;
         }
         if (result.length)
@@ -596,6 +616,36 @@ unittest
     assert(rendered.indexOf("╭") != rendered.indexOf("╭", rendered.indexOf("╭") + 1));
     // Within the canada group, the faster engine (mir-ion, 10) precedes asdf (30).
     assert(rendered.indexOf("mir-ion") < rendered.indexOf("asdf"));
+}
+
+@("formatBenchTable.groupedKeepsRemainingLabels")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    // Label keys NOT in --group-by still discriminate rows: grouping only by
+    // dataset must keep an `operation` column, or three identically-named
+    // engine rows (parse/serialize/validate) are indistinguishable.
+    static BenchStats row(string engine, string operation)
+    {
+        return BenchStats(name: engine,
+            labels: ["dataset": "canada", "operation": operation], iterations: 1,
+            nsPerIterMedian: 10);
+    }
+
+    BenchStats[2] rows = [row("asdf", "parse"), row("asdf", "serialize")];
+    const rendered = formatBenchTable(rows, false, null, null, ["dataset"]);
+    assert(rendered.canFind("operation"), "the non-grouped label key gets a column");
+    assert(rendered.canFind("parse") && rendered.canFind("serialize"));
+    assert(!rendered.canFind("dataset"), "the grouped key lives in the title only");
+
+    // Cases with none of the grouped labels title as (unlabeled), not `/`.
+    BenchStats bare;
+    bare.name = "plain";
+    bare.iterations = 1;
+    const bareTable = formatBenchTable([bare], false, null, null, ["dataset"]);
+    assert(bareTable.canFind("benchmark: (unlabeled)"));
 }
 
 @("formatBenchTable.flatLabelColumns")

@@ -270,12 +270,19 @@ string groupKeyOf(in string[string] labels, in string[] keys) @safe
     return result;
 }
 
-/// A group key rendered for humans: `groupKeySep` → `/`.
-string groupKeyDisplay(string key) @safe pure nothrow
+/// A group key rendered for humans: `groupKeySep` → `/`, an empty part (a case
+/// missing that label) → `?`, and an all-empty key → `(unlabeled)` — so a
+/// group of label-less cases gets a legible title instead of a bare `/` that
+/// collides visually with a real `/` label value.
+string groupKeyDisplay(string key) @safe pure
 {
-    import std.array : replace;
+    import std.algorithm.iteration : map, splitter;
+    import std.array : join;
+    import std.algorithm.searching : all;
 
-    return key.replace(groupKeySep, "/");
+    if (key.splitter(groupKeySep).all!(p => !p.length))
+        return "(unlabeled)";
+    return key.splitter(groupKeySep).map!(p => p.length ? p : "?").join("/");
 }
 
 @("metrics.groupKeyOf.selectsLabels")
