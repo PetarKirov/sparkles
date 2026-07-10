@@ -35,6 +35,9 @@ struct AgentSpec
     string binary;
     immutable(string)[] flags;
     PromptDelivery delivery;
+    /// Alternative binary names to try on `$PATH` when `binary` is absent (e.g.
+    /// a tool distributed under more than one command name).
+    immutable(string)[] aliases;
 }
 
 /// The curated agent menu. Edit/extend freely — it is just data.
@@ -49,24 +52,47 @@ immutable AgentSpec[] agentRegistry = [
     AgentSpec(key: "crush",       binary: "crush",    flags: ["run"],       delivery: PromptDelivery.arg),
     AgentSpec(key: "goose",       binary: "goose",    flags: ["run", "-t"], delivery: PromptDelivery.arg),
     AgentSpec(key: "amp",         binary: "amp",      flags: ["-x"],        delivery: PromptDelivery.arg),
+    AgentSpec(key: "agy",         binary: "agy",      flags: ["-p"],        delivery: PromptDelivery.arg, aliases: ["antigravity-cli"]),
 ];
 
-/// The registry entries whose `binary` is on `$PATH`.
+/// The registry entries resolvable to a `binary` on `$PATH`.
 const(AgentSpec)[] availableAgents()
 {
-    import std.algorithm.iteration : filter;
+    import std.algorithm.iteration : joiner, map;
     import std.array : array;
 
-    return agentRegistry.filter!(a => isInPath(a.binary)).array;
+    // Each `resolveBinary` is an `Expected` — a one-element range on success,
+    // empty on failure — so `joiner` flattens away the not-installed agents.
+    return agentRegistry
+        .map!resolveBinary
+        .joiner
+        .array;
+}
+
+/// Returns `a` with `binary` set to the first of its candidate names — `binary`
+/// itself, then each of its `aliases` — found on `$PATH`, or a failure when none
+/// of them is installed.
+Result!AgentSpec resolveBinary(AgentSpec a)
+{
+    import std.algorithm.searching : find;
+    import std.array : empty, front;
+    import std.range : chain, only;
+
+    auto found = only(a.binary).chain(a.aliases).find!isInPath;
+    if (found.empty)
+        return failure!AgentSpec("agent `" ~ a.key ~ "` is not on PATH");
+    a.binary = found.front;
+    return success(a);
 }
 
 /// The registry entry for `key`, or `null`.
 const(AgentSpec)* findAgent(string key) @safe pure nothrow @nogc
 {
-    foreach (ref a; agentRegistry)
-        if (a.key == key)
-            return &a;
-    return null;
+    import std.algorithm.searching : canFind, find;
+    import std.array : empty;
+
+    auto found = agentRegistry.find!(a => a.key == key || a.aliases.canFind(key));
+    return found.empty ? null : &found[0];
 }
 
 /// The argv used to invoke `a` for `prompt` (prompt appended only for
@@ -310,7 +336,7 @@ string buildAgentPrompt(string suggestedSubject, string range, string logStat)
 {
     import std.algorithm.searching : canFind;
 
-    assert(agentRegistry.length == 10);
+    assert(agentRegistry.length == 11);
     bool[string] seen;
     foreach (a; agentRegistry)
     {
@@ -326,6 +352,33 @@ string buildAgentPrompt(string suggestedSubject, string range, string logStat)
 {
     assert(findAgent("gemini").binary == "gemini");
     assert(findAgent("not-an-agent") is null);
+
+    // Test alias lookup
+    assert(findAgent("antigravity-cli").key == "agy");
+}
+
+@("agents.resolveBinary")
+@safe unittest
+{
+    // `sh` is reliably on `$PATH` (see process_utils.isInPath); the sentinel
+    // name never is — keeping the test independent of what tools are installed.
+    enum absent = "sparkles-nonexistent-binary-xyzzy-123";
+
+    // `binary` present → resolves to it directly.
+    const direct = AgentSpec(
+        key: "mock", binary: "sh", flags: [], delivery: PromptDelivery.arg);
+    assert(resolveBinary(direct).value.binary == "sh");
+
+    // `binary` absent but an alias is present → resolves to the alias.
+    const viaAlias = AgentSpec(
+        key: "mock2", binary: absent, flags: [], delivery: PromptDelivery.arg,
+        aliases: [absent, "sh"]);
+    assert(resolveBinary(viaAlias).value.binary == "sh");
+
+    // No candidate on `$PATH` → a failure, not a null binary.
+    const missing = AgentSpec(
+        key: "mock3", binary: absent, flags: [], delivery: PromptDelivery.arg);
+    assert(resolveBinary(missing).hasError);
 }
 
 @("agents.buildArgv")

@@ -37,7 +37,7 @@ import sparkles.core_cli.ui.tasklist : TaskReporter;
 import sparkles.core_cli.ui.theme : makeTheme, Theme;
 import sparkles.versions.schemes.semver : SemVer;
 
-import sparkles.release.agents : AgentSpec, availableAgents, buildAgentPrompt, buildSegmentationPrompt, capLogStat, buildSegmentationRetryCoda, buildSegmentNotesSection, findAgent, runAgent;
+import sparkles.release.agents : AgentSpec, availableAgents, buildAgentPrompt, buildSegmentationPrompt, capLogStat, buildSegmentationRetryCoda, buildSegmentNotesSection, findAgent, runAgent, resolveBinary;
 import sparkles.release.artifacts : ArtifactSink, makeArtifactSink;
 import sparkles.release.bump : applyBump, BumpKind, parseBumpKind, suggestBump;
 import sparkles.release.conventional : CommitType;
@@ -925,6 +925,8 @@ private Result!string acquireNotesRange(
 
 private Result!(AgentSpec) pickAgent(in CliParams cli, in Theme theme)
 {
+    import expected : mapError;
+
     import sparkles.release.result : success, failure;
 
     auto avail = availableAgents();
@@ -934,10 +936,8 @@ private Result!(AgentSpec) pickAgent(in CliParams cli, in Theme theme)
         auto spec = findAgent(cli.agent);
         if (spec is null)
             return failure!AgentSpec("unknown agent `" ~ cli.agent ~ "`");
-        if (!isInPath(spec.binary))
-            return failure!AgentSpec(
-                "agent `" ~ cli.agent ~ "` (" ~ spec.binary ~ ") is not on PATH");
-        return success(cast(AgentSpec) *spec);
+        return resolveBinary(*spec).mapError!(_ =>
+            "agent `" ~ cli.agent ~ "` (" ~ spec.binary ~ ") is not on PATH");
     }
 
     if (avail.length == 0)
