@@ -16,13 +16,30 @@ version (linux)
     import core.sys.posix.sys.ioctl : ioctl;
     import core.sys.posix.unistd : read;
 
-    /// Rounds to three decimals so counter columns stay short. Shared by the perf
-    /// and syscall projections (kept in one place so they can't drift).
+    /// Rounds to three decimals; used only for the diagnostic `scale` field (a
+    /// ratio in [0, 1]) so report headers stay short. Counter values are NOT
+    /// rounded — see `projectPerIter`.
     package double round3(double v) @safe pure nothrow @nogc
     {
         import std.math.rounding : round;
 
         return round(v * 1000) / 1000;
+    }
+
+    /// One counter's per-iteration projection: the multiplex-corrected average.
+    /// Deliberately unrounded — a rare-but-present event (one syscall or page
+    /// fault in 10 000 iterations) must stay distinguishable from one that
+    /// never fired; rendering formats to significant digits anyway.
+    package double projectPerIter(ulong raw, double ratio, uint iters)
+        @safe pure nothrow @nogc
+        => double(raw) * ratio / iters;
+
+    @("perf_group.projectPerIter.keepsRareEvents")
+    @safe pure nothrow @nogc
+    unittest
+    {
+        assert(projectPerIter(1, 1.0, 10_000) == 1e-4); // a 3-decimal round floors this to 0
+        assert(projectPerIter(3370, 1.0, 1000) == 3.37);
     }
 
     /// Sends a group-wide `perf_event` ioctl to the group leader `leaderFd`.
@@ -152,7 +169,7 @@ version (linux)
         const ratio = scaledRatio(enabled, running);
         scale = enabled > 0 ? round3(double(running) / double(enabled)) : 1.0;
         foreach (k; 0 .. nOpen)
-            values[k] = round3(double(buf[3 + k]) * ratio / iters);
+            values[k] = projectPerIter(buf[3 + k], ratio, iters);
         return true;
     }
 }
