@@ -77,16 +77,16 @@ above the per-repo backend.
 
 ## Config & state
 
-dman uses `core-cli`'s `common_dirs` for cross-platform locations and `wired`
-JSON for persistence:
+dman uses `core-cli`'s `common_dirs` for cross-platform locations; config is a
+file, and the catalog + PR cache live in a bundled SQLite DB
+([D7](./DECISIONS.md)):
 
-- **config** (`configDir`) — dman settings.
-- **data** (`dataDir`) — the repo catalog / registry.
-- **cache** (`cacheDir`) — scan results, PR-status cache, worktree/build cache.
+- **config** (`configDir`) — dman settings (a config file).
+- **data** (`dataDir`) — `dman.db`: the repo catalog + PR cache (SQLite, WAL).
+- **cache** (`cacheDir`) — regenerable scan artifacts.
 - **state** (`stateDir`) — saved TUI layout, session state.
 
-The filesystem stays authoritative; the persisted catalog is a rebuildable
-secondary index.
+The filesystem stays authoritative; the DB is a rebuildable secondary index.
 
 ## The TUI shell — the biggest net-new piece
 

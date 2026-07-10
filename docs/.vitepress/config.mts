@@ -465,6 +465,8 @@ export default withMermaid(
                 },
                 { text: 'Architecture', link: '/specs/dman/architecture' },
                 { text: 'Command Schema', link: '/specs/dman/command-schema' },
+                { text: 'VCS Backend', link: '/specs/dman/vcs-backend' },
+                { text: 'Repo Catalog', link: '/specs/dman/repo-catalog' },
                 { text: 'Milestones', link: '/specs/dman/milestones' },
                 { text: 'Decisions', link: '/specs/dman/DECISIONS' },
               ],

@@ -123,3 +123,63 @@ must not drag in event-horizon) still holds. The two formats interlock where a
 tool's flag value derives from wired field-names (e.g. `gh pr list --json
 number,title`). Future option, deferred: split `core-cli` into `sparkles:tui` +
 `sparkles:command` once that surface grows.
+
+---
+
+## D7 — Catalog & cache persistence
+
+**Decision (Accepted, 2026-07-09):** persist the repo catalog and the PR cache in
+a **bundled SQLite database** (WAL) — one `dman.db` for dman's local state.
+
+**Rationale:** the PR cache wants concurrent-safe writes, native TTL/eviction, and
+indexed lookups; a single embedded DB gives ACID durability, a real migration
+story (`schema_migrations`), and a head start on the later distributed / shared-
+cache work — worth the added dependency. Chosen over per-repo wired-JSON, which is
+dependency-free but re-implements indexing, TTL, and concurrency by hand.
+(Supersedes the earlier provisional wired-JSON default.)
+
+**Implications:** a `dman.db` in `dataDir` holds `repositories`, `cached_prs`
+(`UNIQUE(repo, branch)`, null `pr_number` = "queried, no PR" sentinel), and
+`schema_migrations`; TTL bounds staleness on read and an eviction pass GCs old
+rows; WAL + `foreign_keys=ON`. The filesystem stays authoritative for repo
+existence (the DB is a rebuildable index). Adds a SQLite dependency — most
+sparkles-idiomatically an ImportC binding to the bundled amalgamation (the
+`sparkles:ghostty` pattern), or an existing D binding. TUI/session state stays in
+`stateDir`. See [Repo catalog](./repo-catalog.md).
+
+---
+
+## D8 — VCS backend abstraction depth
+
+**Decision (Accepted — recommended default, 2026-07-09):** build a **minimal,
+Git-shaped `VcsRepo` interface** now — only v1's real operations, Git as the sole
+implementation, jj-aware naming but no speculative generalization.
+
+**Rationale:** jujutsu's model (bookmarks, colocated workspaces, change vs
+branch) is best abstracted against a concrete second backend, not guessed at.
+A focused interface shaped by real v1 needs avoids the wrong abstraction.
+
+**Implications:** the interface generalizes when the jj backend lands (P3); until
+then, avoid a premature multi-backend provider trait. See
+[VCS backend](./vcs-backend.md).
+
+---
+
+## D9 — Worktree on-disk layout
+
+**Decision (Accepted — recommended default, 2026-07-09):** default to **sibling
+directories named `<repo>-<branch>`** next to the main checkout, configurable via
+a naming template.
+
+**Rationale:** matches the existing sparkles worktree convention (e.g.
+`sparkles-dman`, `sparkles-event-horizon`), so dman fits how the repos are
+already laid out, and the repo scanner discovers worktrees as ordinary repos.
+
+**Implications:** worktree support is net-new (no prior art); dman parses
+`git worktree list --porcelain`, links branch↔worktree, and models
+"checked out elsewhere". Layout is a template so a dedicated-subdir or central-root
+convention can be selected instead. See
+[VCS backend § worktree model](./vcs-backend.md#worktree-model-net-new).
+
+> D7–D9 were adopted as the recommended defaults while the requester was away;
+> they are low-cost to revisit pre-1.0.
