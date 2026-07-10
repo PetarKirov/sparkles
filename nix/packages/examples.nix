@@ -29,6 +29,18 @@
         fs.toList
       ];
 
+      # Every lib's `src/` tree, as one fileset. An example may `dependency` on
+      # any sibling sub-package (e.g. `tree.d` pulls in `build-primitives`), and
+      # `core-cli` additionally imports `math` (ScreenSize) via importPaths — so
+      # rather than guess the transitive set per example, include them all (a
+      # `dub build --single` only compiles what the example actually reaches).
+      allLibSources = lib.pipe (builtins.readDir (fromRoot "libs")) [
+        (lib.filterAttrs (_: type: type == "directory"))
+        (lib.mapAttrsToList (name: _: fs.maybeMissing (fromRoot "libs/${name}/src")))
+        fs.unions
+        (fs.intersection (fs.fileFilter (file: file.hasExt "d") (fromRoot "libs")))
+      ];
+
       # Decompose an absolute example path into the metadata needed for the
       # derivation (lib name, file basename, attribute name, sub-paths).
       exampleInfo =
@@ -42,7 +54,6 @@
         {
           inherit libName fileBase;
           examplesRel = "libs/${libName}/examples";
-          librarySrcRel = "libs/${libName}/src";
         };
 
       mkExamplePackage =
@@ -58,13 +69,10 @@
               # example is being built.
               (fs.fileFilter isDubManifest root)
               # Library sources the example links against via
-              # `dependency "sparkles:<lib>" path="../../.."`.
-              (fs.fileFilter (file: file.hasExt "d") (fromRoot "libs/base/src"))
-              (fs.fileFilter (file: file.hasExt "d") (fromRoot info.librarySrcRel))
-              # `base` imports the runner's attributes (in the impl package)
-              # unconditionally, so its source must be present.
-              (fs.fileFilter (file: file.hasExt "d") (fromRoot "libs/test-runner/src"))
-              (fs.fileFilter (file: file.hasExt "d") (fromRoot "libs/test-runner-impl/src"))
+              # `dependency "sparkles:<lib>" path="../../.."` — plus the impl
+              # runner sources `base`/`core-cli` import unconditionally, and
+              # `math` which `core-cli` reaches via importPaths. See allLibSources.
+              allLibSources
               # The full `examples/` subtree — this brings in the shared
               # `views/` string-import assets alongside the script itself.
               (fromRoot info.examplesRel)
