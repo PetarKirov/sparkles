@@ -751,7 +751,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
 
     progress = BenchProgress(total: all.length,
         active: stderrIsTty(options.noColours) && all.length > 0,
-        width: detectTerminalWidth());
+        width: detectTerminalWidth(stderrStream: true));
 
     size_t totalRows, errorRows;
     bool firstFlush = true;
