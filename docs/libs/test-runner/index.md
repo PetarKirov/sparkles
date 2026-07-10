@@ -48,6 +48,7 @@ _Task-oriented._ Short recipes for common jobs.
 - [Write `-betterC` (`@betterC`) tests](./how-to/write-betterc-tests.md)
 - [Write WebAssembly (`@wasm`) tests](./how-to/write-wasm-tests.md)
 - [Benchmark with `@benchmark`](./how-to/benchmark.md)
+- [Skip tests at runtime](./how-to/skip-tests.md)
 
 ### Reference
 
