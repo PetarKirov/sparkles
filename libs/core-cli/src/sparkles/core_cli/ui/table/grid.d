@@ -20,6 +20,8 @@ import sparkles.base.text.grapheme : visibleWidth;
 
 bool hasRectangularShape(T)(const T[][] array)
 {
+    if (array.length == 0)
+        return true; // the empty table is (vacuously) rectangular
     size_t width = array[0].length;
     return array.all!(row => row.length == width);
 }
