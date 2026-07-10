@@ -600,3 +600,82 @@ unittest
     // Absent → error.
     assert(!parseVmRssKbFromStatus("Name:\tx\nThreads:\t1\n").hasValue);
 }
+
+/**
+Runs `args` (an argv array — no shell) streaming its output line by line into
+`sink` as the child produces it, for live progress displays (a task list's
+subprocess tail). stdout and stderr are merged into one stream so lines arrive
+in output order; the full combined output is also returned in
+`CapturedResult.stdout` (`stderr` stays empty).
+
+Like $(LREF runCaptured) this never throws: spawn failures yield `status == 127`
+with the error text in `stderr`. The single merged pipe is drained continuously,
+so a chatty child cannot deadlock. Attributes infer from `Sink` (a callable
+taking `scope const(char)[]`).
+*/
+CapturedResult runStreaming(Sink)(
+    const(string)[] args,
+    scope Sink sink,
+    string workDir = null,
+)
+{
+    import std.array : appender;
+    import std.process : Config, pipeProcess, Redirect, wait;
+
+    CapturedResult result;
+    auto all = appender!string;
+    try
+    {
+        auto pipes = (() @trusted => pipeProcess(
+            args, Redirect.stdout | Redirect.stderrToStdout,
+            null, Config.none, workDir))();
+        foreach (line; (() @trusted => pipes.stdout.byLine)())
+        {
+            sink(line);
+            all ~= line;
+            all ~= '\n';
+        }
+        result.status = (() @trusted => wait(pipes.pid))();
+        result.stdout = all[];
+    }
+    catch (Exception e)
+    {
+        result.status = 127;
+        result.stdout = all[];
+        result.stderr = e.msg;
+    }
+    return result;
+}
+
+@("process_utils.runStreaming.linesArriveAndAggregate")
+@system unittest
+{
+    string[] seen;
+    auto r = runStreaming(
+        ["sh", "-c", "echo one; echo two >&2; echo three"],
+        (scope const(char)[] line) { seen ~= line.idup; });
+    assert(r.succeeded);
+    // stderr is merged into the stream in output order.
+    assert(seen == ["one", "two", "three"]);
+    assert(r.stdout == "one\ntwo\nthree\n");
+    assert(r.stderr.length == 0);
+}
+
+@("process_utils.runStreaming.failuresNeverThrow")
+@system unittest
+{
+    size_t calls;
+    auto bad = runStreaming(
+        ["sparkles-nonexistent-binary-xyzzy-123"],
+        (scope const(char)[]) { calls++; });
+    assert(bad.status == 127);
+    assert(bad.stderr.length != 0);
+    assert(calls == 0);
+
+    auto failing = runStreaming(
+        ["sh", "-c", "echo partial; exit 3"],
+        (scope const(char)[]) { calls++; });
+    assert(failing.status == 3);
+    assert(calls == 1);
+    assert(failing.stdout == "partial\n");
+}
