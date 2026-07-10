@@ -58,6 +58,8 @@ private struct RunnerOptions
     string metrics;
     string sortBy;
     string[] groupBy;
+    string benchJson;  /// --bench-json=FILE ("" = off)
+    uint benchMinTime; /// --bench-min-time=MS (0 = BenchConfig's 5 ms default)
     bool listMetrics;
     string ctfeTrace;
     bool betterC;
@@ -190,6 +192,14 @@ private auto parseInto(ref string[] args, ref RunnerOptions options)
             "keys (comma-separated or repeated), e.g. =dataset,operation. " ~
             "=all groups by every label; =list lists the available keys",
             &options.groupBy,
+        "bench-json",
+            "With --bench: also write the results as JSON to the given file " ~
+            "(all rows in measurement order, incl. error rows, plus a meta block)",
+            &options.benchJson,
+        "bench-min-time",
+            "With --bench: per-case measurement budget in milliseconds — per-call " ~
+            "cases: minimum total measured time; batched: target per sample. Default 5",
+            &options.benchMinTime,
         "list-metrics",
             "With --bench: list the available metric columns (name, class, source) and exit",
             &options.listMetrics,
@@ -673,7 +683,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
 
     foreach (test; benchTests)
     {
-        const config = BenchConfig(iterations: test.traits.benchIterations);
+        const config = benchConfigFor(options.benchMinTime, test.traits.benchIterations);
         auto reg = registerBenchmark(test, config);
         if (!reg.result.succeeded)
             reportFailure(reg.result); // still schedule the cases it did register
@@ -761,6 +771,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     size_t totalRows, errorRows;
     bool firstFlush = true;
     BenchStats[] bucket;
+    BenchStats[] measured; // run-long, for --bench-json (measurement order)
     string curKey;
 
     void flush()
@@ -793,6 +804,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
             if (row.error.length)
                 errorRows++;
             bucket ~= row;
+            measured ~= row;
             totalRows++;
         }
         catch (Throwable t)
@@ -803,7 +815,9 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
             // error-row path — not the separate `failed` tally. `toThrown`
             // re-throws OutOfMemoryError, which must abort the run.
             auto thrown = toThrown(t);
-            bucket ~= errorRow(s.c.name, s.c.labels, thrown);
+            auto row = errorRow(s.c.name, s.c.labels, thrown);
+            bucket ~= row;
+            measured ~= row;
             errorRows++;
             totalRows++;
             progress.clear();
@@ -817,6 +831,24 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     if (totalRows == 0 && !failed)
         stdout.writeln("no @benchmark tests found");
 
+    if (options.benchJson.length)
+    {
+        import std.file : write;
+        import sparkles.test_runner.bench_json : benchReportJson, collectBenchMeta;
+
+        // The meta block records the effective knobs (an empty run still writes
+        // a valid document, deterministic for tooling).
+        const meta = collectBenchMeta(benchConfigFor(options.benchMinTime, 0));
+        try
+            write(options.benchJson, benchReportJson(measured, meta));
+        catch (Exception e)
+        {
+            stderr.writeln("--bench-json: cannot write '", options.benchJson,
+                "': ", e.msg);
+            failed++; // → executed > passed in the returned result: non-zero exit
+        }
+    }
+
     return UnitTestResult(totalRows + failed, totalRows - errorRows, false, false);
 }
 
@@ -826,6 +858,33 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
 private enum bool hasCoreCliTermCaps = __traits(compiles, {
     import sparkles.core_cli.term_caps : detectTermCaps;
 });
+
+/// The per-test `BenchConfig` under the CLI knobs: `--bench-min-time` overrides
+/// the sample-time budget (0 = keep the 5 ms default); a pinned
+/// `@benchmark(iterations: N)` count threads through unchanged.
+private BenchConfig benchConfigFor(uint benchMinTimeMs, uint iterations)
+    @safe pure nothrow @nogc
+{
+    import core.time : msecs;
+
+    auto config = BenchConfig(iterations: iterations);
+    if (benchMinTimeMs)
+        config.minSampleTime = benchMinTimeMs.msecs;
+    return config;
+}
+
+@("runner.benchConfigFor.minTimeOverride")
+@safe pure nothrow @nogc
+unittest
+{
+    import core.time : msecs;
+
+    const pinned = benchConfigFor(0, 7);
+    assert(pinned.iterations == 7 && pinned.minSampleTime == 5.msecs);
+    const budgeted = benchConfigFor(2000, 0);
+    assert(budgeted.minSampleTime == 2000.msecs);
+    assert(budgeted.sampleCount == 32, "only the time budget is overridden");
+}
 
 /// Prepares the console and reports whether colored output should be used.
 /// Delegates to `core-cli`'s `detectTermCaps` (colors off on `--no-colours` /
