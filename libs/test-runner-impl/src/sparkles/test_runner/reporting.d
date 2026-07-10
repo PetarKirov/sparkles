@@ -447,18 +447,7 @@ string formatBenchTable(in BenchStats[] rows, bool colored, string metricFilter 
     TableGeometry* geometry = null) @system // drawTable is @system
 {
     auto models = buildBenchTables(rows, colored, metricFilter, sortBy, groupKeys);
-
-    size_t[] floors;
-    foreach (ref m; models)
-        floors = mergeWidths(floors, contentWidths(m.cells));
-    if (geometry !is null && models.length)
-    {
-        if (geometry.header != models[0].cells[0])
-            geometry.floors = null; // different columns: the carry is stale
-        geometry.floors = mergeWidths(geometry.floors, floors);
-        geometry.header = models[0].cells[0].dup;
-        floors = geometry.floors;
-    }
+    const floors = applyGeometry(geometry, models);
 
     string result;
     foreach (ref m; models)
@@ -487,6 +476,26 @@ package struct TableGeometry
 {
     string[] header;  /// the header row the floors were derived under
     size_t[] floors;  /// per-column content-width floors, in visible cells
+}
+
+/// The column floors for rendering `models`: the union of their natural
+/// widths, merged into (and carried forward by) `geometry` when given —
+/// resetting the carry when the header row (the column signature) changed.
+private size_t[] applyGeometry(TableGeometry* geometry, in BenchTableModel[] models)
+    @safe
+{
+    size_t[] floors;
+    foreach (ref m; models)
+        floors = mergeWidths(floors, contentWidths(m.cells));
+    if (geometry !is null && models.length)
+    {
+        if (geometry.header != models[0].cells[0])
+            geometry.floors = null; // different columns: the carry is stale
+        geometry.floors = mergeWidths(geometry.floors, floors);
+        geometry.header = models[0].cells[0].dup;
+        floors = geometry.floors;
+    }
+    return floors;
 }
 
 /// The table models `formatBenchTable` renders — split out so a live view can
@@ -668,6 +677,101 @@ private size_t[] mergeWidths(in size_t[] a, in size_t[] b) @safe
     return merged;
 }
 
+/// One live frame of a group's results table (the `--bench` ticker): the rows
+/// measured so far — sorted exactly like the final table — plus, while
+/// `inflight.name` is set, a dim `⠹ name │ measuring… │` row pinned to the
+/// bottom. The frame renders through the same model, alignment, title, and
+/// `geometry` floors as the flushed table (which `nameFloor`, the group
+/// roster's widest spinner-prefixed name, extends), so frames never resize as
+/// rows land and the last frame is line-identical to the graduated table.
+/// Returns table lines without trailing newlines (for `LiveRegion.update`);
+/// `null` when there is nothing to show or without `core-cli`.
+package string[] benchFrameLines(in BenchStats[] rows, BenchStats inflight,
+    size_t spin, bool colored, string metricFilter, string sortBy,
+    in string[] groupKeys, size_t nameFloor, ref TableGeometry geometry) @system
+{
+    static if (hasCoreCliUi)
+    {
+        import std.algorithm.searching : canFind;
+        import std.array : array;
+        import sparkles.core_cli.ui.progress : spinnerFrame;
+        import sparkles.core_cli.ui.table : drawTableLines, TableProps;
+        import sparkles.test_runner.metrics : labelKeyUnion;
+
+        if (rows.length == 0 && inflight.name.length == 0)
+            return null;
+
+        // The in-flight case rides through the model as a pseudo error row —
+        // that yields the group's title/header/columns even before the first
+        // real row lands, and error rows sort last, pinning it to the bottom.
+        // The sentinel marks it for the rewrite below (its rendered cells are
+        // replaced wholesale).
+        enum sentinel = "\x01measuring";
+        const(BenchStats)[] allRows = inflight.name.length
+            ? rows ~ BenchStats(name: inflight.name, labels: inflight.labels,
+                error: sentinel)
+            : rows;
+
+        auto models = buildBenchTables(allRows, colored, metricFilter, sortBy,
+            groupKeys);
+        assert(models.length == 1, "a frame renders exactly one group");
+        auto model = models[0];
+
+        // Column of the case name (the spinner stub) and of median/iter (the
+        // `measuring…` cell) — mirroring buildBenchTables' layouts: grouped is
+        // `[name] restKeys… iters median …`, flat is `labelKeys… name iters
+        // median …`.
+        size_t nameIdx, medianIdx;
+        if (groupKeys.length)
+        {
+            size_t restCount;
+            foreach (key; labelKeyUnion(allRows))
+                if (!groupKeys.canFind(key))
+                    restCount++;
+            nameIdx = 0;
+            medianIdx = 1 + restCount + 1;
+        }
+        else
+        {
+            nameIdx = labelKeyUnion(allRows).length;
+            medianIdx = nameIdx + 2;
+        }
+
+        foreach (ref row; model.cells[1 .. $])
+        {
+            if (!row.canFind!(c => c.canFind(sentinel)))
+                continue;
+            const glyph = spinnerFrame(spin);
+            const name = inflight.name;
+            row[nameIdx] = render(colored, i"{dim $(glyph) $(name)}");
+            foreach (i; medianIdx - 1 .. row.length) // iters onward
+                row[i] = "";
+            // `measuring…` rides in the right-aligned iters column, NOT the
+            // decimal median one: a dotless cell in a decimal column gets a
+            // layout-internal trailing pad the geometry floors cannot carry,
+            // so the column would shrink when the row lands (the ticker demo
+            // parks it in `iterations` for the same reason).
+            row[medianIdx - 1] = render(colored, i"{dim measuring…}");
+            break;
+        }
+
+        auto floors = applyGeometry(&geometry, models);
+        if (nameIdx < floors.length && floors[nameIdx] < nameFloor)
+        {
+            floors[nameIdx] = nameFloor;
+            geometry.floors = mergeWidths(geometry.floors, floors);
+        }
+
+        return drawTableLines(model.cells, TableProps(
+            headerRows: 1, title: model.title, columnAligns: model.aligns.dup,
+            columnMinWidths: floors.dup)).array;
+    }
+    else
+    {
+        return null; // the ticker is gated on core-cli in the runner
+    }
+}
+
 @("formatBenchTable.metricColumns")
 @system
 unittest
@@ -765,6 +869,68 @@ unittest
 /// A table with a different column set (here: an extra metric column) resets
 /// the carried floors instead of misapplying them positionally — the output
 /// matches a fresh render exactly.
+/// A ticker frame carries the group's title, the measured rows, and a dim
+/// spinner row for the in-flight case — with `measuring…` in the timing
+/// column and its real label values in the rest columns — even before any row
+/// has landed (the pseudo row alone yields the table skeleton).
+@("reporting.benchFrameLines.inflightRow")
+@system
+unittest
+{
+    static if (hasCoreCliUi)
+    {
+        import std.algorithm.searching : canFind;
+        import std.array : join;
+
+        TableGeometry geom;
+        BenchStats[1] rows = [BenchStats(name: "asdf",
+            labels: ["dataset": "canada"], iterations: 1, nsPerIterMedian: 30)];
+        auto inflight = BenchStats(name: "mir-ion", labels: ["dataset": "canada"]);
+
+        const frame = benchFrameLines(rows[], inflight, 0, false, null, null,
+            ["dataset"], 0, geom);
+        assert(frame.canFind!(l => l.canFind("benchmark: canada")), frame.join("\n"));
+        assert(frame.canFind!(l => l.canFind("asdf")));
+        assert(frame.canFind!(l => l.canFind("⠋ mir-ion")));
+        assert(frame.canFind!(l => l.canFind("measuring…")));
+        assert(!frame.canFind!(l => l.canFind("\x01")), "sentinel must not leak");
+
+        // No rows landed yet: the skeleton (title + header + spinner row) shows.
+        TableGeometry fresh;
+        const first = benchFrameLines(null, inflight, 2, false, null, null,
+            ["dataset"], 0, fresh);
+        assert(first.canFind!(l => l.canFind("benchmark: canada")));
+        assert(first.canFind!(l => l.canFind("⠹ mir-ion")));
+    }
+}
+
+/// The last frame of a group (no in-flight row) is line-identical to the
+/// table the piped path flushes — graduation swaps nothing visually.
+@("reporting.benchFrameLines.finalFrameMatchesFlushedTable")
+@system
+unittest
+{
+    static if (hasCoreCliUi)
+    {
+        import std.array : join;
+
+        BenchStats[2] rows = [
+            BenchStats(name: "asdf", labels: ["dataset": "canada"],
+                iterations: 1, nsPerIterMedian: 30),
+            BenchStats(name: "mir-ion", labels: ["dataset": "canada"],
+                iterations: 1, nsPerIterMedian: 10),
+        ];
+
+        TableGeometry frameGeom, flushGeom;
+        const frame = benchFrameLines(rows[], BenchStats.init, 0, false, null,
+            null, ["dataset"], 0, frameGeom);
+        const flushed = formatBenchTable(rows[], false, null, null, ["dataset"],
+            &flushGeom);
+        assert(frame.join("\n") ~ "\n" == flushed, frame.join("\n"));
+        assert(frameGeom == flushGeom);
+    }
+}
+
 @("formatBenchTable.geometryResetsOnHeaderChange")
 @system
 unittest
