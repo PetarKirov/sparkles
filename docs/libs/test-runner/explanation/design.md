@@ -128,8 +128,9 @@ volatile store elsewhere).
 (engine, dataset, …) and each call becomes its own row, so the combinatorics
 stay in plain-D loops rather than in the runner. It times each call individually
 — the price of letting an untimed `after` release the timed body's result
-before the next iteration — and `after` chooses the failure granularity (a
-`throw` fails the whole test; an `Expected` error isolates a single error row).
+before the next iteration — and a failing `after` (a `throw`, trace printed,
+or an `Expected` error, silent) isolates into a single error row while the
+rest of the matrix continues; the run still reports failure.
 `Metric` columns report throughput as `amount ÷ time`, with a vocabulary (a
 named `Unit`; rate = quantity ÷ time) aligned to the forthcoming
 `sparkles:quantities` library.

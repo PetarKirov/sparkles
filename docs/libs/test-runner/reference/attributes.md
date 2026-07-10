@@ -45,8 +45,9 @@ The test is WebAssembly-compatible.
 The test is a benchmark.
 
 - Skipped by normal runs (counted in the summary); measured by `--bench`.
-- `iterations` pins the per-sample count; `0` (default) auto-scales it until
-  a sample takes long enough to time reliably.
+- `iterations` pins the count; `0` (default) auto-scales. Batched timing
+  (`benchIter`/whole-body) pins the per-sample iteration count; a per-call
+  `benchCase` runs exactly N timed calls, one sample each.
 - The whole body is the measured unit by default. From
   `sparkles.test_runner.bench`: `benchIter` measures a sub-section, `benchCase`
   emits many rows from one test (a matrix, with `Metric` throughput columns),

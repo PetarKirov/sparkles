@@ -183,6 +183,8 @@ silly's successor — same CLI, documented under
 -l, --list          List discovered tests (with attribute markers)
 --no-colours        Disable colored output
 --bench             Run @benchmark tests (auto-scaling ns/iter statistics)
+--bench-json FILE   With --bench: dump results as JSON (baseline snapshots)
+--bench-min-time MS With --bench: per-case measurement budget in ms (default 5)
 --better-c          Extract @betterC tests, compile with -betterC, run them
 --wasm              Extract @wasm tests, cross-compile to wasm32, run them
 --ctfe-trace FILE   Evaluate @ctfe tests under LDC -ftime-trace; per-test cost

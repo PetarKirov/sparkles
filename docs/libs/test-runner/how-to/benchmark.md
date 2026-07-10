@@ -4,7 +4,7 @@
 `--bench`:
 
 ```bash
-dub test :base -- --bench
+dub test :yourpkg -- --bench
 ```
 
 ```console
@@ -14,6 +14,11 @@ dub test :base -- --bench
 ╰────────────────┴─────────┴─────────────┴────────┴────────┴────────╯
 ```
 
+(Illustrative output. An assert-enabled build — dub's stock `unittest` build
+type — prints a warning: real numbers need an optimized unittest buildType,
+e.g. `buildOptions "unittests" "releaseMode" "optimize" "inline"` invoked as
+`dub test -b <name>`.)
+
 ## Measurement protocol
 
 The protocol follows Rust libtest's `Bencher`: the per-sample iteration
@@ -21,7 +26,11 @@ count doubles until one sample takes at least 5 ms (so fast operations are
 timed over millions of iterations), then 32 samples are collected and
 summarized as median, median-absolute-deviation, min, and max
 nanoseconds-per-iteration. `@benchmark(iterations: 1000)` pins the count
-instead of auto-scaling.
+instead of auto-scaling — per sample for batched (`benchIter`/whole-body)
+timing; a per-call `benchCase` runs exactly N timed calls, one sample each.
+`--bench-min-time=MS` overrides the 5 ms budget: for per-call cases it is
+the minimum total measured time per case (samples keep accumulating past 32
+until it is met), for batched ones the per-sample auto-scale target.
 
 Benchmarks run serially (never in the test thread pool), and the whole test
 body is the measured unit by default.
@@ -90,11 +99,13 @@ by every label key; `=list` prints the keys the run offers.
   optional **`setup`/`teardown`** (which bracket the case's measurement) — not
   around the call. Outside `--bench` the case runs once immediately.
 - **`timed`** returns a result that flows to **`after`**, which runs _untimed_
-  after each iteration to verify and release it. `after` may **throw** (the whole
-  benchmark test fails) or return an
-  [`Expected`](../../../guidelines/idioms/expected/index.md) error (only this
-  case becomes an error row; the matrix continues). A case with nothing to
-  release/verify passes a no-op `after` (`() {}` for a `void` body).
+  after each iteration to verify and release it. `after` may **throw** — under
+  `--bench` the case becomes an in-table error row with its trace printed, the
+  matrix continues, and the run reports failure — or return an
+  [`Expected`](../../../guidelines/idioms/expected/index.md) error (the same
+  isolated error row, without a trace). A case with nothing to release/verify
+  passes a no-op `after` (`() {}` for a `void` body). Error rows sort last in
+  their table under every `--sort-by` order.
 - **`metrics`** add throughput columns: `Metric(unit, amount, mode)` with `mode`
   `rate` (`amount ÷ iteration-time` → `<unit>/s`) or `level` (as-is). Units are
   open-basis names (`"B"`, `"req"`, `"tweet"`, …), vocabulary aligned to the
@@ -123,8 +134,11 @@ IPC, instructions/iter, and branch/cache miss-rate columns.
 dub test :base -- --bench --perf
 ```
 
-A counter that can't be opened — a paranoid kernel (`perf_event_paranoid`), or
-the last-level-cache pair dropped to avoid PMU multiplexing — shows as `—`; off
+An individually dropped counter (the last-level-cache pair under PMU
+multiplexing) or an explicitly `--metrics`-selected unavailable column shows
+as `—`; when the whole group can't open (a paranoid kernel's
+`perf_event_paranoid`, or a PMU too busy to ever schedule the group) the
+default perf columns are omitted entirely and a stderr note says why. Off
 Linux the flag is inert.
 
 ## Choosing columns: the metric catalog
@@ -147,7 +161,29 @@ dub test :base -- --bench --metrics=ipc,cache-miss   # opens --perf for these tw
 dub test :base -- --bench --metrics=all              # every available column
 ```
 
-With no `--metrics`, the standard columns show (identical to before this feature).
+With no `--metrics`, the standard columns show (identical to before this
+feature). A selector that matches nothing warns on stderr, like `--sort-by`
+and `--group-by`.
+
+## Machine-readable results: `--bench-json`
+
+`--bench-json=FILE` also writes the run as one JSON document — for committed
+baseline snapshots that later runs are compared against:
+
+```bash
+dub test :yourpkg -- --bench --perf --bench-min-time=2000 --bench-json=results.json
+```
+
+The document is `{schema, meta, columns, rows}`: `meta` records the host,
+compiler, CPU, and the run's effective measurement knobs (baselines are
+self-describing); `columns` describe the available catalog metrics; each row
+carries `name`, its sorted `labels` (the `--group-by` dimensions travel here —
+the JSON itself keeps measurement order, unaffected by `--sort-by`/
+`--group-by`), the timing summary in nanoseconds, and a `metrics` object keyed
+by catalog names (`--list-metrics`). Error rows keep their `labels` and
+`error` with `null` timing fields; unavailable counters are `null`. The
+output is deterministic and float-safe for committing (integral values print
+as integers, others to 6 significant digits).
 
 ## I/O-bound signals: Tier-0 counters and `--syscalls`
 
