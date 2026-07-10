@@ -302,6 +302,14 @@ private enum string[] expandableAreas = ["apps", "libs", "docs"];
 private void renderStats(in ReleaseStats rs, string rangeLabel)
 {
     import std.conv : text;
+    import sparkles.base.text.width : Align;
+    import sparkles.core_cli.term_caps : terminalSize;
+    import sparkles.core_cli.ui.table : TableProps;
+
+    // Numbers right-align; every table caps at the terminal width (0 = no cap
+    // when piped); titles ride the frame instead of a separate banner line.
+    const cap = terminalSize().width;
+    const numeric = [Align.left, Align.right];
 
     writeln();
     writeln(drawHeader("Release range: " ~ rangeLabel,
@@ -315,7 +323,8 @@ private void renderStats(in ReleaseStats rs, string rangeLabel)
         ["Authors", rs.authors.length.text],
         ["Breaking changes", rs.breakingCount.text],
     ];
-    writeln(drawTable(overview));
+    writeln(drawTable(overview,
+        TableProps(title: "Overview", columnAligns: numeric.dup, maxWidth: cap)));
 
     // Conventional-commit type breakdown (only non-zero rows).
     string[][] types = [["Type", "Count"]];
@@ -325,7 +334,8 @@ private void renderStats(in ReleaseStats rs, string rangeLabel)
     if (types.length > 1)
     {
         writeln();
-        writeln(drawTable(types));
+        writeln(drawTable(types, TableProps(title: "Commits by type",
+            headerRows: 1, columnAligns: numeric.dup, maxWidth: cap)));
     }
 
     if (rs.areas.length)
@@ -340,7 +350,8 @@ private void renderStats(in ReleaseStats rs, string rangeLabel)
             ];
         }
         writeln();
-        writeln(drawTable(areaRows));
+        writeln(drawTable(areaRows, TableProps(title: "Changed by area",
+            headerRows: 1, columnAligns: numeric.dup, maxWidth: cap)));
     }
 
     if (rs.authors.length)
