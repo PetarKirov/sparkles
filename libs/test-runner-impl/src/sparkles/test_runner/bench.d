@@ -677,7 +677,9 @@ BenchStats measureCase(BenchContext* context, RegisteredCase c)
         return row;
     }
 
-    // Probe once so an `after` error surfaces before the measurement loop.
+    // Probe once so an `after` error surfaces before the measurement loop —
+    // except under a pinned count, where every call is one of the N samples.
+    if (!context.config.iterations)
     {
         const probe = driveErased(c.runTimed, c.runAfter);
         if (probe.error.length)
@@ -685,10 +687,13 @@ BenchStats measureCase(BenchContext* context, RegisteredCase c)
     }
 
     // Per-call timing: collect until both the sample count and time budget met
-    // (or the clock stalls at 0 ns — see `keepSampling`).
+    // (or the clock stalls at 0 ns — see `keepSampling`). A pinned
+    // `@benchmark(iterations: N)` runs exactly N timed calls, one sample each.
     long[] samples;
     long totalNs;
-    while (keepSampling(samples.length, totalNs, context.config))
+    while (context.config.iterations
+        ? samples.length < context.config.iterations
+        : keepSampling(samples.length, totalNs, context.config))
     {
         const d = driveErased(c.runTimed, c.runAfter);
         if (d.error.length)
@@ -1109,4 +1114,29 @@ unittest
     assert(outcome.result.succeeded);
     assert(outcome.rows.length == 1 && outcome.rows[0].error == "boom");
     assert(teardowns == 1, "teardown runs even when the case errors");
+}
+
+@("measureCase.pinnedIterationsPerCall")
+@system
+unittest
+{
+    // `@benchmark(iterations: N)` pins a per-call case to exactly N timed calls
+    // (one sample each): no probe call, no auto-scaling past the pin.
+    static size_t timeds;
+    timeds = 0;
+
+    static void body_()
+    {
+        benchCase(name: "pinned", timed: () { timeds++; blackBox(timeds); },
+            after: () {});
+    }
+
+    auto counters = CounterGroups.none;
+    auto outcome = runBenchmark(Test(fullName: "m.pin", name: "pin", ptr: &body_),
+        BenchConfig(iterations: 7), counters);
+    assert(outcome.result.succeeded);
+    assert(timeds == 7, "exactly the pinned number of timed calls");
+    assert(outcome.rows.length == 1);
+    assert(outcome.rows[0].samples == 7);
+    assert(outcome.rows[0].iterations == 1, "per-call rows are 1 iteration/sample");
 }
