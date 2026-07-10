@@ -454,8 +454,11 @@ CtfeOutcome runCtfeTests(
             "--ftime-trace-granularity=0"];
     }
 
+    // -verrors=0 lifts the default 20-error limit: parseCtfeFailures attributes
+    // failures from the `error instantiating` trail lines, and a truncated
+    // trail would report the cut-off failing tests as passed.
     const compile = run(
-        [compiler, "-o-", "-unittest", "-checkaction=context"]
+        [compiler, "-o-", "-unittest", "-checkaction=context", "-verrors=0"]
             ~ traceFlags ~ includeFlags(options)
             ~ allImportFlags(allTests, options) ~ moduleFiles ~ [sourceFile],
         options.verbose);
