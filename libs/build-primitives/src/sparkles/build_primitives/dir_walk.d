@@ -3,12 +3,20 @@
  */
 module sparkles.build_primitives.dir_walk;
 
-import sparkles.build_primitives.gitignore : GitIgnore;
+import sparkles.build_primitives.gitignore : GitIgnore, GitIgnoreStack;
 
 /// Hook capability: `bool enterDir(const(char)[] path)`.
 enum bool hasEnterDir(Hook) = is(typeof({
     Hook hook = Hook.init;
     bool keep = hook.enterDir("src");
+}));
+
+/// Hook capability: `void leaveDir(const(char)[] path)` — called after a
+/// directory's subtree has been walked (only for directories that were
+/// entered, so `enterDir`/`leaveDir` pairs nest like a stack).
+enum bool hasLeaveDir(Hook) = is(typeof({
+    Hook hook = Hook.init;
+    hook.leaveDir("src");
 }));
 
 /// Hook capability: `bool includeFile(const(char)[] path)`.
@@ -45,19 +53,44 @@ DirWalkerRange!Hook dirEntriesFilter(Hook = NoopWalkHook)(string root, Hook hook
     return DirWalkerRange!Hook(root, hook);
 }
 
-/// Repository-aware filter using `.gitignore` rules.
+/// Repository-aware filter applying nested `.gitignore` rules: the walk
+/// root's `.gitignore` seeds the stack, every entered directory contributes
+/// its own `.gitignore` (if any) to its subtree, and deeper rules override
+/// shallower ones — matching git's precedence. `.git` is always skipped.
 struct GitRepositoryFilter
 {
-    const GitIgnore ignore;
+    private string root;
+    private GitIgnoreStack stack;
 
-    bool enterDir(const(char)[] relativePath) const @safe pure
+    /// `root` is the directory the walk starts from; `rootIgnore` is the
+    /// `.gitignore` scope applying at that root.
+    this(string root, GitIgnore rootIgnore) @safe pure nothrow
     {
-        return !isGitMetadataPath(relativePath) && !ignore.isIgnored(relativePath, true);
+        this.root = root;
+        stack.push("", rootIgnore);
+    }
+
+    bool enterDir(const(char)[] relativePath) @safe
+    {
+        import std.path : buildPath;
+
+        if (isGitMetadataPath(relativePath) || stack.isIgnored(relativePath, true))
+            return false;
+
+        // A directory's own `.gitignore` governs its contents (never itself).
+        const dirPrefix = relativePath.idup;
+        stack.push(dirPrefix, GitIgnore.fromFile(buildPath(root, dirPrefix, ".gitignore")));
+        return true;
+    }
+
+    void leaveDir(const(char)[] relativePath) @safe pure
+    {
+        stack.pop();
     }
 
     bool includeFile(const(char)[] relativePath) const @safe pure
     {
-        return !isGitMetadataPath(relativePath) && !ignore.isIgnored(relativePath, false);
+        return !isGitMetadataPath(relativePath) && !stack.isIgnored(relativePath, false);
     }
 
 private:
@@ -78,13 +111,14 @@ GitIgnore readRepositoryGitIgnore(string root) @safe
     return GitIgnore.fromFile(buildPath(root, ".gitignore"));
 }
 
-/// Traverses `root` with `.gitignore`-aware filtering.
+/// Traverses `root` with `.gitignore`-aware filtering, seeding the root scope
+/// with `gitIgnore` (nested `.gitignore` files are still picked up below it).
 DirWalkerRange!GitRepositoryFilter walkGitRepository(string root, GitIgnore gitIgnore) @safe
 {
-    return dirEntriesFilter(root, GitRepositoryFilter(ignore: gitIgnore));
+    return dirEntriesFilter(root, GitRepositoryFilter(root, gitIgnore));
 }
 
-/// Traverses `root` using `.gitignore` loaded from disk.
+/// Traverses `root` using the `.gitignore` files found on disk.
 DirWalkerRange!GitRepositoryFilter walkGitRepository(string root) @safe
 {
     return walkGitRepository(root, readRepositoryGitIgnore(root));
@@ -138,6 +172,12 @@ struct CollectingHook(Hook)
         return true;
     }
 
+    void leaveDir(const(char)[] relativePath)
+    {
+        static if (hasLeaveDir!Hook)
+            upstream.leaveDir(relativePath);
+    }
+
     bool includeFile(const(char)[] relativePath)
     {
         static if (hasIncludeFile!Hook)
@@ -180,7 +220,11 @@ void walkDirImpl(Hook)(string absolutePath, string relativePath, ref Hook hook)
                 shouldEnter = hook.enterDir(relPath);
 
             if (shouldEnter)
+            {
                 walkDirImpl(entry.name, relPath, hook);
+                static if (hasLeaveDir!Hook)
+                    hook.leaveDir(relPath);
+            }
 
             continue;
         }
@@ -276,6 +320,41 @@ void walkDirImpl(Hook)(string absolutePath, string relativePath, ref Hook hook)
         "README.md",
         "src/keep.tmp",
         "src/main.d",
+    ]);
+}
+
+@("buildPrimitives.dirWalk.nestedGitignore")
+@safe unittest
+{
+    import std.algorithm.sorting : sort;
+    import std.array : array;
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import std.uuid : randomUUID;
+
+    const root = buildPath(tempDir(), "walkGitRepository-nested-" ~ randomUUID.toString);
+    mkdirRecurse(buildPath(root, "sub", "nested"));
+
+    write(buildPath(root, ".gitignore"), "*.tmp\n");
+    write(buildPath(root, "sub", ".gitignore"), "!keep.tmp\n*.log\n");
+    write(buildPath(root, "a.tmp"), "ignored by root\n");
+    write(buildPath(root, "a.log"), "kept: sub's rules do not apply here\n");
+    write(buildPath(root, "sub", "keep.tmp"), "re-included by sub\n");
+    write(buildPath(root, "sub", "other.tmp"), "still ignored by root\n");
+    write(buildPath(root, "sub", "b.log"), "ignored by sub\n");
+    write(buildPath(root, "sub", "nested", "c.log"), "sub's rules reach the subtree\n");
+
+    scope (exit)
+        rmdirRecurse(root);
+
+    auto files = walkGitRepository(root).array;
+    files.sort;
+
+    assert(files == [
+        ".gitignore",
+        "a.log",
+        "sub/.gitignore",
+        "sub/keep.tmp",
     ]);
 }
 

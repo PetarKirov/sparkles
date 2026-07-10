@@ -73,13 +73,21 @@ private bool matchesAnyParentDirectory(
     return false;
 }
 
+/// Outcome of matching a path against one `.gitignore` file's rules.
+enum IgnoreMatch
+{
+    none, /// No rule matched; the verdict falls through to outer scopes.
+    ignored, /// The last matching rule ignores the path.
+    notIgnored, /// The last matching rule is a negation (`!`) re-including it.
+}
+
 /// Value-semantics container for parsed `.gitignore` rules.
 struct GitIgnore
 {
     GitIgnoreRule[] rules;
 
     /// Parses all rules from a `.gitignore` text payload.
-    static GitIgnore parse(string source)
+    static GitIgnore parse(string source) pure
     {
         GitIgnore result;
         foreach (line; source.lineSplitter)
@@ -100,7 +108,7 @@ struct GitIgnore
     }
 
     /// Adds a single rule line from a `.gitignore` file.
-    void addLine(string rawLine)
+    void addLine(string rawLine) pure
     {
         const parsed = parseRuleLine(rawLine);
         if (parsed.valid)
@@ -112,15 +120,88 @@ struct GitIgnore
     /// The last matching rule wins, including negations.
     bool isIgnored(in const(char)[] relativePath, bool isDirectory = false) const pure
     {
+        return match(relativePath, isDirectory) == IgnoreMatch.ignored;
+    }
+
+    /// Like `isIgnored`, but distinguishes "no rule matched" from an explicit
+    /// negation, so callers layering several `.gitignore` files (see
+    /// `GitIgnoreStack`) can let inner files override outer ones.
+    IgnoreMatch match(in const(char)[] relativePath, bool isDirectory = false) const pure
+    {
         const normalizedPath = normalizePath(relativePath);
         if (normalizedPath.length == 0)
-            return false;
+            return IgnoreMatch.none;
 
-        bool ignored = false;
+        auto result = IgnoreMatch.none;
         foreach (rule; rules)
         {
             if (rule.matches(normalizedPath, isDirectory))
-                ignored = !rule.negated;
+                result = rule.negated ? IgnoreMatch.notIgnored : IgnoreMatch.ignored;
+        }
+        return result;
+    }
+}
+
+/// Layered `.gitignore` scopes for a directory walk: one frame per directory
+/// that contributes rules, from the walk root (`dirPrefix == ""`) downward.
+///
+/// Matches git's precedence: every frame whose directory contains the path is
+/// consulted outermost-first, and a match in a deeper `.gitignore` overrides
+/// any verdict from a shallower one. Frame patterns apply relative to the
+/// frame's own directory, exactly as git reads nested `.gitignore` files.
+struct GitIgnoreStack
+{
+    private static struct Frame
+    {
+        string dirPrefix; /// Walk-relative directory (`""` for the root), no trailing slash.
+        GitIgnore ignore;
+    }
+
+    private Frame[] frames;
+
+    /// Pushes the `.gitignore` scope of `dirPrefix` (push/pop must nest with
+    /// the walk: each entered directory pushes exactly one frame).
+    void push(string dirPrefix, GitIgnore ignore) pure nothrow
+    {
+        frames ~= Frame(dirPrefix: dirPrefix, ignore: ignore);
+    }
+
+    /// Pops the innermost scope.
+    void pop() pure
+    in (frames.length > 0, "Cannot pop from an empty GitIgnoreStack")
+    {
+        frames = frames[0 .. $ - 1];
+    }
+
+    /// Evaluates `relativePath` (walk-relative) against all applicable frames.
+    bool isIgnored(in const(char)[] relativePath, bool isDirectory = false) const pure
+    {
+        const normalizedPath = normalizePath(relativePath);
+
+        bool ignored = false;
+        foreach (ref frame; frames)
+        {
+            const(char)[] localPath;
+            if (frame.dirPrefix.length == 0)
+                localPath = normalizedPath;
+            else if (normalizedPath.length > frame.dirPrefix.length
+                && normalizedPath.startsWith(frame.dirPrefix)
+                && normalizedPath[frame.dirPrefix.length] == '/')
+                localPath = normalizedPath[frame.dirPrefix.length + 1 .. $];
+            else
+                continue;
+
+            final switch (frame.ignore.match(localPath, isDirectory))
+            {
+                case IgnoreMatch.none:
+                    break;
+                case IgnoreMatch.ignored:
+                    ignored = true;
+                    break;
+                case IgnoreMatch.notIgnored:
+                    ignored = false;
+                    break;
+            }
         }
         return ignored;
     }
@@ -362,6 +443,50 @@ bool globMatchAt(in string pattern, size_t patternIndex, in const(char)[] text, 
     assert(ignore.isIgnored("src/generated1.d"));
     assert(ignore.isIgnored("src/a/b/generated9.d"));
     assert(!ignore.isIgnored("src/a/generated10.d"));
+}
+
+@("buildPrimitives.gitIgnore.matchTriState")
+@safe pure unittest
+{
+    const ignore = GitIgnore.parse("*.o\n!keep.o\n");
+
+    assert(ignore.match("main.o") == IgnoreMatch.ignored);
+    assert(ignore.match("keep.o") == IgnoreMatch.notIgnored);
+    assert(ignore.match("main.d") == IgnoreMatch.none);
+}
+
+@("buildPrimitives.gitIgnoreStack.nestedScopes")
+@safe pure unittest
+{
+    GitIgnoreStack stack;
+    stack.push("", GitIgnore.parse("*.tmp\n"));
+    stack.push("sub", GitIgnore.parse("*.log\n!keep.tmp\n"));
+
+    // The root scope applies everywhere; the `sub` scope only under `sub/`.
+    assert(stack.isIgnored("notes.tmp"));
+    assert(stack.isIgnored("sub/notes.tmp"));
+    assert(stack.isIgnored("sub/build.log"));
+    assert(!stack.isIgnored("build.log"));
+
+    // A deeper negation overrides the outer ignore rule — but only in scope.
+    assert(!stack.isIgnored("sub/keep.tmp"));
+    assert(stack.isIgnored("keep.tmp"));
+
+    // Popping the inner frame restores the outer verdicts.
+    stack.pop();
+    assert(stack.isIgnored("sub/keep.tmp"));
+    assert(!stack.isIgnored("sub/build.log"));
+}
+
+@("buildPrimitives.gitIgnoreStack.prefixBoundary")
+@safe pure unittest
+{
+    GitIgnoreStack stack;
+    stack.push("sub", GitIgnore.parse("*.log\n"));
+
+    // `subdir` is not inside `sub` — the frame must not leak past the `/`.
+    assert(!stack.isIgnored("subdir/build.log"));
+    assert(stack.isIgnored("sub/build.log"));
 }
 
 @("buildPrimitives.gitIgnore.directoryRuleAppliesToDescendants")
