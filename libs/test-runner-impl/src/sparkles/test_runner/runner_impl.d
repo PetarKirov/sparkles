@@ -455,13 +455,30 @@ private UnitTestResult runCtfeTraceMode(Test[] tests, in RunnerOptions options, 
     if (!outcome.succeeded)
     {
         stderr.write(outcome.output);
-        stderr.writeln(render(colored,
-            i"{red @ctfe evaluation failed} — fix the tests before tracing"));
+        // Distinguish "the tests failed" from "the trace file could not be
+        // produced" (an uncreatable directory, or LDC's `Error: Error writing
+        // -ftime-trace profile: could not open ...`) — blaming the tests for a
+        // filesystem problem sends the user fixing the wrong thing.
+        const envProblem = outcome.output.canFind("--ctfe-trace:")
+            || (outcome.output.canFind("-ftime-trace") && outcome.output.canFind("rror"));
+        if (envProblem)
+            stderr.writeln(render(colored,
+                i"{red --ctfe-trace}: could not produce $(options.ctfeTrace) (see above)"));
+        else
+            stderr.writeln(render(colored,
+                i"{red @ctfe evaluation failed} — fix the tests before tracing"));
         return UnitTestResult(ctfeTests.length, 0, false, false);
     }
 
-    const costs = attributeCtfeCosts(
-        ctfeTests, parseCtfeEvents(readText(options.ctfeTrace)));
+    string traceJson;
+    try
+        traceJson = readText(options.ctfeTrace);
+    catch (Exception e)
+    {
+        stderr.writeln("--ctfe-trace: cannot read '", options.ctfeTrace, "': ", e.msg);
+        return UnitTestResult(ctfeTests.length, 0, false, false);
+    }
+    const costs = attributeCtfeCosts(ctfeTests, parseCtfeEvents(traceJson));
     stdout.write(formatCtfeTraceTable(costs, colored));
     return UnitTestResult(ctfeTests.length, ctfeTests.length, false, false);
 }
