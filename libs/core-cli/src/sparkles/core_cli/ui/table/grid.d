@@ -17,6 +17,12 @@ import std.range : iota;
 import expected : Expected, err, ok;
 
 import sparkles.base.text.grapheme : visibleWidth;
+import sparkles.base.text.width : Align;
+
+/// Vertical alignment of a cell's content within its (possibly multi-line or
+/// rowspan) height. `inherit` defers to the column/table default. (Model-side
+/// so per-cell overrides can carry it; the renderer applies it.)
+enum VAlign { inherit, top, middle, bottom }
 
 bool hasRectangularShape(T)(const T[][] array)
 {
@@ -74,6 +80,8 @@ package(sparkles.core_cli.ui.table) struct Anchor
     size_t row, col, rowSpan, colSpan;
     string content;
     bool implicit;
+    Align halign = Align.inherit;   /// per-cell override (else column/table default)
+    VAlign valign = VAlign.inherit; /// ditto
 }
 
 /// The resolved grid: dimensions, the anchor list, and a slot→anchor map so
@@ -94,6 +102,11 @@ struct Cell
     string content;    /// Cell text (may contain `\n`; wraps to the column width).
     size_t colSpan = 1;/// Number of columns this cell spans.
     size_t rowSpan = 1;/// Number of rows this cell spans.
+
+    /// Per-cell alignment override; `inherit` (default) defers to the column /
+    /// table default (e.g. `halign: Align.center` on a colspan header cell).
+    Align halign = Align.inherit;
+    VAlign valign = VAlign.inherit; /// ditto
 }
 
 /// A cell for the sparse authoring form `Placement[]`: it names its own `(row, col)`
@@ -106,6 +119,11 @@ struct Placement
     string content;    /// Cell text (may contain `\n`; wraps to the column width).
     size_t colSpan = 1;/// Number of columns this cell spans.
     size_t rowSpan = 1;/// Number of rows this cell spans.
+
+    /// Per-cell alignment override; `inherit` (default) defers to the column /
+    /// table default.
+    Align halign = Align.inherit;
+    VAlign valign = VAlign.inherit; /// ditto
 }
 
 /// What kind of table-model error `validateTable` found.
@@ -191,7 +209,7 @@ package(sparkles.core_cli.ui.table) Resolved resolveGrid(in Cell[][] rows) @safe
             const cs = cell.colSpan < 1 ? 1 : cell.colSpan;
             const rs = cell.rowSpan < 1 ? 1 : cell.rowSpan;
             const idx = anchors.length;
-            anchors ~= Anchor(r, c, rs, cs, cell.content, false);
+            anchors ~= Anchor(r, c, rs, cs, cell.content, false, cell.halign, cell.valign);
             if (r + rs > numRows)
                 errors ~= TableError(TableErrorKind.rowSpanOutOfBounds, r, c,
                     "rowspan extends past the last row");
@@ -247,7 +265,7 @@ package(sparkles.core_cli.ui.table) Resolved resolveGrid(in Placement[] placemen
         const cs = pl.colSpan < 1 ? 1 : pl.colSpan;
         const rs = pl.rowSpan < 1 ? 1 : pl.rowSpan;
         const idx = anchors.length;
-        anchors ~= Anchor(pl.row, pl.col, rs, cs, pl.content, false);
+        anchors ~= Anchor(pl.row, pl.col, rs, cs, pl.content, false, pl.halign, pl.valign);
         foreach (dr; 0 .. rs)
             foreach (dc; 0 .. cs)
             {

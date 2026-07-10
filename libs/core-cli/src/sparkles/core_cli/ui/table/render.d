@@ -65,9 +65,6 @@ struct TableGlyphs
         cornerTL: '┏', cornerTR: '┓', cornerBL: '┗', cornerBR: '┛');
 }
 
-/// Vertical alignment of a cell's content within its (possibly multi-line or rowspan)
-/// height. `inherit` defers to the column/table default.
-enum VAlign { inherit, top, middle, bottom }
 
 /// Table rendering configuration. Defaults reproduce the pre-overhaul rendering
 /// byte-for-byte: rounded glyphs, column separators on, row separators off, outer
@@ -134,6 +131,15 @@ private VAlign effectiveVAlign(size_t c, in TableProps p) @safe pure nothrow @no
         return p.columnVAligns[c];
     return p.defaultVAlign == VAlign.inherit ? VAlign.top : p.defaultVAlign;
 }
+
+/// The effective alignment for an anchor: its own per-cell override when set,
+/// else the column/table default.
+private Align anchorAlign(in Anchor a, in TableProps p) @safe pure nothrow @nogc
+    => a.halign != Align.inherit ? a.halign : effectiveAlign(a.col, p);
+
+/// ditto
+private VAlign anchorVAlign(in Anchor a, in TableProps p) @safe pure nothrow @nogc
+    => a.valign != VAlign.inherit ? a.valign : effectiveVAlign(a.col, p);
 
 /// Blank lines above a content block of `l` lines placed in a field of `hh` lines.
 private size_t padTop(size_t hh, size_t l, VAlign va) @safe pure nothrow @nogc
@@ -316,7 +322,7 @@ private size_t[] anchorDecimalPads(in SlotGrid g, in TableProps p) @safe pure
 
     bool decimalBody(in Anchor a)
         => a.colSpan == 1 && a.row >= p.headerRows
-            && effectiveAlign(a.col, p) == Align.decimal;
+            && anchorAlign(a, p) == Align.decimal;
 
     auto maxTail = new size_t[g.numCols];
     auto dotted = new bool[g.numCols];
@@ -606,17 +612,32 @@ private size_t[] resolveRowHeights(in SlotGrid g, in string[][] lines) @safe pur
     return h;
 }
 
-/// Render text line `t` of grid row `r` (`t < layout.rowHeights[r]`). Each anchor
-/// emits its wrapped line for the current text line in its content band, or a blank
-/// field otherwise, separated by interior verticals where a real boundary sits.
-/// No trailing newline — emission joins lines (see `lineDescs`/`renderLine`).
-private string bodyLine(in TableLayout lay, size_t r, size_t t)
+/// One streamable segment of a body line: `frame` bytes (left border, gutters,
+/// interior separators) followed by an aligned cell `field`. `contentful` marks
+/// fields carrying visible content — blank filler fields (out-of-band rowspan
+/// rows, empty cells) count as frame for chunking purposes. The line-closing
+/// right frame is a final field-less segment. Concatenating `frame ~ field`
+/// over all segments reproduces the body line byte-for-byte (`bodyLine` is
+/// exactly that join, so the two cannot drift).
+private struct LineSegment
+{
+    string frame;
+    string field;
+    bool contentful;
+}
+
+/// Decompose text line `t` of grid row `r` (`t < lay.rowHeights[r]`) into
+/// segments: each anchor emits its wrapped line for the current text line in
+/// its content band, or a blank field otherwise, separated by interior
+/// verticals where a real boundary sits. No trailing newline.
+private LineSegment[] bodyLineSegments(in TableLayout lay, size_t r, size_t t)
 {
     const g = lay.grid;
     const p = lay.props;
-    auto out_ = appender!string;
+    LineSegment[] segs;
+    auto frame = appender!string;
     if (p.border)
-        out_ ~= p.glyphs.verticalLine;
+        frame ~= p.glyphs.verticalLine;
     size_t c = 0;
     while (c < g.numCols)
     {
@@ -634,33 +655,54 @@ private string bodyLine(in TableLayout lay, size_t r, size_t t)
         size_t hh = 0;
         foreach (rr; a.row .. a.row + a.rowSpan)
             hh += lay.rowHeights[rr];
-        const top = padTop(hh, lay.cellLines[idx].length, effectiveVAlign(a.col, p));
-        out_ ~= ' ';
+        const top = padTop(hh, lay.cellLines[idx].length, anchorVAlign(a, p));
+        frame ~= ' ';
+
+        auto field = appender!string;
+        bool contentful = false;
         if (li >= top && li - top < lay.cellLines[idx].length)
         {
+            contentful = lay.cellLines[idx][li - top].length != 0;
             // A decimal column's trailing pad shifts the right-aligned value
             // left so every dot in the column shares a cell.
             const dpad = lay.decimalPads.length ? lay.decimalPads[idx] : 0;
             if (dpad > 0 && dpad < f)
             {
-                alignField(out_, lay.cellLines[idx][li - top], f - dpad, Align.right);
+                alignField(field, lay.cellLines[idx][li - top], f - dpad, Align.right);
                 foreach (_; 0 .. dpad)
-                    out_ ~= ' ';
+                    field ~= ' ';
             }
             else
-                alignField(out_, lay.cellLines[idx][li - top], f, effectiveAlign(a.col, p));
+                alignField(field, lay.cellLines[idx][li - top], f, anchorAlign(a, p));
         }
         else
             foreach (_; 0 .. f)
-                out_ ~= ' ';
-        out_ ~= ' ';
+                field ~= ' ';
+        segs ~= LineSegment(frame[], field[], contentful);
+
+        frame = appender!string;
+        frame ~= ' '; // the gutter after the field
         c += a.colSpan;
         if (c < g.numCols && vSeg(lay.grid, p, r, c))
-            out_ ~= isHeaderCol(p, c, g.numCols)
+            frame ~= isHeaderCol(p, c, g.numCols)
                 ? p.glyphs.headerCol.verticalLine : p.glyphs.verticalLine;
     }
     if (p.border)
-        out_ ~= p.glyphs.verticalLine;
+        frame ~= p.glyphs.verticalLine;
+    segs ~= LineSegment(frame[], "", false); // the closing right frame
+    return segs;
+}
+
+/// Render text line `t` of grid row `r`: the join of its segments. No trailing
+/// newline — emission joins lines (see `lineDescs`/`renderLine`).
+private string bodyLine(in TableLayout lay, size_t r, size_t t)
+{
+    auto out_ = appender!string;
+    foreach (seg; bodyLineSegments(lay, r, t))
+    {
+        out_ ~= seg.frame;
+        out_ ~= seg.field;
+    }
     return out_[];
 }
 
@@ -1704,4 +1746,269 @@ version (unittest) private void checkRender(string actual, string expected)
     auto w = appender!string;
     drawTable(w, [["x"]]).put("tail");
     assert(w[] == drawTable([["x"]]) ~ "tail");
+}
+
+/// The chunk view of `drawTable` (the sibling of `drawBoxChunks`): chunks carry
+/// their own newlines and `join("")` reproduces `drawTable` byte-for-byte.
+///
+/// `lineBuffered: true` yields one chunk per rendered body text line (line +
+/// `'\n'`); `lineBuffered: false` yields one chunk per *contentful cell field*
+/// (the aligned ` content pad ` run), so pacing the output reveals the table
+/// cell by cell in reading order. Frame pieces — borders, junction rules
+/// (including a spliced title/footer), separators, blank filler fields — never
+/// form a standalone chunk: they accumulate as a pending prefix merged onto the
+/// next content chunk, and the trailing frame (closing border, bottom rule) is
+/// appended to the final content chunk. A table with no content at all
+/// degrades to a single chunk carrying the whole frame.
+auto drawTableChunks(bool lineBuffered = true)(
+    string[][] cells, TableProps props = TableProps.init)
+in (hasRectangularShape(cells))
+{
+    return tableChunkRange!lineBuffered(resolveGrid(toCells(cells)).grid, props);
+}
+
+/// ditto
+auto drawTableChunks(bool lineBuffered = true)(
+    Cell[][] cells, TableProps props = TableProps.init)
+{
+    return tableChunkRange!lineBuffered(resolveGrid(cells).grid, props);
+}
+
+/// ditto
+auto drawTableChunks(bool lineBuffered = true)(
+    Placement[] cells, TableProps props = TableProps.init)
+{
+    return tableChunkRange!lineBuffered(resolveGrid(cells).grid, props);
+}
+
+private auto tableChunkRange(bool lineBuffered)(SlotGrid g, TableProps p)
+{
+    auto lay = computeTableLayout(g, p);
+    return TableChunkRange!lineBuffered(lay, lineDescs(lay));
+}
+
+/// The input range returned by $(LREF drawTableChunks). One-chunk lookahead so
+/// the trailing frame attaches to the last content chunk; `front` is owned.
+private struct TableChunkRange(bool lineBuffered)
+{
+    private
+    {
+        TableLayout _lay;
+        LineDesc[] _descs;
+        size_t _di;
+        string _pending;   // frame bytes awaiting a content chunk
+        string _la;        // one-chunk lookahead
+        bool _laValid;
+        string _front;
+        bool _empty, _finished;
+
+        static if (!lineBuffered)
+        {
+            LineSegment[] _segs; // current body line's segments
+            size_t _si;
+            bool _inBody;
+        }
+    }
+
+    this(TableLayout lay, LineDesc[] descs)
+    {
+        _lay = lay;
+        _descs = descs;
+        popFront(); // prime `_front`
+    }
+
+    /// Range primitives (input range).
+    bool empty() const @safe pure nothrow @nogc => _empty;
+
+    /// ditto
+    string front() const @safe pure nothrow @nogc => _front;
+
+    /// ditto
+    void popFront()
+    {
+        if (_finished)
+        {
+            _empty = true;
+            return;
+        }
+        if (!_laValid)
+        {
+            if (!nextContentChunk(_la))
+            {
+                // No content at all: the whole frame is one chunk (or nothing
+                // for an empty table).
+                _front = _pending;
+                _pending = null;
+                _finished = true;
+                _empty = _front.length == 0;
+                return;
+            }
+            _laValid = true;
+        }
+        string next;
+        if (nextContentChunk(next))
+        {
+            _front = _la;
+            _la = next;
+        }
+        else
+        {
+            // `_la` was the last content chunk: the trailing frame rides on it.
+            _front = _la ~ _pending;
+            _pending = null;
+            _finished = true;
+        }
+    }
+
+    // The next pending-prefixed content chunk; false when the walk is done
+    // (leftover frame stays in `_pending` for the caller to attach).
+    private bool nextContentChunk(out string chunk)
+    {
+        for (;;)
+        {
+            static if (!lineBuffered)
+            {
+                if (_inBody)
+                {
+                    if (_si < _segs.length)
+                    {
+                        const seg = _segs[_si++];
+                        _pending ~= seg.frame;
+                        if (seg.contentful)
+                        {
+                            chunk = _pending ~ seg.field;
+                            _pending = null;
+                            return true;
+                        }
+                        _pending ~= seg.field;
+                        continue;
+                    }
+                    _pending ~= "\n"; // the body line's terminator
+                    _inBody = false;
+                }
+            }
+            if (_di >= _descs.length)
+                return false;
+            const d = _descs[_di++];
+            if (d.kind == LineKind.body)
+            {
+                static if (lineBuffered)
+                {
+                    chunk = _pending ~ renderLine(_lay, d) ~ "\n";
+                    _pending = null;
+                    return true;
+                }
+                else
+                {
+                    _segs = bodyLineSegments(_lay, d.r, d.t);
+                    _si = 0;
+                    _inBody = true;
+                }
+            }
+            else
+                _pending ~= renderLine(_lay, d) ~ "\n"; // rules/titles are frame
+        }
+    }
+}
+
+@("drawTable.chunks.joinEqualsString")
+@system unittest
+{
+    import std.algorithm.iteration : joiner;
+    import std.conv : to;
+
+    static void checkChunksParity(T)(T cells, TableProps props)
+    {
+        const eager = drawTable(cells, props);
+        assert(drawTableChunks!true(cells, props).joiner.to!string == eager);
+        assert(drawTableChunks!false(cells, props).joiner.to!string == eager);
+    }
+
+    checkChunksParity([["a", "bb"], ["ccc", "d"]], TableProps.init);
+    checkChunksParity([["h1", "h2"], ["a", "b"]],
+        TableProps(headerRows: 1, rowSeparators: true));
+    checkChunksParity([["alpha", "beta"], ["1", "2"]],
+        TableProps(title: "Title", footer: "Foot"));
+    checkChunksParity([["a", "b"]], TableProps(border: false));
+    checkChunksParity([[Cell("span", colSpan: 2)], [Cell("a"), Cell("b")]],
+        TableProps.init);
+    checkChunksParity([[Cell("tall", rowSpan: 2), Cell("x")], [Cell("y")]],
+        TableProps.init);
+    checkChunksParity([["long wrapping content", "x"]], TableProps(maxWidth: 14));
+    checkChunksParity([Placement(0, 0, "A", colSpan: 2), Placement(1, 1, "B")],
+        TableProps.init);
+
+    // Empty table: empty chunk range.
+    string[][] none;
+    assert(drawTableChunks!true(none).empty);
+    assert(drawTableChunks!false(none).empty);
+}
+
+@("drawTable.chunks.cellGranularOrdering")
+@system unittest
+{
+    import std.algorithm.searching : canFind, countUntil;
+    import std.array : array;
+
+    // Cell contents appear in reading order, one per chunk; the top rule rides
+    // the first chunk and the bottom rule the last.
+    auto chunks = drawTableChunks!false([["a", "b"], ["c", "d"]]).array;
+    assert(chunks.length == 4);
+    const ia = chunks.countUntil!(c => c.canFind("a"));
+    const ib = chunks.countUntil!(c => c.canFind("b"));
+    const ic = chunks.countUntil!(c => c.canFind("c"));
+    const id = chunks.countUntil!(c => c.canFind("d"));
+    assert(ia == 0 && ib == 1 && ic == 2 && id == 3);
+    assert(chunks[0].canFind("╭"));  // leading frame merged in
+    assert(chunks[3].canFind("╰"));  // trailing frame merged in
+}
+
+@("drawTable.chunks.blankTablesAreOneFrameChunk")
+@system unittest
+{
+    import std.algorithm.iteration : joiner;
+    import std.array : array;
+    import std.conv : to;
+
+    // No contentful field at all -> a single chunk carrying the whole frame.
+    auto chunks = drawTableChunks!false([[""]]).array;
+    assert(chunks.length == 1);
+    assert(chunks[0] == drawTable([[""]]));
+
+    // A blank last row still flushes the bottom border onto the final content
+    // chunk.
+    auto tail = drawTableChunks!false([["x"], [""]]).array;
+    assert(tail.length == 1);
+    assert(tail.joiner.to!string == drawTable([["x"], [""]]));
+}
+
+@("drawTable.align.perCellOverride")
+@system unittest
+{
+    import sparkles.test_utils.string : outdent;
+
+    // The canonical use: a centered colspan header over left columns; a
+    // per-cell right override beats the column default.
+    checkRender(drawTable([
+        [Cell("Totals", colSpan: 2, halign: Align.center)],
+        [Cell("alpha"), Cell("1")],
+        [Cell("beta"), Cell("2", halign: Align.right)],
+    ]), `
+        ╭───────────╮
+        │  Totals   │
+        │ alpha │ 1 │
+        │ beta  │ 2 │
+        ╰───────┴───╯
+        `.outdent(2));
+
+    // Sparse form carries the same overrides.
+    const sparse = drawTable([
+        Placement(0, 0, "Totals", colSpan: 2, halign: Align.center),
+        Placement(1, 0, "alpha"), Placement(1, 1, "1"),
+    ]);
+    const dense = drawTable([
+        [Cell("Totals", colSpan: 2, halign: Align.center)],
+        [Cell("alpha"), Cell("1")],
+    ]);
+    assert(sparse == dense);
 }
