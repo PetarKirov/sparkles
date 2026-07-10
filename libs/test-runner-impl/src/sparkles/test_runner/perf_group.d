@@ -88,6 +88,24 @@ version (linux)
             ? double(enabledDelta) / double(runningDelta) : 1.0;
     }
 
+    /// A pass that was enabled but never got PMU time (the kernel's
+    /// `<not counted>` state — vPMU limits, or pinned events hogging every
+    /// counter): its zero counts are meaningless, not measurements.
+    package bool groupNeverRan(ulong enabledDelta, ulong runningDelta)
+        @safe pure nothrow @nogc
+    {
+        return enabledDelta > 0 && runningDelta == 0;
+    }
+
+    @("perf_group.groupNeverRan")
+    @safe pure nothrow @nogc
+    unittest
+    {
+        assert(groupNeverRan(1000, 0));
+        assert(!groupNeverRan(1000, 1)); // any PMU time → scaled estimate
+        assert(!groupNeverRan(0, 0)); // nothing enabled: empty, not starved
+    }
+
     @("perf_group.scaledRatio")
     @safe pure nothrow @nogc
     unittest
@@ -107,7 +125,9 @@ version (linux)
     /// deltas against `base` (see `GroupTimeBase`), sets `scale` to
     /// `round3(runningΔ/enabledΔ)` (`1` = no multiplexing), and returns `true`.
     /// On a short/interrupted read returns `false` and leaves `values`/`scale`
-    /// untouched (the caller fills `nan`).
+    /// untouched (the caller fills `nan`); on a pass the PMU never scheduled
+    /// (`groupNeverRan`) returns `false` with `scale = 0` — the zero counts
+    /// are the kernel's `<not counted>` state, not measurements.
     package bool readScaledGroup(int leaderFd, uint nOpen, uint iters,
         ref double scale, scope double[] values,
         GroupTimeBase base = GroupTimeBase.init) @safe
@@ -124,6 +144,11 @@ version (linux)
         // (base = 0 → the delta is the cumulative time).
         const enabled = buf[1] >= base.enabled ? buf[1] - base.enabled : buf[1];
         const running = buf[2] >= base.running ? buf[2] - base.running : buf[2];
+        if (groupNeverRan(enabled, running))
+        {
+            scale = 0;
+            return false;
+        }
         const ratio = scaledRatio(enabled, running);
         scale = enabled > 0 ? round3(double(running) / double(enabled)) : 1.0;
         foreach (k; 0 .. nOpen)
