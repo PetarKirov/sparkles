@@ -10,7 +10,8 @@ module term_caps_example;
 
 // ci: build-only
 
-import sparkles.core_cli.term_caps : setTermWindowSizeHandler, terminalSize;
+import sparkles.core_cli.term_caps :
+    detectTermCaps, isTerminal, setTermWindowSizeHandler, StdStream, terminalSize;
 import sparkles.math : ScreenSize;
 import core.stdc.stdio : fflush, printf, stdout;
 import std.stdio : readln, writefln;
@@ -41,6 +42,14 @@ string formatSmallSize(ushort w, ushort h)
 
 void main()
 {
+    // The one-shot capability snapshot: tty-ness, the color decision
+    // ($NO_COLOR / TERM=dumb / CLICOLOR_FORCE aware), unicode, and size —
+    // the single place an app decides what its terminal can do.
+    const caps = detectTermCaps();
+    writefln!"caps: tty=%s colors=%s unicode=%s size=%sx%s"(
+        caps.tty, caps.colors, caps.unicode, caps.size.width, caps.size.height);
+    writefln!"stdin is a terminal: %s"(isTerminal(StdStream.stdin));
+
     // The synchronous query seeds the display; SIGWINCH keeps it fresh (the
     // signal never fires at startup).
     const initial = terminalSize();
