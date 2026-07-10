@@ -792,8 +792,22 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     auto order = iota(all.length).array;
     order.sort!((i, j) => all[i].key < all[j].key, SwapStrategy.stable);
 
+    // The live results table (the "bench ticker"): on an interactive stdout
+    // the current group's table repaints in place, growing a row per measured
+    // case, with a dim spinner row for the case in flight; it graduates into
+    // scrollback when the group completes. Frames render only at case
+    // boundaries — no painter thread, so no GC or terminal work runs
+    // concurrently with a measurement. While the ticker is on, the stderr
+    // spinner stays off (one animation); a run with stdout redirected but
+    // stderr on the terminal keeps today's spinner instead.
+    static if (hasCoreCliBenchTicker)
+        const bool ticker = all.length > 0
+            && progressEnabled(options.noColours, stderrStream: false);
+    else
+        enum bool ticker = false;
+
     progress = BenchProgress(total: all.length,
-        active: progressEnabled(options.noColours) && all.length > 0,
+        active: !ticker && progressEnabled(options.noColours) && all.length > 0,
         width: detectTerminalWidth(stderrStream: true));
 
     size_t totalRows, errorRows;
@@ -803,11 +817,60 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     TableGeometry geometry; // run-long column floors: streamed tables only widen
     string curKey;
 
+    static if (hasCoreCliBenchTicker)
+    {
+        import sparkles.core_cli.ui.live : LiveRegion, stdoutLiveRegion;
+        import sparkles.test_runner.reporting : benchFrameLines;
+
+        LiveRegion region;   // one per streamed group while the ticker is on
+        bool regionLive;
+        size_t nameFloor;    // widest roster name of the group + spinner prefix
+        size_t spin;
+
+        // The group's stub-column floor: `⠹ name` must fit for every roster
+        // case up front, so the in-flight row never resizes the table.
+        size_t rosterNameFloor(string key)
+        {
+            import std.algorithm.comparison : max;
+            import sparkles.base.text.grapheme : visibleWidth;
+
+            size_t w;
+            foreach (ref e; all)
+                if (e.key == key)
+                    w = max(w, visibleWidth(e.c.name));
+            return w + 2;
+        }
+
+        void tickerFrame(BenchStats inflight)
+        {
+            if (!regionLive)
+                return;
+            region.update(benchFrameLines(bucket, inflight, spin++, colored,
+                options.metrics, sortBy, keys, nameFloor, geometry));
+        }
+    }
+
     void flush()
     {
         if (bucket.length == 0)
             return;
         progress.clear(); // erase the spinner before the table
+        static if (hasCoreCliBenchTicker)
+        {
+            if (regionLive)
+            {
+                // The final frame (no in-flight row) graduates into scrollback;
+                // it is line-identical to the flushed table (drawTableLines /
+                // drawTable parity), so nothing is re-printed. The frames
+                // already carried `geometry` forward.
+                tickerFrame(BenchStats.init);
+                region.finish(keepFrame: true);
+                regionLive = false;
+                firstFlush = false;
+                bucket = null;
+                return;
+            }
+        }
         if (!firstFlush)
             stdout.write("\n"); // blank line between group tables
         stdout.write(formatBenchTable(bucket, colored, options.metrics,
@@ -824,9 +887,24 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
             flush();
         curKey = s.key;
 
+        static if (hasCoreCliBenchTicker)
+            if (ticker && !regionLive)
+            {
+                if (!firstFlush)
+                {
+                    stdout.write("\n"); // blank line between graduated tables
+                    stdout.flush();
+                }
+                region = stdoutLiveRegion();
+                regionLive = true;
+                nameFloor = rosterNameFloor(s.key);
+            }
+
         // Spinner label: the group + the case name when grouping (`name` alone is
         // just the varying dimension), else the case name.
         progress.tick(keys.length ? groupKeyDisplay(s.key) ~ "  " ~ s.c.name : s.c.name);
+        static if (hasCoreCliBenchTicker)
+            tickerFrame(BenchStats(name: s.c.name, labels: s.c.labels));
         try
         {
             auto row = measureCase(s.c, s.config, counters);
@@ -863,8 +941,22 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
             errorRows++;
             totalRows++;
             progress.clear();
-            foreach (th; thrown)
-                stdout.write(formatThrown(th, colored, true));
+            bool printedAbove = false;
+            static if (hasCoreCliBenchTicker)
+                if (regionLive)
+                {
+                    // Permanent lines above the live frame — the frame repaints
+                    // beneath them (`runParallelLive`'s pattern).
+                    import std.string : lineSplitter;
+
+                    foreach (th; thrown)
+                        foreach (line; formatThrown(th, colored, true).lineSplitter)
+                            region.printAbove(line);
+                    printedAbove = true;
+                }
+            if (!printedAbove)
+                foreach (th; thrown)
+                    stdout.write(formatThrown(th, colored, true));
         }
     }
     flush();
@@ -965,6 +1057,13 @@ private bool prepareConsole(bool noColours)
 private enum bool hasCoreCliLive = __traits(compiles, {
     import sparkles.core_cli.ui.live : stdoutLiveRegion;
     import sparkles.core_cli.ui.progress : ProgressLine;
+});
+
+/// Likewise for the `--bench` live results table (the "ticker"): a `LiveRegion`
+/// repainting `drawTableLines` frames.
+private enum bool hasCoreCliBenchTicker = __traits(compiles, {
+    import sparkles.core_cli.ui.live : stdoutLiveRegion;
+    import sparkles.core_cli.ui.table : drawTableLines;
 });
 
 static if (hasCoreCliLive)
