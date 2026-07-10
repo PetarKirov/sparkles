@@ -253,25 +253,50 @@ auto measure(DG)(scope DG run, in BenchConfig config)
 {
     import std.typecons : tuple;
 
-    static Duration sampleOnce(scope DG run, ulong iterations)
+    static long sampleOnceNs(scope DG run, ulong iterations)
     {
-        const started = MonoTime.currTime;
+        const t0 = MonoTime.currTime.ticks;
         foreach (_; 0 .. iterations)
             run();
-        return MonoTime.currTime - started;
+        return elapsedNs(t0);
     }
 
     // Warmup + auto-scale: double until one sample is long enough to time.
     ulong iterations = config.iterations ? config.iterations : 1;
     if (!config.iterations)
-        while (sampleOnce(run, iterations) < config.minSampleTime && iterations < 1UL << 40)
+        while (sampleOnceNs(run, iterations) < config.minSampleTime.total!"nsecs"
+                && iterations < 1UL << 40)
             iterations *= 2;
 
     auto nsPerIter = new double[](config.sampleCount);
     foreach (ref sample; nsPerIter)
-        sample = double(sampleOnce(run, iterations).total!"nsecs") / iterations;
+        sample = double(sampleOnceNs(run, iterations)) / iterations;
 
     return tuple!("iterations", "nsPerIter")(iterations, nsPerIter);
+}
+
+/// Nanoseconds elapsed since `startTicks` (a `MonoTime.currTime.ticks` value).
+/// Raw ticks, not `MonoTime` subtraction: the latter yields a `Duration`,
+/// whose hnsec storage quantizes every sample to a 100 ns grid — fatal to
+/// sub-microsecond per-call medians.
+private long elapsedNs(long startTicks) @safe nothrow @nogc
+{
+    import core.time : convClockFreq;
+
+    return convClockFreq(MonoTime.currTime.ticks - startTicks,
+        MonoTime.ticksPerSecond, 1_000_000_000L);
+}
+
+@("bench.elapsedNs.preservesSubHnsecDeltas")
+@safe pure nothrow @nogc
+unittest
+{
+    import core.time : convClockFreq;
+
+    // 42 ticks of a 1 GHz monotonic clock is 42 ns — the Duration (hnsec)
+    // path reports 0. The helper's conversion keeps the clock's resolution.
+    assert(convClockFreq(42, 1_000_000_000L, 1_000_000_000L) == 42);
+    assert(convClockFreq(42, 10_000_000L, 1_000_000_000L) == 4200);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -464,16 +489,16 @@ private DriveResult driveOnce(Timed, After)(scope Timed timed, scope After after
 {
     static if (is(typeof(timed()) == void))
     {
-        const t0 = MonoTime.currTime;
+        const t0 = MonoTime.currTime.ticks;
         timed();
-        const ns = (MonoTime.currTime - t0).total!"nsecs";
+        const ns = elapsedNs(t0);
         return DriveResult(ns, invokeAfter(after));
     }
     else
     {
-        const t0 = MonoTime.currTime;
+        const t0 = MonoTime.currTime.ticks;
         auto r = timed();
-        const ns = (MonoTime.currTime - t0).total!"nsecs";
+        const ns = elapsedNs(t0);
         return DriveResult(ns, invokeAfter(after, r));
     }
 }
@@ -481,9 +506,9 @@ private DriveResult driveOnce(Timed, After)(scope Timed timed, scope After after
 /// Times one already-erased `runTimed()` call and runs `runAfter` untimed after.
 private DriveResult driveErased(scope void delegate() runTimed, scope string delegate() runAfter)
 {
-    const t0 = MonoTime.currTime;
+    const t0 = MonoTime.currTime.ticks;
     runTimed();
-    const ns = (MonoTime.currTime - t0).total!"nsecs";
+    const ns = elapsedNs(t0);
     return DriveResult(ns, runAfter is null ? null : runAfter());
 }
 
