@@ -63,6 +63,9 @@
 # docs.vulkan.org blocks GitHub Actions' shared IPs with HTTP 403 (live + 200
 # locally), same pattern as registry.khronos.org above
 ^https?://docs\.vulkan\.org/
+# wiki.haskell.org intermittently 502/503s for GitHub Actions' shared IPs (live +
+# 200 locally; research/vulkan/concepts.md cites the "Phantom type" HaskellWiki page)
+^https?://wiki\.haskell\.org/
 # bugs.kde.org (KDE Bugzilla) times out under GitHub Actions' concurrency
 ^https?://bugs\.kde\.org/
 # https://waf.io/ times out under GitHub Actions' concurrency
