@@ -10,6 +10,7 @@ import core.interpolation : InterpolationFooter, InterpolationHeader;
 import core.time : Duration;
 
 import sparkles.base.text.grapheme : byGraphemeCluster, visibleWidth;
+import sparkles.base.text.width : Align;
 
 import sparkles.test_runner.bench : BenchStats;
 import sparkles.test_runner.ctfe_trace : CtfeTestCost;
@@ -424,21 +425,32 @@ string formatBenchTable(in BenchStats[] rows, bool colored) @system // drawTable
             ns(row.nsPerIterMax),
         ];
 
-    return renderCells(cells);
+    // benchmark name left; iters right; the four timing columns align on the
+    // decimal point (same-unit values line up; mixed units still read right).
+    return renderCells(cells,
+        [Align.left, Align.right, Align.decimal, Align.decimal, Align.decimal, Align.decimal],
+        headerRows: 1);
 }
 
 /// Renders table cells with `core-cli`'s `drawTable` when available, plain
-/// space-aligned columns otherwise.
-package string renderCells(string[][] cells) @system // drawTable is @system
+/// space-aligned columns otherwise. `aligns`/`headerRows` describe per-column
+/// alignment and the header-rule row count; `Align` lives in `base`, so this
+/// signature stays valid without `core-cli` (`TableProps` is built strictly
+/// inside the capability gate), and the fallback honors right/decimal columns
+/// as plain right alignment.
+package string renderCells(
+    string[][] cells, in Align[] aligns = null, size_t headerRows = 0)
+@system // drawTable is @system
 {
     static if (hasCoreCliUi)
     {
-        import sparkles.core_cli.ui.table : drawTable;
+        import sparkles.core_cli.ui.table : drawTable, TableProps;
 
-        return drawTable(cells);
+        return drawTable(cells,
+            TableProps(headerRows: headerRows, columnAligns: aligns.dup));
     }
     else
-        return alignColumns(cells);
+        return alignColumns(cells, aligns);
 }
 
 /// The `--ctfe-trace` report: compile-time cost of each `@ctfe` test.
@@ -466,15 +478,17 @@ string formatCtfeTraceTable(in CtfeTestCost[] costs, bool colored) @system // re
         if (cost.durUs > 0)
             totalUs += cost.durUs;
     }
-    return renderCells(cells)
+    return renderCells(cells, [Align.left, Align.left, Align.right], headerRows: 1)
         ~ render(colored, i"{bold total CTFE time attributed to @ctfe tests:} $(formatDuration(totalUs.usecs))\n");
 }
 
-/// Fallback tabular rendering: two-space-separated left-aligned columns.
-/// Column widths are measured in terminal cells via
+/// Fallback tabular rendering: two-space-separated columns, left-aligned by
+/// default; `aligns` entries of `right`/`decimal` pad before the cell instead
+/// (decimal degrades to plain right — there is no shared dot position without
+/// the full grid). Column widths are measured in terminal cells via
 /// `sparkles.base.text.visibleWidth`, so ANSI escapes count zero and wide CJK /
 /// emoji / combining clusters are sized correctly (matching `drawTable`).
-package string alignColumns(in string[][] cells) @safe
+package string alignColumns(in string[][] cells, in Align[] aligns = null) @safe
 {
     import std.algorithm.comparison : max;
 
@@ -487,15 +501,24 @@ package string alignColumns(in string[][] cells) @safe
             widths[i] = max(widths[i], visibleWidth(cell));
         }
 
+    bool rightish(size_t i)
+        => i < aligns.length && (aligns[i] == Align.right || aligns[i] == Align.decimal);
+
     string result;
     foreach (row; cells)
     {
         foreach (i, cell; row)
         {
+            if (rightish(i))
+                foreach (_; visibleWidth(cell) .. widths[i])
+                    result ~= ' ';
             result ~= cell;
             if (i + 1 < row.length)
-                foreach (_; visibleWidth(cell) .. widths[i] + 2)
+            {
+                const used = rightish(i) ? widths[i] : visibleWidth(cell);
+                foreach (_; used .. widths[i] + 2)
                     result ~= ' ';
+            }
         }
         result ~= '\n';
     }
@@ -520,4 +543,18 @@ unittest
     assert(alignColumns([["世界", "z"], ["x", "y"]]) ==
         "世界  z\n" ~
         "x     y\n");
+}
+
+@("alignColumns.rightAndDecimalFallback")
+@safe
+unittest
+{
+    // right/decimal columns pad before the cell; decimal degrades to right.
+    assert(alignColumns([["a", "22"], ["ccc", "4"]],
+            [Align.left, Align.right]) ==
+        "a    22\n" ~
+        "ccc   4\n");
+    assert(alignColumns([["1.5"], ["12.25"]], [Align.decimal]) ==
+        "  1.5\n" ~
+        "12.25\n");
 }

@@ -169,8 +169,11 @@ int graphemeClusterWidth(in dchar[] cluster) @safe pure nothrow @nogc
 
 /// Horizontal alignment of text within a fixed-width field. `inherit` means "defer
 /// to a caller-supplied default" (e.g. a table column's default alignment) and is
-/// treated as `left` if it reaches `alignField` unresolved.
-enum Align { inherit, left, center, right }
+/// treated as `left` if it reaches `alignField` unresolved. `decimal` aligns a
+/// *column* of numbers on their last `.` — inherently columnar (a lone field has
+/// no shared dot position), so `alignField` treats it as `right`; the columnar
+/// pad is applied by the consumer (see `drawTable`'s per-column handling).
+enum Align { inherit, left, center, right, decimal }
 
 /// Pad `content` to `width` visible columns into the output range `w`, per `align_`.
 ///
@@ -194,9 +197,10 @@ ref Writer alignField(Writer)(
     final switch (align_)
     {
         case Align.inherit:
-        case Align.left:   trail = pad;                        break;
-        case Align.right:  lead = pad;                         break;
-        case Align.center: lead = pad / 2; trail = pad - lead; break;
+        case Align.left:    trail = pad;                        break;
+        case Align.right:
+        case Align.decimal: lead = pad;                         break;
+        case Align.center:  lead = pad / 2; trail = pad - lead; break;
     }
 
     foreach (_; 0 .. lead)
