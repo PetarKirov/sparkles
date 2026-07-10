@@ -85,7 +85,7 @@ void main()
     auto opt = PrettyPrintOptions!void(
         indentStep: 4,
         softMaxWidth: 120, // fits single-line easily
-        useColors: false
+        colored: false
     );
 
     writeln(prettyPrint(points, opt));
