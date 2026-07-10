@@ -630,6 +630,8 @@ private void printReceipt(Stage stage, string tag, string notesBody, in Theme th
     import sparkles.core_cli.ui.osc_link : oscLink;
     import sparkles.core_cli.ui.theme : Semantic;
 
+    import sparkles.core_cli.ui.layout : kvList;
+
     string subject = tag;
     foreach (line; notesBody.lineSplitter)
     {
@@ -637,19 +639,20 @@ private void printReceipt(Stage stage, string tag, string notesBody, in Theme th
         break;
     }
 
-    string[] lines = [
-        "tag      " ~ tag ~ " (annotated)",
-        "subject  " ~ subject,
+    string[2][] pairs = [
+        ["tag", tag ~ " (annotated)"],
+        ["subject", subject],
     ];
     if (stageAtLeast(stage, Stage.pushTag))
-        lines ~= "pushed   origin " ~ theme.mark(Semantic.success);
+        pairs ~= ["pushed", "origin " ~ theme.mark(Semantic.success)];
     if (stageAtLeast(stage, Stage.createGhReleaseDraft))
     {
         const published = stageAtLeast(stage, Stage.publishGhRelease);
         const url = ghReleaseUrl(tag);
-        lines ~= "release  " ~ (url.length ? oscLink(url, url) : "created")
-            ~ (published ? " (published)" : " (draft)");
+        pairs ~= ["release", (url.length ? oscLink(url, url) : "created")
+            ~ (published ? " (published)" : " (draft)")];
     }
+    auto lines = kvList(pairs);
 
     const next = stage == Stage.publishGhRelease
         ? cast(string) null
