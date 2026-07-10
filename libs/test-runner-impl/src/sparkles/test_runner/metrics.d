@@ -545,6 +545,37 @@ string[] syscallSelectorNames(string metricFilter) @safe
     return names;
 }
 
+/// The `--metrics` selectors that match nothing in `names` (the validation
+/// universe) — typo candidates for a stderr warning, mirroring `--sort-by` and
+/// `--group-by`. `all`/`?`/`help`/empty select by other means and are never
+/// unknown.
+string[] unknownMetricSelectors(in string[] names, string metricFilter) @safe
+{
+    import std.algorithm.iteration : splitter;
+    import std.algorithm.searching : any;
+
+    string[] unknown;
+    if (metricFilter == "all" || metricFilter == "?" || metricFilter == "help"
+        || !metricFilter.length)
+        return unknown;
+    foreach (p; metricFilter.splitter(','))
+        if (!names.any!(n => matchesMetricGlob(n, p)))
+            unknown ~= p;
+    return unknown;
+}
+
+@("metrics.unknownMetricSelectors")
+@safe
+unittest
+{
+    static immutable names = ["B/s", "ipc", "cache-miss", "syscalls"];
+    assert(unknownMetricSelectors(names, "ipc,nope") == ["nope"]);
+    assert(unknownMetricSelectors(names, "cache-*") == [], "glob matches");
+    assert(unknownMetricSelectors(names, "x*") == ["x*"], "glob matching nothing");
+    assert(unknownMetricSelectors(names, "all") == []);
+    assert(unknownMetricSelectors(names, "") == []);
+}
+
 /// The canonical column id for a `--sort-by` key: `sc:<name>` is the display
 /// header of the `syscalls:<name>` column id `sortValue` matches on, so both
 /// spellings are accepted and normalized to the id.

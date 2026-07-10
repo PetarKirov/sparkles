@@ -622,7 +622,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     import sparkles.test_runner.execution : toThrown;
     import std.algorithm.searching : canFind;
     import sparkles.test_runner.metrics : canonicalSortKey, catalog,
-        groupKeyDisplay, groupKeyOf;
+        groupKeyDisplay, groupKeyOf, unknownMetricSelectors;
 
     auto benchTests = tests.filter!(t => t.traits.isBenchmark).array;
 
@@ -696,22 +696,32 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     // `sortValue` matches on) are the same column; sort by the canonical id.
     const sortBy = canonicalSortKey(options.sortBy);
 
-    // Warn on a --sort-by that names no orderable column (mirrors --group-by), so
-    // a typo isn't silently ignored (it would fall back to discovery order). Valid:
-    // "name"/"median/iter"/empty, a catalog metric (client/perf/tier0), or a
-    // dynamic syscall column (sc:<name> / syscalls:<name> / the "syscalls" total).
-    if (sortBy.length && sortBy != "name" && sortBy != "median/iter")
+    // One validation universe for the --metrics/--sort-by typo warnings: the
+    // client columns the registered cases mint, the static perf/tier0 families
+    // (name validity is independent of availability), and the syscall columns
+    // this run can carry — the total plus every requested tracepoint.
+    string[] knownColumns;
     {
         import std.algorithm.iteration : map;
-        import std.algorithm.searching : startsWith;
 
         auto synthetic = all.map!(s => BenchStats(name: s.c.name, metrics: s.c.metrics)).array;
-        const known = catalog(synthetic).canFind!(d => d.name == sortBy)
-            || sortBy == "syscalls" || sortBy.startsWith("syscalls:");
-        if (!known)
-            stderr.writeln("--sort-by: no metric column named '", options.sortBy,
-                "' — rows keep their default order");
+        knownColumns = catalog(synthetic).map!(d => d.name).array ~ "syscalls";
+        foreach (n; syscallNames)
+            knownColumns ~= "syscalls:" ~ n;
     }
+
+    // Warn on selectors that match nothing (mirrors --group-by/--sort-by), so a
+    // typo isn't a silently missing column.
+    foreach (p; unknownMetricSelectors(knownColumns, options.metrics))
+        stderr.writeln("--metrics: no metric column matches '", p,
+            "' — see --list-metrics");
+
+    // Warn on a --sort-by that names no orderable column, so a typo isn't
+    // silently ignored (it would fall back to discovery order).
+    if (sortBy.length && sortBy != "name" && sortBy != "median/iter"
+        && !knownColumns.canFind(sortBy))
+        stderr.writeln("--sort-by: no metric column named '", options.sortBy,
+            "' — rows keep their default order");
 
     // Schedule: contiguous by key, keys in ascending order (stable within a key).
     auto order = iota(all.length).array;
