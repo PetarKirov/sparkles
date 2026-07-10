@@ -8,9 +8,14 @@ returns an `Expected` error, so a wrong engine becomes an isolated error row
 instead of aborting the matrix. Hardware counters come from the runner's
 `--perf`; there is no private perf backend any more.
 
-The whole benchmark is a `@benchmark unittest`: skipped by a normal `dub test`,
-measured by `dub test -- --bench` (add `--perf` for counters). Corpora load at
-run time from `$WIRED_BENCH_DATA` (see $(MREF sparkles,wired_bench,data)).
+The benchmark is one `@benchmark unittest` per op (`wired.parse`,
+`wired.validate`, `wired.serialize`, `wired.decode`): skipped by a normal
+`dub test`, measured by `dub test -b bench -- --bench` (add `--perf` for
+counters) — so `-i 'wired\.serialize'` measures one op, and a registration
+failure in one op's body cannot abort the others. Engines and datasets subset
+at run time via `$WIRED_BENCH_ENGINES` / `$WIRED_BENCH_DATASETS` (comma lists;
+empty = all). Corpora load from `$WIRED_BENCH_DATA` (see
+$(MREF sparkles,wired_bench,data)).
 */
 module sparkles.wired_bench.runner;
 
@@ -42,42 +47,157 @@ private void freeDocOf(E)(ref E e)
         e.freeDoc();
 }
 
-@("wired.runtime")
+/// Whether the runtime env filters (`$WIRED_BENCH_ENGINES` /
+/// `$WIRED_BENCH_DATASETS` — the old `--engines`/`--datasets` flags) allow a
+/// name: a comma list allows its members, empty/unset allows everything.
+private bool envListAllows(string envVar, string name) @safe
+{
+    import std.algorithm.iteration : splitter;
+    import std.algorithm.searching : canFind;
+    import std.process : environment;
+
+    const list = environment.get(envVar, "");
+    return !list.length || list.splitter(',').canFind(name);
+}
+
+private bool engineEnabled(string name) @safe
+    => envListAllows("WIRED_BENCH_ENGINES", name);
+
+private bool datasetEnabled(string name) @safe
+    => envListAllows("WIRED_BENCH_DATASETS", name);
+
+/// The corpora this run measures: the canonical list filtered by
+/// `$WIRED_BENCH_DATASETS`, freshly loaded (each `@benchmark` body runs once).
+private Dataset[] benchDatasets()
+{
+    import std.algorithm.iteration : filter;
+    import std.array : array;
+
+    return loadDatasets(defaultDatasets.filter!(n => datasetEnabled(n)).array,
+        resolveDataDir(null));
+}
+
+/// The env filters can empty an op's matrix; an explicitly-labeled marker row
+/// beats the runner's zero-case whole-body fallback, which would silently
+/// measure this registration body instead.
+private void markFilteredOut(string operation)
+{
+    benchCase(name: "(filtered out)", timed: () {}, after: () {},
+        labels: ["operation": operation]);
+}
+
+/// Whether any compiled-in engine supports the op (gates the op's unittest).
+private enum bool anyValidate = () {
+    bool any;
+    static foreach (E; AllEngines)
+        static if (isJsonEngine!E && hasValidate!E)
+            any = true;
+    return any;
+}();
+
+/// ditto
+private enum bool anySerialize = () {
+    bool any;
+    static foreach (E; AllEngines)
+        static if (isJsonEngine!E && hasSerialize!E)
+            any = true;
+    return any;
+}();
+
+/// ditto
+private enum bool anyDecode = () {
+    bool any;
+    static foreach (E; AllEngines)
+        static if (canDecodeTwitter!E)
+            any = true;
+    return any;
+}();
+
+// Each op is registered from its own helper (a fresh frame per call), so its
+// closures capture their own engine and `ds` copy — never a shared loop
+// variable. Under `--bench` the cases run later, in a schedule the runner
+// picks, so each is self-contained: every case owns a heap engine, and all
+// untimed setup/release lives in `setup`/`teardown`.
+
+@("wired.parse")
 @benchmark
 @system
 unittest
 {
-    const datasets = loadDatasets(defaultDatasets, resolveDataDir(null));
-    foreach (ref ds; datasets)
+    size_t registered;
+    foreach (ref ds; benchDatasets)
     {
         const reference = referenceFingerprint(ds.text);
         static foreach (E; AllEngines)
-            registerEngine!E(ds, reference); // `ds` copied by value → fresh capture
+            static if (isJsonEngine!E)
+                if (engineEnabled(E.name))
+                {
+                    registerParse!E(ds, reference);
+                    static if (hasParseInsitu!E)
+                        registerParseInsitu!E(ds);
+                    registered++;
+                }
     }
+    if (!registered)
+        markFilteredOut("parse");
 }
 
-/// Registers the trait-supported op cases for one engine over one dataset. Under
-/// `--bench` the cases run later, in a schedule the runner picks, so each must be
-/// self-contained: `ds` arrives by value (a fresh binding per call, not the shared
-/// loop variable), every case owns a heap engine, and all untimed setup/release
-/// lives in `setup`/`teardown` (which run around that case's measurement) — never
-/// bracketing the call, whose scope has long exited by execution time.
-private void registerEngine(E)(Dataset ds, Fingerprint reference)
+static if (anyValidate)
+@("wired.validate")
+@benchmark
+@system
+unittest
 {
-    static if (isJsonEngine!E)
-    {
-        registerParse!E(ds, reference);
-        static if (hasParseInsitu!E)
-            registerParseInsitu!E(ds);
-        static if (hasValidate!E)
-            registerValidate!E(ds);
-        static if (hasSerialize!E)
-            registerSerialize!E(ds);
-    }
-    // Decode-only engines (e.g. `wired`) have no `parse`/`fingerprint`.
-    static if (canDecodeTwitter!E)
-        if (ds.name == "twitter")
-            registerDecode!E(ds);
+    size_t registered;
+    foreach (ref ds; benchDatasets)
+        static foreach (E; AllEngines)
+            static if (isJsonEngine!E && hasValidate!E)
+                if (engineEnabled(E.name))
+                {
+                    registerValidate!E(ds);
+                    registered++;
+                }
+    if (!registered)
+        markFilteredOut("validate");
+}
+
+static if (anySerialize)
+@("wired.serialize")
+@benchmark
+@system
+unittest
+{
+    size_t registered;
+    foreach (ref ds; benchDatasets)
+        static foreach (E; AllEngines)
+            static if (isJsonEngine!E && hasSerialize!E)
+                if (engineEnabled(E.name))
+                {
+                    registerSerialize!E(ds);
+                    registered++;
+                }
+    if (!registered)
+        markFilteredOut("serialize");
+}
+
+static if (anyDecode)
+@("wired.decode")
+@benchmark
+@system
+unittest
+{
+    size_t registered;
+    if (datasetEnabled("twitter"))
+        foreach (ref ds; loadDatasets(["twitter"], resolveDataDir(null)))
+            static foreach (E; AllEngines)
+                static if (canDecodeTwitter!E)
+                    if (engineEnabled(E.name))
+                    {
+                        registerDecode!E(ds);
+                        registered++;
+                    }
+    if (!registered)
+        markFilteredOut("decode");
 }
 
 // Each op is registered from its own helper (a fresh frame per call), so its
