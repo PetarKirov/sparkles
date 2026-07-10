@@ -646,6 +646,15 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         return UnitTestResult(0, 0, false, false);
     }
 
+    // Benchmark numbers from an assert-enabled (debug) build routinely read
+    // several times off an optimized build's — say so up front, once per run,
+    // instead of letting authoritative-looking tables mislead. (dub's stock
+    // `unittest` build type is debug; a consumer wanting real numbers defines
+    // a release buildType with the `unittests` option — see the docs.)
+    version (assert)
+        stderr.writeln("warning: assert-enabled build — benchmark numbers may be ",
+            "meaningless; use an optimized unittest buildType (e.g. dub test -b bench)");
+
     import std.algorithm.mutation : SwapStrategy;
     import std.algorithm.sorting : sort;
     import std.range : iota;
