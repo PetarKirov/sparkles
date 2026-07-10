@@ -73,6 +73,12 @@ version (linux)
     {
         groupIoctl(leaderFd, PERF_EVENT_IOC_RESET);
         const base = readGroupTimes(leaderFd);
+        // A throw from timed() escapes between ENABLE and DISABLE; the groups
+        // are long-lived (opened once per --bench run) and the streaming runner
+        // continues after an error row, so an un-disabled group would keep
+        // counting for the rest of the run.
+        scope (failure)
+            groupIoctl(leaderFd, PERF_EVENT_IOC_DISABLE);
         foreach (_; 0 .. iters)
         {
             groupIoctl(leaderFd, PERF_EVENT_IOC_ENABLE);

@@ -353,3 +353,35 @@ unittest
     assert(stats.instructions > 10_000);
     assert(stats.cycles > 0);
 }
+
+@("perf.PerfGroup.usableAfterThrowingPass")
+@system
+unittest
+{
+    // A timed body that throws escapes the ENABLE/DISABLE bracket; the
+    // scope(failure) guard must leave the shared group disabled and the throw
+    // must propagate (the streaming runner turns it into an error row), with
+    // the group still measuring correctly on the next pass.
+    auto g = PerfGroup.tryOpen(true);
+    scope (exit)
+        g.close();
+    if (!g.available)
+        return;
+
+    static ulong sink;
+    bool threw;
+    try
+        g.count(() { sink++; throw new Exception("boom"); }, () {}, 3);
+    catch (Exception)
+        threw = true;
+    assert(threw, "the throw propagates out of the counting pass");
+
+    const stats = g.count(() {
+        foreach (i; 0 .. 100_000)
+            sink += i * i;
+    }, () {}, 3);
+    import std.math : isNaN;
+
+    if (!stats.instructions.isNaN)
+        assert(stats.instructions > 10_000, "the group still measures after a throw");
+}
