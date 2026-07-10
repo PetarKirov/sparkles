@@ -83,7 +83,7 @@ struct ProgressLine
 
 /// Plain, equal-width counter: no padding, no elapsed.
 @("progress.ProgressLine.plain")
-@safe unittest
+@safe pure nothrow @nogc unittest
 {
     import sparkles.base.smallbuffer : checkToString;
 
@@ -92,7 +92,7 @@ struct ProgressLine
 
 /// `done` is right-justified in `total`'s digit width (space-padded).
 @("progress.ProgressLine.rightJustified")
-@safe unittest
+@safe pure nothrow @nogc unittest
 {
     import sparkles.base.smallbuffer : checkToString;
 
