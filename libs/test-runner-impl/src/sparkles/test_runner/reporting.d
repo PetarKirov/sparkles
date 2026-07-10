@@ -969,14 +969,16 @@ package bool stderrIsTty(bool noColours)
 /// Raw, unbuffered write to stderr's fd — `@nogc nothrow` (unlike
 /// `std.stdio.stderr.write`), so it is callable from the `@safe nothrow @nogc`
 /// progress hook. No-op on non-POSIX.
-private void writeStderr(scope const(char)[] s) @trusted nothrow @nogc
+private void writeStderr(scope const(char)[] s) @safe nothrow @nogc
 {
     version (Posix)
     {
         import core.sys.posix.unistd : write, STDERR_FILENO;
 
         if (s.length)
-            cast(void) write(STDERR_FILENO, s.ptr, s.length);
+            // Minimal @trusted: the ptr+length pair handed to the syscall
+            // comes from one slice, so the unsafe surface is just the call.
+            cast(void) (() @trusted => write(STDERR_FILENO, s.ptr, s.length))();
     }
 }
 
