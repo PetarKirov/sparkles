@@ -99,3 +99,43 @@ private string stripTrailing(string s) @safe pure nothrow @nogc
         "ok".stylize(Style.green) ~ "  R\n" ~
         "xx");
 }
+
+/// Aligned label/value lines without a frame (a key-value list): every label is
+/// padded to the widest one (by visible width, so styled labels align), then
+/// `gap` spaces, then the value verbatim. Feed the result to `drawBox` for a
+/// framed receipt, or print it bare.
+string[] kvList(in string[2][] pairs, size_t gap = 2) @safe
+{
+    import std.algorithm.comparison : max;
+    import std.array : appender;
+    import sparkles.base.text.grapheme : visibleWidth;
+    import sparkles.base.text.width : Align, alignField;
+
+    size_t labelWidth = 0;
+    foreach (ref pair; pairs)
+        labelWidth = max(labelWidth, visibleWidth(pair[0]));
+
+    string[] lines;
+    lines.reserve(pairs.length);
+    foreach (ref pair; pairs)
+    {
+        auto w = appender!string;
+        alignField(w, pair[0], labelWidth, Align.left);
+        foreach (_; 0 .. gap)
+            w.put(' ');
+        w.put(pair[1]);
+        lines ~= w[];
+    }
+    return lines;
+}
+
+@("layout.kvList.alignsLabels")
+@safe unittest
+{
+    assert(kvList([["tag", "v0.1.0"], ["subject", "v0.1.0 — first"]]) == [
+        "tag      v0.1.0",
+        "subject  v0.1.0 — first",
+    ]);
+    assert(kvList([["a", "1"]], 4) == ["a    1"]);
+    assert(kvList([]) == cast(string[]) []);
+}
