@@ -266,6 +266,19 @@ private UnitTestResult runnerMain(Test[] discovered, bool hostIsRunner)
         return UnitTestResult(0, 0, false, false);
     }
 
+    // The run modes are mutually exclusive; silently preferring one (the old
+    // behavior) turned e.g. `--ctfe-trace f --bench` into a false green — the
+    // requested trace was never written, yet the run exited 0. `--list` /
+    // `--list-metrics` remain winning queries on top of any mode.
+    const requestedModes = (options.bench ? 1 : 0)
+        + (options.ctfeTrace.length ? 1 : 0)
+        + (options.betterC || options.wasm ? 1 : 0);
+    if (requestedModes > 1)
+    {
+        stderr.writeln("error: pick one mode — --bench, --ctfe-trace, or --better-c/--wasm");
+        return UnitTestResult(1, 0, false, false);
+    }
+
     const colored = prepareConsole(options.noColours);
     // Cells available for the compact result lines; `0` (unknown / piped) skips
     // truncation so redirected output stays byte-identical.
