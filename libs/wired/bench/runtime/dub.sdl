@@ -9,9 +9,7 @@ targetPath "build"
 
 dflags "-preview=in" "-preview=dip1000"
 
-dependency "sparkles:base"     path="../../../.."
-dependency "sparkles:core-cli" path="../../../.."
-dependency "sparkles:wired"    path="../../../.."
+dependency "sparkles:wired" path="../../../.."
 // Top-level, not just under `configuration "unittest"`: runner.d imports
 // sparkles.test_runner.* at module scope (and the non-template `bytes()` returns
 // its `Metric`), so it's an unconditional dependency of the package — declaring
@@ -38,4 +36,20 @@ configuration "unittest" {
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
     dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
     lflags "--export-dynamic" platform="linux-ldc"
+}
+
+// Real numbers need release codegen: dub's stock `unittest` build type is a
+// debug build (the runner prints an assert-build warning under --bench), so
+// benchmarks run via `dub test -b bench -- --bench …`. `unittests` is the
+// load-bearing option — without it `dub test` registers zero tests.
+buildType "bench" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    // NB vs the old executable harness's flags: `-enable-cross-module-inlining`
+    // is OFF — build types propagate to dependencies, and mir-ion's -unittest +
+    // releaseMode build culls a template-nested function its inlined code still
+    // references (undefined `printElement…quote`; `-linkonce-templates` ICEs).
+    // Costs ~15% on wired's number-heavy hot loops vs the old `-b bench`
+    // executable baselines — compare new numbers only against baselines
+    // regenerated under this build type.
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
 }
