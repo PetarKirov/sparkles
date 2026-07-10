@@ -141,10 +141,10 @@ in (iters > 0)
         s.syscw = (b.syscw - a.syscw) * inv;
         s.rdChars = (b.rdChars - a.rdChars) * inv;
         s.wrChars = (b.wrChars - a.wrChars) * inv;
-        // read_bytes / write_bytes come from CONFIG_TASK_IO_ACCOUNTING, separate
-        // from rchar/syscr (CONFIG_TASK_XACCT): a kernel with the latter but not
-        // the former leaves these at -1 while ioOk is still true. Guard per field
-        // so an absent block-device counter reads nan, not a bogus 0-byte delta.
+        // Defensive per-field guard: any reading whose parse failed (a field
+        // the kernel omits or restricts) is -1, and an absent block-device
+        // counter must read nan, not a bogus 0-byte delta feeding a fake
+        // 100% cache-hit figure.
         s.rdBytes = a.rdBytes >= 0 && b.rdBytes >= 0 ? (b.rdBytes - a.rdBytes) * inv : double.nan;
         s.wrBytes = a.wrBytes >= 0 && b.wrBytes >= 0 ? (b.wrBytes - a.wrBytes) * inv : double.nan;
     }

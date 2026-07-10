@@ -10,10 +10,13 @@
  * benchmark's timed body with `ENABLE`/`DISABLE`, and the ioctls never perturb
  * the reported timings.
  *
- * `attr.inherit` is set, so syscalls made by threads the benchmark *spawns during*
- * the timed body are counted; a worker pool created before the pass (in untimed
- * setup) is not followed — that needs per-TID attach (a later refinement) or the
- * ptrace backend the roadmap prepares behind the same `--syscalls` flag.
+ * `attr.inherit` is set, so counters clone into every thread the process spawns
+ * *after* `perf_event_open` — and the group opens once at bench-mode start,
+ * before any case's setup runs, so worker pools created in untimed setup are
+ * followed too (their syscalls aggregate into the leader's group read). Only
+ * threads that already existed when the group opened are not followed — that
+ * needs per-TID attach (a later refinement) or the ptrace backend the roadmap
+ * prepares behind the same `--syscalls` flag.
  *
  * Tracepoints need `perf_event_paranoid <= 1`; where they can't be opened — and
  * everywhere off Linux — the group degrades to unavailable and the columns are

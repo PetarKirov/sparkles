@@ -399,14 +399,16 @@ unittest
 /// reported failure) renders the message in place of its timings.
 ///
 /// Grouping and sorting are orthogonal. `sortBy` (`"name"`, a metric column
-/// name, or empty/`"median/iter"`) orders rows. `groupBy` (a `--group-by` spec:
-/// comma-separated name-segment indices) splits the output into one table **per
-/// group**: each is titled `benchmark: <group>` over an `implementation:` stub
-/// column that lists just the varying segment(s) (the shared group prefix is
-/// dropped — DRY), and rows are ordered within the group by `sortBy`. Empty
-/// `groupBy` renders the single flat table (byte-identical to the legacy form).
-/// See `sparkles.test_runner.metrics.sortOrder`. Rendered with `core-cli`'s
-/// `drawTable` when available, plain space-aligned columns otherwise.
+/// name, or empty/`"median/iter"`) orders rows within each group; error rows
+/// sort last under every order. `groupKeys` (case **label** keys, from
+/// `--group-by`) splits the output into one table **per group** of equal
+/// label values: each is titled `benchmark: <group>` over an
+/// `implementation:` stub column listing the row `name`, with a column per
+/// remaining (non-grouped) label key. Empty `groupKeys` renders the single
+/// flat table, label keys as leading columns, rows in ascending median order.
+/// See `sparkles.test_runner.metrics.sortOrder`/`groupKeyOf`. Rendered with
+/// `core-cli`'s `drawTable` when available, plain space-aligned columns
+/// otherwise.
 string formatBenchTable(in BenchStats[] rows, bool colored, string metricFilter = null,
     string sortBy = null, in string[] groupKeys = null) @system // drawTable is @system
 {

@@ -24,10 +24,9 @@ a test must match `-i` **and** not match `-e`.
 
 ```console
 $ dub test :test-runner -- -l
- sparkles.test_runner.bench computeStats.ctfe @ctfe
- sparkles.test_runner.bench medianOf.bench @benchmark
  sparkles.test_runner.discovery discovery.selfTest @betterC
- ...
+ sparkles.test_runner.discovery discovery.moduleTests
+ sparkles.test_runner.discovery.NestedCtfeHost discovery.nestedCtfe @ctfe
 ```
 
 ## Verbose output and source links

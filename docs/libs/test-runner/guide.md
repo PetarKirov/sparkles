@@ -168,9 +168,10 @@ $ dub test -- --bench
 Add `--perf` for hardware performance counters (Linux `perf_event`): a separate
 counting pass brackets each benchmark's timed body — so the counter ioctls never
 perturb the ns/iter numbers — and the table gains IPC, instructions/iter, and
-branch/cache miss-rate columns. A counter that can't be opened (a paranoid kernel,
-or the last-level-cache pair dropped to avoid PMU multiplexing) shows as `—`; off
-Linux the flag is inert.
+branch/cache miss-rate columns. An individually dropped counter (the
+last-level-cache pair under PMU multiplexing) shows as `—`; when the whole
+group can't open (a paranoid kernel) the perf columns are omitted with a
+stderr note. Off Linux the flag is inert.
 
 ```console
 $ dub test -- --bench --perf
@@ -265,11 +266,12 @@ lists the label keys the run offers.
 - **`setup`/`teardown`** (optional) run untimed once around this case's whole
   measurement — for state built once and held across iterations (e.g. parse the
   document a serialize case serializes, and release it after).
-- **`after` picks the failure granularity**: `throw` on a mismatch → the whole
-  benchmark test fails; return an [`Expected`](../../guidelines/idioms/expected/index.md)
-  error → only _this_ case becomes an error row and the rest of the matrix
-  continues. A case with nothing to release/verify passes a no-op (`() {}` for a
-  `void` body).
+- **`after` reports failure two ways**: `throw` on a mismatch → the case
+  becomes an in-table error row with its trace printed, the matrix continues,
+  and the run reports failure; return an
+  [`Expected`](../../guidelines/idioms/expected/index.md)
+  error → the same isolated error row, without a trace. A case with nothing to
+  release/verify passes a no-op (`() {}` for a `void` body).
 - **`metrics`** attach throughput columns: `Metric(unit, amount, mode)` with
   `mode` `rate` (`amount ÷ iteration-time` → `<unit>/s`) or `level` (as-is).
   Units are open-basis names — `"B"`, `"req"`, `"tweet"`, `"frame"` — vocabulary
@@ -309,7 +311,9 @@ Everything after `--` in `dub test -- <options>`. Full table:
 | `--perf`                   | With `--bench`: add hardware perf counters (Linux `perf_event`)                        |
 | `--syscalls[=LIST]`        | With `--bench`: count syscalls/iter (perf tracepoints); bare = total, `=a,b` per-name  |
 | `--metrics=LIST`           | With `--bench`: pick metric columns (glob, `all`, or `?`/`help` to list)               |
-| `--list-metrics`           | With `--bench`: list available metric columns (name, class, source) and exit           |
+| `--list-metrics`           | List available metric columns (name, class, source) and exit; works without `--bench`  |
+| `--bench-json=FILE`        | With `--bench`: also dump the results as JSON (baseline snapshots)                     |
+| `--bench-min-time=MS`      | With `--bench`: per-case measurement budget in ms (default 5)                          |
 | `--better-c`               | Extract and run `@betterC` tests under `-betterC`                                      |
 | `--wasm`                   | Cross-compile and run `@wasm` tests on `wasm32`                                        |
 | `--ctfe-trace FILE`        | Evaluate `@ctfe` tests under LDC `-ftime-trace`; per-test cost                         |
