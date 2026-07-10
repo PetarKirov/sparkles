@@ -136,6 +136,102 @@ live bytes cover Derived: true
 all freed: true
 ```
 
+### Attribute ceiling: how strict can `make`/`dispose` get?
+
+`make`/`dispose` are templates, so — per the
+[sparkles safety-attribute rule](../code-style.md) — their attributes are
+_inferred_ from whatever allocator they're instantiated with, never forced.
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "allocator_make_dispose_attributes"
+    dependency "sparkles:base" version="*"
++/
+import std.stdio : writeln;
+import std.experimental.allocator : make, dispose;
+import std.experimental.allocator.mallocator : Mallocator;
+import std.experimental.allocator.gc_allocator : GCAllocator;
+import sparkles.base.prettyprint : prettyPrint;
+import std.traits : hasElaborateDestructor;
+
+struct Point
+{
+    int x, y;
+}
+
+// Mallocator's allocate/deallocate are both @nogc -- only @safe is out of
+// reach (deallocate slices a raw pointer, so dispose can't infer @safe).
+@safe pure nothrow @nogc
+Unique!(Point, Mallocator) makeWithMallocator()
+    => Unique!(Point, Mallocator)(1, 2);
+
+// GCAllocator's allocate goes through GC.malloc, which isn't @nogc -- same
+// ceiling as Mallocator, minus @nogc.
+@safe pure nothrow
+Unique!(Point, GCAllocator) makeWithGCAllocator()
+    => Unique!(Point, GCAllocator)(3, 4);
+
+@safe
+void main()
+{
+    auto p = makeWithMallocator();
+    auto q = makeWithGCAllocator();
+    writeln(prettyPrint(*p));
+    writeln(prettyPrint(*q));
+}
+
+// A small inline Unique(T, Allocator) RAII helper to avoid use-after-free
+struct Unique(T, Allocator)
+{
+    private T* _ptr;
+
+    this(Args...)(auto ref Args args)
+    if (__traits(compiles, Allocator.instance.make!T(args)))
+    {
+        enum bool isConstructionSafe = __traits(compiles, (Args x) @safe => T(x));
+
+        static if (isConstructionSafe)
+            () @trusted { _ptr = Allocator.instance.make!T(args); }();
+        else
+            _ptr = Allocator.instance.make!T(args);
+    }
+
+    ~this()
+    {
+        if (_ptr)
+        {
+            enum bool isDestructionSafe = !hasElaborateDestructor!T || __traits(compiles, (T x) @safe => destroy(x));
+
+            static if (isDestructionSafe)
+                () @trusted { Allocator.instance.dispose(_ptr); }();
+            else
+                Allocator.instance.dispose(_ptr);
+            _ptr = null;
+        }
+    }
+
+    // Disable copying
+    @disable this(this);
+
+    @safe pure nothrow @nogc
+    ref inout(T) opUnary(string op : "*")() inout => *_ptr;
+}
+```
+
+```ansi
+[35mPoint[39m([96mx[39m: [34m1[39m, [96my[39m: [34m2[39m)
+[35mPoint[39m([96mx[39m: [34m3[39m, [96my[39m: [34m4[39m)
+```
+
+> [!WARNING]
+> **Neither allocator reaches `@safe` directly.** Both allocators' `deallocate` is
+> `@system`, and `dispose` reinterprets the incoming `T*` back to a `void[]`
+> via a raw pointer slice (`package.d:2418`) — that slicing is not
+> `@safe`-inferrable, regardless of which allocator it's instantiated with.
+> To reach `@safe` in the helpers, their system operations are encapsulated
+> within the `@trusted` constructor/destructor of the `Unique` RAII wrapper.
+
 ### `makeArray` — four overloads, three init strategies
 
 `makeArray!T(alloc, length)` default-initializes; `makeArray!T(alloc, length,
