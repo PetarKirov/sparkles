@@ -435,7 +435,21 @@ CtfeOutcome runCtfeTests(
     string[] traceFlags;
     if (traceFile.length)
     {
-        mkdirRecurse(traceFile.dirName);
+        try
+            mkdirRecurse(traceFile.dirName);
+        catch (Exception e)
+        {
+            // An uncreatable trace directory must not escape the unittest hook
+            // as a raw FileException stack trace; fail readably (the caller
+            // prints `output` and recognizes the `--ctfe-trace:` prefix as an
+            // environment problem, not a test failure).
+            import std.conv : text;
+
+            outcome.output = text("--ctfe-trace: cannot create '",
+                traceFile.dirName, "': ", e.msg, "\n");
+            outcome.succeeded = false;
+            return outcome;
+        }
         traceFlags = ["-ftime-trace", "-ftime-trace-file=" ~ traceFile,
             "--ftime-trace-granularity=0"];
     }
