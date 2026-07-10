@@ -23,9 +23,13 @@ import sparkles.base.logger : initLogger, LogLevel, info, warning, error;
 import sparkles.base.term_style : Style, stylize;
 import sparkles.core_cli.args : parseCliArgs, CliOption, HelpInfo;
 import sparkles.core_cli.process_utils : isInPath, runCaptured;
+import sparkles.core_cli.term_caps : detectTermCaps;
 import sparkles.core_cli.ui.box : drawBox, BoxProps;
 import sparkles.core_cli.ui.header : drawHeader, HeaderProps, HeaderStyle;
+import sparkles.core_cli.ui.live : LiveRegion, stdoutLiveRegion;
 import sparkles.core_cli.ui.table : drawTable;
+import sparkles.core_cli.ui.tasklist : TaskReporter;
+import sparkles.core_cli.ui.theme : makeTheme, Theme;
 import sparkles.versions.schemes.semver : SemVer;
 
 import sparkles.release.agents : AgentSpec, availableAgents, buildAgentPrompt, findAgent, runAgent;
@@ -33,7 +37,7 @@ import sparkles.release.bump : applyBump, BumpKind, parseBumpKind, suggestBump;
 import sparkles.release.conventional : CommitType;
 import sparkles.release.git : authorCounts, createAnnotatedTag, currentBranch, diffStat, latestTag, listTags, logRange, logStatRange, numstat, pushTag, repoRoot;
 import sparkles.release.notes : openInEditor, seedEditorBuffer, seedReviewBuffer, stripComments;
-import sparkles.release.preflight : runPreflight, PreflightResult;
+import sparkles.release.preflight : runPreflight, PreflightProgress, PreflightResult;
 import sparkles.release.result : Result;
 import sparkles.release.stages : Stage, parseStage, stageAtLeast, stageToken;
 import sparkles.release.stats : tallyCommits, typeCounts, ReleaseStats, Commit, AuthorCount, FileStat, AreaStat, areaBreakdown;
@@ -91,6 +95,8 @@ int main(string[] args)
 
 private int run(CliParams cli)
 {
+    const theme = makeTheme(detectTermCaps());
+
     // ----- validate the closed-vocabulary options up front -----
     auto stage = parseStage(cli.stage);
     if (stage.isNull)
@@ -158,15 +164,11 @@ private int run(CliParams cli)
     // ----- pre-flight (before any tag is created) -----
     if (!cli.noVerify)
     {
-        info(i"Running pre-flight checks (clean tree, on main, ci --test, ci --verify)…");
-        const root = repoRoot();
-        auto result = runPreflight(root.hasValue ? root.value : ".");
-        if (!result.ok)
-        {
-            writeln(drawBox(result.failures, "Pre-flight failed"));
+        writeln();
+        writeln(drawHeader("Pre-flight"));
+        stdout.flush();
+        if (!runPreflightChecklist(theme))
             return fail("pre-flight checks failed; fix them or pass --no-verify");
-        }
-        info(i"Pre-flight checks passed.");
     }
     else
         warning(i"Skipping pre-flight checks (--no-verify).");
@@ -183,7 +185,35 @@ private int run(CliParams cli)
     }
 
     // ----- execute the chosen stages -----
-    return executeStages(stage.get, tag, notesBody);
+    return executeStages(stage.get, tag, notesBody, theme);
+}
+
+/// Runs the pre-flight checks as a live checklist: each check is a task row,
+/// `ci` output lines pulse the spinner, and failures graduate with their
+/// detail (e.g. the test output tail) as follow-up lines. Returns overall ok.
+private bool runPreflightChecklist(in Theme theme)
+{
+    auto region = stdoutLiveRegion();
+    scope (exit)
+        region.finish();
+    auto tasks = TaskReporter(&region, theme);
+
+    size_t[string] ids;
+    auto progress = PreflightProgress(
+        started: (string label) {
+            const id = tasks.add(label);
+            ids[label] = id;
+            tasks.start(id);
+        },
+        finished: (string label, bool ok, string detail) {
+            if (auto id = label in ids)
+                ok ? tasks.succeed(*id) : tasks.fail(*id, detail);
+        },
+        output: (scope const(char)[]) { tasks.tick(); },
+    );
+
+    const root = repoRoot();
+    return runPreflight(root.hasValue ? root.value : ".", progress).ok;
 }
 
 // ---------------------------------------------------------------------------
@@ -383,7 +413,7 @@ private Result!(AgentSpec) pickAgent(in CliParams cli)
 // Stage execution
 // ---------------------------------------------------------------------------
 
-private int executeStages(Stage chosen, string tag, string notesBody)
+private int executeStages(Stage chosen, string tag, string notesBody, in Theme theme)
 {
     import std.conv : text;
     import std.file : tempDir, write;
@@ -396,35 +426,68 @@ private int executeStages(Stage chosen, string tag, string notesBody)
     scope (exit)
         removeQuietly(notesPath);
 
+    writeln();
+    writeln(drawHeader("Release " ~ tag ~ " · --stage=" ~ stageToken(chosen)));
+    stdout.flush();
+
+    auto region = stdoutLiveRegion();
+    scope (exit)
+        region.finish();
+    auto tasks = TaskReporter(&region, theme);
+
+    // The whole pipeline is registered up front so the pending rows show the
+    // plan; stages beyond --stage are skipped in order as execution passes them.
+    const tagId = tasks.add("create annotated tag " ~ tag);
+    const pushId = tasks.add("push " ~ tag ~ " to origin");
+    const draftId = tasks.add("create draft GitHub release");
+    const publishId = tasks.add("publish GitHub release");
+
+    int failStage(size_t id, string message)
+    {
+        tasks.fail(id, message);
+        region.finish();
+        return fail(message);
+    }
+
+    tasks.start(tagId);
     auto tagR = createAnnotatedTag(tag, notesPath);
     if (tagR.hasError)
-        return fail(tagR.error);
-    info(i"Created annotated tag $(tag).");
+        return failStage(tagId, tagR.error);
+    tasks.succeed(tagId);
 
     if (stageAtLeast(chosen, Stage.pushTag))
     {
+        tasks.start(pushId);
         auto pushR = pushTag(tag);
         if (pushR.hasError)
-            return fail("tag created locally but push failed: " ~ pushR.error
+            return failStage(pushId, "tag created locally but push failed: " ~ pushR.error
                 ~ "\nRetry with: git push origin " ~ tag);
-        info(i"Pushed $(tag) to origin.");
+        tasks.succeed(pushId);
     }
+    else
+        tasks.skip(pushId, "beyond --stage");
 
     if (stageAtLeast(chosen, Stage.createGhReleaseDraft))
     {
+        tasks.start(draftId);
         auto r = runCaptured(["gh", "release", "create", tag, "--draft", "--notes-from-tag"]);
         if (r.status != 0)
-            return fail("gh release draft failed: " ~ r.stderr);
-        info(i"Created draft GitHub release for $(tag).");
+            return failStage(draftId, "gh release draft failed: " ~ r.stderr);
+        tasks.succeed(draftId);
     }
+    else
+        tasks.skip(draftId, "beyond --stage");
 
     if (stageAtLeast(chosen, Stage.publishGhRelease))
     {
+        tasks.start(publishId);
         auto r = runCaptured(["gh", "release", "edit", tag, "--draft=false"]);
         if (r.status != 0)
-            return fail("gh release publish failed: " ~ r.stderr);
-        info(i"Published GitHub release for $(tag) (notify-dub-registry will fire).");
+            return failStage(publishId, "gh release publish failed: " ~ r.stderr);
+        tasks.succeed(publishId, "notify-dub-registry will fire");
     }
+    else
+        tasks.skip(publishId, "beyond --stage");
 
     return 0;
 }
