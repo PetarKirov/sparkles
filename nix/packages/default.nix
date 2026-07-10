@@ -39,7 +39,8 @@
           # `base`/`core-cli` import the runner's `@…` attributes (in the impl
           # package) unconditionally, so its source must be present even in these
           # non-unittest library builds; `core-cli` likewise imports `math`
-          # (ScreenSize) via importPaths.
+          # (ScreenSize) via importPaths; `release` deserializes agent replies
+          # via `wired`.
           ++ map (path: fs.fileFilter (file: file.hasExt "d") (fromRoot path)) [
             "apps/ci/src"
             "apps/release/src"
@@ -49,6 +50,7 @@
             "libs/versions/src"
             "libs/test-runner/src"
             "libs/test-runner-impl/src"
+            "libs/wired/src"
           ]
         );
       };

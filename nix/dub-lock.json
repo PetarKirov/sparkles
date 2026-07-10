@@ -1,8 +1,16 @@
 {
   "dependencies": {
+    "bolts": {
+      "sha256": "1klz02r13r3yq8vcw1gkv39r02vpnv7wlhhb5kkjnybc3s86w1q8",
+      "version": "1.3.1"
+    },
     "expected": {
       "sha256": "1ahr7gbjl6dgw1qs9x5yzcwhbzfg7ygdlsm9gw4hgmm1xrfcpri0",
       "version": "0.4.1"
+    },
+    "optional": {
+      "sha256": "1ab3x96ax5jsb4zayfw3akppqp3mg42p2d847p3ahrj1zmn3hid9",
+      "version": "1.3.1"
     },
     "silly": {
       "sha256": "0fz7ib715sfk3w69i6xns5pwd4caahvfqjf32v13daxm1ms8xdzz",
