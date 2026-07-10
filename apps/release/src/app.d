@@ -7,12 +7,17 @@ a SemVer bump from the conventional commits, gathers the release notes (your
 allows: a local annotated tag (default), a pushed tag, a draft GitHub release, or
 a published one.
 
+With `--split`, the unreleased backlog is instead associated with the PRs that
+introduced it (GitHub GraphQL), segmented into a chain of releases by the
+agent, and — after plan review — each segment is tagged/pushed/released in
+turn. See `docs/specs/release/SPEC.md` §6–§7.
+
 See `docs/guidelines/release.md` for the policy this encodes.
 
 Usage:
     release [--stage=create-tag|push-tag|create-gh-release-draft|publish-gh-release]
             [--auto] [--agent=<key>] [--bump=major|minor|patch]
-            [--notes=manual|agent] [--no-verify] [--log-level=<level>]
+            [--notes=manual|agent] [--split] [--no-verify] [--log-level=<level>]
 +/
 module sparkles.release.app;
 
@@ -32,13 +37,16 @@ import sparkles.core_cli.ui.tasklist : TaskReporter;
 import sparkles.core_cli.ui.theme : makeTheme, Theme;
 import sparkles.versions.schemes.semver : SemVer;
 
-import sparkles.release.agents : AgentSpec, availableAgents, buildAgentPrompt, findAgent, runAgent;
+import sparkles.release.agents : AgentSpec, availableAgents, buildAgentPrompt, buildSegmentationPrompt, capLogStat, buildSegmentationRetryCoda, buildSegmentNotesSection, findAgent, runAgent;
+import sparkles.release.artifacts : ArtifactSink, makeArtifactSink;
 import sparkles.release.bump : applyBump, BumpKind, parseBumpKind, suggestBump;
 import sparkles.release.conventional : CommitType;
-import sparkles.release.git : authorCounts, createAnnotatedTag, currentBranch, diffStat, latestTag, listTags, logRange, logStatRange, numstat, pushTag, repoRoot;
+import sparkles.release.git : authorCounts, countCommitsNotOn, createAnnotatedTag, currentBranch, diffStat, latestTag, listTags, logRange, logStatRange, numstat, pushTag, remoteUrl, repoRoot, tagExists;
 import sparkles.release.notes : openInEditor, seedEditorBuffer, seedReviewBuffer, stripComments;
+import sparkles.release.pr : associatePrs, parseRemoteUrl, PrRef;
 import sparkles.release.preflight : runPreflight, PreflightProgress, PreflightResult;
 import sparkles.release.result : Result;
+import sparkles.release.segment : AgentReply, buildPlan, BumpOrigin, parseSegmentReply, ReleasePlan, SegmentInput, SegmentPlan;
 import sparkles.release.stages : Stage, parseStage, stageAtLeast, stageToken;
 import sparkles.release.stats : tallyCommits, typeCounts, ReleaseStats, Commit, CommitTally, AuthorCount, FileStat, AreaStat, areaBreakdown;
 
@@ -67,6 +75,11 @@ struct CliParams
     @CliOption(`n|notes`,
         "Release-notes mode: manual (open $EDITOR) or agent (LLM summary).")
     string notes;
+
+    @CliOption(`S|split`,
+        "Segment the unreleased backlog into multiple chained releases "
+        ~ "(associates commits with PRs via gh; an LLM agent proposes the split).")
+    bool split;
 
     @CliOption(`N|no-verify`, "Skip the pre-flight checks (clean tree, on main, ci tests).")
     bool noVerify;
@@ -114,6 +127,14 @@ private int run(CliParams cli)
     auto notesMode = resolveNotesMode(cli);
     if (notesMode.isNull)
         return fail("--notes=manual is incompatible with --auto (manual needs $EDITOR)");
+
+    if (cli.split)
+    {
+        if (cli.bump.length)
+            return fail("--bump is incompatible with --split "
+                ~ "(bumps are per-segment; the plan table shows them)");
+        return runSplit(cli, stage.get, notesMode.get, theme);
+    }
 
     // ----- locate the latest tag and the commit range -----
     auto tagsR = listTags();
@@ -221,6 +242,428 @@ private string describeOutwardStages(Stage stage, string tag) @safe pure
     else if (stageAtLeast(stage, Stage.createGhReleaseDraft))
         s ~= " and create a draft GitHub release";
     return s;
+}
+
+// ---------------------------------------------------------------------------
+// Split mode (SPEC §6–§7)
+// ---------------------------------------------------------------------------
+
+/// The `--split` pipeline: associate the backlog with its PRs, let the agent
+/// segment it, review the plan (remainder decision included), then drive the
+/// per-tag machinery once per segment, oldest first.
+private int runSplit(in CliParams cli, Stage stage, NotesMode notesMode, in Theme theme)
+{
+    import std.conv : text;
+    import std.range : retro;
+    import std.array : array;
+    import sparkles.core_cli.prompts : confirm, PromptPolicy, select, SelectOption, stdioPromptIo;
+
+    // Split needs gh for the association even at --stage create-tag.
+    if (auto e = checkGhReady(stage, needGhAnyway: true))
+        return fail(e);
+
+    // One agent serves the segmentation and every segment's notes.
+    auto specR = pickAgent(cli, theme);
+    if (specR.hasError)
+        return fail(specR.error);
+    const spec = specR.value;
+
+    // ----- range (oldest first) -----
+    auto tagsR = listTags();
+    if (tagsR.hasError)
+        return fail(tagsR.error);
+    const latest = latestTag(tagsR.value);
+    const firstRelease = latest.isNull;
+    const fromRef = firstRelease ? "" : latest.get.tag;
+    auto commitsR = logRange(fromRef, "HEAD");
+    if (commitsR.hasError)
+        return fail(commitsR.error);
+    auto commits = commitsR.value.retro.array;
+    if (commits.length == 0)
+    {
+        const since = firstRelease ? "the initial commit" : latest.get.tag;
+        info(i"No commits since $(since); nothing to split.");
+        return 0;
+    }
+    const current = firstRelease ? SemVer(major: 0, minor: 0, patch: 0)
+        : latest.get.version_;
+
+    // ----- GitHub slug -----
+    auto urlR = remoteUrl();
+    if (urlR.hasError)
+        return fail(urlR.error);
+    const slug = parseRemoteUrl(urlR.value);
+    if (slug.isNull)
+        return fail("origin remote `" ~ urlR.value
+            ~ "` is not a GitHub repository (--split associates commits via gh)");
+
+    const root = repoRoot();
+    auto sink = makeArtifactSink(root.hasValue ? root.value : ".");
+
+    writeln();
+    writeln(drawHeader(text("Split: ", firstRelease ? "(initial)" : fromRef,
+        "..HEAD (", commits.length, " commits)"),
+        HeaderProps(style: HeaderStyle.banner)));
+    stdout.flush();
+
+    // ----- PR association (live progress) -----
+    PrRef[] prRefs;
+    {
+        auto region = stdoutLiveRegion();
+        scope (exit)
+            region.finish();
+        auto tasks = TaskReporter(&region, theme);
+        const id = tasks.add("associate commits with PRs (gh api graphql)");
+        tasks.start(id);
+        auto prsR = associatePrs(commits, slug.get,
+            (done, total) { tasks.output(id, text(done, "/", total, " commits")); });
+        if (prsR.hasError)
+        {
+            tasks.fail(id, prsR.error);
+            region.finish();
+            return fail(prsR.error);
+        }
+        prRefs = prsR.value;
+        tasks.succeed(id, text(commits.length, " commits"));
+    }
+
+    SegmentInput[] rows;
+    rows.reserve(commits.length);
+    foreach (i, ref c; commits)
+        rows ~= SegmentInput(sha: c.sha, prNumber: prRefs[i].number,
+            prTitle: prRefs[i].title, subject: c.subject);
+
+    // ----- segmentation (retry once on an invalid reply) -----
+    auto promptR = buildSegmentationPrompt(rows, current);
+    if (promptR.hasError)
+        return fail(promptR.error);
+    sink.save("segmentation-prompt.txt", promptR.value);
+
+    ReleasePlan plan;
+    AgentReply reply;
+    {
+        string lastError;
+        bool valid = false;
+        foreach (attempt; 1 .. 3)
+        {
+            // A corrective coda only makes sense after an *invalid reply*;
+            // after a failed agent run the original prompt is retried as-is.
+            const prompt = lastError.length
+                ? promptR.value ~ buildSegmentationRetryCoda(lastError)
+                : promptR.value;
+            info(i"Segmenting with $(spec.key) (attempt $(attempt))…");
+            auto rawR = runAgent(spec, prompt);
+            if (rawR.hasError)
+            {
+                warning(i"$(rawR.error)");
+                continue;
+            }
+            sink.save(text("segmentation-reply-", attempt, ".txt"), rawR.value);
+
+            auto parsed = parseSegmentReply(rawR.value);
+            if (parsed.hasError)
+            {
+                lastError = parsed.error;
+                warning(i"$(parsed.error)");
+                continue;
+            }
+            auto planR = buildPlan(parsed.value, rows, commits, current);
+            if (planR.hasError)
+            {
+                lastError = planR.error;
+                warning(i"$(planR.error)");
+                continue;
+            }
+            reply = parsed.value;
+            plan = planR.value;
+            valid = true;
+            break;
+        }
+        if (!valid)
+            return fail("segmentation failed after retry"
+                ~ (lastError.length ? ": " ~ lastError : "")
+                ~ " (see " ~ sink.dir ~ ")");
+    }
+
+    // Planned tags must be fresh (stray tags can shadow chained versions).
+    foreach (ref seg; plan.segments)
+    {
+        auto ex = tagExists(seg.tag);
+        if (ex.hasError)
+            return fail(ex.error);
+        if (ex.value)
+            return fail("planned tag " ~ seg.tag ~ " already exists");
+    }
+
+    renderPlan(plan, rows, theme);
+
+    // ----- remainder decision (SPEC §7.4) -----
+    if (plan.remainderBegin < rows.length)
+    {
+        writeln();
+        writeln("Unreleased remainder:");
+        foreach (ref row; rows[plan.remainderBegin .. $])
+            writeln("  " ~ row.sha[0 .. 8] ~ " " ~ row.subject);
+        writeln();
+
+        auto choice = select("Remainder:", [
+            SelectOption("leave unreleased",
+                "re-running --split later picks these up"),
+            SelectOption("extend " ~ plan.segments[$ - 1].tag,
+                "include the remainder in the last release"),
+        ], 0, cli.auto_ ? PromptPolicy.takeDefault : PromptPolicy.interactive,
+            stdioPromptIo(), theme);
+        if (choice.hasValue && choice.value == 1)
+        {
+            auto extended = reply;
+            extended.segments = reply.segments.dup;
+            extended.segments[$ - 1].boundary = rows[$ - 1].sha;
+            extended.remainderNote = null;
+            auto planR = buildPlan(extended, rows, commits, current);
+            if (planR.hasError)
+                return fail(planR.error);      // cannot happen structurally
+            plan = planR.value;
+            renderPlan(plan, rows, theme);
+        }
+    }
+    sink.save("plan.json", planJson(plan));
+
+    // ----- plan approval -----
+    {
+        auto go = confirm(
+            text("Create ", plan.segments.length, " release(s) as planned?"),
+            defaultYes: true,
+            policy: cli.auto_ ? PromptPolicy.takeDefault : PromptPolicy.interactive,
+            io: stdioPromptIo(),
+            theme: theme);
+        if (go.hasError)
+            return fail(go.error);
+        if (!go.value)
+        {
+            info(i"Aborted; nothing was created.");
+            return 0;
+        }
+    }
+
+    // ----- pre-flight (once, against HEAD) -----
+    if (!cli.noVerify)
+    {
+        writeln();
+        writeln(drawHeader("Pre-flight"));
+        stdout.flush();
+        if (!runPreflightChecklist(theme))
+            return fail("pre-flight checks failed; fix them or pass --no-verify");
+    }
+    else
+        warning(i"Skipping pre-flight checks (--no-verify).");
+
+    // ----- one outward gate enumerating every tag -----
+    if (stageAtLeast(stage, Stage.pushTag))
+    {
+        auto go = confirm(
+            "About to " ~ describeOutwardStagesMulti(stage, plan.segments)
+            ~ ". Pushed tags are immutable (code.dlang.org ingests them). Proceed?",
+            defaultYes: true,
+            policy: cli.auto_ ? PromptPolicy.takeDefault : PromptPolicy.interactive,
+            io: stdioPromptIo(),
+            theme: theme);
+        if (go.hasError)
+            return fail(go.error);
+        if (!go.value)
+        {
+            info(i"Aborted before any outward stage; nothing was created.");
+            return 0;
+        }
+    }
+
+    // ----- per-segment execution, oldest first (SPEC §7.5) -----
+    const(SegmentPlan)[] done;
+    string prevBoundary = fromRef;
+    foreach (ref seg; plan.segments)
+    {
+        const subject = seg.tag ~ " — " ~ seg.theme;
+        auto notesR = acquireNotesRange(notesMode, &spec, subject,
+            prevBoundary, seg.boundarySha,
+            buildSegmentNotesSection(seg.highlights, priorContextLines(rows[0 .. seg.begin])),
+            cli.auto_, sink, seg.tag);
+        if (notesR.hasError)
+        {
+            printSplitReceipt(stage, done, plan.segments.length, theme);
+            return fail(notesR.error);
+        }
+        const notesBody = notesR.value;
+        if (notesBody.length == 0)
+        {
+            info(i"Empty notes for $(seg.tag); stopping before it. Created tags stand.");
+            printSplitReceipt(stage, done, plan.segments.length, theme);
+            return 0;
+        }
+        sink.save("notes-" ~ seg.tag ~ ".txt", notesBody);
+
+        const rc = executeStages(stage, seg.tag, notesBody, theme, seg.boundarySha);
+        if (rc != 0)
+        {
+            printSplitReceipt(stage, done, plan.segments.length, theme);
+            return rc;
+        }
+        done ~= seg;
+        prevBoundary = seg.boundarySha;
+    }
+
+    printSplitReceipt(stage, done, plan.segments.length, theme);
+    return 0;
+}
+
+/// The plan table plus its footer warnings (SPEC §7.4).
+private void renderPlan(in ReleasePlan plan, in SegmentInput[] rows, in Theme theme)
+{
+    import std.conv : text;
+    import sparkles.base.text.width : Align;
+    import sparkles.core_cli.term_caps : terminalSize;
+    import sparkles.core_cli.ui.table : TableProps;
+
+    string[][] table = [["Version", "Commits", "PRs", "Theme", "Bump"]];
+    foreach (ref seg; plan.segments)
+        table ~= [
+            seg.tag,
+            (seg.end - seg.begin).text,
+            formatPrList(seg.prNumbers),
+            seg.theme,
+            formatBump(seg),
+        ];
+
+    writeln();
+    writeln(drawTable(table, TableProps(title: "Release plan", headerRows: 1,
+        columnAligns: [Align.left, Align.right, Align.left, Align.left, Align.left],
+        maxWidth: terminalSize().width)));
+
+    if (plan.remainderBegin < rows.length)
+    {
+        const note = plan.remainderNote.length ? ": " ~ plan.remainderNote : "";
+        writeln(stylize(text(rows.length - plan.remainderBegin,
+            " commits left unreleased (remainder)", note), Style.yellow));
+    }
+    if (plan.noPrCommits)
+        writeln(text(plan.noPrCommits, " commits have no associated PR"));
+    auto unpushed = countCommitsNotOn("origin/main", "HEAD");
+    if (unpushed.hasValue && unpushed.value > 0)
+        writeln(stylize(text(unpushed.value, " tip commits are not on origin/main"
+            ~ " — pushing a tag publishes them"), Style.yellow));
+    stdout.flush();
+}
+
+/// `#47 #52 #58 … (+11)` — the first PRs of a segment, elided past three.
+private string formatPrList(const(uint)[] prs) @safe pure
+{
+    import std.conv : text;
+
+    if (prs.length == 0)
+        return "—";
+    string s;
+    foreach (i, p; prs[0 .. prs.length > 3 ? 3 : prs.length])
+        s ~= (i ? " #" : "#") ~ p.text;
+    if (prs.length > 3)
+        s ~= text(" … (+", prs.length - 3, ")");
+    return s;
+}
+
+/// The bump cell: escalations/fallbacks marked, a 1.0 crossing highlighted.
+private string formatBump(in SegmentPlan seg) @safe pure
+{
+    string s = bumpName(seg.bump);
+    final switch (seg.bumpOrigin)
+    {
+        case BumpOrigin.agent:
+            break;
+        case BumpOrigin.escalated:
+            s = stylize(s ~ " ↑ escalated", Style.yellow);
+            break;
+        case BumpOrigin.fallback:
+            s = stylize(s ~ " (fallback)", Style.yellow);
+            break;
+    }
+    if (seg.bump == BumpKind.major && seg.version_.major == 1)
+        s ~= stylize(" → 1.0!", Style.red);
+    return s;
+}
+
+/// `sha7 subject` per prior-segment commit, for the arc-completion context.
+private string[] priorContextLines(const(SegmentInput)[] prior) @safe pure
+{
+    string[] lines;
+    lines.reserve(prior.length);
+    foreach (ref row; prior)
+        lines ~= row.sha[0 .. 7] ~ " " ~ row.subject;
+    return lines;
+}
+
+/// The outward gate line for many tags: `push v0.5.0, v0.6.0 (2 tags) to origin …`.
+private string describeOutwardStagesMulti(Stage stage, const(SegmentPlan)[] segs) @safe pure
+{
+    import std.conv : text;
+
+    string tags;
+    foreach (i, ref seg; segs)
+        tags ~= (i ? ", " : "") ~ seg.tag;
+    string s = text("push ", tags, " (", segs.length, " tags) to origin");
+    if (stageAtLeast(stage, Stage.publishGhRelease))
+        s ~= " and publish their GitHub releases (notify-dub-registry fires)";
+    else if (stageAtLeast(stage, Stage.createGhReleaseDraft))
+        s ~= " and create their draft GitHub releases";
+    return s;
+}
+
+/// The split summary receipt: every tag that completed, and — when the run
+/// stopped early or stayed local — the natural next command.
+private void printSplitReceipt(
+    Stage stage, const(SegmentPlan)[] done, size_t planned, in Theme theme)
+{
+    import std.conv : text;
+    import sparkles.core_cli.ui.layout : kvList;
+    import sparkles.core_cli.ui.theme : Semantic;
+
+    if (done.length == 0)
+    {
+        info(i"No release was completed.");
+        return;
+    }
+
+    string[2][] pairs;
+    foreach (ref seg; done)
+        pairs ~= [seg.tag, seg.theme ~ " (" ~ text(seg.end - seg.begin) ~ " commits)"];
+    if (stageAtLeast(stage, Stage.pushTag))
+        pairs ~= ["pushed", "origin " ~ theme.mark(Semantic.success)];
+
+    string footer = null;
+    if (done.length < planned)
+        footer = "resume: release --split (the backlog re-segments from the last tag)";
+    else if (!stageAtLeast(stage, Stage.pushTag))
+    {
+        string tags;
+        foreach (ref seg; done)
+            tags ~= " " ~ seg.tag;
+        footer = "push: git push origin" ~ tags;
+    }
+
+    writeln();
+    writeln(drawBox(kvList(pairs),
+        theme.mark(done.length == planned ? Semantic.success : Semantic.warning)
+        ~ text(" released ", done.length, "/", planned, " planned tags"),
+        BoxProps(footer: footer)));
+    stdout.flush();
+}
+
+/// The validated plan as pretty JSON for the `.result/` artifact (best-effort:
+/// an encode failure yields an explanatory stub instead of aborting anything).
+private string planJson(in ReleasePlan plan)
+{
+    import std.json : JSONValue;
+    import sparkles.wired : toJSON;
+
+    auto encoded = toJSON(plan);
+    if (encoded.hasError)
+        return `{"error": "could not encode the plan"}`;
+    return encoded.value.toPrettyString;
 }
 
 /// Runs the pre-flight checks as a live checklist: each check is a task row,
@@ -429,10 +872,12 @@ private Result!string acquireNotes(
 /// The range-aware notes core both modes share: `fromRef..toRef` seeds the
 /// editor/agent, `spec` is the pre-picked agent (null in manual mode), and
 /// `extraPromptSection` is appended to the agent prompt (the split mode's
-/// highlights/deferral section; empty classically).
+/// highlights/deferral section; empty classically). With an enabled `sink`
+/// and an `artifactTag`, the agent prompt is persisted for review.
 private Result!string acquireNotesRange(
     NotesMode mode, scope const(AgentSpec)* spec, string suggestedSubject,
-    string fromRef, string toRef, string extraPromptSection, bool auto_)
+    string fromRef, string toRef, string extraPromptSection, bool auto_,
+    in ArtifactSink sink = ArtifactSink.init, string artifactTag = null)
 {
     import sparkles.release.result : success;
 
@@ -451,8 +896,14 @@ private Result!string acquireNotesRange(
     assert(spec !is null, "agent mode needs a pre-picked agent");
     info(i"Summarizing $(spec.key) → release notes…");
 
-    auto generated = runAgent(*spec,
-        buildAgentPrompt(suggestedSubject, range, logStat) ~ extraPromptSection);
+    // The prompt travels as one argv element; a huge range's log must be
+    // capped (the editor path above has no such limit and stays complete).
+    const prompt = buildAgentPrompt(suggestedSubject, range, capLogStat(logStat))
+        ~ extraPromptSection;
+    if (artifactTag.length)
+        sink.save("notes-prompt-" ~ artifactTag ~ ".txt", prompt);
+
+    auto generated = runAgent(*spec, prompt);
     if (generated.hasError)
         return generated;
 
