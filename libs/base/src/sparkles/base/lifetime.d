@@ -35,21 +35,56 @@ if (is(T == class))
     enum size = __traits(classInstanceSize, T);
     enum alignment = __traits(classInstanceAlignment, T);
 
-    align(alignment) static ubyte[size] buffer;
+    auto buffer = recycledSlot!(T, size, alignment);
 
     // Reinitialize on each access
-    emplace!T(buffer[], args);
+    emplace!T(buffer, args);
 
-    return cast(T) buffer.ptr;
+    return (() @trusted => cast(T) buffer.ptr)();
 }
 
 /// ditto
 ref T recycledInstance(T, Args...)(auto ref Args args)
 if (!is(T == class))
 {
-    static T instance;
-    instance = T(args);
-    return instance;
+    static if (T.alignof <= 16)
+    {
+        static T instance;
+        instance = T(args);
+        return instance;
+    }
+    else
+    {
+        // An over-aligned `static T` slot would be aligned only by TLS-layout
+        // accident (see `recycledSlot`), so carve an aligned slot instead.
+        auto p = (() @trusted => cast(T*) recycledSlot!(T, T.sizeof, T.alignof).ptr)();
+        emplace!T(p, args);
+        return *p;
+    }
+}
+
+/// `T`'s thread-local slot of `size` bytes at `alignment` (`T` keys the
+/// instantiation — types of equal size must not share a slot). `align(N)`
+/// beyond 16 on a TLS static is honored by LDC but not by DMD (the TLS
+/// section's own alignment caps it), so an over-aligned slot is carved at
+/// runtime from an oversized buffer; a pointer-to-integer cast is `@safe`, so
+/// only the callers' pointer casts need trust.
+private void[] recycledSlot(T, size_t size, size_t alignment)() @safe nothrow @nogc
+{
+    static if (alignment <= 16)
+    {
+        align(alignment) static ubyte[size] buffer;
+        return buffer[];
+    }
+    else
+    {
+        static assert((alignment & (alignment - 1)) == 0,
+            "alignment must be a power of two");
+        static ubyte[size + alignment - 1] buffer;
+        const base = cast(size_t) &buffer[0];
+        const offset = ((base + alignment - 1) & ~(alignment - 1)) - base;
+        return buffer[offset .. offset + size];
+    }
 }
 
 @("recycledInstance.struct.reinitialization")
