@@ -372,6 +372,15 @@ struct ExtractedTest
     string body_; /// the unittest body, braces stripped
 }
 
+/// `s` with line breaks flattened to spaces — safe inside a generated `// …`
+/// comment, whose scope a raw newline in a test name would escape.
+private string lineSafe(string s) @safe pure nothrow
+{
+    import std.array : replace;
+
+    return s.replace("\n", " ").replace("\r", " ");
+}
+
 /// The extracted-function part shared by both generated programs: one named,
 /// attribute-preserving function per test, with `#line` directives so
 /// compile errors point into the original files.
@@ -392,8 +401,9 @@ private string emitTestFunctions(in ExtractedTest[] tests) @safe pure
     source ~= "\n";
 
     foreach (i, ref test; tests)
-        source ~= format!"// %s\n#line %s \"%s\"\n%svoid test_%s()\n{%s}\n\n"(
-            test.name, test.line, test.file, test.functionAttributes, i, test.body_);
+        source ~= format!"// %s\n#line %s %s\n%svoid test_%s()\n{%s}\n\n"(
+            lineSafe(test.name), test.line, quotedStringLiteral(test.file),
+            test.functionAttributes, i, test.body_);
     return source;
 }
 
@@ -411,13 +421,41 @@ string generateBetterCProgram(in ExtractedTest[] tests) @safe pure
         ~ "    import core.stdc.stdio : fflush, printf;\n\n";
 
     foreach (i, ref test; tests)
-        source ~= format!"    printf(\" > %%s\\n\", \"%s [%s:%s]\".ptr);\n"(
-                test.name, test.file, test.line)
+    {
+        import std.conv : text;
+
+        // The announce string is a generated D literal: a quote or backslash
+        // in a test name / source path must not break the program's compile.
+        const announce = quotedStringLiteral(
+            text(test.name, " [", test.file, ":", test.line, "]"));
+        source ~= format!"    printf(\" > %%s\\n\", %s.ptr);\n"(announce)
             ~ format!"    fflush(null);\n    test_%s();\n"(i);
+    }
 
     source ~= format!"\n    printf(\"%s @betterC tests passed\\n\");\n    return 0;\n}\n"(
         tests.length);
     return source;
+}
+
+@("extract.generateBetterCProgram.escapesNamesAndPaths")
+@safe pure
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    const t = ExtractedTest(
+        name: `quote " and \ backslash`,
+        moduleName: "m",
+        file: `dir\file.d`,
+        line: 3,
+        functionAttributes: "",
+        body_: " int x = 1; ",
+    );
+    const prog = generateBetterCProgram([t]);
+    // The announce literal and the #line path both escape `"` and `\`.
+    assert(prog.canFind(`quote \" and \\ backslash`));
+    assert(prog.canFind(`#line 3 "dir\\file.d"`));
+    assert(!prog.canFind(`"dir\file.d"`));
 }
 
 /// A complete `wasm32` test module: the extracted functions, each exported as
