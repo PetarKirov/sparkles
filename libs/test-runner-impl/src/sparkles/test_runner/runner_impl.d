@@ -666,7 +666,9 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
             keySet[k] = true;
     auto allKeys = keySet.keys.sort.release;
 
-    // --group-by=list/help/? : print the available label keys and exit.
+    // --group-by=list/help/? : print the available label keys and exit — still
+    // reporting a registration failure (the printed keys may be incomplete when
+    // a @benchmark body threw, and a query must not turn that into exit 0).
     if (options.groupBy == ["list"] || options.groupBy == ["help"] || options.groupBy == ["?"])
     {
         if (allKeys.length == 0)
@@ -677,7 +679,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
             foreach (k; allKeys)
                 stdout.writeln("  ", k);
         }
-        return UnitTestResult(0, 0, false, false);
+        return UnitTestResult(failed, 0, false, false);
     }
 
     // Effective group keys: =all → every label key; else the given keys (empty =
