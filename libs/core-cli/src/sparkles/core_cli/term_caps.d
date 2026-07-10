@@ -59,37 +59,53 @@ version (Posix)
 }
 
 /// Current terminal size in cells (columns × rows). A `0` component means that
-/// axis can't be determined — output not a tty, redirected to a pipe/file, or
+/// axis can't be determined — `stream` not a tty, redirected to a pipe/file, or
 /// the OS query failed; `ScreenSize!ushort.init` (0×0) is the fully-unknown
 /// value. A synchronous one-shot query, distinct from the async
 /// `setTermWindowSizeHandler` above. Callers use `0` to mean "unknown, don't
-/// wrap/truncate/clamp".
-ScreenSize!ushort terminalSize() @safe nothrow @nogc
+/// wrap/truncate/clamp". The streams can point at different terminals (or none):
+/// `dub test -- --bench > file` leaves stderr — a progress line — on the
+/// terminal while stdout is a file, so the line's budget is stderr's width.
+ScreenSize!ushort terminalSize(StdStream stream = StdStream.stdout) @safe nothrow @nogc
 {
     version (Posix)
     {
         import core.sys.posix.sys.ioctl : ioctl, winsize, TIOCGWINSZ;
-        import core.sys.posix.unistd : STDOUT_FILENO;
+        import core.sys.posix.unistd : STDERR_FILENO, STDIN_FILENO, STDOUT_FILENO;
 
+        int fd;
+        final switch (stream)
+        {
+            case StdStream.stdin:  fd = STDIN_FILENO;  break;
+            case StdStream.stdout: fd = STDOUT_FILENO; break;
+            case StdStream.stderr: fd = STDERR_FILENO; break;
+        }
         // The ioctl and its out-parameter are one unsafe unit; scope trust to
         // it (capturing nothing, so no `@nogc` closure) and hand back a plain
         // value.
-        return () @trusted {
+        return (int fd) @trusted {
             winsize s;
-            if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &s) != 0)
+            if (ioctl(fd, TIOCGWINSZ, &s) != 0)
                 return ScreenSize!ushort.init;
             return ScreenSize!ushort(s.ws_col, s.ws_row);
-        }();
+        }(fd);
     }
     else version (Windows)
     {
-        import core.sys.windows.windows : CONSOLE_SCREEN_BUFFER_INFO,
+        import core.sys.windows.windows : CONSOLE_SCREEN_BUFFER_INFO, DWORD,
             GetConsoleScreenBufferInfo, GetStdHandle, INVALID_HANDLE_VALUE,
-            STD_OUTPUT_HANDLE;
+            STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE;
 
+        DWORD id;
+        final switch (stream)
+        {
+            case StdStream.stdin:  id = STD_INPUT_HANDLE;  break;
+            case StdStream.stdout: id = STD_OUTPUT_HANDLE; break;
+            case StdStream.stderr: id = STD_ERROR_HANDLE;  break;
+        }
         // Same: the handle lookup and console query are the unsafe unit.
-        return () @trusted {
-            auto handle = GetStdHandle(STD_OUTPUT_HANDLE);
+        return (DWORD id) @trusted {
+            auto handle = GetStdHandle(id);
             if (handle is null || handle == INVALID_HANDLE_VALUE)
                 return ScreenSize!ushort.init;
             CONSOLE_SCREEN_BUFFER_INFO info;
@@ -100,7 +116,7 @@ ScreenSize!ushort terminalSize() @safe nothrow @nogc
             if (width <= 0 || height <= 0)
                 return ScreenSize!ushort.init;
             return ScreenSize!ushort(cast(ushort) width, cast(ushort) height);
-        }();
+        }(id);
     }
     else
         return ScreenSize!ushort.init;
@@ -116,6 +132,11 @@ unittest
     const size = terminalSize();
     assert(size.width == 0 || size.width >= 1);
     assert(size.height == 0 || size.height >= 1);
+
+    // The stderr query is just as callable; both streams may or may not be
+    // terminals here, so again only the "0 = unknown" contract is pinned.
+    const errSize = terminalSize(StdStream.stderr);
+    assert(errSize.width == 0 || errSize.width >= 1);
 }
 
 /// A standard stream, for tty queries.
