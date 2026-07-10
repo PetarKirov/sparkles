@@ -551,12 +551,79 @@ private size_t naturalWidth(string content) @safe pure nothrow
     return m;
 }
 
-private size_t[] resolveColumnWidths(in SlotGrid g, in TableProps p) @safe pure nothrow
+/// Visible width after the last visible `.` in `s` (escapes free), or
+/// `size_t.max` when `s` has no dot — the ingredient of columnar decimal
+/// alignment.
+private size_t decimalTailWidth(string s) @safe pure
+{
+    import sparkles.base.text.grapheme : byGraphemeCluster;
+
+    size_t width = 0;
+    bool seen = false;
+    foreach (c; s.byGraphemeCluster)
+    {
+        if (c.isEscape)
+            continue;
+        if (c.slice == ".")
+        {
+            seen = true;
+            width = 0;
+        }
+        else if (seen)
+            width += c.width;
+    }
+    return seen ? width : size_t.max;
+}
+
+/// Per-anchor trailing pads implementing `Align.decimal`: within each decimal
+/// column, every value's last `.` lands on the same cell — dotted values pad by
+/// `maxTail - tail`, dotless ones by `maxTail + 1` (their last digit sits just
+/// left of the dot column). Header rows (`< headerRows`) and span cells are
+/// exempt (they right-align plainly). Null when no column is decimal; a decimal
+/// column with no dotted value degrades to plain right (all pads stay 0).
+private size_t[] anchorDecimalPads(in SlotGrid g, in TableProps p) @safe pure
+{
+    bool any = false;
+    foreach (c; 0 .. g.numCols)
+        any = any || effectiveAlign(c, p) == Align.decimal;
+    if (!any)
+        return null;
+
+    bool decimalBody(in Anchor a)
+        => a.colSpan == 1 && a.row >= p.headerRows
+            && effectiveAlign(a.col, p) == Align.decimal;
+
+    auto maxTail = new size_t[g.numCols];
+    auto dotted = new bool[g.numCols];
+    foreach (ref a; g.anchors)
+        if (decimalBody(a))
+        {
+            const t = decimalTailWidth(a.content);
+            if (t != size_t.max)
+            {
+                dotted[a.col] = true;
+                maxTail[a.col] = max(maxTail[a.col], t);
+            }
+        }
+
+    auto pads = new size_t[g.anchors.length];
+    foreach (i, ref a; g.anchors)
+        if (decimalBody(a) && dotted[a.col])
+        {
+            const t = decimalTailWidth(a.content);
+            pads[i] = t == size_t.max ? maxTail[a.col] + 1 : maxTail[a.col] - t;
+        }
+    return pads;
+}
+
+private size_t[] resolveColumnWidths(
+    in SlotGrid g, in TableProps p, in size_t[] decimalPads = null) @safe pure
 {
     auto w = new size_t[g.numCols];
-    foreach (ref a; g.anchors)
+    foreach (i, ref a; g.anchors)
         if (a.colSpan == 1)
-            w[a.col] = max(w[a.col], naturalWidth(a.content));
+            w[a.col] = max(w[a.col],
+                naturalWidth(a.content) + (decimalPads.length ? decimalPads[i] : 0));
 
     // Satisfy colspan cells ascending by span then position: columns only grow, so
     // one pass leaves every spanning cell fitting its final member-column widths.
@@ -819,7 +886,7 @@ private size_t[] resolveRowHeights(in SlotGrid g, in string[][] lines) @safe pur
 /// emits its wrapped line for the current text line in its content band, or a blank
 /// field otherwise, separated by interior verticals where a real boundary sits.
 private string bodyRow(in SlotGrid g, in size_t[] w, in string[][] lines,
-    in size_t[] heights, in TableProps p, size_t r)
+    in size_t[] heights, in TableProps p, size_t r, in size_t[] decimalPads = null)
 {
     auto out_ = appender!string;
     foreach (t; 0 .. heights[r])
@@ -846,7 +913,19 @@ private string bodyRow(in SlotGrid g, in size_t[] w, in string[][] lines,
             const top = padTop(hh, lines[idx].length, effectiveVAlign(a.col, p));
             out_ ~= ' ';
             if (li >= top && li - top < lines[idx].length)
-                alignField(out_, lines[idx][li - top], f, effectiveAlign(a.col, p));
+            {
+                // A decimal column's trailing pad shifts the right-aligned value
+                // left so every dot in the column shares a cell.
+                const dpad = decimalPads.length ? decimalPads[idx] : 0;
+                if (dpad > 0 && dpad < f)
+                {
+                    alignField(out_, lines[idx][li - top], f - dpad, Align.right);
+                    foreach (_; 0 .. dpad)
+                        out_ ~= ' ';
+                }
+                else
+                    alignField(out_, lines[idx][li - top], f, effectiveAlign(a.col, p));
+            }
             else
                 foreach (_; 0 .. f)
                     out_ ~= ' ';
@@ -905,7 +984,8 @@ private string drawGrid(in SlotGrid g, in TableProps p)
 {
     if (g.numRows == 0 || g.numCols == 0)
         return "";
-    auto w = resolveColumnWidths(g, p);
+    auto decimalPads = anchorDecimalPads(g, p);
+    auto w = resolveColumnWidths(g, p, decimalPads);
     auto lines = wrapCells(g, w, p);
     auto heights = resolveRowHeights(g, lines);
     auto out_ = appender!string;
@@ -918,7 +998,7 @@ private string drawGrid(in SlotGrid g, in TableProps p)
         out_ ~= p.title ~ "\n";
     foreach (r; 0 .. g.numRows)
     {
-        out_ ~= bodyRow(g, w, lines, heights, p, r);
+        out_ ~= bodyRow(g, w, lines, heights, p, r, decimalPads);
         if (r + 1 < g.numRows && (p.rowSeparators || (p.headerRows > 0 && r + 1 == p.headerRows)))
             out_ ~= separatorLine(g, w, p, r + 1);
     }
@@ -1624,4 +1704,35 @@ version (unittest) private void checkRender(string actual, string expected)
     // The body row keeps its right gutter (a trailing space), so compare per
     // line rather than via an outdented literal.
     assert(t.splitLines == ["Title", " a │ b ", "Footer"]);
+}
+
+@("drawTable.align.decimalColumn")
+@system unittest
+{
+    import sparkles.test_utils.string : outdent;
+
+    // Dots share a cell; the dotless value's last digit sits just left of the
+    // dot column; the header (row 0) right-aligns plainly, exempt from padding.
+    checkRender(drawTable([["n", "value"], ["a", "1.5"], ["b", "12.25"], ["c", "3"]],
+        TableProps(headerRows: 1,
+            columnAligns: [Align.left, Align.decimal])), `
+        ╭───┬───────╮
+        │ n │ value │
+        ┝━━━┿━━━━━━━┥
+        │ a │  1.5  │
+        │ b │ 12.25 │
+        │ c │  3    │
+        ╰───┴───────╯
+        `.outdent(2));
+}
+
+@("drawTable.align.decimalWithoutDotsIsRight")
+@system unittest
+{
+    // No dotted value in the column -> decimal degrades to plain right.
+    const t = drawTable([["1", "22"], ["333", "4"]],
+        TableProps(columnAligns: [Align.decimal, Align.decimal]));
+    const plain = drawTable([["1", "22"], ["333", "4"]],
+        TableProps(columnAligns: [Align.right, Align.right]));
+    assert(t == plain);
 }
