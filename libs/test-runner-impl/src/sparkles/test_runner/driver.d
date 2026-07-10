@@ -551,6 +551,17 @@ DriverOutcome runWasmTests(Test[] wasmTests, Test[] allTests, in DriverOptions o
         return outcome;
     }
 
+    // The wasm32 link needs an external wasm-ld (nixpkgs LDC bundles no
+    // internal linker); a missing linker is a toolchain gap, documented as a
+    // skip, not a failure. An LDC built with -link-internally would skip
+    // unnecessarily here — acceptable per the docs' toolchain requirements.
+    if (!inPath("wasm-ld"))
+    {
+        stderr.writeln("skipping @wasm tests: wasm-ld not found on PATH (nixpkgs: the lld package)");
+        outcome.skipped = true;
+        return outcome;
+    }
+
     const workDir = makeWorkDir("wasm");
     const sourceFile = buildPath(workDir, "wasm_tests.d");
     const wasmFile = buildPath(workDir, "wasm_tests.wasm");
