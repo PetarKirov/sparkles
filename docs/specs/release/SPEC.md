@@ -45,21 +45,22 @@ Release plan (v0.4.0 → v0.7.0, 416 commits)
 | Source root     | `apps/release/src/`                  |
 | Entry point     | `src/app.d` (`sparkles.release.app`) |
 
-| Module                          | Contents                                                                          |
-| ------------------------------- | --------------------------------------------------------------------------------- |
-| `sparkles.release.app`          | CLI surface (§3), orchestration of both modes, all terminal UI                    |
-| `sparkles.release.git`          | Every `git` invocation, returning parsed D data; pure string→struct parsers       |
-| `sparkles.release.conventional` | Conventional-commit subject/body parsing (`type(scope)!: description`)            |
-| `sparkles.release.bump`         | `BumpKind`, the bump policy (§4), `applyBump`                                     |
-| `sparkles.release.stats`        | `Commit` and stats types; pure tallies feeding the policy and the UI              |
-| `sparkles.release.stages`       | The cumulative `--stage` vocabulary (§5.4)                                        |
-| `sparkles.release.agents`       | CLI LLM-agent registry (PATH-filtered), one-shot invocation, prompt builders      |
-| `sparkles.release.notes`        | `$EDITOR` seeding, comment stripping (§8)                                         |
-| `sparkles.release.preflight`    | Pre-tag gating checks (clean tree, branch, `ci` tests)                            |
-| `sparkles.release.pr`           | Commit→PR association via the GitHub GraphQL API (§6)                             |
-| `sparkles.release.segment`      | Segmentation-plan parsing, validation, bump reconciliation, version chaining (§7) |
-| `sparkles.release.artifacts`    | Best-effort run-artifact persistence under `.result/` (§9)                        |
-| `sparkles.release.result`       | `Result!T = Expected!(T, string)` — the IO-layer error channel (§10)              |
+| Module                          | Contents                                                                           |
+| ------------------------------- | ---------------------------------------------------------------------------------- |
+| `sparkles.release.app`          | CLI surface (§3), orchestration of both modes, all terminal UI                     |
+| `sparkles.release.git`          | Every `git` invocation, returning parsed D data; pure string→struct parsers        |
+| `sparkles.release.conventional` | Conventional-commit subject/body parsing (`type(scope)!: description`)             |
+| `sparkles.release.bump`         | `BumpKind`, the bump policy (§4), `applyBump`                                      |
+| `sparkles.release.stats`        | `Commit` and stats types; pure tallies feeding the policy and the UI               |
+| `sparkles.release.stages`       | The cumulative `--stage` vocabulary (§5.4)                                         |
+| `sparkles.release.agents`       | CLI LLM-agent registry (PATH-filtered), one-shot invocation, prompt builders       |
+| `sparkles.release.notes`        | `$EDITOR` seeding, comment stripping (§8)                                          |
+| `sparkles.release.preflight`    | Pre-tag gating checks (clean tree, branch, `ci` tests)                             |
+| `sparkles.release.pr`           | Commit→PR association via the GitHub GraphQL API (§6)                              |
+| `sparkles.release.segment`      | Segmentation-plan parsing, validation, bump reconciliation, version chaining (§7)  |
+| `sparkles.release.artifacts`    | Best-effort run-artifact persistence under `.result/` (§9)                         |
+| `sparkles.release.json_utils`   | The string↔typed JSON boundary: `Result`-wrapped `parseJSON` + wired decode/encode |
+| `sparkles.release.result`       | `Result!T = Expected!(T, string)` — the IO-layer error channel (§10)               |
 
 Pure logic (parsers, validation, policy) is separated from process execution:
 every string→struct transformation is a standalone `@safe` function unit-tested
@@ -343,7 +344,9 @@ The notes are the annotated-tag body — there is no separate changelog file:
   result aborts (git-commit semantics).
 - `agent` — the chosen agent is invoked once with a prompt embedding the
   range's `git log --stat`; the reply is reviewed in `$EDITOR` (skipped under
-  `--auto`, where it is used verbatim).
+  `--auto`, where it is used verbatim). The embedded log is capped at 96 KiB
+  (truncated at a line boundary, elision marked) so the prompt fits Linux's
+  128 KiB per-argv-element limit; the editor path is never truncated.
 
 ### 8.3 Split-mode additions
 
