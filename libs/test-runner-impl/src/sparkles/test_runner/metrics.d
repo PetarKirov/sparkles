@@ -518,7 +518,42 @@ private string[] familyNames(string source) @safe pure nothrow
     else if (source == "tier0")
         foreach (ref info; tier0Infos)
             names ~= info.name;
+    else if (source == "syscall")
+    {
+        // The total only; per-syscall columns are dynamic (`syscallSelectorNames`).
+        names ~= "syscalls";
+    }
     return names;
+}
+
+/// The tracepoint names a `--metrics` filter requests through `syscalls:<name>`
+/// selectors — the dynamic per-syscall columns, which `familyNames` can't know.
+/// Naming one implies opening the syscall pass with that tracepoint, exactly as
+/// `--syscalls=<name>` would.
+string[] syscallSelectorNames(string metricFilter) @safe
+{
+    import std.algorithm.iteration : splitter;
+    import std.algorithm.searching : startsWith;
+
+    enum prefix = "syscalls:";
+    string[] names;
+    if (metricFilter == "all" || !metricFilter.length)
+        return names;
+    foreach (p; metricFilter.splitter(','))
+        if (p.startsWith(prefix) && p.length > prefix.length)
+            names ~= p[prefix.length .. $];
+    return names;
+}
+
+@("metrics.syscallSelectorNames")
+@safe
+unittest
+{
+    assert(syscallSelectorNames("syscalls:futex,ipc,syscalls:write")
+        == ["futex", "write"]);
+    assert(syscallSelectorNames("syscalls") == [], "the total names no tracepoint");
+    assert(syscallSelectorNames("all") == [], "'all' opens the pass via selectsSource");
+    assert(syscallSelectorNames("") == []);
 }
 
 /// Whether a `--metrics` filter would select any metric of `source` — the gate

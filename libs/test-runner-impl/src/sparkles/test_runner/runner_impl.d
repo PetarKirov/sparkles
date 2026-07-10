@@ -561,23 +561,30 @@ private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bo
 private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool colored)
 {
     import std.algorithm.iteration : filter, splitter;
+    import std.algorithm.searching : canFind;
     import std.array : array;
     import std.stdio : stderr, stdout;
     import sparkles.test_runner.metrics : perfFamily, selectsSource, syscallFamily,
-        tier0Family;
+        syscallSelectorNames, tier0Family;
     import sparkles.test_runner.perf : PerfGroup;
     import sparkles.test_runner.syscalls : SyscallGroup;
     import sparkles.test_runner.tier0 : Tier0Group;
 
     // Which counting passes to open: --perf OR a --metrics perf metric (so
     // `--metrics=ipc`/`=all` populate the perf columns, mirroring tier0); a
-    // --metrics tier0 metric (opt-in, no perms); and --syscalls (null = off,
-    // "*" = total only, else a name list).
+    // --metrics tier0 metric (opt-in, no perms); and the syscall pass for
+    // --syscalls (null = off, "*" = total only, else a name list) OR a
+    // --metrics syscall column (`syscalls`, `syscalls:<name>`, `all`).
+    const metricSyscalls = syscallSelectorNames(options.metrics);
     const wantPerf = options.perf || selectsSource(options.metrics, "perf");
     const wantTier0 = selectsSource(options.metrics, "tier0");
-    const wantSyscalls = options.syscalls.length > 0;
-    const syscallNames = (options.syscalls == "*" || !wantSyscalls)
+    const wantSyscalls = options.syscalls.length > 0 || metricSyscalls.length > 0
+        || selectsSource(options.metrics, "syscall");
+    auto syscallNames = (options.syscalls == "*" || !options.syscalls.length)
         ? null : options.syscalls.splitter(',').array;
+    foreach (n; metricSyscalls)
+        if (!syscallNames.canFind(n))
+            syscallNames ~= n;
     auto counters = CounterGroups.open(wantPerf, wantTier0, wantSyscalls, syscallNames);
     scope (exit)
         counters.close();
