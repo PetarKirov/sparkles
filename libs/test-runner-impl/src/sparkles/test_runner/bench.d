@@ -257,6 +257,23 @@ unittest
     assert(errorCell("") == "");
 }
 
+@("benchCase.inertPathSurfacesExpectedError")
+@system
+unittest
+{
+    import std.exception : assertThrown;
+    import expected : err;
+
+    // Outside --bench (a foreign runner executing the test) a soft `Expected`
+    // error from `after` must fail the test, not vanish; teardown still runs.
+    static bool teardownRan;
+    teardownRan = false;
+    assertThrown(benchCase(name: "bad", timed: () {},
+        after: () => err!bool("mismatch"),
+        teardown: () { teardownRan = true; }));
+    assert(teardownRan, "teardown runs on the inert failure path");
+}
+
 @("bench.errorRow.carriesNameLabelsMessage")
 @system
 unittest
@@ -655,10 +672,18 @@ void benchCase(Timed, After, Setup = typeof(null), Teardown = typeof(null))(
         static if (!is(Setup == typeof(null)))
             if (setup !is null)
                 setup();
-        cast(void) driveOnce(timed, after);
-        static if (!is(Teardown == typeof(null)))
-            if (teardown !is null)
-                teardown();
+        scope (exit)
+        {
+            static if (!is(Teardown == typeof(null)))
+                if (teardown !is null)
+                    teardown();
+        }
+        const r = driveOnce(timed, after);
+        // An `Expected` error from `after` isolates a *row* under --bench;
+        // outside --bench there is no table to isolate into, and swallowing
+        // it would green a failing verification under a foreign runner.
+        if (r.error.length)
+            throw new Exception("benchCase '" ~ name ~ "': " ~ r.error);
         return;
     }
     context.cases ~= makeCase(name, labels, timed, after, metrics,
