@@ -224,6 +224,13 @@ void main()
                 ], TableProps(columnMaxWidths: [0, 20])),
             ),
             Section(
+                header: "Width floor: columnMinWidths: [12, 0] — stable geometry for live re-renders",
+                content: drawTable([
+                    ["name", "value"],
+                    ["cpu", "45%"],
+                ], TableProps(columnMinWidths: [12, 0])),
+            ),
+            Section(
                 header: "Wrap (c): explicit \\n in content — hard break",
                 content: drawTable([
                     ["key", "value"],

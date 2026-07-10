@@ -86,6 +86,8 @@ struct TableProps {
     // width caps + wrapping (0 / empty ⇒ unbounded, expand to fit; today's behaviour)
     size_t   maxWidth        = 0;    // total table width incl. separators & borders
     size_t[] columnMaxWidths = null; // per-column max CONTENT width (excludes separators)
+    size_t[] columnMinWidths = null; // per-column CONTENT floor (caps still win) — keeps a
+                                     // live/streaming table's geometry stable across frames
     // per-column alignment (array entry inherit or out-of-range ⇒ the default)
     Align    defaultAlign   = Align.left;
     Align[]  columnAligns   = null;
@@ -145,7 +147,9 @@ A cell renders `<field>` (1-space gutters). A colspan-`n` anchor absorbs the `n�
 interior verticals: `contentField(A) = Σ colWidth[span] + 3*(n−1)`.
 
 1. **Natural widths** — seed `w[c]` with the per-column max of extent-1 cells (this equals
-   today's `columnWidths`), then walk colspan≥2 anchors ascending by `colSpan` then
+   today's `columnWidths`), apply the per-column floors (`w[c] = max(w[c],
+columnMinWidths[c])` where set — a floored column may already satisfy a spanning cell),
+   then walk colspan≥2 anchors ascending by `colSpan` then
    `(row,col)`; for each, `required = max(0, visibleWidth(content) − 3*(n−1))`; if it exceeds
    the current member-column sum, distribute the deficit evenly (remainder to leftmost).
    Columns only grow, so one ascending pass satisfies all constraints without overflow.
