@@ -22,7 +22,7 @@ module sparkles.test_runner.runner_impl;
 import core.runtime : Runtime, UnitTestResult;
 import core.time : Duration, MonoTime;
 
-import sparkles.test_runner.bench : BenchConfig, BenchStats, CounterGroups, runBenchmark;
+import sparkles.test_runner.bench : BenchConfig, BenchStats, CounterGroups;
 import sparkles.test_runner.driver : detectCompiler, DriverOptions, runCtfeTests;
 import sparkles.test_runner.execution : executeTest;
 import sparkles.test_runner.filter : matchesFilter;
