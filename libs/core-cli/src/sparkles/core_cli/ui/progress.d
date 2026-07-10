@@ -1,32 +1,17 @@
 /++
-Live progress rendering: a spinner frame set, a one-line
-`spinner [done/total] (elapsed)` component, and the ANSI cursor / erase-line
-control sequences a redraw-in-place caller needs.
+Live progress rendering: a spinner frame set and a one-line
+`spinner [done/total] (elapsed)` component.
 
 Everything here is a pure producer — `ProgressLine` renders into any output
-range (so a `@nogc` `SmallBuffer` works and the result is unit-testable), and
-`AnsiControl` just names the escape strings. Doing the actual terminal write,
-tty gating, and redraw cadence is left to the caller (see the test-runner's
-benchmark progress, which frames a `ProgressLine` with
-`AnsiControl.carriageReturn` + `AnsiControl.eraseLine`).
-
-Base `sparkles.base.term_style` covers SGR styling; the cursor / erase-line
-sequences below are the terminal-control piece it deliberately omits.
+range (so a `@nogc` `SmallBuffer` works and the result is unit-testable).
+Doing the actual terminal write, tty gating, and redraw cadence is left to the
+caller: frame a `ProgressLine` with `CtlSeq.carriageReturn` +
+`CtlSeq.eraseLine` from `sparkles.base.term_control` (the former `AnsiControl`
+enum here, moved and extended), or drive it through a live region.
 +/
 module sparkles.core_cli.ui.progress;
 
 import core.time : Duration;
-
-/// Terminal control escape sequences for a redraw-in-place progress display.
-/// (SGR colour/attribute escapes live in `sparkles.base.term_style`.)
-enum AnsiControl : string
-{
-    csi = "\x1b[",             /// Control Sequence Introducer.
-    eraseLine = "\x1b[2K",     /// Erase the entire current line.
-    hideCursor = "\x1b[?25l",  /// Hide the cursor.
-    showCursor = "\x1b[?25h",  /// Show the cursor.
-    carriageReturn = "\r",     /// Return to column 0 (redraw the current line).
-}
 
 /// The spinner glyph for animation step `i` (cycles every 10 frames).
 string spinnerFrame(size_t i) @safe pure nothrow @nogc
