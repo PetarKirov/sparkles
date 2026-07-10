@@ -39,6 +39,7 @@ module streaming_table_example;
 //   dub run --single streaming-table.d -- --mode line --delay 120
 //   dub run --single streaming-table.d -- --preset heavy --rows 12
 //   dub run --single streaming-table.d -- --pace width --delay 30
+//   dub run --single streaming-table.d -- --tee /tmp/fleet.txt --delay 0
 //   dub run --single streaming-table.d -- --command 'df -h' --max-width 100
 //   dub run --single streaming-table.d -- --command 'ps aux' --columns 11 --max-width 120
 
@@ -49,7 +50,7 @@ import std.stdio : stderr, stdout, write;
 
 import sparkles.core_cli.args;
 import sparkles.core_cli.ui.table :
-    builtinPresetNames, Cell, drawTableChunks, presetGlyphs, TableProps;
+    builtinPresetNames, Cell, drawTable, drawTableChunks, presetGlyphs, TableProps;
 import sparkles.base.styled_template : styledText;
 import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.base.text.width : Align;
@@ -84,6 +85,9 @@ struct CliParams
 
     @CliOption("c|columns", "Fold command output into at most this many columns, 0 = one per whitespace run")
     int columns = 0;
+
+    @CliOption("tee", "Also write the table to this file via the writer drawTable overload and check byte parity with the streamed output")
+    string tee;
 }
 
 /// A range that sleeps on each `popFront`, so consuming it animates output.
@@ -161,20 +165,54 @@ void main(string[] args)
     table.props.glyphs = presetGlyphs(cli.preset);
     table.props.maxWidth = cli.maxWidth;
 
-    if (cli.mode == "line")
-        streamChunks(drawTableChunks!true(table.cells, table.props), delayFor);
-    else
-        streamChunks(drawTableChunks!false(table.cells, table.props), delayFor);
+    const streamed = cli.mode == "line"
+        ? streamChunks(drawTableChunks!true(table.cells, table.props), delayFor)
+        : streamChunks(drawTableChunks!false(table.cells, table.props), delayFor);
+
+    if (cli.tee.length)
+        teeAndCheck(cli.tee, table, streamed);
 }
 
 /// Write each chunk as it is produced; the delay between chunks is the animation.
 /// No trailing newline needed — table chunks carry their own line terminators.
-void streamChunks(R)(R chunks, int delegate(string) delayFor)
+/// Returns the accumulated bytes (for the `--tee` parity check).
+string streamChunks(R)(R chunks, int delegate(string) delayFor)
 {
+    import std.array : appender;
+
+    auto seen = appender!string;
     foreach (chunk; chunks.delayedRange(delayFor))
     {
         write(chunk);
         stdout.flush(); // show each chunk as it is produced, not at program exit
+        seen ~= chunk;
+    }
+    return seen[];
+}
+
+/// Write the same table through the writer `drawTable` overload into `path`, then
+/// check the file against the bytes the chunk stream produced — the emission
+/// seams (chunk range and output-range writer) must agree byte-for-byte.
+void teeAndCheck(string path, DemoTable table, string streamed)
+{
+    import core.stdc.stdlib : exit;
+    import std.file : readText;
+    import std.stdio : File;
+
+    {
+        auto f = File(path, "w");
+        auto w = f.lockingTextWriter;
+        drawTable(w, table.cells, table.props);
+    }
+    const written = readText(path);
+    if (written == streamed)
+        stderr.writeln("streaming-table: tee: ", written.length, " bytes → ", path,
+            " (byte-identical to the streamed output)");
+    else
+    {
+        stderr.writeln("streaming-table: tee: PARITY MISMATCH — ", path,
+            " differs from the streamed output");
+        exit(1);
     }
 }
 
