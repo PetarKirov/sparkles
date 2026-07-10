@@ -144,14 +144,28 @@ Other ops in brief (twitter): **validate** — simdjson-OD structural skip
 
 ## Reproducing
 
+The bench now runs on `sparkles:test-runner` (the bespoke executable harness
+this snapshot was recorded with is gone — the C/C++/Rust engines are not
+wired up on the port yet):
+
 ```sh
 cd libs/wired/bench/runtime
-dub run -b bench -- --json=results/$(date -I)-<host>-$WIRED_BENCH_ISA.json
+dub test -b bench -- --bench --perf --group-by=dataset,operation \
+    --bench-min-time=2000 \
+    --bench-json=results/$(date -I)-<host>-$WIRED_BENCH_ISA.json
 ```
 
-Two consecutive default-budget runs on the machine above agreed within ~5%
-on every spot-checked row. Keep the default `--min-time-ms`: short budgets
-under-report allocation-heavy paths (yyjson's copying parse measured
-1.6 GB/s at a 300 ms budget vs 4.0 GB/s at the default 2 s — cold pages
-dominate the first few thousand iterations). Numbers are machine- and
-preset-specific; compare only within one snapshot.
+`--bench-min-time=2000` is **required** for baselines: the runner's default
+budget is 5 ms, and short budgets under-report allocation-heavy paths
+(yyjson's copying parse measured 1.6 GB/s at a 300 ms budget vs 4.0 GB/s at
+the old 2 s default — cold pages dominate the first few thousand
+iterations). Two consecutive 2 s-budget runs on the machine above agreed
+within ~5% on every spot-checked row.
+
+Old → new JSON field mapping: `engine` → `name`; `dataset`/`op` →
+`labels.*`; `iters` → `samples`; `mbPerSec` → `metrics["B/s"] / 1e6`; raw
+perf counter totals → per-iteration catalog cells (`ipc`, `instr`, …);
+`meanNs` has no successor (the runner reports median absolute deviation).
+The port also builds without `-enable-cross-module-inlining` (mir-ion breaks
+under it) — a known ~15% delta on wired's number-heavy hot loops. Numbers
+are machine- and preset-specific; compare only within one snapshot.
