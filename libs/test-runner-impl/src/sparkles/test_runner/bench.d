@@ -230,7 +230,31 @@ BenchStats errorRow(string name, string[string] labels, in Thrown[] thrown)
     import std.conv : text;
 
     const msg = thrown.length ? text(thrown[0].type, ": ", thrown[0].message) : "threw";
-    return BenchStats(name: name, labels: labels, error: msg);
+    return BenchStats(name: name, labels: labels, error: errorCell(msg));
+}
+
+/// The first line of a (possibly multi-line) error message, ellipsized:
+/// `BenchStats.error` lands in a single table cell, and an embedded newline
+/// breaks the no-core-cli fallback grid's rectangular layout. The full text
+/// still reaches the console via the failure trace (thrown path); `Expected`
+/// messages are one-liners by convention.
+package(sparkles.test_runner)
+string errorCell(string message) @safe pure nothrow
+{
+    foreach (i, ch; message)
+        if (ch == '\n' || ch == '\r')
+            return message[0 .. i] ~ " …";
+    return message;
+}
+
+@("bench.errorCell.firstLineOnly")
+@safe pure nothrow
+unittest
+{
+    assert(errorCell("boom") == "boom");
+    assert(errorCell("boom\ndetails\nmore") == "boom …");
+    assert(errorCell("boom\r\ndetails") == "boom …");
+    assert(errorCell("") == "");
 }
 
 @("bench.errorRow.carriesNameLabelsMessage")
@@ -683,7 +707,8 @@ BenchStats measureCase(BenchContext* context, RegisteredCase c)
     {
         const probe = driveErased(c.runTimed, c.runAfter);
         if (probe.error.length)
-            return BenchStats(name: c.name, labels: c.labels, error: probe.error);
+            return BenchStats(name: c.name, labels: c.labels,
+                error: errorCell(probe.error));
     }
 
     // Per-call timing: collect until both the sample count and time budget met
@@ -697,7 +722,8 @@ BenchStats measureCase(BenchContext* context, RegisteredCase c)
     {
         const d = driveErased(c.runTimed, c.runAfter);
         if (d.error.length)
-            return BenchStats(name: c.name, labels: c.labels, error: d.error);
+            return BenchStats(name: c.name, labels: c.labels,
+                error: errorCell(d.error));
         samples ~= d.ns;
         totalNs += d.ns;
     }
