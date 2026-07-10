@@ -5,10 +5,9 @@ name "term-caps"
 dependency "sparkles:core-cli" path="../../.."
 targetPath "build"
 +/
+// ci: build-only
 
 module term_caps_example;
-
-// ci: build-only
 
 import sparkles.core_cli.term_caps :
     detectTermCaps, isTerminal, setTermWindowSizeHandler, StdStream, terminalSize;
