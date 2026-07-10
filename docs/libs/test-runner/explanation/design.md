@@ -143,22 +143,35 @@ counters — a paranoid kernel, or the last-level-cache pair dropped to avoid PM
 multiplexing — degrade to `—` rather than failing, and off Linux the pass is
 skipped entirely.
 
-## Live progress: two displays, one policy
+## Live progress: three displays, one policy
 
-The runner has two redraw-in-place displays. The default parallel run polls a
-`ProgressLine` beneath the streaming result lines through `core-cli`'s
-`LiveRegion` (stdout, gated `hasCoreCliLive`); `--bench` redraws a one-line
-spinner between measurements on **stderr** — `--bench > file` keeps results
-clean while progress stays on the terminal — through a raw-fd writer, because
-the tick is a `@safe nothrow @nogc` seam inside the measurement loop where
-`LiveRegion`'s GC delegates can't go. Both ask one policy, `progressEnabled`:
-an interactive terminal on the target stream and none of
-`--no-colours`/`$NO_COLOR`/`TERM=dumb`; and both bracket repaints in DEC-2026
-synchronized output, so a repaint lands as one flicker-free frame. The
-layering follows the build-graph gates above: what must always work comes from
-`base` (`CtlSeq` control sequences, `truncateField` cell-safe truncation),
-while `ProgressLine`, `LiveRegion`, and the `terminalSize`/`isTerminal`
-queries are `core-cli` and degrade to no display at all.
+The runner has three redraw-in-place displays, all answering to one policy —
+`progressEnabled`: an interactive terminal on the target stream and none of
+`--no-colours`/`$NO_COLOR`/`TERM=dumb` — and all bracketing repaints in
+DEC-2026 synchronized output, so a repaint lands as one flicker-free frame.
+
+- The **default parallel run** polls a `ProgressLine` beneath the streaming
+  result lines through `core-cli`'s `LiveRegion` (stdout, gated
+  `hasCoreCliLive`).
+- **`--bench` on an interactive stdout** ticks the current group's whole
+  results table in a `LiveRegion`: rows land as cases complete, a pseudo
+  error row carries the in-flight case (error rows sort last, pinning it to
+  the bottom; `\x01`-marked and rewritten into the dim spinner row), and the
+  final frame graduates via `finish(keepFrame)`. Frames render only at case
+  boundaries — deliberately no painter thread, because concurrent GC
+  allocation and terminal writes would perturb the very numbers being
+  measured. Geometry is pinned before the first frame (roster-name floors +
+  the run's carried `TableGeometry`), so frames never resize.
+- **`--bench` with stdout redirected** falls back to the one-line stderr
+  spinner — `--bench > file` keeps results clean while progress stays on the
+  terminal — through a raw-fd writer, because that tick seam is
+  `@safe nothrow @nogc`.
+
+The layering follows the build-graph gates above: what must always work comes
+from `base` (`CtlSeq` control sequences, `truncateField` cell-safe
+truncation), while `ProgressLine`, `LiveRegion`, `drawTableLines`, and the
+`terminalSize`/`isTerminal` queries are `core-cli` and degrade to no display
+at all.
 
 ## Inherited limitation
 

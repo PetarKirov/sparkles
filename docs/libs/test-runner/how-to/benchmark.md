@@ -21,6 +21,25 @@ real numbers need an optimized unittest buildType, e.g.
 `buildOptions "unittests" "releaseMode" "optimize" "inline"` invoked as
 `dub test -b <name>`.)
 
+On an interactive terminal the table **ticks live** while its group measures:
+rows appear as each case completes, beneath a dim spinner row for the one in
+flight —
+
+```console
+╭────────────────┬────────────┬─────────────┬────────┬────────┬────────╮
+│ benchmark      │      iters │ median/iter │   ±dev │    min │    max │
+┝━━━━━━━━━━━━━━━━┿━━━━━━━━━━━━┿━━━━━━━━━━━━━┿━━━━━━━━┿━━━━━━━━┿━━━━━━━━┥
+│ medianOf.bench │    2097152 │      1.86ns │ 0.02ns │ 1.84ns │ 1.97ns │
+│ ⠹ sum.bench    │ measuring… │             │        │        │        │
+╰────────────────┴────────────┴─────────────┴────────┴────────┴────────╯
+```
+
+— and graduates into the scrollback when the group finishes, pixel-identical
+to its final frame (the columns are pinned up front, so no frame resizes).
+Frames repaint only between measurements: no repaint work ever runs while a
+case is being timed. Piped output skips all of this and prints each table
+once.
+
 ## Measurement protocol
 
 The protocol follows Rust libtest's `Bencher`: the per-sample iteration
