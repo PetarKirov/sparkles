@@ -3,7 +3,9 @@ Benchmark corpus loading.
 
 Datasets are the canonical JSON benchmark corpora pinned by
 `nix/packages/wired-bench-data.nix` and exposed to the devshell as
-`$WIRED_BENCH_DATA`; `--data-dir` overrides the environment.
+`$WIRED_BENCH_DATA` (export it manually outside the devshell). The runner
+subsets them at run time via `$WIRED_BENCH_DATASETS` (see
+$(MREF sparkles,wired_bench,runner)).
 */
 module sparkles.wired_bench.data;
 
@@ -19,14 +21,15 @@ struct Dataset
     string text;        /// the raw JSON text
 }
 
-/// The corpus directory: the CLI value if given, else `$WIRED_BENCH_DATA`.
-string resolveDataDir(string cliValue) @safe
+/// The corpus directory: the explicit value if given, else `$WIRED_BENCH_DATA`.
+string resolveDataDir(string explicitDir) @safe
 {
-    if (cliValue.length)
-        return cliValue;
+    if (explicitDir.length)
+        return explicitDir;
     const env = environment.get("WIRED_BENCH_DATA");
     enforce(env !is null && env.length,
-        "no data directory: pass --data-dir or enter the devshell (which sets $WIRED_BENCH_DATA)");
+        "no data directory: export WIRED_BENCH_DATA to point at the benchmark "
+        ~ "corpora (the devshell sets it)");
     return env;
 }
 
