@@ -124,7 +124,7 @@ onMounted(() => nextTick(fitTextarea));
           >defaultAlign
           <select v-model="props.defaultAlign">
             <option
-              v-for="a in ['left', 'center', 'right']"
+              v-for="a in ['left', 'center', 'right', 'decimal']"
               :key="a"
               :value="a"
             >
@@ -145,6 +145,26 @@ onMounted(() => nextTick(fitTextarea));
           </select>
         </label>
       </div>
+      <div class="tpg-row">
+        <label
+          >title
+          <input
+            v-model="props.title"
+            class="tpg-text"
+            type="text"
+            placeholder="(none)"
+            aria-label="title"
+        /></label>
+        <label
+          >footer
+          <input
+            v-model="props.footer"
+            class="tpg-text"
+            type="text"
+            placeholder="(none)"
+            aria-label="footer"
+        /></label>
+      </div>
     </template>
 
     <!-- Per-column overrides -->
@@ -155,7 +175,7 @@ onMounted(() => nextTick(fitTextarea));
           <div class="tpg-colhead">col {{ c - 1 }}</div>
           <select v-model="colAligns[c - 1]" aria-label="align">
             <option
-              v-for="a in ['inherit', 'left', 'center', 'right']"
+              v-for="a in ['inherit', 'left', 'center', 'right', 'decimal']"
               :key="a"
               :value="a"
             >
@@ -359,7 +379,8 @@ onMounted(() => nextTick(fitTextarea));
   color: var(--vp-c-text-2);
 }
 .tpg-row select,
-.tpg-row .tpg-num {
+.tpg-row .tpg-num,
+.tpg-row .tpg-text {
   margin-left: 0.3rem;
 }
 select {
@@ -368,6 +389,18 @@ select {
   border: 1px solid var(--vp-c-divider);
   border-radius: 5px;
   padding: 0.12rem 0.3rem;
+}
+/* Free-text title/footer inputs (Style & width panel). Sized to sit two-up in a
+  .tpg-row and wrap on a narrow panel. */
+.tpg-text {
+  width: 7rem;
+  max-width: 45%;
+  background: var(--vp-c-bg);
+  color: var(--vp-c-text-1);
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 5px;
+  padding: 0.12rem 0.4rem;
+  font-size: 0.82rem;
 }
 .tpg-percol {
   display: flex;
