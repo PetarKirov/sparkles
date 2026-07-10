@@ -928,29 +928,40 @@ unittest
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Live benchmark progress (stderr, POSIX)
+// Live progress (the bench spinner on stderr, the parallel run on stdout)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Whether a live spinner should animate: stderr is an interactive terminal,
-/// colours aren't disabled (`--no-colours` / `$NO_COLOR`), and the terminal
-/// isn't `TERM=dumb` (no cursor-control escapes). POSIX-only — `false`
-/// elsewhere. Independent of stdout, so results piped to a file still show
-/// progress on the terminal.
-package bool stderrIsTty(bool noColours)
+/// The one policy for whether a live, redraw-in-place progress display may
+/// animate on a stream: it must be an interactive terminal, colours must not
+/// be disabled (`--no-colours` / `$NO_COLOR`), and the terminal must not be
+/// `TERM=dumb` (no cursor-control escapes). The bench spinner asks about
+/// stderr (the default — results piped to a file still show progress on the
+/// terminal); the parallel-run progress line asks about stdout, where it
+/// interleaves with the streamed result lines.
+package bool progressEnabled(bool noColours, bool stderrStream = true)
 {
     import std.process : environment;
 
     if (noColours || environment.get("NO_COLOR", "").length != 0
         || environment.get("TERM", "") == "dumb")
         return false;
-    version (Posix)
+    static if (hasCoreCliTermCaps)
     {
-        import core.sys.posix.unistd : isatty, STDERR_FILENO;
+        import sparkles.core_cli.term_caps : isTerminal, StdStream;
 
-        return isatty(STDERR_FILENO) != 0;
+        return isTerminal(stderrStream ? StdStream.stderr : StdStream.stdout);
     }
     else
-        return false;
+    {
+        version (Posix)
+        {
+            import core.sys.posix.unistd : isatty, STDERR_FILENO, STDOUT_FILENO;
+
+            return isatty(stderrStream ? STDERR_FILENO : STDOUT_FILENO) != 0;
+        }
+        else
+            return false;
+    }
 }
 
 /// Raw, unbuffered write to stderr's fd — `@nogc nothrow` (unlike
