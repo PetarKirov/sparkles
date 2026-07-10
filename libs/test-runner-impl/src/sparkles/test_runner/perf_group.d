@@ -34,13 +34,28 @@ version (linux)
                 perf_event_ioc_flags.PERF_IOC_FLAG_GROUP))();
     }
 
+    private enum maxCounters = 64; // perf group opens 7; syscall group up to 1 + 62
+
+    /// A group's cumulative `time_enabled`/`time_running` at the start of a
+    /// counting pass. `PERF_EVENT_IOC_RESET` zeroes the counter *values* but not
+    /// these time fields — they accumulate from `perf_event_open` — so a
+    /// long-lived group must correct each pass by the pass's own time deltas,
+    /// not the whole process history.
+    package struct GroupTimeBase
+    {
+        ulong enabled;
+        ulong running;
+    }
+
     /// The counting pass's ioctl bracket: `RESET` once, then per iteration
     /// `ENABLE`, `timed()`, `DISABLE`, `between()` — so only `timed()` is counted
-    /// and `between()` (a benchmark's result release) runs uncounted.
-    package void bracketCountingPass(Timed, Between)(int leaderFd,
+    /// and `between()` (a benchmark's result release) runs uncounted. Returns the
+    /// pass's time baseline for `readScaledGroup`.
+    package GroupTimeBase bracketCountingPass(Timed, Between)(int leaderFd,
         scope Timed timed, scope Between between, uint iters)
     {
         groupIoctl(leaderFd, PERF_EVENT_IOC_RESET);
+        const base = readGroupTimes(leaderFd);
         foreach (_; 0 .. iters)
         {
             groupIoctl(leaderFd, PERF_EVENT_IOC_ENABLE);
@@ -48,28 +63,68 @@ version (linux)
             groupIoctl(leaderFd, PERF_EVENT_IOC_DISABLE);
             between();
         }
+        return base;
+    }
+
+    /// Reads just the group's cumulative time fields; `(0, 0)` on a short read,
+    /// so a failed baseline degrades the correction to the cumulative times
+    /// (the pre-delta behavior), never to garbage.
+    private GroupTimeBase readGroupTimes(int leaderFd) @safe
+    {
+        ulong[3 + maxCounters] buf;
+        const got = (() @trusted => read(leaderFd, buf.ptr, buf.sizeof))();
+        return got >= cast(long)(3 * ulong.sizeof)
+            ? GroupTimeBase(buf[1], buf[2]) : GroupTimeBase();
+    }
+
+    /// The multiplex correction for one pass: when the PMU rotated the group
+    /// out for part of the pass (`running < enabled`), the raw counts cover
+    /// only the running fraction and are scaled up by `enabled/running`; a
+    /// fully-scheduled (or empty) pass is `1`.
+    package double scaledRatio(ulong enabledDelta, ulong runningDelta)
+        @safe pure nothrow @nogc
+    {
+        return (runningDelta > 0 && enabledDelta > 0 && runningDelta < enabledDelta)
+            ? double(enabledDelta) / double(runningDelta) : 1.0;
+    }
+
+    @("perf_group.scaledRatio")
+    @safe pure nothrow @nogc
+    unittest
+    {
+        assert(scaledRatio(0, 0) == 1.0);
+        assert(scaledRatio(1000, 1000) == 1.0);
+        assert(scaledRatio(2000, 1000) == 2.0);
+        assert(scaledRatio(0, 1000) == 1.0); // degenerate: never enabled
+        // The correction depends only on the pass's deltas — identical passes
+        // yield identical ratios regardless of how much history preceded them.
+        assert(scaledRatio(2000, 1000) == scaledRatio(2_000_000, 1_000_000));
     }
 
     /// Reads a `PERF_FORMAT_GROUP` group from `leaderFd` (`nOpen` counters opened,
     /// values returned in fd order). On success fills `values[0 .. nOpen]` with the
-    /// per-iteration, multiplex-corrected averages `round3(raw · enabled/running ÷
-    /// iters)`, sets `scale` to `round3(running/enabled)` (`1` = no multiplexing),
-    /// and returns `true`. On a short/interrupted read returns `false` and leaves
-    /// `values`/`scale` untouched (the caller fills `nan`).
+    /// per-iteration averages, multiplex-corrected by the *pass's* enabled/running
+    /// deltas against `base` (see `GroupTimeBase`), sets `scale` to
+    /// `round3(runningΔ/enabledΔ)` (`1` = no multiplexing), and returns `true`.
+    /// On a short/interrupted read returns `false` and leaves `values`/`scale`
+    /// untouched (the caller fills `nan`).
     package bool readScaledGroup(int leaderFd, uint nOpen, uint iters,
-        ref double scale, scope double[] values) @safe
+        ref double scale, scope double[] values,
+        GroupTimeBase base = GroupTimeBase.init) @safe
     in (values.length >= nOpen)
     {
-        enum maxCounters = 64; // perf group opens 7; syscall group up to 1 + 62
         ulong[3 + maxCounters] buf;
         const want = cast(long)(ulong.sizeof * (3 + nOpen));
         const got = (() @trusted => read(leaderFd, buf.ptr, buf.sizeof))();
         if (got < want)
             return false;
 
-        const enabled = buf[1], running = buf[2];
-        const ratio = (running > 0 && enabled > 0 && running < enabled)
-            ? double(enabled) / double(running) : 1.0;
+        // Saturating deltas: the time fields are monotonic since open, so they
+        // can only undershoot the baseline if the baseline read itself failed
+        // (base = 0 → the delta is the cumulative time).
+        const enabled = buf[1] >= base.enabled ? buf[1] - base.enabled : buf[1];
+        const running = buf[2] >= base.running ? buf[2] - base.running : buf[2];
+        const ratio = scaledRatio(enabled, running);
         scale = enabled > 0 ? round3(double(running) / double(enabled)) : 1.0;
         foreach (k; 0 .. nOpen)
             values[k] = round3(double(buf[3 + k]) * ratio / iters);

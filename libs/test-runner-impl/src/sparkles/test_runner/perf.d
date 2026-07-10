@@ -244,7 +244,7 @@ version (linux)
         {
             import sparkles.test_runner.perf_group : bracketCountingPass, readScaledGroup;
 
-            bracketCountingPass(fds[0], timed, between, iters);
+            const base = bracketCountingPass(fds[0], timed, between, iters);
 
             PerfStats s;
             s.iters = iters;
@@ -253,7 +253,7 @@ version (linux)
             // Group read: one scaled per-iteration value per opened counter, in
             // fds order. A short read → counters unavailable (nan → em dash).
             double[events.length] values;
-            if (!readScaledGroup(fds[0], nOpen, iters, s.scale, values[]))
+            if (!readScaledGroup(fds[0], nOpen, iters, s.scale, values[], base))
             {
                 s.cycles = s.instructions = s.branches = s.branchMisses
                     = s.cacheReferences = s.cacheMisses = s.pageFaults = double.nan;

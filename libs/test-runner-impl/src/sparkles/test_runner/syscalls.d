@@ -203,7 +203,7 @@ version (linux)
         {
             import sparkles.test_runner.perf_group : bracketCountingPass, readScaledGroup;
 
-            bracketCountingPass(fds[0], timed, between, iters);
+            const base = bracketCountingPass(fds[0], timed, between, iters);
 
             SyscallStats s;
             s.iters = iters;
@@ -214,7 +214,7 @@ version (linux)
             // One scaled per-iteration value per opened counter, in fds order; a
             // short read → total unavailable (named counts stay nan).
             double[1 + maxNamed] values;
-            if (!readScaledGroup(fds[0], nOpen, iters, s.scale, values[]))
+            if (!readScaledGroup(fds[0], nOpen, iters, s.scale, values[], base))
             {
                 s.total = double.nan;
                 return s;
