@@ -29,7 +29,7 @@ import sparkles.test_runner.filter : matchesFilter;
 import sparkles.test_runner.model : Test, TestResult;
 import sparkles.test_runner.reporting : BenchProgress, detectTerminalWidth,
     formatBenchTable, formatCtfeFailedLine, formatCtfeLine, formatMetricCatalog,
-    formatResultLine, formatSummary, formatThrown, RunTotals, stderrIsTty;
+    formatResultLine, formatSummary, formatThrown, progressEnabled, RunTotals;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Entry point — called across the extern(C) seam by the registration shim,
@@ -548,9 +548,10 @@ private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bo
     bool ranLive = false;
     static if (hasCoreCliLive)
     {
-        import sparkles.core_cli.term_caps : isTerminal;
-
-        if (isTerminal())
+        // The same animate-or-not policy as the bench spinner (tty and no
+        // colour opt-outs), asked about stdout — the line redraws beneath the
+        // streamed result lines there.
+        if (progressEnabled(options.noColours, stderrStream: false))
         {
             runParallelLive(runnable, options, colored, width, threads, passed, failed);
             ranLive = true;
@@ -790,7 +791,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     order.sort!((i, j) => all[i].key < all[j].key, SwapStrategy.stable);
 
     progress = BenchProgress(total: all.length,
-        active: stderrIsTty(options.noColours) && all.length > 0,
+        active: progressEnabled(options.noColours) && all.length > 0,
         width: detectTerminalWidth(stderrStream: true));
 
     size_t totalRows, errorRows;
