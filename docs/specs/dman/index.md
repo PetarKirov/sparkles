@@ -29,6 +29,7 @@ the Git-first foundation lands.
 | [Command schema](./command-schema.md)             | the bidirectional, `wired`-based CLI/command pillar — one struct schema for both dman's own CLI and invoking git/jj/…       |
 | [VCS backend](./vcs-backend.md)                   | the per-repo layer — branch/worktree/status data model and the `VcsRepo` backend                                            |
 | [Repo catalog](./repo-catalog.md)                 | the cross-repo layer — scan → catalog → registry → selection, and persistence                                               |
+| [TUI shell](./tui-shell.md)                       | the interactive UI — the `sparkles:tui` immediate-mode framework and the dman shell's interaction model                     |
 | [Milestones](./milestones.md)                     | the phased plan, dependency graph, and key risks                                                                            |
 | [Decisions](./DECISIONS.md)                       | the foundational decision log (ADR-style)                                                                                   |
 

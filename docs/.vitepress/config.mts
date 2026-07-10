@@ -467,6 +467,7 @@ export default withMermaid(
                 { text: 'Command Schema', link: '/specs/dman/command-schema' },
                 { text: 'VCS Backend', link: '/specs/dman/vcs-backend' },
                 { text: 'Repo Catalog', link: '/specs/dman/repo-catalog' },
+                { text: 'TUI Shell', link: '/specs/dman/tui-shell' },
                 { text: 'Milestones', link: '/specs/dman/milestones' },
                 { text: 'Decisions', link: '/specs/dman/DECISIONS' },
               ],
