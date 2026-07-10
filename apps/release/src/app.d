@@ -326,29 +326,45 @@ private void renderStats(in ReleaseStats rs, string rangeLabel)
     writeln(drawTable(overview,
         TableProps(title: "Overview", columnAligns: numeric.dup, maxWidth: cap)));
 
-    // Conventional-commit type breakdown (only non-zero rows).
-    string[][] types = [["Type", "Count"]];
+    // Conventional-commit type breakdown (only non-zero rows), with a
+    // count-proportional bar per row.
+    import std.algorithm.comparison : max;
+    import sparkles.core_cli.ui.meter : meter;
+
+    size_t maxTypeCount = 0;
+    foreach (count; rs.typeCounts)
+        maxTypeCount = max(maxTypeCount, count);
+
+    string[][] types = [["Type", "Count", ""]];
     static foreach (t; __traits(allMembers, CommitType))
         if (rs.typeCounts[__traits(getMember, CommitType, t)] > 0)
-            types ~= [t, rs.typeCounts[__traits(getMember, CommitType, t)].text];
+            types ~= [t,
+                rs.typeCounts[__traits(getMember, CommitType, t)].text,
+                meter(rs.typeCounts[__traits(getMember, CommitType, t)], maxTypeCount, 12)];
     if (types.length > 1)
     {
         writeln();
         writeln(drawTable(types, TableProps(title: "Commits by type",
-            headerRows: 1, columnAligns: numeric.dup, maxWidth: cap)));
+            headerRows: 1, columnAligns: [Align.left, Align.right, Align.left],
+            maxWidth: cap)));
     }
 
     if (rs.areas.length)
     {
+        // The per-area rows are a pre-ordered (label, depth) walk — exactly the
+        // flat tree form, so the stub column gets real guides instead of the
+        // old two-space indent.
+        import std.algorithm.iteration : map;
+        import std.array : array;
+        import sparkles.core_cli.ui.tree : renderTree, TreeNode;
+
+        const guides = renderTree(rs.areas.map!(a => TreeNode(a.label, a.depth)).array);
         string[][] areaRows = [["Area", "Changed"]];
-        foreach (a; rs.areas)
-        {
-            const indent = a.depth ? "  " : "";
+        foreach (i, a; rs.areas)
             areaRows ~= [
-                indent ~ a.label,
+                guides[i],
                 "+" ~ a.insertions.text ~ " / -" ~ a.deletions.text,
             ];
-        }
         writeln();
         writeln(drawTable(areaRows, TableProps(title: "Changed by area",
             headerRows: 1, columnAligns: numeric.dup, maxWidth: cap)));
