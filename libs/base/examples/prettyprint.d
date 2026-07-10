@@ -232,7 +232,7 @@ void main() {
 
     // 20. Without colors
     writeln("── without colors ──");
-    writeln(prettyPrint(person, PrettyPrintOptions!void(useColors: false)));
+    writeln(prettyPrint(person, PrettyPrintOptions!void(colored: false)));
     writeln();
 
     // ─────────────────────────────────────────────────────────────────────────

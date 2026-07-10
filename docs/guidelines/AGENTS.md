@@ -363,7 +363,7 @@ auto opts = PrettyPrintOptions!void(
     maxDepth: 8,
     maxItems: 32,
     softMaxWidth: 80,
-    useColors: true,
+    colored: true,
 );
 ```
 

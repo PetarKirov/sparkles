@@ -216,7 +216,7 @@ void main()
 
     // Custom options
     int[] numbers = [1, 2, 3, 4, 5];
-    writeln(prettyPrint(numbers, PrettyPrintOptions!void(useColors: false)));
+    writeln(prettyPrint(numbers, PrettyPrintOptions!void(colored: false)));
 }
 ```
 
@@ -241,7 +241,7 @@ PrettyPrintOptions!EditorDetectHook       // auto-detect from $EDITOR/$VISUAL
 | `maxDepth`     | 8       | Maximum recursion depth                                |
 | `maxItems`     | 32      | Max items shown for arrays/AAs                         |
 | `softMaxWidth` | 80      | Try single-line if output fits (0 = always multi-line) |
-| `useColors`    | true    | Enable ANSI colors                                     |
+| `colored`      | true    | Enable ANSI colors                                     |
 | `useOscLinks`  | false   | Wrap type names in OSC 8 hyperlinks to source location |
 
 #### Source URI Hooks

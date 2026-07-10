@@ -946,7 +946,7 @@ unittest
 ///
 /// All hook primitives are optional (DbI §5). When absent, defaults apply:
 /// no styling, raw strings/chars, enums as underlying integers.
-void writeStyledValue(Hook, Writer, T)(ref Writer w, in T value, in Hook hook, bool useColors)
+void writeStyledValue(Hook, Writer, T)(ref Writer w, in T value, in Hook hook, bool colored)
 {
     import std.range.primitives : put;
     import std.traits : isSomeChar, isSomeString, OriginalType;
@@ -955,7 +955,7 @@ void writeStyledValue(Hook, Writer, T)(ref Writer w, in T value, in Hook hook, b
     Style style = Style.none;
     static if (__traits(compiles, hook.styleOf(value)))
     {
-        if (useColors)
+        if (colored)
             style = hook.styleOf(value);
     }
 
@@ -1114,7 +1114,7 @@ unittest
     assert(buf[] == "south");
 }
 
-/// Hook with styling disabled (useColors=false): no escape codes emitted.
+/// Hook with styling disabled (colored=false): no escape codes emitted.
 @("writeStyledValue.stylingDisabled")
 @safe pure nothrow @nogc
 unittest
