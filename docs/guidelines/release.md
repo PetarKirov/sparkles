@@ -113,6 +113,39 @@ A checklist. Each step assumes the toolchain from `nix develop` / `direnv`.
    to delete a mistaken tag — but treat it as best-effort, not a safety net (the
    registry can ingest a pushed tag on its own before you publish).
 
+## Catching up with `release --split`
+
+When many unreleased commits have piled up (hundreds since the last tag), one
+release would bury the changelog. `release --split` segments the backlog into a
+**chain of releases** instead:
+
+```bash
+nix run .#release -- --split --agent claude-code                  # local tags
+nix run .#release -- --split --agent claude-code --stage push-tag # and push
+```
+
+1. Every unreleased commit is associated with the PR that introduced it (via
+   the GitHub GraphQL API — this repo rebase-merges, so `gh` is required even
+   for local tags).
+2. The agent proposes contiguous segments — boundary commit, theme, bump, and
+   per-segment `highlights`. The tool validates the reply: no PR may straddle a
+   boundary, bumps are floored at the policy above (under-bumps are escalated),
+   and versions chain from the latest tag.
+3. You review the plan table, decide what happens to any unreleased trailing
+   remainder (WIP the agent left out), and confirm. Pushing is still gated by
+   its own confirmation naming every tag.
+4. Each segment then gets agent-written notes (reviewed in `$EDITOR` unless
+   `--auto`) and an annotated tag **on its boundary commit**, oldest first.
+
+Notes stay **curated**: work-in-progress inside a segment may be omitted and is
+documented in the release where it completes (that tag's notes summarize the
+whole arc). Prompts, raw replies, and the validated plan are kept under
+`.result/release-split/<timestamp>/` for later review — never a blocker.
+
+If a split run stops early, the created tags stand; re-running `--split`
+resumes naturally, because the backlog now starts at the last created tag. The
+full contract lives in [`docs/specs/release/SPEC.md`](../specs/release/SPEC.md).
+
 ## Release notes — the annotated-tag body
 
 The annotated tag's message **is** the changelog; there is no separate
