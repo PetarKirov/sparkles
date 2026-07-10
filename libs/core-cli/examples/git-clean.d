@@ -6,6 +6,8 @@ dependency "sparkles:core-cli" path="../../.."
 targetPath "build"
 +/
 
+module git_clean_example;
+
 import sparkles.core_cli.args;
 
 struct CliParams
