@@ -100,7 +100,7 @@ behavior (one re-prompts on invalid input, one silently swallows it). Extract:
 
 | #   | Component | Shape                                                                                                                                                  |
 | --- | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| C1  | `select`  | Numbered options with descriptions, rendered default, re-prompt loop; line-based (no raw mode)                                                         |
+| C1  | `select`  | Numbered options with descriptions, rendered default, re-prompt loop; line-based by default, with an optional raw-mode arrow-key cursor mode (§F note) |
 | C2  | `confirm` | `[y/N]` with default; styled destructive-action variant (push/publish gates)                                                                           |
 | C3  | `input`   | Free text with a validation/parse callback loop                                                                                                        |
 | C4  | Policy    | Every prompt takes a resolution mode — `interactive` / `takeDefault` / `fail` — so `--auto` and non-TTY stdin are handled uniformly, not per call site |
@@ -132,8 +132,14 @@ First consumer: `release` (bump select with candidate versions, publish confirm)
 - **`gridBox` layout container** (S5 placement of arbitrary blocks): deliberately
   share the slot-grid + junction machinery from `table.d` rather than grow a second
   model. Deferred until a consumer appears.
-- **Full-screen TUI loop** (alt screen, raw-mode input decoding, event loop): out of
-  scope — no consumer; `apps/terminal` is an emulator, not a client.
+- **Full-screen TUI loop** (alt screen, general `Event`/`Backend` framework, an
+  app-owned event loop): still out of scope — no consumer; `apps/terminal` is an
+  emulator, not a client. `sparkles.core_cli.key_input` (added for C1) is a
+  narrow, deliberate exception to the _raw-mode input decoding_ half of this
+  line, not a reversal of it: a closed `Key { up, down, enter, cancel, other }`
+  vocabulary consumed only by `select`'s cursor mode, not a general `KeyEvent`
+  type or input framework — see `docs/research/tui-libraries/comparison.md`'s
+  Phase 4 roadmap for what a real event system would look like.
 - **Explicitly not building:** terminfo (the survey's no-terminfo, query-first
   consensus — see §4); terminal _queries_ (DA1/CPR/kitty probes need raw-mode
   response reading; `term_caps` stays env + ioctl until an interactive component
