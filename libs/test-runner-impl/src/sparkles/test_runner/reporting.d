@@ -1034,7 +1034,12 @@ package struct BenchProgress
                 ? 80
                 : (width > prefixCells + 1 ? width - prefixCells - 1 : 0);
 
+            // The erase+redraw is bracketed in DEC-2026 synchronized output
+            // (the same trick as core-cli's LiveRegion), so a repaint lands as
+            // one frame — no flicker mid-erase. Unsupporting terminals ignore
+            // the private mode.
             SmallBuffer!(char, 256) buf;
+            buf ~= cast(string) CtlSeq.syncBegin;
             buf ~= cast(string) CtlSeq.carriageReturn;
             buf ~= cast(string) CtlSeq.eraseLine;
             ProgressLine(frame, done, shown, true, elapsed).toString(buf);
@@ -1046,6 +1051,7 @@ package struct BenchProgress
                 // SmallBuffer keeps this seam `@safe nothrow @nogc`).
                 buf.truncateField(name, budget);
             }
+            buf ~= cast(string) CtlSeq.syncEnd;
             writeStderr(buf[]);
         }
     }
@@ -1059,8 +1065,10 @@ package struct BenchProgress
 
         if (!active)
             return;
-        enum eraseSeq = cast(string) CtlSeq.carriageReturn
-            ~ cast(string) CtlSeq.eraseLine;
+        enum eraseSeq = cast(string) CtlSeq.syncBegin
+            ~ cast(string) CtlSeq.carriageReturn
+            ~ cast(string) CtlSeq.eraseLine
+            ~ cast(string) CtlSeq.syncEnd;
         writeStderr(eraseSeq);
     }
 }
