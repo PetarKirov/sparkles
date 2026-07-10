@@ -329,7 +329,9 @@ unittest
 /// groups ordered by their key (alphabetical); empty = no grouping. `sortBy` then
 /// orders rows *within* each group: `"name"` (alphabetical), empty/`"median/iter"`
 /// (ascending median ns/iter — the default), or any other metric column name
-/// (ascending value, via `rowCells`; rows missing it sort last). Ties keep
+/// (ascending value, via `rowCells`; rows missing it sort last). Error rows sort
+/// last under every order (their timing fields are unset — the default-0 median
+/// would masquerade as the fastest row), by name among themselves. Ties keep
 /// discovery order (stable sort).
 size_t[] sortOrder(in BenchStats[] rows, string sortBy, in string[] groupKeys = null) @safe
 {
@@ -342,6 +344,9 @@ size_t[] sortOrder(in BenchStats[] rows, string sortBy, in string[] groupKeys = 
     // The within-group comparator selected by `sortBy`.
     bool within(size_t i, size_t j)
     {
+        const iErr = rows[i].error.length > 0, jErr = rows[j].error.length > 0;
+        if (iErr || jErr)
+            return iErr == jErr ? iErr && rows[i].name < rows[j].name : jErr;
         if (sortBy == "name")
             return rows[i].name < rows[j].name;
         if (sortBy.length == 0 || sortBy == "median/iter")
@@ -384,6 +389,29 @@ unittest
     assert(names("name") == ["a-fast", "b-slow"]);
     assert(names(null) == ["a-fast", "b-slow"]);
     assert(names("median/iter") == ["a-fast", "b-slow"]);
+}
+
+@("metrics.sortOrder.errorRowsLast")
+@safe
+unittest
+{
+    import std.algorithm.iteration : map;
+    import std.array : array;
+
+    // An error row's timing fields are unset (median 0) — it must not
+    // masquerade as the fastest row; it sorts last under every order.
+    const rows = [
+        BenchStats(name: "crashed-b", error: "boom"),
+        BenchStats(name: "slow", nsPerIterMedian: 20),
+        BenchStats(name: "crashed-a", error: "boom"),
+        BenchStats(name: "fast", nsPerIterMedian: 10),
+    ];
+
+    auto names(string sortBy) => sortOrder(rows, sortBy).map!(i => rows[i].name).array;
+
+    assert(names(null) == ["fast", "slow", "crashed-a", "crashed-b"]);
+    assert(names("median/iter") == ["fast", "slow", "crashed-a", "crashed-b"]);
+    assert(names("name") == ["fast", "slow", "crashed-a", "crashed-b"]);
 }
 
 @("metrics.sortOrder.groupByThenSortWithin")
