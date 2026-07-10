@@ -38,12 +38,14 @@
           # D source files for the ci/release apps and their direct dependencies.
           # `base`/`core-cli` import the runner's `@…` attributes (in the impl
           # package) unconditionally, so its source must be present even in these
-          # non-unittest library builds.
+          # non-unittest library builds; `core-cli` likewise imports `math`
+          # (ScreenSize) via importPaths.
           ++ map (path: fs.fileFilter (file: file.hasExt "d") (fromRoot path)) [
             "apps/ci/src"
             "apps/release/src"
             "libs/base/src"
             "libs/core-cli/src"
+            "libs/math/src"
             "libs/versions/src"
             "libs/test-runner/src"
             "libs/test-runner-impl/src"
