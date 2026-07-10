@@ -144,6 +144,14 @@
             pkgs.wayland
             pkgs.wayland.dev
             pkgs.xvfb-run
+
+            # CPU-PMU research probes (docs/research/cpu-pmu/examples): the
+            # symbolization/unwind probes link `libs "dw" "elf"` and the
+            # event-naming probe links `libs "pfm"`. Neither library is found
+            # by `nix shell` alone (no setup hooks run), so they're shell
+            # packages here with LIBRARY_PATH/LD_LIBRARY_PATH exports below.
+            pkgs.elfutils
+            pkgs.libpfm
           ]
           ++ lib.optional greeting pkgs.figlet
           ++ d-toolchain.packages;
@@ -162,6 +170,13 @@
             export LIBRARY_PATH="${pythonEnv}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
             export LD_LIBRARY_PATH="${pythonEnv}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
             export PYTHONPATH="${pythonEnv}/${pythonEnv.sitePackages}''${PYTHONPATH:+:$PYTHONPATH}"
+
+            ${lib.optionalString pkgs.stdenv.isLinux ''
+              # CPU-PMU research probes: libdw/libelf (elfutils) and libpfm for
+              # `dub run --single` linking (`libs "dw" "elf"` / `libs "pfm"`).
+              export LIBRARY_PATH="${pkgs.elfutils.out}/lib:${pkgs.libpfm}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
+              export LD_LIBRARY_PATH="${pkgs.elfutils.out}/lib:${pkgs.libpfm}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            ''}
 
             ${lib.optionalString greeting "figlet 'sparkles : *'"}
           ''
