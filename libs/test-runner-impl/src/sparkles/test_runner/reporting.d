@@ -37,13 +37,15 @@ private enum bool hasCoreCliTermCaps = __traits(compiles, {
 /// Terminal width in cells via `core-cli` when available, else `0` (unknown →
 /// callers skip truncation). `0` is also the value on a non-tty (piped output),
 /// so redirected runs stay byte-identical to the untruncated form.
-package uint detectTerminalWidth()
+/// `stderrStream` measures stderr's terminal instead — the progress spinner
+/// draws there, and `dub test -- --bench > file` leaves only stderr on the tty.
+package uint detectTerminalWidth(bool stderrStream = false)
 {
     static if (hasCoreCliTermCaps)
     {
-        import sparkles.core_cli.term_caps : terminalSize;
+        import sparkles.core_cli.term_caps : StdStream, terminalSize;
 
-        return terminalSize().width;
+        return terminalSize(stderrStream ? StdStream.stderr : StdStream.stdout).width;
     }
     else
         return 0;
@@ -890,15 +892,17 @@ unittest
 // Live benchmark progress (stderr, POSIX)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Whether a live spinner should animate: stderr is an interactive terminal and
-/// colours aren't disabled (`--no-colours` / `$NO_COLOR`). POSIX-only — `false`
+/// Whether a live spinner should animate: stderr is an interactive terminal,
+/// colours aren't disabled (`--no-colours` / `$NO_COLOR`), and the terminal
+/// isn't `TERM=dumb` (no cursor-control escapes). POSIX-only — `false`
 /// elsewhere. Independent of stdout, so results piped to a file still show
 /// progress on the terminal.
 package bool stderrIsTty(bool noColours)
 {
     import std.process : environment;
 
-    if (noColours || environment.get("NO_COLOR", "").length != 0)
+    if (noColours || environment.get("NO_COLOR", "").length != 0
+        || environment.get("TERM", "") == "dumb")
         return false;
     version (Posix)
     {
@@ -924,34 +928,23 @@ private void writeStderr(scope const(char)[] s) @trusted nothrow @nogc
     }
 }
 
-/// Number of UTF-8 code points in `s` (bytes that are not continuation bytes,
-/// `0b10xxxxxx`). For the spinner prefix — digits, punctuation, one braille glyph,
-/// all single-cell — this equals its display width.
-private size_t codePointCount(scope const(char)[] s) @safe pure nothrow @nogc
-{
-    size_t n;
-    foreach (b; s)
-        if ((b & 0xC0) != 0x80)
-            n++;
-    return n;
-}
-
-/// `s` truncated to at most `maxCells` display columns, approximated as code
-/// points — exact for the ASCII case names / group keys the spinner shows — and
-/// backing off a partial trailing UTF-8 sequence. Keeps the redrawn line within
-/// the terminal so it never wraps and leaves an un-erased ghost row.
+/// `s` truncated to at most `maxCells` display columns, measured in true
+/// terminal cells via grapheme clustering (wide CJK/emoji count 2, combining
+/// marks 0) — a code-point approximation lets a wide-glyph case name overflow
+/// the terminal, wrap, and leave a ghost row the one-line CR+erase can't
+/// clear. Never splits a cluster.
 private const(char)[] clampCells(return scope const(char)[] s, size_t maxCells)
     @safe pure nothrow @nogc
 {
-    size_t cells, i;
-    while (i < s.length && cells < maxCells)
+    size_t cells, bytes;
+    foreach (c; s.byGraphemeCluster)
     {
-        i++; // step over this code point's leading byte...
-        while (i < s.length && (s[i] & 0xC0) == 0x80)
-            i++; // ...and its continuation bytes
-        cells++;
+        if (cells + c.width > maxCells)
+            break;
+        cells += c.width;
+        bytes += c.slice.length;
     }
-    return s[0 .. i];
+    return s[0 .. bytes];
 }
 
 @("reporting.clampCells")
@@ -962,7 +955,11 @@ unittest
     assert(clampCells("hello", 3) == "hel");
     assert(clampCells("hello", 0) == "");
     assert(clampCells("aéb", 2) == "aé"); // é is 2 bytes / 1 cell, not split
-    assert(codePointCount("aéb") == 3);
+    // Wide glyphs cost 2 cells: a clamp mid-glyph drops the whole glyph.
+    assert(clampCells("測試x", 5) == "測試x");
+    assert(clampCells("測試x", 4) == "測試");
+    assert(clampCells("測試", 3) == "測");
+    assert(clampCells("a🚀b", 3) == "a🚀");
 }
 
 /// Live single-line benchmark progress on stderr: redraws
@@ -1008,7 +1005,7 @@ package struct BenchProgress
             // old fixed cap, so nothing changes there.
             SmallBuffer!(char, 64) plainPrefix;
             ProgressLine(frame, done, shown, false, elapsed).toString(plainPrefix);
-            const prefixCells = codePointCount(plainPrefix[]);
+            const prefixCells = visibleWidth(plainPrefix[]);
             const budget = width == 0
                 ? 80
                 : (width > prefixCells + 1 ? width - prefixCells - 1 : 0);
