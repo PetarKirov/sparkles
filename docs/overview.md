@@ -15,6 +15,12 @@ builds on it with pretty-printing, UI components, CLI helpers, and process utili
   - [Boxes](#boxes)
   - [Headers](#headers)
   - [OSC 8 Hyperlinks](#osc-8-hyperlinks)
+  - [Meters & Progress](#meters--progress)
+  - [Tree Views](#tree-views)
+  - [Layout Helpers](#layout-helpers)
+- [Live Regions & Task Lists](#live-regions--task-lists)
+- [Interactive Prompts](#interactive-prompts)
+- [Terminal Capabilities & Themes](#terminal-capabilities--themes)
 - [Logger](#logger)
 - [SmallBuffer (@nogc)](#smallbuffer-nogc)
 - [Running Examples](#running-examples)
@@ -424,6 +430,220 @@ Configure via `OscLinkProps`:
 | `terminator` | `OscTerminator.bel` | BEL (`\x07`) or ST (`\x1b\\`) |
 | `id`         | `null`              | Optional link id for grouping |
 
+### Meters & Progress
+
+Proportional bars with eighth-cell precision (`▏▎▍▌▋▊▉█`), a count/max form, an
+ASCII fallback, and the composed `ProgressBar` (determinate) / `ProgressLine`
+(spinner) one-liners that live regions repaint.
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "meterdemo"
+    dependency "sparkles:core-cli" version="*"
++/
+import core.time : msecs;
+import std.stdio : writeln;
+import sparkles.core_cli.ui.meter : meter, meterGlyphs, ProgressBar;
+import sparkles.core_cli.ui.progress : ProgressLine;
+
+void main()
+{
+    writeln("|", meter(0.33, 16), "|");
+    writeln("|", meter(7, 9, 16, meterGlyphs(false)), "|"); // ASCII fallback
+    writeln(ProgressBar(done: 5, total: 40, barWidth: 16));
+    writeln(ProgressLine(frame: 3, done: 12, total: 40, elapsed: 1500.msecs));
+}
+```
+
+```[Output]
+|█████▎          |
+|############----|
+██                5/40
+⠸ 12/40 (1.5s)
+```
+
+### Tree Views
+
+`renderTree` draws `├─`/`└─` guides over flat, pre-ordered `(label, depth)`
+nodes — the storage any depth-first traversal already produces; no recursive
+node objects. The guides compose as a table's first column (see the tree
+example for that variation).
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "treedemo"
+    dependency "sparkles:core-cli" version="*"
++/
+import std.stdio : writeln;
+import sparkles.core_cli.ui.tree : renderTree, TreeNode;
+
+void main()
+{
+    foreach (line; renderTree([
+        TreeNode("src", 0),
+        TreeNode("app.d", 1),
+        TreeNode("ui", 1),
+        TreeNode("table.d", 2),
+        TreeNode("docs", 0),
+    ]))
+        writeln(line);
+}
+```
+
+```[Output]
+src
+├─ app.d
+└─ ui
+   └─ table.d
+docs
+```
+
+### Layout Helpers
+
+`hjoin` zips pre-rendered blocks side by side (top-aligned, padded by visible
+width, so ANSI styling and CJK content line up); `kvList` renders aligned
+label/value lines.
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "layoutdemo"
+    dependency "sparkles:core-cli" version="*"
++/
+import std.stdio : writeln;
+import sparkles.core_cli.ui.box : drawBox;
+import sparkles.core_cli.ui.layout : hjoin, kvList;
+
+void main()
+{
+    writeln(hjoin([
+        drawBox(kvList([["host", "web-01"], ["port", "8080"]]), "server"),
+        drawBox(["ok"], "health"),
+    ]));
+}
+```
+
+```[Output]
+╭──╼ server ╾───╮  ╭──╼ health ╾───╮
+│ host  web-01  │  │ ok            │
+│ port  8080    │  ╰───────────────╯
+╰───────────────╯
+```
+
+## Live Regions & Task Lists
+
+`sparkles.core_cli.ui.live.LiveRegion` repaints a block of lines in place at
+the bottom of the normal scrollback flow — no alternate screen. Every repaint
+is wrapped in DEC 2026 synchronized-output markers (no tearing), rows are
+clamped to the terminal width, and `printAbove` graduates permanent lines into
+the scrollback above the block. On piped output the frames are skipped
+entirely and only the permanent lines appear, so redirected runs see no escape
+codes.
+
+`sparkles.core_cli.ui.tasklist.TaskReporter` drives a checklist through a
+region: `add`/`start`/`succeed`/`fail`/`skip` per task, with each running
+task's output streaming into a bounded tail pane via
+`TaskReporter.output(id, line)` — pair it with
+`sparkles.core_cli.process_utils.runStreaming`, which hands a child process's
+merged output to a sink line by line.
+
+The row renderers are pure, so they are testable (and demoable) without a
+terminal:
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "tasklistdemo"
+    dependency "sparkles:core-cli" version="*"
++/
+import std.stdio : writeln;
+import sparkles.core_cli.ui.tasklist : renderTaskList, TaskItem, TaskStatus;
+import sparkles.core_cli.ui.theme : Theme;
+
+void main()
+{
+    auto items = [
+        TaskItem(label: "fetch", status: TaskStatus.ok), // already in scrollback
+        TaskItem(label: "build", status: TaskStatus.running,
+            tail: ["compiling module 12"]),
+        TaskItem(label: "publish", status: TaskStatus.pending),
+    ];
+    foreach (line; renderTaskList(items, Theme(colors: false)))
+        writeln(line);
+}
+```
+
+```[Output]
+⠋ build
+  compiling module 12
+○ publish
+```
+
+Run [`libs/core-cli/examples/live-tasklist.d`](../libs/core-cli/examples/live-tasklist.d)
+in a terminal for the animated version (and pipe it through `cat` to see the
+escape-free transition log).
+
+## Interactive Prompts
+
+`sparkles.core_cli.prompts` provides line-based `select`, `confirm`, and
+`textInput`. Every prompt takes a `PromptPolicy` — `interactive` asks
+(re-prompting on invalid input), `takeDefault` resolves silently (for `--auto`
+flags or piped stdin), `fail` returns an error — and returns `Expected`, so
+EOF is an error, never an accidental default.
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "promptsdemo"
+    dependency "sparkles:core-cli" version="*"
++/
+import std.stdio : writefln;
+import sparkles.core_cli.prompts;
+import sparkles.core_cli.term_caps : isTerminal, StdStream;
+
+void main()
+{
+    // Interactive on a terminal; takes the defaults when piped (as here).
+    const policy = isTerminal(StdStream.stdin)
+        ? PromptPolicy.interactive : PromptPolicy.takeDefault;
+    auto io = stdioPromptIo();
+
+    auto bump = select("Version bump:", [
+        SelectOption("patch"), SelectOption("minor", "(suggested)"),
+        SelectOption("major"),
+    ], 1, policy, io);
+    auto go = confirm("Push to origin?", defaultYes: true, policy, io);
+    writefln!"bump=%s push=%s"(bump.value + 1, go.value);
+}
+```
+
+```[Output]
+bump=2 push=true
+```
+
+## Terminal Capabilities & Themes
+
+`sparkles.core_cli.term_caps` is the single place the "what can this terminal
+do" decision is made: `terminalSize()` (a `ScreenSize!ushort`; `0` components
+mean unknown), `isTerminal(stream)`, and `detectTermCaps()` — the one-shot
+snapshot combining tty-ness, the color decision (`$NO_COLOR`, `TERM=dumb`,
+`$CLICOLOR_FORCE`; on Windows it also sets the UTF-8 code page and enables VT
+processing), a UTF-8 locale heuristic, and the size. `setTermWindowSizeHandler`
+delivers resize notifications (POSIX `SIGWINCH`).
+
+`sparkles.core_cli.ui.theme` turns a `TermCaps` into rendering decisions:
+`makeTheme(detectTermCaps())` yields a `Theme` with semantic styles
+(`Semantic.success/failure/warning/accent/muted` via `paint`/`mark`), a
+status-glyph vocabulary (`✔ ✖ ⚠ ○ ┄` with ASCII fallbacks), and one
+`BorderStyle` selector (`rounded`/`square`/`ascii`/`double_`/`heavy`) shared by
+`drawBox`, `drawHeader`, and `drawTable` — so a non-UTF-8 terminal degrades
+consistently everywhere. `sparkles.base.term_control` supplies the underlying
+control sequences (`CtlSeq` erase/cursor/alt-screen/synchronized-output
+constants and `writeCursor*`/`DecMode` writers) for anything the components
+don't cover.
+
 ## Logger
 
 The `sparkles.base.logger` module provides `CoreLogger`, a `std.logger.Logger`
@@ -463,11 +683,11 @@ void main()
 -->
 
 ```ansi
-[90m[ 22:24:12[39m | Δt [33m92.8µs[39m | Δtᵢ [33m92.8µs[39m | [32mINF[39m | [2mloggerdemo.d:13[22m ]: [1mListening on port 8080[22m
-[90m[ 22:24:12[39m | Δt [33m185.2µs[39m | Δtᵢ [33m92.4µs[39m | [33mWRN[39m | [2mloggerdemo.d:14[22m ]: [1mDisk usage above 80%[22m
-[90m[ 22:24:12[39m | Δt [33m225.5µs[39m | Δtᵢ [33m40.3µs[39m | [31mERR[39m | [2mloggerdemo.d:15[22m ]: [1mConnection to database lost[22m
-[90m[ 22:24:12[39m | Δt [33m266.7µs[39m | Δtᵢ [33m41.1µs[39m | [1m[31mCRT[39m[22m | [2mloggerdemo.d:16[22m ]: [1mOut of memory[22m
-[90m[ 22:24:12[39m | Δt [33m338.0µs[39m | Δtᵢ [33m71.3µs[39m | [32mINF[39m | [2mloggerdemo.d:19[22m ]: [1mReconnected to db-01.prod:5432[22m
+[90m[ 12:44:39[39m | Δt [33m122.7µs[39m | Δtᵢ [33m122.7µs[39m | [32mINF[39m | [2mloggerdemo.d:13[22m ]: [1mListening on port 8080[22m
+[90m[ 12:44:39[39m | Δt [33m232.9µs[39m | Δtᵢ [33m110.2µs[39m | [33mWRN[39m | [2mloggerdemo.d:14[22m ]: [1mDisk usage above 80%[22m
+[90m[ 12:44:39[39m | Δt [33m274.4µs[39m | Δtᵢ [33m41.5µs[39m | [31mERR[39m | [2mloggerdemo.d:15[22m ]: [1mConnection to database lost[22m
+[90m[ 12:44:39[39m | Δt [33m316.7µs[39m | Δtᵢ [33m42.2µs[39m | [1m[31mCRT[39m[22m | [2mloggerdemo.d:16[22m ]: [1mOut of memory[22m
+[90m[ 12:44:39[39m | Δt [33m388.1µs[39m | Δtᵢ [33m71.4µs[39m | [32mINF[39m | [2mloggerdemo.d:19[22m ]: [1mReconnected to db-01.prod:5432[22m
 ```
 
 ### Features
@@ -546,8 +766,17 @@ Available examples:
 - `color.d` - Style and color palette showcase
 - `logger.d` - Delta-time-prefixed logging (`libs/base/examples/`)
 - `prettyprint.d` - Type formatting demonstration (`libs/base/examples/`)
+- `text-fields.d` - `alignField`/`truncateField` cell-accurate fields (`libs/base/examples/`)
+- `term-control.d` - Redraw-in-place control sequences (`libs/base/examples/`)
 - `styled-template.d` - IES-based template styling
-- `table.d` - Table rendering variations
+- `table.d` - Table rendering gallery (spans, alignment, titles, streaming views)
 - `box.d` - Box layouts with nested content
 - `header.d` - Header styles
 - `osc-link.d` - OSC 8 terminal hyperlinks
+- `theme.d` - Border presets, status glyphs, semantic styles
+- `meter.d` - Meters, progress bars, spinner lines
+- `tree.d` - Tree views (flat nodes; also as a table stub column)
+- `layout.d` - `hjoin` side-by-side blocks and `kvList` receipts
+- `prompts.d` - Interactive select/confirm/input (run in a terminal)
+- `live-tasklist.d` - Live region + task list + streamed child output (run in a terminal)
+- `term-caps.d` - Terminal capability detection and resize handling

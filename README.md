@@ -29,10 +29,13 @@ compatibility; `sparkles:core-cli` builds on it with higher-level CLI tools.
 
 ### What's Inside
 
-- **Base** -- `SmallBuffer`, lifetime helpers, text readers/writers, terminal styling, styled templates, and logging
+- **Base** -- `SmallBuffer`, lifetime helpers, text readers/writers, terminal styling, styled templates, terminal control sequences, and logging
 - **Styled Templates** -- Apply ANSI styles using D's Interpolated Expression Sequences (IES) with a concise `{style text}` syntax
 - **Pretty Printing** -- Colorized, type-aware formatting for any D type via compile-time introspection
-- **UI Components** -- Tables, boxes, headers, and OSC 8 hyperlinks
+- **UI Components** -- Tables (spans, alignment, titles, streaming), boxes, headers, trees, meters/progress bars, key-value lists, horizontal layout, and OSC 8 hyperlinks
+- **Live Rendering** -- Repaint-in-place live regions and task-list checklists with bounded output tails (nix/bazel-style), degrading to a plain transition log when piped
+- **Interactive Prompts** -- `select`/`confirm`/`textInput` with a uniform non-interactive policy for `--auto` flags and piped stdin
+- **Terminal Capabilities** -- One-shot tty/color/unicode/size detection (`detectTermCaps`) and a theme layer with ASCII fallbacks
 - **Semantic Versioning** -- SemVer parsing, normalization, and precedence comparison
 - **Test Runner** -- Parallel `unittest` runner with compile-time (`@ctfe`), `-betterC` (`@betterC`), WebAssembly (`@wasm`), and benchmark (`@benchmark`) modes
 
@@ -191,7 +194,7 @@ void main()
         active: true,
     );
 
-    writeln(prettyPrint(cluster, PrettyPrintOptions!void(useColors: false)));
+    writeln(prettyPrint(cluster, PrettyPrintOptions!void(colored: false)));
 }
 ```
 
@@ -215,7 +218,7 @@ prettyPrint(value, PrettyPrintOptions!void(
     maxDepth: 8,         // recursion limit
     maxItems: 32,        // max array/AA items shown
     softMaxWidth: 80,    // single-line threshold
-    useColors: true,     // ANSI color output
+    colored: true,     // ANSI color output
     useOscLinks: false,  // OSC 8 hyperlinks on type names
 ));
 ```
@@ -288,11 +291,15 @@ void main()
 ╰────────┴────────┴──────╯
 ```
 
-Cells can span columns and rows, columns can be aligned, and separators and
+Cells can span columns and rows, columns can be aligned (including
+`Align.decimal`, which lines a numeric column up on its dot) with per-cell
+overrides, frames can carry a title/footer like `drawBox`'s, and separators and
 glyphs are configurable (`TableProps` / the `stylePresets` registry) — including
 `headerRows` / `headerCols` for a distinct rule setting off the header rows and
 the stub (row-header) column. Both the dense `Cell[][]` form and a sparse
-`Placement[]` form are accepted:
+`Placement[]` form are accepted, and `drawTableLines` / `drawTableChunks` /
+the writer overload emit the same bytes lazily for live regions and paced
+output:
 
 ```d
 #!/usr/bin/env dub
@@ -426,6 +433,199 @@ void main()
 }
 ```
 
+```[Output]
+Example
+D Language
+```
+
+#### Meters & Progress
+
+Proportional bars with eighth-cell precision, plus composed `done/total`
+progress lines:
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "readme_meters"
+    dependency "sparkles:core-cli" version="*"
++/
+
+import std.stdio : writeln;
+
+import sparkles.core_cli.ui.meter : meter, ProgressBar;
+
+void main()
+{
+    writeln("|", meter(0.33, 16), "|");
+    writeln("|", meter(7, 9, 16), "|");
+    writeln(ProgressBar(done: 5, total: 40, barWidth: 16));
+}
+```
+
+```[Output]
+|█████▎          |
+|████████████▌   |
+██                5/40
+```
+
+#### Tree Views
+
+Trees render from flat, pre-ordered `(label, depth)` nodes — no recursive node
+objects, so any depth-first walk displays directly (and the guides compose as a
+table's first column):
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "readme_tree"
+    dependency "sparkles:core-cli" version="*"
++/
+
+import std.stdio : writeln;
+
+import sparkles.core_cli.ui.tree : renderTree, TreeNode;
+
+void main()
+{
+    foreach (line; renderTree([
+        TreeNode("apps", 0),
+        TreeNode("ci", 1),
+        TreeNode("release", 1),
+        TreeNode("src", 2),
+        TreeNode("libs", 0),
+    ]))
+        writeln(line);
+}
+```
+
+```[Output]
+apps
+├─ ci
+└─ release
+   └─ src
+libs
+```
+
+#### Live Task Lists
+
+`LiveRegion` repaints a block of lines in place at the bottom of normal
+scrollback (frames wrapped in DEC 2026 synchronized-output markers, completed
+lines graduating into the scrollback above); `TaskReporter` drives a checklist
+through it, with each running task's child-process output streaming into a
+bounded tail pane (`runStreaming`). On piped output only the transition log
+remains — no escape codes. The row renderers are pure and theme-driven:
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "readme_tasklist"
+    dependency "sparkles:core-cli" version="*"
++/
+
+import std.stdio : writeln;
+
+import sparkles.core_cli.ui.tasklist : renderTaskList, TaskItem, TaskStatus;
+import sparkles.core_cli.ui.theme : Theme;
+
+void main()
+{
+    // The pure renderer (a real app drives TaskReporter over a LiveRegion —
+    // see libs/core-cli/examples/live-tasklist.d for the animated version).
+    auto items = [
+        TaskItem(label: "fetch dependencies", status: TaskStatus.ok),
+        TaskItem(label: "build", status: TaskStatus.running,
+            tail: ["compiling module 11", "compiling module 12"]),
+        TaskItem(label: "publish", status: TaskStatus.pending),
+    ];
+    foreach (line; renderTaskList(items, Theme(colors: false)))
+        writeln(line);
+}
+```
+
+```[Output]
+⠋ build
+  compiling module 11
+  compiling module 12
+○ publish
+```
+
+#### Layout Helpers
+
+`kvList` renders aligned label/value lines; `hjoin` zips pre-rendered blocks
+side by side (padded by visible width, so styled/CJK content lines up):
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "readme_layout"
+    dependency "sparkles:core-cli" version="*"
++/
+
+import std.stdio : writeln;
+
+import sparkles.core_cli.ui.box : BoxProps, drawBox;
+import sparkles.core_cli.ui.layout : hjoin, kvList;
+
+void main()
+{
+    auto receipt = kvList([
+        ["tag", "v0.6.0 (annotated)"],
+        ["pushed", "origin ✔"],
+    ]);
+    writeln(hjoin([
+        drawBox(receipt, "released", BoxProps(footer: "next: publish")),
+        "notes:\n2 feats\n1 fix",
+    ]));
+}
+```
+
+```[Output]
+╭──╼ released ╾──────────────╮  notes:
+│ tag     v0.6.0 (annotated) │  2 feats
+│ pushed  origin ✔           │  1 fix
+╰──╼ next: publish ╾─────────╯
+```
+
+#### Interactive Prompts
+
+Line-based `select` / `confirm` / `textInput`, each with a `PromptPolicy` so
+`--auto` runs and piped stdin resolve to defaults (or fail) uniformly. EOF is
+an error, never an accidental default:
+
+```d
+#!/usr/bin/env dub
+/+ dub.sdl:
+    name "readme_prompts"
+    dependency "sparkles:core-cli" version="*"
++/
+
+import std.stdio : writefln;
+
+import sparkles.core_cli.prompts;
+import sparkles.core_cli.term_caps : isTerminal, StdStream;
+
+void main()
+{
+    // Interactive on a terminal; silently takes the defaults when piped
+    // (which is how this example runs under CI).
+    const policy = isTerminal(StdStream.stdin)
+        ? PromptPolicy.interactive : PromptPolicy.takeDefault;
+    auto io = stdioPromptIo();
+
+    auto bump = select("Version bump:", [
+        SelectOption("patch", "v0.5.0 → v0.5.1"),
+        SelectOption("minor", "v0.5.0 → v0.6.0  (suggested)"),
+        SelectOption("major", "v0.5.0 → v1.0.0"),
+    ], 1, policy, io);
+    auto go = confirm("Push to origin?", defaultYes: true, policy, io);
+    writefln!"bump=%s push=%s"(bump.value + 1, go.value);
+}
+```
+
+```[Output]
+bump=2 push=true
+```
+
 ### Logger
 
 Delta-time-prefixed logging via `DeltaTimeLogger`, a `std.logger.Logger` subclass. Each log line shows wall-clock time, elapsed time since start, and delta since the previous entry.
@@ -458,9 +658,9 @@ void main()
 -->
 
 ```[Output]
-[ 14:32:01 | Δt 0ms   | Δtᵢ 0ms   | INF | app.d:17 ]: Listening on port 8080
-[ 14:32:01 | Δt 5ms   | Δtᵢ 5ms   | WRN | app.d:18 ]: Disk usage above 80%
-[ 14:32:01 | Δt 12ms  | Δtᵢ 7ms   | ERR | app.d:19 ]: Connection to database lost
+[ 12:42:19 | Δt 128.5µs | Δtᵢ 128.5µs | INF | readme_logger.d:15 ]: Listening on port 8080
+[ 12:42:19 | Δt 240.7µs | Δtᵢ 112.1µs | WRN | readme_logger.d:16 ]: Disk usage above 80%
+[ 12:42:19 | Δt 280.7µs | Δtᵢ 40.0µs | ERR | readme_logger.d:17 ]: Connection to database lost
 ```
 
 The colored output uses `writeStyled` IES for ANSI styling -- log levels are color-coded (green for info, yellow for warnings, red for errors, bold+red for critical/fatal), durations are highlighted, and file locations are dimmed.
@@ -571,6 +771,8 @@ Runnable examples are in [`libs/base/examples/`](libs/base/examples/) and
 ```bash
 dub run --single libs/base/examples/logger.d
 dub run --single libs/base/examples/prettyprint.d
+dub run --single libs/base/examples/text-fields.d
+dub run --single libs/base/examples/term-control.d
 
 dub run --single libs/core-cli/examples/styled-template.d
 dub run --single libs/core-cli/examples/table.d
@@ -578,6 +780,13 @@ dub run --single libs/core-cli/examples/box.d
 dub run --single libs/core-cli/examples/header.d
 dub run --single libs/core-cli/examples/osc-link.d
 dub run --single libs/core-cli/examples/color.d
+dub run --single libs/core-cli/examples/theme.d
+dub run --single libs/core-cli/examples/meter.d
+dub run --single libs/core-cli/examples/tree.d
+dub run --single libs/core-cli/examples/layout.d
+dub run --single libs/core-cli/examples/prompts.d       # interactive
+dub run --single libs/core-cli/examples/live-tasklist.d # animated
+dub run --single libs/core-cli/examples/term-caps.d
 ```
 
 ## Building & Testing

@@ -46,6 +46,15 @@ equivalent `drawTable(…, TableProps(…))` call.
 > nudges the browser toward full-width metrics, but small visual differences from a
 > real terminal are a font-rendering artifact, not a `drawTable` bug.
 
-For the full API — spans, alignment, glyph presets, custom glyphs, validation — see
-the module `libs/core-cli/src/sparkles/core_cli/ui/table/` and the runnable demo
-`libs/core-cli/examples/table.d`.
+Beyond what the controls expose, `TableProps` also carries a frame **title** and
+**footer** (spliced into the borders like `drawBox`'s, ellipsis-truncated on
+narrow frames), `Align.decimal` (a numeric column aligns on its dot), and
+per-cell `halign`/`valign` overrides on `Cell`/`Placement` (e.g. a centered
+colspan banner). The same layout also renders lazily: `drawTableLines` (a
+forward range of lines, ready for a `LiveRegion` frame), `drawTableChunks`
+(cell-by-cell pacing), and a writer overload all emit `drawTable`'s exact
+bytes.
+
+For the full API — spans, alignment, glyph presets, custom glyphs, validation,
+streaming — see the module `libs/core-cli/src/sparkles/core_cli/ui/table/` and
+the runnable gallery `libs/core-cli/examples/table.d`.
