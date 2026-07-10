@@ -691,8 +691,11 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         if (!allKeys.canFind(k))
             stderr.writeln("--group-by: no @benchmark case has label '", k, "'");
 
+    // Ungrouped runs stream one table per *test*; key by the module-qualified
+    // fullName so two @benchmark tests sharing a display name in different
+    // modules don't merge into one table.
     foreach (ref s; all)
-        s.key = keys.length ? groupKeyOf(s.c.labels, keys) : s.test.name;
+        s.key = keys.length ? groupKeyOf(s.c.labels, keys) : s.test.fullName;
 
     // `sc:<name>` (the displayed header) and `syscalls:<name>` (the column id
     // `sortValue` matches on) are the same column; sort by the canonical id.
