@@ -561,13 +561,12 @@ string formatBenchTable(in BenchStats[] rows, bool colored, string metricFilter 
     {
         const key = groupKeyOf(rows[order[i]].labels, groupKeys);
         const shownKey = groupKeyDisplay(key); // US separator → '/' for the header
-        GridCell[][] grid = [
-            // Header band: a rowspan-2 stub cell, value headers spanning it too.
-            [GridCell(render(colored, i"{dim benchmark:} {bold $(shownKey)}") ~ "\n"
-                    ~ render(colored, i"{dim implementation:}"), rowSpan: 2)]
-                ~ toGridRow(restHeaders, rowSpan: 2)
-                ~ toGridRow(valueHeaders, rowSpan: 2),
-            [], // the second header row is fully covered by the rowspans above
+        // The group name rides in the table title (spliced into the top border
+        // by `drawTable`, hoisted as a heading line by the plain fallback), so
+        // the header is one ordinary row with `implementation:` as the stub.
+        const title = render(colored, i"{dim benchmark:} {bold $(shownKey)}");
+        string[][] cells = [
+            render(colored, i"{dim implementation:}") ~ restHeaders ~ valueHeaders,
         ];
         while (i < order.length && groupKeyOf(rows[order[i]].labels, groupKeys) == key)
         {
@@ -575,13 +574,12 @@ string formatBenchTable(in BenchStats[] rows, bool colored, string metricFilter 
             string[] restVals;
             foreach (k; restKeys)
                 restVals ~= row.labels.get(k, "");
-            grid ~= GridCell(row.name) ~ toGridRow(restVals)
-                ~ toGridRow(valueCells(row));
+            cells ~= row.name ~ restVals ~ valueCells(row);
             i++;
         }
         if (result.length)
             result ~= "\n";
-        result ~= renderCellGrid(grid, aligns, headerRows: 2);
+        result ~= renderCells(cells, aligns, headerRows: 1, title: title);
     }
     return result;
 }
@@ -649,7 +647,11 @@ unittest
 
     const fast = dotColumn("110.00ns");
     const slow = dotColumn("1.5µs");
-    assert(fast > 0 && fast == slow, rendered);
+    assert(fast > 0 && slow > 0, rendered);
+    // Only the gated drawTable build resolves a shared dot column; the plain
+    // fallback deliberately degrades decimal to right alignment.
+    static if (hasCoreCliUi)
+        assert(fast == slow, rendered);
 }
 
 @("formatBenchTable.grouped")
@@ -672,15 +674,17 @@ unittest
         row("asdf", "twitter", 20),
     ];
 
-    // --group-by=dataset,operation → one table per group; the stub header carries
-    // the group title and an `implementation:` label, rows list the engine `name`.
+    // --group-by=dataset,operation → one table per group; the group name rides
+    // in the table title, `implementation:` heads the stub column, and rows
+    // list the engine `name`.
     const rendered = formatBenchTable(rows, false, null, null, ["dataset", "operation"]);
     assert(rendered.canFind("benchmark: canada/parse"));
     assert(rendered.canFind("benchmark: twitter/parse"));
     assert(rendered.canFind("implementation:"));
     assert(rendered.canFind("mir-ion"));
-    // Two tables → two top borders.
-    assert(rendered.indexOf("╭") != rendered.indexOf("╭", rendered.indexOf("╭") + 1));
+    // Two tables → two titled top borders (heading lines in the fallback).
+    assert(rendered.indexOf("benchmark:")
+        != rendered.indexOf("benchmark:", rendered.indexOf("benchmark:") + 1));
     // Within the canada group, the faster engine (mir-ion, 10) precedes asdf (30).
     assert(rendered.indexOf("mir-ion") < rendered.indexOf("asdf"));
 }
@@ -764,20 +768,42 @@ string formatMetricCatalog(in MetricDescriptor[] cat, bool colored) @system // r
 /// alignment and the header-rule row count; `Align` lives in `base`, so this
 /// signature stays valid without `core-cli` (`TableProps` is built strictly
 /// inside the capability gate), and the fallback honors right/decimal columns
-/// as plain right alignment.
+/// as plain right alignment. `title` (may be styled) is spliced into the top
+/// border — `╭──╼ benchmark: canada ╾──╮` — or, with no border to interrupt,
+/// hoisted as a heading line above the plain fallback.
 package string renderCells(
-    string[][] cells, in Align[] aligns = null, size_t headerRows = 0)
+    string[][] cells, in Align[] aligns = null, size_t headerRows = 0,
+    string title = null)
 @system // drawTable is @system
 {
     static if (hasCoreCliUi)
     {
         import sparkles.core_cli.ui.table : drawTable, TableProps;
 
-        return drawTable(cells,
-            TableProps(headerRows: headerRows, columnAligns: aligns.dup));
+        return drawTable(cells, TableProps(
+            headerRows: headerRows, columnAligns: aligns.dup, title: title));
     }
     else
-        return alignColumns(cells, aligns);
+    {
+        auto table = alignColumns(cells, aligns);
+        return title.length ? title ~ "\n" ~ table : table;
+    }
+}
+
+/// Both renderings surface a `title`: the gated build splices it into the top
+/// border (given a rule wide enough to carry the label — bench tables always
+/// are); the fallback hoists it as a heading line. Either way it precedes the
+/// cells, so this pins the property common to both builds.
+@("reporting.renderCells.titled")
+@system
+unittest
+{
+    import std.string : indexOf;
+
+    const rendered = renderCells([["one sufficiently wide header"], ["v"]], null,
+        headerRows: 1, title: "benchmark: canada");
+    assert(rendered.indexOf("benchmark: canada") >= 0, rendered);
+    assert(rendered.indexOf("benchmark: canada") < rendered.indexOf("v"), rendered);
 }
 
 /// A duration/count formatted for a benchmark timing column: sub-microsecond
@@ -792,110 +818,6 @@ private string benchNs(double value) @safe
     return value < 1_000
         ? format!"%.2fns"(value)
         : formatDuration(nsecs(value.lrint));
-}
-
-/// A span-capable table cell, decoupled from `core-cli`'s `Cell` so the type is
-/// usable even in builds without `core-cli` (where it degrades to plain text).
-package struct GridCell
-{
-    string content;
-    size_t colSpan = 1;
-    size_t rowSpan = 1;
-}
-
-/// Lifts a row of plain strings to `GridCell`s, all sharing `rowSpan` (used to
-/// make value headers span the two-row group-table header band).
-private GridCell[] toGridRow(in string[] contents, size_t rowSpan = 1) @safe
-{
-    import std.algorithm.iteration : map;
-    import std.array : array;
-
-    return contents.map!(c => GridCell(c, rowSpan: rowSpan)).array;
-}
-
-/// Renders a span-capable `GridCell[][]` grid via `core-cli`'s `drawTable` when
-/// available (honoring spans, `headerRows`, and per-column alignment), or a
-/// plain space-aligned fallback that ignores spans otherwise.
-private string renderCellGrid(GridCell[][] grid, in Align[] aligns, size_t headerRows) @system
-{
-    static if (hasCoreCliUi)
-    {
-        import sparkles.core_cli.ui.table : Cell, drawTable, TableProps;
-
-        auto cells = new Cell[][](grid.length);
-        foreach (r, row; grid)
-        {
-            cells[r] = new Cell[row.length];
-            foreach (c, gc; row)
-                cells[r][c] = Cell(gc.content, colSpan: gc.colSpan, rowSpan: gc.rowSpan);
-        }
-
-        return drawTable(cells, TableProps(headerRows: headerRows, columnAligns: aligns.dup));
-    }
-    else
-        return renderCellGridPlain(grid, headerRows);
-}
-
-/// The span-less plain rendering used when `core-cli`'s `drawTable` is absent
-/// (e.g. `base`'s own bench build). Emits each cell's text, dropping empty
-/// (fully covered) rows. A multi-line header cell — the grouped stub
-/// `"benchmark: <key>\nimplementation:"` — would otherwise put a newline inside a
-/// single `alignColumns` column and break the rectangular layout, so its leading
-/// lines are hoisted into a heading above the table and only the last line stays
-/// as the column header. Always compiled (not behind the `hasCoreCliUi`
-/// static-if) so it stays unit-testable in this package's own build.
-private string renderCellGridPlain(GridCell[][] grid, size_t headerRows) @safe
-{
-    import std.string : lastIndexOf;
-
-    string heading;
-    string[][] flat;
-    foreach (r, row; grid)
-    {
-        if (row.length == 0)
-            continue; // fully covered by a rowspan above
-        string[] cells;
-        foreach (gc; row)
-        {
-            string content = gc.content;
-            if (r < headerRows)
-            {
-                const nl = content.lastIndexOf('\n');
-                if (nl >= 0)
-                {
-                    heading ~= (heading.length ? "\n" : "") ~ content[0 .. nl];
-                    content = content[nl + 1 .. $];
-                }
-            }
-            cells ~= content;
-        }
-        flat ~= cells;
-    }
-    return (heading.length ? heading ~ "\n" : "") ~ alignColumns(flat);
-}
-
-@("reporting.renderCellGridPlain.hoistsMultiLineStub")
-@safe
-unittest
-{
-    import std.algorithm.searching : canFind;
-    import std.string : splitLines, startsWith;
-
-    // The grouped header is a rowspan-2 stub "benchmark: k\nimplementation:" over
-    // an empty (covered) second row. The plain fallback must hoist the group line
-    // above the table and keep every table row rectangular (no embedded newline).
-    GridCell[][] grid = [
-        [GridCell("benchmark: twitter\nimplementation:", rowSpan: 2), GridCell("iters", rowSpan: 2)],
-        [],
-        [GridCell("wired"), GridCell("5")],
-    ];
-    const rendered = renderCellGridPlain(grid, 2);
-    assert(rendered.startsWith("benchmark: twitter\n"), rendered);
-    auto lines = rendered.splitLines;
-    // The group heading is hoisted, not fused into a data column.
-    assert(!lines[1 .. $].canFind!(l => l.canFind("benchmark:")), rendered);
-    assert(lines.canFind!(l => l.canFind("implementation:")), rendered);
-    assert(lines.canFind!(l => l.canFind("wired")), rendered);
 }
 
 /// The `--ctfe-trace` report: compile-time cost of each `@ctfe` test.
