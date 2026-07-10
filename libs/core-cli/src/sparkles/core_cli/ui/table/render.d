@@ -522,7 +522,6 @@ private string separatorLine(in SlotGrid g, in size_t[] w, in TableProps p, size
     }
     if (p.border)
         line ~= junctionGlyph(g, p, i, g.numCols);
-    line ~= '\n';
     return line[];
 }
 
@@ -606,78 +605,76 @@ private size_t[] resolveRowHeights(in SlotGrid g, in string[][] lines) @safe pur
     return h;
 }
 
-/// Render all text lines of grid row `r` (its height is `heights[r]`). Each anchor
+/// Render text line `t` of grid row `r` (`t < layout.rowHeights[r]`). Each anchor
 /// emits its wrapped line for the current text line in its content band, or a blank
 /// field otherwise, separated by interior verticals where a real boundary sits.
-private string bodyRow(in SlotGrid g, in size_t[] w, in string[][] lines,
-    in size_t[] heights, in TableProps p, size_t r, in size_t[] decimalPads = null)
+/// No trailing newline — emission joins lines (see `lineDescs`/`renderLine`).
+private string bodyLine(in TableLayout lay, size_t r, size_t t)
 {
+    const g = lay.grid;
+    const p = lay.props;
     auto out_ = appender!string;
-    foreach (t; 0 .. heights[r])
+    if (p.border)
+        out_ ~= p.glyphs.verticalLine;
+    size_t c = 0;
+    while (c < g.numCols)
     {
-        if (p.border)
-            out_ ~= p.glyphs.verticalLine;
-        size_t c = 0;
-        while (c < g.numCols)
+        const idx = owner(lay.grid, r, c);
+        const a = g.anchors[idx];
+        const f = contentField(a, lay.widths, p, g.numCols);
+        // This anchor's line index at row r, text line t: the sum of the heights
+        // of its bands above r, plus t. For an extent-1 cell that is just t; a
+        // rowspan cell's content flows down across its stacked bands.
+        size_t li = t;
+        foreach (rr; a.row .. r)
+            li += lay.rowHeights[rr];
+        // Vertical alignment shifts the content block down within the anchor's
+        // combined height; horizontal alignment is applied per line.
+        size_t hh = 0;
+        foreach (rr; a.row .. a.row + a.rowSpan)
+            hh += lay.rowHeights[rr];
+        const top = padTop(hh, lay.cellLines[idx].length, effectiveVAlign(a.col, p));
+        out_ ~= ' ';
+        if (li >= top && li - top < lay.cellLines[idx].length)
         {
-            const idx = owner(g, r, c);
-            const a = g.anchors[idx];
-            const f = contentField(a, w, p, g.numCols);
-            // This anchor's line index at row r, text line t: the sum of the heights
-            // of its bands above r, plus t. For an extent-1 cell that is just t; a
-            // rowspan cell's content flows down across its stacked bands.
-            size_t li = t;
-            foreach (rr; a.row .. r)
-                li += heights[rr];
-            // Vertical alignment shifts the content block down within the anchor's
-            // combined height; horizontal alignment is applied per line.
-            size_t hh = 0;
-            foreach (rr; a.row .. a.row + a.rowSpan)
-                hh += heights[rr];
-            const top = padTop(hh, lines[idx].length, effectiveVAlign(a.col, p));
-            out_ ~= ' ';
-            if (li >= top && li - top < lines[idx].length)
+            // A decimal column's trailing pad shifts the right-aligned value
+            // left so every dot in the column shares a cell.
+            const dpad = lay.decimalPads.length ? lay.decimalPads[idx] : 0;
+            if (dpad > 0 && dpad < f)
             {
-                // A decimal column's trailing pad shifts the right-aligned value
-                // left so every dot in the column shares a cell.
-                const dpad = decimalPads.length ? decimalPads[idx] : 0;
-                if (dpad > 0 && dpad < f)
-                {
-                    alignField(out_, lines[idx][li - top], f - dpad, Align.right);
-                    foreach (_; 0 .. dpad)
-                        out_ ~= ' ';
-                }
-                else
-                    alignField(out_, lines[idx][li - top], f, effectiveAlign(a.col, p));
+                alignField(out_, lay.cellLines[idx][li - top], f - dpad, Align.right);
+                foreach (_; 0 .. dpad)
+                    out_ ~= ' ';
             }
             else
-                foreach (_; 0 .. f)
-                    out_ ~= ' ';
-            out_ ~= ' ';
-            c += a.colSpan;
-            if (c < g.numCols && vSeg(g, p, r, c))
-                out_ ~= isHeaderCol(p, c, g.numCols)
-                    ? p.glyphs.headerCol.verticalLine : p.glyphs.verticalLine;
+                alignField(out_, lay.cellLines[idx][li - top], f, effectiveAlign(a.col, p));
         }
-        if (p.border)
-            out_ ~= p.glyphs.verticalLine;
-        out_ ~= '\n';
+        else
+            foreach (_; 0 .. f)
+                out_ ~= ' ';
+        out_ ~= ' ';
+        c += a.colSpan;
+        if (c < g.numCols && vSeg(lay.grid, p, r, c))
+            out_ ~= isHeaderCol(p, c, g.numCols)
+                ? p.glyphs.headerCol.verticalLine : p.glyphs.verticalLine;
     }
+    if (p.border)
+        out_ ~= p.glyphs.verticalLine;
     return out_[];
 }
 
-/// Splice `label`, wrapped in the title decorations, into a border `rule` (which
-/// ends in `\n`): `╭──╼ Label ╾─┬──╮`. The label is truncated with `…` when the
-/// rule is too narrow; junction glyphs under the label are simply covered (the
-/// same policy as `drawBox`, whose title also interrupts its top rule). `label`
-/// may be styled — it is measured by visible width and spliced opaquely between
-/// plain-`dchar` border runs.
+/// Splice `label`, wrapped in the title decorations, into a border `rule` (a
+/// bare line, no newline): `╭──╼ Label ╾─┬──╮`. The label is truncated with `…`
+/// when the rule is too narrow; junction glyphs under the label are simply
+/// covered (the same policy as `drawBox`, whose title also interrupts its top
+/// rule). `label` may be styled — it is measured by visible width and spliced
+/// opaquely between plain-`dchar` border runs.
 private string spliceIntoRule(string rule, string label, in TableProps p)
 {
     import std.conv : to;
     import sparkles.base.text.width : truncateField;
 
-    auto chars = rule[0 .. $ - 1].to!(dchar[]); // border glyphs are 1 cell each
+    auto chars = rule.to!(dchar[]); // border glyphs are 1 cell each
     enum lead = 3;         // corner + two fill cells before the decoration
     enum decoration = 4;   // prefix + space … space + suffix
     enum trail = 2;        // at least one fill cell + the closing corner
@@ -696,43 +693,117 @@ private string spliceIntoRule(string rule, string label, in TableProps p)
     out_ ~= ' ';
     out_ ~= p.glyphs.titleSuffix;
     out_ ~= chars[lead + decoration + labelWidth .. $].to!string;
-    out_ ~= '\n';
     return out_[];
 }
 
-/// Render a resolved grid: top border (carrying `title` when set), then each
-/// (multi-line) body row with interior rules between rows when `rowSeparators`,
-/// then the bottom border (carrying `footer`). With `border: false` a title/
-/// footer degrade to plain lines above/below the rows.
-private string drawGrid(in SlotGrid g, in TableProps p)
+/// The fully-resolved layout of one table: the grid plus everything the
+/// emission stage needs, computed once ("eager layout") so that line/chunk
+/// production can be lazy. Shared by the eager `drawGrid` and the streaming
+/// views, which therefore cannot drift.
+package(sparkles.core_cli.ui.table) struct TableLayout
 {
-    if (g.numRows == 0 || g.numCols == 0)
-        return "";
+    SlotGrid grid;
+    TableProps props;
+    size_t[] decimalPads;   /// per-anchor `Align.decimal` trailing pads
+    size_t[] widths;        /// per-column content widths
+    string[][] cellLines;   /// per-anchor wrapped content lines
+    size_t[] rowHeights;    /// per grid-row text height
+}
+
+/// Resolve `g` under `p` into a $(LREF TableLayout).
+package(sparkles.core_cli.ui.table) TableLayout computeTableLayout(
+    SlotGrid g, TableProps p)
+{
     auto decimalPads = anchorDecimalPads(g, p);
-    auto w = resolveColumnWidths(g, p, decimalPads);
-    auto lines = wrapCells(g, w, p);
-    auto heights = resolveRowHeights(g, lines);
-    auto out_ = appender!string;
+    auto widths = resolveColumnWidths(g, p, decimalPads);
+    auto cellLines = wrapCells(g, widths, p);
+    auto rowHeights = resolveRowHeights(g, cellLines);
+    return TableLayout(g, p, decimalPads, widths, cellLines, rowHeights);
+}
+
+/// What one output line of a rendered table is (see $(LREF lineDescs)).
+private enum LineKind : ubyte
+{
+    topRule,     /// top border, carrying the title when set
+    titlePlain,  /// `border: false` title as a plain line
+    body,        /// text line `t` of grid row `r`
+    rule,        /// interior separator above grid row `r`
+    bottomRule,  /// bottom border, carrying the footer when set
+    footerPlain, /// `border: false` footer as a plain line
+}
+
+/// ditto
+private struct LineDesc
+{
+    LineKind kind;
+    size_t r, t;
+}
+
+/// The table's output lines as descriptors, in order — the single source of
+/// truth both the eager renderer and the lazy line/chunk views walk, so the
+/// two cannot drift. Empty grid → empty (drawTable's historical `""`).
+private LineDesc[] lineDescs(in TableLayout lay) @safe pure
+{
+    const g = lay.grid;
+    const p = lay.props;
+    if (g.numRows == 0 || g.numCols == 0)
+        return null;
+
+    LineDesc[] descs;
     if (p.border)
-    {
-        auto top = separatorLine(g, w, p, 0);
-        out_ ~= p.title.length ? spliceIntoRule(top, p.title, p) : top;
-    }
+        descs ~= LineDesc(LineKind.topRule);
     else if (p.title.length)
-        out_ ~= p.title ~ "\n";
+        descs ~= LineDesc(LineKind.titlePlain);
     foreach (r; 0 .. g.numRows)
     {
-        out_ ~= bodyRow(g, w, lines, heights, p, r, decimalPads);
-        if (r + 1 < g.numRows && (p.rowSeparators || (p.headerRows > 0 && r + 1 == p.headerRows)))
-            out_ ~= separatorLine(g, w, p, r + 1);
+        foreach (t; 0 .. lay.rowHeights[r])
+            descs ~= LineDesc(LineKind.body, r, t);
+        if (r + 1 < g.numRows
+                && (p.rowSeparators || (p.headerRows > 0 && r + 1 == p.headerRows)))
+            descs ~= LineDesc(LineKind.rule, r + 1);
     }
     if (p.border)
-    {
-        auto bottom = separatorLine(g, w, p, g.numRows);
-        out_ ~= p.footer.length ? spliceIntoRule(bottom, p.footer, p) : bottom;
-    }
+        descs ~= LineDesc(LineKind.bottomRule);
     else if (p.footer.length)
-        out_ ~= p.footer ~ "\n";
+        descs ~= LineDesc(LineKind.footerPlain);
+    return descs;
+}
+
+/// Render one described line (no trailing newline).
+private string renderLine(in TableLayout lay, in LineDesc d)
+{
+    const p = lay.props;
+    final switch (d.kind)
+    {
+        case LineKind.topRule:
+            auto top = separatorLine(lay.grid, lay.widths, p, 0);
+            return p.title.length ? spliceIntoRule(top, p.title, p) : top;
+        case LineKind.titlePlain:
+            return p.title;
+        case LineKind.body:
+            return bodyLine(lay, d.r, d.t);
+        case LineKind.rule:
+            return separatorLine(lay.grid, lay.widths, p, d.r);
+        case LineKind.bottomRule:
+            auto bottom = separatorLine(lay.grid, lay.widths, p, lay.grid.numRows);
+            return p.footer.length ? spliceIntoRule(bottom, p.footer, p) : bottom;
+        case LineKind.footerPlain:
+            return p.footer;
+    }
+}
+
+/// Render a resolved grid eagerly: walk the line descriptors and join with
+/// newlines (every line, including the last, is terminated — drawTable's
+/// historical shape).
+private string drawGrid(SlotGrid g, TableProps p)
+{
+    auto lay = computeTableLayout(g, p);
+    auto out_ = appender!string;
+    foreach (d; lineDescs(lay))
+    {
+        out_ ~= renderLine(lay, d);
+        out_ ~= '\n';
+    }
     return out_[];
 }
 
