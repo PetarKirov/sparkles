@@ -193,9 +193,12 @@ string formatResultLine(in TestResult result, bool colored, bool verbose, uint w
     const test = result.test;
     const name = test.name;
     const succeeded = result.succeeded;
+    const skipped = result.skipped;
 
     string build(string moduleName) @safe
     {
+        if (skipped)
+            return render(colored, i" {yellow ⊘} {dim $(moduleName)} $(name)");
         return succeeded
             ? render(colored, i" {green ✓} {dim $(moduleName)} $(name)")
             : render(colored, i" {bold.red ✗} {dim $(moduleName)} {bold $(name)}");
@@ -204,6 +207,10 @@ string formatResultLine(in TestResult result, bool colored, bool verbose, uint w
     // Truncation applies only to the compact (non-verbose) line. `.idup` drops
     // the conservative `return scope` on `moduleName` (it is GC-backed already).
     auto line = verbose ? build(test.moduleName) : fitWidth(&build, test.moduleName.idup, width);
+
+    // The reason is the point of surfacing a skip — always shown.
+    if (skipped && result.skipReason.length)
+        line ~= render(colored, i" {dim ($(result.skipReason))}");
 
     if (verbose)
     {
@@ -354,6 +361,7 @@ struct RunTotals
 {
     size_t passed;
     size_t failed;
+    size_t skipped; /// tests that called `skipTest` — neither passed nor failed
     size_t ctfePassed;
     size_t benchSkipped;
 }
@@ -368,6 +376,9 @@ string formatSummary(in RunTotals totals, Duration elapsed, bool colored) @safe
         ? render(colored, i", {bold.red $(totals.failed) failed}")
         : render(colored, i", $(totals.failed) failed");
 
+    // Only when non-zero, so existing pinned outputs stay byte-identical.
+    if (totals.skipped)
+        line ~= render(colored, i", {yellow $(totals.skipped) skipped}");
     if (totals.ctfePassed)
         line ~= render(colored, i", {cyan $(totals.ctfePassed) compile-time}");
     if (totals.benchSkipped)
@@ -389,6 +400,20 @@ unittest
     assert(formatSummary(
             RunTotals(passed: 3, failed: 1, ctfePassed: 2, benchSkipped: 1), 12.msecs, false) ==
         "Summary: 3 passed, 1 failed, 2 compile-time, 1 benchmarks (run with --bench) in 12.0ms");
+    assert(formatSummary(RunTotals(passed: 3, failed: 0, skipped: 2), 12.msecs, false) ==
+        "Summary: 3 passed, 0 failed, 2 skipped in 12.0ms");
+}
+
+@("formatResultLine.skipped")
+@safe
+unittest
+{
+    auto result = TestResult(
+        test: Test(fullName: "pkg.mod.__unittest_L1_C1", name: "case"),
+        skipped: true,
+        skipReason: "no perf counters",
+    );
+    assert(formatResultLine(result, false, false) == " ⊘ pkg.mod case (no perf counters)");
 }
 
 /// The benchmark report as a table: name, iterations/sample, median, ±MAD, min,
@@ -455,7 +480,10 @@ string formatBenchTable(in BenchStats[] rows, bool colored, string metricFilter 
 
         if (row.error.length)
         {
-            string[] errCols = ["—", render(colored, i"{red $(row.error)}")];
+            const message = row.skipped
+                ? render(colored, i"{yellow $(row.error)}")
+                : render(colored, i"{red $(row.error)}");
+            string[] errCols = ["—", message];
             while (errCols.length < valueHeaders.length)
                 errCols ~= "—";
             return errCols;

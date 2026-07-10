@@ -4,14 +4,17 @@
 module sparkles.test_runner.execution;
 
 import sparkles.test_runner.model : Test, TestResult, Thrown;
+import sparkles.test_runner.skip : TestSkipped;
 
 /// Runs one test, capturing anything it throws.
 ///
 /// Almost everything a test throws — `Exception`s, `AssertError`s, and other
 /// `Error`s such as `RangeError` (whose semantics are well-defined in D) — is
 /// recorded (with its full chain and stack traces) as a failure, so one broken
-/// test never aborts the rest of the parallel run. Only `OutOfMemoryError`
-/// indicates a genuinely broken process state and is re-thrown.
+/// test never aborts the rest of the parallel run. `TestSkipped` (from
+/// `skipTest`) records the test as skipped, not failed. Only
+/// `OutOfMemoryError` indicates a genuinely broken process state and is
+/// re-thrown.
 TestResult executeTest(Test test)
 {
     import core.time : MonoTime;
@@ -26,10 +29,44 @@ TestResult executeTest(Test test)
         test.ptr();
         result.succeeded = true;
     }
+    catch (TestSkipped s)
+    {
+        result.skipped = true;
+        // The recycled instance's message buffer is reused by the next
+        // skipTest on this thread — copy now.
+        result.skipReason = s.message.idup;
+    }
     catch (Throwable t)
         result.thrown = toThrown(t); // re-throws OutOfMemoryError
 
     return result;
+}
+
+@("executeTest.skip")
+@system
+unittest
+{
+    import sparkles.test_runner.skip : skipTest;
+
+    static void skipper()
+    {
+        skipTest("no perf counters");
+    }
+
+    auto result = executeTest(Test(fullName: "m.s", name: "s", ptr: &skipper));
+    assert(result.skipped && !result.succeeded);
+    assert(result.thrown.length == 0, "a skip is not a failure");
+    assert(result.skipReason == "no perf counters");
+
+    // A second skip on the same thread reuses the recycled message buffer;
+    // the first result's reason must have been copied out of it.
+    static void skipper2()
+    {
+        skipTest("different reason entirely");
+    }
+
+    cast(void) executeTest(Test(fullName: "m.s2", name: "s2", ptr: &skipper2));
+    assert(result.skipReason == "no perf counters");
 }
 
 /// Converts a caught `Throwable` chain into `Thrown[]` (its full chain, each with

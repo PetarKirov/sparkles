@@ -31,6 +31,7 @@ import std.typecons : Nullable;
 
 import sparkles.test_runner.attributes : benchmark, ctfe;
 import sparkles.test_runner.model : Test, TestResult, Thrown;
+import sparkles.test_runner.skip : TestSkipped;
 import sparkles.test_runner.perf : PerfGroup, PerfStats;
 import sparkles.test_runner.syscalls : SyscallGroup, SyscallStats;
 import sparkles.test_runner.tier0 : Tier0Group, Tier0Stats;
@@ -139,6 +140,7 @@ struct BenchStats
     Nullable!Tier0Stats tier0; /// cheap /proc counters when a tier0 metric is selected
     Nullable!SyscallStats syscalls; /// syscall tracepoint counts under `--syscalls`
     string error; /// non-empty = an error row (a case whose `after` reported failure)
+    bool skipped; /// the error is a `skipTest` reason (rendered yellow, run stays green)
 }
 
 /// The median of a sorted, non-empty slice.
@@ -869,6 +871,12 @@ BenchOutcome runBenchmark(Test test, in BenchConfig config, ref CounterGroups co
             onCaseStart(c.name);
         try
             outcome.rows ~= measureCase(&ctx, c);
+        catch (TestSkipped s)
+        {
+            // A measurement-time skip: a yellow skipped row, not a failure.
+            outcome.rows ~= BenchStats(name: c.name, labels: c.labels,
+                error: errorCell(s.message.idup), skipped: true);
+        }
         catch (Throwable t)
         {
             outcome.result.succeeded = false;
@@ -1208,6 +1216,54 @@ unittest
     assert(outcome.result.succeeded);
     assert(outcome.rows.length == 1 && outcome.rows[0].error == "boom");
     assert(teardowns == 1, "teardown runs even when the case errors");
+}
+
+@("runBenchmark.skipDuringRegistration")
+@system
+unittest
+{
+    import sparkles.test_runner.skip : skipTest;
+
+    // A skipTest at the top of a @benchmark body (the recommended environment
+    // guard) marks the whole test skipped: no rows, not failed, and no
+    // zero-case whole-body fallback.
+    static void body_()
+    {
+        skipTest("no perf counters on this machine");
+        // unreachable
+    }
+
+    auto counters = CounterGroups.none;
+    auto outcome = runBenchmark(Test(fullName: "m.sk", name: "sk", ptr: &body_),
+        BenchConfig(), counters);
+    assert(outcome.result.skipped && !outcome.result.succeeded);
+    assert(outcome.result.skipReason == "no perf counters on this machine");
+    assert(outcome.rows.length == 0);
+}
+
+@("runBenchmark.skipDuringMeasurement")
+@system
+unittest
+{
+    import core.time : usecs;
+    import sparkles.test_runner.skip : skipTest;
+
+    // A skipTest inside a deferred benchCase closure skips only that case's
+    // row (yellow, run stays green); the other cases still measure.
+    static void body_()
+    {
+        benchCase(name: "skipper", timed: () { skipTest("needs root"); },
+            after: () {});
+        benchCase(name: "fine", timed: () { blackBox(1); }, after: () {});
+    }
+
+    auto counters = CounterGroups.none;
+    auto outcome = runBenchmark(Test(fullName: "m.skm", name: "skm", ptr: &body_),
+        BenchConfig(sampleCount: 1, minSampleTime: 1.usecs), counters);
+    assert(outcome.result.succeeded, "a case-level skip does not fail the test");
+    assert(outcome.rows.length == 2);
+    assert(outcome.rows[0].skipped && outcome.rows[0].error == "needs root");
+    assert(!outcome.rows[1].skipped && outcome.rows[1].error.length == 0);
 }
 
 @("measureCase.pinnedIterationsPerCall")
