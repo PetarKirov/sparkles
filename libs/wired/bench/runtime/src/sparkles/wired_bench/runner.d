@@ -86,6 +86,25 @@ private void markFilteredOut(string operation)
         labels: ["operation": operation]);
 }
 
+/// Registers one engine × dataset op through `reg`, isolating a
+/// registration-time throw (an engine crashing in its constructor, the
+/// serialize sizing probe, a reference computation) into a soft error row —
+/// a throw escaping the `@benchmark` body would otherwise abort registration
+/// of every case after it in this op's matrix.
+private void isolated(string engineName, Dataset ds, string operation,
+    scope void delegate() reg)
+{
+    try
+        reg();
+    catch (Exception e)
+    {
+        const string msg = e.msg;
+        benchCase(name: engineName, timed: () {},
+            after: () => err!bool("registration failed: " ~ msg),
+            labels: ["dataset": ds.name, "operation": operation]);
+    }
+}
+
 /// Whether any compiled-in engine supports the op (gates the op's unittest).
 private enum bool anyValidate = () {
     bool any;
@@ -132,9 +151,11 @@ unittest
             static if (isJsonEngine!E)
                 if (engineEnabled(E.name))
                 {
-                    registerParse!E(ds, reference);
+                    isolated(E.name, ds, "parse",
+                        () { registerParse!E(ds, reference); });
                     static if (hasParseInsitu!E)
-                        registerParseInsitu!E(ds, reference);
+                        isolated(E.name, ds, "parse-insitu",
+                            () { registerParseInsitu!E(ds, reference); });
                     registered++;
                 }
     }
@@ -154,7 +175,8 @@ unittest
             static if (isJsonEngine!E && hasValidate!E)
                 if (engineEnabled(E.name))
                 {
-                    registerValidate!E(ds);
+                    isolated(E.name, ds, "validate",
+                        () { registerValidate!E(ds); });
                     registered++;
                 }
     if (!registered)
@@ -175,7 +197,8 @@ unittest
             static if (isJsonEngine!E && hasSerialize!E)
                 if (engineEnabled(E.name))
                 {
-                    registerSerialize!E(ds, reference);
+                    isolated(E.name, ds, "serialize",
+                        () { registerSerialize!E(ds, reference); });
                     registered++;
                 }
     }
@@ -196,7 +219,8 @@ unittest
                 static if (canDecodeTwitter!E)
                     if (engineEnabled(E.name))
                     {
-                        registerDecode!E(ds);
+                        isolated(E.name, ds, "decode",
+                            () { registerDecode!E(ds); });
                         registered++;
                     }
     if (!registered)
