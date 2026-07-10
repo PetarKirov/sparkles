@@ -99,10 +99,12 @@
             # (libs/base/tools), which fetches UCD files via std.net.curl.
             pkgs.curl
 
-            # ghostty
+            # ghostty — the slim repack (shared lib + headers + .pc), NOT the
+            # upstream `.dev` output: its static archive embeds zig store
+            # paths in debug info, dragging a 1.5 GiB toolchain closure into
+            # the shell. See nix/packages/libghostty-vt.nix.
             pkgs.pkg-config
-            inputs'.ghostty.packages.libghostty-vt
-            inputs'.ghostty.packages.libghostty-vt.dev
+            config.packages.libghostty-vt
 
             # Independent oracle libraries for the text-conformance harness
             # (bindings under libs/base/tools/text-conformance/bindings). utf8proc

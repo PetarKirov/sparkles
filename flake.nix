@@ -58,6 +58,7 @@
         ./nix/packages/all.nix
         ./nix/packages/build-d-wasm-module.nix
         ./nix/packages/default.nix
+        ./nix/packages/libghostty-vt.nix
         ./nix/packages/text-wasm.nix
         ./nix/packages/table-wasm.nix
         ./nix/packages/uwidth-rs.nix
