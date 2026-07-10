@@ -16,6 +16,7 @@ dependency "expected" version="~>0.4.1"
 dependency "sparkles:base" path="../.."
 dependency "sparkles:core-cli" path="../.."
 dependency "sparkles:versions" path="../.."
+dependency "sparkles:wired" path="../.."
 
 configuration "application" {
     targetType "executable"
