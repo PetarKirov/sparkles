@@ -959,8 +959,10 @@ unittest
     auto counters = CounterGroups.open(true, false, false, null);
     scope (exit)
         counters.close();
-    if (!counters.perf.available) // paranoid/sandboxed kernels refuse; not a failure
-        return;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (!counters.perf.available) // paranoid/sandboxed kernels refuse
+        skipTest("hardware counters unavailable (perf_event_paranoid?)");
 
     const config = BenchConfig(iterations: 200, sampleCount: 2, minSampleTime: 1.usecs);
     auto outcome = runBenchmark(Test(fullName: "m.p", name: "p", ptr: &body_), config, counters);

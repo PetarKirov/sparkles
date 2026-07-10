@@ -339,8 +339,10 @@ unittest
     auto g = PerfGroup.tryOpen(true);
     scope (exit)
         g.close();
-    if (!g.available) // sandboxed kernels may refuse; that is not a failure
-        return;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (!g.available) // sandboxed kernels may refuse
+        skipTest("hardware counters unavailable (perf_event_paranoid?)");
 
     static ulong sink;
     const stats = g.count(() {
@@ -365,8 +367,10 @@ unittest
     auto g = PerfGroup.tryOpen(true);
     scope (exit)
         g.close();
+    import sparkles.test_runner.skip : skipTest;
+
     if (!g.available)
-        return;
+        skipTest("hardware counters unavailable (perf_event_paranoid?)");
 
     static ulong sink;
     bool threw;
