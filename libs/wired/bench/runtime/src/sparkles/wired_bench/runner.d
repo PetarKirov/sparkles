@@ -134,7 +134,7 @@ unittest
                 {
                     registerParse!E(ds, reference);
                     static if (hasParseInsitu!E)
-                        registerParseInsitu!E(ds);
+                        registerParseInsitu!E(ds, reference);
                     registered++;
                 }
     }
@@ -169,13 +169,16 @@ unittest
 {
     size_t registered;
     foreach (ref ds; benchDatasets)
+    {
+        const reference = referenceFingerprint(ds.text);
         static foreach (E; AllEngines)
             static if (isJsonEngine!E && hasSerialize!E)
                 if (engineEnabled(E.name))
                 {
-                    registerSerialize!E(ds);
+                    registerSerialize!E(ds, reference);
                     registered++;
                 }
+    }
     if (!registered)
         markFilteredOut("serialize");
 }
@@ -233,13 +236,28 @@ private void registerParse(E)(Dataset ds, Fingerprint reference)
     );
 }
 
-private void registerParseInsitu(E)(Dataset ds)
+/// parse-insitu — verified like `parse`: the in-place parse must still produce
+/// the reference document (a wrong-parsing engine must never "look faster").
+private void registerParseInsitu(E)(Dataset ds, Fingerprint reference)
 {
     auto e = new E;
+    bool verified;
     benchCase(
         name: E.name,
         timed: () { e.parseInsitu(ds.text); },
-        after: () { freeDocOf(*e); },
+        after: () {
+            string error;
+            if (!verified)
+            {
+                verified = true;
+                const fp = e.fingerprint();
+                if (!reference.matches(fp))
+                    error = "in-situ fingerprint mismatch vs std.json:"
+                        ~ diffFingerprints(reference, fp);
+            }
+            freeDocOf(*e);
+            return error.length ? err!bool(error) : ok!string(true);
+        },
         metrics: [bytes(ds.text.length)],
         labels: ["dataset": ds.name, "operation": "parse-insitu"],
         setup: engineSetup(e),
@@ -247,13 +265,28 @@ private void registerParseInsitu(E)(Dataset ds)
     );
 }
 
+/// validate — the corpora are valid JSON, so an engine rejecting one is wrong;
+/// a bool-returning validate is checked once in the untimed `after` (one extra
+/// validate per case). A void validate signals rejection by throwing, which
+/// the runner already surfaces as an error row from the timed body itself.
 private void registerValidate(E)(Dataset ds)
 {
     auto e = new E;
+    bool verified;
     benchCase(
         name: E.name,
-        timed: () { e.validate(ds.text); },
-        after: () {},
+        timed: () { cast(void) e.validate(ds.text); },
+        after: () {
+            string error;
+            if (!verified)
+            {
+                verified = true;
+                static if (is(typeof(e.validate(ds.text)) == bool))
+                    if (!e.validate(ds.text))
+                        error = "engine rejects a valid corpus";
+            }
+            return error.length ? err!bool(error) : ok!string(true);
+        },
         metrics: [bytes(ds.text.length)],
         labels: ["dataset": ds.name, "operation": "validate"],
         setup: engineSetup(e),
@@ -261,7 +294,10 @@ private void registerValidate(E)(Dataset ds)
     );
 }
 
-private void registerSerialize(E)(Dataset ds)
+/// serialize — the output must still fingerprint to the reference document
+/// (structural check via std.json, format-independent); verified once in the
+/// untimed `after`, so a wrong serialization can't post a competitive B/s row.
+private void registerSerialize(E)(Dataset ds, Fingerprint reference)
 {
     // Output size for the metric: parse + serialize once now (untimed, released),
     // since it is unknown until a document exists.
@@ -277,10 +313,27 @@ private void registerSerialize(E)(Dataset ds)
             probe.teardown();
     }
     auto e = new E;
+    bool verified;
     benchCase(
         name: E.name,
         timed: () { cast(void) e.serialize(); },
-        after: () {}, // the document persists across iterations
+        after: () {
+            string error;
+            if (!verified)
+            {
+                verified = true;
+                try
+                {
+                    const fp = referenceFingerprint(e.serialize());
+                    if (!reference.matches(fp))
+                        error = "serialize output mismatch vs std.json:"
+                            ~ diffFingerprints(reference, fp);
+                }
+                catch (Exception ex)
+                    error = "serialize output is not valid JSON: " ~ ex.msg;
+            }
+            return error.length ? err!bool(error) : ok!string(true);
+        },
         metrics: [bytes(outBytes)],
         labels: ["dataset": ds.name, "operation": "serialize"],
         // Hold one parsed document across the whole case (untimed).
