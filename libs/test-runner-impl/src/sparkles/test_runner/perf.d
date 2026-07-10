@@ -103,6 +103,7 @@ version (linux)
         private int nOpen;
         private bool opened;
         private bool cacheDropped;
+        private bool neverScheduled; /// calibration saw zero PMU time even reduced
 
         /// Whether counters are usable on this machine.
         bool available() const @safe pure nothrow @nogc => opened;
@@ -110,6 +111,8 @@ version (linux)
         /// Human-readable availability, for a report header.
         string status() const @safe pure nothrow
         {
+            if (neverScheduled)
+                return "unavailable (PMU busy — the group never got scheduled)";
             if (!opened)
                 return "unavailable (perf_event_open failed — perf_event_paranoid?)";
             string s = userOnly ? "user-space only" : "kernel+user";
@@ -136,6 +139,16 @@ version (linux)
                 g.closeFds();
                 g.opened = g.openGroup(withCache: false);
                 g.cacheDropped = true;
+                // The drop bets the multiplexing on the LLC pair; when even the
+                // reduced group gets zero PMU time (vPMU limits, pinned events
+                // hogging every counter), a pass reads the kernel's
+                // `<not counted>` zeros — report unavailable instead.
+                if (g.opened && g.calibratedScale() == 0)
+                {
+                    g.closeFds();
+                    g.opened = false;
+                    g.neverScheduled = true;
+                }
             }
             return g;
         }
