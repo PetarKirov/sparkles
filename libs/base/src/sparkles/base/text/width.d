@@ -286,3 +286,131 @@ string alignField(scope const(char)[] content, size_t width, Align align_) @safe
         assert(alignField("abc", 7, a) == b[]);
     }
 }
+
+/// Truncate `content` to at most `width` visible columns into the output range
+/// `w`, ending in `ellipsis` (default `…`, 1 cell) when truncation occurs — the
+/// companion of `alignField`, which pads and never cuts.
+///
+/// Content at or under `width` passes through verbatim. Otherwise the longest
+/// grapheme-cluster prefix that leaves room for the ellipsis is emitted, any
+/// open SGR style is reset (`\x1b[0m`) before the ellipsis so color cannot
+/// bleed past it, and the ellipsis follows. Widths are terminal cells via the
+/// grapheme segmenter, so ANSI escapes cost nothing and CJK/emoji clusters
+/// count 2; a cluster is never split. When `width` is smaller than the
+/// ellipsis itself, a bare prefix of `width` cells is emitted (the `<= width`
+/// invariant always holds). Attributes infer from `Writer`.
+ref Writer truncateField(Writer)(
+    return ref Writer w, scope const(char)[] content, size_t width,
+    scope const(char)[] ellipsis = "…")
+{
+    import std.range.primitives : put;
+    import sparkles.base.text.grapheme : byGraphemeCluster, visibleWidth;
+
+    if (visibleWidth(content) <= width)
+    {
+        put(w, content);
+        return w;
+    }
+
+    const ellipsisWidth = visibleWidth(ellipsis);
+    const withEllipsis = width >= ellipsisWidth;
+    const budget = withEllipsis ? width - ellipsisWidth : width;
+
+    size_t used = 0;
+    bool sawEscape = false;
+    foreach (c; content.byGraphemeCluster)
+    {
+        if (!c.isEscape && used + c.width > budget)
+            break;
+        if (c.isEscape)
+            sawEscape = true;
+        used += c.width;
+        put(w, c.slice);
+    }
+    if (sawEscape)
+        put(w, "\x1b[0m"); // reset before the ellipsis: no style bleed past the cut
+    if (withEllipsis)
+        put(w, ellipsis);
+    return w;
+}
+
+/// Convenience overload returning a freshly GC-allocated `string`. Prefer the
+/// output-range form in `@nogc` code.
+string truncateField(scope const(char)[] content, size_t width,
+    scope const(char)[] ellipsis = "…") @safe
+{
+    import std.array : appender;
+
+    auto w = appender!string;
+    truncateField(w, content, width, ellipsis);
+    return w[];
+}
+
+@("width.truncateField.basic")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    SmallBuffer!(char, 64) b;
+    truncateField(b, "hello", 10); // fits -> verbatim, no ellipsis
+    assert(b[] == "hello");
+
+    b.clear();
+    truncateField(b, "hello world", 8); // 7 cells + '…'
+    assert(b[] == "hello w…");
+
+    b.clear();
+    truncateField(b, "hello", 5); // exact fit -> verbatim
+    assert(b[] == "hello");
+}
+
+@("width.truncateField.tinyWidths")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    SmallBuffer!(char, 64) b;
+    truncateField(b, "hello", 1); // just the ellipsis
+    assert(b[] == "…");
+
+    b.clear();
+    truncateField(b, "hello", 0); // narrower than the ellipsis -> bare cut
+    assert(b[] == "");
+}
+
+@("width.truncateField.wideClustersNeverSplit")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.text.grapheme : visibleWidth;
+
+    // "世界" is 2+2 cells; width 4 leaves budget 3 -> only one ideograph fits
+    // (a wide cluster is never split), so the result is 3 cells, not 4.
+    SmallBuffer!(char, 64) b;
+    truncateField(b, "世界丂", 4);
+    assert(b[] == "世…");
+    assert(visibleWidth(b[]) == 3);
+}
+
+@("width.truncateField.styledNoBleed")
+@safe pure nothrow @nogc unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    // The kept prefix contains an opening SGR -> a reset precedes the ellipsis.
+    SmallBuffer!(char, 64) b;
+    truncateField(b, "\x1b[31mred red red\x1b[39m", 6);
+    assert(b[] == "\x1b[31mred r\x1b[0m…");
+}
+
+@("width.truncateField.customEllipsisAndStringForm")
+@safe unittest
+{
+    assert(truncateField("hello world", 8, "...") == "hello...");
+    assert(truncateField("hello", 8, "...") == "hello");
+
+    import sparkles.base.smallbuffer : SmallBuffer;
+    SmallBuffer!(char, 64) b;
+    truncateField(b, "hello world", 8, "...");
+    assert(truncateField("hello world", 8, "...") == b[]);
+}

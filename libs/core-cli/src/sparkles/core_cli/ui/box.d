@@ -718,27 +718,16 @@ private const(char)[] stripTrailingSpaces(const(char)[] s)
 
 /// Truncate `title` to `width` visible columns (the trailing `…` included), keeping
 /// styles intact and reset before the ellipsis so colour cannot bleed past it.
-/// Returns `title` unchanged when it already fits.
+/// Returns `title` unchanged when it already fits. Thin wrapper over the shared
+/// `truncateField` (grapheme-accurate, uses the full width budget rather than the
+/// old word-boundary cut); the `width == 0` case keeps the historical bare `…`.
 private string ellipsizeTitle(string title, size_t width)
 {
-    import std.string : lineSplitter;
+    import sparkles.base.text.width : truncateField;
 
-    import sparkles.base.text.wrap : wrapText, WrapOptions, WhitespaceMode;
-
-    if (title.visibleWidth <= width)
-        return title;
     if (width == 0)
         return "…";
-
-    // wrapText (breakLongWords on) guarantees the first line is <= width - 1, so the
-    // first line plus the 1-cell ellipsis is <= width.
-    foreach (line; title.wrapText(
-            WrapOptions(width: width - 1, whitespace: WhitespaceMode.collapse)).lineSplitter)
-    {
-        auto s = line.idup;
-        return (s.canFind('\x1b') ? s ~ "\x1b[0m" : s) ~ "…";
-    }
-    return "…";
+    return truncateField(title, width);
 }
 
 /// The top region for a wrapped title inside a nested box joined to the frame's top by
