@@ -31,9 +31,14 @@ module streaming_table_example;
 //     onward into the last column, e.g. `--command 'ps aux' --columns 11`);
 //     the first line becomes the header row
 //
+// `--pace width` makes each pause proportional to the visible width the next
+// chunk reveals (constant columns/second, so wide CJK cells take longer),
+// instead of the default fixed delay per chunk.
+//
 //   dub run --single streaming-table.d
 //   dub run --single streaming-table.d -- --mode line --delay 120
 //   dub run --single streaming-table.d -- --preset heavy --rows 12
+//   dub run --single streaming-table.d -- --pace width --delay 30
 //   dub run --single streaming-table.d -- --command 'df -h' --max-width 100
 //   dub run --single streaming-table.d -- --command 'ps aux' --columns 11 --max-width 120
 
@@ -46,6 +51,7 @@ import sparkles.core_cli.args;
 import sparkles.core_cli.ui.table :
     builtinPresetNames, Cell, drawTableChunks, presetGlyphs, TableProps;
 import sparkles.base.styled_template : styledText;
+import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.base.text.width : Align;
 
 /// Default number of generated data rows.
@@ -60,6 +66,9 @@ struct CliParams
 
     @CliOption("d|delay", "Animation delay per streamed chunk, in milliseconds")
     int delayMs = 45;
+
+    @CliOption("pace", "Chunk pacing: fixed (delay ms per chunk) or width (delay ms per 10 visible columns)")
+    string pace = "fixed";
 
     @CliOption("p|preset", "Glyph preset: rounded, square, ascii, double, heavy")
     string preset = "rounded";
@@ -77,13 +86,14 @@ struct CliParams
     int columns = 0;
 }
 
-/// A forward range that sleeps on each `popFront`, so consuming it animates output.
-/// Granularity-agnostic: it paces whatever range it wraps — cell fields or whole
-/// lines, whichever chunk view feeds it.
+/// A range that sleeps on each `popFront`, so consuming it animates output.
+/// The delay is a function of the chunk *about to appear*, so pacing can be
+/// uniform (a fixed pause per chunk) or proportional to how much text the next
+/// chunk reveals (as if it were being typed).
 struct DelayedRange(R)
 {
     private R _src;
-    private int _delayMs;
+    private int delegate(ElementType!R) _delayFor;
 
     bool empty() => _src.empty;
     ElementType!R front() => _src.front;
@@ -91,11 +101,13 @@ struct DelayedRange(R)
     {
         _src.popFront;
         if (!_src.empty)
-            Thread.sleep(dur!"msecs"(_delayMs));
+            Thread.sleep(dur!"msecs"(_delayFor(_src.front)));
     }
 }
 
-auto delayedRange(R)(R src, int delayMs) => DelayedRange!R(src, delayMs);
+// The delegate type is its own template parameter: IFTI cannot deduce `R`
+// through `ElementType!R` in a parameter position.
+auto delayedRange(R, F)(R src, F delayFor) => DelayedRange!R(src, delayFor);
 
 /// A demo table: the cells plus the props describing them (title, footer, header
 /// rule, per-column alignment). The CLI's glyph preset and width cap are merged
@@ -128,6 +140,20 @@ void main(string[] args)
             "' (available: ", builtinPresetNames.join(", "), ")");
         exit(2);
     }
+    if (!["fixed", "width"].canFind(cli.pace))
+    {
+        stderr.writeln(`streaming-table: --pace must be "fixed" or "width", not "`,
+            cli.pace, `"`);
+        exit(2);
+    }
+
+    // The pause before a chunk appears: constant, or proportional to the visible
+    // width the chunk reveals (constant columns/second — wide CJK cells take
+    // proportionally longer, exercising the grapheme-width machinery).
+    const delayMs = cli.delayMs;
+    int delegate(string) delayFor = (string chunk) => delayMs;
+    if (cli.pace == "width")
+        delayFor = (string chunk) => cast(int) (delayMs * visibleWidth(chunk) / 10);
 
     auto table = cli.command.length
         ? commandTable(cli.command, cli.columns)
@@ -136,16 +162,16 @@ void main(string[] args)
     table.props.maxWidth = cli.maxWidth;
 
     if (cli.mode == "line")
-        streamChunks(drawTableChunks!true(table.cells, table.props), cli.delayMs);
+        streamChunks(drawTableChunks!true(table.cells, table.props), delayFor);
     else
-        streamChunks(drawTableChunks!false(table.cells, table.props), cli.delayMs);
+        streamChunks(drawTableChunks!false(table.cells, table.props), delayFor);
 }
 
 /// Write each chunk as it is produced; the delay between chunks is the animation.
 /// No trailing newline needed — table chunks carry their own line terminators.
-void streamChunks(R)(R chunks, int delayMs)
+void streamChunks(R)(R chunks, int delegate(string) delayFor)
 {
-    foreach (chunk; chunks.delayedRange(delayMs))
+    foreach (chunk; chunks.delayedRange(delayFor))
     {
         write(chunk);
         stdout.flush(); // show each chunk as it is produced, not at program exit
