@@ -609,6 +609,11 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         stderr.writeln("--perf: hardware counters ", counters.perf.status());
     if (wantSyscalls && !counters.syscalls.available)
         stderr.writeln("--syscalls: syscall counters ", counters.syscalls.status());
+    // The group read caps the named tracepoints (SyscallGroup truncates its
+    // list); a silently dropped column reads as "never fires" — say so.
+    if (counters.syscalls.available && syscallNames.length > counters.syscalls.names.length)
+        stderr.writeln("--syscalls: only the first ", counters.syscalls.names.length,
+            " named tracepoints are counted (", syscallNames.length, " requested)");
 
     // --list-metrics (also --metrics=? / --metrics=help): print the catalog and
     // exit. Dedicated probes report true availability regardless of the flags;
