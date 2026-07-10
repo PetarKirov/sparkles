@@ -234,17 +234,20 @@ private bool runPreflightChecklist(in Theme theme)
     auto tasks = TaskReporter(&region, theme);
 
     size_t[string] ids;
+    size_t current;
     auto progress = PreflightProgress(
         started: (string label) {
             const id = tasks.add(label);
             ids[label] = id;
+            current = id;
             tasks.start(id);
         },
         finished: (string label, bool ok, string detail) {
             if (auto id = label in ids)
                 ok ? tasks.succeed(*id) : tasks.fail(*id, detail);
         },
-        output: (scope const(char)[]) { tasks.tick(); },
+        // ci output streams into the running check's bounded tail pane.
+        output: (scope const(char)[] line) { tasks.output(current, line); },
     );
 
     const root = repoRoot();
