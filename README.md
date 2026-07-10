@@ -779,7 +779,11 @@ dub run --single libs/build-primitives/examples/gitignore_listing.d
 
 dub run --single libs/core-cli/examples/styled-template.d
 dub run --single libs/core-cli/examples/table.d
+dub run --single libs/core-cli/examples/streaming-table.d   # animated; --mode cell|line|race
+dub run --single libs/core-cli/examples/table-leaderboard.d # animated, re-sorting live table
+dub run --single libs/core-cli/examples/table-bench-ticker.d # animated benchmark results
 dub run --single libs/core-cli/examples/box.d
+dub run --single libs/core-cli/examples/streaming-box.d     # animated
 dub run --single libs/core-cli/examples/header.d
 dub run --single libs/core-cli/examples/osc-link.d
 dub run --single libs/core-cli/examples/color.d
