@@ -405,9 +405,11 @@ version (linux)
         // only on average — the two count() passes run sequentially, so the
         // signal (32 writes/iter) is sized to dwarf any realistic burst of
         // cross-thread write syscalls rather than merely exceed it.
+        import sparkles.test_runner.skip : skipTest;
+
         auto g = Tier0Group.tryOpen(true);
         if (!g.available)
-            return;
+            skipTest("tier-0 counters unavailable");
         static void nop() {}
         static void writeBurst()
         {
@@ -439,14 +441,16 @@ version (linux)
         // group subtracts. Compare the two so process-wide noise from parallel
         // test threads (which only adds reads to both) doesn't flake the test.
         auto calibrated = Tier0Group.tryOpen(true);
+        import sparkles.test_runner.skip : skipTest;
+
         if (!calibrated.available)
-            return;
+            skipTest("tier-0 counters unavailable");
         auto raw = Tier0Group(true); // bypasses calibration: gross counts
         static void nop() {}
         const net = calibrated.count(&nop, &nop, 64);
         const gross = raw.count(&nop, &nop, 64);
         if (net.syscr.isNaN || gross.syscr.isNaN)
-            return;
+            skipTest("/proc/self/io unavailable (no per-task I/O accounting)");
         assert(gross.syscr > net.syscr + 0.5,
             text("the calibrated group must subtract the bracket's own read; ",
                 "gross=", gross.syscr, " net=", net.syscr));

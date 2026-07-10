@@ -247,8 +247,10 @@ version (linux)
         auto g = SyscallGroup.tryOpen(true, ["getpid"]);
         scope (exit)
             g.close();
-        if (!g.available) // perf_event_paranoid > 1 / sandbox: not a failure
-            return;
+        import sparkles.test_runner.skip : skipTest;
+
+        if (!g.available) // perf_event_paranoid > 1 / root-only tracefs
+            skipTest(g.status());
 
         static void body_()
         {
