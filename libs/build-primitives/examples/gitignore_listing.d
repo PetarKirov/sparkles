@@ -20,7 +20,7 @@ import std.path : buildPath;
 import std.stdio : writeln;
 
 import sparkles.base.prettyprint : prettyPrint, PrettyPrintOptions;
-import sparkles.build_primitives.dir_walk : readRepositoryGitIgnore, walkDir;
+import sparkles.build_primitives.dir_walk : repositoryGitIgnoreStack, walkDir;
 import sparkles.build_primitives.gitignore : GitIgnore, GitIgnoreStack;
 import sparkles.core_cli.args : CliOption, HelpInfo, parseCliArgs;
 import sparkles.core_cli.ui.tree : renderTree, TreeNode;
@@ -119,8 +119,8 @@ void main(string[] args)
     auto hook = ListingHook(
         root: cli.root,
         mode: cli.mode,
+        stack: repositoryGitIgnoreStack(cli.root),
     );
-    hook.stack.push("", readRepositoryGitIgnore(cli.root));
     walkDir(cli.root, hook);
 
     writeln(cli.prettyPrint(PrettyPrintOptions!void(softMaxWidth: 0)));

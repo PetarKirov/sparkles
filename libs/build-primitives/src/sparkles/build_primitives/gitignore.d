@@ -154,6 +154,7 @@ struct GitIgnoreStack
     private static struct Frame
     {
         string dirPrefix; /// Walk-relative directory (`""` for the root), no trailing slash.
+        string pathPrefix; /// For ancestor scopes: the walk root's path relative to the frame's directory.
         GitIgnore ignore;
     }
 
@@ -164,6 +165,18 @@ struct GitIgnoreStack
     void push(string dirPrefix, GitIgnore ignore) pure nothrow
     {
         frames ~= Frame(dirPrefix: dirPrefix, ignore: ignore);
+    }
+
+    /// Pushes the scope of a directory *above* the walk root — git also
+    /// consults `.gitignore` files of ancestor directories up to the
+    /// repository root. `pathPrefix` is the walk root's path relative to the
+    /// ancestor (e.g. `"libs/base"` for the repo root's `.gitignore` when the
+    /// walk starts at `libs/base`), so the frame sees every path the way that
+    /// `.gitignore` would. Ancestor frames must be pushed outermost-first,
+    /// before any `push` frame, and are never popped.
+    void pushAncestor(string pathPrefix, GitIgnore ignore) pure
+    {
+        frames ~= Frame(pathPrefix: normalizePath(pathPrefix), ignore: ignore);
     }
 
     /// Pops the innermost scope.
@@ -190,6 +203,11 @@ struct GitIgnoreStack
                 localPath = normalizedPath[frame.dirPrefix.length + 1 .. $];
             else
                 continue;
+
+            // An ancestor frame evaluates the path as seen from its own
+            // directory, above the walk root.
+            if (frame.pathPrefix.length > 0)
+                localPath = frame.pathPrefix ~ "/" ~ localPath;
 
             final switch (frame.ignore.match(localPath, isDirectory))
             {
@@ -476,6 +494,24 @@ bool globMatchAt(in string pattern, size_t patternIndex, in const(char)[] text, 
     stack.pop();
     assert(stack.isIgnored("sub/keep.tmp"));
     assert(!stack.isIgnored("sub/build.log"));
+}
+
+@("buildPrimitives.gitIgnoreStack.ancestorScopes")
+@safe pure unittest
+{
+    // Walk rooted at `libs/base` inside a repository whose root `.gitignore`
+    // ignores `build/` everywhere and `/docs` only at the repository root.
+    GitIgnoreStack stack;
+    stack.pushAncestor("libs/base", GitIgnore.parse("build/\n/docs/\n"));
+    stack.push("", GitIgnore.parse("!build/\n"));
+
+    // The unanchored ancestor rule reaches into the walk root, but the walk
+    // root's own negation overrides it (deeper file wins).
+    assert(!stack.isIgnored("build", true));
+
+    // The anchored `/docs` rule matches only at the repository root, not the
+    // walk root's `docs` (which the ancestor frame sees as `libs/base/docs`).
+    assert(!stack.isIgnored("docs", true));
 }
 
 @("buildPrimitives.gitIgnoreStack.prefixBoundary")

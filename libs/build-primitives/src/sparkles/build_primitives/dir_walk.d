@@ -70,6 +70,14 @@ struct GitRepositoryFilter
         stack.push("", rootIgnore);
     }
 
+    /// Like above, but with a pre-seeded scope stack (see
+    /// `repositoryGitIgnoreStack` for one that includes ancestor scopes).
+    this(string root, GitIgnoreStack seededStack) @safe pure nothrow
+    {
+        this.root = root;
+        stack = seededStack;
+    }
+
     bool enterDir(const(char)[] relativePath) @safe
     {
         import std.path : buildPath;
@@ -111,17 +119,68 @@ GitIgnore readRepositoryGitIgnore(string root) @safe
     return GitIgnore.fromFile(buildPath(root, ".gitignore"));
 }
 
+/// Builds the `.gitignore` scopes git would consult for paths under `root`:
+/// the `.gitignore` of every ancestor directory up to the enclosing
+/// repository root (the nearest ancestor containing `.git`), outermost-first,
+/// then `root`'s own. Without an enclosing repository only `root`'s scope
+/// applies.
+GitIgnoreStack repositoryGitIgnoreStack(string root) @safe
+{
+    import std.file : exists;
+    import std.path : absolutePath, buildNormalizedPath, buildPath, dirName, relativePath;
+
+    GitIgnoreStack stack;
+
+    const absRoot = root.absolutePath.buildNormalizedPath;
+
+    string repoRoot;
+    for (string dir = absRoot; ; )
+    {
+        if (buildPath(dir, ".git").exists) // a directory, or a file in worktrees
+        {
+            repoRoot = dir;
+            break;
+        }
+        const parent = dirName(dir);
+        if (parent == dir)
+            break;
+        dir = parent;
+    }
+
+    if (repoRoot.length > 0 && repoRoot != absRoot)
+    {
+        string[] ancestors;
+        for (string dir = dirName(absRoot); ; dir = dirName(dir))
+        {
+            ancestors = dir ~ ancestors;
+            if (dir == repoRoot)
+                break;
+        }
+        foreach (dir; ancestors)
+        {
+            auto ignore = GitIgnore.fromFile(buildPath(dir, ".gitignore"));
+            if (ignore.rules.length > 0)
+                stack.pushAncestor(relativePath(absRoot, dir), ignore);
+        }
+    }
+
+    stack.push("", readRepositoryGitIgnore(root));
+    return stack;
+}
+
 /// Traverses `root` with `.gitignore`-aware filtering, seeding the root scope
-/// with `gitIgnore` (nested `.gitignore` files are still picked up below it).
+/// with `gitIgnore` (nested `.gitignore` files are still picked up below it;
+/// ancestor directories' files are not consulted).
 DirWalkerRange!GitRepositoryFilter walkGitRepository(string root, GitIgnore gitIgnore) @safe
 {
     return dirEntriesFilter(root, GitRepositoryFilter(root, gitIgnore));
 }
 
-/// Traverses `root` using the `.gitignore` files found on disk.
+/// Traverses `root` using the `.gitignore` files found on disk, including
+/// those of ancestor directories up to the enclosing repository root.
 DirWalkerRange!GitRepositoryFilter walkGitRepository(string root) @safe
 {
-    return walkGitRepository(root, readRepositoryGitIgnore(root));
+    return dirEntriesFilter(root, GitRepositoryFilter(root, repositoryGitIgnoreStack(root)));
 }
 
 /// Input range over collected file paths.
@@ -356,6 +415,35 @@ void walkDirImpl(Hook)(string absolutePath, string relativePath, ref Hook hook)
         "sub/.gitignore",
         "sub/keep.tmp",
     ]);
+}
+
+@("buildPrimitives.dirWalk.ancestorGitignore")
+@safe unittest
+{
+    import std.algorithm.sorting : sort;
+    import std.array : array;
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import std.uuid : randomUUID;
+
+    // A repository (marked by `.git`) whose root `.gitignore` applies to a
+    // walk rooted at the `sub` subdirectory.
+    const repo = buildPath(tempDir(), "walkGitRepository-ancestor-" ~ randomUUID.toString);
+    mkdirRecurse(buildPath(repo, ".git"));
+    mkdirRecurse(buildPath(repo, "sub", "build"));
+
+    write(buildPath(repo, ".gitignore"), "build/\n/rootonly.txt\n");
+    write(buildPath(repo, "sub", "a.txt"), "kept\n");
+    write(buildPath(repo, "sub", "rootonly.txt"), "kept: the rule is anchored to the repo root\n");
+    write(buildPath(repo, "sub", "build", "artifact.txt"), "ignored by the ancestor rule\n");
+
+    scope (exit)
+        rmdirRecurse(repo);
+
+    auto files = walkGitRepository(buildPath(repo, "sub")).array;
+    files.sort;
+
+    assert(files == ["a.txt", "rootonly.txt"]);
 }
 
 version (Posix)
