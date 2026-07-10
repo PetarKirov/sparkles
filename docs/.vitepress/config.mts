@@ -439,6 +439,14 @@ export default withMermaid(
               ],
             },
             {
+              text: 'Release',
+              collapsed: false,
+              items: [
+                { text: 'Specification', link: '/specs/release/SPEC' },
+                { text: 'Delivery Plan', link: '/specs/release/PLAN' },
+              ],
+            },
+            {
               text: 'Versions',
               collapsed: false,
               items: [
