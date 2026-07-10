@@ -142,13 +142,15 @@ Result!string buildSegmentationPrompt(
         : "- Bump policy: a breaking change means \"major\"; a new feature"
             ~ " means \"minor\"; otherwise \"patch\".\n";
 
+    // The prompt doubles as the `.result/segmentation-prompt.md` artifact, so
+    // it is valid markdown: JSON travels in ```json fences.
     return success(text(
         "You are planning retroactive releases for the D monorepo `sparkles`.\n",
         "The last released version is v", verString(current), ". Below are the ",
         rows.length, " unreleased commits, OLDEST FIRST, as JSON; `pr` is the",
         " number of the merged PR that introduced each commit (0 = none).\n",
         "Split them into a chain of releases.\n\n",
-        "Rules:\n",
+        "Rules:\n\n",
         "- Segments are contiguous slices of the list, in order; each segment",
         " becomes one release tag.\n",
         "- `boundary` is the FULL SHA of the LAST commit of its segment.\n",
@@ -167,11 +169,15 @@ Result!string buildSegmentationPrompt(
         " feature completions.\n",
         "- `theme` is short; it becomes the tag subject `vX.Y.Z — <theme>`.\n",
         policy,
-        "\nReply with ONLY this JSON object — no prose, no code fences:\n",
+        "\nReply with ONLY a JSON object of this exact shape — no prose around",
+        " it:\n\n",
+        "```json\n",
         `{"segments": [{"boundary": "<full sha>", "theme": "<short theme>",`,
         ` "bump": "patch|minor|major", "highlights": ["<completed work>"]}],`,
         ` "remainderNote": "<optional>"}`,
-        "\n\nInput:\n", inputJson.value));
+        "\n```\n",
+        "\nInput:\n\n",
+        "```json\n", inputJson.value, "\n```\n"));
 }
 
 /// The corrective coda appended (with the original prompt) when the agent's
@@ -312,6 +318,11 @@ string buildAgentPrompt(string suggestedSubject, string range, string logStat)
     assert(pre.value.canFind(`"pr":47`));
     assert(pre.value.canFind(`"remainderNote"`));
     assert(pre.value.canFind("2 unreleased commits"));
+    // The prompt is saved as a markdown artifact: JSON rides in closed fences.
+    assert(pre.value.canFind("```json\n{\"segments\":"));
+    assert(pre.value.canFind("```json\n{\"commits\":"));
+    import std.algorithm.searching : count;
+    assert(pre.value.count("```") == 4);
 
     auto post = buildSegmentationPrompt(rows, SemVer(major: 1, minor: 0, patch: 0));
     assert(post.hasValue);

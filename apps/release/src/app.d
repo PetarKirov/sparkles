@@ -46,7 +46,8 @@ import sparkles.release.notes : openInEditor, seedEditorBuffer, seedReviewBuffer
 import sparkles.release.pr : associatePrs, parseRemoteUrl, PrRef;
 import sparkles.release.preflight : runPreflight, PreflightProgress, PreflightResult;
 import sparkles.release.result : Result;
-import sparkles.release.segment : AgentReply, buildPlan, BumpOrigin, parseSegmentReply, ReleasePlan, SegmentInput, SegmentPlan;
+import sparkles.release.json_utils : parseJsonText;
+import sparkles.release.segment : AgentReply, buildPlan, BumpOrigin, parseSegmentReply, ReleasePlan, SegmentInput, SegmentPlan, stripJsonFence;
 import sparkles.release.stages : Stage, parseStage, stageAtLeast, stageToken;
 import sparkles.release.stats : tallyCommits, typeCounts, ReleaseStats, Commit, CommitTally, AuthorCount, FileStat, AreaStat, areaBreakdown;
 
@@ -337,7 +338,7 @@ private int runSplit(in CliParams cli, Stage stage, NotesMode notesMode, in Them
     auto promptR = buildSegmentationPrompt(rows, current);
     if (promptR.hasError)
         return fail(promptR.error);
-    sink.save("segmentation-prompt.txt", promptR.value);
+    sink.save("segmentation-prompt.md", promptR.value);
 
     ReleasePlan plan;
     AgentReply reply;
@@ -358,7 +359,12 @@ private int runSplit(in CliParams cli, Stage stage, NotesMode notesMode, in Them
                 warning(i"$(rawR.error)");
                 continue;
             }
-            sink.save(text("segmentation-reply-", attempt, ".txt"), rawR.value);
+            // A reply that (fence-stripped) parses as JSON is saved as the
+            // extracted `.json`; anything malformed stays raw `.txt`.
+            const extracted = stripJsonFence(rawR.value);
+            const isJson = parseJsonText(extracted).hasValue;
+            sink.save(text("segmentation-reply-", attempt, isJson ? ".json" : ".txt"),
+                isJson ? extracted : rawR.value);
 
             auto parsed = parseSegmentReply(rawR.value);
             if (parsed.hasError)

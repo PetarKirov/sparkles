@@ -366,14 +366,16 @@ picked once (via `--agent` or one interactive select).
 Split mode persists its intermediate products for later review under the
 (gitignored) `.result/` directory at the repository root:
 
-```text
+````text
 .result/release-split/<yyyymmdd-HHMMSS>/
-├── segmentation-prompt.txt
-├── segmentation-reply-1.txt        # raw, per attempt (…-2.txt on retry)
+├── segmentation-prompt.md          # valid markdown; JSON in ```json fences
+├── segmentation-reply-1.json       # per attempt (…-2 on retry): the
+│                                   # fence-stripped reply when it parses as
+│                                   # JSON, else the raw reply as …-N.txt
 ├── plan.json                       # the validated ReleasePlan
 ├── notes-prompt-<tag>.txt
 └── notes-<tag>.txt                 # the body as tagged
-```
+````
 
 Artifact writes are **best-effort**: a failure logs a warning and never aborts
 the run. Reviewing artifacts is never a blocker for the release process.
