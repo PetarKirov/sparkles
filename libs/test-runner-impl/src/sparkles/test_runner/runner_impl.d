@@ -95,15 +95,28 @@ private bool testingRunnerItself(bool hostIsRunner)
     return args.length && args[0].baseName.canFind("test-runner");
 }
 
-private UnitTestResult runnerMain(Test[] discovered, bool hostIsRunner)
+/// The outcome of CLI parsing: either a populated `options`, a request for the
+/// help text, or a one-line `error` — never a thrown exception, which would
+/// escape the unittest hook as a raw stack trace.
+private struct ParsedArgs
 {
-    import std.algorithm.iteration : filter;
-    import std.array : array;
-    import std.getopt : arraySep, config, getopt;
-    import std.stdio : stdout;
+    import std.getopt : Option;
 
     RunnerOptions options;
-    auto args = Runtime.args;
+    string error; /// non-empty = fail the run with this message
+    bool helpWanted;
+    Option[] helpOptions; /// populated when `helpWanted`
+}
+
+/// Parses the runner's CLI. A malformed value (`-t abc`), an unknown option,
+/// and stray positional arguments (`--syscalls futex` — values attach with
+/// `=`) all yield a readable `error` instead of an uncaught exception.
+package ParsedArgs parseRunnerOptions(string[] args)
+{
+    import std.conv : ConvException, text;
+    import std.getopt : arraySep, config, getopt, GetOptException;
+
+    ParsedArgs r;
     // Comma-separated array options (`--group-by=dataset,operation`, repeatable
     // `-I` paths) split on `,` in addition to accumulating across occurrences.
     arraySep = ",";
@@ -112,7 +125,28 @@ private UnitTestResult runnerMain(Test[] discovered, bool hostIsRunner)
     foreach (ref arg; args)
         if (arg == "--syscalls")
             arg = "--syscalls=*";
-    auto getoptResult = args.getopt(
+    try
+    {
+        auto res = parseInto(args, r.options);
+        r.helpWanted = res.helpWanted;
+        r.helpOptions = res.options;
+    }
+    catch (GetOptException e)
+        r.error = e.msg;
+    catch (ConvException e)
+        r.error = e.msg;
+    if (!r.error.length && args.length > 1)
+        r.error = text("unexpected positional argument", args.length > 2 ? "s " : " ",
+            args[1 .. $], " — attach option values with '=' (e.g. --syscalls=futex)");
+    return r;
+}
+
+/// The getopt call proper (separated so `parseRunnerOptions` can guard it).
+private auto parseInto(ref string[] args, ref RunnerOptions options)
+{
+    import std.getopt : config, getopt;
+
+    return args.getopt(
         config.caseSensitive,
         "i|include",
             "Run only tests whose name matches the regular expression",
@@ -185,11 +219,44 @@ private UnitTestResult runnerMain(Test[] discovered, bool hostIsRunner)
             "Also run the test runner's own unittests",
             &options.selfTest,
     );
+}
 
-    if (getoptResult.helpWanted)
+@("runner.parseRunnerOptions.readableErrors")
+@system
+unittest
+{
+    // Parse failures become messages, never uncaught exceptions out of the
+    // unittest hook; stray positionals (the `--syscalls futex` trap) error too.
+    assert(parseRunnerOptions(["prog", "-t", "abc"]).error.length);
+    assert(parseRunnerOptions(["prog", "--bogus"]).error.length);
+    assert(parseRunnerOptions(["prog", "--syscalls", "futex"]).error.length);
+
+    auto ok = parseRunnerOptions(["prog", "--syscalls", "-t", "4"]);
+    assert(!ok.error.length);
+    assert(ok.options.syscalls == "*" && ok.options.threads == 4);
+
+    auto help = parseRunnerOptions(["prog", "--help"]);
+    assert(!help.error.length && help.helpWanted && help.helpOptions.length);
+}
+
+private UnitTestResult runnerMain(Test[] discovered, bool hostIsRunner)
+{
+    import std.algorithm.iteration : filter;
+    import std.array : array;
+    import std.stdio : stderr, stdout;
+
+    auto parsed = parseRunnerOptions(Runtime.args);
+    if (parsed.error.length)
+    {
+        stderr.writeln("error: ", parsed.error, " (see --help)");
+        return UnitTestResult(1, 0, false, false);
+    }
+    RunnerOptions options = parsed.options;
+
+    if (parsed.helpWanted)
     {
         stdout.writeln("Usage:\n\tdub test -- <options>\n\nOptions:");
-        foreach (option; getoptResult.options)
+        foreach (option; parsed.helpOptions)
         {
             import std.string : leftJustifier;
 
