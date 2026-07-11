@@ -143,18 +143,18 @@ struct LabelSet
     }
 
     /// Number of names in the vocabulary.
-    size_t length() const @safe pure nothrow @nogc
+    size_t length() const scope @safe pure nothrow @nogc
         => _names.length;
 
     /// The dotted name behind `id`. `id` must be a real label from this set.
-    const(char)[] name(LabelId id) const @safe pure nothrow @nogc
+    const(char)[] name(LabelId id) const scope @safe pure nothrow @nogc
     in (id.value < _names.length, "LabelId out of range for this LabelSet")
     {
         return _names[id.value];
     }
 
     /// Exact dotted-name lookup (binary search); `LabelId.none` on miss.
-    LabelId find(scope const(char)[] dotted) const @safe pure nothrow @nogc
+    LabelId find(scope const(char)[] dotted) const scope @safe pure nothrow @nogc
     {
         size_t lo = 0, hi = _names.length;
         while (lo < hi)
@@ -177,7 +177,7 @@ struct LabelSet
     `"function.builtin.static"` → `"function.builtin"` → `"function"`.
     Returns `LabelId.none` when no prefix matches.
     */
-    LabelId resolve(scope const(char)[] captureName) const @safe pure nothrow @nogc
+    LabelId resolve(scope const(char)[] captureName) const scope @safe pure nothrow @nogc
     {
         const(char)[] candidate = captureName;
         while (candidate.length)
