@@ -28,6 +28,10 @@
  */
 module sparkles.test_runner.tier0;
 
+import sparkles.test_runner.capability : Capability, CapabilityAbsence,
+    CapabilityReport, has, hasNamedColumns, hasSnapshot, isCounterBackend,
+    reasonFor;
+
 /// Per-iteration Tier-0 counter deltas of one counting pass. A field is `nan`
 /// when its source could not be read on this machine.
 struct Tier0Stats
@@ -197,6 +201,17 @@ version (linux)
         /// Human-readable availability, for a report header.
         string status() const @safe pure nothrow
             => enabled ? "getrusage + /proc/self/io" : "not requested";
+
+        /// What this backend can deliver: process-scope resource counting —
+        /// present whenever requested (Linux needs no privilege for it).
+        CapabilityReport capabilities() const @safe pure nothrow @nogc
+            => enabled
+                ? CapabilityReport(Capability.counting, null)
+                : CapabilityReport(Capability.none, notRequestedAbsence[]);
+
+        private static immutable CapabilityAbsence[1] notRequestedAbsence = [
+            CapabilityAbsence(Capability.counting, "not requested"),
+        ];
 
         /// Enables collection when `enabled` and calibrates the snapshot
         /// self-cost; otherwise an unavailable group (mirrors
@@ -461,8 +476,14 @@ else
     /// Non-Linux stub: Tier-0 counters are permanently unavailable.
     struct Tier0Group
     {
+        private static immutable CapabilityAbsence[1] stubAbsence = [
+            CapabilityAbsence(Capability.counting, "not Linux"),
+        ];
+
         bool available() const @safe pure nothrow @nogc => false;
         string status() const @safe pure nothrow => "unavailable (not Linux)";
+        CapabilityReport capabilities() const @safe pure nothrow @nogc
+            => CapabilityReport(Capability.none, stubAbsence[]);
         static Tier0Group tryOpen(bool) @safe pure nothrow @nogc => Tier0Group();
         void close() @safe pure nothrow @nogc {}
 
@@ -473,4 +494,29 @@ else
 
         Tier0Reading snapshot() @safe pure nothrow @nogc => Tier0Reading();
     }
+}
+
+// Whichever body the platform built (real or stub) satisfies the backend
+// contract, including the optional snapshot/delta primitive.
+static assert(isCounterBackend!Tier0Group);
+static assert(hasSnapshot!Tier0Group);
+static assert(!hasNamedColumns!Tier0Group);
+
+@("tier0.Tier0Group.capabilities")
+@safe
+unittest
+{
+    auto off = Tier0Group.tryOpen(false);
+    assert(!off.capabilities.has(Capability.counting));
+    version (linux)
+    {
+        assert(off.capabilities.reasonFor(Capability.counting) == "not requested");
+        auto on = Tier0Group.tryOpen(true);
+        scope (exit)
+            on.close();
+        assert(on.capabilities.has(Capability.counting));
+        assert(on.capabilities.reasonFor(Capability.counting) is null);
+    }
+    else
+        assert(off.capabilities.reasonFor(Capability.counting) == "not Linux");
 }
