@@ -1,25 +1,33 @@
 # Syntax Highlighting
 
-The synthesis of the [parsing survey's][umbrella] wave-4 cluster: what syntax
-highlighting actually asks of a parser, the **two models** the field converged on —
-the line-local **[TextMate scope machine](#the-textmate-grammar-model)** ([syntect],
-[Shiki][shiki], consumed by [bat]) and the whole-buffer
-**[CST-query engine](#the-cst-query-model)** ([tree-sitter-highlight]) — the
-[vocabulary](#vocabulary) they share, the
-[theme-format landscape](#the-theme-format-landscape) that connects them, and
+The synthesis of the [parsing survey's][umbrella] highlighting cluster (waves 4–5,
+thirteen deep-dives): what syntax highlighting actually asks of a parser, the
+**three engine models** the field converged on — the line-local
+**[TextMate scope machine](#the-textmate-grammar-model)** ([syntect], [Shiki][shiki],
+consumed by [bat]), the whole-buffer **[CST-query engine](#the-cst-query-model)**
+([tree-sitter-highlight], consumed incrementally by [Helix][helix]), and the
+**[lexer-as-code family](#the-lexer-as-code-model)** ([Pygments][pygments],
+[Chroma][chroma], [highlight.js][hljs]) — plus the three problems around the
+engines: [naming what you color](#vocabulary), [deciding what a file
+is](#language-detection), and [highlighting a window of a file you haven't
+finished reading](#editors-and-the-window-problem). Above them all sits the
+[semantic tier](#the-semantic-tier) ([LSP semantic tokens][lsp-st],
+[IntelliJ][intellij]). The capstone is
 [where the planned `sparkles:syntax` library fits](#where-sparkles-syntax-fits):
 a [bat]-shaped tool with **two engines** (fast TextMate-style + precise
 tree-sitter) and **two rendering backends** (ANSI like bat + HTML like Shiki).
 
 > [!NOTE]
-> **Scope.** This page synthesizes the four cluster deep-dives ([syntect], [bat],
-> [tree-sitter-highlight], [Shiki][shiki]). Out of scope: **semantic highlighting**
-> from full compiler front-ends (LSP `semanticTokens`, [rust-analyzer]-grade name
-> resolution — a third precision tier the cluster's engines deliberately stop short
-> of), editors' in-process re-implementations of either model (Vim regex syntax,
-> Emacs font-lock, Neovim/Helix/Zed query engines), and classic batch generators
-> (Pygments, highlight.js — regex-family engines without the scope-stack model's
-> rigor).
+> **Scope.** This page synthesizes the thirteen cluster deep-dives: the engines
+> ([syntect], [bat], [tree-sitter-highlight], [Shiki][shiki], [Pygments][pygments],
+> [Chroma][chroma], [highlight.js][hljs], [`@lezer/highlight`][lezer-hl]), the
+> detection layer ([Linguist][linguist]), the editor/IDE consumption patterns
+> ([Helix][helix], [IntelliJ][intellij], [Vim & Emacs][vim-emacs]), and the
+> semantic tier ([LSP semantic tokens][lsp-st]). Out of scope: further
+> re-implementations of surveyed designs (Neovim/Zed = the [Helix][helix] shape;
+> Rouge/starry-night = [Pygments][pygments]/[Shiki][shiki] in other ecosystems;
+> Prism ≈ [highlight.js][hljs]) and grammar-format families without a surveyed
+> consumer (Kate/GtkSourceView XML).
 
 **Last reviewed:** July 11, 2026
 
@@ -29,60 +37,77 @@ tree-sitter) and **two rendering backends** (ANSI like bat + HTML like Shiki).
 
 Syntax highlighting inverts the usual parsing contract. A parser is judged by the
 **tree** it builds; a highlighter is judged by **colors on a screen**, and the tree
-(if any) is an implementation detail. That inversion drives every design choice in
-the cluster:
+(if any) is an implementation detail. That inversion drives every design in the
+cluster:
 
 - **Totality beats precision.** A parser may reject input; a highlighter _never_
-  can — its worst legal output is uncolored text. Every surveyed system therefore
-  sits in one [error posture][umbrella-recovery]: degrade gracefully. The
-  interesting engineering is in _bounding the cost_ of hostile input (bat's
-  16 KiB line cutoff, Shiki's per-line time budget, tree-sitter's cancellation
-  flag), not in error messages.
-- **Labels, not structure.** The output vocabulary is a flat-ish set of semantic
-  _labels_ attached to byte ranges — [scopes](#vocabulary) or capture names — which
-  a **theme** later maps to styles. Structure exists only to justify the labels.
-- **The unit of work defines the architecture.** The TextMate model pays **per
-  line** and carries a stack between lines; the CST model pays **per buffer** and
-  answers any window from the tree. Everything else — startup strategy, streaming,
-  window-scrolling behavior, injection handling — follows from that one choice.
-- **Distribution is half the problem.** A highlighter is only as good as its
-  grammar corpus: the four systems represent three corpus strategies — Sublime
-  packages as data files ([syntect]/[bat]), VS Code grammars as npm packages
-  ([Shiki][shiki]), compiled grammar artifacts + query files
-  ([tree-sitter-highlight]).
+  can — its worst legal output is uncolored text. Every surveyed system sits in
+  one [error posture][umbrella-recovery]: degrade gracefully. The interesting
+  engineering is in _bounding the cost_ of hostile input — and the cluster now
+  documents a complete guard taxonomy: length cutoffs ([bat]'s 16 KiB,
+  [Vim][vim-emacs]'s 3 000-column `synmaxcol`), per-line time budgets
+  ([Shiki][shiki]'s 500 ms), per-match regex timeouts ([Chroma][chroma]'s
+  250 ms), whole-window wall clocks ([Vim][vim-emacs]'s 2 000 ms `redrawtime`),
+  parse budgets and size caps ([Helix][helix]'s 500 ms / 512 MiB), host-owned
+  cancellation ([tree-sitter-highlight]) — and, as the cautionary datum, no
+  guards at all ([Pygments][pygments]).
+- **Labels, not structure.** The output vocabulary is a set of semantic _labels_
+  attached to byte ranges — [scopes, tags, tokens, captures, or legend
+  entries](#vocabulary) — which a **theme** later maps to styles. Structure exists
+  only to justify the labels.
+- **The unit of work defines the architecture.** Per line with a carried stack
+  (TextMate), per buffer with a persistent tree (CST), or per document in one
+  whole-text scan (lexer-as-code): everything else — startup strategy, streaming,
+  windowing, injection handling — follows from that choice.
+- **Detection precedes highlighting.** Something must decide _which_ grammar
+  runs; [the detection section](#language-detection) maps the two competing
+  designs.
+- **Distribution is half the problem.** The cluster spans four corpus strategies:
+  grammars as data files ([syntect]/[bat]: Sublime packages; [Shiki][shiki]:
+  npm-packaged VS Code grammars), compiled artifacts + query files
+  ([tree-sitter-highlight]; made operational by [Helix][helix]'s
+  fetch/build/dlopen pipeline), lexers as host-language code
+  ([Pygments][pygments], [highlight.js][hljs], [IntelliJ][intellij],
+  [Vim & Emacs][vim-emacs]) — and corpus _porting_ ([Chroma][chroma]'s
+  machine-translation of Pygments).
 
 ## Vocabulary
 
-The cluster's shared terms, each grounded where the deep-dives develop it:
+The cluster's shared terms, grounded where the deep-dives develop them:
 
 - **Scope** — a dot-separated semantic label (`string.quoted.double.ruby`) from
-  the TextMate lineage. Scopes form **stacks**: at any text position, the active
-  scopes of every enclosing construct apply, and themes match against the stack.
-  Implementation extreme: [syntect] packs a scope into 16 bytes of interned
-  atoms for instruction-level prefix tests. Tree-sitter's grammar metadata
-  [deliberately reuses][ts-highlight] TextMate scope names (`source.js`, matching
-  Linguist), which is what keeps one theme layer feasible across models.
-- **Token** — a maximal run of text with one resolved style. TextMate engines
-  emit tokens per line ([Shiki][shiki]'s `ThemedToken[][]`, [syntect]'s
-  `(Style, &str)` runs); the CST engine emits **events** (`Source` spans between
-  `HighlightStart`/`HighlightEnd`) that a renderer folds into tokens.
-- **Capture** — the CST model's labeling primitive: an S-expression query pattern
-  tags matched nodes with a **highlight name** (`function.method.builtin`),
-  resolved to the consumer's vocabulary by [longest dot-prefix
-  match][ts-highlight].
-- **Theme** — the mapping from labels to styles. Two selector families:
-  scope-selector matching with specificity scoring (`.tmTheme`, VS Code JSON) and
-  name-keyed lookup (tree-sitter CLI config). See
-  [the theme-format landscape](#the-theme-format-landscape).
-- **Grammar state** — the TextMate model's between-lines carry: the rule/context
-  stack (plus syntect's `HighlightState` style stack). Cloneable →
-  **checkpointing**: resume highlighting from a saved line boundary
-  ([syntect]'s documented screen-window strategy, [Shiki][shiki]'s reified
-  `GrammarState`). Strictly forward-only — no engine can start cold mid-file.
-- **Injection** — an embedded-language region (JS in HTML, SQL in a heredoc).
-  TextMate embeds grammars by reference inside rules ([syntect]'s
-  `embed`/`escape`); the CST model spawns nested **layers** parsed with
-  [included ranges][ts-highlight], lazily or combined.
+  the TextMate lineage; scopes form **stacks**, and themes match the stack.
+  [syntect] packs one into 16 bytes; tree-sitter capture names
+  [deliberately reuse][ts-highlight] the same names — the convergence that makes
+  one theme layer feasible across engines.
+- **Token** — a maximal run of text with one resolved style; also
+  [Pygments][pygments]' word for its **hierarchical type taxonomy**
+  (`Token.Keyword.Reserved` → CSS short name `kr`), the de-facto interchange
+  standard of the lexer-as-code family ([Chroma][chroma] re-encodes it as
+  integer ranges).
+- **Capture** — the CST model's labeling primitive: a query pattern tags matched
+  nodes with a highlight name, resolved by
+  [longest dot-prefix match][ts-highlight] ([Helix][helix] resolves against
+  theme keys at load time).
+- **Tag** — [`@lezer/highlight`][lezer-hl]'s answer to open scope strings: a
+  **closed vocabulary** (78 tags + 6 modifiers) of interned objects with a
+  precomputed subsumption lattice and a commutative modifier algebra.
+- **Legend** — [LSP semantic tokens][lsp-st]' negotiated vocabulary: 23 token
+  types × 10 modifier bits, extensible per server, integer-indexed on the wire.
+- **Theme** — the mapping from labels to styles. Selector-scored
+  (`.tmTheme`/VS Code JSON), name-keyed with fallback (tree-sitter config,
+  [IntelliJ][intellij]'s `TextAttributesKey` chains, [Helix][helix]'s TOML
+  scopes), inheritance-walked ([Pygments][pygments] styles), or plain CSS
+  ([highlight.js][hljs]). See [the landscape](#the-theme-format-landscape).
+- **Grammar state** — the TextMate model's between-lines carry (rule/context
+  stack), cloneable → **checkpointing** ([syntect]'s documented screen-window
+  strategy, [Shiki][shiki]'s reified `GrammarState`). Strictly forward-only.
+- **Relevance** — [highlight.js][hljs]' detection currency: matches accumulate
+  grammar-authored scores; `illegal` patterns disqualify a candidate outright.
+- **Injection** — an embedded-language region. TextMate embeds by grammar
+  reference ([syntect]'s `embed`/`escape`); the CST model spawns nested layers
+  with included ranges ([tree-sitter-highlight]), which [Helix][helix] _recycles_
+  across edits.
 
 ## The TextMate grammar model
 
@@ -91,30 +116,19 @@ The 2004-vintage model (TextMate 1.x introduced scope-named grammars and
 build 3084, April 2015) that still colors most of the world's code:
 
 - **Machine.** A pushdown interpreter over regex rules: the top context's
-  patterns are raced against the current line; the winner emits scopes and
-  pushes/pops/sets contexts. First-match-wins ordered choice — the same
-  determinism discipline as [PEG][peg-packrat], with the same inexpressiveness
-  for ambiguity.
-- **Line-locality is constitutive, not incidental.** Rules match within one line;
-  only the stack crosses the boundary. [Shiki][shiki]'s engine-transpilation
-  comments state it flatly (_"TM grammars search line by line"_), and it is why
-  `^`/`$` can be rewritten to `\A`/`\Z` with _"no change in meaning"_. The gains:
-  per-line cost, trivial parallelism across files, natural streaming, cheap
-  checkpointing. The costs: no structural context, no def/use consistency, and
-  the signature failure mode — a missed `end` pattern mis-scopes everything to
-  EOF.
-- **Power per rule, poverty per model.** Individual regexes are Oniguruma-class
-  (lookaround, backrefs, recursion) — far beyond regular — but classification
-  can only see _this line + the stack_. Sublime's dialect pushes the envelope
-  (`branch_point` cross-line speculation, implemented at [syntect]'s HEAD with
-  op replay); the fundamental ceiling stands.
-- **The engine problem.** The model assumes Oniguruma. Every implementation
-  answers differently: [bat] links the C library (`regex-onig`); [syntect] offers
-  pure-Rust `fancy-regex` (~half speed, _"just as correct"_ per its tests);
-  [Shiki][shiki] ships WASM Oniguruma _and_ an `oniguruma-to-es` transpiler to
-  native `RegExp` (223/223 languages, report-verified). Engine divergence is a
-  permanent correctness tax — bat regression-tests it; Shiki generates a compat
-  report.
+  patterns race against the current line; the winner emits scopes and
+  pushes/pops contexts. First-match-wins ordered choice — [PEG][peg-packrat]'s
+  determinism discipline, with the same inexpressiveness for ambiguity.
+- **Line-locality is constitutive.** Rules match within one line; only the stack
+  crosses the boundary ([Shiki][shiki]'s engine comments: _"TM grammars search
+  line by line"_). Gains: per-line cost, streaming, cheap checkpointing. Costs:
+  no structural context, no def/use consistency, and the signature failure mode —
+  a missed `end` pattern mis-scopes everything to EOF.
+- **The engine problem.** The model assumes Oniguruma. [bat] links the C library;
+  [syntect] offers pure-Rust `fancy-regex` (~half speed); [Shiki][shiki] ships
+  WASM Oniguruma _and_ an `oniguruma-to-es` transpiler (223/223 languages,
+  report-verified). Engine divergence is a permanent correctness tax — bat
+  regression-tests it; Shiki generates a compat report.
 
 ## The CST-query model
 
@@ -122,27 +136,116 @@ The 2018–2019 counter-model ([tree-sitter] 2018; the `tree-sitter-highlight`
 crate February 2019; highlighting GitHub.com _"in several languages"_ by early
 2020 per the tree-sitter docs — no GitHub-authored announcement exists):
 
-- **Machine.** Parse the whole buffer into an error-recovered
-  [GLR][bottom-up] CST, then run declarative **queries** — `highlights.scm`,
-  `injections.scm`, `locals.scm` — whose captures attach highlight names to
-  structurally matched nodes. Rendering folds a lazy
-  [event stream][ts-highlight].
-- **What structure buys.** Ancestor-sensitive classification (a `(call_expression
-function: (identifier))` is a function _because of where it sits_), true
-  injection layers with innermost-wins ordering, and **locals** — definition and
-  references colored identically via query-declared scopes — the visible quality
-  jump no line-local engine can make.
-- **What the buffer costs.** No cold window: the top layer parses everything
-  before the first colored byte, so `--line-range=1:50` of a huge file pays a
-  full parse ([tree-sitter-highlight]'s headline constraint). The underlying
-  runtime is [incremental][incremental], but the highlight crate's API is batch —
-  edit-local re-highlighting belongs to editors driving the runtime directly.
-- **Supply chain weight.** Each language needs a _compiled grammar artifact_
-  (C source → native/WASM) plus maintained query files, and query dialects drift
-  between editors. Grammar-as-data-file simplicity is the TextMate side's
-  enduring advantage.
+- **Machine.** Parse the whole buffer into an error-recovered [GLR][bottom-up]
+  CST, then run declarative queries — `highlights.scm`, `injections.scm`,
+  `locals.scm` — whose captures attach highlight names to structurally matched
+  nodes.
+- **What structure buys:** ancestor-sensitive classification, true injection
+  layers, and **locals** — definitions and references colored identically — the
+  quality jump no line-local engine can make.
+- **What the buffer costs:** no cold window — the top layer parses everything
+  before the first colored byte. The reference crate's API is batch;
+  **[Helix][helix] shows the editor pattern** that amortizes it: trees kept
+  alive across edits (`tree.edit` + incremental reparse under a 500 ms budget),
+  injection layers recycled, and highlight queries executed only over the
+  viewport. [`@lezer/highlight`][lezer-hl] is the same architecture in the
+  CodeMirror world, with the incremental tree maintained by [Lezer][lezer] and
+  a two-parameter (`from`/`to`) viewport clip.
+- **Supply chain weight:** compiled grammar artifacts + maintained query files
+  per language, with query dialects drifting between consumers ([Helix][helix]'s
+  `; inherits:` extensions vs the reference crate). Grammar-as-data-file
+  simplicity remains the TextMate side's enduring advantage — [Helix][helix]'s
+  `hx --grammar` fetch/build/dlopen pipeline is what operationalizing the
+  heavier chain takes.
+
+## The lexer-as-code model
+
+The oldest strategy (Emacs font-lock 1992, [Pygments][pygments] 2006,
+[highlight.js][hljs] 2006), where a language is a _program_, not a data file:
+
+- **Machine.** A regex state machine authored in the host language —
+  [Pygments][pygments]' `tokens` dict interpreted over a state stack,
+  [highlight.js][hljs]' compiled mode trees, [IntelliJ][intellij]'s JFlex
+  lexers — scanning the **whole text** at a running position (no line
+  boundary at all; `re.MULTILINE` only affects anchors). Multiline constructs
+  are natural; checkpointing generally isn't.
+- **Unbounded expressiveness, bounded portability.** Callbacks and delegation
+  handle what no data format can — and weld the corpus to the host runtime.
+  [Chroma][chroma] measures the porting cost precisely: 282 of ~300 Pygments
+  lexers machine-translate to XML _data_; 19 need hand-written Go; content
+  detection (`analyse_text` Python code) didn't survive at all.
+- **The taxonomy is the durable artifact.** Pygments' hierarchical token types
+  with parent-inheriting styles (`STANDARD_TYPES` short CSS names) made themes
+  complete-by-construction a decade before [`@lezer/highlight`][lezer-hl]'s
+  closed tags or [IntelliJ][intellij]'s fallback-key chains solved the same
+  problem by other means.
+
+## Language detection
+
+Something must pick the grammar. Two designs bracket the space, with the tools
+in between:
+
+- **Metadata-first — [Linguist][linguist]:** an ordered strategy cascade
+  (modeline → filename → shebang → extension → XML → man page → content
+  heuristics → statistical classifier) that only ever _narrows_ a candidate
+  set; cheap precise signals first, statistics quarantined to last place;
+  815-language registry with community-curated `heuristics.yml` tiebreakers
+  for `.h`/`.m`-style collisions; user overrides (`.gitattributes`) trump
+  everything.
+- **Content-first — [highlight.js][hljs]:** no metadata at all; highlight the
+  text with _every_ grammar, accumulate grammar-authored **relevance**, let
+  `illegal` patterns disqualify candidates early, best score wins (with
+  plaintext always a candidate and a `secondBest` exposing uncertainty).
+- **Tool-sized versions:** [bat]'s layered mappings (globs with _negative_
+  mappings → filename → extension → shebang fallback), [Pygments][pygments]'
+  modeline → glob → per-lexer scored `analyse_text` (clamped, exception-proof),
+  [tree-sitter][ts-highlight]'s per-grammar `file-types`/`first-line-regex`/
+  `content-regex` metadata, [Helix][helix]'s marker enum (name/regex/filename/
+  shebang) for injections.
+
+The composite that falls out for a CLI: **Linguist's cascade shape**
+(user override → modeline → filename → extension + heuristics table → shebang)
+with **relevance-style content scoring as the last resort** — each stage
+narrowing, none able to error.
+
+## The semantic tier
+
+True semantics — is this identifier a `parameter`? `readonly`? `deprecated`? —
+needs name resolution, and the cluster documents both ways to buy it:
+
+- **Over a protocol — [LSP semantic tokens][lsp-st]:** a compiler-grade server
+  ships integer-encoded, delta-updatable token arrays (5 ints/token, relative
+  positions, negotiated 23×10 legend), rendered as an **overlay on a syntactic
+  base** (`augmentsSyntaxTokens`); range requests give viewport-first paint;
+  failure is invisible (the base remains). Eventually consistent by design.
+- **In-process — [IntelliJ][intellij]:** highlighting as latency-ordered
+  passes over one persistent PSI tree — restartable integer-state lexer
+  (instant), parser with inline error elements, incremental PSI-walking
+  annotators (semantic), lowest-priority external tools — no wire format, no
+  legend, everything in one scheduler. Twenty-five years of the layered
+  architecture every multi-mode tool reinvents in miniature.
+
+Both prove the same composition law the cluster's engines rely on: **the fast
+tier paints immediately; smarter tiers refine asynchronously; failure of a
+higher tier must be invisible.**
+
+## Editors and the window problem
+
+Neither primary model highlights an arbitrary mid-file window from scratch —
+state flows top-down (checkpoint it) or comes from a whole-buffer parse (pay
+for it). The editor pages document every known answer:
+
+| Strategy                             | Mechanism                                                                                                    | System                                                                                                                 |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| **Checkpoint at line boundaries**    | Clone the carried state per line; resume from the nearest checkpoint                                         | [syntect] (documented), [Shiki][shiki] (`GrammarState`), [IntelliJ][intellij] (integer lexer states, platform-managed) |
+| **Re-derive backwards**              | Search back from the window for grammar-authored sync points (`:syn sync`), bounded by `minlines`/`maxlines` | [Vim][vim-emacs] — the only cold mid-file start surveyed                                                               |
+| **Render-driven laziness**           | Fontify only what redisplay reveals (1 500-char chunks); repair correctness in idle passes                   | [Emacs jit-lock][vim-emacs]                                                                                            |
+| **Persistent tree + windowed query** | Parse whole-buffer incrementally once; execute highlight queries per viewport range                          | [Helix][helix], [`@lezer/highlight`][lezer-hl] (`from`/`to`), [LSP `range`][lsp-st]                                    |
+| **Full feed (the anti-pattern)**     | Push every preceding line through the engine even when unprinted                                             | [bat] — the tax the others exist to avoid                                                                              |
 
 ## Cross-system comparison
+
+The core four (the two primary models × the two product shapes):
 
 | Dimension         | [syntect]                                              | [bat]                                                  | [tree-sitter-highlight]                                         | [Shiki][shiki]                                                |
 | ----------------- | ------------------------------------------------------ | ------------------------------------------------------ | --------------------------------------------------------------- | ------------------------------------------------------------- |
@@ -157,42 +260,69 @@ function: (identifier))` is a function _because of where it sits_), true
 | Incremental story | Checkpoint state per line (documented, consumer's job) | None                                                   | Batch API over an incremental runtime                           | Forward-only continuation (`GrammarState`, `@shikijs/stream`) |
 | Startup strategy  | Embedded bincode dumps + lazy regexes (~23 ms)         | `include_bytes!` dumps, `OnceCell`, per-theme laziness | Query compilation per language, config shareable across threads | Singleton highlighter, fine-grained bundles, lazy imports     |
 
-Two structural reads of that table:
+The wider field (wave 5), one row per system — model family, the mechanism it
+contributes, and its signature limit:
 
-1. **The models partition cleanly on one axis** — where state lives. Line +
-   carried stack (three systems) vs tree + no carried state (one). Every row
-   below "unit of work" is downstream of that.
-2. **Nobody ships both engines.** bat is locked to syntect; Shiki has no ANSI
-   path; tree-sitter's CLI has no TextMate fallback for the long tail of
-   languages that have a Sublime grammar but no maintained queries. The
-   two-engine, two-backend slot is empty — that is the [`sparkles:syntax`
-   opening](#where-sparkles-syntax-fits).
+| System                         | Model family                      | What it adds to the survey                                                                      | Signature limit                                                 |
+| ------------------------------ | --------------------------------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| [Pygments][pygments]           | Lexer-as-code (whole-text)        | The token taxonomy + parent-inheriting themes; per-lexer scored detection; 14-formatter fan-out | No pathology guards at all; strictly batch                      |
+| [Chroma][chroma]               | Ported corpus (Pygments → Go/XML) | The porting playbook + its measured residue; per-match regex timeout (250 ms)                   | Fidelity/freshness bound by the converter; detection ≈ filename |
+| [highlight.js][hljs]           | Lexer-as-code (mode trees)        | Relevance-scored content detection; `illegal` negative evidence; themes as plain CSS            | Coarse classification; N-grammar detection scans                |
+| [`@lezer/highlight`][lezer-hl] | CST walk (tag-based)              | The closed tag vocabulary + modifier algebra; viewport clip as two API parameters               | Lezer-only; no locals; JS-only                                  |
+| [Helix][helix]                 | CST consumption (editor)          | Persistent trees + recycled injections + windowed cursor; budget constants with rationale       | Whole-buffer parse floor; terminal-only                         |
+| [Linguist][linguist]           | Detection (metadata-first)        | The strategy cascade + registry + heuristics table + override machinery                         | No confidence output; repo-workflow-shaped                      |
+| [LSP semantic tokens][lsp-st]  | Semantic tier (protocol)          | Legend + 5-int delta encoding + range requests + `augmentsSyntaxTokens` overlay law             | Needs a server per language; eventually consistent              |
+| [IntelliJ][intellij]           | Semantic tier (in-process)        | Latency-layered passes; restartable integer-state lexing; `TextAttributesKey` fallback chains   | Nothing extractable; per-language cost is code                  |
+| [Vim & Emacs][vim-emacs]       | Editor engines (regex, windowed)  | Backward sync (`:syn sync`); render-driven laziness (jit-lock); explicit cost ceilings          | Regex precision ceilings; per-editor grammar dialects           |
+
+Three structural reads:
+
+1. **The engine models partition on where state lives:** carried line stack
+   (TextMate family), persistent tree (CST family), single whole-text scan
+   (lexer-as-code). Every other row is downstream.
+2. **The problems around the engine — vocabulary, detection, windowing,
+   tiering — have convergent solutions** discovered independently across
+   ecosystems (fallback-chained vocabularies ×4; narrowing detection cascades
+   ×3; viewport-bounded rendering ×4; fast-base-plus-async-refinement ×3).
+   These recurrences, not any single system, are the survey's design guidance.
+3. **Nobody ships the full matrix.** bat lacks a precise mode and HTML; Shiki
+   lacks ANSI; the tree-sitter CLI lacks a TextMate fallback; editors lack
+   reusable outputs. The two-engine × two-backend slot remains empty.
 
 ## The theme-format landscape
 
-Four formats, one lineage — and a name-vocabulary that deliberately converged:
+One lineage of selector-scored formats, plus the structured vocabularies that
+replaced string matching:
 
-| Format                        | Shape                                                       | Selector semantics                                                        | Native to              | Consumed by                                                      |
-| ----------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------------- | ---------------------- | ---------------------------------------------------------------- |
-| **`.tmTheme`** (2004, plist)  | XML plist of `settings` items                               | Scope selectors scored by specificity ([syntect]'s `MatchPower`)          | TextMate, Sublime Text | [syntect], [bat] (its only theme format)                         |
-| **VS Code JSON**              | `tokenColors` rules + workbench colors                      | Same scope-selector family, JSON syntax                                   | VS Code                | [Shiki][shiki] (via `tm-themes`)                                 |
-| **tree-sitter CLI config**    | JSON map: highlight name → style                            | **Name-keyed** — longest dot-prefix resolution does the matching upstream | `tree-sitter` CLI      | [tree-sitter-highlight] CLI (`Style { ansi, css }`)              |
-| **Generated CSS / variables** | Stylesheet from a theme, or per-token CSS custom properties | Resolution already done; the browser applies                              | The web                | [syntect]'s `css_for_theme`, [Shiki][shiki]'s multi-theme output |
+| Format / vocabulary            | Shape                                               | Resolution semantics                                             | Native to                       | Consumed by                                                     |
+| ------------------------------ | --------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------- | --------------------------------------------------------------- |
+| **`.tmTheme`** (2004, plist)   | XML plist of `settings` items                       | Scope selectors scored by specificity ([syntect]'s `MatchPower`) | TextMate, Sublime Text          | [syntect], [bat] (+ its `#RRGGBBAA` terminal-palette extension) |
+| **VS Code JSON**               | `tokenColors` rules + semantic token rules          | Same selector family; semantic rules outrank the syntactic base  | VS Code                         | [Shiki][shiki] (via `tm-themes`), [LSP][lsp-st] clients         |
+| **tree-sitter CLI config**     | JSON map: highlight name → style                    | Name-keyed; longest dot-prefix resolution upstream               | `tree-sitter` CLI               | [tree-sitter-highlight] (`Style { ansi, css }`)                 |
+| **Helix themes** (TOML)        | Scope keys + palettes, 218 bundled                  | Longest dotted-prefix against theme keys, resolved at load       | [Helix][helix]                  | Helix (opaque `Highlight` indices at runtime)                   |
+| **Pygments `Style` classes**   | Python classes: token type → style string           | Parent-inheritance over the token hierarchy                      | [Pygments][pygments]            | Pygments formatters; ported wholesale by [Chroma][chroma]       |
+| **Lezer `Tag` vocabulary**     | 78 closed tags + 6 modifiers (objects, not strings) | Precomputed subsumption lattice (`tag.set` walk)                 | [`@lezer/highlight`][lezer-hl]  | CodeMirror 6 `HighlightStyle`s                                  |
+| **`TextAttributesKey` chains** | Per-language keys chained to platform defaults      | Fallback-chain lookup, all-or-nothing per step                   | [IntelliJ][intellij]            | JetBrains IDEs, export-to-HTML                                  |
+| **Plain CSS classes**          | Stylesheets over documented class names             | The browser's cascade                                            | [highlight.js][hljs] (`hljs-*`) | Also [syntect]'s `css_for_theme`, Shiki's class mode            |
+| **Generated CSS / variables**  | Per-token custom properties, `light-dark()`         | Resolution already done; the browser applies                     | The web                         | [Shiki][shiki] multi-theme output                               |
 
-The load-bearing convergence: **capture names track TextMate scope names**
-(tree-sitter's stated policy — _"We strive to match the scope names used by
-popular TextMate grammars and by the Linguist library"_). A theme keyed on
-`string`, `keyword`, `function.builtin` can therefore drive both models. The
-terminal adds one more wrinkle both native systems solve identically: RGB themes
-must degrade to 256-color (`ansi256_from_rgb` in both [bat] and the tree-sitter
-CLI) and, in bat's case, express _palette-respecting_ themes via `#RRGGBBAA`
-alpha-channel encodings — a de-facto `.tmTheme` extension for terminals.
+The load-bearing convergence stands: **capture names track TextMate scope
+names** (tree-sitter's stated policy), so a theme keyed on `string`, `keyword`,
+`function.builtin` can drive both primary engines — and the recurring
+completeness trick (make every theme cover every language) has four independent
+implementations: parent-walking taxonomies ([Pygments][pygments]), closed
+lattices ([`@lezer/highlight`][lezer-hl]), fallback-key chains
+([IntelliJ][intellij]), and negotiated legends ([LSP][lsp-st]). Terminal
+reality is handled the same way everywhere it's handled at all: RGB → 256
+downsampling (`ansi256_from_rgb` in [bat] and the tree-sitter CLI; redmean in
+[Chroma][chroma]; plain Euclidean in [Pygments][pygments]) plus
+palette-respecting encodings ([bat]'s `#RRGGBBAA`).
 
 ## Where `sparkles:syntax` fits
 
 ### The shape: two engines × two backends
 
-The survey's conclusion is an architecture with **four corners and one spine**:
+The survey's conclusion is unchanged by the wider field — reinforced by it:
 
 ```
    grammars (.sublime-syntax)  grammars (compiled) + queries (.scm)
@@ -213,45 +343,52 @@ The survey's conclusion is an architecture with **four corners and one spine**:
 ```
 
 - **Fast mode** is a [syntect]-shaped engine: per-line stateful tokenization,
-  grammar corpus as data files, instant window rendering with checkpointed
-  state. It is the default for `cat`-style invocation and huge files.
-- **Precise mode** is a [tree-sitter-highlight]-shaped engine (the D binding
-  path already exists — see [the D substrate](#the-d-substrate)): whole-buffer
-  parse, query-driven captures, locals and injections — opt-in (`--precise`)
-  where fidelity beats latency, e.g. small files, HTML export, documentation
-  pipelines.
-- **The spine is the token/event stream.** Both engines reduce to _(byte range,
-  label, resolved style)_ per line — [tree-sitter-highlight]'s events fold into
-  exactly the per-line token lists TextMate engines emit natively, and both
-  [HtmlRenderer][ts-highlight] and [Shiki][shiki] prove the per-line-validity
-  invariant the backends need. One theme layer serves both because the label
-  vocabularies converged (scope-compatible names).
-- **Two backends, both first-class:** an ANSI fold with [bat]'s color tiers
-  (truecolor / 256 via `ansi256_from_rgb`-equivalent / palette / default-color,
-  italics gating) and an HTML emitter with per-line-valid tags, class-based or
-  inline styles, and CSS-variable multi-theme output à la [Shiki][shiki]
-  (including `light-dark()`). The tree-sitter CLI's `Style { ansi, css }` dual
-  representation is the proof that one theme entry can carry both targets.
-
-The empirically validated product rules that come with the shape: never fail on
-content; guard the engine boundary by **length and time** (bat's 16 KiB _and_
-Shiki's 500 ms, per line); lazy pre-serialized grammar assets for startup
-([bat]'s dumps — for which `sparkles:base`'s allocation-conscious I/O is a
-natural fit); layered detection with negative mappings + first-line fallback;
-checkpoint grammar state at line boundaries instead of bat's full-feed tax —
-the strategy [syntect]'s own `HighlightState` docs describe and [Shiki][shiki]
-productizes. And the shared streaming caveat as a design constraint: **neither
-model highlights an arbitrary mid-file window from scratch** — state flows
-top-down (checkpoint it) or comes from a whole-buffer parse (pay for it).
+  grammar corpus as data files, instant window rendering. Wave 5 sharpens the
+  windowing choice: **checkpoint grammar state at line boundaries** (the
+  [syntect]/[Shiki][shiki] pattern) as the primary strategy, with
+  [Vim][vim-emacs]-style grammar-authored sync points as the researched
+  fallback for cold windows — and never [bat]'s full-feed tax.
+- **Precise mode** is a [tree-sitter-highlight]-shaped engine consumed the
+  [Helix][helix] way when interactive (persistent tree, recycled injection
+  layers, viewport-bounded queries, hard budgets: parse timeout, size cap,
+  match limit) and the batch way when piping.
+- **The spine is the token/event stream** feeding both backends — ANSI with
+  [bat]'s color tiers, HTML with per-line-valid tags and [Shiki][shiki]-style
+  CSS-variable multi-theme output. The label vocabulary should follow the
+  scope-compatible names both engines share, with the completeness trick
+  implemented once (a fallback-walking resolver à la
+  [Pygments][pygments]/[IntelliJ][intellij]).
+- **Detection** is now a designed subsystem, not a bat-clone afterthought:
+  Linguist's cascade shape + bat's negative mappings + a relevance-style
+  content fallback ([the detection section](#language-detection)).
+- **Guards are a checklist, not a choice:** per-line length _and_ time
+  ([bat] + [Shiki][shiki]), per-match timeout if the regex engine backtracks
+  ([Chroma][chroma]), parse budget/size cap/match limit in precise mode
+  ([Helix][helix]) — with degradation visible and recoverable, never sticky-off
+  without a signal ([Vim][vim-emacs]'s `redrawtime` lesson).
+- **The semantic tier is a future client fold, already shaped:** implement the
+  [LSP semantic tokens][lsp-st] decode (5-int legend arrays) over the shared
+  token stream now; gain compiler-grade D highlighting whenever a server
+  exists — the overlay law (fast base paints, semantics refines, failure
+  invisible) matches the architecture for free.
 
 ### What each surveyed system contributes
 
-| System                  | What `sparkles:syntax` takes from it                                                                                                                                                                  |
-| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [bat]                   | The product architecture: controller→printer pipeline, decorations as components, lazy embedded assets, detection order + negative mappings, ANSI color tiers, the 16 KiB guard, pager negotiation    |
-| [syntect]               | The fast-mode engine semantics: contexts + `ScopeStackOp`s, packed scope atoms, pre-linked immutable grammar sets, lazy regexes, binary dumps, **cloneable state = checkpointing**, `css_for_theme`   |
-| [tree-sitter-highlight] | The precise-mode contract: merged three-query configuration, longest-dot-prefix name resolution, streaming events, injection layers, locals, host-owned cancellation, per-line-valid HTML             |
-| [Shiki][shiki]          | The HTML backend doctrine: hast-style structured output, multi-theme CSS variables + `light-dark()`, per-line **time** budgets, reified grammar state, engine-compat verification by generated report |
+| System                         | What `sparkles:syntax` takes from it                                                                                                         |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| [bat]                          | The product architecture: pipeline, decorations, lazy embedded assets, detection order + negative mappings, ANSI tiers, the 16 KiB guard     |
+| [syntect]                      | Fast-mode engine semantics: contexts + ops, packed scopes, pre-linked immutable sets, lazy regexes, dumps, **cloneable state = checkpoints** |
+| [tree-sitter-highlight]        | The precise-mode contract: merged queries, longest-dot-match resolution, streaming events, injections/locals, per-line-valid HTML            |
+| [Shiki][shiki]                 | The HTML backend doctrine: structured output, CSS-variable multi-theme + `light-dark()`, per-line **time** budgets, reified grammar state    |
+| [Pygments][pygments]           | The taxonomy/theme-inheritance design; the no-guards cautionary tale; formatter fan-out as proof of the stream seam                          |
+| [Chroma][chroma]               | The corpus-porting playbook (converter + residue accounting); regex timeouts; integer-encoded taxonomy                                       |
+| [highlight.js][hljs]           | Content-based detection fallback: relevance scoring, `illegal` negative evidence, keyword-hit capping, `secondBest` uncertainty              |
+| [`@lezer/highlight`][lezer-hl] | Vocabulary design to study before naming anything: closed tags, subsumption as data, modifier algebra; viewport clip as API                  |
+| [Helix][helix]                 | Precise-mode consumption: persistent trees, injection recycling, windowed cursor, budget constants with recorded rationale                   |
+| [Linguist][linguist]           | The detection cascade + registry schema + heuristics answer key + user-override precedence                                                   |
+| [LSP semantic tokens][lsp-st]  | The semantic tier's wire shape and the overlay composition law (`augmentsSyntaxTokens`)                                                      |
+| [IntelliJ][intellij]           | The layered-pass reference architecture; restartable integer-state lexing; fallback-key theming                                              |
+| [Vim & Emacs][vim-emacs]       | Backward sync for cold windows; render-driven laziness; explicit user-facing cost ceilings                                                   |
 
 ### The D substrate
 
@@ -271,17 +408,22 @@ its specification. The design itself lands later in `docs/specs/`, next to the
 
 ## Sources
 
-This page cites only claims grounded in the four cluster deep-dives — see each
-page's `Sources` for primary artifacts: [syntect] · [bat] ·
-[tree-sitter-highlight] · [Shiki][shiki]. Historical dates: TextMate 1.0
-(October 2004; scoped grammars/`.tmTheme` are 1.x-era), `.sublime-syntax`
-(Sublime Text 3 build 3084, April 2015), syntect (June 2016), bat v0.1.0
+This page cites only claims grounded in the thirteen cluster deep-dives — see
+each page's `Sources` for primary artifacts. Historical dates (all
+primary-sourced in the grounding ledgers): TextMate 1.0 (October 2004; scoped
+grammars/`.tmTheme` are 1.x-era), font-lock (1992; jit-lock default Emacs 21,
+October 2001), Vim 5.0 syntax highlighting (February 1998), IntelliJ IDEA 1.0
+(January 2001), Pygments 0.5 (October 2006), highlight.js (2006),
+`.sublime-syntax` (April 2015), syntect (June 2016), Chroma (2017), bat v0.1.0
 (April 2018), Shiki (October 2018), `tree-sitter-highlight` crate
 (February 2019), GitHub.com adoption attested by the tree-sitter docs by
-February 2020 (Wayback-verified; no first-party announcement), Shiki v1.0
+February 2020 (Wayback-verified; no first-party announcement), LSP 3.16
+semantic tokens (December 2020), VS Code semantic default-on for TS/JS
+(v1.43, 2020), `@lezer/highlight` on npm (April 2022), Shiki v1.0
 (February 2024).
 
-- Cluster deep-dives: [syntect] · [bat] · [tree-sitter-highlight] · [Shiki][shiki]
+- Engines: [syntect] · [bat] · [tree-sitter-highlight] · [Shiki][shiki] · [Pygments][pygments] · [Chroma][chroma] · [highlight.js][hljs] · [`@lezer/highlight`][lezer-hl]
+- Detection: [Linguist][linguist] · consumption: [Helix][helix] · [IntelliJ][intellij] · [Vim & Emacs][vim-emacs] · semantic tier: [LSP semantic tokens][lsp-st]
 - Survey context: [the umbrella][umbrella] · [comparison][comparison] · [concepts][concepts]
 - Theory: [PEG / ordered choice][peg-packrat] · [bottom-up / GLR][bottom-up] · [incremental][incremental]
 - The inward turn: [the D landscape][d-landscape]
@@ -299,7 +441,17 @@ February 2020 (Wayback-verified; no first-party announcement), Shiki v1.0
 [tree-sitter-highlight]: ./tree-sitter-highlight.md
 [ts-highlight]: ./tree-sitter-highlight.md
 [shiki]: ./shiki.md
+[pygments]: ./pygments.md
+[chroma]: ./chroma.md
+[hljs]: ./highlight-js.md
+[lezer-hl]: ./lezer-highlight.md
+[helix]: ./helix.md
+[linguist]: ./linguist.md
+[lsp-st]: ./lsp-semantic-tokens.md
+[intellij]: ./intellij-highlighting.md
+[vim-emacs]: ./vim-emacs-syntax.md
 [tree-sitter]: ./tree-sitter.md
+[lezer]: ./lezer.md
 [rust-analyzer]: ./rust-analyzer.md
 [peg-packrat]: ./theory/peg-packrat.md
 [bottom-up]: ./theory/bottom-up.md

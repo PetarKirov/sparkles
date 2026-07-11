@@ -651,6 +651,33 @@ export default withMermaid(
                       link: '/research/parsing/tree-sitter-highlight',
                     },
                     { text: 'Shiki', link: '/research/parsing/shiki' },
+                    { text: 'Pygments', link: '/research/parsing/pygments' },
+                    { text: 'Chroma', link: '/research/parsing/chroma' },
+                    {
+                      text: 'highlight.js',
+                      link: '/research/parsing/highlight-js',
+                    },
+                    {
+                      text: '@lezer/highlight',
+                      link: '/research/parsing/lezer-highlight',
+                    },
+                    {
+                      text: 'Helix (editor engine)',
+                      link: '/research/parsing/helix',
+                    },
+                    { text: 'Linguist', link: '/research/parsing/linguist' },
+                    {
+                      text: 'LSP Semantic Tokens',
+                      link: '/research/parsing/lsp-semantic-tokens',
+                    },
+                    {
+                      text: 'IntelliJ Platform',
+                      link: '/research/parsing/intellij-highlighting',
+                    },
+                    {
+                      text: 'Vim & Emacs font-lock',
+                      link: '/research/parsing/vim-emacs-syntax',
+                    },
                   ],
                 },
                 {
