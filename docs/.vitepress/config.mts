@@ -703,6 +703,32 @@ export default withMermaid(
               ],
             },
             {
+              text: 'SQL & ORM Abstraction',
+              link: '/research/sql/',
+              collapsed: true,
+              items: [
+                {
+                  text: 'Concepts & Vocabulary',
+                  link: '/research/sql/concepts',
+                },
+                {
+                  text: 'Effect Systems & Functional Access',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Effect TS (sql)',
+                      link: '/research/sql/effect-ts',
+                    },
+                    { text: 'Quill (Scala)', link: '/research/sql/quill' },
+                    { text: 'doobie (Scala)', link: '/research/sql/doobie' },
+                    { text: 'skunk (Scala)', link: '/research/sql/skunk' },
+                    { text: 'Slick (Scala)', link: '/research/sql/slick' },
+                    { text: 'Ecto (Elixir)', link: '/research/sql/ecto' },
+                  ],
+                },
+              ],
+            },
+            {
               text: 'Sean Parent: Better Code',
               link: '/research/sean-parent/',
               collapsed: true,
