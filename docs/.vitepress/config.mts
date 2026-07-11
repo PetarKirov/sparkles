@@ -237,6 +237,44 @@ export default withMermaid(
               ],
             },
             {
+              text: 'syntax',
+              link: '/libs/syntax/',
+              collapsed: true,
+              items: [
+                {
+                  text: 'Tutorial',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Getting started',
+                      link: '/libs/syntax/tutorial/getting-started',
+                    },
+                  ],
+                },
+                {
+                  text: 'Reference',
+                  collapsed: true,
+                  items: [
+                    { text: 'The core', link: '/libs/syntax/reference/core' },
+                    {
+                      text: 'The tree-sitter engine',
+                      link: '/libs/syntax/reference/engine',
+                    },
+                  ],
+                },
+                {
+                  text: 'Explanation',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'The design',
+                      link: '/libs/syntax/explanation/design',
+                    },
+                  ],
+                },
+              ],
+            },
+            {
               text: 'test-runner',
               link: '/libs/test-runner/',
               collapsed: false,
