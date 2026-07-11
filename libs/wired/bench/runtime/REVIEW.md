@@ -182,7 +182,7 @@ PY
 
 Expected: every `parse`/`decode`/`validate` row within **±0.5%**; the single
 `citm serialize` row at ~−1.8% (a JsonSink buffer-grow amortization effect,
-documented as advisory / open-issue B3). This is the certificate that the
+documented as advisory / open-issue O11). This is the certificate that the
 migration cost no measurement fidelity.
 
 **Wall-clock is deliberately _not_ bit-comparable** (same instructions, different
@@ -232,7 +232,7 @@ ls -1 libs/wired/bench/runtime/results/*.json
   `ins/byte` must not move (only the counting pass, which is separate from
   timing, feeds it).
 - **The CMI recipe (§3).** `-linkonce-templates` fixed the link on LDC 1.41 but
-  has ICE'd elsewhere (noted in open-issue B1). Confirm it links on your
+  has ICE'd elsewhere (noted in open-issue O9). Confirm it links on your
   toolchain.
 - **Scope of runner changes.** Per "coordinate, don't re-architect," the runner
   itself (`sparkles:test-runner`) was **not** patched — gaps are logged as open
