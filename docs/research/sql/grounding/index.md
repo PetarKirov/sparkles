@@ -47,6 +47,15 @@ Populated as each wave lands. Waves: **W1** effects core · **W2** Haskell typed
 | linq2db              | [linq2db.md](./linq2db.md)                           | 50     | 47  | 0   | W3   |
 | dapper               | [dapper.md](./dapper.md)                             | 61     | 56  | 1   | W3   |
 | exposed              | [exposed.md](./exposed.md)                           | 37     | 36  | 0   | W3   |
+| ef-core              | [ef-core.md](./ef-core.md)                           | 55     | 52  | 0   | W4   |
+| hibernate            | [hibernate.md](./hibernate.md)                       | 66     | 57  | 0   | W4   |
+| sqlalchemy           | [sqlalchemy.md](./sqlalchemy.md)                     | 57     | 51  | 0   | W4   |
+| django-orm           | [django-orm.md](./django-orm.md)                     | 62     | 58  | 0   | W4   |
+| prisma               | [prisma.md](./prisma.md)                             | 57     | 52  | 0   | W4   |
+| typeorm              | [typeorm.md](./typeorm.md)                           | 62     | 59  | 0   | W4   |
+| gorm                 | [gorm.md](./gorm.md)                                 | 55     | 46  | 0   | W4   |
+| ent                  | [ent.md](./ent.md)                                   | 56     | 50  | 0   | W4   |
+| activerecord         | [activerecord.md](./activerecord.md)                 | 54     | 52  | 0   | W4   |
 
 ## Master discrepancy register
 
@@ -127,3 +136,33 @@ compiler embedding the real `libpg_query` grammar and does **not** run migration
 `MigrationUtils` + a third-party runner; **SeaORM**'s "async & dynamic ORM" / "built upon
 SQLx" taglines are in-tree (`README`), not just web. The `◯` remainder is the web-attested
 set only.
+
+### Batch 4 (wave 4 — full ORMs, 2026-07-12)
+
+Nine pages grounded at authoring time: [ef-core](./ef-core.md), [hibernate](./hibernate.md),
+[sqlalchemy](./sqlalchemy.md), [django-orm](./django-orm.md), [prisma](./prisma.md),
+[typeorm](./typeorm.md), [gorm](./gorm.md), [ent](./ent.md), [activerecord](./activerecord.md).
+**Zero substantive page discrepancies.** Several load-bearing facts were verified against the
+pinned trees rather than assumed:
+
+- **hibernate** — license is **Apache-2.0** at this HEAD (SPDX in every file + `LICENSE.txt`);
+  the LGPL-2.1 → Apache relicense (6.0, 2022) is web-attested and marked as such. Persistence
+  context = first-level cache = identity map + unit of work + automatic dirty checking (all
+  verbatim-grounded); migrations delegated to Flyway/Liquibase (`BestPractices.adoc`).
+- **prisma** — the historical native **Rust query engine is gone** from this checkout (7.x
+  line): the sole engine is a pure-TS `ClientEngine` + a **WASM** query compiler, and a
+  **driver adapter is mandatory** (`PrismaClient` throws `P2038` without one). Schema-first
+  `.prisma` + generated client; `$queryRawUnsafe` the only injection surface.
+- **ent** — has **no savepoints / nested transactions** (re-entry returns `ErrTxStarted`;
+  zero "savepoint" hits in non-test dialect code); statically-typed generated client, no
+  reflection; Atlas-backed migrations.
+- **typeorm** — the pinned tree is **1.0.0** (2026-05-19); Active-Record base is a thin
+  veneer over the same `Repository`/persistence engine as the Data-Mapper surface.
+- **ef-core / sqlalchemy / activerecord / django-orm / gorm** — change-tracking / unit-of-work
+  presence-or-absence grounded per tree: EF Core, Hibernate, SQLAlchemy have a full unit of
+  work + identity map; ActiveRecord/Django/GORM have per-instance dirty tracking but **no**
+  identity map or session-level unit of work (each `save` its own statement). SQLAlchemy
+  migrations = Alembic (separate); Django migrations built-in; ActiveRecord `where(str)` is
+  the classic SQLi foot-gun guarded by `sanitize_sql`.
+
+The `◯` remainder per page is the web-attested set only.

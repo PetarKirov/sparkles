@@ -35,7 +35,7 @@ This survey answers seven questions:
    The synthesis and delta. See the comparison synthesis (final wave).
 
 > [!NOTE]
-> **Scope: waves 1-3 published; waves 4-5 in progress.** This survey is built in waves.
+> **Scope: waves 1-4 published; wave 5 in progress.** This survey is built in waves.
 > **Wave 1** establishes the shared vocabulary ([concepts][concepts]) and the effect-system
 > / functional-data-mapper core: [Effect TS][effect-ts], [Quill][quill], [doobie][doobie],
 > [skunk][skunk], [Slick][slick], [Ecto][ecto]. **Wave 2** adds the **Haskell typed cluster**
@@ -43,11 +43,12 @@ This survey answers seven questions:
 > [persistent + esqueleto][pe]). **Wave 3** adds the **typed query builders & thin safe-SQL**
 > ([Diesel][diesel], [sqlx][sqlx], [SeaORM][sea-orm], [Kysely][kysely], [Drizzle][drizzle],
 > [jOOQ][jooq], [sqlc][sqlc], [linq2db][linq2db], [Dapper][dapper], [Exposed][exposed]).
-> Later waves add the **full ORMs** (`EF Core`, `Hibernate`, `SQLAlchemy`, `Django ORM`,
-> `Prisma`, `TypeORM`, `GORM`, `ent`, `ActiveRecord`), and the **raw / tagged-template
-> baseline** (Go `database/sql`, `postgres.js`, `JDBI`). Rows in the catalog below are marked
-> with the wave that publishes their deep-dive; forward-dated rows are not yet linked. The
-> capstone comparison synthesis lands with the final wave.
+> **Wave 4** adds the **full ORMs** ([EF Core][ef-core], [Hibernate][hibernate],
+> [SQLAlchemy][sqlalchemy], [Django ORM][django-orm], [Prisma][prisma], [TypeORM][typeorm],
+> [GORM][gorm], [ent][ent], [ActiveRecord][activerecord]). The final wave adds the **raw /
+> tagged-template baseline** (Go `database/sql`, `postgres.js`, `JDBI`). Rows in the catalog
+> below are marked with the wave that publishes their deep-dive; forward-dated rows are not
+> yet linked. The capstone comparison synthesis lands with the final wave.
 
 **Last reviewed:** July 12, 2026
 
@@ -61,41 +62,41 @@ how a result is returned. **Schema stance** is the library's relationship to the
 ([concepts][schema]). The **Link** column points at the deep-dive (or the wave that
 publishes it).
 
-| System                     | Language   | Category                      | Query model                          | Effect / async model                     | Schema stance            | Link                       |
-| -------------------------- | ---------- | ----------------------------- | ------------------------------------ | ---------------------------------------- | ------------------------ | -------------------------- |
-| **Effect TS `sql`**        | TypeScript | Functional data mapper        | Tagged template                      | Effect value (typed `SqlError`)          | Code-agnostic            | [effect-ts][effect-ts]     |
-| **Quill**                  | Scala      | Functional data mapper        | Quoted DSL → AST (compile-time)      | Pluggable; ZIO in JDBC-ZIO               | Code-agnostic            | [quill][quill]             |
-| **doobie**                 | Scala      | Functional data mapper        | Tagged template + `Fragment`         | `ConnectionIO` (cats-effect)             | None (SQL only)          | [doobie][doobie]           |
-| **skunk**                  | Scala      | Functional data mapper        | Typed statement + `Codec`            | cats-effect + fs2                        | None (SQL only)          | [skunk][skunk]             |
-| **Slick**                  | Scala      | Functional-relational         | Typed relational algebra             | `DBIO` → effect-poly `F` (IO/Future/ZIO) | Schema + codegen         | [slick][slick]             |
-| **Ecto**                   | Elixir     | Functional data mapper        | Composable query macros              | Immutable / blocking                     | Code-first + migrations  | [ecto][ecto]               |
-| **hasql**                  | Haskell    | Safe-SQL / micro-mapper       | Raw SQL + `Encoders`/`Decoders`      | `Session` over `IO` (blocking)           | None (SQL only)          | [hasql][hasql]             |
-| **Squeal**                 | Haskell    | Typed query builder           | Typed relational algebra             | Indexed monad `PQ` over `IO`             | Code-first (type-level)  | [squeal][squeal]           |
-| **Opaleye**                | Haskell    | Typed query builder           | Typed relational algebra (arrows)    | `IO` (postgresql-simple)                 | Db-first                 | [opaleye][opaleye]         |
-| **Beam**                   | Haskell    | Functional data mapper        | Typed relational algebra (`Q` monad) | `MonadBeam` over `IO`                    | Code-first / db-first    | [beam][beam]               |
-| **persistent + esqueleto** | Haskell    | Full ORM + typed joins        | TH entities + type-safe EDSL         | `SqlPersistT` over `IO` (blocking)       | Code-first               | [persistent-esqueleto][pe] |
-| **Diesel**                 | Rust       | Typed query builder           | Fluent typed builder                 | Blocking (+ async fork)                  | Db-first (`schema.rs`)   | [diesel][diesel]           |
-| **sqlx**                   | Rust       | Safe-SQL / micro-mapper       | Macro-checked raw SQL                | Async                                    | Db-first (compile check) | [sqlx][sqlx]               |
-| **SeaORM**                 | Rust       | Full ORM (data mapper)        | Fluent builder over `sqlx`           | Async                                    | Code/db-first (entities) | [sea-orm][sea-orm]         |
-| **Kysely**                 | TypeScript | Typed query builder           | Fluent typed builder                 | Async                                    | Db-first (types)         | [kysely][kysely]           |
-| **Drizzle**                | TypeScript | Typed query builder           | Fluent SQL-like builder              | Async                                    | Code-first (schema)      | [drizzle][drizzle]         |
-| **jOOQ**                   | Java       | Typed query builder           | Fluent typed builder                 | Blocking (+ R2DBC)                       | Db-first codegen         | [jooq][jooq]               |
-| **sqlc**                   | Go         | Safe-SQL / micro-mapper       | Raw SQL → generated code             | Blocking (`database/sql`)                | Db-first (codegen)       | [sqlc][sqlc]               |
-| **linq2db**                | .NET       | Typed query builder           | LINQ → SQL                           | Async                                    | Db-first / POCO          | [linq2db][linq2db]         |
-| **Dapper**                 | .NET       | Safe-SQL / micro-mapper       | Raw SQL + auto-map                   | Blocking / async                         | None                     | [dapper][dapper]           |
-| **Exposed**                | Kotlin     | Typed query builder + DAO     | Fluent DSL / DAO                     | Blocking (+ suspend)                     | Code-first               | [exposed][exposed]         |
-| **EF Core**                | .NET       | Full ORM (data mapper)        | LINQ                                 | Async                                    | Code-first + migrations  | wave 4                     |
-| **Hibernate / JPA**        | Java       | Full ORM (data mapper)        | JPQL / Criteria                      | Blocking (+ reactive)                    | Code-first / db-first    | wave 4                     |
-| **SQLAlchemy**             | Python     | Full ORM (data mapper) + Core | Core expression + ORM                | Blocking (+ asyncio)                     | Code-first               | wave 4                     |
-| **Django ORM**             | Python     | Full ORM (active-record-ish)  | `QuerySet` method chains             | Blocking (+ async)                       | Code-first + migrations  | wave 4                     |
-| **Prisma**                 | TypeScript | Full ORM (data mapper)        | Schema-first + generated client      | Async                                    | Schema-first (`.prisma`) | wave 4                     |
-| **TypeORM**                | TypeScript | Full ORM (AR + data mapper)   | Decorators + query builder           | Async                                    | Code-first               | wave 4                     |
-| **GORM**                   | Go         | Full ORM (active-record-ish)  | Chainable methods + struct tags      | Blocking                                 | Code-first (automigrate) | wave 4                     |
-| **ent**                    | Go         | Full ORM (data mapper)        | Schema-as-code + generated builders  | Blocking                                 | Code-first (codegen)     | wave 4                     |
-| **ActiveRecord**           | Ruby       | Full ORM (active record)      | Model + query methods                | Blocking                                 | Db-first + migrations    | wave 4                     |
-| **Go `database/sql`**      | Go         | Driver (+ `sqlx`)             | Raw string                           | Blocking                                 | None                     | wave 5                     |
-| **postgres.js**            | JS / TS    | Driver + safe-SQL             | Tagged template                      | Async                                    | None                     | wave 5                     |
-| **JDBI**                   | Java       | Safe-SQL / micro-mapper       | Raw SQL (fluent + SQL objects)       | Blocking                                 | None                     | wave 5                     |
+| System                     | Language   | Category                      | Query model                          | Effect / async model                     | Schema stance            | Link                         |
+| -------------------------- | ---------- | ----------------------------- | ------------------------------------ | ---------------------------------------- | ------------------------ | ---------------------------- |
+| **Effect TS `sql`**        | TypeScript | Functional data mapper        | Tagged template                      | Effect value (typed `SqlError`)          | Code-agnostic            | [effect-ts][effect-ts]       |
+| **Quill**                  | Scala      | Functional data mapper        | Quoted DSL → AST (compile-time)      | Pluggable; ZIO in JDBC-ZIO               | Code-agnostic            | [quill][quill]               |
+| **doobie**                 | Scala      | Functional data mapper        | Tagged template + `Fragment`         | `ConnectionIO` (cats-effect)             | None (SQL only)          | [doobie][doobie]             |
+| **skunk**                  | Scala      | Functional data mapper        | Typed statement + `Codec`            | cats-effect + fs2                        | None (SQL only)          | [skunk][skunk]               |
+| **Slick**                  | Scala      | Functional-relational         | Typed relational algebra             | `DBIO` → effect-poly `F` (IO/Future/ZIO) | Schema + codegen         | [slick][slick]               |
+| **Ecto**                   | Elixir     | Functional data mapper        | Composable query macros              | Immutable / blocking                     | Code-first + migrations  | [ecto][ecto]                 |
+| **hasql**                  | Haskell    | Safe-SQL / micro-mapper       | Raw SQL + `Encoders`/`Decoders`      | `Session` over `IO` (blocking)           | None (SQL only)          | [hasql][hasql]               |
+| **Squeal**                 | Haskell    | Typed query builder           | Typed relational algebra             | Indexed monad `PQ` over `IO`             | Code-first (type-level)  | [squeal][squeal]             |
+| **Opaleye**                | Haskell    | Typed query builder           | Typed relational algebra (arrows)    | `IO` (postgresql-simple)                 | Db-first                 | [opaleye][opaleye]           |
+| **Beam**                   | Haskell    | Functional data mapper        | Typed relational algebra (`Q` monad) | `MonadBeam` over `IO`                    | Code-first / db-first    | [beam][beam]                 |
+| **persistent + esqueleto** | Haskell    | Full ORM + typed joins        | TH entities + type-safe EDSL         | `SqlPersistT` over `IO` (blocking)       | Code-first               | [persistent-esqueleto][pe]   |
+| **Diesel**                 | Rust       | Typed query builder           | Fluent typed builder                 | Blocking (+ async fork)                  | Db-first (`schema.rs`)   | [diesel][diesel]             |
+| **sqlx**                   | Rust       | Safe-SQL / micro-mapper       | Macro-checked raw SQL                | Async                                    | Db-first (compile check) | [sqlx][sqlx]                 |
+| **SeaORM**                 | Rust       | Full ORM (data mapper)        | Fluent builder over `sqlx`           | Async                                    | Code/db-first (entities) | [sea-orm][sea-orm]           |
+| **Kysely**                 | TypeScript | Typed query builder           | Fluent typed builder                 | Async                                    | Db-first (types)         | [kysely][kysely]             |
+| **Drizzle**                | TypeScript | Typed query builder           | Fluent SQL-like builder              | Async                                    | Code-first (schema)      | [drizzle][drizzle]           |
+| **jOOQ**                   | Java       | Typed query builder           | Fluent typed builder                 | Blocking (+ R2DBC)                       | Db-first codegen         | [jooq][jooq]                 |
+| **sqlc**                   | Go         | Safe-SQL / micro-mapper       | Raw SQL → generated code             | Blocking (`database/sql`)                | Db-first (codegen)       | [sqlc][sqlc]                 |
+| **linq2db**                | .NET       | Typed query builder           | LINQ → SQL                           | Async                                    | Db-first / POCO          | [linq2db][linq2db]           |
+| **Dapper**                 | .NET       | Safe-SQL / micro-mapper       | Raw SQL + auto-map                   | Blocking / async                         | None                     | [dapper][dapper]             |
+| **Exposed**                | Kotlin     | Typed query builder + DAO     | Fluent DSL / DAO                     | Blocking (+ suspend)                     | Code-first               | [exposed][exposed]           |
+| **EF Core**                | .NET       | Full ORM (data mapper)        | LINQ                                 | Async                                    | Code-first + migrations  | [ef-core][ef-core]           |
+| **Hibernate / JPA**        | Java       | Full ORM (data mapper)        | JPQL / Criteria                      | Blocking (+ reactive)                    | Code-first / db-first    | [hibernate][hibernate]       |
+| **SQLAlchemy**             | Python     | Full ORM (data mapper) + Core | Core expression + ORM                | Blocking (+ asyncio)                     | Code-first               | [sqlalchemy][sqlalchemy]     |
+| **Django ORM**             | Python     | Full ORM (active-record-ish)  | `QuerySet` method chains             | Blocking (+ async)                       | Code-first + migrations  | [django-orm][django-orm]     |
+| **Prisma**                 | TypeScript | Full ORM (data mapper)        | Schema-first + generated client      | Async                                    | Schema-first (`.prisma`) | [prisma][prisma]             |
+| **TypeORM**                | TypeScript | Full ORM (AR + data mapper)   | Decorators + query builder           | Async                                    | Code-first               | [typeorm][typeorm]           |
+| **GORM**                   | Go         | Full ORM (active-record-ish)  | Chainable methods + struct tags      | Blocking                                 | Code-first (automigrate) | [gorm][gorm]                 |
+| **ent**                    | Go         | Full ORM (data mapper)        | Schema-as-code + generated builders  | Blocking                                 | Code-first (codegen)     | [ent][ent]                   |
+| **ActiveRecord**           | Ruby       | Full ORM (active record)      | Model + query methods                | Blocking                                 | Db-first + migrations    | [activerecord][activerecord] |
+| **Go `database/sql`**      | Go         | Driver (+ `sqlx`)             | Raw string                           | Blocking                                 | None                     | wave 5                       |
+| **postgres.js**            | JS / TS    | Driver + safe-SQL             | Tagged template                      | Async                                    | None                     | wave 5                       |
+| **JDBI**                   | Java       | Safe-SQL / micro-mapper       | Raw SQL (fluent + SQL objects)       | Blocking                                 | None                     | wave 5                       |
 
 ---
 
@@ -200,8 +201,10 @@ deep-dives (some forward-dated pending their wave).</sub>
 - **"I want the typed-query-builder lineage."** [Slick][slick] → [Squeal][squeal] /
   [Opaleye][opaleye] / [Beam][beam] (Haskell type-level schemas) → [jOOQ][jooq] /
   [Kysely][kysely] / [Diesel][diesel] / [Drizzle][drizzle] (fluent typed builders).
-- **"I want to understand full ORMs."** [concepts: ORM patterns][orm] → `EF Core` /
-  `Hibernate` / `SQLAlchemy` (wave 4) → `ActiveRecord` / `Django ORM` (active record).
+- **"I want to understand full ORMs."** [concepts: ORM patterns][orm] → [Hibernate][hibernate]
+  / [EF Core][ef-core] / [SQLAlchemy][sqlalchemy] (data mapper + unit of work) →
+  [ActiveRecord][activerecord] / [Django ORM][django-orm] / [GORM][gorm] (active record) →
+  [Prisma][prisma] / [ent][ent] (schema-first / codegen).
 
 ### Library deep-dives
 
@@ -214,8 +217,9 @@ Grouped by category; see the [master catalog](#master-catalog) for the one-line 
 - **Typed builders & thin safe-SQL:** [Diesel][diesel] · [sqlx][sqlx] · [SeaORM][sea-orm] ·
   [Kysely][kysely] · [Drizzle][drizzle] · [jOOQ][jooq] · [sqlc][sqlc] · [linq2db][linq2db] ·
   [Dapper][dapper] · [Exposed][exposed].
-- **Full ORMs:** `EF Core` · `Hibernate` · `SQLAlchemy` · `Django ORM` · `Prisma` ·
-  `TypeORM` · `GORM` · `ent` · `ActiveRecord` _(wave 4)_.
+- **Full ORMs:** [EF Core][ef-core] · [Hibernate][hibernate] · [SQLAlchemy][sqlalchemy] ·
+  [Django ORM][django-orm] · [Prisma][prisma] · [TypeORM][typeorm] · [GORM][gorm] ·
+  [ent][ent] · [ActiveRecord][activerecord].
 - **Raw / tagged-template baseline:** Go `database/sql` · `postgres.js` · `JDBI` _(wave 5)_.
 
 ---
@@ -258,3 +262,12 @@ Grouped by category; see the [master catalog](#master-catalog) for the one-line 
 [linq2db]: ./linq2db.md
 [dapper]: ./dapper.md
 [exposed]: ./exposed.md
+[ef-core]: ./ef-core.md
+[hibernate]: ./hibernate.md
+[sqlalchemy]: ./sqlalchemy.md
+[django-orm]: ./django-orm.md
+[prisma]: ./prisma.md
+[typeorm]: ./typeorm.md
+[gorm]: ./gorm.md
+[ent]: ./ent.md
+[activerecord]: ./activerecord.md
