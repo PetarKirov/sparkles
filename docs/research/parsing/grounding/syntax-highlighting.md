@@ -44,6 +44,28 @@ Verified 2026-07-11 via WebSearch/WebFetch + registry APIs; each has a primary s
 | D9  | Shiki v1.0 — 7 Feb 2024 (Shikiji rewrite merged back)                                                     | GitHub release `v1.0.0`; author announcement 2024-02-07                                                                                                                                                                                                                                                                                                                                                                                                                                                      | 🌐 ✓   |
 | D10 | `@shikijs/engine-javascript` debut v1.15.0 (30 Aug 2024); `oniguruma-to-es` adopted v1.23.0 (15 Nov 2024) | GitHub releases `v1.15.0` / `v1.23.0` (+ shiki.style v2 blog crediting oniguruma-to-es); the page says "pure-JS `RegExp` engine (v1.15.0…); `oniguruma-to-es` from v1.23.0" to keep the two steps distinct                                                                                                                                                                                                                                                                                                   | 🌐 ✓   |
 
+## Wave-5 addendum (2026-07-11)
+
+The page was **restructured for wave 5** (three-model landscape, detection axis, semantic
+tier, window-problem section, wider-field table, expanded theme landscape, thirteen-system
+contributions). Cross-page rows 1-11 above remain valid; the new sections aggregate the
+nine Batch-10 ledgers the same way (guard values, windowing strategies, vocabulary designs
+each trace to the per-page ledger rows). Additional web-attested dates, verified 2026-07-11
+with primary sources:
+
+| #   | Date claim                                                                                                           | Primary source                                                                                                                        | Status |
+| --- | -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ------ |
+| D11 | Pygments 0.5 "PyKleur" — 30 Oct 2006                                                                                 | in-tree `CHANGES` ("released Oct 30, 2006 — Initial public release")                                                                  | ✓/🌐   |
+| D12 | highlight.js — 2006 (v0.6 beta by 23 Oct 2006; **exact day soft**)                                                   | Wayback `web/20061023070656/softwaremaniacs.org/soft/highlight/`; LICENSE © 2006                                                      | 🌐 ≈   |
+| D13 | Chroma — created 7 Jun 2017; first tag v0.1.0 25 Sep 2017                                                            | GitHub API `created_at` + tag commit date                                                                                             | 🌐 ✓   |
+| D14 | Linguist — repo created 9 May 2011                                                                                   | GitHub API `created_at`                                                                                                               | 🌐 ✓   |
+| D15 | LSP 3.16 semantic tokens — 14 Dec 2020                                                                               | spec changelog ("3.16.0 (12/14/2020) … Add semantic token support") — also local, row 9 of the [LSP ledger](./lsp-semantic-tokens.md) | ✓      |
+| D16 | VS Code semantic default-on TS/JS — v1.43 (Feb-Mar 2020); walked back in 1.43.1 to built-in/opt-in themes            | code.visualstudio.com/updates/v1_43                                                                                                   | 🌐 ✓   |
+| D17 | `@lezer/highlight` first npm — 0.16.0, 20 Apr 2022 (1.0.0 6 Jun 2022)                                                | npm registry `time.created`. **Trap:** the GitHub repo dates are package-reorg era, not CM6's start                                   | 🌐 ✓   |
+| D18 | Vim 5.0 — 19 Feb 1998 (one stray web source says Feb 16; primaries agree on 19)                                      | vim-history release announcement + `src/version.h`; version fact local (`version5.txt`)                                               | 🌐 ✓   |
+| D19 | font-lock 1992 (Zawinski, Lucid); jit-lock default Emacs 21.1 (Oct 2001; NEWS.21 local); Lazy Lock = 19.30 precursor | `font-lock.el` © header + `etc/NEWS.21` (local); 21.1 release date = FSF press (🌐)                                                   | ✓/🌐   |
+| D20 | IntelliJ IDEA 1.0 — January 2001 (**day only secondary-sourced** — phrased month-level in the pages)                 | JetBrains anniversary page + Wikipedia                                                                                                | 🌐 ≈   |
+
 ## Opinion (◯) — legitimate survey voice
 
 - The "colors-not-trees contract" framing; the four-corners/one-spine architecture and the
