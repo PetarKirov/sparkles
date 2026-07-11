@@ -24,6 +24,10 @@ module sparkles.test_runner.perf;
 
 import std.math : isNaN;
 
+import sparkles.test_runner.capability : Capability, CapabilityAbsence,
+    CapabilityReport, has, hasNamedColumns, hasSnapshot, isCounterBackend,
+    probeMaxPrecise, probePmuType, reasonFor;
+
 /// Per-iteration counter averages of one counting pass. A field is `nan` when
 /// the event could not be opened on this machine (e.g. the LLC pair was
 /// dropped to avoid multiplexing, or the PMU exposes fewer events).
@@ -101,6 +105,7 @@ version (linux)
         private int[7] fds = -1;   /// -1 = event unavailable on this machine
         private bool userOnly;     /// true = kernel-side counting was refused
         private int nOpen;
+        private bool requested;
         private bool opened;
         private bool cacheDropped;
         private bool neverScheduled; /// calibration saw zero PMU time even reduced
@@ -108,17 +113,62 @@ version (linux)
         /// Whether counters are usable on this machine.
         bool available() const @safe pure nothrow @nogc => opened;
 
+        /// The bare reason counting is unavailable — single-sourced between
+        /// `status()` and `capabilities()` so the two never diverge.
+        private string countingAbsence() const @safe pure nothrow @nogc
+        {
+            if (!requested)
+                return "not requested";
+            if (neverScheduled)
+                return "PMU busy — the group never got scheduled";
+            return "perf_event_open failed — perf_event_paranoid?";
+        }
+
         /// Human-readable availability, for a report header.
         string status() const @safe pure nothrow
         {
-            if (neverScheduled)
-                return "unavailable (PMU busy — the group never got scheduled)";
             if (!opened)
-                return "unavailable (perf_event_open failed — perf_event_paranoid?)";
+                return "unavailable (" ~ countingAbsence() ~ ")";
             string s = userOnly ? "user-space only" : "kernel+user";
             if (cacheDropped)
                 s ~= "; LLC events dropped (would multiplex — NMI watchdog holds a counter?)";
             return s;
+        }
+
+        /// Why precise-memory sampling is absent: the flag stays off until a
+        /// backend delivers it (B5), but the reason carries the host finding.
+        private static string preciseMemoryAbsence() @safe nothrow @nogc
+        {
+            if (probePmuType("ibs_op") >= 0)
+                return "hardware present (ibs_op PMU) — data-source sampling lands in B5";
+            if (probeMaxPrecise() > 0)
+                return "hardware present (PEBS, cpu/caps/max_precise > 0) — data-source sampling lands in B5";
+            return "no precise-sampling PMU (no ibs_op; cpu/caps/max_precise = 0)";
+        }
+
+        /// What this backend can deliver on this host, this run (SPEC §6.2):
+        /// scalar counting when the group opened, and a reasoned absence for
+        /// every perf-domain capability a later milestone delivers.
+        CapabilityReport capabilities() const @safe nothrow
+        {
+            Capability present;
+            CapabilityAbsence[] absences;
+            if (opened)
+                present |= Capability.counting;
+            else
+                absences ~= CapabilityAbsence(Capability.counting, countingAbsence());
+            absences ~= CapabilityAbsence(Capability.countingRaw,
+                "raw event selectors (PERF_TYPE_RAW) land in B2");
+            absences ~= CapabilityAbsence(Capability.countingScaled,
+                "labeled multiplexed estimates land in B2 (groups shrink to exact today)");
+            absences ~= CapabilityAbsence(Capability.selfMonitoring,
+                "user-space counter reads (rdpmc) land in B2");
+            absences ~= CapabilityAbsence(Capability.ipSampling,
+                "overflow/IP sampling lands in B6");
+            absences ~= CapabilityAbsence(Capability.preciseMemory, preciseMemoryAbsence());
+            absences ~= CapabilityAbsence(Capability.eventNaming,
+                "event-name tables (libpfm4) land in B2");
+            return CapabilityReport(present, absences);
         }
 
         /// Opens the group unless disabled; failure leaves it unavailable.
@@ -129,6 +179,7 @@ version (linux)
         static PerfGroup tryOpen(bool enabled) @safe
         {
             PerfGroup g;
+            g.requested = enabled;
             if (!enabled)
                 return g;
             g.opened = g.openGroup(withCache: true);
@@ -295,18 +346,83 @@ else
     /// Off Linux: a permanently-unavailable stub with the same surface.
     struct PerfGroup
     {
+        private static immutable CapabilityAbsence[1] stubAbsence = [
+            CapabilityAbsence(Capability.counting, "not Linux"),
+        ];
+
         // A whole-block attribute only for the plain members; `count` is a
         // template, so its attributes are left to infer.
         @safe pure nothrow @nogc
         {
             bool available() const => false;
             string status() const => "unavailable (not Linux)";
+            CapabilityReport capabilities() const
+                => CapabilityReport(Capability.none, stubAbsence[]);
             static PerfGroup tryOpen(bool) => PerfGroup();
             void close() {}
         }
 
         PerfStats count(Timed, Between)(scope Timed, scope Between, uint)
             => assert(false, "perf counters are Linux-only");
+    }
+}
+
+// Whichever body the platform built (real or stub) satisfies the backend
+// contract; the seam's compile-time tripwire.
+static assert(isCounterBackend!PerfGroup);
+static assert(!hasSnapshot!PerfGroup && !hasNamedColumns!PerfGroup);
+
+@("perf.PerfGroup.capabilities.notRequested")
+@safe
+unittest
+{
+    auto g = PerfGroup.tryOpen(false);
+    const r = g.capabilities;
+    assert(!r.has(Capability.counting));
+    version (linux)
+        assert(r.reasonFor(Capability.counting) == "not requested");
+    else
+        assert(r.reasonFor(Capability.counting) == "not Linux");
+}
+
+version (linux)
+{
+    @("perf.PerfGroup.capabilities.opened")
+    @system
+    unittest
+    {
+        import sparkles.test_runner.skip : skipTest;
+
+        auto g = PerfGroup.tryOpen(true);
+        scope (exit)
+            g.close();
+        if (!g.available)
+            skipTest(g.status());
+        const r = g.capabilities;
+        assert(r.has(Capability.counting));
+        assert(r.reasonFor(Capability.counting) is null);
+        assert(r.reasonFor(Capability.preciseMemory) !is null,
+            "the perf domain always explains the precise-memory gap");
+        assert(r.reasonFor(Capability.countingRaw) !is null);
+    }
+
+    @("perf.PerfGroup.status.byteIdentity")
+    @safe pure nothrow
+    unittest
+    {
+        // The exact pre-capability-seam strings, byte for byte.
+        PerfGroup g;
+        g.requested = true;
+        assert(g.status == "unavailable (perf_event_open failed — perf_event_paranoid?)");
+        g.neverScheduled = true;
+        assert(g.status == "unavailable (PMU busy — the group never got scheduled)");
+        g.neverScheduled = false;
+        g.opened = true;
+        assert(g.status == "kernel+user");
+        g.userOnly = true;
+        assert(g.status == "user-space only");
+        g.cacheDropped = true;
+        assert(g.status == "user-space only; LLC events dropped (would multiplex — NMI watchdog holds a counter?)");
     }
 }
 

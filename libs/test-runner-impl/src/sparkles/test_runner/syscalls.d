@@ -24,6 +24,10 @@
  */
 module sparkles.test_runner.syscalls;
 
+import sparkles.test_runner.capability : Capability, CapabilityAbsence,
+    CapabilityReport, has, hasNamedColumns, hasSnapshot, isCounterBackend,
+    probeParanoid, reasonFor;
+
 /// Per-iteration syscall counts of one counting pass. `total` is every syscall
 /// (`raw_syscalls:sys_enter`); `counts[i]` is the per-iteration count of the
 /// tracepoint named `named[i]` (`nan` if that tracepoint could not be opened).
@@ -104,6 +108,8 @@ version (linux)
         private int[] fds;          /// [leader(total), named...]; -1 = unavailable
         private const(string)[] names_;
         private int nOpen;
+        private bool requested;
+        private bool idUnreadable;  /// tracefs id files could not be read
         private bool opened;
 
         /// Whether syscall counters are usable on this machine.
@@ -118,6 +124,30 @@ version (linux)
                 ? "raw_syscalls:sys_enter + per-syscall tracepoints"
                 : "unavailable (needs readable tracefs and perf_event_paranoid ≤ 1 — usually root)";
 
+        /// The bare reason event tracing is unavailable, distinguishing the
+        /// independent gates: tracefs readability vs `perf_event_paranoid`.
+        private string tracingAbsence() const @safe nothrow
+        {
+            if (!requested)
+                return "not requested";
+            if (idUnreadable)
+                return "tracefs event ids unreadable — usually root";
+            const p = probeParanoid();
+            if (!p.ok)
+                return "perf_event_open refused tracepoints — perf_event_paranoid? (needs ≤ 1)";
+            return "perf_event_open refused tracepoints — perf_event_paranoid="
+                ~ longToString(p.value) ~ " (needs ≤ 1)";
+        }
+
+        /// What this backend can deliver: OS-event gating via tracepoints.
+        CapabilityReport capabilities() const @safe nothrow
+        {
+            if (opened)
+                return CapabilityReport(Capability.eventTracing, null);
+            return CapabilityReport(Capability.none,
+                [CapabilityAbsence(Capability.eventTracing, tracingAbsence())]);
+        }
+
         /// Opens the group unless disabled: the `raw_syscalls:sys_enter` leader
         /// plus one `syscalls:sys_enter_<name>` counter per requested name. A
         /// name whose tracepoint can't be resolved gets a `-1` fd (its column
@@ -125,6 +155,7 @@ version (linux)
         static SyscallGroup tryOpen(bool enabled, const(string)[] named) @safe
         {
             SyscallGroup g;
+            g.requested = enabled;
             if (!enabled)
                 return g;
             if (named.length > maxNamed)
@@ -135,7 +166,10 @@ version (linux)
 
             const leaderId = tracepointId("raw_syscalls", "sys_enter");
             if (leaderId < 0)
+            {
+                g.idUnreadable = true;
                 return g;
+            }
             const leader = g.openCounter(leaderId, -1);
             if (leader < 0)
                 return g;
@@ -274,9 +308,15 @@ else
     /// Non-Linux stub: syscall counters are permanently unavailable.
     struct SyscallGroup
     {
+        private static immutable CapabilityAbsence[1] stubAbsence = [
+            CapabilityAbsence(Capability.eventTracing, "not Linux"),
+        ];
+
         bool available() const @safe pure nothrow @nogc => false;
         const(string)[] names() const @safe pure nothrow @nogc => null;
         string status() const @safe pure nothrow => "unavailable (not Linux)";
+        CapabilityReport capabilities() const @safe pure nothrow @nogc
+            => CapabilityReport(Capability.none, stubAbsence[]);
         static SyscallGroup tryOpen(bool, const(string)[]) @safe pure nothrow @nogc
             => SyscallGroup();
         void close() @safe pure nothrow @nogc {}
@@ -286,4 +326,61 @@ else
             assert(false, "syscall counters are Linux-only");
         }
     }
+}
+
+/// A signed decimal rendered without GC formatting machinery, for `nothrow`
+/// reason strings (`perf_event_paranoid=2`).
+private string longToString(long v) @safe pure nothrow
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.text.writers : writeInteger;
+
+    SmallBuffer!(char, 24) buf;
+    writeInteger(buf, v);
+    return buf[].idup;
+}
+
+@("syscalls.longToString.fixtures")
+@safe pure nothrow
+unittest
+{
+    assert(longToString(-1) == "-1");
+    assert(longToString(0) == "0");
+    assert(longToString(4) == "4");
+    assert(longToString(1234) == "1234");
+}
+
+// Whichever body the platform built (real or stub) satisfies the backend
+// contract, including the optional named-columns primitive.
+static assert(isCounterBackend!SyscallGroup);
+static assert(hasNamedColumns!SyscallGroup);
+static assert(!hasSnapshot!SyscallGroup);
+
+@("syscalls.SyscallGroup.capabilities")
+@system
+unittest
+{
+    auto off = SyscallGroup.tryOpen(false, null);
+    assert(!off.capabilities.has(Capability.eventTracing));
+    version (linux)
+    {
+        assert(off.capabilities.reasonFor(Capability.eventTracing) == "not requested");
+
+        auto g = SyscallGroup.tryOpen(true, null);
+        scope (exit)
+            g.close();
+        const r = g.capabilities;
+        if (g.available)
+            assert(r.has(Capability.eventTracing));
+        else
+        {
+            // The reason names the failing gate: tracefs vs paranoid.
+            import std.algorithm.searching : canFind;
+
+            const reason = r.reasonFor(Capability.eventTracing);
+            assert(reason.canFind("tracefs") || reason.canFind("perf_event_paranoid"));
+        }
+    }
+    else
+        assert(off.capabilities.reasonFor(Capability.eventTracing) == "not Linux");
 }
