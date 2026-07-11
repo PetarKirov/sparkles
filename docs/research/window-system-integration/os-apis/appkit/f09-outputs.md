@@ -20,18 +20,18 @@ visibly **changes one of the two enumeration APIs** (the
 which is itself the headless-hotplug answer the spec asks for. A physical plug/unplug
 is Tier C ([script](#tier-c-script-plugunplug)).
 
-| Measurement                                    | Value                                                                                              |
-| ---------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| Outputs (NSScreen / CG online / CG active)     | **1 / 1 / 0** — the locked session removes the display from the _active_ list only                 |
+| Measurement                                   | Value                                                                                              |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Outputs (NSScreen / CG online / CG active)    | **1 / 1 / 0** — the locked session removes the display from the _active_ list only                 |
 | Bridge `NSScreenNumber` ↔ `CGDirectDisplayID` | id **1** on both sides (`in_cg_online_list=1`); equals `CGMainDisplayID()`                         |
-| CG enumeration prerequisites                   | **none** — ran before `NSApplication.sharedApplication()` existed                                  |
-| `CGDisplayPixelsWide/High`                     | **1728×1117** — points-scaled, _not_ pixels; `CGDisplayModeGetPixelWidth` says 3456×2234           |
-| Refresh                                        | CG mode `refresh=120.00`; `NSScreen.maximumFramesPerSecond=120` (ProMotion panel)                  |
-| Physical size                                  | `CGDisplayScreenSize` → **344×223 mm**; AppKit offers no physical-size API                         |
-| `frame` vs `visibleFrame`                      | 1728×1117 vs 1728×**1084** — 33 pt menubar inset at the top, Dock inset 0 while locked             |
+| CG enumeration prerequisites                  | **none** — ran before `NSApplication.sharedApplication()` existed                                  |
+| `CGDisplayPixelsWide/High`                    | **1728×1117** — points-scaled, _not_ pixels; `CGDisplayModeGetPixelWidth` says 3456×2234           |
+| Refresh                                       | CG mode `refresh=120.00`; `NSScreen.maximumFramesPerSecond=120` (ProMotion panel)                  |
+| Physical size                                 | `CGDisplayScreenSize` → **344×223 mm**; AppKit offers no physical-size API                         |
+| `frame` vs `visibleFrame`                     | 1728×1117 vs 1728×**1084** — 33 pt menubar inset at the top, Dock inset 0 while locked             |
 | Window ↔ screen                               | `window.screen` answers at `initWithContentRect:` return, before ordering in                       |
-| Hotplug signals fired headless                 | **0** of 3 (NSNotification ×2 by self-test only; `CGDisplayRegisterReconfigurationCallback` never) |
-| Exit                                           | clean `0` (`loop_exit ticks=45 reconfig_cb=0 screen_params=1 window_screen=1`)                     |
+| Hotplug signals fired headless                | **0** of 3 (NSNotification ×2 by self-test only; `CGDisplayRegisterReconfigurationCallback` never) |
+| Exit                                          | clean `0` (`loop_exit ticks=45 reconfig_cb=0 screen_params=1 window_screen=1`)                     |
 
 ---
 
