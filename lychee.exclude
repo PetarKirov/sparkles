@@ -78,8 +78,3 @@
 ^https?://cgit\.git\.savannah\.gnu\.org/
 # Ignore specs/event-horizon/ links until the feat/event-horizon branch is merged
 specs/event-horizon/
-# The cpu-pmu research baseline (docs/research/cpu-pmu/sparkles-baseline.md)
-# documents the test-runner counter modules that land with PR #88
-# (feat/test-runner-perf); until that merges, its relative source links have
-# no target on main. Drop this block once PR #88 is merged.
-/libs/test-runner-impl/src/sparkles/test_runner/(perf|perf_group|tier0|syscalls|metrics|bench_json)\.d$
