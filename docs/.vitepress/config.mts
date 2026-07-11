@@ -456,6 +456,14 @@ export default withMermaid(
               ],
             },
             {
+              text: 'Syntax (proposal)',
+              collapsed: true,
+              items: [
+                { text: 'Design Proposal', link: '/specs/syntax/' },
+                { text: 'Delivery Plan', link: '/specs/syntax/PLAN' },
+              ],
+            },
+            {
               text: 'Test Runner',
               collapsed: false,
               items: [
