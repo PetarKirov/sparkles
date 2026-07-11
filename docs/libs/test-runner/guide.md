@@ -247,8 +247,17 @@ void registerParse(Engine)(Dataset ds)
 ```
 
 `--group-by=dataset,operation` then prints one table per `(dataset, operation)`
-group as it finishes, each comparing the engines (the `name`s); `--group-by=list`
-lists the label keys the run offers.
+group as it finishes — the group name spliced into the top border, each table
+comparing the engines (the `name`s); `--group-by=list` lists the label keys the
+run offers, and `--sort-by=KEY` orders rows by any metric column (default:
+`median/iter`).
+
+Tables are built to read at a glance: timing and metric columns align on the
+decimal point (mixed units still compare), consecutive streamed tables share
+their column geometry, and on an interactive terminal the current group's
+table **ticks live** — rows land as cases complete beneath a dim
+`⠹ name │ measuring…` row, then the finished table graduates into scrollback.
+Piped output skips all animation and stays byte-stable.
 
 > [!IMPORTANT]
 > Under `--bench`, `benchCase` **registers** the case and the runner measures it
@@ -312,6 +321,8 @@ Everything after `--` in `dub test -- <options>`. Full table:
 | `--syscalls[=LIST]`        | With `--bench`: count syscalls/iter (perf tracepoints); bare = total, `=a,b` per-name  |
 | `--metrics=LIST`           | With `--bench`: pick metric columns (glob, `all`, or `?`/`help` to list)               |
 | `--list-metrics`           | List available metric columns (name, class, source) and exit; works without `--bench`  |
+| `--sort-by=KEY`            | With `--bench`: sort rows by `name` or a metric column (default: `median/iter`)        |
+| `--group-by=KEYS`          | With `--bench`: one table per group of these label keys (`=all`, `=list`)              |
 | `--bench-json=FILE`        | With `--bench`: also dump the results as JSON (baseline snapshots)                     |
 | `--bench-min-time=MS`      | With `--bench`: per-case measurement budget in ms (default 5)                          |
 | `--better-c`               | Extract and run `@betterC` tests under `-betterC`                                      |
@@ -325,9 +336,16 @@ Everything after `--` in `dub test -- <options>`. Full table:
 | `-h`, `--help`             | Option summary                                                                         |
 
 **Exit status:** non-zero when any test fails, in every mode — safe for CI and
-`git bisect run`.
+`git bisect run`. Skipped tests (below) never fail a run.
 
 ## Good to know
+
+- **Skip, don't silently pass.** A test that needs an environment capability —
+  perf counters, a root-only interface, a toolchain binary — should call
+  `skipTest("reason")` from `sparkles.test_runner.skip` instead of returning
+  early: it renders as a yellow `⊘` line plus an `N skipped` summary segment,
+  keeping the gap visible without failing the run. See
+  [Skip tests at runtime](./how-to/skip-tests.md).
 
 - **Keep tests in feature modules, not `package.d`.** Like silly, discovery
   sees only the modules dub lists in `dub_test_root.allModules`, which excludes
