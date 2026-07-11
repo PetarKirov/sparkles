@@ -78,7 +78,7 @@ struct Color
         => Color(kind: Kind.palette, index: index);
 
     /// `true` iff the theme specified this color at all.
-    bool isSet() const pure nothrow @nogc
+    bool isSet() const scope pure nothrow @nogc
         => kind != Kind.unset;
 }
 
@@ -253,6 +253,26 @@ unittest
     assert(ansi256FromRgb(RgbColor(238, 238, 238)) == 255);
 }
 
+/// The xterm default values for the classic 16 palette entries.
+private static immutable RgbColor[16] base16Palette = [
+    RgbColor(0, 0, 0),       // black
+    RgbColor(205, 0, 0),     // red
+    RgbColor(0, 205, 0),     // green
+    RgbColor(205, 205, 0),   // yellow
+    RgbColor(0, 0, 238),     // blue
+    RgbColor(205, 0, 205),   // magenta
+    RgbColor(0, 205, 205),   // cyan
+    RgbColor(229, 229, 229), // white
+    RgbColor(127, 127, 127), // bright black
+    RgbColor(255, 0, 0),     // bright red
+    RgbColor(0, 255, 0),     // bright green
+    RgbColor(255, 255, 0),   // bright yellow
+    RgbColor(92, 92, 255),   // bright blue
+    RgbColor(255, 0, 255),   // bright magenta
+    RgbColor(0, 255, 255),   // bright cyan
+    RgbColor(255, 255, 255), // bright white
+];
+
 /**
 Nearest classic-16 palette index (0–15) for an RGB value, measured against
 the xterm default palette. Foreground SGR codes are `30 + i` (or `90 + i - 8`
@@ -260,37 +280,49 @@ for the bright half); the ANSI renderer derives them.
 */
 ubyte ansi16FromRgb(in RgbColor c) pure nothrow @nogc
 {
-    static immutable RgbColor[16] palette = [
-        RgbColor(0, 0, 0),       // black
-        RgbColor(205, 0, 0),     // red
-        RgbColor(0, 205, 0),     // green
-        RgbColor(205, 205, 0),   // yellow
-        RgbColor(0, 0, 238),     // blue
-        RgbColor(205, 0, 205),   // magenta
-        RgbColor(0, 205, 205),   // cyan
-        RgbColor(229, 229, 229), // white
-        RgbColor(127, 127, 127), // bright black
-        RgbColor(255, 0, 0),     // bright red
-        RgbColor(0, 255, 0),     // bright green
-        RgbColor(255, 255, 0),   // bright yellow
-        RgbColor(92, 92, 255),   // bright blue
-        RgbColor(255, 0, 255),   // bright magenta
-        RgbColor(0, 255, 255),   // bright cyan
-        RgbColor(255, 255, 255), // bright white
-    ];
+    import std.algorithm.searching : minIndex;
 
-    size_t best = 0;
-    uint bestDist = uint.max;
-    foreach (i, entry; palette)
+    // nearest palette entry by squared distance (first min wins on ties). The
+    // distances are materialised into a stack array rather than a lazy `map`
+    // over a `c`-capturing lambda, which would allocate a closure under @nogc.
+    uint[base16Palette.length] dists = void;
+    foreach (i, entry; base16Palette)
+        dists[i] = colorDistanceSq(c, entry);
+    return cast(ubyte) dists[].minIndex;
+}
+
+/**
+The RGB value behind an xterm-256 palette index (xterm defaults for the
+classic 16). Inverse of $(LREF ansi256FromRgb) on palette-exact values, and
+the concretization step a non-terminal (e.g. GPU) backend uses to resolve
+`Color.Kind.palette` against a concrete palette.
+*/
+RgbColor xterm256ToRgb(ubyte index) pure nothrow @nogc
+{
+    static immutable ubyte[6] cubeLevels = [0, 95, 135, 175, 215, 255];
+
+    if (index < 16)
+        return base16Palette[index];
+    if (index < 232)
     {
-        const d = colorDistanceSq(c, entry);
-        if (d < bestDist)
-        {
-            bestDist = d;
-            best = i;
-        }
+        const i = index - 16;
+        return RgbColor(cubeLevels[i / 36], cubeLevels[(i / 6) % 6], cubeLevels[i % 6]);
     }
-    return cast(ubyte) best;
+    const gray = cast(ubyte)(8 + 10 * (index - 232));
+    return RgbColor(gray, gray, gray);
+}
+
+@("color.xterm256ToRgb.roundTrip")
+pure nothrow @nogc
+unittest
+{
+    // Every cube/gray entry maps back to itself through the nearest fold.
+    foreach (i; 16 .. 256)
+        assert(ansi256FromRgb(xterm256ToRgb(cast(ubyte) i)) == i);
+
+    assert(xterm256ToRgb(0) == RgbColor(0, 0, 0));
+    assert(xterm256ToRgb(196) == RgbColor(255, 0, 0));
+    assert(xterm256ToRgb(244) == RgbColor(128, 128, 128));
 }
 
 @("color.ansi16FromRgb.basics")
