@@ -106,6 +106,11 @@
             pkgs.pkg-config
             config.packages.libghostty-vt
 
+            # tree-sitter runtime for sparkles:tree-sitter / sparkles:syntax
+            # (single-output: headers + .so + .pc all in `out`). Grammars come
+            # from the ts-grammars bundle via $SPARKLES_TS_GRAMMAR_PATH below.
+            pkgs.tree-sitter
+
             # Independent oracle libraries for the text-conformance harness
             # (bindings under libs/base/tools/text-conformance/bindings). utf8proc
             # is single-output (headers + .pc in `out`); icu/notcurses carry their
@@ -169,6 +174,10 @@
             # Pinned corpora for the wired runtime JSON bench
             # (libs/wired/bench/runtime; its --data-dir flag overrides this).
             export WIRED_BENCH_DATA=${config.packages.wired-bench-data}
+
+            # tree-sitter grammar bundle for sparkles:syntax (one dir per
+            # language: parser + queries/). Tests skip when unset.
+            export SPARKLES_TS_GRAMMAR_PATH=${config.packages.ts-grammars}
 
             ${benchIsaHook}
 
