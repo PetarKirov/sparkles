@@ -614,8 +614,8 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     import std.algorithm.searching : canFind;
     import std.array : array;
     import std.stdio : stderr, stdout;
-    import sparkles.test_runner.metrics : perfFamily, selectsSource, syscallFamily,
-        syscallSelectorNames, tier0Family;
+    import sparkles.test_runner.metrics : perfFamily, rawSelectorEvents,
+        selectsSource, syscallFamily, syscallSelectorNames, tier0Family;
 
     // Which counting passes to open: --perf OR a --metrics perf metric (so
     // `--metrics=ipc`/`=all` populate the perf columns, mirroring tier0); a
@@ -632,7 +632,10 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     foreach (n; metricSyscalls)
         if (!syscallNames.canFind(n))
             syscallNames ~= n;
-    auto counters = CounterGroups.open(wantPerf, wantTier0, wantSyscalls, syscallNames);
+    const rawEvents = rawSelectorEvents(options.metrics);
+    const wantRaw = rawEvents.length > 0;
+    auto counters = CounterGroups.open(wantPerf, wantTier0, wantSyscalls, syscallNames,
+        wantRaw, rawEvents);
     scope (exit)
         counters.close();
     // Absent-but-requested capabilities, one line each, re-derived from the
@@ -651,6 +654,8 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         noteAbsent("--metrics", counters.tier0.capabilities, Capability.counting);
     if (wantSyscalls && !counters.syscalls.available)
         noteAbsent("--syscalls", counters.syscalls.capabilities, Capability.eventTracing);
+    if (wantRaw && !counters.raw.available)
+        noteAbsent("--metrics", counters.raw.capabilities, Capability.countingRaw);
     // The group read caps the named tracepoints (SyscallGroup truncates its
     // list); a silently dropped column reads as "never fires" — say so.
     if (counters.syscalls.available && syscallNames.length > counters.syscalls.names.length)
@@ -663,7 +668,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     // be listed without running, so they're just noted.
     if (options.listMetrics || options.metrics == "?" || options.metrics == "help")
     {
-        auto probe = CounterGroups.open(true, true, true, null);
+        auto probe = CounterGroups.open(true, true, true, null, rawWanted: true);
         scope (exit)
             probe.close();
         auto cat = perfFamily(probe.perf.available)
@@ -793,6 +798,8 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         knownColumns = catalog(synthetic).map!(d => d.name).array ~ "syscalls";
         foreach (n; syscallNames)
             knownColumns ~= "syscalls:" ~ n;
+        foreach (ref ev; rawEvents)
+            knownColumns ~= "raw:" ~ ev.selector;
     }
 
     // Warn on selectors that match nothing (mirrors --group-by/--sort-by), so a

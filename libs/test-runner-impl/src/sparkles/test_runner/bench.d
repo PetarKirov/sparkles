@@ -34,6 +34,7 @@ import sparkles.test_runner.capability : BackendCapabilities, harnessPendingCapa
 import sparkles.test_runner.model : Test, TestResult, Thrown;
 import sparkles.test_runner.skip : TestSkipped;
 import sparkles.test_runner.perf : PerfGroup, PerfStats;
+import sparkles.test_runner.raw : RawEvent, RawGroup, RawStats;
 import sparkles.test_runner.syscalls : SyscallGroup, SyscallStats;
 import sparkles.test_runner.tier0 : Tier0Group, Tier0Stats;
 
@@ -140,6 +141,7 @@ struct BenchStats
     Nullable!PerfStats perf; /// hardware counters under `--perf` (empty otherwise)
     Nullable!Tier0Stats tier0; /// cheap /proc counters when a tier0 metric is selected
     Nullable!SyscallStats syscalls; /// syscall tracepoint counts under `--syscalls`
+    Nullable!RawStats raw; /// raw hardware events named via `--metrics=raw:…`
     string error; /// non-empty = an error row (a case whose `after` reported failure)
     bool skipped; /// the error is a `skipTest` reason (rendered yellow, run stays green)
 }
@@ -381,16 +383,21 @@ struct CounterGroups
     PerfGroup perf;
     Tier0Group tier0;
     SyscallGroup syscalls;
+    RawGroup raw;
 
     /// Opens each requested source: `--perf` (`perfWanted`), a selected tier0
-    /// metric (`tier0Wanted`), and `--syscalls` (`syscallWanted` + `syscallNames`).
+    /// metric (`tier0Wanted`), `--syscalls` (`syscallWanted` + `syscallNames`),
+    /// and raw events named via `--metrics=raw:…` (`rawEvents`; empty +
+    /// `rawWanted` = a permission probe only).
     static CounterGroups open(bool perfWanted, bool tier0Wanted, bool syscallWanted,
-        const(string)[] syscallNames) @safe
+        const(string)[] syscallNames, bool rawWanted = false,
+        const(RawEvent)[] rawEvents = null) @safe
     {
         CounterGroups g;
         g.perf = PerfGroup.tryOpen(perfWanted);
         g.tier0 = Tier0Group.tryOpen(tier0Wanted);
         g.syscalls = SyscallGroup.tryOpen(syscallWanted, syscallNames);
+        g.raw = RawGroup.tryOpen(rawWanted, rawEvents);
         return g;
     }
 
@@ -403,6 +410,7 @@ struct CounterGroups
         perf.close();
         tier0.close();
         syscalls.close();
+        raw.close();
     }
 
     /// Runs each available source's counting pass over `timed`/`between` (the
@@ -417,6 +425,8 @@ struct CounterGroups
             row.tier0 = tier0.count(timed, between, iters);
         if (syscalls.available)
             row.syscalls = syscalls.count(timed, between, iters);
+        if (raw.available)
+            row.raw = raw.count(timed, between, iters);
     }
 
     /// Every backend's capability report in field order, plus the
@@ -428,6 +438,7 @@ struct CounterGroups
             BackendCapabilities("perf", perf.capabilities),
             BackendCapabilities("tier0", tier0.capabilities),
             BackendCapabilities("syscall", syscalls.capabilities),
+            BackendCapabilities("raw", raw.capabilities),
             BackendCapabilities("harness", harnessPendingCapabilities),
         ];
 }
@@ -439,13 +450,14 @@ unittest
     import sparkles.test_runner.capability : Capability, reasonFor;
 
     const blocks = CounterGroups.none.capabilities;
-    assert(blocks.length == 4);
+    assert(blocks.length == 5);
     assert(blocks[0].backend == "perf");
     assert(blocks[1].backend == "tier0");
     assert(blocks[2].backend == "syscall");
-    assert(blocks[3].backend == "harness");
-    assert(blocks[3].report.reasonFor(Capability.symbolization) !is null);
-    assert(blocks[3].report.reasonFor(Capability.numaAttribution) !is null);
+    assert(blocks[3].backend == "raw");
+    assert(blocks[4].backend == "harness");
+    assert(blocks[4].report.reasonFor(Capability.symbolization) !is null);
+    assert(blocks[4].report.reasonFor(Capability.numaAttribution) !is null);
 }
 
 private struct BenchContext
