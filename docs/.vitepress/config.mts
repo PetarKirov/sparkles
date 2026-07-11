@@ -33,6 +33,7 @@ export default withMermaid(
       '**/research/cpu-pmu/grounding/**',
       '**/research/sanitizers/grounding/**',
       '**/research/manim/grounding/**',
+      '**/research/sql/grounding/**',
       '**/research/iroh/prompt.md',
     ],
 
