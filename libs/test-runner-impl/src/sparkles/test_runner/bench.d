@@ -435,13 +435,18 @@ struct CounterGroups
     /// bench header render from. Labels reuse the metric catalog's `source`
     /// vocabulary.
     BackendCapabilities[] capabilities() const @safe nothrow
-        => [
+    {
+        import sparkles.test_runner.event_naming : namingCapabilities;
+
+        return [
             BackendCapabilities("perf", perf.capabilities),
             BackendCapabilities("tier0", tier0.capabilities),
             BackendCapabilities("syscall", syscalls.capabilities),
             BackendCapabilities("raw", raw.capabilities),
+            BackendCapabilities("pfm", namingCapabilities),
             BackendCapabilities("harness", harnessPendingCapabilities),
         ];
+    }
 }
 
 @("bench.CounterGroups.capabilities")
@@ -451,14 +456,15 @@ unittest
     import sparkles.test_runner.capability : Capability, reasonFor;
 
     const blocks = CounterGroups.none.capabilities;
-    assert(blocks.length == 5);
+    assert(blocks.length == 6);
     assert(blocks[0].backend == "perf");
     assert(blocks[1].backend == "tier0");
     assert(blocks[2].backend == "syscall");
     assert(blocks[3].backend == "raw");
-    assert(blocks[4].backend == "harness");
-    assert(blocks[4].report.reasonFor(Capability.symbolization) !is null);
-    assert(blocks[4].report.reasonFor(Capability.numaAttribution) !is null);
+    assert(blocks[4].backend == "pfm");
+    assert(blocks[5].backend == "harness");
+    assert(blocks[5].report.reasonFor(Capability.symbolization) !is null);
+    assert(blocks[5].report.reasonFor(Capability.numaAttribution) !is null);
 }
 
 private struct BenchContext
