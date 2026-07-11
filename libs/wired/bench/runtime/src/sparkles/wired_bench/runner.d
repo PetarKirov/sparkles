@@ -24,6 +24,7 @@ import expected : err, ok;
 import sparkles.test_runner.attributes : benchmark;
 import sparkles.test_runner.bench : benchCase, Metric, Unit;
 
+import sparkles.wired_bench.allocator : allocatorLevelled;
 import sparkles.wired_bench.data : Dataset, loadDatasets, resolveDataDir;
 import sparkles.wired_bench.engines;
 import sparkles.wired_bench.fingerprint : diffFingerprints, Fingerprint,
