@@ -8,7 +8,7 @@ across that whole ladder; each is defined once here and linked from the deep-div
 
 > [!NOTE]
 > This page is descriptive, not prescriptive: it fixes terminology so the deep-dives and
-> the comparison synthesis can be read side by side. Where a term has a canonical
+> the [comparison][comparison] can be read side by side. Where a term has a canonical
 > external definition (Codd's model, Fowler's _Patterns of Enterprise Application
 > Architecture_), that source is cited; where a library coined or sharpened a term, the
 > owning deep-dive carries the verbatim quote.
@@ -282,6 +282,7 @@ Architecture_, 2002) that separate a **full ORM** from the lower rungs:
 <!-- References -->
 
 [index]: ./index.md
+[comparison]: ./comparison.md
 [effect-ts]: ./effect-ts.md
 [quill]: ./quill.md
 [doobie]: ./doobie.md

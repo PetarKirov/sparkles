@@ -22,7 +22,7 @@ This survey answers seven questions:
    [by-query-model taxonomy](#by-query-construction-model).
 3. **Compile-time or runtime query construction — who checks the query, and when?**
    Type-level schemas and macros ([Quill][quill], `sqlx`, `Squeal`, `jOOQ`) vs runtime AST
-   builders. See the comparison synthesis (final wave).
+   builders. See the [comparison][comparison].
 4. **How is database access modelled as an effect, and how do transactions compose?**
    Blocking vs async vs effect-value (`IO`/`ZIO`/`Effect`/`ConnectionIO`); `withTransaction`
    combinators, nesting, and savepoints. See the [by-effect-model taxonomy](#by-effect-async-model).
@@ -32,10 +32,10 @@ This survey answers seven questions:
 6. **What are the schema & migration strategies?** Code-first, schema-first, and db-first
    (introspection + codegen). See the [by-schema-stance taxonomy](#by-schema-stance).
 7. **What should an effects-first `sparkles:sql` borrow, across the thin→ORM spectrum?**
-   The synthesis and delta. See the comparison synthesis (final wave).
+   The synthesis and delta. See the [comparison][comparison].
 
 > [!NOTE]
-> **Scope: waves 1-4 published; wave 5 in progress.** This survey is built in waves.
+> **Scope: complete — all five waves + synthesis published.** This survey was built in waves.
 > **Wave 1** establishes the shared vocabulary ([concepts][concepts]) and the effect-system
 > / functional-data-mapper core: [Effect TS][effect-ts], [Quill][quill], [doobie][doobie],
 > [skunk][skunk], [Slick][slick], [Ecto][ecto]. **Wave 2** adds the **Haskell typed cluster**
@@ -45,10 +45,10 @@ This survey answers seven questions:
 > [jOOQ][jooq], [sqlc][sqlc], [linq2db][linq2db], [Dapper][dapper], [Exposed][exposed]).
 > **Wave 4** adds the **full ORMs** ([EF Core][ef-core], [Hibernate][hibernate],
 > [SQLAlchemy][sqlalchemy], [Django ORM][django-orm], [Prisma][prisma], [TypeORM][typeorm],
-> [GORM][gorm], [ent][ent], [ActiveRecord][activerecord]). The final wave adds the **raw /
-> tagged-template baseline** (Go `database/sql`, `postgres.js`, `JDBI`). Rows in the catalog
-> below are marked with the wave that publishes their deep-dive; forward-dated rows are not
-> yet linked. The capstone comparison synthesis lands with the final wave.
+> [GORM][gorm], [ent][ent], [ActiveRecord][activerecord]). **Wave 5** adds the **raw /
+> tagged-template baseline** ([Go `database/sql`][gds], [postgres.js][pgjs], [JDBI][jdbi]), and
+> the capstone [comparison & synthesis][comparison] reads the whole corpus against itself and
+> distils the design brief for an effects-first `sparkles:sql`.
 
 **Last reviewed:** July 12, 2026
 
@@ -94,9 +94,9 @@ publishes it).
 | **GORM**                   | Go         | Full ORM (active-record-ish)  | Chainable methods + struct tags      | Blocking                                 | Code-first (automigrate) | [gorm][gorm]                 |
 | **ent**                    | Go         | Full ORM (data mapper)        | Schema-as-code + generated builders  | Blocking                                 | Code-first (codegen)     | [ent][ent]                   |
 | **ActiveRecord**           | Ruby       | Full ORM (active record)      | Model + query methods                | Blocking                                 | Db-first + migrations    | [activerecord][activerecord] |
-| **Go `database/sql`**      | Go         | Driver (+ `sqlx`)             | Raw string                           | Blocking                                 | None                     | wave 5                       |
-| **postgres.js**            | JS / TS    | Driver + safe-SQL             | Tagged template                      | Async                                    | None                     | wave 5                       |
-| **JDBI**                   | Java       | Safe-SQL / micro-mapper       | Raw SQL (fluent + SQL objects)       | Blocking                                 | None                     | wave 5                       |
+| **Go `database/sql`**      | Go         | Driver (+ `sqlx`)             | Raw string                           | Blocking                                 | None                     | [go-database-sql][gds]       |
+| **postgres.js**            | JS / TS    | Driver + safe-SQL             | Tagged template                      | Async                                    | None                     | [postgres-js][pgjs]          |
+| **JDBI**                   | Java       | Safe-SQL / micro-mapper       | Raw SQL (fluent + SQL objects)       | Blocking                                 | None                     | [jdbi][jdbi]                 |
 
 ---
 
@@ -194,7 +194,7 @@ deep-dives (some forward-dated pending their wave).</sub>
   the effect/transaction vocabulary) → [Effect TS][effect-ts] (DB-as-effect, typed error
   union, scoped acquirer, transaction-as-combinator) → [Quill][quill] (compile-time safe
   query DSL, `Idiom`/`NamingStrategy`) → [doobie][doobie] + [skunk][skunk] (the cats-effect
-  free-monad and pure-FP-Postgres alternatives) → the comparison synthesis (final wave).
+  free-monad and pure-FP-Postgres alternatives) → the [comparison][comparison].
 - **"I want the safe-SQL-without-an-ORM story."** [concepts: injection safety][safety] →
   [Effect TS][effect-ts] / [doobie][doobie] (tagged templates) → [sqlx][sqlx] / [sqlc][sqlc]
   (macro-checked / codegen'd raw SQL) → [hasql][hasql] / [Dapper][dapper] (micro-mappers).
@@ -220,7 +220,10 @@ Grouped by category; see the [master catalog](#master-catalog) for the one-line 
 - **Full ORMs:** [EF Core][ef-core] · [Hibernate][hibernate] · [SQLAlchemy][sqlalchemy] ·
   [Django ORM][django-orm] · [Prisma][prisma] · [TypeORM][typeorm] · [GORM][gorm] ·
   [ent][ent] · [ActiveRecord][activerecord].
-- **Raw / tagged-template baseline:** Go `database/sql` · `postgres.js` · `JDBI` _(wave 5)_.
+- **Raw / tagged-template baseline:** [Go `database/sql`][gds] · [postgres.js][pgjs] ·
+  [JDBI][jdbi].
+- **Synthesis:** [Comparison & Synthesis][comparison] — the cross-cutting analysis + the
+  effects-first `sparkles:sql` design brief.
 
 ---
 
@@ -271,3 +274,7 @@ Grouped by category; see the [master catalog](#master-catalog) for the one-line 
 [gorm]: ./gorm.md
 [ent]: ./ent.md
 [activerecord]: ./activerecord.md
+[gds]: ./go-database-sql.md
+[pgjs]: ./postgres-js.md
+[jdbi]: ./jdbi.md
+[comparison]: ./comparison.md
