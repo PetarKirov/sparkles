@@ -183,6 +183,12 @@ silly's successor — same CLI, documented under
 -l, --list          List discovered tests (with attribute markers)
 --no-colours        Disable colored output
 --bench             Run @benchmark tests (auto-scaling ns/iter statistics)
+--perf              With --bench: hardware perf counters (Linux perf_event)
+--syscalls[=LIST]   With --bench: syscalls/iter via perf tracepoints (root-gated)
+--metrics=LIST      With --bench: pick metric columns (glob, all, ?/help = list)
+--list-metrics      List available metric columns and exit
+--sort-by=KEY       With --bench: sort rows by a metric column (default median/iter)
+--group-by=KEYS     With --bench: one table per group of these label keys
 --bench-json FILE   With --bench: dump results as JSON (baseline snapshots)
 --bench-min-time MS With --bench: per-case measurement budget in ms (default 5)
 --better-c          Extract @betterC tests, compile with -betterC, run them
