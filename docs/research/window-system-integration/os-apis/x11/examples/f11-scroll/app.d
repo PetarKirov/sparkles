@@ -296,7 +296,12 @@ int main()
         else if (p == 1)
         {
             XSelectInput(dpy2, win, 0);
-            XFlush(dpy2);
+            // XSync, not XFlush: the server must have *processed* dpy2's
+            // deselect before dpy selects ButtonPress — only one client may
+            // hold a window's ButtonPress selection, so a still-queued
+            // deselect makes the next line's ChangeWindowAttributes die with
+            // BadAccess (seen on CI's Xvfb).
+            XSync(dpy2, False);
             XSelectInput(dpy, win, baseMask | ButtonPressMask | ButtonReleaseMask);
             emit("phase name=dual_selection core_client=deselected "
                     ~ "xi2_client=core+xi2");
