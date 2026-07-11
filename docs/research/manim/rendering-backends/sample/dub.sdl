@@ -1,0 +1,18 @@
+name "anim_backend_cairo_sample"
+description "Illustrative: binding Cairo as a CPU-vector rendering backend via ImportC (source-only fixture, not built by CI)"
+authors "Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+importPaths "src"
+dflags "-preview=in" "-preview=dip1000"
+
+# Cairo's C API is resolved through pkg-config. `libs "cairo"` must live in a
+# `sourceLibrary` target so dub feeds `pkg-config --cflags cairo` to ImportC —
+# a plain `library` target clears `libs` and skips pkg-config, so ImportC then
+# cannot find <cairo.h>. See docs/guidelines/importc-c-libraries.md.
+libs "cairo"
+
+configuration "library" {
+    targetType "sourceLibrary"
+}
