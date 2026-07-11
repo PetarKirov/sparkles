@@ -82,8 +82,9 @@ no history — the pin is the HEAD SHA only, and line numbers are as-of that HEA
 
 > [!NOTE]
 > Go's `database/sql` (the stdlib driver interface the `go-database-sql.md` page surveys)
-> lives in the local Go source tree at `$REPOS/go/go/src/database/sql/`; `jmoiron/sqlx`
-> (`$REPOS/go/sqlx`) is the ergonomic layer above it.
+> lives in the local Go source tree at `$REPOS/go/go` (pinned at `01534385`, 2026-06-01, the
+> Go 1.27 development tip; `src/database/sql/` + `src/database/sql/driver/`); `jmoiron/sqlx`
+> (`$REPOS/go/sqlx` @ `41dac16`) is the ergonomic layer above it.
 
 ## Per-page → repo mapping
 

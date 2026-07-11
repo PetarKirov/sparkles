@@ -56,6 +56,9 @@ Populated as each wave lands. Waves: **W1** effects core · **W2** Haskell typed
 | gorm                 | [gorm.md](./gorm.md)                                 | 55     | 46  | 0   | W4   |
 | ent                  | [ent.md](./ent.md)                                   | 56     | 50  | 0   | W4   |
 | activerecord         | [activerecord.md](./activerecord.md)                 | 54     | 52  | 0   | W4   |
+| go-database-sql      | [go-database-sql.md](./go-database-sql.md)           | 54     | 50  | 0   | W5   |
+| postgres-js          | [postgres-js.md](./postgres-js.md)                   | 65     | 63  | 1   | W5   |
+| jdbi                 | [jdbi.md](./jdbi.md)                                 | 64     | 60  | 0   | W5   |
 
 ## Master discrepancy register
 
@@ -166,3 +169,32 @@ pinned trees rather than assumed:
   the classic SQLi foot-gun guarded by `sanitize_sql`.
 
 The `◯` remainder per page is the web-attested set only.
+
+### Batch 5 (wave 5 — raw drivers / tagged-template baseline, 2026-07-12)
+
+Three baseline pages grounded at authoring time: [go-database-sql](./go-database-sql.md),
+[postgres-js](./postgres-js.md), [jdbi](./jdbi.md). **Zero substantive page discrepancies.**
+Notes:
+
+- **go-database-sql** — the Go stdlib checkout `$REPOS/go/go` is the **Go 1.27 development tip**
+  (`goversion.Version = 27`, pinned `01534385`), BSD-3-Clause; `sqlx` is MIT. `database/sql` is
+  the driver interface + pool and talks to no database itself ("must be used in conjunction with
+  a database driver", verbatim).
+- **postgres-js** (⚠ #D1) — **license is Unlicense (public domain)**, not MIT (verified
+  `package.json` + `UNLICENSE`). One README-vs-code drift flagged: `max_lifetime` docs say
+  "45 and 90 minutes" but the code is 30-60 minutes (`60 * (30 + random()*30)` seconds) — the
+  page uses the code value.
+- **jdbi** — Apache-2.0; "not an ORM" quoted verbatim (no session cache / dirty tracking / lazy
+  loading); Fluent API + SQL-Objects duality grounded in `IntroductionTest.java`.
+
+### Status: all 33 survey pages grounded across 5 batches (2026-07-12)
+
+**354 claims, 328 ✓ locally verified, 3 ⚠, ~23 ◯ web-attested.** The 3 `⚠` are the two
+survey-level corrections applied to the shared pages during wave 1 (R1 Ecto-effect-model, R2
+Slick-4) plus the one page-level `postgres-js` license/lifetime note (all fixed). The `◯`
+remainder is exclusively web-attested metadata — first-release years, latest version numbers,
+download/adoption counts — which a `--depth 1` clone cannot carry. No fabricated tree facts; a
+handful of brief-suggested taglines that were **absent** from the pinned trees (Dapper's "King
+of Micro ORM", jOOQ's "SQL was never meant to be abstracted") were caught at authoring time and
+regrounded on real in-tree text rather than quoted. The [comparison](../comparison.md) synthesis
+carries no ledger of its own — it restates ledgered claims from the deep-dives it links.

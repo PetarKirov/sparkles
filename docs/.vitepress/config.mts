@@ -795,6 +795,25 @@ export default withMermaid(
                     },
                   ],
                 },
+                {
+                  text: 'Raw Drivers & Tagged-Template Baseline',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Go database/sql (+ sqlx)',
+                      link: '/research/sql/go-database-sql',
+                    },
+                    {
+                      text: 'postgres.js (JS/TS)',
+                      link: '/research/sql/postgres-js',
+                    },
+                    { text: 'JDBI (Java)', link: '/research/sql/jdbi' },
+                  ],
+                },
+                {
+                  text: 'Comparison & Synthesis',
+                  link: '/research/sql/comparison',
+                },
               ],
             },
             {
