@@ -125,7 +125,8 @@ version (linux)
                 : "unavailable (needs readable tracefs and perf_event_paranoid ≤ 1 — usually root)";
 
         /// The bare reason event tracing is unavailable, distinguishing the
-        /// independent gates: tracefs readability vs `perf_event_paranoid`.
+        /// independent gates: tracefs readability vs `perf_event_paranoid` —
+        /// and not blaming a paranoid level that is in fact permissive.
         private string tracingAbsence() const @safe nothrow
         {
             if (!requested)
@@ -135,8 +136,11 @@ version (linux)
             const p = probeParanoid();
             if (!p.ok)
                 return "perf_event_open refused tracepoints — perf_event_paranoid? (needs ≤ 1)";
-            return "perf_event_open refused tracepoints — perf_event_paranoid="
-                ~ longToString(p.value) ~ " (needs ≤ 1)";
+            if (p.value > 1)
+                return "perf_event_open refused tracepoints — perf_event_paranoid="
+                    ~ longToString(p.value) ~ " (needs ≤ 1)";
+            return "perf_event_open refused tracepoints (seccomp or kernel policy — "
+                ~ "perf_event_paranoid=" ~ longToString(p.value) ~ " is permissive)";
         }
 
         /// What this backend can deliver: OS-event gating via tracepoints.

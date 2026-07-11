@@ -316,7 +316,17 @@ else
     }
 }
 
-/// The naming capability block for `CounterGroups.capabilities` — a cheap
-/// load probe (the resolver used for actual resolution is separate state).
+/// The naming capability block for `CounterGroups.capabilities` — the load
+/// probe runs once per thread and is cached (the resolver used for actual
+/// resolution is separate state).
 CapabilityReport namingCapabilities() @safe nothrow
-    => PfmResolver.tryLoad().capabilities;
+{
+    static bool probed;
+    static CapabilityReport cached;
+    if (!probed)
+    {
+        cached = PfmResolver.tryLoad().capabilities;
+        probed = true;
+    }
+    return cached;
+}

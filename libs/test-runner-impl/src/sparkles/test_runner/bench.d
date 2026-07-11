@@ -426,7 +426,11 @@ struct CounterGroups
             row.tier0 = tier0.count(timed, between, iters);
         if (syscalls.available)
             row.syscalls = syscalls.count(timed, between, iters);
-        if (raw.available)
+        // Raw rows attach whenever events were *requested*, not only when one
+        // opened: a fully-refused group still yields all-nan stats, so every
+        // selected raw column keeps its em-dash presence (the same
+        // selected-but-unavailable contract the static families honor).
+        if (raw.available || raw.names.length)
             row.raw = raw.count(timed, between, iters);
     }
 

@@ -144,8 +144,13 @@ Acceptance: on the dev box the report reproduces the survey's findings —
 > passes render unavailable), `event_naming.d` (dlopen-soft libpfm4 with the
 > ENCODE_INACTIVE + table-prefix recipe; `pfm:<name>` selectors), and
 > `rdpmc.d` (the selfMonitoring primitive + the O2 bracket-cost
-> measurement: ioctl pair 2.3 µs vs rdpmc read 20 ns on the dev box).
-> Switching the counting pass to the rdpmc bracket remains open-issue O2.
+> measurement: ioctl pair 2.2 µs vs rdpmc read 30 ns vs read(2) 551 ns on
+> the dev box — the rdpmc case asserts each read is real, not the index-0
+> early exit). Switching the counting pass to the rdpmc bracket remains
+> open-issue O2. A post-B2 adversarial review round (9 confirmed findings)
+> hardened the estimate thresholds, the raw column visibility/dedup/
+> truncation contracts, sort-by-header support, and the bracketCost
+> measurement itself.
 
 _(backend-proposal §3; SPEC §6.3, §7.)_ Four capabilities, all probed:
 

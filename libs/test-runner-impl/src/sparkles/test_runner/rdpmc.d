@@ -216,7 +216,10 @@ version (sparklesRdpmc)
         attr.type = perf_type_id.PERF_TYPE_HARDWARE;
         attr.config = perf_hw_id.PERF_COUNT_HW_INSTRUCTIONS;
         attr.exclude_hv = 1;
-        // Created enabled, so the rdpmc case reads a scheduled counter.
+        // Created disabled: a stray enabled event would occupy a PMC across
+        // every other benchmark measured this run. Each case enables what it
+        // needs in its own untimed setup.
+        attr.disabled = 1;
         const fd = (() @trusted => cast(int) perf_event_open(
             hw_event: &attr, pid: 0, cpu: -1, group_fd: -1, flags: 0UL))();
         if (fd < 0)
@@ -225,6 +228,7 @@ version (sparklesRdpmc)
         if (!reader.capRdpmc)
         {
             reader.close();
+            (() @trusted { import core.sys.posix.unistd : close; close(fd); })();
             skipTest("cap_user_rdpmc denied (kernel rdpmc policy)");
         }
 
@@ -238,17 +242,27 @@ version (sparklesRdpmc)
                 cast(void) ioctl(fd, cast(c_ulong) PERF_EVENT_IOC_DISABLE, 0);
             },
             after: () {});
+        auto readOk = new bool;
         benchCase(
             name: "rdpmc-read",
-            labels: ["bracket": "rdpmc"],
             timed: () @trusted {
                 bool ok;
                 blackBox(reader.read(ok));
+                *readOk = ok;
             },
-            after: () {});
+            after: () {
+                assert(*readOk, "the rdpmc case must measure a real read, "
+                    ~ "not the index==0 early exit");
+            },
+            labels: ["bracket": "rdpmc"],
+            // The ioctl case leaves the event DISABLED (index 0 in the mmap
+            // page — the read would measure its early-exit branch, not the
+            // seqlock+rdpmc path); re-enable it untimed first.
+            setup: () @trusted {
+                cast(void) ioctl(fd, cast(c_ulong) PERF_EVENT_IOC_ENABLE, 0);
+            });
         benchCase(
             name: "read2-syscall",
-            labels: ["bracket": "read2"],
             timed: () @trusted {
                 import core.sys.posix.unistd : read;
 
@@ -256,6 +270,7 @@ version (sparklesRdpmc)
                 blackBox(read(fd, buf.ptr, buf.sizeof));
             },
             after: () {},
+            labels: ["bracket": "read2"],
             teardown: () @trusted {
                 import core.sys.posix.unistd : close;
 

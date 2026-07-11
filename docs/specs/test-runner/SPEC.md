@@ -282,13 +282,16 @@ same report when they land — one absence vocabulary program-wide.
 - **"Not counted" is not zero.** A counter group with `time_running == 0`
   (never scheduled) reports its cells unavailable (`nan` → em dash) — never
   `0`, never a scaled estimate.
-- **Exact by default; estimates are labeled.** The default counting group is
-  calibrated at open and shrunk (the LLC pair drops first) until counts are
-  exact. Opt-in `--perf-scaled` keeps the full multiplexing group instead;
-  every scaled cell (pass `running/enabled < 1`) renders with a `≈` prefix
-  and is named in `--bench-json`'s per-row `estimatedMetrics`. A multiplexed
-  pass with under a millisecond of PMU time renders unavailable, never as a
-  number (a 0.58 ms slice measured a 5.7× scale error).
+- **Exact by intent; every estimate is labeled.** The default counting group
+  is calibrated at open and shrunk (the LLC pair drops first) to avoid
+  multiplexing; opt-in `--perf-scaled` keeps the full multiplexing group
+  instead. In **either** mode the label keys off the truth of each pass:
+  every cell whose pass was scaled (`running/enabled < 1` — including
+  ambient PMU contention the open-time calibration could not foresee)
+  renders with a `≈` prefix and is named in `--bench-json`'s per-row
+  `estimatedMetrics`. A multiplexed pass with under a millisecond of PMU
+  time renders unavailable, never as a number (a 0.58 ms slice measured a
+  5.7× scale error).
 - **Group-refused degrades at open.** A platform that refuses an unplaceable
   group outright (RISC-V SBI) fails `perf_event_open` and reports the
   standard open-failure absence — it is never multiplex-scaled.

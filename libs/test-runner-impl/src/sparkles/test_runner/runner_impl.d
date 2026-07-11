@@ -655,7 +655,10 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
             RawEvent ev;
             string err;
             if (resolver.resolve(name, ev, err))
-                rawEvents ~= ev;
+            {
+                if (!rawEvents.canFind!(e => e.id == ev.id))
+                    rawEvents ~= ev;
+            }
             else
                 stderr.writeln("--metrics: pfm:", name, " — ", err);
         }
@@ -688,6 +691,10 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     if (counters.syscalls.available && syscallNames.length > counters.syscalls.names.length)
         stderr.writeln("--syscalls: only the first ", counters.syscalls.names.length,
             " named tracepoints are counted (", syscallNames.length, " requested)");
+    // The raw group caps its event list the same way.
+    if (wantRaw && rawEvents.length > counters.raw.names.length)
+        stderr.writeln("--metrics: only the first ", counters.raw.names.length,
+            " raw/pfm events are counted (", rawEvents.length, " requested)");
 
     // --list-metrics (also --metrics=? / --metrics=help): print the catalog,
     // the per-backend capability block, and exit. One full-probe bundle
@@ -825,8 +832,15 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         knownColumns = catalog(synthetic).map!(d => d.name).array ~ "syscalls";
         foreach (n; syscallNames)
             knownColumns ~= "syscalls:" ~ n;
+        // Both the id and the displayed header sort/validate (r04c2 for
+        // raw:r04c2), matching sortValue's header fallback.
         foreach (ref ev; rawEvents)
+        {
+            import sparkles.test_runner.raw : rawHeader;
+
             knownColumns ~= ev.id;
+            knownColumns ~= rawHeader(ev.id);
+        }
         // A pfm name that failed resolution already warned; keep it out of the
         // unknown-selector list so it is not flagged twice.
         foreach (n; pfmSelectorNames(options.metrics))

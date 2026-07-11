@@ -173,11 +173,13 @@ default perf columns are omitted entirely and a stderr note says why. Off
 Linux the flag is inert.
 
 Add `--perf-scaled` to keep the full group even when the PMU would multiplex
-it: instead of dropping the LLC pair, every value scaled by the pass's
-`enabled/running` ratio renders as a **labeled estimate** (`≈4.10k`) — and is
-named in `--bench-json`'s per-row `estimatedMetrics`. A multiplexed pass
-with under a millisecond of PMU time renders `—` outright: that scale is
-noise, not an estimate.
+it: instead of dropping the LLC pair, the group stays whole and its scaled
+values render as **labeled estimates** (`≈4.10k`), named in `--bench-json`'s
+per-row `estimatedMetrics`. The label keys off each pass's own
+`running/enabled` ratio, so even a default run whose pass got rotated by
+ambient PMU contention labels the affected cells rather than passing them
+off as exact. A multiplexed pass with under a millisecond of PMU time
+renders `—` outright: that scale is noise, not an estimate.
 
 ## Beyond the generic events: `raw:` and `pfm:` selectors
 
