@@ -204,8 +204,10 @@ silly's successor — same CLI, documented under
 --no-colours        Disable colored output
 --bench             Run @benchmark tests (auto-scaling ns/iter statistics)
 --perf              With --bench: hardware perf counters (Linux perf_event)
+--perf-scaled       With --perf: keep a multiplexing group; values render as ≈ estimates
 --syscalls[=LIST]   With --bench: syscalls/iter via perf tracepoints (root-gated)
---metrics=LIST      With --bench: pick metric columns (glob, all, ?/help = list)
+--metrics=LIST      With --bench: pick metric columns (glob, all, ?/help = list;
+                    raw:r<hex> / pfm:<name> add µarch hardware events)
 --list-metrics      List available metric columns and exit
 --sort-by=KEY       With --bench: sort rows by a metric column (default median/iter)
 --group-by=KEYS     With --bench: one table per group of these label keys

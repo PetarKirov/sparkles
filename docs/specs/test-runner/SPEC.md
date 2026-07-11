@@ -58,18 +58,21 @@ The runner is two dub packages:
 Measurement modules (all under
 `libs/test-runner-impl/src/sparkles/test_runner/`):
 
-| Module         | Role                                                                   |
-| -------------- | ---------------------------------------------------------------------- |
-| `bench.d`      | protocol driver, `benchIter`/`benchCase`/`blackBox`, `BenchStats`      |
-| `perf.d`       | hardware-counter tier (`perf_event` group)                             |
-| `perf_group.d` | shared counting bracket + multiplex-delta scaling                      |
-| `tier0.d`      | no-privilege tier (`getrusage` + `/proc/self/io`)                      |
-| `syscalls.d`   | syscall-tracepoint tier                                                |
-| `metrics.d`    | the metric catalog seam (§5)                                           |
-| `capability.d` | the capability seam: flags, reports, backend trait, host probes (§6.2) |
-| `bench_json.d` | the `--bench-json` emitter (§8.3)                                      |
-| `reporting.d`  | tables, live displays, progress                                        |
-| `skip.d`       | `skipTest`                                                             |
+| Module           | Role                                                                   |
+| ---------------- | ---------------------------------------------------------------------- |
+| `bench.d`        | protocol driver, `benchIter`/`benchCase`/`blackBox`, `BenchStats`      |
+| `perf.d`         | hardware-counter tier (`perf_event` group)                             |
+| `perf_group.d`   | shared counting bracket + multiplex-delta scaling                      |
+| `tier0.d`        | no-privilege tier (`getrusage` + `/proc/self/io`)                      |
+| `syscalls.d`     | syscall-tracepoint tier                                                |
+| `metrics.d`      | the metric catalog seam (§5)                                           |
+| `capability.d`   | the capability seam: flags, reports, backend trait, host probes (§6.2) |
+| `raw.d`          | raw hardware-event tier (`raw:r<hex>` selectors)                       |
+| `event_naming.d` | symbolic event names via soft libpfm4 (`pfm:<name>`)                   |
+| `rdpmc.d`        | user-space counter reads (the `selfMonitoring` primitive)              |
+| `bench_json.d`   | the `--bench-json` emitter (§8.3)                                      |
+| `reporting.d`    | tables, live displays, progress                                        |
+| `skip.d`         | `skipTest`                                                             |
 
 Planned modules _(targets)_: `workload.d`/`psi.d` (M4/M5),
 `cache_regime.d`/`provenance.d`/`cgroup.d` (M6–M8), `histogram.d` (B5),
@@ -281,13 +284,14 @@ same report when they land — one absence vocabulary program-wide.
   `0`, never a scaled estimate.
 - **Exact by default; estimates are labeled.** The default counting group is
   calibrated at open and shrunk (the LLC pair drops first) until counts are
-  exact. _(target — B2)_ Opt-in `countingScaled` renders
-  `enabled/running`-scaled estimates with an explicit marker, flags scales
-  derived from sub-millisecond running slices, and marks estimated cells in
-  `--bench-json`.
-- **Group-refused is a distinct branch** _(target — B2)_: a platform that
-  refuses an unplaceable group outright (RISC-V SBI) degrades like
-  never-scheduled, not like multiplexed.
+  exact. Opt-in `--perf-scaled` keeps the full multiplexing group instead;
+  every scaled cell (pass `running/enabled < 1`) renders with a `≈` prefix
+  and is named in `--bench-json`'s per-row `estimatedMetrics`. A multiplexed
+  pass with under a millisecond of PMU time renders unavailable, never as a
+  number (a 0.58 ms slice measured a 5.7× scale error).
+- **Group-refused degrades at open.** A platform that refuses an unplaceable
+  group outright (RISC-V SBI) fails `perf_event_open` and reports the
+  standard open-failure absence — it is never multiplex-scaled.
 - **Privilege gates are independent axes.** `perf_event_paranoid`, tracefs
   file permissions, and per-field gates (e.g. physical addresses) are probed
   separately; each degrades on its own.
@@ -316,9 +320,14 @@ the contracts.
 - **Exit status** — `0` iff everything passed or was skipped (`skipTest` or a
   toolchain-missing mode); non-zero otherwise. A `--bench-json` write failure
   fails the run.
-- _(target — B2)_ `--metrics` accepts raw selectors (`raw:r<hex>`) and,
-  when event naming is available, native µarch event names. _(target — B6)_
-  `--bench-profile` enables the sampling pass.
+- **Hardware-event selectors** — `--metrics` accepts raw selectors
+  (`raw:r<hex>`, the `perf` tool's rNNNN notation) and, when event naming is
+  available (soft libpfm4), symbolic names (`pfm:<name>` with umask and
+  `:u`/`:k` modifier grammar); both become diagnostic columns riding their
+  own counter group, so the default group's exactness is never perturbed. A
+  failed name resolution warns and drops the column. `--perf-scaled` opts
+  into labeled multiplex estimates (§6.3).
+- _(target — B6)_ `--bench-profile` enables the sampling pass.
 
 ## 8. Output surfaces
 
@@ -328,8 +337,9 @@ the contracts.
   streamed tables share their column geometry (floors only widen during a
   run). Grouped tables carry `benchmark: <group>` in the top border over an
   `implementation` column.
-- Unavailable cells render as an em dash. Error rows carry the first line of
-  the error in-table (full traces print to the console) and sort last.
+- Unavailable cells render as an em dash. Multiplex-scaled estimates carry a
+  `≈` prefix (§6.3). Error rows carry the first line of the error in-table
+  (full traces print to the console) and sort last.
 - Diagnostic-class output beyond columns (profiles, histograms — targets B5,
   B6, M9) renders as labeled blocks **below** the numeric table, never as
   throughput-lookalike columns.
@@ -344,7 +354,7 @@ thread. Piped output is byte-stable and prints each table once.
 
 ### 8.3 The `--bench-json` document
 
-One deterministic JSON document, `{schema: 1, meta, columns, rows}`:
+One deterministic JSON document, `{schema: 2, meta, columns, rows}`:
 
 - `meta` — `{date, hostname, os, arch, compiler, cpu, minSampleTimeMs,
 sampleCount}`: host/toolchain provenance plus the run's effective knobs
@@ -355,13 +365,15 @@ class, source}`; `metrics` keys in rows match `--list-metrics` names.
   dimensions travel in each row's sorted `labels`): `{name, labels,
 iterations, samples, medianNs, deviationNs, minNs, maxNs, metrics, error}`.
   Error rows keep `labels` and `error` with `null` timing fields; `nan`
-  cells are `null`.
+  cells are `null`. A row whose counters were multiplex-scaled additionally
+  carries `estimatedMetrics`, the array of `metrics` keys holding estimates
+  (absent = every metric exact — the schema-2 addition).
 - Number policy: `nan`/infinity → `null`; integral values below 2⁵³ print as
   integers; others to 6 significant digits. Output is byte-deterministic for
   committing.
 
-Schema evolution (estimate marking, `@workload` windows) is tracked in
-[open-issues.md](./open-issues.md) (O4, O7).
+Schema evolution (`@workload` windows) is tracked in
+[open-issues.md](./open-issues.md) (O7).
 
 ## 9. Portability and privilege
 

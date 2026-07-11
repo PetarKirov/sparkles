@@ -24,19 +24,26 @@ normatively; (B) keep the matrix descriptive (best-effort reasons from
 **Leaning:** (A) — probe once, then normatize; the capability report (B1)
 is the natural carrier.
 
-## O2 — The rdpmc bracket benefit is unmeasured
+## O2 — Switching the counting pass to the rdpmc bracket
 
 **Where:** SPEC §6.2 (`selfMonitoring`); PLAN B2.
 
-The "~10× cheaper than `read(2)`" figure motivating the rdpmc fast path is
-an order-of-magnitude literature claim, not measured on this hardware
-(grounding ledger M8).
+The measurement gate is **closed**: `rdpmc.bracketCost` (a `@benchmark` in
+`rdpmc.d`) measured, on the Zen 4 dev box, 2.3 µs per ioctl ENABLE/DISABLE
+pair vs 20 ns per rdpmc seqlock read vs 461 ns per `read(2)` — a full
+7-event rdpmc bracket (~280 ns) would be ~8× cheaper than the ioctl pair,
+corroborating the literature's order-of-magnitude claim. What remains open
+is **switching the counting pass**: an rdpmc bracket needs the group enabled
+continuously (deltas exclude `between()` work arithmetically instead of via
+DISABLE), which changes the multiplex-scaling window semantics.
 
-**Options:** (A) measure the bracket cost on-host as part of B2 and record
-it before `selfMonitoring` may advertise or auto-select; (B) ship the fast
-path opt-in with no performance claim.
+**Options:** (A) switch automatically for very short bodies when
+`cap_user_rdpmc` holds and the group is exact (unscaled); (B) an opt-in
+flag; (C) keep the primitive unused until a consumer demonstrates bracket
+cost dominating a real measurement.
 
-**Leaning:** (A) — B2's verification gate already requires the measurement.
+**Leaning:** (A), scoped to the exact (non-`--perf-scaled`) mode where the
+continuous-enable semantics are provably equivalent.
 
 ## O3 — The thread-coverage contract
 
@@ -54,28 +61,15 @@ partially-covered runs are visibly marked.
 pattern (cache regime, M6) — with (B) as a later refinement if a real
 consumer needs it.
 
-## O4 — Estimate marking format
-
-**Where:** SPEC §6.3, §8.3; PLAN B2.
-
-`countingScaled` cells are estimates and must be visibly marked in the table
-and machine-readably marked in `--bench-json`. The JSON schema has no
-estimate field today.
-
-**Options:** (A) per-cell flag — `metrics` values become
-`{value, estimated}` objects under a schema bump; (B) a row-level
-`estimatedMetrics: [names]` array, keeping cell values plain numbers;
-(C) separate `metricsEstimated` sibling object.
-
-**Leaning:** (B) — keeps every existing consumer's numeric path intact and
-the schema bump additive.
-
 ## O5 — The cross-OS event-name vocabulary
 
-**Where:** SPEC §5, §9; PLAN B2/B3/B4.
+**Where:** SPEC §5, §9; PLAN B3/B4.
 
 No naming layer spans operating systems, so the harness owns its vocabulary.
-Undecided: one abstract namespace resolved per-OS, or per-source prefixes.
+B2 shipped the per-source-prefix shape on Linux (`raw:r<hex>`, `pfm:<name>`
+— the leaning's (B), following the `sc:`/`syscalls:` precedent). Open: how
+the future macOS/Windows sources join — their own prefixes (`kpep:`,
+`pmcsource:`) or an abstract shared core.
 
 **Options:** (A) abstract names (`instructions`, `cache-miss`) mapped
 per-OS, failing where unmappable; (B) per-source prefixes (`raw:`, `pfm:`,

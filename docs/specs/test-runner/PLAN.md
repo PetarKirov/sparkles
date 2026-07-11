@@ -137,6 +137,16 @@ Acceptance: on the dev box the report reproduces the survey's findings —
 
 ## B2 — Linux counting depth
 
+> **Shipped** (branch `feat/test-runner-capability-seam`, four commits —
+> one per capability): `raw.d` (`--metrics=raw:r<hex>` columns in their own
+> counter group), `--perf-scaled` labeled estimates (`≈` cells,
+> `estimatedMetrics` in schema-2 JSON — O4 resolved; sub-millisecond scaled
+> passes render unavailable), `event_naming.d` (dlopen-soft libpfm4 with the
+> ENCODE_INACTIVE + table-prefix recipe; `pfm:<name>` selectors), and
+> `rdpmc.d` (the selfMonitoring primitive + the O2 bracket-cost
+> measurement: ioctl pair 2.3 µs vs rdpmc read 20 ns on the dev box).
+> Switching the counting pass to the rdpmc bracket remains open-issue O2.
+
 _(backend-proposal §3; SPEC §6.3, §7.)_ Four capabilities, all probed:
 
 - **`countingRaw`** — `raw:r<hex>` selectors → `PERF_TYPE_RAW`; unlocks
