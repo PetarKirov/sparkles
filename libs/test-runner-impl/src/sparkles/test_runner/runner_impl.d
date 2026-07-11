@@ -29,9 +29,9 @@ import sparkles.test_runner.execution : executeTest;
 import sparkles.test_runner.filter : matchesFilter;
 import sparkles.test_runner.model : Test, TestResult;
 import sparkles.test_runner.reporting : BenchProgress, detectTerminalWidth,
-    formatBenchTable, formatCtfeFailedLine, formatCtfeLine, formatMetricCatalog,
-    formatResultLine, formatSummary, formatThrown, progressEnabled, RunTotals,
-    TableGeometry;
+    formatBenchTable, formatCapabilityBlock, formatCtfeFailedLine, formatCtfeLine,
+    formatMetricCatalog, formatResultLine, formatSummary, formatThrown,
+    progressEnabled, RunTotals, TableGeometry;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Entry point — called across the extern(C) seam by the registration shim,
@@ -616,9 +616,6 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     import std.stdio : stderr, stdout;
     import sparkles.test_runner.metrics : perfFamily, selectsSource, syscallFamily,
         syscallSelectorNames, tier0Family;
-    import sparkles.test_runner.perf : PerfGroup;
-    import sparkles.test_runner.syscalls : SyscallGroup;
-    import sparkles.test_runner.tier0 : Tier0Group;
 
     // Which counting passes to open: --perf OR a --metrics perf metric (so
     // `--metrics=ipc`/`=all` populate the perf columns, mirroring tier0); a
@@ -660,23 +657,21 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         stderr.writeln("--syscalls: only the first ", counters.syscalls.names.length,
             " named tracepoints are counted (", syscallNames.length, " requested)");
 
-    // --list-metrics (also --metrics=? / --metrics=help): print the catalog and
-    // exit. Dedicated probes report true availability regardless of the flags;
-    // client metrics can't be listed without running, so they're just noted.
+    // --list-metrics (also --metrics=? / --metrics=help): print the catalog,
+    // the per-backend capability block, and exit. One full-probe bundle
+    // reports true availability regardless of the flags; client metrics can't
+    // be listed without running, so they're just noted.
     if (options.listMetrics || options.metrics == "?" || options.metrics == "help")
     {
-        auto perfProbe = PerfGroup.tryOpen(true);
+        auto probe = CounterGroups.open(true, true, true, null);
         scope (exit)
-            perfProbe.close();
-        auto syscallProbe = SyscallGroup.tryOpen(true, null);
-        scope (exit)
-            syscallProbe.close();
-        auto cat = perfFamily(perfProbe.available)
-            ~ tier0Family(Tier0Group.tryOpen(true).available)
-            ~ syscallFamily(syscallProbe.available);
+            probe.close();
+        auto cat = perfFamily(probe.perf.available)
+            ~ tier0Family(probe.tier0.available)
+            ~ syscallFamily(probe.syscalls.available);
         stdout.write(formatMetricCatalog(cat, colored));
-        if (!perfProbe.available)
-            stderr.writeln("--list-metrics: hardware counters ", perfProbe.status());
+        stdout.writeln;
+        stdout.write(formatCapabilityBlock(probe.capabilities, colored));
         stdout.writeln("client throughput/level metrics are defined per @benchmark and appear when present.");
         return UnitTestResult(0, 0, false, false);
     }
