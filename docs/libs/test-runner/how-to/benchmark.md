@@ -172,6 +172,33 @@ as `—`; when the whole group can't open (a paranoid kernel's
 default perf columns are omitted entirely and a stderr note says why. Off
 Linux the flag is inert.
 
+Add `--perf-scaled` to keep the full group even when the PMU would multiplex
+it: instead of dropping the LLC pair, every value scaled by the pass's
+`enabled/running` ratio renders as a **labeled estimate** (`≈4.10k`) — and is
+named in `--bench-json`'s per-row `estimatedMetrics`. A multiplexed pass
+with under a millisecond of PMU time renders `—` outright: that scale is
+noise, not an estimate.
+
+## Beyond the generic events: `raw:` and `pfm:` selectors
+
+The seven generic events are portable; microarchitecture-specific events go
+through two `--metrics` selector families, each counted in its **own**
+group so the default columns' exactness is never perturbed:
+
+```bash
+dub test :base -- --bench --metrics=raw:r00c0,instr        # raw config (perf rNNNN)
+dub test :base -- --bench --metrics=pfm:RETIRED_SSE_AVX_FLOPS:ADD_SUB_FLOPS
+```
+
+`raw:r<hex>` passes the config straight to `PERF_TYPE_RAW` (on x86: event
+select and umask bytes). `pfm:<name>` resolves a symbolic name — including
+umask-qualified events and `:u`/`:k` privilege modifiers — through
+**libpfm4**, loaded with `dlopen` at first use: on a host without it the
+column degrades with a stderr note (`--list-metrics` reports `eventNaming`
+absent) and `raw:` selectors keep working. Both appear as diagnostic
+columns, sort via `--sort-by`, and serialize under their selector names in
+`--bench-json`.
+
 ## Choosing columns: the metric catalog
 
 Every measured column — client `metrics`, the perf counters, and the counters
@@ -212,9 +239,11 @@ carries `name`, its sorted `labels` (the `--group-by` dimensions travel here —
 the JSON itself keeps measurement order, unaffected by `--sort-by`/
 `--group-by`), the timing summary in nanoseconds, and a `metrics` object keyed
 by catalog names (`--list-metrics`). Error rows keep their `labels` and
-`error` with `null` timing fields; unavailable counters are `null`. The
-output is deterministic and float-safe for committing (integral values print
-as integers, others to 6 significant digits).
+`error` with `null` timing fields; unavailable counters are `null`; a row
+whose counters were multiplex-scaled additionally names them in an
+`estimatedMetrics` array (the schema-2 addition — absent means every metric
+is exact). The output is deterministic and float-safe for committing
+(integral values print as integers, others to 6 significant digits).
 
 ## I/O-bound signals: Tier-0 counters and `--syscalls`
 
