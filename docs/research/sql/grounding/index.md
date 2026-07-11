@@ -37,6 +37,16 @@ Populated as each wave lands. Waves: **W1** effects core · **W2** Haskell typed
 | opaleye              | [opaleye.md](./opaleye.md)                           | 54     | 51  | 0   | W2   |
 | beam                 | [beam.md](./beam.md)                                 | 54     | 50  | 0   | W2   |
 | persistent-esqueleto | [persistent-esqueleto.md](./persistent-esqueleto.md) | 54     | 52  | 0   | W2   |
+| diesel               | [diesel.md](./diesel.md)                             | 57     | 53  | 0   | W3   |
+| sqlx                 | [sqlx.md](./sqlx.md)                                 | 68     | 65  | 0   | W3   |
+| sea-orm              | [sea-orm.md](./sea-orm.md)                           | 55     | 51  | 0   | W3   |
+| kysely               | [kysely.md](./kysely.md)                             | 52     | 49  | 0   | W3   |
+| drizzle              | [drizzle.md](./drizzle.md)                           | 57     | 53  | 0   | W3   |
+| jooq                 | [jooq.md](./jooq.md)                                 | 68     | 63  | 0   | W3   |
+| sqlc                 | [sqlc.md](./sqlc.md)                                 | 54     | 51  | 0   | W3   |
+| linq2db              | [linq2db.md](./linq2db.md)                           | 50     | 47  | 0   | W3   |
+| dapper               | [dapper.md](./dapper.md)                             | 61     | 56  | 1   | W3   |
+| exposed              | [exposed.md](./exposed.md)                           | 37     | 36  | 0   | W3   |
 
 ## Master discrepancy register
 
@@ -89,3 +99,31 @@ Several brief-vs-tree facts were caught during authoring and stated correctly in
 
 The `◯` remainder per page is the web-attested set only (first-release years, latest
 version numbers on a `--depth 1` clone).
+
+### Batch 3 (wave 3 — typed builders / thin safe-SQL, 2026-07-12)
+
+Ten pages grounded at authoring time: [diesel](./diesel.md), [sqlx](./sqlx.md),
+[sea-orm](./sea-orm.md), [kysely](./kysely.md), [drizzle](./drizzle.md), [jooq](./jooq.md),
+[sqlc](./sqlc.md), [linq2db](./linq2db.md), [dapper](./dapper.md), [exposed](./exposed.md).
+**Zero substantive page discrepancies.** Three authoring-time catches where the brief's
+suggested wording was **not present in the pinned tree** — corrected by grounding on real
+in-tree text rather than quoting a remembered tagline:
+
+- **dapper** (⚠ #D1) — "King of Micro ORM" / "Dapper does not do the following: generate
+  SQL, track changes" are **not** in this checkout's `Readme.md` (older/wiki text); every
+  "does not do X" claim was regrounded on `Readme.md:464` ("the 95% scenario") or
+  grep-confirmed code absence.
+- **jooq** — the "SQL was never meant to be abstracted" tagline is not in the tree; grounded
+  the philosophy on `README.md` instead. License verified Apache-2.0-for-OSS-DBs /
+  commercial-for-others via the blanked `SQLDialect.commercial()` enum section.
+- **linq2db** — grounded on the tree's own text (including faithfully quoted source typos
+  "databse"/"nester"); one flat transaction per connection (a second `BeginTransaction`
+  throws, no savepoints).
+
+Other grounded facts worth recording: **sqlx** removed MSSQL pre-`0.7` and ships pure-Rust
+wire drivers (`#![forbid(unsafe_code)]` core; SQLite the C exception); **sqlc** is a genuine
+compiler embedding the real `libpg_query` grammar and does **not** run migrations; **Exposed**
+`1.x` **deprecated** `createMissingTablesAndColumns` auto-migration in favour of
+`MigrationUtils` + a third-party runner; **SeaORM**'s "async & dynamic ORM" / "built upon
+SQLx" taglines are in-tree (`README`), not just web. The `◯` remainder is the web-attested
+set only.
