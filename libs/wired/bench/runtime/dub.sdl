@@ -39,7 +39,34 @@ versions "BenchJsoniopipe"
 configuration "unittest" {
     // The benchmark is a set of `@benchmark unittest`s run through
     // sparkles:test-runner (`dub test -- --bench`, with `--perf` for hardware
-    // counters). Corpora load from `$WIRED_BENCH_DATA` at run time.
+    // counters). Corpora load from `$WIRED_BENCH_DATA` at run time. This
+    // default config is the D-engine field only (std.json, wired-native,
+    // mir-ion, asdf, jsoniopipe) — pure-D deps that build anywhere, for fast
+    // off-nix iteration.
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+
+// The full competitive field: the D engines plus the foreign engines
+// (yyjson, simdjson DOM/On-Demand, rapidjson, serde_json, simd-json,
+// sonic-rs) reached through their ImportC/`extern(C)` shims. Those shims
+// resolve via pkg-config (`yyjson.pc`, `wired-bench-cpp-shim.pc`,
+// `wired-bench-rs.pc`) on the devshell's `PKG_CONFIG_PATH`, so this config
+// is nix-only. Run the full field with:
+//   dub test -b bench -c unittest-foreign -- --bench --perf
+configuration "unittest-foreign" {
+    // yyjson: ImportC binding; the ISA-preset build's yyjson.pc provides both
+    // cflags and -lyyjson.
+    dependency "yyjson" path="bindings/yyjson"
+    versions "BenchYyjson"
+
+    // simdjson (DOM + On-Demand) and rapidjson via the extern "C" shim, and
+    // serde_json + simd-json + sonic-rs via the Rust staticlib.
+    dependency "wired-bench-shim" path="bindings/shim"
+    versions "BenchCpp" "BenchRust"
+
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
     dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
