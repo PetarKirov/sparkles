@@ -21,50 +21,59 @@ Web is fallback-only. This tree is internal QA evidence — excluded from the Vi
 
 ## Per-page ledgers
 
-| Page                    | Ledger                                                     | Rows | ⚠   | ◯                | Status |
-| ----------------------- | ---------------------------------------------------------- | ---- | --- | ---------------- | ------ |
-| theory/formal-languages | [theory-formal-languages.md](./theory-formal-languages.md) | full | 2   | several          | ✅ B1  |
-| theory/top-down         | [theory-top-down.md](./theory-top-down.md)                 | full | 2   | RS70             | ✅ B1  |
-| theory/bottom-up        | [theory-bottom-up.md](./theory-bottom-up.md)               | full | 4   | Tomita/Pager     | ✅ B1  |
-| theory/general-parsing  | [theory-general-parsing.md](./theory-general-parsing.md)   | full | 0   | Leo/Marpa/GLL    | ✅ B1  |
-| theory/peg-packrat      | [theory-peg-packrat.md](./theory-peg-packrat.md)           | full | 5   | Medeiros         | ✅ B2  |
-| theory/pratt-precedence | [theory-pratt-precedence.md](./theory-pratt-precedence.md) | full | 2   | blogs            | ✅ B2  |
-| theory/derivatives      | [theory-derivatives.md](./theory-derivatives.md)           | full | 0   | Antimirov/blog   | ✅ B2  |
-| theory/incremental      | [theory-incremental.md](./theory-incremental.md)           | full | 0   | Adapton biblio   | ✅ B6  |
-| theory/index            | [theory-index.md](./theory-index.md)                       | full | 0   | —                | ✅ B5  |
-| concepts                | [concepts.md](./concepts.md)                               | full | 3   | GLL/Hopcroft     | ✅ B2  |
-| comparison              | [comparison.md](./comparison.md)                           | full | 2   | Sparkles-fit     | ✅ B5  |
-| index                   | [page-index.md](./page-index.md)                           | full | 2   | biblio dates     | ✅ B5  |
-| simdjson                | [simdjson.md](./simdjson.md)                               | full | 5   | port provenance  | ✅ B3  |
-| tree-sitter             | [tree-sitter.md](./tree-sitter.md)                         | full | 1   | talk/wiki        | ✅ B3  |
-| antlr                   | [antlr.md](./antlr.md)                                     | full | 5   | adopters         | ✅ B3  |
-| bison-yacc              | [bison-yacc.md](./bison-yacc.md)                           | full | 2   | Johnson/Lemon    | ✅ B3  |
-| menhir                  | [menhir.md](./menhir.md)                                   | full | 3   | blog/C11         | ✅ B4  |
-| pest                    | [pest.md](./pest.md)                                       | full | 0   | book/blog        | ✅ B4  |
-| rust-nom                | [rust-nom.md](./rust-nom.md)                               | full | 3   | bench/downloads  | ✅ B4  |
-| rust-chumsky            | [rust-chumsky.md](./rust-chumsky.md)                       | full | 3   | blog/adoption    | ✅ B4  |
-| haskell-parsec          | [haskell-parsec.md](./haskell-parsec.md)                   | full | 1   | FlatParse/ports  | ✅ B5  |
-| rust-analyzer           | [rust-analyzer.md](./rust-analyzer.md)                     | full | 0   | matklad/cadence  | ✅ B6  |
-| roslyn                  | [roslyn.md](./roslyn.md)                                   | full | 0   | CTP/OSS dates    | ✅ B6  |
-| lezer                   | [lezer.md](./lezer.md)                                     | full | 0   | CodeMirror bio   | ✅ B6  |
-| rustc-queries           | [rustc-queries.md](./rustc-queries.md)                     | full | 0   | Matsakis/blog    | ✅ B6  |
-| simd-json               | [simd-json.md](./simd-json.md)                             | full | 0   | bench/date       | ✅ B7  |
-| sonic-rs                | [sonic-rs.md](./sonic-rs.md)                               | full | 0   | bench            | ✅ B7  |
-| yyjson                  | [yyjson.md](./yyjson.md)                                   | full | 0   | bench            | ✅ B7  |
-| rapidjson               | [rapidjson.md](./rapidjson.md)                             | full | 1   | bench (simdjson) | ✅ B7  |
-| hyperscan               | [hyperscan.md](./hyperscan.md)                             | full | 0   | Vectorscan       | ✅ B7  |
-| zig-tokenizer           | [zig-tokenizer.md](./zig-tokenizer.md)                     | full | 1   | Parse.zig        | ✅ B7  |
-| rust-winnow             | [rust-winnow.md](./rust-winnow.md)                         | full | 0   | downloads        | ✅ B7  |
-| haskell-flatparse       | [haskell-flatparse.md](./haskell-flatparse.md)             | full | 0   | bench            | ✅ B7  |
-| rust-combine            | [rust-combine.md](./rust-combine.md)                       | full | 0   | downloads        | ✅ B7  |
-| ocaml-angstrom          | [ocaml-angstrom.md](./ocaml-angstrom.md)                   | full | 0   | httpaf/RWO       | ✅ B7  |
-| fsharp-fparsec          | [fsharp-fparsec.md](./fsharp-fparsec.md)                   | full | 0   | reputation       | ✅ B7  |
-| d-landscape             | [d-landscape.md](./d-landscape.md)                         | full | 0   | dub scores       | ✅ B8  |
-| syntect                 | [syntect.md](./syntect.md)                                 | full | 0   | 5.3.0 docs.rs    | ✅ B9  |
-| bat                     | [bat.md](./bat.md)                                         | full | 0   | v0.1.0 date      | ✅ B9  |
-| tree-sitter-highlight   | [tree-sitter-highlight.md](./tree-sitter-highlight.md)     | full | 0   | crate/GH dates   | ✅ B9  |
-| shiki                   | [shiki.md](./shiki.md)                                     | full | 0   | release history  | ✅ B9  |
-| syntax-highlighting     | [syntax-highlighting.md](./syntax-highlighting.md)         | full | 0   | milestone dates  | ✅ B9  |
+| Page                    | Ledger                                                     | Rows | ⚠   | ◯                | Status    |
+| ----------------------- | ---------------------------------------------------------- | ---- | --- | ---------------- | --------- |
+| theory/formal-languages | [theory-formal-languages.md](./theory-formal-languages.md) | full | 2   | several          | ✅ B1     |
+| theory/top-down         | [theory-top-down.md](./theory-top-down.md)                 | full | 2   | RS70             | ✅ B1     |
+| theory/bottom-up        | [theory-bottom-up.md](./theory-bottom-up.md)               | full | 4   | Tomita/Pager     | ✅ B1     |
+| theory/general-parsing  | [theory-general-parsing.md](./theory-general-parsing.md)   | full | 0   | Leo/Marpa/GLL    | ✅ B1     |
+| theory/peg-packrat      | [theory-peg-packrat.md](./theory-peg-packrat.md)           | full | 5   | Medeiros         | ✅ B2     |
+| theory/pratt-precedence | [theory-pratt-precedence.md](./theory-pratt-precedence.md) | full | 2   | blogs            | ✅ B2     |
+| theory/derivatives      | [theory-derivatives.md](./theory-derivatives.md)           | full | 0   | Antimirov/blog   | ✅ B2     |
+| theory/incremental      | [theory-incremental.md](./theory-incremental.md)           | full | 0   | Adapton biblio   | ✅ B6     |
+| theory/index            | [theory-index.md](./theory-index.md)                       | full | 0   | —                | ✅ B5     |
+| concepts                | [concepts.md](./concepts.md)                               | full | 3   | GLL/Hopcroft     | ✅ B2     |
+| comparison              | [comparison.md](./comparison.md)                           | full | 2   | Sparkles-fit     | ✅ B5     |
+| index                   | [page-index.md](./page-index.md)                           | full | 2   | biblio dates     | ✅ B5     |
+| simdjson                | [simdjson.md](./simdjson.md)                               | full | 5   | port provenance  | ✅ B3     |
+| tree-sitter             | [tree-sitter.md](./tree-sitter.md)                         | full | 1   | talk/wiki        | ✅ B3     |
+| antlr                   | [antlr.md](./antlr.md)                                     | full | 5   | adopters         | ✅ B3     |
+| bison-yacc              | [bison-yacc.md](./bison-yacc.md)                           | full | 2   | Johnson/Lemon    | ✅ B3     |
+| menhir                  | [menhir.md](./menhir.md)                                   | full | 3   | blog/C11         | ✅ B4     |
+| pest                    | [pest.md](./pest.md)                                       | full | 0   | book/blog        | ✅ B4     |
+| rust-nom                | [rust-nom.md](./rust-nom.md)                               | full | 3   | bench/downloads  | ✅ B4     |
+| rust-chumsky            | [rust-chumsky.md](./rust-chumsky.md)                       | full | 3   | blog/adoption    | ✅ B4     |
+| haskell-parsec          | [haskell-parsec.md](./haskell-parsec.md)                   | full | 1   | FlatParse/ports  | ✅ B5     |
+| rust-analyzer           | [rust-analyzer.md](./rust-analyzer.md)                     | full | 0   | matklad/cadence  | ✅ B6     |
+| roslyn                  | [roslyn.md](./roslyn.md)                                   | full | 0   | CTP/OSS dates    | ✅ B6     |
+| lezer                   | [lezer.md](./lezer.md)                                     | full | 0   | CodeMirror bio   | ✅ B6     |
+| rustc-queries           | [rustc-queries.md](./rustc-queries.md)                     | full | 0   | Matsakis/blog    | ✅ B6     |
+| simd-json               | [simd-json.md](./simd-json.md)                             | full | 0   | bench/date       | ✅ B7     |
+| sonic-rs                | [sonic-rs.md](./sonic-rs.md)                               | full | 0   | bench            | ✅ B7     |
+| yyjson                  | [yyjson.md](./yyjson.md)                                   | full | 0   | bench            | ✅ B7     |
+| rapidjson               | [rapidjson.md](./rapidjson.md)                             | full | 1   | bench (simdjson) | ✅ B7     |
+| hyperscan               | [hyperscan.md](./hyperscan.md)                             | full | 0   | Vectorscan       | ✅ B7     |
+| zig-tokenizer           | [zig-tokenizer.md](./zig-tokenizer.md)                     | full | 1   | Parse.zig        | ✅ B7     |
+| rust-winnow             | [rust-winnow.md](./rust-winnow.md)                         | full | 0   | downloads        | ✅ B7     |
+| haskell-flatparse       | [haskell-flatparse.md](./haskell-flatparse.md)             | full | 0   | bench            | ✅ B7     |
+| rust-combine            | [rust-combine.md](./rust-combine.md)                       | full | 0   | downloads        | ✅ B7     |
+| ocaml-angstrom          | [ocaml-angstrom.md](./ocaml-angstrom.md)                   | full | 0   | httpaf/RWO       | ✅ B7     |
+| fsharp-fparsec          | [fsharp-fparsec.md](./fsharp-fparsec.md)                   | full | 0   | reputation       | ✅ B7     |
+| d-landscape             | [d-landscape.md](./d-landscape.md)                         | full | 0   | dub scores       | ✅ B8     |
+| syntect                 | [syntect.md](./syntect.md)                                 | full | 0   | 5.3.0 docs.rs    | ✅ B9     |
+| bat                     | [bat.md](./bat.md)                                         | full | 0   | v0.1.0 date      | ✅ B9     |
+| tree-sitter-highlight   | [tree-sitter-highlight.md](./tree-sitter-highlight.md)     | full | 0   | crate/GH dates   | ✅ B9     |
+| shiki                   | [shiki.md](./shiki.md)                                     | full | 0   | release history  | ✅ B9     |
+| syntax-highlighting     | [syntax-highlighting.md](./syntax-highlighting.md)         | full | 0   | milestone dates  | ✅ B9+B10 |
+| pygments                | [pygments.md](./pygments.md)                               | full | 0   | 2006 date        | ✅ B10    |
+| chroma                  | [chroma.md](./chroma.md)                                   | full | 0   | 2017 dates       | ✅ B10    |
+| helix                   | [helix.md](./helix.md)                                     | full | 0   | tree-house split | ✅ B10    |
+| linguist                | [linguist.md](./linguist.md)                               | full | 0   | 2011 date        | ✅ B10    |
+| highlight-js            | [highlight-js.md](./highlight-js.md)                       | full | 0   | 2006 day soft    | ✅ B10    |
+| lezer-highlight         | [lezer-highlight.md](./lezer-highlight.md)                 | full | 0   | npm dates        | ✅ B10    |
+| lsp-semantic-tokens     | [lsp-semantic-tokens.md](./lsp-semantic-tokens.md)         | full | 0   | VS Code dates    | ✅ B10    |
+| intellij-highlighting   | [intellij-highlighting.md](./intellij-highlighting.md)     | full | 0   | IDEA day soft    | ✅ B10    |
+| vim-emacs-syntax        | [vim-emacs-syntax.md](./vim-emacs-syntax.md)               | full | 0   | release dates    | ✅ B10    |
 
 ## Master discrepancy register
 
@@ -234,9 +243,29 @@ adoption/ecosystem context. The wave-4 edits to `tree-sitter.md`, `comparison.md
 `index.md` are cross-links/rows re-stating ledgered claims — no new ledger deltas beyond the
 milestone dates covered above.
 
-## Status: all 42 pages grounded (9 batches). 44 discrepancies (R8–R51, all from B1–B5);
+### Batch 10 (wave 5 — syntax highlighting widened, 2026-07-11)
 
-wave-2 B6 + B7 + wave-3 B8 + wave-4 B9 added
+**Zero page discrepancies** across the nine new pages ([`pygments`](./pygments.md),
+[`chroma`](./chroma.md), [`helix`](./helix.md), [`linguist`](./linguist.md),
+[`highlight-js`](./highlight-js.md), [`lezer-highlight`](./lezer-highlight.md),
+[`lsp-semantic-tokens`](./lsp-semantic-tokens.md),
+[`intellij-highlighting`](./intellij-highlighting.md),
+[`vim-emacs-syntax`](./vim-emacs-syntax.md)) + the restructured synthesis (B10 addendum in
+its ledger). Verification method: each page's **load-bearing quotes were re-grep-verified
+directly at the pinned checkouts before authoring**; remaining rows carry the exploration
+pass's verbatim locators against the same pins (recorded per ledger). Two **upstream**
+doc-vs-code drifts were found and are _reported in the pages as findings_, not page errors:
+Chroma's "Lab colour space" comments vs its redmean implementation, and Linguist's
+"Bayesian" docs vs its nearest-centroid classifier. Authoring-time catches: the LSP repo's
+`gh-pages` default branch (a `/blob/main/` spec URL 404s — fixed pre-commit, noted in
+`_sources.md`); Helix's engine living in the external `tree-house` crate (dual grounding
+declared rather than papered over); the npm `@lezer/highlight` repo-vs-package dating trap.
+Web-attested only: the ten D11–D20 historical dates (primary sources in the
+[synthesis ledger](./syntax-highlighting.md)), release history, and adoption context.
+
+## Status: all 51 pages grounded (10 batches). 44 discrepancies (R8–R51, all from B1–B5);
+
+wave-2 B6 + B7 + wave-3 B8 + wave-4 B9 + wave-5 B10 added
 
 0 substantive. All minor — quote-precision, citation-locator, version/attribution. No fabricated _facts_
 beyond R8/R23 quote-padding and R26/R39/R45–R47 quote-sourcing. Proceed to Phase 3 (apply fixes).

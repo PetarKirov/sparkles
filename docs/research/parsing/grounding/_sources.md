@@ -87,6 +87,44 @@ Wave 4 — syntax highlighting (added 2026-07-11):
 | tree-sitter (0.27) | `$REPOS/rust/tree-sitter` | `ee0847d6` | 2026-07-11 |
 | shiki              | `$REPOS/typescript/shiki` | `fdff6e23` | 2026-07-03 |
 
+Wave 5 — syntax highlighting, widened (added 2026-07-11):
+
+| Repo                     | Path                                         | Pinned SHA | As of      |
+| ------------------------ | -------------------------------------------- | ---------- | ---------- |
+| pygments                 | `$REPOS/python/pygments`                     | `f1a91515` | 2026-07-09 |
+| chroma                   | `$REPOS/go/chroma`                           | `01c740b`  | 2026-07-08 |
+| helix                    | `$REPOS/rust/helix`                          | `14d6bc0f` | 2026-07-06 |
+| tree-house               | `$REPOS/rust/tree-house`                     | `750cff2`  | 2026-06-28 |
+| linguist                 | `$REPOS/ruby/linguist`                       | `e9fe3c9f` | 2026-06-18 |
+| lezer-highlight          | `$REPOS/js/lezer-highlight`                  | `8b4907f`  | 2026-04-15 |
+| highlight.js             | `$REPOS/js/highlight.js`                     | `d4623998` | 2026-07-09 |
+| language-server-protocol | `$REPOS/typescript/language-server-protocol` | `25005c8`  | 2026-07-09 |
+| intellij-sdk-docs        | `$REPOS/java/intellij-sdk-docs`              | `e203227f` | 2026-07-11 |
+| vim                      | `$REPOS/c/vim`                               | `834b8d21` | 2026-07-03 |
+| emacs                    | `$REPOS/c/emacs`                             | `b22a3be`  | 2026-06-25 |
+
+Wave-5 grounding notes: **helix's engine lives in the external `tree-house` crate**
+(extracted 2025; `helix.md` cites Helix 0.4.0's crates.io sources; the `tree-house`
+repo clone at `750cff2` carries the same passages — key quotes re-located there under
+`highlighter/src/`, line numbers may drift from the 0.4.0 crate tarball). The
+**language-server-protocol** repo's default branch is **`gh-pages`** — GitHub blob
+URLs must use `/blob/gh-pages/`, not `/blob/main/` (a `main`-based spec URL 404s; hit
+and fixed during authoring). The **emacs** clone is `--depth=1` (no history; pin =
+HEAD SHA only). IntelliJ architecture claims ground in the official SDK-docs repo
+(plugin-author contract), NOT `intellij-community` sources — code-level platform
+internals (large-file limits, pass class names) are deliberately not asserted.
+Quote-grounding files: pygments `pygments/{lexer,token,style}.py` + `lexers/__init__.py`
+
+- `formatters/` + `doc/`; chroma `README.md` + `regexp.go` + `types.go` + `_tools/`;
+  helix `helix-core/src/syntax.rs` + `helix-loader/src/grammar.rs` + `book/src/guides/`
+- `docs/vision.md` (+ tree-house `highlighter/src/`); linguist `lib/linguist*` +
+  `docs/`; lezer-highlight `src/highlight.ts`; highlight.js `src/highlight.js` +
+  `docs/language-guide.rst`; LSP `_specifications/lsp/3.17/language/semanticTokens.md`;
+  intellij-sdk-docs `topics/reference_guide/**` + `topics/tutorials/**`; vim
+  `runtime/doc/{syntax,options,version5}.txt` + `src/{syntax.c,structs.h}`; emacs
+  `lisp/{font-lock,jit-lock}.el` + `lisp/emacs-lisp/syntax.el` + `doc/lispref/modes.texi`
+- `etc/NEWS.21`.
+
 Wave-4 grounding notes: **two tree-sitter pins coexist** — wave 1 pinned
 `$REPOS/parsing/tree-sitter` at `cbee4672` (0.26.x) for `tree-sitter.md`, and that pin
 stays; `tree-sitter-highlight.md` grounds against the separate `$REPOS/rust/tree-sitter`

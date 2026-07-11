@@ -1,0 +1,41 @@
+# Grounding ledger — `helix.md`
+
+- `$REPOS/rust/helix` `14d6bc0f` (2026-07-06; `git describe` = `25.07-971`, workspace 25.7.1; MPL-2.0)
+- **Engine external:** `tree-house` crate 0.4.0 (crates.io; Cargo.lock-resolved from helix). Repo clone
+  `$REPOS/rust/tree-house` `750cff2` (2026-06-28, no 0.4.0 tag) carries the cited passages under
+  `highlighter/src/`; key quotes re-located there (line numbers may drift vs the crate tarball).
+
+Status key: ✓ / ≈ / ⚠ / ◯ / 🌐. Load-bearing quotes (rows 3, 8, 9, 12) re-grep-verified directly;
+remaining locators from the exploration pass (helix pin + tree-house 0.4.0 crate sources).
+
+| #   | Claim                                                                                                                                                                                 | Type        | Source (local + locator)                                                                               | Status |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------ | ------ |
+| 1   | Engine extracted to `tree-house` ("Switch out the highlighter for the `tree-house` crate"); deps `tree-house = "0.4"`                                                                 | QUOTE≈      | `CHANGELOG.md:45`; root `Cargo.toml:41`; `Cargo.lock`                                                  | ✓      |
+| 2   | tree-house tagline "A robust and cozy highlighter library for tree-sitter"; authors Kuthe & Davis                                                                                     | QUOTE       | tree-house `Cargo.toml:29` (crate + repo)                                                              | ✓      |
+| 3   | `PARSE_TIMEOUT = 500 ms` "// half a second is pretty generous"; `Syntax { inner: tree_house::Syntax }`                                                                                | QUOTE-code  | `helix-core/src/syntax.rs:513-518` (verified)                                                          | ✓      |
+| 4   | `generate_edits` walks `ChangeSet` → `InputEdit`s, all `Point::ZERO` (byte-only)                                                                                                      | fact        | `helix-core/src/syntax.rs:706-779`                                                                     | ≈      |
+| 5   | Synchronous inline reparse in `Document::apply_impl`; on error "TS parser failed, disabling TS for the current buffer" → `None`                                                       | QUOTE≈      | `helix-view/src/document.rs:1513-1525`                                                                 | ✓      |
+| 6   | Layer model: `Slab<LayerData { language, parse_tree, ranges, injections, flags, parent, locals }>`                                                                                    | fact        | tree-house `lib.rs:85-89,214-227`                                                                      | ≈      |
+| 7   | Injection reuse: ranges mapped through edits (O(M+N)); `reuse_injection` recycles same-language layers; combined injections per scope; `include-children` via `intersect_ranges`      | fact        | tree-house `injections_query.rs:360-484`                                                               | ≈      |
+| 8   | 512 MiB cap: "TS just cannot handle files this big… TS uses 32 (signed) bit indices so this limit must never be raised above 2GiB"                                                    | QUOTE-code  | tree-house repo `highlighter/src/parse.rs:18-23` (verified)                                            | ✓      |
+| 9   | `TREE_SITTER_MATCH_LIMIT = 256` with rationale comment ("multiple seconds… 3k loc… Neovim chose 64… breaks Erlang record fields")                                                     | QUOTE-code  | tree-house repo `highlighter/src/lib.rs:310-328` (const at :328, verified)                             | ✓      |
+| 10  | Edits applied **in reverse** ("If we applied them in order then edit 1 would disrupt the positioning of edit 2"); `parse_with_timeout` → `Error::Timeout`; `prune_dead_layers`        | QUOTE≈      | tree-house `parse.rs:11-120`                                                                           | ✓      |
+| 11  | Windowed API: `pub fn highlighter(&self, source, loader, range: impl RangeBounds<u32>) -> Highlighter`                                                                                | QUOTE-code  | `helix-core/src/syntax.rs:593-600`                                                                     | ✓      |
+| 12  | Viewport wiring: `viewport_byte_range` + "instead of using a view directly to enable rendering syntax highlighted docs anywhere (eg. picker preview)"                                 | QUOTE≈      | `helix-term/src/ui/editor.rs:279-311`                                                                  | ✓      |
+| 13  | Cursor API: `next_event_offset()` + `advance() → (HighlightEvent, …)`; `HighlightEvent::{Refresh, Push}` doc                                                                          | QUOTE-code  | tree-house `highlighter.rs:229-268`                                                                    | ✓      |
+| 14  | Precedence: "prefer the last one which matched. This matches the precedence of Neovim, Zed, and tree-sitter-cli."; book: "Same span: last match wins … Nested nodes: innermost wins." | QUOTE       | tree-house repo `highlighter/src/highlighter.rs:505` (verified); `book/src/guides/highlights.md:24-34` | ✓      |
+| 15  | highlights+locals concatenated into one query; `; inherits:` recursive splicing ("compiled against each inheriting grammar")                                                          | fact/QUOTE≈ | tree-house `highlighter.rs:45-49`, `config.rs:45-72`; `book/src/guides/highlights.md:17-20`            | ✓      |
+| 16  | Capture→theme longest dotted-prefix at load (`reconfigure_highlights`); theme `scopes: Vec<String>` ∥ `highlights: Vec<Style>`; "the longest matching theme key will be used"         | QUOTE≈      | `helix-core/src/syntax.rs:241-266`; `helix-view/src/theme.rs:278-436`; `book/src/themes.md:169`        | ✓      |
+| 17  | Grammar pipeline: `GrammarSource::{Local, Git{remote, rev}}`; shallow fetch; `cc` build `-O3 -fPIC -shared`; dlopen; security gate on untrusted workspace configs                     | fact        | `helix-loader/src/grammar.rs:17-26,50-63,111,249-253,389-393,585-689`                                  | ≈      |
+| 18  | Bundled scale: 342 `[[language]]` + 303 `[[grammar]]`; 341 query dirs / 1190 `.scm`; 218 themes                                                                                       | figure      | `languages.toml`, `runtime/queries/`, `runtime/themes/` counts at pin                                  | ✓      |
+| 19  | Vision quotes ("200 MB XML file… megabyte of minified javascript on a single line…"); injection drives indent/textobjects/comments                                                    | QUOTE       | `docs/vision.md:21,9`; `book/src/guides/injection.md:7-10`                                             | ✓      |
+| 20  | Error enum {Timeout, ExceededMaximumSize, InvalidRanges, Unknown, NoRootConfig, IncompatibleGrammar}                                                                                  | fact        | tree-house `lib.rs:280-288`                                                                            | ≈      |
+| 21  | Strengths / Weaknesses / trade-offs; Neovim/Zed same-shape framing                                                                                                                    | synthesis   | derived (+ row 14's precedence comment as cross-editor evidence)                                       | ◯      |
+
+## Discrepancies
+
+None. The two-repo grounding split (helix pin vs external crate) is declared in the page's
+scope note and metadata rather than papered over; tree-house repo-vs-crate line drift is
+noted here and in `_sources.md`.
+
+**Net:** 0 discrepancies.
