@@ -1,0 +1,35 @@
+name "tree-sitter"
+description "D bindings for the tree-sitter C runtime (ImportC) with RAII wrappers and grammar loading"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+
+importPaths "src"
+
+dflags "-preview=in" "-preview=dip1000"
+
+dependency "expected" version="~>0.4.1"
+
+// Resolved via pkg-config (nixpkgs tree-sitter provides tree-sitter.pc);
+// dub feeds the --cflags include path to ImportC (-P-I) in dependents'
+// executable/test builds — hence sourceLibrary below.
+libs "tree-sitter"
+
+configuration "library" {
+    targetType "sourceLibrary"
+    dependency "sparkles:base" path="../.."
+}
+
+configuration "unittest" {
+    // Fast path: depend on the runner shim (pulls the prebuilt impl library),
+    // so `dub test` recompiles only this package, not the runner sources.
+    dependency "sparkles:test-runner" path="../.."
+    dependency "sparkles:base" path="../.."
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
