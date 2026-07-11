@@ -32,6 +32,7 @@ export default withMermaid(
       '**/research/units-of-measure/grounding/**',
       '**/research/cpu-pmu/grounding/**',
       '**/research/sanitizers/grounding/**',
+      '**/research/manim/grounding/**',
       '**/research/iroh/prompt.md',
     ],
 
@@ -1291,6 +1292,128 @@ export default withMermaid(
                     {
                       text: 'Integration Proposal',
                       link: '/research/sanitizers/integration-proposal',
+                    },
+                  ],
+                },
+              ],
+            },
+            {
+              text: 'Mathematical Animation Engines',
+              link: '/research/manim/',
+              collapsed: true,
+              items: [
+                {
+                  text: 'Concepts',
+                  link: '/research/manim/concepts',
+                },
+                {
+                  text: 'Programmatic Engines',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Manim Community (Python)',
+                      link: '/research/manim/manim-community/',
+                      collapsed: true,
+                      items: [
+                        {
+                          text: 'Scene Graph & Geometry',
+                          link: '/research/manim/manim-community/scene-graph',
+                        },
+                        {
+                          text: 'Text & LaTeX Pipeline',
+                          link: '/research/manim/manim-community/text-pipeline',
+                        },
+                        {
+                          text: 'Caching & Determinism',
+                          link: '/research/manim/manim-community/caching',
+                        },
+                      ],
+                    },
+                    {
+                      text: 'ManimGL (Python)',
+                      link: '/research/manim/manimgl',
+                    },
+                    {
+                      text: 'Motion Canvas (TS)',
+                      link: '/research/manim/motion-canvas',
+                    },
+                    {
+                      text: 'Remotion (React)',
+                      link: '/research/manim/remotion',
+                    },
+                    {
+                      text: 'Theatre.js (TS)',
+                      link: '/research/manim/theatre-js',
+                    },
+                    { text: 'Javis.jl (Julia)', link: '/research/manim/javis' },
+                    { text: 'Makie.jl (Julia)', link: '/research/manim/makie' },
+                    { text: 'nannou (Rust)', link: '/research/manim/nannou' },
+                    {
+                      text: 'MathAnimation (C++)',
+                      link: '/research/manim/mathanimation',
+                    },
+                  ],
+                },
+                {
+                  text: 'Declarative Diagramming',
+                  collapsed: true,
+                  items: [
+                    { text: 'Penrose', link: '/research/manim/penrose' },
+                    { text: 'Bluefish', link: '/research/manim/bluefish' },
+                    { text: 'TikZ / PGF', link: '/research/manim/tikz' },
+                    { text: 'Asymptote', link: '/research/manim/asymptote' },
+                    { text: 'CeTZ (Typst)', link: '/research/manim/cetz' },
+                    { text: 'MetaPost', link: '/research/manim/metapost' },
+                  ],
+                },
+                {
+                  text: 'Building Blocks',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Rendering Backends',
+                      link: '/research/manim/rendering-backends/',
+                      collapsed: true,
+                      items: [
+                        {
+                          text: 'CPU Vector (Cairo/Blend2D)',
+                          link: '/research/manim/rendering-backends/cpu-vector',
+                        },
+                        {
+                          text: 'GPU Vector (Vello/raylib)',
+                          link: '/research/manim/rendering-backends/gpu-vector',
+                        },
+                        {
+                          text: 'Path Ops & Flattening',
+                          link: '/research/manim/rendering-backends/path-ops',
+                        },
+                      ],
+                    },
+                    {
+                      text: 'Math Typesetting',
+                      link: '/research/manim/math-typesetting',
+                    },
+                    {
+                      text: 'Video Encoding',
+                      link: '/research/manim/video-encoding',
+                    },
+                  ],
+                },
+                {
+                  text: 'Synthesis',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Capability Comparison',
+                      link: '/research/manim/comparison',
+                    },
+                    {
+                      text: 'sparkles Baseline',
+                      link: '/research/manim/sparkles-baseline',
+                    },
+                    {
+                      text: 'Animation Engine Proposal',
+                      link: '/research/manim/animation-engine-proposal',
                     },
                   ],
                 },

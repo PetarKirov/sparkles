@@ -38,6 +38,7 @@ exclude_path = [
     '^docs/research/units-of-measure/grounding/',
     '^docs/research/cpu-pmu/grounding/',
     '^docs/research/sanitizers/grounding/',
+    '^docs/research/manim/grounding/',
 ]
 
 # Don't check URLs inside code blocks (they're often illustrative, not real)
