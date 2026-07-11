@@ -18,6 +18,13 @@ results. Every milestone cross-links the prior art it borrows from.
 | Evidence base    | [comparison.md][comparison] capability matrix + the per-subject deep-dives                 |
 | Shape            | 6 milestones: seam → Linux depth → macOS floor → Windows floor → precise memory → sampling |
 
+> [!NOTE]
+> Sequencing and delivery tracking live in the test-runner
+> [delivery plan](../../specs/test-runner/PLAN.md), which interleaves these
+> six milestones (as **B1–B6**) with the workload-harness track and carries
+> the research-derived amendments per milestone. This page remains the
+> design rationale.
+
 ---
 
 ## 1. Abstract & problem statement
