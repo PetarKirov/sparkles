@@ -68,7 +68,13 @@ jobs:
       # Same headroom as the CI job's build — see the note there.
       - name: Build VitePress site
         env:
-          NODE_OPTIONS: --max-old-space-size=8192
+          # The site renders 400+ pages (incl. the dynamic source-code
+          # listings under docs/research/.../os-apis/); node's default ~4 GiB
+          # heap OOMs during the render phase, and 8 GiB still died at
+          # ~7 GiB of live heap ("ineffective mark-compacts"). The
+          # ubuntu-latest runner has 16 GiB; 12 GiB matches the verified
+          # local build.
+          NODE_OPTIONS: --max-old-space-size=12288
         run: npm run docs:build
 
       # Shared with CircleCI — see ci/README.md. The script wraps the same two
