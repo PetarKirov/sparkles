@@ -178,6 +178,9 @@ string jsonEscape(scope const(char)[] s) @safe pure
 /// presentation concerns; the group dimensions travel in each row's `labels`,
 /// whose keys are emitted sorted). `columns` describe the available catalog
 /// metrics for these rows, so `metrics` keys match `--list-metrics` names.
+/// Schema 2 adds the optional per-row `estimatedMetrics` array naming the
+/// `metrics` keys whose values are multiplex-scaled estimates (absent =
+/// every metric exact).
 string benchReportJson(in BenchStats[] rows, in BenchMeta meta) @safe
 {
     import std.algorithm.sorting : sort;
@@ -186,7 +189,7 @@ string benchReportJson(in BenchStats[] rows, in BenchMeta meta) @safe
 
     auto o = appender!string;
     o ~= "{\n";
-    o ~= "  \"schema\": 1,\n";
+    o ~= "  \"schema\": 2,\n";
     o ~= "  \"meta\": {\n";
     o ~= "    \"date\": \"" ~ jsonEscape(meta.date) ~ "\",\n";
     o ~= "    \"hostname\": \"" ~ jsonEscape(meta.hostname) ~ "\",\n";
@@ -252,13 +255,22 @@ string benchReportJson(in BenchStats[] rows, in BenchMeta meta) @safe
             o ~= "      \"maxNs\": " ~ jsonNumber(row.nsPerIterMax) ~ ",\n";
             o ~= "      \"metrics\": {";
             bool firstCell = true;
+            string estimated;
             foreach (ref c; rowCells(row))
             {
                 o ~= firstCell ? " " : ", ";
                 firstCell = false;
                 o ~= "\"" ~ jsonEscape(c.name) ~ "\": " ~ jsonNumber(c.value);
+                if (c.estimated)
+                    estimated ~= (estimated.length ? ", \"" : "\"")
+                        ~ jsonEscape(c.name) ~ "\"";
             }
             o ~= firstCell ? "},\n" : " },\n";
+            // Multiplex-scaled estimates are labeled machine-readably too, so
+            // a baseline comparison never mistakes an estimate for an exact
+            // count (schema 2; absent = every metric exact).
+            if (estimated.length)
+                o ~= "      \"estimatedMetrics\": [ " ~ estimated ~ " ],\n";
         }
         o ~= "      \"error\": \"" ~ jsonEscape(row.error) ~ "\"\n";
         o ~= "    }";
@@ -303,11 +315,13 @@ unittest
         minSampleTimeMs: 5, sampleCount: 32);
     const doc = parseJSON(benchReportJson([measured, plain], meta));
 
-    assert(doc["schema"].integer == 1);
+    assert(doc["schema"].integer == 2);
     assert(doc["meta"]["minSampleTimeMs"].integer == 5);
     assert(doc["rows"].array.length == 2);
     assert(doc["rows"][0]["labels"]["dataset"].str == "twitter");
     assert(doc["rows"][0]["metrics"]["ipc"].get!double == 2.0);
+    assert("estimatedMetrics" !in doc["rows"][0],
+        "exact counts carry no estimate list");
     assert(doc["rows"][0]["medianNs"].integer == 3_823_300);
     assert(doc["rows"][1]["metrics"].object.length == 0 || "ipc" !in doc["rows"][1]["metrics"]);
 
@@ -384,4 +398,31 @@ unittest
     assert(meta.compiler.canFind("front-end"));
     assert(meta.os.length && meta.arch.length);
     assert(meta.date.length == 10); // ISO day
+}
+
+@("benchJson.rows.estimatedMetrics")
+@system
+unittest
+{
+    import std.json : parseJSON;
+    import sparkles.test_runner.perf : PerfStats;
+
+    BenchStats row;
+    row.name = "scaled";
+    row.iterations = 1;
+    row.samples = 32;
+    row.nsPerIterMedian = 100;
+    PerfStats p;
+    p.cycles = 100;
+    p.instructions = 200;
+    p.scale = 0.5; // a half-scheduled pass: values are estimates
+    row.perf = p;
+
+    const doc = parseJSON(benchReportJson([row], BenchMeta(date: "2026-07-10")));
+    const est = doc["rows"][0]["estimatedMetrics"].array;
+    assert(est.length > 0);
+    bool foundIpc;
+    foreach (e; est)
+        foundIpc |= e.str == "ipc";
+    assert(foundIpc, "the scaled perf cells are named");
 }

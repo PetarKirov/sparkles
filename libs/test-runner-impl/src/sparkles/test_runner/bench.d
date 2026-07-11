@@ -385,16 +385,17 @@ struct CounterGroups
     SyscallGroup syscalls;
     RawGroup raw;
 
-    /// Opens each requested source: `--perf` (`perfWanted`), a selected tier0
+    /// Opens each requested source: `--perf` (`perfWanted`; `perfScaled`
+    /// keeps a multiplexing group and labels its estimates), a selected tier0
     /// metric (`tier0Wanted`), `--syscalls` (`syscallWanted` + `syscallNames`),
     /// and raw events named via `--metrics=raw:…` (`rawEvents`; empty +
     /// `rawWanted` = a permission probe only).
     static CounterGroups open(bool perfWanted, bool tier0Wanted, bool syscallWanted,
         const(string)[] syscallNames, bool rawWanted = false,
-        const(RawEvent)[] rawEvents = null) @safe
+        const(RawEvent)[] rawEvents = null, bool perfScaled = false) @safe
     {
         CounterGroups g;
-        g.perf = PerfGroup.tryOpen(perfWanted);
+        g.perf = PerfGroup.tryOpen(perfWanted, perfScaled);
         g.tier0 = Tier0Group.tryOpen(tier0Wanted);
         g.syscalls = SyscallGroup.tryOpen(syscallWanted, syscallNames);
         g.raw = RawGroup.tryOpen(rawWanted, rawEvents);
