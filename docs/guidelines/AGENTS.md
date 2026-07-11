@@ -23,6 +23,7 @@ library backing `sparkles:test-runner` — see the runner integration notes belo
 | `sparkles:syntax`           | `libs/syntax`           | Syntax highlighting: engine-agnostic highlight-event stream, scope-compatible label vocabulary, theme layer, ANSI + HTML renderers, tree-sitter precise-mode engine (design: `docs/specs/syntax/`)                  |
 | `sparkles:test-runner`      | `libs/test-runner`      | General-purpose `unittest` runner (silly successor): parallel runtime tests plus `@ctfe`, `@betterC`, `@wasm`, and `@benchmark` modes                                                                               |
 | `sparkles:test-utils`       | `libs/test-utils`       | Testing helpers: diff tools, temp-filesystem helpers, string helpers                                                                                                                                                |
+| `sparkles:tree-sitter`      | `libs/tree-sitter`      | D bindings for the tree-sitter C runtime: ImportC surface, RAII wrappers with `TsError` reporting, grammar dlopen (grammars supplied by the nix `ts-grammars` bundle via `$SPARKLES_TS_GRAMMAR_PATH`)               |
 | `sparkles:versions`         | `libs/versions`         | Design-by-Introspection versioning library (SemVer, DMD, CalVer, PyPI, Maven, Deb, …) with VERS/pURL interop                                                                                                        |
 
 Each library **should** be documented under `docs/libs/<name>/` as a
