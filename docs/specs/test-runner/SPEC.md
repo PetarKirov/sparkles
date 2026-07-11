@@ -42,9 +42,8 @@ Three invariants shape everything:
    explains a result; rendered separately, never blended into a headline).
 3. **Capability is a runtime probe result.** Every acquisition source opens
    through a probe handshake and **degrades to reported absence, never
-   fails the run and never fabricates numbers**. _(target — B1: absences are
-   enumerated per capability with a reason, not just per-tier status
-   strings.)_
+   fails the run and never fabricates numbers** — absences are enumerated
+   per capability with a reason (§6.2), not just per-tier status strings.
 
 ## 2. Package and module layout
 
@@ -59,19 +58,20 @@ The runner is two dub packages:
 Measurement modules (all under
 `libs/test-runner-impl/src/sparkles/test_runner/`):
 
-| Module         | Role                                                              |
-| -------------- | ----------------------------------------------------------------- |
-| `bench.d`      | protocol driver, `benchIter`/`benchCase`/`blackBox`, `BenchStats` |
-| `perf.d`       | hardware-counter tier (`perf_event` group)                        |
-| `perf_group.d` | shared counting bracket + multiplex-delta scaling                 |
-| `tier0.d`      | no-privilege tier (`getrusage` + `/proc/self/io`)                 |
-| `syscalls.d`   | syscall-tracepoint tier                                           |
-| `metrics.d`    | the metric catalog seam (§5)                                      |
-| `bench_json.d` | the `--bench-json` emitter (§8.3)                                 |
-| `reporting.d`  | tables, live displays, progress                                   |
-| `skip.d`       | `skipTest`                                                        |
+| Module         | Role                                                                   |
+| -------------- | ---------------------------------------------------------------------- |
+| `bench.d`      | protocol driver, `benchIter`/`benchCase`/`blackBox`, `BenchStats`      |
+| `perf.d`       | hardware-counter tier (`perf_event` group)                             |
+| `perf_group.d` | shared counting bracket + multiplex-delta scaling                      |
+| `tier0.d`      | no-privilege tier (`getrusage` + `/proc/self/io`)                      |
+| `syscalls.d`   | syscall-tracepoint tier                                                |
+| `metrics.d`    | the metric catalog seam (§5)                                           |
+| `capability.d` | the capability seam: flags, reports, backend trait, host probes (§6.2) |
+| `bench_json.d` | the `--bench-json` emitter (§8.3)                                      |
+| `reporting.d`  | tables, live displays, progress                                        |
+| `skip.d`       | `skipTest`                                                             |
 
-Planned modules _(targets)_: `capability.d` (B1), `workload.d`/`psi.d` (M4/M5),
+Planned modules _(targets)_: `workload.d`/`psi.d` (M4/M5),
 `cache_regime.d`/`provenance.d`/`cgroup.d` (M6–M8), `histogram.d` (B5),
 `sampling.d`/`symbolize.d` (B6), `offcpu.d` (M9), `loadgen.d` (M10), plus
 per-OS backend variants inside the existing modules (B3/B4).
@@ -212,10 +212,11 @@ one seam — the `scaled`/`fixed` formatters — so the future
 Every acquisition source implements, on all platforms:
 
 ```
-tryOpen(...)    // probe handshake; may calibrate
-available()     // bool: producible on this run
-status()        // human reason when unavailable
-count(...)      // bracket a counting pass; fill the row's XStats
+tryOpen(...)      // probe handshake; may calibrate (arity varies per tier)
+available()       // bool: producible on this run
+status()          // human reason when unavailable
+capabilities()    // CapabilityReport: flags + reasoned absences
+count(...)        // bracket a counting pass; fill the row's XStats
 close()
 ```
 
@@ -224,9 +225,9 @@ elsewhere. Two source shapes exist: _bracketed_ (ioctl ENABLE → body →
 DISABLE per iteration: perf, syscalls) and _snapshot/delta_ (pairs around the
 pass: tier-0; window-friendly for M4+).
 
-### 6.2 The capability model (target — B1)
+### 6.2 The capability model
 
-Backends advertise what this host, this run, can measure:
+Backends advertise what this host, this run, can measure (`capability.d`):
 
 ```d
 enum Capability : uint
@@ -236,25 +237,45 @@ enum Capability : uint
     numaAttribution, eventNaming,   // one flag per survey concern
 }
 
+struct CapabilityAbsence { Capability capability; string reason; }
+
 struct CapabilityReport
 {
-    Capability available;
-    string[Capability] unavailableBecause;  // per-absence reason
+    Capability available;                // OR of the present flags
+    const(CapabilityAbsence)[] absences; // reasoned, declaration order
 }
 ```
 
-`tryOpen` returns a `CapabilityReport`; a DbI `isCounterBackend` trait names
-the required primitives, and optional primitives (precise sampling, page
+`capabilities()` is a **const observer** read after the open handshake — a
+deliberate deviation from the research sketch's "`tryOpen` returns a report":
+the real `tryOpen`s have divergent arities and every call site depends on
+them returning the group, so construction stays per-tier and the report is a
+separate query. Absences are an ordered array of pairs, not a reason map —
+deterministic render order, `nothrow`-friendly, and `static immutable`-
+bindable for the strict stub attribute blocks.
+
+The DbI `isCounterBackend` trait names the required instance surface
+(`available`/`status`/`capabilities`/`close`/`count`); optional primitives
+(`hasSnapshot`, `hasNamedColumns`; later: precise sampling, page
 classification, name resolution) unlock optional capabilities by presence.
+Each tier module compile-validates the trait against whichever body — real
+or stub — the platform built.
+
+A capability that hardware supports but no backend delivers yet stays
+**absent**, with the host finding carried in the reason (e.g. `preciseMemory
+— hardware present (ibs_op PMU) — data-source sampling lands in B5`).
+Concerns no backend owns yet report harness-level, so the vocabulary is
+complete from the start.
+
 `--list-metrics` renders a per-backend capability block; the bench header
-prints one line per absent-but-requested capability. Workload-track sources
-(PSI, cgroup, cache regime) adopt the same report — one absence vocabulary
-program-wide.
+prints one line per absent-but-requested capability, re-derived from the
+same reports. Workload-track sources (PSI, cgroup, cache regime) adopt the
+same report when they land — one absence vocabulary program-wide.
 
 ### 6.3 Degradation rules (normative)
 
 - **Absence is reported, never fatal.** An unavailable source yields omitted
-  columns plus a status line (a reasoned capability entry under B1).
+  columns plus a reasoned capability entry (§6.2).
 - **"Not counted" is not zero.** A counter group with `time_running == 0`
   (never scheduled) reports its cells unavailable (`nan` → em dash) — never
   `0`, never a scaled estimate.
