@@ -31,10 +31,10 @@ and must then be applied in the exact order the XML mandates:
 
 The serial is not a number the compositor invents — it is the client's own
 commit count echoed back: "The compositor must count the number of commit
-requests coming from each zwp_text_input_v3 object and use the count as the
+requests coming from each `zwp_text_input_v3` object and use the count as the
 serial in done events." A `done` whose serial doesn't match means the IM acted
 on stale state; the client must still apply the edits but "should not change
-the current state of the zwp_text_input_v3 object" — i.e. send nothing until
+the current state of the `zwp_text_input_v3` object" — i.e. send nothing until
 a matching `done`. The demo implements exactly this (`g_tiCommits` is
 incremented at the _only_ call site of `commit`), and the discipline fired in
 anger during the round-trip below.
