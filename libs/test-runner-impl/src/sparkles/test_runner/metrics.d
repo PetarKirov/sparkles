@@ -19,6 +19,7 @@
 module sparkles.test_runner.metrics;
 
 import sparkles.test_runner.bench : BenchStats, Metric, Unit;
+import sparkles.test_runner.raw : RawEvent, parseRawEvent, RawStats;
 import sparkles.test_runner.perf : branchMissPercent, cacheMissPercent, ipc,
     PerfStats;
 import sparkles.test_runner.syscalls : SyscallStats;
@@ -193,6 +194,58 @@ MetricDescriptor[] syscallFamily(bool available) @safe pure nothrow
         MetricClass.quantitative, "syscall", available, true)];
 
 // ─────────────────────────────────────────────────────────────────────────────
+// The raw family: PERF_TYPE_RAW counts (dynamic selectors from `--metrics`)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Projects one `RawStats` to its named cells: one `raw:<selector>` column per
+/// requested event (`nan` where the kernel refused it). Hardware counters
+/// explain a result, so the class is `diagnostic`, like the perf family.
+MetricCell[] rawCells(in RawStats s) @safe pure nothrow
+{
+    MetricCell[] cells;
+    cells.reserve(s.selectors.length);
+    foreach (i, sel; s.selectors)
+        cells ~= MetricCell("raw:" ~ sel, sel, s.values[i],
+            MetricFormat.count, MetricClass.diagnostic);
+    return cells;
+}
+
+/// The raw events a `--metrics` filter requests through `raw:r<hex>`
+/// selectors — dynamic columns like the per-syscall ones. Naming one opens
+/// the raw counting pass. A malformed selector is skipped here and surfaces
+/// through the unknown-selector warning instead.
+RawEvent[] rawSelectorEvents(string metricFilter) @safe
+{
+    import std.algorithm.iteration : splitter;
+    import std.algorithm.searching : startsWith;
+
+    enum prefix = "raw:";
+    RawEvent[] events;
+    if (metricFilter == "all" || !metricFilter.length)
+        return events;
+    foreach (p; metricFilter.splitter(','))
+    {
+        RawEvent ev;
+        if (p.startsWith(prefix) && parseRawEvent(p[prefix.length .. $], ev))
+            events ~= ev;
+    }
+    return events;
+}
+
+@("metrics.rawSelectorEvents")
+@safe
+unittest
+{
+    const events = rawSelectorEvents("raw:r04c2,ipc,raw:r00c0");
+    assert(events.length == 2);
+    assert(events[0].selector == "r04c2" && events[0].config == 0x04c2);
+    assert(events[1].selector == "r00c0" && events[1].config == 0xc0);
+    assert(rawSelectorEvents("raw:bogus,ipc") == [], "malformed selectors skip");
+    assert(rawSelectorEvents("all") == []);
+    assert(rawSelectorEvents("") == []);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Client metrics: a unit symbol is the (mint-by-name) column label; a `rate`
 // metric divides its amount by iteration-time (the ÷time yielding `unit·s⁻¹`).
 // ─────────────────────────────────────────────────────────────────────────────
@@ -214,7 +267,7 @@ private bool isBuiltinMetricName(string name) @safe pure nothrow @nogc
         if (info.name == name)
             return true;
     return name == "syscalls" || name.startsWith("syscalls:")
-        || name.startsWith("sc:");
+        || name.startsWith("sc:") || name.startsWith("raw:");
 }
 
 /// The column name a client `Metric` mints: `<unit>/s` for rates, the unit
@@ -256,6 +309,8 @@ MetricCell[] rowCells(in BenchStats row) @safe pure nothrow
         cells ~= tier0Cells(row.tier0.get);
     if (!row.syscalls.isNull)
         cells ~= syscallCells(row.syscalls.get);
+    if (!row.raw.isNull)
+        cells ~= rawCells(row.raw.get);
     return cells;
 }
 
@@ -535,6 +590,13 @@ MetricDescriptor[] catalog(in BenchStats[] rows) @safe pure nothrow
                 if (!result.any!(d => d.name == c.name))
                     result ~= MetricDescriptor(c.name, c.header, c.format, c.cls,
                         "syscall", true, true);
+    // raw columns are dynamic too (selectors from --metrics=raw:…).
+    foreach (ref row; rows)
+        if (!row.raw.isNull)
+            foreach (ref c; rawCells(row.raw.get))
+                if (!result.any!(d => d.name == c.name))
+                    result ~= MetricDescriptor(c.name, c.header, c.format, c.cls,
+                        "raw", true, true);
     return result;
 }
 

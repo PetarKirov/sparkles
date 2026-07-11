@@ -157,8 +157,6 @@ version (linux)
                 present |= Capability.counting;
             else
                 absences ~= CapabilityAbsence(Capability.counting, countingAbsence());
-            absences ~= CapabilityAbsence(Capability.countingRaw,
-                "raw event selectors (PERF_TYPE_RAW) land in B2");
             absences ~= CapabilityAbsence(Capability.countingScaled,
                 "labeled multiplexed estimates land in B2 (groups shrink to exact today)");
             absences ~= CapabilityAbsence(Capability.selfMonitoring,
@@ -403,7 +401,7 @@ version (linux)
         assert(r.reasonFor(Capability.counting) is null);
         assert(r.reasonFor(Capability.preciseMemory) !is null,
             "the perf domain always explains the precise-memory gap");
-        assert(r.reasonFor(Capability.countingRaw) !is null);
+        assert(r.reasonFor(Capability.countingScaled) !is null);
     }
 
     @("perf.PerfGroup.status.byteIdentity")
