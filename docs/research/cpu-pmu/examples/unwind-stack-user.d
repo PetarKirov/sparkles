@@ -3,14 +3,17 @@
     name "cpu_pmu_unwind_stack_user"
     platforms "linux"
     libs "dw" "elf"
-    dflags "-g" "--frame-pointer=none"
+    dflags "-g"
+    dflags "--frame-pointer=none" platform="ldc"
     targetPath "build"
 +/
 /**
  * DWARF-CFI stack unwinding from `PERF_SAMPLE_STACK_USER` + `PERF_SAMPLE_REGS_USER`
  * on a frame-pointer-less build — the "call-graph profiler" acquisition path.
  *
- * Frame-pointer omission (`--frame-pointer=none`) makes the classic `%rbp`
+ * Frame-pointer omission (`--frame-pointer=none`; applied under LDC only —
+ * DMD has no such switch, so a DMD build keeps frame pointers while the CFI
+ * unwind path stays identical) makes the classic `%rbp`
  * chain-walk impossible, so a backtrace must come from DWARF Call Frame
  * Information. We arm `cycles` sampling that, on each overflow, additionally
  * copies the interrupted thread's **register file** (`REGS_USER`) and a slab of
