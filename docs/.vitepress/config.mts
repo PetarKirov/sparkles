@@ -648,6 +648,20 @@ export default withMermaid(
                   ],
                 },
                 {
+                  text: 'Syntax Highlighting',
+                  link: '/research/parsing/syntax-highlighting',
+                  collapsed: true,
+                  items: [
+                    { text: 'syntect', link: '/research/parsing/syntect' },
+                    { text: 'bat', link: '/research/parsing/bat' },
+                    {
+                      text: 'tree-sitter-highlight',
+                      link: '/research/parsing/tree-sitter-highlight',
+                    },
+                    { text: 'Shiki', link: '/research/parsing/shiki' },
+                  ],
+                },
+                {
                   text: 'Comparison & Synthesis',
                   link: '/research/parsing/comparison',
                 },

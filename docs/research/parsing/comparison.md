@@ -15,11 +15,14 @@ note on **where a Sparkles parser would sit**. Terminology is defined in the
 > see [`incremental`][incremental]), **SIMD / high-performance** ([simd-json], [sonic-rs],
 > [yyjson], [RapidJSON][rapidjson], [Hyperscan][hyperscan], [Zig tokenizer][zig]), and
 > **parser combinators** ([winnow], [flatparse], [combine], [Angstrom][angstrom],
-> [FParsec][fparsec]). Only the **generators** cluster (LALRPOP, Lark/PLY, Peggy,
-> Ragel/re2c) and a few JVM combinators remain. Conclusions below are stable for the
-> families surveyed.
+> [FParsec][fparsec]). The wave-4 **syntax-highlighting** cluster ([syntect], [bat],
+> [tree-sitter-highlight][ts-highlight], [Shiki][shiki]) is synthesized separately in
+> [syntax-highlighting][sh] — highlighters answer a _colors-not-trees_ contract, so
+> they are not rows in this matrix. Only the **generators** cluster (LALRPOP, Lark/PLY,
+> Peggy, Ragel/re2c) and a few JVM combinators remain. Conclusions below are stable for
+> the families surveyed.
 
-**Last reviewed:** July 3, 2026
+**Last reviewed:** July 11, 2026
 
 ---
 
@@ -333,6 +336,11 @@ recovery ladder — trace to Knuth 1965, Earley 1970, Ford 2002/2004, Valiant 19
 [combine]: ./rust-combine.md
 [angstrom]: ./ocaml-angstrom.md
 [fparsec]: ./fsharp-fparsec.md
+[syntect]: ./syntect.md
+[bat]: ./bat.md
+[ts-highlight]: ./tree-sitter-highlight.md
+[shiki]: ./shiki.md
+[sh]: ./syntax-highlighting.md
 [d-landscape]: ./d-landscape.md
 [v-parsing]: https://github.com/PetarKirov/sparkles/blob/main/libs/versions/src/sparkles/versions/parsing.d
 [cli-args]: https://github.com/PetarKirov/sparkles/blob/main/libs/core-cli/src/sparkles/core_cli/args.d
