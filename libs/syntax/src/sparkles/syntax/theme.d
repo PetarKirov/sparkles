@@ -1,0 +1,191 @@
+/**
+The theme layer: label selectors → styles, resolved once per vocabulary.
+
+A $(LREF Theme) is plain data — ordered $(LREF ThemeRule)s mapping dotted
+selectors to $(LREF StyleSpec)s. $(LREF resolveTheme) folds it against a
+`LabelSet` into a $(LREF ResolvedTheme): a flat `labelId → StyleSpec` table
+indexed in O(1) on the render path. Resolution is longest-dot-prefix (the
+same rule `LabelSet.resolve` applies to capture names), whole-spec-wins (no
+attribute cascade), and last-rule-wins among equal selectors.
+
+`ResolvedTheme` is public API for every backend — including future
+non-markup consumers (a GPU text renderer indexes it with `StyledSpan.label`
+directly). Theme files (TOML/JSON) are a future seam: only a parser
+producing `ThemeRule[]` is missing.
+*/
+module sparkles.syntax.theme;
+
+import sparkles.syntax.color : Color;
+import sparkles.syntax.event : LabelId;
+import sparkles.syntax.label : LabelSet;
+
+@safe:
+
+/// Font-style flags, backend-neutral (they select faces/decorations, not
+/// escape codes).
+enum FontStyle : ubyte
+{
+    none = 0,
+    bold = 1 << 0,
+    dim = 1 << 1,
+    italic = 1 << 2,
+    underline = 1 << 3,
+    strikethrough = 1 << 4,
+}
+
+/// `true` iff `flags` contains every bit of `bit`.
+bool hasFont(FontStyle flags, FontStyle bit) pure nothrow @nogc
+    => (flags & bit) == bit && bit != FontStyle.none;
+
+/// The style a theme assigns to one label: optional fore-/background colors
+/// plus font flags. `Color.Kind.unset` means "not specified".
+struct StyleSpec
+{
+    Color fg;       /// foreground; unset = unspecified
+    Color bg;       /// background; unset = unspecified
+    FontStyle font; /// font flags
+
+    /// `true` iff the spec specifies nothing at all (renders unstyled).
+    bool empty() const scope pure nothrow @nogc
+        => !fg.isSet && !bg.isSet && font == FontStyle.none;
+}
+
+/// One theme rule: a dotted label selector and the style it assigns.
+struct ThemeRule
+{
+    string selector; /// dotted label name, matched by longest-dot-prefix
+    StyleSpec style; /// the whole spec assigned on match (no cascade)
+}
+
+/// A theme as plain data. See the module header for resolution semantics.
+struct Theme
+{
+    string name;                             /// display name
+    Color defaultFg = Color.defaultColor;    /// unlabeled-text foreground
+    Color defaultBg = Color.defaultColor;    /// document background
+    ThemeRule[] rules;                       /// ordered; later wins among equal selectors
+}
+
+/**
+A theme resolved against a label vocabulary: `labelId → StyleSpec` in O(1).
+The single style bundle every backend takes.
+*/
+struct ResolvedTheme
+{
+    LabelSet labels;                 /// the vocabulary this was resolved against
+    immutable(StyleSpec)[] styles;   /// parallel to `labels`; `.init` if unmatched
+    StyleSpec defaults;              /// style of unlabeled text (`LabelId.none`)
+
+    /// The style for `id`; `defaults` for `LabelId.none`. Ids outside this
+    /// vocabulary (a producer configured against a different `LabelSet`)
+    /// render as defaults — renderers are total.
+    StyleSpec opIndex(LabelId id) const scope pure nothrow @nogc
+        => id && id.value < styles.length ? styles[id.value] : defaults;
+}
+
+/**
+Resolves `theme` against `labels`: for every vocabulary name, the longest
+rule selector that is a dot-prefix of the name wins (last rule wins among
+equal selectors); unmatched names get `StyleSpec.init`.
+
+Configure-time only (allocates the table once). A `defaultFg`/`defaultBg` of
+`Color.defaultColor` is normalized to unset in `defaults` — for a renderer,
+"the terminal default" and "unspecified" both mean "emit nothing".
+*/
+ResolvedTheme resolveTheme(in Theme theme, LabelSet labels) pure nothrow
+{
+    auto styles = new StyleSpec[](labels.length);
+    foreach (i; 0 .. labels.length)
+    {
+        const labelName = labels.name(LabelId(cast(ushort) i));
+        size_t bestLen = 0;
+        bool found = false;
+        StyleSpec best;
+        foreach (rule; theme.rules)
+        {
+            if (rule.selector.length >= bestLen && isDotPrefix(rule.selector, labelName))
+            {
+                bestLen = rule.selector.length;
+                best = rule.style;
+                found = true;
+            }
+        }
+        styles[i] = found ? best : StyleSpec.init;
+    }
+
+    const defaults = StyleSpec(
+        fg: normalizeDefault(theme.defaultFg),
+        bg: normalizeDefault(theme.defaultBg));
+    return ResolvedTheme(labels, styles.idup, defaults);
+}
+
+///
+@("theme.resolveTheme.longestPrefixLastWins")
+unittest
+{
+    const theme = Theme(
+        name: "test",
+        rules: [
+            ThemeRule("string", StyleSpec(fg: Color.fromPalette(2))),
+            ThemeRule("string.special", StyleSpec(fg: Color.fromPalette(5))),
+            ThemeRule("string", StyleSpec(fg: Color.fromPalette(3))), // last wins
+        ]);
+    const labels = LabelSet.standard();
+    const resolved = resolveTheme(theme, labels);
+
+    // longest prefix beats rule order
+    assert(resolved[labels.find("string.special.key")].fg == Color.fromPalette(5));
+    // last rule wins among equal selectors
+    assert(resolved[labels.find("string")].fg == Color.fromPalette(3));
+    assert(resolved[labels.find("string.escape")].fg == Color.fromPalette(3));
+    // unmatched label → empty spec
+    assert(resolved[labels.find("keyword")].empty);
+    // no-label text → defaults (normalized to unset here)
+    assert(resolved[LabelId.none].empty);
+}
+
+@("theme.resolveTheme.noPartialSegmentMatch")
+unittest
+{
+    // "str" must not match "string" — prefixes are whole dotted segments.
+    const theme = Theme(name: "test", rules: [
+        ThemeRule("str", StyleSpec(fg: Color.fromPalette(1))),
+    ]);
+    const labels = LabelSet.standard();
+    const resolved = resolveTheme(theme, labels);
+    assert(resolved[labels.find("string")].empty);
+}
+
+@("theme.StyleSpec.empty")
+pure nothrow @nogc
+unittest
+{
+    assert(StyleSpec.init.empty);
+    assert(!StyleSpec(fg: Color.fromPalette(1)).empty);
+    assert(!StyleSpec(font: FontStyle.bold).empty);
+    assert(!StyleSpec(fg: Color.defaultColor).empty); // default_ counts as set
+}
+
+@("theme.hasFont")
+pure nothrow @nogc
+unittest
+{
+    const flags = cast(FontStyle)(FontStyle.bold | FontStyle.italic);
+    assert(hasFont(flags, FontStyle.bold));
+    assert(hasFont(flags, FontStyle.italic));
+    assert(!hasFont(flags, FontStyle.underline));
+    assert(!hasFont(flags, FontStyle.none));
+}
+
+/// `prefix` matches `full` iff equal, or `full` continues with `.` right
+/// after `prefix` (whole-segment prefix matching).
+private bool isDotPrefix(scope const(char)[] prefix, scope const(char)[] full) pure nothrow @nogc
+{
+    import std.algorithm.searching : startsWith;
+
+    return full.startsWith(prefix)
+        && (full.length == prefix.length || full[prefix.length] == '.');
+}
+
+private Color normalizeDefault(Color c) pure nothrow @nogc
+    => c.kind == Color.Kind.default_ ? Color.init : c;
