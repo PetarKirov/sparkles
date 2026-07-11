@@ -29,6 +29,7 @@ jobs:
   # *speeds up* ingestion — it is not what makes a tag public.
   notify-dub-registry:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Trigger code.dlang.org update
         env:
@@ -59,6 +60,8 @@ jobs:
           - runner: macos-latest
             system: aarch64-darwin
     runs-on: ${{ matrix.runner }}
+    # Usually cache hits (~2-4m); allow margin for a cold-cache `.#all` rebuild.
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v7

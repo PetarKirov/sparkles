@@ -32,6 +32,10 @@ jobs:
             system: aarch64-darwin
             DC: ldc2
     runs-on: ${{ matrix.runner }}
+    # The Linux legs finish in ~4m; the macOS leg normally runs ~5m but the
+    # hosted Apple-Silicon runner occasionally hangs (a 5m job has stalled for
+    # 78m). Cap per-runner: generous for macOS, tighter where history is stable.
+    timeout-minutes: ${{ matrix.runner == 'macos-latest' && 20 || 12 }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -93,6 +97,7 @@ jobs:
   win32-example:
     name: Win32 OS-API example (windows-latest)
     runs-on: windows-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -126,6 +131,9 @@ jobs:
           - ubuntu-latest
           - macos-latest
     runs-on: ${{ matrix.runner }}
+    # `.#all` builds the whole closure; normally 2-4m from cache, but a
+    # cold-cache rebuild (after a flake.lock bump) needs real margin.
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v7

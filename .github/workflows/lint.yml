@@ -16,6 +16,9 @@ concurrency:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    # A full lychee link-check over the whole docs tree runs ~14m; cached runs
+    # are ~3m. Cap with headroom over the uncached case.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
 
