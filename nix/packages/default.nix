@@ -119,6 +119,20 @@
                 ]) d-toolchain.env
               )
             );
+            # The cpu-pmu research probes (docs/research/cpu-pmu/examples) link
+            # C libraries via `libs "dw" "elf"` / `libs "pfm"`. Inside the
+            # devshell the shellHook exports these paths (nix/shells); carry
+            # them in the wrapper too so `nix run .#ci -- --example-files`
+            # links them outside any shell.
+            exampleLibPath = lib.optionalString pkgs.stdenv.isLinux (
+              lib.makeSearchPath "lib" [
+                pkgs.elfutils.out
+                pkgs.libpfm
+              ]
+            );
+            exampleLibArgs = lib.optionalString (
+              exampleLibPath != ""
+            ) "--prefix LIBRARY_PATH : ${exampleLibPath} --prefix LD_LIBRARY_PATH : ${exampleLibPath}";
           in
           ''
             install -Dm755 build/${finalAttrs.pname} $out/bin/${finalAttrs.pname}
@@ -134,6 +148,7 @@
               wrapProgram $out/bin/${finalAttrs.pname} \
                 --prefix PATH : ${path} \
                 ${setEnv} \
+                ${exampleLibArgs} \
                 --run 'ulimit -n ${toString d-toolchain.nofileLimit} 2>/dev/null || true'
             '';
 
