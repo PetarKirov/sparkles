@@ -762,6 +762,39 @@ export default withMermaid(
                     { text: 'Exposed (Kotlin)', link: '/research/sql/exposed' },
                   ],
                 },
+                {
+                  text: 'Full ORMs / Data Mappers',
+                  collapsed: true,
+                  items: [
+                    { text: 'EF Core (.NET)', link: '/research/sql/ef-core' },
+                    {
+                      text: 'Hibernate / JPA (Java)',
+                      link: '/research/sql/hibernate',
+                    },
+                    {
+                      text: 'SQLAlchemy (Python)',
+                      link: '/research/sql/sqlalchemy',
+                    },
+                    {
+                      text: 'Django ORM (Python)',
+                      link: '/research/sql/django-orm',
+                    },
+                    {
+                      text: 'Prisma (TypeScript)',
+                      link: '/research/sql/prisma',
+                    },
+                    {
+                      text: 'TypeORM (TypeScript)',
+                      link: '/research/sql/typeorm',
+                    },
+                    { text: 'GORM (Go)', link: '/research/sql/gorm' },
+                    { text: 'ent (Go)', link: '/research/sql/ent' },
+                    {
+                      text: 'ActiveRecord (Ruby)',
+                      link: '/research/sql/activerecord',
+                    },
+                  ],
+                },
               ],
             },
             {
