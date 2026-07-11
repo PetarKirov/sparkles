@@ -18,6 +18,7 @@ configuration "library" {
     // pkg-config — see docs/guidelines/importc-c-libraries.md.
     targetType "sourceLibrary"
     dependency "sparkles:base" path="../.."
+    dependency "sparkles:tree-sitter" path="../.."
 }
 
 configuration "unittest" {
@@ -25,6 +26,7 @@ configuration "unittest" {
     // so `dub test` recompiles only this package, not the runner sources.
     dependency "sparkles:test-runner" path="../.."
     dependency "sparkles:base" path="../.."
+    dependency "sparkles:tree-sitter" path="../.."
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
