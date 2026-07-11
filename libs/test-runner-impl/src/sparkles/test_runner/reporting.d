@@ -13,6 +13,8 @@ import sparkles.base.text.grapheme : byGraphemeCluster, visibleWidth;
 import sparkles.base.text.width : Align;
 
 import sparkles.test_runner.bench : BenchStats;
+import sparkles.test_runner.capability : allCapabilities, BackendCapabilities,
+    capabilityName, has, reasonFor;
 import sparkles.test_runner.ctfe_trace : CtfeTestCost;
 import sparkles.test_runner.metrics : MetricClass, MetricDescriptor;
 import sparkles.test_runner.model : Test, TestLocation, TestResult, Thrown;
@@ -1057,6 +1059,78 @@ string formatMetricCatalog(in MetricDescriptor[] cat, bool colored) @system // r
             d.available ? "yes" : "no",
         ];
     return renderCells(cells, headerRows: 1);
+}
+
+/// The `--list-metrics` capability block: what each backend can deliver on
+/// this host, this run — one `✓ capability` / `✗ capability — reason` line
+/// per flag a backend claims or explains, grouped by backend, flags in
+/// declaration order. Reasons are prose, so the block is plain indented lines
+/// rather than a table.
+string formatCapabilityBlock(in BackendCapabilities[] blocks, bool colored) @safe
+{
+    import std.algorithm.comparison : max;
+    import std.string : leftJustify;
+
+    size_t labelWidth = 0;
+    foreach (ref b; blocks)
+        labelWidth = max(labelWidth, b.backend.length);
+
+    string o = render(colored, i"{bold capabilities}") ~ ":\n";
+    foreach (ref b; blocks)
+    {
+        bool first = true;
+        foreach (flag; allCapabilities)
+        {
+            string line;
+            if (b.report.has(flag))
+                line = render(colored, i"{green ✓} $(capabilityName(flag))");
+            else
+            {
+                const reason = b.report.reasonFor(flag);
+                if (reason is null)
+                    continue;
+                line = render(colored, i"{red ✗} $(capabilityName(flag)) — $(reason)");
+            }
+            o ~= "  " ~ leftJustify(first ? b.backend : "", labelWidth + 1)
+                ~ line ~ "\n";
+            first = false;
+        }
+    }
+    return o;
+}
+
+@("reporting.formatCapabilityBlock.plain")
+@safe
+unittest
+{
+    import sparkles.test_runner.capability : Capability, CapabilityAbsence,
+        CapabilityReport;
+
+    static immutable CapabilityAbsence[1] tracing = [
+        CapabilityAbsence(Capability.eventTracing, "tracefs event ids unreadable — usually root"),
+    ];
+    const blocks = [
+        BackendCapabilities("perf", CapabilityReport(Capability.counting, null)),
+        BackendCapabilities("syscall", CapabilityReport(Capability.none, tracing[])),
+    ];
+    assert(formatCapabilityBlock(blocks, false) ==
+        "capabilities:\n"
+        ~ "  perf    ✓ counting\n"
+        ~ "  syscall ✗ eventTracing — tracefs event ids unreadable — usually root\n");
+}
+
+@("reporting.formatCapabilityBlock.colored")
+@safe
+unittest
+{
+    import std.algorithm.searching : canFind;
+    import sparkles.test_runner.capability : Capability, CapabilityReport;
+
+    const blocks = [
+        BackendCapabilities("perf", CapabilityReport(Capability.counting, null)),
+    ];
+    const colored = formatCapabilityBlock(blocks, true);
+    assert(colored.canFind("✓") && colored.canFind("\x1b["));
 }
 
 /// Renders table cells with `core-cli`'s `drawTable` when available, plain
