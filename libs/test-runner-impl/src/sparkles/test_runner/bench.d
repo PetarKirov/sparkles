@@ -30,6 +30,7 @@ import core.time : Duration, MonoTime, msecs;
 import std.typecons : Nullable;
 
 import sparkles.test_runner.attributes : benchmark, ctfe;
+import sparkles.test_runner.capability : BackendCapabilities, harnessPendingCapabilities;
 import sparkles.test_runner.model : Test, TestResult, Thrown;
 import sparkles.test_runner.skip : TestSkipped;
 import sparkles.test_runner.perf : PerfGroup, PerfStats;
@@ -373,7 +374,8 @@ struct RegisteredCase
 /// a matching triple of `Nullable` result fields). Each source is opened
 /// independently; one not requested — or unavailable on this machine — contributes
 /// no columns. Adding a future source is one field plus one line in each of
-/// `open`/`close`/`countInto`, not a shotgun edit across every call site.
+/// `open`/`close`/`countInto`/`capabilities`, not a shotgun edit across every
+/// call site.
 struct CounterGroups
 {
     PerfGroup perf;
@@ -416,6 +418,34 @@ struct CounterGroups
         if (syscalls.available)
             row.syscalls = syscalls.count(timed, between, iters);
     }
+
+    /// Every backend's capability report in field order, plus the
+    /// harness-level pending block — the one value `--list-metrics` and the
+    /// bench header render from. Labels reuse the metric catalog's `source`
+    /// vocabulary.
+    BackendCapabilities[] capabilities() const @safe nothrow
+        => [
+            BackendCapabilities("perf", perf.capabilities),
+            BackendCapabilities("tier0", tier0.capabilities),
+            BackendCapabilities("syscall", syscalls.capabilities),
+            BackendCapabilities("harness", harnessPendingCapabilities),
+        ];
+}
+
+@("bench.CounterGroups.capabilities")
+@safe
+unittest
+{
+    import sparkles.test_runner.capability : Capability, reasonFor;
+
+    const blocks = CounterGroups.none.capabilities;
+    assert(blocks.length == 4);
+    assert(blocks[0].backend == "perf");
+    assert(blocks[1].backend == "tier0");
+    assert(blocks[2].backend == "syscall");
+    assert(blocks[3].backend == "harness");
+    assert(blocks[3].report.reasonFor(Capability.symbolization) !is null);
+    assert(blocks[3].report.reasonFor(Capability.numaAttribution) !is null);
 }
 
 private struct BenchContext

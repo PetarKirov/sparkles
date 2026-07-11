@@ -23,6 +23,7 @@ import core.runtime : Runtime, UnitTestResult;
 import core.time : Duration, MonoTime;
 
 import sparkles.test_runner.bench : BenchConfig, BenchStats, CounterGroups;
+import sparkles.test_runner.capability : Capability, capabilityName, CapabilityReport;
 import sparkles.test_runner.driver : detectCompiler, DriverOptions, runCtfeTests;
 import sparkles.test_runner.execution : executeTest;
 import sparkles.test_runner.filter : matchesFilter;
@@ -637,10 +638,22 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     auto counters = CounterGroups.open(wantPerf, wantTier0, wantSyscalls, syscallNames);
     scope (exit)
         counters.close();
+    // Absent-but-requested capabilities, one line each, re-derived from the
+    // capability reports so the header and --list-metrics share one vocabulary.
+    static void noteAbsent(string flag, in CapabilityReport report, Capability wanted)
+    {
+        foreach (ref a; report.absences)
+            if (a.capability & wanted)
+                stderr.writeln(flag, ": ", capabilityName(a.capability),
+                    " unavailable (", a.reason, ")");
+    }
+
     if (wantPerf && !counters.perf.available)
-        stderr.writeln("--perf: hardware counters ", counters.perf.status());
+        noteAbsent("--perf", counters.perf.capabilities, Capability.counting);
+    if (wantTier0 && !counters.tier0.available)
+        noteAbsent("--metrics", counters.tier0.capabilities, Capability.counting);
     if (wantSyscalls && !counters.syscalls.available)
-        stderr.writeln("--syscalls: syscall counters ", counters.syscalls.status());
+        noteAbsent("--syscalls", counters.syscalls.capabilities, Capability.eventTracing);
     // The group read caps the named tracepoints (SyscallGroup truncates its
     // list); a silently dropped column reads as "never fires" — say so.
     if (counters.syscalls.available && syscallNames.length > counters.syscalls.names.length)
