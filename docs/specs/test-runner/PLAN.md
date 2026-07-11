@@ -105,6 +105,17 @@ SPEC as new sections when they land.
 
 ## B1 — Capability seam
 
+> **Shipped** (branch `feat/test-runner-capability-seam`): `capability.d`
+> (enum, report, trait, host probes), per-tier `capabilities()` observers,
+> the `CounterGroups` merge, the `--list-metrics` block, and the
+> report-derived bench-header notes. One design deviation from the research
+> sketch, recorded in SPEC §6.2: `tryOpen` keeps returning the group
+> (arities diverge; call sites depend on it) and `capabilities()` is a
+> separate const observer; the reason map is an ordered absence array, not
+> an AA. Acceptance verified on the dev box: `preciseMemory` absent with a
+> "hardware present (ibs_op PMU)" reason, `eventTracing` absent via the
+> tracefs gate, `--perf` table rendering unchanged.
+
 _(backend-proposal §2; SPEC §6.2.)_ `Capability` bitflag enum (one flag per
 survey concern plus real-world sub-splits: `counting`, `countingRaw`,
 `countingScaled`, `selfMonitoring`, `ipSampling`, `preciseMemory`,
