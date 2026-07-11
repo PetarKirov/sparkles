@@ -58,6 +58,11 @@ jobs:
         run: npm ci
 
       - name: Build VitePress site
+        env:
+          # The site renders 400+ pages (incl. the dynamic source-code
+          # listings under docs/research/.../os-apis/); node's default ~4 GiB
+          # heap OOMs during the render phase.
+          NODE_OPTIONS: --max-old-space-size=8192
         run: npm run docs:build
 
       - name: Deploy to Cloudflare Pages
