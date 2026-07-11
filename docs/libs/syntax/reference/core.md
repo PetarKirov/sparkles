@@ -39,14 +39,14 @@ theme selectors. The whole configure-time path is CTFE-able.
 
 ## Colors (`sparkles.syntax.color`)
 
-| Symbol                                | What it is                                                                                              |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `Color`                               | sum type: `unset` / `default_` / `palette(index)` / `rgb`                                               |
-| `parseHexColor`                       | `#RGB`, `#RRGGBB`, `#RRGGBBAA` (bat's alpha conventions: `00` = palette index, `01` = terminal default) |
-| `ColorDepth`                          | `none` / `ansi16` / `ansi256` / `trueColor`                                                             |
-| `ansi256FromRgb` / `ansi16FromRgb`    | nearest-match tier folds (6×6×6 cube + gray ramp; xterm classic 16)                                     |
-| `xterm256ToRgb`                       | palette index → RGB (the concretization step for non-terminal backends)                                 |
-| `classifyColorDepth(colorterm, term)` | pure tier classifier; `detectColorDepth()` reads the environment                                        |
+| Symbol                                | What it is                                                                                                    |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `Color`                               | sum type: `unset` / `default_` / `palette(index)` / `rgb`                                                     |
+| `parseHexColor`                       | `#RGB`, `#RRGGBB`, `#RRGGBBAA` (bat's alpha conventions: `00` = palette index, `01` = terminal default)       |
+| `ColorDepth`                          | `none` / `ansi16` / `ansi256` / `trueColor` (re-exported from `sparkles.base.term_color`)                     |
+| `ansi256FromRgb` / `ansi16FromRgb`    | nearest-match tier folds (6×6×6 cube + gray ramp; xterm classic 16)                                           |
+| `xterm256ToRgb`                       | palette index → RGB (the concretization step for non-terminal backends)                                       |
+| `classifyColorDepth(colorterm, term)` | pure tier classifier (in `sparkles.base.term_color`, re-exported); `detectColorDepth()` reads the environment |
 
 ## Themes (`sparkles.syntax.theme`, `.themes`)
 

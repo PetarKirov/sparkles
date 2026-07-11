@@ -8,6 +8,7 @@ stay pure producers that take explicit widths/flags.
 +/
 module sparkles.core_cli.term_caps;
 
+import sparkles.base.term_color : ColorDepth, classifyColorDepth;
 import sparkles.math : ScreenSize;
 
 // The SIGWINCH resize-notification machinery is POSIX-only; `terminalSize`
@@ -195,6 +196,7 @@ struct TermCaps
 {
     bool tty;                 /// stdout is attached to a terminal
     bool colors;              /// emit SGR color/attribute escapes
+    ColorDepth colorDepth;    /// color tier to emit; `none` when `colors` is off
     bool unicode;             /// emit non-ASCII glyphs (box drawing, ✓/✗ marks)
     ScreenSize!ushort size;   /// terminal size; `0` components mean unknown
 }
@@ -204,7 +206,9 @@ struct TermCaps
 /// Colors are on only when stdout is a terminal and neither `noColors`,
 /// `$NO_COLOR`, nor `TERM=dumb` disables them; a non-empty, non-`"0"`
 /// `$CLICOLOR_FORCE` forces them on for a non-tty (but never overrides an
-/// explicit disable). On Windows this additionally sets the output code page to
+/// explicit disable). `colorDepth` is the tier
+/// ($(REF classifyColorDepth, sparkles,base,term_color) over `$COLORTERM`/`$TERM`)
+/// when colors are on, else `none`. On Windows this additionally sets the output code page to
 /// UTF-8 (so `✓ ✗ ⚙` render even without colors) and enables virtual-terminal
 /// processing (so ANSI escapes are interpreted rather than printed literally);
 /// colors stay off when stdout is redirected or VT can't be enabled.
@@ -248,6 +252,13 @@ TermCaps detectTermCaps(bool noColors = false) @safe
         caps.unicode = localeIsUtf8();
         caps.colors = !disabled && (force || caps.tty);
     }
+
+    // The color tier, folded through the emit decision: the classifier picks
+    // the tier from $COLORTERM/$TERM, but a snapshot with colors off reports
+    // `none` so consumers can use `.colorDepth` directly.
+    caps.colorDepth = caps.colors
+        ? classifyColorDepth(environment.get("COLORTERM", ""), environment.get("TERM", ""))
+        : ColorDepth.none;
     return caps;
 }
 
@@ -279,5 +290,11 @@ unittest
 {
     const caps = detectTermCaps(noColors: true);
     assert(!caps.colors);
+    assert(caps.colorDepth == ColorDepth.none); // colors off ⇒ no tier
     assert(caps.tty == isTerminal());
+
+    // When colors are on, colorDepth is the classified tier; when off, none.
+    const auto_ = detectTermCaps();
+    if (!auto_.colors)
+        assert(auto_.colorDepth == ColorDepth.none);
 }

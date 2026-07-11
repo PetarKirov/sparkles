@@ -5,7 +5,8 @@ The public symbols of `sparkles:base`, by module.
 ## `sparkles.base`
 
 Package module re-exporting `lifetime`, `logger`, `prettyprint`,
-`smallbuffer`, `source_uri`, `styled_template`, `term_style`, and `text`.
+`smallbuffer`, `source_uri`, `styled_template`, `term_color`, `term_style`,
+and `text`.
 
 ## `sparkles.base.smallbuffer`
 
@@ -26,12 +27,12 @@ Package module re-exporting `lifetime`, `logger`, `prettyprint`,
 The package re-exports `text.writers`, `text.readers`, `text.enums`, and
 `text.errors`.
 
-| Module                       | Description                                                  |
-| ---------------------------- | ------------------------------------------------------------ |
-| `sparkles.base.text.writers` | Integer, float, duration, byte, escape, and value writers.   |
-| `sparkles.base.text.readers` | Slice-advance parsers such as `readInteger` and `readUntil`. |
-| `sparkles.base.text.enums`   | Enum text helpers such as `StringRepresentation`.            |
-| `sparkles.base.text.errors`  | `ParseErrorCode`, `ParseError`, and `ParseExpected!T`.       |
+| Module                       | Description                                                                                        |
+| ---------------------------- | -------------------------------------------------------------------------------------------------- |
+| `sparkles.base.text.writers` | Integer, float, duration, byte, hex (`writeHexByte`), escape, and value writers.                   |
+| `sparkles.base.text.readers` | Slice-advance parsers (`readInteger`, `readUntil`) plus hex predicates `isHexDigit` / `hexNibble`. |
+| `sparkles.base.text.enums`   | Enum text helpers such as `StringRepresentation`.                                                  |
+| `sparkles.base.text.errors`  | `ParseErrorCode`, `ParseError`, and `ParseExpected!T`.                                             |
 
 ## `sparkles.base.term_style`
 
@@ -41,6 +42,13 @@ The package re-exports `text.writers`, `text.readers`, `text.enums`, and
 | `stylize`                   | Wrap text in one ANSI style.                     |
 | `stylizedTextBuilder`       | CTFE-friendly chained styling builder.           |
 | `styleName` / `styleSample` | Style names and sample strings.                  |
+
+## `sparkles.base.term_color`
+
+| Symbol                                | Description                                                        |
+| ------------------------------------- | ------------------------------------------------------------------ |
+| `ColorDepth`                          | Terminal color tiers: `none` / `ansi16` / `ansi256` / `trueColor`. |
+| `classifyColorDepth(colorterm, term)` | Pure, CTFE-able tier classifier over `$COLORTERM`/`$TERM` values.  |
 
 ## `sparkles.base.styled_template`
 

@@ -175,6 +175,7 @@ struct TermCaps
 {
     bool tty;                 /// stdout is a terminal
     bool colors;              /// tty && !$NO_COLOR && !TERM=dumb (|| CLICOLOR_FORCE)
+    ColorDepth colorDepth;    /// classified tier (sparkles.base.term_color); none when colors off
     bool unicode;             /// LANG/LC_* UTF-8 heuristic (Windows: CP set to UTF-8)
     ScreenSize!ushort size;
 }
