@@ -29,8 +29,9 @@ can never post a competitive number. (jsoniopipe's serialize output is
 rejected as invalid JSON on every corpus — the gate working as designed.)
 Throughputs are MB/s over the median iteration. Hardware counters come from
 the runner's separate `perf_event` counting pass (kernel+user; the LLC pair
-is dropped because the NMI watchdog holds one of Zen 4's six PMCs — see
-[test-runner open issue P1](../test-runner/open-issues.md)).
+is dropped because the NMI watchdog holds one of Zen 4's six PMCs — see the
+test-runner
+[validation cross-references](../test-runner/open-issues.md#validation-cross-references)).
 
 ## Validating the runner (before / after)
 
@@ -54,7 +55,7 @@ allocator levelled.
 (26 rows) the runner's retired-instruction count matches B0 to **< 1 % on 25
 rows**, the exception being citm serialize at −1.77 % (a JsonSink
 buffer-grow amortization effect, within the advisory band — see
-[B3](../test-runner/open-issues.md)):
+[test-runner open issue O11](../test-runner/open-issues.md)):
 
 | wired-native, ins/byte | B0 (old harness) | B1 (runner) |       Δ |
 | ---------------------- | ---------------: | ----------: | ------: |
@@ -114,7 +115,7 @@ invocation, and LDC still declines to inline the seams without the CMI pass).
 Bare `-enable-cross-module-inlining` **fails to link** under the runner's
 `-unittest -checkaction=context` build — CMI inlines context-assert bodies
 whose `_d_assert_fail!(T)` instances go unemitted;
-`-linkonce-templates` emits them ([B1](../test-runner/open-issues.md)). The
+`-linkonce-templates` emits them ([test-runner open issue O9](../test-runner/open-issues.md)). The
 bench defaults to `library-inline`; `--override-config sparkles:wired/library`
 and `.../library-singleobj` reproduce the matrix above.
 
@@ -201,8 +202,9 @@ performs more work per byte than yyjson's single-visit string machine.
    regression.
 5. **The LLC pair is unavailable on this box.** The NMI watchdog holds a PMC,
    so cache-references/misses are dropped rather than estimated. Disclosed
-   here because the columns are silently absent
-   ([P1](../test-runner/open-issues.md)).
+   here because the columns are silently absent (the runner's capability seam,
+   milestone B1, is the planned carrier — see the test-runner
+   [validation cross-references](../test-runner/open-issues.md#validation-cross-references)).
 
 ## The scalar exit gate (M15)
 
