@@ -140,20 +140,20 @@ identical perf ABI with firmware owning the counters via SBI).
 Each survey capability against [today's layer][baseline], with the
 [proposal][proposal] milestone that closes the gap.
 
-| Capability (best practice found)                                           | sparkles today                                                  | Gap                                                                   | Closes in                                             |
-| -------------------------------------------------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------- | ----------------------------------------------------- |
-| Grouped counting, exact (all-or-nothing groups)                            | ✅ 7-event group, calibration-drop of LLC pair                  | none — matches the survey's exact-counts stance                       | —                                                     |
-| Labeled multiplex estimates (`enabled/running` scaling, ~1% at 10-on-6)    | ❌ avoided entirely (columns dropped instead)                   | estimates never offered, coverage silently narrows                    | M2 (`countingScaled`)                                 |
-| Raw / per-µarch event selectors + naming tables                            | ❌ 7 hardcoded generics                                         | no vocabulary beyond `PERF_COUNT_*`; nothing µarch-specific reachable | M2 (`countingRaw`, `eventNaming`)                     |
-| [Self-monitoring][c-rdpmc] reads (rdpmc seqlock, ~10× cheaper bracket)     | ❌ `read(2)`/`ioctl(2)` per pass                                | syscall-priced brackets on very short bodies                          | M2 (`selfMonitoring`)                                 |
-| Overflow/IP sampling + flat profiles                                       | ❌ absent                                                       | "what regressed" but never "where"                                    | M6 (`ipSampling`)                                     |
-| Precise memory sampling (IBS skid-0 on this hardware; `perf_mem_data_src`) | ❌ absent                                                       | no latency distributions, no data addresses                           | M5 (`preciseMemory`)                                  |
-| Symbolization + build-id validation (libdwfl; stale-binary hazard)         | ❌ absent                                                       | nothing to attribute samples to                                       | M6 (`symbolization`)                                  |
-| Event-space gating (tracepoints beyond syscalls; PSI, sched)               | ⚠️ syscall counting only, root-gated tracefs correctly detected | no scheduling/fault/pressure context                                  | later (M11 of the [metric-catalog roadmap][baseline]) |
-| NUMA topology + page→node oracles                                          | ❌ absent                                                       | single-node today, but zero awareness even of that                    | M5 (`numaAttribution`)                                |
-| macOS floor (`proc_pid_rusage` unprivileged instructions/cycles)           | ❌ stub                                                         | loses _all_ counters on a platform that offers a real floor           | M3                                                    |
-| Windows floor (`CycleTime` driver-free; ETW when elevated)                 | ❌ stub                                                         | same cliff                                                            | M4                                                    |
-| Capability reporting ("unavailable because X")                             | ⚠️ per-tier `status()` strings                                  | absences not enumerated per capability                                | M1                                                    |
+| Capability (best practice found)                                           | sparkles today                                                  | Gap                                                                   | Closes in                                   |
+| -------------------------------------------------------------------------- | --------------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------- |
+| Grouped counting, exact (all-or-nothing groups)                            | ✅ 7-event group, calibration-drop of LLC pair                  | none — matches the survey's exact-counts stance                       | —                                           |
+| Labeled multiplex estimates (`enabled/running` scaling, ~1% at 10-on-6)    | ❌ avoided entirely (columns dropped instead)                   | estimates never offered, coverage silently narrows                    | M2 (`countingScaled`)                       |
+| Raw / per-µarch event selectors + naming tables                            | ❌ 7 hardcoded generics                                         | no vocabulary beyond `PERF_COUNT_*`; nothing µarch-specific reachable | M2 (`countingRaw`, `eventNaming`)           |
+| [Self-monitoring][c-rdpmc] reads (rdpmc seqlock, ~10× cheaper bracket)     | ❌ `read(2)`/`ioctl(2)` per pass                                | syscall-priced brackets on very short bodies                          | M2 (`selfMonitoring`)                       |
+| Overflow/IP sampling + flat profiles                                       | ❌ absent                                                       | "what regressed" but never "where"                                    | M6 (`ipSampling`)                           |
+| Precise memory sampling (IBS skid-0 on this hardware; `perf_mem_data_src`) | ❌ absent                                                       | no latency distributions, no data addresses                           | M5 (`preciseMemory`)                        |
+| Symbolization + build-id validation (libdwfl; stale-binary hazard)         | ❌ absent                                                       | nothing to attribute samples to                                       | M6 (`symbolization`)                        |
+| Event-space gating (tracepoints beyond syscalls; PSI, sched)               | ⚠️ syscall counting only, root-gated tracefs correctly detected | no scheduling/fault/pressure context                                  | [delivery plan][plan] M5 (PSI) / M9 (sched) |
+| NUMA topology + page→node oracles                                          | ❌ absent                                                       | single-node today, but zero awareness even of that                    | M5 (`numaAttribution`)                      |
+| macOS floor (`proc_pid_rusage` unprivileged instructions/cycles)           | ❌ stub                                                         | loses _all_ counters on a platform that offers a real floor           | M3                                          |
+| Windows floor (`CycleTime` driver-free; ETW when elevated)                 | ❌ stub                                                         | same cliff                                                            | M4                                          |
+| Capability reporting ("unavailable because X")                             | ⚠️ per-tier `status()` strings                                  | absences not enumerated per capability                                | M1                                          |
 
 ---
 
@@ -223,6 +223,7 @@ mac-bsn transcripts quoted in [macos.md][macos]/[arm.md][arm].
 [spine]: ./#the-seven-concerns
 [baseline]: ./sparkles-baseline.md
 [proposal]: ./backend-proposal.md
+[plan]: ../../specs/test-runner/PLAN.md
 [linux]: ./linux-perf-events.md
 [elfutils]: ./elfutils.md
 [libtraceevent]: ./libtraceevent.md
