@@ -740,6 +740,28 @@ export default withMermaid(
                     },
                   ],
                 },
+                {
+                  text: 'Typed Builders & Thin Safe-SQL',
+                  collapsed: true,
+                  items: [
+                    { text: 'Diesel (Rust)', link: '/research/sql/diesel' },
+                    { text: 'sqlx (Rust)', link: '/research/sql/sqlx' },
+                    { text: 'SeaORM (Rust)', link: '/research/sql/sea-orm' },
+                    {
+                      text: 'Kysely (TypeScript)',
+                      link: '/research/sql/kysely',
+                    },
+                    {
+                      text: 'Drizzle (TypeScript)',
+                      link: '/research/sql/drizzle',
+                    },
+                    { text: 'jOOQ (Java)', link: '/research/sql/jooq' },
+                    { text: 'sqlc (Go)', link: '/research/sql/sqlc' },
+                    { text: 'linq2db (.NET)', link: '/research/sql/linq2db' },
+                    { text: 'Dapper (.NET)', link: '/research/sql/dapper' },
+                    { text: 'Exposed (Kotlin)', link: '/research/sql/exposed' },
+                  ],
+                },
               ],
             },
             {
