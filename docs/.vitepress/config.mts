@@ -452,6 +452,14 @@ export default withMermaid(
               ],
             },
             {
+              text: 'Test Runner',
+              collapsed: false,
+              items: [
+                { text: 'Specification', link: '/specs/test-runner/SPEC' },
+                { text: 'Delivery Plan', link: '/specs/test-runner/PLAN' },
+              ],
+            },
+            {
               text: 'Versions',
               collapsed: false,
               items: [
