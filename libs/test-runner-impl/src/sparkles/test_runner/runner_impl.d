@@ -68,6 +68,7 @@ private struct RunnerOptions
     bool list;
     bool bench;
     bool perf;
+    bool perfScaled; /// keep the full group when it multiplexes; label estimates
     string syscalls;
     string metrics;
     string sortBy;
@@ -189,6 +190,11 @@ private auto parseInto(ref string[] args, ref RunnerOptions options)
             "With --bench: collect hardware performance counters per benchmark " ~
             "(Linux perf_event; IPC, instructions, cache/branch miss rates)",
             &options.perf,
+        "perf-scaled",
+            "With --perf: keep the full counter group when the PMU would " ~
+            "multiplex it; scaled values render as labeled estimates (≈). " ~
+            "Default: the group shrinks until counts are exact",
+            &options.perfScaled,
         "syscalls",
             "With --bench: count syscalls per iteration (Linux perf tracepoints). " ~
             "Bare adds a total column; =futex,sched_yield adds one column each",
@@ -623,7 +629,8 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     // --syscalls (null = off, "*" = total only, else a name list) OR a
     // --metrics syscall column (`syscalls`, `syscalls:<name>`, `all`).
     const metricSyscalls = syscallSelectorNames(options.metrics);
-    const wantPerf = options.perf || selectsSource(options.metrics, "perf");
+    const wantPerf = options.perf || options.perfScaled
+        || selectsSource(options.metrics, "perf");
     const wantTier0 = selectsSource(options.metrics, "tier0");
     const wantSyscalls = options.syscalls.length > 0 || metricSyscalls.length > 0
         || selectsSource(options.metrics, "syscall");
@@ -635,7 +642,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     const rawEvents = rawSelectorEvents(options.metrics);
     const wantRaw = rawEvents.length > 0;
     auto counters = CounterGroups.open(wantPerf, wantTier0, wantSyscalls, syscallNames,
-        wantRaw, rawEvents);
+        wantRaw, rawEvents, options.perfScaled);
     scope (exit)
         counters.close();
     // Absent-but-requested capabilities, one line each, re-derived from the

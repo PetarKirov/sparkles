@@ -49,6 +49,7 @@ struct MetricCell
     double value = double.nan;
     MetricFormat format;
     MetricClass cls;
+    bool estimated; /// multiplex-scaled estimate, not an exact count (rendered `≈`)
 }
 
 /// A metric the catalog knows about — for `--list-metrics` and column selection.
@@ -87,18 +88,28 @@ private static immutable PerfInfo[7] perfInfos = [
     PerfInfo("page-faults", "pgflt/iter", MetricFormat.count, false),
 ];
 
+/// Whether a pass's counts are multiplex-scaled estimates rather than exact
+/// counts: the PMU rotated the group out for part of the pass
+/// (`scale` = running/enabled < 1; sub-millisecond slices are already
+/// rejected upstream as unreliable).
+package bool isEstimatedScale(double scale) @safe pure nothrow @nogc
+    => scale < 0.999;
+
 /// Projects one `PerfStats` to its named cells, in `perfInfos` order.
 MetricCell[] perfCells(in PerfStats p) @safe pure nothrow
 {
+    import std.math : isNaN;
+
     const double[7] values = [
         p.ipc, p.instructions, p.branchMissPercent, p.cacheMissPercent,
         p.cycles, p.branches, p.pageFaults,
     ];
+    const estimated = isEstimatedScale(p.scale);
     MetricCell[] cells;
     cells.reserve(perfInfos.length);
     foreach (i, ref info; perfInfos)
         cells ~= MetricCell(info.name, info.header, values[i], info.format,
-            MetricClass.diagnostic);
+            MetricClass.diagnostic, estimated && !values[i].isNaN);
     return cells;
 }
 
@@ -176,13 +187,17 @@ MetricDescriptor[] tier0Family(bool available) @safe pure nothrow
 /// `syscalls:<name>` per requested tracepoint (`nan` where it couldn't be opened).
 MetricCell[] syscallCells(in SyscallStats s) @safe pure nothrow
 {
+    import std.math : isNaN;
+
+    const estimated = isEstimatedScale(s.scale);
     MetricCell[] cells;
     cells.reserve(1 + s.named.length);
     cells ~= MetricCell("syscalls", "syscalls", s.total, MetricFormat.count,
-        MetricClass.quantitative);
+        MetricClass.quantitative, estimated && !s.total.isNaN);
     foreach (i, name; s.named)
         cells ~= MetricCell("syscalls:" ~ name, "sc:" ~ name, s.counts[i],
-            MetricFormat.count, MetricClass.quantitative);
+            MetricFormat.count, MetricClass.quantitative,
+            estimated && !s.counts[i].isNaN);
     return cells;
 }
 
@@ -202,11 +217,15 @@ MetricDescriptor[] syscallFamily(bool available) @safe pure nothrow
 /// explain a result, so the class is `diagnostic`, like the perf family.
 MetricCell[] rawCells(in RawStats s) @safe pure nothrow
 {
+    import std.math : isNaN;
+
+    const estimated = isEstimatedScale(s.scale);
     MetricCell[] cells;
     cells.reserve(s.selectors.length);
     foreach (i, sel; s.selectors)
         cells ~= MetricCell("raw:" ~ sel, sel, s.values[i],
-            MetricFormat.count, MetricClass.diagnostic);
+            MetricFormat.count, MetricClass.diagnostic,
+            estimated && !s.values[i].isNaN);
     return cells;
 }
 
@@ -789,15 +808,49 @@ private string fixed(double value, int decimals, string suffix = "") @safe
 /// Renders one metric cell per its `MetricFormat`.
 string formatCell(in MetricCell c) @safe
 {
+    string s;
     final switch (c.format)
     {
     case MetricFormat.ratio:
-        return fixed(c.value, 2);
+        s = fixed(c.value, 2);
+        break;
     case MetricFormat.count:
-        return scaled(c.value);
+        s = scaled(c.value);
+        break;
     case MetricFormat.percent:
-        return fixed(c.value, 2, "%");
+        s = fixed(c.value, 2, "%");
+        break;
     }
+    // A multiplex-scaled estimate is visibly labeled, never passed off as an
+    // exact count (an unavailable cell is already an em dash, never marked).
+    return c.estimated ? "≈" ~ s : s;
+}
+
+@("metrics.formatCell.estimateMarker")
+@safe
+unittest
+{
+    const exact = MetricCell("instr", "instr/iter", 4100, MetricFormat.count,
+        MetricClass.diagnostic);
+    const estimate = MetricCell("instr", "instr/iter", 4100, MetricFormat.count,
+        MetricClass.diagnostic, true);
+    assert(formatCell(exact) == "4.10k");
+    assert(formatCell(estimate) == "≈4.10k");
+}
+
+@("metrics.perfCells.estimatedScale")
+@safe pure nothrow
+unittest
+{
+    PerfStats p;
+    p.cycles = 1000;
+    p.instructions = 3500;
+    p.scale = 0.5;
+    const cells = perfCells(p);
+    assert(cells[0].estimated, "a half-scheduled pass yields estimates");
+    PerfStats clean;
+    clean.cycles = 1000;
+    assert(!perfCells(clean)[0].estimated, "scale 1 = exact");
 }
 
 @("metrics.matchesMetricGlob")

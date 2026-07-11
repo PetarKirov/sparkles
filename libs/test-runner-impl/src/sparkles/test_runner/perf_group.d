@@ -120,6 +120,28 @@ version (linux)
         return enabledDelta > 0 && runningDelta == 0;
     }
 
+    /// A multiplexed pass whose PMU time is under a millisecond: the scaled
+    /// estimate is noise, not a measurement (a 0.58 ms slice measured a 5.7×
+    /// scale error on the survey's counting probe). Rendered unavailable —
+    /// never as a number.
+    package bool unreliableScale(ulong enabledDelta, ulong runningDelta)
+        @safe pure nothrow @nogc
+    {
+        return runningDelta > 0 && runningDelta < enabledDelta
+            && runningDelta < 1_000_000;
+    }
+
+    @("perf_group.unreliableScale")
+    @safe pure nothrow @nogc
+    unittest
+    {
+        assert(unreliableScale(2_000_000, 580_000), "the probe's 0.58 ms case");
+        assert(!unreliableScale(580_000, 580_000), "exact short pass is fine");
+        assert(!unreliableScale(10_000_000, 5_000_000), "≥1 ms scaled is a labeled estimate");
+        assert(!unreliableScale(1_000_000, 0), "never-ran is its own state");
+        assert(!unreliableScale(0, 0));
+    }
+
     @("perf_group.groupNeverRan")
     @safe pure nothrow @nogc
     unittest
@@ -170,6 +192,14 @@ version (linux)
         if (groupNeverRan(enabled, running))
         {
             scale = 0;
+            return false;
+        }
+        if (unreliableScale(enabled, running))
+        {
+            // The true ratio still reaches the caller (calibration reads it to
+            // tell "multiplexed" from "never scheduled"); only the values are
+            // rejected.
+            scale = round3(double(running) / double(enabled));
             return false;
         }
         const ratio = scaledRatio(enabled, running);

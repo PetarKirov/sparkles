@@ -108,6 +108,7 @@ version (linux)
         private bool requested;
         private bool opened;
         private bool cacheDropped;
+        private bool scaledMode;   /// full group kept multiplexing (--perf-scaled)
         private bool neverScheduled; /// calibration saw zero PMU time even reduced
 
         /// Whether counters are usable on this machine.
@@ -132,6 +133,8 @@ version (linux)
             string s = userOnly ? "user-space only" : "kernel+user";
             if (cacheDropped)
                 s ~= "; LLC events dropped (would multiplex — NMI watchdog holds a counter?)";
+            if (scaledMode)
+                s ~= "; multiplexed — values are labeled estimates (--perf-scaled)";
             return s;
         }
 
@@ -157,8 +160,11 @@ version (linux)
                 present |= Capability.counting;
             else
                 absences ~= CapabilityAbsence(Capability.counting, countingAbsence());
-            absences ~= CapabilityAbsence(Capability.countingScaled,
-                "labeled multiplexed estimates land in B2 (groups shrink to exact today)");
+            if (scaledMode)
+                present |= Capability.countingScaled;
+            else
+                absences ~= CapabilityAbsence(Capability.countingScaled,
+                    "labeled estimates are opt-in (--perf-scaled); groups shrink to exact by default");
             absences ~= CapabilityAbsence(Capability.selfMonitoring,
                 "user-space counter reads (rdpmc) land in B2");
             absences ~= CapabilityAbsence(Capability.ipSampling,
@@ -172,9 +178,11 @@ version (linux)
         /// Opens the group unless disabled; failure leaves it unavailable.
         /// A short calibration decides whether the full group (with the LLC
         /// pair) co-schedules on this machine's free PMCs — a multiplexed
-        /// group yields only rotation-scaled estimates, so the LLC pair is
-        /// dropped rather than reported inaccurately.
-        static PerfGroup tryOpen(bool enabled) @safe
+        /// group yields only rotation-scaled estimates, so by default the LLC
+        /// pair is dropped rather than reported inaccurately. With
+        /// `allowScaled` (`--perf-scaled`) the full group is kept instead and
+        /// its values render as labeled estimates.
+        static PerfGroup tryOpen(bool enabled, bool allowScaled = false) @safe
         {
             PerfGroup g;
             g.requested = enabled;
@@ -183,8 +191,14 @@ version (linux)
             g.opened = g.openGroup(withCache: true);
             if (!g.opened)
                 return g;
-            if (g.calibratedScale() < 0.98)
+            const calibration = g.calibratedScale();
+            if (calibration < 0.98)
             {
+                if (allowScaled && calibration > 0)
+                {
+                    g.scaledMode = true;
+                    return g;
+                }
                 g.closeFds();
                 g.opened = g.openGroup(withCache: false);
                 g.cacheDropped = true;
@@ -356,7 +370,7 @@ else
             string status() const => "unavailable (not Linux)";
             CapabilityReport capabilities() const
                 => CapabilityReport(Capability.none, stubAbsence[]);
-            static PerfGroup tryOpen(bool) => PerfGroup();
+            static PerfGroup tryOpen(bool, bool = false) => PerfGroup();
             void close() {}
         }
 
