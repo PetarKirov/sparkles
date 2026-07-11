@@ -16,3 +16,6 @@ public import sparkles.syntax.ts.config;
 public import sparkles.syntax.ts.highlighter;
 public import sparkles.syntax.ts.predicates;
 public import sparkles.syntax.ts.registry;
+
+// the binding's error vocabulary — every engine API speaks it
+public import sparkles.tree_sitter.errors : TsError, TsErrorCode, TsExpected;

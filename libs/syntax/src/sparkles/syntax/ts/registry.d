@@ -204,3 +204,95 @@ unittest
     assert(missingKind.hasError);
     assert(missingKind.error.code == TsErrorCode.queryFileMissing);
 }
+
+@("ts.registry.bundleSmoke")
+@system
+unittest
+{
+    // The query-dialect canary: every bundled language must load, compile
+    // its shipped highlights.scm, and highlight a small snippet — producing
+    // a well-formed event stream. Unsupported dialect predicates may disable
+    // individual patterns (warnings), but never the language.
+    import std.process : environment;
+    import std.array : appender;
+    import sparkles.test_runner.skip : skipTest;
+    import sparkles.syntax.event : HighlightEvent;
+    import sparkles.syntax.label : LabelSet;
+    import sparkles.syntax.ts.config : TsHighlightConfig;
+    import sparkles.syntax.ts.highlighter : highlight;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+    static immutable string[2][] snippets = [
+        ["bash", "echo \"hi $USER\" | wc -l\n"],
+        ["c", "int main(void) { return 0; } // c\n"],
+        ["c-sharp", "class C { static int Main() => 0; }\n"],
+        ["cpp", "template <class T> T id(T x) { return x; }\n"],
+        ["css", ".a { color: #fff; }\n"],
+        ["d", "void main() @safe { import std; writeln(1 + 2); }\n"],
+        ["go", "package main\nfunc main() { println(1) }\n"],
+        ["haskell", "main :: IO ()\nmain = putStrLn \"hi\"\n"],
+        ["html", "<html><body class=\"x\">hi</body></html>\n"],
+        ["java", "class A { public static void main(String[] a) {} }\n"],
+        ["javascript", "const f = (x) => x * 2; // js\n"],
+        ["json", "{\"a\": [1, true, null]}\n"],
+        ["kotlin", "fun main() { println(\"hi\") }\n"],
+        ["markdown", "# Title\n\n- item `code`\n"],
+        ["nix", "{ pkgs ? null }: { a = 1; }\n"],
+        ["ocaml", "let () = print_endline \"hi\"\n"],
+        ["python", "def f(x: int) -> int:\n    return x * 2\n"],
+        ["rust", "fn main() { println!(\"hi\"); }\n"],
+        ["scala", "object A { def main(a: Array[String]): Unit = () }\n"],
+        ["toml", "[a]\nb = 1\n"],
+        ["typescript", "const f = (x: number): number => x * 2;\n"],
+        ["tsx", "const a = <div className=\"x\">hi</div>;\n"],
+        ["xml", "<?xml version=\"1.0\"?><a b=\"c\">d</a>\n"],
+        ["yaml", "a: 1\nb: [x, y]\n"],
+        ["zig", "pub fn main() void {}\n"],
+    ];
+
+    auto registry = GrammarRegistry.fromEnvironment();
+    const labels = LabelSet.standard();
+
+    foreach (pair; snippets)
+    {
+        const lang = pair[0];
+        const source = pair[1];
+
+        auto grammar = registry.grammar(lang);
+        assert(!grammar.hasError, lang);
+        auto queryText = registry.queryText(lang);
+        assert(!queryText.hasError, lang);
+
+        TsError error;
+        auto config = TsHighlightConfig.create(grammar.value, queryText.value, error);
+        assert(!error, lang);
+        config.configure(labels);
+
+        auto sink = appender!(HighlightEvent[]);
+        auto result = highlight(config, source, sink);
+        assert(!result.hasError, lang);
+
+        // well-formedness: balanced pushes/pops, full coverage
+        size_t depth, offset;
+        foreach (ev; sink[])
+        {
+            final switch (ev.kind)
+            {
+                case HighlightEvent.Kind.source:
+                    assert(ev.start == offset && ev.end <= source.length, lang);
+                    offset = ev.end;
+                    break;
+                case HighlightEvent.Kind.push:
+                    ++depth;
+                    break;
+                case HighlightEvent.Kind.pop:
+                    assert(depth > 0, lang);
+                    --depth;
+                    break;
+            }
+        }
+        assert(depth == 0 && offset == source.length, lang);
+    }
+}
