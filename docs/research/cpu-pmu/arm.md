@@ -643,4 +643,4 @@ answered above (and which page owns the shared machinery).
 [pmu-events-arm64]: https://github.com/torvalds/linux/tree/e43ffb69e043/tools/perf/pmu-events/arch/arm64
 [arm-data]: https://github.com/ARM-software/data
 [applecpu]: https://github.com/dougallj/applecpu
-[ddi0487]: https://developer.arm.com/documentation/ddi0487/ak
+[ddi0487]: https://web.archive.org/web/20260309021822/https://developer.arm.com/documentation/ddi0487/ak
