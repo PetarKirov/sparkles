@@ -165,12 +165,28 @@ version (linux)
             else
                 absences ~= CapabilityAbsence(Capability.countingScaled,
                     "labeled estimates are opt-in (--perf-scaled); groups shrink to exact by default");
-            absences ~= CapabilityAbsence(Capability.selfMonitoring,
-                "user-space counter reads (rdpmc) land in B2");
+            if (opened && probeRdpmc(fds[0]))
+                present |= Capability.selfMonitoring;
+            else
+                absences ~= CapabilityAbsence(Capability.selfMonitoring, opened
+                    ? "cap_user_rdpmc denied (kernel rdpmc policy, or non-x86-64)"
+                    : "user-space reads need an open counting group");
             absences ~= CapabilityAbsence(Capability.ipSampling,
                 "overflow/IP sampling lands in B6");
             absences ~= CapabilityAbsence(Capability.preciseMemory, preciseMemoryAbsence());
             return CapabilityReport(present, absences);
+        }
+
+        /// Whether the kernel grants user-space (`rdpmc`) reads for this
+        /// group's events on this host — a live mmap probe.
+        private static bool probeRdpmc(int fd) @safe nothrow
+        {
+            import sparkles.test_runner.rdpmc : RdpmcCounter;
+
+            auto reader = RdpmcCounter.tryMap(fd);
+            const cap = reader.capRdpmc;
+            reader.close();
+            return cap;
         }
 
         /// Opens the group unless disabled; failure leaves it unavailable.
