@@ -52,7 +52,7 @@ dependency "sparkles:core-cli" version="*"
 
 The `term_style` module provides ANSI terminal colors and text attributes.
 
-- **Source Code**: [`term_style.d`](../libs/core-cli/src/sparkles/core_cli/term_style.d)
+- **Source Code**: [`term_style.d`](../libs/base/src/sparkles/base/term_style.d)
 - **Example**: [`color.d`](../libs/core-cli/examples/color.d)
 
 ### Style Enum
@@ -118,7 +118,7 @@ void main()
 
 The `styled_template` module provides a template syntax for applying terminal styles using D's Interpolated Expression Sequences (IES).
 
-- **Source Code**: [`styled_template.d`](../libs/core-cli/src/sparkles/core_cli/styled_template.d)
+- **Source Code**: [`styled_template.d`](../libs/base/src/sparkles/base/styled_template.d)
 - **Example**: [`styled-template.d`](../libs/core-cli/examples/styled-template.d)
 
 ```d
@@ -210,8 +210,8 @@ Use {style text} syntax
 
 The `prettyprint` module formats any D type with syntax highlighting.
 
-- **Source Code**: [`prettyprint.d`](../libs/core-cli/src/sparkles/core_cli/prettyprint.d)
-- **Example**: [`prettyprint.d`](../libs/core-cli/examples/prettyprint.d)
+- **Source Code**: [`prettyprint.d`](../libs/base/src/sparkles/base/prettyprint.d)
+- **Example**: [`prettyprint.d`](../libs/base/examples/prettyprint.d)
 
 ```d
 #!/usr/bin/env dub
@@ -280,7 +280,7 @@ Custom hooks implement `static void writeSourceUri(string path, size_t line, siz
 
 Render data as ASCII tables with Unicode box-drawing characters.
 
-- **Source Code**: [`table.d`](../libs/core-cli/src/sparkles/core_cli/ui/table.d)
+- **Source Code**: [`table.d`](../libs/core-cli/src/sparkles/core_cli/ui/table/package.d)
 - **Example**: [`table.d`](../libs/core-cli/examples/table.d)
 
 ```d
@@ -672,8 +672,8 @@ base class with a Sparkles `@safe nothrow @nogc` logging path, plus
 `DeltaTimeLogger`, a stderr logger that prints wall-clock time, elapsed time
 since start, and elapsed time since the previous log entry.
 
-- **Source Code**: [`logger.d`](../libs/core-cli/src/sparkles/core_cli/logger.d)
-- **Example**: [`logger.d`](../libs/core-cli/examples/logger.d)
+- **Source Code**: [`logger.d`](../libs/base/src/sparkles/base/logger.d)
+- **Example**: [`logger.d`](../libs/base/examples/logger.d)
 
 ```d
 #!/usr/bin/env dub
@@ -735,7 +735,7 @@ void main()
 
 A `@nogc` container with Small Buffer Optimization (SBO). Stores small data inline, automatically switches to heap when capacity is exceeded.
 
-- **Source Code**: [`smallbuffer.d`](../libs/core-cli/src/sparkles/core_cli/smallbuffer.d)
+- **Source Code**: [`smallbuffer.d`](../libs/base/src/sparkles/base/smallbuffer.d)
 
 ```d
 #!/usr/bin/env dub
