@@ -198,8 +198,9 @@ version (linux)
         {
             // The true ratio still reaches the caller (calibration reads it to
             // tell "multiplexed" from "never scheduled"); only the values are
-            // rejected.
-            scale = round3(double(running) / double(enabled));
+            // rejected. Unrounded: round3 would quantize a <0.0005 ratio to
+            // exactly 0, which callers reserve for "never scheduled".
+            scale = double(running) / double(enabled);
             return false;
         }
         const ratio = scaledRatio(enabled, running);

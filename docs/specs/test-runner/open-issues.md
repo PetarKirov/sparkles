@@ -29,10 +29,11 @@ is the natural carrier.
 **Where:** SPEC §6.2 (`selfMonitoring`); PLAN B2.
 
 The measurement gate is **closed**: `rdpmc.bracketCost` (a `@benchmark` in
-`rdpmc.d`) measured, on the Zen 4 dev box, 2.3 µs per ioctl ENABLE/DISABLE
-pair vs 20 ns per rdpmc seqlock read vs 461 ns per `read(2)` — a full
-7-event rdpmc bracket (~280 ns) would be ~8× cheaper than the ioctl pair,
-corroborating the literature's order-of-magnitude claim. What remains open
+`rdpmc.d`, each read asserted real — not the index-0 early exit) measured,
+on the Zen 4 dev box, 2.2 µs per ioctl ENABLE/DISABLE pair vs 30 ns per
+rdpmc seqlock read vs 551 ns per `read(2)` — a full 7-event rdpmc bracket
+(~420 ns) would be ~5× cheaper than the ioctl pair, corroborating the
+literature's order-of-magnitude claim. What remains open
 is **switching the counting pass**: an rdpmc bracket needs the group enabled
 continuously (deltas exclude `between()` work arithmetically instead of via
 DISABLE), which changes the multiplex-scaling window semantics.

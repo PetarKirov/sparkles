@@ -164,7 +164,8 @@ version (linux)
                 present |= Capability.countingScaled;
             else
                 absences ~= CapabilityAbsence(Capability.countingScaled,
-                    "labeled estimates are opt-in (--perf-scaled); groups shrink to exact by default");
+                    "full-group estimates are opt-in (--perf-scaled); the default shrinks the "
+                    ~ "group at open — residual per-pass scaling still renders ≈");
             if (opened && probeRdpmc(fds[0]))
                 present |= Capability.selfMonitoring;
             else

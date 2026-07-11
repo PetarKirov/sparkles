@@ -91,9 +91,11 @@ private static immutable PerfInfo[7] perfInfos = [
 /// Whether a pass's counts are multiplex-scaled estimates rather than exact
 /// counts: the PMU rotated the group out for part of the pass
 /// (`scale` = running/enabled < 1; sub-millisecond slices are already
-/// rejected upstream as unreliable).
+/// rejected upstream as unreliable). The threshold sits between the stored
+/// scale's round3 quanta (…, 0.999, 1.000), so a ratio that rounds to 0.999
+/// is marked and only a clean 1.000 is exact.
 package bool isEstimatedScale(double scale) @safe pure nothrow @nogc
-    => scale < 0.999;
+    => scale < 0.9995;
 
 /// Projects one `PerfStats` to its named cells, in `perfInfos` order.
 MetricCell[] perfCells(in PerfStats p) @safe pure nothrow
@@ -259,11 +261,12 @@ unittest
 /// The raw events a `--metrics` filter requests through `raw:r<hex>`
 /// selectors — dynamic columns like the per-syscall ones. Naming one opens
 /// the raw counting pass. A malformed selector is skipped here and surfaces
-/// through the unknown-selector warning instead.
+/// through the unknown-selector warning instead; a repeated selector is
+/// deduplicated (a duplicate would mint two same-keyed JSON metrics).
 RawEvent[] rawSelectorEvents(string metricFilter) @safe
 {
     import std.algorithm.iteration : splitter;
-    import std.algorithm.searching : startsWith;
+    import std.algorithm.searching : any, startsWith;
 
     enum prefix = "raw:";
     RawEvent[] events;
@@ -272,7 +275,8 @@ RawEvent[] rawSelectorEvents(string metricFilter) @safe
     foreach (p; metricFilter.splitter(','))
     {
         RawEvent ev;
-        if (p.startsWith(prefix) && parseRawEvent(p[prefix.length .. $], ev))
+        if (p.startsWith(prefix) && parseRawEvent(p[prefix.length .. $], ev)
+            && !events.any!(e => e.id == ev.id))
             events ~= ev;
     }
     return events;
@@ -364,10 +368,12 @@ MetricCell[] rowCells(in BenchStats row) @safe pure nothrow
 /// The sort key's value for `--sort-by`: `"name"` compares the benchmark name;
 /// anything else looks up that metric cell's `value` via `rowCells` (`nan` when
 /// the row lacks it, e.g. an error row or a column another row doesn't carry).
+/// A key may be the cell's id or its displayed header — the spelling the table
+/// shows always sorts (`sc:getpid`, `r04c2`, `RETIRED_INSTRUCTIONS`).
 private double sortValue(in BenchStats row, string sortBy) @safe pure nothrow
 {
     foreach (ref c; rowCells(row))
-        if (c.name == sortBy)
+        if (c.name == sortBy || c.header == sortBy)
             return c.value;
     return double.nan;
 }
