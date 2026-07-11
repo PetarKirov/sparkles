@@ -22,6 +22,8 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # npm ci + the wasm nix build + VitePress build + Cloudflare deploy run ~5m.
+    timeout-minutes: 15
 
     permissions:
       contents: read
