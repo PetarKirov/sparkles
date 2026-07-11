@@ -1,84 +1,158 @@
 # `sparkles:wired` — runtime JSON benchmark baseline
 
 _The evidence base for replacing `std.json` inside `sparkles:wired` with a
-state-of-the-art JSON parser — and the scoreboard for the native engine
-that replaced it (SPEC §11). Numbers from the harness at
-[`libs/wired/bench/runtime`](../../../libs/wired/bench/runtime/README.md);
+state-of-the-art JSON parser, the scoreboard for the native engine that
+replaced it (SPEC §11), and — since the harness moved onto
+[`sparkles:test-runner`](../test-runner/open-issues.md) — the record that
+validates the runner's measurements against the retired hand-rolled harness.
+Numbers from [`libs/wired/bench/runtime`](../../../libs/wired/bench/runtime/README.md);
 the canonical snapshot is
-[`results/2026-07-06-ryzen9-7940hx-x86-64-v4-level-field.json`](../../../libs/wired/bench/runtime/results/2026-07-06-ryzen9-7940hx-x86-64-v4-level-field.json)
-(the original pre-engine snapshot from 2026-07-05 is kept alongside; its
-conclusions all survive the re-measurement below)._
+[`results/2026-07-11-ryzen9-7940hx-x86-64-v4-runner-inline.json`](../../../libs/wired/bench/runtime/results/2026-07-11-ryzen9-7940hx-x86-64-v4-runner-inline.json)._
 
 ## Environment
 
 |                 |                                                                                                                                                   |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | CPU             | AMD Ryzen 9 7940HX (Zen 4, AVX-512)                                                                                                               |
-| D toolchain     | LDC, front-end 2.111, `-mcpu=native` (`bench` build type)                                                                                         |
+| D toolchain     | LDC, front-end 2.111, `-mcpu=native -O3`, `bench` build type                                                                                      |
+| wired codegen   | `library-inline` (cross-module inlining scoped to `sparkles:wired`; see [Codegen parity](#codegen-parity))                                        |
 | Shim ISA preset | `x86-64-v4` (simdjson: runtime dispatch, icelake kernel)                                                                                          |
 | Engines         | simdjson 4.6.0, rapidjson 1.1.0, yyjson 0.12.0, serde_json 1.0.150, simd-json 0.17.0, sonic-rs 0.5.8, mir-ion 2.3.5, asdf 0.8.0, jsoniopipe 0.2.7 |
 | Corpora         | twitter.json 632 KB (strings), citm_catalog.json 1.7 MB (structure), canada.json 2.2 MB (floats), github_events.json 65 KB (small-doc)            |
-| Allocator       | glibc, trim/mmap thresholds raised to 64 MiB at harness startup (see the measurement note below)                                                  |
+| Allocator       | glibc, `M_TRIM_THRESHOLD`/`M_MMAP_THRESHOLD` raised to 64 MiB at process start (a `shared static this()` in the bench library)                    |
+| Harness         | `sparkles:test-runner` `--bench --perf` — one `@benchmark` per op, `benchCase` per engine×dataset                                                 |
 
-Every engine reproduced the `std.json` structural fingerprint on every
-corpus, and the `TwitterStats` checksum on the decode op, before being
-timed. Throughputs are MB/s over the median iteration. Hardware counters
-come from a separate `perf_event_open` counting pass per op (kernel+user;
-the LLC pair was dropped because the NMI watchdog holds one of Zen 4's six
-PMCs and a multiplexed group only yields rotation-scaled estimates).
+Every engine reproduces the `std.json` structural fingerprint on every
+corpus (and the `TwitterStats` checksum on decode) in the untimed `after`
+before it is timed; a mismatch is an isolated error row, so a wrong engine
+can never post a competitive number. (jsoniopipe's serialize output is
+rejected as invalid JSON on every corpus — the gate working as designed.)
+Throughputs are MB/s over the median iteration. Hardware counters come from
+the runner's separate `perf_event` counting pass (kernel+user; the LLC pair
+is dropped because the NMI watchdog holds one of Zen 4's six PMCs — see
+[test-runner open issue P1](../test-runner/open-issues.md)).
 
-> [!IMPORTANT]
-> **The allocator field is levelled.** By default glibc trims multi-MB
-> blocks back to the kernel on `free`, so a parse-in-a-loop refaults its
-> whole document arena every iteration — and _which_ engine paid depended
-> on allocation-pattern luck (one block coalescing to the heap top vs
-> two), not parser quality: at short time budgets, or for engines with an
-> unlucky pattern, this understated throughput by up to 2×. The harness
-> now raises `M_TRIM_THRESHOLD`/`M_MMAP_THRESHOLD` at startup (the same
-> effect as the jemalloc/mimalloc swaps common in parser benchmarking),
-> making page faults a first-iteration cost for every engine equally. The
-> original 2026-07-05 numbers were taken at the default 2 s budgets where
-> steady state was mostly reached, so they match the levelled numbers
-> within noise — but the levelled field is also budget-stable, and it is
-> what removed the "cold pages dominate short budgets" caveat this
-> document previously carried.
+## Validating the runner (before / after)
+
+The harness was rebuilt from a bespoke executable (its own `perf_event_open`
+helper, `mallopt` in `main`, hand-rolled timing) onto `sparkles:test-runner`.
+Before trusting the new numbers we proved the runner measures the _same
+thing_ the old harness did, using **retired instruction count as the
+anchor**: for a fixed binary, code path and input it is an exact count (not a
+rotation-scaled estimate) and is independent of wall-clock noise, so if the
+runner's `instr` matches the old harness's, the counting is correct and the
+timed region boundaries are identical. (`cycles`/IPC/cache are exact when the
+group fits but host-variable, so they are read as advisory, per the
+[cpu-pmu gap analysis](../../research/cpu-pmu/sparkles-baseline.md).)
+
+B0 = the pre-rebase executable harness at tip `55ceec30`
+([`results/B0-prerebase-55ceec30-cmi.json`](../../../libs/wired/bench/runtime/results/B0-prerebase-55ceec30-cmi.json)).
+B1 = the runner, `library-inline` codegen, both at a 2 s budget with the
+allocator levelled.
+
+**Instruction anchor — the gate.** Across the wired-native and yyjson matrix
+(26 rows) the runner's retired-instruction count matches B0 to **< 1 % on 25
+rows**, the exception being citm serialize at −1.77 % (a JsonSink
+buffer-grow amortization effect, within the advisory band — see
+[B3](../test-runner/open-issues.md)):
+
+| wired-native, ins/byte | B0 (old harness) | B1 (runner) |       Δ |
+| ---------------------- | ---------------: | ----------: | ------: |
+| twitter parse          |             8.12 |        8.12 | −0.01 % |
+| twitter decode         |             8.88 |        8.93 | +0.50 % |
+| twitter serialize      |            13.79 |       13.78 | −0.10 % |
+| canada parse           |            23.30 |       23.30 | +0.00 % |
+| citm parse             |             6.21 |        6.21 | +0.00 % |
+| github parse           |             6.89 |        6.90 | +0.05 % |
+
+This is the headline validation result: **the runner's `perf_event`
+instruction counting is byte-for-byte equivalent to the retired hand-rolled
+`perf.d`.** yyjson's rows match equally well (parse/decode/serialize all
+< 0.5 %), confirming it is not a wired-specific coincidence.
+
+**Wall-clock is _not_ bit-comparable across the harness change, and that is
+expected.** Two systematic deviations, both with matching instruction counts
+(so neither is a counting bug):
+
+- **Serialize wall-clock is ~9–22 % slower under the runner** (twitter −17 %,
+  github −18 %, citm −9 %, canada −2 %) at identical instructions — cycles
+  rise, IPC falls (twitter serialize 3.59 → 2.93). Serialize reads the whole
+  document tree and the runner holds the parsed document in a heap-allocated
+  per-case engine (`new E`), a different cache/TLB footprint than the old
+  harness's structure. The effect is largest on the small, cache-resident
+  docs and smallest on canada (memory-bound in both). Memory layout, not
+  measurement.
+- **yyjson parse is ~6–11 % _faster_ under the runner** on twitter/github at
+  matching instructions (higher IPC) — a more favourable warm-cache regime
+  from the runner's longer sample collection.
+
+The lesson the anchor teaches: compare engines **within one snapshot** and
+lean on `ins/byte` for cross-harness correctness; treat wall-clock deltas
+across a harness change as microarchitecture, not truth. The allocator
+leveling holds — page-faults are 0 across the matrix, and verified 0 even
+under an adversarial `MALLOC_MMAP_THRESHOLD_=16384` (the startup `mallopt`
+overrides it).
+
+### Codegen parity
+
+The old executable baseline compiled wired with
+`-enable-cross-module-inlining` (CMI), worth ~15 % on the hot loops by
+folding the `sparkles.wired.json.scan` seams into the reader. That flag
+cannot go on the runner's `bench` build type — it propagates to mir-ion and
+culls a template-nested function. Scoping it to `sparkles:wired` alone
+(`library-inline`) recovers B0's exact codegen, but needed one non-obvious
+step, quantified by the anchor:
+
+| wired config (twitter parse) | flags                                               | ins/byte |
+| ---------------------------- | --------------------------------------------------- | -------: |
+| `library` (stock)            | —                                                   |     9.60 |
+| `library-singleobj`          | `-singleobj`                                        |     9.60 |
+| `library-inline` (default)   | `-enable-cross-module-inlining -linkonce-templates` |     8.12 |
+
+`-singleobj` is inert (dub already compiles wired's modules in one ldc2
+invocation, and LDC still declines to inline the seams without the CMI pass).
+Bare `-enable-cross-module-inlining` **fails to link** under the runner's
+`-unittest -checkaction=context` build — CMI inlines context-assert bodies
+whose `_d_assert_fail!(T)` instances go unemitted;
+`-linkonce-templates` emits them ([B1](../test-runner/open-issues.md)). The
+bench defaults to `library-inline`; `--override-config sparkles:wired/library`
+and `.../library-singleobj` reproduce the matrix above.
 
 ## The headline: typed decode (twitter.json)
 
 The op closest to wired's real workload — raw text → a partial Twitter
-struct. `wired-native` is the shipped codec path (`fromJSON!Twitter`
-through the arena engine, policy layer included); the 155 MB/s `std.json`
-row is the pipeline it retired (the original `wired` row measured
-159 MB/s — the DbI layer was already free).
+struct. `wired-native` is the shipped codec path (`fromJSON!Twitter` through
+the arena engine, policy layer included); the 152 MB/s `std.json` row is the
+pipeline it retired.
 
 | Engine                          |      MB/s | × the retired pipeline |
 | ------------------------------- | --------: | ---------------------: |
-| std.json (the retired pipeline) |       155 |                    1.0 |
-| **wired-native (`fromJSON`)**   | **1 481** |                **9.6** |
-| mir-ion                         |     1 696 |                   10.9 |
-| serde_json                      |     1 881 |                   12.1 |
-| asdf                            |     1 965 |                   12.7 |
-| simd-json                       |     2 029 |                   13.1 |
-| sonic-rs                        |     2 088 |                   13.5 |
-| yyjson (accessor walk)          |     3 406 |                   22.0 |
-| simdjson On-Demand              |     7 554 |                   48.7 |
+| std.json (the retired pipeline) |       152 |                    1.0 |
+| mir-ion                         |     1 669 |                   11.0 |
+| serde_json                      |     1 865 |                   12.3 |
+| simd-json                       |     2 024 |                   13.3 |
+| sonic-rs                        |     2 069 |                   13.6 |
+| asdf                            |     2 194 |                   14.4 |
+| **wired-native (`fromJSON`)**   | **2 614** |               **17.2** |
+| yyjson (accessor walk)          |     3 324 |                   21.9 |
+| simdjson On-Demand              |     7 463 |                   49.1 |
 
-## Parse (full DOM/tape, immutable input)
+## Parse (full DOM/tape, immutable input, MB/s)
 
 | Engine                         | twitter | citm_catalog | canada | github_events |
 | ------------------------------ | ------: | -----------: | -----: | ------------: |
-| std.json                       |     162 |          142 |     81 |           173 |
-| jsoniopipe                     |     321 |          298 |    120 |           382 |
-| serde_json                     |     420 |          791 |    494 |           527 |
-| mir-ion                        |     510 |          431 |     86 |           499 |
-| rapidjson (full precision)     |     914 |        1 593 |    362 |           886 |
-| simd-json                      |   1 082 |        1 019 |    450 |         1 435 |
-| **wired-native**               |   1 732 |        2 497 |    807 |         2 360 |
-| sonic-rs                       |   2 052 |        1 921 |  1 268 |         2 412 |
-| asdf ¹                         |   2 788 |        2 528 |  1 055 |         3 193 |
-| yyjson                         |   3 853 |        3 977 |  1 367 |         4 020 |
-| simdjson On-Demand (full walk) |   4 207 |        4 389 |  1 142 |         4 825 |
-| simdjson DOM                   |   5 343 |        5 639 |  1 451 |         5 921 |
+| std.json                       |     155 |          146 |     78 |           166 |
+| jsoniopipe                     |     289 |          269 |    123 |           352 |
+| serde_json                     |     417 |          800 |    491 |           530 |
+| mir-ion                        |     514 |          427 |    167 |           508 |
+| rapidjson (full precision)     |     895 |        1 578 |    361 |           869 |
+| simd-json                      |   1 099 |          993 |    444 |         1 405 |
+| sonic-rs                       |   2 034 |        1 910 |  1 264 |         2 359 |
+| asdf ¹                         |   2 949 |        2 970 |  2 328 |         3 177 |
+| **wired-native**               |   3 196 |        4 113 |    999 |         3 819 |
+| yyjson                         |   4 013 |        3 899 |  1 357 |         4 530 |
+| simdjson On-Demand (full walk) |   4 160 |        4 369 |  1 132 |         4 791 |
+| simdjson DOM                   |   5 178 |        5 556 |  1 435 |         5 857 |
 
 ¹ asdf's tape keeps numbers textual (decoded on access), which flatters its
 parse column — most visible on float-heavy canada, where engines that
@@ -86,140 +160,94 @@ materialize doubles pay for exact parsing.
 
 ## Hardware counters (twitter.json)
 
-The "why" behind the tables above — per input byte, over the counting pass:
+The "why" behind the tables — per input byte, over the counting pass
+(serialize normalized by output bytes):
 
-| Engine             | op       |  IPC | cyc/B | ins/B | br-miss% | faults/iter |
-| ------------------ | -------- | ---: | ----: | ----: | -------: | ----------: |
-| std.json           | parse    | 2.40 | 38.69 | 92.88 |     0.73 |       171.8 |
-| wired-native       | parse    | 4.14 |  2.85 | 11.81 |     0.10 |           0 |
-| wired-native       | decode   | 3.85 |  3.33 | 12.81 |     0.10 |           0 |
-| wired-native       | validate | 5.36 |  3.37 | 18.08 |     0.12 |           0 |
-| mir-ion            | decode   | 2.89 |  3.10 |  8.93 |     0.50 |           0 |
-| serde_json         | decode   | 4.47 |  2.67 | 11.94 |     0.19 |           0 |
-| sonic-rs           | decode   | 3.91 |  2.40 |  9.39 |     0.12 |           0 |
-| asdf               | parse    | 1.28 |  4.33 |  5.54 |     1.99 |           0 |
-| yyjson             | parse    | 3.47 |  1.34 |  4.64 |     0.13 |           0 |
-| yyjson             | decode   | 3.39 |  1.48 |  5.04 |     0.13 |           0 |
-| simdjson DOM       | parse    | 3.47 |  0.95 |  3.29 |     0.15 |           0 |
-| simdjson On-Demand | decode   | 3.50 |  0.68 |  2.38 |     0.11 |           0 |
+| Engine           | op        |      IPC |    ins/B | br-miss% |
+| ---------------- | --------- | -------: | -------: | -------: |
+| std.json         | parse     |     2.78 |    90.12 |     0.26 |
+| **wired-native** | **parse** | **5.22** | **8.12** | **0.06** |
+| wired-native     | decode    |     4.65 |     8.93 |     0.05 |
+| wired-native     | validate  |     5.36 |    17.83 |     0.13 |
+| wired-native     | serialize |     2.87 |    13.78 |     0.29 |
+| asdf             | parse     |     2.48 |     4.50 |     0.50 |
+| mir-ion          | parse     |     2.41 |    25.41 |     0.41 |
+| yyjson           | parse     |     3.67 |     4.64 |     0.09 |
+| yyjson           | decode    |     3.37 |     5.06 |     0.10 |
+| simdjson DOM     | parse     |     3.43 |     3.29 |     0.10 |
 
-What the counters add:
-
-- **The instruction budget is the whole game.** std.json burned 92.9
-  instructions per byte; the native engine spends 11.8 on the same corpus
-  at 4.1 IPC (against yyjson's 4.6 ins/B and simdjson On-Demand's 2.38).
-  The remaining gap to the scalar frontier is instructions to remove, not
-  IPC to find — wired-native already runs the highest IPC in the field.
-- **Branch discipline arrived.** The engine's rounds took twitter parse to
-  0.10% branch misses — at or below every foreign engine — via the
-  frequency-ordered dispatch, the fused member hop, and predictable scan
-  lanes.
-- **Page faults are the GC signature, and the allocator's.** std.json
-  still faults ~172×/iteration (GC heap growth); every native-arena
-  engine, wired-native included, sits at 0 on the levelled field.
-- **asdf's ceiling is its tape walk**: the lowest IPC in the field (1.28)
-  and the highest miss rate (2.0%) — a dependent-chained, branchy
-  traversal — caps an otherwise tiny instruction budget.
-
-Other ops in brief (twitter): **validate** — simdjson-OD structural skip
-6 790, serde_json `IgnoredAny` 2 747, simd-json 2 290, sonic-rs 2 204,
-wired-native `validateJson` 1 457 (materializing nothing; guarded byte
-loops, SWAR treatment pending), rapidjson SAX 1 066, jsoniopipe drain 662.
-**serialize** — yyjson 5 264, sonic-rs 2 333, simdjson-DOM 2 128,
-serde_json 1 614, wired-native 609 (26.2 ins/B — unoptimized, the next
-M15 target), std.json 181.
+`wired-native` posts the **highest IPC of the whole field** (5.22 parse, 5.36
+validate) and its lowest branch-miss rate: the work per byte is scheduled
+about as efficiently as this core allows. The gap to yyjson is
+_instruction volume_ (8.12 vs 4.64 ins/B), not scheduling — the scalar arena
+performs more work per byte than yyjson's single-visit string machine.
 
 ## Findings
 
-1. **wired was parser-bound, not mapping-bound — confirmed twice.** The
-   original run showed the `fromJSON` DbI layer costing nothing (159 vs
-   157 MB/s for hand-written extraction); the native engine confirmed it
-   from the other side: the full codec decode (1 481 MB/s) measures
-   _faster_ than a hand-written view walk did, because the single-pass
-   struct decode beats repeated member lookups.
-2. **The state of the art was 10–48× away; the native engine closed it to
-   ~2.3×.** Typed decode went 155 → 1 481 MB/s (9.6×), between simd-json
-   and mir-ion in absolute terms, with yyjson's accessor walk at 3 406 and
-   simdjson On-Demand at 7 554 still ahead.
-3. **SIMD is one road, not the only one.** yyjson — deliberately scalar
-   C — parses at 3.9–4.0 GB/s on structure/string corpora. The native
-   engine's scalar rounds (SWAR scan lanes, pointer number kernel,
-   branch-layout work) reached 1.7–2.5 GB/s parse with the top IPC in the
-   field; the rest of the scalar gap is instruction diet, and the
-   vectorized structural scan remains iteration 2.
-4. **Laziness is the biggest single lever for typed decode.** simdjson
-   On-Demand extracts the twitter subset at 7.6 GB/s because untouched
-   fields are skipped, not parsed. wired's decode always knows the target
-   struct, so an on-demand cursor (rather than a DOM) remains the
-   long-term shape for wired's decode path.
-5. **Float parsing is its own battleground.** canada.json compresses every
-   ranking: exact double parsing costs ~3× the throughput of the
-   string-heavy corpora for every materializing engine. The native
-   engine's tiered float path (Clinger → Eisel–Lemire with one `i128`
-   multiply → exact big-decimal) sits at 807 MB/s vs yyjson's 1 367.
-6. **The D ecosystem didn't reach the bar — now it does.** mir-ion
-   (0.1–0.5 GB/s parse; 1.7 GB/s decode) and asdf (fast tape, lazy
-   numbers, dated codebase) were 2–4× behind the frontier; jsoniopipe's
-   typed deserialize leaves string escapes undecoded (caught by the
-   checksum verification, excluded from the decode op). wired-native now
-   out-parses every D engine except asdf's number-deferring tape — with
-   strict RFC 8259 conformance and eager exact numbers.
-7. **Copies are real cost; faults were noise.** On the levelled field
-   rapidjson's in-situ variant still beats its copying parse by 31%
-   (1 197 vs 914 — a true memcpy cost), and simd-json's required `&mut`
-   copy still halves its parse column; but yyjson's insitu advantage
-   collapsed to noise (3 915 vs 3 853) — what looked like copy cost was
-   mostly fault cost. Engines should still parse from `const(char)[]`
-   without demanding caller copies.
-8. **Control the allocator or it benchmarks you.** glibc's trim behavior
-   made multi-MB-arena engines refault every page each iteration at short
-   budgets, understating them by up to 2× depending on allocation-pattern
-   luck. Any parse-in-a-loop comparison needs raised trim/mmap thresholds
-   (or a jemalloc/mimalloc swap) before its numbers mean anything.
+1. **The DbI codec layer is free.** `wired-native`'s `fromJSON!Twitter`
+   (2 614 MB/s) is the whole shipped path — policy walk included — and it
+   sits right below yyjson's raw accessor walk. The old `std.json`-backed
+   `wired` row (152 MB/s) was entirely parser-bound.
+2. **wired-native is IPC-bound-out, instruction-bound-in.** Highest IPC,
+   lowest branch misses, zero faults; the remaining 0.8× gap to yyjson is the
+   instruction budget (§ counters). Closing it is a SIMD structural-pass
+   question (iteration 2), not a scheduling one.
+3. **The runner measures correctly.** The instruction anchor matches the
+   retired harness to < 1 % across the matrix (§ Validating the runner) —
+   the migration onto `sparkles:test-runner` costs no measurement fidelity.
+4. **Serialize wall-clock shifted with the harness, not the code.** Same
+   instructions, more cycles, from the runner's per-case heap-engine memory
+   layout — a caveat for cross-harness serialize comparison, not a
+   regression.
+5. **The LLC pair is unavailable on this box.** The NMI watchdog holds a PMC,
+   so cache-references/misses are dropped rather than estimated. Disclosed
+   here because the columns are silently absent
+   ([P1](../test-runner/open-issues.md)).
 
 ## The scalar exit gate (M15)
 
-The plan's iteration-1 exit gate is wired-native parse **and** decode
-within ±10% of the yyjson rows. Standing on this snapshot:
+The engine's own iteration-1 exit gate is wired-native parse **and** decode
+within ±10 % of yyjson. On this snapshot:
 
-| corpus (parse, MB/s) | wired-native | yyjson | ±10% gate | at    |
-| -------------------- | -----------: | -----: | --------: | ----- |
-| twitter              |        1 732 |  3 853 |     3 468 | 0.50× |
-| citm_catalog         |        2 497 |  3 977 |     3 579 | 0.70× |
-| canada               |          807 |  1 367 |     1 230 | 0.66× |
-| github_events        |        2 360 |  4 020 |     3 618 | 0.65× |
+| corpus (parse, MB/s) | wired-native | yyjson | ±10 % gate |    at |
+| -------------------- | -----------: | -----: | ---------: | ----: |
+| twitter              |        3 196 |  4 013 |      3 612 | 0.80× |
+| citm_catalog         |        4 113 |  3 899 |      3 509 | 1.05× |
+| canada               |          999 |  1 357 |      1 221 | 0.74× |
+| github_events        |        3 819 |  4 530 |      4 077 | 0.84× |
 
-Typed decode (twitter): wired-native 1 481 vs yyjson 3 406 (0.43×).
-Landed rounds: the pointer number kernel, single-`i128`-mul Eisel–Lemire,
-masked UTF-8 sequence checks, frequency-ordered dispatch, the fused
-object-member hop, the short-key fast path, direct-append string cells,
-two-at-a-time fraction digits, and the levelled allocator field.
-
-**Iteration 1 (scalar) has plateaued.** Three structurally different
-attempts to close the remaining ~2× all measured flat or negative, each
-kept for the record: a UTF-8 DFA loses to well-predicted branches on
-uniform CJK (serial load chain); fusing validation into the scan loses
-to the two-pass (per-word bookkeeping exceeds the second pass); the
-yyjson-shape context-specialized goto machine — the C playbook's core
-trick — regresses twitter/citm 7–11% under LLVM's block layout (canada
-+9%), and explicit `expect` hints recover none of it. The engine sits at
-11.8 ins/B with the field's best IPC (4.1) and branch-miss rate (0.10%):
-the work per byte is efficiently scheduled — there is simply more of it
-than yyjson's single-visit string machine performs. Closing the gate
-means iteration 2: the SIMD structural pass (the `scan.d` seams exist
-for exactly this), whose batch classification also collapses the
-scan/validate double visit that defines the scalar architecture. The
-untouched serializer (609 MB/s, 26 ins/B) is independent headroom.
+Typed decode (twitter): wired-native 2 614 vs yyjson 3 324 (0.79×).
+`wired-native` **clears the gate on citm** (structure-heavy — the arena's
+threaded-parent container build shines) and sits at 0.74–0.84× elsewhere.
+Consistent with the pre-rebase standing: **iteration 1 (scalar) has
+plateaued** at ~8 ins/B with the field's best IPC; the remaining gap is work
+volume, which is iteration 2's (SIMD) target. These numbers match the
+pre-rebase executable baseline within noise once codegen parity is restored,
+confirming the rebase changed the harness, not the engine.
 
 ## Reproducing
 
+From the nix devshell (which exports `$WIRED_BENCH_DATA` and puts the ISA-preset
+shims on `PKG_CONFIG_PATH`):
+
 ```sh
 cd libs/wired/bench/runtime
-dub run -b bench -- --json=results/$(date -I)-<host>-$WIRED_BENCH_ISA.json
+
+# D engines only (fast, off-nix-capable) — the default unittest config:
+dub test -b bench -- --bench --perf --group-by=dataset,operation
+
+# The full competitive field (foreign engines via the nix shims):
+dub test -b bench -c unittest-foreign -- --bench --perf --bench-min-time=2000
+
+# Record a snapshot:
+dub test -b bench -c unittest-foreign -- --bench --perf --bench-min-time=2000 \
+  --bench-json=results/$(date -I)-<host>-$WIRED_BENCH_ISA-runner-inline.json
+
+# Subset via env; codegen A/B via --override-config:
+WIRED_BENCH_ENGINES=wired-native,yyjson WIRED_BENCH_DATASETS=twitter \
+  dub test -b bench --override-config sparkles:wired/library -- --bench --perf
 ```
 
-Two consecutive default-budget runs on the machine above agreed within ~5%
-on every spot-checked row, and with the levelled allocator the numbers are
-budget-stable (the previous "cold pages dominate short budgets" caveat was
-the glibc trim behavior of finding 8, now controlled at startup). Numbers
-are machine- and preset-specific; compare only within one snapshot.
+Numbers are machine- and preset-specific; compare only within one snapshot.
+`--bench-min-time=2000` is what makes the medians budget-stable; the perf
+counting pass is separate, so `ins/byte` is exact regardless of budget.
