@@ -1,0 +1,33 @@
+name "syntax"
+description "Syntax highlighting: highlight-event streams, themes, ANSI + HTML renderers"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+
+importPaths "src"
+
+dflags "-preview=in" "-preview=dip1000"
+
+dependency "expected" version="~>0.4.1"
+
+configuration "library" {
+    // sourceLibrary so the tree-sitter engine modules (ImportC types in their
+    // signatures) compile inside each dependent's build, where dub runs
+    // pkg-config — see docs/guidelines/importc-c-libraries.md.
+    targetType "sourceLibrary"
+    dependency "sparkles:base" path="../.."
+}
+
+configuration "unittest" {
+    // Fast path: depend on the runner shim (pulls the prebuilt impl library),
+    // so `dub test` recompiles only this package, not the runner sources.
+    dependency "sparkles:test-runner" path="../.."
+    dependency "sparkles:base" path="../.."
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
