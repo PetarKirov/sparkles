@@ -331,7 +331,7 @@ This is where Tree-sitter most diverges from a batch parser, and it is the "robu
 - **Who uses it in production.** Tree-sitter is now the de-facto editor parsing substrate. Wikipedia lists official editor integrations in _"GNU Emacs, Neovim, Lapce, Zed, Helix, and Atom,"_ and notes that _"GitHub uses Tree-sitter to support in-browser symbolic code navigation in Git repositories."_ It also underpins difftastic (structural diffing), many LSP/highlighting tools, and a growing set of code-analysis/AI pipelines.
 - **Grammars.** Over a hundred maintained grammars exist (`tree-sitter-rust`, `-python`, `-javascript`, `-go`, `-c`, `-cpp`, …), each a small repo shipping a `grammar.js` + generated `parser.c`.
 - **Bindings / ports.** First-class bindings for Rust, Node.js, WASM (browser), Python, Go, Swift, Java, Kotlin, OCaml, Ruby, Perl, Lua, C#, and Zig — all over the same C runtime. Pure-language _re-implementations_ of the runtime also exist (e.g. Go ports), trading the C dependency for less battle-testing.
-- **Tooling.** The `tree-sitter` CLI does codegen, an interactive `playground` (WASM in the browser), corpus-based `test`, `highlight`, and `query` evaluation. The query DSL is its own ecosystem (`highlights.scm`, `injections.scm`, `locals.scm` conventions shared across editors).
+- **Tooling.** The `tree-sitter` CLI does codegen, an interactive `playground` (WASM in the browser), corpus-based `test`, `highlight`, and `query` evaluation. The query DSL is its own ecosystem (`highlights.scm`, `injections.scm`, `locals.scm` conventions shared across editors) — the highlighting pipeline built on those conventions (the `tree-sitter-highlight` crate) is surveyed separately in [tree-sitter-highlight][ts-highlight].
 - **Stability.** The C runtime API (`tree_sitter/api.h`) is stable and versioned; the project is on the `0.26.x` line at the time of writing and is maintained by an active org (`tree-sitter`) plus a large grammar-maintainer community. It is mature, widely embedded, and under continuous development.
 
 ---
@@ -418,6 +418,7 @@ This is where Tree-sitter most diverges from a batch parser, and it is the "robu
 [wagner-thesis]: https://www2.eecs.berkeley.edu/Pubs/TechRpts/1997/CSD-97-946.pdf
 [strangeloop]: https://www.thestrangeloop.com/2018/tree-sitter---a-new-parsing-system-for-programming-tools.html
 [wikipedia]: https://en.wikipedia.org/wiki/Tree-sitter_(parser_generator)
+[ts-highlight]: ./tree-sitter-highlight.md
 [index]: ./index.md
 [concepts]: ./concepts.md
 [comparison]: ./comparison.md
