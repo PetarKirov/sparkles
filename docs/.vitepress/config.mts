@@ -726,6 +726,20 @@ export default withMermaid(
                     { text: 'Ecto (Elixir)', link: '/research/sql/ecto' },
                   ],
                 },
+                {
+                  text: 'Typed Functional SQL (Haskell)',
+                  collapsed: true,
+                  items: [
+                    { text: 'hasql', link: '/research/sql/hasql' },
+                    { text: 'Squeal', link: '/research/sql/squeal' },
+                    { text: 'Opaleye', link: '/research/sql/opaleye' },
+                    { text: 'Beam', link: '/research/sql/beam' },
+                    {
+                      text: 'persistent + esqueleto',
+                      link: '/research/sql/persistent-esqueleto',
+                    },
+                  ],
+                },
               ],
             },
             {

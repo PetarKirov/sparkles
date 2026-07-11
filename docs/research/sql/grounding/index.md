@@ -24,14 +24,19 @@ evidence — excluded from the VitePress build (`srcExclude`) and from lychee.
 Populated as each wave lands. Waves: **W1** effects core · **W2** Haskell typed cluster ·
 **W3** typed builders / thin · **W4** full ORMs · **W5** raw / baseline · **W6** synthesis.
 
-| Page      | Ledger                         | Claims | ✓   | ⚠   | Wave |
-| --------- | ------------------------------ | ------ | --- | --- | ---- |
-| effect-ts | [effect-ts.md](./effect-ts.md) | 59     | 57  | 0   | W1   |
-| quill     | [quill.md](./quill.md)         | 52     | 47  | 0   | W1   |
-| doobie    | [doobie.md](./doobie.md)       | 64     | 58  | 0   | W1   |
-| skunk     | [skunk.md](./skunk.md)         | 56     | 53  | 0   | W1   |
-| slick     | [slick.md](./slick.md)         | 56     | 53  | 1   | W1   |
-| ecto      | [ecto.md](./ecto.md)           | 72     | 69  | 1   | W1   |
+| Page                 | Ledger                                               | Claims | ✓   | ⚠   | Wave |
+| -------------------- | ---------------------------------------------------- | ------ | --- | --- | ---- |
+| effect-ts            | [effect-ts.md](./effect-ts.md)                       | 59     | 57  | 0   | W1   |
+| quill                | [quill.md](./quill.md)                               | 52     | 47  | 0   | W1   |
+| doobie               | [doobie.md](./doobie.md)                             | 64     | 58  | 0   | W1   |
+| skunk                | [skunk.md](./skunk.md)                               | 56     | 53  | 0   | W1   |
+| slick                | [slick.md](./slick.md)                               | 56     | 53  | 1   | W1   |
+| ecto                 | [ecto.md](./ecto.md)                                 | 72     | 69  | 1   | W1   |
+| hasql                | [hasql.md](./hasql.md)                               | 64     | 61  | 0   | W2   |
+| squeal               | [squeal.md](./squeal.md)                             | 65     | 64  | 0   | W2   |
+| opaleye              | [opaleye.md](./opaleye.md)                           | 54     | 51  | 0   | W2   |
+| beam                 | [beam.md](./beam.md)                                 | 54     | 50  | 0   | W2   |
+| persistent-esqueleto | [persistent-esqueleto.md](./persistent-esqueleto.md) | 54     | 52  | 0   | W2   |
 
 ## Master discrepancy register
 
@@ -55,3 +60,32 @@ shared pages (R1, R2 above) rather than left in a deep-dive. The `◯` remainder
 the web-attested set only: first-release years, latest version numbers, docs-site URLs.
 Licenses confirmed from each `LICENSE`: Effect TS **MIT**, Quill **Apache-2.0**, doobie
 **MIT**, skunk **MIT**, Slick **BSD-2-Clause**, Ecto **Apache-2.0**.
+
+### Batch 2 (wave 2 — Haskell typed cluster, 2026-07-12)
+
+Five pages grounded at authoring time against the pinned checkouts: [hasql](./hasql.md),
+[squeal](./squeal.md), [opaleye](./opaleye.md), [beam](./beam.md),
+[persistent-esqueleto](./persistent-esqueleto.md). **Zero substantive page discrepancies.**
+Several brief-vs-tree facts were caught during authoring and stated correctly in the pages
+(none reached a published claim):
+
+- **hasql** — the pinned tree is the **1.10** major revision: the runner is
+  `Connection.use :: … IO (Either SessionError a)` (not `Session.run`), prepared/unprepared
+  is a constructor choice (not a boolean flag), and `Exception` instances were removed in
+  1.10 (errors are fully value-typed). Pooling / transactions / TH-checking live in the
+  satellite packages `hasql-pool` / `hasql-transaction` / `hasql-th` (a core absence).
+- **squeal** — builds directly on `postgresql-libpq` + `postgresql-binary`, **not** on
+  `hasql` (`hasql` is named only as design inspiration in the release notes). Errors are
+  thrown `SquealException`s, not a typed channel.
+- **opaleye** — injection safety is **escaped-literal rendering** (postgresql-simple's
+  parameterless `queryWith_`/`execute_` + `quote`/`escape`), not out-of-band bind
+  parameters — stated precisely rather than assimilated to the generic binding story.
+- **beam** — MIT; higher-kinded-data schema; "does not do connection or transaction
+  management" (verbatim); plain-`IO` backend interpreters; no Template Haskell.
+- **persistent + esqueleto** — **license correction**: persistent is **MIT** but esqueleto
+  is **BSD-3-Clause** (the brief said "MIT for both"); pages state both correctly. persistent
+  owns entities + migrations + `Key` identity but has **no** change tracking / unit of work /
+  lazy loading, and no savepoints in core (`transactionSave` = commit+begin).
+
+The `◯` remainder per page is the web-attested set only (first-release years, latest
+version numbers on a `--depth 1` clone).
