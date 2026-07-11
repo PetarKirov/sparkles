@@ -132,8 +132,10 @@ palette)` concretizer and a `byStyledLine` per-line adapter are recorded seams.
 - **No semantic tier.** The [LSP semantic-tokens][lsp-st] overlay fold is future work;
   the event stream's composition law (fast base paints, refinement overlays, failure
   invisible) already matches it.
-- **Not a terminal-capability framework.** Color-depth detection stays package-local
-  until a second consumer appears; `core-cli`'s `TermCaps` is unchanged.
+- **Not a terminal-capability framework.** The pure color-tier classifier lives in
+  `sparkles.base.term_color` (shared by `syntax` and `core-cli`); `core-cli`'s
+  `TermCaps` now carries the resolved `colorDepth`. Higher-level detection cascades
+  stay out of scope.
 
 ## 5. Prior-art map
 

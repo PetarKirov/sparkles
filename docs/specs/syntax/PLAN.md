@@ -47,9 +47,10 @@ types) and `libs/tree-sitter` (`sparkles:tree-sitter`, `sourceLibrary`).
   (exact, binary search) and `resolve` (longest-dot-prefix), `fromNames` for custom
   vocabularies.
 - `color.d`: `RgbColor`, `Color` sum type (`unset`/`default_`/`palette`/`rgb`),
-  `parseHexColor` (incl. `#RRGGBBAA` alpha conventions), `ColorDepth`,
-  `ansi256FromRgb` (6×6×6 cube + gray ramp), `ansi16FromRgb`, pure
-  `classifyColorDepth(colorterm, term)` + env-reading `detectColorDepth()`.
+  `parseHexColor` (incl. `#RRGGBBAA` alpha conventions), `ansi256FromRgb` (6×6×6
+  cube + gray ramp), `ansi16FromRgb`; `ColorDepth` + pure
+  `classifyColorDepth(colorterm, term)` now live in `sparkles.base.term_color`
+  (re-exported here), with the env-reading `detectColorDepth()` wrapper kept local.
 - Tests: `@ctfe` proof that `standardLabels` is sorted/unique and resolution works at
   compile time; `@nogc` proofs for the stream fold; golden corners for the color folds;
   `parseHexColor` accept/reject.
@@ -159,7 +160,11 @@ engine, own spec addendum + Oniguruma binding), locals, CSS-variable multi-theme
 theme-file parsing (TOML/JSON — `Theme` is plain data; only a parser is missing),
 Linguist-style detection cascade, SDLang (no tree-sitter grammar), Windows
 `LoadLibrary`, incremental/editor machinery, LSP semantic-token overlay, hast-structured
-output, `TermCaps.colorDepth` promotion to `core-cli`.
+output.
+
+The `TermCaps.colorDepth` promotion is **done**: the pure classifier moved to
+`sparkles.base.term_color` and `core-cli`'s `detectTermCaps` now resolves a
+`colorDepth` tier (syntax is the second consumer that earned the shared home).
 
 **Recorded accommodation (Vulkan/GPU backend):** `byStyledSpan`, `StyledSpan`, and
 `ResolvedTheme` are public API and tested as the third-backend contract; `FontStyle`
