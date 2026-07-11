@@ -152,6 +152,13 @@
             # packages here with LIBRARY_PATH/LD_LIBRARY_PATH exports below.
             pkgs.elfutils
             pkgs.libpfm
+
+            # Sanitizers research probes (docs/research/sanitizers/examples):
+            # the valgrind-*.d probes exec `valgrind` from PATH (never link it)
+            # and print a SKIP line when it is absent, so the tool is a
+            # devshell-only package — the `nix run .#ci` wrapper deliberately
+            # omits it to keep the .#ci closure small.
+            pkgs.valgrind
           ]
           ++ lib.optional greeting pkgs.figlet
           ++ d-toolchain.packages;
