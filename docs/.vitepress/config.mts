@@ -14,6 +14,7 @@ export default withMermaid(
     // the VitePress site doesn't serve repo source.
     ignoreDeadLinks: [
       /\.d$/,
+      /\.sdl$/,
       /\/sample\//,
       /\/sample$/,
       /\/example\//,
@@ -30,6 +31,7 @@ export default withMermaid(
       '**/research/parsing/grounding/**',
       '**/research/units-of-measure/grounding/**',
       '**/research/cpu-pmu/grounding/**',
+      '**/research/sanitizers/grounding/**',
       '**/research/iroh/prompt.md',
     ],
 
@@ -1216,6 +1218,79 @@ export default withMermaid(
                     {
                       text: 'Backend Proposal',
                       link: '/research/cpu-pmu/backend-proposal',
+                    },
+                  ],
+                },
+              ],
+            },
+            {
+              text: 'Sanitizers',
+              link: '/research/sanitizers/',
+              collapsed: true,
+              items: [
+                {
+                  text: 'Concepts',
+                  link: '/research/sanitizers/concepts',
+                },
+                {
+                  text: 'The LLVM Stack',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'AddressSanitizer (+ LSan)',
+                      link: '/research/sanitizers/asan',
+                    },
+                    {
+                      text: 'ThreadSanitizer',
+                      link: '/research/sanitizers/tsan',
+                    },
+                    {
+                      text: 'UBSan (the D absence)',
+                      link: '/research/sanitizers/ubsan',
+                    },
+                  ],
+                },
+                {
+                  text: 'The D Toolchain',
+                  link: '/research/sanitizers/d-toolchain',
+                },
+                {
+                  text: 'The Valgrind Family',
+                  link: '/research/sanitizers/valgrind',
+                },
+                {
+                  text: 'The Field',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Runner Integrations',
+                      link: '/research/sanitizers/runner-integrations',
+                    },
+                    {
+                      text: 'macOS & Windows',
+                      link: '/research/sanitizers/macos-windows',
+                    },
+                    {
+                      text: 'Hardware-Assisted & Sampling',
+                      link: '/research/sanitizers/hardware-assisted',
+                    },
+                  ],
+                },
+                {
+                  text: 'Synthesis',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Capability Comparison',
+                      link: '/research/sanitizers/comparison',
+                    },
+                    {
+                      text: 'sparkles Baseline',
+                      link: '/research/sanitizers/sparkles-baseline',
+                    },
+                    {
+                      text: 'Integration Proposal',
+                      link: '/research/sanitizers/integration-proposal',
                     },
                   ],
                 },
