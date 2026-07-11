@@ -170,8 +170,6 @@ version (linux)
             absences ~= CapabilityAbsence(Capability.ipSampling,
                 "overflow/IP sampling lands in B6");
             absences ~= CapabilityAbsence(Capability.preciseMemory, preciseMemoryAbsence());
-            absences ~= CapabilityAbsence(Capability.eventNaming,
-                "event-name tables (libpfm4) land in B2");
             return CapabilityReport(present, absences);
         }
 

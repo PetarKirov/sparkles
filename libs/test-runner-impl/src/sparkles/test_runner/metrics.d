@@ -19,7 +19,7 @@
 module sparkles.test_runner.metrics;
 
 import sparkles.test_runner.bench : BenchStats, Metric, Unit;
-import sparkles.test_runner.raw : RawEvent, parseRawEvent, RawStats;
+import sparkles.test_runner.raw : RawEvent, parseRawEvent, rawHeader, RawStats;
 import sparkles.test_runner.perf : branchMissPercent, cacheMissPercent, ipc,
     PerfStats;
 import sparkles.test_runner.syscalls : SyscallStats;
@@ -223,10 +223,37 @@ MetricCell[] rawCells(in RawStats s) @safe pure nothrow
     MetricCell[] cells;
     cells.reserve(s.selectors.length);
     foreach (i, sel; s.selectors)
-        cells ~= MetricCell("raw:" ~ sel, sel, s.values[i],
+        cells ~= MetricCell(sel, rawHeader(sel), s.values[i],
             MetricFormat.count, MetricClass.diagnostic,
             estimated && !s.values[i].isNaN);
     return cells;
+}
+
+/// The event names a `--metrics` filter requests through `pfm:<name>`
+/// selectors — resolved to raw events through libpfm when available.
+string[] pfmSelectorNames(string metricFilter) @safe
+{
+    import std.algorithm.iteration : splitter;
+    import std.algorithm.searching : startsWith;
+
+    enum prefix = "pfm:";
+    string[] names;
+    if (metricFilter == "all" || !metricFilter.length)
+        return names;
+    foreach (p; metricFilter.splitter(','))
+        if (p.startsWith(prefix) && p.length > prefix.length)
+            names ~= p[prefix.length .. $];
+    return names;
+}
+
+@("metrics.pfmSelectorNames")
+@safe
+unittest
+{
+    assert(pfmSelectorNames("pfm:RETIRED_INSTRUCTIONS,ipc,pfm:X:u")
+        == ["RETIRED_INSTRUCTIONS", "X:u"]);
+    assert(pfmSelectorNames("all") == []);
+    assert(pfmSelectorNames("") == []);
 }
 
 /// The raw events a `--metrics` filter requests through `raw:r<hex>`
@@ -257,8 +284,8 @@ unittest
 {
     const events = rawSelectorEvents("raw:r04c2,ipc,raw:r00c0");
     assert(events.length == 2);
-    assert(events[0].selector == "r04c2" && events[0].config == 0x04c2);
-    assert(events[1].selector == "r00c0" && events[1].config == 0xc0);
+    assert(events[0].id == "raw:r04c2" && events[0].config == 0x04c2);
+    assert(events[1].id == "raw:r00c0" && events[1].config == 0xc0);
     assert(rawSelectorEvents("raw:bogus,ipc") == [], "malformed selectors skip");
     assert(rawSelectorEvents("all") == []);
     assert(rawSelectorEvents("") == []);
@@ -286,7 +313,8 @@ private bool isBuiltinMetricName(string name) @safe pure nothrow @nogc
         if (info.name == name)
             return true;
     return name == "syscalls" || name.startsWith("syscalls:")
-        || name.startsWith("sc:") || name.startsWith("raw:");
+        || name.startsWith("sc:") || name.startsWith("raw:")
+        || name.startsWith("pfm:");
 }
 
 /// The column name a client `Metric` mints: `<unit>/s` for rates, the unit
@@ -609,13 +637,15 @@ MetricDescriptor[] catalog(in BenchStats[] rows) @safe pure nothrow
                 if (!result.any!(d => d.name == c.name))
                     result ~= MetricDescriptor(c.name, c.header, c.format, c.cls,
                         "syscall", true, true);
-    // raw columns are dynamic too (selectors from --metrics=raw:…).
+    // raw columns are dynamic too (selectors from --metrics=raw:…/pfm:…); the
+    // id's prefix names the source ("raw" or "pfm").
     foreach (ref row; rows)
         if (!row.raw.isNull)
             foreach (ref c; rawCells(row.raw.get))
                 if (!result.any!(d => d.name == c.name))
                     result ~= MetricDescriptor(c.name, c.header, c.format, c.cls,
-                        "raw", true, true);
+                        c.name.length > 4 && c.name[0 .. 4] == "pfm:" ? "pfm" : "raw",
+                        true, true);
     return result;
 }
 

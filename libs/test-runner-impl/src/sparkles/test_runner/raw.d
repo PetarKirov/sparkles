@@ -22,17 +22,33 @@ import sparkles.test_runner.capability : Capability, CapabilityAbsence,
     CapabilityReport, has, hasNamedColumns, hasSnapshot, isCounterBackend,
     reasonFor;
 
-/// One raw event request: the selector as the user wrote it (the column id
-/// rides it) plus the decoded `perf_event_attr` payload.
+/// One raw event request: the full column id (the selector as the user wrote
+/// it, prefix included — `raw:r04c2`, `pfm:RETIRED_INSTRUCTIONS`) plus the
+/// decoded `perf_event_attr` payload. `type` defaults to `PERF_TYPE_RAW` (4);
+/// a name-resolved event may carry another type and privilege filters.
 struct RawEvent
 {
-    string selector; /// e.g. "r04c2" (the `raw:` prefix stripped)
-    ulong config;    /// the raw config value (`0x04c2`)
+    string id;          /// column id, e.g. "raw:r04c2"
+    ulong config;       /// the attr config value (`0x04c2`)
+    uint type = 4;      /// perf_type_id (PERF_TYPE_RAW unless resolved otherwise)
+    bool excludeUser;   /// from a resolved `:k` modifier
+    bool excludeKernel; /// from a resolved `:u` modifier
+}
+
+/// The short display header of a raw column: the id past its source prefix
+/// (`raw:r04c2` → `r04c2`).
+string rawHeader(string id) @safe pure nothrow @nogc
+{
+    foreach (i, c; id)
+        if (c == ':')
+            return id[i + 1 .. $];
+    return id;
 }
 
 /// Parses one `r<hex>` selector (the `perf` tool's raw-event notation, the
-/// `raw:` prefix already stripped). Returns false on anything malformed.
-bool parseRawEvent(string selector, out RawEvent ev) @safe pure nothrow @nogc
+/// `raw:` prefix already stripped); the produced id carries the prefix back.
+/// Returns false on anything malformed.
+bool parseRawEvent(string selector, out RawEvent ev) @safe pure nothrow
 {
     if (selector.length < 2 || selector.length > 17 || selector[0] != 'r')
         return false;
@@ -50,22 +66,25 @@ bool parseRawEvent(string selector, out RawEvent ev) @safe pure nothrow @nogc
             return false;
         config = (config << 4) | digit;
     }
-    ev = RawEvent(selector, config);
+    ev = RawEvent("raw:" ~ selector, config);
     return true;
 }
 
 @("raw.parseRawEvent.fixtures")
-@safe pure nothrow @nogc
+@safe pure nothrow
 unittest
 {
     RawEvent ev;
-    assert(parseRawEvent("r04c2", ev) && ev.config == 0x04c2 && ev.selector == "r04c2");
+    assert(parseRawEvent("r04c2", ev) && ev.config == 0x04c2 && ev.id == "raw:r04c2");
+    assert(ev.type == 4 && !ev.excludeUser && !ev.excludeKernel);
     assert(parseRawEvent("r00C0", ev) && ev.config == 0xc0);
     assert(parseRawEvent("r0", ev) && ev.config == 0);
     assert(!parseRawEvent("04c2", ev), "missing the r prefix");
     assert(!parseRawEvent("r", ev), "no digits");
     assert(!parseRawEvent("rxyz", ev), "not hex");
     assert(!parseRawEvent("r00000000000000000", ev), "wider than 64 bits");
+    assert(rawHeader("raw:r04c2") == "r04c2");
+    assert(rawHeader("pfm:RETIRED_INSTRUCTIONS") == "RETIRED_INSTRUCTIONS");
 }
 
 /// Per-iteration counts of one raw counting pass: `values[i]` belongs to
@@ -143,7 +162,7 @@ version (linux)
                 return g;
             if (!events.length)
             {
-                const fd = openRaw(0, -1);
+                const fd = openRaw(RawEvent("raw:probe", 0), -1);
                 g.probeOk = fd >= 0;
                 if (fd >= 0)
                     (() @trusted => posixClose(fd))();
@@ -157,8 +176,8 @@ version (linux)
             int leader = -1;
             foreach (i, ref ev; events)
             {
-                sels[i] = ev.selector;
-                const fd = openRaw(ev.config, leader);
+                sels[i] = ev.id;
+                const fd = openRaw(ev, leader);
                 g.fds[i] = fd;
                 if (fd >= 0)
                 {
@@ -174,13 +193,15 @@ version (linux)
         }
 
         /// Opens one raw event; `leader` is `-1` for the group leader.
-        private static int openRaw(ulong config, int leader) @safe
+        private static int openRaw(in RawEvent ev, int leader) @safe
         {
             perf_event_attr attr;
             attr.size = perf_event_attr.sizeof;
-            attr.type = perf_type_id.PERF_TYPE_RAW;
-            attr.config = config;
+            attr.type = ev.type;
+            attr.config = ev.config;
             attr.disabled = leader < 0;
+            attr.exclude_user = ev.excludeUser;
+            attr.exclude_kernel = ev.excludeKernel;
             attr.exclude_hv = 1;
             if (leader < 0)
                 with (perf_event_read_format)
@@ -279,7 +300,7 @@ version (linux)
                 sink += i * i;
         }, () {}, 5);
         assert(s.iters == 5);
-        assert(s.selectors == [selector]);
+        assert(s.selectors == ["raw:" ~ selector]);
         version (X86_64)
         {
             import std.math : isNaN;

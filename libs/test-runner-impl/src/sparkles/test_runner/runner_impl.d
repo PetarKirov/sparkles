@@ -620,8 +620,9 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     import std.algorithm.searching : canFind;
     import std.array : array;
     import std.stdio : stderr, stdout;
-    import sparkles.test_runner.metrics : perfFamily, rawSelectorEvents,
-        selectsSource, syscallFamily, syscallSelectorNames, tier0Family;
+    import sparkles.test_runner.metrics : perfFamily, pfmSelectorNames,
+        rawSelectorEvents, selectsSource, syscallFamily, syscallSelectorNames,
+        tier0Family;
 
     // Which counting passes to open: --perf OR a --metrics perf metric (so
     // `--metrics=ipc`/`=all` populate the perf columns, mirroring tier0); a
@@ -639,7 +640,26 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     foreach (n; metricSyscalls)
         if (!syscallNames.canFind(n))
             syscallNames ~= n;
-    const rawEvents = rawSelectorEvents(options.metrics);
+    auto rawEvents = rawSelectorEvents(options.metrics);
+    // pfm:<name> selectors resolve to raw events through libpfm (soft
+    // dependency); a failed resolution warns and drops the column — like an
+    // unknown selector, never a run failure.
+    if (const pfmNames = pfmSelectorNames(options.metrics))
+    {
+        import sparkles.test_runner.event_naming : PfmResolver;
+        import sparkles.test_runner.raw : RawEvent;
+
+        auto resolver = PfmResolver.tryLoad();
+        foreach (name; pfmNames)
+        {
+            RawEvent ev;
+            string err;
+            if (resolver.resolve(name, ev, err))
+                rawEvents ~= ev;
+            else
+                stderr.writeln("--metrics: pfm:", name, " — ", err);
+        }
+    }
     const wantRaw = rawEvents.length > 0;
     auto counters = CounterGroups.open(wantPerf, wantTier0, wantSyscalls, syscallNames,
         wantRaw, rawEvents, options.perfScaled);
@@ -806,7 +826,11 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         foreach (n; syscallNames)
             knownColumns ~= "syscalls:" ~ n;
         foreach (ref ev; rawEvents)
-            knownColumns ~= "raw:" ~ ev.selector;
+            knownColumns ~= ev.id;
+        // A pfm name that failed resolution already warned; keep it out of the
+        // unknown-selector list so it is not flagged twice.
+        foreach (n; pfmSelectorNames(options.metrics))
+            knownColumns ~= "pfm:" ~ n;
     }
 
     // Warn on selectors that match nothing (mirrors --group-by/--sort-by), so a
