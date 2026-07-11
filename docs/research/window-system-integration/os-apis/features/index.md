@@ -19,7 +19,7 @@ the [feature matrix](../feature-matrix.md); items needing a human run are queued
 | [F06](./f06-keyboard.md)        | Keyboard & keymap                  | Who owns `xkb` state; client-side repeat          |
 | [F07](./f07-text-input.md)      | IME / text input                   | Pre-edit/commit choreography; TSF vs IMM32 vs XIM |
 | [F08](./f08-dpi-scaling.md)     | DPI / runtime rescale              | Logical vs physical; X11's missing mechanism      |
-| [F09](./f09-outputs.md)         | Output enumeration & hotplug       | Surface↔output knowledge; hotplug order          |
+| [F09](./f09-outputs.md)         | Output enumeration & hotplug       | Surface↔output knowledge; hotplug order           |
 | [F10](./f10-pointer-capture.md) | Pointer: relative + lock + confine | Async-failable lock; macOS's missing confine      |
 | [F11](./f11-scroll.md)          | Scroll fidelity                    | `axis_v120` / sub-120 deltas / momentum phases    |
 | [F12](./f12-cursors.md)         | Cursors                            | Client-composited cursors on Wayland              |

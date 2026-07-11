@@ -27,11 +27,11 @@ and the phase machinery; a real trackpad fling's exact choreography is Tier C
 | Measurement                           | Value                                                                                         |
 | ------------------------------------- | --------------------------------------------------------------------------------------------- |
 | Line-unit notch at the CG layer       | 1 notch → `DeltaAxis1=1`, `FixedPtDeltaAxis1=1.000`, `PointDeltaAxis1=10`, `IsContinuous=0`   |
-| The line↔pixel ratio CG bakes in     | **1 line = 10 px** (`point1 = 10 × lines`, both unit modes)                                   |
+| The line↔pixel ratio CG bakes in      | **1 line = 10 px** (`point1 = 10 × lines`, both unit modes)                                   |
 | Line-unit event at the NSEvent layer  | `precise=0`, **`scrollingDeltaY == deltaY == 1.0`** (line units, _not_ ×10)                   |
 | Pixel-unit event at the NSEvent layer | `precise=1`, `scrollingDeltaY = px` (10 → 10.00), `deltaY = px/10` (10 → 1.000)               |
 | Smallest representable step           | fractional via 16.16 `FixedPtDeltaAxis1` (0.4 → `sdy=0.40`, `legacy_dy=0.400`)                |
-| Device-class signal                   | `kCGScrollWheelEventIsContinuous` ↔ `hasPreciseScrollingDeltas`, 1:1 both ways               |
+| Device-class signal                   | `kCGScrollWheelEventIsContinuous` ↔ `hasPreciseScrollingDeltas`, 1:1 both ways                |
 | CG phase → `NSEventPhase`             | re-encoded, not passed through: `1→0x1, 2→0x4, 4→0x8, 8→0x10` (began/changed/ended/cancelled) |
 | CG momentum → `momentumPhase`         | `1→0x1(began), 2→0x4(changed), 3→0x8(ended)` — sequential in, bitmask out                     |
 | `sendEvent:` vs momentum events       | **dropped** (`momentumPhase≠0` never reached the view; direct call fallback used)             |

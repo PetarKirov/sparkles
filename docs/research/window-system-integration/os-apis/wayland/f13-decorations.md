@@ -33,7 +33,7 @@ the rest:
 | Answer to `set_mode(client_side)`       | —                            | first (pre-map) configure still says `server_side`; `client_side` arrives with the post-map configure                                          |
 | Runtime `set_mode(client_side)` mid-run | —                            | floating: honored (`mode=csd` + the configured size grows to absorb the frame); tiled: **silently ignored** (no `decoration.configure` at all) |
 | Runtime `unset_mode`                    | —                            | back to `server_side` at the next configure                                                                                                    |
-| `swaymsg border none/normal` poke       | —                            | geometry-only re-configures (1276×693 ↔ 1280×720); the decoration _mode_ never changes                                                        |
+| `swaymsg border none/normal` poke       | —                            | geometry-only re-configures (1276×693 ↔ 1280×720); the decoration _mode_ never changes                                                         |
 | Resulting demo path                     | hand-rolled CSD              | SSD, unless forced/floating-switched to CSD                                                                                                    |
 
 So the two ways a client ends up owning the frame are both real: weston omits
