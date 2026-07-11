@@ -60,6 +60,11 @@ Web is fallback-only. This tree is internal QA evidence — excluded from the Vi
 | ocaml-angstrom          | [ocaml-angstrom.md](./ocaml-angstrom.md)                   | full | 0   | httpaf/RWO       | ✅ B7  |
 | fsharp-fparsec          | [fsharp-fparsec.md](./fsharp-fparsec.md)                   | full | 0   | reputation       | ✅ B7  |
 | d-landscape             | [d-landscape.md](./d-landscape.md)                         | full | 0   | dub scores       | ✅ B8  |
+| syntect                 | [syntect.md](./syntect.md)                                 | full | 0   | 5.3.0 docs.rs    | ✅ B9  |
+| bat                     | [bat.md](./bat.md)                                         | full | 0   | v0.1.0 date      | ✅ B9  |
+| tree-sitter-highlight   | [tree-sitter-highlight.md](./tree-sitter-highlight.md)     | full | 0   | crate/GH dates   | ✅ B9  |
+| shiki                   | [shiki.md](./shiki.md)                                     | full | 0   | release history  | ✅ B9  |
+| syntax-highlighting     | [syntax-highlighting.md](./syntax-highlighting.md)         | full | 0   | milestone dates  | ✅ B9  |
 
 ## Master discrepancy register
 
@@ -211,9 +216,27 @@ brief-mention uncloned projects (ctpg, d_tree_sitter, httparsed) — all flagged
 asserted as tree facts. The `docs/specs/parsing/` proposal is design, not a research claim, so
 it carries no ledger; its prior-art links resolve to real survey pages.
 
-## Status: all 37 pages grounded (8 batches). 44 discrepancies (R8–R51, all from B1–B5);
+### Batch 9 (wave 4 — syntax highlighting, 2026-07-11)
 
-wave-2 B6 + B7 + wave-3 B8 added
+**Zero discrepancies.** The five new pages ([`syntect`](./syntect.md), [`bat`](./bat.md),
+[`tree-sitter-highlight`](./tree-sitter-highlight.md), [`shiki`](./shiki.md),
+[`syntax-highlighting`](./syntax-highlighting.md)) were **grounded at authoring time**: every
+material blockquote was grep-verified verbatim at the pinned wave-4 checkouts (recorded in
+[`_sources.md`](./_sources.md), incl. the new `$REPOS/rust/syntect` clone and the dual
+tree-sitter pins) _before_ the prose was written, and the built-site anchors were checked
+against dist HTML ids. Two brief-level corrections were caught during authoring and never
+reached the pages (bat's compression-constant comment wording; `@shikijs/primitive`'s
+self-description) — both noted in their ledgers. Web-attested only: the ten historical dates
+(all with primary sources in the [`syntax-highlighting` ledger](./syntax-highlighting.md),
+incl. the npm `shiki@0.0.1` squatted-package trap and the GitHub-adoption bound at Wayback
+2020-02-23 — no GitHub-authored announcement exists), release-history facts, and
+adoption/ecosystem context. The wave-4 edits to `tree-sitter.md`, `comparison.md`, and
+`index.md` are cross-links/rows re-stating ledgered claims — no new ledger deltas beyond the
+milestone dates covered above.
+
+## Status: all 42 pages grounded (9 batches). 44 discrepancies (R8–R51, all from B1–B5);
+
+wave-2 B6 + B7 + wave-3 B8 + wave-4 B9 added
 
 0 substantive. All minor — quote-precision, citation-locator, version/attribution. No fabricated _facts_
 beyond R8/R23 quote-padding and R26/R39/R45–R47 quote-sourcing. Proceed to Phase 3 (apply fixes).

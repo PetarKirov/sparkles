@@ -78,6 +78,34 @@ Wave 3 — D landscape (added 2026-07-03). All under `$REPOS/dlang/`:
 | sdc           | `$REPOS/dlang/sdc`                       | `611d70ad`   | 2026-03-16 |
 | phobos        | `$REPOS/dlang/phobos`                    | `6be6c3809`  | 2026-06-29 |
 
+Wave 4 — syntax highlighting (added 2026-07-11):
+
+| Repo               | Path                      | Pinned SHA | As of      |
+| ------------------ | ------------------------- | ---------- | ---------- |
+| syntect            | `$REPOS/rust/syntect`     | `4aa7803`  | 2026-04-28 |
+| bat                | `$REPOS/rust/bat`         | `78951393` | 2026-07-01 |
+| tree-sitter (0.27) | `$REPOS/rust/tree-sitter` | `ee0847d6` | 2026-07-11 |
+| shiki              | `$REPOS/typescript/shiki` | `fdff6e23` | 2026-07-03 |
+
+Wave-4 grounding notes: **two tree-sitter pins coexist** — wave 1 pinned
+`$REPOS/parsing/tree-sitter` at `cbee4672` (0.26.x) for `tree-sitter.md`, and that pin
+stays; `tree-sitter-highlight.md` grounds against the separate `$REPOS/rust/tree-sitter`
+checkout (workspace `0.27.0`). Do not "fix" the older pin when re-reviewing. The shiki
+pin `fdff6e23` equals the `v4.3.1` tag exactly; the syntect pin is 119 commits past
+`v5.3.0` (tagged 2025-09-27) and the bat pin is 363 commits past `v0.26.1` — both pages
+state the release-vs-HEAD gap where material (e.g. syntect's HEAD-only `ParseLineOutput`).
+Quote-grounding files: syntect `Readme.md` + `src/{parsing,highlighting}/` +
+`src/{easy,dumps,html}.rs`; bat `README.md` + `doc/assets.md` +
+`src/{controller,printer,terminal,assets*,syntax_mapping}.rs` + `Cargo.toml`; tree-sitter
+`crates/highlight/{src,README.md,include}` + `crates/cli/src/highlight.rs` +
+`crates/loader/src/loader.rs` + `docs/src/3-syntax-highlighting.md`; shiki
+`packages/{primitive,core,engine-javascript,engine-oniguruma,types}/src` + `docs/guide/` +
+`docs/references/engine-js-compat.md` + `LICENSE` + `pnpm-workspace.yaml`. Milestone
+dates in `index.md`/`syntax-highlighting.md` are web-attested (🌐) against primary
+sources recorded in `syntax-highlighting.md`'s ledger (macromates blog, sublimetext.com
+release notes, crates.io/npm registry APIs, GitHub releases, Wayback snapshot of the
+tree-sitter docs for the GitHub-adoption bound).
+
 Wave-3 grounding notes: `std.experimental.lexer` was **removed from Phobos**; the canonical
 copy is vendored inside libdparse at `src/std/experimental/lexer.d`. `mir-algorithm` ships
 only the `mir.serde`/`mir.parse` framework + `JsonAlgebraic` — the actual SIMD parsers are
