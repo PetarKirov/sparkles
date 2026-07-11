@@ -17,6 +17,46 @@ configuration "library" {
     targetType "library"
 }
 
+// ── Codegen-parity matrix (bench validation) ─────────────────────────────
+// Variants of the `library` config that scope inlining to `sparkles:wired`
+// alone — never via a build type, which would propagate to mir-ion and cull
+// its template-nested function (see the bench `dub.sdl`). Select per bench
+// run with `--override-config sparkles:wired/library-<x>`; used to quantify
+// each flag against the pre-rebase executable baseline (B0). Measured on the
+// runner's `-unittest` bench build (twitter parse, retired instructions/byte,
+// the deterministic anchor):
+//
+//   library            (stock)                       9.60 ins/B  — the default
+//   library-singleobj  -singleobj                    9.60 ins/B  — a NO-OP here
+//   library-inline     -enable-cross-module-inlining 8.12 ins/B  — B0 PARITY
+//                      + -linkonce-templates
+//
+// `library` (above) is the stock, flag-free default, so ordinary consumers of
+// `sparkles:wired` are unaffected.
+//
+// `-singleobj` is inert because dub already passes all of wired's modules to
+// one ldc2 invocation; LDC still declines to inline `pragma(inline, true)`
+// seams (`skipWs`, `scanStringBody`, the number/float kernels) across module
+// boundaries without the cross-module-inlining pass.
+configuration "library-singleobj" {
+    targetType "library"
+    dflags "-singleobj" platform="ldc"
+}
+
+// The parity config. `-enable-cross-module-inlining` alone FAILS TO LINK under
+// the runner's `-unittest`+`-checkaction=context` bench build: CMI inlines
+// context-assert bodies whose `_d_assert_fail!(T)` instances then go unemitted
+// (`undefined reference` at link). `-linkonce-templates` emits those template
+// instances into every referencing object, resolving the link — and recovers
+// the pre-rebase executable's exact codegen (ins/B parity to ±0.06% on every
+// corpus). The old `-b bench` executable dodged this because it was `-release`
+// with no context asserts; the runner requires `-unittest`, so the two flags
+// are needed together. Scoped to wired only — mir-ion never sees CMI.
+configuration "library-inline" {
+    targetType "library"
+    dflags "-enable-cross-module-inlining" "-linkonce-templates" platform="ldc"
+}
+
 configuration "unittest" {
     dependency "sparkles:test-runner" path="../.."
 

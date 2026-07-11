@@ -10,6 +10,14 @@ targetPath "build"
 dflags "-preview=in" "-preview=dip1000"
 
 dependency "sparkles:wired" path="../../../.."
+// Build wired with cross-module inlining scoped to that package (its scan→
+// reader seams inline into the hot loop) — this reproduces the pre-rebase
+// executable baseline's codegen exactly (retired ins/byte parity). Scoped
+// here, not via the `bench` build type, so mir-ion never sees CMI (which would
+// cull its template-nested function). The codegen-parity matrix lives in
+// `libs/wired/dub.sdl`; override for A/B measurement with e.g.
+// `--override-config sparkles:wired/library` (stock) or `.../library-singleobj`.
+subConfiguration "sparkles:wired" "library-inline"
 // Top-level, not just under `configuration "unittest"`: runner.d imports
 // sparkles.test_runner.* at module scope (and the non-template `bytes()` returns
 // its `Metric`), so it's an unconditional dependency of the package — declaring
