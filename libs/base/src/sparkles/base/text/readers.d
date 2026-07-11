@@ -119,6 +119,32 @@ const(char)[] readUntil(return ref scope const(char)[] s, scope const(char)[] de
     return head;
 }
 
+/// `true` iff `c` is an ASCII hex digit (`0-9`, `a-f`, `A-F`).
+bool isHexDigit(char c)
+    => (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+
+/// The value `0 … 15` of a hex digit `c` (case-insensitive). `c` must satisfy
+/// $(LREF isHexDigit).
+ubyte hexNibble(char c)
+in (isHexDigit(c))
+    => c <= '9' ? cast(ubyte)(c - '0') : cast(ubyte)((c | 0x20) - 'a' + 10);
+
+///
+@("text.readers.hexDigit")
+@betterC
+unittest
+{
+    assert(isHexDigit('0') && isHexDigit('9'));
+    assert(isHexDigit('a') && isHexDigit('f'));
+    assert(isHexDigit('A') && isHexDigit('F'));
+    assert(!isHexDigit('g') && !isHexDigit('/') && !isHexDigit(' '));
+
+    assert(hexNibble('0') == 0);
+    assert(hexNibble('9') == 9);
+    assert(hexNibble('a') == 10 && hexNibble('A') == 10);
+    assert(hexNibble('f') == 15 && hexNibble('F') == 15);
+}
+
 /// The enum's member names joined as `"a, b, c"`, computed at compile time —
 /// the body of the `"expected one of: …"` detail $(LREF readEnumString) attaches
 /// to an `unknownValue` error.

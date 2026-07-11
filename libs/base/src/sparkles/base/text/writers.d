@@ -1280,6 +1280,37 @@ private void writeFractionDigits(uint radix = 10, Writer)(
 private char hexDigit(uint d) @safe pure nothrow @nogc
     => cast(char)(d < 10 ? '0' + d : 'a' + (d - 10));
 
+/// Writes `b` as exactly two lower-case hex digits (`0x0f` ⇒ `"0f"`), the
+/// zero-padded form CSS/HTML color channels use.
+void writeHexByte(Writer)(ref Writer w, ubyte b)
+{
+    import std.range.primitives : put;
+
+    put(w, hexDigit(b >> 4));
+    put(w, hexDigit(b & 0xf));
+}
+
+///
+@("writeHexByte.basic")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    SmallBuffer!(char, 8) buf;
+    void check(ubyte b, string expected)
+    {
+        buf.clear();
+        writeHexByte(buf, b);
+        assert(buf[] == expected);
+    }
+
+    check(0x00, "00");
+    check(0x0f, "0f");
+    check(0xa6, "a6");
+    check(0xff, "ff");
+}
+
 @("writeFixedPoint.basic")
 @safe pure nothrow @nogc
 unittest
