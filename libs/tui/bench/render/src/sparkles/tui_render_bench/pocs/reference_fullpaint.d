@@ -9,8 +9,8 @@ reachable. It is also a legitimate "no diffing at all" baseline data point.
 +/
 module sparkles.tui_render_bench.pocs.reference_fullpaint;
 
-import sparkles.base.term_control : writeCursorTo;
-import sparkles.tui_render_bench.cell : Cell, CellStyle, Grid, writeStyle;
+import sparkles.tui_render_bench.cell : Grid;
+import sparkles.tui_render_bench.render_util : paintFull;
 import sparkles.tui_render_bench.sink : Sink;
 
 /// Full-repaint renderer. `Name` is the row label under the benchmark.
@@ -35,28 +35,7 @@ struct ReferenceFullpaint
             s.put("\x1b[?7l"); // autowrap off — writing the last cell must not scroll
             _setup = true;
         }
-
-        foreach (y; 0 .. g.rows)
-        {
-            writeCursorTo(s, cast(uint)(y + 1), 1);
-            s.cursorMoves++;
-
-            bool first = true;
-            CellStyle cur;
-            foreach (const ref Cell c; g.row(cast(ushort) y))
-            {
-                if (c.width == 0)
-                    continue; // wide-glyph continuation cell — occupies no bytes
-                if (first || c.style != cur)
-                {
-                    writeStyle(s, c.style);
-                    cur = c.style;
-                    first = false;
-                }
-                s.put(c.grapheme);
-            }
-        }
-        writeStyle(s, CellStyle.init); // park in the default style
+        paintFull(s, g);
     }
 }
 

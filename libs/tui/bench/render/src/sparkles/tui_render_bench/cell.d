@@ -146,6 +146,17 @@ struct Grid
         _cells[0 .. cast(size_t) _cols * _rows] = Cell.init;
     }
 
+    /// Adopt `other`'s dimensions and cell contents (reusing capacity).
+    void copyFrom(in Grid other) @safe nothrow
+    {
+        _cols = other._cols;
+        _rows = other._rows;
+        const n = cast(size_t) _cols * _rows;
+        if (_cells.length < n)
+            _cells.length = n;
+        _cells[0 .. n] = other._cells[0 .. n];
+    }
+
     /// The cell at `(x, y)` (no bounds checking in release).
     ref inout(Cell) at(ushort x, ushort y) inout return scope @safe pure nothrow @nogc
     in (x < _cols && y < _rows)
