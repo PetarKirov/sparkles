@@ -964,7 +964,8 @@ explicit: [mode 2027][mode-2027] is rejected by its author in favor of the
 text-sizing approach
 ("I probably wont support 2027 as I have something better in mind" —
 [kitty#7799][kitty-7799]) — which the [empirical matrix](#16-appendix-empirical-response-matrix)
-shows as kitty's lone `2027 = 0` among the modern rows.
+shows as kitty's `2027 = 0` while ghostty, WezTerm, and iTerm2 each report a
+different non-zero state.
 
 **foot documents the maximal answering surface; ghostty answers more than it
 documents.** foot's man page is the fullest single inventory of query support any
@@ -1457,6 +1458,7 @@ recognized-but-reset distinction is itself a capability signal no database can s
 | tmux-3.6a-attached (bare-pty client) | tmux-256color  | truecolor | 1;2;4                              | 84;0;0     | tmux 3.6a                     | —         | 2    | —    | —    | 2    | —    | —       | —       | —       | —                  | —                  | —         |
 | GNU-Screen-4.00.03 (macOS)           | screen         | —         | 1;2                                | 83;40003;0 | —                             | —         | —    | —    | —    | —    | —    | —       | —       | —       | —                  | —                  | —         |
 | Apple-Terminal (macOS 26.3)          | xterm-256color | truecolor | 1;2                                | 1;95;0     | —                             | —         | —    | —    | —    | —    | —    | —       | —       | —       | rgb:ffff/ffff/ffff | rgb:1e1e/1e1e/1e1e | —         |
+| iTerm2-3.6.10 (macOS)                | xterm-256color | truecolor | 64;1;2;4;6;17;18;21;22;52          | 64;2500;0  | iTerm2 3.6.10                 | 0         | 2    | 2    | 4    | 2    | 2    | 8       | invalid | invalid | rgb:dcaa/dcab/dcaa | rgb:158e/193a/1e75 | OK        |
 | XTerm-403 (Linux)                    | xterm          | —         | 64;1;2;6;9;15;16;17;18;21;22;28;29 | 41;403;0   | XTerm(403)                    | —         | 2    | 0    | 0    | 0    | 0    | 8       | invalid | invalid | rgb:0000/0000/0000 | rgb:ffff/ffff/ffff | —         |
 | Alacritty-0.16.1 (Linux)             | alacritty      | truecolor | 6                                  | 0;2501;1   | —                             | 0         | 2    | 2    | 0    | 0    | 0    | —       | —       | —       | rgb:d8d8/d8d8/d8d8 | rgb:1818/1818/1818 | —         |
 | WezTerm-2025-10-14 (Linux)           | xterm-256color | truecolor | 65;4;6;18;22;52                    | 1;277;0    | WezTerm 0-unstable-2025-10-14 | —         | 2    | 2    | 3    | 0    | 0    | 8/8/8   | 1       | invalid | rgb:b2b2/b2b2/b2b2 | rgb:0000/0000/0000 | OK        |
@@ -1485,9 +1487,22 @@ Collection notes, in row order:
   as 2006-era screen, plus DA2 and OSC 10/11 — and nothing else. Two details are
   load-bearing. First, it now exports `COLORTERM=truecolor`, while supports-color's
   whitelist still grades `Apple_Terminal` at 256-color — hardcoded terminal knowledge
-  rots in _both_ directions. Second, the `DECRQM` silence corroborates Textual's
-  documented reason for skipping the query there entirely (it bleeds a literal `p`
-  into the output on older releases — [linux_driver.py][textual-linux-driver]).
+  rots in _both_ directions. Second, an interactive run captured the query **bleed**
+  directly: the battery left `ppppp+q524742+q5463+q5375Gi=31,…;AAAA` printed at the
+  prompt — five literal `p`s (one per `DECRQM` final byte, exactly the behavior
+  Textual's guard describes — [linux_driver.py][textual-linux-driver]) followed by
+  the `XTGETTCAP` hex payloads and the kitty-graphics APC payload as visible text.
+  This is the [§5](#5-runtime-interrogation) emit-side hazard as first-hand evidence,
+  and the empirical justification for a per-sequence-family risk decision (or an
+  Apple_Terminal skip) in any production query battery.
+- **iTerm2 3.6.10** answers nearly the whole battery: sixel advertised in DA1
+  (`64;1;2;4;…`), the kitty keyboard *and* graphics queries answered, all five modes
+  recognized — with mode 2027 reported as _permanently reset_ (4), the matrix's
+  **fourth** distinct 2027 value. Its `XTGETTCAP` vocabulary mirrors xterm's (`RGB`
+  valid, `Tc`/`Su` invalid). Notable against
+  [§10](#10-hybrid-detectors-crossterm-textual): Textual ignores 2048 replies under
+  iTerm2 as buggy, yet current iTerm2 reports 2048 as recognized — quirk tables age
+  as fast as whitelists.
 - **XTerm 403** is the registry keeper's own row: DA2 carries its patch number in the
   firmware field exactly as its ctlseqs documents (`41;403;0`, 41 = VT420), it answers
   `XTGETTCAP RGB` but rejects `Tc`/`Su` (the xterm-vs-tmux extension-vocabulary split,
@@ -1507,15 +1522,17 @@ Collection notes, in row order:
   ghostty-Linux row byte-for-byte in every capability column, confirming that
   headless collection introduces no capability skew. The two terminals disagree in
   exactly the ways that make interrogation necessary: kitty answers `XTGETTCAP Tc`/`Su` but rejects `RGB` as invalid, while
-  ghostty answers all three; kitty reports mode 2027 as _not recognized_ (0) where
-  ghostty reports it _set by default_ (1) and WezTerm _permanently set_ (3) — three
-  terminals, three different truths for one mode, none knowable from `TERM`.
+  ghostty answers all three; and the 2027 column now holds **four of DECRPM's five
+  possible values** across four modern terminals — kitty _not recognized_ (0),
+  ghostty _set by default_ (1), WezTerm _permanently set_ (3), iTerm2 _permanently
+  reset_ (4) — four different truths for one mode, none knowable from `TERM` (three
+  of the four share `TERM=xterm-*`).
 - **ghostty's two rows are capability-identical across Linux and macOS** (only the
   theme colors differ) — with a query-first terminal the capability profile travels
   with the terminal, not the OS, which is precisely what makes interrogation portable
   where env/database heuristics are not.
 
-Additional rows (zellij, foot, iTerm2, tmux attached to a real emulator, ssh chains)
+Additional rows (zellij, foot, tmux attached to a real emulator, ssh chains)
 paste in directly from `dub run --single query-probe.d -- --markdown` run in the
 terminal of interest.
 
