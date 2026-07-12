@@ -19,14 +19,17 @@ import core.time : Duration, MonoTime;
 
 import sparkles.tree_sitter.errors : TsError, TsErrorCode, TsExpected, tsErr, tsOk;
 import sparkles.tree_sitter.tree_sitter_c :
-    TSLanguage, TSNode, TSParseOptions, TSParseState, TSParser, TSPoint,
+    TSLanguage, TSNode, TSParseOptions, TSParseState, TSParser, TSPoint, TSRange,
     TSInput, TSInputEncoding,
     TSQuery, TSQueryCursor, TSQueryCursorOptions, TSQueryCursorState,
     TSQueryError, TSQueryMatch, TSQueryPredicateStep, TSTree,
     ts_language_abi_version,
-    ts_node_has_error, ts_node_start_byte, ts_node_end_byte, ts_node_string,
+    ts_node_child, ts_node_child_count,
+    ts_node_has_error, ts_node_start_byte, ts_node_end_byte,
+    ts_node_start_point, ts_node_end_point, ts_node_string,
     ts_parser_delete, ts_parser_new, ts_parser_parse,
-    ts_parser_parse_with_options, ts_parser_reset, ts_parser_set_language,
+    ts_parser_parse_with_options, ts_parser_reset,
+    ts_parser_set_included_ranges, ts_parser_set_language,
     ts_query_capture_count, ts_query_capture_name_for_id,
     ts_query_cursor_delete, ts_query_cursor_did_exceed_match_limit,
     ts_query_cursor_exec, ts_query_cursor_exec_with_options,
@@ -202,6 +205,22 @@ struct TsParser
         error = TsError.init;
         return TsTree(rawTree);
     }
+
+    /**
+    Restricts subsequent parses to `ranges` — the byte/point spans an injected
+    layer occupies in the parent buffer (must be ascending and non-overlapping).
+    Returns `false` (and keeps the previous ranges) if tree-sitter rejects them;
+    an empty slice resets to the whole buffer. The parser reads the same source
+    slice as the root — only the included ranges differ per layer.
+    */
+    bool setIncludedRanges(scope const(TSRange)[] ranges) @trusted nothrow @nogc
+    in (valid)
+    {
+        // ImportC drops the C `const` on the pointer param; cast at the boundary
+        // (tree-sitter copies the ranges and never mutates them).
+        return ts_parser_set_included_ranges(_raw, cast(TSRange*) ranges.ptr,
+            cast(uint) ranges.length);
+    }
 }
 
 /// Owning handle over a `TSTree`.
@@ -252,6 +271,38 @@ void writeSExpression(Writer)(ref Writer w, TSNode node) @trusted
         ++n;
     put(w, s[0 .. n]);
 }
+
+// ── Node accessors ──────────────────────────────────────────────────────────
+// `TSNode` is a small POD value type (no ownership), so these are free helpers
+// rather than a wrapper; the engine already reads nodes via raw `ts_node_*`.
+
+/// The node's byte+point extent as a `TSRange` — the shape
+/// $(LREF TsParser.setIncludedRanges) consumes when building an injected layer.
+TSRange nodeRange(TSNode node) @trusted nothrow @nogc
+{
+    TSRange r;
+    r.start_byte = ts_node_start_byte(node);
+    r.end_byte = ts_node_end_byte(node);
+    r.start_point = ts_node_start_point(node);
+    r.end_point = ts_node_end_point(node);
+    return r;
+}
+
+/// Start byte offset of `node`.
+uint nodeStartByte(TSNode node) @trusted nothrow @nogc
+    => ts_node_start_byte(node);
+
+/// End byte offset of `node` (exclusive).
+uint nodeEndByte(TSNode node) @trusted nothrow @nogc
+    => ts_node_end_byte(node);
+
+/// Number of children of `node`, named and anonymous.
+uint nodeChildCount(TSNode node) @trusted nothrow @nogc
+    => ts_node_child_count(node);
+
+/// The `i`-th child of `node` (named or anonymous).
+TSNode nodeChild(TSNode node, uint i) @trusted nothrow @nogc
+    => ts_node_child(node, i);
 
 /// Owning handle over a compiled `TSQuery`.
 struct TsQuery
