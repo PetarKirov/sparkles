@@ -126,6 +126,7 @@ string canonicalLanguage(scope const(char)[] label) @safe pure nothrow
         case "js", "mjs", "cjs", "node": return "javascript";
         case "kt", "kts": return "kotlin";
         case "md": return "markdown";
+        case "markdown_inline", "markdown-inline", "markdown.inline": return "markdown-inline";
         case "ml", "mli": return "ocaml";
         case "py", "python3": return "python";
         case "rs": return "rust";
@@ -146,6 +147,7 @@ unittest
     assert(canonicalLanguage("c#") == "c-sharp");
     assert(canonicalLanguage("console") == "bash");
     assert(canonicalLanguage("md") == "markdown");
+    assert(canonicalLanguage("markdown_inline") == "markdown-inline"); // injection #set! value
     assert(canonicalLanguage("py") == "python");
     assert(canonicalLanguage("D") == "d");
     assert(canonicalLanguage("json") == "json");

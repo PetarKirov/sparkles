@@ -9,10 +9,12 @@ disable their one pattern with a warning — degrade, never fail the
 language); `configure` resolves every capture name through the core's
 longest-dot-prefix `LabelSet.resolve`, so engine output speaks `LabelId`s.
 
-The `injectionsScm`/`localsScm` parameters are recorded seams for the
-injection milestone (the reference concatenates injections → locals →
-highlights into one query and tracks pattern-index boundaries); v1 compiles
-the highlights query alone.
+`injectionsScm` (M7) compiles a second query used to discover embedded
+languages (`@injection.content`/`@injection.language` + `#set!` directives);
+`localsScm` stays a recorded seam (locals scope-tracking is deferred). Unlike
+the reference — which concatenates injections → locals → highlights into one
+query — the highlights and injections queries are kept separate here (batch
+discovery runs the injections query up front, so a merged stream is unnecessary).
 */
 module sparkles.syntax.ts.config;
 
@@ -33,6 +35,14 @@ struct TsHighlightConfig
     package PatternPredicates[] predicates; /// per pattern index
     string[] warnings;                      /// disabled-pattern diagnostics
 
+    // Injections (M7). `injectionQuery` is invalid when the language ships no
+    // `injections.scm` (or it failed to compile — a warning, never a hard fail:
+    // the language still highlights, it just injects nothing).
+    package TsQuery injectionQuery;                  /// the compiled injections query (may be invalid)
+    package PatternPredicates[] injectionPredicates; /// per injection pattern (for `#set!` reads)
+    package uint injectionContentIndex = uint.max;   /// `@injection.content` capture id (or `uint.max`)
+    package uint injectionLanguageIndex = uint.max;  /// `@injection.language` capture id (or `uint.max`)
+
     @disable this(this);
 
     /**
@@ -44,8 +54,9 @@ struct TsHighlightConfig
     static TsHighlightConfig create(Grammar grammar, string highlightsScm, out TsError error,
         string injectionsScm = null, string localsScm = null) @safe
     {
-        // Recorded seams for the injection milestone — see the module header.
-        cast(void) injectionsScm;
+        import std.conv : text;
+
+        // Locals scope-tracking stays a recorded seam (deferred — PLAN §4).
         cast(void) localsScm;
 
         TsHighlightConfig config;
@@ -61,14 +72,49 @@ struct TsHighlightConfig
             auto parsed = parsePatternPredicates(config.query, p);
             if (parsed.unsupported.length)
             {
-                import std.conv : text;
-
                 config.query.disablePattern(p);
                 config.warnings ~= text("pattern ", p, " disabled: unsupported predicate ",
                     parsed.unsupported);
             }
             config.predicates[p] = parsed.predicates;
         }
+
+        // Injections (M7): compile the language's `injections.scm` when present.
+        // A compile failure degrades to "no injections" with a warning — the
+        // highlights query is unaffected, so the language still highlights.
+        if (injectionsScm.length)
+        {
+            TsError injError;
+            config.injectionQuery = TsQuery.create(grammar.language, injectionsScm, injError);
+            if (config.injectionQuery.valid)
+            {
+                const injPatterns = config.injectionQuery.patternCount;
+                config.injectionPredicates = new PatternPredicates[](injPatterns);
+                foreach (p; 0 .. injPatterns)
+                {
+                    auto parsed = parsePatternPredicates(config.injectionQuery, p);
+                    if (parsed.unsupported.length)
+                    {
+                        config.injectionQuery.disablePattern(p);
+                        config.warnings ~= text("injection pattern ", p,
+                            " disabled: unsupported predicate ", parsed.unsupported);
+                    }
+                    config.injectionPredicates[p] = parsed.predicates;
+                }
+                foreach (i; 0 .. config.injectionQuery.captureCount)
+                {
+                    const name = config.injectionQuery.captureName(i);
+                    if (name == "injection.content")
+                        config.injectionContentIndex = i;
+                    else if (name == "injection.language")
+                        config.injectionLanguageIndex = i;
+                }
+            }
+            else
+                config.warnings ~= text("injections query failed to compile (offset ",
+                    injError.detail, "); no injections for this language");
+        }
+
         error = TsError.init;
         return config;
     }
@@ -96,4 +142,10 @@ struct TsHighlightConfig
     /// `true` iff `configure` ran (labels are mapped).
     bool configured() const scope @safe nothrow @nogc
         => valid && captureToLabel.length == query.captureCount;
+
+    /// `true` iff a usable injections query was compiled (a valid query with an
+    /// `@injection.content` capture). The engine skips injection discovery when
+    /// this is `false`.
+    bool hasInjections() const scope @safe nothrow @nogc
+        => injectionQuery.valid && injectionContentIndex != uint.max;
 }

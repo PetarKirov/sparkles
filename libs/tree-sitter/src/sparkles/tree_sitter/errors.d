@@ -33,6 +33,7 @@ enum TsErrorCode : ubyte
     parseCancelled,        /// host cancellation flag observed during parse
     highlightTimeout,      /// query/event budget exceeded
     highlightCancelled,    /// host cancellation flag observed during highlight
+    injectionDepthExceeded,/// injection nesting hit the layer-depth cap (degrade to plain text)
 }
 
 /// Structured binding/engine error: a code plus one code-specific detail
@@ -82,6 +83,7 @@ struct TsError
             case parseCancelled:
             case highlightTimeout:
             case highlightCancelled:
+            case injectionDepthExceeded:
                 return;
         }
     }
