@@ -40,15 +40,15 @@ code; no external application is treated as the specification.
 
 ## Decision ledger
 
-| Area             | Decision                                                                                                                                                          |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Package          | New `sparkles:tui` (`libs/tui/`), depending on `core-cli` + `base`. Keeps `core-cli`'s pure static-producer character intact and its dependency graph loop-free   |
-| Rendering core   | **Open** — line-diff vs 2-D cell-grid, decided by the render benchmark (§3.1, [PLAN](./PLAN.md)). The rest of the design is written to survive either outcome     |
-| Loop ownership   | **Open** — a Ratatui-style library core (app owns the loop) with an optional MVU overlay, vs a Bubble-Tea-style framework-owned loop (§3.2)                       |
-| Terminal control | Reuse `sparkles.base.term_control` (hardcoded sequences, **no terminfo** — the survey's consensus); grow it with the alt-screen + mouse-mode lifecycle it lacks   |
-| Color            | Extend beyond today's 16-color `Style` to truecolor + 256 + degradation (§2, Color row) — a prerequisite for every surveyed mid-level library's styling           |
-| Text substrate   | Reuse `sparkles.base.text` (grapheme/width/wrap/align) unchanged — it is the single source of truth for cell widths and is stronger than most surveyed libraries' |
-| Images           | **In scope as a requirement**, not a non-goal (§2, Graphics row) — grounded in Notcurses and libvaxis                                                             |
+| Area             | Decision                                                                                                                                                                                                                                                |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Package          | New `sparkles:tui` (`libs/tui/`), depending on `core-cli` + `base`. Keeps `core-cli`'s pure static-producer character intact and its dependency graph loop-free                                                                                         |
+| Rendering core   | **Open, leaning 2-D cell-grid** — the render benchmark ([baseline](./render-bench-baseline.md), M1–M2) favours the cell-grid on CPU + bytes; cross-language calibration (M3) confirms before it's final. The rest of the design survives either outcome |
+| Loop ownership   | **Open** — a Ratatui-style library core (app owns the loop) with an optional MVU overlay, vs a Bubble-Tea-style framework-owned loop (§3.2)                                                                                                             |
+| Terminal control | Reuse `sparkles.base.term_control` (hardcoded sequences, **no terminfo** — the survey's consensus); grow it with the alt-screen + mouse-mode lifecycle it lacks                                                                                         |
+| Color            | Extend beyond today's 16-color `Style` to truecolor + 256 + degradation (§2, Color row) — a prerequisite for every surveyed mid-level library's styling                                                                                                 |
+| Text substrate   | Reuse `sparkles.base.text` (grapheme/width/wrap/align) unchanged — it is the single source of truth for cell widths and is stronger than most surveyed libraries'                                                                                       |
+| Images           | **In scope as a requirement**, not a non-goal (§2, Graphics row) — grounded in Notcurses and libvaxis                                                                                                                                                   |
 
 ## 1. Substrate that already exists
 
@@ -141,6 +141,14 @@ calibration. The deciding axes are output bytes per frame, instructions per
 frame, and — likely dominant for a GC'd library — allocations and whether a
 zero-allocation steady state is achievable. `core-cli`'s `LiveRegion` provides a
 naive full-repaint baseline.
+
+**Preliminary finding** ([render-bench-baseline](./render-bench-baseline.md), M1–M2):
+the 2-D cell-grid is best-or-tied on CPU at every change density and dominates on
+bytes on every profile; line-diff costs full-repaint CPU (it re-serializes every
+row to diff it), and the fix (cell-compare rows) only helps sparse workloads.
+Allocation is neutral — all approaches reach zero-alloc steady state. The evidence
+favours the cell-grid core; cross-language calibration (M3) confirms the absolute
+numbers before the decision is final.
 
 ### 3.2 Loop ownership and API shape
 
