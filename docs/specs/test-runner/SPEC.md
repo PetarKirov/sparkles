@@ -298,6 +298,10 @@ same report when they land — one absence vocabulary program-wide.
 - **Privilege gates are independent axes.** `perf_event_paranoid`, tracefs
   file permissions, and per-field gates (e.g. physical addresses) are probed
   separately; each degrades on its own.
+- **Degraded-but-available modes are disclosed.** A perf group that opened
+  but is not in its clean default state — user-only fallback, dropped LLC
+  pair, scaled mode — prints its status once in the bench header; em-dash
+  columns alone never stand in for the reason.
 
 ## 7. CLI contract
 
@@ -330,6 +334,10 @@ the contracts.
   own counter group, so the default group's exactness is never perturbed. A
   failed name resolution warns and drops the column. `--perf-scaled` opts
   into labeled multiplex estimates (§6.3).
+- **Counting-pass pinning** — `--perf-iters=N` pins the counting-pass
+  iteration count (default: the timing pass's count, capped), making
+  per-pass counter totals and amortized one-time costs reproducible across
+  runs; the effective count is auditable per row (§8.3).
 - _(target — B6)_ `--bench-profile` enables the sampling pass.
 
 ## 8. Output surfaces
@@ -361,7 +369,9 @@ One deterministic JSON document, `{schema: 2, meta, columns, rows}`:
 
 - `meta` — `{date, hostname, os, arch, compiler, cpu, minSampleTimeMs,
 sampleCount}`: host/toolchain provenance plus the run's effective knobs
-  (baselines are self-describing).
+  (baselines are self-describing), and — when a suite registered any via
+  `benchProvenance` — a `provenance` array of suite-controlled facts that
+  shape the numbers (allocator regime, codegen configuration).
 - `columns` — the available catalog descriptors `{name, header, format,
 class, source}`; `metrics` keys in rows match `--list-metrics` names.
 - `rows` — measurement order, unaffected by `--sort-by`/`--group-by` (group
@@ -370,7 +380,9 @@ iterations, samples, medianNs, deviationNs, minNs, maxNs, metrics, error}`.
   Error rows keep `labels` and `error` with `null` timing fields; `nan`
   cells are `null`. A row whose counters were multiplex-scaled additionally
   carries `estimatedMetrics`, the array of `metrics` keys holding estimates
-  (absent = every metric exact — the schema-2 addition).
+  (absent = every metric exact), and a row that ran a counting pass carries
+  its effective `countIterations` (absent = no pass ran) — the schema-2
+  additions.
 - Number policy: `nan`/infinity → `null`; integral values below 2⁵³ print as
   integers; others to 6 significant digits. Output is byte-deterministic for
   committing.

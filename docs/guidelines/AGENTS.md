@@ -205,6 +205,7 @@ silly's successor — same CLI, documented under
 --bench             Run @benchmark tests (auto-scaling ns/iter statistics)
 --perf              With --bench: hardware perf counters (Linux perf_event)
 --perf-scaled       With --perf: keep a multiplexing group; values render as ≈ estimates
+--perf-iters=N      With --bench: pin the counting-pass iteration count (reproducible totals)
 --syscalls[=LIST]   With --bench: syscalls/iter via perf tracepoints (root-gated)
 --metrics=LIST      With --bench: pick metric columns (glob, all, ?/help = list;
                     raw:r<hex> / pfm:<name> add µarch hardware events)

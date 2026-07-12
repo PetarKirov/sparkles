@@ -150,7 +150,14 @@ Acceptance: on the dev box the report reproduces the survey's findings —
 > open-issue O2. A post-B2 adversarial review round (9 confirmed findings)
 > hardened the estimate thresholds, the raw column visibility/dedup/
 > truncation contracts, sort-by-header support, and the bracketCost
-> measurement itself.
+> measurement itself. The `wired` runner-validation follow-ups landed as
+> B2 riders: the bench header discloses degraded-but-available perf modes
+> (LLC drop / user-only / scaled — the validation's B1 acceptance gap),
+> `benchProvenance` stamps suite-controlled facts into the header and
+> `meta.provenance` (former O10), and `--perf-iters` +
+> per-row `countIterations` make counting-pass totals pinnable and
+> auditable (former O11); O9/O12's documentation parts landed in the
+> benchmark how-to.
 
 _(backend-proposal §3; SPEC §6.3, §7.)_ Four capabilities, all probed:
 

@@ -8,6 +8,17 @@ reference the commit). Survey-level hardware questions that do not touch the
 spec's behavior stay in the research catalog's
 [open questions](../../research/cpu-pmu/comparison.md#open-questions-gaps)._
 
+_O9–O12 were surfaced on `feat/wired-json-engine` while re-engineering the
+`wired` runtime bench onto the runner and validating its hardware counters
+against the retired hand-rolled harness. O10 (suite provenance) and O11
+(counting-pass iterations) were resolved on
+`feat/test-runner-capability-seam` — `benchProvenance` +
+`meta.provenance`, and `--perf-iters` + per-row `countIterations` (SPEC
+§7/§8.3) — and are deleted per the lifecycle; O9 and O12 remain below with
+their done-parts annotated. The
+[validation cross-references](#validation-cross-references) map the
+remaining findings onto work that already covers them._
+
 ## O1 — The paranoid degradation matrix is unprobed
 
 **Where:** SPEC §9.
@@ -122,3 +133,67 @@ table and its 8-bit event field cannot express kpep's wider selectors.
 touch kpc counters; resolve if/when a kpc backend is attempted.
 
 **Leaning:** record only; blocks nothing in B3.
+
+## O9 — Cross-module inlining needs `-linkonce-templates` under `-unittest`
+
+**Where:** SPEC §2 (benchmarks are `@benchmark unittest`s); the `bench` build
+type. Surfaced compiling `sparkles:wired` under the runner.
+
+Because benchmarks are unittests, the bench binary is a `-unittest` +
+`-checkaction=context` build. A benchmarked library that relies on
+`-enable-cross-module-inlining` (CMI) for its hot loops cannot get it from
+the `bench` build type — a build type propagates to every dependency, and
+CMI culls a template-nested function in mir-ion. Scoping CMI to the one
+package (a `library-inline` config) is the fix, but bare CMI then **fails to
+link**: it inlines `-checkaction=context` assert bodies whose
+`_d_assert_fail!(T)` instances go unemitted (`undefined reference`). The old
+executable harness never hit this — it was `-release` with no context
+asserts. Adding `-linkonce-templates` alongside CMI emits the templates and
+links, recovering the pre-runner codegen exactly (retired-instructions/byte
+parity to ±0.06%). Verified on LDC 1.41; a `-linkonce-templates` ICE was
+reported on other toolchains, so this is version-sensitive.
+
+**Status:** (A) is **done** — the recipe is documented in wired's `dub.sdl`
+(`library-inline`) and in the runner's
+[benchmark how-to](../../libs/test-runner/how-to/benchmark.md). (B) — a
+runner-side warning — is not implementable: the runner binary cannot see a
+dependency's dflags. The entry stays open tracking (C), an upstream
+LDC/druntime fix so context-assert templates survive CMI without the extra
+flag.
+
+## O12 — Retired-instruction determinism not distinguished from advisory counters
+
+**Where:** SPEC §6.3; `MetricClass { quantitative, diagnostic }` — all perf
+cells are `diagnostic`.
+
+The whole-perf-tier `diagnostic` tag flattens a distinction the bench
+validation depends on: retired-instruction count (and page-faults) is the
+exact, host-stable anchor, while `cycles`/IPC/cache are exact-when-fitting
+but host-variable (frequency, µarch) or advisory. A consumer cannot
+programmatically tell which column is the trustworthy correctness anchor.
+(Wording rule from the research: say "exact/stable", not
+"machine-independent" — the latter is a well-founded inference, not a quoted
+theorem.)
+
+**Status:** (B) is **done** — the anchor-vs-advisory note is in the
+[benchmark how-to](../../libs/test-runner/how-to/benchmark.md)'s `--perf`
+section. The entry stays open only for (A), a finer
+`deterministic`/`advisory` tag on `MetricDescriptor`, if downstream tooling
+ever needs to key off it programmatically.
+
+## Validation cross-references
+
+Findings from the wired-bench validation that are covered by shipped work or
+a planned milestone — recorded as acceptance evidence, not new issues:
+
+- **LLC cache pair dropped silently** → **satisfied**: the bench header now
+  discloses degraded-but-available perf modes (`--perf: kernel+user; LLC
+events dropped …`), which fires on every run of the Zen 4 dev box (the NMI
+  watchdog holds a PMC). The wholly-unavailable case was already named by
+  B1's `CapabilityReport` notes.
+- **user-only counting fallback not disclosed** → **satisfied** by the same
+  disclosure line (`status()` carries the `user-space only` scope
+  qualifier); the per-level paranoid matrix itself remains **O1**.
+- **no raw/µarch events; exact-or-drop unlabeled** → **shipped in B2**:
+  `raw:r<hex>`/`pfm:<name>` selectors, `--perf-scaled`, ≈-labeled estimates
+  with the `estimatedMetrics` JSON marking (former O4, resolved).
