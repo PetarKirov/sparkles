@@ -149,6 +149,22 @@ unittest
     assert(jsonNumber(1.651754321e8) == "1.65175e+08", "6 significant digits");
 }
 
+/// The row's counting-pass iteration count: every counter tier shares one
+/// per-pass count, so the first present source carries it. `0` = no counting
+/// pass ran.
+private ulong countIterations(in BenchStats row) @safe pure nothrow @nogc
+{
+    if (!row.perf.isNull)
+        return row.perf.get.iters;
+    if (!row.tier0.isNull)
+        return row.tier0.get.iters;
+    if (!row.syscalls.isNull)
+        return row.syscalls.get.iters;
+    if (!row.raw.isNull)
+        return row.raw.get.iters;
+    return 0;
+}
+
 /// RFC 8259 string escaping: `"`, `\`, and control characters.
 package(sparkles.test_runner)
 string jsonEscape(scope const(char)[] s) @safe pure
@@ -284,6 +300,12 @@ string benchReportJson(in BenchStats[] rows, in BenchMeta meta) @safe
             // count (schema 2; absent = every metric exact).
             if (estimated.length)
                 o ~= "      \"estimatedMetrics\": [ " ~ estimated ~ " ],\n";
+            // The effective counting-pass iteration count (shared by every
+            // counter tier), so per-pass totals are auditable — a validator
+            // can multiply per-iteration cells back to what the pass counted.
+            // Absent when no counting pass ran (schema 2).
+            if (const ci = countIterations(row))
+                o ~= "      \"countIterations\": " ~ ci.to!string ~ ",\n";
         }
         o ~= "      \"error\": \"" ~ jsonEscape(row.error) ~ "\"\n";
         o ~= "    }";
@@ -460,4 +482,29 @@ unittest
 
     const bare = parseJSON(benchReportJson([row], BenchMeta(date: "2026-07-12")));
     assert("provenance" !in bare["meta"], "no lines registered — no key");
+}
+
+@("benchJson.rows.countIterations")
+@system
+unittest
+{
+    import std.json : parseJSON;
+    import sparkles.test_runner.perf : PerfStats;
+
+    BenchStats counted;
+    counted.name = "counted";
+    counted.iterations = 1;
+    PerfStats p;
+    p.iters = 7;
+    p.cycles = 100;
+    counted.perf = p;
+
+    BenchStats uncounted;
+    uncounted.name = "plain";
+    uncounted.iterations = 1;
+
+    const doc = parseJSON(benchReportJson([counted, uncounted],
+        BenchMeta(date: "2026-07-12")));
+    assert(doc["rows"][0]["countIterations"].integer == 7);
+    assert("countIterations" !in doc["rows"][1], "no counting pass — no key");
 }

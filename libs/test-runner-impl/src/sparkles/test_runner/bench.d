@@ -97,6 +97,12 @@ struct BenchConfig
     /// sample so a cheap op's huge auto-scaled count does not make the (ioctl-
     /// bracketed) counting pass slow; counters stabilize well before this.
     uint perfMaxIters = 100_000;
+
+    /// Pinned counting-pass iteration count (`--perf-iters`); `0` follows the
+    /// timing pass's count. A pin makes per-pass counter totals — and ops
+    /// with a one-time cost amortized inside the counting window —
+    /// reproducible across runs by construction.
+    uint perfIters = 0;
 }
 
 /// A unit of measure for a benchmark metric. A forward-compatible stand-in for
@@ -528,8 +534,21 @@ private uint perfIters(ulong iterations, in BenchConfig config) @safe pure nothr
 {
     import std.algorithm.comparison : min;
 
-    const n = min(iterations, config.perfMaxIters);
+    const wanted = config.perfIters ? config.perfIters : iterations;
+    const n = min(wanted, config.perfMaxIters);
     return cast(uint)(n ? n : 1);
+}
+
+@("bench.perfIters.pinAndCap")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(perfIters(50, BenchConfig()) == 50, "follows the timing count");
+    assert(perfIters(1_000_000, BenchConfig()) == 100_000, "capped");
+    assert(perfIters(50, BenchConfig(perfIters: 7)) == 7, "pinned");
+    assert(perfIters(50, BenchConfig(perfIters: 500_000)) == 100_000,
+        "a pin past the cap is capped");
+    assert(perfIters(0, BenchConfig()) == 1, "at least one iteration");
 }
 
 /// Registers a batched-timing case that measures `run` (excluding surrounding
