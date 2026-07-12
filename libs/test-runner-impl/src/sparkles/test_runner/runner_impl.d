@@ -69,6 +69,7 @@ private struct RunnerOptions
     bool bench;
     bool perf;
     bool perfScaled; /// keep the full group when it multiplexes; label estimates
+    uint perfIters;  /// pin the counting-pass iteration count (0 = auto)
     string syscalls;
     string metrics;
     string sortBy;
@@ -195,6 +196,11 @@ private auto parseInto(ref string[] args, ref RunnerOptions options)
             "multiplex it; scaled values render as labeled estimates (≈). " ~
             "Default: the group shrinks until counts are exact",
             &options.perfScaled,
+        "perf-iters",
+            "With --bench: pin the counting-pass iteration count (default: " ~
+            "the timing pass's count, capped) — makes per-pass counter totals " ~
+            "and amortized one-time costs reproducible across runs",
+            &options.perfIters,
         "syscalls",
             "With --bench: count syscalls per iteration (Linux perf tracepoints). " ~
             "Bare adds a total column; =futex,sched_yield adds one column each",
@@ -684,6 +690,9 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     // scaled mode) is disclosed too — em-dash columns alone don't say why.
     if (wantPerf && counters.perf.available && counters.perf.degraded)
         stderr.writeln("--perf: ", counters.perf.status());
+    if (options.perfIters > BenchConfig().perfMaxIters)
+        stderr.writeln("--perf-iters: capped at ", BenchConfig().perfMaxIters,
+            " (", options.perfIters, " requested)");
     if (wantTier0 && !counters.tier0.available)
         noteAbsent("--metrics", counters.tier0.capabilities, Capability.counting);
     if (wantSyscalls && !counters.syscalls.available)
@@ -766,7 +775,8 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
 
     foreach (test; benchTests)
     {
-        const config = benchConfigFor(options.benchMinTime, test.traits.benchIterations);
+        const config = benchConfigFor(options.benchMinTime, test.traits.benchIterations,
+            options.perfIters);
         auto reg = registerBenchmark(test, config);
         if (reg.result.skipped)
         {
@@ -1059,7 +1069,8 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         // The meta block records the effective knobs (an empty run still writes
         // a valid document, deterministic for tooling) plus any registered
         // suite-provenance lines, so the artifact is self-describing.
-        auto meta = collectBenchMeta(benchConfigFor(options.benchMinTime, 0));
+        auto meta = collectBenchMeta(benchConfigFor(options.benchMinTime, 0,
+            options.perfIters));
         {
             import sparkles.test_runner.bench : provenanceLines;
 
@@ -1087,13 +1098,14 @@ private enum bool hasCoreCliTermCaps = __traits(compiles, {
 
 /// The per-test `BenchConfig` under the CLI knobs: `--bench-min-time` overrides
 /// the sample-time budget (0 = keep the 5 ms default); a pinned
-/// `@benchmark(iterations: N)` count threads through unchanged.
-private BenchConfig benchConfigFor(uint benchMinTimeMs, uint iterations)
-    @safe pure nothrow @nogc
+/// `@benchmark(iterations: N)` count threads through unchanged;
+/// `--perf-iters` pins the counting-pass count (0 = follow the timing pass).
+private BenchConfig benchConfigFor(uint benchMinTimeMs, uint iterations,
+    uint perfItersPin = 0) @safe pure nothrow @nogc
 {
     import core.time : msecs;
 
-    auto config = BenchConfig(iterations: iterations);
+    auto config = BenchConfig(iterations: iterations, perfIters: perfItersPin);
     if (benchMinTimeMs)
         config.minSampleTime = benchMinTimeMs.msecs;
     return config;
