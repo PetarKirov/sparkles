@@ -40,6 +40,18 @@ import sparkles.test_runner.reporting : BenchProgress, detectTerminalWidth,
 extern (C) void sparkles_test_runner_run(
     Test* testsPtr, size_t count, bool hostIsRunner, uint* executed, uint* passed)
 {
+    version (OSX)
+    {
+        // druntime resolves macOS stack traces by forking `atos -p <pid>`, which
+        // intermittently stalls on sandboxed CI runners and hangs the whole
+        // binary the moment a test throws (the runner reads `thrown.info` in
+        // `toThrown`). Swap in an in-process handler that keeps the full
+        // backtrace but never spawns atos. See `sparkles.test_runner.macos_trace`.
+        import sparkles.test_runner.macos_trace : installInProcessTraceHandler;
+
+        installInProcessTraceHandler();
+    }
+
     const result = runnerMain(testsPtr[0 .. count], hostIsRunner);
     *executed = cast(uint) result.executed;
     *passed = cast(uint) result.passed;
