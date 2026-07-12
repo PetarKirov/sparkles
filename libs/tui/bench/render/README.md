@@ -72,14 +72,27 @@ target every frame across `sparse`/`churn`/`scroll`/`resize`/`mixed`.
 
 Snapshots under `results/<date>-<host>-<isa>.json` (`--bench-json`).
 
-## Current findings (M1, one host, AMD Ryzen 9 7940HX, `-mcpu=native`)
+## Current findings (M1–M2, one host, AMD Ryzen 9 7940HX, `-mcpu=native`, 120×40)
 
-- **`cell_grid` leads on every width-1 profile**, on both CPU and bytes.
-- **`line_diff` tracks the full-repaint reference on CPU** (`instr/iter` ≈ equal):
-  it re-serializes _every_ row each frame to diff it, so its diffing saves output
-  bytes but not instructions. `cell_grid` diffs cells directly and runs ~35 % fewer
-  instructions on `mixed`/`sparse`.
-- Implication + next step: a line-diff that cell-compares rows before serializing
-  (serializing only changed rows) should close the CPU gap — a planned M2
-  sensitivity variant. Numbers are one scene on one host; foreign calibration
-  (M3: Ratatui, Notcurses) and more profiles/sizes follow before the M5 decision.
+Instructions per scenario (300 frames, `--perf`) and bytes/frame:
+
+| renderer         | sparse instr | mixed instr | churn instr | bytes/frame (sparse→churn) |
+| ---------------- | ------------ | ----------- | ----------- | -------------------------- |
+| `cell_grid`      | 294M         | **316M**    | **349M**    | **277 → 3.9k**             |
+| `line_diff_lazy` | **275M**     | 368M        | 460M        | 1.0k → 7.6k                |
+| `line_diff`      | 455M         | 457M        | 460M        | 1.0k → 7.6k                |
+| `reference`      | 457M         | 457M        | 458M        | 7.8k → 7.8k                |
+
+- **`line_diff` tracks the full-repaint reference on CPU**: it re-serializes _every_
+  row each frame just to diff it, so its diffing saves output bytes, not instructions.
+- **`line_diff_lazy` (M2)** — cell-compare rows, serialize only changed ones — fixes
+  that _when few rows change_ (sparse: 275M, even edging `cell_grid`), but reverts to
+  full-repaint cost on `churn` (all rows change → serialize all), and still emits
+  whole rows so it loses on bytes everywhere.
+- **`cell_grid` is the most consistent on CPU** (best on mixed/churn, ~tie on sparse)
+  and **dominates on bytes** on every profile — cell-run emission is fundamentally
+  more byte-efficient than whole-row.
+
+Takeaway so far: the evidence favours the 2-D cell-grid core. Next: allocation /
+zero-alloc-steady-state comparison, foreign calibration (M3: Ratatui, Notcurses),
+then the M5 decision record. Numbers are one scene on one host.

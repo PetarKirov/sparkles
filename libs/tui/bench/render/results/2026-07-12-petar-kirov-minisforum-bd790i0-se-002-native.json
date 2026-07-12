@@ -27,542 +27,722 @@
   },
   "rows": [
     {
-      "deviationNs": 148048,
+      "deviationNs": 60563,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "churn",
         "size": "120x40"
       },
-      "maxNs": 27010674,
-      "medianNs": 25783741,
+      "maxNs": 26326390,
+      "medianNs": 25202400.0,
       "metrics": {
         "B": 7805,
-        "frame/s": 11635.2
+        "frame/s": 11903.6
       },
-      "minNs": 25594067,
+      "minNs": 24947307,
       "name": "reference_fullpaint",
       "samples": 32
     },
     {
-      "deviationNs": 68403,
+      "deviationNs": 82916,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "churn",
         "size": "120x40"
       },
-      "maxNs": 26043672,
-      "medianNs": 25728000.0,
+      "maxNs": 26875037,
+      "medianNs": 25902600.0,
       "metrics": {
         "B": 7636,
-        "frame/s": 11660.5
+        "frame/s": 11581.9
       },
-      "minNs": 25574138,
+      "minNs": 25180961,
       "name": "line_diff",
       "samples": 32
     },
     {
-      "deviationNs": 44536.5,
+      "deviationNs": 122033,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "churn",
         "size": "120x40"
       },
-      "maxNs": 19198040,
-      "medianNs": 18134100.0,
+      "maxNs": 28609041,
+      "medianNs": 25270600.0,
+      "metrics": {
+        "B": 7636,
+        "frame/s": 11871.5
+      },
+      "minNs": 25079774,
+      "name": "line_diff_lazy",
+      "samples": 32
+    },
+    {
+      "deviationNs": 317573,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "profile": "churn",
+        "size": "120x40"
+      },
+      "maxNs": 19448716,
+      "medianNs": 18389400.0,
       "metrics": {
         "B": 3880,
-        "frame/s": 16543.4
+        "frame/s": 16313.7
       },
-      "minNs": 17985681,
+      "minNs": 17838883,
       "name": "cell_grid",
       "samples": 32
     },
     {
-      "deviationNs": 53739,
+      "deviationNs": 107374,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "churn",
         "size": "80x24"
       },
-      "maxNs": 14229031,
-      "medianNs": 13291000.0,
+      "maxNs": 14082434,
+      "medianNs": 13020900.0,
       "metrics": {
         "B": 4129,
-        "frame/s": 22571.7
+        "frame/s": 23039.9
       },
-      "minNs": 13213985,
+      "minNs": 12781622,
       "name": "reference_fullpaint",
       "samples": 32
     },
     {
-      "deviationNs": 93196,
+      "deviationNs": 164094,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "churn",
         "size": "80x24"
       },
-      "maxNs": 14551348,
-      "medianNs": 13625571,
+      "maxNs": 19157068,
+      "medianNs": 13323800.0,
       "metrics": {
         "B": 4007,
-        "frame/s": 22017.4
+        "frame/s": 22516
       },
-      "minNs": 13475514,
+      "minNs": 12946683,
       "name": "line_diff",
       "samples": 32
     },
     {
-      "deviationNs": 36686,
+      "deviationNs": 306391,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "churn",
         "size": "80x24"
       },
-      "maxNs": 13260476,
-      "medianNs": 10661900.0,
+      "maxNs": 17693080,
+      "medianNs": 13275700.0,
+      "metrics": {
+        "B": 4007,
+        "frame/s": 22597.7
+      },
+      "minNs": 12871196,
+      "name": "line_diff_lazy",
+      "samples": 32
+    },
+    {
+      "deviationNs": 113060,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "profile": "churn",
+        "size": "80x24"
+      },
+      "maxNs": 12275717,
+      "medianNs": 10345096,
       "metrics": {
         "B": 2485,
-        "frame/s": 28137.7
+        "frame/s": 28999.2
       },
-      "minNs": 10534581,
+      "minNs": 10013866,
       "name": "cell_grid",
       "samples": 32
     },
     {
-      "deviationNs": 80957.5,
+      "deviationNs": 154922,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "mixed",
         "size": "120x40"
       },
-      "maxNs": 26199575,
-      "medianNs": 25456600.0,
+      "maxNs": 26257406,
+      "medianNs": 25356600.0,
       "metrics": {
         "B": 7815,
-        "frame/s": 11784.8
+        "frame/s": 11831.2
       },
-      "minNs": 25289174,
+      "minNs": 25061659,
       "name": "reference_fullpaint",
       "samples": 32
     },
     {
-      "deviationNs": 79494.5,
+      "deviationNs": 416155,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "mixed",
         "size": "120x40"
       },
-      "maxNs": 26423982,
-      "medianNs": 25834490,
+      "maxNs": 27869182,
+      "medianNs": 25398000.0,
       "metrics": {
         "B": 4375,
-        "frame/s": 11612.4
+        "frame/s": 11811.9
       },
-      "minNs": 25650838,
+      "minNs": 24842582,
       "name": "line_diff",
       "samples": 32
     },
     {
-      "deviationNs": 29161.5,
+      "deviationNs": 180481,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "mixed",
         "size": "120x40"
       },
-      "maxNs": 17863443,
-      "medianNs": 16541756,
+      "maxNs": 21874807,
+      "medianNs": 20046755,
+      "metrics": {
+        "B": 4376,
+        "frame/s": 14965
+      },
+      "minNs": 19695827,
+      "name": "line_diff_lazy",
+      "samples": 32
+    },
+    {
+      "deviationNs": 103136,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "profile": "mixed",
+        "size": "120x40"
+      },
+      "maxNs": 17587024,
+      "medianNs": 16098532,
       "metrics": {
         "B": 1730,
-        "frame/s": 18135.9
+        "frame/s": 18635.2
       },
-      "minNs": 16429323,
+      "minNs": 15779496,
       "name": "cell_grid",
       "samples": 32
     },
     {
-      "deviationNs": 45748.5,
+      "deviationNs": 142843,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "mixed",
         "size": "80x24"
       },
-      "maxNs": 14380525,
-      "medianNs": 13414485,
+      "maxNs": 14342339,
+      "medianNs": 13159543,
       "metrics": {
         "B": 4142,
-        "frame/s": 22363.9
+        "frame/s": 22797.1
       },
-      "minNs": 13017642,
+      "minNs": 12727528,
       "name": "reference_fullpaint",
       "samples": 32
     },
     {
-      "deviationNs": 236115,
+      "deviationNs": 88326.5,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "mixed",
         "size": "80x24"
       },
-      "maxNs": 14301772,
-      "medianNs": 13360600.0,
+      "maxNs": 14060120,
+      "medianNs": 12963221,
       "metrics": {
         "B": 2452,
-        "frame/s": 22454.1
+        "frame/s": 23142.4
       },
-      "minNs": 13105504,
+      "minNs": 12763968,
       "name": "line_diff",
       "samples": 32
     },
     {
-      "deviationNs": 58528.5,
+      "deviationNs": 68619,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "mixed",
         "size": "80x24"
       },
-      "maxNs": 9399892,
-      "medianNs": 9159054,
+      "maxNs": 12007987,
+      "medianNs": 10645926,
+      "metrics": {
+        "B": 2452,
+        "frame/s": 28179.8
+      },
+      "minNs": 10458231,
+      "name": "line_diff_lazy",
+      "samples": 32
+    },
+    {
+      "deviationNs": 46129.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "profile": "mixed",
+        "size": "80x24"
+      },
+      "maxNs": 10547525,
+      "medianNs": 8951690.0,
       "metrics": {
         "B": 1087,
-        "frame/s": 32754.5
+        "frame/s": 33513.2
       },
-      "minNs": 9070661,
+      "minNs": 8827998,
       "name": "cell_grid",
       "samples": 32
     },
     {
-      "deviationNs": 73924,
+      "deviationNs": 50022,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "resize",
         "size": "120x40"
       },
-      "maxNs": 20031943,
-      "medianNs": 19584978,
+      "maxNs": 20134901,
+      "medianNs": 18883700.0,
       "metrics": {
         "B": 5961,
-        "frame/s": 15317.9
+        "frame/s": 15886.7
       },
-      "minNs": 19411566,
+      "minNs": 18790776,
       "name": "reference_fullpaint",
       "samples": 32
     },
     {
-      "deviationNs": 64244.5,
+      "deviationNs": 107274,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "resize",
         "size": "120x40"
       },
-      "maxNs": 20082071,
-      "medianNs": 19783700.0,
+      "maxNs": 20158908,
+      "medianNs": 19162200.0,
       "metrics": {
         "B": 5809,
-        "frame/s": 15164
+        "frame/s": 15655.8
       },
-      "minNs": 19565014,
+      "minNs": 19009421,
       "name": "line_diff",
       "samples": 32
     },
     {
-      "deviationNs": 213220,
+      "deviationNs": 86733.5,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "resize",
         "size": "120x40"
       },
-      "maxNs": 15564770,
-      "medianNs": 14330600.0,
+      "maxNs": 19929933,
+      "medianNs": 19288800.0,
+      "metrics": {
+        "B": 5809,
+        "frame/s": 15553.1
+      },
+      "minNs": 19141708,
+      "name": "line_diff_lazy",
+      "samples": 32
+    },
+    {
+      "deviationNs": 87400,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "profile": "resize",
+        "size": "120x40"
+      },
+      "maxNs": 15124080,
+      "medianNs": 14289126,
       "metrics": {
         "B": 2782,
-        "frame/s": 20934.2
+        "frame/s": 20995
       },
-      "minNs": 13862507,
+      "minNs": 13565398,
       "name": "cell_grid",
       "samples": 32
     },
     {
-      "deviationNs": 94158.5,
+      "deviationNs": 97905.5,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "resize",
         "size": "80x24"
       },
-      "maxNs": 14993418,
-      "medianNs": 13333500.0,
+      "maxNs": 13550278,
+      "medianNs": 12933800.0,
       "metrics": {
         "B": 4111,
-        "frame/s": 22499.8
+        "frame/s": 23195.1
       },
-      "minNs": 13130262,
+      "minNs": 12728719,
       "name": "reference_fullpaint",
       "samples": 32
     },
     {
-      "deviationNs": 49065.5,
+      "deviationNs": 74389.5,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "resize",
         "size": "80x24"
       },
-      "maxNs": 14219041,
-      "medianNs": 13392800.0,
+      "maxNs": 13863467,
+      "medianNs": 13051367,
       "metrics": {
         "B": 3974,
-        "frame/s": 22400.1
+        "frame/s": 22986.1
       },
-      "minNs": 13260235,
+      "minNs": 12942455,
       "name": "line_diff",
       "samples": 32
     },
     {
-      "deviationNs": 49465.5,
+      "deviationNs": 121080,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "resize",
         "size": "80x24"
       },
-      "maxNs": 10844864,
-      "medianNs": 9560710.0,
+      "maxNs": 14226383,
+      "medianNs": 12816100.0,
+      "metrics": {
+        "B": 3974,
+        "frame/s": 23408
+      },
+      "minNs": 12633555,
+      "name": "line_diff_lazy",
+      "samples": 32
+    },
+    {
+      "deviationNs": 110946,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "profile": "resize",
+        "size": "80x24"
+      },
+      "maxNs": 10587533,
+      "medianNs": 9614320.0,
       "metrics": {
         "B": 1818,
-        "frame/s": 31378.4
+        "frame/s": 31203.5
       },
-      "minNs": 9498204,
+      "minNs": 9281932,
       "name": "cell_grid",
       "samples": 32
     },
     {
-      "deviationNs": 254886,
+      "deviationNs": 85255.5,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "scroll",
         "size": "120x40"
       },
-      "maxNs": 27684044,
-      "medianNs": 25839930,
+      "maxNs": 29466490,
+      "medianNs": 24761695,
       "metrics": {
         "B": 7813,
-        "frame/s": 11609.9
+        "frame/s": 12115.5
       },
-      "minNs": 25372997,
+      "minNs": 24631331,
       "name": "reference_fullpaint",
       "samples": 32
     },
     {
-      "deviationNs": 163368,
+      "deviationNs": 107570,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "scroll",
         "size": "120x40"
       },
-      "maxNs": 28130082,
-      "medianNs": 25216172,
+      "maxNs": 26360466,
+      "medianNs": 25239500.0,
       "metrics": {
         "B": 952,
-        "frame/s": 11897.1
+        "frame/s": 11886.1
       },
-      "minNs": 24988178,
+      "minNs": 25075726,
       "name": "line_diff",
       "samples": 32
     },
     {
-      "deviationNs": 125489,
+      "deviationNs": 69119.5,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "scroll",
         "size": "120x40"
       },
-      "maxNs": 16928103,
-      "medianNs": 14684552,
+      "maxNs": 16053710,
+      "medianNs": 15020359,
+      "metrics": {
+        "B": 952,
+        "frame/s": 19972.9
+      },
+      "minNs": 14905906,
+      "name": "line_diff_lazy",
+      "samples": 32
+    },
+    {
+      "deviationNs": 64189.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "profile": "scroll",
+        "size": "120x40"
+      },
+      "maxNs": 16743092,
+      "medianNs": 15327837,
       "metrics": {
         "B": 241,
-        "frame/s": 20429.6
+        "frame/s": 19572.2
       },
-      "minNs": 14118876,
+      "minNs": 15003446,
       "name": "cell_grid",
       "samples": 32
     },
     {
-      "deviationNs": 69781,
+      "deviationNs": 18871.5,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "scroll",
         "size": "80x24"
       },
-      "maxNs": 14215514,
-      "medianNs": 13285444,
+      "maxNs": 14568048,
+      "medianNs": 13264542,
       "metrics": {
         "B": 4112,
-        "frame/s": 22581.1
+        "frame/s": 22616.7
       },
-      "minNs": 13188956,
+      "minNs": 13205067,
       "name": "reference_fullpaint",
       "samples": 32
     },
     {
-      "deviationNs": 40403,
+      "deviationNs": 69014,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "scroll",
         "size": "80x24"
       },
-      "maxNs": 13987360,
-      "medianNs": 13157019,
+      "maxNs": 14687891,
+      "medianNs": 13327900.0,
       "metrics": {
         "B": 780,
-        "frame/s": 22801.5
+        "frame/s": 22509.2
       },
-      "minNs": 13089573,
+      "minNs": 12853192,
       "name": "line_diff",
       "samples": 32
     },
     {
-      "deviationNs": 99443.5,
+      "deviationNs": 15199.5,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "scroll",
         "size": "80x24"
       },
-      "maxNs": 11180217,
-      "medianNs": 8254584,
+      "maxNs": 8864250,
+      "medianNs": 8038933,
+      "metrics": {
+        "B": 780,
+        "frame/s": 37318.4
+      },
+      "minNs": 7994587,
+      "name": "line_diff_lazy",
+      "samples": 32
+    },
+    {
+      "deviationNs": 44687,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "profile": "scroll",
+        "size": "80x24"
+      },
+      "maxNs": 8385728,
+      "medianNs": 7807500.0,
       "metrics": {
         "B": 222,
-        "frame/s": 36343.4
+        "frame/s": 38424.6
       },
-      "minNs": 7721636,
+      "minNs": 7674455,
       "name": "cell_grid",
       "samples": 32
     },
     {
-      "deviationNs": 79820,
+      "deviationNs": 247868,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "sparse",
         "size": "120x40"
       },
-      "maxNs": 28441148,
-      "medianNs": 25252600.0,
+      "maxNs": 26711359,
+      "medianNs": 25060387,
       "metrics": {
         "B": 7815,
-        "frame/s": 11880
+        "frame/s": 11971.1
       },
-      "minNs": 24917270,
+      "minNs": 24708572,
       "name": "reference_fullpaint",
       "samples": 32
     },
     {
-      "deviationNs": 86834,
+      "deviationNs": 264540,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "sparse",
         "size": "120x40"
       },
-      "maxNs": 26728064,
-      "medianNs": 25305150,
+      "maxNs": 29663984,
+      "medianNs": 25464900.0,
       "metrics": {
         "B": 1013,
-        "frame/s": 11855.3
+        "frame/s": 11780.9
       },
-      "minNs": 25118201,
+      "minNs": 24801653,
       "name": "line_diff",
       "samples": 32
     },
     {
-      "deviationNs": 302444,
+      "deviationNs": 339472,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "sparse",
         "size": "120x40"
       },
-      "maxNs": 15475736,
-      "medianNs": 14664000.0,
+      "maxNs": 16312373,
+      "medianNs": 14536136,
+      "metrics": {
+        "B": 1013,
+        "frame/s": 20638.2
+      },
+      "minNs": 14092874,
+      "name": "line_diff_lazy",
+      "samples": 32
+    },
+    {
+      "deviationNs": 161284,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "profile": "sparse",
+        "size": "120x40"
+      },
+      "maxNs": 16684968,
+      "medianNs": 14598969,
       "metrics": {
         "B": 277,
-        "frame/s": 20458.2
+        "frame/s": 20549.4
       },
-      "minNs": 14308745,
+      "minNs": 14264468,
       "name": "cell_grid",
       "samples": 32
     },
     {
-      "deviationNs": 45278,
+      "deviationNs": 63713.5,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "sparse",
         "size": "80x24"
       },
-      "maxNs": 13794395,
-      "medianNs": 13538900.0,
+      "maxNs": 15202262,
+      "medianNs": 13153255,
       "metrics": {
         "B": 4115,
-        "frame/s": 22158.4
+        "frame/s": 22808
       },
-      "minNs": 13367072,
+      "minNs": 13054764,
       "name": "reference_fullpaint",
       "samples": 32
     },
     {
-      "deviationNs": 53354,
+      "deviationNs": 29698,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "sparse",
         "size": "80x24"
       },
-      "maxNs": 14305218,
-      "medianNs": 13443700.0,
+      "maxNs": 13957400,
+      "medianNs": 13213400.0,
       "metrics": {
         "B": 825,
-        "frame/s": 22315.3
+        "frame/s": 22704.2
       },
-      "minNs": 13078992,
+      "minNs": 13080304,
       "name": "line_diff",
       "samples": 32
     },
     {
-      "deviationNs": 65792.5,
+      "deviationNs": 35804.5,
       "error": "",
       "iterations": 1,
       "labels": {
         "profile": "sparse",
         "size": "80x24"
       },
-      "maxNs": 9107183,
-      "medianNs": 8347955,
+      "maxNs": 8870962,
+      "medianNs": 8684765,
+      "metrics": {
+        "B": 825,
+        "frame/s": 34543.2
+      },
+      "minNs": 8584756,
+      "name": "line_diff_lazy",
+      "samples": 32
+    },
+    {
+      "deviationNs": 49161,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "profile": "sparse",
+        "size": "80x24"
+      },
+      "maxNs": 9404090,
+      "medianNs": 8400893,
       "metrics": {
         "B": 247,
-        "frame/s": 35936.9
+        "frame/s": 35710.5
       },
-      "minNs": 8246037,
+      "minNs": 8312616,
       "name": "cell_grid",
       "samples": 32
     }
