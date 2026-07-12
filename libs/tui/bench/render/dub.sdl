@@ -15,20 +15,27 @@ dflags "-preview=in" "-preview=dip1000"
 dependency "sparkles:base" path="../../../.."
 dependency "sparkles:test-runner" path="../../../.."
 
-// The VT-oracle correctness gate (vt_oracle.d) drives `libghostty-vt` via the
-// `sparkles:ghostty` binding; it needs the ghostty-vt pkg-config from the nix
-// devshell, so it sits behind a `versions` gate (off by default — like wired's
-// foreign-engine gates). Add `versions "TuiBenchVtOracle"` + the dependency to
-// run the correctness check.
-// dependency "sparkles:ghostty" path="../../../.."
-// versions "TuiBenchVtOracle"
-
 configuration "unittest" {
     // The benchmark is a set of `@benchmark unittest`s run through
     // sparkles:test-runner (`dub test -b bench -- --bench`, `--perf` for hardware
     // counters). The scenario is generated deterministically in-process for the
     // D-only milestones; a nix-pinned JSON corpus ($TUI_BENCH_DATA) is added when
     // the cross-language engines need byte-identical input.
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+
+// The VT-oracle correctness gate (`vt_oracle.d`) drives `libghostty-vt` via the
+// `sparkles:ghostty` binding, which needs the ghostty-vt pkg-config from the nix
+// devshell — so it lives in its own configuration, off the default toolchain-light
+// path (mirrors how wired keeps its foreign engines opt-in). Run it with:
+//   nix develop -c dub test --root=libs/tui/bench/render -c oracle
+configuration "oracle" {
+    dependency "sparkles:ghostty" path="../../../.."
+    versions "TuiBenchVtOracle"
+
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
     dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
