@@ -33,9 +33,15 @@ jobs:
             DC: ldc2
     runs-on: ${{ matrix.runner }}
     # The Linux legs finish in ~4m; the macOS leg normally runs ~5m but the
-    # hosted Apple-Silicon runner occasionally hangs (a 5m job has stalled for
-    # 78m). Cap per-runner: generous for macOS, tighter where history is stable.
-    timeout-minutes: ${{ matrix.runner == 'macos-latest' && 20 || 12 }}
+    # hosted Apple-Silicon runner intermittently hangs (a 5m job has stalled for
+    # 78m). Investigation showed the build itself is cheap — a cold recompile
+    # peaks at <1-2 GiB RSS with 0 swap even at 8-way `ldc2` parallelism, well
+    # under the 7 GiB runner — so this is runner-side flakiness, not an OOM, and
+    # it self-heals on re-run. The two `dub`-driven steps below wrap the command
+    # in a per-attempt timeout + retry (`retry_on: timeout`, so a genuine test
+    # failure still fails fast and is never masked). Cap the macOS job generously
+    # to fit the retries; keep Linux tight where history is stable.
+    timeout-minutes: ${{ matrix.runner == 'macos-latest' && 45 || 12 }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -70,8 +76,19 @@ jobs:
       - name: Run flake checks
         run: nix flake check
 
+      # Retry only on a hung attempt (`retry_on: timeout`), so a real test
+      # failure fails immediately and is never masked by a re-run. `ci` and both
+      # compilers are on PATH via the `default` dev shell, inherited by the
+      # action's command. The per-attempt timeout is generous vs the ~5m normal
+      # macOS runtime but catches an indefinite hang; a normal run still exits
+      # as soon as the command finishes.
       - name: Build and test with dub
-        run: ci --test --fail-fast
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4
+        with:
+          timeout_minutes: 12
+          max_attempts: 3
+          retry_on: timeout
+          command: ci --test --fail-fast
         env:
           # `ci` embeds dmd (small closure); honour the matrix compiler for the
           # test suite so the ldc2/dmd dimensions are actually exercised. Both
@@ -79,7 +96,12 @@ jobs:
           DC: ${{ matrix.DC }}
 
       - name: Build and run examples
-        run: ci --example-files --fail-fast
+        uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4
+        with:
+          timeout_minutes: 10
+          max_attempts: 3
+          retry_on: timeout
+          command: ci --example-files --fail-fast
 
       # OS-API research examples (docs/research/.../os-apis). These are multi-file
       # dub packages (ImportC), not single-file, so they are outside `ci
