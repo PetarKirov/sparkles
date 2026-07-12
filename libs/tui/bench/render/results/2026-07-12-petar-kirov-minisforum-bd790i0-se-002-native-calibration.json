@@ -20,138 +20,206 @@
   },
   "rows": [
     {
-      "deviationNs": 117158,
+      "deviationNs": 83673,
       "error": "",
       "iterations": 1,
       "labels": {
         "lang": "D",
         "profile": "churn"
       },
-      "maxNs": 10938311,
-      "medianNs": 9511810.0,
+      "maxNs": 10277745,
+      "medianNs": 9550230.0,
       "metrics": {
-        "frame/s": 31539.7
+        "frame/s": 31412.9
       },
-      "minNs": 9181872,
+      "minNs": 9367282,
       "name": "cell_grid",
       "samples": 32
     },
     {
-      "deviationNs": 106227,
+      "deviationNs": 57917.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "lang": "D-packed",
+        "profile": "churn"
+      },
+      "maxNs": 6065516,
+      "medianNs": 5823030.0,
+      "metrics": {
+        "frame/s": 51519.5
+      },
+      "minNs": 5673383,
+      "name": "cell_grid_packed",
+      "samples": 32
+    },
+    {
+      "deviationNs": 85982.5,
       "error": "",
       "iterations": 1,
       "labels": {
         "lang": "C",
         "profile": "churn"
       },
-      "maxNs": 4782729,
-      "medianNs": 4329860.0,
+      "maxNs": 6492978,
+      "medianNs": 4395050,
       "metrics": {
-        "frame/s": 69286.3
+        "frame/s": 68258.6
       },
-      "minNs": 4124538,
+      "minNs": 4090932,
       "name": "cell_grid_c",
       "samples": 32
     },
     {
-      "deviationNs": 196598,
+      "deviationNs": 85867.5,
       "error": "",
       "iterations": 1,
       "labels": {
         "lang": "D",
         "profile": "mixed"
       },
-      "maxNs": 8861900,
-      "medianNs": 7572640.0,
+      "maxNs": 7748402,
+      "medianNs": 7380160,
       "metrics": {
-        "frame/s": 39616.3
+        "frame/s": 40649.5
       },
-      "minNs": 7262576,
+      "minNs": 7179674,
       "name": "cell_grid",
       "samples": 32
     },
     {
-      "deviationNs": 171349,
+      "deviationNs": 68173,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "lang": "D-packed",
+        "profile": "mixed"
+      },
+      "maxNs": 5483654,
+      "medianNs": 3746710.0,
+      "metrics": {
+        "frame/s": 80070.3
+      },
+      "minNs": 3643121,
+      "name": "cell_grid_packed",
+      "samples": 32
+    },
+    {
+      "deviationNs": 87856,
       "error": "",
       "iterations": 1,
       "labels": {
         "lang": "C",
         "profile": "mixed"
       },
-      "maxNs": 5502410,
-      "medianNs": 3771997,
+      "maxNs": 4050484,
+      "medianNs": 3621444,
       "metrics": {
-        "frame/s": 79533.5
+        "frame/s": 82839.9
       },
-      "minNs": 3474092,
+      "minNs": 3510883,
       "name": "cell_grid_c",
       "samples": 32
     },
     {
-      "deviationNs": 120319,
+      "deviationNs": 89394,
       "error": "",
       "iterations": 1,
       "labels": {
         "lang": "D",
         "profile": "scroll"
       },
-      "maxNs": 7451364,
-      "medianNs": 5970170.0,
+      "maxNs": 8252282,
+      "medianNs": 6033824,
       "metrics": {
-        "frame/s": 50249.9
+        "frame/s": 49719.7
       },
-      "minNs": 5700396,
+      "minNs": 5755763,
       "name": "cell_grid",
       "samples": 32
     },
     {
-      "deviationNs": 91172.5,
+      "deviationNs": 68849.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "lang": "D-packed",
+        "profile": "scroll"
+      },
+      "maxNs": 4942981,
+      "medianNs": 2342090.0,
+      "metrics": {
+        "frame/s": 128091
+      },
+      "minNs": 2245009,
+      "name": "cell_grid_packed",
+      "samples": 32
+    },
+    {
+      "deviationNs": 108226,
       "error": "",
       "iterations": 1,
       "labels": {
         "lang": "C",
         "profile": "scroll"
       },
-      "maxNs": 3857238,
-      "medianNs": 3403860.0,
+      "maxNs": 3607181,
+      "medianNs": 3182890,
       "metrics": {
-        "frame/s": 88135.2
+        "frame/s": 94254
       },
-      "minNs": 3062872,
+      "minNs": 3039195,
       "name": "cell_grid_c",
       "samples": 32
     },
     {
-      "deviationNs": 106302,
+      "deviationNs": 188026,
       "error": "",
       "iterations": 1,
       "labels": {
         "lang": "D",
         "profile": "sparse"
       },
-      "maxNs": 8001735,
-      "medianNs": 6057030,
+      "maxNs": 8260989,
+      "medianNs": 6190850.0,
       "metrics": {
-        "frame/s": 49529.2
+        "frame/s": 48458.6
       },
-      "minNs": 5877620,
+      "minNs": 5915424,
       "name": "cell_grid",
       "samples": 32
     },
     {
-      "deviationNs": 55257.5,
+      "deviationNs": 57356.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "lang": "D-packed",
+        "profile": "sparse"
+      },
+      "maxNs": 2826692,
+      "medianNs": 2525320.0,
+      "metrics": {
+        "frame/s": 118797
+      },
+      "minNs": 2417997,
+      "name": "cell_grid_packed",
+      "samples": 32
+    },
+    {
+      "deviationNs": 46896.5,
       "error": "",
       "iterations": 1,
       "labels": {
         "lang": "C",
         "profile": "sparse"
       },
-      "maxNs": 5118132,
-      "medianNs": 3590680.0,
+      "maxNs": 4003934,
+      "medianNs": 3384550.0,
       "metrics": {
-        "frame/s": 83549.5
+        "frame/s": 88638.1
       },
-      "minNs": 3271097,
+      "minNs": 3292138,
       "name": "cell_grid_c",
       "samples": 32
     }
