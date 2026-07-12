@@ -1,6 +1,7 @@
 # `sparkles:tui` — render-core benchmark baseline
 
-**Status:** living baseline (preliminary — foreign calibration pending) ·
+**Status:** decided — 2-D cell-grid with a compact packed cell (framework
+calibration optional) ·
 **Date:** 2026-07-12 · **Scope:** the rendering-core decision, spec
 [§3.1](./index.md#31-rendering-core-line-diff-vs-2-d-cell-grid).
 
