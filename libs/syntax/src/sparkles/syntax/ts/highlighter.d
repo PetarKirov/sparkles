@@ -28,6 +28,7 @@ milestone; markdown-inline etc.), locals, and UTF-16 sources.
 */
 module sparkles.syntax.ts.highlighter;
 
+import core.lifetime : move;
 import core.time : Duration, msecs;
 import std.range.primitives : put;
 
@@ -35,12 +36,13 @@ import sparkles.base.smallbuffer : SmallBuffer;
 
 import sparkles.syntax.event : HighlightEvent, LabelId;
 import sparkles.syntax.ts.config : TsHighlightConfig;
+import sparkles.syntax.ts.injection : injectionForMatch, intersectRanges, TsConfigCache;
 import sparkles.syntax.ts.predicates : satisfies;
 import sparkles.tree_sitter.errors : TsError, TsErrorCode, TsExpected, tsErr, tsOk;
-import sparkles.tree_sitter.tree_sitter_c : TSNode, TSQueryMatch,
+import sparkles.tree_sitter.tree_sitter_c : TSNode, TSQueryMatch, TSRange,
     ts_node_end_byte, ts_node_start_byte;
-import sparkles.tree_sitter.wrappers : CancelCtx, ParseGuards, TsParser,
-    TsQueryCursor, TsTree;
+import sparkles.tree_sitter.wrappers : CancelCtx, nodeEndByte, nodeStartByte,
+    ParseGuards, TsParser, TsQueryCursor, TsTree;
 
 /// The reference crate's cancellation-check cadence.
 private enum size_t cancellationCheckInterval = 100;
@@ -235,6 +237,314 @@ in (tree.valid, "highlightTree needs a valid tree")
     if (options.matchLimitExceeded !is null && cursor.didExceedMatchLimit)
         *options.matchLimitExceeded = true;
 
+    return tsOk();
+}
+
+// ── Injection layers (M7) ───────────────────────────────────────────────────
+
+/// Hard cap on injection nesting — the reference has none (it relies on ranges
+/// strictly shrinking), but a self-injection over a node's full range could
+/// recurse unbounded, so we bound depth defensively.
+private enum size_t maxInjectionDepth = 8;
+
+/// One parsed language over a set of byte ranges, plus its interleave cursor
+/// state. Heap-allocated (owns non-copyable `TsTree`/`TsQueryCursor`); freed by
+/// the GC finalizer at end of run.
+private struct Layer
+{
+    TsTree tree;                         /// this layer's parse (kept alive for its cursor)
+    TsQueryCursor cursor;                /// the highlights capture stream
+    const(TsHighlightConfig)* config;    /// the language config
+    size_t depth;                        /// injection nesting depth (root = 0)
+    const(TSRange)[] ranges;             /// included ranges (empty = whole buffer)
+    SmallBuffer!(size_t, 16) endStack;   /// pending highlight-end byte offsets (LIFO)
+    bool havePeeked;                     /// `peeked` holds the next highlights capture
+    LayerCapture peeked;                 /// predicate-filtered lookahead
+
+    @disable this(this);
+}
+
+/// A highlights capture copied out of cursor storage (same discipline as the
+/// single-layer loop).
+private struct LayerCapture
+{
+    uint matchId;
+    uint captureId;
+    TSNode node;
+    size_t start, end;
+}
+
+/**
+Injection-aware batch highlighting: parses `rootLanguage`, discovers embedded
+languages via each layer's injections query, parses those over their byte
+ranges, and folds all layers' captures into one $(REF HighlightEvent,
+sparkles,syntax,event) stream ordered by position — the reference crate's
+layer-stack model (non-combined injections; combined + locals deferred).
+
+`cache` resolves every language (root and injected) to a configured
+$(REF TsHighlightConfig, sparkles,syntax,ts,config) and owns the results.
+Totality holds: an injection whose grammar/queries are missing renders as plain
+text; only a size-guard trip or a failed $(I root) parse returns an error.
+*/
+TsExpected!void highlightInjected(Sink)(
+    ref TsConfigCache cache,
+    const(char)[] rootLanguage,
+    scope const(char)[] source,
+    ref Sink sink,
+    HighlightOptions options = HighlightOptions()) @system
+{
+    if (source.length > options.maxSourceBytes || source.length > cast(size_t) int.max)
+        return tsErr!void(TsErrorCode.sourceTooLarge);
+
+    auto rootConfig = cache.resolve(rootLanguage);
+    if (rootConfig is null)
+        return tsErr!void(TsErrorCode.grammarNotFound);
+
+    Layer*[] layers;
+    auto built = buildLayers(cache, rootConfig, source, options, layers);
+    if (built.hasError)
+        return tsErr!void(built.error);
+
+    return interleaveLayers(layers, source, sink, options);
+}
+
+/// BFS layer construction: parse each layer, run its injections query, resolve
+/// and enqueue child layers. A failed $(I root) parse errors; a failed child
+/// parse (or unresolved injection) is skipped — that range stays plain text.
+private TsExpected!void buildLayers(
+    ref TsConfigCache cache, const(TsHighlightConfig)* rootConfig,
+    scope const(char)[] source, in HighlightOptions options, out Layer*[] layers) @system
+{
+    static struct Work
+    {
+        const(TsHighlightConfig)* config;
+        TSRange[] ranges;
+        size_t depth;
+    }
+
+    Work[] queue = [Work(rootConfig, null, 0)];
+    for (size_t qi = 0; qi < queue.length; ++qi)
+    {
+        auto w = queue[qi];
+
+        auto parser = TsParser.create();
+        auto langSet = parser.setLanguage(w.config.grammar.language);
+        if (langSet.hasError)
+        {
+            if (w.depth == 0)
+                return tsErr!void(langSet.error);
+            continue;
+        }
+        if (w.ranges.length)
+            parser.setIncludedRanges(w.ranges);
+
+        TsError parseError;
+        auto tree = parser.parse(source, parseError,
+            ParseGuards(budget: options.parseBudget, cancelFlag: options.cancelFlag));
+        if (!tree.valid)
+        {
+            if (w.depth == 0)
+                return tsErr!void(parseError);
+            continue;
+        }
+
+        auto layer = new Layer;
+        layer.config = w.config;
+        layer.depth = w.depth;
+        layer.ranges = w.ranges;
+        move(tree, layer.tree);
+        layer.cursor = TsQueryCursor.create();
+        layer.cursor.setMatchLimit(options.matchLimit);
+        layer.cursor.exec(w.config.query, layer.tree.rootNode);
+        layers ~= layer;
+
+        // Discover this layer's injections (unless it injects nothing / too deep).
+        if (!w.config.hasInjections || w.depth + 1 > maxInjectionDepth)
+            continue;
+
+        auto injCursor = TsQueryCursor.create();
+        injCursor.setMatchLimit(options.matchLimit);
+        injCursor.exec(w.config.injectionQuery, layer.tree.rootNode);
+
+        TSQueryMatch m;
+        while (injCursor.nextMatch(m))
+        {
+            if (m.pattern_index < w.config.injectionPredicates.length
+                && !satisfies(w.config.injectionPredicates[m.pattern_index], m, source))
+                continue;
+
+            auto inj = injectionForMatch(*w.config, m, source);
+            if (!inj.hasContent || inj.language.length == 0)
+                continue;
+
+            auto childConfig = cache.resolve(inj.language);
+            if (childConfig is null)
+                continue; // grammar/queries missing → plain text
+
+            auto childRanges = intersectRanges(w.ranges, inj.contentNode, inj.includeChildren);
+            if (childRanges.length == 0)
+                continue;
+
+            queue ~= Work(childConfig, childRanges, w.depth + 1);
+        }
+    }
+
+    return tsOk();
+}
+
+/// Predicate-filtered lookahead for one layer's highlights cursor (the
+/// single-layer `peek`, per layer).
+private bool peekLayer(Layer* layer, scope const(char)[] source) @system
+{
+    while (!layer.havePeeked)
+    {
+        TSQueryMatch match;
+        uint captureIndex;
+        if (!layer.cursor.nextCapture(match, captureIndex))
+            return false;
+        if (match.pattern_index < layer.config.predicates.length
+            && !satisfies(layer.config.predicates[match.pattern_index], match, source))
+        {
+            layer.cursor.removeMatch(match.id);
+            continue;
+        }
+        auto node = cast(TSNode) match.captures[captureIndex].node;
+        layer.peeked = LayerCapture(match.id, match.captures[captureIndex].index,
+            node, nodeStartByte(node), nodeEndByte(node));
+        layer.havePeeked = true;
+    }
+    return true;
+}
+
+/// The layer's next boundary: `min(next capture start, top pending end)`, ends
+/// before starts at a tie. Returns `false` when the layer is exhausted.
+private bool layerBoundary(Layer* layer, scope const(char)[] source,
+    out size_t pos, out bool isStart) @system
+{
+    const hasCapture = peekLayer(layer, source);
+    const hasEnd = layer.endStack.length != 0;
+    if (!hasCapture && !hasEnd)
+        return false;
+
+    const nextStart = hasCapture ? layer.peeked.start : size_t.max;
+    const nextEnd = hasEnd ? layer.endStack[layer.endStack.length - 1] : size_t.max;
+    if (nextEnd <= nextStart)
+    {
+        pos = nextEnd;
+        isStart = false;
+    }
+    else
+    {
+        pos = nextStart;
+        isStart = true;
+    }
+    return true;
+}
+
+/// Folds every layer's boundaries into one event stream: at each step take the
+/// globally earliest boundary (ends before starts; deeper layers first at a
+/// tie), fill the `source` gap up to it, and emit the push/pop. Identical
+/// `[start,end)` ranges are emitted once, by the deepest layer (the reference's
+/// cross-layer dedup).
+private TsExpected!void interleaveLayers(Sink)(
+    Layer*[] layers, scope const(char)[] source, ref Sink sink, in HighlightOptions options) @system
+{
+    auto ctx = CancelCtx.from(options.queryBudget, options.cancelFlag);
+
+    size_t byteOffset = 0;
+    size_t lastStart = size_t.max, lastEnd = size_t.max, lastDepth = size_t.max;
+    size_t iterations = 0;
+
+    void emitSourceUpTo(size_t offset)
+    {
+        const clamped = offset < source.length ? offset : source.length;
+        if (byteOffset < clamped)
+        {
+            put(sink, HighlightEvent.sourceSpan(byteOffset, clamped));
+            byteOffset = clamped;
+        }
+    }
+
+    for (;;)
+    {
+        if (++iterations % cancellationCheckInterval == 0 && ctx.armed && ctx.shouldCancel())
+            return tsErr!void(ctx.toError(TsErrorCode.highlightTimeout,
+                TsErrorCode.highlightCancelled));
+
+        // Globally earliest boundary: (pos, ends-before-starts, deeper-first).
+        Layer* best;
+        size_t bestPos;
+        bool bestStart;
+        foreach (layer; layers)
+        {
+            size_t pos;
+            bool isStart;
+            if (!layerBoundary(layer, source, pos, isStart))
+                continue;
+            const better = best is null
+                || pos < bestPos
+                || (pos == bestPos && !isStart && bestStart)
+                || (pos == bestPos && isStart == bestStart && layer.depth > best.depth);
+            if (better)
+            {
+                best = layer;
+                bestPos = pos;
+                bestStart = isStart;
+            }
+        }
+        if (best is null)
+            break;
+
+        emitSourceUpTo(bestPos);
+
+        if (!bestStart)
+        {
+            put(sink, HighlightEvent.popLabel());
+            best.endStack.popBack();
+            continue;
+        }
+
+        auto current = best.peeked;
+        best.havePeeked = false;
+        if (current.end <= byteOffset)
+            continue; // stale (overlapping non-nested capture); skip defensively
+
+        // same-node last-wins within the layer (the reference rule)
+        while (peekLayer(best, source))
+        {
+            if (best.peeked.node.id !is current.node.id)
+                break;
+            best.cursor.removeMatch(current.matchId);
+            current = best.peeked;
+            best.havePeeked = false;
+        }
+
+        // cross-layer identical-range dedup: deeper layer already emitted it
+        if (current.start == lastStart && current.end == lastEnd && best.depth < lastDepth)
+            continue;
+
+        const label = current.captureId < best.config.captureToLabel.length
+            ? best.config.captureToLabel[current.captureId]
+            : LabelId.none;
+        if (label)
+        {
+            lastStart = current.start;
+            lastEnd = current.end;
+            lastDepth = best.depth;
+            put(sink, HighlightEvent.pushLabel(label));
+            best.endStack ~= current.end;
+        }
+    }
+
+    // Defensive: drain any unclosed ends (well-formed streams have none left).
+    foreach (layer; layers)
+        while (layer.endStack.length)
+        {
+            emitSourceUpTo(layer.endStack[layer.endStack.length - 1]);
+            put(sink, HighlightEvent.popLabel());
+            layer.endStack.popBack();
+        }
+    emitSourceUpTo(source.length);
     return tsOk();
 }
 
@@ -487,4 +797,61 @@ unittest
     assert(result.hasError);
     assert(result.error.code == TsErrorCode.sourceTooLarge);
     assert(sink[].length == 0);
+}
+
+version (unittest)
+{
+    import sparkles.syntax.ts.injection : TsConfigCache;
+
+    /// Runs the layered path and returns the event stream (bundle-gated).
+    package HighlightEvent[] injectedEventsForTest(string rootLanguage, string source) @system
+    {
+        import std.array : appender;
+        import std.process : environment;
+        import sparkles.test_runner.skip : skipTest;
+
+        if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+            skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+        static GrammarRegistry registry;
+        registry = GrammarRegistry.fromEnvironment();
+        auto cache = TsConfigCache.create(&registry, LabelSet.standard());
+        auto sink = appender!(HighlightEvent[]);
+        auto result = highlightInjected(cache, rootLanguage, source, sink);
+        assert(!result.hasError);
+        return sink[];
+    }
+}
+
+@("ts.highlighter.injectionAgreesWithSingleLayer")
+@system
+unittest
+{
+    // A language with no injections must yield the identical stream through the
+    // layered path and the single-layer path — the regression guard that the
+    // multi-layer loop degenerates exactly to the proven single-layer one.
+    const source = `{"outer": {"inner": [1, true, null], "b": "x"}}`;
+    auto config = jsonConfigForTest();
+    auto single = eventsForTest(config, source);
+
+    auto layered = injectedEventsForTest("json", source);
+    assert(layered == single, "layered stream diverges from single-layer for json");
+}
+
+@("ts.highlighter.markdownFencedCode")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind, endsWith;
+
+    // A fenced D block inside markdown: the D grammar must highlight the fence
+    // body (markdown treats `code_fence_content` as opaque, so any label on
+    // `void`/`main` can only come from the injected D layer).
+    const source = "# Title\n\n```d\nvoid main() {}\n```\n";
+    auto events = injectedEventsForTest("markdown", source);
+    assertWellFormed(events, source);
+
+    const spans = labeledSpans(events, source);
+    assert(spans.canFind!(s => s.endsWith(":void")),
+        spans.length ? spans[0] : "no labeled spans — injection did not fire");
 }
