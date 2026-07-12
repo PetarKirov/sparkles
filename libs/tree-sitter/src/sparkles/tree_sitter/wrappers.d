@@ -33,7 +33,8 @@ import sparkles.tree_sitter.tree_sitter_c :
     ts_query_capture_count, ts_query_capture_name_for_id,
     ts_query_cursor_delete, ts_query_cursor_did_exceed_match_limit,
     ts_query_cursor_exec, ts_query_cursor_exec_with_options,
-    ts_query_cursor_new, ts_query_cursor_next_capture, ts_query_cursor_remove_match,
+    ts_query_cursor_new, ts_query_cursor_next_capture, ts_query_cursor_next_match,
+    ts_query_cursor_remove_match,
     ts_query_cursor_set_byte_range, ts_query_cursor_set_match_limit,
     ts_query_delete, ts_query_disable_pattern, ts_query_new,
     ts_query_pattern_count, ts_query_predicates_for_pattern,
@@ -463,6 +464,17 @@ struct TsQueryCursor
     in (valid)
     {
         return ts_query_cursor_next_capture(_raw, &match, &captureIndex);
+    }
+
+    /// Advances to the next whole match (all its captures at once). `false` =
+    /// exhausted. Used by injection discovery, which needs a pattern's
+    /// `@injection.content`/`@injection.language` captures together. As with
+    /// `nextCapture`, `match.captures` aliases cursor storage the next call
+    /// invalidates — read it before advancing.
+    bool nextMatch(out TSQueryMatch match) scope @trusted nothrow @nogc
+    in (valid)
+    {
+        return ts_query_cursor_next_match(_raw, &match);
     }
 
     /// Removes an in-progress match (predicate rejection / same-node override).
