@@ -86,6 +86,19 @@ no history — the pin is the HEAD SHA only, and line numbers are as-of that HEA
 > Go 1.27 development tip; `src/database/sql/` + `src/database/sql/driver/`); `jmoiron/sqlx`
 > (`$REPOS/go/sqlx` @ `41dac16`) is the ergonomic layer above it.
 
+### Case study — safe SQL interpolation (D IES)
+
+| Repo                   | Path                                  | Pinned SHA | As of      |
+| ---------------------- | ------------------------------------- | ---------- | ---------- |
+| interpolation-examples | `$REPOS/dlang/interpolation-examples` | `a8a5d4d`  | 2023-10-30 |
+
+> [!NOTE]
+> `safe-interpolation.md` grounds its D claims in Adam D. Ruppe's `interpolation-examples`
+> (`lib/sql.d` + `06-sql.d`) at the pin above, plus the repo's own
+> [IES guideline](../../guidelines/interpolated-expression-sequences.md) and
+> `core.interpolation` (druntime). Its runnable `[Output]` example is CI-verified
+> (`ci --verify`). Foreign-library claims restate the already-ledgered deep-dives.
+
 ## Per-page → repo mapping
 
 Format: page → local repo (+ the sub-tree used for quote grounding). Per-claim locators

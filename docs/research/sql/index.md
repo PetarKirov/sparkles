@@ -18,8 +18,9 @@ This survey answers seven questions:
    [concepts: the abstraction ladder][ladder] and the [master catalog](#master-catalog).
 2. **How is SQL made injection-safe, and how do the mechanisms differ?** Runtime
    tagged-templates vs typed builders vs compile-time quotation vs macro-checked raw SQL.
-   See [concepts: statements, parameters & injection][safety] and the
-   [by-query-model taxonomy](#by-query-construction-model).
+   See [concepts: statements, parameters & injection][safety], the
+   [by-query-model taxonomy](#by-query-construction-model), and the
+   [safe-interpolation case study][safe-interp] (which features D's IES).
 3. **Compile-time or runtime query construction — who checks the query, and when?**
    Type-level schemas and macros ([Quill][quill], `sqlx`, `Squeal`, `jOOQ`) vs runtime AST
    builders. See the [comparison][comparison].
@@ -196,6 +197,7 @@ deep-dives (some forward-dated pending their wave).</sub>
   query DSL, `Idiom`/`NamingStrategy`) → [doobie][doobie] + [skunk][skunk] (the cats-effect
   free-monad and pure-FP-Postgres alternatives) → the [comparison][comparison].
 - **"I want the safe-SQL-without-an-ORM story."** [concepts: injection safety][safety] →
+  the [safe-interpolation case study][safe-interp] (the technique + D's IES) →
   [Effect TS][effect-ts] / [doobie][doobie] (tagged templates) → [sqlx][sqlx] / [sqlc][sqlc]
   (macro-checked / codegen'd raw SQL) → [hasql][hasql] / [Dapper][dapper] (micro-mappers).
 - **"I want the typed-query-builder lineage."** [Slick][slick] → [Squeal][squeal] /
@@ -224,6 +226,8 @@ Grouped by category; see the [master catalog](#master-catalog) for the one-line 
   [JDBI][jdbi].
 - **Synthesis:** [Comparison & Synthesis][comparison] — the cross-cutting analysis + the
   effects-first `sparkles:sql` design brief.
+- **Case study:** [Safe SQL Interpolation][safe-interp] — how each ecosystem makes the
+  `${value}` syntax injection-safe, featuring D's interpolated expression sequences (IES).
 
 ---
 
@@ -278,3 +282,4 @@ Grouped by category; see the [master catalog](#master-catalog) for the one-line 
 [pgjs]: ./postgres-js.md
 [jdbi]: ./jdbi.md
 [comparison]: ./comparison.md
+[safe-interp]: ./safe-interpolation.md
