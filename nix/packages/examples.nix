@@ -38,7 +38,9 @@
         (lib.filterAttrs (_: type: type == "directory"))
         (lib.mapAttrsToList (name: _: fs.maybeMissing (fromRoot "libs/${name}/src")))
         fs.unions
-        (fs.intersection (fs.fileFilter (file: file.hasExt "d") (fromRoot "libs")))
+        (fs.intersection (
+          fs.fileFilter (file: file.hasExt "d" || file.hasExt "c" || file.hasExt "i") (fromRoot "libs")
+        ))
       ];
 
       # Decompose an absolute example path into the metadata needed for the
@@ -94,6 +96,12 @@
           # shared lockfile or split out into its own.
           dubLock = fromRoot "nix/dub-lock.json";
           compiler = pkgs.ldc;
+
+          # Examples that depend on sparkles:syntax (or other ImportC bindings)
+          # need pkg-config + the C library so dub#3085 can feed -P-I...
+          # to ImportC for headers like <tree_sitter/api.h>.
+          nativeBuildInputs = [ pkgs.pkg-config ];
+          buildInputs = [ pkgs.tree-sitter ];
 
           # The unpacked source is read-only by default; dub needs to write
           # build artifacts into the package's `targetPath "build"` directory.

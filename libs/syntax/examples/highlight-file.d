@@ -2,6 +2,7 @@
 /+ dub.sdl:
     name "highlight-file"
     dependency "sparkles:syntax" path="../../.."
+    dependency "sparkles:core-cli" path="../../.."
     targetPath "build"
 +/
 
@@ -10,7 +11,7 @@
 // bundle ($SPARKLES_TS_GRAMMAR_PATH, exported by the devshell); without it
 // the program degrades to plain text — the totality law in action.
 //
-// Usage: highlight-file [--html] [path] (defaults to this file itself)
+// Usage: highlight-file [--html] [--theme <theme>] [path] (defaults to this file itself)
 
 module highlight_file;
 
@@ -20,16 +21,45 @@ import std.path : baseName, extension;
 import std.stdio : stderr, write, writeln;
 
 import sparkles.syntax;
+import sparkles.core_cli.args;
+
+struct CliParams
+{
+    @CliOption("html", "Output formatted HTML instead of ANSI terminal escapes.")
+    bool html;
+
+    @CliOption("theme", "Syntax highlighting theme name.")
+    string theme = "sparkles-dark";
+}
 
 int main(string[] args)
 {
-    bool html = args.length > 1 && args[1] == "--html";
-    const path = args.length > (html ? 2 : 1) ? args[html ? 2 : 1] : __FILE_FULL_PATH__;
+    const cli = args.parseCliArgs!CliParams(
+        HelpInfo(
+            "highlight-file",
+            "The full precise-mode pipeline: file -> tree-sitter parse -> highlights query -> event stream -> ANSI (stdout) or HTML.",
+            null
+        )
+    );
+
+    bool html = cli.html;
+    string themeName = cli.theme;
+    const path = args.length > 1 ? args[1] : __FILE_FULL_PATH__;
     const source = readText(path);
     const lang = canonicalLanguage(path.extension.length ? path.extension[1 .. $] : "");
 
     const labels = LabelSet.standard();
-    const theme = resolveTheme(builtinDark, labels);
+
+    const(Theme)* themeVal = &builtinDark;
+    if (auto t = themeName in builtinThemes)
+    {
+        themeVal = t;
+    }
+    else
+    {
+        stderr.writef("Warning: theme '%s' not found. Falling back to default dark theme.\n", themeName);
+    }
+    const theme = resolveTheme(*themeVal, labels);
 
     // Engine side: any failure falls back to plain text.
     auto events = appender!(HighlightEvent[]);
@@ -57,7 +87,10 @@ int main(string[] args)
     auto output = appender!string;
     if (html)
     {
-        output ~= "<style>\npre { background: #1e1e2e; color: #cdd6f4; padding: 1em; }\n";
+        import std.format : format;
+        string bgStr = theme.defaults.bg.isSet ? format("background: #%02x%02x%02x;", theme.defaults.bg.rgb.r, theme.defaults.bg.rgb.g, theme.defaults.bg.rgb.b) : "";
+        string fgStr = theme.defaults.fg.isSet ? format("color: #%02x%02x%02x;", theme.defaults.fg.rgb.r, theme.defaults.fg.rgb.g, theme.defaults.fg.rgb.b) : "";
+        output ~= format("<style>\npre { %s %s padding: 1em; }\n", bgStr, fgStr);
         writeThemeStylesheet(theme, output);
         output ~= "</style>\n<pre><code>";
         renderHtml(source, events[], theme, output,

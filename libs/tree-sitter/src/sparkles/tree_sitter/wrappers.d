@@ -18,7 +18,24 @@ module sparkles.tree_sitter.wrappers;
 import core.time : Duration, MonoTime;
 
 import sparkles.tree_sitter.errors : TsError, TsErrorCode, TsExpected, tsErr, tsOk;
-import sparkles.tree_sitter.tree_sitter_c;
+import sparkles.tree_sitter.tree_sitter_c :
+    TSLanguage, TSNode, TSParseOptions, TSParseState, TSParser, TSPoint,
+    TSInput, TSInputEncoding,
+    TSQuery, TSQueryCursor, TSQueryCursorOptions, TSQueryCursorState,
+    TSQueryError, TSQueryMatch, TSQueryPredicateStep, TSTree,
+    ts_language_abi_version,
+    ts_node_has_error, ts_node_start_byte, ts_node_end_byte, ts_node_string,
+    ts_parser_delete, ts_parser_new, ts_parser_parse,
+    ts_parser_parse_with_options, ts_parser_reset, ts_parser_set_language,
+    ts_query_capture_count, ts_query_capture_name_for_id,
+    ts_query_cursor_delete, ts_query_cursor_did_exceed_match_limit,
+    ts_query_cursor_exec, ts_query_cursor_exec_with_options,
+    ts_query_cursor_new, ts_query_cursor_next_capture, ts_query_cursor_remove_match,
+    ts_query_cursor_set_byte_range, ts_query_cursor_set_match_limit,
+    ts_query_delete, ts_query_disable_pattern, ts_query_new,
+    ts_query_pattern_count, ts_query_predicates_for_pattern,
+    ts_query_string_value_for_id,
+    ts_tree_delete, ts_tree_root_node;
 
 /// Guards for a batch parse: a wall-clock budget and/or a host cancellation
 /// flag. `Duration.zero` = no budget; both unset = plain uninterruptible parse.
