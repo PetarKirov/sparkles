@@ -56,6 +56,20 @@ until it is met), for batched ones the per-sample auto-scale target.
 Benchmarks run serially (never in the test thread pool), and the whole test
 body is the measured unit by default.
 
+## Cross-module inlining under the runner
+
+Benchmarks are `unittest`s, so the bench binary is a `-unittest` +
+`-checkaction=context` build — and a build type's flags propagate to every
+dependency. A library that needs `-enable-cross-module-inlining` for its hot
+loops should scope it to its **own** configuration (not the build type), and
+on LDC must pair it with `-linkonce-templates`: bare cross-module inlining
+inlines context-assert bodies whose `_d_assert_fail!(T)` template instances
+go unemitted, failing the link with `undefined reference`. The pairing
+recovers non-unittest codegen exactly (retired-instructions parity to
+±0.06 % in the wired bench). The combination is toolchain-version-sensitive
+(`-linkonce-templates` ICEs were reported on other versions) — verify on
+yours.
+
 ## Excluding setup: `benchIter`
 
 To time only part of the body, call `benchIter` — the runner invokes the
@@ -172,6 +186,22 @@ as `—`; when the whole group can't open (a paranoid kernel's
 default perf columns are omitted entirely and a stderr note says why. Off
 Linux the flag is inert.
 
+Not all counters are equally trustworthy across runs and hosts: **retired
+instructions** and **page faults** are exact, host-stable anchors — the
+columns a correctness comparison between two builds can rest on — while
+`cycles`, IPC, and the cache/branch rates are exact when the group is
+scheduled but host-variable (frequency, microarchitecture). Anchor
+cross-run comparisons on the stable columns and read the rest as
+explanation. The bench header also discloses when the group is usable but
+not in its clean default state (user-only fallback, dropped LLC pair,
+scaled mode), so a rescoped run never passes for a default one.
+
+The counting pass reuses the timing pass's iteration count (capped);
+`--perf-iters=N` pins it instead, making per-pass counter totals — and ops
+with a one-time cost amortized inside the counting window, like a buffer
+grown on the first iteration — reproducible across runs. The effective
+count lands in every `--bench-json` row as `countIterations`.
+
 Add `--perf-scaled` to keep the full group even when the PMU would multiplex
 it: instead of dropping the LLC pair, the group stays whole and its scaled
 values render as **labeled estimates** (`≈4.10k`), named in `--bench-json`'s
@@ -235,17 +265,37 @@ dub test :yourpkg -- --bench --perf --bench-min-time=2000 --bench-json=results.j
 ```
 
 The document is `{schema, meta, columns, rows}`: `meta` records the host,
-compiler, CPU, and the run's effective measurement knobs (baselines are
-self-describing); `columns` describe the available catalog metrics; each row
+compiler, CPU, the run's effective measurement knobs, and any
+suite-registered provenance (baselines are self-describing); `columns`
+describe the available catalog metrics; each row
 carries `name`, its sorted `labels` (the `--group-by` dimensions travel here —
 the JSON itself keeps measurement order, unaffected by `--sort-by`/
 `--group-by`), the timing summary in nanoseconds, and a `metrics` object keyed
 by catalog names (`--list-metrics`). Error rows keep their `labels` and
 `error` with `null` timing fields; unavailable counters are `null`; a row
 whose counters were multiplex-scaled additionally names them in an
-`estimatedMetrics` array (the schema-2 addition — absent means every metric
-is exact). The output is deterministic and float-safe for committing
-(integral values print as integers, others to 6 significant digits).
+`estimatedMetrics` array (absent means every metric is exact), and a row
+that ran a counting pass carries its effective `countIterations` (both
+schema-2 additions). The output is deterministic and float-safe for
+committing (integral values print as integers, others to 6 significant
+digits).
+
+A suite can stamp its own provenance into the document — facts it controls
+that materially shape the numbers, like an allocator regime or a codegen
+configuration:
+
+```d
+import sparkles.test_runner.bench : benchProvenance;
+
+shared static this()
+{
+    benchProvenance("glibc malloc trim/mmap thresholds raised to 64 MiB");
+}
+```
+
+Each registered line prints once in the run header and lands in
+`meta.provenance` (deduplicated, first-seen order); outside `--bench` the
+call is inert.
 
 ## I/O-bound signals: Tier-0 counters and `--syscalls`
 
