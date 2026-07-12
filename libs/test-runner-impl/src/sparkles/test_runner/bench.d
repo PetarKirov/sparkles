@@ -481,6 +481,46 @@ private struct BenchContext
 
 private BenchContext* activeBenchContext; // thread-local, set during registration
 
+/// Suite-provenance lines registered via `benchProvenance`, in first-seen
+/// order. Read by the bench driver for the header and `--bench-json` meta.
+package string[] provenanceLines;
+
+/**
+ * Records one line of suite provenance — a fact the suite controls that
+ * materially shapes the numbers and that a committed baseline must carry to
+ * be self-describing: an allocator regime ("glibc malloc trim/mmap
+ * thresholds raised to 64 MiB"), a codegen configuration
+ * ("codegen: library-inline"), a data-set variant. Keep each line short and
+ * declarative.
+ *
+ * Callable from a `@benchmark` body, a `benchCase` helper, or a suite's
+ * `shared static this` (module constructors run on the main thread before
+ * the driver). Under `--bench` the lines print once in the run header and
+ * land in `--bench-json`'s `meta.provenance`; outside `--bench` the call is
+ * inert. Exact duplicates are recorded once.
+ */
+void benchProvenance(string line) @safe nothrow
+{
+    import std.algorithm.searching : canFind;
+
+    if (line.length && !provenanceLines.canFind(line))
+        provenanceLines ~= line;
+}
+
+@("bench.benchProvenance.accumulatesAndDedups")
+@safe nothrow
+unittest
+{
+    const before = provenanceLines.length;
+    scope (exit)
+        provenanceLines = provenanceLines[0 .. before];
+    benchProvenance("fact A");
+    benchProvenance("fact B");
+    benchProvenance("fact A"); // duplicate
+    benchProvenance(""); // empty is ignored
+    assert(provenanceLines[before .. $] == ["fact A", "fact B"]);
+}
+
 /// The counting-pass iteration count for a measurement: the timing's iteration
 /// count, capped so a cheap op's huge count does not make the (ioctl-bracketed)
 /// counting pass slow.
