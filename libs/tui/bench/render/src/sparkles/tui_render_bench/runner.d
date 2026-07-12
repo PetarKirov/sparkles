@@ -26,6 +26,7 @@ import sparkles.tui_render_bench.cell : Grid;
 import sparkles.tui_render_bench.model : apply, initModel, Model, resetModelState;
 import sparkles.tui_render_bench.pocs.cell_grid : CellGrid;
 import sparkles.tui_render_bench.pocs.line_diff : LineDiff;
+import sparkles.tui_render_bench.pocs.line_diff_lazy : LineDiffLazy;
 import sparkles.tui_render_bench.pocs.reference_fullpaint : ReferenceFullpaint;
 import sparkles.tui_render_bench.scenario : generateScenario, Profile, profileNames, Scenario;
 import sparkles.tui_render_bench.scene : renderScene;
@@ -33,7 +34,7 @@ import sparkles.tui_render_bench.sink : Sink;
 
 private enum uint benchFrames = 300;
 
-private alias Renderers = AliasSeq!(ReferenceFullpaint, LineDiff, CellGrid);
+private alias Renderers = AliasSeq!(ReferenceFullpaint, LineDiff, LineDiffLazy, CellGrid);
 
 // Correctness is oracle-verified on the width-1 profiles; `unicode` (wide cells)
 // is excluded until the PoCs' wide-cell handling is verified (spec follow-up).
