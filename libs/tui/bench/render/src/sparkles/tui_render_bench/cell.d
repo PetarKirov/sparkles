@@ -109,9 +109,30 @@ struct Cell
         style = st;
     }
 
+    /// The first code point of this cell's grapheme (0x20 for a blank cell).
+    uint codepoint() const scope @safe pure nothrow @nogc => firstCodepoint(grapheme);
+
     bool opEquals(in Cell o) const @safe pure nothrow @nogc
         => len == o.len && width == o.width && style == o.style
             && bytes[0 .. len] == o.bytes[0 .. o.len];
+}
+
+/// Decode the first code point of a (valid) UTF-8 grapheme; blank/empty → space.
+uint firstCodepoint(scope const(char)[] g) @safe pure nothrow @nogc
+{
+    if (g.length == 0)
+        return 0x20;
+    const c0 = cast(ubyte) g[0];
+    if (c0 < 0x80)
+        return c0;
+    if (c0 < 0xE0 && g.length >= 2)
+        return ((c0 & 0x1F) << 6) | (cast(ubyte) g[1] & 0x3F);
+    if (c0 < 0xF0 && g.length >= 3)
+        return ((c0 & 0x0F) << 12) | ((cast(ubyte) g[1] & 0x3F) << 6) | (cast(ubyte) g[2] & 0x3F);
+    if (g.length >= 4)
+        return ((c0 & 0x07) << 18) | ((cast(ubyte) g[1] & 0x3F) << 12)
+            | ((cast(ubyte) g[2] & 0x3F) << 6) | (cast(ubyte) g[3] & 0x3F);
+    return 0xFFFD;
 }
 
 /// A rectangular grid of cells, indexed `(x, y)` with `(0, 0)` top-left.

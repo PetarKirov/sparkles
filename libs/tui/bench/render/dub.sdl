@@ -15,6 +15,12 @@ dflags "-preview=in" "-preview=dip1000"
 dependency "sparkles:base" path="../../../.."
 dependency "sparkles:test-runner" path="../../../.."
 
+// The byte-identical C port of cell_grid (cross-language codegen calibration).
+// dub compiles it via LDC's ImportC into a linkable object; the D side declares
+// the ABI `extern(C)` in `calibration.d` (importing the ImportC module gives only
+// declarations, not linked code — hence the explicit source file).
+sourceFiles "src/sparkles/tui_render_bench/shim_c.c"
+
 configuration "unittest" {
     // The benchmark is a set of `@benchmark unittest`s run through
     // sparkles:test-runner (`dub test -b bench -- --bench`, `--perf` for hardware

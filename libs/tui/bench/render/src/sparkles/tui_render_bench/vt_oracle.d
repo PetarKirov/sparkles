@@ -22,7 +22,7 @@ module sparkles.tui_render_bench.vt_oracle;
 version (TuiBenchVtOracle):
 
 import sparkles.ghostty;
-import sparkles.tui_render_bench.cell : Cell, CellStyle, Color, Grid;
+import sparkles.tui_render_bench.cell : Cell, CellStyle, Color, firstCodepoint, Grid;
 
 // ---------------------------------------------------------------------------
 // Shared normalized fingerprint (identical hashing on both sides).
@@ -85,24 +85,6 @@ ulong normFingerprint(in Grid g) @safe pure nothrow @nogc
                 cast(ubyte)(c.style.attrs & 0x1F));
         }
     return h;
-}
-
-/// Decode the first code point of a (valid) UTF-8 grapheme; blank/empty → space.
-private uint firstCodepoint(scope const(char)[] g) @safe pure nothrow @nogc
-{
-    if (g.length == 0)
-        return 0x20;
-    const c0 = cast(ubyte) g[0];
-    if (c0 < 0x80)
-        return c0;
-    if (c0 < 0xE0 && g.length >= 2)
-        return ((c0 & 0x1F) << 6) | (cast(ubyte) g[1] & 0x3F);
-    if (c0 < 0xF0 && g.length >= 3)
-        return ((c0 & 0x0F) << 12) | ((cast(ubyte) g[1] & 0x3F) << 6) | (cast(ubyte) g[2] & 0x3F);
-    if (g.length >= 4)
-        return ((c0 & 0x07) << 18) | ((cast(ubyte) g[1] & 0x3F) << 12)
-            | ((cast(ubyte) g[2] & 0x3F) << 6) | (cast(ubyte) g[3] & 0x3F);
-    return 0xFFFD;
 }
 
 // ---------------------------------------------------------------------------
