@@ -78,3 +78,9 @@
 ^https?://cgit\.git\.savannah\.gnu\.org/
 # Ignore specs/event-horizon/ links until the feat/event-horizon branch is merged
 specs/event-horizon/
+
+# New syntax example (feat/sparkles-syntax); the blob/main link 404s until the PR
+# merges and the file exists on the default branch. Matches both the markdown
+# link and the remapped API contents URL lychee uses for github.com/PetarKirov/sparkles.
+^https://github\.com/PetarKirov/sparkles/blob/main/libs/syntax/examples/highlight-file\.d$
+/libs/syntax/examples/highlight-file\.d\?ref=main$
