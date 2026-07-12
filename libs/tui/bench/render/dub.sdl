@@ -1,0 +1,45 @@
+name "tui-render-bench"
+description "Cross-language terminal render-cost benchmark (line-diff vs 2-D cell-grid) on sparkles:test-runner"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetType "library"
+targetPath "build"
+
+dflags "-preview=in" "-preview=dip1000"
+
+// `runner.d` imports sparkles.test_runner.* at module scope, so the runner is an
+// unconditional dependency (mirrors libs/wired/bench/runtime). `base` supplies
+// the SGR/control-sequence + grapheme-width primitives the D PoCs render with.
+dependency "sparkles:base" path="../../../.."
+dependency "sparkles:test-runner" path="../../../.."
+
+// The VT-oracle correctness gate (vt_oracle.d) drives `libghostty-vt` via the
+// `sparkles:ghostty` binding; it needs the ghostty-vt pkg-config from the nix
+// devshell, so it sits behind a `versions` gate (off by default — like wired's
+// foreign-engine gates). Add `versions "TuiBenchVtOracle"` + the dependency to
+// run the correctness check.
+// dependency "sparkles:ghostty" path="../../../.."
+// versions "TuiBenchVtOracle"
+
+configuration "unittest" {
+    // The benchmark is a set of `@benchmark unittest`s run through
+    // sparkles:test-runner (`dub test -b bench -- --bench`, `--perf` for hardware
+    // counters). The scenario is generated deterministically in-process for the
+    // D-only milestones; a nix-pinned JSON corpus ($TUI_BENCH_DATA) is added when
+    // the cross-language engines need byte-identical input.
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+
+// Real numbers need release codegen: dub's stock `unittest` build is a debug
+// build (the runner warns under --bench), so benchmarks run via
+// `dub test -b bench -- --bench …`. `unittests` is load-bearing — without it
+// `dub test` registers zero tests. Copied from libs/wired/bench/runtime.
+buildType "bench" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+}

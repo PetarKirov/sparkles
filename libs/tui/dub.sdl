@@ -1,0 +1,37 @@
+name "tui"
+description "Full-screen interactive terminal-UI library (scaffolding — the rendering core is pending the render-cost benchmark; see docs/specs/tui/)"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+
+importPaths "src"
+
+dflags "-preview=in" "-preview=dip1000"
+
+// The library modules (runtime, backend, input, colour, layout, widgets) are
+// intentionally not written yet: the rendering core (line-diff vs 2-D cell-grid)
+// is being decided by the render-cost benchmark under `bench/render/` — a
+// standalone package with its own manifest, exactly like `libs/wired/bench`.
+// Only the package skeleton exists here today.
+
+configuration "library" {
+    targetType "library"
+    dependency "sparkles:core-cli" path="../.."
+    dependency "sparkles:base" path="../.."
+}
+
+configuration "unittest" {
+    // Fast path: depend on the runner shim (pulls the prebuilt impl library).
+    // `tui` is not in the impl library's dependency closure, so — unlike
+    // `core-cli`/`base` — it can take the normal `dependency` route.
+    dependency "sparkles:test-runner" path="../.."
+    dependency "sparkles:core-cli" path="../.."
+    dependency "sparkles:base" path="../.."
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
