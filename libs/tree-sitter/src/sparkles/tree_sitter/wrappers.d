@@ -25,6 +25,7 @@ import sparkles.tree_sitter.tree_sitter_c :
     TSQueryError, TSQueryMatch, TSQueryPredicateStep, TSTree,
     ts_language_abi_version,
     ts_node_child, ts_node_child_count,
+    ts_node_named_child, ts_node_named_child_count,
     ts_node_has_error, ts_node_start_byte, ts_node_end_byte,
     ts_node_start_point, ts_node_end_point, ts_node_string,
     ts_parser_delete, ts_parser_new, ts_parser_parse,
@@ -304,6 +305,14 @@ uint nodeChildCount(TSNode node) @trusted nothrow @nogc
 /// The `i`-th child of `node` (named or anonymous).
 TSNode nodeChild(TSNode node, uint i) @trusted nothrow @nogc
     => ts_node_child(node, i);
+
+/// Number of $(I named) children of `node` (anonymous token children excluded).
+uint nodeNamedChildCount(TSNode node) @trusted nothrow @nogc
+    => ts_node_named_child_count(node);
+
+/// The `i`-th $(I named) child of `node`.
+TSNode nodeNamedChild(TSNode node, uint i) @trusted nothrow @nogc
+    => ts_node_named_child(node, i);
 
 /// Owning handle over a compiled `TSQuery`.
 struct TsQuery

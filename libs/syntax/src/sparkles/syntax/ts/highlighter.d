@@ -23,8 +23,12 @@ The internal `parse` → $(LREF highlightTree) split is the incremental seam:
 an interactive consumer keeps the `TsTree` alive, edits + re-parses it, and
 calls `highlightTree` per viewport. v1 is batch.
 
-What v1 deliberately skips: injection layers (`injections.scm` — the next
-milestone; markdown-inline etc.), locals, and UTF-16 sources.
+$(LREF highlightInjected) adds embedded languages (M7): it discovers
+injections per layer, parses each over its byte ranges, and folds all layers
+into one position-ordered stream (the reference layer stack). `highlight`
+stays the single-language entry point.
+
+Still deferred: `injection.combined`, locals scope-tracking, and UTF-16 sources.
 */
 module sparkles.syntax.ts.highlighter;
 
@@ -854,4 +858,51 @@ unittest
     const spans = labeledSpans(events, source);
     assert(spans.canFind!(s => s.endsWith(":void")),
         spans.length ? spans[0] : "no labeled spans — injection did not fire");
+}
+
+@("ts.highlighter.markdownInlineSelfInjection")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    // markdown injects its `(inline)` content into markdown_inline. A backslash
+    // escape is inline-only and markdown_inline labels it `@string.escape`
+    // (which resolves in our vocabulary — unlike its neovim-style
+    // `@text.strong`), so the label proves the self-injection recursed.
+    const source = "a paragraph with an escape \\* here\n";
+    auto events = injectedEventsForTest("markdown", source);
+    assertWellFormed(events, source);
+
+    const spans = labeledSpans(events, source);
+    assert(spans.canFind!(s => s.canFind("string.escape")),
+        spans.length ? spans[0] : "no string.escape — inline injection did not fire");
+}
+
+@("ts.highlighter.markdownStaticSetLanguage")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    // An HTML block routes through `#set! injection.language "html"` (no
+    // captured @injection.language node) — exercises the directive path.
+    const source = "<div class=\"x\">hi</div>\n";
+    auto events = injectedEventsForTest("markdown", source);
+    assertWellFormed(events, source);
+
+    const spans = labeledSpans(events, source);
+    assert(spans.canFind!(s => s.canFind("tag")),
+        spans.length ? spans[0] : "no tag label — html injection did not fire");
+}
+
+@("ts.highlighter.injectionRecursionIsBounded")
+@system
+unittest
+{
+    // A fenced markdown block injects markdown into markdown — recursion that
+    // the depth cap must terminate. Well-formedness proves no crash/runaway.
+    const source = "````markdown\n# Inner **b**\n````\n";
+    auto events = injectedEventsForTest("markdown", source);
+    assertWellFormed(events, source);
 }
