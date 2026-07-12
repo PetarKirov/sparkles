@@ -32,8 +32,8 @@ import sparkles.syntax.ts.registry : GrammarRegistry, canonicalLanguage;
 import sparkles.syntax.label : LabelSet;
 import sparkles.tree_sitter.errors : TsError;
 import sparkles.tree_sitter.tree_sitter_c : TSNode, TSPoint, TSQueryMatch, TSRange;
-import sparkles.tree_sitter.wrappers : nodeChild, nodeChildCount, nodeEndByte,
-    nodeRange, nodeStartByte;
+import sparkles.tree_sitter.wrappers : nodeEndByte, nodeNamedChild,
+    nodeNamedChildCount, nodeRange, nodeStartByte;
 
 /// One resolved injection: the embedded language, the node whose text it
 /// covers, and whether the injected parse spans the node's children too.
@@ -95,12 +95,22 @@ InjectionMatch injectionForMatch(ref const TsHighlightConfig config,
 The `TSRange`s an injected parser is restricted to for `contentNode`.
 
 With `includeChildren`, the whole node is one range. Otherwise the ranges are
-the gaps between the node's children (each child excluded) — the "own text
-only" case (e.g. the literal chunks of a template string around its
-interpolations). Every candidate is clipped to `parentRanges` so a child never
-covers bytes the parent didn't; an empty `parentRanges` means the root layer
-(whole buffer), so candidates pass through unclipped. Point coordinates come
-straight from the nodes.
+the gaps between the node's $(I named) children — the "own text only" case
+(e.g. the literal chunks of a template string around its `${…}` interpolations).
+Every candidate is clipped to `parentRanges` so a child never covers bytes the
+parent didn't; an empty `parentRanges` means the root layer (whole buffer), so
+candidates pass through unclipped. Point coordinates come straight from the
+nodes.
+
+$(B Deviation from the reference:) the reference excludes $(I all) children
+(named and anonymous), relying on the injection query to set
+`injection.include-children` whenever the whole node is wanted — as Helix's
+markdown query does for `(inline)`. Excluding only $(I named) children instead
+makes injection work with queries that omit the directive (the bundled
+nvim-treesitter markdown query does): anonymous token children — an escape's
+`\`/`*`, a code span's backticks — stay part of the injected text, while
+genuine sub-structure (a `template_substitution`) is still excluded. A query
+that does set `include-children` still gets the whole node.
 */
 TSRange[] intersectRanges(scope const(TSRange)[] parentRanges, TSNode contentNode,
     bool includeChildren) @system
@@ -115,9 +125,9 @@ TSRange[] intersectRanges(scope const(TSRange)[] parentRanges, TSNode contentNod
         const nr = nodeRange(contentNode);
         uint cursorByte = nr.start_byte;
         TSPoint cursorPoint = nr.start_point;
-        foreach (ci; 0 .. nodeChildCount(contentNode))
+        foreach (ci; 0 .. nodeNamedChildCount(contentNode))
         {
-            const cr = nodeRange(nodeChild(contentNode, ci));
+            const cr = nodeRange(nodeNamedChild(contentNode, ci));
             if (cr.start_byte > cursorByte)
                 candidates ~= mkRange(cursorByte, cursorPoint, cr.start_byte, cr.start_point);
             cursorByte = cr.end_byte;
