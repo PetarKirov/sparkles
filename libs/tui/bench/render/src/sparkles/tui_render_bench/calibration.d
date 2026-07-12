@@ -15,10 +15,12 @@ assumes a constant frame stride).
 +/
 module sparkles.tui_render_bench.calibration;
 
+import sparkles.base.term_control : writeCursorTo;
+
 import sparkles.test_runner.attributes : benchmark;
 import sparkles.test_runner.bench : benchCase, blackBox, Metric, Unit;
 
-import sparkles.tui_render_bench.cell : Grid;
+import sparkles.tui_render_bench.cell : encodeUtf8, Grid;
 import sparkles.tui_render_bench.model : apply, initModel, Model;
 import sparkles.tui_render_bench.pocs.cell_grid : CellGrid;
 import sparkles.tui_render_bench.scenario : generateScenario, Profile, profileNames, Scenario;
@@ -116,6 +118,143 @@ private size_t renderC(in Frames fr, ref char[] buf) @trusted nothrow
     return tui_cellgrid_render(fr.flat.ptr, fr.nframes, fr.cols, fr.rows, buf.ptr, buf.length);
 }
 
+// A D cell_grid over the SAME packed cell as C (`TuiCell`), same algorithm — so
+// D-fat vs D-packed isolates the representation tax, and D-packed vs C isolates
+// pure LDC-vs-GCC codegen.
+
+private bool styleEqP(in TuiCell a, in TuiCell b) @safe pure nothrow @nogc
+    => a.attrs == b.attrs && a.fg_kind == b.fg_kind && a.fr == b.fr && a.fg_ == b.fg_
+    && a.fb == b.fb && a.bg_kind == b.bg_kind && a.br == b.br && a.bg_ == b.bg_ && a.bb == b.bb;
+
+private bool cellEqP(in TuiCell a, in TuiCell b) @safe pure nothrow @nogc
+    => a.cp == b.cp && a.width == b.width && styleEqP(a, b);
+
+private void putColorP(ref Sink s, ubyte kind, ubyte a, ubyte b, ubyte c, bool fg) @safe nothrow
+{
+    if (kind == 1)
+    {
+        s.put(fg ? ";38;5;" : ";48;5;");
+        s.putUint(a);
+    }
+    else if (kind == 2)
+    {
+        s.put(fg ? ";38;2;" : ";48;2;");
+        s.putUint(a);
+        s.put(";");
+        s.putUint(b);
+        s.put(";");
+        s.putUint(c);
+    }
+}
+
+private void writeStyleP(ref Sink s, in TuiCell c) @safe nothrow
+{
+    s.put("\x1b[0");
+    if (c.attrs & 1)
+        s.put(";1");
+    if (c.attrs & 2)
+        s.put(";2");
+    if (c.attrs & 4)
+        s.put(";3");
+    if (c.attrs & 8)
+        s.put(";4");
+    if (c.attrs & 16)
+        s.put(";7");
+    putColorP(s, c.fg_kind, c.fr, c.fg_, c.fb, true);
+    putColorP(s, c.bg_kind, c.br, c.bg_, c.bb, false);
+    s.put("m");
+    s.sgrWrites++;
+}
+
+private void putCpP(ref Sink s, uint cp) @safe nothrow
+{
+    char[4] b = void;
+    const n = encodeUtf8(cast(dchar) cp, b);
+    s.put(b[0 .. n]);
+}
+
+private void paintFullP(ref Sink s, in TuiCell[] frame, int cols, int rows) @safe nothrow
+{
+    foreach (y; 0 .. rows)
+    {
+        writeCursorTo(s, cast(uint)(y + 1), 1);
+        s.cursorMoves++;
+        bool first = true;
+        TuiCell cur;
+        foreach (x; 0 .. cols)
+        {
+            const c = frame[y * cols + x];
+            if (c.width == 0)
+                continue;
+            if (first || !styleEqP(c, cur))
+            {
+                writeStyleP(s, c);
+                cur = c;
+                first = false;
+            }
+            putCpP(s, c.cp);
+        }
+    }
+    writeStyleP(s, TuiCell.init);
+}
+
+/// D cell_grid over the packed flat frames, accumulating the full byte stream.
+private void renderPackedD(in Frames fr, ref Sink s, ref TuiCell[] prev) @safe nothrow
+{
+    s.reset();
+    s.put("\x1b[?7l");
+    const cols = fr.cols, rows = fr.rows, stride = cols * rows;
+    if (prev.length < stride)
+        prev.length = stride;
+
+    bool havePrev = false;
+    foreach (f; 0 .. fr.nframes)
+    {
+        const frame = fr.flat[f * stride .. (f + 1) * stride];
+        if (!havePrev)
+        {
+            paintFullP(s, frame, cols, rows);
+            prev[0 .. stride] = frame[];
+            havePrev = true;
+            continue;
+        }
+        foreach (y; 0 .. rows)
+        {
+            int x = 0;
+            while (x < cols)
+            {
+                if (cellEqP(frame[y * cols + x], prev[y * cols + x]))
+                {
+                    x++;
+                    continue;
+                }
+                writeCursorTo(s, cast(uint)(y + 1), cast(uint)(x + 1));
+                s.cursorMoves++;
+                bool first = true;
+                TuiCell cur;
+                while (x < cols && !cellEqP(frame[y * cols + x], prev[y * cols + x]))
+                {
+                    const c = frame[y * cols + x];
+                    if (c.width == 0)
+                    {
+                        x++;
+                        continue;
+                    }
+                    if (first || !styleEqP(c, cur))
+                    {
+                        writeStyleP(s, c);
+                        cur = c;
+                        first = false;
+                    }
+                    putCpP(s, c.cp);
+                    x++;
+                }
+            }
+        }
+        prev[0 .. stride] = frame[];
+    }
+}
+
 @("calibration.cCellGrid.byteIdenticalToD")
 @system
 unittest
@@ -128,6 +267,12 @@ unittest
     const n = renderC(fr, cbuf);
     assert(n <= cbuf.length, "C output truncated");
     assert(sink.frame == cbuf[0 .. n], "C cell_grid diverged from the D byte stream");
+
+    // The D-packed renderer must produce the identical stream too.
+    Sink sinkP;
+    TuiCell[] prev;
+    renderPackedD(fr, sinkP, prev);
+    assert(sinkP.frame == cbuf[0 .. n], "D-packed cell_grid diverged from the byte stream");
 }
 
 @("render-calibration")
@@ -138,6 +283,7 @@ unittest
     foreach (p; calibProfiles)
     {
         registerD(p);
+        registerPackedD(p);
         registerC(p);
     }
 }
@@ -161,6 +307,28 @@ private void registerD(Profile p)
         after: () {},
         metrics: [Metric(Unit("frame"), cast(double) K, Metric.Mode.rate)],
         labels: ["profile": profileNames[p], "lang": "D"],
+    );
+}
+
+private void registerPackedD(Profile p)
+{
+    static struct St
+    {
+        Frames fr;
+        Sink sink;
+        TuiCell[] prev;
+    }
+
+    auto st = new St;
+    st.fr = precompute(generateScenario(p, calibCols, calibRows, calibFrames));
+    const K = st.fr.nframes;
+
+    benchCase(
+        name: "cell_grid_packed",
+        timed: () { renderPackedD(st.fr, st.sink, st.prev); blackBox(st.sink.length); },
+        after: () {},
+        metrics: [Metric(Unit("frame"), cast(double) K, Metric.Mode.rate)],
+        labels: ["profile": profileNames[p], "lang": "D-packed"],
     );
 }
 
