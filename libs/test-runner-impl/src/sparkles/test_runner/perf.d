@@ -114,6 +114,13 @@ version (linux)
         /// Whether counters are usable on this machine.
         bool available() const @safe pure nothrow @nogc => opened;
 
+        /// Whether the group is usable but not in its clean default state
+        /// (user-only fallback, dropped LLC pair, or scaled mode) — the
+        /// bench header discloses `status()` once when this holds, so a
+        /// silently narrowed or rescoped run never passes for a default one.
+        package bool degraded() const @safe pure nothrow @nogc
+            => userOnly || cacheDropped || scaledMode;
+
         /// The bare reason counting is unavailable — single-sourced between
         /// `status()` and `capabilities()` so the two never diverge.
         private string countingAbsence() const @safe pure nothrow @nogc
@@ -382,6 +389,7 @@ else
         @safe pure nothrow @nogc
         {
             bool available() const => false;
+            package bool degraded() const => false;
             string status() const => "unavailable (not Linux)";
             CapabilityReport capabilities() const
                 => CapabilityReport(Capability.none, stubAbsence[]);
@@ -431,6 +439,22 @@ version (linux)
         assert(r.reasonFor(Capability.preciseMemory) !is null,
             "the perf domain always explains the precise-memory gap");
         assert(r.reasonFor(Capability.countingScaled) !is null);
+    }
+
+    @("perf.PerfGroup.degraded")
+    @safe pure nothrow @nogc
+    unittest
+    {
+        PerfGroup g;
+        assert(!g.degraded, "clean state");
+        g.userOnly = true;
+        assert(g.degraded);
+        g.userOnly = false;
+        g.cacheDropped = true;
+        assert(g.degraded);
+        g.cacheDropped = false;
+        g.scaledMode = true;
+        assert(g.degraded);
     }
 
     @("perf.PerfGroup.status.byteIdentity")

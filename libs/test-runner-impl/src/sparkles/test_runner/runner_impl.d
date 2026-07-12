@@ -680,6 +680,10 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
 
     if (wantPerf && !counters.perf.available)
         noteAbsent("--perf", counters.perf.capabilities, Capability.counting);
+    // A usable-but-degraded group (user-only fallback, dropped LLC pair,
+    // scaled mode) is disclosed too — em-dash columns alone don't say why.
+    if (wantPerf && counters.perf.available && counters.perf.degraded)
+        stderr.writeln("--perf: ", counters.perf.status());
     if (wantTier0 && !counters.tier0.available)
         noteAbsent("--metrics", counters.tier0.capabilities, Capability.counting);
     if (wantSyscalls && !counters.syscalls.available)
