@@ -1449,16 +1449,20 @@ the fence". `DECRQM` cells hold the raw `DECRPM` value (0 = not recognized,
 1 = set, 2 = recognized but reset, 3/4 = permanently set/reset) — the
 recognized-but-reset distinction is itself a capability signal no database can supply.
 
-| Terminal                     | TERM           | COLORTERM | DA1      | DA2        | XTVERSION     | kitty-kbd | 2004 | 2026 | 2027 | 2031 | 2048 | RGB     | Tc  | Su  | OSC 10             | OSC 11             | kitty-gfx |
-| ---------------------------- | -------------- | --------- | -------- | ---------- | ------------- | --------- | ---- | ---- | ---- | ---- | ---- | ------- | --- | --- | ------------------ | ------------------ | --------- |
-| bare-pty-no-emulator (Linux) | xterm-256color | —         | —        | —          | —             | —         | —    | —    | —    | —    | —    | —       | —   | —   | —                  | —                  | —         |
-| bare-pty-no-emulator (macOS) | —              | —         | —        | —          | —             | —         | —    | —    | —    | —    | —    | —       | —   | —   | —                  | —                  | —         |
-| tmux-3.6a-detached           | tmux-256color  | truecolor | 1;2;4    | 84;0;0     | tmux 3.6a     | —         | 2    | —    | —    | 2    | —    | —       | —   | —   | —                  | —                  | —         |
-| GNU-Screen-4.00.03 (macOS)   | screen         | —         | 1;2      | 83;40003;0 | —             | —         | —    | —    | —    | —    | —    | —       | —   | —   | —                  | —                  | —         |
-| Apple-Terminal (macOS 26.3)  | xterm-256color | truecolor | 1;2      | 1;95;0     | —             | —         | —    | —    | —    | —    | —    | —       | —   | —   | rgb:ffff/ffff/ffff | rgb:1e1e/1e1e/1e1e | —         |
-| kitty-0.44.0 (Linux)         | xterm-kitty    | truecolor | 62;52;   | 1;4000;44  | kitty(0.44.0) | 0         | 2    | 2    | 0    | 2    | 2    | invalid | ok  | ok  | rgb:dddd/dddd/dddd | rgb:0000/0000/0000 | OK        |
-| ghostty-1.3.1 (Linux)        | xterm-ghostty  | truecolor | 62;22;52 | 1;10;0     | ghostty 1.3.1 | 0         | 2    | 2    | 1    | 2    | 2    | 8       | ok  | ok  | rgb:ffff/ffff/ffff | rgb:2828/2c2c/3434 | OK        |
-| ghostty-1.3.1 (macOS 26.3)   | xterm-ghostty  | truecolor | 62;22;52 | 1;10;0     | ghostty 1.3.1 | 0         | 2    | 2    | 1    | 2    | 2    | 8       | ok  | ok  | rgb:f0f0/f3f3/f6f6 | rgb:0a0a/0c0c/1010 | OK        |
+| Terminal                             | TERM           | COLORTERM | DA1                                | DA2        | XTVERSION                     | kitty-kbd | 2004 | 2026 | 2027 | 2031 | 2048 | RGB     | Tc      | Su      | OSC 10             | OSC 11             | kitty-gfx |
+| ------------------------------------ | -------------- | --------- | ---------------------------------- | ---------- | ----------------------------- | --------- | ---- | ---- | ---- | ---- | ---- | ------- | ------- | ------- | ------------------ | ------------------ | --------- |
+| bare-pty-no-emulator (Linux)         | xterm-256color | —         | —                                  | —          | —                             | —         | —    | —    | —    | —    | —    | —       | —       | —       | —                  | —                  | —         |
+| bare-pty-no-emulator (macOS)         | —              | —         | —                                  | —          | —                             | —         | —    | —    | —    | —    | —    | —       | —       | —       | —                  | —                  | —         |
+| tmux-3.6a-detached                   | tmux-256color  | truecolor | 1;2;4                              | 84;0;0     | tmux 3.6a                     | —         | 2    | —    | —    | 2    | —    | —       | —       | —       | —                  | —                  | —         |
+| tmux-3.6a-attached (bare-pty client) | tmux-256color  | truecolor | 1;2;4                              | 84;0;0     | tmux 3.6a                     | —         | 2    | —    | —    | 2    | —    | —       | —       | —       | —                  | —                  | —         |
+| GNU-Screen-4.00.03 (macOS)           | screen         | —         | 1;2                                | 83;40003;0 | —                             | —         | —    | —    | —    | —    | —    | —       | —       | —       | —                  | —                  | —         |
+| Apple-Terminal (macOS 26.3)          | xterm-256color | truecolor | 1;2                                | 1;95;0     | —                             | —         | —    | —    | —    | —    | —    | —       | —       | —       | rgb:ffff/ffff/ffff | rgb:1e1e/1e1e/1e1e | —         |
+| XTerm-403 (Linux)                    | xterm          | —         | 64;1;2;6;9;15;16;17;18;21;22;28;29 | 41;403;0   | XTerm(403)                    | —         | 2    | 0    | 0    | 0    | 0    | 8       | invalid | invalid | rgb:0000/0000/0000 | rgb:ffff/ffff/ffff | —         |
+| Alacritty-0.16.1 (Linux)             | alacritty      | truecolor | 6                                  | 0;2501;1   | —                             | 0         | 2    | 2    | 0    | 0    | 0    | —       | —       | —       | rgb:d8d8/d8d8/d8d8 | rgb:1818/1818/1818 | —         |
+| WezTerm-2025-10-14 (Linux)           | xterm-256color | truecolor | 65;4;6;18;22;52                    | 1;277;0    | WezTerm 0-unstable-2025-10-14 | —         | 2    | 2    | 3    | 0    | 0    | 8/8/8   | 1       | invalid | rgb:b2b2/b2b2/b2b2 | rgb:0000/0000/0000 | OK        |
+| kitty-0.44.0 (Linux)                 | xterm-kitty    | truecolor | 62;52;                             | 1;4000;44  | kitty(0.44.0)                 | 0         | 2    | 2    | 0    | 2    | 2    | invalid | ok      | ok      | rgb:dddd/dddd/dddd | rgb:0000/0000/0000 | OK        |
+| ghostty-1.3.1 (Linux)                | xterm-ghostty  | truecolor | 62;22;52                           | 1;10;0     | ghostty 1.3.1                 | 0         | 2    | 2    | 1    | 2    | 2    | 8       | ok      | ok      | rgb:ffff/ffff/ffff | rgb:2828/2c2c/3434 | OK        |
+| ghostty-1.3.1 (macOS 26.3)           | xterm-ghostty  | truecolor | 62;22;52                           | 1;10;0     | ghostty 1.3.1                 | 0         | 2    | 2    | 1    | 2    | 2    | 8       | ok      | ok      | rgb:f0f0/f3f3/f6f6 | rgb:0a0a/0c0c/1010 | OK        |
 
 Collection notes, in row order:
 
@@ -1467,10 +1471,12 @@ Collection notes, in row order:
   L0-passes/L3-fails case a timeout policy exists for. The Linux row's `TERM` is
   leaked from the launching session (a live specimen of environment hearsay); the
   macOS row ran under a non-interactive ssh session with no `TERM` at all.
-- The **tmux** row is a _detached_ server answering for itself: it identifies via
-  `XTVERSION`/DA2 (`84` is ASCII `T`), recognizes modes 2004/2031, but with no client
-  attached answers **nothing** for OSC 10/11 — a capability that appears and
-  disappears with attachment state.
+- The two **tmux** rows are identical — and that identity is the finding. The
+  detached server identifies via `XTVERSION`/DA2 (`84` is ASCII `T`) and recognizes
+  modes 2004/2031 but answers nothing for OSC 10/11; attaching a client _on a bare
+  PTY_ changes nothing, because tmux can only relay colors it has learned from a real
+  client terminal. The OSC capability depends not on attachment but on what the mux
+  knows about its client — a second-order version of the whole detection problem.
 - **GNU screen 4.00.03** (the copy macOS still ships, released 2006) answers exactly
   the two 1980s queries — DA1 `1;2` (VT100-with-AVO) and DA2 (`83` is ASCII `S`) —
   and is silent for everything else: the "ancient multiplexer" floor a degradation
@@ -1482,17 +1488,32 @@ Collection notes, in row order:
   rots in _both_ directions. Second, the `DECRQM` silence corroborates Textual's
   documented reason for skipping the query there entirely (it bleeds a literal `p`
   into the output on older releases — [linux_driver.py][textual-linux-driver]).
+- **XTerm 403** is the registry keeper's own row: DA2 carries its patch number in the
+  firmware field exactly as its ctlseqs documents (`41;403;0`, 41 = VT420), it answers
+  `XTGETTCAP RGB` but rejects `Tc`/`Su` (the xterm-vs-tmux extension-vocabulary split,
+  [§4](#4-the-terminfo-layer-and-its-decline)), and every modern mode is 0.
+- **Alacritty** confirms three claims from the survey in one row: its DA1 is a bare
+  VT102-style `6` with no attribute list (why notcurses can't read sixel support from
+  it, [§7](#7-query-first-stacks-libvaxis-notcurses-termwiz)), its DA2 poses as
+  `Pp = 0` (VT100) with the crate version, and it answers no identity or `XTGETTCAP`
+  query beyond that — yet it _does_ answer the kitty keyboard query, exactly the
+  capability-over-identity posture its maintainer preaches
+  ([§3](#3-the-environment-variable-layer)).
+- **WezTerm** advertises sixel in its DA1 attribute list (`65;4;…`), answers
+  `XTGETTCAP` for both `RGB` and `Tc`, and reports mode 2027 as _permanently set_
+  (3) — giving the 2027 column its third distinct value.
 - The **kitty and ghostty** rows were collected headlessly (`xvfb-run` on Linux,
   LaunchServices on macOS) and disagree in exactly the ways that make interrogation
   necessary: kitty answers `XTGETTCAP Tc`/`Su` but rejects `RGB` as invalid, while
   ghostty answers all three; kitty reports mode 2027 as _not recognized_ (0) where
-  ghostty reports it _set by default_ (1).
+  ghostty reports it _set by default_ (1) and WezTerm _permanently set_ (3) — three
+  terminals, three different truths for one mode, none knowable from `TERM`.
 - **ghostty's two rows are capability-identical across Linux and macOS** (only the
   theme colors differ) — with a query-first terminal the capability profile travels
   with the terminal, not the OS, which is precisely what makes interrogation portable
   where env/database heuristics are not.
 
-Additional rows (zellij, WezTerm, foot, xterm, iTerm2, tmux-attached, ssh chains)
+Additional rows (zellij, foot, iTerm2, tmux attached to a real emulator, ssh chains)
 paste in directly from `dub run --single query-probe.d -- --markdown` run in the
 terminal of interest.
 
