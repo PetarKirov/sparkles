@@ -22,7 +22,8 @@ evidence — excluded from the VitePress build (`srcExclude`) and from lychee.
 ## Per-page ledgers
 
 Populated as each wave lands. Waves: **W1** effects core · **W2** Haskell typed cluster ·
-**W3** typed builders / thin · **W4** full ORMs · **W5** raw / baseline · **W6** synthesis.
+**W3** typed builders / thin · **W4** full ORMs · **W5** raw / baseline · **W6** synthesis ·
+**CS** case study (safe SQL interpolation).
 
 | Page                 | Ledger                                               | Claims | ✓   | ⚠   | Wave |
 | -------------------- | ---------------------------------------------------- | ------ | --- | --- | ---- |
@@ -59,6 +60,7 @@ Populated as each wave lands. Waves: **W1** effects core · **W2** Haskell typed
 | go-database-sql      | [go-database-sql.md](./go-database-sql.md)           | 54     | 50  | 0   | W5   |
 | postgres-js          | [postgres-js.md](./postgres-js.md)                   | 65     | 63  | 1   | W5   |
 | jdbi                 | [jdbi.md](./jdbi.md)                                 | 64     | 60  | 0   | W5   |
+| safe-interpolation   | [safe-interpolation.md](./safe-interpolation.md)     | 12     | 10  | 0   | CS   |
 
 ## Master discrepancy register
 

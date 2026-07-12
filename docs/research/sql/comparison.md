@@ -65,8 +65,8 @@ Two structural observations fall straight out of the matrix:
    thinnest driver to the heaviest ORM — makes bound parameters the default and reserves a
    loudly-named escape hatch (`sql.unsafe`, `$queryRawUnsafe`, `Arel.sql`, `sql.raw`,
    `FromSqlRaw`, `Fragment.const`) for raw text. The interesting variation is _how the safe
-   default is expressed_ (a tagged template, a builder, a macro, a quotation), not _whether_
-   it exists.
+   default is expressed_ (a tagged template, a builder, a macro, a quotation) — dissected,
+   with D's IES, in the [safe-interpolation case study][safe-interp] — not _whether_ it exists.
 2. **Compile-time query checking is the real fault line.** It cleaves the field into three
    camps: **statically-checked** (Quill, Diesel, sqlx, sqlc, jOOQ, Kysely, Drizzle, Squeal,
    Opaleye, Beam, ent, Prisma, esqueleto — a _wrong column or type won't compile_),
@@ -291,6 +291,7 @@ bugs, and which an effects-first, explicit-by-design library is precisely positi
 
 [index]: ./index.md
 [concepts]: ./concepts.md
+[safe-interp]: ./safe-interpolation.md
 [models]: ./concepts.md#query-construction-models
 [schema]: ./concepts.md#schema-migrations-code-generation
 [effect-ts]: ./effect-ts.md
