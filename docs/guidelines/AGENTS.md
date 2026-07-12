@@ -174,6 +174,21 @@ dub --root /path/to/worktree test :core-cli
 > untracked files. Symptom: a freshly created `libs/foo/dub.sdl` or new module
 > "doesn't exist" / "No package file found". Fix: `git add` it.
 
+> [!NOTE]
+> **Substantial scripts and hook logic must be written in D.** Tiny glue
+> (a handful of lines to invoke a binary, set up paths, or do trivial
+> argument munging) is acceptable as `pkgs.writeShellScript` or inline Nix.
+> Any real logic — parsing, non-trivial decisions, more than roughly 5–10
+> lines, etc. — belongs in a D program. The canonical place for repo
+> tooling is `apps/ci` (or a small dedicated sub-package under `apps/` when
+> appropriate). Build it via the flake and invoke it with
+> `lib.getExe config.packages.ci` (or the equivalent for other packages)
+> from pre-commit hooks and other Nix expressions.
+>
+> The `detailed-scope` pre-commit hook (commit-msg stage) was originally a
+> large inline shell script in `nix/checks/pre-commit.nix`; it has been
+> ported to a `--check-commit-scope` subcommand inside the D `ci` tool.
+
 ### Test runner (`sparkles:test-runner`)
 
 The project uses its own runner, `sparkles:test-runner` (`libs/test-runner`,
@@ -622,25 +637,44 @@ have the repo layout, so they keep `version="*"`.
 
 ### Commit messages
 
-Conventional commits: `<type>(<scope>): <description>` (lowercase description).
+Conventional commits with **detailed scopes when practical**:
 
-- **Scope** = a sub-package (`base`, `build-primitives`, `core-cli`, `versions`,
-  `math`, `test-runner`, `test-utils`, `ghostty`, `ci`, `release`, `terminal`) or an
-  area (`nix`, `dub`, `guidelines`, `gh-actions`, `docs`, `research`).
+```
+<type>(<scope>): <description>
+```
+
+The parser (`apps/release`) accepts any text between the parentheses; the scope
+exists for humans, `git log`, and release-note archaeology. The bump policy only
+looks at the _type_ (plus `!` or `BREAKING` footer).
+
+**Prefer the most specific scope that is still short and obvious.** Good patterns:
+
+| Form                             | Example                                                                    | Notes                                                                     |
+| -------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `docs(research/{topic})`         | `docs(research/window-system-integration): add Android/NDK OS-API example` | Research catalog topic                                                    |
+| `docs(guidelines/{area})`        | `docs(guidelines): ...` or `docs(guidelines/code-style): ...`              | Guideline changes                                                         |
+| `{lib/app}.module` (or `sub`)    | `fix(base.smallbuffer): saturate grownCapacity on overflow`                | D module or leaf file                                                     |
+| `{pkg}/subdir` or `{pkg}.subdir` | `feat(core-cli/examples): add animated streaming drawTable demo`           | Examples or nested area                                                   |
+| `pkg.sub.module` (D style)       | `feat(core_cli.ui.table): Use unstyledLength for precise column width`     | Internal module path                                                      |
+| short whole-package name         | `feat(terminal): implement text selection`                                 | Acceptable when the package is small / single-file / cohesive at the time |
+| tool / config area               | `config(lychee): ...`, `ci(gh-actions): ...`                               | Cross-cutting but named                                                   |
+
+Bare top-level scopes (`base`, `core-cli`, `docs`, `research`, `tui`, `wired`, ...) are fine for genuinely cross-cutting work or early-stage packages. When the diff is localized to one file or subdirectory, a dotted or slashed child scope is better.
+
 - **Type** — one of the following (one example each):
 
-| Type       | Use for                                  | Example                                                               |
-| ---------- | ---------------------------------------- | --------------------------------------------------------------------- |
-| `feat`     | new user-facing capability               | `feat(base): add SmallBuffer with small-buffer optimization`          |
-| `fix`      | bug fix                                  | `fix(core-cli): handle empty arrays in prettyPrint`                   |
-| `refactor` | behavior-preserving restructuring        | `refactor(ci): extract dub dependency helpers into a testable module` |
-| `docs`     | documentation only                       | `docs(guidelines): document the [Output] example convention`          |
-| `build`    | build system / dependencies              | `build(dub): add expected as a runtime dependency of versions`        |
-| `ci`       | CI/CD pipelines & tooling                | `ci(gh-actions): add DC (D compiler) dimension to the test matrix`    |
-| `test`     | tests only                               | `test(base): add checkWriter for testing writer functions`            |
-| `style`    | formatting / renames, no behavior change | `style(core-cli): use kebab-case names for example files`             |
-| `chore`    | maintenance (lockfiles, file modes, …)   | `chore(flake.lock): update all flake inputs`                          |
-| `config`   | config-file changes                      | `config(editorconfig): disable indent checking for markdown`          |
+| Type       | Use for                                  | Example                                                                  |
+| ---------- | ---------------------------------------- | ------------------------------------------------------------------------ |
+| `feat`     | new user-facing capability               | `feat(base.smallbuffer): add SmallBuffer with small-buffer optimization` |
+| `fix`      | bug fix                                  | `fix(core-cli): handle empty arrays in prettyPrint`                      |
+| `refactor` | behavior-preserving restructuring        | `refactor(ci): extract dub dependency helpers into a testable module`    |
+| `docs`     | documentation only                       | `docs(guidelines): document the [Output] example convention`             |
+| `build`    | build system / dependencies              | `build(dub): add expected as a runtime dependency of versions`           |
+| `ci`       | CI/CD pipelines & tooling                | `ci(gh-actions): add DC (D compiler) dimension to the test matrix`       |
+| `test`     | tests only                               | `test(base): add checkWriter for testing writer functions`               |
+| `style`    | formatting / renames, no behavior change | `style(core-cli): use kebab-case names for example files`                |
+| `chore`    | maintenance (lockfiles, file modes, …)   | `chore(flake.lock): update all flake inputs`                             |
+| `config`   | config-file changes                      | `config(editorconfig): disable indent checking for markdown`             |
 
 Append `!` after the scope for a breaking change (e.g. `feat(ci)!: …`).
 
@@ -674,6 +708,10 @@ line). Use a blank line between the subject and the body.
 
 ### Pre-commit hooks (`prek`)
 
+See the note in the [Environment, Build & Test](#environment-build--test)
+section about implementing substantial hook logic in D rather than large
+shell scripts.
+
 Hooks run on commit and will modify or block your changes:
 
 - **editorconfig-checker** enforces 4-space-multiple indentation — including inside
@@ -682,6 +720,12 @@ Hooks run on commit and will modify or block your changes:
   turned `5.004_05` into `5.004*05`); double-check tables of literal data after it runs.
 - **verify-md-examples** runs the example verifier and is OOM-prone on large runs;
   bypass a single commit with `SKIP=verify-md-examples git commit …` when needed.
+- **detailed-scope** (runs at `commit-msg` stage) checks for obviously useless
+  scopes (`wip`, `misc`, `update`, …) and suggests more specific scopes for
+  localized changes inside large packages (e.g. bare `base` when only
+  `base/smallbuffer.d` changed). It is intentionally _not_ a strict enum. See
+  the "Commit messages" section above for the intended style. Bypass with
+  `SKIP=detailed-scope git commit …` or `git commit --no-verify`.
 
 ## Pitfalls Checklist
 
