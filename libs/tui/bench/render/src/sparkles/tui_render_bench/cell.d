@@ -125,9 +125,9 @@ struct Grid
     }
 
     ///
-    ushort cols() const @safe pure nothrow @nogc => _cols;
+    ushort cols() const scope @safe pure nothrow @nogc => _cols;
     ///
-    ushort rows() const @safe pure nothrow @nogc => _rows;
+    ushort rows() const scope @safe pure nothrow @nogc => _rows;
 
     /// Resize (reusing capacity) and clear to blank cells.
     void resize(ushort cols, ushort rows) @safe nothrow
@@ -147,12 +147,12 @@ struct Grid
     }
 
     /// The cell at `(x, y)` (no bounds checking in release).
-    ref inout(Cell) at(ushort x, ushort y) inout @safe pure nothrow @nogc
+    ref inout(Cell) at(ushort x, ushort y) inout return scope @safe pure nothrow @nogc
     in (x < _cols && y < _rows)
         => _cells[cast(size_t) y * _cols + x];
 
     /// Row `y` as a cell slice.
-    inout(Cell)[] row(ushort y) inout @safe pure nothrow @nogc return
+    inout(Cell)[] row(ushort y) inout return scope @safe pure nothrow @nogc
     in (y < _rows)
         => _cells[cast(size_t) y * _cols .. cast(size_t)(y + 1) * _cols];
 
