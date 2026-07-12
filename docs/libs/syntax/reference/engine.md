@@ -31,9 +31,9 @@ auto config = TsHighlightConfig.create(grammar, highlightsScm, error);
 config.configure(labels);   // capture names → LabelIds (longest-dot-prefix)
 ```
 
-Built once per (language, vocabulary); non-copyable, pass by `ref`. The
-`injectionsScm`/`localsScm` parameters are recorded seams for the injection
-milestone.
+Built once per (language, vocabulary); non-copyable, pass by `ref`. Passing an
+`injectionsScm` also compiles the language's injections query (used by
+`highlightInjected`, below); `localsScm` stays a recorded seam (locals deferred).
 
 **Predicates.** The C API records query predicates but does not evaluate
 them — the engine implements the reference text-predicate set: `#eq?` /
@@ -57,6 +57,36 @@ removed, ends close before starts at equal offsets, **same-node
 last-pattern-wins**, unresolved captures emit nothing, cancellation checked
 every 100 events plus inside the C query execution.
 
+## Injections
+
+`highlightInjected` highlights embedded languages — fenced code blocks,
+`markdown_inline`, HTML/YAML/TOML front-matter:
+
+```d
+auto registry = GrammarRegistry.fromEnvironment();
+auto cache = TsConfigCache.create(&registry, LabelSet.standard());
+auto result = highlightInjected(cache, "markdown", source, sink);
+```
+
+It parses the root language, discovers injections via each layer's injections
+query, parses each embedded byte range with its own grammar
+(`TsParser.setIncludedRanges`), and folds every layer into one position-ordered
+event stream — the reference layer stack: earliest boundary wins (ends before
+starts, deeper layers first), a global `source` fill, same-node last-wins per
+layer, identical `[start,end)` ranges deduped to the deepest layer.
+
+`TsConfigCache` maps a language name to a configured `TsHighlightConfig` (loaded
+through the registry, cached and owned); a missing grammar or query renders that
+range as plain text (totality). The injected language comes from a captured
+`@injection.language` node or a `#set! injection.language` directive;
+`injection.include-children` is honored, and by default only the content node's
+_named_ children are excluded (so a query that omits the directive still
+re-parses escapes/delimiters). `injection.combined` and locals are deferred;
+nesting is depth-capped (`injectionDepthExceeded`).
+
+`highlight` stays the single-language entry point — a language with no
+injections yields a byte-identical stream through either path.
+
 ## Guards (`HighlightOptions`)
 
 | Option           | Default | Rationale                                                                                                      |
@@ -72,16 +102,15 @@ every 100 events plus inside the C query execution.
 `grammarNotFound` / `dlopenFailed` / `symbolNotFound` / `incompatibleAbi`
 (loader), `queryFileMissing` / `querySyntax` / `queryNodeType` / … (query
 compile, byte offset in `detail`), `sourceTooLarge` / `parseTimeout` /
-`parseCancelled` / `highlightTimeout` / `highlightCancelled` (guards),
-`unsupportedPlatform` (non-Posix dlopen). All surface as
-`TsExpected!T = Expected!(T, TsError, NoGcHook)`.
+`parseCancelled` / `highlightTimeout` / `highlightCancelled` /
+`injectionDepthExceeded` (guards), `unsupportedPlatform` (non-Posix dlopen).
+All surface as `TsExpected!T = Expected!(T, TsError, NoGcHook)`.
 
 ## Out of scope (v1)
 
-Injection layers (`injections.scm` — markdown-inline and fenced code blocks;
-the next milestone, seams in place), locals, UTF-16 sources, Windows
-`LoadLibrary`, incremental editing (keep the `TsTree`, re-parse, call
-`highlightTree` — the split exists; the machinery doesn't yet).
+`injection.combined`, locals, UTF-16 sources, Windows `LoadLibrary`, incremental
+editing (keep the `TsTree`, re-parse, call `highlightTree` — the split exists;
+the machinery doesn't yet).
 
 ## See also
 

@@ -13,20 +13,19 @@ justification read the [proposal](./index.md); for the evidence base read the
 
 ## 1. Milestone overview
 
-| #      | Deliverable                                                                                             | Prior art                        | Depends on |
-| ------ | ------------------------------------------------------------------------------------------------------- | -------------------------------- | ---------- |
-| **M1** | Core seam: `event.d` (events, `byStyledSpan`), `label.d` (vocabulary, longest-dot-prefix), `color.d`    | [ts-highlight] · [helix] · [bat] | —          |
-| **M2** | Theme layer (`theme.d`, `themes.d`) + ANSI backend (`render/ansi.d`)                                    | [helix] · [bat]                  | M1         |
-| **M3** | `writeHtmlEscaped` (base) + HTML backend (`render/html.d`, stylesheet emitter)                          | [ts-highlight] · [shiki]         | M1, M2     |
-| **M4** | `sparkles:tree-sitter` binding (ImportC, RAII, dlopen loader) + Nix runtime & grammar bundle (json)     | [importc] · [ts-highlight]       | —          |
-| **M5** | Precise engine: registry, query config, text predicates, reference event loop → end-to-end ANSI/HTML    | [ts-highlight] · [helix]         | M1–M4      |
-| **M6** | Full grammar bundle (target + docs-fence languages incl. D), language normalization, library docs       | [helix] (supply chain)           | M4, M5     |
-| **M7** | _(next)_ Injections: merged query, `#set!` consumption, layer stack — markdown + fenced code end-to-end | [ts-highlight] · [helix]         | M5, M6     |
+| #      | Deliverable                                                                                                                       | Prior art                        | Depends on |
+| ------ | --------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | ---------- |
+| **M1** | Core seam: `event.d` (events, `byStyledSpan`), `label.d` (vocabulary, longest-dot-prefix), `color.d`                              | [ts-highlight] · [helix] · [bat] | —          |
+| **M2** | Theme layer (`theme.d`, `themes.d`) + ANSI backend (`render/ansi.d`)                                                              | [helix] · [bat]                  | M1         |
+| **M3** | `writeHtmlEscaped` (base) + HTML backend (`render/html.d`, stylesheet emitter)                                                    | [ts-highlight] · [shiki]         | M1, M2     |
+| **M4** | `sparkles:tree-sitter` binding (ImportC, RAII, dlopen loader) + Nix runtime & grammar bundle (json)                               | [importc] · [ts-highlight]       | —          |
+| **M5** | Precise engine: registry, query config, text predicates, reference event loop → end-to-end ANSI/HTML                              | [ts-highlight] · [helix]         | M1–M4      |
+| **M6** | Full grammar bundle (target + docs-fence languages incl. D), language normalization, library docs                                 | [helix] (supply chain)           | M4, M5     |
+| **M7** | Injections: per-layer injections query, `#set!` consumption, layer stack with included ranges — markdown + fenced code end-to-end | [ts-highlight] · [helix]         | M5, M6     |
 
 M1–M3 are pure D over `sparkles:base` and prove both backends with synthetic streams.
 M4 is independent of M1–M3 (only the seam types are shared) and can proceed in parallel.
-M5 is the integration milestone; M6 is supply chain + docs; M7 is scheduled but not part
-of this drop.
+M5 is the integration milestone; M6 is supply chain + docs; M7 adds embedded languages.
 
 ## 2. Per-milestone detail
 
@@ -132,12 +131,24 @@ nothrow)` around `#include <tree_sitter/api.h>`; unique stem), `errors.d`
 - Minimal `docs/libs/syntax/` Diátaxis tree + Libraries sidebar entry; README example
   highlighting real D source.
 
-### M7 — injections _(next drop)_
+### M7 — injections _(shipped)_
 
-Merged query construction (injections → locals → highlights with pattern-index
-boundaries), `#set!` consumption (`injection.language`/`combined`/`include-children`),
-layer stack with included ranges, registry-wired language lookup; markdown +
-markdown-inline end-to-end, fenced D blocks highlighted inside markdown.
+`highlightInjected` (`ts/highlighter.d`) parses the root language, discovers
+embedded languages via each layer's injections query, parses them over their
+byte ranges (`TsParser.setIncludedRanges`), and folds all layers into one
+position-ordered event stream — the reference `tree-sitter-highlight`
+layer-stack model. `ts/injection.d` holds `injectionForMatch` (language from the
+`@injection.language` node or a `#set!` directive; content node;
+include-children), `intersectRanges` (whole node, or the gaps between the
+content node's _named_ children — see the deviation note there), and
+`TsConfigCache` (the `injection_callback`: language → configured
+`TsHighlightConfig`, registry-loaded and owned). `ts/config.d` compiles the
+per-language injections query alongside highlights.
+
+End-to-end: fenced D blocks highlighted inside markdown, markdown →
+markdown_inline self-injection, static `#set! injection.language` (HTML/YAML/
+TOML front-matter), depth-capped recursion. Deferred (seams kept):
+`injection.combined` and locals scope-tracking.
 
 ## 3. Verification
 
