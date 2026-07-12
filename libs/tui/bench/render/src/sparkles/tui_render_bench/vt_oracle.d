@@ -270,18 +270,25 @@ VerifyResult verifyAgainstOracle(R, S)(ref R renderer, in S scn) @system
     return res;
 }
 
-@("vtOracle.reference.reconstructsTargetEveryFrame")
+@("vtOracle.allRenderers.reconstructTargetEveryFrame")
 @system
 unittest
 {
+    import std.meta : AliasSeq;
     import sparkles.tui_render_bench.pocs.reference_fullpaint : ReferenceFullpaint;
+    import sparkles.tui_render_bench.pocs.line_diff : LineDiff;
+    import sparkles.tui_render_bench.pocs.cell_grid : CellGrid;
     import sparkles.tui_render_bench.scenario : generateScenario, Profile;
 
-    foreach (p; [Profile.sparse, Profile.churn, Profile.scroll, Profile.mixed])
-    {
-        auto scn = generateScenario(p, 80, 24, 30);
-        ReferenceFullpaint r;
-        const res = verifyAgainstOracle(r, scn);
-        assert(res.ok, "reference diverged from the VT oracle");
-    }
+    // The diffing renderers (line_diff, cell_grid) legitimately emit different
+    // bytes from the reference and from each other — but every one must
+    // reconstruct the identical picture, on every frame, on the width-1 profiles.
+    static foreach (R; AliasSeq!(ReferenceFullpaint, LineDiff, CellGrid))
+        foreach (p; [Profile.sparse, Profile.churn, Profile.scroll, Profile.resize, Profile.mixed])
+        {
+            auto scn = generateScenario(p, 80, 24, 40);
+            R r;
+            const res = verifyAgainstOracle(r, scn);
+            assert(res.ok, R.label ~ " diverged from the VT oracle");
+        }
 }
