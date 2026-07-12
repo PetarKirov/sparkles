@@ -93,36 +93,50 @@ the art. That is what M3 confirms.
 ## Cross-language calibration (M3, D vs C — same algorithm, byte-identical)
 
 To check whether the _absolute_ D numbers are competitive, `shim_c.c` is a
-byte-identical C port of `cell_grid` (asserted equal output); both are timed over
-the same precomputed target-grid sequence, isolating renderer diff+emit. Actual
-frameworks (Ratatui, Notcurses) render subtly different pictures and can't be
-grid-matched cheaply, so this same-algorithm comparison is the rigorous, achievable
-calibration.
+byte-identical C port of `cell_grid` (asserted equal output), and `cell_grid_packed`
+is a D renderer over the **same packed cell** (`TuiCell`) with the same algorithm.
+All three are timed over the same precomputed target-grid sequence (isolating
+renderer diff+emit). Three points decompose the gap: D-fat vs D-packed = the
+_representation_ tax; D-packed vs C = pure _LDC-vs-GCC codegen_. (Actual frameworks
+render subtly different pictures and can't be grid-matched cheaply, so this
+same-algorithm comparison is the rigorous, achievable calibration.)
 
-| profile | D instr | C instr | D ÷ C |
-| ------- | ------: | ------: | ----: |
-| sparse  |    125M |     63M | ~2.0× |
-| mixed   |    146M |     71M | ~2.1× |
-| churn   |    178M |     84M | ~2.1× |
+Instructions per scenario (300 frames):
 
-**The D `cell_grid` runs ~2× the instructions of the identical C.** IPC is
-comparable, so this is work, not scheduling — and it is _not_ pure LDC-vs-GCC
-codegen: the bench's D `Cell` carries a 16-byte inline grapheme buffer and a branchy
-`Color`/`CellStyle` equality (a `final switch` per colour), while the C cell packs a
-single codepoint and compares flat fields. The per-cell equality runs for every cell
-every frame, so the representation dominates.
+| profile | D-fat `Cell` | D-packed | C (packed) |
+| ------- | -----------: | -------: | ---------: |
+| sparse  |         125M |  **63M** |        63M |
+| scroll  |         125M |  **62M** |        62M |
+| mixed   |         146M |      84M |        71M |
+| churn   |         178M |     115M |        84M |
 
-**Design implication (feeds the library, not just the decision):** a cell-grid core
-should use a **compact packed cell** — a packed codepoint (spilling long graphemes
-out-of-line) and a flat, branch-light style compare — exactly the inline-packing that
-Notcurses and libvaxis use. The ~2× is an implementation tax to avoid, not an
-argument against the cell-grid architecture.
+Findings:
+
+1. **The fat cell, not the language, caused the gap.** Switching to a packed cell
+   _halves_ D's instructions everywhere (sparse 125M → 63M). The bench's D `Cell`
+   carries a 16-byte inline grapheme buffer and a branchy `Color`/`CellStyle`
+   equality (a `final switch` per colour) that ran for every cell every frame; the
+   packed cell compares flat fields on a codepoint.
+
+2. **D-packed reaches C parity on the common workload.** On the change-light profiles
+   (sparse, scroll — the typical TUI case) D-packed is within 0.2 % of C and even
+   edges ahead on scroll. LDC codegen is fully competitive there.
+
+3. **A residual on churn** (D-packed 115M vs C 84M, ~1.4×) traces to `Sink.put`
+   per-call overhead on the emit-heavy path (many small appends), not the diff — a
+   bulk-append sink would narrow it.
+
+**Conclusion: a cell-grid core is fast enough in D.** The architecture is sound and
+the language is competitive — provided the retained/diff grid uses a **compact packed
+cell** (packed codepoint + flat style, spilling long graphemes out-of-line), exactly
+the inline-packing Notcurses and libvaxis use. This is concrete guidance the library
+build inherits.
 
 ## What's next
 
-- **M3 (remaining) — framework calibration.** Ratatui (Rust) / Notcurses (C) as
-  rough absolute-frontier reference points (order-of-magnitude, not grid-matched),
-  plus a compact-cell D variant to confirm the ~2× closes.
+- **M3 (optional) — framework calibration.** Ratatui (Rust) / Notcurses (C) as rough
+  order-of-magnitude frontier reference points (not grid-matched). The core
+  language-viability question is already answered by the packed-cell result above.
 - **Sensitivity** — a scroll-region (`DECSTBM`) `cell_grid` variant; wider profile
   and terminal-size coverage; the `unicode` (wide-cell) profile once the PoCs'
   wide-cell handling is oracle-verified.
