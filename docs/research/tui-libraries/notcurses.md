@@ -123,6 +123,10 @@ The library combines multiple strategies:
 
 The included `notcurses-info` tool reports detected capabilities for any terminal.
 
+For a source-level walkthrough of this interrogation pipeline (the query barrage, the
+DA1 fence and its documented hang risk, and the per-terminal heuristics table), see the
+[Terminal Capability Detection Case Study](capability-detection-case-study.md).
+
 ### Supported Capabilities
 
 | Capability                  | Details                                                                                                                                                                  |

@@ -201,6 +201,10 @@ For legacy terminals that do not respond to capability queries, libvaxis falls b
 standard SGR rendering mode (256-color palette, basic modifiers, no Kitty keyboard). The
 `sgr` field on `Vaxis` tracks whether to use standard or legacy escape sequence formatting.
 
+For a source-level analysis of this query battery (and how it compares to notcurses,
+termwiz, crossterm, and the env-first stacks), see the
+[Terminal Capability Detection Case Study](capability-detection-case-study.md).
+
 ---
 
 ## Layout System

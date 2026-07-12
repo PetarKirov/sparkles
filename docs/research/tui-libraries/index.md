@@ -190,6 +190,8 @@ See the **[Tree-View Case Study][tree-view-case-study]** for a focused analysis 
 
 See the **[Table Row/Column-Span Case Study][table-span-case-study]** for a focused analysis of how tables represent cell spanning (`colspan`/`rowspan`, merged cells) across terminal renderers (cli-table3, npm `table`, tablewriter, [ratatui][ratatui], [FTXUI][ftxui], [ImTui][imtui]), document/markup systems (HTML, GNU `tbl`, LaTeX, AsciiDoc, reStructuredText), and GUI grid layouts (CSS Grid, Qt, GTK, Swing, Android, Tk) — distilled into five representation strategies and design principles for a span-capable Sparkles table.
 
+See the **[Terminal Capability Detection Case Study][capability-detection-case-study]** for a focused analysis of how programs discover what their terminal can do, across five detection layers (stream introspection, environment sniffing, terminfo, runtime interrogation, subscription modes): the env-var standards (`NO_COLOR`, `COLORTERM`, `FORCE_COLOR`), the terminfo decline, the query/fence/timeout pattern, deep dives into [libvaxis][libvaxis], [notcurses][notcurses], termwiz, supports-color/ink, termenv/colorprofile ([Bubble Tea][bubbletea]), tcell v2/v3 ([tview][tview]), vty ([brick][brick]), crossterm ([ratatui][ratatui], [broot][broot]), [Textual][textual], [mosaic][mosaic], and nottui's notty — grounded by an empirical response matrix collected with a co-located runnable probe, and distilled into design principles for a Sparkles capability-detection library.
+
 ## References
 
 [ratatui]: ratatui.md
@@ -210,3 +212,4 @@ See the **[Table Row/Column-Span Case Study][table-span-case-study]** for a focu
 [comparison]: comparison.md
 [tree-view-case-study]: tree-view-case-study.md
 [table-span-case-study]: table-span-case-study.md
+[capability-detection-case-study]: capability-detection-case-study.md

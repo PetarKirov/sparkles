@@ -2190,6 +2190,10 @@ export default withMermaid(
                   text: 'Table Row/Column-Span Case Study',
                   link: '/research/tui-libraries/table-span-case-study',
                 },
+                {
+                  text: 'Terminal Capability Detection Case Study',
+                  link: '/research/tui-libraries/capability-detection-case-study',
+                },
               ],
             },
             {
