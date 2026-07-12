@@ -1,0 +1,160 @@
+{
+  "columns": [
+    {
+      "class": "quantitative",
+      "format": "count",
+      "header": "frame/s",
+      "name": "frame/s",
+      "source": "client"
+    }
+  ],
+  "meta": {
+    "arch": "x86_64",
+    "compiler": "LDC (front-end 2.111)",
+    "cpu": "AMD Ryzen 9 7940HX with Radeon Graphics",
+    "date": "2026-07-12",
+    "hostname": "petar-kirov-minisforum-bd790i0-se-002",
+    "minSampleTimeMs": 5,
+    "os": "linux",
+    "sampleCount": 32
+  },
+  "rows": [
+    {
+      "deviationNs": 117158,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "lang": "D",
+        "profile": "churn"
+      },
+      "maxNs": 10938311,
+      "medianNs": 9511810.0,
+      "metrics": {
+        "frame/s": 31539.7
+      },
+      "minNs": 9181872,
+      "name": "cell_grid",
+      "samples": 32
+    },
+    {
+      "deviationNs": 106227,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "lang": "C",
+        "profile": "churn"
+      },
+      "maxNs": 4782729,
+      "medianNs": 4329860.0,
+      "metrics": {
+        "frame/s": 69286.3
+      },
+      "minNs": 4124538,
+      "name": "cell_grid_c",
+      "samples": 32
+    },
+    {
+      "deviationNs": 196598,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "lang": "D",
+        "profile": "mixed"
+      },
+      "maxNs": 8861900,
+      "medianNs": 7572640.0,
+      "metrics": {
+        "frame/s": 39616.3
+      },
+      "minNs": 7262576,
+      "name": "cell_grid",
+      "samples": 32
+    },
+    {
+      "deviationNs": 171349,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "lang": "C",
+        "profile": "mixed"
+      },
+      "maxNs": 5502410,
+      "medianNs": 3771997,
+      "metrics": {
+        "frame/s": 79533.5
+      },
+      "minNs": 3474092,
+      "name": "cell_grid_c",
+      "samples": 32
+    },
+    {
+      "deviationNs": 120319,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "lang": "D",
+        "profile": "scroll"
+      },
+      "maxNs": 7451364,
+      "medianNs": 5970170.0,
+      "metrics": {
+        "frame/s": 50249.9
+      },
+      "minNs": 5700396,
+      "name": "cell_grid",
+      "samples": 32
+    },
+    {
+      "deviationNs": 91172.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "lang": "C",
+        "profile": "scroll"
+      },
+      "maxNs": 3857238,
+      "medianNs": 3403860.0,
+      "metrics": {
+        "frame/s": 88135.2
+      },
+      "minNs": 3062872,
+      "name": "cell_grid_c",
+      "samples": 32
+    },
+    {
+      "deviationNs": 106302,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "lang": "D",
+        "profile": "sparse"
+      },
+      "maxNs": 8001735,
+      "medianNs": 6057030,
+      "metrics": {
+        "frame/s": 49529.2
+      },
+      "minNs": 5877620,
+      "name": "cell_grid",
+      "samples": 32
+    },
+    {
+      "deviationNs": 55257.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "lang": "C",
+        "profile": "sparse"
+      },
+      "maxNs": 5118132,
+      "medianNs": 3590680.0,
+      "metrics": {
+        "frame/s": 83549.5
+      },
+      "minNs": 3271097,
+      "name": "cell_grid_c",
+      "samples": 32
+    }
+  ],
+  "schema": 1
+}
