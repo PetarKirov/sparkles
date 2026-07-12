@@ -96,7 +96,7 @@ import std.path : baseName, buildPath;
 import std.process : environment, execute;
 import std.range : iota;
 import std.regex : ctRegex, matchFirst;
-import std.stdio : writeln;
+import std.stdio : stderr, writeln;
 import std.string : endsWith, indexOf, lineSplitter, replace, strip, stripRight, toLower;
 
 // sparkles packages
@@ -168,6 +168,9 @@ struct CliParams
 
     @CliOption(`L|log-level`, "Set the log level (trace, info, warning, error). Default: info.")
     LogLevel logLevel = LogLevel.info;
+
+    @CliOption(`check-commit-scope`, "Check a commit message for a detailed scope (used by pre-commit commit-msg hook). If no file is given or the argument is '-', reads the message from stdin instead of a file.")
+    bool checkCommitScope;
 }
 
 enum ProgramMode
@@ -179,6 +182,7 @@ enum ProgramMode
     runDubTests,
     checkReferenceLinks,
     fixReferenceLinks,
+    checkCommitScope,
 }
 
 struct Example
@@ -275,6 +279,12 @@ int main(string[] args)
 
     const mode = resolveProgramMode(cli);
 
+    if (mode == ProgramMode.checkCommitScope)
+    {
+        string source = (positionalArgs.length > 0) ? positionalArgs[0] : "-";
+        return runCheckCommitScope(source);
+    }
+
     if (mode == ProgramMode.runDubTests)
         return runDubTestsMode(cli.failFast);
 
@@ -292,6 +302,8 @@ int main(string[] args)
             styledWritelnErr(i"{bold Usage:} $(args[0].baseName) [--dedup-reference-links|--fix-reference-links] [--files GLOB|FILE...]");
         else if (mode == ProgramMode.runExampleFiles)
             styledWritelnErr(i"{bold Usage:} $(args[0].baseName) --example-files [--fail-fast] [--files GLOB|FILE...]");
+        else if (mode == ProgramMode.checkCommitScope)
+            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) --check-commit-scope [<commit-msg-file> | -]");
         else
             styledWritelnErr(i"{bold Usage:} $(args[0].baseName) [--verify|--update] [--fail-fast] [--files GLOB|FILE...]");
         return 1;
@@ -339,7 +351,13 @@ private string validateCliMode(
     if (cli.test && (cli.dedupReferenceLinks || cli.fixReferenceLinks))
         return "--test cannot be combined with reference deduplication modes (--dedup-reference-links/--fix-reference-links)";
 
-    if (positionalArgs.length > 0)
+    if (cli.checkCommitScope && (cli.verify || cli.update || cli.exampleFiles || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks))
+        return "--check-commit-scope cannot be combined with other modes";
+
+    if (cli.checkCommitScope && positionalArgs.length > 1)
+        return "--check-commit-scope accepts at most one argument (a path or '-' for stdin)";
+
+    if (positionalArgs.length > 0 && !cli.checkCommitScope)
         return "Positional file arguments are no longer supported; use --files";
 
     if (fileSelection.specified && cli.files.length == 0)
@@ -368,6 +386,9 @@ private ProgramMode resolveProgramMode(in CliParams cli)
     if (cli.verify)
         return ProgramMode.verifyExamples;
 
+    if (cli.checkCommitScope)
+        return ProgramMode.checkCommitScope;
+
     return ProgramMode.runExamples;
 }
 
@@ -375,6 +396,181 @@ private bool isReferenceMode(in ProgramMode mode)
 {
     return mode == ProgramMode.checkReferenceLinks
         || mode == ProgramMode.fixReferenceLinks;
+}
+
+/// Runs the detailed commit scope check for a commit message file.
+/// This is invoked by the pre-commit commit-msg hook.
+/// Returns 0 on success (allow commit), 1 on failure (block).
+/// Check the given commit message (file path or "-" / empty for stdin) for
+/// detailed scope compliance. Returns 0 on success (allow), 1 on violation (block).
+private int runCheckCommitScope(string msgSource)
+{
+    import std.file : readText;
+    import std.process : execute;
+    import std.regex : ctRegex, matchFirst;
+    import std.stdio : stderr;
+    import std.string : lineSplitter, strip, toLower;
+
+    static immutable badScopes = [
+        "wip", "todo", "tmp", "temp", "misc", "various", "update", "updates",
+        "changes", "general", "stuff", "fixme", "foo", "bar", "baz", "xxx",
+        "test", "tests",
+    ];
+
+    static immutable largeBareScopes = [
+        "base", "core-cli", "core_cli", "versions", "build-primitives",
+        "test-runner", "test-utils", "wired",
+    ];
+
+    string content;
+    if (msgSource == "-" || msgSource.length == 0)
+    {
+        // Read from stdin (supports piping the commit message)
+        import std.stdio : stdin;
+        ubyte[] buf;
+        foreach (chunk; stdin.byChunk(4096))
+            buf ~= chunk;
+        content = cast(string) buf;
+    }
+    else
+    {
+        try
+        {
+            content = readText(msgSource);
+        }
+        catch (Exception e)
+        {
+            stderr.writeln("✗ Failed to read commit message file: ", msgSource);
+            return 1;
+        }
+    }
+
+    string subject;
+    foreach (rawLine; content.lineSplitter)
+    {
+        auto line = rawLine.strip;
+        if (line.length == 0 || line.startsWith("#"))
+            continue;
+        subject = line;
+        break;
+    }
+
+    if (subject.length == 0)
+        return 0; // nothing to check
+
+    // Match conventional type(scope)?: or type:
+    static subjectRe = ctRegex!(`^([a-zA-Z0-9_-]+)(?:\(([^)]*)\))?:\s*`);
+    auto m = subject.matchFirst(subjectRe);
+    if (m.empty)
+        return 0; // not a conventional subject we care about
+
+    string scopeText = m.captures.length > 2 ? m.captures[2].strip : "";
+    if (scopeText.length == 0)
+        return 0; // no scope present — allowed
+
+    // Check useless scopes
+    auto lowered = scopeText.toLower;
+    if (badScopes.canFind(lowered))
+    {
+        stderr.writeln("✗ Useless commit scope detected.\n");
+        stderr.writeln("  Subject: ", subject);
+        stderr.writeln;
+        stderr.writeln("Use a descriptive scope that helps `git log` readers locate the change.\n");
+        stderr.writeln("Preferred patterns (examples):");
+        stderr.writeln("  docs(research/window-system-integration)");
+        stderr.writeln("  fix(base.smallbuffer)");
+        stderr.writeln("  feat(core-cli.ui.table)");
+        stderr.writeln("  feat(core-cli/examples)");
+        stderr.writeln("  feat(terminal)            # short is ok for small/cohesive packages");
+        stderr.writeln("  config(lychee)");
+        stderr.writeln;
+        stderr.writeln("See docs/guidelines/AGENTS.md § \"Commit messages\".\n");
+        stderr.writeln("Bypass (use sparingly): SKIP=detailed-scope git commit ...");
+        stderr.writeln("or:                    git commit --no-verify");
+        return 1;
+    }
+
+    // Heuristic for large bare package scopes
+    if (largeBareScopes.canFind(scopeText))
+    {
+        auto diffRes = execute(["git", "diff", "--cached", "--name-only", "--diff-filter=ACMR"]);
+        if (diffRes.status != 0)
+            return 0; // can't compute suggestion, allow
+
+        auto changed = diffRes.output
+            .lineSplitter
+            .filter!(l => l.length > 0)
+            .array;
+
+        string suggestion = computeDetailedScopeSuggestion(changed);
+        if (suggestion.length > 0 && suggestion != scopeText)
+        {
+            stderr.writeln("✗ Scope could be more specific.\n");
+            stderr.writeln("  You wrote: ", subject);
+            stderr.writeln("  Staged changes suggest: ", suggestion);
+            stderr.writeln;
+            stderr.writeln("When a change is localized (one module, one research topic, one subdirectory),");
+            stderr.writeln("prefer the detailed form. Bare package scopes are still acceptable for broad");
+            stderr.writeln("or cross-cutting commits.\n");
+            stderr.writeln("See docs/guidelines/AGENTS.md.\n");
+            stderr.writeln("Bypass: SKIP=detailed-scope git commit ...   or   git commit --no-verify");
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+/// Given a list of staged paths (from git diff --cached --name-only), returns
+/// a suggested more-detailed scope string (e.g. "base.smallbuffer" or
+/// "docs(research/foo)") or empty if no good suggestion.
+private string computeDetailedScopeSuggestion(string[] changed)
+{
+    import std.regex : ctRegex, matchFirst;
+    import std.string : replace;
+
+    static reResearch   = ctRegex!(`^docs/research/([^/]+)`);
+    static reGuidelines = ctRegex!(`^docs/guidelines/([^/]+)`);
+    static rePkgDeep    = ctRegex!(`^(libs|apps)/([^/]+)/.*/([^/.]+)\.(d|md)$`);
+    static rePkgSrc     = ctRegex!(`^(libs|apps)/([^/]+)/src/.*/([^/.]+)\.d$`);
+    static rePkgRoot    = ctRegex!(`^(libs|apps)/([^/]+)/([^/.]+)\.(d|md)$`);
+
+    foreach (path; changed)
+    {
+        auto m = path.matchFirst(reResearch);
+        if (!m.empty)
+            return "docs(research/" ~ m.captures[1] ~ ")";
+
+        m = path.matchFirst(reGuidelines);
+        if (!m.empty)
+            return "docs(guidelines/" ~ m.captures[1] ~ ")";
+
+        m = path.matchFirst(rePkgDeep);
+        if (!m.empty)
+        {
+            string pkg = m.captures[2].replace("-", "_");
+            string child = m.captures[3];
+            return pkg ~ "." ~ child;
+        }
+
+        m = path.matchFirst(rePkgSrc);
+        if (!m.empty)
+        {
+            string pkg = m.captures[2].replace("-", "_");
+            string child = m.captures[3];
+            return pkg ~ "." ~ child;
+        }
+
+        m = path.matchFirst(rePkgRoot);
+        if (!m.empty)
+        {
+            string pkg = m.captures[2].replace("-", "_");
+            string child = m.captures[3];
+            return pkg ~ "." ~ child;
+        }
+    }
+
+    return "";
 }
 
 private string[] trackedMarkdownFiles()
@@ -608,6 +804,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
                 break;
             case ProgramMode.checkReferenceLinks:
             case ProgramMode.fixReferenceLinks:
+            case ProgramMode.checkCommitScope:
                 rc = 1;
                 break;
         }

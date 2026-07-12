@@ -244,6 +244,25 @@ in
           # https://prek.j178.dev/builtin/#supported-hooks_1
           rawConfig.repos = [
             {
+              # detailed-scope is implemented in D (apps/ci) per the project guideline
+              # that substantial (> ~10 lines) hook logic must live in D, not shell.
+              # We register via an explicit "local" repo so that `stages = ["commit-msg"]`
+              # is honoured.
+              repo = "local";
+              hooks = [
+                {
+                  id = "detailed-scope";
+                  name = "detailed commit scope";
+                  entry = lib.getExe config.packages.ci;
+                  args = [ "--check-commit-scope" ];
+                  language = "system";
+                  pass_filenames = false;
+                  stages = [ "commit-msg" ];
+                  require_serial = true;
+                }
+              ];
+            }
+            {
               repo = "builtin";
               hooks = [
                 { id = "trailing-whitespace"; }
