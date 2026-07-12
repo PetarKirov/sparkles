@@ -30,6 +30,7 @@ struct BenchMeta
     string cpu;           /// /proc/cpuinfo model name; "" off Linux
     long minSampleTimeMs; /// effective per-sample/total budget (--bench-min-time)
     uint sampleCount;     /// effective BenchConfig.sampleCount
+    const(string)[] provenance; /// suite-registered lines (`benchProvenance`)
 }
 
 /// Collects host/toolchain provenance and the run's effective knobs.
@@ -198,8 +199,20 @@ string benchReportJson(in BenchStats[] rows, in BenchMeta meta) @safe
     o ~= "    \"compiler\": \"" ~ jsonEscape(meta.compiler) ~ "\",\n";
     o ~= "    \"cpu\": \"" ~ jsonEscape(meta.cpu) ~ "\",\n";
     o ~= "    \"minSampleTimeMs\": " ~ meta.minSampleTimeMs.to!string ~ ",\n";
-    o ~= "    \"sampleCount\": " ~ meta.sampleCount.to!string ~ "\n";
-    o ~= "  },\n";
+    o ~= "    \"sampleCount\": " ~ meta.sampleCount.to!string;
+    // Suite-registered provenance (benchProvenance) — only when present, so
+    // a suite that registers nothing keeps the pre-provenance meta shape.
+    if (meta.provenance.length)
+    {
+        o ~= ",\n    \"provenance\": [";
+        foreach (i, line; meta.provenance)
+        {
+            o ~= i ? ", " : " ";
+            o ~= "\"" ~ jsonEscape(line) ~ "\"";
+        }
+        o ~= " ]";
+    }
+    o ~= "\n  },\n";
 
     o ~= "  \"columns\": [";
     bool firstCol = true;
@@ -425,4 +438,26 @@ unittest
     foreach (e; est)
         foundIpc |= e.str == "ipc";
     assert(foundIpc, "the scaled perf cells are named");
+}
+
+@("benchJson.meta.provenance")
+@system
+unittest
+{
+    import std.json : parseJSON;
+
+    BenchStats row;
+    row.name = "x";
+    row.iterations = 1;
+    const meta = BenchMeta(date: "2026-07-12",
+        provenance: ["glibc malloc trim/mmap thresholds raised to 64 MiB",
+            "codegen: library-inline"]);
+    const doc = parseJSON(benchReportJson([row], meta));
+    const p = doc["meta"]["provenance"].array;
+    assert(p.length == 2);
+    assert(p[0].str == "glibc malloc trim/mmap thresholds raised to 64 MiB");
+    assert(p[1].str == "codegen: library-inline");
+
+    const bare = parseJSON(benchReportJson([row], BenchMeta(date: "2026-07-12")));
+    assert("provenance" !in bare["meta"], "no lines registered — no key");
 }

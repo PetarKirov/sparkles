@@ -782,6 +782,16 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
             all ~= Sched(c, test, config, null); // key resolved once label keys are known
     }
 
+    // Suite provenance registered during the bodies above (or in module
+    // constructors): one header line each, on stderr like every other note,
+    // so piped stdout stays byte-stable.
+    {
+        import sparkles.test_runner.bench : provenanceLines;
+
+        foreach (line; provenanceLines)
+            stderr.writeln("provenance: ", line);
+    }
+
     // The label keys available to --group-by: the sorted union across all cases.
     bool[string] keySet;
     foreach (ref s; all)
@@ -1047,8 +1057,14 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         import sparkles.test_runner.bench_json : benchReportJson, collectBenchMeta;
 
         // The meta block records the effective knobs (an empty run still writes
-        // a valid document, deterministic for tooling).
-        const meta = collectBenchMeta(benchConfigFor(options.benchMinTime, 0));
+        // a valid document, deterministic for tooling) plus any registered
+        // suite-provenance lines, so the artifact is self-describing.
+        auto meta = collectBenchMeta(benchConfigFor(options.benchMinTime, 0));
+        {
+            import sparkles.test_runner.bench : provenanceLines;
+
+            meta.provenance = provenanceLines;
+        }
         try
             write(options.benchJson, benchReportJson(measured, meta));
         catch (Exception e)
