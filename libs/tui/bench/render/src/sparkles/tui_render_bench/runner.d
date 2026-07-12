@@ -144,3 +144,50 @@ private bool envAllows(string var, string name) @safe
     const v = environment.get(var, "");
     return v.length == 0 || v.splitter(',').canFind(name);
 }
+
+/// The plan flags zero-allocation steady state as likely the deciding axis for a
+/// GC'd library. Every renderer is designed to allocate only while its buffers
+/// grow (warmup), then reuse capacity. This asserts that: after warmup, a whole
+/// scenario replay allocates zero GC bytes — so the GC-pause axis does *not*
+/// differentiate the architectures, leaving CPU + bytes (which favour cell_grid)
+/// as the deciders.
+@("render.steadyStateZeroAlloc")
+@system
+unittest
+{
+    import core.memory : GC;
+
+    static void replay(R)(ref R r, in Scenario scn, ref Model m, ref Grid target, ref Sink sink)
+    {
+        resetModelState(m, scn);
+        r.reset(scn.cols, scn.rows);
+        foreach (const ref fr; scn.frames)
+        {
+            foreach (const ref e; fr)
+                apply(m, e);
+            renderScene(m, target);
+            sink.reset();
+            r.renderFrame(target, sink);
+        }
+    }
+
+    static foreach (R; Renderers)
+    {
+        {
+            auto scn = generateScenario(Profile.mixed, 80, 24, 60);
+            R r;
+            Model m;
+            initModel(m, scn);
+            Grid target;
+            Sink sink;
+
+            foreach (_; 0 .. 3) // warmup: grow every buffer to its steady size
+                replay(r, scn, m, target, sink);
+
+            const before = GC.stats.allocatedInCurrentThread;
+            replay(r, scn, m, target, sink);
+            const delta = GC.stats.allocatedInCurrentThread - before;
+            assert(delta == 0, R.label ~ " is not zero-alloc in steady state");
+        }
+    }
+}
