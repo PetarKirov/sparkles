@@ -621,7 +621,7 @@ unittest
 /// counters). This is the universe `--list-metrics` and `--metrics` range over.
 MetricDescriptor[] catalog(in BenchStats[] rows) @safe pure nothrow
 {
-    import std.algorithm.searching : any;
+    import std.algorithm.searching : any, countUntil;
 
     MetricDescriptor[] result;
     foreach (ref row; rows)
@@ -652,6 +652,13 @@ MetricDescriptor[] catalog(in BenchStats[] rows) @safe pure nothrow
                     result ~= MetricDescriptor(c.name, c.header, c.format, c.cls,
                         c.name.length > 4 && c.name[0 .. 4] == "pfm:" ? "pfm" : "raw",
                         true, true);
+    // Retired instructions is the deterministic, machine-independent anchor for
+    // no-IO benchmarks — read it first, ahead of the wall-clock-derived client
+    // (B/s) column and the rest of the perf family. Last, so every family is
+    // in `result` before the hoist.
+    const ii = result.countUntil!(d => d.name == "instr");
+    if (ii > 0)
+        result = result[ii] ~ result[0 .. ii] ~ result[ii + 1 .. $];
     return result;
 }
 
@@ -941,9 +948,10 @@ unittest
         "cache-miss", "cycles", "branches", "page-faults"]);
     assert(cells[1].name == "ipc" && cells[1].value == 2.0); // 200/100
 
-    // Default set: client column + the four default perf columns, in order.
+    // Default set: the deterministic `instr` anchor first, then the client
+    // column and the remaining default perf columns, in order.
     const def = visibleMetrics([withPerf], null);
-    assert(def.map!(d => d.name).array == ["B/s", "ipc", "instr", "br-miss", "cache-miss"]);
+    assert(def.map!(d => d.name).array == ["instr", "B/s", "ipc", "br-miss", "cache-miss"]);
 
     // `all` adds the opt-in perf extras; a glob narrows to one family.
     assert(visibleMetrics([withPerf], "all").map!(d => d.name).canFind("cycles"));
