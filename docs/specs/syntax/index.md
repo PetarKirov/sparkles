@@ -118,10 +118,11 @@ palette)` concretizer and a `byStyledLine` per-line adapter are recorded seams.
   chain (compiled grammars from nixpkgs vs a `.sublime-syntax` interpreter plus an
   Oniguruma binding plus a YAML subset). The event seam is designed for it; nothing else
   waits for it.
-- **No injections, no locals in v1.** Injection layers (markdown's inline grammar,
-  fenced code blocks) are the next headline milestone — the config API and `#set!`
-  storage already carry the seams. Locals ([def/use coloring][ts-highlight]) are a
-  quality bonus deferred indefinitely for batch rendering.
+- **Injections landed (M7); no combined injections, no locals.** Injection layers
+  (markdown's inline grammar, fenced code blocks, front-matter) ship in M7 via
+  `highlightInjected` + the layer stack. `injection.combined` and locals
+  ([def/use coloring][ts-highlight]) stay deferred — the latter a quality bonus for
+  batch rendering.
 - **No incremental/editor loop.** v1 is batch (parse once, highlight once) — the
   [Helix][helix] machinery (persistent trees, injection recycling) earns its keep only
   under an editor contract. The seam (`highlightTree` over a kept-alive tree,
