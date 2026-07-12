@@ -98,7 +98,8 @@ map or implicit flush. That boundary is the survey's central design question for
 
   Each mechanism has an **escape hatch** for raw SQL (`sql.unsafe`, `sql"..."`, `queryRaw`)
   that re-exposes injection risk — a library's ergonomics are partly about how rarely you
-  reach for it.
+  reach for it. The [safe-interpolation case study][safe-interp] compares these mechanisms in
+  depth (and adds D's interpolated expression sequences).
 
 ---
 
@@ -283,6 +284,7 @@ Architecture_, 2002) that separate a **full ORM** from the lower rungs:
 
 [index]: ./index.md
 [comparison]: ./comparison.md
+[safe-interp]: ./safe-interpolation.md
 [effect-ts]: ./effect-ts.md
 [quill]: ./quill.md
 [doobie]: ./doobie.md

@@ -814,6 +814,10 @@ export default withMermaid(
                   text: 'Comparison & Synthesis',
                   link: '/research/sql/comparison',
                 },
+                {
+                  text: 'Case Study: Safe SQL Interpolation',
+                  link: '/research/sql/safe-interpolation',
+                },
               ],
             },
             {
