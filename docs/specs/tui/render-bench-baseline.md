@@ -90,12 +90,39 @@ This is **preliminary**: it establishes the _relative_ ordering of D approaches
 robustly, but not whether the _absolute_ numbers are competitive with the state of
 the art. That is what M3 confirms.
 
+## Cross-language calibration (M3, D vs C — same algorithm, byte-identical)
+
+To check whether the _absolute_ D numbers are competitive, `shim_c.c` is a
+byte-identical C port of `cell_grid` (asserted equal output); both are timed over
+the same precomputed target-grid sequence, isolating renderer diff+emit. Actual
+frameworks (Ratatui, Notcurses) render subtly different pictures and can't be
+grid-matched cheaply, so this same-algorithm comparison is the rigorous, achievable
+calibration.
+
+| profile | D instr | C instr | D ÷ C |
+| ------- | ------: | ------: | ----: |
+| sparse  |    125M |     63M | ~2.0× |
+| mixed   |    146M |     71M | ~2.1× |
+| churn   |    178M |     84M | ~2.1× |
+
+**The D `cell_grid` runs ~2× the instructions of the identical C.** IPC is
+comparable, so this is work, not scheduling — and it is _not_ pure LDC-vs-GCC
+codegen: the bench's D `Cell` carries a 16-byte inline grapheme buffer and a branchy
+`Color`/`CellStyle` equality (a `final switch` per colour), while the C cell packs a
+single codepoint and compares flat fields. The per-cell equality runs for every cell
+every frame, so the representation dominates.
+
+**Design implication (feeds the library, not just the decision):** a cell-grid core
+should use a **compact packed cell** — a packed codepoint (spilling long graphemes
+out-of-line) and a flat, branch-light style compare — exactly the inline-packing that
+Notcurses and libvaxis use. The ~2× is an implementation tax to avoid, not an
+argument against the cell-grid architecture.
+
 ## What's next
 
-- **M3 — foreign calibration.** Ratatui (Rust) and Notcurses (C) reference
-  implementations of the same scene, as C-ABI shims, to place the D PoCs' absolute
-  numbers against the frontier (a D cell-grid at 2× Notcurses is a very different
-  conclusion from 20×).
+- **M3 (remaining) — framework calibration.** Ratatui (Rust) / Notcurses (C) as
+  rough absolute-frontier reference points (order-of-magnitude, not grid-matched),
+  plus a compact-cell D variant to confirm the ~2× closes.
 - **Sensitivity** — a scroll-region (`DECSTBM`) `cell_grid` variant; wider profile
   and terminal-size coverage; the `unicode` (wide-cell) profile once the PoCs'
   wide-cell handling is oracle-verified.
