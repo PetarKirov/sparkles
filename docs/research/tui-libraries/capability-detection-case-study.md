@@ -1503,8 +1503,10 @@ Collection notes, in row order:
   `XTGETTCAP` for both `RGB` and `Tc`, and reports mode 2027 as _permanently set_
   (3) — giving the 2027 column its third distinct value.
 - The **kitty and ghostty** rows were collected headlessly (`xvfb-run` on Linux,
-  LaunchServices on macOS) and disagree in exactly the ways that make interrogation
-  necessary: kitty answers `XTGETTCAP Tc`/`Su` but rejects `RGB` as invalid, while
+  LaunchServices on macOS); an interactive Ghostty session on NixOS reproduces the
+  ghostty-Linux row byte-for-byte in every capability column, confirming that
+  headless collection introduces no capability skew. The two terminals disagree in
+  exactly the ways that make interrogation necessary: kitty answers `XTGETTCAP Tc`/`Su` but rejects `RGB` as invalid, while
   ghostty answers all three; kitty reports mode 2027 as _not recognized_ (0) where
   ghostty reports it _set by default_ (1) and WezTerm _permanently set_ (3) — three
   terminals, three different truths for one mode, none knowable from `TERM`.
