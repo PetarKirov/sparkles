@@ -52,15 +52,23 @@ struct Model
         => logCount < logRingCap ? logCount : logRingCap;
 }
 
-/// Initialise the model for a scenario: dimensions, pool, and a non-empty
-/// initial screen (seed log lines + counters) so frame 0 is a realistic full paint.
+/// Initialise the model for a scenario (untimed setup): own a copy of the pool
+/// (severs the model's lifetime from the scenario's), then reset the state. The
+/// `dup` is the only allocation — kept out of the timed frame loop via the
+/// `resetModelState`/`initModel` split.
 void initModel(ref Model m, in Scenario s) @safe pure nothrow
+{
+    m.logPool = s.logPool.dup;
+    resetModelState(m, s);
+}
+
+/// Reset the model to its initial per-scenario state (no allocation — the pool
+/// must already be set by `initModel`). Called at the start of every timed
+/// benchmark iteration so each replay starts from an identical, realistic screen.
+void resetModelState(ref Model m, in Scenario s) @safe pure nothrow @nogc
 {
     m.cols = s.cols;
     m.rows = s.rows;
-    // Own a copy so the model's lifetime doesn't couple to the scenario's (this
-    // runs in untimed setup, so the copy never touches the measured frame loop).
-    m.logPool = s.logPool.dup;
     m.logCount = 0;
     m.logScroll = 0;
     m.selection = 0;
@@ -72,9 +80,9 @@ void initModel(ref Model m, in Scenario s) @safe pure nothrow
         m.counters[r] = 100 * (r + 1);
 
     // Seed enough log lines to fill a viewport.
-    if (s.logPool.length)
+    if (m.logPool.length)
         foreach (i; 0 .. 40)
-            appendLog(m, cast(int)(i % s.logPool.length));
+            appendLog(m, cast(int)(i % m.logPool.length));
 }
 
 /// Apply one scripted event to the model.
