@@ -16,7 +16,7 @@
 module highlight_file;
 
 import std.array : appender;
-import std.file : readText;
+import std.file : exists, readText;
 import std.path : baseName, extension;
 import std.stdio : stderr, write, writeln;
 
@@ -29,7 +29,7 @@ struct CliParams
     bool html;
 
     @CliOption("theme", "Syntax highlighting theme name.")
-    string theme = "sparkles-dark";
+    string theme = "catppuccin-mocha";
 }
 
 int main(string[] args)
@@ -44,9 +44,36 @@ int main(string[] args)
 
     bool html = cli.html;
     string themeName = cli.theme;
-    const path = args.length > 1 ? args[1] : __FILE_FULL_PATH__;
-    const source = readText(path);
-    const lang = canonicalLanguage(path.extension.length ? path.extension[1 .. $] : "");
+
+    string sourcePath;
+    string source;
+    if (args.length > 1) {
+        sourcePath = args[1];
+        source = readText(sourcePath);
+    } else {
+        sourcePath = __FILE_FULL_PATH__;
+        if (sourcePath.exists) {
+            source = readText(sourcePath);
+        } else {
+            // Fallback for packaged runs (e.g. nix run-all-examples) where the
+            // compile-time source path is not present at runtime.
+            source = q{
+module sample;
+
+import std.stdio : writeln;
+
+void main()
+{
+    writeln("Hello, syntax!");
+    int x = 42;
+    if (x > 0)
+        writeln("positive");
+}
+};
+            sourcePath = "sample.d";
+        }
+    }
+    const lang = canonicalLanguage(sourcePath.extension.length ? sourcePath.extension[1 .. $] : "");
 
     const labels = LabelSet.standard();
 
