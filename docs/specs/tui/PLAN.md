@@ -12,15 +12,15 @@ Building `libs/tui/src/` is a **follow-up plan**, not part of this one.
 
 ## Milestone overview
 
-| #      | Deliverable                                                                                         | Depends on | Status |
-| ------ | --------------------------------------------------------------------------------------------------- | ---------- | ------ |
-| **D1** | Feature-requirements / delta spec ([`index.md`](./index.md) + this plan)                            | —          | landed |
-| **M0** | Bench scaffolding + VT-oracle correctness harness (`libs/tui/bench/render/`)                        | D1         | open   |
-| **M1** | Two D PoCs (`line_diff`, `cell_grid`) benched across profiles — **answers the core question**       | M0         | open   |
-| **M2** | Sensitivity: `immediate_flat`, scroll-region `cell_grid` variant, (`incremental_dag` if wanted)     | M1         | open   |
-| **M3** | Systems-language calibration shims: Ratatui (Rust) → Notcurses (C) → libvaxis (Zig, if cheap)       | M1         | open   |
-| **M4** | Runtime-language calibration (subprocess): Bubble Tea (Go); Textual/Ink optional                    | M1         | open   |
-| **M5** | Decision record `render-bench-baseline.md`; record the chosen core back in [`index.md`](./index.md) | M1 (+M3)   | open   |
+| #      | Deliverable                                                                                                         | Depends on | Status      |
+| ------ | ------------------------------------------------------------------------------------------------------------------- | ---------- | ----------- |
+| **D1** | Feature-requirements / delta spec ([`index.md`](./index.md) + this plan)                                            | —          | landed      |
+| **M0** | Bench scaffolding + VT-oracle correctness harness (`libs/tui/bench/render/`)                                        | D1         | landed      |
+| **M1** | Two D PoCs (`line_diff`, `cell_grid`) benched across profiles — **answers the core question**                       | M0         | landed      |
+| **M2** | Sensitivity: `line_diff_lazy` (scroll-region `cell_grid`, `immediate_flat` remain optional)                         | M1         | landed      |
+| **M3** | Systems-language calibration shims: Ratatui (Rust) → Notcurses (C) → libvaxis (Zig, if cheap)                       | M1         | open        |
+| **M4** | Runtime-language calibration (subprocess): Bubble Tea (Go); Textual/Ink optional                                    | M1         | open        |
+| **M5** | Decision record [`render-bench-baseline.md`](./render-bench-baseline.md); flip the core in [`index.md`](./index.md) | M1 (+M3)   | preliminary |
 
 **Realistic MVP that already answers the architecture question:** M0 + M1 +
 (M3: Ratatui + Notcurses).
