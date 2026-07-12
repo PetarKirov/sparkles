@@ -430,12 +430,14 @@ unittest
     assert(formatResultLine(result, false, false) == " ⊘ pkg.mod case (no perf counters)");
 }
 
-/// The benchmark report as a table: name, iterations/sample, median, ±MAD, min,
-/// and max ns-per-iteration. Client `Metric`s add one throughput/level column
-/// per distinct `(unit, mode)`, and `--perf` counters add IPC, instructions/iter,
-/// and branch/cache miss-rate columns — both grown only when present, with an em
-/// dash where a row lacks a value. A row with an `error` (a case whose `after`
-/// reported failure) renders the message in place of its timings.
+/// The benchmark report as a table: name, sample count `n`, median (with ±MAD
+/// folded into the same cell), min, and max ns-per-iteration. Client `Metric`s
+/// add one throughput/level column per distinct `(unit, mode)`, and `--perf`
+/// counters add instructions/iter (first, the deterministic anchor), IPC, and
+/// branch/cache miss-rate columns — both grown only when present, with an em
+/// dash where a row lacks a value. When any row carries an `error` (a case whose
+/// `after` reported failure), a trailing `notes` column appears and the message
+/// wraps there, its timing/metric cells left as em dashes.
 ///
 /// Grouping and sorting are orthogonal. `sortBy` (`"name"`, a metric column
 /// name, or empty/`"median/iter"`) orders rows within each group; error rows
@@ -469,7 +471,7 @@ string formatBenchTable(in BenchStats[] rows, bool colored, string metricFilter 
         if (result.length)
             result ~= "\n";
         result ~= renderCells(m.cells, m.aligns, headerRows: 1, title: m.title,
-            minWidths: floors);
+            minWidths: floors, maxWidths: m.maxWidths);
     }
     return result;
 }
@@ -482,7 +484,19 @@ package struct BenchTableModel
     string title;
     string[][] cells; /// `[0]` is the header row
     Align[] aligns;
+    size_t[] maxWidths; /// per-column content caps (0 = uncapped); wraps the notes column
 }
+
+/// The error/skip message of a failed case rides in a trailing `notes` column
+/// that soft-wraps at this content width, instead of distorting a timing cell.
+private enum benchNotesMaxWidth = 48;
+
+/// The in-flight case rides through the bench-table model as a pseudo error row
+/// carrying this sentinel (so the group's title/header/columns exist before the
+/// first real row lands); the ticker replaces its cells wholesale, and the
+/// notes-column gate excludes it so an all-green group never grows a notes
+/// column mid-run.
+package enum benchInflightSentinel = "\x01measuring";
 
 /// Column geometry carried across `formatBenchTable` calls (caller-owned; see
 /// the `geometry` parameter above).
@@ -528,53 +542,89 @@ package BenchTableModel[] buildBenchTables(in BenchStats[] rows, bool colored,
     // reproduces the legacy column set byte-for-byte.
     auto columns = visibleMetrics(rows, metricFilter);
 
-    // The fixed numeric headers plus one label per visible metric column.
+    // A real error/skip row (not the ticker's in-flight sentinel) earns a
+    // trailing, wrapping `notes` column; an all-green table keeps the legacy
+    // column set and stays byte-identical to the piped flush.
+    import std.algorithm.searching : any;
+
+    const hasNotes = rows.any!(r => r.error.length && r.error != benchInflightSentinel);
+
+    // The fixed numeric headers plus one label per visible metric column, then a
+    // trailing `notes` column when any row failed. `median/iter` folds in the
+    // deviation ("30.00ns ±1.00ns"); `n` is the sample count `--bench-min-time`
+    // grows.
     string[] valueHeaders = [
-        render(colored, i"{bold iters}"),
+        render(colored, i"{bold n}"),
         render(colored, i"{bold median/iter}"),
-        render(colored, i"{bold ±dev}"),
         render(colored, i"{bold min}"),
         render(colored, i"{bold max}"),
     ];
     foreach (ref col; columns)
         valueHeaders ~= render(colored, i"{bold $(col.header)}");
+    if (hasNotes)
+        valueHeaders ~= render(colored, i"{bold notes}");
 
     // Per-column alignment for `stubCols` leading textual columns followed by
-    // the value columns: the integral iters column right-aligns; the timing and
-    // metric columns align on the decimal point (same-unit values line up;
-    // mixed units/magnitudes still read right). A metric column with no dotted
-    // value — a syscall count, or all em dashes — degrades to plain right.
+    // the value columns: the integral `n` column right-aligns; the merged
+    // `median/iter` cell also right-aligns (its trailing `±dev` denies a clean
+    // shared dot); `min`/`max` and the metric columns align on the decimal point
+    // (same-unit values line up; mixed units/magnitudes still read right). A
+    // metric column with no dotted value — a syscall count, or all em dashes —
+    // degrades to plain right; the trailing `notes` column left-aligns (it wraps).
     Align[] valueAligns(size_t stubCols)
     {
         auto aligns = new Align[stubCols + valueHeaders.length];
         aligns[] = Align.decimal;
         aligns[0 .. stubCols] = Align.left;
-        aligns[stubCols] = Align.right; // iters
+        aligns[stubCols] = Align.right;     // n (sample count)
+        aligns[stubCols + 1] = Align.right; // median/iter (merged ±dev)
+        if (hasNotes)
+            aligns[$ - 1] = Align.left;     // notes wraps
         return aligns;
     }
 
+    // A notes column caps its content width (and wraps on the drawTable path);
+    // every other column stays uncapped. Sized to the full table column count.
+    size_t[] notesMaxWidths(size_t totalCols)
+    {
+        if (!hasNotes)
+            return null;
+        auto w = new size_t[totalCols];
+        w[$ - 1] = benchNotesMaxWidth;
+        return w;
+    }
+
     // The value cells of one row (everything right of the name/label columns):
-    // timings then metric cells, or — for an error row — the message padded.
+    // n, merged median, min, max, then metric cells — or, for an error row, em
+    // dashes with the message in the trailing notes column.
     string[] valueCells(in BenchStats row) @system
     {
-        import std.conv : to;
+        import std.conv : text, to;
         import sparkles.test_runner.metrics : formatCell, rowCells;
 
         if (row.error.length)
         {
-            const message = row.skipped
-                ? render(colored, i"{yellow $(row.error)}")
-                : render(colored, i"{red $(row.error)}");
-            string[] errCols = ["—", message];
-            while (errCols.length < valueHeaders.length)
-                errCols ~= "—";
-            return errCols;
+            auto cells = new string[valueHeaders.length];
+            cells[] = "—";
+            if (row.error == benchInflightSentinel)
+                cells[0] = row.error; // parked in `n`; the ticker overwrites it
+            else
+                // A real failure: the message rides in the trailing notes column
+                // (hasNotes is true here), every timing/metric cell an em dash.
+                cells[$ - 1] = row.skipped
+                    ? render(colored, i"{yellow $(row.error)}")
+                    : render(colored, i"{red $(row.error)}");
+            return cells;
         }
 
+        // `n` is the sample count (what `--bench-min-time` grows); a batched case
+        // running several iterations per sample reads `samples×iterations`.
+        const nCell = row.iterations > 1
+            ? text(row.samples, "×", row.iterations)
+            : (row.samples ? row.samples.to!string : "—");
         string[] cols = [
-            row.iterations.to!string,
-            benchNs(row.nsPerIterMedian),
-            benchNs(row.nsPerIterDeviation),
+            nCell,
+            benchNs(row.nsPerIterMedian) ~ " ±" ~ benchNs(row.nsPerIterDeviation),
             benchNs(row.nsPerIterMin),
             benchNs(row.nsPerIterMax),
         ];
@@ -590,6 +640,8 @@ package BenchTableModel[] buildBenchTables(in BenchStats[] rows, bool colored,
                 }
             cols ~= cell;
         }
+        if (hasNotes)
+            cols ~= ""; // a passing row carries no note
         return cols;
     }
 
@@ -613,7 +665,8 @@ package BenchTableModel[] buildBenchTables(in BenchStats[] rows, bool colored,
                 labelCols ~= rows[idx].labels.get(key, "");
             cells ~= labelCols ~ rows[idx].name ~ valueCells(rows[idx]);
         }
-        return [BenchTableModel(null, cells, valueAligns(labelKeys.length + 1))];
+        auto aligns = valueAligns(labelKeys.length + 1);
+        return [BenchTableModel(null, cells, aligns, notesMaxWidths(aligns.length))];
     }
 
     // Grouped: one table per contiguous run of equal group key, titled
@@ -659,7 +712,7 @@ package BenchTableModel[] buildBenchTables(in BenchStats[] rows, bool colored,
             cells ~= row.name ~ restVals ~ valueCells(row);
             i++;
         }
-        models ~= BenchTableModel(title, cells, aligns);
+        models ~= BenchTableModel(title, cells, aligns, notesMaxWidths(aligns.length));
     }
     return models;
 }
@@ -985,8 +1038,9 @@ package string[] benchFrameLines(in BenchStats[] rows, BenchStats inflight,
         // that yields the group's title/header/columns even before the first
         // real row lands, and error rows sort last, pinning it to the bottom.
         // The sentinel marks it for the rewrite below (its rendered cells are
-        // replaced wholesale).
-        enum sentinel = "\x01measuring";
+        // replaced wholesale); the notes-column gate in `buildBenchTables`
+        // excludes it, so a green group never grows a notes column mid-run.
+        enum sentinel = benchInflightSentinel;
         const(BenchStats)[] allRows = inflight.name.length
             ? rows ~ BenchStats(name: inflight.name, labels: inflight.labels,
                 error: sentinel)
@@ -1024,13 +1078,13 @@ package string[] benchFrameLines(in BenchStats[] rows, BenchStats inflight,
             const glyph = spinnerFrame(spin);
             const name = inflight.name;
             row[nameIdx] = render(colored, i"{dim $(glyph) $(name)}");
-            foreach (i; medianIdx - 1 .. row.length) // iters onward
+            foreach (i; medianIdx - 1 .. row.length) // the `n` column onward
                 row[i] = "";
-            // `measuring…` rides in the right-aligned iters column, NOT the
+            // `measuring…` rides in the right-aligned `n` column, NOT the
             // decimal median one: a dotless cell in a decimal column gets a
             // layout-internal trailing pad the geometry floors cannot carry,
-            // so the column would shrink when the row lands (the ticker demo
-            // parks it in `iterations` for the same reason).
+            // so the column would shrink when the row lands (the sentinel is
+            // parked in the `n` cell for the same reason).
             row[medianIdx - 1] = render(colored, i"{dim measuring…}");
             break;
         }
@@ -1044,7 +1098,7 @@ package string[] benchFrameLines(in BenchStats[] rows, BenchStats inflight,
 
         return drawTableLines(model.cells, TableProps(
             headerRows: 1, title: model.title, columnAligns: model.aligns.dup,
-            columnMinWidths: floors.dup)).array;
+            columnMinWidths: floors.dup, columnMaxWidths: model.maxWidths.dup)).array;
     }
     else
     {
@@ -1082,44 +1136,82 @@ unittest
     assert(!filtered.canFind("B/s") && !filtered.canFind("cache-miss"));
 }
 
-/// The timing columns align on the decimal point: with mixed units the dots
-/// of `110.00ns` and `1.5µs` land on the same terminal column, so magnitudes
-/// compare at a glance (`Align.decimal`, resolved per column by `drawTable`).
-@("formatBenchTable.decimalAlignedTimings")
+/// `median/iter` folds the deviation into one right-aligned cell
+/// (`30.00ns ±1.00ns`); the standalone `±dev` column is gone, while `min` and
+/// `max` remain their own decimal-aligned columns.
+@("formatBenchTable.mergedMedianColumn")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    BenchStats[1] rows = [
+        BenchStats(name: "fast", samples: 100, iterations: 1,
+            nsPerIterMedian: 110, nsPerIterDeviation: 5,
+            nsPerIterMin: 108, nsPerIterMax: 120),
+    ];
+    const rendered = formatBenchTable(rows[], false);
+
+    // The median and its deviation share one cell; the dedicated ±dev column
+    // and its header are gone; min/max keep their own cells.
+    assert(rendered.canFind("110.00ns ±5.00ns"), rendered);
+    assert(!rendered.canFind("±dev"), rendered);
+    assert(rendered.canFind("min") && rendered.canFind("max"), rendered);
+    assert(rendered.canFind("108.00ns") && rendered.canFind("120.00ns"), rendered);
+}
+
+/// The `n` column shows the sample count (what `--bench-min-time` grows); a
+/// batched case running several iterations per sample reads `samples×iters`.
+@("formatBenchTable.sampleCountColumn")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    BenchStats[1] perCall = [BenchStats(name: "a", samples: 19000, iterations: 1,
+        nsPerIterMedian: 30)];
+    assert(formatBenchTable(perCall[], false).canFind("19000"), "per-call: n = samples");
+
+    BenchStats[1] batched = [BenchStats(name: "a", samples: 32, iterations: 8,
+        nsPerIterMedian: 30)];
+    assert(formatBenchTable(batched[], false).canFind("32×8"), "batched: samples×iterations");
+}
+
+/// A failing row's message rides in a trailing, wrapping `notes` column — never
+/// in a timing cell; a passing row's note is empty, and an all-green table grows
+/// no notes column at all.
+@("formatBenchTable.notesColumn")
 @system
 unittest
 {
     import std.algorithm.iteration : splitter;
     import std.algorithm.searching : canFind;
-    import std.string : indexOf;
 
     BenchStats[2] rows = [
-        BenchStats(name: "fast", iterations: 1, nsPerIterMedian: 110),
-        BenchStats(name: "slow", iterations: 1, nsPerIterMedian: 1500),
+        BenchStats(name: "ok", samples: 100, iterations: 1, nsPerIterMedian: 30),
+        BenchStats(name: "bad", error: "boom: it failed"),
     ];
     const rendered = formatBenchTable(rows[], false);
+    assert(rendered.canFind("notes"), rendered);          // header present
+    assert(rendered.canFind("boom: it failed"), rendered); // message in the table
+    assert(rendered.canFind("30.00ns ±0.00ns"), rendered); // passing row keeps timings
 
-    // Byte column of the value's decimal dot within its line. The two data
-    // lines are byte-identical up to the median cell (same-width names), so
-    // byte columns compare like terminal cells here.
-    ptrdiff_t dotColumn(string needle)
-    {
-        foreach (line; rendered.splitter('\n'))
-        {
-            const at = line.indexOf(needle);
-            if (at >= 0)
-                return at + needle.indexOf('.');
-        }
-        return -1;
-    }
+    // No error rows → no notes column (legacy layout preserved).
+    BenchStats[1] green = [BenchStats(name: "ok", samples: 100, iterations: 1,
+        nsPerIterMedian: 30)];
+    assert(!formatBenchTable(green[], false).canFind("notes"), "no notes header when green");
 
-    const fast = dotColumn("110.00ns");
-    const slow = dotColumn("1.5µs");
-    assert(fast > 0 && slow > 0, rendered);
-    // Only the gated drawTable build resolves a shared dot column; the plain
-    // fallback deliberately degrades decimal to right alignment.
+    // A long message wraps within the cap on the drawTable path: the words all
+    // survive, but the full line is broken across rows (never contiguous).
     static if (hasUiComponents)
-        assert(fast == slow, rendered);
+    {
+        enum long_ = "serialize output is not valid JSON: Illegal control "
+            ~ "character somewhere deep inside the payload buffer";
+        BenchStats[1] longErr = [BenchStats(name: "bad", error: long_)];
+        const wrapped = formatBenchTable(longErr[], false);
+        assert(wrapped.canFind("serialize") && wrapped.canFind("payload"), wrapped);
+        assert(!wrapped.canFind(long_), "a long note must wrap, not stay one line");
+    }
 }
 
 /// A `TableGeometry` threaded across calls keeps consecutive streamed tables
@@ -1132,10 +1224,16 @@ unittest
 {
     import std.string : splitLines;
 
+    // `wide` must dominate every value column (name, n, merged median, min,
+    // max) so the carried floors equal its own widths and the narrower second
+    // table renders under them. Sub-µs medians format widest, so a nonzero
+    // deviation keeps the wide median cell the longest.
     TableGeometry geom;
     BenchStats[1] wide = [BenchStats(name: "a-rather-long-benchmark-name",
-        iterations: 123456, nsPerIterMedian: 1500)];
-    BenchStats[1] narrow = [BenchStats(name: "b", iterations: 1, nsPerIterMedian: 110)];
+        samples: 19000, iterations: 1, nsPerIterMedian: 110,
+        nsPerIterDeviation: 99, nsPerIterMin: 108, nsPerIterMax: 120)];
+    BenchStats[1] narrow = [BenchStats(name: "b", samples: 1, iterations: 1,
+        nsPerIterMedian: 30)];
 
     const first = formatBenchTable(wide[], false, null, null, null, &geom);
     const second = formatBenchTable(narrow[], false, null, null, null, &geom);
@@ -1420,9 +1518,11 @@ unittest
 /// hoisted as a heading line above the plain fallback. `minWidths` floors the
 /// column content widths (`TableProps.columnMinWidths`; honored by the
 /// fallback too), letting consecutive streamed tables share their geometry.
+/// `maxWidths` caps them (`TableProps.columnMaxWidths`; content over a column's
+/// cap wraps on the `drawTable` path, ignored by the plain fallback).
 package string renderCells(
     string[][] cells, in Align[] aligns = null, size_t headerRows = 0,
-    string title = null, in size_t[] minWidths = null)
+    string title = null, in size_t[] minWidths = null, in size_t[] maxWidths = null)
 @system // drawTable is @system
 {
     static if (hasUiComponents)
@@ -1431,10 +1531,12 @@ package string renderCells(
 
         return drawTable(cells, TableProps(
             headerRows: headerRows, columnAligns: aligns.dup, title: title,
-            columnMinWidths: minWidths.dup));
+            columnMinWidths: minWidths.dup, columnMaxWidths: maxWidths.dup));
     }
     else
     {
+        // The plain fallback has no wrapping engine, so `maxWidths` is ignored;
+        // `errorCell` already collapses a message to one line for this grid.
         auto table = alignColumns(cells, aligns, minWidths);
         return title.length ? title ~ "\n" ~ table : table;
     }
