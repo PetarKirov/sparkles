@@ -8,14 +8,18 @@ dub test :yourpkg -- --bench
 ```
 
 ```console
-╭────────────────┬─────────┬─────────────┬────────┬────────┬────────╮
-│ benchmark      │   iters │ median/iter │   ±dev │    min │    max │
-│ medianOf.bench │ 2097152 │      1.86ns │ 0.02ns │ 1.84ns │ 1.97ns │
-╰────────────────┴─────────┴─────────────┴────────┴────────┴────────╯
+╭────────────────┬─────────────┬─────────────────┬─────────┬─────────╮
+│ benchmark      │           n │     median/iter │     min │     max │
+┝━━━━━━━━━━━━━━━━┿━━━━━━━━━━━━━┿━━━━━━━━━━━━━━━━━┿━━━━━━━━━┿━━━━━━━━━┥
+│ medianOf.bench │ 32×16777216 │ 11.48ns ±0.02ns │ 11.41ns │ 11.54ns │
+╰────────────────┴─────────────┴─────────────────┴─────────┴─────────╯
 ```
 
-(Illustrative output. Timing and metric columns align on the decimal point,
-so mixed units — `391.00ns` next to `1.5µs` — still compare at a glance. An
+(Illustrative output. `n` is the sample count — a batched benchmark that runs
+several iterations per sample reads `samples×iterations`. `median/iter` folds
+the ±deviation (median-absolute-deviation) into the same cell. The `min`, `max`,
+and metric columns align on the decimal point, so mixed units — `391.00ns` next
+to `1.5µs` — still compare at a glance. An
 assert-enabled build — dub's stock `unittest` build type — prints a warning:
 real numbers need an optimized unittest buildType, e.g.
 `buildOptions "unittests" "releaseMode" "optimize" "inline"` invoked as
@@ -26,12 +30,12 @@ rows appear as each case completes, beneath a dim spinner row for the one in
 flight —
 
 ```console
-╭────────────────┬────────────┬─────────────┬────────┬────────┬────────╮
-│ benchmark      │      iters │ median/iter │   ±dev │    min │    max │
-┝━━━━━━━━━━━━━━━━┿━━━━━━━━━━━━┿━━━━━━━━━━━━━┿━━━━━━━━┿━━━━━━━━┿━━━━━━━━┥
-│ medianOf.bench │    2097152 │      1.86ns │ 0.02ns │ 1.84ns │ 1.97ns │
-│ ⠹ sum.bench    │ measuring… │             │        │        │        │
-╰────────────────┴────────────┴─────────────┴────────┴────────┴────────╯
+╭────────────────┬─────────────┬─────────────────┬─────────┬─────────╮
+│ benchmark      │           n │     median/iter │     min │     max │
+┝━━━━━━━━━━━━━━━━┿━━━━━━━━━━━━━┿━━━━━━━━━━━━━━━━━┿━━━━━━━━━┿━━━━━━━━━┥
+│ medianOf.bench │ 32×16777216 │ 11.48ns ±0.02ns │ 11.41ns │ 11.54ns │
+│ ⠹ sum.bench    │  measuring… │                 │         │         │
+╰────────────────┴─────────────┴─────────────────┴─────────┴─────────╯
 ```
 
 — and graduates into the scrollback when the group finishes, pixel-identical
@@ -128,12 +132,12 @@ by every label key; `=list` prints the keys the run offers. The group name rides
 in the table's top border:
 
 ```console
-╭──╼ benchmark: canada/parse ╾─────────┬────────┬────────┬────────╮
-│ implementation │ iters │ median/iter │   ±dev │    min │    max │
-┝━━━━━━━━━━━━━━━━┿━━━━━━━┿━━━━━━━━━━━━━┿━━━━━━━━┿━━━━━━━━┿━━━━━━━━┥
-│ mir-ion        │  4096 │      1.2µs  │ 0.01µs │  1.1µs │  1.3µs │
-│ asdf           │  4096 │      3.4µs  │ 0.02µs │  3.3µs │  3.6µs │
-╰────────────────┴───────┴─────────────┴────────┴────────┴────────╯
+╭──╼ benchmark: canada/parse ╾──────────┬────────┬────────┬─────────╮
+│ implementation │  n │     median/iter │    min │    max │     B/s │
+┝━━━━━━━━━━━━━━━━┿━━━━┿━━━━━━━━━━━━━━━━━┿━━━━━━━━┿━━━━━━━━┿━━━━━━━━━┥
+│ asdf           │ 42 │  1.8ms ±236.8µs │  1.5ms │ 11.0ms │   1.25G │
+│ mir-ion        │ 32 │ 13.5ms ±451.2µs │ 12.8ms │ 45.3ms │ 166.96M │
+╰────────────────┴────┴─────────────────┴────────┴────────┴─────────╯
 ```
 
 - Under `--bench`, `benchCase` **registers** the case; the runner measures it
