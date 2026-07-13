@@ -708,7 +708,7 @@ Where each concept is load-bearing, at a glance (deep-dive links; the
 [tephra-readme]: https://github.com/Dolkar/Tephra/blob/main/README.md
 [raii-cppref]: https://en.cppreference.com/w/cpp/language/raii
 [bracket-haddock]: https://hackage.haskell.org/package/base/docs/Control-Exception.html#v:bracket
-[typestate-cliffle]: https://cliffle.com/blog/rust-typestate/
+[typestate-cliffle]: https://web.archive.org/web/20260706064825/https://cliffle.com/blog/rust-typestate/
 [substructural]: https://en.wikipedia.org/wiki/Substructural_type_system
 [phantom-haskell]: https://wiki.haskell.org/Phantom_type
 [sync-validation]: ./sync-validation.md
