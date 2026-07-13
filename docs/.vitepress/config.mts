@@ -479,6 +479,10 @@ export default withMermaid(
               collapsed: false,
               items: [
                 { text: 'drawTable spec', link: '/specs/core-cli/table' },
+                {
+                  text: 'Terminal capability detection',
+                  link: '/specs/core-cli/term-caps-detection/SPEC',
+                },
               ],
             },
             {

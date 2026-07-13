@@ -141,12 +141,20 @@ First consumer: `release` (bump select with candidate versions, publish confirm)
   type or input framework — see `docs/research/tui-libraries/comparison.md`'s
   Phase 4 roadmap for what a real event system would look like.
 - **Explicitly not building:** terminfo (the survey's no-terminfo, query-first
-  consensus — see §4); terminal _queries_ (DA1/CPR/kitty probes need raw-mode
-  response reading; `term_caps` stays env + ioctl until an interactive component
-  forces it); kitty keyboard/graphics; a cell-grid diff compositor (the in-scope
-  consumers need log-update, not a framebuffer).
+  consensus — see §4); kitty keyboard/graphics; a cell-grid diff compositor (the
+  in-scope consumers need log-update, not a framebuffer). Terminal _queries_
+  (DA1/kitty probes), formerly deferred here until an interactive component
+  forced them, now have their own accepted spec:
+  [term-caps-detection](../term-caps-detection/SPEC.md).
 
 ## 3. Design: `term_caps.d` (A1 + A2)
+
+> [!NOTE]
+> Superseded (2026-07-13): the design below shipped as the current
+> `term_caps.d`; its green-field successor — layered detection with per-field
+> provenance and opt-in terminal interrogation, grounded in the
+> [capability-detection case study](../../../research/tui-libraries/capability-detection-case-study.md)
+> — is specified in [term-caps-detection/SPEC.md](../term-caps-detection/SPEC.md).
 
 Rename `term_size.d` → `term_caps.d`; one home for size, tty-ness, color policy,
 and console preparation (they all interrogate the same stdout handle under the same
