@@ -686,10 +686,16 @@ line). Use a blank line between the subject and the body.
 - **Confirm the current branch before any write/amend/rebase.** A misdirected
   `--amend` silently folds work into the wrong commit. If you're on the default
   branch, create a branch first.
-- **Commit as you go — only _pushing_ needs to be explicitly asked for.** Create a
-  commit at each significant step instead of batching everything at the end: a
-  clean, atomic, bisectable series is far easier to build incrementally than to
-  reconstruct afterward. Don't wait for permission to commit; do wait for it to push.
+- **Commit as you go — only _pushing_ normally needs to be explicitly asked for.**
+  Create a commit at each significant step instead of batching everything at the
+  end: a clean, atomic, bisectable series is far easier to build incrementally than
+  to reconstruct afterward. Don't wait for permission to commit. The exception is
+  documentation-related work: once it is committed, validated, and rebased, push it
+  and open the PR without waiting for confirmation.
+- **Always rebase on `origin/main` before opening a PR.** Fetch `origin`, rebase the
+  completed branch onto the current `origin/main`, resolve conflicts, and rerun the
+  affected validation before pushing/opening. If the rebased branch was already
+  pushed, update it with `--force-with-lease`, never plain `--force`.
 - **Keep commits atomic.** One logical change per commit, and each commit should
   pass build + test + lint _on its own_ so history stays bisectable. Use
   `git commit --fixup=<sha>` for tweaks that belong to an earlier commit instead
