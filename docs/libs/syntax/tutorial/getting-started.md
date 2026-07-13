@@ -83,10 +83,7 @@ html ~= "</code></pre>";
 
 ## The whole program
 
-[`libs/syntax/examples/highlight-file.d`][example] is this tutorial as a
-runnable script — `dub run --single highlight-file.d` inside the devshell
-highlights its own source; `--html` switches backends.
-
-<!-- References -->
-
-[example]: https://github.com/PetarKirov/sparkles/blob/3cc01cfdc8ae867f0558e43c731885a004cb0130/libs/syntax/examples/highlight-file.d
+The `hue` app (`apps/hue`) is this tutorial as a runnable
+program — `dub run :hue` inside the devshell highlights its own source;
+`--html` switches backends, and in a tty it opens an interactive live
+theme previewer (↑/↓ to switch themes).
