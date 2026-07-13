@@ -44,3 +44,7 @@ charset = unset
 # Make requires literal tabs — so disable indent-style checking for that file.
 [docs/research/monorepo-tooling/make/index.md]
 indent_style = unset
+
+# Grounding snapshots preserve upstream/manual indentation rather than project style.
+[docs/research/application-packaging/grounding/*]
+indent_size = unset
