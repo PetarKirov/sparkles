@@ -1,20 +1,13 @@
-#!/usr/bin/env dub
-/+ dub.sdl:
-    name "highlight-file"
-    dependency "sparkles:syntax" path="../../.."
-    dependency "sparkles:core-cli" path="../../.."
-    targetPath "build"
-+/
-
-// The full precise-mode pipeline: file → tree-sitter parse → highlights
-// query → event stream → ANSI (stdout) or HTML. Grammars come from the nix
-// bundle ($SPARKLES_TS_GRAMMAR_PATH, exported by the devshell); without it
-// the program degrades to plain text — the totality law in action.
+// `hue` — the `sparkles:syntax` precise-mode pipeline as an interactive app:
+// file → tree-sitter parse → highlights query → event stream → ANSI (stdout)
+// or HTML. Grammars come from the nix bundle ($SPARKLES_TS_GRAMMAR_PATH,
+// exported by the devshell and baked into the nix package); without it the
+// program degrades to plain text — the totality law in action.
 //
-// Usage: highlight-file [--html] [--theme <theme>] [path] (defaults to this file itself)
+// Usage: hue [--html] [--theme <theme>] [path] (defaults to this file itself)
 //   Interactive TUI (tty, no --html): ↑/↓ to switch themes live; any other key quits.
 
-module highlight_file;
+module app;
 
 import std.array : appender;
 import std.file : exists, readText;
