@@ -161,26 +161,29 @@ unittest
 
 ```console
 $ dub test -- --bench
-╭────────────┬───────┬─────────────┬───────┬────────┬────────╮
-│ benchmark  │ iters │ median/iter │  ±dev │    min │    max │
-│ sort.bench │  2048 │      41.7µs │ 0.3µs │ 41.1µs │ 43.0µs │
-╰────────────┴───────┴─────────────┴───────┴────────┴────────╯
+╭────────────┬─────────┬─────────────────┬─────────┬─────────╮
+│ benchmark  │       n │     median/iter │     min │     max │
+┝━━━━━━━━━━━━┿━━━━━━━━━┿━━━━━━━━━━━━━━━━━┿━━━━━━━━━┿━━━━━━━━━┥
+│ sort.bench │ 32×2048 │ 41.70µs ±0.30µs │ 41.10µs │ 43.00µs │
+╰────────────┴─────────┴─────────────────┴─────────┴─────────╯
 ```
 
 Add `--perf` for hardware performance counters (Linux `perf_event`): a separate
 counting pass brackets each benchmark's timed body — so the counter ioctls never
-perturb the ns/iter numbers — and the table gains IPC, instructions/iter, and
-branch/cache miss-rate columns. An individually dropped counter (the
+perturb the ns/iter numbers — and the table gains instructions/iter (placed
+first, as the deterministic machine-independent anchor), IPC, and branch/cache
+miss-rate columns. An individually dropped counter (the
 last-level-cache pair under PMU multiplexing) shows as `—`; when the whole
 group can't open (a paranoid kernel) the perf columns are omitted with a
 stderr note. Off Linux the flag is inert.
 
 ```console
 $ dub test -- --bench --perf
-╭────────────┬───────┬─────────────┬─┬─────┬────────────┬─────────┬────────────╮
-│ benchmark  │ iters │ median/iter │…│ IPC │ instr/iter │ br-miss │ cache-miss │
-│ sort.bench │  2048 │      41.7µs │…│ 2.9 │     118.4k │   0.71% │      3.20% │
-╰────────────┴───────┴─────────────┴─┴─────┴────────────┴─────────┴────────────╯
+╭────────────┬─────────┬─────────────────┬─────────┬─────────┬────────────┬──────┬─────────┬────────────╮
+│ benchmark  │       n │     median/iter │     min │     max │ instr/iter │  IPC │ br-miss │ cache-miss │
+┝━━━━━━━━━━━━┿━━━━━━━━━┿━━━━━━━━━━━━━━━━━┿━━━━━━━━━┿━━━━━━━━━┿━━━━━━━━━━━━┿━━━━━━┿━━━━━━━━━┿━━━━━━━━━━━━┥
+│ sort.bench │ 32×2048 │ 41.70µs ±0.30µs │ 41.10µs │ 43.00µs │     118.4k │ 2.90 │   0.71% │      3.20% │
+╰────────────┴─────────┴─────────────────┴─────────┴─────────┴────────────┴──────┴─────────┴────────────╯
 ```
 
 Every measured column — client throughput/level metrics and the perf counters —
@@ -295,11 +298,12 @@ counter columns to each:
 
 ```console
 $ dub test -- --bench --perf
-╭──────────────────┬───────┬─────────────┬────────┬─────┬────────────┬─────────╮
-│ benchmark        │ iters │ median/iter │    B/s │ IPC │ instr/iter │ br-miss │
-│ simdjson/twitter │     1 │      41.7µs │ 15.14G │ 3.1 │     118.4k │   0.71% │
-│ stdjson/twitter  │     1 │     611.0µs │  1.03G │ 1.8 │      2.44M │   2.90% │
-╰──────────────────┴───────┴─────────────┴────────┴─────┴────────────┴─────────╯
+╭──────────────────┬──────┬──────────────────┬──────────┬──────────┬────────────┬────────┬──────┬─────────╮
+│ benchmark        │    n │      median/iter │      min │      max │ instr/iter │    B/s │  IPC │ br-miss │
+┝━━━━━━━━━━━━━━━━━━┿━━━━━━┿━━━━━━━━━━━━━━━━━━┿━━━━━━━━━━┿━━━━━━━━━━┿━━━━━━━━━━━━┿━━━━━━━━┿━━━━━━┿━━━━━━━━━┥
+│ simdjson/twitter │ 1024 │  41.70µs ±0.30µs │  41.10µs │  43.00µs │    118.4k  │ 15.14G │ 3.10 │   0.71% │
+│ stdjson/twitter  │   54 │ 611.00µs ±5.00µs │ 598.00µs │ 702.00µs │      2.44M │  1.03G │ 1.80 │   2.90% │
+╰──────────────────┴──────┴──────────────────┴──────────┴──────────┴────────────┴────────┴──────┴─────────╯
 ```
 
 Attributes compose: `@betterC @wasm` opts one test into both extra
