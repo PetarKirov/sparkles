@@ -30,6 +30,15 @@ struct CliParams
     string theme = "catppuccin-mocha";
 }
 
+// `CtlSeq` is a `string`-based enum; `std.stdio.write` formats enums by their
+// symbolic member name (e.g. "enterAltScreen"), not the underlying escape
+// sequence, so writing one directly silently prints garbage instead of
+// control codes. Route every use through an explicit cast to `string`.
+void writeCtl(CtlSeq seq)
+{
+    write(cast(string) seq);
+}
+
 int main(string[] args)
 {
     const cli = args.parseCliArgs!CliParams(
@@ -101,7 +110,7 @@ void main()
         }
         else
             renderAnsi(source, events[], theme, output,
-                AnsiOptions(depth: detectColorDepth(), italics: true));
+                AnsiOptions(depth: detectColorDepth(), italics: true, emitBackground: true));
 
         write(output[]);
         return 0;
@@ -119,19 +128,28 @@ void main()
     {
         auto output = appender!string;
         renderAnsi(source, events[], theme, output,
-            AnsiOptions(depth: detectColorDepth(), italics: true));
+            AnsiOptions(depth: detectColorDepth(), italics: true, emitBackground: true));
         write(output[]);
         return 0;
     }
     auto sess = sessFactory();
     scope (exit) sess.finish();
 
-    write(CtlSeq.enterAltScreen);
-    write(CtlSeq.hideCursor);
+    writeCtl(CtlSeq.enterAltScreen);
+    writeCtl(CtlSeq.hideCursor);
     scope (exit)
     {
-        write(CtlSeq.showCursor);
-        write(CtlSeq.exitAltScreen);
+        writeCtl(CtlSeq.showCursor);
+        writeCtl(CtlSeq.exitAltScreen);
+    }
+
+    // Emits the SGR transition from `from` to `to` directly to stdout.
+    void emitSgr(in StyleSpec from, in StyleSpec to, ColorDepth depth)
+    {
+        import sparkles.base.smallbuffer : SmallBuffer;
+        SmallBuffer!(char, 64) sgr;
+        writeStyleTransition(sgr, from, to, depth);
+        write(sgr[]);
     }
 
     string lastRendered;
@@ -141,24 +159,33 @@ void main()
         auto tp = cur in builtinThemes;
         const(Theme)* thp = tp ? tp : &builtinDark;
         const resolved = resolveTheme(*thp, labels);
+        const depth = detectColorDepth();
+        const chrome = StyleSpec(fg: resolved.defaults.fg, bg: resolved.defaults.bg);
 
         import sparkles.base.smallbuffer : SmallBuffer;
         SmallBuffer!(char, 8192) buf;
         renderAnsi(source, events[], resolved, buf,
-            AnsiOptions(depth: detectColorDepth(), italics: true));
+            AnsiOptions(depth: depth, italics: true, emitBackground: true));
         lastRendered = buf[].idup;
 
         import std.string : splitLines;
         import std.algorithm.comparison : min;
         auto codeLines = lastRendered.splitLines();
         const sz = terminalSize();
-        const reserved = 9u;
+        enum win = 7;
+        const reserved = 4u + win; // header + hint + 2 separators + theme list
         const maxCode = (sz.height > reserved) ? sz.height - reserved : 10;
         auto view = codeLines.length > maxCode ? codeLines[0 .. maxCode] : codeLines;
 
-        write(CtlSeq.syncBegin);
-        write(CtlSeq.eraseDisplay);
-        write(CtlSeq.cursorHome);
+        writeCtl(CtlSeq.syncBegin);
+        // Open the theme's fg/bg before erasing: terminals with "back color
+        // erase" (xterm, kitty, alacritty, ghostty, iTerm2, Windows Terminal —
+        // effectively universal) fill erased cells with the *current* SGR
+        // background, so the whole alt-screen viewport picks up the theme's
+        // backdrop with no per-line padding needed.
+        emitSgr(StyleSpec.init, chrome, depth);
+        writeCtl(CtlSeq.eraseDisplay);
+        writeCtl(CtlSeq.cursorHome);
 
         writef(" %s  —  %s (%d/%d)\n", baseName(sourcePath), cur, idx + 1, names.length);
         write(" ↑/↓ switch   any other key quits\n");
@@ -166,18 +193,23 @@ void main()
         foreach (_; 0 .. sepLen) write('─');
         write('\n');
 
+        // Code lines already carry their own per-span (incl. background)
+        // styling — start them from a clean slate rather than the chrome
+        // style above.
+        emitSgr(chrome, StyleSpec.init, depth);
         foreach (l; view) write(l, "\n");
+        emitSgr(StyleSpec.init, chrome, depth);
 
         foreach (_; 0 .. sepLen) write('─');
         write('\n');
 
-        enum win = 7;
         size_t vs = (idx < win / 2) ? 0 : idx - win / 2;
         vs = (vs + win > names.length) ? (names.length > win ? names.length - win : 0) : vs;
         foreach (i; vs .. (vs + win > names.length ? names.length : vs + win))
             write(i == idx ? "❯ " : "  ", names[i], "\n");
 
-        write(CtlSeq.syncEnd);
+        emitSgr(chrome, StyleSpec.init, depth);
+        writeCtl(CtlSeq.syncEnd);
 
         final switch (sess.next())
         {
@@ -189,6 +221,8 @@ void main()
     }
 done:;
 
+    writeCtl(CtlSeq.showCursor);
+    writeCtl(CtlSeq.exitAltScreen);
     write(lastRendered);
     return 0;
 }
