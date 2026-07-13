@@ -32,8 +32,8 @@ renderAnsi(source, events[], resolveTheme(builtinDark, labels), ansi);
 
 Any engine failure is an `Expected` error value — the caller renders plain
 text instead (a highlighter's worst legal output is uncolored text, never a
-crash). The runnable version of this pipeline is
-[`libs/syntax/examples/highlight-file.d`][example].
+crash). The runnable version of this pipeline is the
+`hue` app (`apps/hue`).
 
 ## How this documentation is organised
 
@@ -61,7 +61,3 @@ crash). The runnable version of this pipeline is
 - The research this library reifies:
   [the syntax-highlighting cluster](../../research/parsing/syntax-highlighting.md)
   of the parsing survey.
-
-<!-- References -->
-
-[example]: https://github.com/PetarKirov/sparkles/blob/3cc01cfdc8ae867f0558e43c731885a004cb0130/libs/syntax/examples/highlight-file.d
