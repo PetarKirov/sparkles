@@ -6,7 +6,7 @@
     "build:wasm": "bash docs/scripts/build-wasm.sh",
     "build:twoslash-showcase": "bash docs/scripts/build-twoslash-showcase.sh",
     "docs:dev": "npm run build:wasm && npm run build:twoslash-showcase && vitepress dev docs --host",
-    "docs:build": "npm run build:wasm && npm run build:twoslash-showcase && NODE_OPTIONS=\"--max-old-space-size=8192\" vitepress build docs",
+    "docs:build": "npm run build:wasm && npm run build:twoslash-showcase && NODE_OPTIONS=\"--max-old-space-size=12288\" vitepress build docs",
     "docs:preview": "vitepress preview docs"
   },
   "devDependencies": {

@@ -4245,5 +4245,14 @@ export default withMermaid(
         { icon: 'github', link: 'https://github.com/PetarKirov/sparkles' },
       ],
     },
+
+    vite: {
+      build: {
+        chunkSizeWarningLimit: 2000,
+        rollupOptions: {
+          maxParallelFileOps: 4, // Limit parallel file operations to reduce peak memory usage
+        },
+      },
+    },
   }),
 );
