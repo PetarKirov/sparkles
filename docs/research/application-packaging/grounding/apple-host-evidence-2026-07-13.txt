@@ -1,0 +1,194 @@
+    75		     written to the specified file. The code being signed is not
+    76		     modified and need not be writable.  When verifying, designates a
+    77		     file containing a detached signature to be used for verification.
+    78		     Any embedded signature in the code is ignored.
+    79
+    80	     --deep  (DEPRECATED for signing as of macOS 13.0) When signing a bundle,
+    81		     specifies that nested code content such as helpers, frameworks,
+    82		     and plug-ins, should be recursively signed in turn.
+    83		     Beware:
+    84
+    85		     o	 All signing options will be applied, in turn, to all nested
+    86			 content. This is almost never what you want.
+    87
+    88		     o	 Nested code content is a special term that only applies to
+    89			 macOS style bundles with a Contents folder. Only bare Mach-Os
+    90			 and well structured bundles qualify as nested code content.
+    91			 Non-bundle directories in nested code content locations will
+    92			 cause an error when signing. The codesign tool will only
+    93			 discover nested code content in the following directories:
+    94
+    95			 o   Contents
+    96
+    97			 o   Contents/Frameworks
+    98
+    99			 o   Contents/SharedFrameworks
+   100
+   101			 o   Contents/PlugIns
+   102
+   103			 o   Contents/Plug-ins
+   104
+   105			 o   Contents/XPCServices
+   106
+   107			 o   Contents/Helpers
+   108
+   109			 o   Contents/MacOS
+   110
+   111			 o   Contents/Library/Automator
+   112
+   113			 o   Contents/Library/Spotlight
+   114
+   115			 o   Contents/Library/LoginItems
+   116
+   117		     o	 If any code (Mach-Os, bundles) are located outside the above
+   118			 listed locations they will not be signed by the --deep option
+   119
+   120		     o	 Using the --deep option on an iOS style bundle without a
+   121			 Contents folder will not cause an error but will only sign
+   122			 the main binary of the bundle.
+   123		     When verifying a bundle, this option specifies that any nested
+   124		     code content will be recursively verified as to its full content.
+   125		     By default, verification of nested content is limited to a
+   360		     given without a value, which preserves all of these values as
+   361		     presently known. This use is deprecated and will eventually be
+   362		     removed; always specify an explicit list of preserved items.
+   363
+   364	     --strict options
+   365		     When validating code, apply additional restrictions beyond the
+   366		     defaults.
+   367
+   368		     symlinks  Check that symbolic links inside the code bundle point
+   369			       to sealed files inside its bundle.  This means that
+   370			       broken symbolic links are rejected, as are links to
+   371			       places outside the bundle and to places that are not,
+   372			       for whatever reason, sealed by the signature.
+   373
+   374		     sideband  Check that no resource forks, Finder attributes, or
+   375			       similar sideband data is present in the signed code.
+   376			       This is now automatically enforced by signing
+   377			       operations.
+   378		     Options can be specified as a comma-separated list. Use plain
+   379		     --strict or --strict=all to be as strict as possible. Note that
+   380		     --strict=all may include more checking types over time.
+   381		     Not all strictness check make sense in all circumstances, which
+   382		     is why these behaviors are not the defualt.
+   383
+   384	     --timestamp [=URL]
+   385		     During signing, requests that a timestamp authority server be
+   386		     contacted to authenticate the time of signing. The server
+   387		     contacted is given by the URL value.  If this option is given
+   388		     without a value, a default server provided by Apple is used.
+   389		     Note that this server may not support signatures made with
+   390		     identities not furnished by Apple.  If the timestamp authority
+   391		     service cannot be contacted over the Internet, or it malfunctions
+   392		     or refuses service, the signing operation will fail.
+   393		     If this option is not given at all, a system-specific default
+   394		     behavior is invoked.  This may result in some but not all code
+   395		     signatures being timestamped.
+   396		     The special value none explicitly disables the use of timestamp
+   397		     services.
+   398
+   399	     --runtime-version version
+   400		     During signing, when the runtime OPTION FLAG is set, explicitly
+   401		     specify the hardened runtime version stored in the code
+   402		     signature.  If this option is omitted, but the runtime OPTION
+   450		     structurally valid and contain only keys known on this OS version
+   451		     or keys that are properly wrapped with the $optional operator.
+   452		     An error message is printed if an error occurs.
+   453
+   454	OPERATION
+   455	     In the first synopsis form, codesign attempts to sign the code objects at
+   456	     the path(s) given, using the identity provided. Internal requirements and
+   457	     entitlements are embedded if requested. Internal requirements not
+   458	     specified may be assigned suitable default values. Defaulting applies
+   459	     separately to each type of internal requirement.  If an identifier is
+   460	     explicitly given, it is sealed into all path(s).  Otherwise, each path
+   461	     derives its identifier independently from its Info.plist or pathname.
+   462	     Code nested within bundle directories must already be signed or the
+   463	     signing operation will fail, unless the --deep option is given, in which
+   464	     case any unsigned nested code will be recursively signed before
+   465	     proceeding, using the same signing options and parameters. If the --force
+   466	     option is given, any existing top-level signature is replaced, subject to
+   467	     any --preserve-metadata options also present. Combining the --force and
+   468	     --deep options results in forcible replacement of all signatures within
+   469	     the target bundle.
+   470
+   471	     In the second synopsis form, codesign verifies the code signatures on all
+   472	     the path(s) given. The verification confirms that the code at those
+   473	     path(s) is signed, that the signature is valid, and that all sealed
+   474	     components are unaltered. Valid in this case means that the signature is
+   475	     structurally and cryptographically sound. If a requirement is given, each
+   476	     path is also checked against this requirement (but see DIAGNOSTICS
+   477	     below).  If verbose verification is requested, the program is also
+   478	     checked against its own designated requirement, which should never fail
+   479	     for a properly signed program.
+   480
+   481	     Note: Verification/validation do not check the signature against OS
+   482	     policy.  A valid/verified signature may still fail to meet Gatekeeper,
+   483	     Entitlements or other contextual policy requirements.
+   484
+   485	     If a path begins with a decimal digit, it is interpreted as the process
+     1	OVERVIEW: Submit an archive to the Notary service
+     2
+     3	USAGE: notarytool submit [<options>] <file-path>
+     4
+     5	ARGUMENTS:
+     6	  <file-path>             Path to the archive
+     7
+     8	OPTIONS:
+     9	  -v, --verbose
+    10	  -k, --key <key>         App Store Connect API key. File system path to the
+    11	                          private key.
+    12	  -d, --key-id <key-id>   App Store Connect API Key ID. Usually 10 or more
+    13	                          alphanumeric characters.
+    14	  -i, --issuer <issuer>   App Store Connect API Issuer ID, UUID format.
+    15	                          Required for Team API Keys. Do not provide for
+    16	                          Individual API Keys.
+    17	  --apple-id <apple-id>   Developer Apple ID.
+    18	  --password <password>   App-specific password for your Apple ID. You will be
+    19	                          given a secure prompt on the command line if Apple ID
+    20	                          and Team ID are provided and '--password' option is
+    21	                          not specified.
+    22	  --team-id <team-id>     Developer Team ID.
+    23	  -p, --keychain-profile <keychain-profile>
+    24	                          Authenticate with credentials stored in the Keychain.
+    25	                          Use the profile name you provided in the
+    26	                          "store-credentials" command.
+    27	  --keychain <keychain>   Pass the path to a keychain file to use for reading
+    28	                          the keychain item. If the specified keychain is
+    29	                          locked, you'll be prompted to unlock it.
+    30	  -f, --output-format <output-format>
+    31	                          Desired output format. Note that 'json' and 'plist'
+    32	                          are incompatible with '--progress'; a single update
+    33	                          will be output at the end of the operation. Choices:
+    34	                          ["normal", "json", "plist"] (default: normal)
+    35	  --progress/--no-progress
+    36	                          Display progress indicators. Only compatible with
+    37	                          normal output format (default) and will be otherwise
+    38	                          suppressed. (default: true)
+    39	  --webhook <webhook>     Designate a public webhook URL to receive HTTP
+    40	                          notifications on.
+    41	  --wait/--no-wait        Wait until processing is complete. Optionally set a
+    42	                          '--timeout' if waiting. (default: false)
+    43	  --timeout <duration>    Optional time limit for 'wait'. notarytool will exit
+    44	                          after polling for <duration>. The Notary service will
+    45	                          continue processing even if the timeout is reached.
+    46	        'duration' is an integer followed by an optional suffix: seconds 's'
+    47	        (default), minutes 'm', hours 'h'. Examples: '3600', '60m', '1h'
+    48	  --s3-acceleration/--no-s3-acceleration
+    49	                          Use S3 Transfer Acceleration for uploads. (default:
+    50	                          true)
+    51	  --force                 Upload the file even if pre-flight validation or
+    52	                          other problems are encountered.
+    53	  --version               Show the version.
+    54	  -h, --help              Show help information.
+    55
+     1	Usage: stapler staple [-q] [-v] path
+     2	        Retrieves a ticket and attaches it to the supported file
+     3	        format at path.
+     4
+     5	Usage: stapler validate [-q] [-v] path
+     6	        Validates an existing stapled ticket.
+     7
+     8	Supported file formats are: UDIF disk images, code-signed executable
+     9	bundles, and signed "flat" installer packages.

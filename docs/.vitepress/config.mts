@@ -7,13 +7,14 @@ export default withMermaid(
     description: 'D library for building CLI applications',
     base: '/',
 
-    // Ignore links to .d source files and to sample/ workspace directories
+    // Ignore links to .d/.nix source files and to sample/ workspace directories
     // (source artifacts under research/monorepo-tooling/<tool>/sample/, not pages),
     // and links into repo source trees the harness docs reference (the
     // text-conformance tool + the base/text source) — these resolve on GitHub but
     // the VitePress site doesn't serve repo source.
     ignoreDeadLinks: [
       /\.d$/,
+      /\.nix$/,
       /\.sdl$/,
       /\/sample\//,
       /\/sample$/,
@@ -22,6 +23,7 @@ export default withMermaid(
       /\/libs\/base\/src\//,
       /\/libs\/wired\/bench\//,
       /\/specs\/event-horizon\//,
+      /\/research\/application-packaging\/grounding\//,
     ],
 
     // The parsing and units-of-measure grounding ledgers are internal QA
@@ -33,6 +35,8 @@ export default withMermaid(
       '**/research/cpu-pmu/grounding/**',
       '**/research/sanitizers/grounding/**',
       '**/research/manim/grounding/**',
+      '**/research/application-packaging/PLAN.md',
+      '**/research/application-packaging/grounding/**',
       '**/research/sql/grounding/**',
       '**/research/iroh/prompt.md',
     ],
@@ -1893,6 +1897,217 @@ export default withMermaid(
                     {
                       text: 'dub Workspace Proposal',
                       link: '/research/monorepo-tooling/dub-proposal',
+                    },
+                  ],
+                },
+              ],
+            },
+            {
+              text: 'Application Packaging',
+              link: '/research/application-packaging/',
+              collapsed: true,
+              items: [
+                {
+                  text: 'Concepts & Baseline',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Concepts',
+                      link: '/research/application-packaging/concepts',
+                    },
+                    {
+                      text: 'Artifact Formats',
+                      link: '/research/application-packaging/artifact-formats',
+                    },
+                    {
+                      text: 'Release Pipeline',
+                      link: '/research/application-packaging/release-pipeline',
+                    },
+                    {
+                      text: 'Sparkles Baseline',
+                      link: '/research/application-packaging/sparkles-baseline',
+                    },
+                  ],
+                },
+                {
+                  text: 'Linux',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Native Packages',
+                      link: '/research/application-packaging/linux-native-packages',
+                    },
+                    {
+                      text: 'Repositories',
+                      link: '/research/application-packaging/linux-repositories',
+                    },
+                    {
+                      text: 'AppImage',
+                      link: '/research/application-packaging/appimage',
+                    },
+                    {
+                      text: 'Flatpak',
+                      link: '/research/application-packaging/flatpak',
+                    },
+                    {
+                      text: 'Snap',
+                      link: '/research/application-packaging/snap',
+                    },
+                    {
+                      text: 'linuxdeploy + appimagetool',
+                      link: '/research/application-packaging/linuxdeploy-appimagetool',
+                    },
+                  ],
+                },
+                {
+                  text: 'Windows',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Portable Applications',
+                      link: '/research/application-packaging/windows-portable',
+                    },
+                    {
+                      text: 'WiX / MSI',
+                      link: '/research/application-packaging/wix-msi',
+                    },
+                    {
+                      text: 'MSIX',
+                      link: '/research/application-packaging/msix',
+                    },
+                    {
+                      text: 'Inno Setup / NSIS',
+                      link: '/research/application-packaging/inno-setup-nsis',
+                    },
+                    {
+                      text: 'WinGet',
+                      link: '/research/application-packaging/winget',
+                    },
+                    {
+                      text: 'Chocolatey',
+                      link: '/research/application-packaging/chocolatey',
+                    },
+                    {
+                      text: 'Scoop',
+                      link: '/research/application-packaging/scoop',
+                    },
+                  ],
+                },
+                {
+                  text: 'macOS',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Application Bundles',
+                      link: '/research/application-packaging/macos-app-bundles',
+                    },
+                    {
+                      text: 'DMG / PKG / XIP',
+                      link: '/research/application-packaging/macos-dmg-pkg-xip',
+                    },
+                    {
+                      text: 'Signing & Notarization',
+                      link: '/research/application-packaging/macos-signing-notarization',
+                    },
+                    {
+                      text: 'Homebrew',
+                      link: '/research/application-packaging/homebrew',
+                    },
+                  ],
+                },
+                {
+                  text: 'Release Control Planes',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'dist / cargo-dist',
+                      link: '/research/application-packaging/cargo-dist',
+                    },
+                    {
+                      text: 'GoReleaser',
+                      link: '/research/application-packaging/goreleaser',
+                    },
+                    {
+                      text: 'JReleaser',
+                      link: '/research/application-packaging/jreleaser',
+                    },
+                    {
+                      text: 'dotnet-releaser',
+                      link: '/research/application-packaging/dotnet-releaser',
+                    },
+                  ],
+                },
+                {
+                  text: 'Packagers & Updaters',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'cargo-packager',
+                      link: '/research/application-packaging/cargo-packager',
+                    },
+                    {
+                      text: 'Velopack',
+                      link: '/research/application-packaging/velopack',
+                    },
+                    {
+                      text: 'Conveyor',
+                      link: '/research/application-packaging/conveyor',
+                    },
+                    {
+                      text: 'Briefcase',
+                      link: '/research/application-packaging/briefcase',
+                    },
+                    {
+                      text: 'cx_Freeze',
+                      link: '/research/application-packaging/cx-freeze',
+                    },
+                    {
+                      text: 'electron-builder',
+                      link: '/research/application-packaging/electron-builder',
+                    },
+                    {
+                      text: 'Electron Forge',
+                      link: '/research/application-packaging/electron-forge',
+                    },
+                  ],
+                },
+                {
+                  text: 'Packaging Backends',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'CPack',
+                      link: '/research/application-packaging/cpack',
+                    },
+                    {
+                      text: 'fpm / nFPM',
+                      link: '/research/application-packaging/fpm-nfpm',
+                    },
+                    {
+                      text: 'jpackage',
+                      link: '/research/application-packaging/jpackage',
+                    },
+                    {
+                      text: 'Swift Bundler',
+                      link: '/research/application-packaging/swift-bundler',
+                    },
+                  ],
+                },
+                {
+                  text: 'Synthesis',
+                  collapsed: true,
+                  items: [
+                    {
+                      text: 'Comparison',
+                      link: '/research/application-packaging/comparison',
+                    },
+                    {
+                      text: 'Platform Gotchas',
+                      link: '/research/application-packaging/platform-gotchas',
+                    },
+                    {
+                      text: 'Recommendations',
+                      link: '/research/application-packaging/recommendations',
                     },
                   ],
                 },
