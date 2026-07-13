@@ -443,6 +443,20 @@ export default withMermaid(
           collapsed: true,
           items: [
             {
+              text: 'Application Packaging',
+              collapsed: false,
+              items: [
+                {
+                  text: 'Specification',
+                  link: '/specs/application-packaging/SPEC',
+                },
+                {
+                  text: 'Delivery Plan',
+                  link: '/specs/application-packaging/PLAN',
+                },
+              ],
+            },
+            {
               text: 'Base',
               collapsed: false,
               items: [
