@@ -37,8 +37,10 @@ struct AnsiOptions
     /// Color tier to emit. `none` = verbatim passthrough.
     ColorDepth depth = ColorDepth.ansi256;
 
-    /// Emit per-run theme backgrounds. Off by default: respect the
-    /// terminal's own background.
+    /// Emit per-run theme backgrounds — including the theme's page
+    /// background (`ResolvedTheme.defaults.bg`) for runs whose own rule
+    /// styles fg only. Off by default: respect the terminal's own
+    /// background.
     bool emitBackground = false;
 
     /// Emit italics. Off by default (bat's defensive gate — some terminals
@@ -89,6 +91,12 @@ if (isHighlightEventRange!Events)
             spec.font = cast(FontStyle)(spec.font & ~FontStyle.italic);
         if (!options.emitBackground)
             spec.bg = Color.init;
+        else if (!spec.bg.isSet)
+            // Most rules style fg only. Unlike HTML's `<pre>` container,
+            // ANSI has no background inheritance, so without this an unset
+            // per-span bg would render as the terminal's own default (`49`)
+            // instead of the theme's page background showing through.
+            spec.bg = theme.defaults.bg;
 
         // Defensive clamp: a misbehaving producer must not crash a renderer.
         const lo = min(span.start, source.length);
@@ -289,6 +297,7 @@ version (unittest)
     {
         const theme = Theme(
             name: "test",
+            defaultBg: Color.fromPalette(235), // page background; only consulted with emitBackground
             rules: [
                 ThemeRule("keyword", StyleSpec(
                     fg: Color.fromRgb(0xcb, 0xa6, 0xf7), font: FontStyle.bold)),
@@ -344,6 +353,34 @@ unittest
     // none: verbatim passthrough
     checkWriter!((ref w) => renderAnsi(source, events[], resolved, w,
         AnsiOptions(depth: ColorDepth.none)))(source);
+}
+
+@("render.ansi.emitBackgroundFallsBackToPageBackground")
+@safe pure nothrow
+unittest
+{
+    const resolved = testTheme();
+    alias E = HighlightEvent;
+    const source = "if x";
+    const events = [
+        E.pushLabel(lbl("keyword")),
+        E.sourceSpan(0, 2), // "if" — the keyword rule styles fg only
+        E.popLabel(),
+        E.sourceSpan(2, 4), // " x" — unlabeled gap
+    ];
+
+    // "if" has no rule-specified background, but still picks up the theme's
+    // page background (48;5;235) instead of resetting to the terminal
+    // default; the unlabeled gap already carried it via `defaults`, so no
+    // redundant background code is re-emitted when the run changes.
+    checkWriter!((ref w) => renderAnsi(source, events[], resolved, w,
+        AnsiOptions(depth: ColorDepth.ansi256, emitBackground: true)))(
+        "\x1b[1;38;5;183;48;5;235mif\x1b[22;39m x\x1b[0m");
+
+    // emitBackground off (default): no page background leaks in at all.
+    checkWriter!((ref w) => renderAnsi(source, events[], resolved, w,
+        AnsiOptions(depth: ColorDepth.ansi256)))(
+        "\x1b[1;38;5;183mif\x1b[0m x");
 }
 
 @("render.ansi.italicsGateAndBackground")
