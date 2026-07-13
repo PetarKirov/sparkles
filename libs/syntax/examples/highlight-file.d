@@ -12,16 +12,21 @@
 // the program degrades to plain text — the totality law in action.
 //
 // Usage: highlight-file [--html] [--theme <theme>] [path] (defaults to this file itself)
+//   Interactive TUI (tty, no --html): ↑/↓ to switch themes live; any other key quits.
 
 module highlight_file;
 
 import std.array : appender;
 import std.file : exists, readText;
 import std.path : baseName, extension;
-import std.stdio : stderr, write, writeln;
+import std.stdio : stderr, write, writef, writeln;
 
 import sparkles.syntax;
 import sparkles.core_cli.args;
+
+import sparkles.base.term_control : CtlSeq;
+import sparkles.core_cli.key_input : Key, stdioKeySession;
+import sparkles.core_cli.term_caps : isTerminal, StdStream, terminalSize;
 
 struct CliParams
 {
@@ -45,19 +50,8 @@ int main(string[] args)
     bool html = cli.html;
     string themeName = cli.theme;
 
-    string sourcePath;
-    string source;
-    if (args.length > 1) {
-        sourcePath = args[1];
-        source = readText(sourcePath);
-    } else {
-        sourcePath = __FILE_FULL_PATH__;
-        if (sourcePath.exists) {
-            source = readText(sourcePath);
-        } else {
-            // Fallback for packaged runs (e.g. nix run-all-examples) where the
-            // compile-time source path is not present at runtime.
-            source = q{
+    string sourcePath = args.length > 1 ? args[1] : __FILE_FULL_PATH__;
+    string source = (args.length > 1 || sourcePath.exists) ? readText(sourcePath) : q{
 module sample;
 
 import std.stdio : writeln;
@@ -70,64 +64,138 @@ void main()
         writeln("positive");
 }
 };
-            sourcePath = "sample.d";
-        }
-    }
+    sourcePath = (args.length <= 1 && !sourcePath.exists) ? "sample.d" : sourcePath;
     const lang = canonicalLanguage(sourcePath.extension.length ? sourcePath.extension[1 .. $] : "");
 
     const labels = LabelSet.standard();
 
-    const(Theme)* themeVal = &builtinDark;
-    if (auto t = themeName in builtinThemes)
-    {
-        themeVal = t;
-    }
-    else
-    {
-        stderr.writef("Warning: theme '%s' not found. Falling back to default dark theme.\n", themeName);
-    }
+    auto t = themeName in builtinThemes;
+    if (!t) stderr.writef("Warning: theme '%s' not found. Falling back to default dark theme.\n", themeName);
+    const(Theme)* themeVal = t ? t : &builtinDark;
     const theme = resolveTheme(*themeVal, labels);
 
-    // Engine side: any failure falls back to plain text.
+    // Engine side: any failure falls back to plain text. Use the injection-aware
+    // path so that markdown (and other languages with injections.scm) get their
+    // fenced code blocks / inline content highlighted by nested grammars.
     auto events = appender!(HighlightEvent[]);
     auto registry = GrammarRegistry.fromEnvironment();
+    auto cache = TsConfigCache.create(&registry, labels);
 
-    bool highlighted = false;
-    auto grammar = registry.grammar(lang);
-    auto queryText = registry.queryText(lang);
-    if (!grammar.hasError && !queryText.hasError)
-    {
-        TsError error;
-        auto config = TsHighlightConfig.create(grammar.value, queryText.value, error);
-        if (!error)
-        {
-            config.configure(labels);
-            highlighted = !highlight(config, source, events).hasError;
-        }
-    }
-    if (!highlighted)
+    auto res = highlightInjected(cache, lang, source, events);
+    if (res.hasError)
     {
         stderr.writeln("note: no grammar for '", lang, "' — plain text");
         events ~= HighlightEvent.sourceSpan(0, source.length);
     }
 
-    auto output = appender!string;
-    if (html)
+    const interactive = !html &&
+        isTerminal(StdStream.stdin) && isTerminal(StdStream.stdout);
+
+    if (!interactive)
     {
-        import std.format : format;
-        string bgStr = theme.defaults.bg.isSet ? format("background: #%02x%02x%02x;", theme.defaults.bg.rgb.r, theme.defaults.bg.rgb.g, theme.defaults.bg.rgb.b) : "";
-        string fgStr = theme.defaults.fg.isSet ? format("color: #%02x%02x%02x;", theme.defaults.fg.rgb.r, theme.defaults.fg.rgb.g, theme.defaults.fg.rgb.b) : "";
-        output ~= format("<style>\npre { %s %s padding: 1em; }\n", bgStr, fgStr);
-        writeThemeStylesheet(theme, output);
-        output ~= "</style>\n<pre><code>";
-        renderHtml(source, events[], theme, output,
-            HtmlOptions(mode: HtmlMode.cssClasses));
-        output ~= "</code></pre>\n";
+        auto output = appender!string;
+        if (html)
+        {
+            import std.format : format;
+            string bgStr = theme.defaults.bg.isSet ? format("background: #%02x%02x%02x;", theme.defaults.bg.rgb.r, theme.defaults.bg.rgb.g, theme.defaults.bg.rgb.b) : "";
+            string fgStr = theme.defaults.fg.isSet ? format("color: #%02x%02x%02x;", theme.defaults.fg.rgb.r, theme.defaults.fg.rgb.g, theme.defaults.fg.rgb.b) : "";
+            output ~= format("<style>\npre { %s %s padding: 1em; }\n", bgStr, fgStr);
+            writeThemeStylesheet(theme, output);
+            output ~= "</style>\n<pre><code>";
+            renderHtml(source, events[], theme, output,
+                HtmlOptions(mode: HtmlMode.cssClasses));
+            output ~= "</code></pre>\n";
+        }
+        else
+            renderAnsi(source, events[], theme, output,
+                AnsiOptions(depth: detectColorDepth(), italics: true));
+
+        write(output[]);
+        return 0;
     }
-    else
+
+    string[] names = builtinThemes.keys.dup;
+    import std.algorithm.sorting : sort;
+    sort(names);
+
+    size_t idx = 0;
+    foreach (i, n; names) if (n == themeName) { idx = i; break; }
+
+    auto sessFactory = stdioKeySession();
+    if (sessFactory is null)
+    {
+        auto output = appender!string;
         renderAnsi(source, events[], theme, output,
             AnsiOptions(depth: detectColorDepth(), italics: true));
+        write(output[]);
+        return 0;
+    }
+    auto sess = sessFactory();
+    scope (exit) sess.finish();
 
-    write(output[]);
+    write(CtlSeq.enterAltScreen);
+    write(CtlSeq.hideCursor);
+    scope (exit)
+    {
+        write(CtlSeq.showCursor);
+        write(CtlSeq.exitAltScreen);
+    }
+
+    string lastRendered;
+    while (true)
+    {
+        const cur = names[idx];
+        auto tp = cur in builtinThemes;
+        const(Theme)* thp = tp ? tp : &builtinDark;
+        const resolved = resolveTheme(*thp, labels);
+
+        import sparkles.base.smallbuffer : SmallBuffer;
+        SmallBuffer!(char, 8192) buf;
+        renderAnsi(source, events[], resolved, buf,
+            AnsiOptions(depth: detectColorDepth(), italics: true));
+        lastRendered = buf[].idup;
+
+        import std.string : splitLines;
+        import std.algorithm.comparison : min;
+        auto codeLines = lastRendered.splitLines();
+        const sz = terminalSize();
+        const reserved = 9u;
+        const maxCode = (sz.height > reserved) ? sz.height - reserved : 10;
+        auto view = codeLines.length > maxCode ? codeLines[0 .. maxCode] : codeLines;
+
+        write(CtlSeq.syncBegin);
+        write(CtlSeq.eraseDisplay);
+        write(CtlSeq.cursorHome);
+
+        writef(" %s  —  %s (%d/%d)\n", baseName(sourcePath), cur, idx + 1, names.length);
+        write(" ↑/↓ switch   any other key quits\n");
+        const sepLen = sz.width ? min(60, sz.width) : 60;
+        foreach (_; 0 .. sepLen) write('─');
+        write('\n');
+
+        foreach (l; view) write(l, "\n");
+
+        foreach (_; 0 .. sepLen) write('─');
+        write('\n');
+
+        enum win = 7;
+        size_t vs = (idx < win / 2) ? 0 : idx - win / 2;
+        vs = (vs + win > names.length) ? (names.length > win ? names.length - win : 0) : vs;
+        foreach (i; vs .. (vs + win > names.length ? names.length : vs + win))
+            write(i == idx ? "❯ " : "  ", names[i], "\n");
+
+        write(CtlSeq.syncEnd);
+
+        final switch (sess.next())
+        {
+            case Key.up:   idx = (idx == 0) ? names.length - 1 : idx - 1; break;
+            case Key.down: idx = (idx + 1 == names.length) ? 0 : idx + 1; break;
+            case Key.enter, Key.cancel, Key.other:
+                goto done;
+        }
+    }
+done:;
+
+    write(lastRendered);
     return 0;
 }
