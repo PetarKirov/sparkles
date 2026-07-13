@@ -199,6 +199,7 @@ export default {
             entry.name === 'bin' ||
             entry.name === 'obj' ||
             entry.name === '.dub' ||
+            entry.name === 'node_modules' ||
             entry.name.startsWith('.')
           ) {
             continue;
@@ -372,7 +373,9 @@ export default {
             child.name === 'build' ||
             child.name === 'bin' ||
             child.name === 'obj' ||
-            child.name === '.dub'
+            child.name === '.dub' ||
+            child.name === 'node_modules' ||
+            child.name.startsWith('.')
           ) {
             continue;
           }
@@ -409,7 +412,11 @@ export default {
       routes.push({
         params: { filepath: `${docsRelPath}/index` },
         content,
-        frontmatter: { layout: 'page', aside: false },
+        frontmatter: {
+          layout: 'page',
+          aside: false,
+          search: false,
+        },
       });
     }
 
@@ -442,10 +449,10 @@ export default {
           layout: 'page',
           aside: false,
           pageClass: 'source-code-page',
+          search: false,
         },
       });
     }
-
     return routes;
   },
 };
