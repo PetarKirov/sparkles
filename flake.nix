@@ -63,6 +63,7 @@
         ./nix/packages/text-wasm.nix
         ./nix/packages/table-wasm.nix
         ./nix/packages/ts-grammars.nix
+        ./nix/packages/syntax-foreign.nix
         ./nix/packages/uwidth-rs.nix
         ./nix/packages/wired-bench-data.nix
         ./nix/packages/wired-bench-yyjson.nix

@@ -1,0 +1,14 @@
+{
+  "name": "shiki-html-cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Tiny CLI over shiki's codeToHtml for the sparkles:syntax foreign benchmark panel",
+  "license": "BSL-1.0",
+  "type": "module",
+  "bin": {
+    "shiki-html": "cli.mjs"
+  },
+  "dependencies": {
+    "shiki": "1.29.2"
+  }
+}

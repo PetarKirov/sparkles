@@ -1,0 +1,17 @@
+name "syntax-foreign-bench"
+description "End-to-end throughput comparison of foreign syntax highlighters (bat/chroma/pygments/shiki) on the sparkles:syntax render corpus"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetType "executable"
+targetName "syntax-foreign-bench"
+targetPath "build"
+mainSourceFile "src/app.d"
+
+dflags "-preview=in" "-preview=dip1000"
+
+// Pure Phobos: it shells out to the pinned foreign tools (found via
+// $SYNTAX_FOREIGN or argv) and times them. No sparkles deps — the corpus is
+// read at runtime as plain files, not string-imported, so non-D languages can
+// be added without touching the D bench.

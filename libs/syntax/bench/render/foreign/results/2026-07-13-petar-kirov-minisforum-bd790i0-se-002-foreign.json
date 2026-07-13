@@ -1,0 +1,190 @@
+{
+  "date": "2026-07-13",
+  "host": "host",
+  "note": "end-to-end wall clock (spawn+parse+render); comparable among these tools, not to in-process rows",
+  "reps": 3,
+  "results": [
+    {
+      "format": "ansi",
+      "inputBytes": 804012,
+      "lang": "d",
+      "mbPerSec": 1.2441,
+      "medianMs": 646.238,
+      "ok": true,
+      "outputBytes": 3670326,
+      "tool": "bat"
+    },
+    {
+      "format": "ansi",
+      "inputBytes": 801856,
+      "lang": "python",
+      "mbPerSec": 0.9148,
+      "medianMs": 876.57,
+      "ok": true,
+      "outputBytes": 4055792,
+      "tool": "bat"
+    },
+    {
+      "format": "ansi",
+      "inputBytes": 802944,
+      "lang": "typescript",
+      "mbPerSec": 0.5046,
+      "medianMs": 1591.254,
+      "ok": true,
+      "outputBytes": 4768416,
+      "tool": "bat"
+    },
+    {
+      "format": "ansi",
+      "inputBytes": 804012,
+      "lang": "d",
+      "mbPerSec": 1.0426,
+      "medianMs": 771.151,
+      "ok": true,
+      "outputBytes": 3605338,
+      "tool": "chroma"
+    },
+    {
+      "format": "html",
+      "inputBytes": 804012,
+      "lang": "d",
+      "mbPerSec": 1.0677,
+      "medianMs": 753.066,
+      "ok": true,
+      "outputBytes": 4696772,
+      "tool": "chroma"
+    },
+    {
+      "format": "ansi",
+      "inputBytes": 801856,
+      "lang": "python",
+      "mbPerSec": 0.6261,
+      "medianMs": 1280.727,
+      "ok": true,
+      "outputBytes": 4333232,
+      "tool": "chroma"
+    },
+    {
+      "format": "html",
+      "inputBytes": 801856,
+      "lang": "python",
+      "mbPerSec": 0.6311,
+      "medianMs": 1270.489,
+      "ok": true,
+      "outputBytes": 5563506,
+      "tool": "chroma"
+    },
+    {
+      "format": "ansi",
+      "inputBytes": 802944,
+      "lang": "typescript",
+      "mbPerSec": 1.0725,
+      "medianMs": 748.697,
+      "ok": true,
+      "outputBytes": 4745376,
+      "tool": "chroma"
+    },
+    {
+      "format": "html",
+      "inputBytes": 802944,
+      "lang": "typescript",
+      "mbPerSec": 1.0773,
+      "medianMs": 745.311,
+      "ok": true,
+      "outputBytes": 5887922,
+      "tool": "chroma"
+    },
+    {
+      "format": "ansi",
+      "inputBytes": 804012,
+      "lang": "d",
+      "mbPerSec": 1.2019,
+      "medianMs": 668.932,
+      "ok": true,
+      "outputBytes": 2111184,
+      "tool": "pygmentize"
+    },
+    {
+      "format": "html",
+      "inputBytes": 804012,
+      "lang": "d",
+      "mbPerSec": 1.2478,
+      "medianMs": 644.365,
+      "ok": true,
+      "outputBytes": 4700242,
+      "tool": "pygmentize"
+    },
+    {
+      "format": "ansi",
+      "inputBytes": 801856,
+      "lang": "python",
+      "mbPerSec": 0.6895,
+      "medianMs": 1162.984,
+      "ok": true,
+      "outputBytes": 2264670,
+      "tool": "pygmentize"
+    },
+    {
+      "format": "html",
+      "inputBytes": 801856,
+      "lang": "python",
+      "mbPerSec": 0.7092,
+      "medianMs": 1130.631,
+      "ok": true,
+      "outputBytes": 4334644,
+      "tool": "pygmentize"
+    },
+    {
+      "format": "ansi",
+      "inputBytes": 802944,
+      "lang": "typescript",
+      "mbPerSec": 0.8601,
+      "medianMs": 933.535,
+      "ok": true,
+      "outputBytes": 3140638,
+      "tool": "pygmentize"
+    },
+    {
+      "format": "html",
+      "inputBytes": 802944,
+      "lang": "typescript",
+      "mbPerSec": 0.9561,
+      "medianMs": 839.784,
+      "ok": true,
+      "outputBytes": 6267508,
+      "tool": "pygmentize"
+    },
+    {
+      "format": "html",
+      "inputBytes": 804012,
+      "lang": "d",
+      "mbPerSec": 0.2813,
+      "medianMs": 2858.128,
+      "ok": true,
+      "outputBytes": 4734123,
+      "tool": "shiki-html"
+    },
+    {
+      "format": "html",
+      "inputBytes": 801856,
+      "lang": "python",
+      "mbPerSec": 0.2863,
+      "medianMs": 2800.891,
+      "ok": true,
+      "outputBytes": 6877117,
+      "tool": "shiki-html"
+    },
+    {
+      "format": "html",
+      "inputBytes": 802944,
+      "lang": "typescript",
+      "mbPerSec": 0.2301,
+      "medianMs": 3488.886,
+      "ok": true,
+      "outputBytes": 7355661,
+      "tool": "shiki-html"
+    }
+  ],
+  "schema": "syntax-foreign/1",
+  "targetBytes": 800000
+}
