@@ -11,6 +11,10 @@ result-*
 .pre-commit-config.yaml
 .lycheecache
 
+# pi-team runtime and worktrees
+.pi/team-lead/
+.worktrees/
+
 # build artifact dir
 build/
 
