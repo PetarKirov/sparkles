@@ -141,12 +141,12 @@ This is the extra spine dimension for the [syntax-highlighting cluster][sh]:
 <!-- References -->
 
 [repo]: https://github.com/alecthomas/chroma
-[readme]: https://github.com/alecthomas/chroma/blob/master/README.md
-[regexp-go]: https://github.com/alecthomas/chroma/blob/master/regexp.go
-[types-go]: https://github.com/alecthomas/chroma/blob/master/types.go
-[colour-go]: https://github.com/alecthomas/chroma/blob/master/colour.go
-[tools]: https://github.com/alecthomas/chroma/blob/master/_tools/pygments2chroma_xml.py
-[lexers-dir]: https://github.com/alecthomas/chroma/tree/master/lexers
+[readme]: https://github.com/alecthomas/chroma/blob/974344042859273c52cd26d7498253614412d478/README.md
+[regexp-go]: https://github.com/alecthomas/chroma/blob/974344042859273c52cd26d7498253614412d478/regexp.go
+[types-go]: https://github.com/alecthomas/chroma/blob/974344042859273c52cd26d7498253614412d478/types.go
+[colour-go]: https://github.com/alecthomas/chroma/blob/974344042859273c52cd26d7498253614412d478/colour.go
+[tools]: https://github.com/alecthomas/chroma/blob/974344042859273c52cd26d7498253614412d478/_tools/pygments2chroma_xml.py
+[lexers-dir]: https://github.com/alecthomas/chroma/tree/974344042859273c52cd26d7498253614412d478/lexers
 [regexp2]: https://github.com/dlclark/regexp2
 [pygments]: ./pygments.md
 [syntect]: ./syntect.md

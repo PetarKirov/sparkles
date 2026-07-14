@@ -385,8 +385,8 @@ its geometric imprecision.
 [paper-arxiv]: https://arxiv.org/html/2307.00146v4
 [paper-acm]: https://dl.acm.org/doi/10.1145/3654777.3676465
 [repo]: https://github.com/bluefishjs/bluefish
-[license]: https://github.com/bluefishjs/bluefish/blob/main/LICENSE
-[pkg]: https://github.com/bluefishjs/bluefish/blob/main/packages/bluefish-solid/package.json
+[license]: https://github.com/bluefishjs/bluefish/blob/a6d2134a0c4b6c388e9f1646f1085fb68d882a2f/LICENSE
+[pkg]: https://github.com/bluefishjs/bluefish/blob/a6d2134a0c4b6c388e9f1646f1085fb68d882a2f/packages/bluefish-solid/package.json
 [site]: https://bluefishjs.org/
 [what-is]: https://bluefishjs.org/learn/what-is-bluefish.html
 [tutorial]: https://bluefishjs.org/learn/tutorial-1-intro.html

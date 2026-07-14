@@ -736,28 +736,28 @@ and is drawn in — the [comparison capstone][comparison].
 <!-- Pinned clone: biozic/quantities @ 3cb3205 -->
 
 [repo-q]: https://github.com/biozic/quantities
-[readme-q]: https://github.com/biozic/quantities/blob/3cb3205/README.md
-[dims]: https://github.com/biozic/quantities/blob/3cb3205/source/quantities/internal/dimensions.d
-[ct]: https://github.com/biozic/quantities/blob/3cb3205/source/quantities/compiletime.d
-[rt]: https://github.com/biozic/quantities/blob/3cb3205/source/quantities/runtime.d
-[parsing]: https://github.com/biozic/quantities/blob/3cb3205/source/quantities/parsing.d
-[si-q]: https://github.com/biozic/quantities/blob/3cb3205/source/quantities/internal/si.d
-[si-q-top]: https://github.com/biozic/quantities/blob/3cb3205/source/quantities/si.d
-[common]: https://github.com/biozic/quantities/blob/3cb3205/source/quantities/common.d
-[fake]: https://github.com/biozic/quantities/blob/3cb3205/tests/fake_units_tests.d
+[readme-q]: https://github.com/biozic/quantities/blob/3cb3205a53ead6af5f557523984ed52ddb625ea7/README.md
+[dims]: https://github.com/biozic/quantities/blob/3cb3205a53ead6af5f557523984ed52ddb625ea7/source/quantities/internal/dimensions.d
+[ct]: https://github.com/biozic/quantities/blob/3cb3205a53ead6af5f557523984ed52ddb625ea7/source/quantities/compiletime.d
+[rt]: https://github.com/biozic/quantities/blob/3cb3205a53ead6af5f557523984ed52ddb625ea7/source/quantities/runtime.d
+[parsing]: https://github.com/biozic/quantities/blob/3cb3205a53ead6af5f557523984ed52ddb625ea7/source/quantities/parsing.d
+[si-q]: https://github.com/biozic/quantities/blob/3cb3205a53ead6af5f557523984ed52ddb625ea7/source/quantities/internal/si.d
+[si-q-top]: https://github.com/biozic/quantities/blob/3cb3205a53ead6af5f557523984ed52ddb625ea7/source/quantities/si.d
+[common]: https://github.com/biozic/quantities/blob/3cb3205a53ead6af5f557523984ed52ddb625ea7/source/quantities/common.d
+[fake]: https://github.com/biozic/quantities/blob/3cb3205a53ead6af5f557523984ed52ddb625ea7/tests/fake_units_tests.d
 
 <!-- Pinned clone: nordlow/units-d @ 9589ac9 -->
 
 [repo-u]: https://github.com/nordlow/units-d
-[readme-u]: https://github.com/nordlow/units-d/blob/9589ac9/README.md
-[pkg-u]: https://github.com/nordlow/units-d/blob/9589ac9/src/experimental/units/package.d
-[si-u]: https://github.com/nordlow/units-d/blob/9589ac9/src/experimental/units/si.d
+[readme-u]: https://github.com/nordlow/units-d/blob/9589ac9ccdf566134b3e2e94c7a1bcc93c6a93b4/README.md
+[pkg-u]: https://github.com/nordlow/units-d/blob/9589ac9ccdf566134b3e2e94c7a1bcc93c6a93b4/src/experimental/units/package.d
+[si-u]: https://github.com/nordlow/units-d/blob/9589ac9ccdf566134b3e2e94c7a1bcc93c6a93b4/src/experimental/units/si.d
 
 <!-- Pinned artifact: dnadlinger/phobos units branch @ 4a7279a -->
 
 [repo-n]: https://github.com/dnadlinger/phobos/tree/units
-[units-d-file]: https://github.com/dnadlinger/phobos/blob/4a7279a/std/units.d
-[si-n]: https://github.com/dnadlinger/phobos/blob/4a7279a/std/si.d
+[units-d-file]: https://github.com/dnadlinger/phobos/blob/4a7279a7759495df1f8e2793fd5ccd4a3a80cd46/std/units.d
+[si-n]: https://github.com/dnadlinger/phobos/blob/4a7279a7759495df1f8e2793fd5ccd4a3a80cd46/std/si.d
 
 <!-- Official docs, registry & history -->
 

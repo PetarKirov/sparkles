@@ -363,13 +363,13 @@ Two observations matter for sparkles:
 <!-- References -->
 
 [repo]: https://github.com/ParticlePeter/ErupteD
-[readme]: https://github.com/ParticlePeter/ErupteD/blob/master/README.md
+[readme]: https://github.com/ParticlePeter/ErupteD/blob/1b3c80c49ebbeafc48252b61652644ff0c6dab91/README.md
 [dub]: https://code.dlang.org/packages/erupted
-[types]: https://github.com/ParticlePeter/ErupteD/blob/master/source/erupted/types.d
-[functions]: https://github.com/ParticlePeter/ErupteD/blob/master/source/erupted/functions.d
-[dispatch]: https://github.com/ParticlePeter/ErupteD/blob/master/source/erupted/dispatch_device.d
+[types]: https://github.com/ParticlePeter/ErupteD/blob/1b3c80c49ebbeafc48252b61652644ff0c6dab91/source/erupted/types.d
+[functions]: https://github.com/ParticlePeter/ErupteD/blob/1b3c80c49ebbeafc48252b61652644ff0c6dab91/source/erupted/functions.d
+[dispatch]: https://github.com/ParticlePeter/ErupteD/blob/1b3c80c49ebbeafc48252b61652644ff0c6dab91/source/erupted/dispatch_device.d
 [verupt]: https://github.com/ParticlePeter/V-Erupt
-[gen]: https://github.com/ParticlePeter/V-Erupt/blob/master/erupt_dlang.py
+[gen]: https://github.com/ParticlePeter/V-Erupt/blob/ba03fbea909746d00555d6286689eebfebbb6ed4/erupt_dlang.py
 [dvulkan]: https://github.com/ColonelThirtyTwo/dvulkan
 [dvulkan-dub]: https://code.dlang.org/packages/d-vulkan
 [bindbc]: https://code.dlang.org/packages/bindbc-vulkan
@@ -379,7 +379,7 @@ Two observations matter for sparkles:
 [derelict]: https://code.dlang.org/packages/derelict-vulkan
 [vulkanish]: https://code.dlang.org/packages/vulkanish
 [intel]: https://www.intel.com/content/www/us/en/developer/articles/training/api-without-secrets-introduction-to-vulkan-part-1.html
-[vkxml]: https://github.com/KhronosGroup/Vulkan-Headers/blob/main/registry/vk.xml
+[vkxml]: https://github.com/KhronosGroup/Vulkan-Headers/blob/8d6039a455a7ecc7d2a592ff97f62db4e59b70bf/registry/vk.xml
 [externsync]: https://registry.khronos.org/vulkan/specs/latest/html/vkspec.html#fundamentals-threadingbehavior
 [dip1000]: https://dlang.org/spec/memory-safe-d.html
 [importc-guide]: ../../guidelines/importc-c-libraries.md

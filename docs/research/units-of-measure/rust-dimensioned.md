@@ -673,24 +673,24 @@ Why consolidation went the other way (all observable in the two pinned clones):
 <!-- Pinned clone (dimensioned @ 615c908) -->
 
 [repo]: https://github.com/paholg/dimensioned
-[lib]: https://github.com/paholg/dimensioned/blob/615c908/src/lib.rs
-[make-units]: https://github.com/paholg/dimensioned/blob/615c908/src/make_units.rs
-[traits]: https://github.com/paholg/dimensioned/blob/615c908/src/traits.rs
-[dimensions]: https://github.com/paholg/dimensioned/blob/615c908/src/dimensions.rs
-[conversion]: https://github.com/paholg/dimensioned/blob/615c908/src/conversion.rs
-[fmt]: https://github.com/paholg/dimensioned/blob/615c908/src/fmt.rs
-[array]: https://github.com/paholg/dimensioned/blob/615c908/src/array.rs
-[build-mod]: https://github.com/paholg/dimensioned/blob/615c908/src/build/mod.rs
-[si-build]: https://github.com/paholg/dimensioned/blob/615c908/src/build/si.rs
-[ucum-build]: https://github.com/paholg/dimensioned/blob/615c908/src/build/ucum.rs
-[cgs-build]: https://github.com/paholg/dimensioned/blob/615c908/src/build/cgs.rs
-[prefixes]: https://github.com/paholg/dimensioned/blob/615c908/src/f64prefixes.rs
-[readme]: https://github.com/paholg/dimensioned/blob/615c908/README.md
-[changelog]: https://github.com/paholg/dimensioned/blob/615c908/CHANGELOG.md
-[cargo]: https://github.com/paholg/dimensioned/blob/615c908/Cargo.toml
-[todo]: https://github.com/paholg/dimensioned/blob/615c908/todo.org
-[example]: https://github.com/paholg/dimensioned/blob/615c908/examples/readme-example.rs
-[tests]: https://github.com/paholg/dimensioned/tree/615c908/tests
+[lib]: https://github.com/paholg/dimensioned/blob/615c908ae5735435077a73e74d0e996c49d46015/src/lib.rs
+[make-units]: https://github.com/paholg/dimensioned/blob/615c908ae5735435077a73e74d0e996c49d46015/src/make_units.rs
+[traits]: https://github.com/paholg/dimensioned/blob/615c908ae5735435077a73e74d0e996c49d46015/src/traits.rs
+[dimensions]: https://github.com/paholg/dimensioned/blob/615c908ae5735435077a73e74d0e996c49d46015/src/dimensions.rs
+[conversion]: https://github.com/paholg/dimensioned/blob/615c908ae5735435077a73e74d0e996c49d46015/src/conversion.rs
+[fmt]: https://github.com/paholg/dimensioned/blob/615c908ae5735435077a73e74d0e996c49d46015/src/fmt.rs
+[array]: https://github.com/paholg/dimensioned/blob/615c908ae5735435077a73e74d0e996c49d46015/src/array.rs
+[build-mod]: https://github.com/paholg/dimensioned/blob/615c908ae5735435077a73e74d0e996c49d46015/src/build/mod.rs
+[si-build]: https://github.com/paholg/dimensioned/blob/615c908ae5735435077a73e74d0e996c49d46015/src/build/si.rs
+[ucum-build]: https://github.com/paholg/dimensioned/blob/615c908ae5735435077a73e74d0e996c49d46015/src/build/ucum.rs
+[cgs-build]: https://github.com/paholg/dimensioned/blob/615c908ae5735435077a73e74d0e996c49d46015/src/build/cgs.rs
+[prefixes]: https://github.com/paholg/dimensioned/blob/615c908ae5735435077a73e74d0e996c49d46015/src/f64prefixes.rs
+[readme]: https://github.com/paholg/dimensioned/blob/615c908ae5735435077a73e74d0e996c49d46015/README.md
+[changelog]: https://github.com/paholg/dimensioned/blob/615c908ae5735435077a73e74d0e996c49d46015/CHANGELOG.md
+[cargo]: https://github.com/paholg/dimensioned/blob/615c908ae5735435077a73e74d0e996c49d46015/Cargo.toml
+[todo]: https://github.com/paholg/dimensioned/blob/615c908ae5735435077a73e74d0e996c49d46015/todo.org
+[example]: https://github.com/paholg/dimensioned/blob/615c908ae5735435077a73e74d0e996c49d46015/examples/readme-example.rs
+[tests]: https://github.com/paholg/dimensioned/tree/615c908ae5735435077a73e74d0e996c49d46015/tests
 [pr3]: https://github.com/paholg/dimensioned/pull/3
 
 <!-- Official docs & registry -->

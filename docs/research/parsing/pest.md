@@ -357,8 +357,8 @@ pest is a **mature, widely-adopted, stable** member of the Rust parsing ecosyste
 [book]: https://pest.rs/book/
 [site]: https://pest.rs/
 [docs]: https://docs.rs/pest/latest/pest/
-[lib]: https://github.com/pest-parser/pest/blob/master/pest/src/lib.rs
-[state]: https://github.com/pest-parser/pest/blob/master/pest/src/parser_state.rs
+[lib]: https://github.com/pest-parser/pest/blob/24ed7bc68d5a6798a03bc6ff85b5ec2cfccdd603/pest/src/lib.rs
+[state]: https://github.com/pest-parser/pest/blob/24ed7bc68d5a6798a03bc6ff85b5ec2cfccdd603/pest/src/parser_state.rs
 [syntax]: https://pest.rs/book/grammars/syntax.html
 [parser-api]: https://pest.rs/book/parser_api.html
 [peg-page]: https://pest.rs/book/grammars/peg.html

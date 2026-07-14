@@ -1110,6 +1110,6 @@ struct Application
 - **Wiki (tutorials, custom widgets, concurrency)**: <https://github.com/rivo/tview/wiki>
 - **tcell (terminal backend)**: <https://github.com/gdamore/tcell>
 - **uniseg (Unicode segmentation)**: <https://github.com/rivo/uniseg>
-- **Grid demo (responsive layout)**: <https://github.com/rivo/tview/tree/master/demos/grid>
-- **Flex demo**: <https://github.com/rivo/tview/tree/master/demos/flex>
+- **Grid demo (responsive layout)**: <https://github.com/rivo/tview/tree/63ee97f9e01448f58772e29a005388f8c3b2e622/demos/grid>
+- **Flex demo**: <https://github.com/rivo/tview/tree/63ee97f9e01448f58772e29a005388f8c3b2e622/demos/flex>
 - **K9s (major tview application)**: <https://github.com/derailed/k9s>

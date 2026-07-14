@@ -342,7 +342,7 @@ recovery ladder — trace to Knuth 1965, Earley 1970, Ford 2002/2004, Valiant 19
 [shiki]: ./shiki.md
 [sh]: ./syntax-highlighting.md
 [d-landscape]: ./d-landscape.md
-[v-parsing]: https://github.com/PetarKirov/sparkles/blob/main/libs/versions/src/sparkles/versions/parsing.d
-[cli-args]: https://github.com/PetarKirov/sparkles/blob/main/libs/core-cli/src/sparkles/core_cli/args.d
-[base-text]: https://github.com/PetarKirov/sparkles/blob/main/libs/base/src/sparkles/base/text/package.d
+[v-parsing]: https://github.com/PetarKirov/sparkles/blob/8e7b3aecec3a166caeec00e49bcb2d715351b38f/libs/versions/src/sparkles/versions/parsing.d
+[cli-args]: https://github.com/PetarKirov/sparkles/blob/8e7b3aecec3a166caeec00e49bcb2d715351b38f/libs/core-cli/src/sparkles/core_cli/args.d
+[base-text]: https://github.com/PetarKirov/sparkles/blob/8e7b3aecec3a166caeec00e49bcb2d715351b38f/libs/base/src/sparkles/base/text/package.d
 [expected]: ../../guidelines/idioms/expected/index.md

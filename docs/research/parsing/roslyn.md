@@ -252,13 +252,13 @@ Every character lives in the tree — tokens carry **leading and trailing trivia
 <!-- References -->
 
 [repo]: https://github.com/dotnet/roslyn
-[roslyn-rg]: https://github.com/dotnet/roslyn/blob/main/docs/compilers/Design/Red-Green%20Trees.md
-[roslyn-inc]: https://github.com/dotnet/roslyn/blob/main/docs/compilers/Design/Incremental%20Parser.md
-[bound]: https://github.com/dotnet/roslyn/blob/main/docs/compilers/Design/Bound%20Node%20Design.md
-[overview]: https://github.com/dotnet/roslyn/blob/main/docs/wiki/Roslyn-Overview.md
-[syntax-analysis]: https://github.com/dotnet/roslyn/blob/main/docs/wiki/Getting-Started-C%23-Syntax-Analysis.md
+[roslyn-rg]: https://github.com/dotnet/roslyn/blob/18bf2c8709264bac6615856e507eb44ba2a026e2/docs/compilers/Design/Red-Green%20Trees.md
+[roslyn-inc]: https://github.com/dotnet/roslyn/blob/18bf2c8709264bac6615856e507eb44ba2a026e2/docs/compilers/Design/Incremental%20Parser.md
+[bound]: https://github.com/dotnet/roslyn/blob/18bf2c8709264bac6615856e507eb44ba2a026e2/docs/compilers/Design/Bound%20Node%20Design.md
+[overview]: https://github.com/dotnet/roslyn/blob/18bf2c8709264bac6615856e507eb44ba2a026e2/docs/wiki/Roslyn-Overview.md
+[syntax-analysis]: https://github.com/dotnet/roslyn/blob/18bf2c8709264bac6615856e507eb44ba2a026e2/docs/wiki/Getting-Started-C%23-Syntax-Analysis.md
 [work-with-syntax]: https://learn.microsoft.com/en-us/dotnet/csharp/roslyn-sdk/work-with-syntax
-[toy]: https://github.com/gafter/Toy-Incremental-Parser/blob/main/README.md
+[toy]: https://github.com/gafter/Toy-Incremental-Parser/blob/5e28ad4587b2a512344c5f6b9bd99747e41930e4/README.md
 [rowan]: https://github.com/rust-analyzer/rowan
 [incremental]: ./theory/incremental.md
 [rg-section]: ./theory/incremental.md#persistent--red-green-trees-making-reuse-cheap

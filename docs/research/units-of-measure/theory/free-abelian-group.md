@@ -830,6 +830,6 @@ placed at a different point of the compile/run spectrum; the mechanics are disse
 [lean-isq]: https://github.com/ATOMSLab/LeanDimensionalAnalysis/blob/de263eed945693058ef2b8a1fa56c2ec5642ea7a/DimensionalAnalysis/ISQ.lean
 [lean-homog]: https://github.com/ATOMSLab/LeanDimensionalAnalysis/blob/de263eed945693058ef2b8a1fa56c2ec5642ea7a/DimensionalAnalysis/DimensionalHomogeneity.lean
 [mathlib-fag]: https://leanprover-community.github.io/mathlib4_docs/Mathlib/GroupTheory/FreeAbelianGroup.html
-[mp-units-dim-h]: https://github.com/mpusz/mp-units/blob/d7b11de/src/core/include/mp-units/framework/dimension.h
-[fsharp-typedtree]: https://github.com/dotnet/fsharp/blob/25c6a37e/src/Compiler/TypedTree/TypedTree.fs
+[mp-units-dim-h]: https://github.com/mpusz/mp-units/blob/d7b11dec7f1033aca55a5c024bbede1405ee1036/src/core/include/mp-units/framework/dimension.h
+[fsharp-typedtree]: https://github.com/dotnet/fsharp/blob/25c6a37e68d01387a5d5322e70efecb4551cb058/src/Compiler/TypedTree/TypedTree.fs
 [gnat-ugn]: https://gcc.gnu.org/onlinedocs/gnat_ugn/Performing-Dimensionality-Analysis-in-GNAT.html

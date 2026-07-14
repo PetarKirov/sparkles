@@ -1275,8 +1275,8 @@ to ANSI for terminals or HTML for browsers.
 - **DOM Elements Reference**: <https://arthursonzogni.github.io/FTXUI/group__dom.html>
 - **Component Reference**: <https://arthursonzogni.github.io/FTXUI/group__component.html>
 - **Screen Reference**: <https://arthursonzogni.github.io/FTXUI/group__screen.html>
-- **Examples Directory**: <https://github.com/ArthurSonzogni/FTXUI/tree/main/examples>
-- **FlexboxConfig Header**: <https://github.com/ArthurSonzogni/FTXUI/blob/main/include/ftxui/dom/flexbox_config.hpp>
+- **Examples Directory**: <https://github.com/ArthurSonzogni/FTXUI/tree/c100eab535db2283b78d30fcb6d082a1f84fb683/examples>
+- **FlexboxConfig Header**: <https://github.com/ArthurSonzogni/FTXUI/blob/c100eab535db2283b78d30fcb6d082a1f84fb683/include/ftxui/dom/flexbox_config.hpp>
 - **Online Interactive Demos**: <https://arthursonzogni.github.io/FTXUI/examples/>
 
 ---
@@ -1286,4 +1286,4 @@ to ANSI for terminals or HTML for browsers.
 [ftxui-element]: https://arthursonzogni.github.io/FTXUI/group__dom.html
 [ftxui-screen]: https://arthursonzogni.github.io/FTXUI/group__screen.html
 [ftxui-component]: https://arthursonzogni.github.io/FTXUI/group__component.html
-[ftxui-flexbox]: https://github.com/ArthurSonzogni/FTXUI/blob/main/include/ftxui/dom/flexbox_config.hpp
+[ftxui-flexbox]: https://github.com/ArthurSonzogni/FTXUI/blob/c100eab535db2283b78d30fcb6d082a1f84fb683/include/ftxui/dom/flexbox_config.hpp

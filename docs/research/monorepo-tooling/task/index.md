@@ -505,13 +505,13 @@ over a list. Compare [Turborepo][turborepo]'s `--filter`, [pnpm][pnpm]'s
 <!-- References -->
 
 [repo]: https://github.com/go-task/task
-[readme]: https://github.com/go-task/task/blob/main/README.md
+[readme]: https://github.com/go-task/task/blob/75b227ee13db066a830187315fa4345cef28878f/README.md
 [docs]: https://taskfile.dev/
 [guide]: https://taskfile.dev/docs/guide
 [schema]: https://taskfile.dev/docs/reference/schema
 [cli]: https://taskfile.dev/docs/reference/cli
-[ast-task]: https://github.com/go-task/task/blob/main/taskfile/ast/task.go
-[fingerprint]: https://github.com/go-task/task/tree/main/internal/fingerprint
+[ast-task]: https://github.com/go-task/task/blob/75b227ee13db066a830187315fa4345cef28878f/taskfile/ast/task.go
+[fingerprint]: https://github.com/go-task/task/tree/75b227ee13db066a830187315fa4345cef28878f/internal/fingerprint
 [remote]: https://taskfile.dev/docs/experiments/remote-taskfiles
 [releases]: https://github.com/go-task/task/releases
 [issue-852]: https://github.com/go-task/task/issues/852

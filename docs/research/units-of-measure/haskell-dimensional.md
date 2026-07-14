@@ -726,31 +726,31 @@ Length Rational` is `127 % 5000 m`, per the [`NonSI.hs`][nonsi] doctests).
 
 [repo]: https://github.com/bjornbm/dimensional
 [hackage]: https://hackage.haskell.org/package/dimensional
-[readme]: https://github.com/bjornbm/dimensional/blob/f759f32/README.md
-[changelog]: https://github.com/bjornbm/dimensional/blob/f759f32/CHANGELOG.md
-[cabal]: https://github.com/bjornbm/dimensional/blob/f759f32/dimensional.cabal
-[core]: https://github.com/bjornbm/dimensional/blob/f759f32/src/Numeric/Units/Dimensional.hs
-[typelevel]: https://github.com/bjornbm/dimensional/blob/f759f32/src/Numeric/Units/Dimensional/Dimensions/TypeLevel.hs
-[termlevel]: https://github.com/bjornbm/dimensional/blob/f759f32/src/Numeric/Units/Dimensional/Dimensions/TermLevel.hs
-[internal]: https://github.com/bjornbm/dimensional/blob/f759f32/src/Numeric/Units/Dimensional/Internal.hs
-[variants]: https://github.com/bjornbm/dimensional/blob/f759f32/src/Numeric/Units/Dimensional/Variants.hs
-[quantities]: https://github.com/bjornbm/dimensional/blob/f759f32/src/Numeric/Units/Dimensional/Quantities.hs
-[siunits]: https://github.com/bjornbm/dimensional/blob/f759f32/src/Numeric/Units/Dimensional/SIUnits.hs
-[nonsi]: https://github.com/bjornbm/dimensional/blob/f759f32/src/Numeric/Units/Dimensional/NonSI.hs
-[dynamic]: https://github.com/bjornbm/dimensional/blob/f759f32/src/Numeric/Units/Dimensional/Dynamic.hs
-[fixedpoint]: https://github.com/bjornbm/dimensional/blob/f759f32/src/Numeric/Units/Dimensional/FixedPoint.hs
-[prelude-mod]: https://github.com/bjornbm/dimensional/blob/f759f32/src/Numeric/Units/Dimensional/Prelude.hs
-[benchmark]: https://github.com/bjornbm/dimensional/blob/f759f32/benchmarks/Main.hs
+[readme]: https://github.com/bjornbm/dimensional/blob/f759f32d0955c6e33013b4f8306e7ee58fd2bf4f/README.md
+[changelog]: https://github.com/bjornbm/dimensional/blob/f759f32d0955c6e33013b4f8306e7ee58fd2bf4f/CHANGELOG.md
+[cabal]: https://github.com/bjornbm/dimensional/blob/f759f32d0955c6e33013b4f8306e7ee58fd2bf4f/dimensional.cabal
+[core]: https://github.com/bjornbm/dimensional/blob/f759f32d0955c6e33013b4f8306e7ee58fd2bf4f/src/Numeric/Units/Dimensional.hs
+[typelevel]: https://github.com/bjornbm/dimensional/blob/f759f32d0955c6e33013b4f8306e7ee58fd2bf4f/src/Numeric/Units/Dimensional/Dimensions/TypeLevel.hs
+[termlevel]: https://github.com/bjornbm/dimensional/blob/f759f32d0955c6e33013b4f8306e7ee58fd2bf4f/src/Numeric/Units/Dimensional/Dimensions/TermLevel.hs
+[internal]: https://github.com/bjornbm/dimensional/blob/f759f32d0955c6e33013b4f8306e7ee58fd2bf4f/src/Numeric/Units/Dimensional/Internal.hs
+[variants]: https://github.com/bjornbm/dimensional/blob/f759f32d0955c6e33013b4f8306e7ee58fd2bf4f/src/Numeric/Units/Dimensional/Variants.hs
+[quantities]: https://github.com/bjornbm/dimensional/blob/f759f32d0955c6e33013b4f8306e7ee58fd2bf4f/src/Numeric/Units/Dimensional/Quantities.hs
+[siunits]: https://github.com/bjornbm/dimensional/blob/f759f32d0955c6e33013b4f8306e7ee58fd2bf4f/src/Numeric/Units/Dimensional/SIUnits.hs
+[nonsi]: https://github.com/bjornbm/dimensional/blob/f759f32d0955c6e33013b4f8306e7ee58fd2bf4f/src/Numeric/Units/Dimensional/NonSI.hs
+[dynamic]: https://github.com/bjornbm/dimensional/blob/f759f32d0955c6e33013b4f8306e7ee58fd2bf4f/src/Numeric/Units/Dimensional/Dynamic.hs
+[fixedpoint]: https://github.com/bjornbm/dimensional/blob/f759f32d0955c6e33013b4f8306e7ee58fd2bf4f/src/Numeric/Units/Dimensional/FixedPoint.hs
+[prelude-mod]: https://github.com/bjornbm/dimensional/blob/f759f32d0955c6e33013b4f8306e7ee58fd2bf4f/src/Numeric/Units/Dimensional/Prelude.hs
+[benchmark]: https://github.com/bjornbm/dimensional/blob/f759f32d0955c6e33013b4f8306e7ee58fd2bf4f/benchmarks/Main.hs
 
 <!-- units package (pinned clone c06d560) -->
 
 [units-repo]: https://github.com/goldfirere/units
-[units-readme-root]: https://github.com/goldfirere/units/blob/c06d560/README.md
-[units-readme]: https://github.com/goldfirere/units/blob/c06d560/units/README.md
-[units-qu]: https://github.com/goldfirere/units/blob/c06d560/units/Data/Metrology/Qu.hs
-[units-factor]: https://github.com/goldfirere/units/blob/c06d560/units/Data/Metrology/Factor.hs
-[units-z]: https://github.com/goldfirere/units/blob/c06d560/units/Data/Metrology/Z.hs
-[units-defs-si]: https://github.com/goldfirere/units/blob/c06d560/units-defs/Data/Dimensions/SI.hs
+[units-readme-root]: https://github.com/goldfirere/units/blob/c06d56043c91bd3d646c6c45118026ebf3a9262b/README.md
+[units-readme]: https://github.com/goldfirere/units/blob/c06d56043c91bd3d646c6c45118026ebf3a9262b/units/README.md
+[units-qu]: https://github.com/goldfirere/units/blob/c06d56043c91bd3d646c6c45118026ebf3a9262b/units/Data/Metrology/Qu.hs
+[units-factor]: https://github.com/goldfirere/units/blob/c06d56043c91bd3d646c6c45118026ebf3a9262b/units/Data/Metrology/Factor.hs
+[units-z]: https://github.com/goldfirere/units/blob/c06d56043c91bd3d646c6c45118026ebf3a9262b/units/Data/Metrology/Z.hs
+[units-defs-si]: https://github.com/goldfirere/units/blob/c06d56043c91bd3d646c6c45118026ebf3a9262b/units-defs/Data/Dimensions/SI.hs
 
 <!-- Companion packages & external primary sources -->
 

@@ -1023,6 +1023,6 @@ A D renderer can maintain a front buffer and back buffer, comparing them to emit
 - **Compose Snapshot System**: <https://dev.to/zachklipp/introduction-to-the-compose-snapshot-system-19cn>
 - **Jake Wharton's "Compose Runtime" Talk**: <https://jakewharton.com/a-jetpack-compose-by-any-other-name/>
 - **Ink (JavaScript inspiration)**: <https://github.com/vadimdemedes/ink>
-- **Mosaic Changelog**: <https://github.com/JakeWharton/mosaic/blob/trunk/CHANGELOG.md>
+- **Mosaic Changelog**: <https://github.com/JakeWharton/mosaic/blob/20bb2c1faeda6a2bdc4c42cff29b133b3fa78206/CHANGELOG.md>
 - **Kotlin Compose Multiplatform**: <https://www.jetbrains.com/compose-multiplatform/>
 - **Mosaic Maven Central**: `com.jakewharton.mosaic:mosaic-runtime:0.18.0`

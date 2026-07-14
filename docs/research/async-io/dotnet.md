@@ -529,8 +529,8 @@ while still feeding the shared managed ThreadPool for continuations.
 [sendzcman]: https://man7.org/linux/man-pages/man3/io_uring_prep_send_zc.3.html
 [io-uring-net-2023]: https://github.com/axboe/liburing/wiki/io_uring-and-networking-in-2023
 [phoronix]: https://www.phoronix.com/news/Microsoft-dotNET-IO-uring
-[engineUnix]: https://github.com/dotnet/runtime/blob/main/src/libraries/System.Net.Sockets/src/System/Net/Sockets/SocketAsyncEngine.Unix.cs
-[ctxUnix]: https://github.com/dotnet/runtime/blob/main/src/libraries/System.Net.Sockets/src/System/Net/Sockets/SocketAsyncContext.Unix.cs
+[engineUnix]: https://github.com/dotnet/runtime/blob/ed84dd37d6728e9d0d50a37a323eddcc5c57cd71/src/libraries/System.Net.Sockets/src/System/Net/Sockets/SocketAsyncEngine.Unix.cs
+[ctxUnix]: https://github.com/dotnet/runtime/blob/ed84dd37d6728e9d0d50a37a323eddcc5c57cd71/src/libraries/System.Net.Sockets/src/System/Net/Sockets/SocketAsyncContext.Unix.cs
 [shimH]: https://github.com/dotnet/runtime/blob/2f707114e84b64ac9a895c3277b5c8a413c4404e/src/native/libs/System.Native/pal_io_uring_shim.h
 [shimC]: https://github.com/dotnet/runtime/blob/2f707114e84b64ac9a895c3277b5c8a413c4404e/src/native/libs/System.Native/pal_io_uring_shim.c
 [iouring]: ./io-uring/index.md

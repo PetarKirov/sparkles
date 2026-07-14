@@ -151,7 +151,7 @@ This is the extra spine dimension for the [syntax-highlighting cluster][sh]:
 
 [repo]: https://github.com/microsoft/language-server-protocol
 [spec-site]: https://microsoft.github.io/language-server-protocol/
-[spec-317]: https://github.com/microsoft/language-server-protocol/blob/gh-pages/_specifications/lsp/3.17/language/semanticTokens.md
+[spec-317]: https://github.com/microsoft/language-server-protocol/blob/25005c80d9ec5e366c51108a4981ef264fe058e7/_specifications/lsp/3.17/language/semanticTokens.md
 [vscode-143]: https://code.visualstudio.com/updates/v1_43
 [sh]: ./syntax-highlighting.md
 [sh-tm]: ./syntax-highlighting.md#the-textmate-grammar-model

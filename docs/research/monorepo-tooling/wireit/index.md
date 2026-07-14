@@ -484,16 +484,16 @@ everything you want Wireit to do, you declare in `package.json` ahead of time.
 <!-- References -->
 
 [repo]: https://github.com/google/wireit
-[docs]: https://github.com/google/wireit/blob/main/README.md
+[docs]: https://github.com/google/wireit/blob/e82171c914dcf4ffd1e7a6c52b300a1d6df62f0a/README.md
 [npm]: https://www.npmjs.com/package/wireit
-[analyzer]: https://github.com/google/wireit/blob/main/src/analyzer.ts
-[fingerprint]: https://github.com/google/wireit/blob/main/src/fingerprint.ts
-[executor]: https://github.com/google/wireit/blob/main/src/executor.ts
-[cache]: https://github.com/google/wireit/blob/main/src/caching/cache.ts
-[localcache]: https://github.com/google/wireit/blob/main/src/caching/local-cache.ts
-[ghcache]: https://github.com/google/wireit/blob/main/src/caching/github-actions-cache.ts
-[workerpool]: https://github.com/google/wireit/blob/main/src/util/worker-pool.ts
-[clioptions]: https://github.com/google/wireit/blob/main/src/cli-options.ts
+[analyzer]: https://github.com/google/wireit/blob/e82171c914dcf4ffd1e7a6c52b300a1d6df62f0a/src/analyzer.ts
+[fingerprint]: https://github.com/google/wireit/blob/e82171c914dcf4ffd1e7a6c52b300a1d6df62f0a/src/fingerprint.ts
+[executor]: https://github.com/google/wireit/blob/e82171c914dcf4ffd1e7a6c52b300a1d6df62f0a/src/executor.ts
+[cache]: https://github.com/google/wireit/blob/e82171c914dcf4ffd1e7a6c52b300a1d6df62f0a/src/caching/cache.ts
+[localcache]: https://github.com/google/wireit/blob/e82171c914dcf4ffd1e7a6c52b300a1d6df62f0a/src/caching/local-cache.ts
+[ghcache]: https://github.com/google/wireit/blob/e82171c914dcf4ffd1e7a6c52b300a1d6df62f0a/src/caching/github-actions-cache.ts
+[workerpool]: https://github.com/google/wireit/blob/e82171c914dcf4ffd1e7a6c52b300a1d6df62f0a/src/util/worker-pool.ts
+[clioptions]: https://github.com/google/wireit/blob/e82171c914dcf4ffd1e7a6c52b300a1d6df62f0a/src/cli-options.ts
 [turborepo]: ../turborepo/
 [nx]: ../nx/
 [lerna]: ../lerna/

@@ -510,19 +510,19 @@ compile-time work that cost buys.
 <!-- Pinned clone (swift-corelibs-foundation @ cd04666) -->
 
 [repo]: https://github.com/swiftlang/swift-corelibs-foundation
-[f-meas]: https://github.com/swiftlang/swift-corelibs-foundation/blob/cd04666/Sources/Foundation/Measurement.swift
-[f-unit]: https://github.com/swiftlang/swift-corelibs-foundation/blob/cd04666/Sources/Foundation/Unit.swift
-[f-fmt]: https://github.com/swiftlang/swift-corelibs-foundation/blob/cd04666/Sources/Foundation/MeasurementFormatter.swift
+[f-meas]: https://github.com/swiftlang/swift-corelibs-foundation/blob/cd0466660eec80f20eebaec72aefa94c93696e3d/Sources/Foundation/Measurement.swift
+[f-unit]: https://github.com/swiftlang/swift-corelibs-foundation/blob/cd0466660eec80f20eebaec72aefa94c93696e3d/Sources/Foundation/Unit.swift
+[f-fmt]: https://github.com/swiftlang/swift-corelibs-foundation/blob/cd0466660eec80f20eebaec72aefa94c93696e3d/Sources/Foundation/MeasurementFormatter.swift
 
 <!-- Pinned clone (NeedleInAJayStack/Units @ 08ab9be) -->
 
 [units-repo]: https://github.com/NeedleInAJayStack/Units
-[u-unit]: https://github.com/NeedleInAJayStack/Units/blob/08ab9be/Sources/Units/Unit/Unit.swift
-[u-meas]: https://github.com/NeedleInAJayStack/Units/blob/08ab9be/Sources/Units/Measurement/Measurement.swift
-[u-quantity]: https://github.com/NeedleInAJayStack/Units/blob/08ab9be/Sources/Units/Quantity.swift
-[u-err]: https://github.com/NeedleInAJayStack/Units/blob/08ab9be/Sources/Units/UnitError.swift
-[u-test]: https://github.com/NeedleInAJayStack/Units/blob/08ab9be/Tests/UnitsTests/MeasurementTests.swift
-[u-readme]: https://github.com/NeedleInAJayStack/Units/blob/08ab9be/README.md
+[u-unit]: https://github.com/NeedleInAJayStack/Units/blob/08ab9bec93bfad56d83a82ab4a32271b2bda90e9/Sources/Units/Unit/Unit.swift
+[u-meas]: https://github.com/NeedleInAJayStack/Units/blob/08ab9bec93bfad56d83a82ab4a32271b2bda90e9/Sources/Units/Measurement/Measurement.swift
+[u-quantity]: https://github.com/NeedleInAJayStack/Units/blob/08ab9bec93bfad56d83a82ab4a32271b2bda90e9/Sources/Units/Quantity.swift
+[u-err]: https://github.com/NeedleInAJayStack/Units/blob/08ab9bec93bfad56d83a82ab4a32271b2bda90e9/Sources/Units/UnitError.swift
+[u-test]: https://github.com/NeedleInAJayStack/Units/blob/08ab9bec93bfad56d83a82ab4a32271b2bda90e9/Tests/UnitsTests/MeasurementTests.swift
+[u-readme]: https://github.com/NeedleInAJayStack/Units/blob/08ab9bec93bfad56d83a82ab4a32271b2bda90e9/README.md
 
 <!-- Official docs -->
 

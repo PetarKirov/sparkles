@@ -15,7 +15,7 @@ state to drive minimal recomposition.
 | Language         | Kotlin (Compose compiler plugin + runtime)                                                                                                                   |
 | License          | Apache 2.0                                                                                                                                                   |
 | Repository       | <https://android.googlesource.com/platform/frameworks/support/+/refs/heads/androidx-main/compose/>                                                           |
-| GitHub mirror    | <https://github.com/androidx/androidx/tree/androidx-main/compose>                                                                                            |
+| GitHub mirror    | <https://github.com/androidx/androidx/tree/1454585f0a0abce374b4752026f1d0a111163c06/compose>                                                                 |
 | Documentation    | <https://developer.android.com/jetpack/compose> and <https://developer.android.com/develop/ui/compose>                                                       |
 | Version snapshot | Compose UI 1.11.1 (AndroidX, May 2026); Compose Multiplatform releases independently through JetBrains                                                       |
 | Notable adoption | Google Play Store, Twitter/X for Android, Lyft, Airbnb, Pinterest, Square Cash; Compose Multiplatform: JetBrains Toolbox, Toolbox apps; Mosaic for terminal. |

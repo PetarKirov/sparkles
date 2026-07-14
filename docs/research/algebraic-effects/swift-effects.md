@@ -98,5 +98,5 @@ Actors serve as a "contextual handler" for concurrency. Code running within an a
 [github.com/swiftlang/swift]: https://github.com/swiftlang/swift
 [swift.org]: https://swift.org/documentation/concurrency/
 [Swift Concurrency Manifest]: https://gist.github.com/lattner/31ed37682ef1576b16bca1432ea9f782
-[SE-0310: Effectful Read-only Properties]: https://github.com/swiftlang/swift-evolution/blob/main/proposals/0310-effectful-readonly-properties.md
-[SE-0413: Typed Throws]: https://github.com/swiftlang/swift-evolution/blob/main/proposals/0413-typed-throws.md
+[SE-0310: Effectful Read-only Properties]: https://github.com/swiftlang/swift-evolution/blob/dd0367c0e5de9f6ff75fd789d5b699e7ff256766/proposals/0310-effectful-readonly-properties.md
+[SE-0413: Typed Throws]: https://github.com/swiftlang/swift-evolution/blob/dd0367c0e5de9f6ff75fd789d5b699e7ff256766/proposals/0413-typed-throws.md

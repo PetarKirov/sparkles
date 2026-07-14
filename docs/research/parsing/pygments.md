@@ -145,11 +145,11 @@ This is the extra spine dimension for the [syntax-highlighting cluster][sh]:
 
 [repo]: https://github.com/pygments/pygments
 [docs]: https://pygments.org/
-[init-py]: https://github.com/pygments/pygments/blob/master/pygments/__init__.py
-[lexer-py]: https://github.com/pygments/pygments/blob/master/pygments/lexer.py
-[token-py]: https://github.com/pygments/pygments/blob/master/pygments/token.py
-[lexers-init]: https://github.com/pygments/pygments/blob/master/pygments/lexers/__init__.py
-[terminal256-py]: https://github.com/pygments/pygments/blob/master/pygments/formatters/terminal256.py
+[init-py]: https://github.com/pygments/pygments/blob/d0588828dc613bdaed6f7ad687610097c94c88d2/pygments/__init__.py
+[lexer-py]: https://github.com/pygments/pygments/blob/d0588828dc613bdaed6f7ad687610097c94c88d2/pygments/lexer.py
+[token-py]: https://github.com/pygments/pygments/blob/d0588828dc613bdaed6f7ad687610097c94c88d2/pygments/token.py
+[lexers-init]: https://github.com/pygments/pygments/blob/d0588828dc613bdaed6f7ad687610097c94c88d2/pygments/lexers/__init__.py
+[terminal256-py]: https://github.com/pygments/pygments/blob/d0588828dc613bdaed6f7ad687610097c94c88d2/pygments/formatters/terminal256.py
 [chroma]: ./chroma.md
 [syntect]: ./syntect.md
 [shiki]: ./shiki.md

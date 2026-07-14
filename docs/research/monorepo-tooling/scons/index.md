@@ -512,14 +512,14 @@ timestamp semantics.
 
 [repo]: https://github.com/SCons/scons
 [repo-releases]: https://github.com/SCons/scons/releases
-[readme]: https://github.com/SCons/scons/blob/master/README.rst
-[changes]: https://github.com/SCons/scons/blob/master/CHANGES.txt
-[cachedir-py]: https://github.com/SCons/scons/blob/master/SCons/CacheDir.py
-[taskmaster-py]: https://github.com/SCons/scons/blob/master/SCons/Taskmaster/__init__.py
-[job-py]: https://github.com/SCons/scons/blob/master/SCons/Taskmaster/Job.py
-[env-py]: https://github.com/SCons/scons/blob/master/SCons/Environment.py
-[sconscript-py]: https://github.com/SCons/scons/blob/master/SCons/Script/SConscript.py
-[userguide]: https://github.com/SCons/scons/tree/master/doc/user
+[readme]: https://github.com/SCons/scons/blob/b3d8b3335bf9b78c2b3035c1a54f04a728a57ce0/README.rst
+[changes]: https://github.com/SCons/scons/blob/b3d8b3335bf9b78c2b3035c1a54f04a728a57ce0/CHANGES.txt
+[cachedir-py]: https://github.com/SCons/scons/blob/b3d8b3335bf9b78c2b3035c1a54f04a728a57ce0/SCons/CacheDir.py
+[taskmaster-py]: https://github.com/SCons/scons/blob/b3d8b3335bf9b78c2b3035c1a54f04a728a57ce0/SCons/Taskmaster/__init__.py
+[job-py]: https://github.com/SCons/scons/blob/b3d8b3335bf9b78c2b3035c1a54f04a728a57ce0/SCons/Taskmaster/Job.py
+[env-py]: https://github.com/SCons/scons/blob/b3d8b3335bf9b78c2b3035c1a54f04a728a57ce0/SCons/Environment.py
+[sconscript-py]: https://github.com/SCons/scons/blob/b3d8b3335bf9b78c2b3035c1a54f04a728a57ce0/SCons/Script/SConscript.py
+[userguide]: https://github.com/SCons/scons/tree/b3d8b3335bf9b78c2b3035c1a54f04a728a57ce0/doc/user
 [userguide-html]: https://scons.org/doc/production/HTML/scons-user/index.html
 [manpage]: https://scons.org/doc/production/HTML/scons-man.html
 [apiref]: https://scons.org/doc/production/HTML/scons-api/index.html

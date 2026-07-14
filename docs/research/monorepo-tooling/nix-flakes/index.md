@@ -603,18 +603,18 @@ attribute path (and thus which sub-flake or sub-derivation) you name.
 <!-- References -->
 
 [repo]: https://github.com/NixOS/nix
-[libflake]: https://github.com/NixOS/nix/tree/master/src/libflake
-[flake-md]: https://github.com/NixOS/nix/blob/master/src/nix/flake.md
-[flake]: https://github.com/NixOS/nix/blob/master/src/libflake/flake.cc
-[callflake]: https://github.com/NixOS/nix/blob/master/src/libflake/call-flake.nix
-[lockfile]: https://github.com/NixOS/nix/blob/master/src/libflake/lockfile.cc
-[flakeref]: https://github.com/NixOS/nix/blob/master/src/libflake/flakeref.cc
-[flakehh]: https://github.com/NixOS/nix/blob/master/src/libflake/include/nix/flake/flake.hh
-[installable]: https://github.com/NixOS/nix/blob/master/src/libcmd/installable-flake.cc
-[installables]: https://github.com/NixOS/nix/blob/master/src/libcmd/installables.cc
-[check-md]: https://github.com/NixOS/nix/blob/master/src/nix/flake-check.md
-[update-md]: https://github.com/NixOS/nix/blob/master/src/nix/flake-update.md
-[xp]: https://github.com/NixOS/nix/blob/master/src/libutil/experimental-features.cc
+[libflake]: https://github.com/NixOS/nix/tree/40f375fac1af1a432cbf48dfd15468b1921d458c/src/libflake
+[flake-md]: https://github.com/NixOS/nix/blob/40f375fac1af1a432cbf48dfd15468b1921d458c/src/nix/flake.md
+[flake]: https://github.com/NixOS/nix/blob/40f375fac1af1a432cbf48dfd15468b1921d458c/src/libflake/flake.cc
+[callflake]: https://github.com/NixOS/nix/blob/40f375fac1af1a432cbf48dfd15468b1921d458c/src/libflake/call-flake.nix
+[lockfile]: https://github.com/NixOS/nix/blob/40f375fac1af1a432cbf48dfd15468b1921d458c/src/libflake/lockfile.cc
+[flakeref]: https://github.com/NixOS/nix/blob/40f375fac1af1a432cbf48dfd15468b1921d458c/src/libflake/flakeref.cc
+[flakehh]: https://github.com/NixOS/nix/blob/40f375fac1af1a432cbf48dfd15468b1921d458c/src/libflake/include/nix/flake/flake.hh
+[installable]: https://github.com/NixOS/nix/blob/40f375fac1af1a432cbf48dfd15468b1921d458c/src/libcmd/installable-flake.cc
+[installables]: https://github.com/NixOS/nix/blob/40f375fac1af1a432cbf48dfd15468b1921d458c/src/libcmd/installables.cc
+[check-md]: https://github.com/NixOS/nix/blob/40f375fac1af1a432cbf48dfd15468b1921d458c/src/nix/flake-check.md
+[update-md]: https://github.com/NixOS/nix/blob/40f375fac1af1a432cbf48dfd15468b1921d458c/src/nix/flake-update.md
+[xp]: https://github.com/NixOS/nix/blob/40f375fac1af1a432cbf48dfd15468b1921d458c/src/libutil/experimental-features.cc
 [registry]: https://nix.dev/manual/nix/latest/command-ref/new-cli/nix3-registry
 [rfc49]: https://github.com/NixOS/rfcs/pull/49
 [nixdev]: https://nix.dev/concepts/flakes.html

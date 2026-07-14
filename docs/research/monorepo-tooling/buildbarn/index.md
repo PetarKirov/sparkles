@@ -490,13 +490,13 @@ client-side tools, and [d-landscape][d-landscape] for where `dub` sits today.
 <!-- References -->
 
 [bb-storage]: https://github.com/buildbarn/bb-storage
-[bb-storage-readme]: https://github.com/buildbarn/bb-storage/blob/main/README.md
+[bb-storage-readme]: https://github.com/buildbarn/bb-storage/blob/bdd785e3d1daccb280256016129d12198ea50e39/README.md
 [bb-re]: https://github.com/buildbarn/bb-remote-execution
-[bb-re-readme]: https://github.com/buildbarn/bb-remote-execution/blob/main/README.md
+[bb-re-readme]: https://github.com/buildbarn/bb-remote-execution/blob/b5d49abbef7b81a98b31cf8d08e4bb8695a0bf08/README.md
 [bb-deploy]: https://github.com/buildbarn/bb-deployments
 [bb-adrs]: https://github.com/buildbarn/bb-adrs
-[bb-adr-storage]: https://github.com/buildbarn/bb-adrs/blob/main/0002-storage.md
-[bb-adr-nfsv4]: https://github.com/buildbarn/bb-adrs/blob/main/0009-nfsv4.md
+[bb-adr-storage]: https://github.com/buildbarn/bb-adrs/blob/00164e0caac384cc3c76e875773a1053fb1c4ef6/0002-storage.md
+[bb-adr-nfsv4]: https://github.com/buildbarn/bb-adrs/blob/00164e0caac384cc3c76e875773a1053fb1c4ef6/0009-nfsv4.md
 [reapi]: https://github.com/bazelbuild/remote-apis
 [buildbuddy]: ../buildbuddy/
 [bazel]: ../bazel/

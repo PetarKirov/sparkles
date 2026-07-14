@@ -571,25 +571,25 @@ BaseUnit`/`DerivedUnit`/`DeltaUnit` is a first-class unit; no macro authoring, n
 <!-- Pinned clone (coulomb @ 681442a) -->
 
 [repo]: https://github.com/erikerlandson/coulomb
-[quantity]: https://github.com/erikerlandson/coulomb/blob/681442a/core/src/main/scala/coulomb/quantity.scala
-[meta]: https://github.com/erikerlandson/coulomb/blob/681442a/core/src/main/scala/coulomb/infra/meta.scala
-[define]: https://github.com/erikerlandson/coulomb/blob/681442a/core/src/main/scala/coulomb/define/define.scala
-[coefficient]: https://github.com/erikerlandson/coulomb/blob/681442a/core/src/main/scala/coulomb/conversion/coefficient.scala
-[unitconv]: https://github.com/erikerlandson/coulomb/blob/681442a/core/src/main/scala/coulomb/conversion/unit.scala
-[coeffs]: https://github.com/erikerlandson/coulomb/blob/681442a/core/src/main/scala/coulomb/conversion/coefficients.scala
-[simplified]: https://github.com/erikerlandson/coulomb/blob/681442a/core/src/main/scala/coulomb/infra/simplified.scala
-[delta]: https://github.com/erikerlandson/coulomb/blob/681442a/core/src/main/scala/coulomb/deltaquantity.scala
-[si]: https://github.com/erikerlandson/coulomb/blob/681442a/units/src/main/scala/coulomb/units/si.scala
-[accepted]: https://github.com/erikerlandson/coulomb/blob/681442a/units/src/main/scala/coulomb/units/accepted.scala
-[temp]: https://github.com/erikerlandson/coulomb/blob/681442a/units/src/main/scala/coulomb/units/temperature.scala
-[info]: https://github.com/erikerlandson/coulomb/blob/681442a/units/src/main/scala/coulomb/units/info.scala
-[mks]: https://github.com/erikerlandson/coulomb/blob/681442a/units/src/main/scala/coulomb/units/mks.scala
-[runtime]: https://github.com/erikerlandson/coulomb/blob/681442a/runtime/src/main/scala/coulomb/runtime/runtime.scala
-[ioshow]: https://github.com/erikerlandson/coulomb/blob/681442a/core/src/main/scala/coulomb/io/show.scala
-[qtest]: https://github.com/erikerlandson/coulomb/blob/681442a/core/src/test/scala/coulomb/quantity.scala
-[coredoc]: https://github.com/erikerlandson/coulomb/blob/681442a/docs/coulomb-core.md
-[readme]: https://github.com/erikerlandson/coulomb/blob/681442a/README.md
-[build]: https://github.com/erikerlandson/coulomb/blob/681442a/build.sbt
+[quantity]: https://github.com/erikerlandson/coulomb/blob/681442a38c6709afd9f417f1a05510c6d791c5c5/core/src/main/scala/coulomb/quantity.scala
+[meta]: https://github.com/erikerlandson/coulomb/blob/681442a38c6709afd9f417f1a05510c6d791c5c5/core/src/main/scala/coulomb/infra/meta.scala
+[define]: https://github.com/erikerlandson/coulomb/blob/681442a38c6709afd9f417f1a05510c6d791c5c5/core/src/main/scala/coulomb/define/define.scala
+[coefficient]: https://github.com/erikerlandson/coulomb/blob/681442a38c6709afd9f417f1a05510c6d791c5c5/core/src/main/scala/coulomb/conversion/coefficient.scala
+[unitconv]: https://github.com/erikerlandson/coulomb/blob/681442a38c6709afd9f417f1a05510c6d791c5c5/core/src/main/scala/coulomb/conversion/unit.scala
+[coeffs]: https://github.com/erikerlandson/coulomb/blob/681442a38c6709afd9f417f1a05510c6d791c5c5/core/src/main/scala/coulomb/conversion/coefficients.scala
+[simplified]: https://github.com/erikerlandson/coulomb/blob/681442a38c6709afd9f417f1a05510c6d791c5c5/core/src/main/scala/coulomb/infra/simplified.scala
+[delta]: https://github.com/erikerlandson/coulomb/blob/681442a38c6709afd9f417f1a05510c6d791c5c5/core/src/main/scala/coulomb/deltaquantity.scala
+[si]: https://github.com/erikerlandson/coulomb/blob/681442a38c6709afd9f417f1a05510c6d791c5c5/units/src/main/scala/coulomb/units/si.scala
+[accepted]: https://github.com/erikerlandson/coulomb/blob/681442a38c6709afd9f417f1a05510c6d791c5c5/units/src/main/scala/coulomb/units/accepted.scala
+[temp]: https://github.com/erikerlandson/coulomb/blob/681442a38c6709afd9f417f1a05510c6d791c5c5/units/src/main/scala/coulomb/units/temperature.scala
+[info]: https://github.com/erikerlandson/coulomb/blob/681442a38c6709afd9f417f1a05510c6d791c5c5/units/src/main/scala/coulomb/units/info.scala
+[mks]: https://github.com/erikerlandson/coulomb/blob/681442a38c6709afd9f417f1a05510c6d791c5c5/units/src/main/scala/coulomb/units/mks.scala
+[runtime]: https://github.com/erikerlandson/coulomb/blob/681442a38c6709afd9f417f1a05510c6d791c5c5/runtime/src/main/scala/coulomb/runtime/runtime.scala
+[ioshow]: https://github.com/erikerlandson/coulomb/blob/681442a38c6709afd9f417f1a05510c6d791c5c5/core/src/main/scala/coulomb/io/show.scala
+[qtest]: https://github.com/erikerlandson/coulomb/blob/681442a38c6709afd9f417f1a05510c6d791c5c5/core/src/test/scala/coulomb/quantity.scala
+[coredoc]: https://github.com/erikerlandson/coulomb/blob/681442a38c6709afd9f417f1a05510c6d791c5c5/docs/coulomb-core.md
+[readme]: https://github.com/erikerlandson/coulomb/blob/681442a38c6709afd9f417f1a05510c6d791c5c5/README.md
+[build]: https://github.com/erikerlandson/coulomb/blob/681442a38c6709afd9f417f1a05510c6d791c5c5/build.sbt
 
 <!-- Official docs & registry -->
 

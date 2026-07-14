@@ -447,8 +447,8 @@ Stacking these — SQPOLL + IOPOLL + fixed files/buffers + `DEFER_TASKRUN` — y
 [setup2]: https://man7.org/linux/man-pages/man2/io_uring_setup.2.html
 [enter2]: https://man7.org/linux/man-pages/man2/io_uring_enter.2.html
 [register2]: https://man7.org/linux/man-pages/man2/io_uring_register.2.html
-[linux-io_uring]: https://github.com/torvalds/linux/tree/master/io_uring
-[uapi]: https://github.com/torvalds/linux/blob/master/include/uapi/linux/io_uring.h
+[linux-io_uring]: https://github.com/torvalds/linux/tree/3b029c035b34bbc693405ddf759f0e9b920c27f1/io_uring
+[uapi]: https://github.com/torvalds/linux/blob/3b029c035b34bbc693405ddf759f0e9b920c27f1/include/uapi/linux/io_uring.h
 [liburing]: https://github.com/axboe/liburing
 [kernel-dk]: https://kernel.dk/io_uring.pdf
 [lwn-growth]: https://lwn.net/Articles/810414/

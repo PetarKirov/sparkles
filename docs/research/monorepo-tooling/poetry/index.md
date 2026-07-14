@@ -265,15 +265,15 @@ There is **no** `--filter`, **no** `-p/--package`, **no** `:target` colon syntax
 
 [repo]: https://github.com/python-poetry/poetry
 [docs]: https://python-poetry.org/docs/
-[readme]: https://github.com/python-poetry/poetry/blob/main/README.md
+[readme]: https://github.com/python-poetry/poetry/blob/f46702336862f30050d5c641d5ed6f7568ded793/README.md
 [basic-usage]: https://python-poetry.org/docs/basic-usage/
 [pyproject]: https://python-poetry.org/docs/pyproject/
 [depspec]: https://python-poetry.org/docs/dependency-specification/
 [managing]: https://python-poetry.org/docs/managing-dependencies/
 [cli]: https://python-poetry.org/docs/cli/
-[changelog]: https://github.com/python-poetry/poetry/blob/main/CHANGELOG.md
+[changelog]: https://github.com/python-poetry/poetry/blob/f46702336862f30050d5c641d5ed6f7568ded793/CHANGELOG.md
 [issue6850]: https://github.com/python-poetry/poetry/issues/6850
-[solver]: https://github.com/python-poetry/poetry/blob/master/src/poetry/mixology/version_solver.py
+[solver]: https://github.com/python-poetry/poetry/blob/500a313d68637cbd317171c567280a10eaabae3c/src/poetry/mixology/version_solver.py
 [mixology]: https://github.com/sdispater/mixology
 [multiproject]: https://pypi.org/project/poetry-multiproject-plugin/
 [monodepplugin]: https://pypi.org/project/poetry-monorepo-dependency-plugin/

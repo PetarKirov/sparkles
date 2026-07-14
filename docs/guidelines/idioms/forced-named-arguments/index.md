@@ -2,7 +2,7 @@
 
 ## Problem
 
-D's [named arguments (DIP1030)](https://github.com/dlang/DIPs/blob/master/DIPs/accepted/DIP1030.md) are convenient but **optional** — callers can always fall back to positional arguments. For APIs with multiple parameters of the same type (e.g., `int x, int y, int width, int height`), positional calls are error-prone because swapping arguments compiles silently.
+D's [named arguments (DIP1030)](https://github.com/dlang/DIPs/blob/90490da522d8209c7940071a4a58c5b4d7e8938e/DIPs/accepted/DIP1030.md) are convenient but **optional** — callers can always fall back to positional arguments. For APIs with multiple parameters of the same type (e.g., `int x, int y, int width, int height`), positional calls are error-prone because swapping arguments compiles silently.
 
 There is no built-in keyword-only parameter mechanism (unlike Python's `*` separator).
 

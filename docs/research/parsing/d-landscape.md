@@ -295,16 +295,16 @@ Primary artifacts: the project READMEs and source trees named inline (Pegged `RE
 
 [pegged-repo]: https://github.com/PhilippeSigaud/Pegged
 [libdparse-repo]: https://github.com/dlang-community/libdparse
-[libdparse-lexer]: https://github.com/dlang-community/libdparse/blob/master/src/std/experimental/lexer.d
-[dmd-repo]: https://github.com/dlang/dmd/blob/master/compiler/src/dmd/parse.d
+[libdparse-lexer]: https://github.com/dlang-community/libdparse/blob/ce770e4446a919b5b76d65874cde9e1bb7b2852f/src/std/experimental/lexer.d
+[dmd-repo]: https://github.com/dlang/dmd/blob/c050aa5d8f9f558b0fd8c01d5235f8d8c7581170/compiler/src/dmd/parse.d
 [sdc-repo]: https://github.com/snazzy-d/sdc
-[sdc-ambiguous]: https://github.com/snazzy-d/sdc/blob/master/src/d/parser/ambiguous.d
+[sdc-ambiguous]: https://github.com/snazzy-d/sdc/blob/611d70adcfcba0afbeae546bc8a5c52d655add69/src/d/parser/ambiguous.d
 [pry-repo]: https://github.com/DmitryOlshansky/pry-parser
 [mir-algo-repo]: https://github.com/libmir/mir-algorithm
 [mir-ion-repo]: https://github.com/libmir/mir-ion
 [asdf-repo]: https://github.com/libmir/asdf
 [jsoniopipe-repo]: https://github.com/schveiguy/jsoniopipe
-[stdjson]: https://github.com/dlang/phobos/blob/master/std/json.d
+[stdjson]: https://github.com/dlang/phobos/blob/3779f860109764b6ae4f67eccf690bafac5a63cd/std/json.d
 [dxml-repo]: https://github.com/jmdavis/dxml
 [dyaml-repo]: https://github.com/dlang-community/D-YAML
 [sdlite-repo]: https://github.com/s-ludwig/sdlite
@@ -313,6 +313,6 @@ Primary artifacts: the project READMEs and source trees named inline (Pegged `RE
 
 <!-- In-tree Sparkles sources -->
 
-[v-parsing]: https://github.com/PetarKirov/sparkles/blob/main/libs/versions/src/sparkles/versions/parsing.d
-[base-text]: https://github.com/PetarKirov/sparkles/blob/main/libs/base/src/sparkles/base/text/package.d
-[cli-args]: https://github.com/PetarKirov/sparkles/blob/main/libs/core-cli/src/sparkles/core_cli/args.d
+[v-parsing]: https://github.com/PetarKirov/sparkles/blob/8e7b3aecec3a166caeec00e49bcb2d715351b38f/libs/versions/src/sparkles/versions/parsing.d
+[base-text]: https://github.com/PetarKirov/sparkles/blob/8e7b3aecec3a166caeec00e49bcb2d715351b38f/libs/base/src/sparkles/base/text/package.d
+[cli-args]: https://github.com/PetarKirov/sparkles/blob/8e7b3aecec3a166caeec00e49bcb2d715351b38f/libs/core-cli/src/sparkles/core_cli/args.d

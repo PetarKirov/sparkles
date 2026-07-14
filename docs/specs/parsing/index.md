@@ -141,8 +141,5 @@ The milestones that build this — bottom-up, each reusing the `base.text` subst
 [Roslyn]: ../../research/parsing/roslyn.md
 [Lezer]: ../../research/parsing/lezer.md
 [rustc]: ../../research/parsing/rustc-queries.md
-
-<!-- In-tree Sparkles sources -->
-
-[base-text]: https://github.com/PetarKirov/sparkles/blob/main/libs/base/src/sparkles/base/text/package.d
-[v-parsing]: https://github.com/PetarKirov/sparkles/blob/main/libs/versions/src/sparkles/versions/schemes/semver.d
+[base-text]: https://github.com/PetarKirov/sparkles/blob/3cc01cfdc8ae867f0558e43c731885a004cb0130/libs/base/src/sparkles/base/text/package.d
+[v-parsing]: https://github.com/PetarKirov/sparkles/blob/3cc01cfdc8ae867f0558e43c731885a004cb0130/libs/versions/src/sparkles/versions/schemes/semver.d

@@ -436,7 +436,7 @@ with the full selector grammar, not shell wrappers.
 
 [repo]: https://github.com/microsoft/rushstack
 [docs]: https://rushjs.io/
-[welcome-src]: https://github.com/microsoft/rushstack-websites/blob/main/websites/rushjs.io/docs/pages/intro/welcome.md
+[welcome-src]: https://github.com/microsoft/rushstack-websites/blob/12e70a4cc92474602a2070bbe8974e197d6de07e/websites/rushjs.io/docs/pages/intro/welcome.md
 [rushjson]: https://rushjs.io/pages/configs/rush_json/
 [cmdline]: https://rushjs.io/pages/configs/command-line_json/
 [phased]: https://rushjs.io/pages/maintainer/phased_builds/

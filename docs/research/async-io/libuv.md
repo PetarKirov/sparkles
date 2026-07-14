@@ -431,7 +431,7 @@ libuv's defining position is _portability and stability over peak Linux throughp
 
 [libuv GitHub Repository]: https://github.com/libuv/libuv
 [libuv Documentation]: https://docs.libuv.org/en/v1.x/
-[libuv ChangeLog]: https://github.com/libuv/libuv/blob/v1.x/ChangeLog
+[libuv ChangeLog]: https://github.com/libuv/libuv/blob/2cadaa40167050baf7c6905ac897e6fb57afb2c6/ChangeLog
 [libuv fs docs (io_uring & threadpool note)]: https://docs.libuv.org/en/v1.x/fs.html
 [PR #3952: linux: introduce io_uring support]: https://github.com/libuv/libuv/pull/3952
 [Issue #4044: use io_uring for network i/o]: https://github.com/libuv/libuv/issues/4044

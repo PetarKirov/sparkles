@@ -48,7 +48,7 @@ Emscripten is treated as a musl-Linux-flavoured POSIX target — it predefines `
 
 ```cpp
 // gen/abi/wasm.cpp:10
-// see https://github.com/WebAssembly/tool-conventions/blob/main/BasicCABI.md
+// see https://github.com/WebAssembly/tool-conventions/blob/58188346ab5b5cbc4af125e74406b35121ff0458/BasicCABI.md
 ```
 
 `WasmTargetABI::passByVal` returns true for in-memory POD aggregates that are _not_ a single-scalar wrapper (`gen/abi/wasm.cpp:60-62`); `isDirectlyPassedAggregate` passes a POD struct/static-array directly iff it wraps a single scalar type, size ≤ 16, and is not over-aligned (`gen/abi/wasm.cpp:43-58`). This matters for coroutines because the **coroutine frame struct** that `CoroFrame` materializes (§2.2) is exactly the kind of aggregate this ABI governs once it is passed by pointer to the resume/destroy functions — i.e. nothing special is needed; the frame is an ordinary struct under an ordinary ABI.

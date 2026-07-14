@@ -444,8 +444,8 @@ surface the `dub` proposal must source from the explicit-workspace tools
 [repo]: https://github.com/apenwarr/redo
 [djb]: https://cr.yp.to/redo.html
 [docs]: https://redo.readthedocs.io/en/latest/
-[docsdir]: https://github.com/apenwarr/redo/tree/main/docs
-[docsindex]: https://github.com/apenwarr/redo/blob/main/docs/index.md
+[docsdir]: https://github.com/apenwarr/redo/tree/7f00abc36be15f398fa3ecf9f4e5283509c34a00/docs
+[docsindex]: https://github.com/apenwarr/redo/blob/7f00abc36be15f398fa3ecf9f4e5283509c34a00/docs/index.md
 [ifchange]: https://redo.readthedocs.io/en/latest/redo-ifchange/
 [ifcreate]: https://redo.readthedocs.io/en/latest/redo-ifcreate/
 [faqsem]: https://redo.readthedocs.io/en/latest/FAQSemantics/

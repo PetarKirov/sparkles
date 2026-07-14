@@ -646,5 +646,5 @@ no-recompile analog — is in [macos-windows.md][macos-windows].
 [comparison]: ./comparison.md
 [vg-src]: https://sourceware.org/git/?p=valgrind.git;a=tree
 [vg-manual]: https://valgrind.org/docs/manual/manual.html
-[druntime-src]: https://github.com/dlang/dmd/tree/master/druntime/src
+[druntime-src]: https://github.com/dlang/dmd/tree/c050aa5d8f9f558b0fd8c01d5235f8d8c7581170/druntime/src
 [louisbrunner]: https://github.com/LouisBrunner/valgrind-macos

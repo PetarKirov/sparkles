@@ -264,7 +264,7 @@ In practice, the vast majority of effect operations in real programs are tail-re
 [Retrofitting Effect Handlers onto OCaml]: https://dl.acm.org/doi/pdf/10.1145/3453483.3454039
 [Continuation Passing Style for Effect Handlers]: https://homepages.inf.ed.ac.uk/slindley/papers/handlers-cps.pdf
 [Continuing WebAssembly with Effect Handlers]: https://dl.acm.org/doi/10.1145/3622814
-[Delimited Continuation Primops -- GHC Proposal #313]: https://github.com/ghc-proposals/ghc-proposals/blob/master/proposals/0313-delimited-continuation-primops.rst
+[Delimited Continuation Primops -- GHC Proposal #313]: https://github.com/ghc-proposals/ghc-proposals/blob/667c883317a7df10cb6391ab36a38e8aaa31a7d0/proposals/0313-delimited-continuation-primops.rst
 [Monad Transformers and Modular Algebraic Effects]: https://www.fceia.unr.edu.ar/~mauro/pubs/haskell2019.pdf
 [Capture Checking -- Scala 3 Reference]: https://docs.scala-lang.org/scala3/reference/experimental/cc.html
 [Eio -- Effects-Based Direct-Style IO for OCaml 5]: https://github.com/ocaml-multicore/eio

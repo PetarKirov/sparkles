@@ -443,7 +443,7 @@ action DAG), and 5 (target-pattern CLI) in ~30 lines of config.
 [run-build]: https://bazel.build/run/build
 [query-lang]: https://bazel.build/query/language
 [target-determinator]: https://github.com/bazel-contrib/target-determinator
-[llvm-module]: https://github.com/llvm/llvm-project/blob/main/utils/bazel/MODULE.bazel
+[llvm-module]: https://github.com/llvm/llvm-project/blob/d64972c91369c6372e23e728881d9c645edeb37d/utils/bazel/MODULE.bazel
 [cargo]: ../cargo/
 [go-work]: ../go-work/
 [nx]: ../nx/

@@ -367,5 +367,5 @@ official docs); the authoritative artifacts behind this index's classifications 
 
 <!-- Sparkles source -->
 
-[v-parsing]: https://github.com/PetarKirov/sparkles/blob/main/libs/versions/src/sparkles/versions/parsing.d
-[cli-args]: https://github.com/PetarKirov/sparkles/blob/main/libs/core-cli/src/sparkles/core_cli/args.d
+[v-parsing]: https://github.com/PetarKirov/sparkles/blob/8e7b3aecec3a166caeec00e49bcb2d715351b38f/libs/versions/src/sparkles/versions/parsing.d
+[cli-args]: https://github.com/PetarKirov/sparkles/blob/8e7b3aecec3a166caeec00e49bcb2d715351b38f/libs/core-cli/src/sparkles/core_cli/args.d

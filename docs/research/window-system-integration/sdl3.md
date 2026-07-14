@@ -425,7 +425,7 @@ The richest source is [`docs/README-migration.md`][migration], a long catalog of
 
 [repo]: https://github.com/libsdl-org/SDL
 [commit]: https://github.com/libsdl-org/SDL/commit/b53f1b06447cfe699e2649afc52a1a54e5f19f71
-[license]: https://github.com/libsdl-org/SDL/blob/main/LICENSE.txt
+[license]: https://github.com/libsdl-org/SDL/blob/758dab45af3694c4f085da0857dfa87c4ecba68a/LICENSE.txt
 [wiki]: https://wiki.libsdl.org/SDL3/
 [issues]: https://github.com/libsdl-org/SDL/issues
 [kde-bug]: https://bugs.kde.org/show_bug.cgi?id=448856

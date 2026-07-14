@@ -485,7 +485,7 @@ a time with `dub run --single <file>`.
 
 <!-- References -->
 
-[io_uring.h]: https://github.com/torvalds/linux/blob/master/include/uapi/linux/io_uring.h
+[io_uring.h]: https://github.com/torvalds/linux/blob/3b029c035b34bbc693405ddf759f0e9b920c27f1/include/uapi/linux/io_uring.h
 [liburing]: https://github.com/axboe/liburing
 [man7-enter]: https://man7.org/linux/man-pages/man2/io_uring_enter.2.html
 [man7-setup]: https://man7.org/linux/man-pages/man2/io_uring_setup.2.html

@@ -467,7 +467,7 @@ built into the core CLI here rather than as a side tool.
 [remote]: https://www.pantsbuild.org/dev/docs/using-pants/remote-caching-and-execution
 [selection]: https://www.pantsbuild.org/dev/docs/using-pants/advanced-target-selection
 [tailor-goal]: https://www.pantsbuild.org/dev/reference/goals/tailor
-[engine]: https://github.com/pantsbuild/pants/tree/main/src/rust/engine
+[engine]: https://github.com/pantsbuild/pants/tree/5235dca1e76aad0a798081ad2ce16ef6bb887bcc/src/rust/engine
 [tokio-pr]: https://github.com/pantsbuild/pants/pull/5846
 [rel-2-28]: https://www.pantsbuild.org/blog/2025/09/08/pants-2-28
 [rel-2-31]: https://www.pantsbuild.org/blog/2026/02/19/pants-2-31

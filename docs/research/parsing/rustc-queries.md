@@ -509,7 +509,7 @@ apart from the editor parsers.
 [salsa-doc]: https://rustc-dev-guide.rust-lang.org/queries/salsa.html
 [overview]: https://rustc-dev-guide.rust-lang.org/overview.html
 [metadata]: https://doc.rust-lang.org/nightly/nightly-rustc/rustc_metadata/index.html
-[design-doc]: https://github.com/nikomatsakis/rustc-on-demand-incremental-design-doc/blob/master/0000-rustc-on-demand-and-incremental.md
+[design-doc]: https://github.com/nikomatsakis/rustc-on-demand-incremental-design-doc/blob/e08b00408bb1ee912642be4c5f78704efd0eedc5/0000-rustc-on-demand-and-incremental.md
 [redgreen]: https://github.com/rust-lang/rust/issues/42293
 [announce]: https://blog.rust-lang.org/2016/09/08/incremental.html
 [chalk]: https://rust-lang.github.io/chalk/book/what_is_chalk.html

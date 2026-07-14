@@ -377,8 +377,8 @@ The embedder split _is_ the escape hatch: the entire native layer is the embedde
 [macos-text]: https://github.com/flutter/flutter/blob/feab40b83b8d1954106e83bb1d7b52265a41cb45/engine/src/flutter/shell/platform/darwin/macos/framework/Source/FlutterTextInputPlugin.mm
 [windowing-h]: https://github.com/flutter/flutter/blob/feab40b83b8d1954106e83bb1d7b52265a41cb45/engine/src/flutter/shell/platform/common/windowing.h
 [engine-readme]: https://github.com/flutter/flutter/blob/feab40b83b8d1954106e83bb1d7b52265a41cb45/engine/README.md
-[engine-arch-wiki]: https://github.com/flutter/flutter/blob/master/docs/about/The-Engine-architecture.md
-[embedder-wiki]: https://github.com/flutter/flutter/tree/master/engine/src/flutter/shell/platform/embedder
+[engine-arch-wiki]: https://github.com/flutter/flutter/blob/2ac447c8ae5d9e05442dc0b9ce57a80a108734e7/docs/about/The-Engine-architecture.md
+[embedder-wiki]: https://github.com/flutter/flutter/tree/2ac447c8ae5d9e05442dc0b9ce57a80a108734e7/engine/src/flutter/shell/platform/embedder
 [gh-fractional]: https://github.com/flutter/flutter/issues/41980
 [gh-multiwindow]: https://github.com/flutter/flutter/issues/30701
 [gmainloop]: https://docs.gtk.org/glib/main-loop.html

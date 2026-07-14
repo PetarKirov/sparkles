@@ -164,6 +164,6 @@ rasterizer: it collapses this entire preprocessing chain into a single API call.
 [nanovg-sec]: ./gpu-vector.md#nanovg
 [skia-gpu]: ./gpu-vector.md#skia
 [pathops-repo]: https://github.com/fonttools/skia-pathops
-[skpathops-h]: https://github.com/google/skia/blob/main/include/pathops/SkPathOps.h
+[skpathops-h]: https://github.com/google/skia/blob/88954ef8f36d064fda7d81c3353edd06f99e7e4b/include/pathops/SkPathOps.h
 [skia-repo]: https://github.com/google/skia
-[mc-boolean]: https://github.com/ManimCommunity/manim/blob/4d25c031/manim/mobject/geometry/boolean_ops.py
+[mc-boolean]: https://github.com/ManimCommunity/manim/blob/4d25c031ffe71c602e20935afd54a96f33545a6e/manim/mobject/geometry/boolean_ops.py

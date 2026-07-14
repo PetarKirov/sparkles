@@ -730,10 +730,10 @@ profiling story; they are cross-linked here, not re-surveyed.
 [proposal]: ./integration-proposal.md
 [cpu-pmu]: ../cpu-pmu/index.md
 [llvm-src]: https://github.com/llvm/llvm-project/tree/73802c2e9d102a4fb646bc039754779fca3ea476
-[linux-mte]: https://github.com/torvalds/linux/blob/e43ffb69e043/Documentation/arch/arm64/memory-tagging-extension.rst
-[linux-taggedaddr]: https://github.com/torvalds/linux/blob/e43ffb69e043/Documentation/arch/arm64/tagged-address-abi.rst
-[linux-prctl]: https://github.com/torvalds/linux/blob/e43ffb69e043/arch/x86/include/uapi/asm/prctl.h
-[linux-kasan]: https://github.com/torvalds/linux/blob/e43ffb69e043/Documentation/dev-tools/kasan.rst
+[linux-mte]: https://github.com/torvalds/linux/blob/e43ffb69e0438cddd72aaa30898b4dc446f664f8/Documentation/arch/arm64/memory-tagging-extension.rst
+[linux-taggedaddr]: https://github.com/torvalds/linux/blob/e43ffb69e0438cddd72aaa30898b4dc446f664f8/Documentation/arch/arm64/tagged-address-abi.rst
+[linux-prctl]: https://github.com/torvalds/linux/blob/e43ffb69e0438cddd72aaa30898b4dc446f664f8/arch/x86/include/uapi/asm/prctl.h
+[linux-kasan]: https://github.com/torvalds/linux/blob/e43ffb69e0438cddd72aaa30898b4dc446f664f8/Documentation/dev-tools/kasan.rst
 [ldc-src]: https://github.com/ldc-developers/ldc/tree/v1.41.0
 [hwasan-design]: https://clang.llvm.org/docs/HardwareAssistedAddressSanitizerDesign.html
 [rtsan-doc]: https://clang.llvm.org/docs/RealtimeSanitizer.html

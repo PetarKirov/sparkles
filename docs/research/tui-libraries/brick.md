@@ -2,14 +2,14 @@
 
 A declarative terminal user interface library for Haskell that lets developers build TUIs by writing pure functions to describe how the UI should look based on application state.
 
-| Field          | Value                                                                                                                                |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Language       | Haskell                                                                                                                              |
-| License        | BSD-3-Clause                                                                                                                         |
-| Repository     | [github.com/jtdaugherty/brick](https://github.com/jtdaugherty/brick)                                                                 |
-| Documentation  | [Hackage](https://hackage.haskell.org/package/brick) / [User Guide](https://github.com/jtdaugherty/brick/blob/master/docs/guide.rst) |
-| Latest Version | ~2.10                                                                                                                                |
-| GitHub Stars   | ~1.7k                                                                                                                                |
+| Field          | Value                                                                                                                                                                  |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Language       | Haskell                                                                                                                                                                |
+| License        | BSD-3-Clause                                                                                                                                                           |
+| Repository     | [github.com/jtdaugherty/brick](https://github.com/jtdaugherty/brick)                                                                                                   |
+| Documentation  | [Hackage](https://hackage.haskell.org/package/brick) / [User Guide](https://github.com/jtdaugherty/brick/blob/868004e111e83446f628ecb45bfca90762c6b609/docs/guide.rst) |
+| Latest Version | ~2.10                                                                                                                                                                  |
+| GitHub Stars   | ~1.7k                                                                                                                                                                  |
 
 ---
 
@@ -718,14 +718,14 @@ struct HBox(Widgets...) {
 ## References
 
 - **Repository**: <https://github.com/jtdaugherty/brick>
-- **User Guide**: <https://github.com/jtdaugherty/brick/blob/master/docs/guide.rst>
+- **User Guide**: <https://github.com/jtdaugherty/brick/blob/868004e111e83446f628ecb45bfca90762c6b609/docs/guide.rst>
 - **Hackage (API docs)**: <https://hackage.haskell.org/package/brick>
-- **FAQ**: <https://github.com/jtdaugherty/brick/blob/master/FAQ.md>
-- **Demo Programs**: <https://github.com/jtdaugherty/brick/tree/master/programs>
+- **FAQ**: <https://github.com/jtdaugherty/brick/blob/868004e111e83446f628ecb45bfca90762c6b609/FAQ.md>
+- **Demo Programs**: <https://github.com/jtdaugherty/brick/tree/868004e111e83446f628ecb45bfca90762c6b609/programs>
 - **Vty (terminal backend)**: <https://github.com/jtdaugherty/vty>
 - **Vty on Hackage**: <https://hackage.haskell.org/package/vty>
 - **brick-users mailing list**: <https://groups.google.com/group/brick-users>
 - **GitHub Discussions**: <https://github.com/jtdaugherty/brick/discussions>
-- **Changelog**: <https://github.com/jtdaugherty/brick/blob/master/CHANGELOG.md>
+- **Changelog**: <https://github.com/jtdaugherty/brick/blob/868004e111e83446f628ecb45bfca90762c6b609/CHANGELOG.md>
 - **Jonathan Daugherty's talk -- "Building Terminal User Interfaces in Haskell"**: Presented at various Haskell meetups; search for conference recordings.
 - **Samuel Tay -- "Brick Tutorial"**: <https://samtay.github.io/posts/introduction-to-brick>

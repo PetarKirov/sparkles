@@ -4,14 +4,14 @@ A breadth-first survey of terminal user interface (TUI) libraries across program
 
 ## Rust
 
-| Library                   | Rendering Model | Architecture    | Abstraction | Status       | Links                                                                                 |
-| ------------------------- | --------------- | --------------- | ----------- | ------------ | ------------------------------------------------------------------------------------- |
-| **[Ratatui](ratatui.md)** | Immediate       | App-driven loop | Mid-level   | Active       | [repo](https://github.com/ratatui/ratatui) · [docs](https://ratatui.rs)               |
-| **[Cursive](cursive.md)** | Retained        | Callback-based  | High-level  | Maintained   | [repo](https://github.com/gyscos/cursive) · [docs](https://docs.rs/cursive)           |
-| **Crossterm**             | N/A (backend)   | Imperative      | Low-level   | Active       | [repo](https://github.com/crossterm-rs/crossterm) · [docs](https://docs.rs/crossterm) |
-| **Termion**               | N/A (backend)   | Imperative      | Low-level   | Maintained   | [repo](https://github.com/redox-os/termion)                                           |
-| **Termwiz**               | Immediate       | Imperative      | Mid-level   | Active       | [repo](https://github.com/wez/wezterm/tree/main/termwiz)                              |
-| **Dioxus TUI**            | Retained        | React-like      | High-level  | Experimental | [repo](https://github.com/DioxusLabs/dioxus)                                          |
+| Library                   | Rendering Model | Architecture    | Abstraction | Status       | Links                                                                                        |
+| ------------------------- | --------------- | --------------- | ----------- | ------------ | -------------------------------------------------------------------------------------------- |
+| **[Ratatui](ratatui.md)** | Immediate       | App-driven loop | Mid-level   | Active       | [repo](https://github.com/ratatui/ratatui) · [docs](https://ratatui.rs)                      |
+| **[Cursive](cursive.md)** | Retained        | Callback-based  | High-level  | Maintained   | [repo](https://github.com/gyscos/cursive) · [docs](https://docs.rs/cursive)                  |
+| **Crossterm**             | N/A (backend)   | Imperative      | Low-level   | Active       | [repo](https://github.com/crossterm-rs/crossterm) · [docs](https://docs.rs/crossterm)        |
+| **Termion**               | N/A (backend)   | Imperative      | Low-level   | Maintained   | [repo](https://github.com/redox-os/termion)                                                  |
+| **Termwiz**               | Immediate       | Imperative      | Mid-level   | Active       | [repo](https://github.com/wez/wezterm/tree/d13ed704b2234c58007eb6591aaa5d998d5c5a9b/termwiz) |
+| **Dioxus TUI**            | Retained        | React-like      | High-level  | Experimental | [repo](https://github.com/DioxusLabs/dioxus)                                                 |
 
 ## Python
 
@@ -36,9 +36,9 @@ A breadth-first survey of terminal user interface (TUI) libraries across program
 
 ## Neovim / Lua
 
-| Library                           | Rendering Model            | Architecture              | Abstraction | Status | Links                                                                                                      |
-| --------------------------------- | -------------------------- | ------------------------- | ----------- | ------ | ---------------------------------------------------------------------------------------------------------- |
-| **[Snacks.nvim](snacks-nvim.md)** | Retained (buffers/windows) | Event-driven plugin suite | High-level  | Active | [repo](https://github.com/folke/snacks.nvim) · [docs](https://github.com/folke/snacks.nvim/tree/main/docs) |
+| Library                           | Rendering Model            | Architecture              | Abstraction | Status | Links                                                                                                                                          |
+| --------------------------------- | -------------------------- | ------------------------- | ----------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| **[Snacks.nvim](snacks-nvim.md)** | Retained (buffers/windows) | Event-driven plugin suite | High-level  | Active | [repo](https://github.com/folke/snacks.nvim) · [docs](https://github.com/folke/snacks.nvim/tree/882c996cf28183f4d63640de0b4c02ec886d01f2/docs) |
 
 ## Go
 

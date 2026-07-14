@@ -577,22 +577,22 @@ Power` in domain vocabulary, for free, because dimensions are nominal classes; n
 <!-- Pinned clone (squants @ 29aa57f) -->
 
 [repo]: https://github.com/typelevel/squants
-[quantity]: https://github.com/typelevel/squants/blob/29aa57f/shared/src/main/scala/squants/Quantity.scala
-[dimension]: https://github.com/typelevel/squants/blob/29aa57f/shared/src/main/scala/squants/Dimension.scala
-[uom-scala]: https://github.com/typelevel/squants/blob/29aa57f/shared/src/main/scala/squants/UnitOfMeasure.scala
-[length]: https://github.com/typelevel/squants/blob/29aa57f/shared/src/main/scala/squants/space/Length.scala
-[temp]: https://github.com/typelevel/squants/blob/29aa57f/shared/src/main/scala/squants/thermal/Temperature.scala
-[angle]: https://github.com/typelevel/squants/blob/29aa57f/shared/src/main/scala/squants/space/Angle.scala
-[energy]: https://github.com/typelevel/squants/blob/29aa57f/shared/src/main/scala/squants/energy/Energy.scala
-[torque]: https://github.com/typelevel/squants/blob/29aa57f/shared/src/main/scala/squants/motion/Torque.scala
-[dimensionless]: https://github.com/typelevel/squants/blob/29aa57f/shared/src/main/scala/squants/Dimensionless.scala
-[money]: https://github.com/typelevel/squants/blob/29aa57f/shared/src/main/scala/squants/market/Money.scala
-[timederiv]: https://github.com/typelevel/squants/blob/29aa57f/shared/src/main/scala/squants/time/TimeDerivative.scala
-[metric]: https://github.com/typelevel/squants/blob/29aa57f/shared/src/main/scala/squants/MetricSystem.scala
-[information]: https://github.com/typelevel/squants/blob/29aa57f/shared/src/main/scala/squants/information/Information.scala
-[svector]: https://github.com/typelevel/squants/blob/29aa57f/shared/src/main/scala/squants/SVector.scala
-[readme]: https://github.com/typelevel/squants/blob/29aa57f/README.md
-[build]: https://github.com/typelevel/squants/blob/29aa57f/project/Build.scala
+[quantity]: https://github.com/typelevel/squants/blob/29aa57f4a1958daf9a5a397cca8982b1654e164c/shared/src/main/scala/squants/Quantity.scala
+[dimension]: https://github.com/typelevel/squants/blob/29aa57f4a1958daf9a5a397cca8982b1654e164c/shared/src/main/scala/squants/Dimension.scala
+[uom-scala]: https://github.com/typelevel/squants/blob/29aa57f4a1958daf9a5a397cca8982b1654e164c/shared/src/main/scala/squants/UnitOfMeasure.scala
+[length]: https://github.com/typelevel/squants/blob/29aa57f4a1958daf9a5a397cca8982b1654e164c/shared/src/main/scala/squants/space/Length.scala
+[temp]: https://github.com/typelevel/squants/blob/29aa57f4a1958daf9a5a397cca8982b1654e164c/shared/src/main/scala/squants/thermal/Temperature.scala
+[angle]: https://github.com/typelevel/squants/blob/29aa57f4a1958daf9a5a397cca8982b1654e164c/shared/src/main/scala/squants/space/Angle.scala
+[energy]: https://github.com/typelevel/squants/blob/29aa57f4a1958daf9a5a397cca8982b1654e164c/shared/src/main/scala/squants/energy/Energy.scala
+[torque]: https://github.com/typelevel/squants/blob/29aa57f4a1958daf9a5a397cca8982b1654e164c/shared/src/main/scala/squants/motion/Torque.scala
+[dimensionless]: https://github.com/typelevel/squants/blob/29aa57f4a1958daf9a5a397cca8982b1654e164c/shared/src/main/scala/squants/Dimensionless.scala
+[money]: https://github.com/typelevel/squants/blob/29aa57f4a1958daf9a5a397cca8982b1654e164c/shared/src/main/scala/squants/market/Money.scala
+[timederiv]: https://github.com/typelevel/squants/blob/29aa57f4a1958daf9a5a397cca8982b1654e164c/shared/src/main/scala/squants/time/TimeDerivative.scala
+[metric]: https://github.com/typelevel/squants/blob/29aa57f4a1958daf9a5a397cca8982b1654e164c/shared/src/main/scala/squants/MetricSystem.scala
+[information]: https://github.com/typelevel/squants/blob/29aa57f4a1958daf9a5a397cca8982b1654e164c/shared/src/main/scala/squants/information/Information.scala
+[svector]: https://github.com/typelevel/squants/blob/29aa57f4a1958daf9a5a397cca8982b1654e164c/shared/src/main/scala/squants/SVector.scala
+[readme]: https://github.com/typelevel/squants/blob/29aa57f4a1958daf9a5a397cca8982b1654e164c/README.md
+[build]: https://github.com/typelevel/squants/blob/29aa57f4a1958daf9a5a397cca8982b1654e164c/project/Build.scala
 
 <!-- Official docs & project -->
 

@@ -200,17 +200,17 @@ This maps cleanly onto the D `Expected` idiom this repo already standardizes on.
 <!-- References -->
 
 [repo]: https://github.com/KhronosGroup/Vulkan-Hpp
-[usage]: https://github.com/KhronosGroup/Vulkan-Hpp/blob/main/docs/Usage.md
-[handles-doc]: https://github.com/KhronosGroup/Vulkan-Hpp/blob/main/docs/Handles.md
-[raii-doc]: https://github.com/KhronosGroup/Vulkan-Hpp/blob/main/docs/VkRaiiProgrammingGuide.md
-[config]: https://github.com/KhronosGroup/Vulkan-Hpp/blob/main/docs/Configuration.md
-[generator]: https://github.com/KhronosGroup/Vulkan-Hpp/tree/main/generator
-[generator-cpp]: https://github.com/KhronosGroup/Vulkan-Hpp/blob/main/generator/VulkanHppGenerator.cpp
-[parser]: https://github.com/KhronosGroup/Vulkan-Hpp/blob/main/generator/VkXMLParser.cpp
-[vulkan-hpp]: https://github.com/KhronosGroup/Vulkan-Hpp/blob/main/vulkan/vulkan.hpp
-[raii-hpp]: https://github.com/KhronosGroup/Vulkan-Hpp/blob/main/vulkan/vulkan_raii.hpp
-[static-asserts]: https://github.com/KhronosGroup/Vulkan-Hpp/blob/main/vulkan/vulkan_static_assertions.hpp
-[vkxml]: https://github.com/KhronosGroup/Vulkan-Headers/blob/main/registry/vk.xml
+[usage]: https://github.com/KhronosGroup/Vulkan-Hpp/blob/66ac921bb67efeef0ac298e1cf584ea2eb8e4ec5/docs/Usage.md
+[handles-doc]: https://github.com/KhronosGroup/Vulkan-Hpp/blob/66ac921bb67efeef0ac298e1cf584ea2eb8e4ec5/docs/Handles.md
+[raii-doc]: https://github.com/KhronosGroup/Vulkan-Hpp/blob/66ac921bb67efeef0ac298e1cf584ea2eb8e4ec5/docs/VkRaiiProgrammingGuide.md
+[config]: https://github.com/KhronosGroup/Vulkan-Hpp/blob/66ac921bb67efeef0ac298e1cf584ea2eb8e4ec5/docs/Configuration.md
+[generator]: https://github.com/KhronosGroup/Vulkan-Hpp/tree/66ac921bb67efeef0ac298e1cf584ea2eb8e4ec5/generator
+[generator-cpp]: https://github.com/KhronosGroup/Vulkan-Hpp/blob/66ac921bb67efeef0ac298e1cf584ea2eb8e4ec5/generator/VulkanHppGenerator.cpp
+[parser]: https://github.com/KhronosGroup/Vulkan-Hpp/blob/66ac921bb67efeef0ac298e1cf584ea2eb8e4ec5/generator/VkXMLParser.cpp
+[vulkan-hpp]: https://github.com/KhronosGroup/Vulkan-Hpp/blob/66ac921bb67efeef0ac298e1cf584ea2eb8e4ec5/vulkan/vulkan.hpp
+[raii-hpp]: https://github.com/KhronosGroup/Vulkan-Hpp/blob/66ac921bb67efeef0ac298e1cf584ea2eb8e4ec5/vulkan/vulkan_raii.hpp
+[static-asserts]: https://github.com/KhronosGroup/Vulkan-Hpp/blob/66ac921bb67efeef0ac298e1cf584ea2eb8e4ec5/vulkan/vulkan_static_assertions.hpp
+[vkxml]: https://github.com/KhronosGroup/Vulkan-Headers/blob/8d6039a455a7ecc7d2a592ff97f62db4e59b70bf/registry/vk.xml
 [rust-ash]: ./rust-ash.md
 [rust-vulkanalia]: ./rust-vulkanalia.md
 [d-erupted]: ./d-erupted.md

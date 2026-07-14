@@ -220,16 +220,16 @@ This is the extra spine dimension for the [syntax-highlighting cluster][sh]:
 <!-- References -->
 
 [repo]: https://github.com/sharkdp/bat
-[readme]: https://github.com/sharkdp/bat/blob/master/README.md
-[doc-assets]: https://github.com/sharkdp/bat/blob/master/doc/assets.md
-[printer-rs]: https://github.com/sharkdp/bat/blob/master/src/printer.rs
-[controller-rs]: https://github.com/sharkdp/bat/blob/master/src/controller.rs
-[assets-rs]: https://github.com/sharkdp/bat/blob/master/src/assets.rs
-[sss-rs]: https://github.com/sharkdp/bat/blob/master/src/assets/serialized_syntax_set.rs
-[lts-rs]: https://github.com/sharkdp/bat/blob/master/src/assets/lazy_theme_set.rs
-[syntax-mapping-rs]: https://github.com/sharkdp/bat/blob/master/src/syntax_mapping.rs
-[terminal-rs]: https://github.com/sharkdp/bat/blob/master/src/terminal.rs
-[cargo-toml]: https://github.com/sharkdp/bat/blob/master/Cargo.toml
+[readme]: https://github.com/sharkdp/bat/blob/78951393e29bfd2f2a45f4326b9d2bb5e737dd2a/README.md
+[doc-assets]: https://github.com/sharkdp/bat/blob/78951393e29bfd2f2a45f4326b9d2bb5e737dd2a/doc/assets.md
+[printer-rs]: https://github.com/sharkdp/bat/blob/78951393e29bfd2f2a45f4326b9d2bb5e737dd2a/src/printer.rs
+[controller-rs]: https://github.com/sharkdp/bat/blob/78951393e29bfd2f2a45f4326b9d2bb5e737dd2a/src/controller.rs
+[assets-rs]: https://github.com/sharkdp/bat/blob/78951393e29bfd2f2a45f4326b9d2bb5e737dd2a/src/assets.rs
+[sss-rs]: https://github.com/sharkdp/bat/blob/78951393e29bfd2f2a45f4326b9d2bb5e737dd2a/src/assets/serialized_syntax_set.rs
+[lts-rs]: https://github.com/sharkdp/bat/blob/78951393e29bfd2f2a45f4326b9d2bb5e737dd2a/src/assets/lazy_theme_set.rs
+[syntax-mapping-rs]: https://github.com/sharkdp/bat/blob/78951393e29bfd2f2a45f4326b9d2bb5e737dd2a/src/syntax_mapping.rs
+[terminal-rs]: https://github.com/sharkdp/bat/blob/78951393e29bfd2f2a45f4326b9d2bb5e737dd2a/src/terminal.rs
+[cargo-toml]: https://github.com/sharkdp/bat/blob/78951393e29bfd2f2a45f4326b9d2bb5e737dd2a/Cargo.toml
 [syntect]: ./syntect.md
 [shiki]: ./shiki.md
 [tree-sitter-highlight]: ./tree-sitter-highlight.md

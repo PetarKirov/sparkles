@@ -487,14 +487,14 @@ Vec<Error>)` rather than `Result<T, Error>`"_, each LSP request is wrapped in
 <!-- External primary sources -->
 
 [repo]: https://github.com/rust-lang/rust-analyzer
-[arch]: https://github.com/rust-lang/rust-analyzer/blob/master/docs/book/src/contributing/architecture.md
-[syntax]: https://github.com/rust-lang/rust-analyzer/blob/master/docs/book/src/contributing/syntax.md
-[parser-lib]: https://github.com/rust-lang/rust-analyzer/blob/master/crates/parser/src/lib.rs
-[change]: https://github.com/rust-lang/rust-analyzer/blob/master/crates/base-db/src/change.rs
-[salsa-readme]: https://github.com/salsa-rs/salsa/blob/master/README.md
-[salsa-durability]: https://github.com/salsa-rs/salsa/blob/master/src/durability.rs
-[salsa-cancelled]: https://github.com/salsa-rs/salsa/blob/master/src/cancelled.rs
-[salsa-cycle]: https://github.com/salsa-rs/salsa/blob/master/src/cycle.rs
+[arch]: https://github.com/rust-lang/rust-analyzer/blob/711ead6ca0e0f59210ddf8363ff52fdf3328dd8d/docs/book/src/contributing/architecture.md
+[syntax]: https://github.com/rust-lang/rust-analyzer/blob/711ead6ca0e0f59210ddf8363ff52fdf3328dd8d/docs/book/src/contributing/syntax.md
+[parser-lib]: https://github.com/rust-lang/rust-analyzer/blob/711ead6ca0e0f59210ddf8363ff52fdf3328dd8d/crates/parser/src/lib.rs
+[change]: https://github.com/rust-lang/rust-analyzer/blob/711ead6ca0e0f59210ddf8363ff52fdf3328dd8d/crates/base-db/src/change.rs
+[salsa-readme]: https://github.com/salsa-rs/salsa/blob/2947fab93349b56958ad5cfa0fb838f827a642f0/README.md
+[salsa-durability]: https://github.com/salsa-rs/salsa/blob/2947fab93349b56958ad5cfa0fb838f827a642f0/src/durability.rs
+[salsa-cancelled]: https://github.com/salsa-rs/salsa/blob/2947fab93349b56958ad5cfa0fb838f827a642f0/src/cancelled.rs
+[salsa-cycle]: https://github.com/salsa-rs/salsa/blob/2947fab93349b56958ad5cfa0fb838f827a642f0/src/cycle.rs
 [rowan-repo]: https://github.com/rust-analyzer/rowan
-[rowan-cache]: https://github.com/rust-analyzer/rowan/blob/master/src/green/node_cache.rs
+[rowan-cache]: https://github.com/rust-analyzer/rowan/blob/0c1077e9e1ae6a97e76a48fea4c347f5465724e9/src/green/node_cache.rs
 [rustc-query]: https://rustc-dev-guide.rust-lang.org/query.html

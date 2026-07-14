@@ -503,18 +503,18 @@ BuildBuddy.
 
 [repo]: https://github.com/buildbuddy-io/buildbuddy
 [docs]: https://www.buildbuddy.io/docs/introduction/
-[readme]: https://github.com/buildbuddy-io/buildbuddy/blob/master/README.md
-[intro]: https://github.com/buildbuddy-io/buildbuddy/blob/master/docs/introduction.mdx
+[readme]: https://github.com/buildbuddy-io/buildbuddy/blob/e70e71f76270b0cc474c450e5c3f7b6825ab9a54/README.md
+[intro]: https://github.com/buildbuddy-io/buildbuddy/blob/e70e71f76270b0cc474c450e5c3f7b6825ab9a54/docs/introduction.mdx
 [rbe-setup]: https://www.buildbuddy.io/docs/rbe-setup/
 [rbe-platforms]: https://www.buildbuddy.io/docs/rbe-platforms/
 [rbe-pools]: https://www.buildbuddy.io/docs/rbe-pools/
-[rbe-doc]: https://github.com/buildbuddy-io/buildbuddy/blob/master/docs/remote-build-execution.md
-[config-cache]: https://github.com/buildbuddy-io/buildbuddy/blob/master/docs/config-cache.md
-[scheduler-proto]: https://github.com/buildbuddy-io/buildbuddy/blob/master/proto/scheduler.proto
-[scheduler-server]: https://github.com/buildbuddy-io/buildbuddy/blob/master/enterprise/server/scheduling/scheduler_server/scheduler_server.go
-[task-router]: https://github.com/buildbuddy-io/buildbuddy/blob/master/enterprise/server/scheduling/task_router/task_router.go
-[action-merger]: https://github.com/buildbuddy-io/buildbuddy/blob/master/enterprise/server/remote_execution/action_merger/action_merger.go
-[reapi-proto]: https://github.com/buildbuddy-io/buildbuddy/blob/master/proto/remote_execution.proto
+[rbe-doc]: https://github.com/buildbuddy-io/buildbuddy/blob/e70e71f76270b0cc474c450e5c3f7b6825ab9a54/docs/remote-build-execution.md
+[config-cache]: https://github.com/buildbuddy-io/buildbuddy/blob/e70e71f76270b0cc474c450e5c3f7b6825ab9a54/docs/config-cache.md
+[scheduler-proto]: https://github.com/buildbuddy-io/buildbuddy/blob/e70e71f76270b0cc474c450e5c3f7b6825ab9a54/proto/scheduler.proto
+[scheduler-server]: https://github.com/buildbuddy-io/buildbuddy/blob/e70e71f76270b0cc474c450e5c3f7b6825ab9a54/enterprise/server/scheduling/scheduler_server/scheduler_server.go
+[task-router]: https://github.com/buildbuddy-io/buildbuddy/blob/e70e71f76270b0cc474c450e5c3f7b6825ab9a54/enterprise/server/scheduling/task_router/task_router.go
+[action-merger]: https://github.com/buildbuddy-io/buildbuddy/blob/e70e71f76270b0cc474c450e5c3f7b6825ab9a54/enterprise/server/remote_execution/action_merger/action_merger.go
+[reapi-proto]: https://github.com/buildbuddy-io/buildbuddy/blob/e70e71f76270b0cc474c450e5c3f7b6825ab9a54/proto/remote_execution.proto
 [remote-apis]: https://github.com/bazelbuild/remote-apis
 [bazel]: ../bazel/
 [buck2]: ../buck2/

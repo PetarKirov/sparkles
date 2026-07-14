@@ -585,13 +585,13 @@ internal ID hashing would collapse them to the same control and clicking any row
 
 - **GitHub repository** -- <https://github.com/ocornut/imgui>
 - **Wiki landing page** -- <https://github.com/ocornut/imgui/wiki>
-- **FAQ** -- <https://github.com/ocornut/imgui/blob/master/docs/FAQ.md>
+- **FAQ** -- <https://github.com/ocornut/imgui/blob/b62bfd6b06de958e4630b715225b7e8409bfd0f9/docs/FAQ.md>
 - **Tables API documentation** -- <https://github.com/ocornut/imgui/wiki/Tables-API>
   (and the main tracking issue [#3740](https://github.com/ocornut/imgui/issues/3740))
-- **Examples and backends** -- <https://github.com/ocornut/imgui/tree/master/examples>
-- **`imgui.h` (public API)** -- <https://github.com/ocornut/imgui/blob/master/imgui.h>
+- **Examples and backends** -- <https://github.com/ocornut/imgui/tree/b62bfd6b06de958e4630b715225b7e8409bfd0f9/examples>
+- **`imgui.h` (public API)** -- <https://github.com/ocornut/imgui/blob/b62bfd6b06de958e4630b715225b7e8409bfd0f9/imgui.h>
 - **`imgui_demo.cpp` (canonical example of every feature)** --
-  <https://github.com/ocornut/imgui/blob/master/imgui_demo.cpp>
+  <https://github.com/ocornut/imgui/blob/b62bfd6b06de958e4630b715225b7e8409bfd0f9/imgui_demo.cpp>
 - **Background reading on immediate-mode GUIs** -- Casey Muratori's "Immediate-Mode
   Graphical User Interfaces" talk, archived at <https://caseymuratori.com/blog_0001>
 - **Selected ports and bindings:**

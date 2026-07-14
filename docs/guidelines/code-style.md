@@ -66,7 +66,7 @@ template isSpecial(T)
 }
 ```
 
-## Expression-Based Contracts ([DIP1009](https://github.com/dlang/DIPs/blob/master/DIPs/accepted/DIP1009.md))
+## Expression-Based Contracts ([DIP1009](https://github.com/dlang/DIPs/blob/90490da522d8209c7940071a4a58c5b4d7e8938e/DIPs/accepted/DIP1009.md))
 
 ```d
 // Good
@@ -93,7 +93,7 @@ do
 }
 ```
 
-## Expression-Based Functions ([DIP1043](https://github.com/dlang/DIPs/blob/master/DIPs/accepted/DIP1043.md))
+## Expression-Based Functions ([DIP1043](https://github.com/dlang/DIPs/blob/90490da522d8209c7940071a4a58c5b4d7e8938e/DIPs/accepted/DIP1043.md))
 
 For simple functions, use `=>` syntax:
 
@@ -126,7 +126,7 @@ foreach (T; AliasSeq!(int, long, float))
 }
 ```
 
-## Copy Constructors ([DIP1018](https://github.com/dlang/DIPs/blob/master/DIPs/accepted/DIP1018.md))
+## Copy Constructors ([DIP1018](https://github.com/dlang/DIPs/blob/90490da522d8209c7940071a4a58c5b4d7e8938e/DIPs/accepted/DIP1018.md))
 
 Use copy constructors instead of postblit:
 
@@ -160,7 +160,7 @@ void process(const ref Config config) { ... }
 
 Note: `in` may be omitted for primitive types and `immutable(T)[]` slices (e.g., `string`).
 
-## Named Arguments ([DIP1030](https://github.com/dlang/DIPs/blob/master/DIPs/accepted/DIP1030.md))
+## Named Arguments ([DIP1030](https://github.com/dlang/DIPs/blob/90490da522d8209c7940071a4a58c5b4d7e8938e/DIPs/accepted/DIP1030.md))
 
 Use named arguments for clarity at call sites:
 
@@ -205,7 +205,7 @@ To support `@nogc nothrow` code paths, the project uses the [`github:tchaloupka/
 
 See [Expected Error Handling](idioms/expected/) for comprehensive guidelines on how to chain, transform, and flatten `Expected` values, with handy comparisons for developers coming from Rust.
 
-## Interpolated Expression Sequences ([DIP1036](https://github.com/dlang/DIPs/blob/master/DIPs/other/DIP1036.md))
+## Interpolated Expression Sequences ([DIP1036](https://github.com/dlang/DIPs/blob/90490da522d8209c7940071a4a58c5b4d7e8938e/DIPs/other/DIP1036.md))
 
 Use IES (`i"..."`) when interspersing string literals with expressions. Preference order:
 

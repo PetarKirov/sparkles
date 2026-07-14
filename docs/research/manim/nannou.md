@@ -425,7 +425,7 @@ frame-rate-dependent math); the engine makes no such guarantee.
 <!-- External primary sources -->
 
 [repo]: https://github.com/nannou-org/nannou
-[nannou-crate-toml]: https://github.com/nannou-org/nannou/blob/master/nannou/Cargo.toml
+[nannou-crate-toml]: https://github.com/nannou-org/nannou/blob/b699dc67d3670090d46531e9380676ddbac6dcfb/nannou/Cargo.toml
 [guide]: https://guide.nannou.cc/
 [guide-anatomy]: https://guide.nannou.cc/tutorials/basics/anatomy-of-a-nannou-app
 [guide-draw]: https://guide.nannou.cc/tutorials/basics/drawing-2d-shapes

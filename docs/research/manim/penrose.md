@@ -468,8 +468,8 @@ Primary sources — the SIGGRAPH 2020 paper, the official docs, and the
 <!-- External: Penrose paper, docs (live), and source -->
 
 [repo]: https://github.com/penrose/penrose
-[readme]: https://github.com/penrose/penrose/blob/main/README.md
-[license]: https://github.com/penrose/penrose/blob/main/LICENSE
+[readme]: https://github.com/penrose/penrose/blob/c9f4bc612f85f20904154403ba55a1cdf080c5f2/README.md
+[license]: https://github.com/penrose/penrose/blob/c9f4bc612f85f20904154403ba55a1cdf080c5f2/LICENSE
 [release]: https://github.com/penrose/penrose/releases/tag/v3.3.0
 [homepage]: https://penrose.cs.cmu.edu/
 [docs]: https://penrose.cs.cmu.edu/docs/ref

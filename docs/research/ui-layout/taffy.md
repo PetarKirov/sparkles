@@ -693,7 +693,7 @@ _vocabulary_ (`Length`/`Percent`/`Auto`/`Fr`) is worth borrowing wholesale.
   - `Style`: <https://docs.rs/taffy/latest/taffy/style/struct.Style.html>
   - `Display`: <https://docs.rs/taffy/latest/taffy/style/enum.Display.html>
   - `Dimension`, `LengthPercentage`, `LengthPercentageAuto`: see `taffy::style`
-- **Release notes / changelog:** <https://github.com/DioxusLabs/taffy/blob/main/CHANGELOG.md>
+- **Release notes / changelog:** <https://github.com/DioxusLabs/taffy/blob/c4c7d09fe4ca2bd5109e976ed31a3d4e763b979d/CHANGELOG.md>
 - **Notable adopters:**
   - Bevy UI: <https://github.com/bevyengine/bevy>
   - Zed editor (via GPUI): <https://github.com/zed-industries/zed>

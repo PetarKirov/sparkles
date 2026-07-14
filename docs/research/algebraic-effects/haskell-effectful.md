@@ -257,7 +257,7 @@ The trade-off is accepted: most real applications end up in IO anyway, and the p
 [polysemy]: haskell-polysemy.md
 [fused-effects]: haskell-fused-effects.md
 [heftia]: haskell-heftia.md
-[effectful benchmark suite]: https://github.com/haskell-effectful/effectful/blob/master/benchmarks/README.md
+[effectful benchmark suite]: https://github.com/haskell-effectful/effectful/blob/0ea2c16187f9021abb996c04a362b3d55f03c65c/benchmarks/README.md
 [effectful on Hackage]: https://hackage.haskell.org/package/effectful
 [effectful GitHub repository]: https://github.com/haskell-effectful/effectful
 [effectful documentation]: https://haskell-effectful.github.io/

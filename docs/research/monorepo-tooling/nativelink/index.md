@@ -603,14 +603,14 @@ config edit, not a recompile or a flag.
 <!-- References -->
 
 [repo]: https://github.com/TraceMachina/nativelink
-[readme]: https://github.com/TraceMachina/nativelink/blob/main/README.md
+[readme]: https://github.com/TraceMachina/nativelink/blob/b08995de0447d92fc5a47f71af1d83d4c4da142c/README.md
 [docs]: https://nativelink.com/docs
-[config-src]: https://github.com/TraceMachina/nativelink/tree/main/nativelink-config/src
-[stores-src]: https://github.com/TraceMachina/nativelink/blob/main/nativelink-config/src/stores.rs
-[schedulers-src]: https://github.com/TraceMachina/nativelink/blob/main/nativelink-config/src/schedulers.rs
-[basic-cas]: https://github.com/TraceMachina/nativelink/blob/main/nativelink-config/examples/basic_cas.json5
-[lre-readme]: https://github.com/TraceMachina/nativelink/blob/main/local-remote-execution/README.md
-[license]: https://github.com/TraceMachina/nativelink/blob/main/LICENSE
+[config-src]: https://github.com/TraceMachina/nativelink/tree/b08995de0447d92fc5a47f71af1d83d4c4da142c/nativelink-config/src
+[stores-src]: https://github.com/TraceMachina/nativelink/blob/b08995de0447d92fc5a47f71af1d83d4c4da142c/nativelink-config/src/stores.rs
+[schedulers-src]: https://github.com/TraceMachina/nativelink/blob/b08995de0447d92fc5a47f71af1d83d4c4da142c/nativelink-config/src/schedulers.rs
+[basic-cas]: https://github.com/TraceMachina/nativelink/blob/b08995de0447d92fc5a47f71af1d83d4c4da142c/nativelink-config/examples/basic_cas.json5
+[lre-readme]: https://github.com/TraceMachina/nativelink/blob/b08995de0447d92fc5a47f71af1d83d4c4da142c/local-remote-execution/README.md
+[license]: https://github.com/TraceMachina/nativelink/blob/b08995de0447d92fc5a47f71af1d83d4c4da142c/LICENSE
 [remote-apis]: https://github.com/bazelbuild/remote-apis
 [buildbuddy]: ../buildbuddy/
 [bazel]: ../bazel/

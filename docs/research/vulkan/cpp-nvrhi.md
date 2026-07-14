@@ -349,19 +349,19 @@ crash-dump integration is built in (`aftermathEnabled` in [`DeviceDesc`][vulkan-
 <!-- References -->
 
 [repo]: https://github.com/NVIDIA-RTX/NVRHI
-[readme]: https://github.com/NVIDIA-RTX/NVRHI/blob/main/README.md
-[pg]: https://github.com/NVIDIA-RTX/NVRHI/blob/main/doc/ProgrammingGuide.md
-[tut]: https://github.com/NVIDIA-RTX/NVRHI/blob/main/doc/Tutorial.md
-[nvrhi-h]: https://github.com/NVIDIA-RTX/NVRHI/blob/main/include/nvrhi/nvrhi.h
-[vulkan-h]: https://github.com/NVIDIA-RTX/NVRHI/blob/main/include/nvrhi/vulkan.h
-[st-h]: https://github.com/NVIDIA-RTX/NVRHI/blob/main/src/common/state-tracking.h
-[st-cpp]: https://github.com/NVIDIA-RTX/NVRHI/blob/main/src/common/state-tracking.cpp
-[vkst]: https://github.com/NVIDIA-RTX/NVRHI/blob/main/src/vulkan/vulkan-state-tracking.cpp
-[vkc]: https://github.com/NVIDIA-RTX/NVRHI/blob/main/src/vulkan/vulkan-constants.cpp
-[vkq]: https://github.com/NVIDIA-RTX/NVRHI/blob/main/src/vulkan/vulkan-queue.cpp
-[vkcl]: https://github.com/NVIDIA-RTX/NVRHI/blob/main/src/vulkan/vulkan-commandlist.cpp
-[vk-tex]: https://github.com/NVIDIA-RTX/NVRHI/blob/main/src/vulkan/vulkan-texture.cpp
-[val]: https://github.com/NVIDIA-RTX/NVRHI/blob/main/src/validation/validation-commandlist.cpp
+[readme]: https://github.com/NVIDIA-RTX/NVRHI/blob/8e8c36e37558acec333204619b95d9d2fcdc4a79/README.md
+[pg]: https://github.com/NVIDIA-RTX/NVRHI/blob/8e8c36e37558acec333204619b95d9d2fcdc4a79/doc/ProgrammingGuide.md
+[tut]: https://github.com/NVIDIA-RTX/NVRHI/blob/8e8c36e37558acec333204619b95d9d2fcdc4a79/doc/Tutorial.md
+[nvrhi-h]: https://github.com/NVIDIA-RTX/NVRHI/blob/8e8c36e37558acec333204619b95d9d2fcdc4a79/include/nvrhi/nvrhi.h
+[vulkan-h]: https://github.com/NVIDIA-RTX/NVRHI/blob/8e8c36e37558acec333204619b95d9d2fcdc4a79/include/nvrhi/vulkan.h
+[st-h]: https://github.com/NVIDIA-RTX/NVRHI/blob/8e8c36e37558acec333204619b95d9d2fcdc4a79/src/common/state-tracking.h
+[st-cpp]: https://github.com/NVIDIA-RTX/NVRHI/blob/8e8c36e37558acec333204619b95d9d2fcdc4a79/src/common/state-tracking.cpp
+[vkst]: https://github.com/NVIDIA-RTX/NVRHI/blob/8e8c36e37558acec333204619b95d9d2fcdc4a79/src/vulkan/vulkan-state-tracking.cpp
+[vkc]: https://github.com/NVIDIA-RTX/NVRHI/blob/8e8c36e37558acec333204619b95d9d2fcdc4a79/src/vulkan/vulkan-constants.cpp
+[vkq]: https://github.com/NVIDIA-RTX/NVRHI/blob/8e8c36e37558acec333204619b95d9d2fcdc4a79/src/vulkan/vulkan-queue.cpp
+[vkcl]: https://github.com/NVIDIA-RTX/NVRHI/blob/8e8c36e37558acec333204619b95d9d2fcdc4a79/src/vulkan/vulkan-commandlist.cpp
+[vk-tex]: https://github.com/NVIDIA-RTX/NVRHI/blob/8e8c36e37558acec333204619b95d9d2fcdc4a79/src/vulkan/vulkan-texture.cpp
+[val]: https://github.com/NVIDIA-RTX/NVRHI/blob/8e8c36e37558acec333204619b95d9d2fcdc4a79/src/validation/validation-commandlist.cpp
 [donut]: https://github.com/NVIDIA-RTX/Donut
 [auto-sync]: ./concepts.md#auto-sync-via-per-resource-usage-tracking
 [named-states]: ./concepts.md#simplified-barrier-vocabulary-named-usage-states

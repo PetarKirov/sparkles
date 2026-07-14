@@ -795,7 +795,7 @@ work being avoided.
 
 ### Source
 
-- **`clay.h`** (single header, 4.8k LOC): <https://github.com/nicbarker/clay/blob/main/clay.h>
+- **`clay.h`** (single header, 4.8k LOC): <https://github.com/nicbarker/clay/blob/e6cc36941ab2af5d81107617039d6f527a1c660b/clay.h>
 - **The `CLAY()` macro** (lines 146-151 of `clay.h`): the for-loop DSL trick.
 - **Render-command type enum**: `Clay_RenderCommandType` around line 765 of `clay.h`.
 
@@ -814,11 +814,11 @@ work being avoided.
 
 ### Bindings
 
-- **Odin** (in-tree, official): <https://github.com/nicbarker/clay/tree/main/bindings/odin>
+- **Odin** (in-tree, official): <https://github.com/nicbarker/clay/tree/e6cc36941ab2af5d81107617039d6f527a1c660b/bindings/odin>
 - **Rust** (separate repo, official): <https://github.com/clay-ui-rs/clay>
-- **Zig** (in-tree): <https://github.com/nicbarker/clay/tree/main/bindings/zig>
-- **C#** (in-tree): <https://github.com/nicbarker/clay/tree/main/bindings/csharp>
-- **C++** (in-tree, idiomatic): <https://github.com/nicbarker/clay/tree/main/bindings/cpp>
+- **Zig** (in-tree): <https://github.com/nicbarker/clay/tree/e6cc36941ab2af5d81107617039d6f527a1c660b/bindings/zig>
+- **C#** (in-tree): <https://github.com/nicbarker/clay/tree/e6cc36941ab2af5d81107617039d6f527a1c660b/bindings/csharp>
+- **C++** (in-tree, idiomatic): <https://github.com/nicbarker/clay/tree/e6cc36941ab2af5d81107617039d6f527a1c660b/bindings/cpp>
 - **D** (external, community): <https://github.com/zkxjzmswkwl/clayd>, <https://github.com/zkxjzmswkwl/clayui>
 - **Go (line-by-line port)**: <https://github.com/soypat/glay>
 - **Go (cxgo transpile)**: <https://github.com/totallygamerjet/clay>

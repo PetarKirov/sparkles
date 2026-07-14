@@ -481,7 +481,7 @@ Simon Danisch, Julius Krumbiegel`.
 <!-- References -->
 
 [repo]: https://github.com/MakieOrg/Makie.jl
-[license]: https://github.com/MakieOrg/Makie.jl/blob/master/LICENSE.md
+[license]: https://github.com/MakieOrg/Makie.jl/blob/f34d62d4fbe49ed9604e7571f22ae78f31cd7083/LICENSE.md
 [docs]: https://docs.makie.org/stable/
 [obs-docs]: https://docs.makie.org/stable/explanations/observables
 [anim-docs]: https://docs.makie.org/stable/explanations/animation
@@ -491,8 +491,8 @@ Simon Danisch, Julius Krumbiegel`.
 [fig-docs]: https://docs.makie.org/stable/explanations/figure
 [fonts-docs]: https://docs.makie.org/stable/explanations/fonts
 [getting-started]: https://docs.makie.org/stable/tutorials/getting-started
-[ffmpeg]: https://github.com/MakieOrg/Makie.jl/blob/master/Makie/src/ffmpeg-util.jl
-[recording]: https://github.com/MakieOrg/Makie.jl/blob/master/Makie/src/recording.jl
+[ffmpeg]: https://github.com/MakieOrg/Makie.jl/blob/f34d62d4fbe49ed9604e7571f22ae78f31cd7083/Makie/src/ffmpeg-util.jl
+[recording]: https://github.com/MakieOrg/Makie.jl/blob/f34d62d4fbe49ed9604e7571f22ae78f31cd7083/Makie/src/recording.jl
 [observables-pkg]: https://github.com/JuliaGizmos/Observables.jl
 [freetype]: https://github.com/JuliaGraphics/FreeType.jl
 [fta]: https://github.com/JuliaGraphics/FreeTypeAbstraction.jl

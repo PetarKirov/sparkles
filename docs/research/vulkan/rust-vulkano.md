@@ -181,25 +181,25 @@ This makes vulkano's relationship to the [Khronos validation layers][sync-valida
 <!-- References -->
 
 [repo]: https://github.com/vulkano-rs/vulkano
-[readme]: https://github.com/vulkano-rs/vulkano/blob/master/README.md
+[readme]: https://github.com/vulkano-rs/vulkano/blob/9f7d1ef2eafb6adf5a059086e550b75ed930133d/README.md
 [docs]: https://docs.rs/vulkano/latest/vulkano/
 [site]: https://vulkano.rs/
-[changelog]: https://github.com/vulkano-rs/vulkano/blob/master/CHANGELOG.md
-[cargo]: https://github.com/vulkano-rs/vulkano/blob/master/vulkano/Cargo.toml
-[autogen]: https://github.com/vulkano-rs/vulkano/tree/master/autogen
-[autogen-main]: https://github.com/vulkano-rs/vulkano/blob/master/autogen/src/main.rs
-[vkxml-vendored]: https://github.com/vulkano-rs/vulkano/blob/master/autogen/vk.xml
+[changelog]: https://github.com/vulkano-rs/vulkano/blob/9f7d1ef2eafb6adf5a059086e550b75ed930133d/CHANGELOG.md
+[cargo]: https://github.com/vulkano-rs/vulkano/blob/9f7d1ef2eafb6adf5a059086e550b75ed930133d/vulkano/Cargo.toml
+[autogen]: https://github.com/vulkano-rs/vulkano/tree/9f7d1ef2eafb6adf5a059086e550b75ed930133d/autogen
+[autogen-main]: https://github.com/vulkano-rs/vulkano/blob/9f7d1ef2eafb6adf5a059086e550b75ed930133d/autogen/src/main.rs
+[vkxml-vendored]: https://github.com/vulkano-rs/vulkano/blob/9f7d1ef2eafb6adf5a059086e550b75ed930133d/autogen/vk.xml
 [vk-parse]: https://crates.io/crates/vk-parse
 [ash-dep]: https://crates.io/crates/ash
-[auto-mod]: https://github.com/vulkano-rs/vulkano/blob/master/vulkano/src/command_buffer/auto/mod.rs
-[auto-builder]: https://github.com/vulkano-rs/vulkano/blob/master/vulkano/src/command_buffer/auto/builder.rs
+[auto-mod]: https://github.com/vulkano-rs/vulkano/blob/9f7d1ef2eafb6adf5a059086e550b75ed930133d/vulkano/src/command_buffer/auto/mod.rs
+[auto-builder]: https://github.com/vulkano-rs/vulkano/blob/9f7d1ef2eafb6adf5a059086e550b75ed930133d/vulkano/src/command_buffer/auto/builder.rs
 [gpufuture]: https://docs.rs/vulkano/latest/vulkano/sync/future/trait.GpuFuture.html
 [validationerror]: https://docs.rs/vulkano/latest/vulkano/struct.ValidationError.html
 [taskgraph-crate]: https://crates.io/crates/vulkano-taskgraph
-[taskgraph-lib]: https://github.com/vulkano-rs/vulkano/blob/master/vulkano-taskgraph/src/lib.rs
-[compile-src]: https://github.com/vulkano-rs/vulkano/blob/master/vulkano-taskgraph/src/graph/compile.rs
-[resources-src]: https://github.com/vulkano-rs/vulkano/blob/master/vulkano-taskgraph/src/resource/mod.rs
-[flight-src]: https://github.com/vulkano-rs/vulkano/blob/master/vulkano-taskgraph/src/resource/state.rs
+[taskgraph-lib]: https://github.com/vulkano-rs/vulkano/blob/9f7d1ef2eafb6adf5a059086e550b75ed930133d/vulkano-taskgraph/src/lib.rs
+[compile-src]: https://github.com/vulkano-rs/vulkano/blob/9f7d1ef2eafb6adf5a059086e550b75ed930133d/vulkano-taskgraph/src/graph/compile.rs
+[resources-src]: https://github.com/vulkano-rs/vulkano/blob/9f7d1ef2eafb6adf5a059086e550b75ed930133d/vulkano-taskgraph/src/resource/mod.rs
+[flight-src]: https://github.com/vulkano-rs/vulkano/blob/9f7d1ef2eafb6adf5a059086e550b75ed930133d/vulkano-taskgraph/src/resource/state.rs
 [vulkano-shaders]: https://crates.io/crates/vulkano-shaders
 [issue-2217]: https://github.com/vulkano-rs/vulkano/issues/2217
 [externsync]: ./concepts.md

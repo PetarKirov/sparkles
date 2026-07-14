@@ -509,10 +509,10 @@ licenses from [`theatre-js/theatre`][repo] `main`; versions from npm `0.7.2`):
 <!-- External: Theatre.js docs (live) + source/licenses on main + npm 0.7.2 -->
 
 [repo]: https://github.com/theatre-js/theatre
-[license-apache]: https://github.com/theatre-js/theatre/blob/main/LICENSE
-[license-agpl]: https://github.com/theatre-js/theatre/blob/main/packages/studio/LICENSE
-[dataverse]: https://github.com/theatre-js/theatre/tree/main/packages/dataverse
-[r3f-readme]: https://github.com/theatre-js/theatre/blob/main/packages/r3f/README.md
+[license-apache]: https://github.com/theatre-js/theatre/blob/6ea82b938ea49609489f6377ded693ccc6ee8f5b/LICENSE
+[license-agpl]: https://github.com/theatre-js/theatre/blob/6ea82b938ea49609489f6377ded693ccc6ee8f5b/packages/studio/LICENSE
+[dataverse]: https://github.com/theatre-js/theatre/tree/6ea82b938ea49609489f6377ded693ccc6ee8f5b/packages/dataverse
+[r3f-readme]: https://github.com/theatre-js/theatre/blob/6ea82b938ea49609489f6377ded693ccc6ee8f5b/packages/r3f/README.md
 [npm-core]: https://www.npmjs.com/package/@theatre/core
 [npm-studio]: https://www.npmjs.com/package/@theatre/studio
 [npm-r3f]: https://www.npmjs.com/package/@theatre/r3f

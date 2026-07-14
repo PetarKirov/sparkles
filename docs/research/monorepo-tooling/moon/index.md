@@ -516,7 +516,7 @@ projects where `apps/web` `dependsOn` `packages/utils` **locally** (via both
 <!-- References -->
 
 [repo]: https://github.com/moonrepo/moon
-[readme]: https://github.com/moonrepo/moon/blob/master/README.md
+[readme]: https://github.com/moonrepo/moon/blob/0670031933b72403abb8d134c5cc3363b4a57874/README.md
 [docs]: https://moonrepo.dev/docs
 [config]: https://moonrepo.dev/docs/config
 [config-ws]: https://moonrepo.dev/docs/config/workspace

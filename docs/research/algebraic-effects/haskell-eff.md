@@ -217,7 +217,7 @@ The proposal explicitly states it is neither about nor coupled to eff. Any effec
 [effectful]: haskell-effectful.md
 [cleff]: haskell-cleff.md
 [eff GitHub repository]: https://github.com/hasura/eff
-[GHC Proposal #313: Delimited continuation primops]: https://github.com/ghc-proposals/ghc-proposals/blob/master/proposals/0313-delimited-continuation-primops.rst
+[GHC Proposal #313: Delimited continuation primops]: https://github.com/ghc-proposals/ghc-proposals/blob/667c883317a7df10cb6391ab36a38e8aaa31a7d0/proposals/0313-delimited-continuation-primops.rst
 [GHC Proposal #313 PR discussion]: https://github.com/ghc-proposals/ghc-proposals/pull/313
 [Alexis King -- Delimited Continuations, Demystified]: https://www.lambdadays.org/lambdadays2023/alexis-king
 [From delimited continuations to algebraic effects in Haskell]: https://blog.poisson.chat/posts/2023-01-02-del-cont-examples.html

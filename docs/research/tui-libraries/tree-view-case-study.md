@@ -32,7 +32,7 @@ The two primary case studies — snacks.nvim's explorer and ratatui-tree-widget 
 
 ## 2. Snacks.nvim Explorer — Deep Dive
 
-Source: [snacks.nvim repository](https://github.com/folke/snacks.nvim/tree/main/lua/snacks/explorer)
+Source: [snacks.nvim repository](https://github.com/folke/snacks.nvim/tree/882c996cf28183f4d63640de0b4c02ec886d01f2/lua/snacks/explorer)
 
 ### "A picker in disguise"
 
@@ -665,6 +665,6 @@ broot demonstrates that a tree view does not require persistent expand/collapse 
 [tui-tree-widget-flattened]: https://docs.rs/tui-tree-widget/latest/tui_tree_widget/struct.Flattened.html
 [tui-tree-widget-tree]: https://docs.rs/tui-tree-widget/latest/tui_tree_widget/struct.Tree.html
 [cursive-tree-view]: https://docs.rs/cursive_tree_view/latest/cursive_tree_view/
-[stlab-forest]: https://github.com/stlab/libraries/blob/main/include/stlab/forest.hpp
+[stlab-forest]: https://github.com/stlab/libraries/blob/9eb9ad365915d5c0d47e6aae57e76749b9835910/include/stlab/forest.hpp
 [broot-tree-line]: https://docs.rs/broot/latest/broot/tree/struct.TreeLine.html
 [broot-dam]: https://docs.rs/broot/latest/broot/task_sync/struct.Dam.html

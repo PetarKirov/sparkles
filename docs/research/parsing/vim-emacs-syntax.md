@@ -151,14 +151,14 @@ This is the extra spine dimension for the [syntax-highlighting cluster][sh]:
 
 [vim-repo]: https://github.com/vim/vim
 [emacs-repo]: https://github.com/emacs-mirror/emacs
-[vim-syntax-txt]: https://github.com/vim/vim/blob/master/runtime/doc/syntax.txt
-[vim-options-txt]: https://github.com/vim/vim/blob/master/runtime/doc/options.txt
-[vim-syntax-c]: https://github.com/vim/vim/blob/master/src/syntax.c
-[vim-structs-h]: https://github.com/vim/vim/blob/master/src/structs.h
-[font-lock-el]: https://github.com/emacs-mirror/emacs/blob/master/lisp/font-lock.el
-[jit-lock-el]: https://github.com/emacs-mirror/emacs/blob/master/lisp/jit-lock.el
-[syntax-el]: https://github.com/emacs-mirror/emacs/blob/master/lisp/emacs-lisp/syntax.el
-[modes-texi]: https://github.com/emacs-mirror/emacs/blob/master/doc/lispref/modes.texi
+[vim-syntax-txt]: https://github.com/vim/vim/blob/834b8d218f1db92e587ecd449e5ce88b41fbe256/runtime/doc/syntax.txt
+[vim-options-txt]: https://github.com/vim/vim/blob/834b8d218f1db92e587ecd449e5ce88b41fbe256/runtime/doc/options.txt
+[vim-syntax-c]: https://github.com/vim/vim/blob/834b8d218f1db92e587ecd449e5ce88b41fbe256/src/syntax.c
+[vim-structs-h]: https://github.com/vim/vim/blob/834b8d218f1db92e587ecd449e5ce88b41fbe256/src/structs.h
+[font-lock-el]: https://github.com/emacs-mirror/emacs/blob/c6147e2b539dc3490b47a924bed86da00cc763a7/lisp/font-lock.el
+[jit-lock-el]: https://github.com/emacs-mirror/emacs/blob/c6147e2b539dc3490b47a924bed86da00cc763a7/lisp/jit-lock.el
+[syntax-el]: https://github.com/emacs-mirror/emacs/blob/c6147e2b539dc3490b47a924bed86da00cc763a7/lisp/emacs-lisp/syntax.el
+[modes-texi]: https://github.com/emacs-mirror/emacs/blob/c6147e2b539dc3490b47a924bed86da00cc763a7/doc/lispref/modes.texi
 [helix]: ./helix.md
 [syntect]: ./syntect.md
 [shiki]: ./shiki.md

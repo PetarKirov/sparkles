@@ -207,7 +207,7 @@ For the sparkles design: vulkanalia is the strongest evidence in the survey that
 <!-- References -->
 
 [repo]: https://github.com/KyleMayes/vulkanalia
-[readme]: https://github.com/KyleMayes/vulkanalia/blob/master/README.md
+[readme]: https://github.com/KyleMayes/vulkanalia/blob/3fcda51f2950689ae85f4adeb6558b36419be26d/README.md
 [docs]: https://docs.rs/vulkanalia/latest/vulkanalia/
 [docs-sys]: https://docs.rs/vulkanalia-sys/latest/vulkanalia_sys/
 [vk-mod]: https://docs.rs/vulkanalia/latest/vulkanalia/vk/index.html
@@ -216,13 +216,13 @@ For the sparkles design: vulkanalia is the strongest evidence in the survey that
 [builder-docs]: https://docs.rs/vulkanalia/latest/vulkanalia/vk/struct.InstanceCreateInfoBuilder.html
 [tutorial]: https://kylemayes.github.io/vulkanalia/
 [tutorial-overview]: https://kylemayes.github.io/vulkanalia/overview.html
-[generator]: https://github.com/KyleMayes/vulkanalia/tree/master/generator
-[builders-kt]: https://github.com/KyleMayes/vulkanalia/blob/master/generator/src/main/kotlin/com/kylemayes/generator/generate/file/Builders.kt
-[chains-kt]: https://github.com/KyleMayes/vulkanalia/blob/master/generator/src/main/kotlin/com/kylemayes/generator/generate/file/Chains.kt
-[wrapper-kt]: https://github.com/KyleMayes/vulkanalia/blob/master/generator/src/main/kotlin/com/kylemayes/generator/generate/support/Wrapper.kt
-[extract-kt]: https://github.com/KyleMayes/vulkanalia/blob/master/generator/src/main/kotlin/com/kylemayes/generator/registry/Extract.kt
-[update-yml]: https://github.com/KyleMayes/vulkanalia/blob/master/.github/workflows/update.yml
-[vk-xml]: https://github.com/KhronosGroup/Vulkan-Docs/blob/main/xml/vk.xml
+[generator]: https://github.com/KyleMayes/vulkanalia/tree/3fcda51f2950689ae85f4adeb6558b36419be26d/generator
+[builders-kt]: https://github.com/KyleMayes/vulkanalia/blob/3fcda51f2950689ae85f4adeb6558b36419be26d/generator/src/main/kotlin/com/kylemayes/generator/generate/file/Builders.kt
+[chains-kt]: https://github.com/KyleMayes/vulkanalia/blob/3fcda51f2950689ae85f4adeb6558b36419be26d/generator/src/main/kotlin/com/kylemayes/generator/generate/file/Chains.kt
+[wrapper-kt]: https://github.com/KyleMayes/vulkanalia/blob/3fcda51f2950689ae85f4adeb6558b36419be26d/generator/src/main/kotlin/com/kylemayes/generator/generate/support/Wrapper.kt
+[extract-kt]: https://github.com/KyleMayes/vulkanalia/blob/3fcda51f2950689ae85f4adeb6558b36419be26d/generator/src/main/kotlin/com/kylemayes/generator/registry/Extract.kt
+[update-yml]: https://github.com/KyleMayes/vulkanalia/blob/3fcda51f2950689ae85f4adeb6558b36419be26d/.github/workflows/update.yml
+[vk-xml]: https://github.com/KhronosGroup/Vulkan-Docs/blob/7f61271fa6b6e7d71bf56dbc3a6165cda43bd8cb/xml/vk.xml
 [ash]: https://github.com/ash-rs/ash
 [ash-push-next]: https://docs.rs/ash/latest/ash/vk/struct.InstanceCreateInfo.html
 [rwh]: https://crates.io/crates/raw-window-handle

@@ -257,4 +257,4 @@ Like [polysemy], fused-effects has documented unsound cases where combinations o
 [fused-effects GitHub repository]: https://github.com/fused-effects/fused-effects
 [Fusion for Free (Wu, Schrijvers 2015)]: https://people.cs.kuleuven.be/~tom.schrijvers/Research/papers/mpc2015.pdf
 [GitHub Semantic's Strange Loop talk on fused-effects]: https://www.youtube.com/watch?v=vfDazZfxlNs
-[fused-effects README with examples]: https://github.com/fused-effects/fused-effects/blob/main/README.md
+[fused-effects README with examples]: https://github.com/fused-effects/fused-effects/blob/3f2d942d701238173923cc066e583ecb91fbdcaf/README.md

@@ -786,7 +786,7 @@ unittest {
 - **create-ink-app scaffolding**: <https://github.com/vadimdemedes/create-ink-app>
 - **Pastel framework**: <https://github.com/vadimdemedes/pastel>
 - **Yoga Layout Engine**: <https://github.com/facebook/yoga>
-- **react-reconciler**: <https://github.com/facebook/react/tree/main/packages/react-reconciler>
+- **react-reconciler**: <https://github.com/facebook/react/tree/7023f501b644815e29a621875c0379ea757905f6/packages/react-reconciler>
 - **Vadim Demedes (author)**: <https://github.com/vadimdemedes>
 - **"Building a React Renderer" (Sophie Alpert talk)**: <https://www.youtube.com/watch?v=CGpMlWVcHok> -- foundational talk on custom React renderers that influenced Ink's architecture
 - **Awesome Ink (community components)**: <https://github.com/vadimdemedes/ink#useful-components> -- curated list of Ink ecosystem packages

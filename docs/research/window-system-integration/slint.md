@@ -451,7 +451,7 @@ That the abstraction exposes the entire underlying `Window` and an `ApplicationH
 [commit]: https://github.com/slint-ui/slint/commit/24318cebc2b3feed4f7187e237915f52715ce285
 [slint-docs]: https://slint.dev/docs
 [platform-docs]: https://docs.rs/i-slint-core/latest/i_slint_core/platform/trait.Platform.html
-[changelog]: https://github.com/slint-ui/slint/blob/master/CHANGELOG.md
+[changelog]: https://github.com/slint-ui/slint/blob/fca8dcbacf79ce75c6e353fdfff58849f3566c89/CHANGELOG.md
 [#1499]: https://github.com/slint-ui/slint/issues/1499
 [PR #4315]: https://github.com/slint-ui/slint/pull/4315
 [winit-2945]: https://github.com/rust-windowing/winit/issues/2945

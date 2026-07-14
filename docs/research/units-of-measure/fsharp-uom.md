@@ -596,21 +596,21 @@ quality bar the template- and trait-based systems in this survey are measured ag
 <!-- Pinned clone (dotnet/fsharp @ 25c6a37e) -->
 
 [repo]: https://github.com/dotnet/fsharp
-[cs-fs]: https://github.com/dotnet/fsharp/blob/25c6a37e/src/Compiler/Checking/ConstraintSolver.fs
-[tt-fs]: https://github.com/dotnet/fsharp/blob/25c6a37e/src/Compiler/TypedTree/TypedTree.fs
-[tto-remap]: https://github.com/dotnet/fsharp/blob/25c6a37e/src/Compiler/TypedTree/TypedTreeOps.Remap.fs
-[pickle]: https://github.com/dotnet/fsharp/blob/25c6a37e/src/Compiler/TypedTree/TypedTreePickle.fs
-[si-fs]: https://github.com/dotnet/fsharp/blob/25c6a37e/src/FSharp.Core/SI.fs
-[prim-types]: https://github.com/dotnet/fsharp/blob/25c6a37e/src/FSharp.Core/prim-types.fsi
-[fscomp]: https://github.com/dotnet/fsharp/blob/25c6a37e/src/Compiler/FSComp.txt
-[syntree]: https://github.com/dotnet/fsharp/blob/25c6a37e/src/Compiler/SyntaxTree/SyntaxTree.fsi
-[parsfsy]: https://github.com/dotnet/fsharp/blob/25c6a37e/src/Compiler/pars.fsy
-[langfeatures]: https://github.com/dotnet/fsharp/blob/25c6a37e/src/Compiler/Facilities/LanguageFeatures.fs
-[relnotes10]: https://github.com/dotnet/fsharp/blob/25c6a37e/docs/release-notes/.Language/10.0.md
-[e-massforce]: https://github.com/dotnet/fsharp/blob/25c6a37e/tests/FSharp.Compiler.ComponentTests/Conformance/UnitsOfMeasure/Basic/E_MassForce.fsx
-[e-unsupported]: https://github.com/dotnet/fsharp/blob/25c6a37e/tests/FSharp.Compiler.ComponentTests/Conformance/UnitsOfMeasure/Diagnostics/E_UnsupportedType01.fsx
-[e-range]: https://github.com/dotnet/fsharp/blob/25c6a37e/tests/FSharp.Compiler.ComponentTests/Conformance/UnitsOfMeasure/Diagnostics/E_RangeOfDimensioned03.fsx
-[neg21]: https://github.com/dotnet/fsharp/blob/25c6a37e/tests/fsharp/typecheck/sigs/neg21.bsl
+[cs-fs]: https://github.com/dotnet/fsharp/blob/25c6a37e68d01387a5d5322e70efecb4551cb058/src/Compiler/Checking/ConstraintSolver.fs
+[tt-fs]: https://github.com/dotnet/fsharp/blob/25c6a37e68d01387a5d5322e70efecb4551cb058/src/Compiler/TypedTree/TypedTree.fs
+[tto-remap]: https://github.com/dotnet/fsharp/blob/25c6a37e68d01387a5d5322e70efecb4551cb058/src/Compiler/TypedTree/TypedTreeOps.Remap.fs
+[pickle]: https://github.com/dotnet/fsharp/blob/25c6a37e68d01387a5d5322e70efecb4551cb058/src/Compiler/TypedTree/TypedTreePickle.fs
+[si-fs]: https://github.com/dotnet/fsharp/blob/25c6a37e68d01387a5d5322e70efecb4551cb058/src/FSharp.Core/SI.fs
+[prim-types]: https://github.com/dotnet/fsharp/blob/25c6a37e68d01387a5d5322e70efecb4551cb058/src/FSharp.Core/prim-types.fsi
+[fscomp]: https://github.com/dotnet/fsharp/blob/25c6a37e68d01387a5d5322e70efecb4551cb058/src/Compiler/FSComp.txt
+[syntree]: https://github.com/dotnet/fsharp/blob/25c6a37e68d01387a5d5322e70efecb4551cb058/src/Compiler/SyntaxTree/SyntaxTree.fsi
+[parsfsy]: https://github.com/dotnet/fsharp/blob/25c6a37e68d01387a5d5322e70efecb4551cb058/src/Compiler/pars.fsy
+[langfeatures]: https://github.com/dotnet/fsharp/blob/25c6a37e68d01387a5d5322e70efecb4551cb058/src/Compiler/Facilities/LanguageFeatures.fs
+[relnotes10]: https://github.com/dotnet/fsharp/blob/25c6a37e68d01387a5d5322e70efecb4551cb058/docs/release-notes/.Language/10.0.md
+[e-massforce]: https://github.com/dotnet/fsharp/blob/25c6a37e68d01387a5d5322e70efecb4551cb058/tests/FSharp.Compiler.ComponentTests/Conformance/UnitsOfMeasure/Basic/E_MassForce.fsx
+[e-unsupported]: https://github.com/dotnet/fsharp/blob/25c6a37e68d01387a5d5322e70efecb4551cb058/tests/FSharp.Compiler.ComponentTests/Conformance/UnitsOfMeasure/Diagnostics/E_UnsupportedType01.fsx
+[e-range]: https://github.com/dotnet/fsharp/blob/25c6a37e68d01387a5d5322e70efecb4551cb058/tests/FSharp.Compiler.ComponentTests/Conformance/UnitsOfMeasure/Diagnostics/E_RangeOfDimensioned03.fsx
+[neg21]: https://github.com/dotnet/fsharp/blob/25c6a37e68d01387a5d5322e70efecb4551cb058/tests/fsharp/typecheck/sigs/neg21.bsl
 
 <!-- Specs, papers & official docs -->
 

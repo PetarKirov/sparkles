@@ -646,7 +646,7 @@ all pass `sz`/`guardPageSize`). Specifics:
 - [bytecodealliance/wasmtime#10248](https://github.com/bytecodealliance/wasmtime/issues/10248)
   — Stack-switching status: `Config::wasm_stack_switching`, x64-only, experimental; GC
   TODOs; backtraces-across-suspensions WIP.
-- [Binaryen CHANGELOG](https://github.com/WebAssembly/binaryen/blob/main/CHANGELOG.md) —
+- [Binaryen CHANGELOG](https://github.com/WebAssembly/binaryen/blob/9cb9f39e4fd8255aa7cb3fd28b875cb949126d57/CHANGELOG.md) —
   v122 "'typed-continuations' renamed 'stack-switching' … experimentally supported";
   v124 "Add Stack Switching support".
 - [WebAssembly/proposals](https://github.com/WebAssembly/proposals) — Stack Switching =

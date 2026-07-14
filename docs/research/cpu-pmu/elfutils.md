@@ -312,4 +312,4 @@ selectors_ to names. The `type`/`config` naming problem is
 [riscv]: ./riscv.md
 [elfutils-home]: https://sourceware.org/elfutils/
 [elfutils-src]: https://sourceware.org/git/?p=elfutils.git;a=tree
-[perf-unwind]: https://github.com/torvalds/linux/blob/e43ffb69e043/tools/perf/util/unwind-libdw.c
+[perf-unwind]: https://github.com/torvalds/linux/blob/e43ffb69e0438cddd72aaa30898b4dc446f664f8/tools/perf/util/unwind-libdw.c

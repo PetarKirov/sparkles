@@ -272,18 +272,18 @@ Validation-layer integration is conventional and external: the Makefile's `make 
 <!-- References -->
 
 [repo]: https://github.com/Octachron/olivine
-[readme]: https://github.com/Octachron/olivine/blob/main/README.md
-[spec-dir]: https://github.com/Octachron/olivine/blob/main/spec/vk.xml
-[libgen]: https://github.com/Octachron/olivine/blob/main/generator/libgen.ml
-[handle-builtin]: https://github.com/Octachron/olivine/blob/main/lib/vk__builtin__handle.ml
-[bitset-builtin]: https://github.com/Octachron/olivine/blob/main/lib/vk__builtin__bitset.ml
-[result-builtin]: https://github.com/Octachron/olivine/blob/main/lib/vk__result.ml
-[ext-sig]: https://github.com/Octachron/olivine/blob/main/lib/vk__extension_sig.ml
-[handle-gen]: https://github.com/Octachron/olivine/blob/main/aster/handle.ml
-[record-ext]: https://github.com/Octachron/olivine/blob/main/aster/record_extension.ml
-[fn-gen]: https://github.com/Octachron/olivine/blob/main/aster/fn.ml
-[structured-spec]: https://github.com/Octachron/olivine/blob/main/info/structured_spec.ml
-[triangle]: https://github.com/Octachron/olivine/blob/main/examples/triangle.ml
+[readme]: https://github.com/Octachron/olivine/blob/f48eba52fe747c63d72c193d04f2962995e26f82/README.md
+[spec-dir]: https://github.com/Octachron/olivine/blob/f48eba52fe747c63d72c193d04f2962995e26f82/spec/vk.xml
+[libgen]: https://github.com/Octachron/olivine/blob/f48eba52fe747c63d72c193d04f2962995e26f82/generator/libgen.ml
+[handle-builtin]: https://github.com/Octachron/olivine/blob/f48eba52fe747c63d72c193d04f2962995e26f82/lib/vk__builtin__handle.ml
+[bitset-builtin]: https://github.com/Octachron/olivine/blob/f48eba52fe747c63d72c193d04f2962995e26f82/lib/vk__builtin__bitset.ml
+[result-builtin]: https://github.com/Octachron/olivine/blob/f48eba52fe747c63d72c193d04f2962995e26f82/lib/vk__result.ml
+[ext-sig]: https://github.com/Octachron/olivine/blob/f48eba52fe747c63d72c193d04f2962995e26f82/lib/vk__extension_sig.ml
+[handle-gen]: https://github.com/Octachron/olivine/blob/f48eba52fe747c63d72c193d04f2962995e26f82/aster/handle.ml
+[record-ext]: https://github.com/Octachron/olivine/blob/f48eba52fe747c63d72c193d04f2962995e26f82/aster/record_extension.ml
+[fn-gen]: https://github.com/Octachron/olivine/blob/f48eba52fe747c63d72c193d04f2962995e26f82/aster/fn.ml
+[structured-spec]: https://github.com/Octachron/olivine/blob/f48eba52fe747c63d72c193d04f2962995e26f82/info/structured_spec.ml
+[triangle]: https://github.com/Octachron/olivine/blob/f48eba52fe747c63d72c193d04f2962995e26f82/examples/triangle.ml
 [spec-bump]: https://github.com/Octachron/olivine/commit/d7e705c5
 [blog]: https://roscidus.com/blog/blog/2025/09/20/ocaml-vulkan/
 [ctypes]: https://github.com/yallop/ocaml-ctypes

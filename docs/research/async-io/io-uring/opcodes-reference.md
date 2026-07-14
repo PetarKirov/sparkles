@@ -535,9 +535,9 @@ For the design rationale behind these primitives — submission/completion rings
 [man-enter]: https://man7.org/linux/man-pages/man2/io_uring_enter.2.html
 [man-setup]: https://man7.org/linux/man-pages/man2/io_uring_setup.2.html
 [man7]: https://man7.org/linux/man-pages/man7/io_uring.7.html
-[uapi]: https://github.com/torvalds/linux/blob/master/include/uapi/linux/io_uring.h
-[opdef]: https://github.com/torvalds/linux/blob/master/io_uring/opdef.c
-[liburing]: https://github.com/axboe/liburing/blob/master/src/include/liburing.h
+[uapi]: https://github.com/torvalds/linux/blob/3b029c035b34bbc693405ddf759f0e9b920c27f1/include/uapi/linux/io_uring.h
+[opdef]: https://github.com/torvalds/linux/blob/3b029c035b34bbc693405ddf759f0e9b920c27f1/io_uring/opdef.c
+[liburing]: https://github.com/axboe/liburing/blob/e50e32a6b9030faba2e30fa0ba999571a0cffe28/src/include/liburing.h
 [axboe-pdf]: https://kernel.dk/io_uring.pdf
 [wiki-611]: https://github.com/axboe/liburing/wiki/What%27s-new-with-io_uring-in-6.11-and-6.12
 [lwn-futex]: https://lwn.net/Articles/945891/
