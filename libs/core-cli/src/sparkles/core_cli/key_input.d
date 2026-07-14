@@ -25,8 +25,8 @@ enum Key { up, down, enter, cancel, other }
 /// enter/use/finish lifecycle).
 struct KeySession
 {
-    Key delegate() next;
-    void delegate() finish;
+    Key delegate() @nogc nothrow next;
+    void delegate() @nogc nothrow finish;
 }
 
 /// Begins a raw-mode key session on stdin, or `null` when arrow-key
@@ -58,7 +58,7 @@ unittest
 /// Classifies a single input byte; `readEscape` is only invoked for a lone
 /// ESC (`0x1b`), and decides between a bare Esc keypress and the start of a
 /// CSI/SS3 escape sequence (typically via a short read timeout).
-private Key classifyByte(char b, scope Key delegate() @safe nothrow readEscape) @safe nothrow
+private Key classifyByte(char b, scope Key delegate() @safe nothrow @nogc readEscape) @safe nothrow @nogc
 {
     switch (b)
     {
@@ -135,7 +135,7 @@ version (Posix)
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
 
         auto restored = false;
-        void finish()
+        void finish() @nogc nothrow
         {
             if (restored) return;
             restored = true;
@@ -147,7 +147,7 @@ version (Posix)
     /// Reads one byte, retrying on `EINTR` (a `SIGWINCH` resize — see
     /// `term_caps.d`'s handler — must not spuriously cancel the prompt).
     /// Returns `1` (byte read), `0` (real EOF), or `-1` (other error).
-    private ptrdiff_t readBytePosix(ref char b) @trusted nothrow
+    private ptrdiff_t readBytePosix(ref char b) @trusted nothrow @nogc
     {
         import core.stdc.errno : EINTR, errno;
         import core.sys.posix.unistd : read, STDIN_FILENO;
@@ -160,7 +160,7 @@ version (Posix)
         }
     }
 
-    private Key readKeyPosix() @trusted nothrow
+    private Key readKeyPosix() @trusted nothrow @nogc
     {
         char b;
         if (readBytePosix(b) != 1)
@@ -168,7 +168,7 @@ version (Posix)
         return classifyByte(b, () => decodeEscapePosix());
     }
 
-    private Key decodeEscapePosix() @trusted nothrow
+    private Key decodeEscapePosix() @trusted nothrow @nogc
     {
         import core.sys.posix.poll : poll, pollfd, POLLIN;
         import core.sys.posix.unistd : STDIN_FILENO;
@@ -217,7 +217,7 @@ version (Windows)
         SetConsoleMode(handle, raw);
 
         auto restored = false;
-        void finish()
+        void finish() @nogc nothrow
         {
             if (restored) return;
             restored = true;
@@ -227,7 +227,7 @@ version (Windows)
     }
 
     /// Returns `1` (byte read), `0`/`-1` on EOF/error (mirrors `readBytePosix`).
-    private ptrdiff_t readByteWindows(HANDLE handle, ref char b) @trusted nothrow
+    private ptrdiff_t readByteWindows(HANDLE handle, ref char b) @trusted nothrow @nogc
     {
         import core.sys.windows.windows : DWORD, ReadFile;
 
@@ -237,7 +237,7 @@ version (Windows)
         return n;
     }
 
-    private Key readKeyWindows(HANDLE handle) @trusted nothrow
+    private Key readKeyWindows(HANDLE handle) @trusted nothrow @nogc
     {
         char b;
         if (readByteWindows(handle, b) != 1)
@@ -245,7 +245,7 @@ version (Windows)
         return classifyByte(b, () => decodeEscapeWindows(handle));
     }
 
-    private Key decodeEscapeWindows(HANDLE handle) @trusted nothrow
+    private Key decodeEscapeWindows(HANDLE handle) @trusted nothrow @nogc
     {
         import core.sys.windows.windows : WAIT_OBJECT_0, WaitForSingleObject;
 
