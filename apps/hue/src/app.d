@@ -13,7 +13,7 @@
 module app;
 
 import std.array : appender;
-import std.file : exists, readText;
+import std.file : readText;
 import std.path : baseName, extension;
 import std.stdio : stderr, write, writef, writeln;
 
@@ -48,21 +48,13 @@ int main(string[] args)
     bool html = cli.html;
     string themeName = cli.theme;
 
-    string sourcePath = args.length > 1 ? args[1] : __FILE_FULL_PATH__;
-    string source = (args.length > 1 || sourcePath.exists) ? readText(sourcePath) : q{
-module sample;
-
-import std.stdio : writeln;
-
-void main()
-{
-    writeln("Hello, syntax!");
-    int x = 42;
-    if (x > 0)
-        writeln("positive");
-}
-};
-    sourcePath = (args.length <= 1 && !sourcePath.exists) ? "sample.d" : sourcePath;
+    // With a path argument, highlight that file; otherwise highlight hue's own
+    // source, embedded at compile time via `import()`. That works from any
+    // install location — the build-time `__FILE_FULL_PATH__` would not exist in
+    // a released (nix-packaged or copied) binary.
+    const hasFile = args.length > 1;
+    const sourcePath = hasFile ? args[1] : "app.d";
+    const source = hasFile ? readText(sourcePath) : import("app.d");
     const lang = canonicalLanguage(sourcePath.extension.length ? sourcePath.extension[1 .. $] : "");
 
     const labels = LabelSet.standard();
