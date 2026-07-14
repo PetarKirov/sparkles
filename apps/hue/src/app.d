@@ -144,13 +144,15 @@ int main(string[] args)
     sink.put(CtlSeq.hideCursor);
     sink.flush();
 
-    runLoop(prev, sink, sess, idx, depth);
+    const result = runLoop(prev, sink, sess, idx, depth);
 
-    // Restore the terminal, then leave the last highlighted frame on the primary
-    // screen (the alt screen's contents are discarded on exit).
+    // Restore the terminal (the alt screen's contents are discarded on exit).
+    // On selection (Enter), print the whole file highlighted with the chosen
+    // theme onto the primary screen; on quit/abort, print nothing.
     sink.put(CtlSeq.showCursor);
     sink.put(CtlSeq.exitAltScreen);
-    sink.put(prev.lastCode());
+    if (result.selected)
+        sink.put(prev.renderFull(result.idx, depth));
     sink.flush();
     return 0;
 }

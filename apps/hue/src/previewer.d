@@ -103,31 +103,51 @@ struct Previewer
     const(char)[] lastCode() const @safe pure nothrow @nogc
         => frame[][codeStart .. codeEnd];
 
-    /// Builds the whole frame for theme `idx` into `frame` (`@nogc nothrow`):
-    /// sync markers, the theme backdrop via back-color-erase, header, the
-    /// highlighted viewport, and the theme-list window. Re-resolves the theme
-    /// into `styleBuf` only when `idx` changed.
-    void buildFrame(size_t idx, ushort width, ushort height, ColorDepth depth)
-        @safe @nogc nothrow
+    /// Renders the $(I entire) source with theme `idx` into the frame buffer and
+    /// returns the bytes — used to print the whole highlighted file to the
+    /// primary screen once the user selects a theme (Enter), rather than the
+    /// viewport slice `buildFrame` shows. `@nogc` (the buffer spills to malloc,
+    /// never the GC, for a large file).
+    const(char)[] renderFull(size_t idx, ColorDepth depth) @safe @nogc nothrow
+    {
+        const theme = themeView(idx);
+        frame.clear();
+        renderAnsi(source, events, theme, frame,
+            AnsiOptions(depth: depth, italics: true, emitBackground: true));
+        return frame[];
+    }
+
+    /// Resolves theme `idx` into the reused `styleBuf` (only when it changed)
+    /// and returns a `ResolvedTheme` borrowing it. The borrow is sound because
+    /// renderAnsi takes `in ResolvedTheme` and never escapes the slice, and the
+    /// buffer is only rewritten on the next theme change.
+    private ResolvedTheme themeView(size_t idx) @safe @nogc nothrow
     in (idx < names.length)
     in (labels.length <= styleBuf.length, "label vocabulary larger than the style buffer")
     {
-        import std.algorithm.comparison : min;
-
         if (idx != resolvedIdx)
         {
             resolveThemeInto(themes[idx], labels, styleBuf[0 .. labels.length],
                 resolvedDefaults);
             resolvedIdx = idx;
         }
-        // A ResolvedTheme borrowing the reused (mutable) style table: sound
-        // because renderAnsi takes `in ResolvedTheme` and never escapes the
-        // slice, and the buffer is only rewritten on the next theme change.
-        const theme = () @trusted {
+        return () @trusted {
             return ResolvedTheme(labels,
                 cast(immutable(StyleSpec)[]) styleBuf[0 .. labels.length],
                 resolvedDefaults);
         }();
+    }
+
+    /// Builds the whole frame for theme `idx` into `frame` (`@nogc nothrow`):
+    /// sync markers, the theme backdrop via back-color-erase, header, the
+    /// highlighted viewport, and the theme-list window.
+    void buildFrame(size_t idx, ushort width, ushort height, ColorDepth depth)
+        @safe @nogc nothrow
+    in (idx < names.length)
+    {
+        import std.algorithm.comparison : min;
+
+        const theme = themeView(idx);
         const chrome = StyleSpec(fg: resolvedDefaults.fg, bg: resolvedDefaults.bg);
 
         enum win = 7;
@@ -155,7 +175,7 @@ struct Previewer
         frame.put("/");
         writeInteger(frame, names.length);
         frame.put(")\n");
-        frame.put(" ↑/↓ switch   any other key quits\n");
+        frame.put(" ↑/↓ switch   enter: print full file   any other key: quit\n");
         putSeparator(sepLen);
 
         // Code lines carry their own per-span styling — start from a clean slate.
@@ -193,11 +213,19 @@ struct Previewer
     const(char)[] frameBytes() const @safe pure nothrow @nogc => frame[];
 }
 
+/// How the previewer loop ended: the theme `idx` last shown, and whether the
+/// user `selected` it (pressed Enter) versus quit/aborted (any other key).
+struct LoopResult
+{
+    size_t idx;
+    bool selected;
+}
+
 /// The interactive core: repaint, flush, read a key, repeat — `@nogc nothrow`,
 /// so a theme switch allocates nothing. `@system` only because raw terminal I/O
-/// (the key delegate, `fwrite`) is inherently unsafe. Returns the last-shown
-/// theme index. `idx` starts at the caller's chosen theme.
-size_t runLoop(ref Previewer prev, ref TermOut sink, ref KeySession sess,
+/// (the key delegate, `fwrite`) is inherently unsafe. `idx` starts at the
+/// caller's chosen theme.
+LoopResult runLoop(ref Previewer prev, ref TermOut sink, ref KeySession sess,
     size_t idx, ColorDepth depth) @system @nogc nothrow
 {
     while (true)
@@ -215,8 +243,10 @@ size_t runLoop(ref Previewer prev, ref TermOut sink, ref KeySession sess,
             case Key.down:
                 idx = (idx + 1 == prev.themeCount()) ? 0 : idx + 1;
                 break;
-            case Key.enter, Key.cancel, Key.other:
-                return idx;
+            case Key.enter:
+                return LoopResult(idx, true);   // select → print the full file
+            case Key.cancel, Key.other:
+                return LoopResult(idx, false);  // quit → print nothing
         }
     }
 }
@@ -281,4 +311,33 @@ unittest
         prev.buildFrame(i % 2, 80, 24, ColorDepth.trueColor);
     const delta = GC.stats.allocatedInCurrentThread - before;
     assert(delta == 0, "buildFrame is not zero-GC in steady state");
+}
+
+@("previewer.renderFull.coversWholeFile")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    // A source taller than a small viewport, with a distinctive last line.
+    static immutable src = "a0\na1\na2\na3\na4\na5\na6\na7\na8\nLAST_LINE\n";
+    static HighlightEvent[1] ev = [HighlightEvent.sourceSpan(0, src.length)];
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+
+    Previewer prev;
+    prev.title = "t";
+    prev.source = src;
+    prev.events = ev[];
+    prev.labels = LabelSet.standard();
+    prev.names = names[];
+    prev.themes = themes[];
+
+    // height 14 → reserved 11 → maxCode 3 visible lines: the viewport truncates.
+    prev.buildFrame(0, 40, 14, ColorDepth.trueColor);
+    assert(!prev.lastCode().canFind("LAST_LINE"), "viewport should truncate");
+
+    const full = prev.renderFull(0, ColorDepth.trueColor);
+    assert(full.canFind("a0") && full.canFind("LAST_LINE"),
+        "renderFull must cover the whole file");
 }
