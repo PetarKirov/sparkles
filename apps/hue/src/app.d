@@ -6,6 +6,9 @@
 //
 // Usage: hue [--html] [--theme <theme>] [path] (defaults to this file itself)
 //   Interactive TUI (tty, no --html): ↑/↓ to switch themes live; any other key quits.
+//
+// Startup here is GC (CLI parse, file read, tree-sitter parse, theme list); the
+// interactive render/output core lives in `previewer.d` and is @nogc.
 
 module app;
 
@@ -18,8 +21,10 @@ import sparkles.syntax;
 import sparkles.core_cli.args;
 
 import sparkles.base.term_control : CtlSeq;
-import sparkles.core_cli.key_input : Key, stdioKeySession;
-import sparkles.core_cli.term_caps : isTerminal, StdStream, terminalSize;
+import sparkles.core_cli.key_input : stdioKeySession;
+import sparkles.core_cli.term_caps : isTerminal, StdStream;
+
+import previewer : Previewer, runLoop, TermOut;
 
 struct CliParams
 {
@@ -30,36 +35,11 @@ struct CliParams
     string theme = "catppuccin-mocha";
 }
 
-// `CtlSeq` is a `string`-based enum; `std.stdio.write` formats enums by their
-// symbolic member name (e.g. "enterAltScreen"), not the underlying escape
-// sequence, so writing one directly silently prints garbage instead of
-// control codes. Route every use through an explicit cast to `string`.
-void writeCtl(CtlSeq seq)
-{
-    write(cast(string) seq);
-}
-
-// The first `n` lines of `s` (including the newline that ends line `n`), or all
-// of `s` when it has fewer. The previewer only ever shows the top of the file,
-// so slicing here keeps the highlight fold O(visible lines) instead of
-// O(file) — the difference between a 40-line viewport and a multi-thousand-line
-// source on every keystroke.
-const(char)[] firstLines(return scope const(char)[] s, size_t n) @safe pure nothrow @nogc
-{
-    if (n == 0)
-        return s;
-    size_t seen = 0;
-    foreach (i, char c; s)
-        if (c == '\n' && ++seen == n)
-            return s[0 .. i + 1];
-    return s;
-}
-
 int main(string[] args)
 {
     const cli = args.parseCliArgs!CliParams(
         HelpInfo(
-            "highlight-file",
+            "hue",
             "The full precise-mode pipeline: file -> tree-sitter parse -> highlights query -> event stream -> ANSI (stdout) or HTML.",
             null
         )
@@ -132,9 +112,15 @@ void main()
         return 0;
     }
 
-    string[] names = builtinThemes.keys.dup;
+    // Sorted theme names, plus the parallel theme values the previewer indexes
+    // per frame (avoids per-frame GC AA lookups; `.keys` already returns a
+    // fresh array, so no `.dup`).
+    string[] names = builtinThemes.keys;
     import std.algorithm.sorting : sort;
+    import std.algorithm.iteration : map;
+    import std.array : array;
     sort(names);
+    immutable(Theme)[] themes = names.map!(n => *(n in builtinThemes)).array;
 
     size_t idx = 0;
     foreach (i, n; names) if (n == themeName) { idx = i; break; }
@@ -151,113 +137,28 @@ void main()
     auto sess = sessFactory();
     scope (exit) sess.finish();
 
-    writeCtl(CtlSeq.enterAltScreen);
-    writeCtl(CtlSeq.hideCursor);
-    scope (exit)
-    {
-        writeCtl(CtlSeq.showCursor);
-        writeCtl(CtlSeq.exitAltScreen);
-    }
-
-    // Emits the SGR transition from `from` to `to` directly to stdout.
-    void emitSgr(in StyleSpec from, in StyleSpec to, ColorDepth depth)
-    {
-        import sparkles.base.smallbuffer : SmallBuffer;
-        SmallBuffer!(char, 64) sgr;
-        writeStyleTransition(sgr, from, to, depth);
-        write(sgr[]);
-    }
-
-    // Color depth is a stable property of the session — probe once, not per
-    // frame. Resolved themes are memoized: switching revisits themes, and each
-    // resolveTheme allocates a fresh label→style table.
     const depth = detectColorDepth();
-    ResolvedTheme[string] resolvedCache;
+    auto prev = Previewer(
+        title: baseName(sourcePath),
+        source: source,
+        events: events[],
+        labels: labels,
+        names: names,
+        themes: themes,
+    );
 
-    ref const(ResolvedTheme) resolveCached(string name)
-    {
-        if (auto r = name in resolvedCache)
-            return *r;
-        auto tp = name in builtinThemes;
-        resolvedCache[name] = resolveTheme(tp ? *tp : builtinDark, labels);
-        return resolvedCache[name];
-    }
+    auto sink = TermOut.standard();
+    sink.put(CtlSeq.enterAltScreen);
+    sink.put(CtlSeq.hideCursor);
+    sink.flush();
 
-    string lastRendered;
-    while (true)
-    {
-        const cur = names[idx];
-        const resolved = resolveCached(cur);
-        const chrome = StyleSpec(fg: resolved.defaults.fg, bg: resolved.defaults.bg);
+    runLoop(prev, sink, sess, idx, depth);
 
-        import std.algorithm.comparison : min;
-        const sz = terminalSize();
-        enum win = 7;
-        const reserved = 4u + win; // header + hint + 2 separators + theme list
-        const maxCode = (sz.height > reserved) ? sz.height - reserved : 10;
-
-        // Render only the visible slice: highlighting the whole file every frame
-        // and then discarding all but `maxCode` lines was the theme-switch
-        // regression (O(file) render + idup + splitLines per keystroke).
-        // renderAnsi clamps spans to the sliced length, so the shared event
-        // stream needs no filtering.
-        const shown = source.firstLines(maxCode);
-
-        import sparkles.base.smallbuffer : SmallBuffer;
-        SmallBuffer!(char, 8192) buf;
-        renderAnsi(shown, events[], resolved, buf,
-            AnsiOptions(depth: depth, italics: true, emitBackground: true));
-        lastRendered = buf[].idup;
-
-        import std.string : splitLines;
-        auto view = lastRendered.splitLines();
-
-        writeCtl(CtlSeq.syncBegin);
-        // Open the theme's fg/bg before erasing: terminals with "back color
-        // erase" (xterm, kitty, alacritty, ghostty, iTerm2, Windows Terminal —
-        // effectively universal) fill erased cells with the *current* SGR
-        // background, so the whole alt-screen viewport picks up the theme's
-        // backdrop with no per-line padding needed.
-        emitSgr(StyleSpec.init, chrome, depth);
-        writeCtl(CtlSeq.eraseDisplay);
-        writeCtl(CtlSeq.cursorHome);
-
-        writef(" %s  —  %s (%d/%d)\n", baseName(sourcePath), cur, idx + 1, names.length);
-        write(" ↑/↓ switch   any other key quits\n");
-        const sepLen = sz.width ? min(60, sz.width) : 60;
-        foreach (_; 0 .. sepLen) write('─');
-        write('\n');
-
-        // Code lines already carry their own per-span (incl. background)
-        // styling — start them from a clean slate rather than the chrome
-        // style above.
-        emitSgr(chrome, StyleSpec.init, depth);
-        foreach (l; view) write(l, "\n");
-        emitSgr(StyleSpec.init, chrome, depth);
-
-        foreach (_; 0 .. sepLen) write('─');
-        write('\n');
-
-        size_t vs = (idx < win / 2) ? 0 : idx - win / 2;
-        vs = (vs + win > names.length) ? (names.length > win ? names.length - win : 0) : vs;
-        foreach (i; vs .. (vs + win > names.length ? names.length : vs + win))
-            write(i == idx ? "❯ " : "  ", names[i], "\n");
-
-        emitSgr(chrome, StyleSpec.init, depth);
-        writeCtl(CtlSeq.syncEnd);
-
-        final switch (sess.next())
-        {
-            case Key.up:   idx = (idx == 0) ? names.length - 1 : idx - 1; break;
-            case Key.down: idx = (idx + 1 == names.length) ? 0 : idx + 1; break;
-            case Key.enter, Key.cancel, Key.other:
-                goto done;
-        }
-    }
-done:;
-
-    writeCtl(CtlSeq.showCursor);
-    writeCtl(CtlSeq.exitAltScreen);
-    write(lastRendered);
+    // Restore the terminal, then leave the last highlighted frame on the primary
+    // screen (the alt screen's contents are discarded on exit).
+    sink.put(CtlSeq.showCursor);
+    sink.put(CtlSeq.exitAltScreen);
+    sink.put(prev.lastCode());
+    sink.flush();
     return 0;
 }
