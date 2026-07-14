@@ -84,17 +84,23 @@ struct ResolvedTheme
 }
 
 /**
-Resolves `theme` against `labels`: for every vocabulary name, the longest
-rule selector that is a dot-prefix of the name wins (last rule wins among
-equal selectors); unmatched names get `StyleSpec.init`.
+Resolves `theme` into a caller-provided `styles` buffer (`@nogc`): for every
+vocabulary name, the longest rule selector that is a dot-prefix of the name
+wins (last rule wins among equal selectors); unmatched names get
+`StyleSpec.init`. `styles` must be exactly `labels.length` long and is written
+in full; `defaults` receives the normalized unlabeled-text style.
 
-Configure-time only (allocates the table once). A `defaultFg`/`defaultBg` of
-`Color.defaultColor` is normalized to unset in `defaults` — for a renderer,
-"the terminal default" and "unspecified" both mean "emit nothing".
+Allocation-free — the whole-table resolution logic without the array. A
+`@nogc nothrow` caller (e.g. an interactive previewer re-resolving on each
+theme switch into one reused buffer) can drive this directly; `resolveTheme`
+is the GC-allocating convenience wrapper. A `defaultFg`/`defaultBg` of
+`Color.defaultColor` is normalized to unset — for a renderer, "the terminal
+default" and "unspecified" both mean "emit nothing".
 */
-ResolvedTheme resolveTheme(in Theme theme, LabelSet labels) pure nothrow
+void resolveThemeInto(in Theme theme, LabelSet labels,
+    scope StyleSpec[] styles, out StyleSpec defaults) @safe pure nothrow @nogc
+in (styles.length == labels.length, "styles buffer must match the label vocabulary size")
 {
-    auto styles = new StyleSpec[](labels.length);
     foreach (i; 0 .. labels.length)
     {
         const labelName = labels.name(LabelId(cast(ushort) i));
@@ -113,9 +119,22 @@ ResolvedTheme resolveTheme(in Theme theme, LabelSet labels) pure nothrow
         styles[i] = found ? best : StyleSpec.init;
     }
 
-    const defaults = StyleSpec(
+    defaults = StyleSpec(
         fg: normalizeDefault(theme.defaultFg),
         bg: normalizeDefault(theme.defaultBg));
+}
+
+/**
+Resolves `theme` against `labels` into a freshly allocated `ResolvedTheme`.
+
+Configure-time only (allocates the table once); see $(LREF resolveThemeInto)
+for the `@nogc` caller-buffer variant this delegates to.
+*/
+ResolvedTheme resolveTheme(in Theme theme, LabelSet labels) pure nothrow
+{
+    auto styles = new StyleSpec[](labels.length);
+    StyleSpec defaults;
+    resolveThemeInto(theme, labels, styles, defaults);
     return ResolvedTheme(labels, styles.idup, defaults);
 }
 
@@ -154,6 +173,47 @@ unittest
     const labels = LabelSet.standard();
     const resolved = resolveTheme(theme, labels);
     assert(resolved[labels.find("string")].empty);
+}
+
+@("theme.resolveThemeInto.nogc")
+@safe pure nothrow @nogc
+unittest
+{
+    // Resolves into a stack buffer with no GC — the interactive-previewer path.
+    ThemeRule[1] rules = [ThemeRule("string", StyleSpec(fg: Color.fromPalette(2)))];
+    const theme = Theme(name: "t", defaultFg: Color.fromPalette(7), rules: rules[]);
+    const labels = LabelSet.standard();
+
+    StyleSpec[128] buf = void;
+    assert(labels.length <= buf.length);
+    StyleSpec defaults;
+    resolveThemeInto(theme, labels, buf[0 .. labels.length], defaults);
+
+    assert(buf[labels.find("string").value] == StyleSpec(fg: Color.fromPalette(2)));
+    assert(buf[labels.find("keyword").value] == StyleSpec.init);
+    assert(defaults.fg == Color.fromPalette(7));
+}
+
+@("theme.resolveThemeInto.matchesWrapper")
+@safe pure nothrow
+unittest
+{
+    // The caller-buffer path is identical to the GC wrapper, entry for entry.
+    const theme = Theme(name: "t", defaultBg: Color.fromPalette(235), rules: [
+        ThemeRule("string", StyleSpec(fg: Color.fromPalette(2))),
+        ThemeRule("string.special", StyleSpec(fg: Color.fromPalette(5))),
+        ThemeRule("comment", StyleSpec(fg: Color.fromPalette(8))),
+    ]);
+    const labels = LabelSet.standard();
+    const wrapped = resolveTheme(theme, labels);
+
+    auto buf = new StyleSpec[](labels.length);
+    StyleSpec defaults;
+    resolveThemeInto(theme, labels, buf, defaults);
+
+    foreach (i; 0 .. labels.length)
+        assert(buf[i] == wrapped.styles[i]);
+    assert(defaults == wrapped.defaults);
 }
 
 @("theme.StyleSpec.empty")
