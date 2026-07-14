@@ -630,11 +630,11 @@ Shared vocabulary: [concepts.md][concepts] ([instrumentation locus][locus],
 [comparison]: ./comparison.md
 [cpu-pmu-macos]: ../cpu-pmu/macos.md
 [llvm-src]: https://github.com/llvm/llvm-project/tree/73802c2e9d102a4fb646bc039754779fca3ea476
-[ldc-linker-gcc]: https://github.com/ldc-developers/ldc/blob/v1.41.0/driver/linker-gcc.cpp
-[ldc-linker-msvc]: https://github.com/ldc-developers/ldc/blob/v1.41.0/driver/linker-msvc.cpp
-[ldc-lit]: https://github.com/ldc-developers/ldc/blob/v1.41.0/tests/sanitizers/lit.local.cfg
-[ldc-cmake]: https://github.com/ldc-developers/ldc/blob/v1.41.0/CMakeLists.txt
-[ldc-changelog]: https://github.com/ldc-developers/ldc/blob/v1.41.0/CHANGELOG.md
+[ldc-linker-gcc]: https://github.com/ldc-developers/ldc/blob/90e39b6a6e61d36ef5f5d0ab6ae0667130fd8549/driver/linker-gcc.cpp
+[ldc-linker-msvc]: https://github.com/ldc-developers/ldc/blob/90e39b6a6e61d36ef5f5d0ab6ae0667130fd8549/driver/linker-msvc.cpp
+[ldc-lit]: https://github.com/ldc-developers/ldc/blob/90e39b6a6e61d36ef5f5d0ab6ae0667130fd8549/tests/sanitizers/lit.local.cfg
+[ldc-cmake]: https://github.com/ldc-developers/ldc/blob/90e39b6a6e61d36ef5f5d0ab6ae0667130fd8549/CMakeLists.txt
+[ldc-changelog]: https://github.com/ldc-developers/ldc/blob/90e39b6a6e61d36ef5f5d0ab6ae0667130fd8549/CHANGELOG.md
 [ldc-3760]: https://github.com/ldc-developers/ldc/issues/3760
 [compiler-rt-lsan]: https://github.com/llvm/llvm-project/blob/73802c2e9d102a4fb646bc039754779fca3ea476/compiler-rt/lib/lsan/lsan_common.h
 [compiler-rt-nanozone]: https://github.com/llvm/llvm-project/blob/73802c2e9d102a4fb646bc039754779fca3ea476/compiler-rt/unittests/lit.common.unit.cfg.py

@@ -523,12 +523,12 @@ What Go does **not** optimize, relative to completion runtimes: it does not avoi
 <!-- References -->
 
 [golang/go]: https://github.com/golang/go
-[runtime/netpoll.go source]: https://github.com/golang/go/blob/master/src/runtime/netpoll.go
-[runtime/netpoll_epoll.go source]: https://github.com/golang/go/blob/master/src/runtime/netpoll_epoll.go
-[runtime/proc.go source]: https://github.com/golang/go/blob/master/src/runtime/proc.go
-[runtime/time.go source]: https://github.com/golang/go/blob/master/src/runtime/time.go
-[internal/poll/fd_poll_runtime.go source]: https://github.com/golang/go/blob/master/src/internal/poll/fd_poll_runtime.go
-[internal/poll/fd_unix.go source]: https://github.com/golang/go/blob/master/src/internal/poll/fd_unix.go
+[runtime/netpoll.go source]: https://github.com/golang/go/blob/a1298407792546b9e93393c903c26be9e87e8e3b/src/runtime/netpoll.go
+[runtime/netpoll_epoll.go source]: https://github.com/golang/go/blob/a1298407792546b9e93393c903c26be9e87e8e3b/src/runtime/netpoll_epoll.go
+[runtime/proc.go source]: https://github.com/golang/go/blob/a1298407792546b9e93393c903c26be9e87e8e3b/src/runtime/proc.go
+[runtime/time.go source]: https://github.com/golang/go/blob/a1298407792546b9e93393c903c26be9e87e8e3b/src/runtime/time.go
+[internal/poll/fd_poll_runtime.go source]: https://github.com/golang/go/blob/a1298407792546b9e93393c903c26be9e87e8e3b/src/internal/poll/fd_poll_runtime.go
+[internal/poll/fd_unix.go source]: https://github.com/golang/go/blob/a1298407792546b9e93393c903c26be9e87e8e3b/src/internal/poll/fd_unix.go
 [Go runtime package docs]: https://pkg.go.dev/runtime
 [The Go netpoller (Morsing)]: https://morsmachine.dk/netpoller
 [go-31908]: https://github.com/golang/go/issues/31908

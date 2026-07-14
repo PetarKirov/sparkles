@@ -329,7 +329,7 @@ From an effect-systems viewpoint, stack switching gives Wasm a practical backend
 [papers]: papers.md
 [parallelism]: parallelism.md
 [WebAssembly/stack-switching]: https://github.com/WebAssembly/stack-switching
-[Stack-switching Explainer.md]: https://github.com/WebAssembly/stack-switching/blob/main/proposals/stack-switching/Explainer.md
+[Stack-switching Explainer.md]: https://github.com/WebAssembly/stack-switching/blob/c7be390539e5fc10669c88cadc4fa4b32fba1d47/proposals/stack-switching/Explainer.md
 [WebAssembly proposals tracker]: https://github.com/WebAssembly/proposals
 [Continuing WebAssembly with Effect Handlers (OOPSLA 2023)]: https://doi.org/10.1145/3622814
 [WasmFX project site]: https://wasmfx.dev/

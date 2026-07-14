@@ -555,16 +555,16 @@ common case ends.
 <!-- Pinned clone (measured @ 3f65500) -->
 
 [repo]: https://github.com/nacular/measured
-[units]: https://github.com/nacular/measured/blob/3f65500/src/commonMain/kotlin/io/nacular/measured/units/Units.kt
-[length]: https://github.com/nacular/measured/blob/3f65500/src/commonMain/kotlin/io/nacular/measured/units/Length.kt
-[time]: https://github.com/nacular/measured/blob/3f65500/src/commonMain/kotlin/io/nacular/measured/units/Time.kt
-[mass]: https://github.com/nacular/measured/blob/3f65500/src/commonMain/kotlin/io/nacular/measured/units/Mass.kt
-[angle]: https://github.com/nacular/measured/blob/3f65500/src/commonMain/kotlin/io/nacular/measured/units/Angle.kt
-[binarysize]: https://github.com/nacular/measured/blob/3f65500/src/commonMain/kotlin/io/nacular/measured/units/BinarySize.kt
-[graphics]: https://github.com/nacular/measured/blob/3f65500/src/commonMain/kotlin/io/nacular/measured/units/GraphicsLength.kt
-[unittests]: https://github.com/nacular/measured/blob/3f65500/src/commonTest/kotlin/io/nacular/measured/units/UnitTests.kt
-[readme]: https://github.com/nacular/measured/blob/3f65500/README.md
-[module]: https://github.com/nacular/measured/blob/3f65500/Module.md
+[units]: https://github.com/nacular/measured/blob/3f65500945e5c09318ae895621825894ab95cad9/src/commonMain/kotlin/io/nacular/measured/units/Units.kt
+[length]: https://github.com/nacular/measured/blob/3f65500945e5c09318ae895621825894ab95cad9/src/commonMain/kotlin/io/nacular/measured/units/Length.kt
+[time]: https://github.com/nacular/measured/blob/3f65500945e5c09318ae895621825894ab95cad9/src/commonMain/kotlin/io/nacular/measured/units/Time.kt
+[mass]: https://github.com/nacular/measured/blob/3f65500945e5c09318ae895621825894ab95cad9/src/commonMain/kotlin/io/nacular/measured/units/Mass.kt
+[angle]: https://github.com/nacular/measured/blob/3f65500945e5c09318ae895621825894ab95cad9/src/commonMain/kotlin/io/nacular/measured/units/Angle.kt
+[binarysize]: https://github.com/nacular/measured/blob/3f65500945e5c09318ae895621825894ab95cad9/src/commonMain/kotlin/io/nacular/measured/units/BinarySize.kt
+[graphics]: https://github.com/nacular/measured/blob/3f65500945e5c09318ae895621825894ab95cad9/src/commonMain/kotlin/io/nacular/measured/units/GraphicsLength.kt
+[unittests]: https://github.com/nacular/measured/blob/3f65500945e5c09318ae895621825894ab95cad9/src/commonTest/kotlin/io/nacular/measured/units/UnitTests.kt
+[readme]: https://github.com/nacular/measured/blob/3f65500945e5c09318ae895621825894ab95cad9/README.md
+[module]: https://github.com/nacular/measured/blob/3f65500945e5c09318ae895621825894ab95cad9/Module.md
 
 <!-- Official docs -->
 

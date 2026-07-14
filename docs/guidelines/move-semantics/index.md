@@ -768,9 +768,9 @@ guarantees.
 [spec-disable-copy]: https://dlang.org/spec/struct.html#disable-copy
 [std-elaborate-move]: https://dlang.org/phobos/std_traits.html#hasElaborateMove
 [move-doc]: https://dlang.org/phobos/core_lifetime.html#.move
-[dip1014]: https://github.com/dlang/DIPs/blob/master/DIPs/accepted/DIP1014.md
-[dip1018]: https://github.com/dlang/DIPs/blob/master/DIPs/accepted/DIP1018.md
-[dip1040]: https://github.com/dlang/DIPs/blob/master/DIPs/other/DIP1040.md
+[dip1014]: https://github.com/dlang/DIPs/blob/90490da522d8209c7940071a4a58c5b4d7e8938e/DIPs/accepted/DIP1014.md
+[dip1018]: https://github.com/dlang/DIPs/blob/90490da522d8209c7940071a4a58c5b4d7e8938e/DIPs/accepted/DIP1018.md
+[dip1040]: https://github.com/dlang/DIPs/blob/90490da522d8209c7940071a4a58c5b4d7e8938e/DIPs/other/DIP1040.md
 [issue-20970]: https://github.com/dlang/dmd/issues/20970
 [toolchain-req]: https://dub.pm/dub-reference/package_settings/#toolchainrequirements
 [pr-17050]: https://github.com/dlang/dmd/pull/17050

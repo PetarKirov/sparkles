@@ -393,4 +393,4 @@ The lineage is among the **most battle-tested parsing infrastructure in any lang
 [atto-bytestring]: https://hackage.haskell.org/package/attoparsec-0.14.4/docs/Data-Attoparsec-ByteString.html
 [flat-hackage]: https://hackage.haskell.org/package/flatparse
 [flat-repo]: https://github.com/AndrasKovacs/flatparse
-[flat-readme]: https://raw.githubusercontent.com/AndrasKovacs/flatparse/master/README.md
+[flat-readme]: https://raw.githubusercontent.com/AndrasKovacs/flatparse/df7e978f710a96f4ed3366b89be67a8b8550b948/README.md

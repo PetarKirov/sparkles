@@ -390,7 +390,7 @@ tooling rules without upgrading `plz` itself.
 [lexicon]: https://please.build/lexicon.html
 [commands]: https://please.build/commands.html
 [faq]: https://please.build/faq.html
-[changes]: https://github.com/thought-machine/please/blob/master/src/query/changes.go
+[changes]: https://github.com/thought-machine/please/blob/0e61e4eaf5964dd457d1613a3196fb8afcd3ac26/src/query/changes.go
 [bazel]: ../bazel/
 [buck2]: ../buck2/
 [pants]: ../pants/

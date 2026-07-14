@@ -713,8 +713,8 @@ Notcurses' zero-allocation rendering philosophy (packed cells, frame diffing, mi
 - **Wiki**: [nick-black.com/dankwiki/Notcurses](https://nick-black.com/dankwiki/index.php/Notcurses)
 - **Book**: _Hacking the Planet with Notcurses: A Guide to TUIs and Character Graphics_ by Nick Black ([free PDF](https://nick-black.com/htp-notcurses.pdf))
 - **Nick Black's blog**: [nick-black.com](https://nick-black.com)
-- **API header**: [`include/notcurses/notcurses.h`](https://github.com/dankamongmen/notcurses/blob/master/include/notcurses/notcurses.h)
+- **API header**: [`include/notcurses/notcurses.h`](https://github.com/dankamongmen/notcurses/blob/b26048eebc74d5d254717d3332fa484718f9efe6/include/notcurses/notcurses.h)
 - **Rust binding**: [libnotcurses-sys on crates.io](https://crates.io/crates/libnotcurses-sys)
 - **Demo video / showcase**: Run `notcurses-demo` after installation
-- **NEWS / changelog**: [NEWS.md](https://github.com/dankamongmen/notcurses/blob/master/NEWS.md)
+- **NEWS / changelog**: [NEWS.md](https://github.com/dankamongmen/notcurses/blob/b26048eebc74d5d254717d3332fa484718f9efe6/NEWS.md)
 - **FOSDEM 2021 talk**: Nick Black on Notcurses and modern terminal capabilities

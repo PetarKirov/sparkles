@@ -417,7 +417,7 @@ keys on).
 [dvisvgm]: https://dvisvgm.de/
 [dvisvgm-man]: https://dvisvgm.de/Manpage/
 [dvisvgm-repo]: https://github.com/mgieseki/dvisvgm
-[manim-tex]: https://github.com/ManimCommunity/manim/blob/4d25c031ffe7/manim/utils/tex_file_writing.py
+[manim-tex]: https://github.com/ManimCommunity/manim/blob/4d25c031ffe71c602e20935afd54a96f33545a6e/manim/utils/tex_file_writing.py
 [mathjax-repo]: https://github.com/mathjax/MathJax-src
 [mathjax-site]: https://www.mathjax.org/
 [katex-repo]: https://github.com/KaTeX/KaTeX
@@ -429,5 +429,5 @@ keys on).
 [typst-ref]: https://typst.app/docs/reference/
 [typstts]: https://github.com/Myriad-Dreamin/typst.ts
 [harfbuzz]: https://harfbuzz.github.io/
-[hb-math]: https://github.com/harfbuzz/harfbuzz/blob/907579859f60/src/hb-ot-math.h
-[hb-copying]: https://github.com/harfbuzz/harfbuzz/blob/907579859f60/COPYING
+[hb-math]: https://github.com/harfbuzz/harfbuzz/blob/907579859f604633ad511f2f49fa0299d799d9b8/src/hb-ot-math.h
+[hb-copying]: https://github.com/harfbuzz/harfbuzz/blob/907579859f604633ad511f2f49fa0299d799d9b8/COPYING

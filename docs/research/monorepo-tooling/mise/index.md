@@ -539,25 +539,25 @@ skips to avoid redundant work.
 <!-- References -->
 
 [repo]: https://github.com/jdx/mise
-[readme]: https://github.com/jdx/mise/blob/main/README.md
+[readme]: https://github.com/jdx/mise/blob/e3920138974b779f82b1822aa8d02b67a77dbbe0/README.md
 [docs]: https://mise.jdx.dev/
 [docs-tasks]: https://mise.jdx.dev/tasks/
 [docs-taskcfg]: https://mise.jdx.dev/tasks/task-configuration.html
 [docs-monorepo]: https://mise.jdx.dev/tasks/monorepo.html
-[docs-monorepo-md]: https://github.com/jdx/mise/blob/main/docs/tasks/monorepo.md
+[docs-monorepo-md]: https://github.com/jdx/mise/blob/e3920138974b779f82b1822aa8d02b67a77dbbe0/docs/tasks/monorepo.md
 [docs-arch]: https://mise.jdx.dev/tasks/architecture.html
 [releases]: https://github.com/jdx/mise/releases
 [disc-6564]: https://github.com/jdx/mise/discussions/6564
-[config-root]: https://github.com/jdx/mise/blob/main/src/config/config_file/config_root.rs
-[mise-toml]: https://github.com/jdx/mise/blob/main/src/config/config_file/mise_toml.rs
-[config-mod]: https://github.com/jdx/mise/blob/main/src/config/mod.rs
-[deps]: https://github.com/jdx/mise/blob/main/src/task/deps.rs
-[scheduler]: https://github.com/jdx/mise/blob/main/src/task/task_scheduler.rs
-[source-checker]: https://github.com/jdx/mise/blob/main/src/task/task_source_checker.rs
-[task-dep]: https://github.com/jdx/mise/blob/main/src/task/task_dep.rs
-[task-mod]: https://github.com/jdx/mise/blob/main/src/task/mod.rs
-[src-deps]: https://github.com/jdx/mise/tree/main/src/deps
-[run]: https://github.com/jdx/mise/blob/main/src/cli/run.rs
+[config-root]: https://github.com/jdx/mise/blob/e3920138974b779f82b1822aa8d02b67a77dbbe0/src/config/config_file/config_root.rs
+[mise-toml]: https://github.com/jdx/mise/blob/e3920138974b779f82b1822aa8d02b67a77dbbe0/src/config/config_file/mise_toml.rs
+[config-mod]: https://github.com/jdx/mise/blob/e3920138974b779f82b1822aa8d02b67a77dbbe0/src/config/mod.rs
+[deps]: https://github.com/jdx/mise/blob/e3920138974b779f82b1822aa8d02b67a77dbbe0/src/task/deps.rs
+[scheduler]: https://github.com/jdx/mise/blob/e3920138974b779f82b1822aa8d02b67a77dbbe0/src/task/task_scheduler.rs
+[source-checker]: https://github.com/jdx/mise/blob/e3920138974b779f82b1822aa8d02b67a77dbbe0/src/task/task_source_checker.rs
+[task-dep]: https://github.com/jdx/mise/blob/e3920138974b779f82b1822aa8d02b67a77dbbe0/src/task/task_dep.rs
+[task-mod]: https://github.com/jdx/mise/blob/e3920138974b779f82b1822aa8d02b67a77dbbe0/src/task/mod.rs
+[src-deps]: https://github.com/jdx/mise/tree/e3920138974b779f82b1822aa8d02b67a77dbbe0/src/deps
+[run]: https://github.com/jdx/mise/blob/e3920138974b779f82b1822aa8d02b67a77dbbe0/src/cli/run.rs
 [task]: ../task/
 [just]: ../just/
 [make]: ../make/

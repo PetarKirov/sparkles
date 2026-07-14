@@ -155,5 +155,5 @@ the experiment transcripts are the primary evidence.
 <!-- References -->
 
 [llvm-project@73802c2e]: https://github.com/llvm/llvm-project/tree/73802c2e9d102a4fb646bc039754779fca3ea476
-[linux@e43ffb69e043]: https://github.com/torvalds/linux/blob/e43ffb69e043/Documentation/arch/arm64/memory-tagging-extension.rst
+[linux@e43ffb69e043]: https://github.com/torvalds/linux/blob/e43ffb69e0438cddd72aaa30898b4dc446f664f8/Documentation/arch/arm64/memory-tagging-extension.rst
 [ldc@v1.41.0]: https://github.com/ldc-developers/ldc/tree/v1.41.0

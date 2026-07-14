@@ -620,17 +620,17 @@ dominate the build.
 <!-- Pinned clone (unchained @ 426d72a) -->
 
 [repo]: https://github.com/SciNim/Unchained
-[readme]: https://github.com/SciNim/Unchained/blob/426d72a/README.org
-[coretypes]: https://github.com/SciNim/Unchained/blob/426d72a/src/unchained/core_types.nim
-[quantities]: https://github.com/SciNim/Unchained/blob/426d72a/src/unchained/quantities.nim
-[ctunit]: https://github.com/SciNim/Unchained/blob/426d72a/src/unchained/ct_unit_types.nim
-[units]: https://github.com/SciNim/Unchained/blob/426d72a/src/unchained/units.nim
-[defunits]: https://github.com/SciNim/Unchained/blob/426d72a/src/unchained/define_units.nim
-[siunits]: https://github.com/SciNim/Unchained/blob/426d72a/src/unchained/si_units.nim
-[api]: https://github.com/SciNim/Unchained/blob/426d72a/src/unchained/api.nim
-[custom]: https://github.com/SciNim/Unchained/blob/426d72a/examples/custom_unit_system.nim
-[tests]: https://github.com/SciNim/Unchained/blob/426d72a/tests/tunchained.nim
-[nimble]: https://github.com/SciNim/Unchained/blob/426d72a/unchained.nimble
+[readme]: https://github.com/SciNim/Unchained/blob/426d72a5cd0c48d63fe4747bee8dfb964a9629c0/README.org
+[coretypes]: https://github.com/SciNim/Unchained/blob/426d72a5cd0c48d63fe4747bee8dfb964a9629c0/src/unchained/core_types.nim
+[quantities]: https://github.com/SciNim/Unchained/blob/426d72a5cd0c48d63fe4747bee8dfb964a9629c0/src/unchained/quantities.nim
+[ctunit]: https://github.com/SciNim/Unchained/blob/426d72a5cd0c48d63fe4747bee8dfb964a9629c0/src/unchained/ct_unit_types.nim
+[units]: https://github.com/SciNim/Unchained/blob/426d72a5cd0c48d63fe4747bee8dfb964a9629c0/src/unchained/units.nim
+[defunits]: https://github.com/SciNim/Unchained/blob/426d72a5cd0c48d63fe4747bee8dfb964a9629c0/src/unchained/define_units.nim
+[siunits]: https://github.com/SciNim/Unchained/blob/426d72a5cd0c48d63fe4747bee8dfb964a9629c0/src/unchained/si_units.nim
+[api]: https://github.com/SciNim/Unchained/blob/426d72a5cd0c48d63fe4747bee8dfb964a9629c0/src/unchained/api.nim
+[custom]: https://github.com/SciNim/Unchained/blob/426d72a5cd0c48d63fe4747bee8dfb964a9629c0/examples/custom_unit_system.nim
+[tests]: https://github.com/SciNim/Unchained/blob/426d72a5cd0c48d63fe4747bee8dfb964a9629c0/tests/tunchained.nim
+[nimble]: https://github.com/SciNim/Unchained/blob/426d72a5cd0c48d63fe4747bee8dfb964a9629c0/unchained.nimble
 
 <!-- Official / org -->
 

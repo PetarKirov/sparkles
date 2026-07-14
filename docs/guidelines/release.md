@@ -197,7 +197,7 @@ version.
 
 - **There is no upload step.** code.dlang.org is registered against the GitHub
   repo and a background scanner periodically polls it for new `vX.Y.Z` tags
-  ([`dub-registry`'s `updatePackages`](https://github.com/dlang/dub-registry/blob/master/source/dubregistry/registry.d)).
+  ([`dub-registry`'s `updatePackages`](https://github.com/dlang/dub-registry/blob/8060161910f9012ec3659c317be8fa3f4e6bd439/source/dubregistry/registry.d)).
   So _any pushed tag_ eventually becomes a public version on its own schedule —
   which is why pushing the tag, not publishing the Release, is the real point of
   no return.

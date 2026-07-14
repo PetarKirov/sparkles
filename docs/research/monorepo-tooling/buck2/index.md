@@ -496,7 +496,7 @@ covers anything the fixed CLI does not.
 [key-concepts]: https://buck2.build/docs/concepts/key_concepts/
 [buckconfig]: https://buck2.build/docs/concepts/buckconfig/
 [re-docs]: https://buck2.build/docs/users/remote_execution/
-[dice-doc]: https://github.com/facebook/buck2/blob/main/dice/dice/docs/index.md
+[dice-doc]: https://github.com/facebook/buck2/blob/3ac72b5b743d2c66909d03ab846c36e6bb30075d/dice/dice/docs/index.md
 [modern-dice]: https://buck2.build/docs/insights_and_knowledge/modern_dice/
 [fb-blog]: https://engineering.fb.com/2023/04/06/open-source/buck2-open-source-large-scale-build-system/
 [tweag]: https://www.tweag.io/blog/2023-07-06-buck2/

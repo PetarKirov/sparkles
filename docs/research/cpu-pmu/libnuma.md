@@ -226,7 +226,7 @@ event naming is [event-naming.md][naming]'s.
 [macos]: ./macos.md
 [naming]: ./event-naming.md
 [numactl-repo]: https://github.com/numactl/numactl
-[libnuma-c]: https://github.com/numactl/numactl/blob/93c1fe5/libnuma.c
-[syscall-c]: https://github.com/numactl/numactl/blob/93c1fe5/syscall.c
-[distance-c]: https://github.com/numactl/numactl/blob/93c1fe5/distance.c
-[mynode-c]: https://github.com/numactl/numactl/blob/93c1fe5/test/mynode.c
+[libnuma-c]: https://github.com/numactl/numactl/blob/93c1fe5fabf38502ca315598bf74699c41300df9/libnuma.c
+[syscall-c]: https://github.com/numactl/numactl/blob/93c1fe5fabf38502ca315598bf74699c41300df9/syscall.c
+[distance-c]: https://github.com/numactl/numactl/blob/93c1fe5fabf38502ca315598bf74699c41300df9/distance.c
+[mynode-c]: https://github.com/numactl/numactl/blob/93c1fe5fabf38502ca315598bf74699c41300df9/test/mynode.c

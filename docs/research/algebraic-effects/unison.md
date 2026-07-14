@@ -520,7 +520,7 @@ implements local handlers is what makes a continuation a transmissible value.
 [Eio's io_uring backend]: ../async-io/eio-backend.md
 [Unison language documentation]: https://www.unison-lang.org/docs/
 [Unison GitHub repository]: https://github.com/unisonweb/unison
-[runtime design notes]: https://github.com/unisonweb/unison/blob/trunk/unison-runtime/src/Unison/Runtime/docs.markdown
+[runtime design notes]: https://github.com/unisonweb/unison/blob/e1870038739ffcb27b4e3b483dafd2c21f6541b2/unison-runtime/src/Unison/Runtime/docs.markdown
 [Abilities and ability handlers (language reference)]: https://www.unison-lang.org/docs/language-reference/abilities-and-ability-handlers/
 [Ability declaration (language reference)]: https://www.unison-lang.org/docs/language-reference/ability-declaration/
 [Abilities: a mental model]: https://www.unison-lang.org/docs/fundamentals/abilities/

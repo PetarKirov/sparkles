@@ -236,14 +236,14 @@ yyjson is mature and widely packaged. Distribution is maximally friction-free â€
 <!-- References -->
 
 [repo]: https://github.com/ibireme/yyjson
-[license]: https://github.com/ibireme/yyjson/blob/master/LICENSE
+[license]: https://github.com/ibireme/yyjson/blob/ac8f6074e1fbc43ec496aa1404b460d08b55d7a5/LICENSE
 [doxy]: https://ibireme.github.io/yyjson/doc/doxygen/html/
-[api]: https://github.com/ibireme/yyjson/blob/master/doc/API.md
-[ds]: https://github.com/ibireme/yyjson/blob/master/doc/DataStructure.md
-[build]: https://github.com/ibireme/yyjson/blob/master/doc/BuildAndTest.md
-[perf]: https://github.com/ibireme/yyjson/blob/master/doc/Performance.md
-[hdr]: https://github.com/ibireme/yyjson/blob/master/src/yyjson.h
-[src]: https://github.com/ibireme/yyjson/blob/master/src/yyjson.c
+[api]: https://github.com/ibireme/yyjson/blob/ac8f6074e1fbc43ec496aa1404b460d08b55d7a5/doc/API.md
+[ds]: https://github.com/ibireme/yyjson/blob/ac8f6074e1fbc43ec496aa1404b460d08b55d7a5/doc/DataStructure.md
+[build]: https://github.com/ibireme/yyjson/blob/ac8f6074e1fbc43ec496aa1404b460d08b55d7a5/doc/BuildAndTest.md
+[perf]: https://github.com/ibireme/yyjson/blob/ac8f6074e1fbc43ec496aa1404b460d08b55d7a5/doc/Performance.md
+[hdr]: https://github.com/ibireme/yyjson/blob/ac8f6074e1fbc43ec496aa1404b460d08b55d7a5/src/yyjson.h
+[src]: https://github.com/ibireme/yyjson/blob/ac8f6074e1fbc43ec496aa1404b460d08b55d7a5/src/yyjson.c
 [bench]: https://github.com/ibireme/yyjson_benchmark
 [dbl-conv]: https://github.com/google/double-conversion
 [json5]: https://json5.org

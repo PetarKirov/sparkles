@@ -1110,7 +1110,7 @@ foreach (i, item; items) {
 - **ImTui Repository:** <https://github.com/ggerganov/imtui>
 - **Dear ImGui:** <https://github.com/ocornut/imgui>
 - **Dear ImGui Documentation:** <https://github.com/ocornut/imgui/wiki>
-- **Dear ImGui Demo:** <https://github.com/ocornut/imgui/blob/master/imgui_demo.cpp>
+- **Dear ImGui Demo:** <https://github.com/ocornut/imgui/blob/b62bfd6b06de958e4630b715225b7e8409bfd0f9/imgui_demo.cpp>
   (comprehensive widget reference)
 - **hnterm (Hacker News terminal client):** <https://github.com/ggerganov/hnterm>
 - **hnterm Live Web Demo:** <https://hnterm.ggerganov.com>

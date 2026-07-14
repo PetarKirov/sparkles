@@ -245,7 +245,7 @@ Every Windows-capable toolkit in the survey bottoms out in the same `RegisterCla
 
 <!-- D bindings (GitHub) -->
 
-[coresyswindows]: https://github.com/dlang/dmd/tree/master/druntime/src/core/sys/windows
+[coresyswindows]: https://github.com/dlang/dmd/tree/c050aa5d8f9f558b0fd8c01d5235f8d8c7581170/druntime/src/core/sys/windows
 [windows-d]: https://github.com/RolandTaverner/windows-d
 [windows-d-orig]: https://github.com/rumbu13/windows-d
 

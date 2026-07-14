@@ -707,5 +707,5 @@ anchor was designed for.
 - **ConstraintLayout for Compose** -- <https://developer.android.com/develop/ui/compose/layouts/constraintlayout>
 - **Source code** -- <https://androidx.tech/artifacts/constraintlayout/constraintlayout/> (also mirrored at <https://android.googlesource.com/platform/frameworks/support/+/refs/heads/androidx-main/constraintlayout/>)
 - **Cassowary algorithm overview** -- <https://constraints.cs.washington.edu/cassowary/>
-- **Sample code** -- <https://github.com/android/views-widgets-samples/tree/main/ConstraintLayoutExamples>
+- **Sample code** -- <https://github.com/android/views-widgets-samples/tree/2238cc873501f9cda63605051de11832bb736a8a/ConstraintLayoutExamples>
 - **History of Android layout managers** -- "Build a Responsive UI with ConstraintLayout" tutorial archive, Google I/O 2017 talks

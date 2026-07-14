@@ -375,15 +375,15 @@ The `sync()` method additionally implements "Jim Idle's magic sync" — at the s
 <!-- References -->
 
 [repo]: https://github.com/antlr/antlr4
-[tool-dir]: https://github.com/antlr/antlr4/tree/master/tool
-[runtime-dir]: https://github.com/antlr/antlr4/tree/master/runtime
-[simulator]: https://github.com/antlr/antlr4/blob/master/runtime/Java/src/org/antlr/v4/runtime/atn/ParserATNSimulator.java
-[error-strategy]: https://github.com/antlr/antlr4/blob/master/runtime/Java/src/org/antlr/v4/runtime/DefaultErrorStrategy.java
-[parser-rules]: https://github.com/antlr/antlr4/blob/master/doc/parser-rules.md
-[lexer-rules]: https://github.com/antlr/antlr4/blob/master/doc/lexer-rules.md
-[left-recursion]: https://github.com/antlr/antlr4/blob/master/doc/left-recursion.md
-[listeners]: https://github.com/antlr/antlr4/blob/master/doc/listeners.md
-[doc-index]: https://github.com/antlr/antlr4/blob/master/doc/index.md
+[tool-dir]: https://github.com/antlr/antlr4/tree/594cf95e5460435c7521e80618666741e33e4d91/tool
+[runtime-dir]: https://github.com/antlr/antlr4/tree/594cf95e5460435c7521e80618666741e33e4d91/runtime
+[simulator]: https://github.com/antlr/antlr4/blob/594cf95e5460435c7521e80618666741e33e4d91/runtime/Java/src/org/antlr/v4/runtime/atn/ParserATNSimulator.java
+[error-strategy]: https://github.com/antlr/antlr4/blob/594cf95e5460435c7521e80618666741e33e4d91/runtime/Java/src/org/antlr/v4/runtime/DefaultErrorStrategy.java
+[parser-rules]: https://github.com/antlr/antlr4/blob/594cf95e5460435c7521e80618666741e33e4d91/doc/parser-rules.md
+[lexer-rules]: https://github.com/antlr/antlr4/blob/594cf95e5460435c7521e80618666741e33e4d91/doc/lexer-rules.md
+[left-recursion]: https://github.com/antlr/antlr4/blob/594cf95e5460435c7521e80618666741e33e4d91/doc/left-recursion.md
+[listeners]: https://github.com/antlr/antlr4/blob/594cf95e5460435c7521e80618666741e33e4d91/doc/listeners.md
+[doc-index]: https://github.com/antlr/antlr4/blob/594cf95e5460435c7521e80618666741e33e4d91/doc/index.md
 [grammars-v4]: https://github.com/antlr/grammars-v4
 [allstar]: https://www.antlr.org/papers/allstar-techreport.pdf
 [site]: https://www.antlr.org/

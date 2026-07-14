@@ -701,35 +701,35 @@ criterion ([`docs/alternatives/index.md`][alternatives]).
 <!-- Pinned clone (au @ 50b97bf) -->
 
 [repo]: https://github.com/aurora-opensource/au
-[readme]: https://github.com/aurora-opensource/au/blob/50b97bf/README.md
-[dimension-hh]: https://github.com/aurora-opensource/au/blob/50b97bf/au/dimension.hh
-[magnitude-hh]: https://github.com/aurora-opensource/au/blob/50b97bf/au/magnitude.hh
-[packs-hh]: https://github.com/aurora-opensource/au/blob/50b97bf/au/packs.hh
-[unit-hh]: https://github.com/aurora-opensource/au/blob/50b97bf/au/unit_of_measure.hh
-[quantity-hh]: https://github.com/aurora-opensource/au/blob/50b97bf/au/quantity.hh
-[conversion-policy-hh]: https://github.com/aurora-opensource/au/blob/50b97bf/au/conversion_policy.hh
-[quantity-point-hh]: https://github.com/aurora-opensource/au/blob/50b97bf/au/quantity_point.hh
-[math-hh]: https://github.com/aurora-opensource/au/blob/50b97bf/au/math.hh
-[prefix-hh]: https://github.com/aurora-opensource/au/blob/50b97bf/au/prefix.hh
-[celsius-hh]: https://github.com/aurora-opensource/au/blob/50b97bf/au/units/celsius.hh
-[hertz-hh]: https://github.com/aurora-opensource/au/blob/50b97bf/au/units/hertz.hh
-[becquerel-hh]: https://github.com/aurora-opensource/au/blob/50b97bf/au/units/becquerel.hh
-[percent-hh]: https://github.com/aurora-opensource/au/blob/50b97bf/au/units/percent.hh
-[constants-dir]: https://github.com/aurora-opensource/au/tree/50b97bf/au/constants
-[error-examples]: https://github.com/aurora-opensource/au/blob/50b97bf/au/error_examples.cc
-[vector-space]: https://github.com/aurora-opensource/au/blob/50b97bf/docs/discussion/implementation/vector_space.md
-[applying-mag]: https://github.com/aurora-opensource/au/blob/50b97bf/docs/discussion/implementation/applying_magnitudes.md
-[truncation-doc]: https://github.com/aurora-opensource/au/blob/50b97bf/docs/discussion/concepts/truncation.md
-[dimensionless-doc]: https://github.com/aurora-opensource/au/blob/50b97bf/docs/discussion/concepts/dimensionless.md
-[new-units]: https://github.com/aurora-opensource/au/blob/50b97bf/docs/howto/new-units.md
-[new-dimensions]: https://github.com/aurora-opensource/au/blob/50b97bf/docs/howto/new-dimensions.md
-[unit-slots]: https://github.com/aurora-opensource/au/blob/50b97bf/docs/discussion/idioms/unit-slots.md
-[troubleshooting]: https://github.com/aurora-opensource/au/blob/50b97bf/docs/troubleshooting.md
-[alternatives]: https://github.com/aurora-opensource/au/blob/50b97bf/docs/alternatives/index.md
-[install]: https://github.com/aurora-opensource/au/blob/50b97bf/docs/install.md
-[compilers]: https://github.com/aurora-opensource/au/blob/50b97bf/docs/supported-compilers.md
-[tutorial]: https://github.com/aurora-opensource/au/blob/50b97bf/docs/tutorial/101-quantity-makers.md
-[quantity-ref]: https://github.com/aurora-opensource/au/blob/50b97bf/docs/reference/quantity.md
+[readme]: https://github.com/aurora-opensource/au/blob/50b97bf92ed7f7d9506cad523eae2cbb4503276b/README.md
+[dimension-hh]: https://github.com/aurora-opensource/au/blob/50b97bf92ed7f7d9506cad523eae2cbb4503276b/au/dimension.hh
+[magnitude-hh]: https://github.com/aurora-opensource/au/blob/50b97bf92ed7f7d9506cad523eae2cbb4503276b/au/magnitude.hh
+[packs-hh]: https://github.com/aurora-opensource/au/blob/50b97bf92ed7f7d9506cad523eae2cbb4503276b/au/packs.hh
+[unit-hh]: https://github.com/aurora-opensource/au/blob/50b97bf92ed7f7d9506cad523eae2cbb4503276b/au/unit_of_measure.hh
+[quantity-hh]: https://github.com/aurora-opensource/au/blob/50b97bf92ed7f7d9506cad523eae2cbb4503276b/au/quantity.hh
+[conversion-policy-hh]: https://github.com/aurora-opensource/au/blob/50b97bf92ed7f7d9506cad523eae2cbb4503276b/au/conversion_policy.hh
+[quantity-point-hh]: https://github.com/aurora-opensource/au/blob/50b97bf92ed7f7d9506cad523eae2cbb4503276b/au/quantity_point.hh
+[math-hh]: https://github.com/aurora-opensource/au/blob/50b97bf92ed7f7d9506cad523eae2cbb4503276b/au/math.hh
+[prefix-hh]: https://github.com/aurora-opensource/au/blob/50b97bf92ed7f7d9506cad523eae2cbb4503276b/au/prefix.hh
+[celsius-hh]: https://github.com/aurora-opensource/au/blob/50b97bf92ed7f7d9506cad523eae2cbb4503276b/au/units/celsius.hh
+[hertz-hh]: https://github.com/aurora-opensource/au/blob/50b97bf92ed7f7d9506cad523eae2cbb4503276b/au/units/hertz.hh
+[becquerel-hh]: https://github.com/aurora-opensource/au/blob/50b97bf92ed7f7d9506cad523eae2cbb4503276b/au/units/becquerel.hh
+[percent-hh]: https://github.com/aurora-opensource/au/blob/50b97bf92ed7f7d9506cad523eae2cbb4503276b/au/units/percent.hh
+[constants-dir]: https://github.com/aurora-opensource/au/tree/50b97bf92ed7f7d9506cad523eae2cbb4503276b/au/constants
+[error-examples]: https://github.com/aurora-opensource/au/blob/50b97bf92ed7f7d9506cad523eae2cbb4503276b/au/error_examples.cc
+[vector-space]: https://github.com/aurora-opensource/au/blob/50b97bf92ed7f7d9506cad523eae2cbb4503276b/docs/discussion/implementation/vector_space.md
+[applying-mag]: https://github.com/aurora-opensource/au/blob/50b97bf92ed7f7d9506cad523eae2cbb4503276b/docs/discussion/implementation/applying_magnitudes.md
+[truncation-doc]: https://github.com/aurora-opensource/au/blob/50b97bf92ed7f7d9506cad523eae2cbb4503276b/docs/discussion/concepts/truncation.md
+[dimensionless-doc]: https://github.com/aurora-opensource/au/blob/50b97bf92ed7f7d9506cad523eae2cbb4503276b/docs/discussion/concepts/dimensionless.md
+[new-units]: https://github.com/aurora-opensource/au/blob/50b97bf92ed7f7d9506cad523eae2cbb4503276b/docs/howto/new-units.md
+[new-dimensions]: https://github.com/aurora-opensource/au/blob/50b97bf92ed7f7d9506cad523eae2cbb4503276b/docs/howto/new-dimensions.md
+[unit-slots]: https://github.com/aurora-opensource/au/blob/50b97bf92ed7f7d9506cad523eae2cbb4503276b/docs/discussion/idioms/unit-slots.md
+[troubleshooting]: https://github.com/aurora-opensource/au/blob/50b97bf92ed7f7d9506cad523eae2cbb4503276b/docs/troubleshooting.md
+[alternatives]: https://github.com/aurora-opensource/au/blob/50b97bf92ed7f7d9506cad523eae2cbb4503276b/docs/alternatives/index.md
+[install]: https://github.com/aurora-opensource/au/blob/50b97bf92ed7f7d9506cad523eae2cbb4503276b/docs/install.md
+[compilers]: https://github.com/aurora-opensource/au/blob/50b97bf92ed7f7d9506cad523eae2cbb4503276b/docs/supported-compilers.md
+[tutorial]: https://github.com/aurora-opensource/au/blob/50b97bf92ed7f7d9506cad523eae2cbb4503276b/docs/tutorial/101-quantity-makers.md
+[quantity-ref]: https://github.com/aurora-opensource/au/blob/50b97bf92ed7f7d9506cad523eae2cbb4503276b/docs/reference/quantity.md
 
 <!-- Official docs & issues -->
 

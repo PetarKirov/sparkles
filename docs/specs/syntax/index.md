@@ -178,5 +178,5 @@ The milestones that build this — bottom-up, each independently useful — are 
 <!-- Guidelines & in-tree sources -->
 
 [importc]: ../../guidelines/importc-c-libraries.md
-[base-text]: https://github.com/PetarKirov/sparkles/blob/main/libs/base/src/sparkles/base/text/writers.d
-[base-ansi]: https://github.com/PetarKirov/sparkles/blob/main/libs/base/src/sparkles/base/text/ansi.d
+[base-text]: https://github.com/PetarKirov/sparkles/blob/3cc01cfdc8ae867f0558e43c731885a004cb0130/libs/base/src/sparkles/base/text/writers.d
+[base-ansi]: https://github.com/PetarKirov/sparkles/blob/3cc01cfdc8ae867f0558e43c731885a004cb0130/libs/base/src/sparkles/base/text/ansi.d

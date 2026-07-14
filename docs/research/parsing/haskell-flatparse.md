@@ -289,4 +289,4 @@ flatparse is the survey's **existence proof for a `@nogc` combinator API**. Ever
 [angstrom]: ./ocaml-angstrom.md
 [flat-repo]: https://github.com/AndrasKovacs/flatparse
 [flat-hackage]: https://hackage.haskell.org/package/flatparse
-[flat-readme]: https://raw.githubusercontent.com/AndrasKovacs/flatparse/master/README.md
+[flat-readme]: https://raw.githubusercontent.com/AndrasKovacs/flatparse/df7e978f710a96f4ed3366b89be67a8b8550b948/README.md

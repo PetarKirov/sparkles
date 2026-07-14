@@ -233,7 +233,7 @@ measured per final artifact ([Sparkles baseline][baseline], [platform gotchas][g
 [jpackage]: ./jpackage.md
 [semver]: https://semver.org/spec/v2.0.0.html
 [slsa]: https://slsa.dev/spec/v1.2/provenance
-[in-toto]: https://github.com/in-toto/attestation/blob/main/spec/README.md
+[in-toto]: https://github.com/in-toto/attestation/blob/676ab5f26a246c99dfa5ee541c1c77a9c9f1499a/spec/README.md
 [spdx]: https://spdx.github.io/spdx-spec/v3.0.1/
 [cyclonedx]: https://cyclonedx.org/specification/overview/
 [apple-code-signing]: https://developer.apple.com/library/archive/documentation/Security/Conceptual/CodeSigningGuide/Introduction/Introduction.html

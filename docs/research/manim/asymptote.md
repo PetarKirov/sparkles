@@ -401,8 +401,8 @@ path][cpu-vs-gpu] is not bit-identical across drivers — see the survey's gener
 <!-- References -->
 
 [repo]: https://github.com/vectorgraphics/asymptote
-[license-lesser]: https://github.com/vectorgraphics/asymptote/blob/master/LICENSE.LESSER
-[license-gpl]: https://github.com/vectorgraphics/asymptote/blob/master/LICENSE
+[license-lesser]: https://github.com/vectorgraphics/asymptote/blob/3cba52ff18fe952521deab7cfd2e90add597e1c8/LICENSE.LESSER
+[license-gpl]: https://github.com/vectorgraphics/asymptote/blob/3cba52ff18fe952521deab7cfd2e90add597e1c8/LICENSE
 [site]: https://asymptote.sourceforge.io
 [manual]: https://asymptote.sourceforge.io/doc/index.html
 [description]: https://asymptote.sourceforge.io/doc/Description.html
@@ -417,15 +417,15 @@ path][cpu-vs-gpu] is not bit-identical across drivers — see the survey's gener
 [animate]: https://asymptote.sourceforge.io/doc/animate.html
 [latexusage]: https://asymptote.sourceforge.io/doc/LaTeX-usage.html
 [options]: https://asymptote.sourceforge.io/doc/Options.html
-[src-campl]: https://github.com/vectorgraphics/asymptote/blob/master/camp.l
-[src-campy]: https://github.com/vectorgraphics/asymptote/blob/master/camp.y
-[src-coder]: https://github.com/vectorgraphics/asymptote/blob/master/coder.cc
-[src-inst]: https://github.com/vectorgraphics/asymptote/blob/master/inst.h
-[src-stack]: https://github.com/vectorgraphics/asymptote/blob/master/stack.cc
-[src-vm]: https://github.com/vectorgraphics/asymptote/blob/master/vm.h
-[src-scaling]: https://github.com/vectorgraphics/asymptote/blob/master/base/plain_scaling.asy
-[src-animation]: https://github.com/vectorgraphics/asymptote/blob/master/base/animation.asy
-[src-simplex2]: https://github.com/vectorgraphics/asymptote/blob/master/base/simplex2.asy
+[src-campl]: https://github.com/vectorgraphics/asymptote/blob/3cba52ff18fe952521deab7cfd2e90add597e1c8/camp.l
+[src-campy]: https://github.com/vectorgraphics/asymptote/blob/3cba52ff18fe952521deab7cfd2e90add597e1c8/camp.y
+[src-coder]: https://github.com/vectorgraphics/asymptote/blob/3cba52ff18fe952521deab7cfd2e90add597e1c8/coder.cc
+[src-inst]: https://github.com/vectorgraphics/asymptote/blob/3cba52ff18fe952521deab7cfd2e90add597e1c8/inst.h
+[src-stack]: https://github.com/vectorgraphics/asymptote/blob/3cba52ff18fe952521deab7cfd2e90add597e1c8/stack.cc
+[src-vm]: https://github.com/vectorgraphics/asymptote/blob/3cba52ff18fe952521deab7cfd2e90add597e1c8/vm.h
+[src-scaling]: https://github.com/vectorgraphics/asymptote/blob/3cba52ff18fe952521deab7cfd2e90add597e1c8/base/plain_scaling.asy
+[src-animation]: https://github.com/vectorgraphics/asymptote/blob/3cba52ff18fe952521deab7cfd2e90add597e1c8/base/animation.asy
+[src-simplex2]: https://github.com/vectorgraphics/asymptote/blob/3cba52ff18fe952521deab7cfd2e90add597e1c8/base/simplex2.asy
 [bezier-basis]: ./concepts.md#bezier-basis-quadratic-vs-cubic
 [de-casteljau]: ./concepts.md#de-casteljau-evaluation
 [hobby]: ./concepts.md#hobby-splines-and-equation-solved-points

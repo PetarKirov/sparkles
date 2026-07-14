@@ -50,7 +50,7 @@ Silk.NET 2.x bindings are produced by an in-repo generator, `Silk.NET.BuildTools
 {
   "profileName": "Vulkan",
   "sources": [
-    "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Docs/main/xml/vk.xml"
+    "https://raw.githubusercontent.com/KhronosGroup/Vulkan-Docs/7f61271fa6b6e7d71bf56dbc3a6165cda43bd8cb/xml/vk.xml"
   ],
   "mode": "ConvertConstruct",
   "converter": { "reader": "vk", "constructor": "vk", "className": "Vk" },
@@ -223,25 +223,25 @@ It is effectively abandoned: the last release (`0.4.2`) dates to January 2018, t
 [repo]: https://github.com/dotnet/Silk.NET
 [docs]: https://dotnet.github.io/Silk.NET/
 [nuget]: https://www.nuget.org/packages/Silk.NET.Vulkan
-[readme]: https://github.com/dotnet/Silk.NET/blob/main/README.md
-[vkxml]: https://github.com/KhronosGroup/Vulkan-Docs/blob/main/xml/vk.xml
-[generatorjson]: https://github.com/dotnet/Silk.NET/blob/main/generator.json
-[buildtools]: https://github.com/dotnet/Silk.NET/tree/main/src/Core/Silk.NET.BuildTools
-[natgen]: https://github.com/dotnet/Silk.NET/blob/main/src/Core/Silk.NET.SilkTouch/NativeApiGenerator.cs
-[vtable]: https://github.com/dotnet/Silk.NET/blob/main/src/Core/Silk.NET.SilkTouch/VTableGeneration.cs
-[middlewares]: https://github.com/dotnet/Silk.NET/tree/main/src/Core/Silk.NET.SilkTouch/Middlewares
+[readme]: https://github.com/dotnet/Silk.NET/blob/266259d37bcbab3646f61c3a83229a292b851376/README.md
+[vkxml]: https://github.com/KhronosGroup/Vulkan-Docs/blob/7f61271fa6b6e7d71bf56dbc3a6165cda43bd8cb/xml/vk.xml
+[generatorjson]: https://github.com/dotnet/Silk.NET/blob/266259d37bcbab3646f61c3a83229a292b851376/generator.json
+[buildtools]: https://github.com/dotnet/Silk.NET/tree/266259d37bcbab3646f61c3a83229a292b851376/src/Core/Silk.NET.BuildTools
+[natgen]: https://github.com/dotnet/Silk.NET/blob/266259d37bcbab3646f61c3a83229a292b851376/src/Core/Silk.NET.SilkTouch/NativeApiGenerator.cs
+[vtable]: https://github.com/dotnet/Silk.NET/blob/266259d37bcbab3646f61c3a83229a292b851376/src/Core/Silk.NET.SilkTouch/VTableGeneration.cs
+[middlewares]: https://github.com/dotnet/Silk.NET/tree/266259d37bcbab3646f61c3a83229a292b851376/src/Core/Silk.NET.SilkTouch/Middlewares
 [silktouch-blog]: https://dotnet.github.io/Silk.NET/blog/nov-2020/silktouch-invokes-marshalling/
-[proposal]: https://github.com/dotnet/Silk.NET/blob/main/documentation/proposals/Proposal%20-%20Generation%20of%20Library%20Sources%20and%20PInvoke%20Mechanisms.md
-[vkcs]: https://github.com/dotnet/Silk.NET/blob/main/src/Vulkan/Silk.NET.Vulkan/Vk.cs
-[vkgen]: https://github.com/dotnet/Silk.NET/blob/main/src/Vulkan/Silk.NET.Vulkan/Vk.gen.cs
-[ichainable]: https://github.com/dotnet/Silk.NET/blob/main/src/Vulkan/Silk.NET.Vulkan/IChainable.cs
-[ichainstart]: https://github.com/dotnet/Silk.NET/blob/main/src/Vulkan/Silk.NET.Vulkan/IChainStart.cs
-[iextends]: https://github.com/dotnet/Silk.NET/blob/main/src/Vulkan/Silk.NET.Vulkan/IExtendsChain.cs
-[istructured]: https://github.com/dotnet/Silk.NET/blob/main/src/Vulkan/Silk.NET.Vulkan/IStructuredType.cs
-[chainext]: https://github.com/dotnet/Silk.NET/blob/main/src/Vulkan/Silk.NET.Vulkan/ChainExtensions.cs
-[chaincs]: https://github.com/dotnet/Silk.NET/blob/main/src/Vulkan/Silk.NET.Vulkan/Chain.cs
-[instance]: https://github.com/dotnet/Silk.NET/blob/main/src/Vulkan/Silk.NET.Vulkan/Structs/Instance.gen.cs
-[pdv12]: https://github.com/dotnet/Silk.NET/blob/main/src/Vulkan/Silk.NET.Vulkan/Structs/PhysicalDeviceVulkan12Features.gen.cs
+[proposal]: https://github.com/dotnet/Silk.NET/blob/266259d37bcbab3646f61c3a83229a292b851376/documentation/proposals/Proposal%20-%20Generation%20of%20Library%20Sources%20and%20PInvoke%20Mechanisms.md
+[vkcs]: https://github.com/dotnet/Silk.NET/blob/266259d37bcbab3646f61c3a83229a292b851376/src/Vulkan/Silk.NET.Vulkan/Vk.cs
+[vkgen]: https://github.com/dotnet/Silk.NET/blob/266259d37bcbab3646f61c3a83229a292b851376/src/Vulkan/Silk.NET.Vulkan/Vk.gen.cs
+[ichainable]: https://github.com/dotnet/Silk.NET/blob/266259d37bcbab3646f61c3a83229a292b851376/src/Vulkan/Silk.NET.Vulkan/IChainable.cs
+[ichainstart]: https://github.com/dotnet/Silk.NET/blob/266259d37bcbab3646f61c3a83229a292b851376/src/Vulkan/Silk.NET.Vulkan/IChainStart.cs
+[iextends]: https://github.com/dotnet/Silk.NET/blob/266259d37bcbab3646f61c3a83229a292b851376/src/Vulkan/Silk.NET.Vulkan/IExtendsChain.cs
+[istructured]: https://github.com/dotnet/Silk.NET/blob/266259d37bcbab3646f61c3a83229a292b851376/src/Vulkan/Silk.NET.Vulkan/IStructuredType.cs
+[chainext]: https://github.com/dotnet/Silk.NET/blob/266259d37bcbab3646f61c3a83229a292b851376/src/Vulkan/Silk.NET.Vulkan/ChainExtensions.cs
+[chaincs]: https://github.com/dotnet/Silk.NET/blob/266259d37bcbab3646f61c3a83229a292b851376/src/Vulkan/Silk.NET.Vulkan/Chain.cs
+[instance]: https://github.com/dotnet/Silk.NET/blob/266259d37bcbab3646f61c3a83229a292b851376/src/Vulkan/Silk.NET.Vulkan/Structs/Instance.gen.cs
+[pdv12]: https://github.com/dotnet/Silk.NET/blob/266259d37bcbab3646f61c3a83229a292b851376/src/Vulkan/Silk.NET.Vulkan/Structs/PhysicalDeviceVulkan12Features.gen.cs
 [sharpvk]: https://github.com/FacticiusVir/SharpVk
 [ash]: ./rust-ash.md
 [erupted]: ./d-erupted.md

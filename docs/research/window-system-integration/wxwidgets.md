@@ -478,8 +478,8 @@ GTK4 removed `GdkWindow` and the X11 escape hatches wxGTK relies on (it forces C
 
 [wxWidgets/wxWidgets]: https://github.com/wxWidgets/wxWidgets
 [commit]: https://github.com/wxWidgets/wxWidgets/commit/f12b247d26b6a1f2d48e88f2892c51988acbb578
-[readme]: https://github.com/wxWidgets/wxWidgets/blob/master/README.md
-[license]: https://github.com/wxWidgets/wxWidgets/blob/master/docs/licence.txt
+[readme]: https://github.com/wxWidgets/wxWidgets/blob/52eee93edb66f59d0516a09a5f5e3335262356a8/README.md
+[license]: https://github.com/wxWidgets/wxWidgets/blob/52eee93edb66f59d0516a09a5f5e3335262356a8/docs/licence.txt
 [wx-manual]: https://web.archive.org/web/20250514161534/https://docs.wxwidgets.org/3.2/
 [wx-toplevel]: https://web.archive.org/web/20250323112235/https://docs.wxwidgets.org/3.2/classwx_top_level_window.html
 [wx-evtloop]: https://web.archive.org/web/20250208031531/https://docs.wxwidgets.org/3.2/classwx_event_loop_base.html

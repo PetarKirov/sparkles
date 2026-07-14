@@ -775,15 +775,15 @@ auto nested = i"outer $(i"inner $(value)") end";
 
 [d-spec-ies]: https://dlang.org/spec/istring.html
 [core-interpolation]: https://dlang.org/phobos/core_interpolation.html
-[dip1036]: https://github.com/dlang/DIPs/blob/master/DIPs/other/DIP1036.md
+[dip1036]: https://github.com/dlang/DIPs/blob/90490da522d8209c7940071a4a58c5b4d7e8938e/DIPs/other/DIP1036.md
 
 <!-- Adam D. Ruppe's interpolation-examples -->
 
 [interpolation-examples]: https://github.com/adamdruppe/interpolation-examples
-[interpolation-examples-sql]: https://github.com/adamdruppe/interpolation-examples/blob/master/lib/sql.d
-[interpolation-examples-html]: https://github.com/adamdruppe/interpolation-examples/blob/master/lib/html.d
-[interpolation-examples-url]: https://github.com/adamdruppe/interpolation-examples/blob/master/lib/url.d
-[interpolation-examples-i18n]: https://github.com/adamdruppe/interpolation-examples/blob/master/04-internationalization.d
+[interpolation-examples-sql]: https://github.com/adamdruppe/interpolation-examples/blob/a8a5d4d4ee37ee9ae3942c4f4e8489011c3c4673/lib/sql.d
+[interpolation-examples-html]: https://github.com/adamdruppe/interpolation-examples/blob/a8a5d4d4ee37ee9ae3942c4f4e8489011c3c4673/lib/html.d
+[interpolation-examples-url]: https://github.com/adamdruppe/interpolation-examples/blob/a8a5d4d4ee37ee9ae3942c4f4e8489011c3c4673/lib/url.d
+[interpolation-examples-i18n]: https://github.com/adamdruppe/interpolation-examples/blob/a8a5d4d4ee37ee9ae3942c4f4e8489011c3c4673/04-internationalization.d
 
 <!-- Sparkles source files -->
 

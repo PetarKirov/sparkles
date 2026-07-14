@@ -364,8 +364,8 @@ the `ShaderQQ` quasiquoters compile GLSL/HLSL to SPIR-V **at Haskell compile tim
 <!-- References -->
 
 [repo]: https://github.com/expipiplus1/vulkan
-[readme]: https://github.com/expipiplus1/vulkan/blob/main/readme.md
-[gen-readme]: https://github.com/expipiplus1/vulkan/blob/main/generate-new/readme.md
+[readme]: https://github.com/expipiplus1/vulkan/blob/577b4b1c2edca0613ede04fa3917225435fadd35/readme.md
+[gen-readme]: https://github.com/expipiplus1/vulkan/blob/577b4b1c2edca0613ede04fa3917225435fadd35/generate-new/readme.md
 [hackage]: https://hackage.haskell.org/package/vulkan
 [gh-pages]: https://expipiplus1.github.io/vulkan/
 [vma-pkg]: https://hackage.haskell.org/package/VulkanMemoryAllocator

@@ -511,18 +511,18 @@ The `cli` module declares a `tool` build target. Run `go build ./...` /
 <!-- References -->
 
 [repo]: https://github.com/golang/go
-[workgo]: https://github.com/golang/go/blob/master/src/cmd/go/internal/workcmd/work.go
-[use]: https://github.com/golang/go/blob/master/src/cmd/go/internal/workcmd/use.go
-[sync]: https://github.com/golang/go/blob/master/src/cmd/go/internal/workcmd/sync.go
-[init]: https://github.com/golang/go/blob/master/src/cmd/go/internal/modload/init.go
-[modfile]: https://github.com/golang/go/blob/master/src/cmd/go/internal/modload/modfile.go
-[exec]: https://github.com/golang/go/blob/master/src/cmd/go/internal/work/exec.go
-[buildid]: https://github.com/golang/go/blob/master/src/cmd/go/internal/work/buildid.go
-[cache]: https://github.com/golang/go/blob/master/src/cmd/go/internal/cache/cache.go
-[prog]: https://github.com/golang/go/blob/master/src/cmd/go/internal/cache/prog.go
-[cfg]: https://github.com/golang/go/blob/master/src/cmd/go/internal/cfg/cfg.go
-[build]: https://github.com/golang/go/blob/master/src/cmd/go/internal/work/build.go
-[workfile]: https://github.com/golang/go/blob/master/src/cmd/vendor/golang.org/x/mod/modfile/work.go
+[workgo]: https://github.com/golang/go/blob/a1298407792546b9e93393c903c26be9e87e8e3b/src/cmd/go/internal/workcmd/work.go
+[use]: https://github.com/golang/go/blob/a1298407792546b9e93393c903c26be9e87e8e3b/src/cmd/go/internal/workcmd/use.go
+[sync]: https://github.com/golang/go/blob/a1298407792546b9e93393c903c26be9e87e8e3b/src/cmd/go/internal/workcmd/sync.go
+[init]: https://github.com/golang/go/blob/a1298407792546b9e93393c903c26be9e87e8e3b/src/cmd/go/internal/modload/init.go
+[modfile]: https://github.com/golang/go/blob/a1298407792546b9e93393c903c26be9e87e8e3b/src/cmd/go/internal/modload/modfile.go
+[exec]: https://github.com/golang/go/blob/a1298407792546b9e93393c903c26be9e87e8e3b/src/cmd/go/internal/work/exec.go
+[buildid]: https://github.com/golang/go/blob/a1298407792546b9e93393c903c26be9e87e8e3b/src/cmd/go/internal/work/buildid.go
+[cache]: https://github.com/golang/go/blob/a1298407792546b9e93393c903c26be9e87e8e3b/src/cmd/go/internal/cache/cache.go
+[prog]: https://github.com/golang/go/blob/a1298407792546b9e93393c903c26be9e87e8e3b/src/cmd/go/internal/cache/prog.go
+[cfg]: https://github.com/golang/go/blob/a1298407792546b9e93393c903c26be9e87e8e3b/src/cmd/go/internal/cfg/cfg.go
+[build]: https://github.com/golang/go/blob/a1298407792546b9e93393c903c26be9e87e8e3b/src/cmd/go/internal/work/build.go
+[workfile]: https://github.com/golang/go/blob/a1298407792546b9e93393c903c26be9e87e8e3b/src/cmd/vendor/golang.org/x/mod/modfile/work.go
 [ref]: https://go.dev/ref/mod#workspaces
 [cmd]: https://pkg.go.dev/cmd/go#hdr-Workspace_maintenance
 [tut]: https://go.dev/doc/tutorial/workspaces

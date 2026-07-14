@@ -443,7 +443,7 @@ subdirectory's `Earthfile`.
 [satellites]: https://docs.earthly.dev/earthly-cloud/satellites
 [earthly-command]: https://docs.earthly.dev/docs/earthly-command
 [shutdown]: https://earthly.dev/blog/shutting-down-earthfiles-cloud/
-[changelog]: https://github.com/earthly/earthly/blob/main/CHANGELOG.md
+[changelog]: https://github.com/earthly/earthly/blob/6e641c15d3b4d7dd396363b61d2381faa2658f3d/CHANGELOG.md
 [buildkit]: https://github.com/moby/buildkit
 [dagger]: ../dagger/
 [garden]: ../garden/

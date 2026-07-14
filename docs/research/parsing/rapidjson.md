@@ -223,11 +223,11 @@ RapidJSON is a mature, widely-vendored Tencent open-source project (© 2015 THL 
 
 [repo]: https://github.com/Tencent/rapidjson
 [site]: https://rapidjson.org/
-[sax]: https://github.com/Tencent/rapidjson/blob/master/doc/sax.md
-[dom]: https://github.com/Tencent/rapidjson/blob/master/doc/dom.md
-[internals]: https://github.com/Tencent/rapidjson/blob/master/doc/internals.md
-[features]: https://github.com/Tencent/rapidjson/blob/master/doc/features.md
-[reader]: https://github.com/Tencent/rapidjson/blob/master/include/rapidjson/reader.h
+[sax]: https://github.com/Tencent/rapidjson/blob/24b5e7a8b27f42fa16b96fc70aade9106cf7102f/doc/sax.md
+[dom]: https://github.com/Tencent/rapidjson/blob/24b5e7a8b27f42fa16b96fc70aade9106cf7102f/doc/dom.md
+[internals]: https://github.com/Tencent/rapidjson/blob/24b5e7a8b27f42fa16b96fc70aade9106cf7102f/doc/internals.md
+[features]: https://github.com/Tencent/rapidjson/blob/24b5e7a8b27f42fa16b96fc70aade9106cf7102f/doc/features.md
+[reader]: https://github.com/Tencent/rapidjson/blob/24b5e7a8b27f42fa16b96fc70aade9106cf7102f/include/rapidjson/reader.h
 [nativejson]: https://github.com/miloyip/nativejson-benchmark
 [simdjson]: ./simdjson.md
 [simd-json]: ./simd-json.md

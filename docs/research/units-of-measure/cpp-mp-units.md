@@ -605,37 +605,37 @@ use.
 <!-- Pinned clone (mp-units @ d7b11de) -->
 
 [repo]: https://github.com/mpusz/mp-units
-[quantity-h]: https://github.com/mpusz/mp-units/blob/d7b11de/src/core/include/mp-units/framework/quantity.h
-[dimension-h]: https://github.com/mpusz/mp-units/blob/d7b11de/src/core/include/mp-units/framework/dimension.h
-[symexpr]: https://github.com/mpusz/mp-units/blob/d7b11de/src/core/include/mp-units/framework/symbolic_expression.h
-[qspec-h]: https://github.com/mpusz/mp-units/blob/d7b11de/src/core/include/mp-units/framework/quantity_spec.h
-[qpoint-h]: https://github.com/mpusz/mp-units/blob/d7b11de/src/core/include/mp-units/framework/quantity_point.h
-[mag-bits]: https://github.com/mpusz/mp-units/blob/d7b11de/src/core/include/mp-units/bits/unit_magnitude.h
-[mag-fw]: https://github.com/mpusz/mp-units/blob/d7b11de/src/core/include/mp-units/framework/unit_magnitude.h
-[unsat]: https://github.com/mpusz/mp-units/blob/d7b11de/src/core/include/mp-units/bits/unsatisfied.h
-[hacks]: https://github.com/mpusz/mp-units/blob/d7b11de/src/core/include/mp-units/bits/hacks.h
-[si-units]: https://github.com/mpusz/mp-units/blob/d7b11de/src/systems/include/mp-units/systems/si/units.h
-[prefixes]: https://github.com/mpusz/mp-units/blob/d7b11de/src/systems/include/mp-units/systems/si/prefixes.h
-[angular]: https://github.com/mpusz/mp-units/blob/d7b11de/src/systems/include/mp-units/systems/angular/units.h
-[yardpound]: https://github.com/mpusz/mp-units/blob/d7b11de/src/systems/include/mp-units/systems/yard_pound.h
-[fracexp]: https://github.com/mpusz/mp-units/blob/d7b11de/test/static/fractional_exponent_quantity.cpp
-[readme]: https://github.com/mpusz/mp-units/blob/d7b11de/README.md
-[citation]: https://github.com/mpusz/mp-units/blob/d7b11de/CITATION.cff
-[src-cmake]: https://github.com/mpusz/mp-units/blob/d7b11de/src/CMakeLists.txt
-[docs-dir]: https://github.com/mpusz/mp-units/tree/d7b11de/docs
+[quantity-h]: https://github.com/mpusz/mp-units/blob/d7b11dec7f1033aca55a5c024bbede1405ee1036/src/core/include/mp-units/framework/quantity.h
+[dimension-h]: https://github.com/mpusz/mp-units/blob/d7b11dec7f1033aca55a5c024bbede1405ee1036/src/core/include/mp-units/framework/dimension.h
+[symexpr]: https://github.com/mpusz/mp-units/blob/d7b11dec7f1033aca55a5c024bbede1405ee1036/src/core/include/mp-units/framework/symbolic_expression.h
+[qspec-h]: https://github.com/mpusz/mp-units/blob/d7b11dec7f1033aca55a5c024bbede1405ee1036/src/core/include/mp-units/framework/quantity_spec.h
+[qpoint-h]: https://github.com/mpusz/mp-units/blob/d7b11dec7f1033aca55a5c024bbede1405ee1036/src/core/include/mp-units/framework/quantity_point.h
+[mag-bits]: https://github.com/mpusz/mp-units/blob/d7b11dec7f1033aca55a5c024bbede1405ee1036/src/core/include/mp-units/bits/unit_magnitude.h
+[mag-fw]: https://github.com/mpusz/mp-units/blob/d7b11dec7f1033aca55a5c024bbede1405ee1036/src/core/include/mp-units/framework/unit_magnitude.h
+[unsat]: https://github.com/mpusz/mp-units/blob/d7b11dec7f1033aca55a5c024bbede1405ee1036/src/core/include/mp-units/bits/unsatisfied.h
+[hacks]: https://github.com/mpusz/mp-units/blob/d7b11dec7f1033aca55a5c024bbede1405ee1036/src/core/include/mp-units/bits/hacks.h
+[si-units]: https://github.com/mpusz/mp-units/blob/d7b11dec7f1033aca55a5c024bbede1405ee1036/src/systems/include/mp-units/systems/si/units.h
+[prefixes]: https://github.com/mpusz/mp-units/blob/d7b11dec7f1033aca55a5c024bbede1405ee1036/src/systems/include/mp-units/systems/si/prefixes.h
+[angular]: https://github.com/mpusz/mp-units/blob/d7b11dec7f1033aca55a5c024bbede1405ee1036/src/systems/include/mp-units/systems/angular/units.h
+[yardpound]: https://github.com/mpusz/mp-units/blob/d7b11dec7f1033aca55a5c024bbede1405ee1036/src/systems/include/mp-units/systems/yard_pound.h
+[fracexp]: https://github.com/mpusz/mp-units/blob/d7b11dec7f1033aca55a5c024bbede1405ee1036/test/static/fractional_exponent_quantity.cpp
+[readme]: https://github.com/mpusz/mp-units/blob/d7b11dec7f1033aca55a5c024bbede1405ee1036/README.md
+[citation]: https://github.com/mpusz/mp-units/blob/d7b11dec7f1033aca55a5c024bbede1405ee1036/CITATION.cff
+[src-cmake]: https://github.com/mpusz/mp-units/blob/d7b11dec7f1033aca55a5c024bbede1405ee1036/src/CMakeLists.txt
+[docs-dir]: https://github.com/mpusz/mp-units/tree/d7b11dec7f1033aca55a5c024bbede1405ee1036/docs
 
 <!-- Pinned in-tree docs -->
 
-[soq]: https://github.com/mpusz/mp-units/blob/d7b11de/docs/users_guide/framework_basics/systems_of_quantities.md
-[affine]: https://github.com/mpusz/mp-units/blob/d7b11de/docs/users_guide/framework_basics/the_affine_space.md
-[iface]: https://github.com/mpusz/mp-units/blob/d7b11de/docs/users_guide/framework_basics/interface_introduction.md
-[generic]: https://github.com/mpusz/mp-units/blob/d7b11de/docs/users_guide/framework_basics/generic_interfaces.md
-[ftl]: https://github.com/mpusz/mp-units/blob/d7b11de/docs/users_guide/framework_basics/faster_than_lightspeed_constants.md
-[valconv]: https://github.com/mpusz/mp-units/blob/d7b11de/docs/users_guide/framework_basics/value_conversions.md
-[simple]: https://github.com/mpusz/mp-units/blob/d7b11de/docs/users_guide/framework_basics/simple_and_typed_quantities.md
-[about]: https://github.com/mpusz/mp-units/blob/d7b11de/docs/getting_started/about.md
-[faq]: https://github.com/mpusz/mp-units/blob/d7b11de/docs/getting_started/faq.md
-[compiler-support]: https://github.com/mpusz/mp-units/blob/d7b11de/docs/getting_started/cpp_compiler_support.md
+[soq]: https://github.com/mpusz/mp-units/blob/d7b11dec7f1033aca55a5c024bbede1405ee1036/docs/users_guide/framework_basics/systems_of_quantities.md
+[affine]: https://github.com/mpusz/mp-units/blob/d7b11dec7f1033aca55a5c024bbede1405ee1036/docs/users_guide/framework_basics/the_affine_space.md
+[iface]: https://github.com/mpusz/mp-units/blob/d7b11dec7f1033aca55a5c024bbede1405ee1036/docs/users_guide/framework_basics/interface_introduction.md
+[generic]: https://github.com/mpusz/mp-units/blob/d7b11dec7f1033aca55a5c024bbede1405ee1036/docs/users_guide/framework_basics/generic_interfaces.md
+[ftl]: https://github.com/mpusz/mp-units/blob/d7b11dec7f1033aca55a5c024bbede1405ee1036/docs/users_guide/framework_basics/faster_than_lightspeed_constants.md
+[valconv]: https://github.com/mpusz/mp-units/blob/d7b11dec7f1033aca55a5c024bbede1405ee1036/docs/users_guide/framework_basics/value_conversions.md
+[simple]: https://github.com/mpusz/mp-units/blob/d7b11dec7f1033aca55a5c024bbede1405ee1036/docs/users_guide/framework_basics/simple_and_typed_quantities.md
+[about]: https://github.com/mpusz/mp-units/blob/d7b11dec7f1033aca55a5c024bbede1405ee1036/docs/getting_started/about.md
+[faq]: https://github.com/mpusz/mp-units/blob/d7b11dec7f1033aca55a5c024bbede1405ee1036/docs/getting_started/faq.md
+[compiler-support]: https://github.com/mpusz/mp-units/blob/d7b11dec7f1033aca55a5c024bbede1405ee1036/docs/getting_started/cpp_compiler_support.md
 
 <!-- Official docs & WG21 -->
 

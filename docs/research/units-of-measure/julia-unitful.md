@@ -616,29 +616,29 @@ dimensionally compatible`, values and units in domain language.
 <!-- Pinned clone (Unitful.jl @ 829da44) -->
 
 [repo]: https://github.com/JuliaPhysics/Unitful.jl
-[types]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da44/src/types.jl
-[dimensions]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da44/src/dimensions.jl
-[units]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da44/src/units.jl
-[quantities]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da44/src/quantities.jl
-[user]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da44/src/user.jl
-[conversion]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da44/src/conversion.jl
-[promotion]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da44/src/promotion.jl
-[utils]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da44/src/utils.jl
-[pkgdefaults]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da44/src/pkgdefaults.jl
-[logarithm]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da44/src/logarithm.jl
-[readme]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da44/README.md
-[news]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da44/NEWS.md
-[license]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da44/LICENSE.md
-[runtests]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da44/test/runtests.jl
-[types-md]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da44/docs/src/types.md
-[highlights-md]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da44/docs/src/highlights.md
-[temperature-md]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da44/docs/src/temperature.md
-[trouble-md]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da44/docs/src/trouble.md
-[extending-md]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da44/docs/src/extending.md
-[newunits-md]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da44/docs/src/newunits.md
-[conversion-md]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da44/docs/src/conversion.md
-[logarithm-md]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da44/docs/src/logarithm.md
-[index-md]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da44/docs/src/index.md
+[types]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da449919e7edda1403cfcf2dda3157b4955d2/src/types.jl
+[dimensions]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da449919e7edda1403cfcf2dda3157b4955d2/src/dimensions.jl
+[units]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da449919e7edda1403cfcf2dda3157b4955d2/src/units.jl
+[quantities]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da449919e7edda1403cfcf2dda3157b4955d2/src/quantities.jl
+[user]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da449919e7edda1403cfcf2dda3157b4955d2/src/user.jl
+[conversion]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da449919e7edda1403cfcf2dda3157b4955d2/src/conversion.jl
+[promotion]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da449919e7edda1403cfcf2dda3157b4955d2/src/promotion.jl
+[utils]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da449919e7edda1403cfcf2dda3157b4955d2/src/utils.jl
+[pkgdefaults]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da449919e7edda1403cfcf2dda3157b4955d2/src/pkgdefaults.jl
+[logarithm]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da449919e7edda1403cfcf2dda3157b4955d2/src/logarithm.jl
+[readme]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da449919e7edda1403cfcf2dda3157b4955d2/README.md
+[news]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da449919e7edda1403cfcf2dda3157b4955d2/NEWS.md
+[license]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da449919e7edda1403cfcf2dda3157b4955d2/LICENSE.md
+[runtests]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da449919e7edda1403cfcf2dda3157b4955d2/test/runtests.jl
+[types-md]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da449919e7edda1403cfcf2dda3157b4955d2/docs/src/types.md
+[highlights-md]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da449919e7edda1403cfcf2dda3157b4955d2/docs/src/highlights.md
+[temperature-md]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da449919e7edda1403cfcf2dda3157b4955d2/docs/src/temperature.md
+[trouble-md]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da449919e7edda1403cfcf2dda3157b4955d2/docs/src/trouble.md
+[extending-md]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da449919e7edda1403cfcf2dda3157b4955d2/docs/src/extending.md
+[newunits-md]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da449919e7edda1403cfcf2dda3157b4955d2/docs/src/newunits.md
+[conversion-md]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da449919e7edda1403cfcf2dda3157b4955d2/docs/src/conversion.md
+[logarithm-md]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da449919e7edda1403cfcf2dda3157b4955d2/docs/src/logarithm.md
+[index-md]: https://github.com/JuliaPhysics/Unitful.jl/blob/829da449919e7edda1403cfcf2dda3157b4955d2/docs/src/index.md
 
 <!-- Official docs, issues & ecosystem -->
 

@@ -569,19 +569,19 @@ Further mapping notes:
 <!-- References -->
 
 [repo]: https://github.com/n0-computer/iroh/tree/22cac742ca
-[key]: https://github.com/n0-computer/iroh/blob/22cac742ca/iroh-base/src/key.rs
-[base-cargo]: https://github.com/n0-computer/iroh/blob/22cac742ca/iroh-base/Cargo.toml
-[tls]: https://github.com/n0-computer/iroh/blob/22cac742ca/iroh/src/tls.rs
-[verifier]: https://github.com/n0-computer/iroh/blob/22cac742ca/iroh/src/tls/verifier.rs
-[resolver]: https://github.com/n0-computer/iroh/blob/22cac742ca/iroh/src/tls/resolver.rs
-[name]: https://github.com/n0-computer/iroh/blob/22cac742ca/iroh/src/tls/name.rs
-[misc]: https://github.com/n0-computer/iroh/blob/22cac742ca/iroh/src/tls/misc.rs
-[handshake]: https://github.com/n0-computer/iroh/blob/22cac742ca/iroh-relay/src/protos/handshake.rs
-[connection]: https://github.com/n0-computer/iroh/blob/22cac742ca/iroh/src/endpoint/connection.rs
-[endpoint-src]: https://github.com/n0-computer/iroh/blob/22cac742ca/iroh/src/endpoint.rs
-[pq]: https://github.com/n0-computer/iroh/blob/22cac742ca/iroh/examples/pq-only-key-exchange.rs
-[docs-keys]: https://github.com/n0-computer/iroh-docs/blob/v0.101.0/src/keys.rs
-[noq-crypto]: https://github.com/n0-computer/noq/blob/noq-v1.0.1/noq-proto/src/crypto.rs
+[key]: https://github.com/n0-computer/iroh/blob/22cac742ca5e84da4542681e14b2d23b74c8330e/iroh-base/src/key.rs
+[base-cargo]: https://github.com/n0-computer/iroh/blob/22cac742ca5e84da4542681e14b2d23b74c8330e/iroh-base/Cargo.toml
+[tls]: https://github.com/n0-computer/iroh/blob/22cac742ca5e84da4542681e14b2d23b74c8330e/iroh/src/tls.rs
+[verifier]: https://github.com/n0-computer/iroh/blob/22cac742ca5e84da4542681e14b2d23b74c8330e/iroh/src/tls/verifier.rs
+[resolver]: https://github.com/n0-computer/iroh/blob/22cac742ca5e84da4542681e14b2d23b74c8330e/iroh/src/tls/resolver.rs
+[name]: https://github.com/n0-computer/iroh/blob/22cac742ca5e84da4542681e14b2d23b74c8330e/iroh/src/tls/name.rs
+[misc]: https://github.com/n0-computer/iroh/blob/22cac742ca5e84da4542681e14b2d23b74c8330e/iroh/src/tls/misc.rs
+[handshake]: https://github.com/n0-computer/iroh/blob/22cac742ca5e84da4542681e14b2d23b74c8330e/iroh-relay/src/protos/handshake.rs
+[connection]: https://github.com/n0-computer/iroh/blob/22cac742ca5e84da4542681e14b2d23b74c8330e/iroh/src/endpoint/connection.rs
+[endpoint-src]: https://github.com/n0-computer/iroh/blob/22cac742ca5e84da4542681e14b2d23b74c8330e/iroh/src/endpoint.rs
+[pq]: https://github.com/n0-computer/iroh/blob/22cac742ca5e84da4542681e14b2d23b74c8330e/iroh/examples/pq-only-key-exchange.rs
+[docs-keys]: https://github.com/n0-computer/iroh-docs/blob/091e8cac47bbc49cdb84b0bfed227cc163b61dfe/src/keys.rs
+[noq-crypto]: https://github.com/n0-computer/noq/blob/340e9c7da0d60eda6f5c7ffa7a36d20ed8d793fd/noq-proto/src/crypto.rs
 [docs-iroh-base]: https://docs.rs/iroh-base/1.0.1/iroh_base/
 [docs-iroh]: https://docs.rs/iroh/1.0.1/iroh/
 [blake3]: https://docs.rs/blake3/latest/blake3/

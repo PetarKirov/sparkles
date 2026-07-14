@@ -218,6 +218,6 @@ Unlike monad transformer stacks that require `lift` to access effects from deepe
 [Koka]: koka.md
 [Frank GitHub repository]: https://github.com/frank-lang/frank
 [Do Be Do Be Do (Frank paper, POPL 2017)]: https://arxiv.org/abs/1611.09259
-[Frank README with examples]: https://github.com/frank-lang/frank/blob/master/README.md
+[Frank README with examples]: https://github.com/frank-lang/frank/blob/b5585a050221abfe03e5b6824cd1dd2b516a27f2/README.md
 [Call-by-Push-Value book]: https://doi.org/10.1017/S095679680100422X
 [Unison documentation]: https://www.unison-lang.org/docs/

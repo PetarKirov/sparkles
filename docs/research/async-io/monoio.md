@@ -670,7 +670,7 @@ control over the driver and options.
 
 [monoio GitHub Repository]: https://github.com/bytedance/monoio
 [monoio on docs.rs]: https://docs.rs/monoio/latest/monoio/
-[monoio design docs]: https://github.com/bytedance/monoio/tree/master/docs/en
+[monoio design docs]: https://github.com/bytedance/monoio/tree/f0931e48e13bbeb1bcc3a1dc881dbe5c9385aa6c/docs/en
 [ihciah]: https://github.com/ihciah
 [mio]: https://github.com/tokio-rs/mio
 [Tokio]: https://github.com/tokio-rs/tokio

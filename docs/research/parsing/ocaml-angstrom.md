@@ -279,5 +279,5 @@ Angstrom is a mature, widely-depended-upon library in the OCaml ecosystem and th
 [pratt]: ./theory/pratt-precedence.md
 [angstrom-repo]: https://github.com/inhabitedtype/angstrom
 [angstrom-opam]: https://opam.ocaml.org/packages/angstrom/
-[http-example]: https://github.com/inhabitedtype/angstrom/blob/master/examples/rFC2616.ml
-[json-example]: https://github.com/inhabitedtype/angstrom/blob/master/examples/rFC7159.ml
+[http-example]: https://github.com/inhabitedtype/angstrom/blob/76c5ef5b0d0430eb71aa8dccad1fe23f50b96277/examples/rFC2616.ml
+[json-example]: https://github.com/inhabitedtype/angstrom/blob/76c5ef5b0d0430eb71aa8dccad1fe23f50b96277/examples/rFC7159.ml

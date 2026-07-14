@@ -8,7 +8,7 @@ verification, deferrals. For the design rationale and prior-art justification re
 > [!NOTE]
 > **Status: proposal.** This is a milestoned _plan_ for a library that does not exist yet.
 > It is deliberately incremental: each milestone is independently useful, builds bottom-up on
-> the existing [`sparkles.base.text`](https://github.com/PetarKirov/sparkles/blob/main/libs/base/src/sparkles/base/text/package.d)
+> The existing [`sparkles.base.text`](https://github.com/PetarKirov/sparkles/blob/3cc01cfdc8ae867f0558e43c731885a004cb0130/libs/base/src/sparkles/base/text/package.d)
 > substrate, and can stop early â€” Sparkles gets value at M2 (combinators + Pratt) without
 > ever needing M4. Nothing here should be built ahead of a real in-repo client that needs it.
 
@@ -56,7 +56,7 @@ small, under `libs/base/src/sparkles/base/text/` beside the readers it extends â
 - A table-free binding-power loop (`prattParse!(prefix, infix)`) per [pratt-precedence][pratt].
 - **First client:** re-express a version-constraint grammar (node-semver-style `>=1.2 <2.0 || ^3`)
   with M1 combinators + M2 Pratt, and validate it against the existing
-  [`sparkles.versions`](https://github.com/PetarKirov/sparkles/blob/main/libs/versions/src/sparkles/versions/parsing.d)
+  [`sparkles.versions`](https://github.com/PetarKirov/sparkles/blob/3cc01cfdc8ae867f0558e43c731885a004cb0130/libs/versions/src/sparkles/versions/parsing.d)
   range parsers (same accept/reject set). This is the milestone that proves the toolkit earns
   its place.
 
@@ -107,5 +107,5 @@ plan builds the small `@nogc` combinator + Pratt layer that D lacks
 [mir-ion]: ../../research/parsing/d-landscape.md
 [asdf]: ../../research/parsing/d-landscape.md
 [Pegged]: ../../research/parsing/d-landscape.md
-[base-text]: https://github.com/PetarKirov/sparkles/blob/main/libs/base/src/sparkles/base/text/package.d
-[v-parsing]: https://github.com/PetarKirov/sparkles/blob/main/libs/versions/src/sparkles/versions/schemes/semver.d
+[base-text]: https://github.com/PetarKirov/sparkles/blob/3cc01cfdc8ae867f0558e43c731885a004cb0130/libs/base/src/sparkles/base/text/package.d
+[v-parsing]: https://github.com/PetarKirov/sparkles/blob/3cc01cfdc8ae867f0558e43c731885a004cb0130/libs/versions/src/sparkles/versions/schemes/semver.d

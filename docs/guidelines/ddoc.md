@@ -30,7 +30,7 @@ License: $(HTTP boost.org/LICENSE_1_0.txt, Boost License 1.0)
 Authors: $(HTTP example.com, Jane Developer)
 
 Macros:
-    SRC = $(LINK2 https://github.com/example/geom/blob/main/$0, $0)
+    SRC = $(LINK2 https://github.com/example/geom/blob/0000000000000000000000000000000000000000/$0, $0)
 */
 module geometry.twodim;
 
@@ -837,6 +837,6 @@ Key findings:
 - [DDoc Language Specification](https://dlang.org/spec/ddoc.html) — The authoritative reference for all DDoc syntax and processing rules.
 - [The D Style](https://dlang.org/dstyle.html) — Official coding and documentation style conventions for D.
 - [Documented Unit Tests](https://dlang.org/spec/unittest.html#documented-unittests) — Specification for auto-generated examples from unittests.
-- [Predefined Macro Definitions (source)](https://github.com/dlang/dmd/blob/master/compiler/src/dmd/res/default_ddoc_theme.ddoc) — Reference implementation of all predefined DDoc macros.
-- [Standard Library Macros (std_consolidated.ddoc)](https://github.com/dlang/dlang.org/blob/master/std_consolidated.ddoc) — Macro definitions for `LREF`, `REF`, `BUGZILLA`, and other standard library macros.
-- [dlang.org Macros (dlang.org.ddoc)](https://github.com/dlang/dlang.org/blob/master/dlang.org.ddoc) — Site-wide macro definitions including `REF`, `MREF`, and layout macros.
+- [Predefined Macro Definitions (source)](https://github.com/dlang/dmd/blob/c050aa5d8f9f558b0fd8c01d5235f8d8c7581170/compiler/src/dmd/res/default_ddoc_theme.ddoc) — Reference implementation of all predefined DDoc macros.
+- [Standard Library Macros (std_consolidated.ddoc)](https://github.com/dlang/dlang.org/blob/ec07302accc6a628219d87c45ea205c88bea990a/std_consolidated.ddoc) — Macro definitions for `LREF`, `REF`, `BUGZILLA`, and other standard library macros.
+- [dlang.org Macros (dlang.org.ddoc)](https://github.com/dlang/dlang.org/blob/ec07302accc6a628219d87c45ea205c88bea990a/dlang.org.ddoc) — Site-wide macro definitions including `REF`, `MREF`, and layout macros.

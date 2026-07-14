@@ -174,9 +174,9 @@ Related: the Manim Community deep-dive · [`scene-graph.md`][scene-graph] ·
 [deterministic]: ../concepts.md#deterministic-frame-sampling
 [content]: ../concepts.md#content-hash-caching
 [ex-frame]: ../examples/frame-capture.d
-[hashing]: https://github.com/ManimCommunity/manim/blob/4d25c031/manim/utils/hashing.py
-[cairo-r]: https://github.com/ManimCommunity/manim/blob/4d25c031/manim/renderer/cairo_renderer.py
-[scene]: https://github.com/ManimCommunity/manim/blob/4d25c031/manim/scene/scene.py
-[mobject]: https://github.com/ManimCommunity/manim/blob/4d25c031/manim/mobject/mobject.py
-[writer]: https://github.com/ManimCommunity/manim/blob/4d25c031/manim/scene/scene_file_writer.py
-[default-cfg]: https://github.com/ManimCommunity/manim/blob/4d25c031/manim/_config/default.cfg
+[hashing]: https://github.com/ManimCommunity/manim/blob/4d25c031ffe71c602e20935afd54a96f33545a6e/manim/utils/hashing.py
+[cairo-r]: https://github.com/ManimCommunity/manim/blob/4d25c031ffe71c602e20935afd54a96f33545a6e/manim/renderer/cairo_renderer.py
+[scene]: https://github.com/ManimCommunity/manim/blob/4d25c031ffe71c602e20935afd54a96f33545a6e/manim/scene/scene.py
+[mobject]: https://github.com/ManimCommunity/manim/blob/4d25c031ffe71c602e20935afd54a96f33545a6e/manim/mobject/mobject.py
+[writer]: https://github.com/ManimCommunity/manim/blob/4d25c031ffe71c602e20935afd54a96f33545a6e/manim/scene/scene_file_writer.py
+[default-cfg]: https://github.com/ManimCommunity/manim/blob/4d25c031ffe71c602e20935afd54a96f33545a6e/manim/_config/default.cfg

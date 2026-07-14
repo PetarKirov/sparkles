@@ -2,14 +2,14 @@
 
 A reactive terminal UI library built on incremental computation primitives, where the UI is defined as a dependency-tracked reactive document that automatically recomputes only the affected subtrees when state changes.
 
-| Field         | Value                                                                                                                       |
-| ------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| Language      | OCaml                                                                                                                       |
-| License       | MIT                                                                                                                         |
-| Repository    | [github.com/let-def/lwd](https://github.com/let-def/lwd) (monorepo: Lwd + Nottui)                                           |
-| Documentation | [README](https://github.com/let-def/lwd/blob/master/lib/nottui/README.md) / [opam](https://opam.ocaml.org/packages/nottui/) |
-| Install       | `opam install nottui`                                                                                                       |
-| Author        | Frederic Bour (also known for Merlin, the OCaml IDE service)                                                                |
+| Field         | Value                                                                                                                                                         |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Language      | OCaml                                                                                                                                                         |
+| License       | MIT                                                                                                                                                           |
+| Repository    | [github.com/let-def/lwd](https://github.com/let-def/lwd) (monorepo: Lwd + Nottui)                                                                             |
+| Documentation | [README](https://github.com/let-def/lwd/blob/818ce8aa4f892003b1f7fef3fac5eca5b68ce1e5/lib/nottui/README.md) / [opam](https://opam.ocaml.org/packages/nottui/) |
+| Install       | `opam install nottui`                                                                                                                                         |
+| Author        | Frederic Bour (also known for Merlin, the OCaml IDE service)                                                                                                  |
 
 ---
 
@@ -886,13 +886,13 @@ This mirrors Lwd's approach where `Lwd.get` implicitly registers dependencies du
 ## References
 
 - **Lwd repository (includes Nottui)**: <https://github.com/let-def/lwd>
-- **Nottui source**: <https://github.com/let-def/lwd/tree/master/lib/nottui>
-- **Nottui README with examples**: <https://github.com/let-def/lwd/blob/master/lib/nottui/README.md>
-- **Lwd README (incremental computation model)**: <https://github.com/let-def/lwd/blob/master/README.md>
-- **Lwd API (`.mli`)**: <https://github.com/let-def/lwd/blob/master/lib/lwd/lwd.mli>
-- **Nottui API (`.mli`)**: <https://github.com/let-def/lwd/blob/master/lib/nottui/nottui.mli>
-- **Nottui widgets API (`.mli`)**: <https://github.com/let-def/lwd/blob/master/lib/nottui/nottui_widgets.mli>
-- **`Lwd_table` API (`.mli`)**: <https://github.com/let-def/lwd/blob/master/lib/lwd/lwd_table.mli>
+- **Nottui source**: <https://github.com/let-def/lwd/tree/818ce8aa4f892003b1f7fef3fac5eca5b68ce1e5/lib/nottui>
+- **Nottui README with examples**: <https://github.com/let-def/lwd/blob/818ce8aa4f892003b1f7fef3fac5eca5b68ce1e5/lib/nottui/README.md>
+- **Lwd README (incremental computation model)**: <https://github.com/let-def/lwd/blob/818ce8aa4f892003b1f7fef3fac5eca5b68ce1e5/README.md>
+- **Lwd API (`.mli`)**: <https://github.com/let-def/lwd/blob/818ce8aa4f892003b1f7fef3fac5eca5b68ce1e5/lib/lwd/lwd.mli>
+- **Nottui API (`.mli`)**: <https://github.com/let-def/lwd/blob/818ce8aa4f892003b1f7fef3fac5eca5b68ce1e5/lib/nottui/nottui.mli>
+- **Nottui widgets API (`.mli`)**: <https://github.com/let-def/lwd/blob/818ce8aa4f892003b1f7fef3fac5eca5b68ce1e5/lib/nottui/nottui_widgets.mli>
+- **`Lwd_table` API (`.mli`)**: <https://github.com/let-def/lwd/blob/818ce8aa4f892003b1f7fef3fac5eca5b68ce1e5/lib/lwd/lwd_table.mli>
 - **Notty (terminal backend)**: <https://github.com/pqwy/notty>
 - **opam package**: <https://opam.ocaml.org/packages/nottui/>
 - **Frederic Bour (author)**: <https://github.com/let-def>

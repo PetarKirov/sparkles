@@ -337,8 +337,8 @@ from the effect systems:
 [ies-guide]: ../../guidelines/interpolated-expression-sequences.md
 [d-spec-ies]: https://dlang.org/spec/istring.html
 [core-interpolation]: https://dlang.org/phobos/core_interpolation.html
-[dip1036]: https://github.com/dlang/DIPs/blob/master/DIPs/other/DIP1036.md
+[dip1036]: https://github.com/dlang/DIPs/blob/90490da522d8209c7940071a4a58c5b4d7e8938e/DIPs/other/DIP1036.md
 [ctfe]: https://dlang.org/spec/function.html#interpretation
 [ie-repo]: https://github.com/adamdruppe/interpolation-examples
-[ie-sql]: https://github.com/adamdruppe/interpolation-examples/blob/master/lib/sql.d
-[ie-06]: https://github.com/adamdruppe/interpolation-examples/blob/master/06-sql.d
+[ie-sql]: https://github.com/adamdruppe/interpolation-examples/blob/a8a5d4d4ee37ee9ae3942c4f4e8489011c3c4673/lib/sql.d
+[ie-06]: https://github.com/adamdruppe/interpolation-examples/blob/a8a5d4d4ee37ee9ae3942c4f4e8489011c3c4673/06-sql.d

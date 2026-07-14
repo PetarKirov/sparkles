@@ -446,7 +446,7 @@ probe illustrates is exactly what makes such distributed splitting safe.
 
 [repo]: https://github.com/remotion-dev/remotion
 [releases]: https://github.com/remotion-dev/remotion/releases/latest
-[license-md]: https://github.com/remotion-dev/remotion/blob/main/LICENSE.md
+[license-md]: https://github.com/remotion-dev/remotion/blob/ae327ffe05aa4ca47fe20e2a6e440180ceb17ae5/LICENSE.md
 [license-doc]: https://www.remotion.dev/docs/license
 [docs]: https://www.remotion.dev/docs
 [fundamentals]: https://www.remotion.dev/docs/the-fundamentals

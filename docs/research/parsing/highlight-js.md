@@ -136,9 +136,9 @@ This is the extra spine dimension for the [syntax-highlighting cluster][sh]:
 
 [repo]: https://github.com/highlightjs/highlight.js
 [docs]: https://highlightjs.readthedocs.io/
-[readme]: https://github.com/highlightjs/highlight.js/blob/main/README.md
-[lang-guide]: https://github.com/highlightjs/highlight.js/blob/main/docs/language-guide.rst
-[highlight-js-src]: https://github.com/highlightjs/highlight.js/blob/main/src/highlight.js
+[readme]: https://github.com/highlightjs/highlight.js/blob/b353518e12d45d2bde57125ec6c0af4928545be7/README.md
+[lang-guide]: https://github.com/highlightjs/highlight.js/blob/b353518e12d45d2bde57125ec6c0af4928545be7/docs/language-guide.rst
+[highlight-js-src]: https://github.com/highlightjs/highlight.js/blob/b353518e12d45d2bde57125ec6c0af4928545be7/src/highlight.js
 [linguist]: ./linguist.md
 [pygments]: ./pygments.md
 [syntect]: ./syntect.md

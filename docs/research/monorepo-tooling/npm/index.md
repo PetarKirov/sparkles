@@ -277,16 +277,16 @@ A minimal, runnable two-member `npm` workspace lives under [`./sample/`](./sampl
 <!-- References -->
 
 [repo]: https://github.com/npm/cli
-[arborist-src]: https://github.com/npm/cli/tree/latest/workspaces/arborist
+[arborist-src]: https://github.com/npm/cli/tree/7b1f6c173d17b3bf30e45426f6df39473c6a1163/workspaces/arborist
 [arborist-pkg]: https://www.npmjs.com/package/@npmcli/arborist
 [docs]: https://docs.npmjs.com/cli/v11/using-npm/workspaces/
 [pkgjson]: https://docs.npmjs.com/cli/v11/configuring-npm/package-json
-[rfc]: https://github.com/npm/rfcs/blob/main/implemented/0026-workspaces.md
-[ws-doc]: https://github.com/npm/cli/blob/latest/workspaces/arborist/docs/workspace.md
-[tree-types]: https://github.com/npm/cli/blob/latest/workspaces/arborist/docs/tree-types.md
-[ideal-tree]: https://github.com/npm/cli/blob/latest/workspaces/arborist/docs/ideal-tree.md
-[defs]: https://github.com/npm/cli/blob/latest/workspaces/config/lib/definitions/definitions.js
-[getws]: https://github.com/npm/cli/blob/latest/lib/utils/get-workspaces.js
+[rfc]: https://github.com/npm/rfcs/blob/520fe7d8a0e9c4ccbaf20acbbc73d954dd6f19f3/implemented/0026-workspaces.md
+[ws-doc]: https://github.com/npm/cli/blob/7b1f6c173d17b3bf30e45426f6df39473c6a1163/workspaces/arborist/docs/workspace.md
+[tree-types]: https://github.com/npm/cli/blob/7b1f6c173d17b3bf30e45426f6df39473c6a1163/workspaces/arborist/docs/tree-types.md
+[ideal-tree]: https://github.com/npm/cli/blob/7b1f6c173d17b3bf30e45426f6df39473c6a1163/workspaces/arborist/docs/ideal-tree.md
+[defs]: https://github.com/npm/cli/blob/7b1f6c173d17b3bf30e45426f6df39473c6a1163/workspaces/config/lib/definitions/definitions.js
+[getws]: https://github.com/npm/cli/blob/7b1f6c173d17b3bf30e45426f6df39473c6a1163/lib/utils/get-workspaces.js
 [arborist-blog]: https://blog.npmjs.org/post/618653678433435649/npm-v7-series-arborist-deep-dive.html
 [v7-blog]: https://github.blog/2020-10-13-presenting-v7-0-0-of-the-npm-cli/
 [d-landscape]: ../../async-io/d-landscape.md

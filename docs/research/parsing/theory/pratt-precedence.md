@@ -689,5 +689,5 @@ difference across the whole family.
 [nystrom]: https://journal.stuffwithstuff.com/2011/03/19/pratt-parsers-expression-parsing-made-easy/
 [dragon]: https://web.archive.org/web/20260610070726/https://suif.stanford.edu/dragonbook/
 [chumsky]: https://docs.rs/chumsky/latest/chumsky/pratt/index.html
-[chumsky-src]: https://github.com/zesterer/chumsky/blob/main/src/pratt.rs
+[chumsky-src]: https://github.com/zesterer/chumsky/blob/4879268c589b18927df6ec21331e66d7fb56df86/src/pratt.rs
 [wiki-opp]: https://en.wikipedia.org/wiki/Operator-precedence_parser

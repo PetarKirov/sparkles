@@ -725,7 +725,7 @@ the `X` of `OutsideIn(X)` for any theory that can supply sound, most-general sim
 [bobbin]: https://arxiv.org/abs/2509.13142
 [atkey]: https://dl.acm.org/doi/10.1145/2535838.2535867
 [fsharp-repo]: https://github.com/dotnet/fsharp
-[fsharp-cs]: https://github.com/dotnet/fsharp/blob/25c6a37e/src/Compiler/Checking/ConstraintSolver.fs
+[fsharp-cs]: https://github.com/dotnet/fsharp/blob/25c6a37e68d01387a5d5322e70efecb4551cb058/src/Compiler/Checking/ConstraintSolver.fs
 [uom-plugin-repo]: https://github.com/adamgundry/uom-plugin
 [dimensional-repo]: https://github.com/bjornbm/dimensional
 [units-pkg]: https://github.com/goldfirere/units

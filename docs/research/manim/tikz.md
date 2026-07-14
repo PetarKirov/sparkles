@@ -594,7 +594,7 @@ loadable **libraries** — and the surface is enormous.
 <!-- References -->
 
 [repo]: https://github.com/pgf-tikz/pgf
-[license]: https://github.com/pgf-tikz/pgf/blob/master/doc/generic/pgf/licenses/LICENSE
+[license]: https://github.com/pgf-tikz/pgf/blob/dc56af18b72255bede59800928f9a2bab1fe35e0/doc/generic/pgf/licenses/LICENSE
 [ctan]: https://ctan.org/pkg/pgf
 [manual-home]: https://tikz.dev/
 [tikz-design]: https://tikz.dev/tikz-design

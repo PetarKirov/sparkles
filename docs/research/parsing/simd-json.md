@@ -252,16 +252,16 @@ simd-json is a mature, widely-depended-on crate (it underpins the `tremor` event
 <!-- References -->
 
 [repo]: https://github.com/simd-lite/simd-json
-[repo-readme]: https://github.com/simd-lite/simd-json/blob/main/README.md
-[lib]: https://github.com/simd-lite/simd-json/blob/main/src/lib.rs
-[stage2]: https://github.com/simd-lite/simd-json/blob/main/src/stage2.rs
-[tape]: https://github.com/simd-lite/simd-json/blob/main/src/value/tape.rs
-[value]: https://github.com/simd-lite/simd-json/blob/main/src/value.rs
-[lazy]: https://github.com/simd-lite/simd-json/blob/main/src/value/lazy.rs
-[avx2-stage1]: https://github.com/simd-lite/simd-json/blob/main/src/impls/avx2/stage1.rs
-[numberparse]: https://github.com/simd-lite/simd-json/blob/main/src/numberparse.rs
-[numcorrect]: https://github.com/simd-lite/simd-json/blob/main/src/numberparse/correct.rs
-[cargo]: https://github.com/simd-lite/simd-json/blob/main/Cargo.toml
+[repo-readme]: https://github.com/simd-lite/simd-json/blob/432715360f1e388ae3168ebd27b7e1985d99c663/README.md
+[lib]: https://github.com/simd-lite/simd-json/blob/432715360f1e388ae3168ebd27b7e1985d99c663/src/lib.rs
+[stage2]: https://github.com/simd-lite/simd-json/blob/432715360f1e388ae3168ebd27b7e1985d99c663/src/stage2.rs
+[tape]: https://github.com/simd-lite/simd-json/blob/432715360f1e388ae3168ebd27b7e1985d99c663/src/value/tape.rs
+[value]: https://github.com/simd-lite/simd-json/blob/432715360f1e388ae3168ebd27b7e1985d99c663/src/value.rs
+[lazy]: https://github.com/simd-lite/simd-json/blob/432715360f1e388ae3168ebd27b7e1985d99c663/src/value/lazy.rs
+[avx2-stage1]: https://github.com/simd-lite/simd-json/blob/432715360f1e388ae3168ebd27b7e1985d99c663/src/impls/avx2/stage1.rs
+[numberparse]: https://github.com/simd-lite/simd-json/blob/432715360f1e388ae3168ebd27b7e1985d99c663/src/numberparse.rs
+[numcorrect]: https://github.com/simd-lite/simd-json/blob/432715360f1e388ae3168ebd27b7e1985d99c663/src/numberparse/correct.rs
+[cargo]: https://github.com/simd-lite/simd-json/blob/432715360f1e388ae3168ebd27b7e1985d99c663/Cargo.toml
 [site]: https://simd-json.rs
 [docsrs]: https://docs.rs/simd-json
 [crates]: https://crates.io/crates/simd-json

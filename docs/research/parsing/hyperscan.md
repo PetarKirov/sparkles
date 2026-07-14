@@ -223,22 +223,22 @@ Hyperscan's deepest tie to this survey is genealogical: **Geoff Langdale co-auth
 <!-- References -->
 
 [repo]: https://github.com/intel/hyperscan
-[repo-readme]: https://github.com/intel/hyperscan/blob/master/README.md
+[repo-readme]: https://github.com/intel/hyperscan/blob/828b4fef341759e05292741a6c89cb66055986f8/README.md
 [vectorscan]: https://github.com/VectorCamp/vectorscan
 [devref]: http://intel.github.io/hyperscan/dev-reference/
-[devref-src]: https://github.com/intel/hyperscan/tree/master/doc/dev-reference
-[license]: https://github.com/intel/hyperscan/blob/master/LICENSE
-[intro]: https://github.com/intel/hyperscan/blob/master/doc/dev-reference/intro.rst
-[compilation]: https://github.com/intel/hyperscan/blob/master/doc/dev-reference/compilation.rst
-[fdr-h]: https://github.com/intel/hyperscan/blob/master/src/fdr/fdr.h
-[teddy-h]: https://github.com/intel/hyperscan/blob/master/src/fdr/teddy.h
-[limex]: https://github.com/intel/hyperscan/tree/master/src/nfa
-[rose]: https://github.com/intel/hyperscan/tree/master/src/rose
-[rose-build]: https://github.com/intel/hyperscan/blob/master/src/rose/rose_build.h
-[hs-compile]: https://github.com/intel/hyperscan/blob/master/src/hs_compile.h
-[hs-runtime]: https://github.com/intel/hyperscan/blob/master/src/hs_runtime.h
-[hs-h]: https://github.com/intel/hyperscan/blob/master/src/hs.h
-[changelog]: https://github.com/intel/hyperscan/blob/master/CHANGELOG.md
+[devref-src]: https://github.com/intel/hyperscan/tree/828b4fef341759e05292741a6c89cb66055986f8/doc/dev-reference
+[license]: https://github.com/intel/hyperscan/blob/828b4fef341759e05292741a6c89cb66055986f8/LICENSE
+[intro]: https://github.com/intel/hyperscan/blob/828b4fef341759e05292741a6c89cb66055986f8/doc/dev-reference/intro.rst
+[compilation]: https://github.com/intel/hyperscan/blob/828b4fef341759e05292741a6c89cb66055986f8/doc/dev-reference/compilation.rst
+[fdr-h]: https://github.com/intel/hyperscan/blob/828b4fef341759e05292741a6c89cb66055986f8/src/fdr/fdr.h
+[teddy-h]: https://github.com/intel/hyperscan/blob/828b4fef341759e05292741a6c89cb66055986f8/src/fdr/teddy.h
+[limex]: https://github.com/intel/hyperscan/tree/828b4fef341759e05292741a6c89cb66055986f8/src/nfa
+[rose]: https://github.com/intel/hyperscan/tree/828b4fef341759e05292741a6c89cb66055986f8/src/rose
+[rose-build]: https://github.com/intel/hyperscan/blob/828b4fef341759e05292741a6c89cb66055986f8/src/rose/rose_build.h
+[hs-compile]: https://github.com/intel/hyperscan/blob/828b4fef341759e05292741a6c89cb66055986f8/src/hs_compile.h
+[hs-runtime]: https://github.com/intel/hyperscan/blob/828b4fef341759e05292741a6c89cb66055986f8/src/hs_runtime.h
+[hs-h]: https://github.com/intel/hyperscan/blob/828b4fef341759e05292741a6c89cb66055986f8/src/hs.h
+[changelog]: https://github.com/intel/hyperscan/blob/828b4fef341759e05292741a6c89cb66055986f8/CHANGELOG.md
 [paper]: https://www.usenix.org/conference/nsdi19/presentation/wang-xiang
 [umbrella]: ./index.md
 [concepts]: ./concepts.md

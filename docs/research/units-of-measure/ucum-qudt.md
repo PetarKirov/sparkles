@@ -604,45 +604,45 @@ in four dialects: **the check is data-driven and it happens at run time.**
 <!-- Pinned clone: ucum-java (FHIR/Ucum-java @ 70106f4) -->
 
 [ucumj-repo]: https://github.com/FHIR/Ucum-java
-[ucumj-lexer]: https://github.com/FHIR/Ucum-java/blob/70106f4/src/main/java/org/fhir/ucum/Lexer.java
-[ucumj-parser]: https://github.com/FHIR/Ucum-java/blob/70106f4/src/main/java/org/fhir/ucum/ExpressionParser.java
-[ucumj-conv]: https://github.com/FHIR/Ucum-java/blob/70106f4/src/main/java/org/fhir/ucum/Converter.java
-[ucumj-canon]: https://github.com/FHIR/Ucum-java/blob/70106f4/src/main/java/org/fhir/ucum/Canonical.java
-[ucumj-base]: https://github.com/FHIR/Ucum-java/blob/70106f4/src/main/java/org/fhir/ucum/BaseUnit.java
-[ucumj-svc]: https://github.com/FHIR/Ucum-java/blob/70106f4/src/main/java/org/fhir/ucum/UcumEssenceService.java
-[ucumj-readme]: https://github.com/FHIR/Ucum-java/blob/70106f4/README.md
+[ucumj-lexer]: https://github.com/FHIR/Ucum-java/blob/70106f43ea1ee9ca04d1f109604f0742021a38eb/src/main/java/org/fhir/ucum/Lexer.java
+[ucumj-parser]: https://github.com/FHIR/Ucum-java/blob/70106f43ea1ee9ca04d1f109604f0742021a38eb/src/main/java/org/fhir/ucum/ExpressionParser.java
+[ucumj-conv]: https://github.com/FHIR/Ucum-java/blob/70106f43ea1ee9ca04d1f109604f0742021a38eb/src/main/java/org/fhir/ucum/Converter.java
+[ucumj-canon]: https://github.com/FHIR/Ucum-java/blob/70106f43ea1ee9ca04d1f109604f0742021a38eb/src/main/java/org/fhir/ucum/Canonical.java
+[ucumj-base]: https://github.com/FHIR/Ucum-java/blob/70106f43ea1ee9ca04d1f109604f0742021a38eb/src/main/java/org/fhir/ucum/BaseUnit.java
+[ucumj-svc]: https://github.com/FHIR/Ucum-java/blob/70106f43ea1ee9ca04d1f109604f0742021a38eb/src/main/java/org/fhir/ucum/UcumEssenceService.java
+[ucumj-readme]: https://github.com/FHIR/Ucum-java/blob/70106f43ea1ee9ca04d1f109604f0742021a38eb/README.md
 
 <!-- Pinned clone: ucum-lhc (LHNCBC/ucum-lhc @ 3713cd1) -->
 
 [lhc-repo]: https://github.com/LHNCBC/ucum-lhc
-[lhc-dim]: https://github.com/LHNCBC/ucum-lhc/blob/3713cd1/source/dimension.js
-[lhc-unit]: https://github.com/LHNCBC/ucum-lhc/blob/3713cd1/source/unit.js
-[lhc-utils]: https://github.com/LHNCBC/ucum-lhc/blob/3713cd1/source/ucumLhcUtils.js
-[lhc-ustr]: https://github.com/LHNCBC/ucum-lhc/blob/3713cd1/source/unitString.js
-[lhc-config]: https://github.com/LHNCBC/ucum-lhc/blob/3713cd1/source/config.js
-[lhc-test]: https://github.com/LHNCBC/ucum-lhc/blob/3713cd1/test/testUcumLhcUtils.spec.js
+[lhc-dim]: https://github.com/LHNCBC/ucum-lhc/blob/3713cd178fa84ea4d0611b66c8923320623ac8d6/source/dimension.js
+[lhc-unit]: https://github.com/LHNCBC/ucum-lhc/blob/3713cd178fa84ea4d0611b66c8923320623ac8d6/source/unit.js
+[lhc-utils]: https://github.com/LHNCBC/ucum-lhc/blob/3713cd178fa84ea4d0611b66c8923320623ac8d6/source/ucumLhcUtils.js
+[lhc-ustr]: https://github.com/LHNCBC/ucum-lhc/blob/3713cd178fa84ea4d0611b66c8923320623ac8d6/source/unitString.js
+[lhc-config]: https://github.com/LHNCBC/ucum-lhc/blob/3713cd178fa84ea4d0611b66c8923320623ac8d6/source/config.js
+[lhc-test]: https://github.com/LHNCBC/ucum-lhc/blob/3713cd178fa84ea4d0611b66c8923320623ac8d6/test/testUcumLhcUtils.spec.js
 
 <!-- Pinned clone: qudtlib-java (qudtlib/qudtlib-java @ 8530b43) -->
 
 [qudt-repo]: https://github.com/qudtlib/qudtlib-java
-[qudt-unit]: https://github.com/qudtlib/qudtlib-java/blob/8530b43/qudtlib-model/src/main/java/io/github/qudtlib/model/Unit.java
-[qudt-dv]: https://github.com/qudtlib/qudtlib-java/blob/8530b43/qudtlib-model/src/main/java/io/github/qudtlib/model/DimensionVector.java
-[qudt-readme]: https://github.com/qudtlib/qudtlib-java/blob/8530b43/README.md
+[qudt-unit]: https://github.com/qudtlib/qudtlib-java/blob/8530b438e7f8ce69a0429c44afaf4e698720b560/qudtlib-model/src/main/java/io/github/qudtlib/model/Unit.java
+[qudt-dv]: https://github.com/qudtlib/qudtlib-java/blob/8530b438e7f8ce69a0429c44afaf4e698720b560/qudtlib-model/src/main/java/io/github/qudtlib/model/DimensionVector.java
+[qudt-readme]: https://github.com/qudtlib/qudtlib-java/blob/8530b438e7f8ce69a0429c44afaf4e698720b560/README.md
 
 <!-- Pinned clone: unit-api / JSR-385 (unitsofmeasurement/unit-api @ 79682ff) -->
 
 [uapi-repo]: https://github.com/unitsofmeasurement/unit-api
-[uapi-unit]: https://github.com/unitsofmeasurement/unit-api/blob/79682ff/src/main/java/javax/measure/Unit.java
-[uapi-dim]: https://github.com/unitsofmeasurement/unit-api/blob/79682ff/src/main/java/javax/measure/Dimension.java
-[uapi-quantity]: https://github.com/unitsofmeasurement/unit-api/blob/79682ff/src/main/java/javax/measure/Quantity.java
-[uapi-inc]: https://github.com/unitsofmeasurement/unit-api/blob/79682ff/src/main/java/javax/measure/IncommensurableException.java
+[uapi-unit]: https://github.com/unitsofmeasurement/unit-api/blob/79682ff4bffb5eee828a1737840f8a03dac13168/src/main/java/javax/measure/Unit.java
+[uapi-dim]: https://github.com/unitsofmeasurement/unit-api/blob/79682ff4bffb5eee828a1737840f8a03dac13168/src/main/java/javax/measure/Dimension.java
+[uapi-quantity]: https://github.com/unitsofmeasurement/unit-api/blob/79682ff4bffb5eee828a1737840f8a03dac13168/src/main/java/javax/measure/Quantity.java
+[uapi-inc]: https://github.com/unitsofmeasurement/unit-api/blob/79682ff4bffb5eee828a1737840f8a03dac13168/src/main/java/javax/measure/IncommensurableException.java
 
 <!-- Pinned clone: indriya (unitsofmeasurement/indriya @ c3dc219) -->
 
 [ind-repo]: https://github.com/unitsofmeasurement/indriya
-[ind-au]: https://github.com/unitsofmeasurement/indriya/blob/c3dc219/src/main/java/tech/units/indriya/AbstractUnit.java
-[ind-ud]: https://github.com/unitsofmeasurement/indriya/blob/c3dc219/src/main/java/tech/units/indriya/unit/UnitDimension.java
-[ind-readme]: https://github.com/unitsofmeasurement/indriya/blob/c3dc219/README.md
+[ind-au]: https://github.com/unitsofmeasurement/indriya/blob/c3dc21914a63b1adcb93966979af3dd3ab2775dc/src/main/java/tech/units/indriya/AbstractUnit.java
+[ind-ud]: https://github.com/unitsofmeasurement/indriya/blob/c3dc21914a63b1adcb93966979af3dd3ab2775dc/src/main/java/tech/units/indriya/unit/UnitDimension.java
+[ind-readme]: https://github.com/unitsofmeasurement/indriya/blob/c3dc21914a63b1adcb93966979af3dd3ab2775dc/README.md
 
 <!-- Package registries -->
 

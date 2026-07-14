@@ -689,46 +689,46 @@ runtime-checked, term-level — with five instructive divergences:
 <!-- Pinned clone (pint @ 7a927b4) -->
 
 [repo]: https://github.com/hgrecco/pint
-[defaults]: https://github.com/hgrecco/pint/blob/7a927b4/pint/default_en.txt
-[util]: https://github.com/hgrecco/pint/blob/7a927b4/pint/util.py
-[typing]: https://github.com/hgrecco/pint/blob/7a927b4/pint/_typing.py
-[quantity]: https://github.com/hgrecco/pint/blob/7a927b4/pint/facets/plain/quantity.py
-[plainreg]: https://github.com/hgrecco/pint/blob/7a927b4/pint/facets/plain/registry.py
-[qto]: https://github.com/hgrecco/pint/blob/7a927b4/pint/facets/plain/qto.py
-[nonmuldef]: https://github.com/hgrecco/pint/blob/7a927b4/pint/facets/nonmultiplicative/definitions.py
-[nonmulreg]: https://github.com/hgrecco/pint/blob/7a927b4/pint/facets/nonmultiplicative/registry.py
-[nonmulobj]: https://github.com/hgrecco/pint/blob/7a927b4/pint/facets/nonmultiplicative/objects.py
-[numpyfunc]: https://github.com/hgrecco/pint/blob/7a927b4/pint/facets/numpy/numpy_func.py
-[errors]: https://github.com/hgrecco/pint/blob/7a927b4/pint/errors.py
-[registry]: https://github.com/hgrecco/pint/blob/7a927b4/pint/registry.py
-[facets]: https://github.com/hgrecco/pint/blob/7a927b4/pint/facets/__init__.py
-[helpers]: https://github.com/hgrecco/pint/blob/7a927b4/pint/registry_helpers.py
-[pinteval]: https://github.com/hgrecco/pint/blob/7a927b4/pint/pint_eval.py
-[init]: https://github.com/hgrecco/pint/blob/7a927b4/pint/__init__.py
-[readme]: https://github.com/hgrecco/pint/blob/7a927b4/README.rst
-[changes]: https://github.com/hgrecco/pint/blob/7a927b4/CHANGES
-[authors]: https://github.com/hgrecco/pint/blob/7a927b4/AUTHORS
-[overview]: https://github.com/hgrecco/pint/blob/7a927b4/docs/getting/overview.rst
-[perf]: https://github.com/hgrecco/pint/blob/7a927b4/docs/advanced/performance.rst
-[nonmult]: https://github.com/hgrecco/pint/blob/7a927b4/docs/user/nonmult.rst
-[logunits]: https://github.com/hgrecco/pint/blob/7a927b4/docs/user/log_units.rst
-[angular]: https://github.com/hgrecco/pint/blob/7a927b4/docs/user/angular_frequency.rst
-[defining]: https://github.com/hgrecco/pint/blob/7a927b4/docs/advanced/defining.rst
-[pitheorem]: https://github.com/hgrecco/pint/blob/7a927b4/docs/advanced/pitheorem.rst
-[systems]: https://github.com/hgrecco/pint/blob/7a927b4/docs/user/systems.rst
-[typingdoc]: https://github.com/hgrecco/pint/blob/7a927b4/docs/advanced/typing.rst
-[ecosystem]: https://github.com/hgrecco/pint/blob/7a927b4/docs/ecosystem.rst
+[defaults]: https://github.com/hgrecco/pint/blob/7a927b4515b29917a76ee14617608531c59dd1d5/pint/default_en.txt
+[util]: https://github.com/hgrecco/pint/blob/7a927b4515b29917a76ee14617608531c59dd1d5/pint/util.py
+[typing]: https://github.com/hgrecco/pint/blob/7a927b4515b29917a76ee14617608531c59dd1d5/pint/_typing.py
+[quantity]: https://github.com/hgrecco/pint/blob/7a927b4515b29917a76ee14617608531c59dd1d5/pint/facets/plain/quantity.py
+[plainreg]: https://github.com/hgrecco/pint/blob/7a927b4515b29917a76ee14617608531c59dd1d5/pint/facets/plain/registry.py
+[qto]: https://github.com/hgrecco/pint/blob/7a927b4515b29917a76ee14617608531c59dd1d5/pint/facets/plain/qto.py
+[nonmuldef]: https://github.com/hgrecco/pint/blob/7a927b4515b29917a76ee14617608531c59dd1d5/pint/facets/nonmultiplicative/definitions.py
+[nonmulreg]: https://github.com/hgrecco/pint/blob/7a927b4515b29917a76ee14617608531c59dd1d5/pint/facets/nonmultiplicative/registry.py
+[nonmulobj]: https://github.com/hgrecco/pint/blob/7a927b4515b29917a76ee14617608531c59dd1d5/pint/facets/nonmultiplicative/objects.py
+[numpyfunc]: https://github.com/hgrecco/pint/blob/7a927b4515b29917a76ee14617608531c59dd1d5/pint/facets/numpy/numpy_func.py
+[errors]: https://github.com/hgrecco/pint/blob/7a927b4515b29917a76ee14617608531c59dd1d5/pint/errors.py
+[registry]: https://github.com/hgrecco/pint/blob/7a927b4515b29917a76ee14617608531c59dd1d5/pint/registry.py
+[facets]: https://github.com/hgrecco/pint/blob/7a927b4515b29917a76ee14617608531c59dd1d5/pint/facets/__init__.py
+[helpers]: https://github.com/hgrecco/pint/blob/7a927b4515b29917a76ee14617608531c59dd1d5/pint/registry_helpers.py
+[pinteval]: https://github.com/hgrecco/pint/blob/7a927b4515b29917a76ee14617608531c59dd1d5/pint/pint_eval.py
+[init]: https://github.com/hgrecco/pint/blob/7a927b4515b29917a76ee14617608531c59dd1d5/pint/__init__.py
+[readme]: https://github.com/hgrecco/pint/blob/7a927b4515b29917a76ee14617608531c59dd1d5/README.rst
+[changes]: https://github.com/hgrecco/pint/blob/7a927b4515b29917a76ee14617608531c59dd1d5/CHANGES
+[authors]: https://github.com/hgrecco/pint/blob/7a927b4515b29917a76ee14617608531c59dd1d5/AUTHORS
+[overview]: https://github.com/hgrecco/pint/blob/7a927b4515b29917a76ee14617608531c59dd1d5/docs/getting/overview.rst
+[perf]: https://github.com/hgrecco/pint/blob/7a927b4515b29917a76ee14617608531c59dd1d5/docs/advanced/performance.rst
+[nonmult]: https://github.com/hgrecco/pint/blob/7a927b4515b29917a76ee14617608531c59dd1d5/docs/user/nonmult.rst
+[logunits]: https://github.com/hgrecco/pint/blob/7a927b4515b29917a76ee14617608531c59dd1d5/docs/user/log_units.rst
+[angular]: https://github.com/hgrecco/pint/blob/7a927b4515b29917a76ee14617608531c59dd1d5/docs/user/angular_frequency.rst
+[defining]: https://github.com/hgrecco/pint/blob/7a927b4515b29917a76ee14617608531c59dd1d5/docs/advanced/defining.rst
+[pitheorem]: https://github.com/hgrecco/pint/blob/7a927b4515b29917a76ee14617608531c59dd1d5/docs/advanced/pitheorem.rst
+[systems]: https://github.com/hgrecco/pint/blob/7a927b4515b29917a76ee14617608531c59dd1d5/docs/user/systems.rst
+[typingdoc]: https://github.com/hgrecco/pint/blob/7a927b4515b29917a76ee14617608531c59dd1d5/docs/advanced/typing.rst
+[ecosystem]: https://github.com/hgrecco/pint/blob/7a927b4515b29917a76ee14617608531c59dd1d5/docs/ecosystem.rst
 
 <!-- Pinned clone (astropy @ 8104d4c) -->
 
 [apyrepo]: https://github.com/astropy/astropy
-[apycore]: https://github.com/astropy/astropy/blob/8104d4c/astropy/units/core.py
-[apyq]: https://github.com/astropy/astropy/blob/8104d4c/astropy/units/quantity.py
-[apyeq]: https://github.com/astropy/astropy/blob/8104d4c/astropy/units/equivalencies.py
-[apyutils]: https://github.com/astropy/astropy/blob/8104d4c/astropy/units/utils.py
-[apyphys]: https://github.com/astropy/astropy/blob/8104d4c/astropy/units/physical.py
-[apylog]: https://github.com/astropy/astropy/blob/8104d4c/astropy/units/function/logarithmic.py
-[apysi]: https://github.com/astropy/astropy/blob/8104d4c/astropy/units/si.py
+[apycore]: https://github.com/astropy/astropy/blob/8104d4ca6d8da974bcb5a11e4b0077d4674c6626/astropy/units/core.py
+[apyq]: https://github.com/astropy/astropy/blob/8104d4ca6d8da974bcb5a11e4b0077d4674c6626/astropy/units/quantity.py
+[apyeq]: https://github.com/astropy/astropy/blob/8104d4ca6d8da974bcb5a11e4b0077d4674c6626/astropy/units/equivalencies.py
+[apyutils]: https://github.com/astropy/astropy/blob/8104d4ca6d8da974bcb5a11e4b0077d4674c6626/astropy/units/utils.py
+[apyphys]: https://github.com/astropy/astropy/blob/8104d4ca6d8da974bcb5a11e4b0077d4674c6626/astropy/units/physical.py
+[apylog]: https://github.com/astropy/astropy/blob/8104d4ca6d8da974bcb5a11e4b0077d4674c6626/astropy/units/function/logarithmic.py
+[apysi]: https://github.com/astropy/astropy/blob/8104d4ca6d8da974bcb5a11e4b0077d4674c6626/astropy/units/si.py
 
 <!-- Official docs -->
 

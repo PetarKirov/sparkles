@@ -226,7 +226,7 @@ Different ecosystems currently optimize different subsets of these properties.
 [Continuing WebAssembly with Effect Handlers (2023)]: https://doi.org/10.1145/3622814
 [Parallel Algebraic Effect Handlers (2024)]: https://doi.org/10.1145/3674651
 [Polysemy: Mea Culpa]: https://reasonablypolymorphic.com/blog/mea-culpa/
-[GHC Proposal #313]: https://github.com/ghc-proposals/ghc-proposals/blob/master/proposals/0313-delimited-continuation-primops.rst
+[GHC Proposal #313]: https://github.com/ghc-proposals/ghc-proposals/blob/667c883317a7df10cb6391ab36a38e8aaa31a7d0/proposals/0313-delimited-continuation-primops.rst
 [Effects Bibliography (living index)]: https://github.com/yallop/effects-bibliography
 [OCaml 5.3.0 release (2025-01-08)]: https://ocaml.org/releases/5.3.0
 [OCaml releases index (includes 5.4.0, 2025-10-09)]: https://ocaml.org/releases/

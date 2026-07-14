@@ -297,9 +297,9 @@ Observations against this survey's filter-ergonomics axis:
 [rel-43]: https://cmake.org/cmake/help/latest/release/4.3.html
 [cps-kitware]: https://www.kitware.com/common-package-specification-is-out-the-gate/
 [license]: https://cmake.org/licensing/
-[clay-cmake]: https://github.com/nicbarker/clay/blob/main/CMakeLists.txt
-[clay-raylib]: https://github.com/nicbarker/clay/blob/main/examples/raylib-transitions/CMakeLists.txt
-[llvm-presets]: https://github.com/llvm/llvm-project/blob/main/llvm/CMakePresets.json
+[clay-cmake]: https://github.com/nicbarker/clay/blob/e6cc36941ab2af5d81107617039d6f527a1c660b/CMakeLists.txt
+[clay-raylib]: https://github.com/nicbarker/clay/blob/e6cc36941ab2af5d81107617039d6f527a1c660b/examples/raylib-transitions/CMakeLists.txt
+[llvm-presets]: https://github.com/llvm/llvm-project/blob/d64972c91369c6372e23e728881d9c645edeb37d/llvm/CMakePresets.json
 [Clay]: https://github.com/nicbarker/clay
 [vcpkg]: https://github.com/microsoft/vcpkg
 [meson-slug-note]: https://mesonbuild.com/

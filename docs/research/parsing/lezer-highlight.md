@@ -155,8 +155,8 @@ This is the extra spine dimension for the [syntax-highlighting cluster][sh]:
 
 [repo]: https://github.com/lezer-parser/highlight
 [docs]: https://lezer.codemirror.net/
-[readme]: https://github.com/lezer-parser/highlight/blob/main/README.md
-[highlight-ts]: https://github.com/lezer-parser/highlight/blob/main/src/highlight.ts
+[readme]: https://github.com/lezer-parser/highlight/blob/8b4907f3cb5b258e056e13dded092550b3043836/README.md
+[highlight-ts]: https://github.com/lezer-parser/highlight/blob/8b4907f3cb5b258e056e13dded092550b3043836/src/highlight.ts
 [lezer]: ./lezer.md
 [ts-highlight]: ./tree-sitter-highlight.md
 [syntect]: ./syntect.md

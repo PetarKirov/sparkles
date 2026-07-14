@@ -321,17 +321,17 @@ makes those checks tractable.
 <!-- References -->
 
 [repo]: https://github.com/Themaister/Granite
-[readme]: https://github.com/Themaister/Granite/blob/master/README.md
-[overview]: https://github.com/Themaister/Granite/blob/master/OVERVIEW.md
+[readme]: https://github.com/Themaister/Granite/blob/20bb2ec0716c42bb36ec936ce145b31da44cf920/README.md
+[overview]: https://github.com/Themaister/Granite/blob/20bb2ec0716c42bb36ec936ce145b31da44cf920/OVERVIEW.md
 [rg-blog]: https://themaister.net/blog/2017/08/15/render-graphs-and-vulkan-a-deep-dive/
 [tour-1]: https://themaister.net/blog/2019/04/14/a-tour-of-granites-vulkan-backend-part-1/
 [tour-2]: https://themaister.net/blog/2019/04/17/a-tour-of-granites-vulkan-backend-part-2/
 [tour-3]: https://themaister.net/blog/2019/04/20/a-tour-of-granites-vulkan-backend-part-3/
 [tour-5]: https://themaister.net/blog/2019/04/27/a-tour-of-granites-vulkan-backend-part-5/
 [heap-blog]: https://themaister.net/blog/2026/03/29/walking-backwards-into-the-future-a-look-at-descriptor-heap-in-granite/
-[rg-hpp]: https://github.com/Themaister/Granite/blob/master/renderer/render_graph.hpp
-[rg-cpp]: https://github.com/Themaister/Granite/blob/master/renderer/render_graph.cpp
-[vulkan-dir]: https://github.com/Themaister/Granite/tree/master/vulkan
+[rg-hpp]: https://github.com/Themaister/Granite/blob/20bb2ec0716c42bb36ec936ce145b31da44cf920/renderer/render_graph.hpp
+[rg-cpp]: https://github.com/Themaister/Granite/blob/20bb2ec0716c42bb36ec936ce145b31da44cf920/renderer/render_graph.cpp
+[vulkan-dir]: https://github.com/Themaister/Granite/tree/20bb2ec0716c42bb36ec936ce145b31da44cf920/vulkan
 [volk]: https://github.com/zeux/volk
 [spirv-cross]: https://github.com/KhronosGroup/SPIRV-Cross
 [fossilize]: https://github.com/ValveSoftware/Fossilize

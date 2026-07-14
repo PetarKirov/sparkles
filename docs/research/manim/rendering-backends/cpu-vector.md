@@ -290,4 +290,4 @@ the SVG-document shortcut, not a general drawing surface.
 [resvg-repo]: https://github.com/RazrFalcon/resvg
 [skia-repo]: https://github.com/google/skia
 [importc]: https://dlang.org/spec/importc.html
-[mc-boolean]: https://github.com/ManimCommunity/manim/blob/4d25c031/manim/mobject/geometry/boolean_ops.py
+[mc-boolean]: https://github.com/ManimCommunity/manim/blob/4d25c031ffe71c602e20935afd54a96f33545a6e/manim/mobject/geometry/boolean_ops.py

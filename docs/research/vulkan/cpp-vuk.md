@@ -152,7 +152,7 @@ vuk's costs are deliberately **runtime, amortized by caching**, not compile-time
 
 ### Error handling & validation integration
 
-All fallible APIs return `vuk::Result<T, E>` ([`include/vuk/Result.hpp`][result]) — attributed verbatim in-source as _"based on `https://github.com/kociap/anton_core/blob/master/public/anton/expected.hpp`"_ — a discriminated union whose error arm is a heap-allocated pointer to an `Exception`-derived object. Its distinctive policy is **unobserved-error escalation**: destroying a `Result` holding an unexamined error calls `_error->throw_this()` when `VUK_USE_EXCEPTIONS` is set, otherwise `std::abort()`; `VUK_FAIL_FAST` asserts at the error's creation site instead. The error taxonomy ([`include/vuk/Exception.hpp`][exception]) covers `ShaderCompilationException`, `RenderGraphException` (graph validation failures: unattached resources, inference contradictions, illegal access combinations — diagnosed at compile-of-the-graph, before any Vulkan call, with `VUK_CALLSTACK` source locations in the message), `RequiredPFNMissingException`, `VkException` (a `VkResult` wrapper), and `AllocateException`.
+All fallible APIs return `vuk::Result<T, E>` ([`include/vuk/Result.hpp`][result]) — attributed verbatim in-source as _"based on `https://github.com/kociap/anton_core/blob/d3adb33fd3adb33fd3adb33fd3adb33fd3adb33f/public/anton/expected.hpp`"_ — a discriminated union whose error arm is a heap-allocated pointer to an `Exception`-derived object. Its distinctive policy is **unobserved-error escalation**: destroying a `Result` holding an unexamined error calls `_error->throw_this()` when `VUK_USE_EXCEPTIONS` is set, otherwise `std::abort()`; `VUK_FAIL_FAST` asserts at the error's creation site instead. The error taxonomy ([`include/vuk/Exception.hpp`][exception]) covers `ShaderCompilationException`, `RenderGraphException` (graph validation failures: unattached resources, inference contradictions, illegal access combinations — diagnosed at compile-of-the-graph, before any Vulkan call, with `VUK_CALLSTACK` source locations in the message), `RequiredPFNMissingException`, `VkException` (a `VkResult` wrapper), and `AllocateException`.
 
 `CommandBuffer` recording is monadic-light: `bind_*`/`draw` return `CommandBuffer&` for chaining while a floating `Result<void> current_error` latches the first failure; the pass framework checks `result()` after the callback, so a broken bind poisons the pass rather than crashing mid-record ([`include/vuk/runtime/CommandBuffer.hpp`][cmdbuf]). For debugging, `Compiler::dump_graph()` emits the IR ([`src/GraphDumper.cpp`][dumper]), passes/resources get debug names propagated to Vulkan object names (the README: _"Helps debugging by naming the internal resources"_), and because barriers are machine-derived, [synchronization validation][sync-validation] findings indicate vuk bugs rather than user bugs. Khronos validation layers remain the backstop for everything below the graph (vuk does not ingest validation output programmatically).
 
@@ -228,37 +228,37 @@ In short, Daxa buys per-frame CPU time with rigidity; vuk buys flexibility (and 
 <!-- References -->
 
 [repo]: https://github.com/martty/vuk
-[readme]: https://github.com/martty/vuk/blob/master/README.md
-[cmake]: https://github.com/martty/vuk/blob/master/CMakeLists.txt
+[readme]: https://github.com/martty/vuk/blob/61abde9ddff60a38b792f193ba60c39e068c1eae/README.md
+[cmake]: https://github.com/martty/vuk/blob/61abde9ddff60a38b792f193ba60c39e068c1eae/CMakeLists.txt
 [docs]: https://vuk.readthedocs.io/en/latest/
-[index-rst]: https://github.com/martty/vuk/blob/master/docs/index.rst
-[rg-rst]: https://github.com/martty/vuk/blob/master/docs/topics/rendergraph.rst
-[ir]: https://github.com/martty/vuk/blob/master/include/vuk/IR.hpp
-[value]: https://github.com/martty/vuk/blob/master/include/vuk/Value.hpp
-[rendergraph-hpp]: https://github.com/martty/vuk/blob/master/include/vuk/RenderGraph.hpp
-[types]: https://github.com/martty/vuk/blob/master/include/vuk/Types.hpp
-[synclowering]: https://github.com/martty/vuk/blob/master/include/vuk/SyncLowering.hpp
-[resourceuse]: https://github.com/martty/vuk/blob/master/include/vuk/ResourceUse.hpp
-[syncpoint]: https://github.com/martty/vuk/blob/master/include/vuk/SyncPoint.hpp
-[irpasses]: https://github.com/martty/vuk/blob/master/src/IRPasses.cpp
-[backend]: https://github.com/martty/vuk/blob/master/src/runtime/vk/Backend.cpp
-[queueexec]: https://github.com/martty/vuk/blob/master/src/runtime/vk/VkQueueExecutor.cpp
-[devicevk]: https://github.com/martty/vuk/blob/master/src/runtime/vk/DeviceVkResource.cpp
-[framers]: https://github.com/martty/vuk/blob/master/src/runtime/vk/DeviceFrameResource.cpp
-[cmdbuf]: https://github.com/martty/vuk/blob/master/include/vuk/runtime/CommandBuffer.hpp
-[result]: https://github.com/martty/vuk/blob/master/include/vuk/Result.hpp
-[exception]: https://github.com/martty/vuk/blob/master/include/vuk/Exception.hpp
-[dumper]: https://github.com/martty/vuk/blob/master/src/GraphDumper.cpp
-[allocator]: https://github.com/martty/vuk/blob/master/include/vuk/runtime/vk/Allocator.hpp
-[vkruntime]: https://github.com/martty/vuk/blob/master/include/vuk/runtime/vk/VkRuntime.hpp
-[vkruntime-cpp]: https://github.com/martty/vuk/blob/master/src/runtime/vk/VkRuntime.cpp
-[pfn-req]: https://github.com/martty/vuk/blob/master/include/vuk/runtime/vk/VkPFNRequired.hpp
-[pfn-opt]: https://github.com/martty/vuk/blob/master/include/vuk/runtime/vk/VkPFNOptional.hpp
-[config]: https://github.com/martty/vuk/blob/master/include/vuk/Config.hpp
-[simpleinit]: https://github.com/martty/vuk/blob/master/src/extra/init/SimpleInit.cpp
-[triangle]: https://github.com/martty/vuk/blob/master/examples/01_triangle.cpp
+[index-rst]: https://github.com/martty/vuk/blob/61abde9ddff60a38b792f193ba60c39e068c1eae/docs/index.rst
+[rg-rst]: https://github.com/martty/vuk/blob/61abde9ddff60a38b792f193ba60c39e068c1eae/docs/topics/rendergraph.rst
+[ir]: https://github.com/martty/vuk/blob/61abde9ddff60a38b792f193ba60c39e068c1eae/include/vuk/IR.hpp
+[value]: https://github.com/martty/vuk/blob/61abde9ddff60a38b792f193ba60c39e068c1eae/include/vuk/Value.hpp
+[rendergraph-hpp]: https://github.com/martty/vuk/blob/61abde9ddff60a38b792f193ba60c39e068c1eae/include/vuk/RenderGraph.hpp
+[types]: https://github.com/martty/vuk/blob/61abde9ddff60a38b792f193ba60c39e068c1eae/include/vuk/Types.hpp
+[synclowering]: https://github.com/martty/vuk/blob/61abde9ddff60a38b792f193ba60c39e068c1eae/include/vuk/SyncLowering.hpp
+[resourceuse]: https://github.com/martty/vuk/blob/61abde9ddff60a38b792f193ba60c39e068c1eae/include/vuk/ResourceUse.hpp
+[syncpoint]: https://github.com/martty/vuk/blob/61abde9ddff60a38b792f193ba60c39e068c1eae/include/vuk/SyncPoint.hpp
+[irpasses]: https://github.com/martty/vuk/blob/61abde9ddff60a38b792f193ba60c39e068c1eae/src/IRPasses.cpp
+[backend]: https://github.com/martty/vuk/blob/61abde9ddff60a38b792f193ba60c39e068c1eae/src/runtime/vk/Backend.cpp
+[queueexec]: https://github.com/martty/vuk/blob/61abde9ddff60a38b792f193ba60c39e068c1eae/src/runtime/vk/VkQueueExecutor.cpp
+[devicevk]: https://github.com/martty/vuk/blob/61abde9ddff60a38b792f193ba60c39e068c1eae/src/runtime/vk/DeviceVkResource.cpp
+[framers]: https://github.com/martty/vuk/blob/61abde9ddff60a38b792f193ba60c39e068c1eae/src/runtime/vk/DeviceFrameResource.cpp
+[cmdbuf]: https://github.com/martty/vuk/blob/61abde9ddff60a38b792f193ba60c39e068c1eae/include/vuk/runtime/CommandBuffer.hpp
+[result]: https://github.com/martty/vuk/blob/61abde9ddff60a38b792f193ba60c39e068c1eae/include/vuk/Result.hpp
+[exception]: https://github.com/martty/vuk/blob/61abde9ddff60a38b792f193ba60c39e068c1eae/include/vuk/Exception.hpp
+[dumper]: https://github.com/martty/vuk/blob/61abde9ddff60a38b792f193ba60c39e068c1eae/src/GraphDumper.cpp
+[allocator]: https://github.com/martty/vuk/blob/61abde9ddff60a38b792f193ba60c39e068c1eae/include/vuk/runtime/vk/Allocator.hpp
+[vkruntime]: https://github.com/martty/vuk/blob/61abde9ddff60a38b792f193ba60c39e068c1eae/include/vuk/runtime/vk/VkRuntime.hpp
+[vkruntime-cpp]: https://github.com/martty/vuk/blob/61abde9ddff60a38b792f193ba60c39e068c1eae/src/runtime/vk/VkRuntime.cpp
+[pfn-req]: https://github.com/martty/vuk/blob/61abde9ddff60a38b792f193ba60c39e068c1eae/include/vuk/runtime/vk/VkPFNRequired.hpp
+[pfn-opt]: https://github.com/martty/vuk/blob/61abde9ddff60a38b792f193ba60c39e068c1eae/include/vuk/runtime/vk/VkPFNOptional.hpp
+[config]: https://github.com/martty/vuk/blob/61abde9ddff60a38b792f193ba60c39e068c1eae/include/vuk/Config.hpp
+[simpleinit]: https://github.com/martty/vuk/blob/61abde9ddff60a38b792f193ba60c39e068c1eae/src/extra/init/SimpleInit.cpp
+[triangle]: https://github.com/martty/vuk/blob/61abde9ddff60a38b792f193ba60c39e068c1eae/examples/01_triangle.cpp
 [maister]: https://themaister.net/blog/2017/08/15/render-graphs-and-vulkan-a-deep-dive/
-[daxa-readme]: https://github.com/Ipotrick/Daxa/blob/master/README.md
+[daxa-readme]: https://github.com/Ipotrick/Daxa/blob/c4e7eaee588893e08a5316f543e16dcfc8f6bc21/README.md
 [daxa]: ./cpp-daxa.md
 [tephra]: ./cpp-tephra.md
 [vulkano]: ./rust-vulkano.md

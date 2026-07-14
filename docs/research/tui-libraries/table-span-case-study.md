@@ -676,13 +676,13 @@ handling in [`drawTable`][table-src] (which already unstyles for width via `visi
 [npm-table]: https://github.com/gajus/table
 [tablewriter]: https://github.com/olekukonko/tablewriter
 [tablewriter-godoc]: https://pkg.go.dev/github.com/olekukonko/tablewriter@v0.0.5
-[ratatui-cell-src]: https://github.com/ratatui/ratatui/blob/main/ratatui-widgets/src/table/cell.rs
+[ratatui-cell-src]: https://github.com/ratatui/ratatui/blob/de5168de6ba2f4b310565c287764f213f249a61f/ratatui-widgets/src/table/cell.rs
 [ratatui-1568]: https://github.com/ratatui/ratatui/issues/1568
-[ftxui-table-src]: https://github.com/ArthurSonzogni/FTXUI/blob/main/include/ftxui/dom/table.hpp
-[imgui-tables-src]: https://github.com/ocornut/imgui/blob/master/imgui_tables.cpp
+[ftxui-table-src]: https://github.com/ArthurSonzogni/FTXUI/blob/c100eab535db2283b78d30fcb6d082a1f84fb683/include/ftxui/dom/table.hpp
+[imgui-tables-src]: https://github.com/ocornut/imgui/blob/b62bfd6b06de958e4630b715225b7e8409bfd0f9/imgui_tables.cpp
 [imgui-3565]: https://github.com/ocornut/imgui/issues/3565
 [brick-table-docs]: https://hackage.haskell.org/package/brick/docs/Brick-Widgets-Table.html
-[tview-table-src]: https://github.com/rivo/tview/blob/master/table.go
+[tview-table-src]: https://github.com/rivo/tview/blob/63ee97f9e01448f58772e29a005388f8c3b2e622/table.go
 [tview-godoc]: https://pkg.go.dev/github.com/rivo/tview
 [css-grid]: https://developer.mozilla.org/en-US/docs/Web/CSS/grid-column
 [css-grid-spec]: https://www.w3.org/TR/css-grid-1/#grid-auto-flow-property

@@ -237,15 +237,15 @@ For the cross-language synthesis — especially how a D library could consume th
 <!-- References -->
 
 [repo]: https://github.com/Snektron/vulkan-zig
-[readme]: https://github.com/Snektron/vulkan-zig/blob/master/README.md
-[render]: https://github.com/Snektron/vulkan-zig/blob/master/src/vulkan/render.zig
-[parse]: https://github.com/Snektron/vulkan-zig/blob/master/src/vulkan/parse.zig
-[registry]: https://github.com/Snektron/vulkan-zig/blob/master/src/vulkan/registry.zig
-[c-parse]: https://github.com/Snektron/vulkan-zig/blob/master/src/vulkan/c_parse.zig
-[xml]: https://github.com/Snektron/vulkan-zig/blob/master/src/xml.zig
-[main]: https://github.com/Snektron/vulkan-zig/blob/master/src/main.zig
-[gctx]: https://github.com/Snektron/vulkan-zig/blob/master/examples/graphics_context.zig
-[examples]: https://github.com/Snektron/vulkan-zig/tree/master/examples
+[readme]: https://github.com/Snektron/vulkan-zig/blob/057180744c666bb62e20877fe106422784a5e29a/README.md
+[render]: https://github.com/Snektron/vulkan-zig/blob/057180744c666bb62e20877fe106422784a5e29a/src/vulkan/render.zig
+[parse]: https://github.com/Snektron/vulkan-zig/blob/057180744c666bb62e20877fe106422784a5e29a/src/vulkan/parse.zig
+[registry]: https://github.com/Snektron/vulkan-zig/blob/057180744c666bb62e20877fe106422784a5e29a/src/vulkan/registry.zig
+[c-parse]: https://github.com/Snektron/vulkan-zig/blob/057180744c666bb62e20877fe106422784a5e29a/src/vulkan/c_parse.zig
+[xml]: https://github.com/Snektron/vulkan-zig/blob/057180744c666bb62e20877fe106422784a5e29a/src/xml.zig
+[main]: https://github.com/Snektron/vulkan-zig/blob/057180744c666bb62e20877fe106422784a5e29a/src/main.zig
+[gctx]: https://github.com/Snektron/vulkan-zig/blob/057180744c666bb62e20877fe106422784a5e29a/examples/graphics_context.zig
+[examples]: https://github.com/Snektron/vulkan-zig/tree/057180744c666bb62e20877fe106422784a5e29a/examples
 [vk-xml]: https://registry.khronos.org/vulkan/specs/latest/registry.html
 [volk]: https://github.com/zeux/volk
 [ash]: ./rust-ash.md

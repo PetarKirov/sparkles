@@ -193,4 +193,4 @@ The key takeaway: historically important and still expressive, but no longer sta
 [freer-simple GitHub repository]: https://github.com/lexi-lambda/freer-simple
 [Control.Monad.Freer.Internal docs]: https://hackage.haskell.org/package/freer-simple/docs/Control-Monad-Freer-Internal.html
 [Freer Monads, More Extensible Effects (2015)]: https://doi.org/10.1145/2804302.2804319
-[effectful benchmark suite]: https://github.com/haskell-effectful/effectful/blob/master/benchmarks/README.md
+[effectful benchmark suite]: https://github.com/haskell-effectful/effectful/blob/0ea2c16187f9021abb996c04a362b3d55f03c65c/benchmarks/README.md

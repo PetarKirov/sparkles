@@ -515,8 +515,8 @@ Primary sources (docs pinned to the live site; source pinned to tag
 
 [repo]: https://github.com/motion-canvas/motion-canvas
 [repo-tag]: https://github.com/motion-canvas/motion-canvas/tree/v3.17.2
-[readme]: https://github.com/motion-canvas/motion-canvas/blob/v3.17.2/README.md
-[license]: https://github.com/motion-canvas/motion-canvas/blob/v3.17.2/LICENSE
+[readme]: https://github.com/motion-canvas/motion-canvas/blob/e735a995aa738ca682feb4204a39ee7db7b5d279/README.md
+[license]: https://github.com/motion-canvas/motion-canvas/blob/e735a995aa738ca682feb4204a39ee7db7b5d279/LICENSE
 [docs]: https://motioncanvas.io/docs/
 [flow]: https://motioncanvas.io/docs/flow
 [signals]: https://motioncanvas.io/docs/signals
@@ -528,17 +528,17 @@ Primary sources (docs pinned to the live site; source pinned to tag
 [rendering]: https://motioncanvas.io/docs/rendering
 [render-video]: https://motioncanvas.io/docs/rendering/video
 [render-imgseq]: https://motioncanvas.io/docs/rendering/image-sequence
-[intro-src]: https://github.com/motion-canvas/motion-canvas/blob/v3.17.2/packages/docs/docs/intro.md
-[flow-src]: https://github.com/motion-canvas/motion-canvas/blob/v3.17.2/packages/docs/docs/getting-started/flow.mdx
-[hierarchy-src]: https://github.com/motion-canvas/motion-canvas/blob/v3.17.2/packages/docs/docs/getting-started/hierarchy.mdx
-[node-src]: https://github.com/motion-canvas/motion-canvas/blob/v3.17.2/packages/2d/src/lib/components/Node.ts
-[node-render]: https://github.com/motion-canvas/motion-canvas/blob/v3.17.2/packages/2d/src/lib/components/Node.ts#L1649
-[stage-src]: https://github.com/motion-canvas/motion-canvas/blob/v3.17.2/packages/core/src/app/Stage.ts
-[getcontext-src]: https://github.com/motion-canvas/motion-canvas/blob/v3.17.2/packages/core/src/utils/getContext.ts#L5
-[webgl-src]: https://github.com/motion-canvas/motion-canvas/blob/v3.17.2/packages/core/src/app/SharedWebGLContext.ts
-[imgexporter-src]: https://github.com/motion-canvas/motion-canvas/blob/v3.17.2/packages/core/src/app/ImageExporter.ts#L113
-[latex-src]: https://github.com/motion-canvas/motion-canvas/blob/v3.17.2/packages/2d/src/lib/components/Latex.ts#L14
-[txtleaf-src]: https://github.com/motion-canvas/motion-canvas/blob/v3.17.2/packages/2d/src/lib/components/TxtLeaf.ts#L115
+[intro-src]: https://github.com/motion-canvas/motion-canvas/blob/e735a995aa738ca682feb4204a39ee7db7b5d279/packages/docs/docs/intro.md
+[flow-src]: https://github.com/motion-canvas/motion-canvas/blob/e735a995aa738ca682feb4204a39ee7db7b5d279/packages/docs/docs/getting-started/flow.mdx
+[hierarchy-src]: https://github.com/motion-canvas/motion-canvas/blob/e735a995aa738ca682feb4204a39ee7db7b5d279/packages/docs/docs/getting-started/hierarchy.mdx
+[node-src]: https://github.com/motion-canvas/motion-canvas/blob/e735a995aa738ca682feb4204a39ee7db7b5d279/packages/2d/src/lib/components/Node.ts
+[node-render]: https://github.com/motion-canvas/motion-canvas/blob/e735a995aa738ca682feb4204a39ee7db7b5d279/packages/2d/src/lib/components/Node.ts#L1649
+[stage-src]: https://github.com/motion-canvas/motion-canvas/blob/e735a995aa738ca682feb4204a39ee7db7b5d279/packages/core/src/app/Stage.ts
+[getcontext-src]: https://github.com/motion-canvas/motion-canvas/blob/e735a995aa738ca682feb4204a39ee7db7b5d279/packages/core/src/utils/getContext.ts#L5
+[webgl-src]: https://github.com/motion-canvas/motion-canvas/blob/e735a995aa738ca682feb4204a39ee7db7b5d279/packages/core/src/app/SharedWebGLContext.ts
+[imgexporter-src]: https://github.com/motion-canvas/motion-canvas/blob/e735a995aa738ca682feb4204a39ee7db7b5d279/packages/core/src/app/ImageExporter.ts#L113
+[latex-src]: https://github.com/motion-canvas/motion-canvas/blob/e735a995aa738ca682feb4204a39ee7db7b5d279/packages/2d/src/lib/components/Latex.ts#L14
+[txtleaf-src]: https://github.com/motion-canvas/motion-canvas/blob/e735a995aa738ca682feb4204a39ee7db7b5d279/packages/2d/src/lib/components/TxtLeaf.ts#L115
 
 <!-- Cross-links into the shared concepts glossary -->
 

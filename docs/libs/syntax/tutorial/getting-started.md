@@ -89,4 +89,4 @@ highlights its own source; `--html` switches backends.
 
 <!-- References -->
 
-[example]: https://github.com/PetarKirov/sparkles/blob/main/libs/syntax/examples/highlight-file.d
+[example]: https://github.com/PetarKirov/sparkles/blob/3cc01cfdc8ae867f0558e43c731885a004cb0130/libs/syntax/examples/highlight-file.d

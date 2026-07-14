@@ -564,12 +564,12 @@ that make Tier 3 possible, see the [io_uring features][io-uring-features],
 [io-uring-opcodes]: io-uring/opcodes-reference.md
 [io-uring-timeline]: io-uring/timeline.md
 [eio]: ../algebraic-effects/ocaml-eio.md
-[libuv `uv.h` handle/request taxonomy]: https://github.com/libuv/libuv/blob/v1.x/include/uv.h
-[Tokio source: net, time, fs, signal, process]: https://github.com/tokio-rs/tokio/tree/master/tokio/src
-[Tokio io_uring file read]: https://github.com/tokio-rs/tokio/blob/master/tokio/src/fs/read_uring.rs
-[trio nurseries and cancel scopes]: https://github.com/python-trio/trio/blob/main/src/trio/_core/_run.py
-[trio self-pipe wakeup]: https://github.com/python-trio/trio/blob/main/src/trio/_core/_wakeup_socketpair.py
-[Zig `std.Io` VTable]: https://github.com/ziglang/zig/blob/master/lib/std/Io.zig
+[libuv `uv.h` handle/request taxonomy]: https://github.com/libuv/libuv/blob/2cadaa40167050baf7c6905ac897e6fb57afb2c6/include/uv.h
+[Tokio source: net, time, fs, signal, process]: https://github.com/tokio-rs/tokio/tree/dac81bf8c8de0a3e35f1626643674ba9faf9569c/tokio/src
+[Tokio io_uring file read]: https://github.com/tokio-rs/tokio/blob/dac81bf8c8de0a3e35f1626643674ba9faf9569c/tokio/src/fs/read_uring.rs
+[trio nurseries and cancel scopes]: https://github.com/python-trio/trio/blob/976c11b5749db70559ffd81bfeddeed51b250dd0/src/trio/_core/_run.py
+[trio self-pipe wakeup]: https://github.com/python-trio/trio/blob/976c11b5749db70559ffd81bfeddeed51b250dd0/src/trio/_core/_wakeup_socketpair.py
+[Zig `std.Io` VTable]: https://github.com/ziglang/zig/blob/738d2be9d6b6ef3ff3559130c05159ef53336224/lib/std/Io.zig
 [epoll(7) manual page]: https://man7.org/linux/man-pages/man7/epoll.7.html
 [io_uring_prep_multishot_accept(3) manual page]: https://man7.org/linux/man-pages/man3/io_uring_prep_multishot_accept.3.html
 [io_uring provided buffer ring (`IORING_REGISTER_PBUF_RING`, 5.19)]: https://man7.org/linux/man-pages/man2/io_uring_register.2.html

@@ -544,18 +544,18 @@ for schema-level checking.
 <!-- References -->
 
 [repo]: https://github.com/porsager/postgres
-[readme]: https://github.com/porsager/postgres/blob/master/README.md
-[changelog]: https://github.com/porsager/postgres/blob/master/CHANGELOG.md
-[pkg]: https://github.com/porsager/postgres/blob/master/package.json
-[license]: https://github.com/porsager/postgres/blob/master/UNLICENSE
-[index]: https://github.com/porsager/postgres/blob/master/src/index.js
-[types]: https://github.com/porsager/postgres/blob/master/src/types.js
-[query]: https://github.com/porsager/postgres/blob/master/src/query.js
-[conn]: https://github.com/porsager/postgres/blob/master/src/connection.js
-[subscribe]: https://github.com/porsager/postgres/blob/master/src/subscribe.js
-[large]: https://github.com/porsager/postgres/blob/master/src/large.js
-[errors]: https://github.com/porsager/postgres/blob/master/src/errors.js
-[result]: https://github.com/porsager/postgres/blob/master/src/result.js
+[readme]: https://github.com/porsager/postgres/blob/e7dfa14519f363229ccc3ead7b1b2f2051937efb/README.md
+[changelog]: https://github.com/porsager/postgres/blob/e7dfa14519f363229ccc3ead7b1b2f2051937efb/CHANGELOG.md
+[pkg]: https://github.com/porsager/postgres/blob/e7dfa14519f363229ccc3ead7b1b2f2051937efb/package.json
+[license]: https://github.com/porsager/postgres/blob/e7dfa14519f363229ccc3ead7b1b2f2051937efb/UNLICENSE
+[index]: https://github.com/porsager/postgres/blob/e7dfa14519f363229ccc3ead7b1b2f2051937efb/src/index.js
+[types]: https://github.com/porsager/postgres/blob/e7dfa14519f363229ccc3ead7b1b2f2051937efb/src/types.js
+[query]: https://github.com/porsager/postgres/blob/e7dfa14519f363229ccc3ead7b1b2f2051937efb/src/query.js
+[conn]: https://github.com/porsager/postgres/blob/e7dfa14519f363229ccc3ead7b1b2f2051937efb/src/connection.js
+[subscribe]: https://github.com/porsager/postgres/blob/e7dfa14519f363229ccc3ead7b1b2f2051937efb/src/subscribe.js
+[large]: https://github.com/porsager/postgres/blob/e7dfa14519f363229ccc3ead7b1b2f2051937efb/src/large.js
+[errors]: https://github.com/porsager/postgres/blob/e7dfa14519f363229ccc3ead7b1b2f2051937efb/src/errors.js
+[result]: https://github.com/porsager/postgres/blob/e7dfa14519f363229ccc3ead7b1b2f2051937efb/src/result.js
 [effect-ts]: ./effect-ts.md
 [concepts]: ./concepts.md
 [concepts-ladder]: ./concepts.md#the-abstraction-ladder

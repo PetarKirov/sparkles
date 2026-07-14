@@ -725,7 +725,7 @@ project, but it is a **finding with a locator, not a TODO**. The
 [gc-uaf-probe]: ./examples/gc-uaf-blindspot.d
 [fiber-probe]: ./examples/fiber-asan.d
 [ldc-tree]: https://github.com/ldc-developers/ldc/tree/v1.41.0
-[ldc-compiler-rt-doc]: https://github.com/ldc-developers/ldc/blob/v1.41.0/docs/compiler_rt.md
+[ldc-compiler-rt-doc]: https://github.com/ldc-developers/ldc/blob/90e39b6a6e61d36ef5f5d0ab6ae0667130fd8549/docs/compiler_rt.md
 [dub-tree]: https://github.com/dlang/dub/tree/5efed360e1c9342453bc5dd19339c75981526d83
 [dub-3111]: https://github.com/dlang/dub/pull/3111
 [dub-640]: https://github.com/dlang/dub/issues/640

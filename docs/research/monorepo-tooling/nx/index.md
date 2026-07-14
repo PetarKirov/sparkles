@@ -567,10 +567,10 @@ topological build and a cacheable `test` target. See the directory for the exact
 [creep]: https://nx.dev/docs/reference/deprecated/self-hosted-cache-packages
 [tslinking]: https://nx.dev/docs/concepts/typescript-project-linking
 [misses]: https://nx.dev/docs/troubleshooting/troubleshoot-cache-misses
-[hasher]: https://github.com/nrwl/nx/blob/master/packages/nx/src/native/hasher.rs
-[taskhash]: https://github.com/nrwl/nx/blob/master/packages/nx/src/native/tasks/task_hasher.rs
-[orch]: https://github.com/nrwl/nx/blob/master/packages/nx/src/tasks-runner/task-orchestrator.ts
-[cacheloc]: https://github.com/nrwl/nx/blob/master/packages/nx/src/native/native-file-cache-location.ts
+[hasher]: https://github.com/nrwl/nx/blob/91d48359f274196cf7c5922170823f6b618f3ae9/packages/nx/src/native/hasher.rs
+[taskhash]: https://github.com/nrwl/nx/blob/91d48359f274196cf7c5922170823f6b618f3ae9/packages/nx/src/native/tasks/task_hasher.rs
+[orch]: https://github.com/nrwl/nx/blob/91d48359f274196cf7c5922170823f6b618f3ae9/packages/nx/src/tasks-runner/task-orchestrator.ts
+[cacheloc]: https://github.com/nrwl/nx/blob/91d48359f274196cf7c5922170823f6b618f3ae9/packages/nx/src/native/native-file-cache-location.ts
 [turborepo]: ../turborepo/
 [lerna]: ../lerna/
 [pnpm]: ../pnpm/

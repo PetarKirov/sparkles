@@ -332,19 +332,19 @@ with wgpu, the abstraction blade was designed in reaction to.
 <!-- References -->
 
 [repo]: https://github.com/kvark/blade
-[gfx-readme]: https://github.com/kvark/blade/blob/main/blade-graphics/README.md
-[motivation]: https://github.com/kvark/blade/blob/main/blade-graphics/etc/motivation.md
-[faq]: https://github.com/kvark/blade/blob/main/blade-graphics/etc/FAQ.md
-[perf]: https://github.com/kvark/blade/blob/main/blade-graphics/etc/performance.md
-[lib-rs]: https://github.com/kvark/blade/blob/main/blade-graphics/src/lib.rs
-[traits-rs]: https://github.com/kvark/blade/blob/main/blade-graphics/src/traits.rs
-[vk-command]: https://github.com/kvark/blade/blob/main/blade-graphics/src/vulkan/command.rs
-[vk-mod]: https://github.com/kvark/blade/blob/main/blade-graphics/src/vulkan/mod.rs
-[vk-init]: https://github.com/kvark/blade/blob/main/blade-graphics/src/vulkan/init.rs
-[macros]: https://github.com/kvark/blade/tree/main/blade-macros
+[gfx-readme]: https://github.com/kvark/blade/blob/ba0fb5a6f2b5462c3e5796f8ce06b3b3d580adac/blade-graphics/README.md
+[motivation]: https://github.com/kvark/blade/blob/ba0fb5a6f2b5462c3e5796f8ce06b3b3d580adac/blade-graphics/etc/motivation.md
+[faq]: https://github.com/kvark/blade/blob/ba0fb5a6f2b5462c3e5796f8ce06b3b3d580adac/blade-graphics/etc/FAQ.md
+[perf]: https://github.com/kvark/blade/blob/ba0fb5a6f2b5462c3e5796f8ce06b3b3d580adac/blade-graphics/etc/performance.md
+[lib-rs]: https://github.com/kvark/blade/blob/ba0fb5a6f2b5462c3e5796f8ce06b3b3d580adac/blade-graphics/src/lib.rs
+[traits-rs]: https://github.com/kvark/blade/blob/ba0fb5a6f2b5462c3e5796f8ce06b3b3d580adac/blade-graphics/src/traits.rs
+[vk-command]: https://github.com/kvark/blade/blob/ba0fb5a6f2b5462c3e5796f8ce06b3b3d580adac/blade-graphics/src/vulkan/command.rs
+[vk-mod]: https://github.com/kvark/blade/blob/ba0fb5a6f2b5462c3e5796f8ce06b3b3d580adac/blade-graphics/src/vulkan/mod.rs
+[vk-init]: https://github.com/kvark/blade/blob/ba0fb5a6f2b5462c3e5796f8ce06b3b3d580adac/blade-graphics/src/vulkan/init.rs
+[macros]: https://github.com/kvark/blade/tree/ba0fb5a6f2b5462c3e5796f8ce06b3b3d580adac/blade-macros
 [docsrs]: https://docs.rs/blade-graphics/latest/blade_graphics/
 [talk]: https://hackmd.io/@kvark/blade
-[naga]: https://github.com/gfx-rs/wgpu/tree/trunk/naga
+[naga]: https://github.com/gfx-rs/wgpu/tree/1f56415f14dfd8f64af0f2e1003dd30825015a5f/naga
 [zed-blog]: https://zed.dev/blog/zed-decoded-linux-when
 [zed-pr-old]: https://github.com/zed-industries/zed/pull/7343
 [zed-pr]: https://github.com/zed-industries/zed/pull/46758

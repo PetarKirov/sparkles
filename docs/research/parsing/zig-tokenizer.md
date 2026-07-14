@@ -261,9 +261,9 @@ The contrast points are equally instructive: where a generator (Ragel, [`re2c`][
 
 [repo]: https://github.com/ziglang/zig
 [zig]: https://ziglang.org/
-[tokenizer]: https://github.com/ziglang/zig/blob/master/lib/std/zig/tokenizer.zig
-[ast]: https://github.com/ziglang/zig/blob/master/lib/std/zig/Ast.zig
-[license]: https://github.com/ziglang/zig/blob/master/LICENSE
+[tokenizer]: https://github.com/ziglang/zig/blob/738d2be9d6b6ef3ff3559130c05159ef53336224/lib/std/zig/tokenizer.zig
+[ast]: https://github.com/ziglang/zig/blob/738d2be9d6b6ef3ff3559130c05159ef53336224/lib/std/zig/Ast.zig
+[license]: https://github.com/ziglang/zig/blob/738d2be9d6b6ef3ff3559130c05159ef53336224/LICENSE
 [zigspec38]: https://github.com/ziglang/zig-spec/issues/38
 [re2c]: https://re2c.org/
 [umbrella]: ./index.md

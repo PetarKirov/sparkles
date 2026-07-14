@@ -614,22 +614,22 @@ v0.37.0 even after the numerous quantity and unit additions", attributing the wi
 <!-- Pinned clone (uom @ a465bcc) -->
 
 [repo]: https://github.com/iliekturtles/uom
-[lib]: https://github.com/iliekturtles/uom/blob/a465bcc/src/lib.rs
-[system-rs]: https://github.com/iliekturtles/uom/blob/a465bcc/src/system.rs
-[quantity-rs]: https://github.com/iliekturtles/uom/blob/a465bcc/src/quantity.rs
-[unit-rs]: https://github.com/iliekturtles/uom/blob/a465bcc/src/unit.rs
-[si-mod]: https://github.com/iliekturtles/uom/blob/a465bcc/src/si/mod.rs
-[angle]: https://github.com/iliekturtles/uom/blob/a465bcc/src/si/angle.rs
-[torque]: https://github.com/iliekturtles/uom/blob/a465bcc/src/si/torque.rs
-[radioactivity]: https://github.com/iliekturtles/uom/blob/a465bcc/src/si/radioactivity.rs
-[tt]: https://github.com/iliekturtles/uom/blob/a465bcc/src/si/thermodynamic_temperature.rs
-[ti]: https://github.com/iliekturtles/uom/blob/a465bcc/src/si/temperature_interval.rs
-[prefix]: https://github.com/iliekturtles/uom/blob/a465bcc/src/si/prefix.rs
-[examples]: https://github.com/iliekturtles/uom/tree/a465bcc/examples
-[readme]: https://github.com/iliekturtles/uom/blob/a465bcc/README.md
-[changelog]: https://github.com/iliekturtles/uom/blob/a465bcc/CHANGELOG.md
-[cargo]: https://github.com/iliekturtles/uom/blob/a465bcc/Cargo.toml
-[uom-macros]: https://github.com/iliekturtles/uom/tree/a465bcc/uom-macros
+[lib]: https://github.com/iliekturtles/uom/blob/a465bcc2b3bf67f9f12fc0b133d371762d9d8fe4/src/lib.rs
+[system-rs]: https://github.com/iliekturtles/uom/blob/a465bcc2b3bf67f9f12fc0b133d371762d9d8fe4/src/system.rs
+[quantity-rs]: https://github.com/iliekturtles/uom/blob/a465bcc2b3bf67f9f12fc0b133d371762d9d8fe4/src/quantity.rs
+[unit-rs]: https://github.com/iliekturtles/uom/blob/a465bcc2b3bf67f9f12fc0b133d371762d9d8fe4/src/unit.rs
+[si-mod]: https://github.com/iliekturtles/uom/blob/a465bcc2b3bf67f9f12fc0b133d371762d9d8fe4/src/si/mod.rs
+[angle]: https://github.com/iliekturtles/uom/blob/a465bcc2b3bf67f9f12fc0b133d371762d9d8fe4/src/si/angle.rs
+[torque]: https://github.com/iliekturtles/uom/blob/a465bcc2b3bf67f9f12fc0b133d371762d9d8fe4/src/si/torque.rs
+[radioactivity]: https://github.com/iliekturtles/uom/blob/a465bcc2b3bf67f9f12fc0b133d371762d9d8fe4/src/si/radioactivity.rs
+[tt]: https://github.com/iliekturtles/uom/blob/a465bcc2b3bf67f9f12fc0b133d371762d9d8fe4/src/si/thermodynamic_temperature.rs
+[ti]: https://github.com/iliekturtles/uom/blob/a465bcc2b3bf67f9f12fc0b133d371762d9d8fe4/src/si/temperature_interval.rs
+[prefix]: https://github.com/iliekturtles/uom/blob/a465bcc2b3bf67f9f12fc0b133d371762d9d8fe4/src/si/prefix.rs
+[examples]: https://github.com/iliekturtles/uom/tree/a465bcc2b3bf67f9f12fc0b133d371762d9d8fe4/examples
+[readme]: https://github.com/iliekturtles/uom/blob/a465bcc2b3bf67f9f12fc0b133d371762d9d8fe4/README.md
+[changelog]: https://github.com/iliekturtles/uom/blob/a465bcc2b3bf67f9f12fc0b133d371762d9d8fe4/CHANGELOG.md
+[cargo]: https://github.com/iliekturtles/uom/blob/a465bcc2b3bf67f9f12fc0b133d371762d9d8fe4/Cargo.toml
+[uom-macros]: https://github.com/iliekturtles/uom/tree/a465bcc2b3bf67f9f12fc0b133d371762d9d8fe4/uom-macros
 
 <!-- Official docs & registry -->
 

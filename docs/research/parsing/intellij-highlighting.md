@@ -151,11 +151,11 @@ This is the extra spine dimension for the [syntax-highlighting cluster][sh]:
 [repo]: https://github.com/JetBrains/intellij-sdk-docs
 [docs]: https://plugins.jetbrains.com/docs/intellij/
 [ij-community]: https://github.com/JetBrains/intellij-community
-[ij-highlighting-md]: https://github.com/JetBrains/intellij-sdk-docs/blob/main/topics/reference_guide/custom_language_support/syntax_highlighting_and_error_highlighting.md
-[ij-lexer-md]: https://github.com/JetBrains/intellij-sdk-docs/blob/main/topics/reference_guide/custom_language_support/implementing_lexer.md
-[ij-parser-md]: https://github.com/JetBrains/intellij-sdk-docs/blob/main/topics/reference_guide/custom_language_support/implementing_parser_and_psi.md
-[ij-syntax-errors-md]: https://github.com/JetBrains/intellij-sdk-docs/blob/main/topics/tutorials/syntax_errors.md
-[ij-colors-md]: https://github.com/JetBrains/intellij-sdk-docs/blob/main/topics/reference_guide/color_scheme_management.md
+[ij-highlighting-md]: https://github.com/JetBrains/intellij-sdk-docs/blob/d28585c4a5c19a9a1339924e2578c5ef1e6290c8/topics/reference_guide/custom_language_support/syntax_highlighting_and_error_highlighting.md
+[ij-lexer-md]: https://github.com/JetBrains/intellij-sdk-docs/blob/d28585c4a5c19a9a1339924e2578c5ef1e6290c8/topics/reference_guide/custom_language_support/implementing_lexer.md
+[ij-parser-md]: https://github.com/JetBrains/intellij-sdk-docs/blob/d28585c4a5c19a9a1339924e2578c5ef1e6290c8/topics/reference_guide/custom_language_support/implementing_parser_and_psi.md
+[ij-syntax-errors-md]: https://github.com/JetBrains/intellij-sdk-docs/blob/d28585c4a5c19a9a1339924e2578c5ef1e6290c8/topics/tutorials/syntax_errors.md
+[ij-colors-md]: https://github.com/JetBrains/intellij-sdk-docs/blob/d28585c4a5c19a9a1339924e2578c5ef1e6290c8/topics/reference_guide/color_scheme_management.md
 [lsp-st]: ./lsp-semantic-tokens.md
 [lezer-hl]: ./lezer-highlight.md
 [helix]: ./helix.md

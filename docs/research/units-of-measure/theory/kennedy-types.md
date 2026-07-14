@@ -842,4 +842,4 @@ Kennedy's texts are unusually candid about what remains open; several problems s
 [gundry]: https://dl.acm.org/doi/10.1145/2804302.2804305
 [atkey]: https://dl.acm.org/doi/10.1145/2535838.2535867
 [fsharp-repo]: https://github.com/dotnet/fsharp
-[cs-fs]: https://github.com/dotnet/fsharp/blob/25c6a37e/src/Compiler/Checking/ConstraintSolver.fs
+[cs-fs]: https://github.com/dotnet/fsharp/blob/25c6a37e68d01387a5d5322e70efecb4551cb058/src/Compiler/Checking/ConstraintSolver.fs

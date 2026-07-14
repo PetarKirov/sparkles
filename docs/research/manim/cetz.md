@@ -388,12 +388,12 @@ solve, not an iterative optimizer with seed sensitivity.
 <!-- References -->
 
 [repo]: https://github.com/cetz-package/cetz
-[readme]: https://github.com/cetz-package/cetz/blob/master/README.md
-[license]: https://github.com/cetz-package/cetz/blob/master/LICENSE
-[manual]: https://github.com/cetz-package/cetz/blob/master/manual.pdf
-[cetz-core]: https://github.com/cetz-package/cetz/blob/master/cetz-core/src/lib.rs
-[wasm-typ]: https://github.com/cetz-package/cetz/blob/master/src/wasm.typ
-[bezier-doc]: https://github.com/cetz-package/cetz/blob/master/src/bezier.typ
+[readme]: https://github.com/cetz-package/cetz/blob/22affc3f44ce309fda5d2294f133e79fe2b045b6/README.md
+[license]: https://github.com/cetz-package/cetz/blob/22affc3f44ce309fda5d2294f133e79fe2b045b6/LICENSE
+[manual]: https://github.com/cetz-package/cetz/blob/22affc3f44ce309fda5d2294f133e79fe2b045b6/manual.pdf
+[cetz-core]: https://github.com/cetz-package/cetz/blob/22affc3f44ce309fda5d2294f133e79fe2b045b6/cetz-core/src/lib.rs
+[wasm-typ]: https://github.com/cetz-package/cetz/blob/22affc3f44ce309fda5d2294f133e79fe2b045b6/src/wasm.typ
+[bezier-doc]: https://github.com/cetz-package/cetz/blob/22affc3f44ce309fda5d2294f133e79fe2b045b6/src/bezier.typ
 [rel-first]: https://github.com/cetz-package/cetz/releases/tag/v0.0.1
 [rel-latest]: https://github.com/cetz-package/cetz/releases/tag/v0.5.2
 [docs]: https://cetz-package.github.io/docs/

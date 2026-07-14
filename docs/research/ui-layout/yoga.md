@@ -665,7 +665,7 @@ reach for once Yoga is in the dependency graph.
 ### Spec / Algorithm
 
 - **CSS Flexible Box Layout Module Level 1 (W3C)**: <https://www.w3.org/TR/css-flexbox-1/>
-- **Yoga's documented Flexbox differences**: <https://github.com/facebook/yoga/blob/main/README.md>
+- **Yoga's documented Flexbox differences**: <https://github.com/facebook/yoga/blob/6d3a8e0292d8b3c21fe5a14ec76721940f74f569/README.md>
 
 ### Bindings
 

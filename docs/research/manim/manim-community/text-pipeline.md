@@ -205,9 +205,9 @@ Probe: [`bezier-eval.d`][ex-bezier].
 [latex]: ../concepts.md#latex-to-svg
 [shaping]: ../concepts.md#text-shaping
 [ex-bezier]: ../examples/bezier-eval.d
-[tex-write]: https://github.com/ManimCommunity/manim/blob/4d25c031/manim/utils/tex_file_writing.py
-[typst-write]: https://github.com/ManimCommunity/manim/blob/4d25c031/manim/utils/typst_file_writing.py
-[tex-mob]: https://github.com/ManimCommunity/manim/blob/4d25c031/manim/mobject/text/tex_mobject.py
-[text-mob]: https://github.com/ManimCommunity/manim/blob/4d25c031/manim/mobject/text/text_mobject.py
-[svg-mob]: https://github.com/ManimCommunity/manim/blob/4d25c031/manim/mobject/svg/svg_mobject.py
-[pyproject]: https://github.com/ManimCommunity/manim/blob/4d25c031/pyproject.toml
+[tex-write]: https://github.com/ManimCommunity/manim/blob/4d25c031ffe71c602e20935afd54a96f33545a6e/manim/utils/tex_file_writing.py
+[typst-write]: https://github.com/ManimCommunity/manim/blob/4d25c031ffe71c602e20935afd54a96f33545a6e/manim/utils/typst_file_writing.py
+[tex-mob]: https://github.com/ManimCommunity/manim/blob/4d25c031ffe71c602e20935afd54a96f33545a6e/manim/mobject/text/tex_mobject.py
+[text-mob]: https://github.com/ManimCommunity/manim/blob/4d25c031ffe71c602e20935afd54a96f33545a6e/manim/mobject/text/text_mobject.py
+[svg-mob]: https://github.com/ManimCommunity/manim/blob/4d25c031ffe71c602e20935afd54a96f33545a6e/manim/mobject/svg/svg_mobject.py
+[pyproject]: https://github.com/ManimCommunity/manim/blob/4d25c031ffe71c602e20935afd54a96f33545a6e/pyproject.toml

@@ -741,35 +741,35 @@ bottleneck — ergonomics, diagnostics, and standard-library distribution were.
 <!-- Pinned clone (boostorg/units @ f39b667) -->
 
 [repo]: https://github.com/boostorg/units
-[qbk]: https://github.com/boostorg/units/blob/f39b667/doc/units.qbk
-[quantity-hpp]: https://github.com/boostorg/units/blob/f39b667/include/boost/units/quantity.hpp
-[unit-hpp]: https://github.com/boostorg/units/blob/f39b667/include/boost/units/unit.hpp
-[dimension-hpp]: https://github.com/boostorg/units/blob/f39b667/include/boost/units/dimension.hpp
-[dim-hpp]: https://github.com/boostorg/units/blob/f39b667/include/boost/units/dim.hpp
-[base-dimension-hpp]: https://github.com/boostorg/units/blob/f39b667/include/boost/units/base_dimension.hpp
-[static-rational-hpp]: https://github.com/boostorg/units/blob/f39b667/include/boost/units/static_rational.hpp
-[static-constant-hpp]: https://github.com/boostorg/units/blob/f39b667/include/boost/units/static_constant.hpp
-[absolute-hpp]: https://github.com/boostorg/units/blob/f39b667/include/boost/units/absolute.hpp
-[heterogeneous-hpp]: https://github.com/boostorg/units/blob/f39b667/include/boost/units/heterogeneous_system.hpp
-[pow-hpp]: https://github.com/boostorg/units/blob/f39b667/include/boost/units/pow.hpp
-[cmath-hpp]: https://github.com/boostorg/units/blob/f39b667/include/boost/units/cmath.hpp
-[config-hpp]: https://github.com/boostorg/units/blob/f39b667/include/boost/units/config.hpp
-[si-base-hpp]: https://github.com/boostorg/units/blob/f39b667/include/boost/units/systems/si/base.hpp
-[torque-dim]: https://github.com/boostorg/units/blob/f39b667/include/boost/units/physical_dimensions/torque.hpp
-[activity-dim]: https://github.com/boostorg/units/blob/f39b667/include/boost/units/physical_dimensions/activity.hpp
-[frequency-dim]: https://github.com/boostorg/units/blob/f39b667/include/boost/units/physical_dimensions/frequency.hpp
-[temp-conv]: https://github.com/boostorg/units/blob/f39b667/include/boost/units/base_units/temperature/conversions.hpp
-[het-ex]: https://github.com/boostorg/units/blob/f39b667/example/heterogeneous_unit.cpp
-[info-dir]: https://github.com/boostorg/units/tree/f39b667/include/boost/units/systems/information
-[test-system]: https://github.com/boostorg/units/blob/f39b667/example/test_system.hpp
-[dimension-ex]: https://github.com/boostorg/units/blob/f39b667/example/dimension.cpp
-[radar]: https://github.com/boostorg/units/blob/f39b667/example/radar_beam_height.cpp
-[kitchen-sink]: https://github.com/boostorg/units/blob/f39b667/example/kitchen_sink.cpp
-[temperature-ex]: https://github.com/boostorg/units/blob/f39b667/example/temperature.cpp
-[performance-ex]: https://github.com/boostorg/units/blob/f39b667/example/performance.cpp
-[example-dir]: https://github.com/boostorg/units/tree/f39b667/example
-[fail-add]: https://github.com/boostorg/units/blob/f39b667/test/fail_quantity_add.cpp
-[test-dir]: https://github.com/boostorg/units/tree/f39b667/test
+[qbk]: https://github.com/boostorg/units/blob/f39b667d7803a6428d869c0087d92128b1212685/doc/units.qbk
+[quantity-hpp]: https://github.com/boostorg/units/blob/f39b667d7803a6428d869c0087d92128b1212685/include/boost/units/quantity.hpp
+[unit-hpp]: https://github.com/boostorg/units/blob/f39b667d7803a6428d869c0087d92128b1212685/include/boost/units/unit.hpp
+[dimension-hpp]: https://github.com/boostorg/units/blob/f39b667d7803a6428d869c0087d92128b1212685/include/boost/units/dimension.hpp
+[dim-hpp]: https://github.com/boostorg/units/blob/f39b667d7803a6428d869c0087d92128b1212685/include/boost/units/dim.hpp
+[base-dimension-hpp]: https://github.com/boostorg/units/blob/f39b667d7803a6428d869c0087d92128b1212685/include/boost/units/base_dimension.hpp
+[static-rational-hpp]: https://github.com/boostorg/units/blob/f39b667d7803a6428d869c0087d92128b1212685/include/boost/units/static_rational.hpp
+[static-constant-hpp]: https://github.com/boostorg/units/blob/f39b667d7803a6428d869c0087d92128b1212685/include/boost/units/static_constant.hpp
+[absolute-hpp]: https://github.com/boostorg/units/blob/f39b667d7803a6428d869c0087d92128b1212685/include/boost/units/absolute.hpp
+[heterogeneous-hpp]: https://github.com/boostorg/units/blob/f39b667d7803a6428d869c0087d92128b1212685/include/boost/units/heterogeneous_system.hpp
+[pow-hpp]: https://github.com/boostorg/units/blob/f39b667d7803a6428d869c0087d92128b1212685/include/boost/units/pow.hpp
+[cmath-hpp]: https://github.com/boostorg/units/blob/f39b667d7803a6428d869c0087d92128b1212685/include/boost/units/cmath.hpp
+[config-hpp]: https://github.com/boostorg/units/blob/f39b667d7803a6428d869c0087d92128b1212685/include/boost/units/config.hpp
+[si-base-hpp]: https://github.com/boostorg/units/blob/f39b667d7803a6428d869c0087d92128b1212685/include/boost/units/systems/si/base.hpp
+[torque-dim]: https://github.com/boostorg/units/blob/f39b667d7803a6428d869c0087d92128b1212685/include/boost/units/physical_dimensions/torque.hpp
+[activity-dim]: https://github.com/boostorg/units/blob/f39b667d7803a6428d869c0087d92128b1212685/include/boost/units/physical_dimensions/activity.hpp
+[frequency-dim]: https://github.com/boostorg/units/blob/f39b667d7803a6428d869c0087d92128b1212685/include/boost/units/physical_dimensions/frequency.hpp
+[temp-conv]: https://github.com/boostorg/units/blob/f39b667d7803a6428d869c0087d92128b1212685/include/boost/units/base_units/temperature/conversions.hpp
+[het-ex]: https://github.com/boostorg/units/blob/f39b667d7803a6428d869c0087d92128b1212685/example/heterogeneous_unit.cpp
+[info-dir]: https://github.com/boostorg/units/tree/f39b667d7803a6428d869c0087d92128b1212685/include/boost/units/systems/information
+[test-system]: https://github.com/boostorg/units/blob/f39b667d7803a6428d869c0087d92128b1212685/example/test_system.hpp
+[dimension-ex]: https://github.com/boostorg/units/blob/f39b667d7803a6428d869c0087d92128b1212685/example/dimension.cpp
+[radar]: https://github.com/boostorg/units/blob/f39b667d7803a6428d869c0087d92128b1212685/example/radar_beam_height.cpp
+[kitchen-sink]: https://github.com/boostorg/units/blob/f39b667d7803a6428d869c0087d92128b1212685/example/kitchen_sink.cpp
+[temperature-ex]: https://github.com/boostorg/units/blob/f39b667d7803a6428d869c0087d92128b1212685/example/temperature.cpp
+[performance-ex]: https://github.com/boostorg/units/blob/f39b667d7803a6428d869c0087d92128b1212685/example/performance.cpp
+[example-dir]: https://github.com/boostorg/units/tree/f39b667d7803a6428d869c0087d92128b1212685/example
+[fail-add]: https://github.com/boostorg/units/blob/f39b667d7803a6428d869c0087d92128b1212685/test/fail_quantity_add.cpp
+[test-dir]: https://github.com/boostorg/units/tree/f39b667d7803a6428d869c0087d92128b1212685/test
 
 <!-- Official docs & standardization papers -->
 

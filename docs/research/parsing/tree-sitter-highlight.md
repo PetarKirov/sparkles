@@ -216,13 +216,13 @@ This is the extra spine dimension for the [syntax-highlighting cluster][sh], and
 
 [repo]: https://github.com/tree-sitter/tree-sitter
 [docs-rs]: https://docs.rs/tree-sitter-highlight
-[highlight-rs]: https://github.com/tree-sitter/tree-sitter/blob/master/crates/highlight/src/highlight.rs
-[crate-readme]: https://github.com/tree-sitter/tree-sitter/blob/master/crates/highlight/README.md
-[c-lib-rs]: https://github.com/tree-sitter/tree-sitter/blob/master/crates/highlight/src/c_lib.rs
-[highlight-h]: https://github.com/tree-sitter/tree-sitter/blob/master/crates/highlight/include/tree_sitter/highlight.h
-[cli-highlight-rs]: https://github.com/tree-sitter/tree-sitter/blob/master/crates/cli/src/highlight.rs
-[loader-rs]: https://github.com/tree-sitter/tree-sitter/blob/master/crates/loader/src/loader.rs
-[highlight-md]: https://github.com/tree-sitter/tree-sitter/blob/master/docs/src/3-syntax-highlighting.md
+[highlight-rs]: https://github.com/tree-sitter/tree-sitter/blob/da2838c39c15885963094317edb0adb451755979/crates/highlight/src/highlight.rs
+[crate-readme]: https://github.com/tree-sitter/tree-sitter/blob/da2838c39c15885963094317edb0adb451755979/crates/highlight/README.md
+[c-lib-rs]: https://github.com/tree-sitter/tree-sitter/blob/da2838c39c15885963094317edb0adb451755979/crates/highlight/src/c_lib.rs
+[highlight-h]: https://github.com/tree-sitter/tree-sitter/blob/da2838c39c15885963094317edb0adb451755979/crates/highlight/include/tree_sitter/highlight.h
+[cli-highlight-rs]: https://github.com/tree-sitter/tree-sitter/blob/da2838c39c15885963094317edb0adb451755979/crates/cli/src/highlight.rs
+[loader-rs]: https://github.com/tree-sitter/tree-sitter/blob/da2838c39c15885963094317edb0adb451755979/crates/loader/src/loader.rs
+[highlight-md]: https://github.com/tree-sitter/tree-sitter/blob/da2838c39c15885963094317edb0adb451755979/docs/src/3-syntax-highlighting.md
 [tree-sitter]: ./tree-sitter.md
 [ts-queries]: ./tree-sitter.md#the-s-expression-query-language
 [tree-sitter-injection]: ./tree-sitter.md#interface-composition-model

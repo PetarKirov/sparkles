@@ -336,6 +336,6 @@ behind this index's classifications are:
 <!-- External -->
 
 [dip1000]: https://dlang.org/spec/function.html#scope-parameters
-[vkxml]: https://github.com/KhronosGroup/Vulkan-Docs/blob/main/xml/vk.xml
+[vkxml]: https://github.com/KhronosGroup/Vulkan-Docs/blob/7f61271fa6b6e7d71bf56dbc3a6165cda43bd8cb/xml/vk.xml
 [spec-threading]: https://registry.khronos.org/vulkan/specs/latest/html/vkspec.html#fundamentals-threadingbehavior
 [vvl]: https://github.com/KhronosGroup/Vulkan-ValidationLayers

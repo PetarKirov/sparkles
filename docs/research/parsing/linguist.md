@@ -155,13 +155,13 @@ This is the extra spine dimension for the [syntax-highlighting cluster][sh] — 
 <!-- References -->
 
 [repo]: https://github.com/github-linguist/linguist
-[readme]: https://github.com/github-linguist/linguist/blob/main/README.md
-[linguist-rb]: https://github.com/github-linguist/linguist/blob/main/lib/linguist.rb
-[languages-yml]: https://github.com/github-linguist/linguist/blob/main/lib/linguist/languages.yml
-[heuristics-yml]: https://github.com/github-linguist/linguist/blob/main/lib/linguist/heuristics.yml
-[classifier-rb]: https://github.com/github-linguist/linguist/blob/main/lib/linguist/classifier.rb
-[how-works]: https://github.com/github-linguist/linguist/blob/main/docs/how-linguist-works.md
-[overrides]: https://github.com/github-linguist/linguist/blob/main/docs/overrides.md
+[readme]: https://github.com/github-linguist/linguist/blob/e9fe3c9f230cd9220afcd057f75702de4d7700c9/README.md
+[linguist-rb]: https://github.com/github-linguist/linguist/blob/e9fe3c9f230cd9220afcd057f75702de4d7700c9/lib/linguist.rb
+[languages-yml]: https://github.com/github-linguist/linguist/blob/e9fe3c9f230cd9220afcd057f75702de4d7700c9/lib/linguist/languages.yml
+[heuristics-yml]: https://github.com/github-linguist/linguist/blob/e9fe3c9f230cd9220afcd057f75702de4d7700c9/lib/linguist/heuristics.yml
+[classifier-rb]: https://github.com/github-linguist/linguist/blob/e9fe3c9f230cd9220afcd057f75702de4d7700c9/lib/linguist/classifier.rb
+[how-works]: https://github.com/github-linguist/linguist/blob/e9fe3c9f230cd9220afcd057f75702de4d7700c9/docs/how-linguist-works.md
+[overrides]: https://github.com/github-linguist/linguist/blob/e9fe3c9f230cd9220afcd057f75702de4d7700c9/docs/overrides.md
 [hljs]: ./highlight-js.md
 [pygments]: ./pygments.md
 [bat]: ./bat.md

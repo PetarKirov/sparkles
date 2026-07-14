@@ -508,7 +508,7 @@ offers natively.
 <!-- References -->
 
 [repo]: https://github.com/casey/just
-[readme]: https://github.com/casey/just/blob/master/README.md
+[readme]: https://github.com/casey/just/blob/f550d493db7735cf7ec61b416949284910e0f7d0/README.md
 [manual]: https://just.systems/man/en/
 [man1]: https://man.archlinux.org/man/extra/just/just.1.en
 [mod-doc]: https://just.systems/man/en/modules.html

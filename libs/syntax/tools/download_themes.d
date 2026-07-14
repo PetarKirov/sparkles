@@ -234,7 +234,7 @@ struct ThemeInfo
 
 ThemeInfo* processTheme(string themeName)
 {
-    string url = format("https://raw.githubusercontent.com/shikijs/textmate-grammars-themes/main/packages/tm-themes/themes/%s.json", themeName);
+    string url = format("https://raw.githubusercontent.com/shikijs/textmate-grammars-themes/022eed00a8dd29481123f08e1cccf5a5bfee23f9/packages/tm-themes/themes/%s.json", themeName);
     stderr.writef("Downloading %s...\n", themeName);
 
     string jsonText;

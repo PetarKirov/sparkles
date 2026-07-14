@@ -245,11 +245,11 @@ Its lineage gives it unusual depth of prior art: it inherits algorithms and test
 
 [repo]: https://github.com/cloudwego/sonic-rs
 [docsrs]: https://docs.rs/sonic-rs
-[perf]: https://github.com/cloudwego/sonic-rs/blob/main/docs/performance.md
-[compat]: https://github.com/cloudwego/sonic-rs/blob/main/docs/serdejson_compatibility.md
-[getrs]: https://github.com/cloudwego/sonic-rs/blob/main/src/parser.rs
-[arch-x86]: https://github.com/cloudwego/sonic-rs/blob/main/src/util/arch/x86_64.rs
-[lazyvalue]: https://github.com/cloudwego/sonic-rs/blob/main/src/lazyvalue/value.rs
+[perf]: https://github.com/cloudwego/sonic-rs/blob/03545a9530346fe279b674dd496e037d94204bc5/docs/performance.md
+[compat]: https://github.com/cloudwego/sonic-rs/blob/03545a9530346fe279b674dd496e037d94204bc5/docs/serdejson_compatibility.md
+[getrs]: https://github.com/cloudwego/sonic-rs/blob/03545a9530346fe279b674dd496e037d94204bc5/src/parser.rs
+[arch-x86]: https://github.com/cloudwego/sonic-rs/blob/03545a9530346fe279b674dd496e037d94204bc5/src/util/arch/x86_64.rs
+[lazyvalue]: https://github.com/cloudwego/sonic-rs/blob/03545a9530346fe279b674dd496e037d94204bc5/src/lazyvalue/value.rs
 [soniccpp]: https://github.com/bytedance/sonic-cpp
 [jsonpaper]: https://arxiv.org/abs/1902.08318
 [jsonski]: https://dl.acm.org/doi/10.1145/3503222.3507719

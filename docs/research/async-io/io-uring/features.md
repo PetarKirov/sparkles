@@ -544,8 +544,8 @@ For a multi-tenant or sandboxed deployment, BPF filtering lets the host express 
 
 <!-- References -->
 
-[linux-iou]: https://github.com/torvalds/linux/tree/master/io_uring
-[uapi]: https://github.com/torvalds/linux/blob/master/include/uapi/linux/io_uring.h
+[linux-iou]: https://github.com/torvalds/linux/tree/3b029c035b34bbc693405ddf759f0e9b920c27f1/io_uring
+[uapi]: https://github.com/torvalds/linux/blob/3b029c035b34bbc693405ddf759f0e9b920c27f1/include/uapi/linux/io_uring.h
 [zcrx-doc]: https://docs.kernel.org/networking/iou-zcrx.html
 [liburing]: https://github.com/axboe/liburing
 [reg2]: https://man7.org/linux/man-pages/man2/io_uring_register.2.html
@@ -556,13 +556,13 @@ For a multi-tenant or sandboxed deployment, BPF filtering lets the host express 
 [whatsnew]: https://github.com/axboe/liburing/wiki/What%27s-new-with-io_uring-in-6.11-and-6.12
 [lwn-futex]: https://lwn.net/Articles/934350/
 [lwn-zc]: https://lwn.net/Articles/879724/
-[liburing/examples/proxy.c]: https://github.com/axboe/liburing/blob/master/examples/proxy.c
-[liburing/examples/send-zerocopy.c]: https://github.com/axboe/liburing/blob/master/examples/send-zerocopy.c
-[liburing/examples/zcrx.c]: https://github.com/axboe/liburing/blob/master/examples/zcrx.c
-[liburing/examples/napi-busy-poll-server.c]: https://github.com/axboe/liburing/blob/master/examples/napi-busy-poll-server.c
-[liburing/man/io_uring_multishot.7]: https://github.com/axboe/liburing/blob/master/man/io_uring_multishot.7
-[liburing/man/io_uring_linked_requests.7]: https://github.com/axboe/liburing/blob/master/man/io_uring_linked_requests.7
-[liburing/man/io_uring_cancelation.7]: https://github.com/axboe/liburing/blob/master/man/io_uring_cancelation.7
+[liburing/examples/proxy.c]: https://github.com/axboe/liburing/blob/e50e32a6b9030faba2e30fa0ba999571a0cffe28/examples/proxy.c
+[liburing/examples/send-zerocopy.c]: https://github.com/axboe/liburing/blob/e50e32a6b9030faba2e30fa0ba999571a0cffe28/examples/send-zerocopy.c
+[liburing/examples/zcrx.c]: https://github.com/axboe/liburing/blob/e50e32a6b9030faba2e30fa0ba999571a0cffe28/examples/zcrx.c
+[liburing/examples/napi-busy-poll-server.c]: https://github.com/axboe/liburing/blob/e50e32a6b9030faba2e30fa0ba999571a0cffe28/examples/napi-busy-poll-server.c
+[liburing/man/io_uring_multishot.7]: https://github.com/axboe/liburing/blob/e50e32a6b9030faba2e30fa0ba999571a0cffe28/man/io_uring_multishot.7
+[liburing/man/io_uring_linked_requests.7]: https://github.com/axboe/liburing/blob/e50e32a6b9030faba2e30fa0ba999571a0cffe28/man/io_uring_linked_requests.7
+[liburing/man/io_uring_cancelation.7]: https://github.com/axboe/liburing/blob/e50e32a6b9030faba2e30fa0ba999571a0cffe28/man/io_uring_cancelation.7
 [ex-rwfixed]: ./examples/read-write-fixed.d
 [ex-regfiles]: ./examples/registered-files.d
 [ex-pbufring]: ./examples/provided-buf-ring.d

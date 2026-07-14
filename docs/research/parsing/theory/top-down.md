@@ -581,4 +581,4 @@ contrast cases. The capstone [comparison][comparison] places them all on one axi
 [llstar]: https://www.antlr.org/papers/LL-star-PLDI11.pdf
 [dragon]: https://web.archive.org/web/20260610070726/https://suif.stanford.edu/dragonbook/
 [gj]: https://dickgrune.com/Books/PTAPG_2nd_Edition/
-[antlr-parser-rules]: https://github.com/antlr/antlr4/blob/master/doc/parser-rules.md
+[antlr-parser-rules]: https://github.com/antlr/antlr4/blob/594cf95e5460435c7521e80618666741e33e4d91/doc/parser-rules.md

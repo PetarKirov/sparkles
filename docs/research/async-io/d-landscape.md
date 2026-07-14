@@ -371,7 +371,7 @@ For how this compares to the same niche in other languages — [Tokio][tokio] an
 [during]: #during--the-low-level-io_uring-binding
 [during-repo]: https://github.com/tchaloupka/during
 [during-dub]: https://code.dlang.org/packages/during
-[during-readme]: https://github.com/tchaloupka/during/blob/master/README.md
+[during-readme]: https://github.com/tchaloupka/during/blob/4db53813842015d2d295eef1220abd70f2dad36d/README.md
 [eventcore]: https://github.com/vibe-d/eventcore
 [eventcore-api]: https://vibed.org/api/eventcore.driver/
 [eventcore-pr175]: https://github.com/vibe-d/eventcore/pull/175
