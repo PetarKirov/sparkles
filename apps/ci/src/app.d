@@ -171,6 +171,9 @@ struct CliParams
 
     @CliOption(`check-commit-scope`, "Check a commit message for a detailed scope (used by pre-commit commit-msg hook). If no file is given or the argument is '-', reads the message from stdin instead of a file.")
     bool checkCommitScope;
+
+    @CliOption(`check-vcs-urls`, "Check all files or specified files for github.com and raw.githubusercontent.com URLs, ensuring they reference a specific git commit.")
+    bool checkVcsUrls;
 }
 
 enum ProgramMode
@@ -183,6 +186,7 @@ enum ProgramMode
     checkReferenceLinks,
     fixReferenceLinks,
     checkCommitScope,
+    checkVcsUrls,
 }
 
 struct Example
@@ -290,6 +294,9 @@ int main(string[] args)
 
     auto inputFiles = collectInputFiles(cli, mode);
 
+    if (mode == ProgramMode.checkVcsUrls)
+        return runCheckVcsUrls(inputFiles);
+
     if (inputFiles.length == 0)
     {
         if (cli.files.length > 0)
@@ -351,8 +358,11 @@ private string validateCliMode(
     if (cli.test && (cli.dedupReferenceLinks || cli.fixReferenceLinks))
         return "--test cannot be combined with reference deduplication modes (--dedup-reference-links/--fix-reference-links)";
 
-    if (cli.checkCommitScope && (cli.verify || cli.update || cli.exampleFiles || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks))
+    if (cli.checkCommitScope && (cli.verify || cli.update || cli.exampleFiles || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkVcsUrls))
         return "--check-commit-scope cannot be combined with other modes";
+
+    if (cli.checkVcsUrls && (cli.verify || cli.update || cli.exampleFiles || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope))
+        return "--check-vcs-urls cannot be combined with other modes";
 
     if (cli.checkCommitScope && positionalArgs.length > 1)
         return "--check-commit-scope accepts at most one argument (a path or '-' for stdin)";
@@ -388,6 +398,9 @@ private ProgramMode resolveProgramMode(in CliParams cli)
 
     if (cli.checkCommitScope)
         return ProgramMode.checkCommitScope;
+
+    if (cli.checkVcsUrls)
+        return ProgramMode.checkVcsUrls;
 
     return ProgramMode.runExamples;
 }
@@ -698,6 +711,22 @@ private string[] trackedFilesMatching(string pattern)
         .array;
 }
 
+private string[] trackedAllFiles()
+{
+    const result = execute(["git", "ls-files"]);
+    if (result.status != 0)
+    {
+        error(i"Failed to enumerate all files with git ls-files");
+        return [];
+    }
+
+    return result.output
+        .lineSplitter
+        .filter!(line => line.length != 0)
+        .map!(line => line.idup)
+        .array;
+}
+
 private string[] collectInputFiles(
     in CliParams cli,
     in ProgramMode mode,
@@ -724,6 +753,16 @@ private string[] collectInputFiles(
             inputFiles = trackedMarkdownFiles();
         else if (mode == ProgramMode.runExampleFiles)
             inputFiles = trackedStandaloneExampleFiles();
+        else if (mode == ProgramMode.checkVcsUrls)
+            inputFiles = trackedAllFiles();
+    }
+
+    if (mode == ProgramMode.checkVcsUrls)
+    {
+        return inputFiles
+            .filter!(path => path.length > 0)
+            .map!(path => path.idup)
+            .array;
     }
 
     const requiredSuffix = mode == ProgramMode.runExampleFiles ? ".d" : ".md";
@@ -805,6 +844,7 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             case ProgramMode.checkReferenceLinks:
             case ProgramMode.fixReferenceLinks:
             case ProgramMode.checkCommitScope:
+            case ProgramMode.checkVcsUrls:
                 rc = 1;
                 break;
         }
@@ -1010,6 +1050,73 @@ private int runReferenceLinkMode(string[] mdFiles, bool fix)
         writeln("  ", filePath);
 
     return missingFiles > 0 ? 1 : 0;
+}
+
+private int runCheckVcsUrls(string[] files)
+{
+    import std.file : readText;
+    import std.path : baseName;
+    import std.regex : ctRegex, matchAll, matchFirst;
+    import std.stdio : writeln;
+    import std.string : lineSplitter;
+    import std.algorithm : canFind;
+
+    static urlRe = ctRegex!(`https?://(?:raw\.githubusercontent\.com/([^/]+)/([^/]+)/([^/]+)/([^#\s"'()\]]*)|(?:www\.)?github\.com/([^/]+)/([^/]+)/(blob|tree)/([^/]+)/([^#\s"'()\]]*))`);
+    static shaRe = ctRegex!(`^[0-9a-fA-F]{40}$`);
+
+    int totalErrors = 0;
+
+    foreach (filePath; files)
+    {
+        string content;
+        try
+        {
+            content = readText(filePath);
+        }
+        catch (Exception)
+        {
+            continue; // skip binary/invalid files
+        }
+
+        size_t lineNum = 1;
+        foreach (line; content.lineSplitter)
+        {
+            foreach (m; line.matchAll(urlRe))
+            {
+                string rText;
+                if (m.captures[3].length > 0)
+                    rText = m.captures[3].idup;
+                else if (m.captures[8].length > 0)
+                    rText = m.captures[8].idup;
+                else
+                    continue;
+
+                // Allow placeholders or variables
+                if (rText.canFind('$') || rText.canFind('%'))
+                    continue;
+
+                if (matchFirst(rText, shaRe).empty)
+                {
+                    stderr.writefln("✗ %s:%d: URL refers to branch/tag '%s' instead of a specific commit SHA:",
+                        filePath, lineNum, rText);
+                    stderr.writefln("  %s", m.hit);
+                    stderr.writeln;
+                    totalErrors++;
+                }
+            }
+            lineNum++;
+        }
+    }
+
+    if (totalErrors > 0)
+    {
+        stderr.writefln("Found %d non-conforming GitHub URL(s).", totalErrors);
+        stderr.writeln("Please pin all code/file reference URLs to a specific 40-character commit SHA.");
+        return 1;
+    }
+
+    info(i"{green ✓} All checked GitHub URLs refer to specific commit SHAs.");
+    return 0;
 }
 
 // === Core Functions ===

@@ -85,7 +85,7 @@ in
           '';
         };
 
-      # impl: https://github.com/cachix/git-hooks.nix/blob/master/flake-module.nix
+      # impl: https://github.com/cachix/git-hooks.nix/blob/bca82caa46d5ec0f5d422c61fb1e30bc51313cbe/flake-module.nix
       pre-commit = {
         # Disable `checks` flake output
         check.enable = false;
@@ -237,6 +237,19 @@ in
                   ''
                 )
               );
+            };
+
+            check-vcs-urls = {
+              enable = true;
+              name = "check-vcs-urls";
+              entry = lib.getExe config.packages.ci;
+              args = [
+                "--check-vcs-urls"
+                "--files"
+              ];
+              language = "system";
+              pass_filenames = true;
+              require_serial = true;
             };
           };
 
