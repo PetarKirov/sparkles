@@ -270,6 +270,7 @@ package. A module that imports them in a non-`unittest` build (e.g. `base`'s
 ```bash
 nix run .#ci -- --test --fail-fast       # dub test for every sub-package
 nix run .#ci -- --verify --files README.md   # verify markdown examples (see Examples below)
+nix run .#ci -- --check-vcs-urls         # audit all tracked markdown for unpinned GitHub URLs
 ```
 
 ### Debugging tips
@@ -735,6 +736,15 @@ Hooks run on commit and will modify or block your changes:
   `base/smallbuffer.d` changed). It is intentionally _not_ a strict enum. See
   the "Commit messages" section above for the intended style. Bypass with
   `SKIP=detailed-scope git commit …` or `git commit --no-verify`.
+- **check-vcs-urls** scans staged markdown files for `github.com`/
+  `raw.githubusercontent.com` URLs and rejects any that reference a branch or
+  tag instead of a 40-character commit SHA (so docs citing external source
+  stay pinned to the exact revision they describe). It only runs against
+  `.md` files — non-doc files (e.g. `.envrc`, other tag+hash-pinned tool
+  fetches) are out of scope. `$` or `%` in the ref position is treated as a
+  runtime placeholder and skipped. Bypass with
+  `SKIP=check-vcs-urls git commit …` or `git commit --no-verify`; run
+  `nix run .#ci -- --check-vcs-urls` to audit all tracked markdown files.
 
 ## Pitfalls Checklist
 
