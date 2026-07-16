@@ -39,6 +39,22 @@ void writeCtl(CtlSeq seq)
     write(cast(string) seq);
 }
 
+// The first `n` lines of `s` (including the newline that ends line `n`), or all
+// of `s` when it has fewer. The previewer only ever shows the top of the file,
+// so slicing here keeps the highlight fold O(visible lines) instead of
+// O(file) — the difference between a 40-line viewport and a multi-thousand-line
+// source on every keystroke.
+const(char)[] firstLines(return scope const(char)[] s, size_t n) @safe pure nothrow @nogc
+{
+    if (n == 0)
+        return s;
+    size_t seen = 0;
+    foreach (i, char c; s)
+        if (c == '\n' && ++seen == n)
+            return s[0 .. i + 1];
+    return s;
+}
+
 int main(string[] args)
 {
     const cli = args.parseCliArgs!CliParams(
@@ -152,30 +168,49 @@ void main()
         write(sgr[]);
     }
 
+    // Color depth is a stable property of the session — probe once, not per
+    // frame. Resolved themes are memoized: switching revisits themes, and each
+    // resolveTheme allocates a fresh label→style table.
+    const depth = detectColorDepth();
+    ResolvedTheme[string] resolvedCache;
+
+    ref const(ResolvedTheme) resolveCached(string name)
+    {
+        if (auto r = name in resolvedCache)
+            return *r;
+        auto tp = name in builtinThemes;
+        resolvedCache[name] = resolveTheme(tp ? *tp : builtinDark, labels);
+        return resolvedCache[name];
+    }
+
     string lastRendered;
     while (true)
     {
         const cur = names[idx];
-        auto tp = cur in builtinThemes;
-        const(Theme)* thp = tp ? tp : &builtinDark;
-        const resolved = resolveTheme(*thp, labels);
-        const depth = detectColorDepth();
+        const resolved = resolveCached(cur);
         const chrome = StyleSpec(fg: resolved.defaults.fg, bg: resolved.defaults.bg);
 
-        import sparkles.base.smallbuffer : SmallBuffer;
-        SmallBuffer!(char, 8192) buf;
-        renderAnsi(source, events[], resolved, buf,
-            AnsiOptions(depth: depth, italics: true, emitBackground: true));
-        lastRendered = buf[].idup;
-
-        import std.string : splitLines;
         import std.algorithm.comparison : min;
-        auto codeLines = lastRendered.splitLines();
         const sz = terminalSize();
         enum win = 7;
         const reserved = 4u + win; // header + hint + 2 separators + theme list
         const maxCode = (sz.height > reserved) ? sz.height - reserved : 10;
-        auto view = codeLines.length > maxCode ? codeLines[0 .. maxCode] : codeLines;
+
+        // Render only the visible slice: highlighting the whole file every frame
+        // and then discarding all but `maxCode` lines was the theme-switch
+        // regression (O(file) render + idup + splitLines per keystroke).
+        // renderAnsi clamps spans to the sliced length, so the shared event
+        // stream needs no filtering.
+        const shown = source.firstLines(maxCode);
+
+        import sparkles.base.smallbuffer : SmallBuffer;
+        SmallBuffer!(char, 8192) buf;
+        renderAnsi(shown, events[], resolved, buf,
+            AnsiOptions(depth: depth, italics: true, emitBackground: true));
+        lastRendered = buf[].idup;
+
+        import std.string : splitLines;
+        auto view = lastRendered.splitLines();
 
         writeCtl(CtlSeq.syncBegin);
         // Open the theme's fg/bg before erasing: terminals with "back color
