@@ -1,0 +1,36 @@
+name "syntax-render-bench"
+description "Syntax-highlighting render-cost benchmark (ANSI + HTML, sizes, theme-switch) on sparkles:test-runner, with a nix-pinned foreign panel"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetType "library"
+targetPath "build"
+
+dflags "-preview=in" "-preview=dip1000"
+
+// `runner.d` imports sparkles.test_runner.* at module scope, so the runner is an
+// unconditional dependency (mirrors libs/tui/bench/render). `sparkles:syntax`
+// pulls in tree-sitter (ImportC) and base; the corpus is parsed once per case in
+// untimed setup, then the renderers are timed over the cached event stream.
+dependency "sparkles:syntax" path="../../../.."
+dependency "sparkles:test-runner" path="../../../.."
+
+// The frozen corpus files are string-imported (cwd-independent, deterministic).
+stringImportPaths "corpus"
+
+configuration "unittest" {
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+
+// Real numbers need release codegen: dub's stock `unittest` build is a debug
+// build (the runner warns under --bench), so benchmarks run via
+// `dub test -b bench -- --bench …`. `unittests` is load-bearing — without it
+// `dub test` registers zero tests. Copied from libs/tui/bench/render.
+buildType "bench" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+}
