@@ -242,6 +242,7 @@ in
             check-vcs-urls = {
               enable = true;
               name = "check-vcs-urls";
+              files = "\\.md$";
               entry = lib.getExe config.packages.ci;
               args = [
                 "--check-vcs-urls"

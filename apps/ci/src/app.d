@@ -20,6 +20,7 @@ nix run .#ci -- [--verify|--update] [--fail-fast] [--files GLOB|FILE...]
 nix run .#ci -- --example-files [--fail-fast] [--files GLOB|FILE...]
 nix run .#ci -- --test [--fail-fast]
 nix run .#ci -- [--dedup-reference-links|--fix-reference-links] [--files GLOB|FILE...]
+nix run .#ci -- --check-vcs-urls [--files GLOB|FILE...]
 nix run .#ci -- [--log-level trace|info|warning|error]
 ---
 
@@ -35,6 +36,7 @@ $(LIST
     $(ITEM `--fail-fast` — stop on the first failing example and replay its output at the end)
     $(ITEM `--dedup-reference-links` — report duplicate markdown reference definitions by URL)
     $(ITEM `--fix-reference-links` — rewrite duplicates to a canonical label)
+    $(ITEM `--check-vcs-urls` — check tracked markdown files for github.com/raw.githubusercontent.com URLs, ensuring they reference a specific commit SHA)
 )
 
 The script looks for D code blocks starting with:
@@ -172,7 +174,7 @@ struct CliParams
     @CliOption(`check-commit-scope`, "Check a commit message for a detailed scope (used by pre-commit commit-msg hook). If no file is given or the argument is '-', reads the message from stdin instead of a file.")
     bool checkCommitScope;
 
-    @CliOption(`check-vcs-urls`, "Check all files or specified files for github.com and raw.githubusercontent.com URLs, ensuring they reference a specific git commit.")
+    @CliOption(`check-vcs-urls`, "Check tracked markdown files (or specified files) for github.com and raw.githubusercontent.com URLs, ensuring they reference a specific git commit.")
     bool checkVcsUrls;
 }
 
@@ -294,9 +296,6 @@ int main(string[] args)
 
     auto inputFiles = collectInputFiles(cli, mode);
 
-    if (mode == ProgramMode.checkVcsUrls)
-        return runCheckVcsUrls(inputFiles);
-
     if (inputFiles.length == 0)
     {
         if (cli.files.length > 0)
@@ -311,6 +310,8 @@ int main(string[] args)
             styledWritelnErr(i"{bold Usage:} $(args[0].baseName) --example-files [--fail-fast] [--files GLOB|FILE...]");
         else if (mode == ProgramMode.checkCommitScope)
             styledWritelnErr(i"{bold Usage:} $(args[0].baseName) --check-commit-scope [<commit-msg-file> | -]");
+        else if (mode == ProgramMode.checkVcsUrls)
+            styledWritelnErr(i"{bold Usage:} $(args[0].baseName) --check-vcs-urls [--files GLOB|FILE...]");
         else
             styledWritelnErr(i"{bold Usage:} $(args[0].baseName) [--verify|--update] [--fail-fast] [--files GLOB|FILE...]");
         return 1;
@@ -324,6 +325,9 @@ int main(string[] args)
 
     if (mode == ProgramMode.fixReferenceLinks)
         return runReferenceLinkMode(inputFiles, true);
+
+    if (mode == ProgramMode.checkVcsUrls)
+        return runCheckVcsUrls(inputFiles);
 
     return runExamplesForFiles(inputFiles, mode, cli.failFast);
 }
@@ -711,22 +715,6 @@ private string[] trackedFilesMatching(string pattern)
         .array;
 }
 
-private string[] trackedAllFiles()
-{
-    const result = execute(["git", "ls-files"]);
-    if (result.status != 0)
-    {
-        error(i"Failed to enumerate all files with git ls-files");
-        return [];
-    }
-
-    return result.output
-        .lineSplitter
-        .filter!(line => line.length != 0)
-        .map!(line => line.idup)
-        .array;
-}
-
 private string[] collectInputFiles(
     in CliParams cli,
     in ProgramMode mode,
@@ -754,15 +742,7 @@ private string[] collectInputFiles(
         else if (mode == ProgramMode.runExampleFiles)
             inputFiles = trackedStandaloneExampleFiles();
         else if (mode == ProgramMode.checkVcsUrls)
-            inputFiles = trackedAllFiles();
-    }
-
-    if (mode == ProgramMode.checkVcsUrls)
-    {
-        return inputFiles
-            .filter!(path => path.length > 0)
-            .map!(path => path.idup)
-            .array;
+            inputFiles = trackedMarkdownFiles();
     }
 
     const requiredSuffix = mode == ProgramMode.runExampleFiles ? ".d" : ".md";
@@ -1055,9 +1035,7 @@ private int runReferenceLinkMode(string[] mdFiles, bool fix)
 private int runCheckVcsUrls(string[] files)
 {
     import std.file : readText;
-    import std.path : baseName;
     import std.regex : ctRegex, matchAll, matchFirst;
-    import std.stdio : writeln;
     import std.string : lineSplitter;
     import std.algorithm : canFind;
 
