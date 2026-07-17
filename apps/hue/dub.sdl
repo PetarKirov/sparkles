@@ -9,15 +9,11 @@ targetName "hue"
 targetPath "build"
 mainSourceFile "src/app.d"
 
-// `app.d` string-imports itself (`import("app.d")`) as the default sample to
-// highlight, so it works from any install location instead of relying on the
-// build-time __FILE_FULL_PATH__.
+// `app.d` string-imports itself (`import("app.d")`)
 stringImportPaths "src"
 
 dflags "-preview=in" "-preview=dip1000"
 
-// Resolved via pkg-config in dependents' builds (sparkles:syntax pulls in
-// sparkles:tree-sitter, whose ImportC surface needs <tree_sitter/api.h>).
 dependency "sparkles:syntax" path="../.."
 dependency "sparkles:core-cli" path="../.."
 
