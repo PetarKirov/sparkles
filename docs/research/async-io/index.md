@@ -279,7 +279,7 @@ this index's classifications are:
 <!-- External -->
 
 [liburing]: https://github.com/axboe/liburing
-[axboe-pdf]: https://kernel.dk/io_uring.pdf
+[axboe-pdf]: http://web.archive.org/web/20260624135046/https://kernel.dk/io_uring.pdf
 [lwn-growth]: https://lwn.net/Articles/810414/
 [PEP 3156]: https://peps.python.org/pep-3156/
 [JEP 444]: https://openjdk.org/jeps/444

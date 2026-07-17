@@ -450,6 +450,6 @@ Stacking these — SQPOLL + IOPOLL + fixed files/buffers + `DEFER_TASKRUN` — y
 [linux-io_uring]: https://github.com/torvalds/linux/tree/3b029c035b34bbc693405ddf759f0e9b920c27f1/io_uring
 [uapi]: https://github.com/torvalds/linux/blob/3b029c035b34bbc693405ddf759f0e9b920c27f1/include/uapi/linux/io_uring.h
 [liburing]: https://github.com/axboe/liburing
-[kernel-dk]: https://kernel.dk/io_uring.pdf
+[kernel-dk]: http://web.archive.org/web/20260624135046/https://kernel.dk/io_uring.pdf
 [lwn-growth]: https://lwn.net/Articles/810414/
 [wikipedia]: https://en.wikipedia.org/wiki/Io_uring
