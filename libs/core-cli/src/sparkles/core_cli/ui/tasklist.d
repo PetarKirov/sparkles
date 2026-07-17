@@ -182,6 +182,50 @@ struct TaskReporter
         repaint();
     }
 
+    /// Returns a short-lived writer for live output on this task.
+    /// You can call `.put` or `.writeStyled(i"...")` on it.
+    /// On destruction it flushes the accumulated content via the normal output path.
+    ///
+    /// Example (reduces SmallBuffer boilerplate):
+    ///   tasks.output(jobsId).writeStyled(i"$(i + 1) / $(runs.length) runs");
+    auto output(this This)(size_t id)
+    in (id < _items.length)
+    {
+        import sparkles.base.smallbuffer : SmallBuffer;
+
+        static struct OutputWriter
+        {
+            This* r;
+            size_t id;
+            SmallBuffer!(char, 256) b;
+
+            // The dtor flushes the accumulated buffer, so a copy would flush twice.
+            // The proxy is meant to be used as a short-lived temporary/local (moved,
+            // never copied); disable copying to make an accidental copy a compile error.
+            @disable this(this);
+
+            void put(const(char)[] s) { b ~= s; }
+
+            void writeStyled(Args...)(Args args)
+            {
+                import sparkles.base.styled_template : writeStyled;
+                import sparkles.base.term_color : ColorDepth;
+                // Honor the wrapped reporter's theme, like every other render path —
+                // a colors-off theme must not emit raw ANSI into the tail pane.
+                const depth = r._theme.colors ? ColorDepth.trueColor : ColorDepth.none;
+                writeStyled(b, depth, args);
+            }
+
+            ~this()
+            {
+                if (b.length > 0)
+                    r.output(id, b[]);
+            }
+        }
+
+        return OutputWriter(cast(This*)&this, id);
+    }
+
     /// The items (for tests / summaries).
     const(TaskItem)[] items() const @safe pure nothrow @nogc => _items;
 
