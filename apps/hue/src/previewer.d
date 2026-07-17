@@ -12,7 +12,7 @@ import core.stdc.stdio : FILE, fflush, fwrite;
 
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_control : CtlSeq;
-import sparkles.base.text.writers : writeInteger;
+import sparkles.base.styled_template : writeStyled;
 
 import sparkles.syntax : AnsiOptions, ColorDepth, HighlightEvent, LabelSet,
     renderAnsi, ResolvedTheme, resolveThemeInto, StyleSpec, Theme,
@@ -165,16 +165,10 @@ struct Previewer
         frame.put(CtlSeq.eraseDisplay);
         frame.put(CtlSeq.cursorHome);
 
-        // Header: " <file>  —  <theme> (i/n)".
-        frame.put(" ");
-        frame.put(title);
-        frame.put("  —  ");
-        frame.put(names[idx]);
-        frame.put(" (");
-        writeInteger(frame, idx + 1);
-        frame.put("/");
-        writeInteger(frame, names.length);
-        frame.put(")\n");
+        // Header + hint. `writeStyled` interpolation reads as the rendered line
+        // (no color markup — the header runs under the active `chrome` style, and
+        // a color's `39`/`49` reset would clobber it).
+        writeStyled(frame, i" $(title)  —  $(names[idx]) ($(idx + 1)/$(names.length))\n");
         frame.put(" ↑/↓ switch   enter: print full file   any other key: quit\n");
         putSeparator(sepLen);
 
