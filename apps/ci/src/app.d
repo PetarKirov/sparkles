@@ -176,6 +176,35 @@ struct CliParams
 
     @CliOption(`check-vcs-urls`, "Check tracked markdown files (or specified files) for github.com and raw.githubusercontent.com URLs, ensuring they reference a specific git commit.")
     bool checkVcsUrls;
+
+    @CliOption(`C|ci-stats`,
+        "Compute GitHub Actions CI job timing statistics and runner-type aggregates. "
+        ~ "See docs/specs/ci/stats/ for the full specification.")
+    bool ciStats;
+
+    @CliOption(`g|github-token`,
+        "GitHub token for API access (Bearer auth). Falls back to $GITHUB_TOKEN.")
+    string githubToken;
+
+    @CliOption(`r|repo`,
+        "Target repository as owner/repo (e.g. PetarKirov/sparkles).")
+    string repo;
+
+    @CliOption(`l|limit`,
+        "Maximum number of recent workflow runs to analyze (default 100).")
+    int limit = 100;
+
+    @CliOption(`S|since`,
+        "Only include runs created on/after this date (YYYY-MM-DD or ISO).")
+    string since;
+
+    @CliOption(`w|workflow`,
+        "Filter to runs/jobs matching this workflow name or path substring.")
+    string workflow;
+
+    @CliOption(`c|conclusion`,
+        "Only jobs with this conclusion (e.g. success, failure).")
+    string conclusion;
 }
 
 enum ProgramMode
@@ -189,6 +218,7 @@ enum ProgramMode
     fixReferenceLinks,
     checkCommitScope,
     checkVcsUrls,
+    ciStats,
 }
 
 struct Example
@@ -294,6 +324,9 @@ int main(string[] args)
     if (mode == ProgramMode.runDubTests)
         return runDubTestsMode(cli.failFast);
 
+    if (mode == ProgramMode.ciStats)
+        return runCiStatsMode(cli);
+
     auto inputFiles = collectInputFiles(cli, mode);
 
     if (inputFiles.length == 0)
@@ -362,11 +395,18 @@ private string validateCliMode(
     if (cli.test && (cli.dedupReferenceLinks || cli.fixReferenceLinks))
         return "--test cannot be combined with reference deduplication modes (--dedup-reference-links/--fix-reference-links)";
 
-    if (cli.checkCommitScope && (cli.verify || cli.update || cli.exampleFiles || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkVcsUrls))
+    if (cli.checkCommitScope && (cli.verify || cli.update || cli.exampleFiles || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkVcsUrls || cli.ciStats))
         return "--check-commit-scope cannot be combined with other modes";
 
-    if (cli.checkVcsUrls && (cli.verify || cli.update || cli.exampleFiles || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope))
+    if (cli.checkVcsUrls && (cli.verify || cli.update || cli.exampleFiles || cli.test || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.ciStats))
         return "--check-vcs-urls cannot be combined with other modes";
+
+    if (cli.ciStats && (cli.verify || cli.update || cli.exampleFiles || cli.test
+            || cli.dedupReferenceLinks || cli.fixReferenceLinks || cli.checkCommitScope || cli.checkVcsUrls))
+        return "--ci-stats cannot be combined with other modes";
+
+    if (cli.ciStats && cli.limit <= 0)
+        return "--limit must be a positive integer";
 
     if (cli.checkCommitScope && positionalArgs.length > 1)
         return "--check-commit-scope accepts at most one argument (a path or '-' for stdin)";
@@ -382,6 +422,9 @@ private string validateCliMode(
 
 private ProgramMode resolveProgramMode(in CliParams cli)
 {
+    if (cli.ciStats)
+        return ProgramMode.ciStats;
+
     if (cli.exampleFiles)
         return ProgramMode.runExampleFiles;
 
@@ -826,6 +869,9 @@ private int runExamplesForFiles(string[] mdFiles, in ProgramMode mode, bool fail
             case ProgramMode.checkCommitScope:
             case ProgramMode.checkVcsUrls:
                 rc = 1;
+                break;
+            case ProgramMode.ciStats:
+                rc = 1;   // handled earlier in main(); should never reach here
                 break;
         }
 
@@ -2528,4 +2574,41 @@ private void displaySummary(size_t total, size_t failures)
             styledText(i"{dim $(passed)/$(total) passed}"),
         ].drawBox(styledText(i"{red Results}")));
     }
+}
+
+// ---------------------------------------------------------------------------
+// ci-stats (GitHub Actions usage) — M1 skeleton; real implementation in M2+
+// (see docs/specs/ci/stats/)
+// ---------------------------------------------------------------------------
+
+private int runCiStatsMode(in CliParams cli)
+{
+    import std.process : environment;
+    import std.stdio : writeln;
+
+    import ci_stats : CiStatsOptions, fetchAndDeserializeJson, runCiStats;
+
+    string token = cli.githubToken;
+    if (token.length == 0)
+        token = environment.get("GITHUB_TOKEN", "");
+
+    auto opts = CiStatsOptions(
+        repo: cli.repo,
+        token: token,
+        limit: cli.limit,
+        since: cli.since,
+        workflowFilter: cli.workflow,
+        conclusionFilter: cli.conclusion,
+    );
+
+    auto res = runCiStats!fetchAndDeserializeJson(opts);
+    if (res.hasError)
+    {
+        import sparkles.base.logger : error;
+        string errMsg = res.error;
+        error(i"ci-stats failed: $(errMsg)");
+        return 1;
+    }
+
+    return 0;
 }
