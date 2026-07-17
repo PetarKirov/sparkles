@@ -491,7 +491,7 @@ a time with `dub run --single <file>`.
 [man7-setup]: https://man7.org/linux/man-pages/man2/io_uring_setup.2.html
 [man7-register]: https://man7.org/linux/man-pages/man2/io_uring_register.2.html
 [man7-recv-ms]: https://man7.org/linux/man-pages/man3/io_uring_prep_recv_multishot.3.html
-[axboe-pdf]: https://kernel.dk/io_uring.pdf
+[axboe-pdf]: http://web.archive.org/web/20260624135046/https://kernel.dk/io_uring.pdf
 [lwn-growth]: https://lwn.net/Articles/810414/
 [lwn-waitid]: https://lwn.net/Articles/940294/
 [lwn-futex]: https://lwn.net/Articles/934350/

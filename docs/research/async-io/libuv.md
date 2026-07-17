@@ -436,7 +436,7 @@ libuv's defining position is _portability and stability over peak Linux throughp
 [PR #3952: linux: introduce io_uring support]: https://github.com/libuv/libuv/pull/3952
 [Issue #4044: use io_uring for network i/o]: https://github.com/libuv/libuv/issues/4044
 [Phoronix: libuv adds io_uring support]: https://www.phoronix.com/news/libuv-io-uring
-[io_uring (kernel.dk)]: https://kernel.dk/io_uring.pdf
+[io_uring (kernel.dk)]: http://web.archive.org/web/20260624135046/https://kernel.dk/io_uring.pdf
 [An Introduction to libuv (book)]: https://docs.libuv.org/en/v1.x/guide.html
 [iouring]: ./io-uring/index.md
 [iouring-features]: ./io-uring/features.md

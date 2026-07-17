@@ -682,8 +682,8 @@ the classic `@effect/sql` is the production-stable line.
 [pgclient]: https://github.com/Effect-TS/effect-smol/blob/3e4abbcb0d0e9a5e82b6b88c7ef7ab69900105ec/packages/sql/pg/src/PgClient.ts
 [license]: https://github.com/Effect-TS/effect-smol/blob/3e4abbcb0d0e9a5e82b6b88c7ef7ab69900105ec/LICENSE
 [changeset]: https://github.com/Effect-TS/effect-smol/blob/3e4abbcb0d0e9a5e82b6b88c7ef7ab69900105ec/.changeset/consolidate-sql-error.md
-[drizzle]: https://github.com/Effect-TS/effect/blob/0fa51411b4d734643b1efc4d6393de0dd3d091aa/packages/sql-drizzle/README.md
-[kysely]: https://github.com/Effect-TS/effect/blob/0fa51411b4d734643b1efc4d6393de0dd3d091aa/packages/sql-kysely/README.md
+[drizzle]: https://github.com/Effect-TS/effect/blob/e5998a45f69960b38eb2b8cb67cbb07b9e6962c7/packages/sql-drizzle/README.md
+[kysely]: https://github.com/Effect-TS/effect/blob/e5998a45f69960b38eb2b8cb67cbb07b9e6962c7/packages/sql-kysely/README.md
 [concepts]: ./concepts.md
 [concepts-ladder]: ./concepts.md#the-abstraction-ladder
 [concepts-qcm]: ./concepts.md#query-construction-models

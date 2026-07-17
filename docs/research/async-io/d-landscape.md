@@ -382,7 +382,7 @@ For how this compares to the same niche in other languages — [Tokio][tokio] an
 [fiber-docs]: https://dlang.org/library/core/thread/fiber.html
 [concurrency-docs]: https://dlang.org/library/std/concurrency.html
 [libasync]: https://github.com/etcimon/libasync
-[io-uring-pdf]: https://kernel.dk/io_uring.pdf
+[io-uring-pdf]: http://web.archive.org/web/20260624135046/https://kernel.dk/io_uring.pdf
 [DUB]: https://code.dlang.org
 [io-uring]: ./io-uring/index.md
 [comparison]: ./comparison.md

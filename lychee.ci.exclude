@@ -79,3 +79,15 @@
 ^https?://([^/]+\.)?reactnative\.dev/
 ^https?://garden\.dlang\.io/
 ^https?://grid\.malven\.co/
+# gitlab.lisn.upsaclay.fr (INRIA/CNRS TeX Live MetaPost mirror, cited in
+# manim/metapost.md) times out under GitHub Actions' concurrency (live + 200
+# locally)
+^https?://gitlab\.lisn\.upsaclay\.fr/
+# manpages.ubuntu.com times out consistently for automated checkers (both
+# under GitHub Actions and from other sandboxed environments); cited for the
+# mpost(1) man page in manim/metapost.md
+^https?://manpages\.ubuntu\.com/
+# androidx.tech (a third-party androidx artifact mirror, cited in
+# ui-layout/android-constraintlayout.md) currently 522s at the origin under
+# Cloudflare; the same citation is already mirrored at android.googlesource.com
+^https?://androidx\.tech/
