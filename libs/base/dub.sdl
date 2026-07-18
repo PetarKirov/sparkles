@@ -30,3 +30,14 @@ configuration "unittest" {
     dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
     lflags "--export-dynamic" platform="linux-ldc"
 }
+
+// Real numbers need release codegen: dub's stock `unittest` build type is a
+// debug build (the runner prints an assert-build warning under --bench), so
+// benchmarks run via `dub test :base -b bench -- --bench …`. `unittests` is
+// the load-bearing option — without it `dub test` registers zero tests.
+// No `-enable-cross-module-inlining`: build types propagate to dependencies
+// (see the cross-module-inlining note in docs/libs/test-runner/how-to/benchmark.md).
+buildType "bench" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+}

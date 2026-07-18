@@ -19,7 +19,7 @@ import sparkles.base.text.errors :
 
 // Unconditional import (phobos-style, cf. std.internal.attributes): unittest
 // UDAs are resolved even in builds where the unittest bodies are not compiled.
-import sparkles.test_runner.attributes : betterC;
+import sparkles.test_runner.attributes : benchmark, betterC;
 
 /**
 A positional digit vocabulary: `digits[i]` is the character for symbol
@@ -858,4 +858,144 @@ unittest
         assert(c == 'A');
     assert(buf[][76 .. 78] == "\r\n");
     assert(buf[][78 .. $] == "AAAA");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Benchmarks (`dub test :base -b bench -- --bench --group-by=preset,op,size`)
+// ─────────────────────────────────────────────────────────────────────────────
+
+version (unittest)
+{
+    private struct CharSink
+    {
+        char[] buf;
+        size_t n;
+        void put(char c) @safe { buf[n++] = c; }
+    }
+
+    private struct ByteSink
+    {
+        ubyte[] buf;
+        size_t n;
+        void put(ubyte b) @safe { buf[n++] = b; }
+    }
+
+    /// Per-cell bench state on the GC heap. The timed/after callbacks are
+    /// member delegates (context = this instance), NOT frame closures:
+    /// `base` source-includes the runner impl, so under this package's
+    /// -preview=dip1000 the harness's delegate parameters scope-infer and a
+    /// frame closure passed to benchCase is stack-allocated — dangling by
+    /// the time the deferred measurement runs (stack-use-after-return).
+    private final class StreamingBenchCase(Alphabet a)
+    {
+        ubyte[] data;
+        char[] encoded;
+        ubyte[] decoded;
+
+        this(size_t size) @safe
+        {
+            data = new ubyte[](size);
+            uint x = 0x9E3779B9 ^ cast(uint) size;
+            foreach (ref b; data)
+            {
+                x = x * 1664525 + 1013904223;
+                b = cast(ubyte)(x >> 24);
+            }
+            encoded = new char[](encodedLen(a, size));
+            decoded = new ubyte[](size);
+            auto w = CharSink(encoded);
+            encodeBase!a(w, data); // seed `encoded` for the decode case
+        }
+
+        size_t timedEncode() @safe
+        {
+            auto w = CharSink(encoded);
+            encodeBase!a(w, data);
+            return w.n;
+        }
+
+        void afterEncode(ref size_t n) @safe
+        {
+            if (n != encoded.length)
+                throw new Exception("encoded length mismatch");
+        }
+
+        // The timed result must be default-constructible for the harness,
+        // which ParseExpected deliberately is not — collapse it to the
+        // byte count (size_t.max signals an error).
+        size_t timedDecode() @safe
+        {
+            auto w = ByteSink(decoded);
+            auto r = decodeBase!a(w, encoded);
+            return r.hasError ? size_t.max : r.value;
+        }
+
+        void afterDecode(ref size_t n) @safe
+        {
+            if (n != decoded.length)
+                throw new Exception("decode mismatch");
+        }
+    }
+
+    /// Registers the streaming encode + decode rows for one
+    /// (alphabet, size) cell.
+    private void registerStreamingBench(Alphabet a)(
+        string preset, string sizeLabel, size_t size) @safe
+    {
+        import sparkles.test_runner.bench : benchCase, Metric, Unit;
+
+        auto c = new StreamingBenchCase!a(size);
+        benchCase(
+            name: "scalar",
+            labels: ["preset": preset, "op": "encode", "size": sizeLabel],
+            timed: &c.timedEncode,
+            after: &c.afterEncode,
+            metrics: [Metric(Unit("B"), size, Metric.Mode.rate)]);
+        benchCase(
+            name: "scalar",
+            labels: ["preset": preset, "op": "decode", "size": sizeLabel],
+            timed: &c.timedDecode,
+            after: &c.afterDecode,
+            metrics: [Metric(Unit("B"), size, Metric.Mode.rate)]);
+    }
+}
+
+@("text.base_codecs.bench.streaming")
+@benchmark @safe
+unittest
+{
+    registerStreamingBench!base16("base16", "1KiB", 1 << 10);
+    registerStreamingBench!base16("base16", "64KiB", 1 << 16);
+    registerStreamingBench!base32("base32", "1KiB", 1 << 10);
+    registerStreamingBench!base32("base32", "64KiB", 1 << 16);
+    registerStreamingBench!base64("base64", "1KiB", 1 << 10);
+    registerStreamingBench!base64("base64", "64KiB", 1 << 16);
+}
+
+/// The fixed-length encoders are tens of nanoseconds — measure them with
+/// `benchIter` (batched timing), not per-call `benchCase` rows.
+@("text.base_codecs.bench.fixed32")
+@benchmark @safe
+unittest
+{
+    import std.meta : AliasSeq;
+    import sparkles.test_runner.bench : benchIter, blackBox;
+
+    ubyte[32] src = void;
+    uint x = 0xDEADBEEF;
+    foreach (ref b; src)
+    {
+        x = x * 1664525 + 1013904223;
+        b = cast(ubyte)(x >> 24);
+    }
+
+    static foreach (i, a; AliasSeq!(base16, base32, base64))
+    {{
+        enum names = ["base16", "base32", "base64"];
+        char[encodedLen(a, 32)] dst = void;
+        benchIter({
+            encodeBase!a(blackBox(src), dst);
+            blackBox(dst);
+        }, ["preset": names[i], "op": "encode", "size": "32B-fixed"]);
+    }}
 }
