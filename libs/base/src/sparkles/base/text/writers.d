@@ -15,8 +15,50 @@ import sparkles.base.text.case_style : CaseStyle, convertCase;
 // Integer Writing
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Writes an integer (signed or unsigned) to an output range. @nogc-compatible.
-void writeInteger(Writer, T)(ref Writer w, const T val)
+/// Writes an integer (signed or unsigned) in base `radix` (2–36, default
+/// 10) to an output range. Digits ≥ 10 are lower-case letters (the shared
+/// `alnum` vocabulary from `sparkles.base.text.base_codecs`), consistent
+/// with $(LREF writeHexByte). The inverse of `readInteger`
+/// (`sparkles.base.text.readers`). @nogc-compatible.
+///
+/// The eponymous-template shape (rather than a flat
+/// `writeInteger(ubyte radix, Writer, T)`) is what lets a partial
+/// instantiation be aliased: `alias writeHex = writeInteger!16;`.
+template writeInteger(ubyte radix = 10)
+if (radix >= 2 && radix <= 36)
+{
+    void writeInteger(Writer, T)(ref Writer w, const T val)
+    if (__traits(isIntegral, T))
+    {
+        writeUnsigned!radix(w, splitSign(w, val));
+    }
+}
+
+/// Writes an integer in base `radix` with at least `minDigits` digits,
+/// left-padded with `'0'`. For a negative signed value the `'-'` is written
+/// first and only the digit count (not the sign) is padded. `minDigits == 0`
+/// behaves like $(LREF writeInteger).
+template writeIntegerPadded(ubyte radix = 10)
+if (radix >= 2 && radix <= 36)
+{
+    void writeIntegerPadded(Writer, T)(ref Writer w, const T val, size_t minDigits)
+    if (__traits(isIntegral, T))
+    {
+        writeUnsigned!radix(w, splitSign(w, val), minDigits);
+    }
+}
+
+/// Base-16 shorthand for $(LREF writeInteger): `writeHex(w, 0xDEADu)` ⇒
+/// `"dead"`.
+alias writeHex = writeInteger!16;
+/// Base-2 shorthand for $(LREF writeInteger).
+alias writeBinary = writeInteger!2;
+/// Base-8 shorthand for $(LREF writeInteger).
+alias writeOctal = writeInteger!8;
+
+/// Writes the `'-'` sign of a negative `val` and returns its magnitude as
+/// the unsigned type (unsigned arithmetic handles `T.min` correctly).
+private auto splitSign(Writer, T)(ref Writer w, const T val)
 if (__traits(isIntegral, T))
 {
     import std.range.primitives : put;
@@ -25,87 +67,58 @@ if (__traits(isIntegral, T))
     static if (isSigned!T)
     {
         alias U = Unsigned!T;
-
         if (val < 0)
         {
             put(w, '-');
-            // Handle T.min correctly by using unsigned arithmetic
-            U value = cast(U)(0 - cast(U) val);
-            writeUnsignedImpl(w, value);
+            return cast(U)(0 - cast(U) val);
         }
-        else
-        {
-            writeUnsignedImpl(w, cast(U) val);
-        }
+        return cast(U) val;
     }
     else
-    {
-        writeUnsignedImpl(w, val);
-    }
+        return val;
 }
 
-private void writeUnsignedImpl(Writer, T)(ref Writer w, const T val)
-if (__traits(isUnsigned, T))
+/// The single digit walk backing every integer writer: fills a CTFE-sized
+/// buffer least-significant-first, left-pads with `'0'` up to `minDigits`,
+/// and writes the result.
+private void writeUnsigned(ubyte radix = 10, Writer, T)(
+    ref Writer w, const T val, size_t minDigits = 0)
+if (__traits(isUnsigned, T) && radix >= 2 && radix <= 36)
 {
     import std.range.primitives : put;
+    import sparkles.base.text.base_codecs : alnum;
 
-    T value = val;  // Local mutable copy
-    char[sizeForUnsignedNumberBuffer!T] buf = void;
-    ubyte i = buf.length - 1;
-    while (value >= 10)
+    enum string digits = alnum.digits;
+    char[maxDigits!(T, radix)] buf = void;
+    size_t start = buf.length;
+    T value = val;
+    do
     {
-        buf[i--] = cast(char)('0' + value % 10);
-        value /= 10;
+        buf[--start] = digits[cast(size_t)(value % radix)];
+        value /= radix;
     }
-    buf[i] = cast(char)('0' + value);
-    put(w, buf[i .. $]);
-}
-
-private template sizeForUnsignedNumberBuffer(T)
-if (__traits(isUnsigned, T))
-{
-    import core.internal.string : numDigits;
-    enum sizeForUnsignedNumberBuffer = T.max.numDigits;
-}
-
-/// Writes an integer with at least `minDigits` digits, left-padded with
-/// `'0'`. For a negative signed value the `'-'` is written first and only
-/// the digit count (not the sign) is padded. `minDigits == 0` behaves like
-/// $(LREF writeInteger).
-void writeIntegerPadded(Writer, T)(ref Writer w, const T val, size_t minDigits)
-if (__traits(isIntegral, T))
-{
-    import std.range.primitives : put;
-    import std.traits : Unsigned, isSigned;
-
-    static if (isSigned!T)
-    {
-        alias U = Unsigned!T;
-
-        if (val < 0)
-        {
-            put(w, '-');
-            // unsigned arithmetic handles T.min correctly
-            writeUnsignedPadded(w, cast(U)(0 - cast(U) val), minDigits);
-        }
-        else
-            writeUnsignedPadded(w, cast(U) val, minDigits);
-    }
-    else
-        writeUnsignedPadded(w, val, minDigits);
-}
-
-private void writeUnsignedPadded(Writer, T)(ref Writer w, const T val, size_t minDigits)
-if (__traits(isUnsigned, T))
-{
-    import std.range.primitives : put;
-
-    size_t digits = 1;
-    for (T v = val; v >= 10; v /= 10)
-        digits++;
-    for (size_t i = digits; i < minDigits; i++)
+    while (value);
+    foreach (_; buf.length - start .. minDigits)
         put(w, '0');
-    writeUnsignedImpl(w, val);
+    put(w, buf[start .. $]);
+}
+
+/// The digit count of `T.max` in base `radix` — the buffer size that fits
+/// any `T` value.
+private template maxDigits(T, ubyte radix)
+if (__traits(isUnsigned, T) && radix >= 2 && radix <= 36)
+{
+    enum size_t maxDigits = () {
+        size_t n = 0;
+        ulong v = T.max;
+        do
+        {
+            v /= radix;
+            n++;
+        }
+        while (v);
+        return n;
+    }();
 }
 
 @("writeIntegerPadded.pads")
@@ -178,6 +191,32 @@ unittest
     import sparkles.base.smallbuffer : checkWriter;
 
     checkWriter!((ref b) => writeInteger(b, 0uL))("0");
+}
+
+@("writeInteger.radix")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.smallbuffer : checkWriter;
+
+    checkWriter!((ref b) => writeHex(b, 0xDEADu))("dead");
+    checkWriter!((ref b) => writeBinary(b, 0b1011u))("1011");
+    checkWriter!((ref b) => writeOctal(b, 493u))("755");
+    checkWriter!((ref b) => writeInteger!36(b, 35u))("z");
+    checkWriter!((ref b) => writeHex(b, -255))("-ff");
+    // ulong.max in base 2 exercises the widest (64-digit) buffer.
+    checkWriter!((ref b) => writeBinary(b, ulong.max))(
+        "1111111111111111111111111111111111111111111111111111111111111111");
+}
+
+@("writeIntegerPadded.radix")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.smallbuffer : checkWriter;
+
+    checkWriter!((ref b) => writeIntegerPadded!16(b, 0xABu, 4))("00ab");
+    checkWriter!((ref b) => writeIntegerPadded!2(b, 5u, 8))("00000101");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -397,11 +436,14 @@ void writeEscapedChar(Writer)(ref Writer w, char c)
                 put(w, c);
             else
             {
-                // Hex escape for non-printable
+                // Hex escape for non-printable. Deliberately upper-case
+                // (`\xAB`), unlike the lower-case numeral digits — the
+                // escape convention predates the shared alphabet.
+                import sparkles.base.text.base_codecs : base16;
+
                 put(w, `\x`);
-                static immutable hexDigits = "0123456789ABCDEF";
-                put(w, hexDigits[(c >> 4) & 0xF]);
-                put(w, hexDigits[c & 0xF]);
+                put(w, base16.digits[(c >> 4) & 0xF]);
+                put(w, base16.digits[c & 0xF]);
             }
     }
 }
@@ -1209,7 +1251,7 @@ unittest
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Writes `number` as a fixed-point value with `radixPoint` fractional digits
-/// in base `radix` (2 ≤ `radix` ≤ 16) — i.e. the value `number /
+/// in base `radix` (2 ≤ `radix` ≤ 36) — i.e. the value `number /
 /// radix^^radixPoint`. The integer part is written first, then (when
 /// `radixPoint > 0`) a `.` and exactly `radixPoint` zero-padded fractional
 /// digits. `radix^^radixPoint` must fit in a `ulong`. @nogc-compatible.
@@ -1219,7 +1261,7 @@ unittest
 /// `0.ff`.
 void writeFixedPoint(uint radix = 10, Writer)(
     ref Writer w, ulong number, uint radixPoint)
-if (radix >= 2 && radix <= 16)
+if (radix >= 2 && radix <= 36)
 in (radixPoint <= 64, "radixPoint must be <= 64")
 {
     import std.range.primitives : put;
@@ -1228,24 +1270,7 @@ in (radixPoint <= 64, "radixPoint must be <= 64")
     foreach (_; 0 .. radixPoint)
         divisor *= radix;
 
-    // Integer part. Base 10 reuses the optimized writeInteger; other bases use
-    // a most-significant-first digit walk.
-    const ulong intPart = number / divisor;
-    static if (radix == 10)
-        writeInteger(w, intPart);
-    else
-    {
-        char[64] buf = void;              // ≤ 64 digits for a ulong in base 2
-        size_t start = buf.length;
-        ulong v = intPart;
-        do
-        {
-            buf[--start] = hexDigit(cast(uint)(v % radix));
-            v /= radix;
-        }
-        while (v);
-        put(w, buf[start .. $]);
-    }
+    writeUnsigned!(cast(ubyte) radix)(w, number / divisor);
 
     if (radixPoint > 0)
     {
@@ -1262,11 +1287,13 @@ private void writeFractionDigits(uint radix = 10, Writer)(
     ref Writer w, ulong value, uint digits, bool stripTrailing = false)
 {
     import std.range.primitives : put;
+    import sparkles.base.text.base_codecs : alnum;
 
+    enum string alnumDigits = alnum.digits;
     char[64] buf = void;
     foreach_reverse (i; 0 .. digits)
     {
-        buf[i] = hexDigit(cast(uint)(value % radix));
+        buf[i] = alnumDigits[cast(size_t)(value % radix)];
         value /= radix;
     }
     uint len = digits;
@@ -1276,18 +1303,15 @@ private void writeFractionDigits(uint radix = 10, Writer)(
     put(w, buf[0 .. len]);
 }
 
-/// Maps a digit value `0 … 15` to its lower-case character (`0-9`, `a-f`).
-private char hexDigit(uint d) @safe pure nothrow @nogc
-    => cast(char)(d < 10 ? '0' + d : 'a' + (d - 10));
-
 /// Writes `b` as exactly two lower-case hex digits (`0x0f` ⇒ `"0f"`), the
 /// zero-padded form CSS/HTML color channels use.
 void writeHexByte(Writer)(ref Writer w, ubyte b)
 {
     import std.range.primitives : put;
+    import sparkles.base.text.base_codecs : alnum;
 
-    put(w, hexDigit(b >> 4));
-    put(w, hexDigit(b & 0xf));
+    put(w, alnum.digits[b >> 4]);
+    put(w, alnum.digits[b & 0xf]);
 }
 
 ///
