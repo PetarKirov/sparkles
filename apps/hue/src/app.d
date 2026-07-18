@@ -1,25 +1,32 @@
-// `hue` — the `sparkles:syntax` precise-mode pipeline as an interactive app:
-// file → tree-sitter parse → highlights query → event stream → ANSI (stdout)
-// or HTML. Grammars come from the nix bundle ($SPARKLES_TS_GRAMMAR_PATH,
-// exported by the devshell and baked into the nix package); without it the
-// program degrades to plain text — the totality law in action.
-//
-// Usage: hue [--html] [--theme <theme>] [path] (defaults to this file itself)
-//   Interactive TUI (tty, no --html): ↑/↓ to switch themes live; any other key quits.
-//
-// Startup here is GC (CLI parse, file read, tree-sitter parse, theme list); the
-// interactive render/output core lives in `previewer.d` and is @nogc.
+/**
+`hue` — an interactive syntax-highlighting file viewer and live theme previewer.
 
+Highlights a source file in the terminal (ANSI) or as HTML. In a tty it opens a
+live previewer: browse the built-in themes with ↑/↓, and press Enter to print
+the whole file in the chosen theme.
+
+    hue [--html] [--theme <name>] [path]
+
+With no path, `hue` highlights its own source.
+
+$(B Implementation:) the full `sparkles:syntax` precise pipeline (tree-sitter
+parse → highlights query → event stream → ANSI/HTML renderer). Grammars come
+from the nix bundle ($SPARKLES_TS_GRAMMAR_PATH); without it the program degrades
+to plain text. Startup is GC; the interactive render/output core
+($(MREF previewer)) is `@nogc`.
+*/
 module app;
 
-import std.array : appender;
 import std.file : readText;
 import std.path : baseName, extension;
-import std.stdio : stderr, write, writef, writeln;
+import std.stdio : write;
+import std.string : chompPrefix;
 
 import sparkles.syntax;
 import sparkles.core_cli.args;
 
+import sparkles.base.logger : initLogger, LogLevel, warning;
+import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_control : CtlSeq;
 import sparkles.core_cli.key_input : stdioKeySession;
 import sparkles.core_cli.term_caps : isTerminal, StdStream;
@@ -40,10 +47,12 @@ int main(string[] args)
     const cli = args.parseCliArgs!CliParams(
         HelpInfo(
             "hue",
-            "The full precise-mode pipeline: file -> tree-sitter parse -> highlights query -> event stream -> ANSI (stdout) or HTML.",
+            "Highlight a source file in the terminal or as HTML, or browse syntax themes live.",
             null
         )
     );
+
+    initLogger(LogLevel.warning); // hue only emits degradation warnings
 
     bool html = cli.html;
     string themeName = cli.theme;
@@ -55,27 +64,39 @@ int main(string[] args)
     const hasFile = args.length > 1;
     const sourcePath = hasFile ? args[1] : "app.d";
     const source = hasFile ? readText(sourcePath) : import("app.d");
-    const lang = canonicalLanguage(sourcePath.extension.length ? sourcePath.extension[1 .. $] : "");
+    const lang = canonicalLanguage(sourcePath.extension.chompPrefix("."));
 
     const labels = LabelSet.standard();
 
-    auto t = themeName in builtinThemes;
-    if (!t) stderr.writef("Warning: theme '%s' not found. Falling back to default dark theme.\n", themeName);
-    const(Theme)* themeVal = t ? t : &builtinDark;
-    const theme = resolveTheme(*themeVal, labels);
+    // `.get`'s default is `lazy`, so the warning fires only on a miss.
+    const theme = resolveTheme(builtinThemes.get(themeName, {
+            warning(i"theme '$(themeName)' not found; falling back to the default dark theme");
+            return builtinDark;
+        }()), labels);
 
     // Engine side: any failure falls back to plain text. Use the injection-aware
     // path so that markdown (and other languages with injections.scm) get their
     // fenced code blocks / inline content highlighted by nested grammars.
-    auto events = appender!(HighlightEvent[]);
+    SmallBuffer!HighlightEvent events;
     auto registry = GrammarRegistry.fromEnvironment();
     auto cache = TsConfigCache.create(&registry, labels);
 
     auto res = highlightInjected(cache, lang, source, events);
     if (res.hasError)
     {
-        stderr.writeln("note: no grammar for '", lang, "' — plain text");
+        warning(i"no grammar for '$(lang)' — rendering as plain text");
         events ~= HighlightEvent.sourceSpan(0, source.length);
+    }
+
+    // Render the whole file to ANSI and write it — used by both non-interactive
+    // paths (piped/redirected output, and no key session available).
+    int emitAnsiWholeFile()
+    {
+        SmallBuffer!char output;
+        renderAnsi(source, events[], theme, output,
+            AnsiOptions(depth: detectColorDepth(), italics: true, emitBackground: true));
+        write(output[]);
+        return 0;
     }
 
     const interactive = !html &&
@@ -83,25 +104,22 @@ int main(string[] args)
 
     if (!interactive)
     {
-        auto output = appender!string;
         if (html)
         {
-            import std.format : format;
-            string bgStr = theme.defaults.bg.isSet ? format("background: #%02x%02x%02x;", theme.defaults.bg.rgb.r, theme.defaults.bg.rgb.g, theme.defaults.bg.rgb.b) : "";
-            string fgStr = theme.defaults.fg.isSet ? format("color: #%02x%02x%02x;", theme.defaults.fg.rgb.r, theme.defaults.fg.rgb.g, theme.defaults.fg.rgb.b) : "";
-            output ~= format("<style>\npre { %s %s padding: 1em; }\n", bgStr, fgStr);
+            // The `.syn-root` rule writeThemeStylesheet emits carries the
+            // default fg/bg; give the wrapper that class so it applies, instead
+            // of re-deriving the same colors into a duplicate `pre {}` rule.
+            SmallBuffer!char output;
+            output ~= "<style>\npre { padding: 1em; }\n";
             writeThemeStylesheet(theme, output);
-            output ~= "</style>\n<pre><code>";
+            output ~= "</style>\n<pre class=\"syn-root\"><code>";
             renderHtml(source, events[], theme, output,
                 HtmlOptions(mode: HtmlMode.cssClasses));
             output ~= "</code></pre>\n";
+            write(output[]);
+            return 0;
         }
-        else
-            renderAnsi(source, events[], theme, output,
-                AnsiOptions(depth: detectColorDepth(), italics: true, emitBackground: true));
-
-        write(output[]);
-        return 0;
+        return emitAnsiWholeFile();
     }
 
     // Sorted theme names, plus the parallel theme values the previewer indexes
@@ -119,13 +137,7 @@ int main(string[] args)
 
     auto sessFactory = stdioKeySession();
     if (sessFactory is null)
-    {
-        auto output = appender!string;
-        renderAnsi(source, events[], theme, output,
-            AnsiOptions(depth: detectColorDepth(), italics: true, emitBackground: true));
-        write(output[]);
-        return 0;
-    }
+        return emitAnsiWholeFile();
     auto sess = sessFactory();
     scope (exit) sess.finish();
 
