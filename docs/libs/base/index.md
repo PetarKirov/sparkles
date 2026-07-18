@@ -44,9 +44,11 @@ _Task-oriented._ Short recipes for common jobs.
 _Information-oriented._ Lookup material for modules and symbols.
 
 - [API index](./reference/api.md)
+- [Base codecs](./reference/base-codecs.md)
 
 ### Explanation
 
 _Understanding-oriented._ Why `base` exists as a separate package.
 
 - [The design](./explanation/design.md)
+- [Base codecs: design notes](./explanation/base-codecs.md)

@@ -132,10 +132,16 @@ for the `@nogc` caller-buffer variant this delegates to.
 */
 ResolvedTheme resolveTheme(in Theme theme, LabelSet labels) pure nothrow
 {
+    import std.exception : assumeUnique;
+
     auto styles = new StyleSpec[](labels.length);
     StyleSpec defaults;
     resolveThemeInto(theme, labels, styles, defaults);
-    return ResolvedTheme(labels, styles.idup, defaults);
+    // `styles` is a fresh, uniquely-owned allocation not aliased elsewhere, so
+    // transfer ownership to the immutable table with no second copy (vs `.idup`).
+    // The immutable cast is the only unsafe step — @trusted just that.
+    auto immStyles = (() @trusted => assumeUnique(styles))();
+    return ResolvedTheme(labels, immStyles, defaults);
 }
 
 ///
@@ -179,18 +185,22 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    // Resolves into a stack buffer with no GC — the interactive-previewer path.
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    // Resolves into a reused buffer with no GC — the interactive-previewer path.
     ThemeRule[1] rules = [ThemeRule("string", StyleSpec(fg: Color.fromPalette(2)))];
     const theme = Theme(name: "t", defaultFg: Color.fromPalette(7), rules: rules[]);
     const labels = LabelSet.standard();
 
-    StyleSpec[128] buf = void;
-    assert(labels.length <= buf.length);
+    SmallBuffer!(StyleSpec, 128) styles;
+    foreach (_; 0 .. labels.length)
+        styles ~= StyleSpec.init;
     StyleSpec defaults;
-    resolveThemeInto(theme, labels, buf[0 .. labels.length], defaults);
+    resolveThemeInto(theme, labels, styles[], defaults);
 
-    assert(buf[labels.find("string").value] == StyleSpec(fg: Color.fromPalette(2)));
-    assert(buf[labels.find("keyword").value] == StyleSpec.init);
+    auto s = styles[];
+    assert(s[labels.find("string").value] == StyleSpec(fg: Color.fromPalette(2)));
+    assert(s[labels.find("keyword").value] == StyleSpec.init);
     assert(defaults.fg == Color.fromPalette(7));
 }
 
@@ -211,8 +221,7 @@ unittest
     StyleSpec defaults;
     resolveThemeInto(theme, labels, buf, defaults);
 
-    foreach (i; 0 .. labels.length)
-        assert(buf[i] == wrapped.styles[i]);
+    assert(buf[] == wrapped.styles[]);
     assert(defaults == wrapped.defaults);
 }
 

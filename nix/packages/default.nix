@@ -15,64 +15,17 @@
       # DMD only targets x86_64/i686-linux + x86_64-darwin; keep LDC elsewhere.
       ciCompiler = if pkgs.stdenv.hostPlatform.system == "x86_64-linux" then pkgs.dmd else pkgs.ldc;
 
-      fs = lib.fileset;
       root = ../..;
       fromRoot = lib.path.append root;
-
-      isDubManifest =
-        file:
-        builtins.elem file.name [
-          "dub.sdl"
-          "dub.selections.json"
-        ];
-
-      src = fs.toSource {
-        inherit root;
-        fileset = fs.unions (
-          [
-            # Dub validates that all sub-packages declared in the root dub.sdl
-            # exist on disk even when only building :ci, so the sibling manifests
-            # must be present too.
-            (fs.fileFilter isDubManifest root)
-          ]
-          # D source files for the ci/release apps and their direct dependencies.
-          # `base`/`core-cli` import the runner's `@…` attributes (in the impl
-          # package) unconditionally, so its source must be present even in these
-          # non-unittest library builds; `core-cli` likewise imports `math`
-          # (ScreenSize) via importPaths; `release` deserializes agent replies
-          # via `wired`.
-          ++ map (path: fs.fileFilter (file: file.hasExt "d") (fromRoot path)) [
-            "apps/ci/src"
-            "apps/release/src"
-            "libs/base/src"
-            "libs/core-cli/src"
-            "libs/math/src"
-            "libs/versions/src"
-            "libs/test-runner/src"
-            "libs/test-runner-impl/src"
-            "libs/wired/src"
-          ]
-        );
-      };
     in
     {
-      packages.ci = pkgs.buildDubPackage (finalAttrs: {
+      packages.ci = config.legacyPackages.buildSparklesApp (finalAttrs: {
         pname = "ci";
         version = "0.1.0";
 
-        inherit src;
-        sourceRoot = "${finalAttrs.src.name}/apps/${finalAttrs.pname}";
-
-        # The Nix-format lockfile is shared with the standalone example
-        # derivations (see ./examples.nix); keeping it under `nix/` keeps
-        # that sharing explicit instead of having `examples.nix` reach
-        # into a sibling sub-package's dir to grab the file.
+        # Shared with the standalone example derivations (see ./examples.nix).
         dubLock = fromRoot "nix/dub-lock.json";
         compiler = ciCompiler;
-
-        nativeBuildInputs = [
-          pkgs.makeWrapper
-        ];
 
         # `ci` shells out to `dub run --single` / `dub build --single` at
         # runtime, so the wrapped binary genuinely needs the D compiler and
@@ -84,18 +37,10 @@
         # `disallowedReferences` keeps the runtime closure honest.
         disallowedReferences = [ ];
 
-        # The unpacked source is read-only by default; dub needs to write
-        # build artifacts into each package's `targetPath "build"` directory.
-        preBuild = ''chmod -R u+w "$NIX_BUILD_TOP"'';
-
-        installPhase = ''
-          install -Dm755 build/${finalAttrs.pname} $out/bin/${finalAttrs.pname}
-        '';
-
-        # Wrap in `postFixup` rather than `installPhase` so we run *after*
-        # `buildDubPackage`'s `preFixup`, which strips references to the
-        # compiler. Wrapping there would otherwise leave the placeholder
-        # path in PATH and break `dub run --single`.
+        # Runs *after* buildDubPackage's `preFixup` compiler scrub: re-install the
+        # un-scrubbed binary, then put the D toolchain + git on PATH (wrapping in
+        # `installPhase` would bake the scrubbed placeholder path and break
+        # `dub run --single`).
         postFixup =
           let
             path = lib.makeBinPath [
@@ -166,37 +111,24 @@
         program = lib.getExe config.packages.ci;
       };
 
-      packages.release = pkgs.buildDubPackage (finalAttrs: {
+      packages.release = config.legacyPackages.buildSparklesApp (finalAttrs: {
         pname = "release";
         version = "0.1.0";
-
-        inherit src;
-        sourceRoot = "${finalAttrs.src.name}/apps/${finalAttrs.pname}";
 
         # Shared with `ci` and the example derivations (see ./examples.nix).
         dubLock = fromRoot "nix/dub-lock.json";
         compiler = pkgs.ldc;
 
-        nativeBuildInputs = [
-          pkgs.makeWrapper
-        ];
-
         # Unlike `ci`, `release` needs no D compiler at runtime, so the
-        # toolchain must not leak into the closure. `buildDubPackage` already
-        # scrubs and disallows the compiler's `out`, but the druntime/phobos
-        # *sources* live in ldc's separate `include` output, whose path gets
-        # baked into the binary via assert/`__FILE__` strings — scrub and
-        # disallow that output too (see postFixup).
+        # toolchain must not leak into the closure. `buildDubPackage` scrubs and
+        # disallows the compiler's `out`; the druntime/phobos *sources* live in
+        # ldc's separate `include` output, whose path is baked into the binary
+        # via assert/`__FILE__` strings — list it here and buildSparklesApp
+        # derives the scrub from this list.
         disallowedReferences = [
           pkgs.ldc
           pkgs.ldc.include
         ];
-
-        preBuild = ''chmod -R u+w "$NIX_BUILD_TOP"'';
-
-        installPhase = ''
-          install -Dm755 build/${finalAttrs.pname} $out/bin/${finalAttrs.pname}
-        '';
 
         # `release` shells out to `git`, optionally `gh` (for the GitHub release
         # stages), and — for the pre-flight checks — the repo's own `ci` tool.
@@ -219,7 +151,6 @@
           ''
             wrapProgram $out/bin/${finalAttrs.pname} \
               --prefix PATH : ${path}
-            find "$out" -type f -exec remove-references-to -t ${pkgs.ldc.include} '{}' +
           '';
 
         meta = {

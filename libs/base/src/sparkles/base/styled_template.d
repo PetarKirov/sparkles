@@ -20,6 +20,7 @@
 module sparkles.base.styled_template;
 
 import core.interpolation;
+import std.sumtype : match, SumType;
 
 import sparkles.base.term_style : Style;
 
@@ -447,6 +448,47 @@ unittest
     assert(styleFromName("BgBlue") == Style.none);
 }
 
+/// 24-bit RGB foreground/background via `#RRGGBB` / `bg#RRGGBB`, and the short
+/// `#RGB` form (each nibble doubled).
+@("writeStyled.rgbColor")
+@safe unittest
+{
+    // 0xcba6f7 = 203,166,247 fg; reset with 39.
+    assert(styledText(i"{#cba6f7 text}") == "\x1b[38;2;203;166;247mtext\x1b[39m");
+    // 0x1e2e2e background; reset with 49.
+    assert(styledText(i"{bg#1e2e2e bg}") == "\x1b[48;2;30;46;46mbg\x1b[49m");
+    // short form #f00 → 255,0,0.
+    assert(styledText(i"{#f00 r}") == "\x1b[38;2;255;0;0mr\x1b[39m");
+    // malformed hex → token ignored, plain text.
+    assert(styledText(i"{#xyz z}") == "z");
+}
+
+/// 256-palette foreground/background via `@N` / `bg@N`.
+@("writeStyled.paletteColor")
+@safe unittest
+{
+    assert(styledText(i"{@183 kw}") == "\x1b[38;5;183mkw\x1b[39m");
+    assert(styledText(i"{bg@235 bg}") == "\x1b[48;5;235mbg\x1b[49m");
+    // out-of-range index → token ignored.
+    assert(styledText(i"{@256 x}") == "x");
+}
+
+/// Colors compose with named styles (dots), nesting, and interpolation, just
+/// like the named styles do.
+@("writeStyled.colorComposition")
+@safe unittest
+{
+    // bold + palette fg: opened in order, closed in reverse.
+    assert(styledText(i"{bold.@183 x}") == "\x1b[1m\x1b[38;5;183mx\x1b[39m\x1b[22m");
+    // nested: inner rgb inherits outer bold.
+    assert(styledText(i"{bold A {#00ff00 B} C}")
+        == "\x1b[1mA \x1b[38;2;0;255;0mB\x1b[39m C\x1b[22m");
+    int n = 7;
+    assert(styledText(i"n={@201 $(n)}") == "n=\x1b[38;5;201m7\x1b[39m");
+    // uncolored mode strips color markup too.
+    assert(plainText(i"{#cba6f7 text} {@5 x}") == "text x");
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Implementation Details
 // ─────────────────────────────────────────────────────────────────────────────
@@ -454,42 +496,110 @@ unittest
 private enum maxStylesPerBlock = 8;
 private enum maxNestingDepth = 16;
 
+/// A named `Style` — the classic 16 attrs/colors, an `[open, close]` code pair.
+private struct NamedStyle
+{
+    Style style;
+}
+
+/// A 256-palette color (`38;5;n` / `48;5;n`).
+private struct PaletteColor
+{
+    bool bg;     /// background vs foreground
+    ubyte index;
+}
+
+/// A 24-bit RGB color (`38;2;r;g;b` / `48;2;r;g;b`).
+private struct RgbColor
+{
+    bool bg;     /// background vs foreground
+    ubyte r, g, b;
+}
+
+/// One resolved style token on the block stack. Named tokens emit and compare
+/// exactly as before (existing markup is byte-for-byte unchanged); the palette /
+/// RGB alternatives carry the multi-parameter SGR that `Style` (`uint[2]`)
+/// cannot hold. As a `SumType`, `==` gives structural equality for free and
+/// `match` keeps the emit paths exhaustive.
+private alias StyleAtom = SumType!(NamedStyle, PaletteColor, RgbColor);
+
+/// The inert sentinel — a `Style.none` named token (also `StyleAtom.init`).
+private bool isNone(in StyleAtom a) @safe @nogc nothrow
+    => a.match!(
+        (NamedStyle n) => n.style == Style.none,
+        (PaletteColor _) => false,
+        (RgbColor _) => false,
+    );
+
+/// Emit the opening SGR sequence for `a`.
+private void emitOpen(Writer)(in StyleAtom a, ref Writer w)
+{
+    import sparkles.base.text.writers : writeEscapeSeq, writeInteger;
+    import std.range.primitives : put;
+
+    a.match!(
+        (NamedStyle n) => writeEscapeSeq(w, n.style[0]),
+        (PaletteColor c) {
+            put(w, c.bg ? "\x1b[48;5;" : "\x1b[38;5;");
+            writeInteger(w, c.index);
+            put(w, 'm');
+        },
+        (RgbColor c) {
+            put(w, c.bg ? "\x1b[48;2;" : "\x1b[38;2;");
+            writeInteger(w, c.r);
+            put(w, ';');
+            writeInteger(w, c.g);
+            put(w, ';');
+            writeInteger(w, c.b);
+            put(w, 'm');
+        },
+    );
+}
+
+/// Emit the closing SGR sequence for `a` (colors reset with `39`/`49`).
+private void emitClose(Writer)(in StyleAtom a, ref Writer w)
+{
+    import sparkles.base.text.writers : writeEscapeSeq;
+
+    a.match!(
+        (NamedStyle n) => writeEscapeSeq(w, n.style[1]),
+        (PaletteColor c) => writeEscapeSeq(w, c.bg ? 49 : 39),
+        (RgbColor c) => writeEscapeSeq(w, c.bg ? 49 : 39),
+    );
+}
+
 @safe
 private struct StyleState
 {
-    Style[maxStylesPerBlock] styles;
+    StyleAtom[maxStylesPerBlock] styles;
     size_t count;
 
     /// Emit escape sequences for transition FROM parent TO this state
     void emitOpenDiff(Writer)(ref Writer w, in StyleState parent) const
     {
-        import sparkles.base.text.writers : writeEscapeSeq;
-
         // Close styles that were in parent but removed in this (negation)
         foreach_reverse (i; 0 .. parent.count)
-            if (parent.styles[i] != Style.none && !hasStyle(parent.styles[i]))
-                writeEscapeSeq(w, parent.styles[i][1]);
+            if (!parent.styles[i].isNone && !hasStyle(parent.styles[i]))
+                parent.styles[i].emitClose(w);
 
         // Open styles that are new in this (not in parent)
         foreach (i; 0 .. count)
-            if (styles[i] != Style.none && !parent.hasStyle(styles[i]))
-                writeEscapeSeq(w, styles[i][0]);
+            if (!styles[i].isNone && !parent.hasStyle(styles[i]))
+                styles[i].emitOpen(w);
     }
 
     /// Emit escape sequences for transition FROM this state back TO parent
     void emitCloseDiff(Writer)(ref Writer w, in StyleState parent) const
     {
-        import sparkles.base.text.writers : writeEscapeSeq;
-
         // Close styles that were added in this (not in parent)
         foreach_reverse (i; 0 .. count)
-            if (styles[i] != Style.none && !parent.hasStyle(styles[i]))
-                writeEscapeSeq(w, styles[i][1]);
+            if (!styles[i].isNone && !parent.hasStyle(styles[i]))
+                styles[i].emitClose(w);
 
         // Restore styles that were negated (in parent but not in this)
         foreach (i; 0 .. parent.count)
-            if (parent.styles[i] != Style.none && !hasStyle(parent.styles[i]))
-                writeEscapeSeq(w, parent.styles[i][0]);
+            if (!parent.styles[i].isNone && !hasStyle(parent.styles[i]))
+                parent.styles[i].emitOpen(w);
     }
 
     /// Emit opening escape sequences for all active styles
@@ -505,7 +615,7 @@ private struct StyleState
     }
 
     /// Check if a style is currently active
-    bool hasStyle(Style s) const @nogc nothrow
+    bool hasStyle(in StyleAtom s) const @nogc nothrow
     {
         foreach (i; 0 .. count)
             if (styles[i] == s)
@@ -514,14 +624,14 @@ private struct StyleState
     }
 
     /// Add a style if not already present
-    void addStyle(Style s) @nogc nothrow
+    void addStyle(in StyleAtom s) @nogc nothrow
     {
-        if (s != Style.none && !hasStyle(s) && count < styles.length)
+        if (!s.isNone && !hasStyle(s) && count < styles.length)
             styles[count++] = s;
     }
 
     /// Remove a style
-    void removeStyle(Style s) @nogc nothrow
+    void removeStyle(in StyleAtom s) @nogc nothrow
     {
         size_t writeIdx = 0;
         foreach (i; 0 .. count)
@@ -730,17 +840,88 @@ private void applyStylePart(const(char)[] part, ref StyleState state)
     if (part.length == 0)
         return;
 
-    bool negate = part[0] == '~';
-    const(char)[] styleName = negate ? part[1 .. $] : part;
+    const negate = part[0] == '~';
+    const(char)[] name = negate ? part[1 .. $] : part;
 
-    Style s = styleFromName(styleName);
-    if (s != Style.none)
+    StyleAtom atom;
+    if (!resolveStyleAtom(name, atom))
+        return;
+
+    if (negate)
+        state.removeStyle(atom);
+    else
+        state.addStyle(atom);
+}
+
+/// Resolves one style token to a `StyleAtom`. Beyond the named styles
+/// (`styleFromName`), recognizes 24-bit `#RGB`/`#RRGGBB` and 256-palette `@N`
+/// foreground colors, each with a `bg` prefix (`bg#…`, `bg@N`) for background.
+/// Returns `false` (token ignored) on an unknown name or malformed color.
+@safe nothrow @nogc
+private bool resolveStyleAtom(const(char)[] name, out StyleAtom atom)
+{
+    bool bg;
+    // `bg` only prefixes a color literal here; named `bgRed` etc. fall through.
+    if (name.length > 2 && name[0 .. 2] == "bg" && (name[2] == '#' || name[2] == '@'))
     {
-        if (negate)
-            state.removeStyle(s);
-        else
-            state.addStyle(s);
+        bg = true;
+        name = name[2 .. $];
     }
+
+    if (name.length && name[0] == '#')
+    {
+        ubyte r, g, b;
+        if (!parseHexColor(name[1 .. $], r, g, b))
+            return false;
+        atom = StyleAtom(RgbColor(bg, r, g, b));
+        return true;
+    }
+
+    if (name.length && name[0] == '@')
+    {
+        import sparkles.base.text.readers : readInteger;
+
+        auto rest = name[1 .. $];
+        auto idx = readInteger!ubyte(rest);
+        if (idx.hasError || rest.length != 0) // the whole token must be the index
+            return false;
+        atom = StyleAtom(PaletteColor(bg, idx.value));
+        return true;
+    }
+
+    const s = styleFromName(name);
+    if (s == Style.none)
+        return false;
+    atom = StyleAtom(NamedStyle(s));
+    return true;
+}
+
+/// `#RGB` (each nibble doubled) or `#RRGGBB` hex → 8-bit channels. Digit
+/// decoding reuses `sparkles.base.text.readers` (`isHexDigit`/`hexNibble`).
+@safe nothrow @nogc
+private bool parseHexColor(const(char)[] hex, out ubyte r, out ubyte g, out ubyte b)
+{
+    import sparkles.base.text.readers : hexNibble, isHexDigit;
+
+    if (hex.length != 3 && hex.length != 6)
+        return false;
+    foreach (c; hex) // validate up front so `hexNibble`'s `in` contract holds
+        if (!isHexDigit(c))
+            return false;
+
+    if (hex.length == 3) // #RGB → each nibble doubled (0xN → 0xNN)
+    {
+        r = cast(ubyte)(hexNibble(hex[0]) * 17);
+        g = cast(ubyte)(hexNibble(hex[1]) * 17);
+        b = cast(ubyte)(hexNibble(hex[2]) * 17);
+    }
+    else // #RRGGBB
+    {
+        r = cast(ubyte)(hexNibble(hex[0]) * 16 + hexNibble(hex[1]));
+        g = cast(ubyte)(hexNibble(hex[2]) * 16 + hexNibble(hex[3]));
+        b = cast(ubyte)(hexNibble(hex[4]) * 16 + hexNibble(hex[5]));
+    }
+    return true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

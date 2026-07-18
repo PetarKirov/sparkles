@@ -4,18 +4,19 @@ Slice-advance text reading primitives.
 Each reader takes the input as a `ref scope const(char)[]` cursor and, on
 success, advances it past the consumed characters (the cursor _is_ the
 position). Readers are mechanism, not policy: they report mechanical
-outcomes via $(REF ParseExpected, sparkles,core_cli,text,errors) and leave
+outcomes via $(REF ParseExpected, sparkles,base,text,errors) and leave
 all higher-level rules (leading-zero handling, field widths, which error
 to surface) to the caller.
 
 The integer reader is the inverse of
-$(REF writeInteger, sparkles,core_cli,text,writers); $(LREF readEnumString) is
+$(REF writeInteger, sparkles,base,text,writers); $(LREF readEnumString) is
 the inverse of `writeEnumMemberName` (`sparkles.base.text.writers`).
 */
 module sparkles.base.text.readers;
 
 import std.traits : isUnsigned;
 
+import sparkles.base.text.base_codecs : alnum, makeDecodeTable;
 import sparkles.base.text.case_style : CaseStyle, convertCase;
 import sparkles.base.text.errors :
     ParseErrorCode, ParseExpected, parseErr, parseOk;
@@ -24,41 +25,71 @@ import sparkles.base.text.errors :
 // UDAs are resolved even in builds where the unittest bodies are not compiled.
 import sparkles.test_runner.attributes : betterC;
 
+/// One case-insensitive reverse table serves every radix 2–36: a symbol
+/// value `>= radix` simply fails the range check in `readInteger`.
+private static immutable byte[256] alnumDecodeTable = makeDecodeTable(alnum);
+
 @safe pure nothrow @nogc:
 
 /**
-Reads leading decimal digits from the front of `s` into an unsigned
-integer `T`, advancing `s` past them on success.
+Reads leading base-`radix` digits (2–36, default 10) from the front of `s`
+into an unsigned integer `T`, advancing `s` past them on success. For
+`radix >= 11`, letter digits are accepted in either case.
 
 Fails — leaving `s` unchanged — when the cursor is empty
 (`emptyInput`), does not start with a digit (`unexpectedCharacter`), or
 the value would overflow `T` (`numericOverflow`). Reported offsets are
 relative to `s` as received (0 at its first character).
 */
-ParseExpected!T readInteger(T)(ref scope const(char)[] s)
-if (isUnsigned!T)
+ParseExpected!T readInteger(T, ubyte radix = 10)(ref scope const(char)[] s)
+if (isUnsigned!T && radix >= 2 && radix <= 36)
 {
-    import std.ascii : isDigit;
-
     if (s.length == 0)
         return parseErr!T(ParseErrorCode.emptyInput, 0);
-    if (!s[0].isDigit)
-        return parseErr!T(ParseErrorCode.unexpectedCharacter, 0);
+
+    // Hoisted overflow bounds (the strtol formulation): appending digit `d`
+    // to `value` overflows iff value > cutoff, or value == cutoff && d > cutlim.
+    enum T cutoff = T.max / radix;
+    enum uint cutlim = T.max % radix;
 
     T value = 0;
     size_t i = 0;
-    while (i < s.length && s[i].isDigit)
+    while (i < s.length)
     {
-        const digit = cast(T)(s[i] - '0');
-        if (value > cast(T)((T.max - digit) / 10))
+        uint d;
+        static if (radix <= 10)
+        {
+            // Arithmetic fast path: a wraparound below '0' lands >= radix.
+            d = cast(uint)(s[i] - '0');
+            if (d >= radix)
+                break;
+        }
+        else
+        {
+            const v = alnumDecodeTable[s[i]];
+            if (v < 0 || v >= radix)
+                break;
+            d = v;
+        }
+        if (value > cutoff || (value == cutoff && d > cutlim))
             return parseErr!T(ParseErrorCode.numericOverflow, i);
-        value = cast(T)(value * 10 + digit);
+        value = cast(T)(value * radix + d);
         i++;
     }
+
+    if (i == 0)
+        return parseErr!T(ParseErrorCode.unexpectedCharacter, 0);
 
     s = s[i .. $]; // advance only on success
     return parseOk(value);
 }
+
+/// Base-16 shorthand for $(LREF readInteger) (case-insensitive digits).
+alias readHex(T) = readInteger!(T, 16);
+/// Base-2 shorthand for $(LREF readInteger).
+alias readBinary(T) = readInteger!(T, 2);
+/// Base-8 shorthand for $(LREF readInteger).
+alias readOctal(T) = readInteger!(T, 8);
 
 /// Advances `s` past leading characters satisfying `pred`, returning the
 /// number skipped.
@@ -92,6 +123,8 @@ bool tryConsumeAny(ref scope const(char)[] s, scope const(char)[] set)
 {
     if (s.length == 0)
         return false;
+    // Manual loop on purpose: std.algorithm.canFind over char[] autodecodes
+    // (may throw UTFException), which would break `nothrow @nogc`.
     foreach (c; set)
         if (s[0] == c)
         {
@@ -107,6 +140,7 @@ bool tryConsumeAny(ref scope const(char)[] s, scope const(char)[] set)
 const(char)[] readUntil(return ref scope const(char)[] s, scope const(char)[] delims)
 {
     size_t i = 0;
+    // Manual loops on purpose — see the autodecoding note in tryConsumeAny.
     cursor: while (i < s.length)
     {
         foreach (d; delims)
@@ -247,6 +281,62 @@ unittest
 
     const(char)[] ok = "255";
     assert(readInteger!ubyte(ok).value == 255);
+}
+
+@("text.readers.readInteger.radix")
+@betterC
+unittest
+{
+    // Hex, case-insensitive, advances past the digits only.
+    const(char)[] s = "DeadBEEF!";
+    auto r = readHex!uint(s);
+    assert(r.hasValue);
+    assert(r.value == 0xDEADBEEF);
+    assert(s == "!");
+
+    const(char)[] b = "1011x";
+    assert(readBinary!ubyte(b).value == 0b1011);
+    assert(b == "x");
+
+    const(char)[] o = "755";
+    assert(readOctal!uint(o).value == 0b111_101_101);
+    assert(o.length == 0);
+
+    // Base 36 uses the whole alnum vocabulary.
+    const(char)[] z = "zz";
+    assert(readInteger!(uint, 36)(z).value == 35 * 36 + 35);
+
+    // A digit valid in a larger radix is a boundary in a smaller one.
+    const(char)[] t = "129";
+    assert(readInteger!(uint, 8)(t).value == 0b1010);
+    assert(t == "9");
+}
+
+@("text.readers.readInteger.radixOverflow")
+@betterC
+unittest
+{
+    import sparkles.base.text.errors : ParseErrorCode;
+
+    // ubyte.max == 0xFF: "ff" fits, "100" does not.
+    const(char)[] ok = "ff";
+    assert(readHex!ubyte(ok).value == 0xFF);
+
+    const(char)[] over = "100";
+    auto r = readHex!ubyte(over);
+    assert(!r.hasValue);
+    assert(r.error.code == ParseErrorCode.numericOverflow);
+    assert(r.error.offset == 2); // the digit that would overflow
+    assert(over == "100"); // not advanced on failure
+
+    // 64 binary ones == ulong.max; 65 digits overflow.
+    const(char)[] maxBits =
+        "1111111111111111111111111111111111111111111111111111111111111111";
+    assert(readBinary!ulong(maxBits).value == ulong.max);
+
+    const(char)[] tooMany =
+        "11111111111111111111111111111111111111111111111111111111111111111";
+    assert(!readBinary!ulong(tooMany).hasValue);
 }
 
 @("text.readers.skipSpaces")
