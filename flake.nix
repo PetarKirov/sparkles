@@ -57,6 +57,7 @@
         ./nix/d-toolchain.nix
         ./nix/packages/all.nix
         ./nix/packages/build-d-wasm-module.nix
+        ./nix/packages/build-sparkles-app.nix
         ./nix/packages/default.nix
         ./nix/packages/hue.nix
         ./nix/packages/libghostty-vt.nix
