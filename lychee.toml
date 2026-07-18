@@ -12,8 +12,17 @@ cache_exclude_status = [401, 403, 429, "500.."]
 
 #############################  Requests  ############################
 
-# Timeout per request (seconds)
-timeout = 5
+# Timeout per request (seconds). Kept generous: some doc hosts behind Cloudflare
+# (e.g. docs.appimage.org) or GitHub Pages answer a browser in <0.5s but stall a
+# bot request for several seconds before the challenge clears, tripping a tight
+# timeout in CI even though the link is live.
+timeout = 20
+
+# Present as a real browser. Cloudflare / ReadTheDocs-fronted hosts bot-score the
+# default `lychee/<ver>` agent and slow-walk or challenge it (manifesting as a
+# request timeout in CI, while curl with a browser UA gets 200 immediately). This
+# does NOT help hosts that refuse at the TCP layer — see web.archive.org below.
+user_agent = "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
 
 # Reduce concurrent requests in CI to avoid rate limits and connection resets
 max_concurrency = 16
