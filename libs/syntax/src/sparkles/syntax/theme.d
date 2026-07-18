@@ -84,23 +84,24 @@ struct ResolvedTheme
 }
 
 /**
-Resolves `theme` into a caller-provided `styles` buffer (`@nogc`): for every
-vocabulary name, the longest rule selector that is a dot-prefix of the name
-wins (last rule wins among equal selectors); unmatched names get
-`StyleSpec.init`. `styles` must be exactly `labels.length` long and is written
-in full; `defaults` receives the normalized unlabeled-text style.
+Writes the per-label resolved styles into the output range `w` — one
+`StyleSpec` per vocabulary name, in `LabelId` order: for every name, the
+longest rule selector that is a dot-prefix of the name wins (last rule wins
+among equal selectors); unmatched names get `StyleSpec.init`. `defaults`
+receives the normalized unlabeled-text style.
 
-Allocation-free — the whole-table resolution logic without the array. A
-`@nogc nothrow` caller (e.g. an interactive previewer re-resolving on each
-theme switch into one reused buffer) can drive this directly; `resolveTheme`
+Allocation-free — the whole-table resolution logic without owning the buffer.
+A `@nogc nothrow` caller (e.g. an interactive previewer re-resolving on each
+theme switch into one reused `SmallBuffer`) drives this directly; `resolveTheme`
 is the GC-allocating convenience wrapper. A `defaultFg`/`defaultBg` of
 `Color.defaultColor` is normalized to unset — for a renderer, "the terminal
 default" and "unspecified" both mean "emit nothing".
 */
-void resolveThemeInto(in Theme theme, LabelSet labels,
-    scope StyleSpec[] styles, out StyleSpec defaults) @safe pure nothrow @nogc
-in (styles.length == labels.length, "styles buffer must match the label vocabulary size")
+void writeThemeStyles(Writer)(ref Writer w, in Theme theme, LabelSet labels,
+    out StyleSpec defaults)
 {
+    import std.range.primitives : put;
+
     foreach (i; 0 .. labels.length)
     {
         const labelName = labels.name(LabelId(cast(ushort) i));
@@ -116,7 +117,7 @@ in (styles.length == labels.length, "styles buffer must match the label vocabula
                 found = true;
             }
         }
-        styles[i] = found ? best : StyleSpec.init;
+        put(w, found ? best : StyleSpec.init);
     }
 
     defaults = StyleSpec(
@@ -127,15 +128,22 @@ in (styles.length == labels.length, "styles buffer must match the label vocabula
 /**
 Resolves `theme` against `labels` into a freshly allocated `ResolvedTheme`.
 
-Configure-time only (allocates the table once); see $(LREF resolveThemeInto)
-for the `@nogc` caller-buffer variant this delegates to.
+Configure-time only (allocates the table once); see $(LREF writeThemeStyles)
+for the `@nogc` output-range variant this delegates to.
 */
 ResolvedTheme resolveTheme(in Theme theme, LabelSet labels) pure nothrow
 {
-    auto styles = new StyleSpec[](labels.length);
+    import std.array : appender;
+    import std.exception : assumeUnique;
+
+    auto styles = appender!(StyleSpec[]);
+    styles.reserve(labels.length); // final size is known: one StyleSpec per label
     StyleSpec defaults;
-    resolveThemeInto(theme, labels, styles, defaults);
-    return ResolvedTheme(labels, styles.idup, defaults);
+    styles.writeThemeStyles(theme, labels, defaults);
+    // Transfer the fresh, uniquely-owned array to the immutable table with no
+    // second copy (vs `.idup`); the immutable cast is the only unsafe step.
+    auto immStyles = (() @trusted => assumeUnique(styles[]))();
+    return ResolvedTheme(labels, immStyles, defaults);
 }
 
 ///
@@ -175,30 +183,33 @@ unittest
     assert(resolved[labels.find("string")].empty);
 }
 
-@("theme.resolveThemeInto.nogc")
+@("theme.writeThemeStyles.nogc")
 @safe pure nothrow @nogc
 unittest
 {
-    // Resolves into a stack buffer with no GC — the interactive-previewer path.
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    // Resolves into a reused SmallBuffer with no GC — the interactive-previewer
+    // path. `put` appends each StyleSpec, so no pre-sizing/fill is needed.
     ThemeRule[1] rules = [ThemeRule("string", StyleSpec(fg: Color.fromPalette(2)))];
     const theme = Theme(name: "t", defaultFg: Color.fromPalette(7), rules: rules[]);
     const labels = LabelSet.standard();
 
-    StyleSpec[128] buf = void;
-    assert(labels.length <= buf.length);
+    SmallBuffer!(StyleSpec, 128) styles;
     StyleSpec defaults;
-    resolveThemeInto(theme, labels, buf[0 .. labels.length], defaults);
+    writeThemeStyles(styles, theme, labels, defaults);
 
-    assert(buf[labels.find("string").value] == StyleSpec(fg: Color.fromPalette(2)));
-    assert(buf[labels.find("keyword").value] == StyleSpec.init);
+    auto s = styles[];
+    assert(s[labels.find("string").value] == StyleSpec(fg: Color.fromPalette(2)));
+    assert(s[labels.find("keyword").value] == StyleSpec.init);
     assert(defaults.fg == Color.fromPalette(7));
 }
 
-@("theme.resolveThemeInto.matchesWrapper")
+@("theme.writeThemeStyles.matchesWrapper")
 @safe pure nothrow
 unittest
 {
-    // The caller-buffer path is identical to the GC wrapper, entry for entry.
+    // The output-range path is identical to the GC wrapper, entry for entry.
     const theme = Theme(name: "t", defaultBg: Color.fromPalette(235), rules: [
         ThemeRule("string", StyleSpec(fg: Color.fromPalette(2))),
         ThemeRule("string.special", StyleSpec(fg: Color.fromPalette(5))),
@@ -207,12 +218,13 @@ unittest
     const labels = LabelSet.standard();
     const wrapped = resolveTheme(theme, labels);
 
-    auto buf = new StyleSpec[](labels.length);
-    StyleSpec defaults;
-    resolveThemeInto(theme, labels, buf, defaults);
+    import std.array : appender;
 
-    foreach (i; 0 .. labels.length)
-        assert(buf[i] == wrapped.styles[i]);
+    auto buf = appender!(StyleSpec[]);
+    StyleSpec defaults;
+    buf.writeThemeStyles(theme, labels, defaults);
+
+    assert(buf[] == wrapped.styles[]);
     assert(defaults == wrapped.defaults);
 }
 

@@ -5,18 +5,18 @@
 // terminal, plus the key-driven loop — is `@nogc nothrow`, so a theme switch
 // never triggers a GC pause. The whole frame is assembled into one reused
 // `SmallBuffer` and flushed with a single `fwrite`; the theme is re-resolved
-// into one reused stack buffer on change (see `resolveThemeInto`).
+// into one reused stack buffer on change (see `writeThemeStyles`).
 module previewer;
 
 import core.stdc.stdio : FILE, fflush, fwrite;
 
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_control : CtlSeq;
-import sparkles.base.text.writers : writeInteger;
+import sparkles.base.styled_template : writeStyled;
 
 import sparkles.syntax : AnsiOptions, ColorDepth, HighlightEvent, LabelSet,
-    renderAnsi, ResolvedTheme, resolveThemeInto, StyleSpec, Theme,
-    writeStyleTransition;
+    renderAnsi, ResolvedTheme, StyleSpec, Theme,
+    writeStyleTransition, writeThemeStyles;
 
 import sparkles.core_cli.key_input : Key, KeySession;
 import sparkles.core_cli.term_caps : StdStream, terminalSize;
@@ -90,7 +90,7 @@ struct Previewer
     // Reused per-frame scratch — no per-frame heap (spills to malloc, never GC,
     // only on very large terminals).
     private SmallBuffer!(char, 16384) frame;
-    private StyleSpec[128] styleBuf = void; /// current resolved theme's table
+    private SmallBuffer!(StyleSpec, 128) styleBuf; /// current resolved theme's table
     private StyleSpec resolvedDefaults;
     private size_t resolvedIdx = size_t.max; /// which theme is in styleBuf
     private size_t codeStart, codeEnd;       /// the code slice within `frame`
@@ -123,17 +123,16 @@ struct Previewer
     /// buffer is only rewritten on the next theme change.
     private ResolvedTheme themeView(size_t idx) @safe @nogc nothrow
     in (idx < names.length)
-    in (labels.length <= styleBuf.length, "label vocabulary larger than the style buffer")
     {
         if (idx != resolvedIdx)
         {
-            resolveThemeInto(themes[idx], labels, styleBuf[0 .. labels.length],
-                resolvedDefaults);
+            styleBuf.clear();
+            styleBuf.writeThemeStyles(themes[idx], labels, resolvedDefaults);
             resolvedIdx = idx;
         }
         return () @trusted {
             return ResolvedTheme(labels,
-                cast(immutable(StyleSpec)[]) styleBuf[0 .. labels.length],
+                cast(immutable(StyleSpec)[]) styleBuf[],
                 resolvedDefaults);
         }();
     }
@@ -165,16 +164,8 @@ struct Previewer
         frame.put(CtlSeq.eraseDisplay);
         frame.put(CtlSeq.cursorHome);
 
-        // Header: " <file>  —  <theme> (i/n)".
-        frame.put(" ");
-        frame.put(title);
-        frame.put("  —  ");
-        frame.put(names[idx]);
-        frame.put(" (");
-        writeInteger(frame, idx + 1);
-        frame.put("/");
-        writeInteger(frame, names.length);
-        frame.put(")\n");
+        // Header + hint.
+        writeStyled(frame, i" $(title)  —  $(names[idx]) ($(idx + 1)/$(names.length))\n");
         frame.put(" ↑/↓ switch   enter: print full file   any other key: quit\n");
         putSeparator(sepLen);
 
