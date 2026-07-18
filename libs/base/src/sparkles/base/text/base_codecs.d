@@ -782,3 +782,80 @@ unittest
         assert(viaWriter[] == viaCodec[]);
     }
 }
+
+/**
+A column-counting decorator writer: forwards characters to the wrapped
+writer, inserting `newline` before every character that would start column
+`width + 1` — i.e. lines are at most `width` characters, with no trailing
+newline after the last one (append one yourself if the framing requires
+it). The codec kernels stay free of framing logic; wrap MIME (76-column
+CRLF) or PEM (64-column LF) output by encoding through this.
+
+Note: this wraps codec output — pure single-column ASCII. For wrapping
+prose by terminal cell width, see `sparkles.base.text.wrap`.
+*/
+struct LineWrapWriter(Writer)
+{
+    private Writer* inner;
+    private size_t width;
+    private const(char)[] newline;
+    private size_t column;
+
+    /// Output-range primitive.
+    void put(char c)
+    {
+        import std.range.primitives : basePut = put;
+
+        if (column == width)
+        {
+            basePut(*inner, newline);
+            column = 0;
+        }
+        basePut(*inner, c);
+        column++;
+    }
+}
+
+/// Wraps `w` at `width` columns with `newline` (default `"\n"`; MIME
+/// base64 uses `"\r\n"` at 76): `encodeBase64(lineWrapWriter(w, 76, "\r\n"), data)`.
+auto lineWrapWriter(Writer)(
+    return ref Writer w, size_t width, const(char)[] newline = "\n")
+    => LineWrapWriter!Writer(&w, width, newline);
+
+@("text.base_codecs.lineWrap.basic")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+    import std.string : representation;
+
+    SmallBuffer!(char, 128) buf;
+    auto lw = lineWrapWriter(buf, 4);
+    encodeBase64(lw, "foobarbaz".representation);
+    assert(buf[] == "Zm9v\nYmFy\nYmF6"); // no trailing newline
+
+    // A width no line exceeds leaves the output untouched.
+    SmallBuffer!(char, 128) wide;
+    auto lww = lineWrapWriter(wide, 80);
+    encodeBase64(lww, "foobarbaz".representation);
+    assert(wide[] == "Zm9vYmFyYmF6");
+}
+
+@("text.base_codecs.lineWrap.mime76")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    // 60 zero bytes encode to 80 'A's; MIME wraps at 76 with CRLF.
+    ubyte[60] data = 0;
+    SmallBuffer!(char, 128) buf;
+    auto lw = lineWrapWriter(buf, 76, "\r\n");
+    encodeBase64(lw, data[]);
+
+    assert(buf[].length == 82);
+    foreach (c; buf[][0 .. 76])
+        assert(c == 'A');
+    assert(buf[][76 .. 78] == "\r\n");
+    assert(buf[][78 .. $] == "AAAA");
+}
