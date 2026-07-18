@@ -20,8 +20,12 @@
 module sparkles.base.styled_template;
 
 import core.interpolation;
+import std.algorithm.mutation : remove;
+import std.algorithm.searching : canFind;
+import std.sumtype : match, SumType;
 
 import sparkles.base.term_style : Style;
+import sparkles.base.text.readers : hexNibble, isHexDigit;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Core Processing Functions
@@ -447,6 +451,61 @@ unittest
     assert(styleFromName("BgBlue") == Style.none);
 }
 
+/// 24-bit RGB foreground/background via `#RRGGBB` / `bg#RRGGBB`, and the short
+/// `#RGB` form (each nibble doubled).
+@("writeStyled.rgbColor")
+@safe unittest
+{
+    // 0xcba6f7 = 203,166,247 fg; reset with 39.
+    assert(styledText(i"{#cba6f7 text}") == "\x1b[38;2;203;166;247mtext\x1b[39m");
+    // 0x1e2e2e background; reset with 49.
+    assert(styledText(i"{bg#1e2e2e bg}") == "\x1b[48;2;30;46;46mbg\x1b[49m");
+    // short form #f00 → 255,0,0.
+    assert(styledText(i"{#f00 r}") == "\x1b[38;2;255;0;0mr\x1b[39m");
+    // malformed hex → token ignored, plain text.
+    assert(styledText(i"{#xyz z}") == "z");
+}
+
+/// 256-palette foreground/background via `@N` / `bg@N`.
+@("writeStyled.paletteColor")
+@safe unittest
+{
+    assert(styledText(i"{@183 kw}") == "\x1b[38;5;183mkw\x1b[39m");
+    assert(styledText(i"{bg@235 bg}") == "\x1b[48;5;235mbg\x1b[49m");
+    // out-of-range index → token ignored.
+    assert(styledText(i"{@256 x}") == "x");
+}
+
+/// Colors compose with named styles (dots), nesting, and interpolation, just
+/// like the named styles do.
+@("writeStyled.colorComposition")
+@safe unittest
+{
+    // bold + palette fg: opened in order, closed in reverse.
+    assert(styledText(i"{bold.@183 x}") == "\x1b[1m\x1b[38;5;183mx\x1b[39m\x1b[22m");
+    // nested: inner rgb inherits outer bold.
+    assert(styledText(i"{bold A {#00ff00 B} C}")
+        == "\x1b[1mA \x1b[38;2;0;255;0mB\x1b[39m C\x1b[22m");
+    int n = 7;
+    assert(styledText(i"n={@201 $(n)}") == "n=\x1b[38;5;201m7\x1b[39m");
+    // uncolored mode strips color markup too.
+    assert(plainText(i"{#cba6f7 text} {@5 x}") == "text x");
+}
+
+/// Nesting a color inside a same-channel color restores the outer color on
+/// exit: closing the inner color emits the absolute reset (39/49), which clears
+/// the shared fg/bg channel, so the inherited outer color must be re-opened.
+@("writeStyled.colorNestingRestoresOuter")
+@safe unittest
+{
+    // Foreground over foreground: exiting red must bring blue back, not default.
+    assert(styledText(i"{blue A {red B} C}")
+        == "\x1b[34mA \x1b[31mB\x1b[39m\x1b[34m C\x1b[39m");
+    // Background over background: same restoration via 49.
+    assert(styledText(i"{bg@235 A {bg@200 B} C}")
+        == "\x1b[48;5;235mA \x1b[48;5;200mB\x1b[49m\x1b[48;5;235m C\x1b[49m");
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Implementation Details
 // ─────────────────────────────────────────────────────────────────────────────
@@ -454,42 +513,166 @@ unittest
 private enum maxStylesPerBlock = 8;
 private enum maxNestingDepth = 16;
 
+/// A named `Style` — the classic 16 attrs/colors, an `[open, close]` code pair.
+private struct NamedStyle
+{
+    Style style;
+}
+
+/// A 256-palette color (`38;5;n` / `48;5;n`).
+private struct PaletteColor
+{
+    bool bg;     /// background vs foreground
+    ubyte index;
+}
+
+/// A 24-bit RGB color (`38;2;r;g;b` / `48;2;r;g;b`).
+private struct RgbColor
+{
+    bool bg;     /// background vs foreground
+    ubyte r, g, b;
+}
+
+/// One resolved style token on the block stack. Named tokens emit and compare
+/// exactly as before (existing markup is byte-for-byte unchanged); the palette /
+/// RGB alternatives carry the multi-parameter SGR that `Style` (`uint[2]`)
+/// cannot hold. As a `SumType`, `==` gives structural equality for free and
+/// `match` keeps the emit paths exhaustive.
+private alias StyleAtom = SumType!(NamedStyle, PaletteColor, RgbColor);
+
+/// The inert sentinel — a `Style.none` named token (also `StyleAtom.init`).
+private bool isNone(in StyleAtom a) @safe @nogc nothrow
+    => a.match!(
+        (NamedStyle n) => n.style == Style.none,
+        (PaletteColor _) => false,
+        (RgbColor _) => false,
+    );
+
+/// Emit the opening SGR sequence for `a`.
+private void emitOpen(Writer)(in StyleAtom a, ref Writer w)
+{
+    import sparkles.base.text.writers : writeEscapeSeq, writeInteger;
+    import std.range.primitives : put;
+
+    a.match!(
+        (NamedStyle n) => writeEscapeSeq(w, n.style[0]),
+        (PaletteColor c) {
+            put(w, c.bg ? "\x1b[48;5;" : "\x1b[38;5;");
+            writeInteger(w, c.index);
+            put(w, 'm');
+        },
+        (RgbColor c) {
+            put(w, c.bg ? "\x1b[48;2;" : "\x1b[38;2;");
+            writeInteger(w, c.r);
+            put(w, ';');
+            writeInteger(w, c.g);
+            put(w, ';');
+            writeInteger(w, c.b);
+            put(w, 'm');
+        },
+    );
+}
+
+/// Emit the closing SGR sequence for `a` (colors reset with `39`/`49`).
+private void emitClose(Writer)(in StyleAtom a, ref Writer w)
+{
+    import sparkles.base.text.writers : writeEscapeSeq;
+
+    a.match!(
+        (NamedStyle n) => writeEscapeSeq(w, n.style[1]),
+        (PaletteColor c) => writeEscapeSeq(w, c.bg ? 49 : 39),
+        (RgbColor c) => writeEscapeSeq(w, c.bg ? 49 : 39),
+    );
+}
+
+/// The absolute SGR reset code an atom closes with: `39` = default foreground,
+/// `49` = default background, otherwise an independent attribute-off code.
+/// Two atoms sharing a code contend for the same terminal channel, so closing
+/// one clears the other — colors do not stack.
+@safe pure nothrow @nogc
+private int closeCode(in StyleAtom a)
+    => a.match!(
+        (NamedStyle n) => cast(int) n.style[1],
+        (PaletteColor c) => c.bg ? 49 : 39,
+        (RgbColor c) => c.bg ? 49 : 39,
+    );
+
 @safe
 private struct StyleState
 {
-    Style[maxStylesPerBlock] styles;
+    // Fixed array, not `SmallBuffer`: its accessors take a non-`scope` `this`,
+    // which the `in` (scope) `StyleState` parameters below reject under dip1000.
+    StyleAtom[maxStylesPerBlock] styles;
     size_t count;
 
     /// Emit escape sequences for transition FROM parent TO this state
     void emitOpenDiff(Writer)(ref Writer w, in StyleState parent) const
     {
-        import sparkles.base.text.writers : writeEscapeSeq;
-
         // Close styles that were in parent but removed in this (negation)
         foreach_reverse (i; 0 .. parent.count)
-            if (parent.styles[i] != Style.none && !hasStyle(parent.styles[i]))
-                writeEscapeSeq(w, parent.styles[i][1]);
+            if (!parent.styles[i].isNone && !hasStyle(parent.styles[i]))
+                parent.styles[i].emitClose(w);
 
         // Open styles that are new in this (not in parent)
         foreach (i; 0 .. count)
-            if (styles[i] != Style.none && !parent.hasStyle(styles[i]))
-                writeEscapeSeq(w, styles[i][0]);
+            if (!styles[i].isNone && !parent.hasStyle(styles[i]))
+                styles[i].emitOpen(w);
+
+        // A negated close above may emit a *shared* SGR reset (22 clears both
+        // bold and dim, 39 every fg colour, 49 every bg colour) that also turned
+        // off a style this block keeps (present in both). Re-open it so the kept
+        // style survives the negation — e.g. `~dim` must not also drop an active
+        // bold.
+        foreach (i; 0 .. count)
+            if (!styles[i].isNone && parent.hasStyle(styles[i])
+                && negatedClosesWith(styles[i].closeCode, parent))
+                styles[i].emitOpen(w);
     }
 
     /// Emit escape sequences for transition FROM this state back TO parent
     void emitCloseDiff(Writer)(ref Writer w, in StyleState parent) const
     {
-        import sparkles.base.text.writers : writeEscapeSeq;
-
         // Close styles that were added in this (not in parent)
         foreach_reverse (i; 0 .. count)
-            if (styles[i] != Style.none && !parent.hasStyle(styles[i]))
-                writeEscapeSeq(w, styles[i][1]);
+            if (!styles[i].isNone && !parent.hasStyle(styles[i]))
+                styles[i].emitClose(w);
+
+        // A close above may emit a *shared* SGR reset (22 clears both bold and
+        // dim, 39 every fg colour, 49 every bg colour) that also turned off an
+        // inherited parent style with the same close code this block keeps
+        // (shadowed, not negated). The negation-restore loop below skips it
+        // because it is present here, so re-open it now.
+        foreach (i; 0 .. parent.count)
+            if (!parent.styles[i].isNone && hasStyle(parent.styles[i])
+                && closedByChildOnly(parent.styles[i].closeCode, parent))
+                parent.styles[i].emitOpen(w);
 
         // Restore styles that were negated (in parent but not in this)
         foreach (i; 0 .. parent.count)
-            if (parent.styles[i] != Style.none && !hasStyle(parent.styles[i]))
-                writeEscapeSeq(w, parent.styles[i][0]);
+            if (!parent.styles[i].isNone && !hasStyle(parent.styles[i]))
+                parent.styles[i].emitOpen(w);
+    }
+
+    /// True if a style this block adds (present here, not in `parent`) closes
+    /// with SGR code `code` — i.e. its `emitClose` turns off that shared group.
+    private bool closedByChildOnly(int code, in StyleState parent) const @safe nothrow @nogc
+    {
+        foreach (i; 0 .. count)
+            if (!styles[i].isNone && !parent.hasStyle(styles[i])
+                && styles[i].closeCode == code)
+                return true;
+        return false;
+    }
+
+    /// True if a style this block negates (in `parent`, removed here) closes
+    /// with SGR code `code`.
+    private bool negatedClosesWith(int code, in StyleState parent) const @safe nothrow @nogc
+    {
+        foreach (i; 0 .. parent.count)
+            if (!parent.styles[i].isNone && !hasStyle(parent.styles[i])
+                && parent.styles[i].closeCode == code)
+                return true;
+        return false;
     }
 
     /// Emit opening escape sequences for all active styles
@@ -505,36 +688,18 @@ private struct StyleState
     }
 
     /// Check if a style is currently active
-    bool hasStyle(Style s) const @nogc nothrow
-    {
-        foreach (i; 0 .. count)
-            if (styles[i] == s)
-                return true;
-        return false;
-    }
+    bool hasStyle(in StyleAtom s) const @nogc nothrow => styles[0 .. count].canFind(s);
 
     /// Add a style if not already present
-    void addStyle(Style s) @nogc nothrow
+    void addStyle(in StyleAtom s) @nogc nothrow
     {
-        if (s != Style.none && !hasStyle(s) && count < styles.length)
+        if (!s.isNone && !hasStyle(s) && count < styles.length)
             styles[count++] = s;
     }
 
     /// Remove a style
-    void removeStyle(Style s) @nogc nothrow
-    {
-        size_t writeIdx = 0;
-        foreach (i; 0 .. count)
-        {
-            if (styles[i] != s)
-            {
-                if (writeIdx != i)
-                    styles[writeIdx] = styles[i];
-                writeIdx++;
-            }
-        }
-        count = writeIdx;
-    }
+    void removeStyle(in StyleAtom s) @nogc nothrow
+        => cast(void)(count = styles[0 .. count].remove!(a => a == s).length);
 
     /// Check if any styles are active
     bool empty() const @nogc nothrow => count == 0;
@@ -550,6 +715,8 @@ private enum ParseState
 @safe
 private struct ParserContext
 {
+    // Fixed array (see `StyleState.styles`); overflow past the cap is tracked,
+    // not allocated.
     StyleState[maxNestingDepth] styleStack;
     size_t stackDepth;
     /// Tracks pushes that were dropped due to stack overflow
@@ -730,17 +897,104 @@ private void applyStylePart(const(char)[] part, ref StyleState state)
     if (part.length == 0)
         return;
 
-    bool negate = part[0] == '~';
-    const(char)[] styleName = negate ? part[1 .. $] : part;
+    const negate = part[0] == '~';
+    const(char)[] name = negate ? part[1 .. $] : part;
 
-    Style s = styleFromName(styleName);
-    if (s != Style.none)
+    StyleAtom atom;
+    if (!resolveStyleAtom(name, atom))
+        return;
+
+    if (negate)
+        state.removeStyle(atom);
+    else
+        state.addStyle(atom);
+}
+
+/// Resolves one style token to a `StyleAtom`. Beyond the named styles
+/// (`styleFromName`), recognizes 24-bit `#RGB`/`#RRGGBB` and 256-palette `@N`
+/// foreground colors, each with a `bg` prefix (`bg#…`, `bg@N`) for background.
+/// Returns `false` (token ignored) on an unknown name or malformed color.
+@safe nothrow @nogc
+private bool resolveStyleAtom(const(char)[] name, out StyleAtom atom)
+{
+    bool bg;
+    // `bg` only prefixes a color literal here; named `bgRed` etc. fall through.
+    if (name.length > 2 && name[0 .. 2] == "bg" && (name[2] == '#' || name[2] == '@'))
     {
-        if (negate)
-            state.removeStyle(s);
-        else
-            state.addStyle(s);
+        bg = true;
+        name = name[2 .. $];
     }
+
+    if (name.length && name[0] == '#')
+    {
+        ubyte r, g, b;
+        if (!parseHexColor(name[1 .. $], r, g, b))
+            return false;
+        atom = StyleAtom(RgbColor(bg, r, g, b));
+        return true;
+    }
+
+    if (name.length && name[0] == '@')
+    {
+        import sparkles.base.text.readers : readInteger;
+
+        auto rest = name[1 .. $];
+        auto idx = readInteger!ubyte(rest);
+        if (idx.hasError || rest.length != 0) // the whole token must be the index
+            return false;
+        atom = StyleAtom(PaletteColor(bg, idx.value));
+        return true;
+    }
+
+    const s = styleFromName(name);
+    if (s == Style.none)
+        return false;
+    atom = StyleAtom(NamedStyle(s));
+    return true;
+}
+
+/// A hex-digit pair → one byte (`"ff"` → 255). Reuses `readers.hexNibble`; both
+/// characters must be hex digits (validated by `parseHexColor` before the call).
+private ubyte hexOctet(char[2] chars) @safe nothrow @nogc
+in (isHexDigit(chars[0]) && isHexDigit(chars[1]))
+    => cast(ubyte)(hexNibble(chars[0]) * 16 + hexNibble(chars[1]));
+
+/// `#RGB` (each nibble doubled) or `#RRGGBB` hex → 8-bit channels. Digit
+/// decoding reuses `sparkles.base.text.readers` (`isHexDigit`/`hexNibble`).
+@safe nothrow @nogc
+private bool parseHexColor(const(char)[] hex, out ubyte r, out ubyte g, out ubyte b)
+{
+    if (hex.length != 3 && hex.length != 6)
+        return false;
+    foreach (c; hex) // validate up front so `hexOctet`'s `in` contract holds
+        if (!isHexDigit(c))
+            return false;
+
+    if (hex.length == 3) // #RGB → each nibble doubled (0xN → 0xNN, i.e. ×17)
+    {
+        r = hexOctet([hex[0], hex[0]]);
+        g = hexOctet([hex[1], hex[1]]);
+        b = hexOctet([hex[2], hex[2]]);
+    }
+    else // #RRGGBB
+    {
+        r = hexOctet(hex[0 .. 2]);
+        g = hexOctet(hex[2 .. 4]);
+        b = hexOctet(hex[4 .. 6]);
+    }
+    return true;
+}
+
+/// `#RGB` shorthand doubles each nibble (`0xN → 0xNN`), same as the old
+/// `hexNibble(c) * 17`; a regression guard for the `hexOctet` refactor.
+@("writeStyled.rgbShorthandDoubling")
+@safe unittest
+{
+    // #abc → aa,bb,cc = 170,187,204; #f0a → ff,00,aa = 255,0,170.
+    assert(styledText(i"{#abc x}") == "\x1b[38;2;170;187;204mx\x1b[39m");
+    assert(styledText(i"{#f0a x}") == "\x1b[38;2;255;0;170mx\x1b[39m");
+    // Shorthand and full form agree: #fff == #ffffff.
+    assert(styledText(i"{#fff x}") == styledText(i"{#ffffff x}"));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1165,39 +1419,57 @@ private void applyStylePart(const(char)[] part, ref StyleState state)
 @("styled.innerReplacesColor")
 @safe unittest
 {
-    // {red ... {green ...} ...} — green replaces red temporarily via inheritance
-    // green inherits from red's state, but since red is already there, green adds itself
+    // {red ... {green ...} ...} — green temporarily shadows the inherited red.
+    // Inner block inherits [red] and adds green → [red, green]. Closing green
+    // emits 39 (default fg), which also clears red, so red must be re-opened.
     auto result = styledText(i"{red A {green B} C}");
-    // Inner block: inherits [red], adds green → [red, green]
-    // emitOpenDiff: green is new → emit green open
-    // emitCloseDiff: green is new → emit green close
     assert(result ==
         "\x1b[31m" ~      // red ON
         "A " ~
         "\x1b[32m" ~      // green ON (added to inherited red)
         "B" ~
-        "\x1b[39m" ~      // green OFF (close code for green = 39)
+        "\x1b[39m" ~      // green OFF (close code for green = 39, resets fg)
+        "\x1b[31m" ~      // red restored (inherited color re-opened on the fg channel)
         " C" ~
         "\x1b[39m"        // red OFF
     );
 }
 
 /// Negation with `~` on a style that uses the same close code as another
-/// active style (e.g., both bold and dim close with code 22).
+/// active style (e.g., both bold and dim close with code 22). Closing dim
+/// emits 22, which also clears the still-active bold, so bold must be re-opened
+/// for the inner content.
 @("styled.negationSharedCloseCode")
 @safe unittest
 {
     // bold and dim both have close code 22
     auto result = styledText(i"{bold.dim text {~dim inner} text}");
     assert(result ==
-        "\x1b[1m\x1b[2m" ~  // bold ON, dim ON
+        "\x1b[1m\x1b[2m" ~   // bold ON, dim ON
         "text " ~
-        "\x1b[22m" ~        // dim OFF (close code 22)
+        "\x1b[22m\x1b[1m" ~  // dim OFF (via 22, kills bold too) then bold restored
         "inner" ~
-        "\x1b[2m" ~         // dim ON (restored)
+        "\x1b[2m" ~          // dim restored (bold still on)
         " text" ~
-        "\x1b[22m\x1b[22m"  // dim OFF, bold OFF
+        "\x1b[22m\x1b[22m"   // dim OFF, bold OFF
     );
+}
+
+/// Shared-close-code restoration across nesting (not negation): an inner block
+/// adding a style that shares a close code with an inherited one must restore
+/// the inherited style on exit. `22` (bold/dim) mirrors the `39`/`49` colour
+/// cases in `colorNestingRestoresOuter`.
+@("styled.sharedCloseCodeNestingRestoresOuter")
+@safe unittest
+{
+    // dim inherited, inner adds bold; exiting bold emits 22, which also clears
+    // dim, so dim must be re-opened for " C".
+    assert(styledText(i"{dim A {bold B} C}")
+        == "\x1b[2mA \x1b[1mB\x1b[22m\x1b[2m C\x1b[22m");
+    // Negating one fg colour while another remains: `~green` emits 39, clearing
+    // the still-active red, which must be restored for "in".
+    assert(styledText(i"{red.green o {~green in} o}")
+        == "\x1b[31m\x1b[32mo \x1b[39m\x1b[31min\x1b[32m o\x1b[39m\x1b[39m");
 }
 
 /// Style block immediately after an escaped brace.
