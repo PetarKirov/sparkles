@@ -22,6 +22,8 @@ enum ParseErrorCode
     invalidIdentifier,   /// an identifier contained a disallowed character
     unknownValue,        /// a token matched no value in a known (closed) set
     widthMismatch,       /// a fixed-width field did not meet its width
+    nonCanonicalTrailing,/// unused trailing bits in a final encoded group were not zero
+    paddingMismatch,     /// padding count did not match the final encoded group's length
 }
 
 /// Structured parse error: a $(LREF ParseErrorCode) plus the byte offset
