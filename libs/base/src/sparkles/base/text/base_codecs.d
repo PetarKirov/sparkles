@@ -178,6 +178,45 @@ if (isPowerOf2(a.radix))
             foreach (_; 0 .. (cpg - n % cpg) % cpg)
                 put(w, a.padding);
     }
+
+    /// Fixed-length: encode `src` into an exactly-sized `dst`. Group
+    /// count, tail handling, and padding are all compile-time constants,
+    /// and each group's inner loops are unrolled (`static foreach`) —
+    /// byte-identical to the streaming overload.
+    void encodeBase(size_t N, size_t M)(ref const ubyte[N] src, ref char[M] dst)
+    if (M == encodedLen(a, N)) // both lengths deduce; the constraint ties them
+    {
+        enum string digits = a.digits;
+        enum int bpc = bsr(a.radix);
+        enum uint msk = a.radix - 1;
+        enum size_t cpg = 8 / gcd(8, bpc);      // chars per group
+        enum size_t bpg = bpc * cpg / 8;        // bytes per group
+        enum size_t fullGroups = N / bpg;
+        enum size_t tailBytes = N % bpg;
+
+        foreach (g; 0 .. fullGroups)
+        {
+            ulong acc = 0;
+            static foreach (k; 0 .. bpg)
+                acc = (acc << 8) | src[g * bpg + k];
+            static foreach (k; 0 .. cpg)
+                dst[g * cpg + k] = digits[(acc >> (bpc * (cpg - 1 - k))) & msk];
+        }
+        static if (tailBytes > 0)
+        {
+            enum size_t tailChars = (tailBytes * 8 + bpc - 1) / bpc;
+            ulong acc = 0;
+            static foreach (k; 0 .. tailBytes)
+                acc = (acc << 8) | src[fullGroups * bpg + k];
+            acc <<= bpc * tailChars - tailBytes * 8; // MSB-align the partial
+            static foreach (k; 0 .. tailChars)
+                dst[fullGroups * cpg + k] =
+                    digits[(acc >> (bpc * (tailChars - 1 - k))) & msk];
+            static if (a.padding != '\0')
+                static foreach (k; tailChars .. cpg)
+                    dst[fullGroups * cpg + k] = a.padding;
+        }
+    }
 }
 
 /**
@@ -262,6 +301,36 @@ if (isPowerOf2(a.radix))
                 return parseErr!size_t(
                     ParseErrorCode.paddingMismatch, text.length);
         return parseOk(written);
+    }
+
+    /// Fixed-length: decode exactly `encodedLen(a, N)` chars into `dst`.
+    /// A thin wrapper over the streaming kernel through a stack sink, so
+    /// the rejection behavior (codes and offsets) is identical by
+    /// construction; the compile-time win is the exact input/output
+    /// sizing (and that failure leaves no partial heap output to manage).
+    // Both lengths deduce independently (deducing M as encodedLen(a, N)
+    // from the first parameter would reference N before it is known),
+    // with the constraint tying them together.
+    ParseExpected!void decodeBase(size_t M, size_t N)(
+        in char[M] src, ref ubyte[N] dst)
+    if (M == encodedLen(a, N))
+    {
+        static struct FixedSink
+        {
+            ubyte[] rem;
+            void put(ubyte b)
+            {
+                rem[0] = b;
+                rem = rem[1 .. $];
+            }
+        }
+
+        scope sink = FixedSink(dst[]);
+        auto r = .decodeBase!a(sink, src[]);
+        if (!r.hasValue)
+            return parseErr!void(r.error);
+        assert(r.value == N); // structural: the input length is exact
+        return parseOk();
     }
 }
 
@@ -606,4 +675,110 @@ unittest
     auto v = decodeBase64(buf, "TWFu="); // complete group + stray pad
     assert(!v.hasValue);
     assert(v.error.code == ParseErrorCode.paddingMismatch);
+}
+
+@("text.base_codecs.fixedLength.knownAnswers")
+@safe pure nothrow @nogc
+unittest
+{
+    const ubyte[3] man = ['M', 'a', 'n'];
+    char[4] enc = void;
+    encodeBase64(man, enc); // the alias resolves the fixed-length overload too
+    assert(enc == "TWFu");
+
+    ubyte[3] back = void;
+    auto r = decodeBase64("TWFu", back);
+    assert(!r.hasError);
+    assert(back == man);
+
+    const ubyte[4] deadbeef = [0xDE, 0xAD, 0xBE, 0xEF];
+    char[8] hexed = void;
+    encodeBase16(deadbeef, hexed);
+    assert(hexed == "DEADBEEF");
+
+    const ubyte[1] m = ['M'];
+    char[4] padded = void;
+    encodeBase64(m, padded);
+    assert(padded == "TQ==");
+}
+
+@("text.base_codecs.fixedLength.matchesStreaming")
+@safe pure nothrow @nogc
+unittest
+{
+    import std.meta : AliasSeq;
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    static void check(Alphabet a, size_t N)()
+    {
+        uint x = cast(uint)(N * 2654435761u + 1);
+        ubyte[N] src = void;
+        foreach (ref b; src)
+        {
+            x = x * 1664525 + 1013904223;
+            b = cast(ubyte)(x >> 24);
+        }
+
+        char[encodedLen(a, N)] dst = void;
+        encodeBase!a(src, dst);
+
+        SmallBuffer!(char, 128) reference;
+        encodeBase!a(reference, src[]);
+        assert(dst[] == reference[]); // byte-identical to streaming
+
+        ubyte[N] back = void;
+        auto r = decodeBase!a(dst, back);
+        assert(!r.hasError);
+        assert(back == src);
+    }
+
+    static foreach (a; AliasSeq!(base16, base32, base32hex, base64, base64url, zbase32))
+        static foreach (N; AliasSeq!(1, 2, 3, 4, 5, 6, 7, 8, 16, 20, 31, 32, 33, 64))
+            check!(a, N)();
+}
+
+@("text.base_codecs.fixedLength.rejectsLikeStreaming")
+@safe pure nothrow @nogc
+unittest
+{
+    // The fixed-length decoder is the streaming kernel behind an exact-size
+    // sink, so codes and offsets match by construction — spot-check anyway.
+    ubyte[1] one = void;
+    auto r = decodeBase64("TR==", one);
+    assert(r.hasError);
+    assert(r.error.code == ParseErrorCode.nonCanonicalTrailing);
+    assert(r.error.offset == 4);
+
+    auto s = decodeBase64("T$==", one);
+    assert(s.hasError);
+    assert(s.error.code == ParseErrorCode.unexpectedCharacter);
+    assert(s.error.offset == 1);
+
+    ubyte[4] four = void;
+    auto h = decodeBase16("DEADBEEZ", four);
+    assert(h.hasError);
+    assert(h.error.code == ParseErrorCode.unexpectedCharacter);
+    assert(h.error.offset == 7);
+}
+
+@("text.base_codecs.writeHexByte.anchor")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.base.text.writers : writeHexByte;
+
+    // writeHexByte is definitionally the one-byte fixed-length encode over
+    // a lower-case base16 alphabet — anchor the codec kernel to it.
+    enum Alphabet base16lower = Alphabet(digits: "0123456789abcdef");
+    foreach (b; 0 .. 256)
+    {
+        const ubyte[1] src = [cast(ubyte) b];
+        char[2] viaCodec = void;
+        encodeBase!base16lower(src, viaCodec);
+
+        SmallBuffer!(char, 4) viaWriter;
+        writeHexByte(viaWriter, cast(ubyte) b);
+        assert(viaWriter[] == viaCodec[]);
+    }
 }
