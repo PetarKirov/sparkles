@@ -292,18 +292,34 @@ version (unittest)
     import sparkles.syntax.label : LabelSet;
     import sparkles.syntax.theme : Theme, ThemeRule, resolveTheme;
 
+    // Named test palette — so the theme rules and the expected-output SGR below
+    // read as intent instead of bare magic hex/indices.
+    private enum Color kwFg = Color.fromRgb(0xcb, 0xa6, 0xf7); // keyword (mauve)
+    private enum Color strFg = Color.fromRgb(0xa6, 0xe3, 0xa1); // string (green)
+    private enum Color commentFg = Color.fromPalette(8); // comment (bright black)
+    private enum Color pageBg = Color.fromPalette(235); // page background
+
+    // The SGR *parameters* the renderer emits for those colors, per depth.
+    // (These can't be built with `styledText`: renderAnsi merges params into a
+    // single escape — `\x1b[1;38;2;…m` — while styledText emits one escape per
+    // style, so the byte streams differ.)
+    private enum kwFgTrue = "38;2;203;166;247"; // kwFg at trueColor
+    private enum kwFg256 = "38;5;183"; // kwFg folded to 256-palette
+    private enum kwFg16 = "37"; // kwFg folded to classic-16 (white)
+    private enum strFgTrue = "38;2;166;227;161"; // strFg at trueColor
+    private enum commentSgr = "90"; // palette 8, classic bright-black at any depth
+    private enum pageBg256 = "48;5;235"; // pageBg at 256-palette
+
     // A tiny fixed vocabulary/theme pair shared by the renderer tests.
     private ResolvedTheme testTheme() @safe pure nothrow
     {
         const theme = Theme(
             name: "test",
-            defaultBg: Color.fromPalette(235), // page background; only consulted with emitBackground
+            defaultBg: pageBg, // only consulted with emitBackground
             rules: [
-                ThemeRule("keyword", StyleSpec(
-                    fg: Color.fromRgb(0xcb, 0xa6, 0xf7), font: FontStyle.bold)),
-                ThemeRule("string", StyleSpec(fg: Color.fromRgb(0xa6, 0xe3, 0xa1))),
-                ThemeRule("comment", StyleSpec(
-                    fg: Color.fromPalette(8), font: FontStyle.italic)),
+                ThemeRule("keyword", StyleSpec(fg: kwFg, font: FontStyle.bold)),
+                ThemeRule("string", StyleSpec(fg: strFg)),
+                ThemeRule("comment", StyleSpec(fg: commentFg, font: FontStyle.italic)),
             ]);
         return resolveTheme(theme, LabelSet.standard());
     }
@@ -338,17 +354,17 @@ unittest
     // (classic bright-black 90) at every depth; comment italic gated off.
     checkWriter!((ref w) => renderAnsi(source, events[], resolved, w,
         AnsiOptions(depth: ColorDepth.trueColor)))(
-        "\x1b[1;38;2;203;166;247mif\x1b[0m (x) \x1b[90m// hi\x1b[0m");
+        "\x1b[1;" ~ kwFgTrue ~ "mif\x1b[0m (x) \x1b[" ~ commentSgr ~ "m// hi\x1b[0m");
 
     // ansi256: RGB folds to the nearest palette entry
     checkWriter!((ref w) => renderAnsi(source, events[], resolved, w,
         AnsiOptions(depth: ColorDepth.ansi256)))(
-        "\x1b[1;38;5;183mif\x1b[0m (x) \x1b[90m// hi\x1b[0m");
+        "\x1b[1;" ~ kwFg256 ~ "mif\x1b[0m (x) \x1b[" ~ commentSgr ~ "m// hi\x1b[0m");
 
-    // ansi16: RGB folds to the classic palette (0xcba6f7 → white, 37)
+    // ansi16: RGB folds to the classic palette (kwFg → white, 37)
     checkWriter!((ref w) => renderAnsi(source, events[], resolved, w,
         AnsiOptions(depth: ColorDepth.ansi16)))(
-        "\x1b[1;37mif\x1b[0m (x) \x1b[90m// hi\x1b[0m");
+        "\x1b[1;" ~ kwFg16 ~ "mif\x1b[0m (x) \x1b[" ~ commentSgr ~ "m// hi\x1b[0m");
 
     // none: verbatim passthrough
     checkWriter!((ref w) => renderAnsi(source, events[], resolved, w,
@@ -375,12 +391,12 @@ unittest
     // redundant background code is re-emitted when the run changes.
     checkWriter!((ref w) => renderAnsi(source, events[], resolved, w,
         AnsiOptions(depth: ColorDepth.ansi256, emitBackground: true)))(
-        "\x1b[1;38;5;183;48;5;235mif\x1b[22;39m x\x1b[0m");
+        "\x1b[1;" ~ kwFg256 ~ ";" ~ pageBg256 ~ "mif\x1b[22;39m x\x1b[0m");
 
     // emitBackground off (default): no page background leaks in at all.
     checkWriter!((ref w) => renderAnsi(source, events[], resolved, w,
         AnsiOptions(depth: ColorDepth.ansi256)))(
-        "\x1b[1;38;5;183mif\x1b[0m x");
+        "\x1b[1;" ~ kwFg256 ~ "mif\x1b[0m x");
 }
 
 @("render.ansi.italicsGateAndBackground")
@@ -399,12 +415,12 @@ unittest
     // italics off (default): only the color survives
     checkWriter!((ref w) => renderAnsi(source, events[], resolved, w,
         AnsiOptions(depth: ColorDepth.ansi256)))(
-        "\x1b[90mx\x1b[0m");
+        "\x1b[" ~ commentSgr ~ "mx\x1b[0m");
 
     // italics on: italic flag emitted
     checkWriter!((ref w) => renderAnsi(source, events[], resolved, w,
         AnsiOptions(depth: ColorDepth.ansi256, italics: true)))(
-        "\x1b[3;90mx\x1b[0m");
+        "\x1b[3;" ~ commentSgr ~ "mx\x1b[0m");
 }
 
 @("render.ansi.adjacentRunsDiffMinimally")
@@ -427,7 +443,7 @@ unittest
 
     checkWriter!((ref w) => renderAnsi(source, events[], resolved, w,
         AnsiOptions(depth: ColorDepth.trueColor)))(
-        "\x1b[1;38;2;203;166;247mab\x1b[22;38;2;166;227;161mcd\x1b[0m");
+        "\x1b[1;" ~ kwFgTrue ~ "mab\x1b[22;" ~ strFgTrue ~ "mcd\x1b[0m");
 }
 
 @("render.ansi.perLineReset")
@@ -452,8 +468,8 @@ unittest
     // style re-established after each newline
     checkWriter!((ref w) => renderAnsi(source, events[], resolved, w,
         AnsiOptions(depth: ColorDepth.trueColor)))(
-        "\x1b[38;2;166;227;161maa\x1b[0m\n\x1b[38;2;166;227;161mbb\x1b[0m\n" ~
-        "\x1b[38;2;166;227;161mcc\x1b[0m");
+        "\x1b[" ~ strFgTrue ~ "maa\x1b[0m\n\x1b[" ~ strFgTrue ~ "mbb\x1b[0m\n" ~
+        "\x1b[" ~ strFgTrue ~ "mcc\x1b[0m");
 
     // the machine-checked invariant: SGR state inactive at every newline
     SgrState state;
