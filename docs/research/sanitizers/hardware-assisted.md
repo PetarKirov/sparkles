@@ -734,7 +734,7 @@ profiling story; they are cross-linked here, not re-surveyed.
 [linux-taggedaddr]: https://github.com/torvalds/linux/blob/e43ffb69e0438cddd72aaa30898b4dc446f664f8/Documentation/arch/arm64/tagged-address-abi.rst
 [linux-prctl]: https://github.com/torvalds/linux/blob/e43ffb69e0438cddd72aaa30898b4dc446f664f8/arch/x86/include/uapi/asm/prctl.h
 [linux-kasan]: https://github.com/torvalds/linux/blob/e43ffb69e0438cddd72aaa30898b4dc446f664f8/Documentation/dev-tools/kasan.rst
-[ldc-src]: https://github.com/ldc-developers/ldc/tree/v1.41.0
+[ldc-src]: https://github.com/ldc-developers/ldc/tree/90e39b6a6e61d36ef5f5d0ab6ae0667130fd8549
 [hwasan-design]: https://clang.llvm.org/docs/HardwareAssistedAddressSanitizerDesign.html
 [rtsan-doc]: https://clang.llvm.org/docs/RealtimeSanitizer.html
 [tysan-doc]: https://clang.llvm.org/docs/TypeSanitizer.html

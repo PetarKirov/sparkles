@@ -4,7 +4,7 @@
 
 Claim-by-claim source verification of [`motion-canvas.md`](../motion-canvas.md).
 Docs are pinned to the live site ([motioncanvas.io/docs](https://motioncanvas.io/docs/));
-source is pinned to tag [`v3.17.2`](https://github.com/motion-canvas/motion-canvas/tree/v3.17.2).
+source is pinned to tag [`v3.17.2`](https://github.com/motion-canvas/motion-canvas/tree/e735a995aa738ca682feb4204a39ee7db7b5d279).
 
 Status legend: ✓ verified against a local artifact · ≈ paraphrase-verified · 🌐 web-verified (primary source fetched) · ◯ open
 Claim types: quote · fact · figure · behavior · exposition

@@ -461,4 +461,4 @@ spine:
 [elfutils]: ./elfutils.md
 [naming]: ./event-naming.md
 [probe]: ./examples/mem-latency-numa.d
-[linux-src]: https://github.com/torvalds/linux/tree/e43ffb69e043
+[linux-src]: https://github.com/torvalds/linux/tree/e43ffb69e0438cddd72aaa30898b4dc446f664f8

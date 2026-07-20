@@ -584,4 +584,4 @@ sanitizer_deadlock_detector.h}` — all quoted/cited above
 [probe]: ./examples/tsan-data-race.d
 [llvm-src]: https://github.com/llvm/llvm-project/tree/73802c2e9d102a4fb646bc039754779fca3ea476
 [go-src]: https://github.com/golang/go/tree/015343854b5d9e2829481df30dbcae2ca6682d25
-[ldc-src]: https://github.com/ldc-developers/ldc/tree/v1.41.0
+[ldc-src]: https://github.com/ldc-developers/ldc/tree/90e39b6a6e61d36ef5f5d0ab6ae0667130fd8549

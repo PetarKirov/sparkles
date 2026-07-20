@@ -1039,7 +1039,11 @@ private int runCheckVcsUrls(string[] files)
     import std.string : lineSplitter;
     import std.algorithm : canFind;
 
-    static urlRe = ctRegex!(`https?://(?:raw\.githubusercontent\.com/([^/]+)/([^/]+)/([^/]+)/([^#\s"'()\]]*)|(?:www\.)?github\.com/([^/]+)/([^/]+)/(blob|tree)/([^/]+)/([^#\s"'()\]]*))`);
+    // The github blob/tree path is optional: a directory link like
+    // `github.com/o/r/tree/main` (a moving branch ref, no trailing file path)
+    // must still be caught, so the ref group stands alone and `(?:/…)?` wraps
+    // the path. Capture indices are unchanged (the wrapper is non-capturing).
+    static urlRe = ctRegex!(`https?://(?:raw\.githubusercontent\.com/([^/]+)/([^/]+)/([^/]+)/([^#\s"'()\]]*)|(?:www\.)?github\.com/([^/]+)/([^/]+)/(blob|tree)/([^/#\s"'()\]]+)(?:/([^#\s"'()\]]*))?)`);
     static shaRe = ctRegex!(`^[0-9a-fA-F]{40}$`);
 
     int totalErrors = 0;
@@ -1051,9 +1055,14 @@ private int runCheckVcsUrls(string[] files)
         {
             content = readText(filePath);
         }
-        catch (Exception)
+        catch (Exception e)
         {
-            continue; // skip binary/invalid files
+            // A file we cannot read (e.g. invalid UTF-8) cannot be scanned for
+            // unpinned URLs. Surface it and fail rather than silently passing —
+            // a silent skip would defeat the guarantee this check exists for.
+            stderr.writefln("✗ %s: could not read file to check URLs (%s)", filePath, e.msg);
+            totalErrors++;
+            continue;
         }
 
         size_t lineNum = 1;

@@ -442,9 +442,9 @@ Related pages: [the multipath socket][socket] (which consumes the report — hom
 
 <!-- References -->
 
-[repo]: https://github.com/n0-computer/iroh/tree/22cac742ca
+[repo]: https://github.com/n0-computer/iroh/tree/22cac742ca5e84da4542681e14b2d23b74c8330e
 [docs]: https://docs.rs/iroh/1.0.1/iroh/
-[nettools]: https://github.com/n0-computer/net-tools/tree/051ab876
+[nettools]: https://github.com/n0-computer/net-tools/tree/051ab8761006d7f2155e34a49f6bb881b582d5ab
 [docs-netwatch]: https://docs.rs/netwatch/0.19.1/netwatch/
 [docs-portmapper]: https://docs.rs/portmapper/0.19.1/portmapper/
 [nr-doc]: https://github.com/n0-computer/iroh/blob/22cac742ca5e84da4542681e14b2d23b74c8330e/iroh/src/net_report.rs#L3

@@ -377,12 +377,12 @@ Where the store touches disk, **event-horizon is strictly better than Rust here*
 
 <!-- References -->
 
-[repo]: https://github.com/n0-computer/iroh-blobs/tree/v0.103.0
+[repo]: https://github.com/n0-computer/iroh-blobs/tree/e82cbdcbdac9a78033174aad55e3199b2cf4c0dc
 [docs]: https://docs.rs/iroh-blobs/0.103.0/iroh_blobs/
-[util-repo]: https://github.com/n0-computer/iroh-util/tree/v0.6.0
-[irpc-repo]: https://github.com/n0-computer/irpc/tree/v0.17.0
+[util-repo]: https://github.com/n0-computer/iroh-util/tree/2b5447abf79bc0d7c02c202f2cc21f44f42d39fa
+[irpc-repo]: https://github.com/n0-computer/irpc/tree/0ed2b235d5c797b54d8263ecb3b0247272d055f9
 [irpc-docs]: https://docs.rs/irpc/0.17.0/irpc/
-[bt-repo]: https://github.com/n0-computer/bao-tree/tree/v0.16.0
+[bt-repo]: https://github.com/n0-computer/bao-tree/tree/0d2e29163a52654ebf231e09ae87e4e207e21382
 [bt-docs]: https://docs.rs/bao-tree/0.16.0/bao_tree/
 [bp-alpn]: https://github.com/n0-computer/iroh-blobs/blob/e82cbdcbdac9a78033174aad55e3199b2cf4c0dc/src/protocol.rs#L406
 [bp-maxsize]: https://github.com/n0-computer/iroh-blobs/blob/e82cbdcbdac9a78033174aad55e3199b2cf4c0dc/src/protocol.rs#L395

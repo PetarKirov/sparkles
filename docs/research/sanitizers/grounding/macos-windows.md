@@ -128,7 +128,7 @@ hardware verification_ (rerun kit staged, open Q-row). Six discrepancies/surpris
 
 <!-- References -->
 
-[`ldc@v1.41.0`]: https://github.com/ldc-developers/ldc/tree/v1.41.0
+[`ldc@v1.41.0`]: https://github.com/ldc-developers/ldc/tree/90e39b6a6e61d36ef5f5d0ab6ae0667130fd8549
 [`llvm-project@73802c2e`]: https://github.com/llvm/llvm-project/tree/73802c2e9d102a4fb646bc039754779fca3ea476
 [`valgrind@218cee2f`]: https://sourceware.org/git/?p=valgrind.git;a=tree
 [`drmemory@3d2b5f9`]: https://github.com/DynamoRIO/drmemory
