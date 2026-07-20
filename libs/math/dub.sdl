@@ -13,9 +13,18 @@ importPaths "src" "../test-runner-impl/src"
 
 dflags "-preview=in" "-preview=dip1000"
 
+dependency "sparkles:core-cli" version="*"
+
 configuration "library" {
     targetType "library"
     excludedSourceFiles "src/app.d"
+}
+
+configuration "library-heavy" {
+    targetType "library"
+    excludedSourceFiles "src/app.d"
+
+    versions "VGAHeavyCompileTests"
 }
 
 configuration "unittest" {
@@ -23,6 +32,19 @@ configuration "unittest" {
 
     dependency "sparkles:test-runner" path="../.."
     dependency "sparkles:base" path="../.."
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
+
+configuration "unittest-heavy" {
+    excludedSourceFiles "src/app.d"
+
+    dependency "silly" version="~>1.1.1"
+
+    versions "VGAHeavyCompileTests"
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
