@@ -20,8 +20,6 @@
 module sparkles.base.styled_template;
 
 import core.interpolation;
-import std.algorithm.mutation : remove;
-import std.algorithm.searching : canFind;
 import std.sumtype : match, SumType;
 
 import sparkles.base.term_style : Style;
@@ -86,8 +84,9 @@ void writeStyled(bool colored = true, Writer, Args...)(
 @("writeStyled.chainedStyles")
 @safe unittest
 {
-    // bold.red applies both styles, closed in reverse order
-    assert(styledText(i"{bold.red text}") == "\x1b[1m\x1b[31mtext\x1b[39m\x1b[22m");
+    // bold.red applies both styles; groups close in a fixed order
+    // (intensity, then foreground colour).
+    assert(styledText(i"{bold.red text}") == "\x1b[1m\x1b[31mtext\x1b[22m\x1b[39m");
 }
 
 /// Interpolated expressions: `{green $(expr)}` styles the result of an expression.
@@ -119,7 +118,7 @@ void writeStyled(bool colored = true, Writer, Args...)(
         "\x1b[39m" ~         // red OFF (negated)
         "plain" ~
         "\x1b[31m" ~         // red ON (restored on exit)
-        "\x1b[39m\x1b[22m"   // red OFF, bold OFF
+        "\x1b[22m\x1b[39m"   // bold OFF, red OFF (group order: intensity, colour)
     );
 }
 
@@ -191,25 +190,24 @@ void writeStyled(bool colored = true, Writer, Args...)(
 // String Conversion
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Returns styled IES as a string.
-string styledText(Args...)(InterpolationHeader header, Args args, InterpolationFooter footer)
+/// Renders IES to a fresh string; `colored` selects styled vs stripped output.
+private string renderToString(bool colored, Args...)(
+    InterpolationHeader header, Args args, InterpolationFooter footer)
 {
     import std.array : appender;
 
     auto buf = appender!string;
-    writeStyled(buf, header, args, footer);
+    writeStyled!colored(buf, header, args, footer);
     return buf[];
 }
+
+/// Returns styled IES as a string.
+string styledText(Args...)(InterpolationHeader header, Args args, InterpolationFooter footer)
+    => renderToString!true(header, args, footer);
 
 /// Returns IES with style markup stripped as a plain string.
 string plainText(Args...)(InterpolationHeader header, Args args, InterpolationFooter footer)
-{
-    import std.array : appender;
-
-    auto buf = appender!string;
-    writeStyled!false(buf, header, args, footer);
-    return buf[];
-}
+    => renderToString!false(header, args, footer);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Lazy Wrapper
@@ -257,43 +255,37 @@ auto styled(Args...)(InterpolationHeader header, Args args, InterpolationFooter 
 // stdout/stderr Write Functions
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Backs the four public write wrappers: pick the stream (`toErr`) and whether
+/// to append a newline (`newline`).
+private void styledWriteTo(bool toErr, bool newline, Args...)(
+    InterpolationHeader header, Args args, InterpolationFooter footer)
+{
+    import std.stdio : stdout, stderr;
+
+    static if (toErr)
+        auto w = stderr.lockingTextWriter;
+    else
+        auto w = stdout.lockingTextWriter;
+    writeStyled(w, header, args, footer);
+    static if (newline)
+        w.put('\n');
+}
+
 /// Write styled IES to stdout.
 void styledWrite(Args...)(InterpolationHeader header, Args args, InterpolationFooter footer)
-{
-    import std.stdio : stdout;
-
-    auto w = stdout.lockingTextWriter;
-    writeStyled(w, header, args, footer);
-}
+    => styledWriteTo!(false, false)(header, args, footer);
 
 /// Write styled IES to stdout with newline.
 void styledWriteln(Args...)(InterpolationHeader header, Args args, InterpolationFooter footer)
-{
-    import std.stdio : stdout;
-
-    auto w = stdout.lockingTextWriter;
-    writeStyled(w, header, args, footer);
-    w.put('\n');
-}
+    => styledWriteTo!(false, true)(header, args, footer);
 
 /// Write styled IES to stderr.
 void styledWriteErr(Args...)(InterpolationHeader header, Args args, InterpolationFooter footer)
-{
-    import std.stdio : stderr;
-
-    auto w = stderr.lockingTextWriter;
-    writeStyled(w, header, args, footer);
-}
+    => styledWriteTo!(true, false)(header, args, footer);
 
 /// Write styled IES to stderr with newline.
 void styledWritelnErr(Args...)(InterpolationHeader header, Args args, InterpolationFooter footer)
-{
-    import std.stdio : stderr;
-
-    auto w = stderr.lockingTextWriter;
-    writeStyled(w, header, args, footer);
-    w.put('\n');
-}
+    => styledWriteTo!(true, true)(header, args, footer);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Style Name Lookup
@@ -481,8 +473,8 @@ unittest
 @("writeStyled.colorComposition")
 @safe unittest
 {
-    // bold + palette fg: opened in order, closed in reverse.
-    assert(styledText(i"{bold.@183 x}") == "\x1b[1m\x1b[38;5;183mx\x1b[39m\x1b[22m");
+    // bold + palette fg: opened and closed in a fixed group order.
+    assert(styledText(i"{bold.@183 x}") == "\x1b[1m\x1b[38;5;183mx\x1b[22m\x1b[39m");
     // nested: inner rgb inherits outer bold.
     assert(styledText(i"{bold A {#00ff00 B} C}")
         == "\x1b[1mA \x1b[38;2;0;255;0mB\x1b[39m C\x1b[22m");
@@ -498,211 +490,124 @@ unittest
 @("writeStyled.colorNestingRestoresOuter")
 @safe unittest
 {
-    // Foreground over foreground: exiting red must bring blue back, not default.
+    // Foreground over foreground: exiting red sets the fg straight back to blue
+    // (one absolute set, no redundant reset-then-reopen).
     assert(styledText(i"{blue A {red B} C}")
-        == "\x1b[34mA \x1b[31mB\x1b[39m\x1b[34m C\x1b[39m");
-    // Background over background: same restoration via 49.
+        == "\x1b[34mA \x1b[31mB\x1b[34m C\x1b[39m");
+    // Background over background: exiting the inner bg sets bg straight back.
     assert(styledText(i"{bg@235 A {bg@200 B} C}")
-        == "\x1b[48;5;235mA \x1b[48;5;200mB\x1b[49m\x1b[48;5;235m C\x1b[49m");
+        == "\x1b[48;5;235mA \x1b[48;5;200mB\x1b[48;5;235m C\x1b[49m");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Implementation Details
 // ─────────────────────────────────────────────────────────────────────────────
 
-private enum maxStylesPerBlock = 8;
 private enum maxNestingDepth = 16;
 
-/// A named `Style` — the classic 16 attrs/colors, an `[open, close]` code pair.
-private struct NamedStyle
+// Shared SGR reset codes: closing any style in one of these groups resets the
+// *whole* group, which is why the style model below tracks groups, not codes.
+private enum sgrResetIntensity = 22; // clears bold AND dim
+private enum sgrResetFg = 39;        // clears any foreground colour
+private enum sgrResetBg = 49;        // clears any background colour
+
+/// A foreground/background colour, as a sum of its representations.
+/// `DefaultColor` (also `Color.init`) is the terminal default; `AnsiColor` holds
+/// the full SGR open code (31 fg-red, 41 bg-red, 91/101 bright …) so the fg/bg
+/// distinction is already baked in; palette/rgb carry their parameters. As a
+/// `SumType`, structural `==` and exhaustive `match` come for free.
+private struct DefaultColor {}
+private struct AnsiColor { uint code; }
+private struct PaletteColor { ubyte index; }
+private struct RgbColor { ubyte r, g, b; }
+private alias Color = SumType!(DefaultColor, AnsiColor, PaletteColor, RgbColor);
+
+/// The resolved terminal style of one block — one field per independent SGR
+/// group. `TermStyle.init` is the terminal default (the root block). Because the
+/// groups are independent, a field-by-field diff (`emitTransition`) is correct
+/// by construction: there are no shared-close-code collisions to repair.
+private struct TermStyle
 {
-    Style style;
+    enum Intensity : ubyte { normal, bold, dim } /// SGR 1 / 2, shared reset 22
+    Intensity intensity;
+    bool italic;    /// 3 / 23
+    bool underline; /// 4 / 24
+    bool inverse;   /// 7 / 27
+    bool hidden;    /// 8 / 28
+    bool strike;    /// 9 / 29
+    Color fg;       /// reset 39
+    Color bg;       /// reset 49
 }
 
-/// A 256-palette color (`38;5;n` / `48;5;n`).
-private struct PaletteColor
-{
-    bool bg;     /// background vs foreground
-    ubyte index;
-}
-
-/// A 24-bit RGB color (`38;2;r;g;b` / `48;2;r;g;b`).
-private struct RgbColor
-{
-    bool bg;     /// background vs foreground
-    ubyte r, g, b;
-}
-
-/// One resolved style token on the block stack. Named tokens emit and compare
-/// exactly as before (existing markup is byte-for-byte unchanged); the palette /
-/// RGB alternatives carry the multi-parameter SGR that `Style` (`uint[2]`)
-/// cannot hold. As a `SumType`, `==` gives structural equality for free and
-/// `match` keeps the emit paths exhaustive.
-private alias StyleAtom = SumType!(NamedStyle, PaletteColor, RgbColor);
-
-/// The inert sentinel — a `Style.none` named token (also `StyleAtom.init`).
-private bool isNone(in StyleAtom a) @safe @nogc nothrow
-    => a.match!(
-        (NamedStyle n) => n.style == Style.none,
-        (PaletteColor _) => false,
-        (RgbColor _) => false,
-    );
-
-/// Emit the opening SGR sequence for `a`.
-private void emitOpen(Writer)(in StyleAtom a, ref Writer w)
+/// Emit the SGR that sets colour `c` on the fg (or `bg`) channel; the terminal
+/// default emits the channel reset (`39`/`49`).
+private void emitColorOpen(Writer)(in Color c, bool bg, ref Writer w)
 {
     import sparkles.base.text.writers : writeEscapeSeq, writeInteger;
     import std.range.primitives : put;
 
-    a.match!(
-        (NamedStyle n) => writeEscapeSeq(w, n.style[0]),
-        (PaletteColor c) {
-            put(w, c.bg ? "\x1b[48;5;" : "\x1b[38;5;");
-            writeInteger(w, c.index);
+    c.match!(
+        (DefaultColor _) => writeEscapeSeq(w, bg ? sgrResetBg : sgrResetFg),
+        (AnsiColor a) => writeEscapeSeq(w, a.code),
+        (PaletteColor p) {
+            put(w, bg ? "\x1b[48;5;" : "\x1b[38;5;");
+            writeInteger(w, p.index);
             put(w, 'm');
         },
-        (RgbColor c) {
-            put(w, c.bg ? "\x1b[48;2;" : "\x1b[38;2;");
-            writeInteger(w, c.r);
+        (RgbColor rgb) {
+            put(w, bg ? "\x1b[48;2;" : "\x1b[38;2;");
+            writeInteger(w, rgb.r);
             put(w, ';');
-            writeInteger(w, c.g);
+            writeInteger(w, rgb.g);
             put(w, ';');
-            writeInteger(w, c.b);
+            writeInteger(w, rgb.b);
             put(w, 'm');
         },
     );
 }
 
-/// Emit the closing SGR sequence for `a` (colors reset with `39`/`49`).
-private void emitClose(Writer)(in StyleAtom a, ref Writer w)
+/// Emit the minimal SGR codes to move the terminal FROM style `from` TO `to`.
+/// Each group is set absolutely, so the same function drives both block entry
+/// (`emitTransition(parent, child)`) and exit (`emitTransition(child, parent)`).
+private void emitTransition(Writer)(in TermStyle from, in TermStyle to, ref Writer w)
 {
     import sparkles.base.text.writers : writeEscapeSeq;
 
-    a.match!(
-        (NamedStyle n) => writeEscapeSeq(w, n.style[1]),
-        (PaletteColor c) => writeEscapeSeq(w, c.bg ? 49 : 39),
-        (RgbColor c) => writeEscapeSeq(w, c.bg ? 49 : 39),
-    );
-}
-
-/// The absolute SGR reset code an atom closes with: `39` = default foreground,
-/// `49` = default background, otherwise an independent attribute-off code.
-/// Two atoms sharing a code contend for the same terminal channel, so closing
-/// one clears the other — colors do not stack.
-@safe pure nothrow @nogc
-private int closeCode(in StyleAtom a)
-    => a.match!(
-        (NamedStyle n) => cast(int) n.style[1],
-        (PaletteColor c) => c.bg ? 49 : 39,
-        (RgbColor c) => c.bg ? 49 : 39,
-    );
-
-@safe
-private struct StyleState
-{
-    // Fixed array, not `SmallBuffer`: its accessors take a non-`scope` `this`,
-    // which the `in` (scope) `StyleState` parameters below reject under dip1000.
-    StyleAtom[maxStylesPerBlock] styles;
-    size_t count;
-
-    /// Emit escape sequences for transition FROM parent TO this state
-    void emitOpenDiff(Writer)(ref Writer w, in StyleState parent) const
+    if (from.intensity != to.intensity)
     {
-        // Close styles that were in parent but removed in this (negation)
-        foreach_reverse (i; 0 .. parent.count)
-            if (!parent.styles[i].isNone && !hasStyle(parent.styles[i]))
-                parent.styles[i].emitClose(w);
-
-        // Open styles that are new in this (not in parent)
-        foreach (i; 0 .. count)
-            if (!styles[i].isNone && !parent.hasStyle(styles[i]))
-                styles[i].emitOpen(w);
-
-        // A negated close above may emit a *shared* SGR reset (22 clears both
-        // bold and dim, 39 every fg colour, 49 every bg colour) that also turned
-        // off a style this block keeps (present in both). Re-open it so the kept
-        // style survives the negation — e.g. `~dim` must not also drop an active
-        // bold.
-        foreach (i; 0 .. count)
-            if (!styles[i].isNone && parent.hasStyle(styles[i])
-                && negatedClosesWith(styles[i].closeCode, parent))
-                styles[i].emitOpen(w);
+        final switch (to.intensity)
+        {
+            case TermStyle.Intensity.normal:
+                writeEscapeSeq(w, sgrResetIntensity);
+                break;
+            case TermStyle.Intensity.bold:
+                // dim and bold share one SGR state; reset first so a dim→bold
+                // switch is deterministic across terminals.
+                if (from.intensity == TermStyle.Intensity.dim)
+                    writeEscapeSeq(w, sgrResetIntensity);
+                writeEscapeSeq(w, 1);
+                break;
+            case TermStyle.Intensity.dim:
+                if (from.intensity == TermStyle.Intensity.bold)
+                    writeEscapeSeq(w, sgrResetIntensity);
+                writeEscapeSeq(w, 2);
+                break;
+        }
     }
-
-    /// Emit escape sequences for transition FROM this state back TO parent
-    void emitCloseDiff(Writer)(ref Writer w, in StyleState parent) const
-    {
-        // Close styles that were added in this (not in parent)
-        foreach_reverse (i; 0 .. count)
-            if (!styles[i].isNone && !parent.hasStyle(styles[i]))
-                styles[i].emitClose(w);
-
-        // A close above may emit a *shared* SGR reset (22 clears both bold and
-        // dim, 39 every fg colour, 49 every bg colour) that also turned off an
-        // inherited parent style with the same close code this block keeps
-        // (shadowed, not negated). The negation-restore loop below skips it
-        // because it is present here, so re-open it now.
-        foreach (i; 0 .. parent.count)
-            if (!parent.styles[i].isNone && hasStyle(parent.styles[i])
-                && closedByChildOnly(parent.styles[i].closeCode, parent))
-                parent.styles[i].emitOpen(w);
-
-        // Restore styles that were negated (in parent but not in this)
-        foreach (i; 0 .. parent.count)
-            if (!parent.styles[i].isNone && !hasStyle(parent.styles[i]))
-                parent.styles[i].emitOpen(w);
-    }
-
-    /// True if a style this block adds (present here, not in `parent`) closes
-    /// with SGR code `code` — i.e. its `emitClose` turns off that shared group.
-    private bool closedByChildOnly(int code, in StyleState parent) const @safe nothrow @nogc
-    {
-        foreach (i; 0 .. count)
-            if (!styles[i].isNone && !parent.hasStyle(styles[i])
-                && styles[i].closeCode == code)
-                return true;
-        return false;
-    }
-
-    /// True if a style this block negates (in `parent`, removed here) closes
-    /// with SGR code `code`.
-    private bool negatedClosesWith(int code, in StyleState parent) const @safe nothrow @nogc
-    {
-        foreach (i; 0 .. parent.count)
-            if (!parent.styles[i].isNone && !hasStyle(parent.styles[i])
-                && parent.styles[i].closeCode == code)
-                return true;
-        return false;
-    }
-
-    /// Emit opening escape sequences for all active styles
-    void emitOpen(Writer)(ref Writer w) const
-    {
-        emitOpenDiff(w, StyleState.init);
-    }
-
-    /// Emit closing escape sequences for all active styles (reverse order)
-    void emitClose(Writer)(ref Writer w) const
-    {
-        emitCloseDiff(w, StyleState.init);
-    }
-
-    /// Check if a style is currently active
-    bool hasStyle(in StyleAtom s) const @nogc nothrow => styles[0 .. count].canFind(s);
-
-    /// Add a style if not already present
-    void addStyle(in StyleAtom s) @nogc nothrow
-    {
-        if (!s.isNone && !hasStyle(s) && count < styles.length)
-            styles[count++] = s;
-    }
-
-    /// Remove a style
-    void removeStyle(in StyleAtom s) @nogc nothrow
-        => cast(void)(count = styles[0 .. count].remove!(a => a == s).length);
-
-    /// Check if any styles are active
-    bool empty() const @nogc nothrow => count == 0;
+    if (from.italic != to.italic)
+        writeEscapeSeq(w, to.italic ? 3 : 23);
+    if (from.underline != to.underline)
+        writeEscapeSeq(w, to.underline ? 4 : 24);
+    if (from.inverse != to.inverse)
+        writeEscapeSeq(w, to.inverse ? 7 : 27);
+    if (from.hidden != to.hidden)
+        writeEscapeSeq(w, to.hidden ? 8 : 28);
+    if (from.strike != to.strike)
+        writeEscapeSeq(w, to.strike ? 9 : 29);
+    if (from.fg != to.fg)
+        emitColorOpen(to.fg, false, w);
+    if (from.bg != to.bg)
+        emitColorOpen(to.bg, true, w);
 }
 
 private enum ParseState
@@ -715,9 +620,8 @@ private enum ParseState
 @safe
 private struct ParserContext
 {
-    // Fixed array (see `StyleState.styles`); overflow past the cap is tracked,
-    // not allocated.
-    StyleState[maxNestingDepth] styleStack;
+    // Fixed stack; nesting past the cap is tracked (overflowDepth), not pushed.
+    TermStyle[maxNestingDepth] styleStack;
     size_t stackDepth;
     /// Tracks pushes that were dropped due to stack overflow
     size_t overflowDepth;
@@ -725,7 +629,7 @@ private struct ParserContext
     size_t styleNameStart;
     size_t styleNameEnd;
 
-    void pushStyle(StyleState s) @nogc nothrow
+    void pushStyle(TermStyle s) @nogc nothrow
     {
         if (stackDepth < styleStack.length)
             styleStack[stackDepth++] = s;
@@ -741,15 +645,11 @@ private struct ParserContext
             stackDepth--;
     }
 
-    ref StyleState topStyle() return @nogc nothrow
-    {
-        return styleStack[stackDepth > 0 ? stackDepth - 1 : 0];
-    }
+    ref TermStyle topStyle() return @nogc nothrow
+        => styleStack[stackDepth > 0 ? stackDepth - 1 : 0];
 
-    StyleState parentStyle() const @nogc nothrow
-    {
-        return stackDepth > 1 ? styleStack[stackDepth - 2] : StyleState.init;
-    }
+    TermStyle parentStyle() const @nogc nothrow
+        => stackDepth > 1 ? styleStack[stackDepth - 2] : TermStyle.init;
 
     bool hasStyles() const @nogc nothrow => stackDepth > 0;
 }
@@ -772,46 +672,30 @@ private void parseLiteral(bool colored = true, Writer)(
         final switch (ctx.state)
         {
             case ParseState.normal:
-                if (c == '#' && i + 1 < literal.length)
-                {
-                    const char next = literal[i + 1];
-                    if (next == '{' || next == '}')
-                    {
-                        put(w, next);
-                        i += 2;
-                        continue;
-                    }
-                    put(w, c);
-                }
-                else if (c == '{')
+                if (tryBraceEscape(w, literal, i))
+                    continue;
+                if (c == '{')
                 {
                     ctx.state = ParseState.styleName;
                     ctx.styleNameStart = i + 1;
                     ctx.styleNameEnd = i + 1;
                 }
-                else if (c == '}')
-                {
-                    put(w, c);
-                }
                 else
-                {
-                    put(w, c);
-                }
+                    put(w, c); // regular char, or a lone '}' outside any block
                 break;
 
             case ParseState.styleName:
                 if (c == ' ')
                 {
-                    // End of style names, apply and switch to content
+                    // End of style names: resolve the block and open it. A block
+                    // dropped past the depth cap was never pushed, so `topStyle`
+                    // still refers to its parent — emitting would re-diff the
+                    // parent against its own parent (spurious codes).
                     auto spec = literal[ctx.styleNameStart .. ctx.styleNameEnd];
                     applyStyleSpec(spec, ctx);
-                    // Only emit styles that are NEW (not inherited from parent);
-                    // a block dropped past the depth cap was never pushed, so
-                    // `topStyle` still refers to its parent — emitting would
-                    // re-diff the parent against its own parent (spurious codes).
                     static if (colored)
                         if (ctx.overflowDepth == 0)
-                            ctx.topStyle.emitOpenDiff(w, ctx.parentStyle);
+                            emitTransition(ctx.parentStyle, ctx.topStyle, w);
                     ctx.state = ParseState.content;
                 }
                 else if (c == '}')
@@ -828,24 +712,15 @@ private void parseLiteral(bool colored = true, Writer)(
                 }
                 else
                 {
-                    // Accumulate style name
+                    // Accumulate style name (# / @ colour literals live here too)
                     ctx.styleNameEnd = i + 1;
                 }
                 break;
 
             case ParseState.content:
-                if (c == '#' && i + 1 < literal.length)
-                {
-                    const char next = literal[i + 1];
-                    if (next == '{' || next == '}')
-                    {
-                        put(w, next);
-                        i += 2;
-                        continue;
-                    }
-                    put(w, c);
-                }
-                else if (c == '{')
+                if (tryBraceEscape(w, literal, i))
+                    continue;
+                if (c == '{')
                 {
                     // Nested block
                     ctx.state = ParseState.styleName;
@@ -854,110 +729,180 @@ private void parseLiteral(bool colored = true, Writer)(
                 }
                 else if (c == '}')
                 {
-                    // End of block - close only styles that were added in this
-                    // block; a block dropped past the depth cap emitted nothing
-                    // on entry, so it must emit nothing on exit either.
+                    // End of block; a block dropped past the depth cap emitted
+                    // nothing on entry, so it emits nothing on exit either.
                     static if (colored)
                         if (ctx.overflowDepth == 0)
-                            ctx.topStyle.emitCloseDiff(w, ctx.parentStyle);
+                            emitTransition(ctx.topStyle, ctx.parentStyle, w);
                     ctx.popStyle();
                     ctx.state = ctx.hasStyles ? ParseState.content : ParseState.normal;
                 }
                 else
-                {
                     put(w, c);
-                }
                 break;
         }
         i++;
     }
 }
 
-/// Parses style specification like "bold.red" or "~red.bold"
+/// Consume a `#{` / `#}` escape at `literal[i]`, emitting the literal brace and
+/// advancing `i` past both characters. Returns `true` (caller should `continue`)
+/// when an escape was consumed; a lone `#` is left for the normal path. Used by
+/// the `normal` and `content` states, which handle escapes identically.
+private bool tryBraceEscape(Writer)(ref Writer w, const(char)[] literal, ref size_t i)
+{
+    import std.range.primitives : put;
+
+    if (literal[i] == '#' && i + 1 < literal.length
+        && (literal[i + 1] == '{' || literal[i + 1] == '}'))
+    {
+        put(w, literal[i + 1]);
+        i += 2;
+        return true;
+    }
+    return false;
+}
+
+/// Resolves a dot-separated spec ("bold.red", "~red.bold") into a child style
+/// seeded from the current top, and pushes it onto the block stack.
 @safe nothrow @nogc
 private void applyStyleSpec(const(char)[] spec, ref ParserContext ctx)
 {
-    // Create new style state based on parent (or empty if root)
-    StyleState newState = ctx.hasStyles ? ctx.topStyle : StyleState.init;
+    // Inherit the parent block's style (or the terminal default at the root).
+    TermStyle newState = ctx.hasStyles ? ctx.topStyle : TermStyle.init;
 
-    // Parse dot-separated style names
     size_t start = 0;
     foreach (i, c; spec)
     {
         if (c == '.')
         {
             if (i > start)
-                applyStylePart(spec[start .. i], newState);
+                applyStyleName(spec[start .. i], newState);
             start = i + 1;
         }
     }
-    // Handle last part
     if (start < spec.length)
-        applyStylePart(spec[start .. $], newState);
+        applyStyleName(spec[start .. $], newState);
 
     ctx.pushStyle(newState);
 }
 
+/// Applies one dot-part token to `style`: strips the `~` negation prefix, then
+/// dispatches to a colour literal (`#RGB`/`#RRGGBB`, `@N`, each `bg`-prefixable)
+/// or a named style. Unknown/malformed tokens are ignored.
 @safe nothrow @nogc
-private void applyStylePart(const(char)[] part, ref StyleState state)
+private void applyStyleName(const(char)[] token, ref TermStyle style)
 {
-    if (part.length == 0)
+    if (token.length == 0)
         return;
 
-    const negate = part[0] == '~';
-    const(char)[] name = negate ? part[1 .. $] : part;
+    const negate = token[0] == '~';
+    const(char)[] name = negate ? token[1 .. $] : token;
 
-    StyleAtom atom;
-    if (!resolveStyleAtom(name, atom))
-        return;
-
-    if (negate)
-        state.removeStyle(atom);
-    else
-        state.addStyle(atom);
-}
-
-/// Resolves one style token to a `StyleAtom`. Beyond the named styles
-/// (`styleFromName`), recognizes 24-bit `#RGB`/`#RRGGBB` and 256-palette `@N`
-/// foreground colors, each with a `bg` prefix (`bg#…`, `bg@N`) for background.
-/// Returns `false` (token ignored) on an unknown name or malformed color.
-@safe nothrow @nogc
-private bool resolveStyleAtom(const(char)[] name, out StyleAtom atom)
-{
+    // Colour literal (`#…` / `@…`), optionally `bg`-prefixed. Named `bgRed` etc.
+    // fall through to `styleFromName`.
     bool bg;
-    // `bg` only prefixes a color literal here; named `bgRed` etc. fall through.
     if (name.length > 2 && name[0 .. 2] == "bg" && (name[2] == '#' || name[2] == '@'))
     {
         bg = true;
         name = name[2 .. $];
     }
+    if (name.length && (name[0] == '#' || name[0] == '@'))
+    {
+        Color c;
+        if (parseColorLiteral(name, c))
+            applyColor(style, bg, c, negate);
+        return;
+    }
 
-    if (name.length && name[0] == '#')
+    // Named style: `none` is a no-op, `reset` clears every group, otherwise
+    // dispatch by SGR group.
+    const s = styleFromName(name);
+    if (s == Style.none)
+        return;
+    if (s == Style.reset)
+    {
+        if (!negate)
+            style = TermStyle.init;
+        return;
+    }
+    applyNamed(style, s, negate);
+}
+
+/// Parses a `#RGB`/`#RRGGBB` or `@N` colour literal (the `bg` prefix already
+/// stripped) into `c`. Returns false on malformed input.
+@safe nothrow @nogc
+private bool parseColorLiteral(const(char)[] name, out Color c)
+{
+    if (name[0] == '#')
     {
         ubyte r, g, b;
         if (!parseHexColor(name[1 .. $], r, g, b))
             return false;
-        atom = StyleAtom(RgbColor(bg, r, g, b));
+        c = Color(RgbColor(r, g, b));
         return true;
     }
 
-    if (name.length && name[0] == '@')
-    {
-        import sparkles.base.text.readers : readInteger;
+    // name[0] == '@' — 256-palette index; the whole token must be the number.
+    import sparkles.base.text.readers : readInteger;
 
-        auto rest = name[1 .. $];
-        auto idx = readInteger!ubyte(rest);
-        if (idx.hasError || rest.length != 0) // the whole token must be the index
-            return false;
-        atom = StyleAtom(PaletteColor(bg, idx.value));
-        return true;
-    }
-
-    const s = styleFromName(name);
-    if (s == Style.none)
+    auto rest = name[1 .. $];
+    auto idx = readInteger!ubyte(rest);
+    if (idx.hasError || rest.length != 0)
         return false;
-    atom = StyleAtom(NamedStyle(s));
+    c = Color(PaletteColor(idx.value));
     return true;
+}
+
+/// Sets the fg (or `bg`) colour slot, or — when negating — clears it only if it
+/// currently holds exactly `c` (matching the old "remove if present" semantics,
+/// so `~red` on a green foreground is a no-op).
+@safe nothrow @nogc
+private void applyColor(ref TermStyle style, bool bg, in Color c, bool negate)
+{
+    if (negate)
+    {
+        if (bg)
+        {
+            if (style.bg == c)
+                style.bg = Color.init;
+        }
+        else if (style.fg == c)
+            style.fg = Color.init;
+    }
+    else if (bg)
+        style.bg = c;
+    else
+        style.fg = c;
+}
+
+/// Applies a named `Style` (never `none`/`reset`) to its SGR group, keyed by the
+/// close code `s[1]`. Negation clears the group only when it currently holds this
+/// exact style, preserving the old per-token "remove if present" behaviour.
+@safe nothrow @nogc
+private void applyNamed(ref TermStyle style, Style s, bool negate)
+{
+    switch (s[1])
+    {
+        case sgrResetIntensity: // 22 — bold (open 1) or dim (open 2)
+            const want = s[0] == 1 ? TermStyle.Intensity.bold : TermStyle.Intensity.dim;
+            if (negate)
+            {
+                if (style.intensity == want)
+                    style.intensity = TermStyle.Intensity.normal;
+            }
+            else
+                style.intensity = want;
+            break;
+        case 23: style.italic = !negate; break;
+        case 24: style.underline = !negate; break;
+        case 27: style.inverse = !negate; break;
+        case 28: style.hidden = !negate; break;
+        case 29: style.strike = !negate; break;
+        case sgrResetFg: applyColor(style, false, Color(AnsiColor(s[0])), negate); break;
+        case sgrResetBg: applyColor(style, true, Color(AnsiColor(s[0])), negate); break;
+        default: break; // unknown group — ignore
+    }
 }
 
 /// A hex-digit pair → one byte (`"ff"` → 255). Reuses `readers.hexNibble`; both
@@ -1033,13 +978,15 @@ private bool parseHexColor(const(char)[] hex, out ubyte r, out ubyte g, out ubyt
 /// ---
 ///
 /// Expected escape sequence flow:
+/// Styles are emitted in a fixed group order (intensity, italic, underline,
+/// inverse, hidden, strike, fg, bg) on every transition:
 /// - [1m[3m[31m  → bold on, italic on, red on
 /// - "A"
-/// - [39m[4m     → red off, underline on
+/// - [4m[39m     → underline on, red off
 /// - "B"
 /// - [36m        → cyan on
 /// - "C"
-/// - [23m[22m    → italic off, bold off (reverse order of parent array)
+/// - [22m[23m    → bold off, italic off
 /// - "D"
 /// - [1m[3m      → bold on, italic on (restore)
 /// - "E"
@@ -1047,7 +994,7 @@ private bool parseHexColor(const(char)[] hex, out ubyte r, out ubyte g, out ubyt
 /// - "F"
 /// - [24m[31m    → underline off, red on (restore)
 /// - "G"
-/// - [39m[23m[22m → red off, italic off, bold off
+/// - [22m[23m[39m → bold off, italic off, red off
 @("styled.complexNestingWithNegation")
 @safe unittest
 {
@@ -1060,12 +1007,11 @@ private bool parseHexColor(const(char)[] hex, out ubyte r, out ubyte g, out ubyt
     assert(result ==
         "\x1b[1m\x1b[3m\x1b[31m" ~  // bold, italic, red ON
         "A" ~
-        "\x1b[39m" ~                // red OFF (negated)
-        "\x1b[4m" ~                 // underline ON (added)
+        "\x1b[4m\x1b[39m" ~         // underline ON, red OFF (group order)
         "B" ~
         "\x1b[36m" ~                // cyan ON (added)
         "C" ~
-        "\x1b[23m\x1b[22m" ~        // italic OFF, bold OFF (reverse order)
+        "\x1b[22m\x1b[23m" ~        // bold OFF, italic OFF (group order)
         "D" ~
         "\x1b[1m\x1b[3m" ~          // bold ON, italic ON (restored)
         "E" ~
@@ -1074,7 +1020,7 @@ private bool parseHexColor(const(char)[] hex, out ubyte r, out ubyte g, out ubyt
         "\x1b[24m" ~                // underline OFF (exiting underline block)
         "\x1b[31m" ~                // red ON (restored from negation)
         "G" ~
-        "\x1b[39m\x1b[23m\x1b[22m"  // red OFF, italic OFF, bold OFF
+        "\x1b[22m\x1b[23m\x1b[39m"  // bold OFF, italic OFF, red OFF (group order)
     );
 }
 
@@ -1090,11 +1036,11 @@ private bool parseHexColor(const(char)[] hex, out ubyte r, out ubyte g, out ubyt
     assert(result ==
         "\x1b[1m\x1b[3m\x1b[4m" ~   // bold, italic, underline ON
         "outer " ~
-        "\x1b[24m\x1b[22m" ~        // underline OFF, bold OFF (reverse order)
+        "\x1b[22m\x1b[24m" ~        // bold OFF, underline OFF (group order)
         "inner" ~
         "\x1b[1m\x1b[4m" ~          // bold ON, underline ON (restored)
         " outer" ~
-        "\x1b[24m\x1b[23m\x1b[22m"  // underline OFF, italic OFF, bold OFF
+        "\x1b[22m\x1b[23m\x1b[24m"  // bold OFF, italic OFF, underline OFF (group order)
     );
 }
 
@@ -1110,7 +1056,7 @@ private bool parseHexColor(const(char)[] hex, out ubyte r, out ubyte g, out ubyt
         "parent " ~
         "\x1b[4m\x1b[36m" ~         // underline ON, cyan ON (new styles)
         "child" ~
-        "\x1b[39m\x1b[24m" ~        // cyan OFF, underline OFF
+        "\x1b[24m\x1b[39m" ~        // underline OFF, cyan OFF (group order)
         " parent" ~
         "\x1b[22m"                  // bold OFF
     );
@@ -1147,13 +1093,11 @@ private bool parseHexColor(const(char)[] hex, out ubyte r, out ubyte g, out ubyt
     assert(result ==
         "\x1b[1m\x1b[31m" ~  // bold ON, red ON
         "start " ~
-        "\x1b[39m" ~         // red OFF (negated)
-        "\x1b[36m" ~         // cyan ON (added)
+        "\x1b[36m" ~         // fg: red -> cyan (one absolute set, no 39 first)
         "middle" ~
-        "\x1b[39m" ~         // cyan OFF
-        "\x1b[31m" ~         // red ON (restored)
+        "\x1b[31m" ~         // fg: cyan -> red (restored directly)
         " end" ~
-        "\x1b[39m\x1b[22m"   // red OFF, bold OFF
+        "\x1b[22m\x1b[39m"   // bold OFF, red OFF (group order)
     );
 }
 
@@ -1184,7 +1128,7 @@ private bool parseHexColor(const(char)[] hex, out ubyte r, out ubyte g, out ubyt
 @safe unittest
 {
     auto result = styledText(i"{red.bgWhite text}");
-    assert(result == "\x1b[31m\x1b[47mtext\x1b[49m\x1b[39m");
+    assert(result == "\x1b[31m\x1b[47mtext\x1b[39m\x1b[49m");
 }
 
 /// Unknown style names in a spec are silently ignored (treated as Style.none).
@@ -1218,11 +1162,11 @@ private bool parseHexColor(const(char)[] hex, out ubyte r, out ubyte g, out ubyt
     assert(result ==
         "\x1b[1m\x1b[31m" ~  // bold ON, red ON
         "outer " ~
-        "\x1b[39m\x1b[22m" ~ // red OFF, bold OFF (negated)
+        "\x1b[22m\x1b[39m" ~ // bold OFF, red OFF (negated, group order)
         "inner" ~
         "\x1b[1m\x1b[31m" ~  // bold ON, red ON (restored)
         " outer" ~
-        "\x1b[39m\x1b[22m"   // red OFF, bold OFF
+        "\x1b[22m\x1b[39m"   // bold OFF, red OFF (group order)
     );
 }
 
@@ -1304,7 +1248,7 @@ private bool parseHexColor(const(char)[] hex, out ubyte r, out ubyte g, out ubyt
 @safe unittest
 {
     // "bold..red" → "bold", empty (skipped), "red"
-    assert(styledText(i"{bold..red text}") == "\x1b[1m\x1b[31mtext\x1b[39m\x1b[22m");
+    assert(styledText(i"{bold..red text}") == "\x1b[1m\x1b[31mtext\x1b[22m\x1b[39m");
 }
 
 /// Single character content in a styled block.
@@ -1379,39 +1323,30 @@ private bool parseHexColor(const(char)[] hex, out ubyte r, out ubyte g, out ubyt
     );
 }
 
-/// Maximum styles per block (8) — adding an 8th style works.
-@("styled.maxStylesPerBlock")
+/// Every SGR group can be set in one block — the group model has no
+/// styles-per-block cap. Codes are emitted in the fixed group order (intensity,
+/// italic, underline, inverse, hidden, strike, fg, bg) and closed the same way.
+@("styled.allGroupsInOneBlock")
 @safe unittest
 {
-    // 8 distinct styles: bold, italic, underline, dim, inverse, strikethrough, red, bgBlue
     auto result = styledText(
-        i"{bold.italic.underline.dim.inverse.strikethrough.red.bgBlue X}"
+        i"{bold.italic.underline.inverse.hidden.strikethrough.red.bgBlue X}"
     );
 
-    // All 8 open codes, then text, then all 8 close codes (reverse order)
     assert(result ==
-        "\x1b[1m\x1b[3m\x1b[4m\x1b[2m\x1b[7m\x1b[9m\x1b[31m\x1b[44m" ~
+        "\x1b[1m\x1b[3m\x1b[4m\x1b[7m\x1b[8m\x1b[9m\x1b[31m\x1b[44m" ~
         "X" ~
-        "\x1b[49m\x1b[39m\x1b[29m\x1b[27m\x1b[22m\x1b[24m\x1b[23m\x1b[22m"
+        "\x1b[22m\x1b[23m\x1b[24m\x1b[27m\x1b[28m\x1b[29m\x1b[39m\x1b[49m"
     );
 }
 
-/// Exceeding maxStylesPerBlock (8) — the 9th style is silently dropped.
-@("styled.overflowStylesPerBlock")
+/// Two colours on the same channel collapse to the last (one fg / one bg slot),
+/// just like the intensity group — there is no hidden stack of shadowed colours.
+@("styled.colorGroupLastWins")
 @safe unittest
 {
-    // 9 styles: hidden is the 9th
-    auto result = styledText(
-        i"{bold.italic.underline.dim.inverse.strikethrough.red.bgBlue.hidden X}"
-    );
-
-    // "hidden" is dropped (addStyle no-op because count >= length)
-    // Same output as maxStylesPerBlock test
-    assert(result ==
-        "\x1b[1m\x1b[3m\x1b[4m\x1b[2m\x1b[7m\x1b[9m\x1b[31m\x1b[44m" ~
-        "X" ~
-        "\x1b[49m\x1b[39m\x1b[29m\x1b[27m\x1b[22m\x1b[24m\x1b[23m\x1b[22m"
-    );
+    assert(styledText(i"{red.green x}") == "\x1b[32mx\x1b[39m");
+    assert(styledText(i"{bgRed.bgBlue x}") == "\x1b[44mx\x1b[49m");
 }
 
 /// Empty string input.
@@ -1447,57 +1382,52 @@ private bool parseHexColor(const(char)[] hex, out ubyte r, out ubyte g, out ubyt
 @("styled.innerReplacesColor")
 @safe unittest
 {
-    // {red ... {green ...} ...} — green temporarily shadows the inherited red.
-    // Inner block inherits [red] and adds green → [red, green]. Closing green
-    // emits 39 (default fg), which also clears red, so red must be re-opened.
+    // {red ... {green ...} ...} — green shadows the inherited red on the single
+    // fg slot; exiting the inner block sets the fg straight back to red.
     auto result = styledText(i"{red A {green B} C}");
     assert(result ==
         "\x1b[31m" ~      // red ON
         "A " ~
-        "\x1b[32m" ~      // green ON (added to inherited red)
+        "\x1b[32m" ~      // green ON (fg: red -> green)
         "B" ~
-        "\x1b[39m" ~      // green OFF (close code for green = 39, resets fg)
-        "\x1b[31m" ~      // red restored (inherited color re-opened on the fg channel)
+        "\x1b[31m" ~      // fg: green -> red (one absolute set, no 39 first)
         " C" ~
         "\x1b[39m"        // red OFF
     );
 }
 
-/// Negation with `~` on a style that uses the same close code as another
-/// active style (e.g., both bold and dim close with code 22). Closing dim
-/// emits 22, which also clears the still-active bold, so bold must be re-opened
-/// for the inner content.
-@("styled.negationSharedCloseCode")
+/// Intensity is a single group: bold and dim share one SGR slot, so the last
+/// one in a spec wins (they can never both be active), and negation clears it.
+@("styled.intensityGroupLastWins")
 @safe unittest
 {
-    // bold and dim both have close code 22
-    auto result = styledText(i"{bold.dim text {~dim inner} text}");
+    // Same-group tokens collapse to the last: `bold.dim` == dim, `dim.bold` == bold.
+    assert(styledText(i"{bold.dim x}") == "\x1b[2mx\x1b[22m");
+    assert(styledText(i"{dim.bold x}") == "\x1b[1mx\x1b[22m");
+
+    // Negating the active intensity clears it (22); the outer intensity is set
+    // absolutely on the way back in, no shared-close-code repair needed.
+    auto result = styledText(i"{dim text {~dim inner} text}");
     assert(result ==
-        "\x1b[1m\x1b[2m" ~   // bold ON, dim ON
+        "\x1b[2m" ~     // dim ON
         "text " ~
-        "\x1b[22m\x1b[1m" ~  // dim OFF (via 22, kills bold too) then bold restored
+        "\x1b[22m" ~    // dim OFF (negated)
         "inner" ~
-        "\x1b[2m" ~          // dim restored (bold still on)
+        "\x1b[2m" ~     // dim restored
         " text" ~
-        "\x1b[22m\x1b[22m"   // dim OFF, bold OFF
+        "\x1b[22m"      // dim OFF
     );
 }
 
-/// Shared-close-code restoration across nesting (not negation): an inner block
-/// adding a style that shares a close code with an inherited one must restore
-/// the inherited style on exit. `22` (bold/dim) mirrors the `39`/`49` colour
-/// cases in `colorNestingRestoresOuter`.
-@("styled.sharedCloseCodeNestingRestoresOuter")
+/// Nesting a different intensity: the dim↔bold switch resets the group first
+/// (22) then sets the target, so it is deterministic across terminals, and the
+/// parent intensity is set absolutely on exit.
+@("styled.intensityNestingIsAbsolute")
 @safe unittest
 {
-    // dim inherited, inner adds bold; exiting bold emits 22, which also clears
-    // dim, so dim must be re-opened for " C".
+    // dim inherited, inner switches to bold: 22 then 1 going in, 22 then 2 out.
     assert(styledText(i"{dim A {bold B} C}")
-        == "\x1b[2mA \x1b[1mB\x1b[22m\x1b[2m C\x1b[22m");
-    // Negating one fg colour while another remains: `~green` emits 39, clearing
-    // the still-active red, which must be restored for "in".
-    assert(styledText(i"{red.green o {~green in} o}")
-        == "\x1b[31m\x1b[32mo \x1b[39m\x1b[31min\x1b[32m o\x1b[39m\x1b[39m");
+        == "\x1b[2mA \x1b[22m\x1b[1mB\x1b[22m\x1b[2m C\x1b[22m");
 }
 
 /// Style block immediately after an escaped brace.
@@ -1585,10 +1515,10 @@ private bool parseHexColor(const(char)[] hex, out ubyte r, out ubyte g, out ubyt
     assert(result ==
         "\x1b[1m\x1b[3m\x1b[4m" ~   // bold, italic, underline ON
         "outer " ~
-        "\x1b[24m\x1b[23m\x1b[22m" ~ // underline OFF, italic OFF, bold OFF
+        "\x1b[22m\x1b[23m\x1b[24m" ~ // bold OFF, italic OFF, underline OFF (group order)
         "plain" ~
         "\x1b[1m\x1b[3m\x1b[4m" ~   // bold, italic, underline ON (restored)
         " outer" ~
-        "\x1b[24m\x1b[23m\x1b[22m"  // underline OFF, italic OFF, bold OFF
+        "\x1b[22m\x1b[23m\x1b[24m"  // bold OFF, italic OFF, underline OFF (group order)
     );
 }
