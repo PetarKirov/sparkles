@@ -276,14 +276,14 @@ this index's classifications derive from them. The pinned upstream artifacts are
 
 <!-- Upstream repositories -->
 
-[repo-iroh]: https://github.com/n0-computer/iroh/tree/22cac742ca
-[repo-noq]: https://github.com/n0-computer/noq/tree/noq-v1.0.1
-[repo-blobs]: https://github.com/n0-computer/iroh-blobs/tree/v0.103.0
-[repo-docs]: https://github.com/n0-computer/iroh-docs/tree/v0.101.0
-[repo-gossip]: https://github.com/n0-computer/iroh-gossip/tree/v0.101.0
-[repo-bao]: https://github.com/n0-computer/bao-tree/tree/v0.16.0
-[repo-util]: https://github.com/n0-computer/iroh-util/tree/v0.6.0
-[repo-irpc]: https://github.com/n0-computer/irpc/tree/v0.17.0
+[repo-iroh]: https://github.com/n0-computer/iroh/tree/22cac742ca5e84da4542681e14b2d23b74c8330e
+[repo-noq]: https://github.com/n0-computer/noq/tree/340e9c7da0d60eda6f5c7ffa7a36d20ed8d793fd
+[repo-blobs]: https://github.com/n0-computer/iroh-blobs/tree/e82cbdcbdac9a78033174aad55e3199b2cf4c0dc
+[repo-docs]: https://github.com/n0-computer/iroh-docs/tree/091e8cac47bbc49cdb84b0bfed227cc163b61dfe
+[repo-gossip]: https://github.com/n0-computer/iroh-gossip/tree/2ce78afe09d89d41d123f28eac19bdc831609cc8
+[repo-bao]: https://github.com/n0-computer/bao-tree/tree/0d2e29163a52654ebf231e09ae87e4e207e21382
+[repo-util]: https://github.com/n0-computer/iroh-util/tree/2b5447abf79bc0d7c02c202f2cc21f44f42d39fa
+[repo-irpc]: https://github.com/n0-computer/irpc/tree/0ed2b235d5c797b54d8263ecb3b0247272d055f9
 [repo-nettools]: https://github.com/n0-computer/net-tools
 
 <!-- docs.rs -->

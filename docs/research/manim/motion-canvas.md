@@ -514,7 +514,7 @@ Primary sources (docs pinned to the live site; source pinned to tag
 <!-- External: Motion Canvas docs (live) + source pinned to v3.17.2 -->
 
 [repo]: https://github.com/motion-canvas/motion-canvas
-[repo-tag]: https://github.com/motion-canvas/motion-canvas/tree/v3.17.2
+[repo-tag]: https://github.com/motion-canvas/motion-canvas/tree/e735a995aa738ca682feb4204a39ee7db7b5d279
 [readme]: https://github.com/motion-canvas/motion-canvas/blob/e735a995aa738ca682feb4204a39ee7db7b5d279/README.md
 [license]: https://github.com/motion-canvas/motion-canvas/blob/e735a995aa738ca682feb4204a39ee7db7b5d279/LICENSE
 [docs]: https://motioncanvas.io/docs/

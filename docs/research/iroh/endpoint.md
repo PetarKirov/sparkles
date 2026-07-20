@@ -467,7 +467,7 @@ Three constructs have **no event-horizon equivalent and need new design**:
 
 <!-- References -->
 
-[repo]: https://github.com/n0-computer/iroh/tree/22cac742ca
+[repo]: https://github.com/n0-computer/iroh/tree/22cac742ca5e84da4542681e14b2d23b74c8330e
 [docs]: https://docs.rs/iroh/1.0.1/iroh/
 [ep-struct]: https://github.com/n0-computer/iroh/blob/22cac742ca5e84da4542681e14b2d23b74c8330e/iroh/src/endpoint.rs#L897
 [ep-single]: https://github.com/n0-computer/iroh/blob/22cac742ca5e84da4542681e14b2d23b74c8330e/iroh/src/endpoint.rs#L861

@@ -677,7 +677,7 @@ host resolution.
 
 <!-- References -->
 
-[repo]: https://github.com/n0-computer/iroh/tree/22cac742ca
+[repo]: https://github.com/n0-computer/iroh/tree/22cac742ca5e84da4542681e14b2d23b74c8330e
 [docs-iroh]: https://docs.rs/iroh/1.0.1/iroh/address_lookup/index.html
 [docs-dns]: https://docs.rs/iroh-dns/1.0.1/iroh_dns/
 [docs-dns-server]: https://docs.rs/iroh-dns-server/1.0.1/iroh_dns_server/

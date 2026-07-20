@@ -755,7 +755,7 @@ and is drawn in — the [comparison capstone][comparison].
 
 <!-- Pinned artifact: dnadlinger/phobos units branch @ 4a7279a -->
 
-[repo-n]: https://github.com/dnadlinger/phobos/tree/units
+[repo-n]: https://github.com/dnadlinger/phobos/tree/4a7279a7759495df1f8e2793fd5ccd4a3a80cd46
 [units-d-file]: https://github.com/dnadlinger/phobos/blob/4a7279a7759495df1f8e2793fd5ccd4a3a80cd46/std/units.d
 [si-n]: https://github.com/dnadlinger/phobos/blob/4a7279a7759495df1f8e2793fd5ccd4a3a80cd46/std/si.d
 

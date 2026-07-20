@@ -391,7 +391,7 @@ The clean-close handshake needs the [noq][quic-transport] stream API equivalents
 [docs-api]: https://github.com/n0-computer/iroh-docs/blob/091e8cac47bbc49cdb84b0bfed227cc163b61dfe/src/api.rs
 [docs-api-proto]: https://github.com/n0-computer/iroh-docs/blob/091e8cac47bbc49cdb84b0bfed227cc163b61dfe/src/api/protocol.rs
 [irpc-lib]: https://github.com/n0-computer/irpc/blob/0ed2b235d5c797b54d8263ecb3b0247272d055f9/src/lib.rs
-[iroh-repo]: https://github.com/n0-computer/iroh/tree/22cac742ca
+[iroh-repo]: https://github.com/n0-computer/iroh/tree/22cac742ca5e84da4542681e14b2d23b74c8330e
 [meyer]: https://arxiv.org/abs/2212.13567
 [willow]: https://willowprotocol.org/
 [redb]: https://docs.rs/redb/latest/redb/

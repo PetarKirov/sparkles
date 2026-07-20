@@ -277,5 +277,5 @@ _(From D's vantage — why it is out of reach.)_
 [comparison]: ./comparison.md
 [proposal]: ./integration-proposal.md
 [llvm-src]: https://github.com/llvm/llvm-project/tree/73802c2e9d102a4fb646bc039754779fca3ea476
-[ldc-src]: https://github.com/ldc-developers/ldc/tree/v1.41.0
+[ldc-src]: https://github.com/ldc-developers/ldc/tree/90e39b6a6e61d36ef5f5d0ab6ae0667130fd8549
 [clang-ubsan]: https://clang.llvm.org/docs/UndefinedBehaviorSanitizer.html

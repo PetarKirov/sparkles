@@ -710,7 +710,7 @@ Related pages: [Concepts & Vocabulary][concepts] · [QUIC Transport][quic-transp
 [iroh-netreport]: https://github.com/n0-computer/iroh/blob/22cac742ca5e84da4542681e14b2d23b74c8330e/iroh/src/net_report.rs
 [relay-quic]: https://github.com/n0-computer/iroh/blob/22cac742ca5e84da4542681e14b2d23b74c8330e/iroh-relay/src/quic.rs
 [noq-readme]: https://github.com/n0-computer/noq/blob/340e9c7da0d60eda6f5c7ffa7a36d20ed8d793fd/README.md
-[iroh-repo]: https://github.com/n0-computer/iroh/tree/22cac742ca
+[iroh-repo]: https://github.com/n0-computer/iroh/tree/22cac742ca5e84da4542681e14b2d23b74c8330e
 [docs-noq-proto]: https://docs.rs/noq-proto/1.0.1/noq_proto/
 [docs-iroh]: https://docs.rs/iroh/1.0.1/iroh/
 [rfc9000]: https://www.rfc-editor.org/rfc/rfc9000.html
