@@ -12,14 +12,17 @@ module sparkles.test_runner.register;
 
 version (unittest):
 
-static if (!__traits(compiles, () { static import dub_test_root; }))
+deprecated
 {
-    static assert(false,
-        "Couldn't find 'dub_test_root'. Make sure you are running tests with `dub test`.");
-}
-else
-{
-    static import dub_test_root;
+    static if (!__traits(compiles, () { static import dub_test_root; }))
+    {
+        static assert(false,
+            "Couldn't find 'dub_test_root'. Make sure you are running tests with `dub test`.");
+    }
+    else
+    {
+        static import dub_test_root;
+    }
 }
 
 import core.attribute : standalone;
