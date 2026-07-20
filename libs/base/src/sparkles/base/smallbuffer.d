@@ -71,7 +71,8 @@ pure nothrow @nogc:
         alias Allocator = AffixAllocator!(Mallocator, ControlBlock);
 
         // The shared control block (logically-mutable metadata; valid iff onHeap).
-        ref ControlBlock ctrl() const => Allocator.instance.prefix(cast(ubyte[]) _block);
+        ref ControlBlock ctrl() const @system
+            => Allocator.instance.prefix(cast(ubyte[]) _block);
     }
 
     @property const
@@ -140,7 +141,7 @@ pure nothrow @nogc:
     /// bumped), an inline source is copied — mirroring the copy constructors.
     ref SmallBuffer opAssign(ref const SmallBuffer rhs) return @trusted
     {
-        if (cast(const void*) &this is cast(const void*) &rhs)
+        if (&this is &rhs)
             return this;
 
         if (rhs.onHeap)
@@ -259,8 +260,11 @@ pure nothrow @nogc:
 
         // If the source aliases inline storage, preserve it before the union is
         // overwritten by the inline->heap transition.
-        if (oldLen <= N && newLen > N
-            && elements.overlap(cast(const(T)[]) _inline[0 .. oldLen]).length)
+        const overlapsInline = () @trusted {
+            return !onHeap &&
+                elements.overlap(_inline[0 .. oldLen]).length;
+        }();
+        if (newLen > N && overlapsInline)
         {
             T[N] tmp = void;
             tmp[0 .. elements.length] = elements[];
@@ -348,8 +352,10 @@ pure nothrow @nogc:
                 foreach (e; elements)
                     nb[i++] = e;
 
-                _block = nb;
-                _length = newLen;
+                () @trusted {
+                    _block = nb;
+                    _length = newLen;
+                }();
             }
             else
             {
@@ -392,7 +398,7 @@ pure nothrow @nogc:
     }
 
     /// Removes all elements; releases heap storage and reverts to inline.
-    void clear() @trusted
+    void clear() @safe
     {
         releaseStorage();
         _length = 0;
