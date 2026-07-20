@@ -1,0 +1,443 @@
+{
+  "columns": [
+    {
+      "class": "quantitative",
+      "format": "count",
+      "header": "B/s",
+      "name": "B/s",
+      "source": "client"
+    },
+    {
+      "class": "quantitative",
+      "format": "count",
+      "header": "B",
+      "name": "B",
+      "source": "client"
+    }
+  ],
+  "meta": {
+    "arch": "x86_64",
+    "compiler": "LDC (front-end 2.111)",
+    "cpu": "AMD Ryzen 9 7940HX with Radeon Graphics",
+    "date": "2026-07-13",
+    "hostname": "petar-kirov-minisforum-bd790i0-se-002",
+    "minSampleTimeMs": 5,
+    "os": "linux",
+    "sampleCount": 32
+  },
+  "rows": [
+    {
+      "deviationNs": 802,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "bg": "off",
+        "lang": "d",
+        "size": "24l"
+      },
+      "maxNs": 20159,
+      "medianNs": 5280,
+      "metrics": {
+        "B": 2269,
+        "B/s": 190530000.0
+      },
+      "minNs": 4419,
+      "name": "ansi",
+      "samples": 923
+    },
+    {
+      "deviationNs": 30,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "bg": "on",
+        "lang": "d",
+        "size": "24l"
+      },
+      "maxNs": 46320,
+      "medianNs": 4989,
+      "metrics": {
+        "B": 2535,
+        "B/s": 201644000.0
+      },
+      "minNs": 4909,
+      "name": "ansi",
+      "samples": 948
+    },
+    {
+      "deviationNs": 1883.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "bg": "off",
+        "lang": "d",
+        "size": "24l"
+      },
+      "maxNs": 97449,
+      "medianNs": 86768.5,
+      "metrics": {
+        "B": 2103,
+        "B/s": 69564400.0
+      },
+      "minNs": 84134,
+      "name": "ansi-switch",
+      "samples": 58
+    },
+    {
+      "deviationNs": 1593,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "bg": "on",
+        "lang": "d",
+        "size": "24l"
+      },
+      "maxNs": 310424,
+      "medianNs": 91543,
+      "metrics": {
+        "B": 2376,
+        "B/s": 65936200.0
+      },
+      "minNs": 87600,
+      "name": "ansi-switch",
+      "samples": 52
+    },
+    {
+      "deviationNs": 50,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "lang": "d",
+        "size": "24l"
+      },
+      "maxNs": 69345,
+      "medianNs": 4569,
+      "metrics": {
+        "B": 3030,
+        "B/s": 220179000.0
+      },
+      "minNs": 4419,
+      "name": "html",
+      "samples": 987
+    },
+    {
+      "deviationNs": 59,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "bg": "off",
+        "lang": "d",
+        "size": "40l"
+      },
+      "maxNs": 30780,
+      "medianNs": 11672,
+      "metrics": {
+        "B": 4875,
+        "B/s": 122087000.0
+      },
+      "minNs": 11532,
+      "name": "ansi",
+      "samples": 422
+    },
+    {
+      "deviationNs": 90,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "bg": "on",
+        "lang": "d",
+        "size": "40l"
+      },
+      "maxNs": 24658,
+      "medianNs": 12975,
+      "metrics": {
+        "B": 5348,
+        "B/s": 109827000.0
+      },
+      "minNs": 12694,
+      "name": "ansi",
+      "samples": 370
+    },
+    {
+      "deviationNs": 1288,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "bg": "off",
+        "lang": "d",
+        "size": "40l"
+      },
+      "maxNs": 238494,
+      "medianNs": 126350,
+      "metrics": {
+        "B": 4466,
+        "B/s": 67668900.0
+      },
+      "minNs": 124742,
+      "name": "ansi-switch",
+      "samples": 38
+    },
+    {
+      "deviationNs": 836,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "bg": "on",
+        "lang": "d",
+        "size": "40l"
+      },
+      "maxNs": 326976,
+      "medianNs": 132492,
+      "metrics": {
+        "B": 4956,
+        "B/s": 64532000.0
+      },
+      "minNs": 131085,
+      "name": "ansi-switch",
+      "samples": 36
+    },
+    {
+      "deviationNs": 145.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "lang": "d",
+        "size": "40l"
+      },
+      "maxNs": 22835,
+      "medianNs": 10485.5,
+      "metrics": {
+        "B": 6110,
+        "B/s": 135902000.0
+      },
+      "minNs": 10169,
+      "name": "html",
+      "samples": 464
+    },
+    {
+      "deviationNs": 145,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "bg": "off",
+        "lang": "d",
+        "size": "51l"
+      },
+      "maxNs": 26080,
+      "medianNs": 16507,
+      "metrics": {
+        "B": 6693,
+        "B/s": 111407000.0
+      },
+      "minNs": 16301,
+      "name": "ansi",
+      "samples": 292
+    },
+    {
+      "deviationNs": 69,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "bg": "on",
+        "lang": "d",
+        "size": "51l"
+      },
+      "maxNs": 29317,
+      "medianNs": 17785,
+      "metrics": {
+        "B": 7306,
+        "B/s": 103402000.0
+      },
+      "minNs": 17585,
+      "name": "ansi",
+      "samples": 267
+    },
+    {
+      "deviationNs": 637,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "bg": "off",
+        "lang": "d",
+        "size": "51l"
+      },
+      "maxNs": 168157,
+      "medianNs": 155508,
+      "metrics": {
+        "B": 6133,
+        "B/s": 70954500.0
+      },
+      "minNs": 154331,
+      "name": "ansi-switch",
+      "samples": 32
+    },
+    {
+      "deviationNs": 1723,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "bg": "on",
+        "lang": "d",
+        "size": "51l"
+      },
+      "maxNs": 217192,
+      "medianNs": 163964,
+      "metrics": {
+        "B": 6769,
+        "B/s": 67295300.0
+      },
+      "minNs": 161805,
+      "name": "ansi-switch",
+      "samples": 32
+    },
+    {
+      "deviationNs": 3426.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "lang": "d",
+        "size": "51l"
+      },
+      "maxNs": 33645,
+      "medianNs": 18175.5,
+      "metrics": {
+        "B": 8234,
+        "B/s": 101180000.0
+      },
+      "minNs": 14428,
+      "name": "html",
+      "samples": 282
+    },
+    {
+      "deviationNs": 10450,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "bg": "off",
+        "lang": "d",
+        "size": "full"
+      },
+      "maxNs": 761090,
+      "medianNs": 551086,
+      "metrics": {
+        "B": 194051,
+        "B/s": 66312600.0
+      },
+      "minNs": 536433,
+      "name": "ansi",
+      "samples": 32
+    },
+    {
+      "deviationNs": 8486.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "bg": "on",
+        "lang": "d",
+        "size": "full"
+      },
+      "maxNs": 597623,
+      "medianNs": 582858,
+      "metrics": {
+        "B": 207630,
+        "B/s": 62697900.0
+      },
+      "minNs": 567053,
+      "name": "ansi",
+      "samples": 32
+    },
+    {
+      "deviationNs": 26972,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "bg": "off",
+        "lang": "d",
+        "size": "full"
+      },
+      "maxNs": 3415784,
+      "medianNs": 3198350.0,
+      "metrics": {
+        "B": 175601,
+        "B/s": 68555400.0
+      },
+      "minNs": 3101152,
+      "name": "ansi-switch",
+      "samples": 32
+    },
+    {
+      "deviationNs": 21712,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "bg": "on",
+        "lang": "d",
+        "size": "full"
+      },
+      "maxNs": 4415027,
+      "medianNs": 3351043,
+      "metrics": {
+        "B": 189417,
+        "B/s": 65431600.0
+      },
+      "minNs": 3266293,
+      "name": "ansi-switch",
+      "samples": 32
+    },
+    {
+      "deviationNs": 6888,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "lang": "d",
+        "size": "full"
+      },
+      "maxNs": 557474,
+      "medianNs": 531228,
+      "metrics": {
+        "B": 276827,
+        "B/s": 68791500.0
+      },
+      "minNs": 518298,
+      "name": "html",
+      "samples": 32
+    },
+    {
+      "deviationNs": 12094,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "frame": "whole",
+        "lang": "d"
+      },
+      "maxNs": 1003111,
+      "medianNs": 790573,
+      "metrics": {
+        "B": 207630,
+        "B/s": 46224700.0
+      },
+      "minNs": 728066,
+      "name": "app-frame",
+      "samples": 32
+    },
+    {
+      "deviationNs": 2274.5,
+      "error": "",
+      "iterations": 1,
+      "labels": {
+        "frame": "viewport",
+        "lang": "d"
+      },
+      "maxNs": 99824,
+      "medianNs": 68007,
+      "metrics": {
+        "B": 5348,
+        "B/s": 20953700.0
+      },
+      "minNs": 64205,
+      "name": "app-frame",
+      "samples": 72
+    }
+  ],
+  "schema": 2
+}
