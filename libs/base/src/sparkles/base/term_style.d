@@ -52,6 +52,43 @@ enum Style : uint[2]
     bgBrightWhite = [107, 49],
 }
 
+/// The SGR "on" code of a style — the first of its `[open, close]` pair.
+uint openCode(Style s) @nogc => s[0];
+
+/// The SGR "off" code of a style — the second of its `[open, close]` pair.
+/// Several styles share one (bold and dim both close with 22; every foreground
+/// colour with 39; every background colour with 49), so a close code identifies
+/// a *group* rather than a single style — see $(LREF SgrGroupReset).
+uint closeCode(Style s) @nogc => s[1];
+
+/// The SGR reset code of each attribute group. Because a group's members share
+/// their close code, the reset names the group, not any one `Style`; the values
+/// are sourced from the representative `Style` members so the numbers live in
+/// exactly one place (the $(LREF Style) table above).
+enum SgrGroupReset : uint
+{
+    intensity  = Style.bold[1],          /// 22 — bold and dim
+    italic     = Style.italic[1],        /// 23
+    underline  = Style.underline[1],     /// 24
+    inverse    = Style.inverse[1],       /// 27
+    hidden     = Style.hidden[1],        /// 28
+    strike     = Style.strikethrough[1], /// 29
+    foreground = Style.red[1],           /// 39 — every foreground colour
+    background = Style.bgRed[1],          /// 49 — every background colour
+}
+
+///
+@("term_style.openClose.groupReset")
+@safe pure nothrow @nogc unittest
+{
+    assert(Style.bold.openCode == 1 && Style.bold.closeCode == 22);
+    assert(Style.red.openCode == 31 && Style.red.closeCode == 39);
+    // bold and dim share the intensity reset; every colour shares fg/bg resets.
+    assert(SgrGroupReset.intensity == Style.dim.closeCode);
+    assert(SgrGroupReset.foreground == Style.brightBlue.closeCode);
+    assert(SgrGroupReset.background == Style.bgWhite.closeCode);
+}
+
 ///
 auto stylizedTextBuilder(string text, bool resetAfter = true)
 {

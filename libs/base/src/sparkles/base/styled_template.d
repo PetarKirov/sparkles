@@ -22,7 +22,7 @@ module sparkles.base.styled_template;
 import core.interpolation;
 import std.sumtype : match, SumType;
 
-import sparkles.base.term_style : Style;
+import sparkles.base.term_style : Style, SgrGroupReset, openCode, closeCode;
 import sparkles.base.text.readers : hexNibble, isHexDigit;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -505,12 +505,6 @@ unittest
 
 private enum maxNestingDepth = 16;
 
-// Shared SGR reset codes: closing any style in one of these groups resets the
-// *whole* group, which is why the style model below tracks groups, not codes.
-private enum sgrResetIntensity = 22; // clears bold AND dim
-private enum sgrResetFg = 39;        // clears any foreground colour
-private enum sgrResetBg = 49;        // clears any background colour
-
 /// A foreground/background colour, as a sum of its representations.
 /// `DefaultColor` (also `Color.init`) is the terminal default; `AnsiColor` holds
 /// the full SGR open code (31 fg-red, 41 bg-red, 91/101 bright …) so the fg/bg
@@ -547,7 +541,7 @@ private void emitColorOpen(Writer)(in Color c, bool bg, ref Writer w)
     import std.range.primitives : put;
 
     c.match!(
-        (DefaultColor _) => writeEscapeSeq(w, bg ? sgrResetBg : sgrResetFg),
+        (DefaultColor _) => writeEscapeSeq(w, bg ? SgrGroupReset.background : SgrGroupReset.foreground),
         (AnsiColor a) => writeEscapeSeq(w, a.code),
         (PaletteColor p) {
             put(w, bg ? "\x1b[48;5;" : "\x1b[38;5;");
@@ -566,6 +560,14 @@ private void emitColorOpen(Writer)(in Color c, bool bg, ref Writer w)
     );
 }
 
+/// Emit a boolean attribute's on/off SGR code (its `Style` open or close code).
+private void emitAttr(Writer)(ref Writer w, Style s, bool on)
+{
+    import sparkles.base.text.writers : writeEscapeSeq;
+
+    writeEscapeSeq(w, on ? s.openCode : s.closeCode);
+}
+
 /// Emit the minimal SGR codes to move the terminal FROM style `from` TO `to`.
 /// Each group is set absolutely, so the same function drives both block entry
 /// (`emitTransition(parent, child)`) and exit (`emitTransition(child, parent)`).
@@ -578,32 +580,32 @@ private void emitTransition(Writer)(in TermStyle from, in TermStyle to, ref Writ
         final switch (to.intensity)
         {
             case TermStyle.Intensity.normal:
-                writeEscapeSeq(w, sgrResetIntensity);
+                writeEscapeSeq(w, SgrGroupReset.intensity);
                 break;
             case TermStyle.Intensity.bold:
                 // dim and bold share one SGR state; reset first so a dim→bold
                 // switch is deterministic across terminals.
                 if (from.intensity == TermStyle.Intensity.dim)
-                    writeEscapeSeq(w, sgrResetIntensity);
-                writeEscapeSeq(w, 1);
+                    writeEscapeSeq(w, SgrGroupReset.intensity);
+                writeEscapeSeq(w, Style.bold.openCode);
                 break;
             case TermStyle.Intensity.dim:
                 if (from.intensity == TermStyle.Intensity.bold)
-                    writeEscapeSeq(w, sgrResetIntensity);
-                writeEscapeSeq(w, 2);
+                    writeEscapeSeq(w, SgrGroupReset.intensity);
+                writeEscapeSeq(w, Style.dim.openCode);
                 break;
         }
     }
     if (from.italic != to.italic)
-        writeEscapeSeq(w, to.italic ? 3 : 23);
+        emitAttr(w, Style.italic, to.italic);
     if (from.underline != to.underline)
-        writeEscapeSeq(w, to.underline ? 4 : 24);
+        emitAttr(w, Style.underline, to.underline);
     if (from.inverse != to.inverse)
-        writeEscapeSeq(w, to.inverse ? 7 : 27);
+        emitAttr(w, Style.inverse, to.inverse);
     if (from.hidden != to.hidden)
-        writeEscapeSeq(w, to.hidden ? 8 : 28);
+        emitAttr(w, Style.hidden, to.hidden);
     if (from.strike != to.strike)
-        writeEscapeSeq(w, to.strike ? 9 : 29);
+        emitAttr(w, Style.strikethrough, to.strike);
     if (from.fg != to.fg)
         emitColorOpen(to.fg, false, w);
     if (from.bg != to.bg)
@@ -876,16 +878,18 @@ private void applyColor(ref TermStyle style, bool bg, in Color c, bool negate)
         style.fg = c;
 }
 
-/// Applies a named `Style` (never `none`/`reset`) to its SGR group, keyed by the
-/// close code `s[1]`. Negation clears the group only when it currently holds this
-/// exact style, preserving the old per-token "remove if present" behaviour.
+/// Applies a named `Style` (never `none`/`reset`) to its SGR group, keyed by its
+/// close code (which names the group). Negation clears the group only when it
+/// currently holds this exact style, preserving the per-token "remove if
+/// present" behaviour.
 @safe nothrow @nogc
 private void applyNamed(ref TermStyle style, Style s, bool negate)
 {
-    switch (s[1])
+    switch (s.closeCode)
     {
-        case sgrResetIntensity: // 22 — bold (open 1) or dim (open 2)
-            const want = s[0] == 1 ? TermStyle.Intensity.bold : TermStyle.Intensity.dim;
+        case SgrGroupReset.intensity: // bold or dim, distinguished by open code
+            const want = s.openCode == Style.bold.openCode
+                ? TermStyle.Intensity.bold : TermStyle.Intensity.dim;
             if (negate)
             {
                 if (style.intensity == want)
@@ -894,13 +898,13 @@ private void applyNamed(ref TermStyle style, Style s, bool negate)
             else
                 style.intensity = want;
             break;
-        case 23: style.italic = !negate; break;
-        case 24: style.underline = !negate; break;
-        case 27: style.inverse = !negate; break;
-        case 28: style.hidden = !negate; break;
-        case 29: style.strike = !negate; break;
-        case sgrResetFg: applyColor(style, false, Color(AnsiColor(s[0])), negate); break;
-        case sgrResetBg: applyColor(style, true, Color(AnsiColor(s[0])), negate); break;
+        case SgrGroupReset.italic:    style.italic = !negate; break;
+        case SgrGroupReset.underline: style.underline = !negate; break;
+        case SgrGroupReset.inverse:   style.inverse = !negate; break;
+        case SgrGroupReset.hidden:    style.hidden = !negate; break;
+        case SgrGroupReset.strike:    style.strike = !negate; break;
+        case SgrGroupReset.foreground: applyColor(style, false, Color(AnsiColor(s.openCode)), negate); break;
+        case SgrGroupReset.background: applyColor(style, true, Color(AnsiColor(s.openCode)), negate); break;
         default: break; // unknown group — ignore
     }
 }
