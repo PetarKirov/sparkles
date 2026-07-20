@@ -805,9 +805,13 @@ private void parseLiteral(bool colored = true, Writer)(
                     // End of style names, apply and switch to content
                     auto spec = literal[ctx.styleNameStart .. ctx.styleNameEnd];
                     applyStyleSpec(spec, ctx);
-                    // Only emit styles that are NEW (not inherited from parent)
+                    // Only emit styles that are NEW (not inherited from parent);
+                    // a block dropped past the depth cap was never pushed, so
+                    // `topStyle` still refers to its parent — emitting would
+                    // re-diff the parent against its own parent (spurious codes).
                     static if (colored)
-                        ctx.topStyle.emitOpenDiff(w, ctx.parentStyle);
+                        if (ctx.overflowDepth == 0)
+                            ctx.topStyle.emitOpenDiff(w, ctx.parentStyle);
                     ctx.state = ParseState.content;
                 }
                 else if (c == '}')
@@ -850,9 +854,12 @@ private void parseLiteral(bool colored = true, Writer)(
                 }
                 else if (c == '}')
                 {
-                    // End of block - close only styles that were added in this block
+                    // End of block - close only styles that were added in this
+                    // block; a block dropped past the depth cap emitted nothing
+                    // on entry, so it must emit nothing on exit either.
                     static if (colored)
-                        ctx.topStyle.emitCloseDiff(w, ctx.parentStyle);
+                        if (ctx.overflowDepth == 0)
+                            ctx.topStyle.emitCloseDiff(w, ctx.parentStyle);
                     ctx.popStyle();
                     ctx.state = ctx.hasStyles ? ParseState.content : ParseState.normal;
                 }
@@ -1348,6 +1355,27 @@ private bool parseHexColor(const(char)[] hex, out ubyte r, out ubyte g, out ubyt
         "\x1b[1m" ~
         "overflow" ~
         "\x1b[22m"
+    );
+}
+
+/// An overflowed block whose (dropped) state differs from the real top must not
+/// emit spurious codes. Here level 16 negates bold, then the 17th block
+/// overflows: entering/exiting it must add nothing to the escape stream.
+@("styled.overflowNestingNoSpuriousEmit")
+@safe unittest
+{
+    auto result = styledText(
+        i"{bold {bold {bold {bold {bold {bold {bold {bold {bold {bold {bold {bold {bold {bold {bold {~bold {red overflow}}}}}}}}}}}}}}}}}"
+    );
+
+    // bold ON, then OFF at ~bold, "overflow" plain, bold restored on exit of the
+    // ~bold block, bold OFF at the end — no doubled 22/1 from the overflow.
+    assert(result ==
+        "\x1b[1m" ~   // bold ON (outermost)
+        "\x1b[22m" ~  // bold OFF (level 16 ~bold)
+        "overflow" ~
+        "\x1b[1m" ~   // bold restored (exit ~bold)
+        "\x1b[22m"    // bold OFF (exit outermost)
     );
 }
 
