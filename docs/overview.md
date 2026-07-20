@@ -52,6 +52,9 @@ dependency "sparkles:core-cli" version="*"
 
 The `term_style` module provides ANSI terminal colors and text attributes.
 
+- **Source Code**: [`term_style.d`](../libs/base/src/sparkles/base/term_style.d)
+- **Example**: [`color.d`](../libs/core-cli/examples/color.d)
+
 ### Style Enum
 
 Available styles include:
@@ -114,6 +117,9 @@ void main()
 ## Styled Templates (IES)
 
 The `styled_template` module provides a template syntax for applying terminal styles using D's Interpolated Expression Sequences (IES).
+
+- **Source Code**: [`styled_template.d`](../libs/base/src/sparkles/base/styled_template.d)
+- **Example**: [`styled-template.d`](../libs/core-cli/examples/styled-template.d)
 
 ```d
 #!/usr/bin/env dub
@@ -204,6 +210,9 @@ Use {style text} syntax
 
 The `prettyprint` module formats any D type with syntax highlighting.
 
+- **Source Code**: [`prettyprint.d`](../libs/base/src/sparkles/base/prettyprint.d)
+- **Example**: [`prettyprint.d`](../libs/base/examples/prettyprint.d)
+
 ```d
 #!/usr/bin/env dub
 /+ dub.sdl:
@@ -271,6 +280,9 @@ Custom hooks implement `static void writeSourceUri(string path, size_t line, siz
 
 Render data as ASCII tables with Unicode box-drawing characters.
 
+- **Source Code**: [`table.d`](../libs/core-cli/src/sparkles/core_cli/ui/table/package.d)
+- **Example**: [`table.d`](../libs/core-cli/examples/table.d)
+
 ```d
 #!/usr/bin/env dub
 /+ dub.sdl:
@@ -303,6 +315,9 @@ void main()
 ### Boxes
 
 Draw bordered boxes around content with optional titles.
+
+- **Source Code**: [`box.d`](../libs/core-cli/src/sparkles/core_cli/ui/box.d)
+- **Example**: [`box.d`](../libs/core-cli/examples/box.d)
 
 ```d
 #!/usr/bin/env dub
@@ -356,6 +371,9 @@ void main()
 
 Create section dividers and banners.
 
+- **Source Code**: [`header.d`](../libs/core-cli/src/sparkles/core_cli/ui/header.d)
+- **Example**: [`header.d`](../libs/core-cli/examples/header.d)
+
 ```d
 #!/usr/bin/env dub
 /+ dub.sdl:
@@ -388,6 +406,9 @@ void main()
 ### OSC 8 Hyperlinks
 
 Make text clickable in terminal emulators that support [OSC 8](https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda).
+
+- **Source Code**: [`osc_link.d`](../libs/core-cli/src/sparkles/core_cli/ui/osc_link.d)
+- **Example**: [`osc-link.d`](../libs/core-cli/examples/osc-link.d)
 
 ```d
 #!/usr/bin/env dub
@@ -651,6 +672,9 @@ base class with a Sparkles `@safe nothrow @nogc` logging path, plus
 `DeltaTimeLogger`, a stderr logger that prints wall-clock time, elapsed time
 since start, and elapsed time since the previous log entry.
 
+- **Source Code**: [`logger.d`](../libs/base/src/sparkles/base/logger.d)
+- **Example**: [`logger.d`](../libs/base/examples/logger.d)
+
 ```d
 #!/usr/bin/env dub
 /+ dub.sdl:
@@ -711,6 +735,8 @@ void main()
 
 A `@nogc` container with Small Buffer Optimization (SBO). Stores small data inline, automatically switches to heap when capacity is exceeded.
 
+- **Source Code**: [`smallbuffer.d`](../libs/base/src/sparkles/base/smallbuffer.d)
+
 ```d
 #!/usr/bin/env dub
 /+ dub.sdl:
@@ -748,8 +774,7 @@ On heap: false
 
 ## Running Examples
 
-Examples in `libs/base/examples/` and `libs/core-cli/examples/` are standalone
-runnable files:
+Examples in [`libs/base/examples/`](../libs/base/examples/) and [`libs/core-cli/examples/`](../libs/core-cli/examples/) are standalone runnable files:
 
 ```bash
 # Run directly with dub
@@ -763,20 +788,20 @@ chmod +x libs/core-cli/examples/color.d
 
 Available examples:
 
-- `color.d` - Style and color palette showcase
-- `logger.d` - Delta-time-prefixed logging (`libs/base/examples/`)
-- `prettyprint.d` - Type formatting demonstration (`libs/base/examples/`)
-- `text-fields.d` - `alignField`/`truncateField` cell-accurate fields (`libs/base/examples/`)
-- `term-control.d` - Redraw-in-place control sequences (`libs/base/examples/`)
-- `styled-template.d` - IES-based template styling
-- `table.d` - Table rendering gallery (spans, alignment, titles, streaming views)
-- `box.d` - Box layouts with nested content
-- `header.d` - Header styles
-- `osc-link.d` - OSC 8 terminal hyperlinks
-- `theme.d` - Border presets, status glyphs, semantic styles
-- `meter.d` - Meters, progress bars, spinner lines
-- `tree.d` - Tree views (flat nodes; also as a table stub column)
-- `layout.d` - `hjoin` side-by-side blocks and `kvList` receipts
-- `prompts.d` - Interactive select/confirm/input (run in a terminal)
-- `live-tasklist.d` - Live region + task list + streamed child output (run in a terminal)
-- `term-caps.d` - Terminal capability detection and resize handling
+- [`color.d`](../libs/core-cli/examples/color.d) - Style and color palette showcase
+- [`logger.d`](../libs/base/examples/logger.d) - Delta-time-prefixed logging
+- [`prettyprint.d`](../libs/base/examples/prettyprint.d) - Type formatting demonstration
+- [`text-fields.d`](../libs/base/examples/text-fields.d) - `alignField`/`truncateField` cell-accurate fields
+- [`term-control.d`](../libs/base/examples/term-control.d) - Redraw-in-place control sequences
+- [`styled-template.d`](../libs/core-cli/examples/styled-template.d) - IES-based template styling
+- [`table.d`](../libs/core-cli/examples/table.d) - Table rendering gallery (spans, alignment, titles, streaming views)
+- [`box.d`](../libs/core-cli/examples/box.d) - Box layouts with nested content
+- [`header.d`](../libs/core-cli/examples/header.d) - Header styles
+- [`osc-link.d`](../libs/core-cli/examples/osc-link.d) - OSC 8 terminal hyperlinks
+- [`theme.d`](../libs/core-cli/examples/theme.d) - Border presets, status glyphs, semantic styles
+- [`meter.d`](../libs/core-cli/examples/meter.d) - Meters, progress bars, spinner lines
+- [`tree.d`](../libs/core-cli/examples/tree.d) - Tree views (flat nodes; also as a table stub column)
+- [`layout.d`](../libs/core-cli/examples/layout.d) - `hjoin` side-by-side blocks and `kvList` receipts
+- [`prompts.d`](../libs/core-cli/examples/prompts.d) - Interactive select/confirm/input (run in a terminal)
+- [`live-tasklist.d`](../libs/core-cli/examples/live-tasklist.d) - Live region + task list + streamed child output (run in a terminal)
+- [`term-caps.d`](../libs/core-cli/examples/term-caps.d) - Terminal capability detection and resize handling

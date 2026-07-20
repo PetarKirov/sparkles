@@ -1,0 +1,8 @@
+name "f02_resize_appkit"
+description "F02 resize-correctness demo on macOS/AppKit: corner-anchored gradient under a setFrame:/setContentSize:/zoom: resize storm, point-vs-pixel buffer math asserted at scale=2.0."
+targetType "executable"
+sourcePaths "."
+targetPath "build"
+platforms "osx"
+dependency "objective-d" version="~>1.1.2"
+lflags "-framework" "Cocoa"

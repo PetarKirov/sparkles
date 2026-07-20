@@ -164,6 +164,28 @@
             # devshell-only package — the `nix run .#ci` wrapper deliberately
             # omits it to keep the .#ci closure small.
             pkgs.valgrind
+
+            # Windowing feature demos (os-apis/<platform>/examples/): headless
+            # compositor for Tier-A Wayland runs, xdg-shell & friends protocol XML
+            # + wayland-scanner to generate their client glue, xkbcommon for the
+            # keyboard demos, and the X11 extension libs the demos exercise.
+            pkgs.weston
+            pkgs.wayland-protocols
+            pkgs.wayland-scanner
+            pkgs.libxkbcommon
+            pkgs.libxkbcommon.dev
+            pkgs.libxext
+            pkgs.libxext.dev
+            pkgs.libxi
+            pkgs.libxi.dev
+            pkgs.libxfixes
+            pkgs.libxfixes.dev
+            pkgs.libxcursor
+            pkgs.libxcursor.dev
+            pkgs.libxrandr
+            pkgs.libxrandr.dev
+            pkgs.libxcb
+            pkgs.libxcb.dev
           ]
           ++ lib.optional greeting pkgs.figlet
           ++ d-toolchain.packages;

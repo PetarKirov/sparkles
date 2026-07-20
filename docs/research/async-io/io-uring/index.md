@@ -414,6 +414,16 @@ Stacking these — SQPOLL + IOPOLL + fixed files/buffers + `DEFER_TASKRUN` — y
 | io-wq offload + fast-poll                                  | Handle genuinely blocking ops without stalling the submitter                         | Worker threads cost memory/scheduling; pool needs tuning under load                 |
 | Resource registration (fixed files/buffers, regions)       | Remove repeated per-I/O page-pinning and fd refcount overhead                        | Up-front setup; pinned memory; re-registration on changes                           |
 
+## Runnable Examples
+
+A comprehensive suite of D examples demonstrating individual `io_uring` features and opcodes is available:
+
+- **Examples Directory**: [`examples/`](./examples/)
+- **Basic/Intro**: [`nop.d`](./examples/nop.d) (minimal test), [`probe.d`](./examples/probe.d) (query features)
+- **Files & Buffers**: [`pipe.d`](./examples/pipe.d) (pipe communication), [`registered-files.d`](./examples/registered-files.d), [`read-write-fixed.d`](./examples/read-write-fixed.d), [`provided-buf-ring.d`](./examples/provided-buf-ring.d)
+- **Sockets & Networks**: [`socket-bind-listen.d`](./examples/socket-bind-listen.d), [`tcp-echo.d`](./examples/tcp-echo.d), [`multishot-accept.d`](./examples/multishot-accept.d), [`multishot-recv.d`](./examples/multishot-recv.d)
+- **Advanced Features**: [`linked-sqes.d`](./examples/linked-sqes.d), [`sqpoll.d`](./examples/sqpoll.d), [`async-cancel.d`](./examples/async-cancel.d), [`defer-taskrun.d`](./examples/defer-taskrun.d)
+
 ---
 
 ## Sources

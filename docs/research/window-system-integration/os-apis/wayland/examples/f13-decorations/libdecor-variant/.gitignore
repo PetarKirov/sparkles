@@ -1,0 +1,2 @@
+# Symlinked by ./generate.sh from pkg-config --variable=includedir libdecor-0
+libdecor.h

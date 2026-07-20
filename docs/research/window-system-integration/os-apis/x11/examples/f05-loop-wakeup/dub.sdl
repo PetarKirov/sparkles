@@ -1,0 +1,7 @@
+name "f05_loop_wakeup_x11"
+description "X11 F05 demo: cross-thread wakeup latency (XSendEvent ClientMessage vs eventfd) + timerfd in one poll() loop."
+targetType "executable"
+sourcePaths "."
+importPaths "."
+libs "x11"
+targetPath "build"

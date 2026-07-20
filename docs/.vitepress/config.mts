@@ -1,5 +1,77 @@
 import { defineConfig } from 'vitepress';
 import { withMermaid } from 'vitepress-plugin-mermaid';
+import fs from 'fs';
+import path from 'path';
+
+function rewriteLink(href: string, relativePath: string): string | null {
+  if (/^(https?:|mailto:|#)/.test(href)) {
+    return null;
+  }
+  if (href.startsWith('/')) {
+    return null;
+  }
+
+  const [urlPath, anchor] = href.split('#');
+  const currentDir = path.dirname(relativePath);
+
+  // Resolve relative path from the current markdown file's directory
+  const resolvedPath = path.join(currentDir, urlPath);
+  const absolutePath = path.resolve(process.cwd(), 'docs', resolvedPath);
+
+  if (fs.existsSync(absolutePath)) {
+    const docsDir = path.resolve(process.cwd(), 'docs');
+    const repoDir = process.cwd();
+    const isInsideDocs = absolutePath.startsWith(docsDir + path.sep);
+    const isInsideRepo = absolutePath.startsWith(repoDir + path.sep);
+
+    if (isInsideRepo) {
+      const stats = fs.statSync(absolutePath);
+      const filename = path.basename(absolutePath);
+      const ext = path.extname(filename).toLowerCase();
+      const allowedExtensions = [
+        '.d',
+        '.c',
+        '.h',
+        '.sdl',
+        '.sh',
+        '.json',
+        '.toml',
+        '.yaml',
+        '.yml',
+        '.build',
+        '.txt',
+        '.go',
+        '.work',
+      ];
+      const isAllowedFile =
+        allowedExtensions.includes(ext) ||
+        filename === 'Makefile' ||
+        filename === 'Cargo.toml';
+
+      if (stats.isDirectory() || isAllowedFile) {
+        if (isInsideDocs) {
+          const relPath = path
+            .relative(docsDir, absolutePath)
+            .replace(/\\/g, '/');
+          return `/${relPath}${stats.isDirectory() ? '/' : ''}${anchor ? '#' + anchor : ''}`.replace(
+            /\/+/g,
+            '/',
+          );
+        } else {
+          const repoRelPath = path
+            .relative(repoDir, absolutePath)
+            .replace(/\\/g, '/');
+          return `/${repoRelPath}${stats.isDirectory() ? '/' : ''}${anchor ? '#' + anchor : ''}`.replace(
+            /\/+/g,
+            '/',
+          );
+        }
+      }
+    }
+  }
+
+  return null;
+}
 
 export default withMermaid(
   defineConfig({
@@ -7,12 +79,14 @@ export default withMermaid(
     description: 'D library for building CLI applications',
     base: '/',
 
-    // Ignore links to .d/.nix source files and to sample/ workspace directories
-    // (source artifacts under research/monorepo-tooling/<tool>/sample/, not pages),
-    // and links into repo source trees the harness docs reference (the
-    // text-conformance tool + the base/text source) — these resolve on GitHub but
-    // the VitePress site doesn't serve repo source.
+    // Ignore links to .d/.c/.nix/.sdl source files and to sample/ workspace directories
+    // (source artifacts under research/monorepo-tooling/<tool>/sample/ and the
+    // os-apis demo packages' ImportC shims, not pages), and links into repo
+    // source trees the harness docs reference (the text-conformance tool + the
+    // base/text source) — these resolve on GitHub but the VitePress site doesn't
+    // serve repo source.
     ignoreDeadLinks: [
+      /\.c$/,
       /\.d$/,
       /\.nix$/,
       /\.sdl$/,
@@ -25,7 +99,6 @@ export default withMermaid(
       /\/specs\/event-horizon\//,
       /\/research\/application-packaging\/grounding\//,
     ],
-
     // The parsing and units-of-measure grounding ledgers are internal QA
     // evidence (claim-by-claim source verification), not published research —
     // keep them out of the site.
@@ -42,6 +115,7 @@ export default withMermaid(
     ],
 
     markdown: {
+      lineNumbers: true,
       languageAlias: {
         sdl: 'd',
         eff: 'ocaml',
@@ -58,9 +132,42 @@ export default withMermaid(
         starlark: 'python',
         bzl: 'python',
       },
+      config(md) {
+        md.core.ruler.push('rewrite-artifact-links', state => {
+          const env = state.env;
+          const relativePath = env.relativePath;
+          if (!relativePath) return;
+
+          function walk(tokens: any[]) {
+            for (const token of tokens) {
+              if (token.type === 'link_open') {
+                const hrefAttr = token.attrs.find(
+                  (attr: string[]) => attr[0] === 'href',
+                );
+                if (hrefAttr) {
+                  const href = hrefAttr[1];
+                  const newHref = rewriteLink(href, relativePath);
+                  if (newHref) {
+                    hrefAttr[1] = newHref;
+                  }
+                }
+              }
+              if (token.children) {
+                walk(token.children);
+              }
+            }
+          }
+          walk(state.tokens);
+        });
+      },
     },
 
     themeConfig: {
+      editLink: {
+        pattern: 'https://github.com/PetarKirov/sparkles/edit/main/docs/:path',
+        text: 'Edit this page on GitHub',
+      },
+
       // Built-in local search (MiniSearch) — fully client-side, no third-party APIs.
       search: {
         provider: 'local',
@@ -2473,6 +2580,101 @@ export default withMermaid(
                       text: 'Cross-Platform Summary',
                       link: '/research/window-system-integration/os-apis/summary',
                     },
+                    {
+                      text: 'Demo Feature Specs (F01–F17)',
+                      link: '/research/window-system-integration/os-apis/features/',
+                      collapsed: true,
+                      items: [
+                        {
+                          text: 'F01 First pixel & init cost',
+                          link: '/research/window-system-integration/os-apis/features/f01-first-pixel',
+                        },
+                        {
+                          text: 'F02 Resize correctness',
+                          link: '/research/window-system-integration/os-apis/features/f02-resize',
+                        },
+                        {
+                          text: 'F03 Modal-loop survival',
+                          link: '/research/window-system-integration/os-apis/features/f03-modal-loop',
+                        },
+                        {
+                          text: 'F04 Vsync / frame pacing',
+                          link: '/research/window-system-integration/os-apis/features/f04-frame-pacing',
+                        },
+                        {
+                          text: 'F05 Loop wakeup & fds',
+                          link: '/research/window-system-integration/os-apis/features/f05-loop-wakeup',
+                        },
+                        {
+                          text: 'F06 Keyboard & keymap',
+                          link: '/research/window-system-integration/os-apis/features/f06-keyboard',
+                        },
+                        {
+                          text: 'F07 IME / text input',
+                          link: '/research/window-system-integration/os-apis/features/f07-text-input',
+                        },
+                        {
+                          text: 'F08 DPI / runtime rescale',
+                          link: '/research/window-system-integration/os-apis/features/f08-dpi-scaling',
+                        },
+                        {
+                          text: 'F09 Outputs & hotplug',
+                          link: '/research/window-system-integration/os-apis/features/f09-outputs',
+                        },
+                        {
+                          text: 'F10 Pointer lock & confine',
+                          link: '/research/window-system-integration/os-apis/features/f10-pointer-capture',
+                        },
+                        {
+                          text: 'F11 Scroll fidelity',
+                          link: '/research/window-system-integration/os-apis/features/f11-scroll',
+                        },
+                        {
+                          text: 'F12 Cursors',
+                          link: '/research/window-system-integration/os-apis/features/f12-cursors',
+                        },
+                        {
+                          text: 'F13 CSD & decorations',
+                          link: '/research/window-system-integration/os-apis/features/f13-decorations',
+                        },
+                        {
+                          text: 'F14 Window state & close',
+                          link: '/research/window-system-integration/os-apis/features/f14-window-state',
+                        },
+                        {
+                          text: 'F15 Popup with grab',
+                          link: '/research/window-system-integration/os-apis/features/f15-popup',
+                        },
+                        {
+                          text: 'F16 Clipboard + DnD',
+                          link: '/research/window-system-integration/os-apis/features/f16-clipboard-dnd',
+                        },
+                        {
+                          text: 'F17 Threading probes',
+                          link: '/research/window-system-integration/os-apis/features/f17-threading',
+                        },
+                      ],
+                    },
+                    {
+                      text: 'Feature Matrix',
+                      link: '/research/window-system-integration/os-apis/feature-matrix',
+                    },
+                    {
+                      text: 'Divergence Map',
+                      link: '/research/window-system-integration/os-apis/divergence-map',
+                    },
+                    {
+                      text: 'Event Sequences',
+                      link: '/research/window-system-integration/os-apis/event-sequences',
+                    },
+                    {
+                      text: 'Design Constraints',
+                      link: '/research/window-system-integration/os-apis/design-constraints',
+                    },
+                    {
+                      text: 'Manual-Run Queue',
+                      link: '/research/window-system-integration/os-apis/manual-run-queue',
+                    },
                   ],
                 },
                 {
@@ -2744,6 +2946,15 @@ export default withMermaid(
       socialLinks: [
         { icon: 'github', link: 'https://github.com/PetarKirov/sparkles' },
       ],
+    },
+
+    vite: {
+      build: {
+        chunkSizeWarningLimit: 2000,
+        rollupOptions: {
+          maxParallelFileOps: 4, // Limit parallel file operations to reduce peak memory usage
+        },
+      },
     },
   }),
 );

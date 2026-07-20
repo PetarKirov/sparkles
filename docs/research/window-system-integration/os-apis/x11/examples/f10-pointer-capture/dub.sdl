@@ -1,0 +1,7 @@
+name "f10_pointer_capture_x11"
+description "X11 F10 demo: XI2 raw motion (raw vs accelerated valuators), mouselook lock (XIGrabDevice + XFixesHideCursor + warp-to-center), and confine-to-region both ways (XGrabPointer confine_to vs XFixes pointer barriers)."
+targetType "executable"
+sourcePaths "."
+importPaths "."
+libs "x11" "xi" "xfixes"
+targetPath "build"

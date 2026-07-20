@@ -1,0 +1,8 @@
+name "f17_threading_appkit"
+description "F17 threading probes on macOS/AppKit: five --probe=N run modes that violate (and obey) the main-thread rule — NSWindow created on a second thread (the NSInternalInconsistencyException anchor, exact assert text captured), window creation on a worker after [NSApp run] starts, the sanctioned performSelectorOnMainThread/dispatch_async(main queue) marshaling, rendering from a worker (marshaled setNeedsDisplay vs direct lockFocusIfCanDraw/CGContext), and NSPasteboard/postEvent: from a worker. Every probe ends in a verdict line that survives crashes (signal handlers + NSUncaughtExceptionHandler + SIGALRM watchdog); the no-argument run fork+execs each probe twice."
+targetType "executable"
+sourcePaths "."
+targetPath "build"
+platforms "osx"
+dependency "objective-d" version="~>1.1.2"
+lflags "-framework" "Cocoa"

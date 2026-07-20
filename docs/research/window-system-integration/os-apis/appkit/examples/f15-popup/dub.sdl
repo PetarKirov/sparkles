@@ -1,0 +1,8 @@
+name "f15_popup_appkit"
+description "F15 popup-with-grab demo on macOS/AppKit: a borderless NSWindow at NSPopUpMenuWindowLevel stands in for a context menu (3 items, tracking-area hover), with BOTH outside-click dismissal mechanisms compared — local+global NSEvent monitors vs canBecomeKeyWindow + windowDidResignKey — Esc via keyDown → interpretKeyEvents: → cancelOperation:, app-computed edge clamping (constrainFrameRect:toScreen: probed for borderless auto-clamp), and a one-level submenu as a child window (addChildWindow:ordered:, move-with-parent)."
+targetType "executable"
+sourcePaths "."
+targetPath "build"
+platforms "osx"
+dependency "objective-d" version="~>1.1.2"
+lflags "-framework" "Cocoa"

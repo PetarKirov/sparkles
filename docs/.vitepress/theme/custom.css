@@ -598,3 +598,25 @@ div[class*='language-']:hover > .code-block-actions {
   display: inline-block;
   line-height: 1;
 }
+
+/* --------------------------------------------------------------------------
+ * Full-width layout for pages without aside (e.g. dynamic code listings)
+ * -------------------------------------------------------------------------- */
+.VPDoc:not(.has-aside) .container {
+  max-width: 100% !important;
+}
+
+.VPDoc:not(.has-aside) .content-container {
+  max-width: 100% !important;
+}
+
+/* Source code listing: disable inner scroll and expand background to content width */
+.source-code-page div[class*='language-'] {
+  overflow-x: visible !important;
+  width: 100% !important;
+  min-width: max-content !important;
+}
+
+.source-code-page div[class*='language-'] pre {
+  overflow-x: visible !important;
+}

@@ -7,7 +7,7 @@ ultimately call, and the irreducible code to open a window yourself. Every platf
 **minimal, dependency-light D program** that opens (or bootstraps) a window by calling the OS API
 directly, with no windowing-abstraction library.
 
-**Last reviewed:** June 9, 2026
+**Last reviewed:** June 11, 2026
 
 ## Catalog
 
@@ -27,6 +27,19 @@ Each survey follows the same shape (metadata table → "What it is" → a walk o
 decorations & popups, clipboard/DnD → what toolkits build on it). The shared vocabulary they link
 to lives in [concepts][concepts]; the cross-platform contrasts are drawn together in the
 [summary][summary].
+
+## The empirical demo matrix
+
+Beneath the surveys sits a second, **measured** layer: 17 feature clusters
+([specs][specs]) × the four desktop platforms, each cell a small instrumented D demo
+(located in the `examples/` directory for each platform: [Wayland](./wayland/examples/), [X11](./x11/examples/), [Win32](./win32/examples/), and [AppKit](./appkit/examples/)) with a
+findings doc next to the survey it extends. The grid is the
+[feature matrix][matrix]; the cross-platform synthesis is drawn in three capstones —
+the [divergence map][divmap] (per-feature agree/fork/consequence), the
+[event sequences][evseq] (eight lifecycle transitions aligned four ways), and the
+[design constraints][constraints] (the thirteen things a framework cannot abstract away,
+each with its measured evidence). Items needing real hardware or an interactive session
+are queued in the [manual-run queue][queue].
 
 The minimal programs bind the OS directly, choosing the most honest mechanism per platform:
 
@@ -57,6 +70,12 @@ The minimal programs bind the OS directly, choosing the most honest mechanism pe
 <!-- References -->
 
 [catalog]: ../index.md
+[specs]: ./features/
+[matrix]: ./feature-matrix.md
+[divmap]: ./divergence-map.md
+[evseq]: ./event-sequences.md
+[constraints]: ./design-constraints.md
+[queue]: ./manual-run-queue.md
 [concepts]: ../concepts.md
 [comparison]: ../comparison.md
 [summary]: ./summary.md

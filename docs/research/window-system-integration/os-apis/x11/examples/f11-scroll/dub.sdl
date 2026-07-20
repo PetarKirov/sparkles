@@ -1,0 +1,7 @@
+name "f11_scroll_x11"
+description "X11 F11 demo: both representations of one physical scroll (core buttons 4/5/6/7 vs XI2 smooth-scroll valuators), XIScrollClass device query, the XIPointerEmulated dedupe flag, and per-gesture totals over a scrollable ruler."
+targetType "executable"
+sourcePaths "."
+importPaths "."
+libs "x11" "xi"
+targetPath "build"

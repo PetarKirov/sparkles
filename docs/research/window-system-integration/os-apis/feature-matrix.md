@@ -1,0 +1,126 @@
+# Platform × Feature Findings Matrix
+
+The cross-platform grid for the [windowing demo feature specs](./features/): one cell per
+platform per feature, each holding a verification-tier label, a one-line finding, and a link
+to the full findings doc. Empty cells are demos not yet landed.
+
+**Last reviewed:** June 11, 2026
+
+Legend: **A** = agent-verified (**A[wine]** = under Wine — Wine is a reimplementation, not
+Windows; **A[ssh]** = on `mac-bsn` over SSH — WindowServer-registration verified, on-screen
+compositing not), **B** = compiled-for-target only, **C** = manual run pending/done,
+**—** = N/A. Tier B/C expectations are `[expected, unverified]`, never stated as fact.
+
+| Feature                           | Wayland                                                                                                                                                                                                        | X11                                                                                                                                                                                                                     | Win32                                                                                                                                                                                                                                              | macOS                                                                                                                                                                                                                                                                  |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Scaffold: concepts-to-pixel / LOC | [A] 11 / 463 ([findings][wl-scaffold])                                                                                                                                                                         | [A] 9 / 412 ([findings][x11-scaffold])                                                                                                                                                                                  | [A[wine]] 10 / 323 ([findings][w32-scaffold])                                                                                                                                                                                                      | [A[ssh]] 11 / 391 ([findings][mac-scaffold])                                                                                                                                                                                                                           |
+| [F01 first pixel][f01]            | [A] 11 concepts / 2 round-trips; ~2.2 ms client work, 11–19 ms to confirmed pixel (frame-clock-bound) ([findings][wl-f01])                                                                                     | [A] ~1.4 ms, 5 round-trips dominate; no on-glass proof without Present; a WM adds ~3 ms ([findings][x11-f01])                                                                                                           | [A[wine]] 23.8 ms to first `BitBlt`, 13.1 ms = one-time session connect; 0 round-trips; first `WM_SIZE` in `CreateWindowExW` iff `WS_VISIBLE` ([findings][w32-f01])                                                                                | [A[ssh]] 130 ms cold → 100 ms warm; the delta is the three first-WindowServer-contact calls ([findings][mac-f01])                                                                                                                                                      |
+| [F02 resize][f02]                 | [A] negotiation proven (serial-exact ack before every matching commit); `--violate` ⇒ fatal `invalid_surface_state`, connection killed ([findings][wl-f02])                                                    | [A] notify-not-negotiate; ≥1 stale frame/resize structural; WM makes `XResizeWindow` deniable ([findings][x11-f02])                                                                                                     | [A[wine]] notification: all 14 `SetWindowPos` sizes granted verbatim; pure shrinks invalidate nothing; `WM_SIZING` unreachable programmatically ([findings][w32-f02])                                                                              | [A[ssh]] app-decided, synchronous `setFrameSize:`→`windowDidResize:`→`drawRect:`; pixels = points × 2.0 on all 14 events; live-resize never entered programmatically ([findings][mac-f02])                                                                             |
+| [F03 modal loop][f03]             | [A] no modal loop exists to survive: max tick gap 17.06 ms through 12 transitions vs 16.80 ms calm; `modal_enter` unrepresentable ([findings][wl-f03])                                                         | [A] no modal loop — ticks held ≤17.8 ms through 50-resize storms, bare + WM-mediated ([findings][x11-f03])                                                                                                              | [A[wine]] modal loop entered programmatically: no-fix freeze max gap 1.01 s vs `SetTimer`-fix 17 ms in-modal ticks; winewayland swallows `SC_*` entirely ([findings][w32-f03])                                                                     | [A[ssh]] common-modes timer ticks through nested tracking/modal modes (max gap 109.5 ms); default-mode timer starves completely (0 fires / 2.0 s gap) ([findings][mac-f03])                                                                                            |
+| [F04 frame pacing][f04]           | [A] `wl_surface.frame`: 16.52/16.67/16.75/16.87 ms over 600 frames (synthetic 60 Hz); minimized ⇒ callbacks stop dead, no client-side un-minimize ([findings][wl-f04])                                         | [A] Present is the only frame clock (real ust/msc); Xvfb advertises 1.2, synthetic 60 Hz; hidden windows never throttle ([findings][x11-f04])                                                                           | [A[wine]] `DwmFlush` is a non-blocking `S_OK` stub under Wine (forced pacing free-runs at p50 522 µs) → timer fallback ran 600 frames; no throttling while minimized ([findings][w32-f04])                                                         | [A[ssh]] `CADisplayLink` silent under locked console despite unpaused/visible state — watchdog fell back to a 16 ms `NSTimer`; real cadence Tier C ([findings][mac-f04])                                                                                               |
+| [F05 loop wakeup][f05]            | [A] no protocol-level user event — cross-thread wakeup must be a client fd; eventfd median 11 µs via the `prepare_read`/`poll` loop ([findings][wl-f05])                                                       | [A] native user event exists (`ClientMessage`, p50 71 µs, full round-trip) but fd-readiness is trivial and 4× faster (eventfd p50 17 µs) ([findings][x11-f05])                                                          | [A[wine]] `PostMessageW` p50 60 µs vs `PostThreadMessageW` p50 506 µs; `MsgWaitForMultipleObjectsEx` is the "add an fd" story — capped at 63 handles (n=64 ⇒ `err=87`) ([findings][w32-f05])                                                       | [A[ssh]] three mechanisms compared — fd via `CFFileDescriptor` fastest (p50 72 µs) vs `postEvent:` 319 µs / `CFRunLoopSource` 398 µs; raw fds only through CF/dispatch adapters, never `poll()`-style; ~75 ms cold-start tax on the first wakeup ([findings][mac-f05]) |
+| [F06 keyboard][f06]               | [A] protocol ships only evdev codes; client owns sym/text, repeat (both cancellations proven), and compose — verified under sway headless + `wtype` ([findings][wl-f06])                                       | [A] same `xkbcommon` state machine as Wayland via xkbcommon-x11; server owns repeat (detectable opt-in); live `setxkbmap` rebuild + client-side compose proven ([findings][x11-f06])                                    | [A[wine]] full `WM_KEYDOWN`→`TranslateMessage`→`WM_CHAR` chain driven at scancode level; the layout switch is a lie under the null driver — the `HKL` changes, the tables don't (de-layout captures queued for real Windows) ([findings][w32-f06]) | [A[ssh]] three levels, three owners (`keyCode` / `UCKeyTranslate` / `interpretKeyEvents:`); synthetic `NSEvent` never composes dead keys, the layout engine does (`é`); repeat contract 250 ms delay / 33 ms interval with `isARepeat` ([findings][mac-f06])           |
+| [F07 text input][f07]             | [A] full CJK round-trip headless: sway + fcitx5-pinyin drove `zwp_text_input_v3` preedit→`commit_string "你好"`, serial discipline proven; weston is v1-only ([findings][wl-f07])                              | [A] XIM end-to-end incl. headless fcitx5 pinyin (你好 commit, destroy/restart callbacks, on-the-spot preedit deltas); the `XFilterEvent` gate is total ([findings][x11-f07])                                            | [A[wine]] IMM32 choreography fully verified headless (`SCS_SETSTR` echoes real `WM_IME_*`); TSF COM bring-up all-`S_OK`, blocked only by `ITextStoreACP` ([findings][w32-f07])                                                                     | [A[ssh]] full `NSTextInputClient` (runtime `class_addProtocol`!) flips composition on: option-e+e ⇒ `setMarkedText:"´"`→`insertText:"é"`; Esc commits-then-cancels; focus loss orphans the pre-edit ([findings][mac-f07])                                              |
+| [F08 dpi scaling][f08]            | [A] both paths in one binary; live fractional rescale + cross-scale output move on sway; first commit is ALWAYS at scale 1 — post-map rescale guaranteed ([findings][wl-f08])                                  | [A] absence proven live: `Xft.dpi` 96→144→192 + `xrandr --dpi` deliver NOTHING to the window; only live channel = opt-in root `PropertyNotify` on `RESOURCE_MANAGER` (convention, not protocol) ([findings][x11-f08])   | [A[wine]] PMv2 surface complete (write-once `err=5`, thread granularity, virtualization captured); `WM_DPICHANGED` structurally unreachable — Wayland scale arrives as plain `WM_SIZE` at DPI 96 ([findings][w32-f08])                             | [A[ssh]] all scale sources agree (2.0); `convertRectToBacking:` exact incl. fractional; headless `drawRect:` CTM is identity — rasterization claim Tier C; wrong-scale buffers fail silently ([findings][mac-f08])                                                     |
+| [F09 outputs][f09]                | [A] `wl_output` v4 + xdg-output logical/physical split; live hot-add/remove + the vanishing-occupied-output sequence captured; occupancy trails configures by ~200 ms ([findings][wl-f09])                     | [A] both RandR views (1.5 monitors vs 1.2 wiring objects, they disagree on physical mm); occupancy derived, off-screen windows learn nothing; soft-unplug via `non-desktop` reachable ([findings][x11-f09])             | [A[wine]] live hotplug captured (sway output → `\\.\DISPLAY2` in ~1 s) but Wine fires NONE of the three notify messages — only polling caught it; `rcMonitor` all at +0+0 under winewayland ([findings][w32-f09])                                  | [A[ssh]] dual enumeration (NSScreen + CG) + `NSScreenNumber` bridge + `window.screen` (AppKit answers occupancy itself); locked session empties the CG _active_ list only; `CGDisplayPixelsWide` returns points ([findings][mac-f09])                                  |
+| [F10 pointer capture][f10]        | [A] lock granted only on surface entry; oneshot/persistent lifecycles + hint-warp proven; only relative motion flows while locked; deactivation ONLY on focus change (sway) ([findings][wl-f10])               | [A] lock is assembled (grab+hide+warp; restore exact); `confine_to` modal but unenforced post-activation on Xvfb; XFixes barriers ambient + grab-proof; raw events DOUBLE during own grabs ([findings][x11-f10])        | [A[wine]] raw `WM_INPUT` + `ClipCursor(1×1)`+`ShowCursor` lock + confine all proven; Wine applies ballistics BEFORE the raw stream; focus loss doesn’t clear the clip ([findings][w32-f10])                                                        | [A[ssh]] lock = 3 sync calls, no deny, no read-back getter; warp silent/fraction-truncating + 0.25 s suppression; NO public confine — warp-back leaks 1 out-of-bounds event per excursion ([findings][mac-f10])                                                        |
+| [F11 scroll][f11]                 | [A] full v9 axis vocabulary frame-grouped; v120 = discrete×120 (15/detent libinput convention); `axis_stop` in its own frame; momentum is app-synthesized ([findings][wl-f11])                                 | [A] core vs XI2 delivered either/or per window (XI2 suppresses core); Xvfb has no `XIScrollClass` (CI = buttons 4/5 only); `XIPointerEmulated`=0 on XTest wheels — dedupe by capability, not flag ([findings][x11-f11]) | [A[wine]] `wheelDelta` verbatim at ±120/±40; carry-vs-truncate diffed (truncation loses AND fabricates detents); under-cursor routing while the routing SPI errors ([findings][w32-f11])                                                           | [A[ssh]] one event, three representations; `hasPreciseScrollingDeltas` is the unit switch (lines vs px, 10 px/line); momentum routed statefully — `sendEvent:` drops synthetic momentum events ([findings][mac-f11])                                                   |
+| [F12 cursors][f12]                | [A] `cursor-shape-v1` (sway yes / weston no — both mechanisms mandatory in 2026) + theme path with HiDPI reload; seat-capability lifecycle is fatal if mishandled ([findings][wl-f12])                         | [A] font + themed + custom-ARGB + 60-frame SERVER-animated cursors; `XCURSOR_*` env all honored; themeless Xvfb resolves nothing, default size = min(dim)/48 ([findings][x11-f12])                                      | [A[wine]] resize vocabulary is 4 bidirectional shapes for 8 edges; class cursor silently overwrites `SetCursor` on `DefWindowProc` fall-through; `WM_SETCURSOR` storms per mouse move ([findings][w32-f12])                                        | [A[ssh]] 22-getter vocabulary probed — no public diagonal resize cursor pre-macOS 15 (`frameResize…` ×8 exercised); `set` rewrites the push/pop stack top; system cursors ship 1x+2x (arrow: 4 reps to 280 px) ([findings][mac-f12])                                   |
+| [F13 decorations][f13]            | [A] SSD negotiated where offered (sway; weston has NO decoration protocol); hand-rolled CSD with real-serial move/resize grabs; geometry violation = disconnect; libdecor 295 vs 1061 LOC ([findings][wl-f13]) | — (N/A — SSD; hook notes in the Wayland F13 doc)                                                                                                                                                                        | —                                                                                                                                                                                                                                                  | —                                                                                                                                                                                                                                                                      |
+| [F14 window state][f14]           | [A] full states-array choreography (v1 sees `maximized` where v5 sees `tiled_*`!); minimize is fire-and-forget by XML and measurement; close advisory, veto = ignore, EPIPE captured ([findings][wl-f14])      | [A] state changes are advisory ClientMessages (silence without a WM); echo = payload-less `PropertyNotify` requiring re-fetch; close veto = ignoring the message; no handshake ⇒ `XKillClient` ([findings][x11-f14])    | [A[wine]] states echo synchronously via `WM_SIZE` wParam; fullscreen is a geometry idiom that CORRUPTS the placement normal-rect; close veto is first-class (don’t forward `WM_CLOSE`) ([findings][w32-f14])                                       | [A[ssh]] three verbs, three temporal shapes: `zoom:` sync+animated (356 ms live-resize bracket), `miniaturize:` async (1.55 s), `toggleFullScreen:` FAILS locked; `windowShouldClose:` is a first-class once-veto — `close` skips the ask ([findings][mac-f14])        |
+| [F15 popup][f15]                  | [A] positioner solved COMPOSITOR-side (sway flips, not slides, at edges); outside click is uncapturable — only `popup_done`, topmost-first; stale grab serial silently granted grab-less ([findings][wl-f15])  | [A] popup = override-redirect + session-global grab (starves ALL other clients); placement and dismissal 100% app-side; one grab serves the submenu chain ([findings][x11-f15])                                         | [A[wine]] `WS_POPUP`+`SetCapture`; one capture slot + screen-coord hit-testing serves the chain; `WM_CAPTURECHANGED` is the silent grab-breaker; popups may exceed output bounds ([findings][w32-f15])                                             | [A[ssh]] borderless window @ level 101; placement/clamping 100% app math (off-screen frames accepted verbatim); local monitor sees only queued events; Esc via `cancelOperation:`; child window tracks parent exactly ([findings][mac-f15])                            |
+| [F16 clipboard + DnD][f16]        | [A] clipboard + DnD share one `data_source`/offer pipe-fd machinery; `set_selection` is DEAD without a real input serial (silently ignored); DnD action compositor-resolved ([findings][wl-f16])               | [A] clipboard + XDND are ONE selection mechanism; INCR proven both directions; full XDND v5 source+target by hand; delayed rendering is the only mode ([findings][x11-f16])                                             | [A[wine]] delayed rendering timed (`WM_RENDERFORMAT` only on demand); OLE DnD fully headless (hand-rolled COM to `DRAGDROP_S_DROP`); host bridging two-way on winex11, ABSENT on winewayland ([findings][w32-f16])                                 | [A[ssh]] eager+lazy `NSPasteboard`; `changeCount` polling is the ONLY change signal; promises die with the source; `changeCount`-in-ownership-callback recurses to stack overflow ([findings][mac-f16])                                                                |
+| [F17 threading][f17]              | [A] no main-thread rule at all; per-thread `wl_event_queue` + proxy wrapper is the designed routing model; a mispaired `read_events` silently wedges the connection forever ([findings][wl-f17])               | [A] no main-thread rule (affinity is per-`Display`); classic no-`XInitThreads` corruption EXTINCT on libX11 ≥ 1.8 (ELF-constructor self-arms); shared-Display reads starve one reader ([findings][x11-f17])             | [A[wine]] HWND queue affinity proven (main sees 0 of 10); `SendMessage` blocks on the receiver's pump; mutual-send defused by nonqueued processing, send-to-parked-thread DEADLOCKS; 100/100 cross-thread `BitBlt` ([findings][w32-f17])           | [A[ssh]] the strictest of all four: window off-main = deterministic `NSInternalInconsistencyException` crash (assert verbatim); direct cross-thread `setNeedsDisplay:` is a SILENT no-op ([findings][mac-f17])                                                         |
+
+The X11 and macOS F13 cells are "N/A — SSD" by design (see the
+[F13 spec](./features/f13-decorations.md)); their one-line customization-hook notes land in
+the Wayland F13 findings doc's comparison section.
+
+<!-- References -->
+
+[wl-scaffold]: ./wayland/scaffold.md
+[x11-scaffold]: ./x11/scaffold.md
+[w32-scaffold]: ./win32/scaffold.md
+[mac-scaffold]: ./appkit/scaffold.md
+[wl-f15]: ./wayland/f15-popup.md
+[wl-f16]: ./wayland/f16-clipboard-dnd.md
+[wl-f17]: ./wayland/f17-threading.md
+[wl-f13]: ./wayland/f13-decorations.md
+[wl-f14]: ./wayland/f14-window-state.md
+[wl-f10]: ./wayland/f10-pointer-capture.md
+[wl-f11]: ./wayland/f11-scroll.md
+[wl-f09]: ./wayland/f09-outputs.md
+[wl-f12]: ./wayland/f12-cursors.md
+[wl-f07]: ./wayland/f07-text-input.md
+[wl-f08]: ./wayland/f08-dpi-scaling.md
+[wl-f05]: ./wayland/f05-loop-wakeup.md
+[wl-f06]: ./wayland/f06-keyboard.md
+[wl-f03]: ./wayland/f03-modal-loop.md
+[wl-f04]: ./wayland/f04-frame-pacing.md
+[wl-f01]: ./wayland/f01-first-pixel.md
+[wl-f02]: ./wayland/f02-resize.md
+[x11-f16]: ./x11/f16-clipboard-dnd.md
+[x11-f17]: ./x11/f17-threading.md
+[x11-f14]: ./x11/f14-window-state.md
+[x11-f15]: ./x11/f15-popup.md
+[x11-f10]: ./x11/f10-pointer-capture.md
+[x11-f11]: ./x11/f11-scroll.md
+[x11-f09]: ./x11/f09-outputs.md
+[x11-f12]: ./x11/f12-cursors.md
+[x11-f07]: ./x11/f07-text-input.md
+[x11-f08]: ./x11/f08-dpi-scaling.md
+[x11-f05]: ./x11/f05-loop-wakeup.md
+[x11-f06]: ./x11/f06-keyboard.md
+[x11-f03]: ./x11/f03-modal-loop.md
+[x11-f04]: ./x11/f04-frame-pacing.md
+[x11-f01]: ./x11/f01-first-pixel.md
+[x11-f02]: ./x11/f02-resize.md
+[w32-f16]: ./win32/f16-clipboard-dnd.md
+[w32-f17]: ./win32/f17-threading.md
+[w32-f14]: ./win32/f14-window-state.md
+[w32-f15]: ./win32/f15-popup.md
+[w32-f10]: ./win32/f10-pointer-capture.md
+[w32-f11]: ./win32/f11-scroll.md
+[w32-f09]: ./win32/f09-outputs.md
+[w32-f12]: ./win32/f12-cursors.md
+[w32-f07]: ./win32/f07-text-input.md
+[w32-f08]: ./win32/f08-dpi-scaling.md
+[w32-f05]: ./win32/f05-loop-wakeup.md
+[w32-f06]: ./win32/f06-keyboard.md
+[w32-f03]: ./win32/f03-modal-loop.md
+[w32-f04]: ./win32/f04-frame-pacing.md
+[w32-f01]: ./win32/f01-first-pixel.md
+[w32-f02]: ./win32/f02-resize.md
+[mac-f16]: ./appkit/f16-clipboard-dnd.md
+[mac-f17]: ./appkit/f17-threading.md
+[mac-f14]: ./appkit/f14-window-state.md
+[mac-f15]: ./appkit/f15-popup.md
+[mac-f10]: ./appkit/f10-pointer-capture.md
+[mac-f11]: ./appkit/f11-scroll.md
+[mac-f09]: ./appkit/f09-outputs.md
+[mac-f12]: ./appkit/f12-cursors.md
+[mac-f07]: ./appkit/f07-text-input.md
+[mac-f08]: ./appkit/f08-dpi-scaling.md
+[mac-f05]: ./appkit/f05-loop-wakeup.md
+[mac-f06]: ./appkit/f06-keyboard.md
+[mac-f03]: ./appkit/f03-modal-loop.md
+[mac-f04]: ./appkit/f04-frame-pacing.md
+[mac-f01]: ./appkit/f01-first-pixel.md
+[mac-f02]: ./appkit/f02-resize.md
+[f01]: ./features/f01-first-pixel.md
+[f02]: ./features/f02-resize.md
+[f03]: ./features/f03-modal-loop.md
+[f04]: ./features/f04-frame-pacing.md
+[f05]: ./features/f05-loop-wakeup.md
+[f06]: ./features/f06-keyboard.md
+[f07]: ./features/f07-text-input.md
+[f08]: ./features/f08-dpi-scaling.md
+[f09]: ./features/f09-outputs.md
+[f10]: ./features/f10-pointer-capture.md
+[f11]: ./features/f11-scroll.md
+[f12]: ./features/f12-cursors.md
+[f13]: ./features/f13-decorations.md
+[f14]: ./features/f14-window-state.md
+[f15]: ./features/f15-popup.md
+[f16]: ./features/f16-clipboard-dnd.md
+[f17]: ./features/f17-threading.md

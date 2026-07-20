@@ -58,6 +58,14 @@ jobs:
         run: npm ci
 
       - name: Build VitePress site
+        env:
+          # The site renders 400+ pages (incl. the dynamic source-code
+          # listings under docs/research/.../os-apis/); node's default ~4 GiB
+          # heap OOMs during the render phase, and 8 GiB still died at
+          # ~7 GiB of live heap ("ineffective mark-compacts"). The
+          # ubuntu-latest runner has 16 GiB; 12 GiB matches the verified
+          # local build.
+          NODE_OPTIONS: --max-old-space-size=12288
         run: npm run docs:build
 
       - name: Deploy to Cloudflare Pages

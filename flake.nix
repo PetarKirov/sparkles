@@ -71,6 +71,7 @@
         ./nix/checks/pre-commit.nix
         ./nix/shells/default.nix
         ./nix/shells/android.nix
+        ./nix/shells/win32-cross.nix
       ];
       systems = import inputs.systems;
     };
