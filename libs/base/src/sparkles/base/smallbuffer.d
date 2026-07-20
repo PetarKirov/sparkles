@@ -415,11 +415,11 @@ pure nothrow @nogc:
      * discriminant (so an empty buffer can hold a reserved heap block) is a
      * planned policy knob.
      */
-    void reserve(size_t newCapacity) @trusted
+    void reserve(size_t newCapacity) @safe
     {
-        if (_length <= N)
+        if (!onHeap)
             return;
-        if (newCapacity <= _block.length)
+        if (newCapacity <= capacity)
             return; // already large enough — don't clone a shared block needlessly
         ensureUniqueStorage(minCapacity: newCapacity);
     }
@@ -473,12 +473,16 @@ pure nothrow @nogc:
     // Ensure this buffer has unique mutable storage with room for `extraLen`
     // additional elements (and at least `minCapacity` total slots). `_length`
     // is deliberately unchanged; callers fill the returned tail and then commit.
-    private T[] ensureUniqueStorage(size_t extraLen = 0, size_t minCapacity = 0) @trusted
+    private T[] ensureUniqueStorage(size_t extraLen = 0, size_t minCapacity = 0) @safe
     {
         import std.math.algebraic : truncPow2;
 
         const oldLen = _length;
         const newLen = oldLen + extraLen;
+
+        if (newLen <= N)
+            return (() @trusted => _inline[oldLen .. newLen])();
+
         const needed = max(newLen, minCapacity);
 
         size_t capacity = needed;
@@ -493,34 +497,30 @@ pure nothrow @nogc:
             }
         }
 
-        if (newLen <= N)
-            return _inline[oldLen .. newLen];
-
-        if (oldLen <= N)
+        const rc = this.refCount;
+        if (rc == 1)
         {
-            T[] nb = allocateBlock(capacity);
-            nb[0 .. oldLen] = _inline[0 .. oldLen];
-            _block = nb;
-            return _block[oldLen .. newLen];
+            if (needed > this.capacity)
+            {
+                const ok = (() @trusted =>
+                    Allocator.instance.expandArray(
+                        _block, capacity - _block.length
+                    )
+                )();
+                if (!ok)
+                    assert(false, "SmallBuffer: reallocation failed");
+            }
+            return (() @trusted => _block[oldLen .. newLen])();
         }
 
-        if (ctrl().refCount > 1)
-        {
-            T[] nb = allocateBlock(max(_block.length, capacity));
-            nb[0 .. oldLen] = _block[0 .. oldLen];
-            --ctrl().refCount;
-            _block = nb;
-            return _block[oldLen .. newLen];
-        }
-
-        if (needed > _block.length)
-        {
-            const ok = expandArray(Allocator.instance, _block, capacity - _block.length);
-            if (!ok)
-                assert(false, "SmallBuffer: reallocation failed");
-        }
-
-        return _block[oldLen .. newLen];
+        T[] oldBlock = this.view;
+        T[] newBlock = allocateBlock(max(this.capacity, capacity));
+        newBlock[0 .. oldLen] = oldBlock[];
+        () @trusted {
+            if (rc > 1) --ctrl().refCount;
+            _block = newBlock;
+        }();
+        return newBlock[oldLen .. newLen];
     }
 
     // Drop this owner's heap reference. If refCount hits 0, destroy and free the
@@ -1422,9 +1422,23 @@ unittest
     assert(reader[] == [0, 1, 2, 3, 4]);         // sharer keeps the old block
 }
 
+@("SmallBuffer.reserve.sharedDetachPreservesCapacity")
+@safe pure nothrow @nogc
+unittest
+{
+    SmallBuffer!(int, 2) a;
+    a ~= [0, 1, 2, 3, 4];
+    a.reserve(100);
+    const reservedCapacity = a.capacity;
 
+    auto b = a;
+    b[0] = 99;                         // detach without growing
 
-
+    assert(a.capacity == reservedCapacity);
+    assert(b.capacity == reservedCapacity);
+    assert(a[0] == 0);
+    assert(b[0] == 99);
+}
 
 @("SmallBuffer.cow.attributesPreserved")
 @safe pure nothrow @nogc
