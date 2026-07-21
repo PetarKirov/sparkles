@@ -20,7 +20,7 @@ Totality: the renderer never fails on any event stream.
 
 Color notes: `Color.Kind.palette` values are concretized through the xterm
 default palette (`xterm256ToRgb`) — HTML has no terminal palette to defer
-to; `default_`/`unset` emit no declaration; `FontStyle.dim` has no single
+to; `default_`/`unset` emit no declaration; `TextAttr.dim` has no single
 CSS declaration and is skipped.
 */
 module sparkles.syntax.render.html;
@@ -32,7 +32,7 @@ import sparkles.base.text.writers : writeHexByte;
 
 import sparkles.syntax.color : Color, RgbColor, xterm256ToRgb;
 import sparkles.syntax.event : HighlightEvent, LabelId, isHighlightEventRange;
-import sparkles.syntax.theme : FontStyle, ResolvedTheme, StyleSpec, hasFont;
+import sparkles.syntax.theme : ResolvedTheme, StyleSpec, TextAttr, UnderlineStyle;
 
 import sparkles.base.smallbuffer : SmallBuffer;
 
@@ -229,18 +229,18 @@ private void writeStyleDeclarations(Writer)(ref Writer w, in StyleSpec spec)
         put(w, "background-color:#");
         writeHexRgb(w, rgb);
     }
-    if (hasFont(spec.font, FontStyle.bold))
+    if (spec.attrs.has(TextAttr.bold))
     {
         sep();
         put(w, "font-weight:bold");
     }
-    if (hasFont(spec.font, FontStyle.italic))
+    if (spec.attrs.has(TextAttr.italic))
     {
         sep();
         put(w, "font-style:italic");
     }
-    const underline = hasFont(spec.font, FontStyle.underline);
-    const strikethrough = hasFont(spec.font, FontStyle.strikethrough);
+    const underline = spec.underline != UnderlineStyle.none;
+    const strikethrough = spec.attrs.has(TextAttr.strikethrough);
     if (underline || strikethrough)
     {
         sep();
@@ -251,6 +251,29 @@ private void writeStyleDeclarations(Writer)(ref Writer w, in StyleSpec spec)
             put(w, ' ');
         if (strikethrough)
             put(w, "line-through");
+    }
+    // Non-single underline shapes map to CSS text-decoration-style; an underline
+    // color maps to text-decoration-color. Solid single underlines emit neither
+    // (the CSS defaults), so existing output is unchanged.
+    if (underline && spec.underline != UnderlineStyle.single)
+    {
+        sep();
+        put(w, "text-decoration-style:");
+        final switch (spec.underline)
+        {
+            case UnderlineStyle.none:
+            case UnderlineStyle.single:  break; // unreachable under the guard
+            case UnderlineStyle.double_: put(w, "double"); break;
+            case UnderlineStyle.curly:   put(w, "wavy");   break;
+            case UnderlineStyle.dotted:  put(w, "dotted"); break;
+            case UnderlineStyle.dashed:  put(w, "dashed"); break;
+        }
+    }
+    if (underline && concreteRgb(spec.underlineColor, rgb))
+    {
+        sep();
+        put(w, "text-decoration-color:#");
+        writeHexRgb(w, rgb);
     }
 }
 
@@ -297,10 +320,10 @@ version (unittest)
             name: "test",
             rules: [
                 ThemeRule("keyword", StyleSpec(
-                    fg: Color.fromRgb(0xcb, 0xa6, 0xf7), font: FontStyle.bold)),
+                    fg: Color.fromRgb(0xcb, 0xa6, 0xf7), attrs: TextAttr.bold)),
                 ThemeRule("string", StyleSpec(fg: Color.fromRgb(0xa6, 0xe3, 0xa1))),
                 ThemeRule("comment", StyleSpec(
-                    fg: Color.fromPalette(8), font: FontStyle.italic)),
+                    fg: Color.fromPalette(8), attrs: TextAttr.italic)),
             ]);
         return resolveTheme(theme, LabelSet.standard());
     }
@@ -334,6 +357,29 @@ unittest
     checkWriter!((ref w) => renderHtml(source, events[], resolved, w))(
         `<span style="color:#cba6f7;font-weight:bold">if</span> (x) ` ~
         `<span style="color:#7f7f7f;font-style:italic">// hi</span>`);
+}
+
+/// Non-single underline shapes and an underline color render to CSS
+/// text-decoration-style / text-decoration-color.
+@("render.html.underlineStyleAndColor")
+@safe pure nothrow
+unittest
+{
+    import sparkles.syntax.theme : Theme, ThemeRule, resolveTheme;
+
+    alias E = HighlightEvent;
+    const theme = Theme(name: "t", rules: [
+        ThemeRule("keyword", StyleSpec(
+            underlineColor: Color.fromRgb(0xff, 0x55, 0x55),
+            underline: UnderlineStyle.curly)),
+    ]);
+    const resolved = resolveTheme(theme, LabelSet.standard());
+    const source = "if";
+    const events = [E.pushLabel(lbl("keyword")), E.sourceSpan(0, 2), E.popLabel()];
+
+    checkWriter!((ref w) => renderHtml(source, events[], resolved, w))(
+        `<span style="text-decoration:underline;text-decoration-style:wavy;` ~
+        `text-decoration-color:#ff5555">if</span>`);
 }
 
 @("render.html.cssClasses")
@@ -474,7 +520,7 @@ unittest
         defaultBg: hex("#1e1e2e"),
         rules: [
             ThemeRule("keyword", StyleSpec(
-                fg: Color.fromRgb(0xcb, 0xa6, 0xf7), font: FontStyle.bold)),
+                fg: Color.fromRgb(0xcb, 0xa6, 0xf7), attrs: TextAttr.bold)),
             ThemeRule("string", StyleSpec(fg: Color.fromRgb(0xa6, 0xe3, 0xa1))),
         ]);
     const resolved = resolveTheme(theme, LabelSet.fromNames(["keyword", "string"]));

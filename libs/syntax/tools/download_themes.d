@@ -186,20 +186,48 @@ string cleanHexColor(string c)
     return c;
 }
 
-string parseFontStyle(string styleStr)
+/// The D expression constructing the `Color` for a cleaned `#RRGGBB` /
+/// `#RRGGBBAA` hex string: a `x"…"` hex-string literal through `Color.fromRgb`,
+/// with bat's alpha convention (`00` = palette index, `01` = terminal default).
+string colorExpr(string cleanHex)
 {
-    if (styleStr.length == 0) return "FontStyle.none";
+    const digits = cleanHex[1 .. $]; // drop the leading '#'
+    if (digits.length == 8)
+    {
+        const alpha = digits[6 .. 8];
+        if (alpha == "00")
+            return format("Color.fromPalette(0x%s)", digits[0 .. 2]);
+        if (alpha == "01")
+            return "Color.defaultColor";
+    }
+    return format("Color.fromRgb(x\"%s\")", digits[0 .. 6]);
+}
+
+string parseTextAttr(string styleStr)
+{
+    if (styleStr.length == 0) return "TextAttr.none";
     auto parts = styleStr.toLower().split();
     string[] flags;
     foreach (p; parts)
     {
-        if (p == "bold") flags ~= "FontStyle.bold";
-        else if (p == "italic") flags ~= "FontStyle.italic";
-        else if (p == "underline") flags ~= "FontStyle.underline";
-        else if (p == "strikethrough") flags ~= "FontStyle.strikethrough";
+        // `underline` is not a TextAttr flag — it is a separate UnderlineStyle
+        // field (see hasUnderlineStyle); skip it here.
+        if (p == "bold") flags ~= "TextAttr.bold";
+        else if (p == "italic") flags ~= "TextAttr.italic";
+        else if (p == "strikethrough") flags ~= "TextAttr.strikethrough";
     }
-    if (flags.length == 0) return "FontStyle.none";
-    return "cast(FontStyle)(" ~ flags.join(" | ") ~ ")";
+    if (flags.length == 0) return "TextAttr.none";
+    // TextAttr's typed `|` keeps the result a TextAttr — no cast needed.
+    return flags.join(" | ");
+}
+
+/// `true` iff the VS Code fontStyle string requests underline (a separate
+/// `UnderlineStyle.single`, not a `TextAttr` flag).
+bool hasUnderlineStyle(string styleStr)
+{
+    import std.algorithm.searching : canFind;
+
+    return styleStr.toLower().split().canFind("underline");
 }
 
 string getJsonStringOpt(ref JSONValue json, string[] path)
@@ -219,7 +247,8 @@ struct ParsedRule
     string label;
     string fg;
     string bg;
-    string font;
+    string attrs;
+    bool underline;
 }
 
 struct ThemeInfo
@@ -295,9 +324,10 @@ ThemeInfo* processTheme(string themeName)
                 string fg = cleanHexColor(getJsonStringOpt(*settingsOpt, ["foreground"]));
                 string bg = cleanHexColor(getJsonStringOpt(*settingsOpt, ["background"]));
                 string fontStyle = getJsonStringOpt(*settingsOpt, ["fontStyle"]);
-                string font = parseFontStyle(fontStyle);
+                string attrs = parseTextAttr(fontStyle);
+                bool underline = hasUnderlineStyle(fontStyle);
 
-                if (!fg && !bg && font == "FontStyle.none") continue;
+                if (!fg && !bg && attrs == "TextAttr.none" && !underline) continue;
 
                 if (auto scopeOpt = "scope" in tc.object)
                 {
@@ -320,11 +350,11 @@ ThemeInfo* processTheme(string themeName)
                             string label = mapScopeToLabel(s);
                             if (label)
                             {
-                                string key = format("%s|%s|%s|%s", label, fg, bg, font);
+                                string key = format("%s|%s|%s|%s|%s", label, fg, bg, attrs, underline);
                                 if (key !in seen)
                                 {
                                     seen[key] = true;
-                                    rules ~= ParsedRule(label, fg, bg, font);
+                                    rules ~= ParsedRule(label, fg, bg, attrs, underline);
                                 }
                             }
                         }
@@ -361,8 +391,8 @@ derived from Shikijs/TextMate themes.
 */
 module sparkles.syntax.themes;
 
-import sparkles.syntax.color : Color, parseHexColor;
-import sparkles.syntax.theme : FontStyle, StyleSpec, Theme, ThemeRule;
+import sparkles.syntax.color : Color;
+import sparkles.syntax.theme : StyleSpec, TextAttr, Theme, ThemeRule, UnderlineStyle;
 
 @safe:
 
@@ -377,19 +407,21 @@ static immutable Theme builtinLight = solarized_light;
         dCode ~= format("static immutable Theme %s = Theme(\n", theme.idName);
         dCode ~= format("    name: \"%s\",\n", theme.name);
         if (theme.defaultFg)
-            dCode ~= format("    defaultFg: hex(\"%s\"),\n", theme.defaultFg);
+            dCode ~= format("    defaultFg: %s,\n", colorExpr(theme.defaultFg));
         if (theme.defaultBg)
-            dCode ~= format("    defaultBg: hex(\"%s\"),\n", theme.defaultBg);
+            dCode ~= format("    defaultBg: %s,\n", colorExpr(theme.defaultBg));
         dCode ~= "    rules: [\n";
         foreach (ref r; theme.rules)
         {
             string[] styleArgs;
             if (r.fg)
-                styleArgs ~= format("fg: hex(\"%s\")", r.fg);
+                styleArgs ~= format("fg: %s", colorExpr(r.fg));
             if (r.bg)
-                styleArgs ~= format("bg: hex(\"%s\")", r.bg);
-            if (r.font != "FontStyle.none")
-                styleArgs ~= format("font: %s", r.font);
+                styleArgs ~= format("bg: %s", colorExpr(r.bg));
+            if (r.attrs != "TextAttr.none")
+                styleArgs ~= format("attrs: %s", r.attrs);
+            if (r.underline)
+                styleArgs ~= "underline: UnderlineStyle.single";
 
             string styleStr = styleArgs.length ? format("StyleSpec(%s)", styleArgs.join(", ")) : "StyleSpec.init";
             dCode ~= format("        ThemeRule(\"%s\", %s),\n", r.label, styleStr);
@@ -398,24 +430,27 @@ static immutable Theme builtinLight = solarized_light;
     }
 
     dCode ~= q"EOF
-/// Dictionary of all built-in themes by name.
-static immutable Theme[string] builtinThemes;
-
-@system shared static this()
-{
-    Theme[string] themes;
+/// Dictionary of all built-in themes by name (static AA literal — no ctor).
+static immutable Theme[string] builtinThemes = [
 EOF";
 
+    // Emit each distinct key once: a single-word theme name and its
+    // hyphen-stripped alias collide, and an AA literal has no last-wins.
+    bool[string] keysSeen;
     foreach (theme; results)
     {
-        dCode ~= format("    themes[\"%s\"] = cast() %s;\n", theme.name, theme.idName);
-        string simplified = theme.name.toLower().replace(" ", "").replace("-", "");
-        dCode ~= format("    themes[\"%s\"] = cast() %s;\n", simplified, theme.idName);
+        const simplified = theme.name.toLower().replace(" ", "").replace("-", "");
+        foreach (key; [theme.name, simplified])
+        {
+            if (key in keysSeen)
+                continue;
+            keysSeen[key] = true;
+            dCode ~= format("    \"%s\": %s,\n", key, theme.idName);
+        }
     }
 
     dCode ~= q"EOF
-    builtinThemes = cast(immutable) themes;
-}
+];
 
 @("themes.builtins.resolveCleanly")
 unittest
@@ -431,15 +466,6 @@ unittest
         // Ensure standard theme elements resolve
         assert(!resolved[LabelId.none].fg.isSet || resolved[LabelId.none].fg.kind != Color.Kind.unset);
     }
-}
-
-/// CTFE `#RRGGBB` or `#RRGGBBAA` → `Color` for theme data.
-private Color hex(string s) pure nothrow @nogc
-{
-    const(char)[] t = s;
-    auto parsed = parseHexColor(t);
-    assert(parsed.hasValue && t.length == 0, "invalid theme hex color");
-    return parsed.value;
 }
 EOF";
 

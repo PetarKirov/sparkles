@@ -13,10 +13,10 @@ import core.stdc.stdio : FILE, fflush, fwrite;
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_control : CtlSeq;
 import sparkles.base.styled_template : writeStyled;
+import sparkles.base.term_style : writeStyleTransition;
 
 import sparkles.syntax : AnsiOptions, ColorDepth, HighlightEvent, LabelSet,
-    renderAnsi, ResolvedTheme, StyleSpec, Theme,
-    writeStyleTransition, writeThemeStyles;
+    renderAnsi, ResolvedTheme, StyleSpec, Theme, writeThemeStyles;
 
 import sparkles.core_cli.key_input : Key, KeySession;
 import sparkles.core_cli.term_caps : StdStream, terminalSize;
