@@ -3,6 +3,29 @@
     name "ratatui-colors-rgb"
     dependency "sparkles:core-cli" path="../../.."
     targetPath "build"
+
+    # The default config for `dub run` (the demo). Declaring `unittest` below
+    # suppresses dub's auto-generated application config, so name it explicitly.
+    configuration "application" {
+        targetType "executable"
+    }
+
+    configuration "unittest" {
+        # The frame-render fps benchmark (see the `version (unittest)` block
+        # below) runs on sparkles:test-runner; the shim pulls the prebuilt impl.
+        dependency "sparkles:test-runner" path="../../.."
+        dflags "-checkaction=context" "-allinst"
+        dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+        dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+        lflags "--export-dynamic" platform="linux-ldc"
+    }
+
+    # Release codegen for meaningful numbers:
+    #   dub test --single ratatui-colors-rgb.d -b bench -- --bench --group-by=sink
+    buildType "bench" {
+        buildOptions "unittests" "releaseMode" "optimize" "inline"
+        dflags "-mcpu=native" "-O3" "-allinst" platform="ldc"
+    }
 +/
 // ci: build-only
 
@@ -27,6 +50,10 @@ module ratatui_colors_rgb_example;
 // into a single reused inline `SmallBuffer` (never heap-backed for a real
 // terminal width) and the row builders are `@nogc`, so the compiler proves the
 // hot loop performs no GC allocation.
+//
+// The bottom of this file also carries a `@benchmark` (under `version (unittest)`)
+// that measures the uncapped frame-render fps at several terminal sizes — see it
+// for the `dub test … -b bench` invocation.
 //
 //   dub run --single ratatui-colors-rgb.d
 //   dub run --single ratatui-colors-rgb.d -- --frames 300 --fps 30
@@ -56,6 +83,9 @@ alias RowBuffer = SmallBuffer!(char, 131_072);
 __gshared bool stop = false;
 extern (C) void onSigint(int) nothrow @nogc { stop = true; }
 
+// In a `dub test` (unittest) build the runner provides the entry point, so the
+// demo's `main` is compiled only for the normal `dub run` build.
+version (unittest) {} else
 void main(string[] args)
 {
     size_t maxFrames = 0; // 0 = run until Ctrl+C
@@ -240,4 +270,161 @@ void hsvToRgb(double h, double s, double v, out ubyte r, out ubyte g, out ubyte 
     r = q(r1);
     g = q(g1);
     b = q(b1);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Benchmark: uncapped frame-render throughput (fps) at different terminal sizes.
+//
+// Reuses the demo's own row builders (`writeTitle`/`writeSpectrumRow`) to render
+// one full frame per timed iteration and write it to a real fd (`/dev/null`), so
+// the write() syscall + buffer-copy overhead is counted; an in-memory (no-write)
+// baseline is measured alongside, so the IO overhead is the mem→/dev/null delta.
+// There is no `Thread.sleep` here — this is the raw render+IO ceiling. It lives
+// under `version (unittest)` so the plain `dub run` demo build needs no
+// test-runner dependency.
+//
+//   dub test --single ratatui-colors-rgb.d -b bench -- --bench --group-by=sink
+//   RGB_BENCH_SIZES=120x40,320x90 RGB_BENCH_SINKS=devnull \
+//       dub test --single ratatui-colors-rgb.d -b bench -- --bench
+// ─────────────────────────────────────────────────────────────────────────────
+version (unittest)
+{
+    import sparkles.test_runner.attributes : benchmark;
+    import sparkles.test_runner.bench : benchCase, blackBox, Metric, Unit;
+    import std.stdio : File;
+
+    private struct BenchSize { uint width, height; string label; }
+
+    private immutable BenchSize[] benchSizes = [
+        BenchSize(80, 24, "80x24"),
+        BenchSize(120, 40, "120x40"),
+        BenchSize(160, 48, "160x48"),
+        BenchSize(240, 67, "240x67"),
+        BenchSize(320, 90, "320x90"),
+    ];
+
+    version (Posix) private enum nullPath = "/dev/null";
+    else            private enum nullPath = "NUL";
+
+    /// Reusable per-case state: heap-allocated so the deferred `benchCase`
+    /// closures all share one instance (the frame buffer and fd persist, and
+    /// `frameIdx` advances between iterations to animate and defeat caching).
+    private struct St
+    {
+        @disable this(this); // holds a File; only ever used via `new St` + pointer
+
+        uint width, height;
+        RowBuffer buf;   // reused; stays inline → render is allocation-free
+        size_t frameIdx;
+        bool toFd;
+        File sink;       // /dev/null, opened once (when toFd)
+    }
+
+    @("colors-rgb.render")
+    @benchmark
+    @system
+    unittest
+    {
+        bool any;
+        foreach (const ref sz; benchSizes)
+        {
+            if (!benchEnvAllows("RGB_BENCH_SIZES", sz.label))
+                continue;
+            foreach (toFd; [false, true])
+            {
+                if (!benchEnvAllows("RGB_BENCH_SINKS", toFd ? "devnull" : "mem"))
+                    continue;
+                registerFrame(sz, toFd);
+                any = true;
+            }
+        }
+        if (!any)
+            benchCase(name: "(filtered out)", timed: () {}, after: () {});
+    }
+
+    private void registerFrame(BenchSize sz, bool toFd)
+    {
+        auto st = new St;
+        st.width = sz.width;
+        st.height = sz.height;
+        st.toFd = toFd;
+        if (toFd)
+            st.sink = File(nullPath, "wb");
+
+        const frameBytes = probeFrameBytes(sz.width, sz.height);
+
+        benchCase(
+            name: sz.label,
+            labels: ["sink": toFd ? "/dev/null" : "mem"],
+            timed: () { renderFrame(st); },
+            after: () {},
+            metrics: [
+                // One frame per timed call → the rate column IS frames/sec (fps).
+                Metric(unit: Unit("frame"), amount: 1.0, mode: Metric.Mode.rate),
+                Metric(unit: Unit("B"), amount: cast(double) frameBytes, mode: Metric.Mode.rate),
+                Metric(unit: Unit("B"), amount: cast(double) frameBytes, mode: Metric.Mode.level),
+            ],
+        );
+    }
+
+    /// Render one full frame (title + `H-1` spectrum rows) into the reused inline
+    /// buffer, writing each row to the sink. Allocation-free in steady state.
+    private void renderFrame(St* st)
+    {
+        const rows = st.height >= 2 ? st.height - 1 : st.height;
+        const pixelRows = cast(uint)(rows * 2);
+
+        st.buf.clear();
+        writeTitle(st.buf, st.width, 60.0);
+        emit(st);
+        foreach (ry; 0 .. rows)
+        {
+            st.buf.clear();
+            writeSpectrumRow(st.buf, cast(uint) ry, st.width, pixelRows,
+                st.frameIdx, ColorDepth.trueColor);
+            emit(st);
+        }
+        if (st.toFd)
+            st.sink.flush();
+        ++st.frameIdx;
+        blackBox(st.frameIdx);
+    }
+
+    private void emit(St* st)
+    {
+        if (st.toFd)
+            st.sink.rawWrite(st.buf[]);
+        else
+            blackBox(st.buf[]);
+    }
+
+    /// Total bytes one frame writes at this size (trueColor) — for the B/s and
+    /// bytes/frame metric columns. Frame 0 is representative (SGR-delta sizes
+    /// vary only slightly across frames).
+    private size_t probeFrameBytes(uint width, uint height)
+    {
+        const rows = height >= 2 ? height - 1 : height;
+        const pixelRows = cast(uint)(rows * 2);
+        RowBuffer buf;
+        size_t total;
+        buf.clear();
+        writeTitle(buf, width, 60.0);
+        total += buf.length;
+        foreach (ry; 0 .. rows)
+        {
+            buf.clear();
+            writeSpectrumRow(buf, cast(uint) ry, width, pixelRows, 0, ColorDepth.trueColor);
+            total += buf.length;
+        }
+        return total;
+    }
+
+    private bool benchEnvAllows(string var, string name)
+    {
+        import std.algorithm : canFind, splitter;
+        import std.process : environment;
+
+        const v = environment.get(var, "");
+        return v.length == 0 || v.splitter(',').canFind(name);
+    }
 }
