@@ -289,59 +289,74 @@ private void writeStyleColorPacked(ref Sink s, uint packedWord, ColorChannel cha
     writeSgrColorPacked(s, packedWord, ColorDepth.trueColor, channel);
 }
 
-/// Pack a `Color` into the C calibration ABI tag: 0 = none/default, 1 = palette,
-/// 2 = rgb (matches ghostty's style-color tags and the C `TuiCell` layout).
-ubyte calibColorTag(in Color c) @safe pure nothrow @nogc
+/// Pack a packed-color word into the C calibration ABI tag: 0 = none/default,
+/// 1 = palette, 2 = rgb (matches ghostty's style-color tags and the C `TuiCell`
+/// layout). Reads only the `packColor` kind in bits 24–25 — no `Color` unpack.
+ubyte calibColorTagPacked(uint packedWord) @safe pure nothrow @nogc
 {
-    final switch (c.kind)
+    final switch ((packedWord >> 24) & 3)
     {
-        case Color.Kind.unset:
-        case Color.Kind.default_:
+        case 0: // Color.Kind.unset
+        case 1: // Color.Kind.default_
             return 0;
-        case Color.Kind.palette:
+        case 2: // Color.Kind.palette
             return 1;
-        case Color.Kind.rgb:
+        case 3: // Color.Kind.rgb
             return 2;
     }
 }
 
-/// RGB/palette payload bytes for the C calibration ABI (`a,b,c` fields).
-void calibColorPayload(in Color c, out ubyte a, out ubyte b, out ubyte cc) @safe pure nothrow @nogc
+/// RGB/palette payload bytes for the C calibration ABI from a packed word.
+void calibColorPayloadPacked(uint packedWord, out ubyte a, out ubyte b, out ubyte cc)
+    @safe pure nothrow @nogc
 {
-    final switch (c.kind)
+    final switch ((packedWord >> 24) & 3)
     {
-        case Color.Kind.unset:
-        case Color.Kind.default_:
+        case 0: // unset
+        case 1: // default_
             a = b = cc = 0;
             return;
-        case Color.Kind.palette:
-            a = c.index;
+        case 2: // palette
+            a = cast(ubyte)(packedWord & 0xFF);
             b = cc = 0;
             return;
-        case Color.Kind.rgb:
-            a = c.rgb.r;
-            b = c.rgb.g;
-            cc = c.rgb.b;
+        case 3: // rgb
+            a = cast(ubyte)(packedWord >> 16);
+            b = cast(ubyte)(packedWord >> 8);
+            cc = cast(ubyte) packedWord;
             return;
     }
 }
 
 /// Canonical attribute bits for calibration / VT oracle: bold=1, dim=2,
-/// italic=4, underline=8, reverse=16.
+/// italic=4, underline=8, reverse=16. Reads packed words only.
 ubyte calibAttrs(in TermStyle st) @safe pure nothrow @nogc
 {
+    const attrs = cast(ubyte)((st.packed0 >> colorBits) & attrsMask);
     ubyte a;
-    if (st.attrs.has(TextAttr.bold))
+    if (attrs & TextAttr.bold.bits)
         a |= 1;
-    if (st.attrs.has(TextAttr.dim))
+    if (attrs & TextAttr.dim.bits)
         a |= 2;
-    if (st.attrs.has(TextAttr.italic))
+    if (attrs & TextAttr.italic.bits)
         a |= 4;
-    if (st.underline != UnderlineStyle.none)
+    if (((st.packed1 >> colorBits) & underlineMask) != 0)
         a |= 8;
-    if (st.attrs.has(TextAttr.inverse))
+    if (attrs & TextAttr.inverse.bits)
         a |= 16;
     return a;
+}
+
+/// Fill C-ABI color + attr fields from a `TermStyle` without unpacking `Color`.
+void calibFillStyle(in TermStyle st, out ubyte fgKind, out ubyte fr, out ubyte fg, out ubyte fb,
+    out ubyte bgKind, out ubyte br, out ubyte bg, out ubyte bb, out ubyte attrs)
+    @safe pure nothrow @nogc
+{
+    fgKind = calibColorTagPacked(st.packed0);
+    calibColorPayloadPacked(st.packed0, fr, fg, fb);
+    bgKind = calibColorTagPacked(st.packed1);
+    calibColorPayloadPacked(st.packed1, br, bg, bb);
+    attrs = calibAttrs(st);
 }
 
 @("cell.grid.putTextAndWidth")

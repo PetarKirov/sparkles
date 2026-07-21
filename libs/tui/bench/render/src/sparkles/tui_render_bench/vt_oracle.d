@@ -22,8 +22,7 @@ module sparkles.tui_render_bench.vt_oracle;
 version (TuiBenchVtOracle):
 
 import sparkles.ghostty;
-import sparkles.tui_render_bench.cell : calibAttrs, calibColorPayload, calibColorTag, Cell,
-    firstCodepoint, Grid;
+import sparkles.tui_render_bench.cell : calibFillStyle, Cell, firstCodepoint, Grid;
 
 // ---------------------------------------------------------------------------
 // Shared normalized fingerprint (identical hashing on both sides).
@@ -80,13 +79,9 @@ ulong normFingerprint(in Grid g) @safe pure nothrow @nogc
         {
             const c = g.at(x, y);
             const cp = firstCodepoint(c.grapheme);
-            ubyte fa, fb, fc, ba, bb, bc;
-            calibColorPayload(c.style.fg, fa, fb, fc);
-            calibColorPayload(c.style.bg, ba, bb, bc);
-            hashCell(h, cp,
-                calibColorTag(c.style.fg), fa, fb, fc,
-                calibColorTag(c.style.bg), ba, bb, bc,
-                calibAttrs(c.style));
+            ubyte fgKind, fa, fb, fc, bgKind, ba, bb, bc, attrs;
+            calibFillStyle(c.style, fgKind, fa, fb, fc, bgKind, ba, bb, bc, attrs);
+            hashCell(h, cp, fgKind, fa, fb, fc, bgKind, ba, bb, bc, attrs);
         }
     return h;
 }
