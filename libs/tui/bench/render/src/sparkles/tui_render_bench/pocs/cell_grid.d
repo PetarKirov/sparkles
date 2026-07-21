@@ -11,7 +11,7 @@ capacity, so steady state is allocation-free.
 module sparkles.tui_render_bench.pocs.cell_grid;
 
 import sparkles.base.term_control : writeCursorTo;
-import sparkles.tui_render_bench.cell : CellStyle, Grid, writeStyle;
+import sparkles.tui_render_bench.cell : Grid, TermStyle, writeStyle;
 import sparkles.tui_render_bench.render_util : paintFull;
 import sparkles.tui_render_bench.sink : Sink;
 
@@ -66,7 +66,7 @@ struct CellGrid
                 writeCursorTo(s, cast(uint)(y + 1), cast(uint)(x + 1));
                 s.cursorMoves++;
                 bool first = true;
-                CellStyle cur;
+                TermStyle cur;
                 while (x < g.cols && g.at(x, y) != _prev.at(x, y))
                 {
                     const c = g.at(x, y);

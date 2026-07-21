@@ -12,19 +12,19 @@ The target grid is a pure function of the model, recomputed in full each frame.
 +/
 module sparkles.tui_render_bench.scene;
 
-import sparkles.tui_render_bench.cell : Attr, Cell, CellStyle, Color, Grid;
+import sparkles.tui_render_bench.cell : Color, Grid, TermStyle, TextAttr, UnderlineStyle;
 import sparkles.tui_render_bench.model : Model;
 import sparkles.tui_render_bench.scenario : sceneTableRows, sceneTreeNodes;
 
 // Palette (truecolor — the benchmark must exercise RGB, spec C1).
-private enum Color cFg = Color.rgb(0xC8, 0xD3, 0xE0);
-private enum Color cAccent = Color.rgb(0x7A, 0xA2, 0xF7);
-private enum Color cBarBg = Color.rgb(0x24, 0x28, 0x33);
-private enum Color cSelBg = Color.rgb(0x33, 0x3A, 0x52);
-private enum Color cOk = Color.rgb(0x9E, 0xCE, 0x6A);
-private enum Color cWarn = Color.rgb(0xE0, 0xAF, 0x68);
-private enum Color cErr = Color.rgb(0xF7, 0x76, 0x8E);
-private enum Color cMuted = Color.rgb(0x56, 0x5F, 0x89);
+private enum Color cFg = Color.fromRgb(0xC8, 0xD3, 0xE0);
+private enum Color cAccent = Color.fromRgb(0x7A, 0xA2, 0xF7);
+private enum Color cBarBg = Color.fromRgb(0x24, 0x28, 0x33);
+private enum Color cSelBg = Color.fromRgb(0x33, 0x3A, 0x52);
+private enum Color cOk = Color.fromRgb(0x9E, 0xCE, 0x6A);
+private enum Color cWarn = Color.fromRgb(0xE0, 0xAF, 0x68);
+private enum Color cErr = Color.fromRgb(0xF7, 0x76, 0x8E);
+private enum Color cMuted = Color.fromRgb(0x56, 0x5F, 0x89);
 
 private immutable string[10] spinnerFrames = [
     "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏",
@@ -61,14 +61,14 @@ void renderScene(in Model m, ref Grid g) @safe nothrow
 
 private void drawHeader(in Model m, ref Grid g) @safe nothrow
 {
-    const st = CellStyle(cAccent, cBarBg, Attr.bold);
+    const st = TermStyle(fg: cAccent, bg: cBarBg, attrs: TextAttr.bold);
     g.fill(0, 0, m.cols, st);
     g.putText(1, 0, "sparkles ops dashboard", st);
 
     char[8] clock;
     formatClock(m.clockSecs, clock);
     const cx = cast(ushort)(m.cols >= 10 ? m.cols - 9 : 0);
-    g.putText(cx, 0, clock[], CellStyle(cFg, cBarBg));
+    g.putText(cx, 0, clock[], TermStyle(fg: cFg, bg: cBarBg));
 }
 
 private void drawLog(in Model m, ref Grid g, ushort top, ushort bottom, ushort width) @safe nothrow
@@ -87,7 +87,7 @@ private void drawLog(in Model m, ref Grid g, ushort top, ushort bottom, ushort w
     }
 }
 
-private CellStyle logStyle(scope const(string) line, ushort width) @safe nothrow
+private TermStyle logStyle(scope const(string) line, ushort width) @safe nothrow
 {
     Color fg = cFg;
     if (line.length >= 4)
@@ -101,7 +101,7 @@ private CellStyle logStyle(scope const(string) line, ushort width) @safe nothrow
         else if (line[0 .. 4] == "INFO")
             fg = cOk;
     }
-    return CellStyle(fg, Color.init);
+    return TermStyle(fg: fg);
 }
 
 private void drawTable(in Model m, ref Grid g, ushort x, ushort top, ushort bottom, ushort width) @safe nothrow
@@ -109,7 +109,8 @@ private void drawTable(in Model m, ref Grid g, ushort x, ushort top, ushort bott
     if (width < 8)
         return;
     // Header row.
-    g.putText(x, top, "NODE       PHASE     COUNT  STATE", CellStyle(cAccent, Color.init, Attr.bold | Attr.underline));
+    g.putText(x, top, "NODE       PHASE     COUNT  STATE",
+        TermStyle(fg: cAccent, attrs: TextAttr.bold, underline: UnderlineStyle.single));
     foreach (r; 0 .. sceneTableRows)
     {
         const y = cast(ushort)(top + 1 + r);
@@ -117,18 +118,18 @@ private void drawTable(in Model m, ref Grid g, ushort x, ushort top, ushort bott
             break;
         const selected = r == m.selection;
         const rowBg = selected ? cSelBg : Color.init;
-        const rowFg = selected ? Color.rgb(0xFF, 0xFF, 0xFF) : cFg;
-        g.fill(x, y, width, CellStyle(rowFg, rowBg));
+        const rowFg = selected ? Color.fromRgb(0xFF, 0xFF, 0xFF) : cFg;
+        g.fill(x, y, width, TermStyle(fg: rowFg, bg: rowBg));
 
         char[16] cnt;
         const n = formatUint(m.counters[r], cnt);
         const state = m.counters[r] % 3 == 0 ? "ok" : (m.counters[r] % 3 == 1 ? "run" : "wait");
         const stFg = state == "ok" ? cOk : (state == "run" ? cWarn : cMuted);
 
-        g.putText(x, y, nodeNames[r], CellStyle(rowFg, rowBg));
-        g.putText(cast(ushort)(x + 11), y, phases[r % phases.length], CellStyle(rowFg, rowBg));
-        g.putText(cast(ushort)(x + 21), y, cnt[$ - n .. $], CellStyle(rowFg, rowBg));
-        g.putText(cast(ushort)(x + 28), y, state, CellStyle(stFg, rowBg));
+        g.putText(x, y, nodeNames[r], TermStyle(fg: rowFg, bg: rowBg));
+        g.putText(cast(ushort)(x + 11), y, phases[r % phases.length], TermStyle(fg: rowFg, bg: rowBg));
+        g.putText(cast(ushort)(x + 21), y, cnt[$ - n .. $], TermStyle(fg: rowFg, bg: rowBg));
+        g.putText(cast(ushort)(x + 28), y, state, TermStyle(fg: stFg, bg: rowBg));
     }
 }
 
@@ -144,22 +145,22 @@ private void drawTree(in Model m, ref Grid g, ushort x, ushort top, ushort botto
         const expandable = n + 1 < sceneTreeNodes && treeLabels[n + 1].length > treeLabels[n].length;
         const expanded = (m.treeExpanded & (1u << n)) != 0;
         const marker = expandable ? (expanded ? "▾ " : "▸ ") : "· ";
-        g.putText(x, y, marker, CellStyle(cAccent, Color.init));
-        g.putText(cast(ushort)(x + 2), y, treeLabels[n], CellStyle(cFg, Color.init));
+        g.putText(x, y, marker, TermStyle(fg: cAccent));
+        g.putText(cast(ushort)(x + 2), y, treeLabels[n], TermStyle(fg: cFg));
         y++;
     }
 }
 
 private void drawFooter(in Model m, ref Grid g, ushort y) @safe nothrow
 {
-    const st = CellStyle(cFg, cBarBg);
+    const st = TermStyle(fg: cFg, bg: cBarBg);
     g.fill(0, y, m.cols, st);
     // Three spinners at different phases.
     ushort x = 1;
     foreach (i; 0 .. 3)
     {
         const frame = spinnerFrames[(m.spinnerFrame + i * 3) % spinnerFrames.length];
-        g.putText(x, y, frame, CellStyle(cAccent, cBarBg, Attr.bold));
+        g.putText(x, y, frame, TermStyle(fg: cAccent, bg: cBarBg, attrs: TextAttr.bold));
         x = cast(ushort)(x + 2);
     }
     // Progress bar.
@@ -172,7 +173,7 @@ private void drawFooter(in Model m, ref Grid g, ushort y) @safe nothrow
         {
             const on = i < filled;
             g.putText(cast(ushort)(barX + i), y, on ? "█" : "░",
-                CellStyle(on ? cOk : cMuted, cBarBg));
+                TermStyle(fg: on ? cOk : cMuted, bg: cBarBg));
         }
         char[16] pct;
         const pn = formatUint(m.progressMille / 10, pct);
@@ -183,7 +184,7 @@ private void drawFooter(in Model m, ref Grid g, ushort y) @safe nothrow
 
 private void drawStatus(in Model m, ref Grid g, ushort y) @safe nothrow
 {
-    const st = CellStyle(cMuted, Color.init);
+    const st = TermStyle(fg: cMuted);
     g.fill(0, y, m.cols, st);
     g.putText(1, y, "q quit  ↑↓ select  ⏎ open  r retry", st);
 }
