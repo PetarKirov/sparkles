@@ -19,6 +19,35 @@ import std.experimental.allocator.mallocator : Mallocator;
 
 version (unittest) import std.range : iota;
 
+// Heap blocks carry a `ControlBlock` refcount prefix ahead of the element data.
+// These live at module scope (rather than nested in the struct) so that the
+// copy-on-write and `unique` instantiations of `SmallBuffer` share one
+// allocator type — that is what lets `toShared` transfer a heap block from a
+// `unique` buffer to a copy-on-write one without reallocating.
+private struct ControlBlock { size_t refCount; }
+private alias BlockAllocator = AffixAllocator!(Mallocator, ControlBlock);
+
+// Round a required element count up to the next power of two (saturating: a
+// count whose doubling would overflow is left as-is). Shared by every growth
+// site so the capacity policy stays in one place.
+private size_t roundedCapacity(size_t needed) @safe pure nothrow @nogc
+{
+    import std.math.algebraic : truncPow2;
+
+    size_t capacity = needed;
+    if (capacity > 0)
+    {
+        const t = truncPow2(capacity);
+        if (t != capacity)
+        {
+            const rounded = t << 1;
+            if (rounded != 0)
+                capacity = rounded;
+        }
+    }
+    return capacity;
+}
+
 /**
  * A @nogc container with Small Buffer Optimization and copy-on-write.
  *
@@ -49,12 +78,27 @@ version (unittest) import std.range : iota;
  *       union exactly (`max(1, (T[]).sizeof / T.sizeof)`), so the struct stays
  *       three words (`3 * size_t.sizeof`) regardless of `T` — e.g. 16 for
  *       `char`, 4 for `int`, 2 for `long`.
+ *   unique = When `true`, opt out of the copy-on-write machinery: the buffer
+ *       becomes move-only (copy construction/assignment are `@disable`d), so it
+ *       is a sole owner by construction. Mutation then never reads or bumps a
+ *       reference count — the append/grow hot path skips the uniqueness check
+ *       entirely. Hand a finished `unique` buffer to the shareable
+ *       copy-on-write world with $(LREF SmallBuffer.toShared), which consumes it
+ *       and returns a `SmallBuffer!(T, N)` (heap storage transfers without a
+ *       reallocation). The default, `false`, is the ordinary copy-on-write
+ *       buffer described above.
  */
-struct SmallBuffer(T, size_t N = max(size_t(1), (T[]).sizeof / T.sizeof))
+struct SmallBuffer(T, size_t N = max(size_t(1), (T[]).sizeof / T.sizeof), bool unique = false)
 {
 pure nothrow @nogc:
 
     static assert(N > 0, "N must be greater than 0");
+
+    // The copy-on-write instantiation this `unique` buffer promotes to (and,
+    // symmetrically, the type `toShared` returns). Same field layout — only the
+    // ownership discipline differs — so a heap block moves across for free.
+    static if (unique)
+        private alias Shared = SmallBuffer!(T, N, false);
 
     private
     {
@@ -66,9 +110,7 @@ pure nothrow @nogc:
             T[] _block;                           // capacity slots (ControlBlock prefix precedes them)
         }
 
-        // Allocator blocks carry a `ControlBlock` prefix ahead of the element data.
-        struct ControlBlock { size_t refCount; }
-        alias Allocator = AffixAllocator!(Mallocator, ControlBlock);
+        alias Allocator = BlockAllocator;
 
         // The shared control block (logically-mutable metadata; valid iff onHeap).
         ref ControlBlock ctrl() const @system
@@ -95,67 +137,80 @@ pure nothrow @nogc:
         size_t capacity() =>
             onHeap ? _block.length : N;
 
-        /// Test-facing: shared reference count (0 while inline).
-        private size_t refCount() =>
-            onHeap ? ctrl().refCount : 0;
+        static if (!unique)
+            /// Test-facing: shared reference count (0 while inline).
+            private size_t refCount() =>
+                onHeap ? ctrl().refCount : 0;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
     // copy / assign / destroy
     // ─────────────────────────────────────────────────────────────────────────
 
-    /**
-     * Copy constructor (copy-on-write). An inline buffer copies its elements,
-     * yielding an independent buffer. A heap buffer instead shares storage and
-     * bumps the reference count; the shared block is cloned only when a mutable
-     * copy is first written (see `ensureUniqueStorage`). Reaching a copy through
-     * `const` (e.g. via `borrow`) is therefore a zero-clone read-only handle.
-     */
-    this(ref inout SmallBuffer rhs) inout @trusted
+    static if (unique)
     {
-        this._length = rhs._length;
-        if (rhs.onHeap)
-        {
-            this._block = rhs._block;
-            ++this.ctrl().refCount;
-        }
-        else
-            this._inline[0 .. rhs._length] = rhs._inline[0 .. rhs._length];
+        // `unique` buffers are move-only: a sole owner cannot be copied, only
+        // moved (or promoted with `toShared`). Disabling the copy constructors
+        // and copy-assignment is what makes the append/grow path refcount-free.
+        @disable this(ref inout SmallBuffer);
+        @disable this(ref const SmallBuffer);
+        @disable ref SmallBuffer opAssign(ref const SmallBuffer);
     }
-
-    /// Build a mutable working copy from a `const` (e.g. borrowed) buffer.
-    this(ref const SmallBuffer rhs) @trusted
+    else
     {
-        _length = rhs._length;
-        if (rhs.onHeap)
+        /**
+         * Copy constructor (copy-on-write). An inline buffer copies its elements,
+         * yielding an independent buffer. A heap buffer instead shares storage and
+         * bumps the reference count; the shared block is cloned only when a mutable
+         * copy is first written (see `ensureUniqueStorage`). Reaching a copy through
+         * `const` (e.g. via `borrow`) is therefore a zero-clone read-only handle.
+         */
+        this(ref inout SmallBuffer rhs) inout @trusted
         {
-            _block = cast(T[]) rhs._block;
-            ++ctrl().refCount;
+            this._length = rhs._length;
+            if (rhs.onHeap)
+            {
+                this._block = rhs._block;
+                ++this.ctrl().refCount;
+            }
+            else
+                this._inline[0 .. rhs._length] = rhs._inline[0 .. rhs._length];
         }
-        else
-            _inline[0 .. rhs._length] = cast(T[]) rhs._inline[0 .. rhs._length];
-    }
 
-    /// Copy assignment: release current storage, then share/copy from `rhs`.
-    /// Accepts a `const` (e.g. borrowed) source — a heap source is shared (refcount
-    /// bumped), an inline source is copied — mirroring the copy constructors.
-    ref SmallBuffer opAssign(ref const SmallBuffer rhs) return @trusted
-    {
-        if (&this is &rhs)
+        /// Build a mutable working copy from a `const` (e.g. borrowed) buffer.
+        this(ref const SmallBuffer rhs) @trusted
+        {
+            _length = rhs._length;
+            if (rhs.onHeap)
+            {
+                _block = cast(T[]) rhs._block;
+                ++ctrl().refCount;
+            }
+            else
+                _inline[0 .. rhs._length] = cast(T[]) rhs._inline[0 .. rhs._length];
+        }
+
+        /// Copy assignment: release current storage, then share/copy from `rhs`.
+        /// Accepts a `const` (e.g. borrowed) source — a heap source is shared (refcount
+        /// bumped), an inline source is copied — mirroring the copy constructors.
+        ref SmallBuffer opAssign(ref const SmallBuffer rhs) return @trusted
+        {
+            if (&this is &rhs)
+                return this;
+
+            if (rhs.onHeap)
+                ++rhs.ctrl().refCount; // acquire rhs before releasing self
+
+            releaseStorage();
+            _length = rhs._length;
+
+            if (rhs.onHeap)
+                _block = cast(T[]) rhs._block;
+            else
+                _inline[0 .. rhs._length] = cast(T[]) rhs._inline[0 .. rhs._length];
+
             return this;
-
-        if (rhs.onHeap)
-            ++rhs.ctrl().refCount; // acquire rhs before releasing self
-
-        releaseStorage();
-        _length = rhs._length;
-
-        if (rhs.onHeap)
-            _block = cast(T[]) rhs._block;
-        else
-            _inline[0 .. rhs._length] = cast(T[]) rhs._inline[0 .. rhs._length];
-
-        return this;
+        }
     }
 
     /// Move assignment from an rvalue: release current storage, then steal
@@ -271,53 +326,84 @@ pure nothrow @nogc:
         const oldLen = _length;
         const newLen = oldLen + n;
 
-        // If the source aliases inline storage, preserve it before the union is
-        // overwritten by the inline->heap transition.
-        const overlapsInline = () @trusted {
-            return !onHeap &&
-                elements.overlap(_inline[0 .. oldLen]).length;
-        }();
-
-        // Fast path: the result stays inline (always uniquely owned) and the
-        // source doesn't alias our live inline data — one bulk copy, no
-        // `ensureUniqueStorage`/refcount work.
-        if (newLen <= N && !overlapsInline)
+        static if (unique)
         {
-            _inline[oldLen .. newLen] = elements[];
+            // Sole owner: no refcount to consult and no shared block to clone.
+            const hasRoom = onHeap ? newLen <= _block.length : newLen <= N;
+            if (hasRoom)
+            {
+                // Existing storage already has the slots. Any source that
+                // aliases us lives in `[0 .. oldLen]`, disjoint from the
+                // `[oldLen .. newLen]` destination, so a plain copy is safe.
+                _length = newLen;
+                this.view()[oldLen .. newLen] = elements[];
+                return;
+            }
+
+            // Growth needed: `ensureUniqueStorage` performs the inline->heap
+            // transition or the in-place realloc, preserving `[0 .. oldLen]`. If
+            // the source aliases that region it is preserved (and possibly
+            // relocated) too, so we recover it from the grown block by its
+            // offset rather than reading the now-stale `elements`.
+            auto v = this.view();
+            const overlaps = elements.overlap(v).length != 0;
+            const aliasStart = overlaps ? cast(size_t)(elements.ptr - v.ptr) : 0;
+
+            T[] tail = ensureUniqueStorage(extraLen: n);
+            tail[] = overlaps ? _block[aliasStart .. aliasStart + n] : elements[];
             _length = newLen;
             return;
         }
-
-        if (newLen > N && overlapsInline)
+        else
         {
-            T[N] tmp = void;
-            tmp[0 .. elements.length] = elements[];
+            // If the source aliases inline storage, preserve it before the union is
+            // overwritten by the inline->heap transition.
+            const overlapsInline = () @trusted {
+                return !onHeap &&
+                    elements.overlap(_inline[0 .. oldLen]).length;
+            }();
+
+            // Fast path: the result stays inline (always uniquely owned) and the
+            // source doesn't alias our live inline data — one bulk copy, no
+            // `ensureUniqueStorage`/refcount work.
+            if (newLen <= N && !overlapsInline)
+            {
+                _inline[oldLen .. newLen] = elements[];
+                _length = newLen;
+                return;
+            }
+
+            if (newLen > N && overlapsInline)
+            {
+                T[N] tmp = void;
+                tmp[0 .. elements.length] = elements[];
+                T[] tail = ensureUniqueStorage(extraLen: elements.length);
+                tail[] = tmp[0 .. elements.length];
+                _length = newLen;
+                return;
+            }
+
+            // If a unique heap block must grow while the source aliases it, keep the
+            // old block alive until after the tail copy. `ensureUniqueStorage` then
+            // takes the shared-clone path instead of reallocating underneath us.
+            T[] retainedBlock;
+            if (oldLen > N && newLen > _block.length
+                && ctrl().refCount == 1
+                && elements.overlap(cast(const(T)[]) _block).length)
+            {
+                retainedBlock = _block;
+                ++ctrl().refCount;
+            }
+
             T[] tail = ensureUniqueStorage(extraLen: elements.length);
-            tail[] = tmp[0 .. elements.length];
+            tail[] = elements[];
             _length = newLen;
-            return;
-        }
 
-        // If a unique heap block must grow while the source aliases it, keep the
-        // old block alive until after the tail copy. `ensureUniqueStorage` then
-        // takes the shared-clone path instead of reallocating underneath us.
-        T[] retainedBlock;
-        if (oldLen > N && newLen > _block.length
-            && ctrl().refCount == 1
-            && elements.overlap(cast(const(T)[]) _block).length)
-        {
-            retainedBlock = _block;
-            ++ctrl().refCount;
-        }
-
-        T[] tail = ensureUniqueStorage(extraLen: elements.length);
-        tail[] = elements[];
-        _length = newLen;
-
-        if (retainedBlock !is null)
-        {
-            if (--Allocator.instance.prefix(retainedBlock).refCount == 0)
-                dispose(Allocator.instance, retainedBlock);
+            if (retainedBlock !is null)
+            {
+                if (--Allocator.instance.prefix(retainedBlock).refCount == 0)
+                    dispose(Allocator.instance, retainedBlock);
+            }
         }
     }
 
@@ -448,37 +534,70 @@ pure nothrow @nogc:
         ensureUniqueStorage(minCapacity: newCapacity);
     }
 
-    /**
-     * Returns a `const`, storage-sharing handle to this buffer — the
-     * producer-builds-then-many-readers handoff. Reading through the result (or
-     * its copies) never clones, since nothing can mutate through `const`.
-     *
-     * Like Rust's `Borrow`, this is the read side of the copy-on-write type — but
-     * unlike a Rust borrow it is an $(I owner): it bumps the reference count and
-     * keeps the heap block alive independently of the source (closer to
-     * `Rc::clone` than a lifetime-bound `&`). `const x = buf;` is equivalent;
-     * `borrow` simply names the handoff and works in expression position.
-     *
-     * See_Also: $(LREF SmallBuffer.toOwned) for the inverse (an independent,
-     * uniquely-owned mutable copy).
-     */
-    const(SmallBuffer) borrow() const @safe => this;
-
-    /**
-     * Returns an independent, uniquely-owned mutable copy, eagerly detached from
-     * any shared block (Rust's `ToOwned`/`Cow::into_owned`). The result shares
-     * with no one — its reference count is 1 — so later mutations never pay a
-     * copy-on-write clone, and it is unaffected by writes to the source.
-     *
-     * Plain copy construction (`auto b = a;`) is the lazy counterpart: it shares
-     * a heap block and clones only on the first write. `toOwned` forces that
-     * clone up front.
-     */
-    SmallBuffer toOwned() const @safe
+    static if (!unique)
     {
-        SmallBuffer copy = this; // shares (heap) or copies (inline)
-        copy.ensureUniqueStorage();     // force a private block if shared
-        return copy;
+        /**
+         * Returns a `const`, storage-sharing handle to this buffer — the
+         * producer-builds-then-many-readers handoff. Reading through the result (or
+         * its copies) never clones, since nothing can mutate through `const`.
+         *
+         * Like Rust's `Borrow`, this is the read side of the copy-on-write type — but
+         * unlike a Rust borrow it is an $(I owner): it bumps the reference count and
+         * keeps the heap block alive independently of the source (closer to
+         * `Rc::clone` than a lifetime-bound `&`). `const x = buf;` is equivalent;
+         * `borrow` simply names the handoff and works in expression position.
+         *
+         * See_Also: $(LREF SmallBuffer.toOwned) for the inverse (an independent,
+         * uniquely-owned mutable copy).
+         */
+        const(SmallBuffer) borrow() const @safe => this;
+
+        /**
+         * Returns an independent, uniquely-owned mutable copy, eagerly detached from
+         * any shared block (Rust's `ToOwned`/`Cow::into_owned`). The result shares
+         * with no one — its reference count is 1 — so later mutations never pay a
+         * copy-on-write clone, and it is unaffected by writes to the source.
+         *
+         * Plain copy construction (`auto b = a;`) is the lazy counterpart: it shares
+         * a heap block and clones only on the first write. `toOwned` forces that
+         * clone up front.
+         */
+        SmallBuffer toOwned() const @safe
+        {
+            SmallBuffer copy = this; // shares (heap) or copies (inline)
+            copy.ensureUniqueStorage();     // force a private block if shared
+            return copy;
+        }
+    }
+    else
+    {
+        /**
+         * Consumes this `unique` buffer and returns an equivalent copy-on-write
+         * `SmallBuffer!(T, N)` that can be shared/borrowed. This is the bridge from
+         * the refcount-free build phase to the many-readers handoff: build mutably
+         * under `unique` (no per-append uniqueness checks), then `toShared` once and
+         * hand out `const` copies.
+         *
+         * The heap block transfers directly — no reallocation and no element copy —
+         * because both instantiations share the same affix layout; an inline buffer
+         * copies its (small) inline elements. Afterwards this buffer is left empty
+         * (it no longer owns the storage).
+         *
+         * See_Also: $(LREF SmallBuffer.toOwned) / $(LREF SmallBuffer.borrow) on the
+         * returned copy-on-write buffer.
+         */
+        Shared toShared() @trusted
+        {
+            Shared result;
+            result._length = _length;
+            if (onHeap)
+                result._block = _block; // transfer ownership (refCount already 1)
+            else
+                result._inline[0 .. _length] = _inline[0 .. _length];
+            _block = null; // relinquish: our destructor must not free the block
+            _length = 0;
+            return result;
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -499,8 +618,6 @@ pure nothrow @nogc:
     // is deliberately unchanged; callers fill the returned tail and then commit.
     private T[] ensureUniqueStorage(size_t extraLen = 0, size_t minCapacity = 0) @safe
     {
-        import std.math.algebraic : truncPow2;
-
         const oldLen = _length;
         const newLen = oldLen + extraLen;
 
@@ -508,22 +625,24 @@ pure nothrow @nogc:
             return (() @trusted => _inline[oldLen .. newLen])();
 
         const needed = max(newLen, minCapacity);
+        const capacity = roundedCapacity(needed);
 
-        size_t capacity = needed;
-        if (capacity > 0)
+        static if (unique)
         {
-            const t = truncPow2(capacity);
-            if (t != capacity)
+            // Sole owner by construction — no reference count to read, never a
+            // clone.
+            if (!onHeap)
             {
-                const rounded = t << 1;
-                if (rounded != 0)
-                    capacity = rounded;
+                // inline -> heap: allocate a fresh block and move the inline
+                // elements into it before the union is repurposed as `_block`.
+                T[] nb = allocateBlock(capacity);
+                () @trusted {
+                    nb[0 .. oldLen] = _inline[0 .. oldLen];
+                    _block = nb;
+                }();
+                return nb[oldLen .. newLen];
             }
-        }
-
-        const rc = this.refCount;
-        if (rc == 1)
-        {
+            // Already on the heap: grow in place when too small.
             if (needed > this.capacity)
             {
                 const ok = (() @trusted =>
@@ -536,15 +655,33 @@ pure nothrow @nogc:
             }
             return (() @trusted => _block[oldLen .. newLen])();
         }
+        else
+        {
+            const rc = this.refCount;
+            if (rc == 1)
+            {
+                if (needed > this.capacity)
+                {
+                    const ok = (() @trusted =>
+                        Allocator.instance.expandArray(
+                            _block, capacity - _block.length
+                        )
+                    )();
+                    if (!ok)
+                        assert(false, "SmallBuffer: reallocation failed");
+                }
+                return (() @trusted => _block[oldLen .. newLen])();
+            }
 
-        T[] oldBlock = this.view;
-        T[] newBlock = allocateBlock(max(this.capacity, capacity));
-        newBlock[0 .. oldLen] = oldBlock[];
-        () @trusted {
-            if (rc > 1) --ctrl().refCount;
-            _block = newBlock;
-        }();
-        return newBlock[oldLen .. newLen];
+            T[] oldBlock = this.view;
+            T[] newBlock = allocateBlock(max(this.capacity, capacity));
+            newBlock[0 .. oldLen] = oldBlock[];
+            () @trusted {
+                if (rc > 1) --ctrl().refCount;
+                _block = newBlock;
+            }();
+            return newBlock[oldLen .. newLen];
+        }
     }
 
     // Drop this owner's heap reference. If refCount hits 0, destroy and free the
@@ -554,7 +691,9 @@ pure nothrow @nogc:
     {
         if (!onHeap)
             return;
-        if (--ctrl().refCount == 0)
+        static if (unique)
+            dispose(Allocator.instance, _block); // sole owner: free outright
+        else if (--ctrl().refCount == 0)
             dispose(Allocator.instance, _block);
         _block = null;
     }
@@ -1511,4 +1650,143 @@ unittest
     assert(buf.onHeap);
     assert(buf.length == 6);
     assert(buf[] == [1, 2, 3, 2, 4, 6]);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Unique (copy-on-write opted out)
+// ─────────────────────────────────────────────────────────────────────────────
+
+///
+@("SmallBuffer.unique.tour")
+@safe pure nothrow @nogc
+unittest
+{
+    // A `unique` buffer behaves like the default one for building — append
+    // inline, spill to the heap, index/slice — but carries no copy-on-write
+    // machinery, so appends never consult a reference count.
+    SmallBuffer!(int, 4, true) buf;
+    buf ~= [1, 2, 3];
+    buf.put(4);
+    assert(buf[] == [1, 2, 3, 4] && !buf.onHeap);
+
+    buf ~= 5;                            // spill to the heap
+    assert(buf.onHeap && buf[] == [1, 2, 3, 4, 5]);
+    assert(buf[0] == 1 && buf[$ - 1] == 5 && buf[1 .. 3] == [2, 3]);
+
+    // It is move-only: there is no sharing, so it cannot be copied — only moved
+    // or promoted. `toShared` consumes it and hands back an ordinary
+    // copy-on-write `SmallBuffer!(int, 4)` that borrows/shares as usual.
+    auto sh = buf.toShared();
+    assert(buf.length == 0);             // consumed
+    assert(sh[] == [1, 2, 3, 4, 5] && sh.refCount == 1);
+
+    const reader = sh.borrow;            // now shareable
+    assert(sh.refCount == 2 && reader[] == [1, 2, 3, 4, 5]);
+}
+
+@("SmallBuffer.unique.moveOnly")
+@safe pure nothrow @nogc
+unittest
+{
+    // Copy construction and copy-assignment are disabled; the type is move-only.
+    static assert(!__traits(isCopyable, SmallBuffer!(int, 4, true)));
+    static assert( __traits(isCopyable, SmallBuffer!(int, 4)));       // default: copyable
+
+    static assert(!__traits(compiles, (SmallBuffer!(int, 4, true) a) { auto b = a; }));
+    static assert(!__traits(compiles, (SmallBuffer!(int, 4, true) a,
+        SmallBuffer!(int, 4, true) b) { b = a; }));
+
+    // Still an output range, and moving works.
+    import std.range : isOutputRange;
+    static assert(isOutputRange!(SmallBuffer!(int, 4, true), int));
+
+    import std.algorithm.mutation : move;
+    SmallBuffer!(int, 2, true) a;
+    a ~= iota(5);                        // heap
+    SmallBuffer!(int, 2, true) b;
+    b = move(a);                         // move-assignment steals the block
+    assert(b[] == [0, 1, 2, 3, 4] && a.length == 0);
+}
+
+@("SmallBuffer.unique.heapGrowth")
+@safe pure nothrow @nogc
+unittest
+{
+    SmallBuffer!(int, 2, true) buf;
+    buf ~= iota(100);                    // many reallocations, all in place
+    assert(buf.length == 100);
+    foreach (i; 0 .. 100)
+        assert(buf[i] == i);
+
+    // popBack across the heap->inline boundary and clear both work.
+    buf.clear();
+    assert(buf.empty && !buf.onHeap);
+    buf ~= iota(3);                      // heap: [0, 1, 2]
+    buf.popBack();                       // 3 -> 2: revert to inline
+    assert(!buf.onHeap && buf[] == [0, 1]);
+}
+
+@("SmallBuffer.unique.selfAppend.inlineToHeap")
+@safe pure nothrow @nogc
+unittest
+{
+    // Self-append that crosses inline->heap: the source aliases inline storage,
+    // which must be read into the new block before the union is overwritten.
+    SmallBuffer!(int, 4, true) buf;
+    buf ~= [0, 1, 2];
+    buf ~= buf[];
+    assert(buf.onHeap && buf[] == [0, 1, 2, 0, 1, 2]);
+}
+
+@("SmallBuffer.unique.selfAppend.heapGrow")
+@safe pure nothrow @nogc
+unittest
+{
+    // Self-append that forces a heap grow: the source aliases the block being
+    // grown, so the unique path allocate-copy-frees rather than reallocating
+    // underneath the source.
+    SmallBuffer!(int, 2, true) buf;
+    buf ~= iota(5);                      // heap: [0, 1, 2, 3, 4], capacity 8
+    buf ~= buf[];                        // 5 + 5 = 10 > capacity → grow
+    assert(buf.length == 10);
+    assert(buf[] == [0, 1, 2, 3, 4, 0, 1, 2, 3, 4]);
+}
+
+@("SmallBuffer.unique.toShared.inline")
+@safe pure nothrow @nogc
+unittest
+{
+    SmallBuffer!(int, 4, true) u;
+    u ~= [1, 2];
+    auto sh = u.toShared();
+    assert(u.length == 0 && !u.onHeap); // consumed, left empty
+    assert(!sh.onHeap && sh[] == [1, 2]);
+
+    // The result is a fully-featured copy-on-write buffer.
+    auto copy = sh;                      // inline copy: independent
+    copy[0] = 99;
+    assert(sh[0] == 1 && copy[0] == 99);
+}
+
+@("SmallBuffer.unique.toShared.heapTransfersBlock")
+@safe pure nothrow @nogc
+unittest
+{
+    SmallBuffer!(int, 2, true) u;
+    u ~= iota(5);                        // heap
+    const cap = u.capacity;
+
+    auto sh = u.toShared();              // block transfers, no realloc
+    assert(u.length == 0);
+    assert(sh.onHeap && sh[] == [0, 1, 2, 3, 4]);
+    assert(sh.capacity == cap);          // same block
+    assert(sh.refCount == 1);            // sole owner
+
+    // Copy-on-write is live on the promoted buffer.
+    const reader = sh.borrow;
+    assert(sh.refCount == 2);
+    auto w = sh;                         // share
+    w ~= 5;                              // CoW clone
+    assert(reader[] == [0, 1, 2, 3, 4]); // original intact
+    assert(w[] == [0, 1, 2, 3, 4, 5]);
 }
