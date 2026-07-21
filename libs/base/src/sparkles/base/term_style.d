@@ -1,5 +1,233 @@
 module sparkles.base.term_style;
 
+import sparkles.base.term_color : Color, ColorChannel, ColorDepth, writeSgrColor;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Resolved terminal style + the minimal-transition SGR encoder
+//
+// These live before the module's `@safe pure nothrow:` label so
+// `writeStyleTransition` (a template also driven by non-pure stdout writers)
+// infers its attributes instead of being forced pure.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The text attributes of a resolved style, as a typed bitflag set. `underline`
+/// is deliberately NOT here: it is a first-class $(LREF UnderlineStyle) (it
+/// carries a shape and an independent color). The typed `|`/`&`/`~` operators
+/// keep a set a `TextAttr` (no `cast` back from the integer promotion an `enum`
+/// would give).
+struct TextAttr
+{
+    ubyte bits; /// the raw flag bits
+
+    enum TextAttr none          = TextAttr(0);      ///
+    enum TextAttr bold          = TextAttr(1 << 0); /// SGR 1 / off 22 (shared with dim)
+    enum TextAttr dim           = TextAttr(1 << 1); /// SGR 2 / off 22 (shared with bold)
+    enum TextAttr italic        = TextAttr(1 << 2); /// SGR 3 / off 23
+    enum TextAttr strikethrough = TextAttr(1 << 3); /// SGR 9 / off 29
+    enum TextAttr inverse       = TextAttr(1 << 4); /// SGR 7 / off 27
+    enum TextAttr hidden        = TextAttr(1 << 5); /// SGR 8 / off 28
+
+@safe pure nothrow @nogc:
+
+    /// Set union / intersection / difference — all stay `TextAttr`.
+    TextAttr opBinary(string op)(TextAttr rhs) const
+    if (op == "|" || op == "&" || op == "^")
+        => TextAttr(cast(ubyte) mixin("bits " ~ op ~ " rhs.bits"));
+
+    /// Complement (for clearing flags: `attrs & ~TextAttr.italic`).
+    TextAttr opUnary(string op : "~")() const
+        => TextAttr(cast(ubyte) ~bits);
+
+    /// Non-empty test, so `if (attrs & TextAttr.bold)` works.
+    bool opCast(T : bool)() const => bits != 0;
+
+    /// `true` iff every bit of `flag` is set (and `flag` is not `none`).
+    bool has(TextAttr flag) const
+        => (bits & flag.bits) == flag.bits && flag.bits != 0;
+}
+
+/// Underline shape. `single` emits the legacy SGR `4`; the extended shapes emit
+/// the colon sub-parameter form (`4:2`…`4:5`); all clear with `24`.
+enum UnderlineStyle : ubyte
+{
+    none,    /// not underlined (SGR 24)
+    single,  /// SGR 4
+    double_, /// SGR 4:2
+    curly,   /// SGR 4:3
+    dotted,  /// SGR 4:4
+    dashed,  /// SGR 4:5
+}
+
+/// The resolved terminal style of one span/block: fore/background/underline
+/// colors plus text attributes and underline shape. `TermStyle.init` is the
+/// terminal default (nothing set). One field per independent SGR group, so a
+/// field-by-field diff ($(LREF writeStyleTransition)) is correct by
+/// construction — no shared-close-code collisions to repair. Shared by
+/// `sparkles.base.styled_template` and `sparkles.syntax` (which aliases it as
+/// `StyleSpec`).
+struct TermStyle
+{
+    Color fg;                 /// foreground; `unset` = unspecified
+    Color bg;                 /// background; `unset` = unspecified
+    Color underlineColor;     /// underline color (SGR 58/59); `unset` = default
+    TextAttr attrs;           /// bold/dim/italic/strikethrough/inverse/hidden
+    UnderlineStyle underline; /// underline shape (`none` = off)
+
+@safe pure nothrow @nogc:
+
+    /// `true` iff nothing is set at all (renders unstyled).
+    bool empty() const scope
+        => !fg.isSet && !bg.isSet && !underlineColor.isSet
+            && attrs == TextAttr.none && underline == UnderlineStyle.none;
+}
+
+/// A differential ANSI encoder: writes the minimal merged SGR sequence moving
+/// the terminal FROM style `from` TO style `to` at color `depth` — a single
+/// `ESC[p1;p2;…m` carrying only the groups that changed, or nothing when the two
+/// styles are equal. Each group is set absolutely, so the same function drives
+/// both span entry (`writeStyleTransition(w, parent, child)`) and exit
+/// (`writeStyleTransition(w, child, parent)`).
+///
+/// Group order: intensity (bold/dim), italic, underline, inverse, hidden,
+/// strikethrough, foreground, background, underline color.
+///
+/// The `from == to` guard is load-bearing: past it the `ESC[`/`m` wrapper is
+/// written unconditionally, and callers (e.g. `styled_template`) may issue no-op
+/// transitions that must emit nothing rather than a spurious `ESC[m`.
+void writeStyleTransition(Writer)(ref Writer w, in TermStyle from, in TermStyle to, ColorDepth depth)
+{
+    import std.range.primitives : put;
+    import sparkles.base.text.writers : writeInteger;
+
+    if (from == to)
+        return;
+
+    put(w, "\x1b[");
+    bool first = true;
+    void sep() { if (!first) put(w, ';'); first = false; }
+    void code(uint c) { sep(); writeInteger(w, c); }
+
+    // Intensity: bold and dim share the off-code 22 (Style.bold[1] == Style.dim[1]).
+    // If either is cleared, 22 clears both, so re-issue the survivor.
+    const fromBD = from.attrs & (TextAttr.bold | TextAttr.dim);
+    const toBD = to.attrs & (TextAttr.bold | TextAttr.dim);
+    if (fromBD != toBD)
+    {
+        if (fromBD & ~toBD)
+        {
+            code(Style.bold[1]); // 22 clears both bold and dim
+            if (toBD & TextAttr.bold) code(Style.bold[0]);
+            if (toBD & TextAttr.dim)  code(Style.dim[0]);
+        }
+        else
+        {
+            if ((toBD & TextAttr.bold) && !(fromBD & TextAttr.bold)) code(Style.bold[0]);
+            if ((toBD & TextAttr.dim)  && !(fromBD & TextAttr.dim))  code(Style.dim[0]);
+        }
+    }
+
+    if (from.attrs.has(TextAttr.italic) != to.attrs.has(TextAttr.italic))
+        code(to.attrs.has(TextAttr.italic) ? Style.italic[0] : Style.italic[1]);
+
+    if (from.underline != to.underline)
+    {
+        sep();
+        final switch (to.underline)
+        {
+            case UnderlineStyle.none:    writeInteger(w, Style.underline[1]); break; // 24
+            case UnderlineStyle.single:  writeInteger(w, Style.underline[0]); break; // 4
+            case UnderlineStyle.double_: put(w, "4:2"); break;
+            case UnderlineStyle.curly:   put(w, "4:3"); break;
+            case UnderlineStyle.dotted:  put(w, "4:4"); break;
+            case UnderlineStyle.dashed:  put(w, "4:5"); break;
+        }
+    }
+
+    if (from.attrs.has(TextAttr.inverse) != to.attrs.has(TextAttr.inverse))
+        code(to.attrs.has(TextAttr.inverse) ? Style.inverse[0] : Style.inverse[1]);
+    if (from.attrs.has(TextAttr.hidden) != to.attrs.has(TextAttr.hidden))
+        code(to.attrs.has(TextAttr.hidden) ? Style.hidden[0] : Style.hidden[1]);
+    if (from.attrs.has(TextAttr.strikethrough) != to.attrs.has(TextAttr.strikethrough))
+        code(to.attrs.has(TextAttr.strikethrough) ? Style.strikethrough[0] : Style.strikethrough[1]);
+
+    if (from.fg != to.fg)
+    {
+        sep();
+        writeSgrColor(w, to.fg, depth, ColorChannel.foreground);
+    }
+    if (from.bg != to.bg)
+    {
+        sep();
+        writeSgrColor(w, to.bg, depth, ColorChannel.background);
+    }
+    // The underline color only exists at 256/truecolor; below that it is not
+    // emitted at all (rather than a redundant reset), so the sequence stays clean.
+    if (from.underlineColor != to.underlineColor && depth >= ColorDepth.ansi256)
+    {
+        sep();
+        writeSgrColor(w, to.underlineColor, depth, ColorChannel.underline);
+    }
+
+    put(w, 'm');
+}
+
+///
+@("term_style.writeStyleTransition.basics")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.smallbuffer : checkWriter;
+
+    checkWriter!((ref w) => writeStyleTransition(w, TermStyle.init, TermStyle.init, ColorDepth.trueColor))("");
+    checkWriter!((ref w) => writeStyleTransition(w, TermStyle.init, TermStyle(attrs: TextAttr.bold), ColorDepth.trueColor))("\x1b[1m");
+    // bold + red arrive in one escape
+    checkWriter!((ref w) => writeStyleTransition(w, TermStyle.init,
+        TermStyle(fg: Color.fromPalette(1), attrs: TextAttr.bold), ColorDepth.trueColor))("\x1b[1;31m");
+    // bold → dim: 22 clears both, dim re-issued
+    checkWriter!((ref w) => writeStyleTransition(w, TermStyle(attrs: TextAttr.bold),
+        TermStyle(attrs: TextAttr.dim), ColorDepth.trueColor))("\x1b[22;2m");
+    checkWriter!((ref w) => writeStyleTransition(w, TermStyle(fg: Color.fromPalette(1), attrs: TextAttr.bold),
+        TermStyle.init, ColorDepth.trueColor))("\x1b[22;39m");
+}
+
+///
+@("term_style.writeStyleTransition.underline")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.smallbuffer : checkWriter;
+
+    checkWriter!((ref w) => writeStyleTransition(w, TermStyle.init,
+        TermStyle(underline: UnderlineStyle.single), ColorDepth.trueColor))("\x1b[4m");
+    checkWriter!((ref w) => writeStyleTransition(w, TermStyle(underline: UnderlineStyle.single),
+        TermStyle.init, ColorDepth.trueColor))("\x1b[24m");
+    checkWriter!((ref w) => writeStyleTransition(w, TermStyle.init,
+        TermStyle(underline: UnderlineStyle.curly), ColorDepth.trueColor))("\x1b[4:3m");
+    checkWriter!((ref w) => writeStyleTransition(w, TermStyle.init,
+        TermStyle(underline: UnderlineStyle.dashed), ColorDepth.trueColor))("\x1b[4:5m");
+    checkWriter!((ref w) => writeStyleTransition(w, TermStyle.init,
+        TermStyle(underlineColor: Color.fromRgb(255, 0, 0), underline: UnderlineStyle.curly),
+        ColorDepth.trueColor))("\x1b[4:3;58;2;255;0;0m");
+    // underline color is dropped below ansi256
+    checkWriter!((ref w) => writeStyleTransition(w, TermStyle.init,
+        TermStyle(underlineColor: Color.fromRgb(255, 0, 0), underline: UnderlineStyle.curly),
+        ColorDepth.ansi16))("\x1b[4:3m");
+}
+
+///
+@("term_style.TextAttr.ops")
+@safe pure nothrow @nogc
+unittest
+{
+    const flags = TextAttr.bold | TextAttr.italic;
+    assert(flags.has(TextAttr.bold));
+    assert(flags.has(TextAttr.italic));
+    assert(!flags.has(TextAttr.strikethrough));
+    assert(!flags.has(TextAttr.none));
+    assert((flags & ~TextAttr.bold) == TextAttr.italic);
+    assert(TextAttr.init == TextAttr.none);
+}
+
 @safe pure nothrow:
 
 ///
@@ -57,7 +285,7 @@ uint openCode(Style s) @nogc => s[0];
 
 /// The SGR "off" code of a style — the second of its `[open, close]` pair.
 /// Several styles share one (bold and dim both close with 22; every foreground
-/// colour with 39; every background colour with 49), so a close code identifies
+/// color with 39; every background color with 49), so a close code identifies
 /// a *group* rather than a single style — see $(LREF SgrGroupReset).
 uint closeCode(Style s) @nogc => s[1];
 
@@ -73,8 +301,8 @@ enum SgrGroupReset : uint
     inverse    = Style.inverse[1],       /// 27
     hidden     = Style.hidden[1],        /// 28
     strike     = Style.strikethrough[1], /// 29
-    foreground = Style.red[1],           /// 39 — every foreground colour
-    background = Style.bgRed[1],          /// 49 — every background colour
+    foreground = Style.red[1],           /// 39 — every foreground color
+    background = Style.bgRed[1],          /// 49 — every background color
 }
 
 ///
@@ -83,7 +311,7 @@ enum SgrGroupReset : uint
 {
     assert(Style.bold.openCode == 1 && Style.bold.closeCode == 22);
     assert(Style.red.openCode == 31 && Style.red.closeCode == 39);
-    // bold and dim share the intensity reset; every colour shares fg/bg resets.
+    // bold and dim share the intensity reset; every color shares fg/bg resets.
     assert(SgrGroupReset.intensity == Style.dim.closeCode);
     assert(SgrGroupReset.foreground == Style.brightBlue.closeCode);
     assert(SgrGroupReset.background == Style.bgWhite.closeCode);

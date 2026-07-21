@@ -19,36 +19,17 @@ import sparkles.syntax.color : Color;
 import sparkles.syntax.event : LabelId;
 import sparkles.syntax.label : LabelSet;
 
+// The resolved-style vocabulary lives in `base` so `styled_template` and
+// `syntax` share one type; re-exported here so `sparkles.syntax.theme.StyleSpec`
+// (and `TextAttr`/`UnderlineStyle`) still resolve for every backend.
+public import sparkles.base.term_style : TextAttr, UnderlineStyle, TermStyle;
+
 @safe:
 
-/// Font-style flags, backend-neutral (they select faces/decorations, not
-/// escape codes).
-enum FontStyle : ubyte
-{
-    none = 0,
-    bold = 1 << 0,
-    dim = 1 << 1,
-    italic = 1 << 2,
-    underline = 1 << 3,
-    strikethrough = 1 << 4,
-}
-
-/// `true` iff `flags` contains every bit of `bit`.
-bool hasFont(FontStyle flags, FontStyle bit) pure nothrow @nogc
-    => (flags & bit) == bit && bit != FontStyle.none;
-
-/// The style a theme assigns to one label: optional fore-/background colors
-/// plus font flags. `Color.Kind.unset` means "not specified".
-struct StyleSpec
-{
-    Color fg;       /// foreground; unset = unspecified
-    Color bg;       /// background; unset = unspecified
-    FontStyle font; /// font flags
-
-    /// `true` iff the spec specifies nothing at all (renders unstyled).
-    bool empty() const scope pure nothrow @nogc
-        => !fg.isSet && !bg.isSet && font == FontStyle.none;
-}
+/// The style a theme assigns to one label — `sparkles.base.term_style.TermStyle`:
+/// optional fore-/background/underline colors, font flags, and underline shape.
+/// `Color.Kind.unset` means "not specified".
+alias StyleSpec = TermStyle;
 
 /// One theme rule: a dotted label selector and the style it assigns.
 struct ThemeRule
@@ -234,19 +215,8 @@ unittest
 {
     assert(StyleSpec.init.empty);
     assert(!StyleSpec(fg: Color.fromPalette(1)).empty);
-    assert(!StyleSpec(font: FontStyle.bold).empty);
+    assert(!StyleSpec(attrs: TextAttr.bold).empty);
     assert(!StyleSpec(fg: Color.defaultColor).empty); // default_ counts as set
-}
-
-@("theme.hasFont")
-pure nothrow @nogc
-unittest
-{
-    const flags = cast(FontStyle)(FontStyle.bold | FontStyle.italic);
-    assert(hasFont(flags, FontStyle.bold));
-    assert(hasFont(flags, FontStyle.italic));
-    assert(!hasFont(flags, FontStyle.underline));
-    assert(!hasFont(flags, FontStyle.none));
 }
 
 /// `prefix` matches `full` iff equal, or `full` continues with `.` right

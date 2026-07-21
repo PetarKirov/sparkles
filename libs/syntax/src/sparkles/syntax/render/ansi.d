@@ -22,14 +22,12 @@ module sparkles.syntax.render.ansi;
 
 import std.range.primitives : put;
 
-import sparkles.base.text.writers : writeInteger;
 import sparkles.base.text.ansi : writeSgrReset;
-import sparkles.base.term_style : Style;
+import sparkles.base.term_style : writeStyleTransition;
 
-import sparkles.syntax.color : Color, ColorDepth, RgbColor, ansi16FromRgb,
-    ansi256FromRgb, xterm256ToRgb;
+import sparkles.syntax.color : Color, ColorDepth;
 import sparkles.syntax.event : byStyledSpan, isHighlightEventRange;
-import sparkles.syntax.theme : FontStyle, ResolvedTheme, StyleSpec, hasFont;
+import sparkles.syntax.theme : TextAttr, ResolvedTheme, StyleSpec;
 
 /// Options for $(LREF renderAnsi).
 struct AnsiOptions
@@ -79,7 +77,13 @@ if (isHighlightEventRange!Events)
     {
         if (current != target)
         {
-            writeStyleTransition(w, current, target, options.depth);
+            // Reset-to-default is a single `ESC[0m` (a renderer-level choice that
+            // keeps each line self-contained); any other change is the minimal
+            // group diff from the shared encoder.
+            if (target.empty)
+                writeSgrReset(w);
+            else
+                writeStyleTransition(w, current, target, options.depth);
             current = target;
         }
     }
@@ -88,7 +92,7 @@ if (isHighlightEventRange!Events)
     {
         auto spec = theme[span.label];
         if (!options.italics)
-            spec.font = cast(FontStyle)(spec.font & ~FontStyle.italic);
+            spec.attrs = spec.attrs & ~TextAttr.italic;
         if (!options.emitBackground)
             spec.bg = Color.init;
         else if (!spec.bg.isSet)
@@ -130,161 +134,6 @@ if (isHighlightEventRange!Events)
     return w;
 }
 
-/**
-Emits the minimal SGR sequence transitioning the terminal from style `from`
-to style `to` at `depth`; nothing when they are equal, a single `ESC[0m`
-when `to` is empty.
-
-Font bits are diffed per flag (off-codes `22`/`23`/`24`/`29` for cleared
-bits, on-codes for set bits — `22` clears both bold and dim, so a surviving
-one is re-issued); colors are emitted only when changed, an unset/default
-target as `39`/`49`.
-*/
-void writeStyleTransition(Writer)(ref Writer w, in StyleSpec from, in StyleSpec to, ColorDepth depth)
-{
-    if (from == to)
-        return;
-    if (to.empty)
-    {
-        if (!from.empty)
-            writeSgrReset(w);
-        return;
-    }
-
-    put(w, "\x1b[");
-    bool first = true;
-
-    // Emit one `;`-separated SGR parameter. Codes are sourced from
-    // `base.term_style.Style` ([on, off] pairs) so the numbers have one home.
-    void pieceCode(uint code)
-    {
-        if (!first)
-            put(w, ';');
-        first = false;
-        writeInteger(w, code);
-    }
-
-    // bold/dim share the off-code 22 (Style.bold[1] == Style.dim[1]): if either
-    // is cleared, clear both and re-issue the survivor.
-    const fromBD = from.font & (FontStyle.bold | FontStyle.dim);
-    const toBD = to.font & (FontStyle.bold | FontStyle.dim);
-    if (fromBD != toBD)
-    {
-        if (fromBD & ~toBD)
-        {
-            pieceCode(Style.bold[1]);
-            if (toBD & FontStyle.bold)
-                pieceCode(Style.bold[0]);
-            if (toBD & FontStyle.dim)
-                pieceCode(Style.dim[0]);
-        }
-        else
-        {
-            if ((toBD & FontStyle.bold) && !(fromBD & FontStyle.bold))
-                pieceCode(Style.bold[0]);
-            if ((toBD & FontStyle.dim) && !(fromBD & FontStyle.dim))
-                pieceCode(Style.dim[0]);
-        }
-    }
-
-    static struct FlagCodes
-    {
-        FontStyle flag;
-        uint on, off;
-    }
-
-    static immutable FlagCodes[3] flagCodes = [
-        FlagCodes(FontStyle.italic, Style.italic[0], Style.italic[1]),
-        FlagCodes(FontStyle.underline, Style.underline[0], Style.underline[1]),
-        FlagCodes(FontStyle.strikethrough, Style.strikethrough[0], Style.strikethrough[1]),
-    ];
-
-    foreach (fc; flagCodes)
-    {
-        const had = hasFont(from.font, fc.flag);
-        const has = hasFont(to.font, fc.flag);
-        if (had != has)
-            pieceCode(has ? fc.on : fc.off);
-    }
-
-    if (from.fg != to.fg)
-    {
-        if (!first)
-            put(w, ';');
-        first = false;
-        writeSgrColor(w, to.fg, depth, background: false);
-    }
-    if (from.bg != to.bg)
-    {
-        if (!first)
-            put(w, ';');
-        first = false;
-        writeSgrColor(w, to.bg, depth, background: true);
-    }
-
-    put(w, 'm');
-}
-
-/**
-Emits the SGR parameter(s) selecting `color` (without the `ESC[`/`m`
-wrapper): `38;2;r;g;b` / `38;5;n` / classic codes by `depth`, `39`/`49` for
-unset or terminal-default, palette entries kept palette-native (indices
-0–15 as classic codes at any depth; 16–255 as `38;5;n`, downsampled through
-the xterm palette only when the terminal can't address them).
-*/
-void writeSgrColor(Writer)(ref Writer w, in Color color, ColorDepth depth, bool background)
-{
-    final switch (color.kind)
-    {
-        case Color.Kind.unset:
-        case Color.Kind.default_:
-            put(w, background ? "49" : "39");
-            return;
-
-        case Color.Kind.palette:
-            if (color.index < 16)
-                writeClassicCode(w, color.index, background);
-            else if (depth >= ColorDepth.ansi256)
-            {
-                put(w, background ? "48;5;" : "38;5;");
-                writeInteger(w, color.index);
-            }
-            else
-                writeClassicCode(w, ansi16FromRgb(xterm256ToRgb(color.index)), background);
-            return;
-
-        case Color.Kind.rgb:
-            final switch (depth)
-            {
-                case ColorDepth.none:
-                case ColorDepth.ansi16:
-                    writeClassicCode(w, ansi16FromRgb(color.rgb), background);
-                    return;
-                case ColorDepth.ansi256:
-                    put(w, background ? "48;5;" : "38;5;");
-                    writeInteger(w, ansi256FromRgb(color.rgb));
-                    return;
-                case ColorDepth.trueColor:
-                    put(w, background ? "48;2;" : "38;2;");
-                    writeInteger(w, color.rgb.r);
-                    put(w, ';');
-                    writeInteger(w, color.rgb.g);
-                    put(w, ';');
-                    writeInteger(w, color.rgb.b);
-                    return;
-            }
-    }
-}
-
-private void writeClassicCode(Writer)(ref Writer w, ubyte index, bool background)
-in (index < 16)
-{
-    const base = index < 8
-        ? (background ? 40 : 30) + index
-        : (background ? 100 : 90) + index - 8;
-    writeInteger(w, cast(uint) base);
-}
-
 version (unittest)
 {
     import sparkles.base.smallbuffer : SmallBuffer, checkWriter;
@@ -317,9 +166,9 @@ version (unittest)
             name: "test",
             defaultBg: pageBg, // only consulted with emitBackground
             rules: [
-                ThemeRule("keyword", StyleSpec(fg: kwFg, font: FontStyle.bold)),
+                ThemeRule("keyword", StyleSpec(fg: kwFg, attrs: TextAttr.bold)),
                 ThemeRule("string", StyleSpec(fg: strFg)),
-                ThemeRule("comment", StyleSpec(fg: commentFg, font: FontStyle.italic)),
+                ThemeRule("comment", StyleSpec(fg: commentFg, attrs: TextAttr.italic)),
             ]);
         return resolveTheme(theme, LabelSet.standard());
     }
@@ -501,47 +350,4 @@ unittest
     SmallBuffer!(char, 64) buf;
     renderAnsi("text", events[], theme, buf);
     assert(buf[] == "text");
-}
-
-@("render.ansi.writeSgrColor")
-@safe pure nothrow @nogc
-unittest
-{
-    checkWriter!((ref w) => writeSgrColor(w, Color.init, ColorDepth.trueColor, false))("39");
-    checkWriter!((ref w) => writeSgrColor(w, Color.defaultColor, ColorDepth.trueColor, true))("49");
-    checkWriter!((ref w) => writeSgrColor(w, Color.fromPalette(3), ColorDepth.trueColor, false))("33");
-    checkWriter!((ref w) => writeSgrColor(w, Color.fromPalette(11), ColorDepth.ansi16, true))("103");
-    checkWriter!((ref w) => writeSgrColor(w, Color.fromPalette(114), ColorDepth.ansi256, false))("38;5;114");
-    // palette above 15 at ansi16: downsampled through the xterm palette
-    checkWriter!((ref w) => writeSgrColor(w, Color.fromPalette(196), ColorDepth.ansi16, false))("91");
-    checkWriter!((ref w) => writeSgrColor(w, Color.fromRgb(1, 2, 3), ColorDepth.trueColor, false))("38;2;1;2;3");
-    checkWriter!((ref w) => writeSgrColor(w, Color.fromRgb(255, 0, 0), ColorDepth.ansi256, true))("48;5;196");
-    checkWriter!((ref w) => writeSgrColor(w, Color.fromRgb(255, 0, 0), ColorDepth.ansi16, false))("91");
-}
-
-@("render.ansi.writeStyleTransition")
-@safe pure nothrow @nogc
-unittest
-{
-    const bold = StyleSpec(font: FontStyle.bold);
-    const boldDim = StyleSpec(font: cast(FontStyle)(FontStyle.bold | FontStyle.dim));
-    const dim = StyleSpec(font: FontStyle.dim);
-    const plainRed = StyleSpec(fg: Color.fromPalette(1));
-
-    // no-op
-    checkWriter!((ref w) => writeStyleTransition(w, bold, bold, ColorDepth.ansi256))("");
-    // to empty → single reset
-    checkWriter!((ref w) => writeStyleTransition(w, bold, StyleSpec.init, ColorDepth.ansi256))("\x1b[0m");
-    // from empty
-    checkWriter!((ref w) => writeStyleTransition(w, StyleSpec.init, bold, ColorDepth.ansi256))("\x1b[1m");
-    // bold→dim: 22 clears both, dim re-issued
-    checkWriter!((ref w) => writeStyleTransition(w, bold, dim, ColorDepth.ansi256))("\x1b[22;2m");
-    // bold→bold+dim: pure addition, no 22
-    checkWriter!((ref w) => writeStyleTransition(w, bold, boldDim, ColorDepth.ansi256))("\x1b[2m");
-    // bold+dim→bold: 22 then re-issue bold
-    checkWriter!((ref w) => writeStyleTransition(w, boldDim, bold, ColorDepth.ansi256))("\x1b[22;1m");
-    // color-only change
-    checkWriter!((ref w) => writeStyleTransition(w, StyleSpec.init, plainRed, ColorDepth.ansi256))("\x1b[31m");
-    // dropping the color while keeping nothing else → reset
-    checkWriter!((ref w) => writeStyleTransition(w, plainRed, StyleSpec.init, ColorDepth.ansi256))("\x1b[0m");
 }
