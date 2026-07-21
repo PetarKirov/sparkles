@@ -69,7 +69,7 @@ stdin ([`camera.py`][gl-camera]). Its constructor defaults are `ffmpeg_bin =
 `.mp4`; `use_fast_encoding()` swaps in a **lossless** RGB path —
 `video_codec = "libx264rgb"`, `pixel_format = "rgb32"` — which skips YUV chroma
 subsampling entirely ([`scene_file_writer.py`][gl-writer]). The vertical flip and
-a `eq=saturation:gamma` [colour][c-color] tweak are folded into the `-vf` filter,
+a `eq=saturation:gamma` [color][c-color] tweak are folded into the `-vf` filter,
 i.e. applied by the encoder at the pixel boundary rather than in-shader. The
 [`frame-capture.d`][ex-capture] probe stands in for the readback step and ends by
 noting these bytes are "the input to `ffmpeg -f rawvideo -pix_fmt rgba`".
@@ -269,7 +269,7 @@ conversion** that `libav*`/`ffmpeg` would do for you.
 
 **D-bindability** is good in the small — `EbSvtAv1Enc.h` is a compact C header,
 ImportC-friendly by the same `libs/ghostty` recipe — but the surrounding work
-(a correct IVF/MP4 muxer, a colour-correct RGBA→YUV converter) is exactly what
+(a correct IVF/MP4 muxer, a color-correct RGBA→YUV converter) is exactly what
 the libav\* path hands you for free. It is the right choice only if AV1-only
 output and a minimal dependency graph outrank container/codec breadth.
 
@@ -291,7 +291,7 @@ and it is where correctness quietly leaks:
 
 - **Premultiplied vs straight alpha.** A frame's alpha convention
   ([color model][c-color]) must match what the encoder expects; blending
-  premultiplied colours as if straight (or vice-versa) produces dark or bright
+  premultiplied colors as if straight (or vice-versa) produces dark or bright
   fringes at edges. Composite in the convention the pixel format documents.
 
 - **WebM/MOV alpha is a different pixel format, not a flag.** Transparency needs
@@ -300,7 +300,7 @@ and it is where correctness quietly leaks:
   ([`scene_file_writer.py:562-566`][mc-writer]) — you cannot get alpha out of a
   plain `yuv420p` mp4.
 
-- **Colour tweaks at the encode boundary.** ManimGL folds a
+- **Color tweaks at the encode boundary.** ManimGL folds a
   `eq=saturation:gamma` pass into ffmpeg's `-vf` ([`scene_file_writer.py`][gl-writer]) —
   a reminder that the encoder is the last place [gamma][c-color] gets touched, so
   a linear-vs-sRGB mistake upstream is baked in here.

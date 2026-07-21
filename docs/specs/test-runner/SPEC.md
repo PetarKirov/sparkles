@@ -359,7 +359,7 @@ the contracts.
 
 One suppression policy for all three live displays (runtime progress line,
 bench table ticker on stdout, bench stderr spinner): suppressed when piped,
-under `--no-colours`, `$NO_COLOR`, or `TERM=dumb`. Repaints are bracketed in
+under `--no-colors`, `$NO_COLOR`, or `TERM=dumb`. Repaints are bracketed in
 DEC-2026 synchronized output and happen only at case boundaries — no painter
 thread. Piped output is byte-stable and prints each table once.
 

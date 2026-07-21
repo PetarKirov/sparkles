@@ -236,8 +236,8 @@ primitives"_ ([arXiv][paper-arxiv]), and Solid's DOM renderer materialises them.
 So the entire [CPU-vector-vs-GPU-vector][rasterization] question — fill
 triangulation, coverage-based anti-aliasing, the tessellation pipeline that a
 native Manim/`Cairo`/OpenGL backend must implement — is delegated wholesale to
-the SVG rendering engine of the host browser. Colour is authored as CSS/SVG
-colour strings (`fill="#EBE3CF"`), so the [colour-model/gamma][color-gamma]
+the SVG rendering engine of the host browser. Color is authored as CSS/SVG
+color strings (`fill="#EBE3CF"`), so the [color-model/gamma][color-gamma]
 behaviour is likewise the browser's sRGB compositing, not something Bluefish
 defines. The framework's job ends at producing correct SVG geometry.
 

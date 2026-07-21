@@ -227,7 +227,7 @@ chumsky also supports **nested inputs**: a parser can run over a `&[Token]` slic
 
 ### Diagnostics: the `ariadne` sister crate
 
-chumsky deliberately stops at producing `Rich` error values; **rendering** them as beautiful terminal diagnostics is the job of [`ariadne`][ariadne], the same author's companion crate, whose README opens _"A fancy compiler diagnostics crate."_ ([`ariadne` README][ariadne-readme]). The two are designed to complement each other without a hard dependency — ariadne is _"a sister project"_ to chumsky, inspired by [`codespan`][codespan] and modelled on `rustc`'s output. Given a `Rich` error's span and labels, ariadne renders multi-line, multi-file reports with colour-coded label arcs, overlap-avoiding layout heuristics, and Unicode/tab-aware column handling. The standard language-frontend pipeline is therefore: **chumsky** parses (recovering, accumulating `Rich` errors) → map each error to an `ariadne::Report` → ariadne prints it. This pairing is what gives a hobby language `rustc`-quality diagnostics for a few hours' work.
+chumsky deliberately stops at producing `Rich` error values; **rendering** them as beautiful terminal diagnostics is the job of [`ariadne`][ariadne], the same author's companion crate, whose README opens _"A fancy compiler diagnostics crate."_ ([`ariadne` README][ariadne-readme]). The two are designed to complement each other without a hard dependency — ariadne is _"a sister project"_ to chumsky, inspired by [`codespan`][codespan] and modelled on `rustc`'s output. Given a `Rich` error's span and labels, ariadne renders multi-line, multi-file reports with color-coded label arcs, overlap-avoiding layout heuristics, and Unicode/tab-aware column handling. The standard language-frontend pipeline is therefore: **chumsky** parses (recovering, accumulating `Rich` errors) → map each error to an `ariadne::Report` → ariadne prints it. This pairing is what gives a hobby language `rustc`-quality diagnostics for a few hours' work.
 
 ---
 
@@ -278,7 +278,7 @@ chumsky is a **widely-adopted, single-maintainer-led** project (Joshua Barretto 
 ## Strengths
 
 - **Best-in-class declarative error recovery.** `recover_with` + `nested_delimiters` produce a partial AST _and_ a list of errors in one run, with (per the author) ~3 lines of recovery code for a JSON parser — no other mainstream Rust combinator library offers this.
-- **Rich diagnostics for free.** The default `Rich` error plus the [`ariadne`][ariadne] sister crate give a hobby language `rustc`-grade terminal errors with spans, labels, and colour.
+- **Rich diagnostics for free.** The default `Rich` error plus the [`ariadne`][ariadne] sister crate give a hobby language `rustc`-grade terminal errors with spans, labels, and color.
 - **Genuinely generic.** One combinator set runs over `&str`, `&[u8]`, or `&[Token]` slices — scannerless or two-stage, your choice — and over your own span/error/output types.
 - **Zero-copy outputs.** Borrowed slices in the AST cut allocation; the rewrite brought throughput into the same league as [`nom`][nom] for JSON-like inputs.
 - **Built-in Pratt parsing** makes operator-precedence expression grammars a one-combinator declaration instead of a hand-coded precedence ladder.

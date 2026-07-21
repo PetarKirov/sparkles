@@ -233,7 +233,7 @@ layouts adapt to varying window sizes.
 
 ### Style stack
 
-Spacing, padding, frame rounding, alpha, colours, and a long list of similar visual
+Spacing, padding, frame rounding, alpha, colors, and a long list of similar visual
 parameters live on a per-context **style** stack. To temporarily override one for a
 section of UI, push it, draw, then pop:
 
@@ -331,7 +331,7 @@ Selected `ImGuiTableFlags`:
 | `Reorderable`                     | User can drag column headers to reorder.                               |
 | `Hideable`                        | User can hide columns via header context menu.                         |
 | `Sortable`                        | Header clicks toggle sort. Use `TableGetSortSpecs` to read sort state. |
-| `RowBg`                           | Alternate row background colour.                                       |
+| `RowBg`                           | Alternate row background color.                                        |
 | `BordersInnerH` / `BordersOuterH` | Horizontal border lines.                                               |
 | `BordersInnerV` / `BordersOuterV` | Vertical border lines.                                                 |
 | `ScrollX` / `ScrollY`             | Enable horizontal / vertical scrolling.                                |

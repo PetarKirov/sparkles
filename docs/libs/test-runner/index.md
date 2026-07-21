@@ -2,7 +2,7 @@
 
 `sparkles:test-runner` is the monorepo's general-purpose `unittest` runner
 (the successor of the third-party `silly` runner). It keeps silly's CLI
-(`-i`/`-e`/`-v`/`-t`/`--no-colours`, parallel execution, `@("name")` UDAs) and
+(`-i`/`-e`/`-v`/`-t`/`--no-colors`, parallel execution, `@("name")` UDAs) and
 adds opt-in attributes that run tests in environments plain `unittest` blocks
 cannot reach:
 

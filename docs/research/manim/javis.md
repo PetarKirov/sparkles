@@ -111,7 +111,7 @@ Luxor:
 ```julia
 function ground(args...)
     background("white")   # Luxor: fill the canvas
-    sethue("black")       # Luxor: set the pen colour
+    sethue("black")       # Luxor: set the pen color
 end
 
 Background(1:70, ground)                              # applied to all later objects
@@ -294,10 +294,10 @@ Luxor, then reads the surface back as an image matrix (`get_javis_frame` →
   inherited wholesale from the drawing layer, not something Javis configures. The
   [`frame-capture.d`](./examples/frame-capture.d) probe's 1px analytic disc-edge
   coverage stands in for this CPU path.
-- **[Color model / gamma][color]** is delegated: Luxor takes colours through
-  `Colors.jl` (`sethue("red")`, RGB/HSV/named CSS colours) and Cairo does the
-  compositing. Javis adds no colour-space policy of its own; it lerps colour
-  channels through `Animations.jl` where an action animates a colour, and leaves
+- **[Color model / gamma][color]** is delegated: Luxor takes colors through
+  `Colors.jl` (`sethue("red")`, RGB/HSV/named CSS colors) and Cairo does the
+  compositing. Javis adds no color-space policy of its own; it lerps color
+  channels through `Animations.jl` where an action animates a color, and leaves
   blending/premultiplication to Cairo.
 - **Resolution** is the `Video`'s pixel `width`/`height`; `render` also exposes a
   `rescale_factor` to downscale frames _"for faster rendering"_

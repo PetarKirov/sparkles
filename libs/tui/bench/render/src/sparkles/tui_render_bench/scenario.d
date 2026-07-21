@@ -20,7 +20,7 @@ module sparkles.tui_render_bench.scenario;
 enum Profile : ubyte
 {
     sparse, /// ~1–3% of cells change per frame (clock, spinners, selection)
-    churn, /// most cells change per frame (fast log + counters + colour sweep)
+    churn, /// most cells change per frame (fast log + counters + color sweep)
     scroll, /// the log fills the pane and scrolls every frame
     resize, /// periodic terminal-size changes among normal activity
     mixed, /// a realistic blend — the headline profile

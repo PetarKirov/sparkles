@@ -1,7 +1,7 @@
 /++
 `sparkles:tui` — a full-screen, interactive terminal-UI library.
 
-$(B Status: scaffolding.) The library's runtime, backend, input, colour,
+$(B Status: scaffolding.) The library's runtime, backend, input, color,
 layout, and widget modules are intentionally not written yet. The core
 rendering architecture — a $(I line-diff) buffer of styled byte-lines versus a
 $(I 2-D cell-grid) with per-cell diffing — is being decided by measurement, not

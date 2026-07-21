@@ -1314,17 +1314,17 @@ unittest
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// The one policy for whether a live, redraw-in-place progress display may
-/// animate on a stream: it must be an interactive terminal, colours must not
-/// be disabled (`--no-colours` / `$NO_COLOR`), and the terminal must not be
+/// animate on a stream: it must be an interactive terminal, colors must not
+/// be disabled (`--no-colors` / `$NO_COLOR`), and the terminal must not be
 /// `TERM=dumb` (no cursor-control escapes). The bench spinner asks about
 /// stderr (the default — results piped to a file still show progress on the
 /// terminal); the parallel-run progress line asks about stdout, where it
 /// interleaves with the streamed result lines.
-package bool progressEnabled(bool noColours, bool stderrStream = true)
+package bool progressEnabled(bool noColors, bool stderrStream = true)
 {
     import std.process : environment;
 
-    if (noColours || environment.get("NO_COLOR", "").length != 0
+    if (noColors || environment.get("NO_COLOR", "").length != 0
         || environment.get("TERM", "") == "dumb")
         return false;
     static if (hasCoreCliTermCaps)
@@ -1378,7 +1378,7 @@ package struct BenchProgress
     import core.time : MonoTime;
 
     size_t total;            /// case denominator from the enumerate pass
-    bool active;             /// stderr is an interactive tty (colours on)
+    bool active;             /// stderr is an interactive tty (colors on)
     uint width;              /// terminal width in cells (0 = unknown → fixed cap)
     private size_t done;
     private size_t frame;
@@ -1404,7 +1404,7 @@ package struct BenchProgress
             const shown = done > total ? done : total; // never render done > total
             const elapsed = MonoTime.currTime - started;
 
-            // Measure the (uncoloured) prefix so the label gets the terminal's
+            // Measure the (uncolored) prefix so the label gets the terminal's
             // remaining columns; truncate it there rather than to a fixed 80
             // that wraps a narrow terminal and leaves a ghost row the
             // CR+eraseLine (one physical line) can't erase. width==0

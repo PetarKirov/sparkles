@@ -336,7 +336,7 @@ interpolation "for free":
 ```
 
 `MotionLayout` only animates **position and size** (the things the solver controls). Other
-properties (colour, text, alpha) require `CustomAttribute` blocks or external animation
+properties (color, text, alpha) require `CustomAttribute` blocks or external animation
 APIs.
 
 ### ConstraintLayout for Compose

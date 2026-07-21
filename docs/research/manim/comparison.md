@@ -56,7 +56,7 @@ almost everywhere (Cairo, Canvas2D, SVG, all the TeX-lineage languages), and onl
 [ManimGL](./manimgl.md) and Manim-community's GL classes use **quadratic** — a
 choice that pays off _only_ when the GPU is the sole target. A second split is
 data layout: ManimGL packs one interleaved structured array (GPU-upload-friendly);
-Manim-community-Cairo keeps points and colours in _parallel_ arrays (better for
+Manim-community-Cairo keeps points and colors in _parallel_ arrays (better for
 the two independent `Transform` passes). The [`bezier-eval.d`](./examples/bezier-eval.d)
 probe quantifies why cubic is the safer canonical form.
 

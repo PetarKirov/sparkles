@@ -222,8 +222,8 @@ reproducibility problem is not a bespoke deterministic rasteriser but
 **pinning the browser** (a Remotion-managed Chromium/Chrome Headless Shell
 download) so every render machine rasterises identically, and offering `` `gl` ``
 options (`angle`, `swiftshader`, …) to force a software GL path when GPU drivers
-would diverge. [Colour and gamma][gamma] are likewise the browser's job: CSS
-colours, compositing, and sRGB handling follow web semantics, so an author gets
+would diverge. [Color and gamma][gamma] are likewise the browser's job: CSS
+colors, compositing, and sRGB handling follow web semantics, so an author gets
 correct blends only insofar as CSS/Canvas give them. Anti-aliasing is Blink's
 (coverage AA for CSS/SVG, MSAA/analytic for WebGL) — not a Remotion setting.
 
@@ -370,7 +370,7 @@ probe illustrates is exactly what makes such distributed splitting safe.
 - **Not open source.** The [Remotion License][license-md] is source-available with a
   paid **Company License** for organisations over 3 employees — a real adoption
   and forking constraint, unlike the MIT/BSD tools elsewhere in this survey.
-- **Chromium is the whole backend.** Rendering, rasterisation, text, and colour
+- **Chromium is the whole backend.** Rendering, rasterisation, text, and color
   are Blink's; reproducibility across machines depends on **pinning the browser**
   and forcing a software `gl` path, and the render process carries a full headless
   browser's weight (memory, startup, screenshot I/O per frame).

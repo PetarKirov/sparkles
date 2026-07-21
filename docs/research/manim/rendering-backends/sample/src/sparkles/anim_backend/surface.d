@@ -36,7 +36,7 @@ struct CairoCanvas
 
     /// Fill one cubic-Bézier subpath — points laid out as
     /// `anchor, handle, handle, anchor, handle, handle, anchor, …` — with an
-    /// RGBA colour under the nonzero winding rule. This is the exact primitive
+    /// RGBA color under the nonzero winding rule. This is the exact primitive
     /// a `VMobject` fill lowers to on the Cairo backend (no triangulation).
     void fillCubicPath(scope const double[2][] pts, double r, double g, double b, double a) @nogc nothrow
     in (pts.length >= 4 && (pts.length - 1) % 3 == 0)

@@ -629,7 +629,7 @@ helpers (Bevy's `Node`, GPUI's `Style`).
   is a lot of irrelevant surface area. Feature flags reduce _compiled_ code, but not the
   size of the public API.
 - **No styling, no events, no rendering.** Taffy is pure layout. Consumers must supply
-  their own text shaper, their own colour and font model, their own input system. For a
+  their own text shaper, their own color and font model, their own input system. For a
   catalog comparing against, e.g., [Ratatui](../tui-libraries/ratatui.md) (which bundles
   layout + widgets + buffering) or [Textual](../tui-libraries/textual.md) (full TUI
   framework), Taffy is at a much lower abstraction level.

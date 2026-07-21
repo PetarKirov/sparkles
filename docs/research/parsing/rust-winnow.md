@@ -133,7 +133,7 @@ For the cases that genuinely want `nom`'s return-the-leftover shape — testing,
 driving one parser from another during migration — winnow keeps a `parse_peek(input:
 I) -> Result<(I, O), E>` method that "returns a copy of the `Stream` advanced to the
 next location" ([`src/parser.rs`][parser]); the docs flag it as "primarily intended
-for: Migrating from older versions / `nom`, Testing". The `#rrggbb` colour parser
+for: Migrating from older versions / `nom`, Testing". The `#rrggbb` color parser
 that is `hex_color` in `nom`'s README is the same grammar in winnow's `css` example,
 now written with the `seq!` macro over `&mut &str` ([`examples/css/parser.rs`][css]):
 

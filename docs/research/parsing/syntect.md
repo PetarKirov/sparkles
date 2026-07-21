@@ -105,7 +105,7 @@ The `dumps` module exists _"to allow fast startup times"_ ([`dumps.rs`][dumps-rs
 
 ### HTML output: `ClassedHTMLGenerator` and `css_for_theme`
 
-The `html` module makes syntect dual-backend out of the box: `ClassedHTMLGenerator` emits `<span>`s with **CSS classes derived from scopes** (`ClassStyle::Spaced` or the collision-safe `SpacedPrefixed`), and `css_for_theme_with_class_style` renders a `.tmTheme` into a stylesheet ([`html.rs`][html-rs]) — the class-based analogue of [Shiki][shiki]'s inline-styled output. There is also direct inline-styled HTML (`highlighted_html_for_string`) and the ANSI helper `as_24_bit_terminal_escaped` in `util` — the README's stated goal of _"Built-in output to coloured HTML `<pre>` tags or 24-bit colour ANSI terminal escape sequences"_. What the built-in ANSI path lacks (256-color/palette tiering) is precisely the part [bat] adds in `terminal.rs`.
+The `html` module makes syntect dual-backend out of the box: `ClassedHTMLGenerator` emits `<span>`s with **CSS classes derived from scopes** (`ClassStyle::Spaced` or the collision-safe `SpacedPrefixed`), and `css_for_theme_with_class_style` renders a `.tmTheme` into a stylesheet ([`html.rs`][html-rs]) — the class-based analogue of [Shiki][shiki]'s inline-styled output. There is also direct inline-styled HTML (`highlighted_html_for_string`) and the ANSI helper `as_24_bit_terminal_escaped` in `util` — the README's stated goal of _"Built-in output to colored HTML `<pre>` tags or 24-bit color ANSI terminal escape sequences"_. What the built-in ANSI path lacks (256-color/palette tiering) is precisely the part [bat] adds in `terminal.rs`.
 
 ---
 

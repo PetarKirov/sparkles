@@ -71,7 +71,7 @@ GPU with support for compute shaders to run."
   (the `kurbo` curve library), flattened on-GPU; see [Bézier basis][basis].
 - **Anti-aliasing — analytic**, computed in the compute pipeline (area coverage),
   not [MSAA][aa].
-- **Colour / gamma.** Operates in a linear compute pipeline with explicit
+- **Color / gamma.** Operates in a linear compute pipeline with explicit
   encode at the output — the [linear-then-encode model][color] done right, in
   contrast to Cairo's device-space compositing.
 - **Readback.** Renders into a `wgpu` texture; a buffer copy + map yields pixels
@@ -140,8 +140,8 @@ concrete answer to the [fill-triangulation][fill] problem, the same role
 - **Anti-aliasing — none built in.** Output is bare geometry; AA is the
   consumer's job (MSAA on the target, or an analytic edge shader) — see
   [anti-aliasing][aa].
-- **Colour / gamma — out of scope.** Vertices carry whatever attributes you
-  attach; [colour handling][color] lives in your shader.
+- **Color / gamma — out of scope.** Vertices carry whatever attributes you
+  attach; [color handling][color] lives in your shader.
 - **Readback — n/a.** Lyon produces a mesh, not pixels; [readback][capture]
   belongs to the pipeline you draw the mesh with.
 
@@ -211,7 +211,7 @@ accumulated in the stencil; the final `GL_NOTEQUAL` cover pass paints the inside
   anti-aliased edge strip ("fringe") is drawn with a coverage-carrying alpha —
   an [analytic-ish AA][aa] without MSAA (`NVG_STENCIL_STROKES` improves stroke
   quality).
-- **Colour / gamma — straight RGBA in shader**; premultiplied blend on the GL
+- **Color / gamma — straight RGBA in shader**; premultiplied blend on the GL
   target — the [device-space compositing caveat][color] applies.
 - **Readback.** Via the enclosing GL FBO (`glReadPixels`), not a NanoVG call —
   the [readback][capture] belongs to your GL context.
@@ -273,7 +273,7 @@ the triangles.
   lines yourself. See [flattening][decast].
 - **Anti-aliasing — MSAA.** `FLAG_MSAA_4X_HINT` on the context; no analytic
   vector AA. See [anti-aliasing][aa].
-- **Colour / gamma — 8-bit sRGB `Color`**, composited in device space on the GL
+- **Color / gamma — 8-bit sRGB `Color`**, composited in device space on the GL
   target — the [gamma caveat][color] applies.
 - **Readback — first-class.** `TakeScreenshot(const char *fileName)` — "Takes a
   screenshot of current screen (filename extension defines format)" — and, for
@@ -343,9 +343,9 @@ our gpu backends".
   ([SkPath API][skia-skpath], verbatim). See [Bézier basis][basis].
 - **Anti-aliasing — analytic** (per-primitive `SkPaint::setAntiAlias`), coverage
   on CPU and shader-analytic on GPU; see [anti-aliasing][aa].
-- **Colour / gamma — colour-managed.** `SkColorSpace` carries an explicit
+- **Color / gamma — color-managed.** `SkColorSpace` carries an explicit
   transfer function, so Skia can composite in linear light and encode at the
-  boundary — the [colour/gamma model][color] done explicitly rather than in
+  boundary — the [color/gamma model][color] done explicitly rather than in
   device bytes.
 - **Readback.** `SkImage::readPixels` / `SkSurface::readPixels` copies out an
   RGBA buffer — the [readback][capture] step, uniform across backends.

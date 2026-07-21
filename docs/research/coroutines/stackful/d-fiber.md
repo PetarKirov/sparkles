@@ -61,7 +61,7 @@ it as a blocking-call abstraction (`base.d:285`):
 This is the defining stackful property, in N4134's vocabulary ([concepts]): a fiber's
 saved state _is_ the full call stack, so `Fiber.yield()` can fire from **any call
 depth** — behind any number of ordinary, non-coroutine-aware function frames — and the
-whole stack slice survives the suspension. There is no function "colouring": a `Fiber`
+whole stack slice survives the suspension. There is no function "coloring": a `Fiber`
 body is an ordinary `void function()` or `void delegate()` that can yield from anywhere
 it (transitively) calls. That _suspend-anywhere_ generality is exactly the ergonomic
 advantage of stackful coroutines, and the cost the stackless model trades away for memory

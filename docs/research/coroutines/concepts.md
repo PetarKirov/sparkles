@@ -342,11 +342,11 @@ D coroutine design cares about:
 - **Suspend across nested frames.** Already covered: stackful can, stackless cannot
   (`n4134:104` vs `n4134:106-108`). This is the _one_ axis where stackful wins outright —
   direct-style code where any nested call may block. Everything below favours stackless.
-- **Function "colouring".** Because a stackless coroutine can only suspend at its own
+- **Function "coloring".** Because a stackless coroutine can only suspend at its own
   lexical await points, "I can suspend here" is a _static property of the function's
   signature_ — a coroutine is a different kind of thing from an ordinary function, and the
-  distinction is visible at the call site (you must `await` it). This "colouring" is the
-  price of the no-call-stack model; the stackful model has no colours because any function
+  distinction is visible at the call site (you must `await` it). This "coloring" is the
+  price of the no-call-stack model; the stackful model has no colors because any function
   can yield. See [comparison] for how Rust, C++, Go, and others make this choice.
 - **`@nogc` / determinism.** A stackful `Fiber` cannot be constructed `@nogc` — its
   constructor `mmap`s a stack and GC-allocates a `StackContext` (see [d-fiber]). A
@@ -399,7 +399,7 @@ The whole tradeoff, on one screen. "Stackful" is instantiated by D's `Fiber` ([d
 | **Suspend / resume cost** | a `switch` on a resume index + reload of spilled locals; "comparable in cost to a function call overhead" (`n4134:127`) | register save/restore + stack-pointer swap + indirect jump (per-arch hand asm; see [d-fiber])                         |
 | **Debugger stacks**       | flat frame struct; no walkable call stack while suspended (resume index, not a backtrace)                               | real, walkable call stack preserved by the switch                                                                     |
 | **Who owns the stack**    | the _ordinary_ thread stack — used only while running; nothing reserved while suspended                                 | a dedicated per-fiber stack, reserved and addressable for the fiber's whole lifetime                                  |
-| **Function colouring**    | yes — "is a coroutine" / "must `await`" is a static, signature-level distinction                                        | no — any function may yield; no colours                                                                               |
+| **Function coloring**     | yes — "is a coroutine" / "must `await`" is a static, signature-level distinction                                        | no — any function may yield; no colors                                                                                |
 | **WebAssembly**           | works: a state machine in linear memory; the _only_ viable path on wasm (see [wasm])                                    | D's `Fiber` literally `assert(0, "Fibers not supported on WASI")` — needs a native stack ([d-fiber], [wasm])          |
 
 The last row is decisive for the survey's porting goal. WebAssembly exposes no addressable
@@ -421,7 +421,7 @@ With the vocabulary fixed, the rest of the survey divides cleanly:
 - **The surface template** — the C++20 promise + awaiter + handle protocol the D design
   copies, and the full N4134/TS rationale: [cpp].
 - **How other languages choose** between stackless and stackful, and how they handle
-  colouring: [comparison].
+  coloring: [comparison].
 - **The D stackful baseline** the new design argues against, in depth (assembly, GC race,
   thread migration, the WASI `assert`): [d-fiber].
 - **Why stackless wins on wasm**, and how WasmFX relates: [wasm], [wasmfx].

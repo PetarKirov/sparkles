@@ -57,7 +57,7 @@ struct Framebuffer
         }
     }
 
-    /// Alpha-composite a colour over pixel (x,y) with coverage in [0,1].
+    /// Alpha-composite a color over pixel (x,y) with coverage in [0,1].
     void blend(int x, int y, ubyte r, ubyte g, ubyte b, double cov) @safe pure nothrow @nogc
     {
         if (x < 0 || x >= W || y < 0 || y >= H || cov <= 0)

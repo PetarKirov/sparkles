@@ -40,7 +40,7 @@ Its shape is a list of Bézier curves (subpaths); its appearance is a fill and a
 stroke. This is the workhorse type — text glyphs, shapes, and graphs are all
 VMobjects — because vector paths scale, interpolate, and morph cleanly. The two
 representational questions every engine answers are the [Bézier
-basis](#bezier-basis-quadratic-vs-cubic) and whether per-vertex colour lives
+basis](#bezier-basis-quadratic-vs-cubic) and whether per-vertex color lives
 interleaved with the points or in parallel arrays.
 
 ### Bezier basis: quadratic vs cubic
@@ -103,7 +103,7 @@ origin) versus device pixels; the camera's transform maps one to the other.
 
 **Interpolation** produces in-between states; **lerp** (linear interpolation)
 is the base case, `a + (b−a)·t`. Animating a Mobject lerps its control points
-and colours from a start to an end state as `t` runs `0→1`. Colours must be
+and colors from a start to an end state as `t` runs `0→1`. Colors must be
 lerped in a linear space, not gamma-encoded sRGB (see [color model and
 gamma](#color-model-and-gamma)).
 
@@ -148,7 +148,7 @@ submobject trees _and_ equal numbers of control points per subpath, so a
 point-to-point lerp is well-defined. The engine pads the shorter family and
 **subdivides** curves in the sparser path (via [de
 Casteljau](#de-casteljau-evaluation)) until the counts match, then lerps points
-and colours along a **path function** (straight line by default; arc or spiral
+and colors along a **path function** (straight line by default; arc or spiral
 optional). Getting alignment right is the single subtlest part of a
 reimplementation.
 
@@ -219,11 +219,11 @@ probe](./examples/frame-capture.d) uses 1px analytic coverage on a disc edge.
 
 A **color model** stores channels (RGBA) and an alpha convention
 (**premultiplied** vs straight). **Gamma** is the catch: display sRGB is a
-non-linear encoding, so interpolating or compositing colours in sRGB is visibly
+non-linear encoding, so interpolating or compositing colors in sRGB is visibly
 wrong — blends must happen in **linear** space and be re-encoded to sRGB only at
 the pixel boundary. An engine that stores linear RGBA and converts at the paint
 edge gets correct blends for free; one that lerps sRGB bytes does not. Manim's
-`Vector`-style colour is naturally expressed as a 4-component value
+`Vector`-style color is naturally expressed as a 4-component value
 (`["r","g","b","a"]`).
 
 ---

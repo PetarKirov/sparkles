@@ -228,7 +228,7 @@ Each `io_uring` event loop owns one ring. Instead of an `epoll_wait` readiness l
 
 ### Virtual threads (JEP 444, final in Java 21)
 
-A _virtual thread_ is a `java.lang.Thread` scheduled by the JVM, not the OS. Millions can exist at once; they are multiplexed onto a small pool of **carrier threads** (a `ForkJoinPool` of platform threads). When a virtual thread performs a blocking operation that the JDK knows how to make non-blocking — a socket `read`, a `Future.get`, a `BlockingQueue.take`, `Thread.sleep` — the runtime _unmounts_ it from its carrier, parks a continuation, and lets the carrier run another virtual thread. The blocked operation is registered with the same NIO netpoller (`epoll`/`kqueue`/IOCP) that selectors use; when it becomes ready, the virtual thread is re-mounted and resumes. The result: thread-per-request code with the scalability of an event loop, but no callbacks, no `CompletableFuture` chains, no coloured functions.
+A _virtual thread_ is a `java.lang.Thread` scheduled by the JVM, not the OS. Millions can exist at once; they are multiplexed onto a small pool of **carrier threads** (a `ForkJoinPool` of platform threads). When a virtual thread performs a blocking operation that the JDK knows how to make non-blocking — a socket `read`, a `Future.get`, a `BlockingQueue.take`, `Thread.sleep` — the runtime _unmounts_ it from its carrier, parks a continuation, and lets the carrier run another virtual thread. The blocked operation is registered with the same NIO netpoller (`epoll`/`kqueue`/IOCP) that selectors use; when it becomes ready, the virtual thread is re-mounted and resumes. The result: thread-per-request code with the scalability of an event loop, but no callbacks, no `CompletableFuture` chains, no colored functions.
 
 ```java
 // Idiomatic Loom: a virtual thread per connection, blocking style
@@ -312,7 +312,7 @@ JUring's README also documents the honest losses: write throughput at **20+ conc
 | Sealed `Result` + exhaustive opcode `switch`        | Type-safe, total decoding and per-op buffer-ownership rules        | Adding an opcode touches the sealed set and the central switch       |
 | `JUringBlocking` poller → `CompletableFuture` by id | Lets virtual threads block synchronously over the ring             | A single platform poller thread per ring is a throughput bottleneck  |
 | Netty `io_uring` as a drop-in `EventLoopGroup`      | Existing channel/pipeline code is unchanged                        | Net gain over epoll is workload-dependent, often marginal            |
-| Loom = cheap threads, not a new async model         | Keeps `Thread`/`synchronized`/debuggers working; no coloured fns   | Filesystem I/O still pins; relies on the netpoller, not `io_uring`   |
+| Loom = cheap threads, not a new async model         | Keeps `Thread`/`synchronized`/debuggers working; no colored fns    | Filesystem I/O still pins; relies on the netpoller, not `io_uring`   |
 
 ---
 

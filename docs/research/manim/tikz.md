@@ -510,8 +510,8 @@ loadable **libraries** — and the surface is enormous.
   pictures dominate compile time (mitigated only by externalization).
 - **Offline authoring.** Edit-compile-view loop; no live canvas, scrubber, or
   interactive preview in the tool itself.
-- **No linear-light compositing.** Colours come from `xcolor` and are passed as
-  device colours to the driver; there is no
+- **No linear-light compositing.** Colors come from `xcolor` and are passed as
+  device colors to the driver; there is no
   [gamma-correct linear-space blend](./concepts.md#color-model-and-gamma) model
   because there is no per-pixel compositing stage.
 

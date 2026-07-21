@@ -35,7 +35,7 @@ Everything below follows from two decisions the survey makes defensible:
 2. **GC for topology, value types for the hot payload.** The scene-graph _tree_
    is a reference-semantic, GC-managed `final class` (matches Manim's identity
    model, makes updater closures natural, and the baseline already runs a GC
-   under wasm). The per-frame numeric _payload_ — points and colours — lives in
+   under wasm). The per-frame numeric _payload_ — points and colors — lives in
    allocator-conscious Structure-of-Arrays value buffers so interpolation stays
    `@nogc`.
 
@@ -48,8 +48,8 @@ updaters, a dirty flag, and a lazy `family()` range). A `VMobject`'s
 [geometry](./concepts.md#vmobject-and-vector-geometry) is **Structure-of-Arrays**
 (the [Manim-community-Cairo](./manim-community/scene-graph.md) layout, not
 [ManimGL](./manimgl.md)'s interleaved structured array): cubic subpaths plus
-_parallel_ per-anchor colour/width arrays, so `Transform`'s two passes (equalise
-point counts, then lerp points and colours) are independent and vectorisable. The
+_parallel_ per-anchor color/width arrays, so `Transform`'s two passes (equalise
+point counts, then lerp points and colors) are independent and vectorisable. The
 GPU backend packs the interleaved `[x,y,z,r,g,b,a,w]` vertex buffer as a _pack
 step_, not the canonical store. A `MobjectId` indirection is kept as insurance:
 the payload can migrate to a component arena for an ECS-style `@nogc` hot loop
@@ -147,7 +147,7 @@ Design-direction only; each milestone names the prior art it borrows and a
 | M       | Goal                                                                                                    | Reuses / borrows from                                                          | Key risk                                       | Prove-it                                                                                 |
 | ------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ | ---------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | **M1**  | `libs/math`: matrix/affine/quaternion, cubic Bézier (eval/subdivide/flatten/align), ease, gamma `Color` | the [probes](./examples/bezier-eval.d); [MetaPost](./metapost.md) Hobby curves | keep it wasm/betterC-clean                     | `unittest`s: split reproduces the curve; sRGB↔linear round-trips; all `@safe pure @nogc` |
-| **M2**  | Object model: `Mobject` GC tree + `VMobject` SoA (cubic + parallel colour)                              | [Manim-community](./manim-community/scene-graph.md) cubic layout               | GC-tree vs arena; SoA churn                    | build a scene graph; dump `family()` + point counts                                      |
+| **M2**  | Object model: `Mobject` GC tree + `VMobject` SoA (cubic + parallel color)                               | [Manim-community](./manim-community/scene-graph.md) cubic layout               | GC-tree vs arena; SoA churn                    | build a scene graph; dump `family()` + point counts                                      |
 | **M3**  | First backend: [Cairo](./rendering-backends/cpu-vector.md) via ImportC + frame capture (the reference)  | `libs/ghostty` recipe                                                          | ImportC/Cairo header quirks; unique `c.c` stem | a static scene → byte-stable PNG                                                         |
 | **M4**  | Animation + play loop + `Transform` alignment                                                           | [Manim](./manim-community/index.md) timing                                     | alignment correctness                          | `Transform(square → circle)` frame sequence                                              |
 | **M5**  | Encoding: [ffmpeg subprocess](./video-encoding.md) + per-`play()` content-hash cache                    | ManimGL pipe; Manim-community cache                                            | cache-key determinism                          | one scene → cached MP4; re-run skips unchanged plays                                     |

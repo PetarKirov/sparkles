@@ -672,7 +672,7 @@ function styleCss(st: Style): string {
 // `spk_segment` (the SAME oracle drawTable padded with), and `font-size` == the cell
 // height with `line-height: 1`, so box-drawing glyphs fill their cell and connect
 // across borders. Alignment AND line-joining are thus independent of the browser's
-// glyph metrics. ANSI SGR escapes set the per-cell colour/weight; plain padding
+// glyph metrics. ANSI SGR escapes set the per-cell color/weight; plain padding
 // spaces are skipped (the empty grid column already reserves the gap).
 const IN_MAX = 115000;
 const TRIP_OFF = 120000;

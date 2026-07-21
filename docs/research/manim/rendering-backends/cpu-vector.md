@@ -54,7 +54,7 @@ The licence is the permissive-copyleft pair, verbatim:
 ### How it works
 
 A caller creates a surface, wraps it in a `cairo_t` context, appends path
-segments, sets a source (colour/gradient), and calls `cairo_fill` /
+segments, sets a source (color/gradient), and calls `cairo_fill` /
 `cairo_stroke`. The rasterizer scan-converts the path into per-pixel coverage on
 the CPU. Cairo's design goal is media-independent, consistent output
 ([cairographics.org][cairo-site], verbatim):
@@ -90,14 +90,14 @@ surface is pure software, hence its reproducibility.
   white background, for example)." The scan-converter computes each boundary
   pixel's covered fraction — the [analytic-coverage AA][aa] the
   [`frame-capture.d`][ex-capture] probe models with 1px disc coverage.
-- **Colour / gamma — premultiplied ARGB32, device-space compositing.** The
+- **Color / gamma — premultiplied ARGB32, device-space compositing.** The
   workhorse format is `CAIRO_FORMAT_ARGB32` ([cairo-Image-Surfaces][cairo-img],
   verbatim): "each pixel is a 32-bit quantity, with alpha in the upper 8 bits,
   then red, then green, then blue. The 32-bit quantities are stored native-endian.
   Pre-multiplied alpha is used. (That is, 50% transparent red is 0x80800000, not
   0x80ff0000.)" Cairo composites in this stored byte space — it has no
   linear-light stage — so an engine that wants correct [linear blends][color]
-  must linearize its colours around Cairo, not rely on it.
+  must linearize its colors around Cairo, not rely on it.
 - **Readback.** `cairo_image_surface_get_data` ([cairo-Image-Surfaces][cairo-img],
   verbatim) — "Get a pointer to the data of the image surface, for direct
   inspection or modification" — hands back the raw RGBA buffer an encoder
@@ -166,10 +166,10 @@ rasterization approach, JIT optimized pipelines, and multithreading".
   `BL_FILL_RULE_EVEN_ODD` — the same [two winding rules][fill]; no triangulation.
 - **Anti-aliasing — analytic coverage**, produced by the "novel rasterization
   approach" above; comparable to Cairo's grayscale [coverage AA][aa] but faster.
-- **Colour / gamma — premultiplied ARGB.** Blend2D's default pixel format is
+- **Color / gamma — premultiplied ARGB.** Blend2D's default pixel format is
   premultiplied 32-bit ARGB (`BL_FORMAT_PRGB32`), the same [premultiplied
   device-space model][color] as Cairo — it is a faster CPU rasterizer, not a
-  colour-management upgrade.
+  color-management upgrade.
 - **Readback.** Renders into a caller-owned `BLImage`; `BLImage::getData` yields
   the pixel buffer for the [readback][capture] step.
 
@@ -237,7 +237,7 @@ resvg's rendering is itself a Cairo-class CPU coverage rasterizer — a pure-Rus
 - **Fill rule — winding and even-odd**, per SVG's `fill-rule`; `tiny-skia` fills
   by [winding rule][fill], no triangulation.
 - **Anti-aliasing — coverage**, the `tiny-skia` analytic [coverage AA][aa].
-- **Colour / gamma — straight/premultiplied RGBA** per the SVG/`tiny-skia`
+- **Color / gamma — straight/premultiplied RGBA** per the SVG/`tiny-skia`
   model; the same [pixel-boundary re-encoding concern][color] applies.
 - **Readback.** The C API renders into a caller-provided pixmap buffer
   (`resvg_render` → RGBA bytes) — a one-shot [readback][capture], not a

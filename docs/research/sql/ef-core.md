@@ -92,7 +92,7 @@ surface and the persistence surface ([`src/EFCore/DbSet.cs`][dbset]):
 > _"A `DbSet<TEntity>` can be used to query and save instances of `TEntity`. LINQ queries
 > against a `DbSet<TEntity>` will be translated into queries against the database."_
 
-The third pillar — the one that most colours the survey — is that EF Core **guesses**. It
+The third pillar — the one that most colors the survey — is that EF Core **guesses**. It
 guesses which SQL a `Where` becomes, when a relation must be loaded, and which rows changed.
 Those guesses are what make the mainstream ergonomics possible; they are also the source of
 every trade-off below (the leaky LINQ-translation boundary, change-tracking overhead, lazy

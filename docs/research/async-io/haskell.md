@@ -469,7 +469,7 @@ completion" structure that Haskell achieves with green threads + `MVar`s.
 ## Strengths
 
 - **Direct-style scalability for free (layer 1).** Ordinary blocking-looking socket code
-  scales to millions of green threads with no callbacks, `async`/`await`, or coloured
+  scales to millions of green threads with no callbacks, `async`/`await`, or colored
   functions — the runtime owns the loop. MIO makes that multicore.
 - **SSD-saturating block I/O (layer 2).** `blockio-uring` reaches ~92% of `fio` IOPS for
   random 4 KiB reads via batching + concurrency, closing the file-I/O gap the RTS IO manager
@@ -506,7 +506,7 @@ completion" structure that Haskell achieves with green threads + `MVar`s.
 
 | Decision                                                   | Rationale                                                                          | Trade-off                                                                          |
 | ---------------------------------------------------------- | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| RTS owns the loop; green threads park on `epoll`/`kqueue`  | Direct-style blocking code scales like an event loop; no coloured functions        | File I/O has no readiness model → handled by a blocking safe-FFI OS thread         |
+| RTS owns the loop; green threads park on `epoll`/`kqueue`  | Direct-style blocking code scales like an event loop; no colored functions         | File I/O has no readiness model → handled by a blocking safe-FFI OS thread         |
 | MIO: one event manager per capability                      | Removes the single-dispatcher bottleneck; scales to 40+ cores                      | More `epoll`/`kqueue` instances and per-cap state to coordinate                    |
 | `blockio-uring` is a batching _library_, not a runtime     | Rides on existing green threads; no new scheduler/continuation machinery to build  | Caller must supply concurrency (spawn many submitting threads) to fill the ring    |
 | One `io_uring` + one completion thread **per capability**  | No cross-capability SQ contention; throughput scales with `-N`                     | `IOCtx` is a vector; more rings/threads; each ring reaped by a single thread       |

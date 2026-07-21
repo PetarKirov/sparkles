@@ -25,7 +25,7 @@ The proof that a highlighting corpus can be **ported, not rewritten**: Chroma is
 
 ### What it solves
 
-_"Chroma takes source code and other structured text and converts it into syntax highlighted HTML, ANSI-coloured text, etc."_ and — the strategy in one sentence — _"Chroma is based heavily on Pygments, and includes translators for Pygments lexers and styles."_ ([`README.md:11-15`][readme]). Go's ecosystem (Hugo above all) needed batch highlighting without a Python runtime; rather than author hundreds of grammars, Chroma **imported** them.
+_"Chroma takes source code and other structured text and converts it into syntax highlighted HTML, ANSI-colored text, etc."_ and — the strategy in one sentence — _"Chroma is based heavily on Pygments, and includes translators for Pygments lexers and styles."_ ([`README.md:11-15`][readme]). Go's ecosystem (Hugo above all) needed batch highlighting without a Python runtime; rather than author hundreds of grammars, Chroma **imported** them.
 
 ### Design philosophy
 

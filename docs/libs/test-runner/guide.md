@@ -8,7 +8,7 @@ benchmarks. For the reasoning behind the design, see
 its deeper reference.
 
 `sparkles:test-runner` is a drop-in successor to the [`silly`](https://gitlab.com/AntonMeep/silly)
-runner: same `@("name")` UDAs, same `-i`/`-e`/`-v`/`-t`/`--no-colours` CLI,
+runner: same `@("name")` UDAs, same `-i`/`-e`/`-v`/`-t`/`--no-colors` CLI,
 same parallel execution. It adds opt-in attributes and keeps `dub test` close
 to a vanilla build.
 
@@ -315,7 +315,7 @@ Everything after `--` in `dub test -- <options>`. Full table:
 | `-v`, `--verbose`          | Durations, `[file:line]` locations, full stack traces                                  |
 | `-t`, `--threads N`        | Worker threads; `0` (default) auto-detects, `1` is single-thread                       |
 | `-l`, `--list`             | List discovered tests with their attribute markers                                     |
-| `--no-colours`             | Disable colour (also honours `$NO_COLOR` and non-tty stdout)                           |
+| `--no-colors`              | Disable color (also honours `$NO_COLOR` and non-tty stdout)                            |
 | `--bench`                  | Measure `@benchmark` tests                                                             |
 | `--perf`                   | With `--bench`: add hardware perf counters (Linux `perf_event`)                        |
 | `--syscalls[=LIST]`        | With `--bench`: count syscalls/iter (perf tracepoints); bare = total, `=a,b` per-name  |

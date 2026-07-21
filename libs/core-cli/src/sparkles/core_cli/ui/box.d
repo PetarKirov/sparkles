@@ -31,7 +31,7 @@ struct BoxProps
     /// default a title wider than `maxWidth` still wins (the box is never truncated
     /// below what it must show); set `titleOverflow` to make a long title wrap or
     /// truncate so the box honours `maxWidth` too. Styled content keeps its
-    /// colours/links across wrapped rows and is reset before the border so style
+    /// colors/links across wrapped rows and is reset before the border so style
     /// never bleeds onto the padding or frame.
     ///
     /// `minWidth`, if non-zero, pads the box out to at least this many columns so
@@ -717,7 +717,7 @@ private const(char)[] stripTrailingSpaces(const(char)[] s)
 }
 
 /// Truncate `title` to `width` visible columns (the trailing `…` included), keeping
-/// styles intact and reset before the ellipsis so colour cannot bleed past it.
+/// styles intact and reset before the ellipsis so color cannot bleed past it.
 /// Returns `title` unchanged when it already fits. Thin wrapper over the shared
 /// `truncateField` (grapheme-accurate, uses the full width budget rather than the
 /// old word-boundary cut); the `width == 0` case keeps the historical bare `…`.
@@ -1069,7 +1069,7 @@ unittest
     import std.algorithm.searching : canFind;
     import sparkles.base.term_style : stylize, Style;
 
-    // A styled line wrapped across rows is reset before the border, so colour
+    // A styled line wrapped across rows is reset before the border, so color
     // cannot bleed onto the padding or frame.
     const styled = "red red red".stylize(Style.red);
     const box = drawBox([styled], "T", BoxProps(maxWidth: 11));
@@ -1171,7 +1171,7 @@ unittest
     import sparkles.base.term_style : stylize, Style;
 
     // A styled title wrapped into the nested box is reset before the border so its
-    // colour cannot bleed onto the frame.
+    // color cannot bleed onto the frame.
     const styled = "cyan cyan cyan cyan cyan cyan cyan cyan".stylize(Style.cyan);
     const box = drawBox(["body"], styled, BoxProps(maxWidth: 30, titleOverflow: TitleOverflow.wrap));
     assert(box.canFind("\x1b[0m"));
@@ -1316,7 +1316,7 @@ unittest
     import std.array : join;
     import sparkles.base.term_style : stylize, Style;
 
-    // Colours ride along with their word chunks, so the cell-granular stream still
+    // Colors ride along with their word chunks, so the cell-granular stream still
     // reproduces drawBox's styled row exactly (reset before the border, no bleed).
     const styled = "red red red red".stylize(Style.red);
     const want = drawBox([styled], "T", BoxProps(minWidth: 24, maxWidth: 24));

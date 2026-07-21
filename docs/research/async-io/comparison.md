@@ -166,27 +166,27 @@ _How_ you express "do this, then await its result" is the axis users feel most d
 families, from lowest- to highest-level (the deep theory of how each resumes a suspended
 computation is in [effects and event loops][effects]):
 
-| Model                  | What suspends             | Stack                | Function colouring                         | Composability                | Cancellation                         | Backtraces                    | Per-task overhead    | Exemplars                                                                                    |
-| ---------------------- | ------------------------- | -------------------- | ------------------------------------------ | ---------------------------- | ------------------------------------ | ----------------------------- | -------------------- | -------------------------------------------------------------------------------------------- |
-| **Callbacks**          | nothing (CPS by hand)     | none                 | n/a                                        | poor ("callback hell")       | manual                               | shredded                      | minimal              | [libuv][libuv], stock [asyncio][python] transports, [Asio][boost-asio] handlers              |
-| **Futures / promises** | a polled state machine    | none                 | viral (`.then`)                            | combinator-based             | drop/abort the future                | partial                       | tiny (struct)        | [Seastar][seastar], [Java `CompletableFuture`][java], [Asio][boost-asio] `deferred`          |
-| **async/await**        | a compiler state machine  | none                 | **viral** ("what colour is your function") | good (linear-looking)        | drop the future at `.await`          | reconstructed by the compiler | tiny (no stack)      | [Tokio][tokio], [Glommio][glommio], [Monoio][monoio], [.NET][dotnet], [asyncio/Trio][python] |
-| **Stackful fibers**    | a full stack switch       | heap stack           | **none** (direct style)                    | excellent (any fn can block) | inject an exception at a yield point | natural (real stack)          | a stack (KBs)        | [Go][go], [vibe-core][d-landscape], [Photon][d-landscape], `core.thread.Fiber`               |
-| **Algebraic effects**  | a delimited continuation  | reified continuation | none                                       | excellent + typed            | structural (handler-scoped)          | natural                       | continuation capture | [Eio][eio], [Koka][effects]                                                                  |
-| **Virtual threads**    | a runtime-unmounted stack | managed stack        | none                                       | excellent                    | interrupt + structured scopes        | natural                       | small managed stack  | [Java Loom][loom]                                                                            |
+| Model                  | What suspends             | Stack                | Function coloring                         | Composability                | Cancellation                         | Backtraces                    | Per-task overhead    | Exemplars                                                                                    |
+| ---------------------- | ------------------------- | -------------------- | ----------------------------------------- | ---------------------------- | ------------------------------------ | ----------------------------- | -------------------- | -------------------------------------------------------------------------------------------- |
+| **Callbacks**          | nothing (CPS by hand)     | none                 | n/a                                       | poor ("callback hell")       | manual                               | shredded                      | minimal              | [libuv][libuv], stock [asyncio][python] transports, [Asio][boost-asio] handlers              |
+| **Futures / promises** | a polled state machine    | none                 | viral (`.then`)                           | combinator-based             | drop/abort the future                | partial                       | tiny (struct)        | [Seastar][seastar], [Java `CompletableFuture`][java], [Asio][boost-asio] `deferred`          |
+| **async/await**        | a compiler state machine  | none                 | **viral** ("what color is your function") | good (linear-looking)        | drop the future at `.await`          | reconstructed by the compiler | tiny (no stack)      | [Tokio][tokio], [Glommio][glommio], [Monoio][monoio], [.NET][dotnet], [asyncio/Trio][python] |
+| **Stackful fibers**    | a full stack switch       | heap stack           | **none** (direct style)                   | excellent (any fn can block) | inject an exception at a yield point | natural (real stack)          | a stack (KBs)        | [Go][go], [vibe-core][d-landscape], [Photon][d-landscape], `core.thread.Fiber`               |
+| **Algebraic effects**  | a delimited continuation  | reified continuation | none                                      | excellent + typed            | structural (handler-scoped)          | natural                       | continuation capture | [Eio][eio], [Koka][effects]                                                                  |
+| **Virtual threads**    | a runtime-unmounted stack | managed stack        | none                                      | excellent                    | interrupt + structured scopes        | natural                       | small managed stack  | [Java Loom][loom]                                                                            |
 
 The headline trade-offs:
 
-- **Function colouring.** `async`/`await` and futures _colour_ functions: an async function
+- **Function coloring.** `async`/`await` and futures _color_ functions: an async function
   can only be awaited from another async function, splitting the world in two ([the classic
-  "what colour is your function" problem][effects]). Stackful fibers, effects, and virtual
-  threads have _no colouring_ — ordinary-looking synchronous code suspends transparently. This
+  "what color is your function" problem][effects]). Stackful fibers, effects, and virtual
+  threads have _no coloring_ — ordinary-looking synchronous code suspends transparently. This
   is the single biggest ergonomic divide, and it is why Go, Loom, Eio, and the D fiber
   frameworks all chose direct-style.
 - **Overhead.** Stackless models (futures, async/await) cost _zero_ per-task stack and have no
   stack-overflow risk; the suspended state is a compact struct. Stackful models pay a
   per-fiber stack reservation (the "memory tax") and a context switch, but allow _any_
-  function to block without colouring. D's `core.thread.Fiber` defaults to 4 pages on Linux
+  function to block without coloring. D's `core.thread.Fiber` defaults to 4 pages on Linux
   (see [D landscape §Fiber][d-landscape]).
 - **Composability & cancellation.** Effects and virtual threads compose best and cancel most
   cleanly (structural, scoped). Callbacks compose worst and cancel by ad-hoc bookkeeping.
@@ -287,7 +287,7 @@ Three structural conclusions fall out of this matrix and shape Part 2:
    Monoio, Seastar). That combination is not an accident: thread-per-core removes the cross-core
    sync that would otherwise eat `io_uring`'s syscall savings, and owned buffers are _forced_ by
    completion semantics anyway.
-2. **Direct-style ergonomics (no function colouring) are achievable without async/await** via
+2. **Direct-style ergonomics (no function coloring) are achievable without async/await** via
    stackful fibers (Go, vibe-core, Photon) or effects (Eio) — and D already ships the fiber
    primitive (`core.thread.Fiber`).
 3. **Structured concurrency is the consensus modern cancellation model** (Trio, Eio, Loom,
@@ -315,7 +315,7 @@ range/UFCS style, `SmallBuffer`).
 | **Readiness/epoll fallback behind a runtime probe**                                  | Old kernels (< 5.x features), seccomp/container lockdowns, and macOS need a path; Seastar/Monoio/Eio all ship one.                                                                                                                         | A second backend to maintain; the fallback can't expose Tier-3 features, so the API must degrade gracefully.                              |
 | **Thread-per-core (share-nothing) as the primary topology**                          | Lowest tail latency, no cross-core sync to erode `io_uring`'s savings, no `Send`/shared-state cost — and it pairs naturally with `DEFER_TASKRUN + SINGLE_ISSUER`.                                                                          | Load balancing becomes the app's problem; uneven sharding = hot-shard bottleneck. Offer a single-threaded mode too.                       |
 | **`DEFER_TASKRUN + SINGLE_ISSUER` per-core ring**                                    | Highest-throughput config for a dedicated I/O thread: no IPIs, no spurious wakeups, batched completion processing ([io_uring overview §operating-modes][uring-index]).                                                                     | The app _must_ periodically wait for events or completions stall; one issuer per ring (enforced with `-EEXIST`).                          |
-| **Stackful fibers (`core.thread.Fiber`) for the concurrency model**                  | Direct-style, **no function colouring**, real backtraces, and D already ships the primitive `nothrow @nogc` for `yield`/`getThis`. Matches vibe-core/Photon/Go/Eio ergonomics.                                                             | Per-fiber stack memory tax (4 pages default); a context switch per resume; `betterC` needs a custom fiber if druntime is excluded (§2.3). |
+| **Stackful fibers (`core.thread.Fiber`) for the concurrency model**                  | Direct-style, **no function coloring**, real backtraces, and D already ships the primitive `nothrow @nogc` for `yield`/`getThis`. Matches vibe-core/Photon/Go/Eio ergonomics.                                                              | Per-fiber stack memory tax (4 pages default); a context switch per resume; `betterC` needs a custom fiber if druntime is excluded (§2.3). |
 | **Build on [during][d-landscape] + `core.thread.Fiber`, not vibe-core/Photon**       | `during` is the only `@nogc nothrow betterC` SQE/CQE substrate with current opcode coverage; `Fiber` is the cheap suspension primitive. vibe-core/Photon are GC- and exception-coupled.                                                    | `during` has _no_ scheduler/await/timer/cancellation — that entire layer is the work.                                                     |
 | **Layer primitives in Tier order (0→3)**                                             | Each tier is a precondition for the next ([primitives][primitives]); ship a usable echo server (Tier 1) before chasing zero-copy.                                                                                                          | Resisting the temptation to wire `SEND_ZC`/zcrx early; they add the most lifetime complexity for the least early payoff.                  |
 | **Owned-buffer (move/`scope`) API for I/O**                                          | Completion semantics _force_ it — a borrowed slice is unsound across submission→CQE. Mirror Monoio's `IoBuf`/BufResult with D move semantics.                                                                                              | Less ergonomic than borrowed `read(buf[])`; users must thread buffers through; needs a clean `SmallBuffer`/pool story.                    |
@@ -376,7 +376,7 @@ and layered over their existing reactor.
 **Recommendation: stackful fibers via `core.thread.Fiber`, exposing a direct-style
 ("blocking-looking") API, with the proactor underneath.** Justification:
 
-- **No function colouring.** The biggest ergonomic win in §1.4. A `read` that _looks_
+- **No function coloring.** The biggest ergonomic win in §1.4. A `read` that _looks_
   synchronous but parks the fiber on submission and resumes it from the CQE is exactly the
   vibe-core/Photon/Go/Eio model, and it composes with ordinary D control flow, UFCS range
   pipelines, and `scope(exit)` cleanup without an `async` keyword splitting the codebase.
@@ -392,7 +392,7 @@ and layered over their existing reactor.
 
 Why **not** stackless awaitables: D has no first-class `async`/`await` state-machine transform.
 Emulating one (hand-rolled coroutine structs, or a library combinator monad) re-introduces
-function colouring and loses the direct-style ergonomics that are D's existing strength, for no
+function coloring and loses the direct-style ergonomics that are D's existing strength, for no
 proportionate gain over fibers in a `@nogc` setting.
 
 The one real cost is the **per-fiber stack memory tax** (4 pages default on Linux). Mitigations:
@@ -439,7 +439,7 @@ void echo(TcpConn conn) @safe nothrow
 ```
 
 The key properties visible here map one-to-one to the recommendations: no `async`/`await`
-colouring (§2.3), `BufResult` ownership transfer (§2.5), a lexical `scope_` that joins its
+coloring (§2.3), `BufResult` ownership transfer (§2.5), a lexical `scope_` that joins its
 children (§2.4), multishot accept (§2.4 Tier 3), and `@nogc nothrow` throughout with
 `SmallBuffer`/pooled buffers (the [agent guidelines][agents]).
 
