@@ -647,16 +647,18 @@ void writeTimeHms(Writer)(ref Writer w, int hour, int minute, int second)
 void writeStyledLevel(bool colored = true, Writer)(ref Writer w, LogLevel level)
 {
     import sparkles.base.styled_template : writeStyled;
+    import sparkles.base.term_color : ColorDepth;
 
+    enum depth = colored ? ColorDepth.trueColor : ColorDepth.none;
     switch (level)
     {
-        case LogLevel.trace:    writeStyled!colored(w, i"{gray TRC}");     break;
-        case LogLevel.info:     writeStyled!colored(w, i"{green INF}");    break;
-        case LogLevel.warning:  writeStyled!colored(w, i"{yellow WRN}");   break;
-        case LogLevel.error:    writeStyled!colored(w, i"{red ERR}");      break;
-        case LogLevel.critical: writeStyled!colored(w, i"{bold.red CRT}"); break;
-        case LogLevel.fatal:    writeStyled!colored(w, i"{bold.red FTL}"); break;
-        default:                writeStyled!colored(w, i"{dim ???}");      break;
+        case LogLevel.trace:    writeStyled(w, depth, i"{gray TRC}");     break;
+        case LogLevel.info:     writeStyled(w, depth, i"{green INF}");    break;
+        case LogLevel.warning:  writeStyled(w, depth, i"{yellow WRN}");   break;
+        case LogLevel.error:    writeStyled(w, depth, i"{red ERR}");      break;
+        case LogLevel.critical: writeStyled(w, depth, i"{bold.red CRT}"); break;
+        case LogLevel.fatal:    writeStyled(w, depth, i"{bold.red FTL}"); break;
+        default:                writeStyled(w, depth, i"{dim ???}");      break;
     }
 }
 
@@ -672,17 +674,19 @@ void writeLogPrefix(bool colored = false, Writer)(
 {
     import sparkles.base.smallbuffer : SmallBuffer;
     import sparkles.base.styled_template : writeStyled;
+    import sparkles.base.term_color : ColorDepth;
     import sparkles.base.text.writers : writeDurationPadded;
 
+    enum depth = colored ? ColorDepth.trueColor : ColorDepth.none;
     SmallBuffer!(char, 16) startBuf;
     writeDurationPadded(startBuf, sinceStart, 5);
     SmallBuffer!(char, 16) prevBuf;
     writeDurationPadded(prevBuf, sincePrev, 5);
     auto loc = baseNameSlice(file);
 
-    writeStyled!colored(w, i"{gray [ $(timeStr)} | Δt {yellow $(startBuf[])} | Δtᵢ {yellow $(prevBuf[])} | ");
+    writeStyled(w, depth, i"{gray [ $(timeStr)} | Δt {yellow $(startBuf[])} | Δtᵢ {yellow $(prevBuf[])} | ");
     writeStyledLevel!colored(w, level);
-    writeStyled!colored(w, i" | {dim $(loc):$(line)} ]: ");
+    writeStyled(w, depth, i" | {dim $(loc):$(line)} ]: ");
 }
 
 @safe pure nothrow @nogc

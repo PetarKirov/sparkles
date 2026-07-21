@@ -37,8 +37,8 @@ void main()
 ```
 
 ```ansi
-[31m[1mFatal Error: connection refused[22m[39m
-Status: [32m[1mOK[22m[39m | Service: [36mdatabase[39m
+[1;31mFatal Error: connection refused[22;39m
+Status: [1;32mOK[22;39m | Service: [36mdatabase[39m
 ```
 
 ## Convert to strings

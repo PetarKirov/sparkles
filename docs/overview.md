@@ -193,10 +193,10 @@ void main()
 ```
 
 ```ansi
-[1m[3m[32mBold italic green text[39m[23m[22m
+[1;3;32mBold italic green text[22;23;39m
 [1mBold [31mbold+red[39m back to bold[22m
-[1m[31mBoth [39mjust bold[31m both again[39m[22m
-[2mmain.d:[22m [31m[1m3 errors[22m[39m
+[1;31mBoth [39mjust bold[31m both again[22;39m
+[2mmain.d:[22m [1;31m3 errors[22;39m
 Use {style text} syntax
 ```
 
