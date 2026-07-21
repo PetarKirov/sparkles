@@ -1,6 +1,7 @@
 module sparkles.base.term_style;
 
-import sparkles.base.term_color : Color, ColorChannel, ColorDepth, writeSgrColor;
+import sparkles.base.term_color : Color, ColorChannel, ColorDepth,
+    writeSgrColorPacked, packColor, unpackColor;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Resolved terminal style + the minimal-transition SGR encoder
@@ -58,27 +59,99 @@ enum UnderlineStyle : ubyte
     dashed,  /// SGR 4:5
 }
 
+// ── TermStyle bit-packing ──
+//
+// The three independent colors, the text attributes, and the underline shape
+// are inlined into three 32-bit words rather than composed as sub-type fields.
+// A color needs 26 bits (a 2-bit `Color.Kind` tag over a 24-bit payload —
+// palette index or packed RGB), so one color fits per word with room for the
+// two small attribute groups alongside it (see the layout table on `TermStyle`).
+
+private enum uint colorBits = 26;               // bits 0-25 of a word hold one packed color
+private enum uint colorMask = (1u << colorBits) - 1;
+private enum ubyte attrsMask = 0x3F;            // 6 `TextAttr` flag bits
+private enum ubyte underlineMask = 0x07;        // 3 bits — `UnderlineStyle` 0-5
+
+// The Color <-> 26-bit codec (packColor/unpackColor) and the bit-decoding SGR
+// emitter (writeSgrColorPacked) live in sparkles.base.term_color, which owns
+// the Color vocabulary; they are imported at the top of this module.
+
 /// The resolved terminal style of one span/block: fore/background/underline
-/// colors plus text attributes and underline shape. `TermStyle.init` is the
-/// terminal default (nothing set). One field per independent SGR group, so a
-/// field-by-field diff ($(LREF writeStyleTransition)) is correct by
-/// construction — no shared-close-code collisions to repair. Shared by
-/// `sparkles.base.styled_template` and `sparkles.syntax` (which aliases it as
-/// `StyleSpec`).
+/// colors plus text attributes and underline shape, bit-packed into three
+/// 32-bit words. `TermStyle.init` (all words zero) is the terminal default
+/// (nothing set). The getters/setters below materialize the `Color` /
+/// `TextAttr` / `UnderlineStyle` domain types on demand; the packed layout is:
+///
+/// $(TABLE
+///   $(TR $(TH word) $(TH bits 0-25) $(TH bits 26-31))
+///   $(TR $(TD `_w0`) $(TD `fg`) $(TD `attrs` (6 flags)))
+///   $(TR $(TD `_w1`) $(TD `bg`) $(TD `underline` (3 bits) + 3 spare))
+///   $(TR $(TD `_w2`) $(TD `underlineColor`) $(TD 6 spare)))
+///
+/// One group per property, so a field-by-field diff ($(LREF
+/// writeStyleTransition)) is correct by construction — no shared-close-code
+/// collisions to repair. Because `packColor` is canonical and all spare bits
+/// are forced to zero, the compiler-generated `opEquals` over the three words
+/// is exactly a comparison of the five logical fields (three dword compares),
+/// keeping the load-bearing `from == to` guard in `writeStyleTransition`
+/// correct. Shared by `sparkles.base.styled_template` and `sparkles.syntax`
+/// (which aliases it as `StyleSpec`).
 struct TermStyle
 {
-    Color fg;                 /// foreground; `unset` = unspecified
-    Color bg;                 /// background; `unset` = unspecified
-    Color underlineColor;     /// underline color (SGR 58/59); `unset` = default
-    TextAttr attrs;           /// bold/dim/italic/strikethrough/inverse/hidden
-    UnderlineStyle underline; /// underline shape (`none` = off)
+    private uint _w0, _w1, _w2;
 
 @safe pure nothrow @nogc:
 
+    /// Construct from the logical fields. Named arguments (`TermStyle(fg: …,
+    /// attrs: …)`) bind to these parameters, so every existing named-arg call
+    /// site keeps compiling unchanged. This is a `static opCall` rather than a
+    /// constructor because D forbids a struct constructor whose parameters all
+    /// have defaults (it would be a disallowed default constructor).
+    static TermStyle opCall(
+        Color fg = Color.init,
+        Color bg = Color.init,
+        Color underlineColor = Color.init,
+        TextAttr attrs = TextAttr.none,
+        UnderlineStyle underline = UnderlineStyle.none,
+    )
+    {
+        TermStyle s;
+        s._w0 = packColor(fg) | (cast(uint)(attrs.bits & attrsMask) << colorBits);
+        s._w1 = packColor(bg) | (cast(uint)(underline & underlineMask) << colorBits);
+        s._w2 = packColor(underlineColor);
+        return s;
+    }
+
+    /// Foreground color; `unset` = unspecified.
+    Color fg() const scope => unpackColor(_w0);
+    /// ditto
+    void fg(Color c) scope { _w0 = packColor(c) | (_w0 & ~colorMask); }
+
+    /// Background color; `unset` = unspecified.
+    Color bg() const scope => unpackColor(_w1);
+    /// ditto
+    void bg(Color c) scope { _w1 = packColor(c) | (_w1 & ~colorMask); }
+
+    /// Underline color (SGR 58/59); `unset` = default.
+    Color underlineColor() const scope => unpackColor(_w2);
+    /// ditto
+    void underlineColor(Color c) scope { _w2 = packColor(c); }
+
+    /// Text attributes: bold/dim/italic/strikethrough/inverse/hidden.
+    TextAttr attrs() const scope => TextAttr(cast(ubyte)((_w0 >> colorBits) & attrsMask));
+    /// ditto
+    void attrs(TextAttr a) scope
+        { _w0 = (_w0 & colorMask) | (cast(uint)(a.bits & attrsMask) << colorBits); }
+
+    /// Underline shape (`none` = off).
+    UnderlineStyle underline() const scope
+        => cast(UnderlineStyle)((_w1 >> colorBits) & underlineMask);
+    /// ditto
+    void underline(UnderlineStyle u) scope
+        { _w1 = (_w1 & colorMask) | (cast(uint)(u & underlineMask) << colorBits); }
+
     /// `true` iff nothing is set at all (renders unstyled).
-    bool empty() const scope
-        => !fg.isSet && !bg.isSet && !underlineColor.isSet
-            && attrs == TextAttr.none && underline == UnderlineStyle.none;
+    bool empty() const scope => _w0 == 0 && _w1 == 0 && _w2 == 0;
 }
 
 /// A differential ANSI encoder: writes the minimal merged SGR sequence moving
@@ -107,10 +180,20 @@ void writeStyleTransition(Writer)(ref Writer w, in TermStyle from, in TermStyle 
     void sep() { if (!first) put(w, ';'); first = false; }
     void code(uint c) { sep(); writeInteger(w, c); }
 
+    // Read each grouped field off the packed words once. `attrs`/`underline`
+    // are cheap bit extractions cached here to avoid re-extracting per check;
+    // the three colors compare by their packed 26-bit slice directly (canonical
+    // packing ⇒ masked-word equality *is* Color equality), so an unchanged color
+    // costs one masked compare instead of materializing a Color on every span —
+    // a Color is only rebuilt (`to.fg` etc.) on the rare span where it changed.
+    const fromAttrs = from.attrs;
+    const toAttrs = to.attrs;
+    const toUnderline = to.underline;
+
     // Intensity: bold and dim share the off-code 22 (Style.bold[1] == Style.dim[1]).
     // If either is cleared, 22 clears both, so re-issue the survivor.
-    const fromBD = from.attrs & (TextAttr.bold | TextAttr.dim);
-    const toBD = to.attrs & (TextAttr.bold | TextAttr.dim);
+    const fromBD = fromAttrs & (TextAttr.bold | TextAttr.dim);
+    const toBD = toAttrs & (TextAttr.bold | TextAttr.dim);
     if (fromBD != toBD)
     {
         if (fromBD & ~toBD)
@@ -126,13 +209,13 @@ void writeStyleTransition(Writer)(ref Writer w, in TermStyle from, in TermStyle 
         }
     }
 
-    if (from.attrs.has(TextAttr.italic) != to.attrs.has(TextAttr.italic))
-        code(to.attrs.has(TextAttr.italic) ? Style.italic[0] : Style.italic[1]);
+    if (fromAttrs.has(TextAttr.italic) != toAttrs.has(TextAttr.italic))
+        code(toAttrs.has(TextAttr.italic) ? Style.italic[0] : Style.italic[1]);
 
-    if (from.underline != to.underline)
+    if (from.underline != toUnderline)
     {
         sep();
-        final switch (to.underline)
+        final switch (toUnderline)
         {
             case UnderlineStyle.none:    writeInteger(w, Style.underline[1]); break; // 24
             case UnderlineStyle.single:  writeInteger(w, Style.underline[0]); break; // 4
@@ -143,29 +226,34 @@ void writeStyleTransition(Writer)(ref Writer w, in TermStyle from, in TermStyle 
         }
     }
 
-    if (from.attrs.has(TextAttr.inverse) != to.attrs.has(TextAttr.inverse))
-        code(to.attrs.has(TextAttr.inverse) ? Style.inverse[0] : Style.inverse[1]);
-    if (from.attrs.has(TextAttr.hidden) != to.attrs.has(TextAttr.hidden))
-        code(to.attrs.has(TextAttr.hidden) ? Style.hidden[0] : Style.hidden[1]);
-    if (from.attrs.has(TextAttr.strikethrough) != to.attrs.has(TextAttr.strikethrough))
-        code(to.attrs.has(TextAttr.strikethrough) ? Style.strikethrough[0] : Style.strikethrough[1]);
+    if (fromAttrs.has(TextAttr.inverse) != toAttrs.has(TextAttr.inverse))
+        code(toAttrs.has(TextAttr.inverse) ? Style.inverse[0] : Style.inverse[1]);
+    if (fromAttrs.has(TextAttr.hidden) != toAttrs.has(TextAttr.hidden))
+        code(toAttrs.has(TextAttr.hidden) ? Style.hidden[0] : Style.hidden[1]);
+    if (fromAttrs.has(TextAttr.strikethrough) != toAttrs.has(TextAttr.strikethrough))
+        code(toAttrs.has(TextAttr.strikethrough) ? Style.strikethrough[0] : Style.strikethrough[1]);
 
-    if (from.fg != to.fg)
+    // `_w0`/`_w1` hold fg/bg in their low 26 bits; XOR-then-mask is nonzero iff
+    // the color slice differs (the attribute bits in 26-31 are ignored here).
+    // On a change we emit straight from the packed word — writeSgrColorPacked
+    // reads only bits 0-25, so no Color is ever materialized on this hot path.
+    if ((from._w0 ^ to._w0) & colorMask)
     {
         sep();
-        writeSgrColor(w, to.fg, depth, ColorChannel.foreground);
+        writeSgrColorPacked(w, to._w0, depth, ColorChannel.foreground);
     }
-    if (from.bg != to.bg)
+    if ((from._w1 ^ to._w1) & colorMask)
     {
         sep();
-        writeSgrColor(w, to.bg, depth, ColorChannel.background);
+        writeSgrColorPacked(w, to._w1, depth, ColorChannel.background);
     }
     // The underline color only exists at 256/truecolor; below that it is not
     // emitted at all (rather than a redundant reset), so the sequence stays clean.
-    if (from.underlineColor != to.underlineColor && depth >= ColorDepth.ansi256)
+    // `_w2` holds only underlineColor, so any bit difference is a color change.
+    if (((from._w2 ^ to._w2) & colorMask) && depth >= ColorDepth.ansi256)
     {
         sep();
-        writeSgrColor(w, to.underlineColor, depth, ColorChannel.underline);
+        writeSgrColorPacked(w, to._w2, depth, ColorChannel.underline);
     }
 
     put(w, 'm');
@@ -212,6 +300,61 @@ unittest
     checkWriter!((ref w) => writeStyleTransition(w, TermStyle.init,
         TermStyle(underlineColor: Color.fromRgb(255, 0, 0), underline: UnderlineStyle.curly),
         ColorDepth.ansi16))("\x1b[4:3m");
+}
+
+///
+@("term_style.TermStyle.packing")
+@safe pure nothrow @nogc
+unittest
+{
+    // The whole resolved style fits in three words.
+    static assert(TermStyle.sizeof == 12);
+
+    // Every Color.Kind round-trips through the packed representation.
+    static foreach (c; [
+        Color.init,                // unset
+        Color.defaultColor,        // default_
+        Color.fromPalette(200),    // palette
+        Color.fromRgb(12, 34, 56), // rgb
+    ])
+        assert(unpackColor(packColor(c)) == c);
+
+    // unset packs distinctly from a black RGB (matches Color's field-wise ==).
+    assert(Color.init != Color.fromRgb(0, 0, 0));
+    assert(packColor(Color.init) != packColor(Color.fromRgb(0, 0, 0)));
+
+    // TermStyle.init is fully empty; setting any single group is not.
+    assert(TermStyle.init.empty);
+    assert(!TermStyle(attrs: TextAttr.bold).empty);
+
+    // Getters materialize exactly what the named-arg constructor packed.
+    const s = TermStyle(
+        fg: Color.fromRgb(1, 2, 3),
+        bg: Color.fromPalette(9),
+        underlineColor: Color.defaultColor,
+        attrs: TextAttr.bold | TextAttr.italic,
+        underline: UnderlineStyle.curly,
+    );
+    assert(s.fg == Color.fromRgb(1, 2, 3));
+    assert(s.bg == Color.fromPalette(9));
+    assert(s.underlineColor == Color.defaultColor);
+    assert(s.attrs == (TextAttr.bold | TextAttr.italic));
+    assert(s.underline == UnderlineStyle.curly);
+
+    // Mutating one group leaves the neighbouring bit-group in the same word intact.
+    TermStyle m;
+    m.fg = Color.fromRgb(200, 100, 50);
+    m.attrs = TextAttr.strikethrough;    // shares _w0 with fg
+    m.bg = Color.fromPalette(7);
+    m.underline = UnderlineStyle.dotted; // shares _w1 with bg
+    assert(m.fg == Color.fromRgb(200, 100, 50));
+    assert(m.attrs == TextAttr.strikethrough);
+    assert(m.bg == Color.fromPalette(7));
+    assert(m.underline == UnderlineStyle.dotted);
+
+    // Reconstructing from the getters compares equal to the original (canonical
+    // packing → the default three-word opEquals is logical equality).
+    assert(TermStyle(fg: m.fg, bg: m.bg, attrs: m.attrs, underline: m.underline) == m);
 }
 
 ///

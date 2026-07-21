@@ -440,54 +440,156 @@ color resets to the terminal default (`59`).
 */
 void writeSgrColor(Writer)(ref Writer w, in Color color, ColorDepth depth, ColorChannel channel)
 {
-    import std.range.primitives : put;
-    import sparkles.base.text.writers : writeInteger;
-
     final switch (color.kind)
     {
         case Color.Kind.unset:
         case Color.Kind.default_:
             writeChannelReset(w, channel);
             return;
-
         case Color.Kind.palette:
-            if (channel != ColorChannel.underline && color.index < 16)
-                writeClassicCode(w, color.index, channel);
-            else if (depth >= ColorDepth.ansi256)
-            {
-                writeChannelPrefix256(w, channel);
-                writeInteger(w, color.index);
-            }
-            else if (channel == ColorChannel.underline)
-                writeChannelReset(w, channel); // no low-depth underline color
-            else
-                writeClassicCode(w, ansi16FromRgb(xterm256ToRgb(color.index)), channel);
+            writeSgrPalette(w, color.index, depth, channel);
             return;
-
         case Color.Kind.rgb:
-            final switch (depth)
+            writeSgrRgb(w, color.rgb, depth, channel);
+            return;
+    }
+}
+
+/// ditto, but decoding the color from its packed 26-bit form ($(LREF
+/// packColor)) instead of materializing a $(LREF Color) — the render hot path
+/// (`writeStyleTransition`) passes the packed word straight from `TermStyle`,
+/// so an emitted color never round-trips through a `Color` value. Only bits
+/// 0–25 are read; any higher bits (a co-packed attribute group) are ignored.
+void writeSgrColorPacked(Writer)(ref Writer w, uint packed, ColorDepth depth, ColorChannel channel)
+{
+    final switch (cast(Color.Kind)((packed >> 24) & 3))
+    {
+        case Color.Kind.unset:
+        case Color.Kind.default_:
+            writeChannelReset(w, channel);
+            return;
+        case Color.Kind.palette:
+            writeSgrPalette(w, cast(ubyte)(packed & 0xFF), depth, channel);
+            return;
+        case Color.Kind.rgb:
+            writeSgrRgb(w, RgbColor(cast(ubyte)(packed >> 16),
+                cast(ubyte)(packed >> 8), cast(ubyte) packed), depth, channel);
+            return;
+    }
+}
+
+/// The `palette` case of $(LREF writeSgrColor): a fg/bg palette index 0–15 as a
+/// classic code at any depth; 16–255 as `…;5;n`, downsampled through the xterm
+/// palette when the terminal can't address them; the underline channel has no
+/// classic form, so it resets below `ansi256`.
+private void writeSgrPalette(Writer)(ref Writer w, ubyte index, ColorDepth depth, ColorChannel channel)
+{
+    import sparkles.base.text.writers : writeInteger;
+
+    if (channel != ColorChannel.underline && index < 16)
+        writeClassicCode(w, index, channel);
+    else if (depth >= ColorDepth.ansi256)
+    {
+        writeChannelPrefix256(w, channel);
+        writeInteger(w, index);
+    }
+    else if (channel == ColorChannel.underline)
+        writeChannelReset(w, channel); // no low-depth underline color
+    else
+        writeClassicCode(w, ansi16FromRgb(xterm256ToRgb(index)), channel);
+}
+
+/// The `rgb` case of $(LREF writeSgrColor): `38;2;r;g;b` at `trueColor`,
+/// nearest palette entry at `ansi256`, nearest classic-16 below (the underline
+/// channel resets, having no classic form).
+private void writeSgrRgb(Writer)(ref Writer w, in RgbColor rgb, ColorDepth depth, ColorChannel channel)
+{
+    import std.range.primitives : put;
+    import sparkles.base.text.writers : writeInteger;
+
+    final switch (depth)
+    {
+        case ColorDepth.none:
+        case ColorDepth.ansi16:
+            if (channel == ColorChannel.underline)
+                writeChannelReset(w, channel);
+            else
+                writeClassicCode(w, ansi16FromRgb(rgb), channel);
+            return;
+        case ColorDepth.ansi256:
+            writeChannelPrefix256(w, channel);
+            writeInteger(w, ansi256FromRgb(rgb));
+            return;
+        case ColorDepth.trueColor:
+            writeChannelPrefix24(w, channel);
+            writeInteger(w, rgb.r);
+            put(w, ';');
+            writeInteger(w, rgb.g);
+            put(w, ';');
+            writeInteger(w, rgb.b);
+            return;
+    }
+}
+
+/// Pack a `Color` into a 26-bit value: a 2-bit `Kind` tag in bits 24-25 above a
+/// 24-bit payload (palette index, or packed RGB `r<<16 | g<<8 | b`). Every case
+/// is canonical — inactive payload bits are always zero — so field-wise-equal
+/// colors pack to identical, distinct codes (and `unset` is all-zero). This is
+/// the representation `TermStyle` inlines three of; $(LREF writeSgrColorPacked)
+/// emits straight from it.
+uint packColor(in Color c) @safe pure nothrow @nogc
+{
+    final switch (c.kind)
+    {
+        case Color.Kind.unset:    return 0;
+        case Color.Kind.default_: return 1u << 24;
+        case Color.Kind.palette:  return (2u << 24) | c.index;
+        case Color.Kind.rgb:      return (3u << 24)
+            | (cast(uint) c.rgb.r << 16) | (cast(uint) c.rgb.g << 8) | c.rgb.b;
+    }
+}
+
+/// Inverse of $(LREF packColor): materialize a `Color` from a packed word. Only
+/// bits 0-25 are read; any higher bits are ignored, so a `TermStyle` word (with
+/// its co-packed attribute group) may be passed in directly.
+Color unpackColor(uint w) @safe pure nothrow @nogc
+{
+    final switch (cast(Color.Kind)((w >> 24) & 3))
+    {
+        case Color.Kind.unset:    return Color.init;
+        case Color.Kind.default_: return Color.defaultColor;
+        case Color.Kind.palette:  return Color.fromPalette(cast(ubyte)(w & 0xFF));
+        case Color.Kind.rgb:      return Color.fromRgb(
+            RgbColor(cast(ubyte)(w >> 16), cast(ubyte)(w >> 8), cast(ubyte) w));
+    }
+}
+
+///
+@("term_color.packColor.roundTripAndEmit")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.smallbuffer : checkWriter;
+
+    // Round-trip every Kind, and confirm packed emit == Color emit byte-for-byte.
+    static foreach (c; [
+        Color.init, Color.defaultColor, Color.fromPalette(3),
+        Color.fromPalette(200), Color.fromRgb(1, 2, 3),
+    ])
+    {
+        assert(unpackColor(packColor(c)) == c);
+        foreach (channel; [ColorChannel.foreground, ColorChannel.background, ColorChannel.underline])
+            foreach (depth; [ColorDepth.ansi16, ColorDepth.ansi256, ColorDepth.trueColor])
             {
-                case ColorDepth.none:
-                case ColorDepth.ansi16:
-                    if (channel == ColorChannel.underline)
-                        writeChannelReset(w, channel);
-                    else
-                        writeClassicCode(w, ansi16FromRgb(color.rgb), channel);
-                    return;
-                case ColorDepth.ansi256:
-                    writeChannelPrefix256(w, channel);
-                    writeInteger(w, ansi256FromRgb(color.rgb));
-                    return;
-                case ColorDepth.trueColor:
-                    writeChannelPrefix24(w, channel);
-                    writeInteger(w, color.rgb.r);
-                    put(w, ';');
-                    writeInteger(w, color.rgb.g);
-                    put(w, ';');
-                    writeInteger(w, color.rgb.b);
-                    return;
+                import sparkles.base.smallbuffer : SmallBuffer;
+                SmallBuffer!(char, 32) a, b;
+                writeSgrColor(a, c, depth, channel);
+                writeSgrColorPacked(b, packColor(c), depth, channel);
+                assert(a[] == b[]);
             }
     }
+    // unset packs distinctly from black RGB (matches Color's field-wise ==).
+    assert(packColor(Color.init) != packColor(Color.fromRgb(0, 0, 0)));
 }
 
 /// Reset-to-default parameter for `channel` (`39`/`49`/`59`).
