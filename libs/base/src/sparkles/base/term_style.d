@@ -40,9 +40,11 @@ struct TextAttr
         => TextAttr(cast(ubyte) ~bits);
 
     /// Non-empty test, so `if (attrs & TextAttr.bold)` works.
+    pragma(inline, true)
     bool opCast(T : bool)() const => bits != 0;
 
     /// `true` iff every bit of `flag` is set (and `flag` is not `none`).
+    pragma(inline, true)
     bool has(TextAttr flag) const
         => (bits & flag.bits) == flag.bits && flag.bits != 0;
 }
@@ -123,34 +125,45 @@ struct TermStyle
     }
 
     /// Foreground color; `unset` = unspecified.
+    pragma(inline, true)
     Color fg() const scope => unpackColor(_w0);
     /// ditto
+    pragma(inline, true)
     void fg(Color c) scope { _w0 = packColor(c) | (_w0 & ~colorMask); }
 
     /// Background color; `unset` = unspecified.
+    pragma(inline, true)
     Color bg() const scope => unpackColor(_w1);
     /// ditto
+    pragma(inline, true)
     void bg(Color c) scope { _w1 = packColor(c) | (_w1 & ~colorMask); }
 
     /// Underline color (SGR 58/59); `unset` = default.
+    pragma(inline, true)
     Color underlineColor() const scope => unpackColor(_w2);
     /// ditto
+    pragma(inline, true)
     void underlineColor(Color c) scope { _w2 = packColor(c); }
 
     /// Text attributes: bold/dim/italic/strikethrough/inverse/hidden.
+    pragma(inline, true)
     TextAttr attrs() const scope => TextAttr(cast(ubyte)((_w0 >> colorBits) & attrsMask));
     /// ditto
+    pragma(inline, true)
     void attrs(TextAttr a) scope
         { _w0 = (_w0 & colorMask) | (cast(uint)(a.bits & attrsMask) << colorBits); }
 
     /// Underline shape (`none` = off).
+    pragma(inline, true)
     UnderlineStyle underline() const scope
         => cast(UnderlineStyle)((_w1 >> colorBits) & underlineMask);
     /// ditto
+    pragma(inline, true)
     void underline(UnderlineStyle u) scope
         { _w1 = (_w1 & colorMask) | (cast(uint)(u & underlineMask) << colorBits); }
 
     /// `true` iff nothing is set at all (renders unstyled).
+    pragma(inline, true)
     bool empty() const scope => _w0 == 0 && _w1 == 0 && _w2 == 0;
 }
 
