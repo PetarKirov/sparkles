@@ -46,10 +46,13 @@ module ratatui_colors_rgb_example;
 // stdout is piped it prints a single static frame instead (so it stays
 // pipe-safe). `--frames N` bounds the run; `--fps N` sets the target rate.
 //
-// The per-frame render is allocation-free: the frame is built one row at a time
-// into a single reused inline `SmallBuffer` (never heap-backed for a real
-// terminal width) and the row builders are `@nogc`, so the compiler proves the
-// hot loop performs no GC allocation.
+// Colors are cached: the HSV→RGB grid is computed once and rebuilt only on a
+// resize (`SpectrumCache`, like ratatui's `setup_colors`); each frame is then a
+// cached lookup scrolled by the frame count, so no HSV math runs per frame. The
+// render itself is allocation-free: the frame is built one row at a time into a
+// single reused inline `SmallBuffer` (never heap-backed for a real terminal
+// width) and the row builders are `@nogc`, so the compiler proves the hot loop
+// performs no GC allocation.
 //
 // The bottom of this file also carries a `@benchmark` (under `version (unittest)`)
 // that measures the uncapped frame-render fps at several terminal sizes — see it
@@ -121,13 +124,15 @@ void main(string[] args)
     if (!caps.tty)
     {
         const rows = height >= 2 ? height - 1 : height;
+        SpectrumCache cache;
+        cache.resize(width, cast(uint)(rows * 2));
         row.clear();
         writeTitle(row, width, -1);
         stdout.rawWrite(row[]);
         foreach (ry; 0 .. rows)
         {
             row.clear();
-            writeSpectrumRow(row, cast(uint) ry, width, cast(uint)(rows * 2), 0, caps.colorDepth);
+            writeSpectrumRow(row, cache, cast(uint) ry, 0, caps.colorDepth);
             stdout.rawWrite(row[]);
         }
         stdout.rawWrite("\n");
@@ -148,6 +153,7 @@ void main(string[] args)
     size_t sinceTick;
     double fps = 0;
     uint prevW = 0, prevH = 0;
+    SpectrumCache cache; // the HSV→RGB grid, rebuilt only when the size changes
     const frameBudget = dur!"msecs"(1000 / fpsTarget);
 
     for (size_t i = 0; !stop && (maxFrames == 0 || i < maxFrames); ++i)
@@ -161,6 +167,7 @@ void main(string[] args)
         prevH = height;
 
         const rows = height >= 2 ? height - 1 : height;
+        cache.resize(width, cast(uint)(rows * 2)); // no-op unless the size changed
 
         // Preamble + title as the first write; clear stale cells only on resize
         // (a full redraw covers the screen otherwise, so no per-frame flicker).
@@ -175,7 +182,7 @@ void main(string[] args)
         foreach (ry; 0 .. rows)
         {
             row.clear();
-            writeSpectrumRow(row, cast(uint) ry, width, cast(uint)(rows * 2), i, caps.colorDepth);
+            writeSpectrumRow(row, cache, cast(uint) ry, i, caps.colorDepth);
             stdout.rawWrite(row[]);
         }
         stdout.rawWrite(CtlSeq.syncEnd);
@@ -217,39 +224,69 @@ void writeTitle(ref RowBuffer w, uint width, double fps) @nogc
     w ~= right[];
 }
 
-/// One spectrum row (a leading `\n` then `width` half-block cells). `fg` is the
-/// top pixel, `bg` the pixel below; `writeStyleTransition` emits only the SGR
+/// A precomputed HSV→RGB grid — one `Color` per pixel column × pixel row —
+/// rebuilt only when the terminal size changes (the equivalent of ratatui's
+/// `setup_colors`). The per-frame render is then a cached lookup with the column
+/// scrolled by the frame count, so no HSV math happens in the hot loop.
+///
+/// ratatui uses perceptually-uniform Okhsv; this uses plain HSV, a punchier — if
+/// less uniform — rainbow for the demo.
+struct SpectrumCache
+{
+    private Color[] colors; // row-major: colors[py * width + x]
+    uint width;
+    uint pixelRows;
+
+    /// (Re)compute the grid for `width × pixelRows`; a no-op when the size is
+    /// unchanged. The one allocation lives here (on resize) — never in the hot
+    /// loop, so the per-frame render stays allocation-free.
+    void resize(uint w, uint pr)
+    {
+        const n = cast(size_t) w * pr;
+        if (w == width && pr == pixelRows && colors.length == n)
+            return;
+        width = w;
+        pixelRows = pr;
+        colors.length = n;
+        foreach (py; 0 .. pr)
+            foreach (x; 0 .. w)
+            {
+                const hue = 360.0 * x / w;
+                const value = pr ? cast(double)(pr - py) / pr : 1.0;
+                ubyte r, g, b;
+                hsvToRgb(hue, 1.0, value, r, g, b);
+                colors[py * w + x] = Color.fromRgb(r, g, b);
+            }
+    }
+
+    /// The cached color of pixel column `x`, pixel row `py`, at animation frame
+    /// `frameIdx` — the hue rides the column, scrolled by the frame count.
+    Color at(uint x, uint py, size_t frameIdx) const @nogc
+    {
+        const xi = cast(uint)((x + frameIdx) % width);
+        return colors[py * width + xi];
+    }
+}
+
+/// One spectrum row (a leading `\n` then `cache.width` half-block cells). `fg` is
+/// the top pixel, `bg` the pixel below; `writeStyleTransition` emits only the SGR
 /// delta between adjacent cells. Allocation-free — the compiler enforces it via
-/// `@nogc`.
-void writeSpectrumRow(ref RowBuffer w, uint ry, uint width, uint pixelRows,
+/// `@nogc` (the colors are cached lookups, not recomputed here).
+void writeSpectrumRow(ref RowBuffer w, in SpectrumCache cache, uint ry,
     size_t frameIdx, ColorDepth depth) @nogc
 {
     w ~= '\n';
     auto cur = TermStyle.init;
-    foreach (x; 0 .. width)
+    foreach (x; 0 .. cache.width)
     {
-        const top = spectrum(x, ry * 2, frameIdx, width, pixelRows);
-        const bottom = spectrum(x, ry * 2 + 1, frameIdx, width, pixelRows);
+        const top = cache.at(x, ry * 2, frameIdx);
+        const bottom = cache.at(x, ry * 2 + 1, frameIdx);
         const next = TermStyle(fg: top, bg: bottom);
         writeStyleTransition(w, cur, next, depth);
         w ~= "▀";
         cur = next;
     }
     writeStyleTransition(w, cur, TermStyle.init, depth); // clear bg at row end
-}
-
-/// The color of pixel `(x, py)` at animation frame `frameIdx`: hue rides `x`
-/// (scrolled by the frame count) around the wheel, brightness rises up the
-/// column. ratatui uses perceptually-uniform Okhsv; this uses plain HSV, which
-/// is a punchier — if less uniform — rainbow for the demo.
-Color spectrum(uint x, uint py, size_t frameIdx, uint width, uint pixelRows) @nogc
-{
-    const xi = (x + frameIdx) % width;
-    const hue = 360.0 * xi / width;
-    const value = pixelRows ? cast(double)(pixelRows - py) / pixelRows : 1.0;
-    ubyte r, g, b;
-    hsvToRgb(hue, 1.0, value, r, g, b);
-    return Color.fromRgb(r, g, b);
 }
 
 /// HSV → RGB. `h` in [0, 360), `s`/`v` in [0, 1].
@@ -314,10 +351,11 @@ version (unittest)
         @disable this(this); // holds a File; only ever used via `new St` + pointer
 
         uint width, height;
-        RowBuffer buf;   // reused; stays inline → render is allocation-free
+        RowBuffer buf;      // reused; stays inline → render is allocation-free
+        SpectrumCache cache; // built once per case (fixed size), then lookups only
         size_t frameIdx;
         bool toFd;
-        File sink;       // /dev/null, opened once (when toFd)
+        File sink;          // /dev/null, opened once (when toFd)
     }
 
     @("colors-rgb.render")
@@ -350,6 +388,8 @@ version (unittest)
         st.toFd = toFd;
         if (toFd)
             st.sink = File(nullPath, "wb");
+        const rows0 = sz.height >= 2 ? sz.height - 1 : sz.height;
+        st.cache.resize(sz.width, cast(uint)(rows0 * 2)); // untimed per-case setup
 
         const frameBytes = probeFrameBytes(sz.width, sz.height);
 
@@ -372,7 +412,6 @@ version (unittest)
     private void renderFrame(St* st)
     {
         const rows = st.height >= 2 ? st.height - 1 : st.height;
-        const pixelRows = cast(uint)(rows * 2);
 
         st.buf.clear();
         writeTitle(st.buf, st.width, 60.0);
@@ -380,8 +419,7 @@ version (unittest)
         foreach (ry; 0 .. rows)
         {
             st.buf.clear();
-            writeSpectrumRow(st.buf, cast(uint) ry, st.width, pixelRows,
-                st.frameIdx, ColorDepth.trueColor);
+            writeSpectrumRow(st.buf, st.cache, cast(uint) ry, st.frameIdx, ColorDepth.trueColor);
             emit(st);
         }
         if (st.toFd)
@@ -404,7 +442,8 @@ version (unittest)
     private size_t probeFrameBytes(uint width, uint height)
     {
         const rows = height >= 2 ? height - 1 : height;
-        const pixelRows = cast(uint)(rows * 2);
+        SpectrumCache cache;
+        cache.resize(width, cast(uint)(rows * 2));
         RowBuffer buf;
         size_t total;
         buf.clear();
@@ -413,7 +452,7 @@ version (unittest)
         foreach (ry; 0 .. rows)
         {
             buf.clear();
-            writeSpectrumRow(buf, cast(uint) ry, width, pixelRows, 0, ColorDepth.trueColor);
+            writeSpectrumRow(buf, cache, cast(uint) ry, 0, ColorDepth.trueColor);
             total += buf.length;
         }
         return total;
