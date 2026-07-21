@@ -8,68 +8,19 @@ so neither the line-diff nor the cell-grid PoC is flattered by the encoding: bot
 receive the identical target grid and differ only in how they turn a sequence of
 grids into bytes.
 
-Style is a truecolor-capable `CellStyle` (fg/bg/attrs), not
-`sparkles.base.term_style.Style` (16-color SGR only): the scene paints with RGB,
-which the benchmark must exercise to be realistic (spec C1). SGR emission lives
-here so every renderer shares one honest encoder.
+Style is `sparkles.base.term_style.TermStyle` (truecolor-capable `Color` fg/bg,
+`TextAttr`, underline shape). The scene paints with RGB, which the benchmark must
+exercise to be realistic (spec C1). SGR emission uses the same absolute
+reset-then-set encoder every renderer shares, so byte streams stay comparable
+across PoCs (and with the C calibration shim).
 +/
 module sparkles.tui_render_bench.cell;
 
+public import sparkles.base.term_color : Color;
+public import sparkles.base.term_style : TermStyle, TextAttr, UnderlineStyle;
+
+import sparkles.base.term_color : ColorChannel, ColorDepth, writeSgrColor;
 import sparkles.tui_render_bench.sink : Sink;
-
-/// A terminal color: terminal default, a 256-palette index, or 24-bit RGB.
-struct Color
-{
-    ///
-    enum Kind : ubyte
-    {
-        default_,
-        indexed,
-        rgb,
-    }
-
-    Kind kind = Kind.default_;
-    ubyte a, b, c; // rgb: (r,g,b); indexed: index in `a`
-
-    static Color rgb(ubyte r, ubyte g, ubyte b) @safe pure nothrow @nogc
-        => Color(Kind.rgb, r, g, b);
-    static Color indexed(ubyte i) @safe pure nothrow @nogc
-        => Color(Kind.indexed, i, 0, 0);
-
-    bool opEquals(in Color o) const @safe pure nothrow @nogc
-    {
-        if (kind != o.kind)
-            return false;
-        final switch (kind)
-        {
-            case Kind.default_: return true;
-            case Kind.indexed: return a == o.a;
-            case Kind.rgb: return a == o.a && b == o.b && c == o.c;
-        }
-    }
-}
-
-/// Text-attribute bits (OR them into `CellStyle.attrs`).
-enum Attr : ubyte
-{
-    none = 0,
-    bold = 1 << 0,
-    dim = 1 << 1,
-    italic = 1 << 2,
-    underline = 1 << 3,
-    reverse = 1 << 4,
-}
-
-/// A truecolor-capable cell style: foreground, background, attribute bits.
-struct CellStyle
-{
-    Color fg;
-    Color bg;
-    ubyte attrs;
-
-    bool opEquals(in CellStyle o) const @safe pure nothrow @nogc
-        => fg == o.fg && bg == o.bg && attrs == o.attrs;
-}
 
 /// Longest inline grapheme cluster a cell stores (covers CJK, most emoji, and
 /// short ZWJ sequences; longer clusters are truncated — a `unicode`-profile edge
@@ -83,13 +34,13 @@ struct Cell
     char[maxCellBytes] bytes = ' ';
     ubyte len = 1;
     ubyte width = 1;
-    CellStyle style;
+    TermStyle style;
 
     /// The grapheme cluster's bytes.
     const(char)[] grapheme() const @safe pure nothrow @nogc return => bytes[0 .. len];
 
     /// Set this cell to a single code point (encoded to UTF-8) with `width`.
-    void setCodepoint(dchar cp, ubyte w, in CellStyle st) @safe pure nothrow @nogc
+    void setCodepoint(dchar cp, ubyte w, in TermStyle st) @safe pure nothrow @nogc
     {
         char[4] buf = void;
         const n = encodeUtf8(cp, buf);
@@ -100,7 +51,7 @@ struct Cell
     }
 
     /// Set this cell to an already-encoded cluster slice (truncated to fit).
-    void setBytes(scope const(char)[] cluster, ubyte w, in CellStyle st) @safe pure nothrow @nogc
+    void setBytes(scope const(char)[] cluster, ubyte w, in TermStyle st) @safe pure nothrow @nogc
     {
         const n = cluster.length > maxCellBytes ? maxCellBytes : cluster.length;
         bytes[0 .. n] = cluster[0 .. n];
@@ -190,7 +141,7 @@ struct Grid
 
     /// Write a styled string starting at `(x, y)`, advancing by each code
     /// point's display width; stops at the right edge. Returns the next free x.
-    ushort putText(ushort x, ushort y, scope const(char)[] text, in CellStyle st) @safe pure nothrow @nogc
+    ushort putText(ushort x, ushort y, scope const(char)[] text, in TermStyle st) @safe pure nothrow @nogc
     {
         import std.utf : byDchar;
 
@@ -214,7 +165,7 @@ struct Grid
     }
 
     /// Fill a horizontal run `[x, x+n)` on row `y` with a styled space.
-    void fill(ushort x, ushort y, ushort n, in CellStyle st) @safe pure nothrow @nogc
+    void fill(ushort x, ushort y, ushort n, in TermStyle st) @safe pure nothrow @nogc
     {
         foreach (i; 0 .. n)
         {
@@ -270,44 +221,115 @@ ubyte encodeUtf8(dchar cp, ref char[4] buf) @safe pure nothrow @nogc
 /// Emit `ESC[0;…m` establishing `st` from a clean slate (reset-then-set). Robust
 /// and trivial for the VT oracle to reconstruct; renderers coalesce it per
 /// style-run so the byte cost is realistic, not inflated per cell.
-void writeStyle(ref Sink s, in CellStyle st) @safe nothrow
+///
+/// Colors use `sparkles.base.term_color.writeSgrColor` at truecolor depth; unset
+/// / terminal-default colors are omitted (the leading `0` already selected them).
+void writeStyle(ref Sink s, in TermStyle st) @safe nothrow
 {
     s.put("\x1b[0");
-    if (st.attrs & Attr.bold)
+    const a = st.attrs;
+    if (a.has(TextAttr.bold))
         s.put(";1");
-    if (st.attrs & Attr.dim)
+    if (a.has(TextAttr.dim))
         s.put(";2");
-    if (st.attrs & Attr.italic)
+    if (a.has(TextAttr.italic))
         s.put(";3");
-    if (st.attrs & Attr.underline)
-        s.put(";4");
-    if (st.attrs & Attr.reverse)
+    // Underline shape (scene uses `single`; extended shapes use colon form).
+    final switch (st.underline)
+    {
+        case UnderlineStyle.none:
+            break;
+        case UnderlineStyle.single:
+            s.put(";4");
+            break;
+        case UnderlineStyle.double_:
+            s.put(";4:2");
+            break;
+        case UnderlineStyle.curly:
+            s.put(";4:3");
+            break;
+        case UnderlineStyle.dotted:
+            s.put(";4:4");
+            break;
+        case UnderlineStyle.dashed:
+            s.put(";4:5");
+            break;
+    }
+    if (a.has(TextAttr.inverse))
         s.put(";7");
-    writeColor(s, st.fg, true);
-    writeColor(s, st.bg, false);
+    if (a.has(TextAttr.hidden))
+        s.put(";8");
+    if (a.has(TextAttr.strikethrough))
+        s.put(";9");
+    writeStyleColor(s, st.fg, ColorChannel.foreground);
+    writeStyleColor(s, st.bg, ColorChannel.background);
     s.put("m");
     s.sgrWrites++;
 }
 
-private void writeColor(ref Sink s, in Color c, bool fg) @safe nothrow
+/// Append a color as SGR parameters after a leading `;`, skipping unset/default
+/// (the absolute `0` reset already selected the terminal defaults).
+private void writeStyleColor(ref Sink s, in Color c, ColorChannel channel) @safe nothrow
+{
+    if (c.kind == Color.Kind.unset || c.kind == Color.Kind.default_)
+        return;
+    s.put(';');
+    writeSgrColor(s, c, ColorDepth.trueColor, channel);
+}
+
+/// Pack a `Color` into the C calibration ABI tag: 0 = none/default, 1 = palette,
+/// 2 = rgb (matches ghostty's style-color tags and the C `TuiCell` layout).
+ubyte calibColorTag(in Color c) @safe pure nothrow @nogc
 {
     final switch (c.kind)
     {
+        case Color.Kind.unset:
         case Color.Kind.default_:
-            return; // 0m already selected the default; nothing to add
-        case Color.Kind.indexed:
-            s.put(fg ? ";38;5;" : ";48;5;");
-            s.putUint(c.a);
+            return 0;
+        case Color.Kind.palette:
+            return 1;
+        case Color.Kind.rgb:
+            return 2;
+    }
+}
+
+/// RGB/palette payload bytes for the C calibration ABI (`a,b,c` fields).
+void calibColorPayload(in Color c, out ubyte a, out ubyte b, out ubyte cc) @safe pure nothrow @nogc
+{
+    final switch (c.kind)
+    {
+        case Color.Kind.unset:
+        case Color.Kind.default_:
+            a = b = cc = 0;
+            return;
+        case Color.Kind.palette:
+            a = c.index;
+            b = cc = 0;
             return;
         case Color.Kind.rgb:
-            s.put(fg ? ";38;2;" : ";48;2;");
-            s.putUint(c.a);
-            s.put(";");
-            s.putUint(c.b);
-            s.put(";");
-            s.putUint(c.c);
+            a = c.rgb.r;
+            b = c.rgb.g;
+            cc = c.rgb.b;
             return;
     }
+}
+
+/// Canonical attribute bits for calibration / VT oracle: bold=1, dim=2,
+/// italic=4, underline=8, reverse=16.
+ubyte calibAttrs(in TermStyle st) @safe pure nothrow @nogc
+{
+    ubyte a;
+    if (st.attrs.has(TextAttr.bold))
+        a |= 1;
+    if (st.attrs.has(TextAttr.dim))
+        a |= 2;
+    if (st.attrs.has(TextAttr.italic))
+        a |= 4;
+    if (st.underline != UnderlineStyle.none)
+        a |= 8;
+    if (st.attrs.has(TextAttr.inverse))
+        a |= 16;
+    return a;
 }
 
 @("cell.grid.putTextAndWidth")
@@ -316,11 +338,11 @@ unittest
 {
     Grid g;
     g.resize(10, 2);
-    const st = CellStyle(Color.rgb(255, 0, 0), Color.init, Attr.bold);
+    const st = TermStyle(fg: Color.fromRgb(255, 0, 0), attrs: TextAttr.bold);
     const nx = g.putText(0, 0, "hi", st);
     assert(nx == 2);
     assert(g.at(0, 0).grapheme == "h");
-    assert(g.at(1, 0).style.attrs == Attr.bold);
+    assert(g.at(1, 0).style.attrs == TextAttr.bold);
     assert(g.at(2, 0).grapheme == " "); // untouched blank
 }
 
@@ -329,7 +351,10 @@ unittest
 unittest
 {
     Sink s;
-    writeStyle(s, CellStyle(Color.rgb(10, 20, 30), Color.init, Attr.bold | Attr.underline));
+    writeStyle(s, TermStyle(
+        fg: Color.fromRgb(10, 20, 30),
+        attrs: TextAttr.bold,
+        underline: UnderlineStyle.single));
     assert(s.frame == "\x1b[0;1;4;38;2;10;20;30m");
     assert(s.sgrWrites == 1);
 }

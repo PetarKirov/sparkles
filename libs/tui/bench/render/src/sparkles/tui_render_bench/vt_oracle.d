@@ -22,7 +22,8 @@ module sparkles.tui_render_bench.vt_oracle;
 version (TuiBenchVtOracle):
 
 import sparkles.ghostty;
-import sparkles.tui_render_bench.cell : Cell, CellStyle, Color, firstCodepoint, Grid;
+import sparkles.tui_render_bench.cell : calibAttrs, calibColorPayload, calibColorTag, Cell,
+    firstCodepoint, Grid;
 
 // ---------------------------------------------------------------------------
 // Shared normalized fingerprint (identical hashing on both sides).
@@ -66,7 +67,7 @@ private void hashCell(ref ulong h, uint cp,
 }
 
 /// Canonical attribute bits: bold=1, dim=2, italic=4, underline=8, reverse=16.
-/// The scene's own `Attr` already uses this layout, so target attrs pass through.
+/// Mapped from `TermStyle` via `calibAttrs` (underline is a shape, not a TextAttr bit).
 
 /// Fingerprint the target grid in the shared normalized form.
 ulong normFingerprint(in Grid g) @safe pure nothrow @nogc
@@ -79,10 +80,13 @@ ulong normFingerprint(in Grid g) @safe pure nothrow @nogc
         {
             const c = g.at(x, y);
             const cp = firstCodepoint(c.grapheme);
+            ubyte fa, fb, fc, ba, bb, bc;
+            calibColorPayload(c.style.fg, fa, fb, fc);
+            calibColorPayload(c.style.bg, ba, bb, bc);
             hashCell(h, cp,
-                cast(ubyte) c.style.fg.kind, c.style.fg.a, c.style.fg.b, c.style.fg.c,
-                cast(ubyte) c.style.bg.kind, c.style.bg.a, c.style.bg.b, c.style.bg.c,
-                cast(ubyte)(c.style.attrs & 0x1F));
+                calibColorTag(c.style.fg), fa, fb, fc,
+                calibColorTag(c.style.bg), ba, bb, bc,
+                calibAttrs(c.style));
         }
     return h;
 }

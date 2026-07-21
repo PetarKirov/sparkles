@@ -9,7 +9,7 @@ renderer's bytes against the fingerprint of the target grid.
 +/
 module sparkles.tui_render_bench.fingerprint;
 
-import sparkles.tui_render_bench.cell : Cell, Color, Grid;
+import sparkles.tui_render_bench.cell : Cell, Color, Grid, TermStyle;
 
 /// FNV-1a over the full grid (dimensions + every cell).
 ulong gridFingerprint(in Grid g) @safe pure nothrow @nogc
@@ -31,9 +31,34 @@ ulong gridFingerprint(in Grid g) @safe pure nothrow @nogc
     void mixColor(in Color c) @safe pure nothrow @nogc
     {
         mix(cast(ubyte) c.kind);
-        mix(c.a);
-        mix(c.b);
-        mix(c.c);
+        final switch (c.kind)
+        {
+            case Color.Kind.unset:
+            case Color.Kind.default_:
+                mix(0);
+                mix(0);
+                mix(0);
+                return;
+            case Color.Kind.palette:
+                mix(c.index);
+                mix(0);
+                mix(0);
+                return;
+            case Color.Kind.rgb:
+                mix(c.rgb.r);
+                mix(c.rgb.g);
+                mix(c.rgb.b);
+                return;
+        }
+    }
+
+    void mixStyle(in TermStyle st) @safe pure nothrow @nogc
+    {
+        mixColor(st.fg);
+        mixColor(st.bg);
+        mixColor(st.underlineColor);
+        mix(st.attrs.bits);
+        mix(cast(ubyte) st.underline);
     }
 
     mix16(g.cols);
@@ -44,9 +69,7 @@ ulong gridFingerprint(in Grid g) @safe pure nothrow @nogc
             mix(cell.width);
             foreach (ch; cell.grapheme)
                 mix(cast(ubyte) ch);
-            mixColor(cell.style.fg);
-            mixColor(cell.style.bg);
-            mix(cell.style.attrs);
+            mixStyle(cell.style);
         }
     return h;
 }
@@ -55,16 +78,16 @@ ulong gridFingerprint(in Grid g) @safe pure nothrow @nogc
 @safe nothrow
 unittest
 {
-    import sparkles.tui_render_bench.cell : Attr, CellStyle;
+    import sparkles.tui_render_bench.cell : TermStyle;
 
     Grid a, b;
     a.resize(8, 2);
     b.resize(8, 2);
     assert(gridFingerprint(a) == gridFingerprint(b)); // both blank
 
-    b.putText(0, 0, "x", CellStyle(Color.init, Color.init));
+    b.putText(0, 0, "x", TermStyle.init);
     assert(gridFingerprint(a) != gridFingerprint(b)); // content differs
 
-    a.putText(0, 0, "x", CellStyle(Color.rgb(1, 0, 0), Color.init));
+    a.putText(0, 0, "x", TermStyle(fg: Color.fromRgb(1, 0, 0)));
     assert(gridFingerprint(a) != gridFingerprint(b)); // same glyph, different color
 }
