@@ -243,6 +243,18 @@ pure nothrow @nogc:
     /// Output range interface: appends a single element.
     void put(in T element) @safe
     {
+        // Fast path: while the buffer is inline (`length <= N`) it is always
+        // uniquely owned — copy-on-write applies only to shared heap blocks — so
+        // append straight into the inline slots and skip `ensureUniqueStorage`
+        // (and its refcount work) entirely. This is the hot path for output-range
+        // builders that never spill to the heap.
+        const l = _length;
+        if (l < N)
+        {
+            (() @trusted { _inline[l] = element; })();
+            _length = l + 1;
+            return;
+        }
         T tmp = element;
         T[] tail = ensureUniqueStorage(extraLen: 1);
         tail[0] = tmp;
@@ -252,11 +264,12 @@ pure nothrow @nogc:
     /// Output range interface: appends elements from a slice.
     void put(in T[] elements) @trusted
     {
-        if (elements.length == 0)
+        const n = elements.length;
+        if (n == 0)
             return;
 
         const oldLen = _length;
-        const newLen = oldLen + elements.length;
+        const newLen = oldLen + n;
 
         // If the source aliases inline storage, preserve it before the union is
         // overwritten by the inline->heap transition.
@@ -264,6 +277,17 @@ pure nothrow @nogc:
             return !onHeap &&
                 elements.overlap(_inline[0 .. oldLen]).length;
         }();
+
+        // Fast path: the result stays inline (always uniquely owned) and the
+        // source doesn't alias our live inline data — one bulk copy, no
+        // `ensureUniqueStorage`/refcount work.
+        if (newLen <= N && !overlapsInline)
+        {
+            _inline[oldLen .. newLen] = elements[];
+            _length = newLen;
+            return;
+        }
+
         if (newLen > N && overlapsInline)
         {
             T[N] tmp = void;
