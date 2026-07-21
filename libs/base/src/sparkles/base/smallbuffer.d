@@ -443,20 +443,7 @@ pure nothrow @nogc:
                 // our inline storage from reading corrupted data, we must allocate
                 // the new block, fill it with the inline elements and range elements,
                 // and only then overwrite the union by assigning _block.
-                size_t capacity = newLen;
-                import std.math.algebraic : truncPow2;
-                if (capacity > 0)
-                {
-                    const t = truncPow2(capacity);
-                    if (t != capacity)
-                    {
-                        const rounded = t << 1;
-                        if (rounded != 0)
-                            capacity = rounded;
-                    }
-                }
-
-                T[] nb = allocateBlock(capacity);
+                T[] nb = allocateBlock(roundedCapacity(newLen));
                 nb[0 .. oldLen] = _inline[0 .. oldLen];
                 size_t i = oldLen;
                 foreach (e; elements)
@@ -473,7 +460,7 @@ pure nothrow @nogc:
                 size_t i;
                 foreach (e; elements)
                     tail[i++] = e;
-                _length = oldLen + n;
+                _length = newLen;
             }
         }
         else
