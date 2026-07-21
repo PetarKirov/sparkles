@@ -19,8 +19,15 @@ module sparkles.tui_render_bench.cell;
 public import sparkles.base.term_color : Color;
 public import sparkles.base.term_style : TermStyle, TextAttr, UnderlineStyle;
 
-import sparkles.base.term_color : ColorChannel, ColorDepth, writeSgrColor;
+import sparkles.base.term_color : ColorChannel, ColorDepth, writeSgrColorPacked;
 import sparkles.tui_render_bench.sink : Sink;
+
+// Layout constants matching `sparkles.base.term_style` packing (bits 0–25 color,
+// 26–31 attrs/underline). Kept local so the emit path never materializes Color.
+private enum uint colorBits = 26;
+private enum uint colorMask = (1u << colorBits) - 1;
+private enum ubyte attrsMask = 0x3F;
+private enum ubyte underlineMask = 0x07;
 
 /// Longest inline grapheme cluster a cell stores (covers CJK, most emoji, and
 /// short ZWJ sequences; longer clusters are truncated — a `unicode`-profile edge
@@ -222,20 +229,23 @@ ubyte encodeUtf8(dchar cp, ref char[4] buf) @safe pure nothrow @nogc
 /// and trivial for the VT oracle to reconstruct; renderers coalesce it per
 /// style-run so the byte cost is realistic, not inflated per cell.
 ///
-/// Colors use `sparkles.base.term_color.writeSgrColor` at truecolor depth; unset
-/// / terminal-default colors are omitted (the leading `0` already selected them).
+/// Colors go through `writeSgrColorPacked` on the raw `TermStyle` words — no
+/// `Color` is materialized on this path. Unset/default colors are omitted (the
+/// leading `0` already selected them).
 void writeStyle(ref Sink s, in TermStyle st) @safe nothrow
 {
     s.put("\x1b[0");
-    const a = st.attrs;
-    if (a.has(TextAttr.bold))
+    const w0 = st.packed0;
+    const w1 = st.packed1;
+    const attrs = cast(ubyte)((w0 >> colorBits) & attrsMask);
+    if (attrs & TextAttr.bold.bits)
         s.put(";1");
-    if (a.has(TextAttr.dim))
+    if (attrs & TextAttr.dim.bits)
         s.put(";2");
-    if (a.has(TextAttr.italic))
+    if (attrs & TextAttr.italic.bits)
         s.put(";3");
     // Underline shape (scene uses `single`; extended shapes use colon form).
-    final switch (st.underline)
+    final switch (cast(UnderlineStyle)((w1 >> colorBits) & underlineMask))
     {
         case UnderlineStyle.none:
             break;
@@ -255,26 +265,28 @@ void writeStyle(ref Sink s, in TermStyle st) @safe nothrow
             s.put(";4:5");
             break;
     }
-    if (a.has(TextAttr.inverse))
+    if (attrs & TextAttr.inverse.bits)
         s.put(";7");
-    if (a.has(TextAttr.hidden))
+    if (attrs & TextAttr.hidden.bits)
         s.put(";8");
-    if (a.has(TextAttr.strikethrough))
+    if (attrs & TextAttr.strikethrough.bits)
         s.put(";9");
-    writeStyleColor(s, st.fg, ColorChannel.foreground);
-    writeStyleColor(s, st.bg, ColorChannel.background);
+    writeStyleColorPacked(s, w0, ColorChannel.foreground);
+    writeStyleColorPacked(s, w1, ColorChannel.background);
     s.put("m");
     s.sgrWrites++;
 }
 
-/// Append a color as SGR parameters after a leading `;`, skipping unset/default
-/// (the absolute `0` reset already selected the terminal defaults).
-private void writeStyleColor(ref Sink s, in Color c, ColorChannel channel) @safe nothrow
+/// Append a packed color as SGR parameters after a leading `;`, skipping
+/// unset/default (the absolute `0` reset already selected the terminal defaults).
+private void writeStyleColorPacked(ref Sink s, uint packedWord, ColorChannel channel) @safe nothrow
 {
-    if (c.kind == Color.Kind.unset || c.kind == Color.Kind.default_)
+    // Kind tag lives in bits 24–25 of the packColor payload (low 26 bits).
+    const kind = (packedWord >> 24) & 3;
+    if (kind == Color.Kind.unset || kind == Color.Kind.default_)
         return;
     s.put(';');
-    writeSgrColor(s, c, ColorDepth.trueColor, channel);
+    writeSgrColorPacked(s, packedWord, ColorDepth.trueColor, channel);
 }
 
 /// Pack a `Color` into the C calibration ABI tag: 0 = none/default, 1 = palette,

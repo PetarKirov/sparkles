@@ -165,6 +165,20 @@ struct TermStyle
     /// `true` iff nothing is set at all (renders unstyled).
     pragma(inline, true)
     bool empty() const scope => _w0 == 0 && _w1 == 0 && _w2 == 0;
+
+    /// Packed words for hot-path emission/equality without materializing `Color`.
+    /// Bits 0–25 of each word are a `packColor` value; higher bits hold attrs /
+    /// underline (see the layout table above). `writeSgrColorPacked` ignores the
+    /// high bits, so the words may be passed to it directly.
+    /// Visible to `sparkles.*` (bench, syntax) — not part of the public style API.
+    pragma(inline, true)
+    package(sparkles) uint packed0() const scope => _w0;
+    /// ditto
+    pragma(inline, true)
+    package(sparkles) uint packed1() const scope => _w1;
+    /// ditto
+    pragma(inline, true)
+    package(sparkles) uint packed2() const scope => _w2;
 }
 
 /// A differential ANSI encoder: writes the minimal merged SGR sequence moving
