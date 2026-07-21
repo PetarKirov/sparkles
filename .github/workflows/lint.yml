@@ -55,7 +55,7 @@ jobs:
 
       - name: Verify markdown runnable examples
         run: |
-          nix run .#ci -- --verify --files '**.md'
+          nix run .#ci -- --verify --fail-fast --files '**.md'
 
       # Save even when a prior step (e.g. prek) fails, so the lychee link-check
       # cache still gets populated. The combined actions/cache action gates its
