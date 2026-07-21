@@ -64,7 +64,7 @@ private struct RunnerOptions
     string exclude;
     bool verbose;
     uint threads;
-    bool noColours;
+    bool noColors;
     bool list;
     bool bench;
     bool perf;
@@ -178,9 +178,9 @@ private auto parseInto(ref string[] args, ref RunnerOptions options)
         "t|threads",
             "Number of worker threads (0 = auto-detect)",
             &options.threads,
-        "no-colours",
+        "no-colors",
             "Disable colored output",
-            &options.noColours,
+            &options.noColors,
         "l|list",
             "List discovered tests without running them",
             &options.list,
@@ -315,7 +315,7 @@ private UnitTestResult runnerMain(Test[] discovered, bool hostIsRunner)
         return UnitTestResult(1, 0, false, false);
     }
 
-    const colored = prepareConsole(options.noColours);
+    const colored = prepareConsole(options.noColors);
     // Cells available for the compact result lines; `0` (unknown / piped) skips
     // truncation so redirected output stays byte-identical.
     const width = detectTerminalWidth();
@@ -575,9 +575,9 @@ private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bo
     static if (hasCoreCliLive)
     {
         // The same animate-or-not policy as the bench spinner (tty and no
-        // colour opt-outs), asked about stdout — the line redraws beneath the
+        // color opt-outs), asked about stdout — the line redraws beneath the
         // streamed result lines there.
-        if (progressEnabled(options.noColours, stderrStream: false))
+        if (progressEnabled(options.noColors, stderrStream: false))
         {
             runParallelLive(runnable, options, colored, width, threads,
                 passed, failed, skipped);
@@ -898,12 +898,12 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     // stderr on the terminal keeps today's spinner instead.
     static if (hasCoreCliBenchTicker)
         const bool ticker = all.length > 0
-            && progressEnabled(options.noColours, stderrStream: false);
+            && progressEnabled(options.noColors, stderrStream: false);
     else
         enum bool ticker = false;
 
     progress = BenchProgress(total: all.length,
-        active: !ticker && progressEnabled(options.noColours) && all.length > 0,
+        active: !ticker && progressEnabled(options.noColors) && all.length > 0,
         width: detectTerminalWidth(stderrStream: true));
 
     size_t totalRows, errorRows;
@@ -1125,23 +1125,23 @@ unittest
 }
 
 /// Prepares the console and reports whether colored output should be used.
-/// Delegates to `core-cli`'s `detectTermCaps` (colors off on `--no-colours` /
+/// Delegates to `core-cli`'s `detectTermCaps` (colors off on `--no-colors` /
 /// `$NO_COLOR` / `TERM=dumb` / non-tty; Windows UTF-8 code page + VT enable).
 /// In `base`'s own test build (no `core-cli` there) a minimal inline fallback
-/// keeps the same `--no-colours`/`$NO_COLOR`/tty behaviour.
-private bool prepareConsole(bool noColours)
+/// keeps the same `--no-colors`/`$NO_COLOR`/tty behaviour.
+private bool prepareConsole(bool noColors)
 {
     static if (hasCoreCliTermCaps)
     {
         import sparkles.core_cli.term_caps : detectTermCaps;
 
-        return detectTermCaps(noColours).colors;
+        return detectTermCaps(noColors).colors;
     }
     else
     {
         import std.process : environment;
 
-        const disabled = noColours || environment.get("NO_COLOR", "").length != 0;
+        const disabled = noColors || environment.get("NO_COLOR", "").length != 0;
 
         version (Posix)
         {

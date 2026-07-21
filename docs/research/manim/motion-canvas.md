@@ -254,7 +254,7 @@ recurses into `drawChildren` — an ordinary [CPU-vector][cpu-gpu] retained
 [rasterisation][rasterization] pass. The [`Stage`][stage-src] owns the output as
 plain `HTMLCanvasElement` buffers (`finalBuffer`, plus `current`/`previous` for
 scene transitions), and its context is created `willReadFrequently` because
-frames are read back for export. Colour space is a first-class knob —
+frames are read back for export. Color space is a first-class knob —
 `private colorSpace: CanvasColorSpace = 'srgb'` by default, with **DCI-P3**
 wide-gamut selectable ([rendering][rendering]) — the browser's canvas handles the
 [gamma/linear][color-gamma] compositing.
@@ -310,7 +310,7 @@ Two distinct paths, and neither matches Manim's LaTeX-to-`dvisvgm` pipeline:
 ## Output & encoding
 
 Rendering is driven from the editor's **Video Settings** tab: pick a frame
-`Range`, `Resolution`, `Frame rate`, `Scale`, and colour space, press `RENDER`,
+`Range`, `Resolution`, `Frame rate`, `Scale`, and color space, press `RENDER`,
 and Motion Canvas "plays through the animation" writing frames to `/output`
 ([rendering][rendering]). The render loop seeks the playback to each integer
 frame and reads the `Stage` back — an [export via **frame capture /
@@ -499,7 +499,7 @@ Primary sources (docs pinned to the live site; source pinned to tag
 - [Positioning][positioning] — Cartesian space, world-space helpers, matrices.
 - [Time events][time-events] — `waitUntil`, editor-draggable events, `useDuration`.
 - [Rendering][rendering] · [Image sequence][render-imgseq] · [Video (FFmpeg)][render-video]
-  — Video Settings, colour space, exporters.
+  — Video Settings, color space, exporters.
 - [`Node.ts`][node-render] · [`getContext.ts`][getcontext-src] · [`Stage.ts`][stage-src]
   — Canvas2D `render(context)`, the `getContext('2d')` factory, the `Stage` buffers.
 - [`SharedWebGLContext.ts`][webgl-src] — the WebGL2 shader-only context.

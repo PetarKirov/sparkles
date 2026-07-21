@@ -662,8 +662,8 @@ WrappedChunks!(lineBuffered, bufferSize) byWrappedChunk(
 @("wrap.style.sgrReEmittedAcrossBreak")
 @safe unittest
 {
-    // Red "foo bar" wrapped at 3: each line reset at the end and re-coloured at
-    // the start, so colour never bleeds onto the next line / a border.
+    // Red "foo bar" wrapped at 3: each line reset at the end and re-colored at
+    // the start, so color never bleeds onto the next line / a border.
     assert(wrapText("\x1b[31mfoo bar\x1b[0m",
         WrapOptions(width: 3, continuity: StyleContinuity.sgrReset, whitespace: WhitespaceMode.collapse))
         == "\x1b[31mfoo\x1b[0m\n\x1b[31mbar\x1b[0m");
@@ -706,7 +706,7 @@ WrappedChunks!(lineBuffered, bufferSize) byWrappedChunk(
         assert(pair[0].byWrappedLine(opt).equal(pair[0].wrapText(opt).lineSplitter));
     }}
 
-    // Styled input: each line is reset/re-coloured exactly as `wrapText` does.
+    // Styled input: each line is reset/re-colored exactly as `wrapText` does.
     const styled = "\x1b[31mfoo bar\x1b[0m";
     const sopt = WrapOptions(width: 3, continuity: StyleContinuity.sgrReset,
         whitespace: WhitespaceMode.collapse);
@@ -799,7 +799,7 @@ version (unittest) private string joinChunks(R)(R r)
     import sparkles.base.text.grapheme : visibleWidth;
 
     // Every chunk is either exactly "\n" or carries at least one visible cell — a
-    // chunk is never escape-only, so the colours ride along with their text.
+    // chunk is never escape-only, so the colors ride along with their text.
     const styled = "\x1b[31mfoo bar baz\x1b[0m";
     const opt = WrapOptions(width: 3, continuity: StyleContinuity.sgrReset,
         whitespace: WhitespaceMode.collapse);

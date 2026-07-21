@@ -222,7 +222,7 @@ an OpenGL renderer for interactive preview (`asy -V`, mouse-rotatable) and for
 `settings.render=n` (n pixels per `bp`) rasterized output, with `material`/`light`
 [PBR shading][three]. That is the survey's [CPU-vs-GPU split][cpu-vs-gpu] in one
 tool: a deterministic CPU-vector path for 2D/print, a GPU-OpenGL path for 3D
-preview and shaded rasterization. Colour lives in the `pen`: `gray`, `rgb`/`RGB`,
+preview and shaded rasterization. Color lives in the `pen`: `gray`, `rgb`/`RGB`,
 `cmyk`, and `hsv` models ([Pens][pens]); compositing/[gamma][color-gamma] is
 whatever the PostScript/PDF interpreter applies, not something the language
 re-encodes at a linear paint edge.
@@ -381,7 +381,7 @@ path][cpu-vs-gpu] is not bit-identical across drivers — see the survey's gener
   [Paths and guides][paths] (guide = deferred cubic spline), [Drawing
   commands][drawing] (four primitives, deferred ordering), [Deferred
   drawing][deferred] (`drawer` signature, shipout-time coordinate resolution),
-  [Pens][pens] (attribute list, colour models, fill rules, opacity),
+  [Pens][pens] (attribute list, color models, fill rules, opacity),
   [Structures][structures] (`struct`/`operator init`), [three][three] (native 3D,
   PRC/V3D/WebGL/OpenGL), [animation][animation] / [animate][animate] (GIF/MPEG via
   ImageMagick, clickable PDF movies), [LaTeX usage][latexusage] (`asymptote.sty`,

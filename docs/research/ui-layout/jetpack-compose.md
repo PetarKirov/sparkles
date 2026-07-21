@@ -800,7 +800,7 @@ Mosaic ([`../tui-libraries/mosaic.md`](../tui-libraries/mosaic.md)) demonstrates
 the runtime _can_ produce one-shot output: its `renderMosaic` API composes a tree,
 renders it to ANSI once, and exits. But the cost-versus-benefit is a real
 consideration: bringing in the Compose compiler plugin, Kotlin runtime, and snapshot
-machinery just to print a coloured table is heavy. Compose shines when the UI is
+machinery just to print a colored table is heavy. Compose shines when the UI is
 long-lived and state-driven; for batch-style "compose once, emit, exit" workloads, a
 plain string builder or a smaller library is usually faster end-to-end.
 

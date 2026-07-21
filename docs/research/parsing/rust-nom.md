@@ -165,7 +165,7 @@ combinators, grouped by purpose ([docs.rs/nom][docs]):
 | Repetition      | `many0`, `many1`, `many_m_n`, `separated_list0`, `fold_many0`          | Apply a parser repeatedly, collecting results   |
 | General-purpose | `opt`, `map`, `map_res`, `value`, `verify`, `recognize`, `cut`, `peek` | Transform, validate, commit, or look ahead      |
 
-A small, representative example — recognizing `#rrggbb` hex colours — straight from the
+A small, representative example — recognizing `#rrggbb` hex colors — straight from the
 nom `README.md` ([`README.md`][readme]):
 
 ```rust

@@ -269,8 +269,8 @@ SVG drawing operators — and leaves pixels to a downstream device:
 
 Rasterization to **PNG** is a bolt-on: historically the EPS was run through
 Ghostscript; modern `mplib` carries a PNG backend (Cairo-based) so a figure can
-go straight to pixels. Colour is authored as a `color` value and written to the
-output as gray, RGB, or (for print) CMYK — the [colour model][color-gamma] is the
+go straight to pixels. Color is authored as a `color` value and written to the
+output as gray, RGB, or (for print) CMYK — the [color model][color-gamma] is the
 output device's, not MetaPost's; there is no linear-vs-sRGB compositing question
 because MetaPost does not composite pixels, it hands the device analytic paths.
 In this survey's [CPU-vs-GPU][rasterization] framing MetaPost is the extreme

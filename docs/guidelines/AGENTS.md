@@ -201,7 +201,7 @@ silly's successor — same CLI, documented under
 -v, --verbose       Show durations, [file:line] locations, full stack traces
 -t, --threads       Number of worker threads (0 = auto)
 -l, --list          List discovered tests (with attribute markers)
---no-colours        Disable colored output
+--no-colors        Disable colored output
 --bench             Run @benchmark tests (auto-scaling ns/iter statistics)
 --perf              With --bench: hardware perf counters (Linux perf_event)
 --perf-scaled       With --perf: keep a multiplexing group; values render as ≈ estimates

@@ -678,8 +678,8 @@ or table-formatter modules produce -- you would have to:
 3. Run `Clay_EndLayout()` to get the render-command array.
 4. Iterate the array and project each command onto an integer character
    grid -- choosing block characters for filled rectangles, using cursor
-   moves for text placement, quantising RGB colours to xterm-256 or
-   true-colour SGR escapes, and tracking the
+   moves for text placement, quantising RGB colors to xterm-256 or
+   true-color SGR escapes, and tracking the
    `SCISSOR_START`/`SCISSOR_END` pairs to clip text inside scroll
    regions.
 
@@ -688,7 +688,7 @@ lines, and _most_ of it is the shading lookup that maps RGBA to
 `█`/`▓`/`▒`/`░`. It has no styled-text support, no border-character
 selection, and treats every rectangle as a heat-map cell. The
 termbox2-based renderer is much more sophisticated -- it uses cell
-buffers, mosaic image rendering, and quantises colours into the
+buffers, mosaic image rendering, and quantises colors into the
 xterm-256 palette -- but it is also nearly 1800 lines, and a non-trivial
 fraction of that is image-rendering scaffolding rather than the layout
 glue.
@@ -721,7 +721,7 @@ approach Ink takes, which is closer to Clay's model but with the
 configuration knobs.
 
 The other practical wrinkle for terminal output is the **box model**.
-Clay uses rectangles with optional corner radii, RGBA colours, and
+Clay uses rectangles with optional corner radii, RGBA colors, and
 borders specified as `Clay_BorderElementConfig` with per-side widths
 in floats. A terminal renderer has to choose box-drawing characters
 (`┌`, `─`, `│`, `┐`, ...) for borders, and Clay's renderer-agnostic

@@ -255,7 +255,7 @@ its ledger). Verification method: each page's **load-bearing quotes were re-grep
 directly at the pinned checkouts before authoring**; remaining rows carry the exploration
 pass's verbatim locators against the same pins (recorded per ledger). Two **upstream**
 doc-vs-code drifts were found and are _reported in the pages as findings_, not page errors:
-Chroma's "Lab colour space" comments vs its redmean implementation, and Linguist's
+Chroma's "Lab color space" comments vs its redmean implementation, and Linguist's
 "Bayesian" docs vs its nearest-centroid classifier. Authoring-time catches: the LSP repo's
 `gh-pages` default branch (a `/blob/main/` spec URL 404s — fixed pre-commit, noted in
 `_sources.md`); Helix's engine living in the external `tree-house` crate (dual grounding

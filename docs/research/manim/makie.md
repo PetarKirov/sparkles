@@ -194,7 +194,7 @@ its absence:
 
 | Manim axis-2 concept                                                           | Makie                                                                                                                                                           |
 | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [Interpolation / lerp](./concepts.md#interpolation-and-lerp)                   | **N/A in core.** The author writes the tween (iterate a `LinRange`, set `obs[] = a + (b-a)*t`); no built-in point/colour lerp.                                  |
+| [Interpolation / lerp](./concepts.md#interpolation-and-lerp)                   | **N/A in core.** The author writes the tween (iterate a `LinRange`, set `obs[] = a + (b-a)*t`); no built-in point/color lerp.                                   |
 | [Rate function / easing](./concepts.md#rate-function-and-easing)               | **N/A in core.** No `smooth`/`rush_into` library; ease by transforming the loop parameter yourself (companion `Animations.jl` exists but is not part of Makie). |
 | [Transform + point-count alignment](./concepts.md#mobject-and-the-scene-graph) | **N/A.** No shape-to-shape morph; there is no Bézier path store to align.                                                                                       |
 | [Updaters / `ValueTracker`](./concepts.md#updaters-and-valuetracker)           | **Native, inverted.** `lift`/`@lift` and `on` _are_ the reactive graph the imperative engines emulate.                                                          |
@@ -262,7 +262,7 @@ routing text through a LaTeX install the way both Manim forks do.
 - **GL backends use SDF glyphs** — the GL/WGL path rasterizes each glyph from a
   **signed distance field**: the fonts docs note this _"can only be used to
   render monochrome glyphs, but not arbitrary bitmaps"_ ([fonts docs][fonts-docs]),
-  which is why emoji/colour fonts do not render on those backends. `CairoMakie`,
+  which is why emoji/color fonts do not render on those backends. `CairoMakie`,
   by contrast, draws the glyph outlines directly through Cairo.
 - **Math via a native engine, not a TeX toolchain** — `LaTeXString`s are laid
   out by [`MathTeXEngine.jl`][mathtex], a pure-Julia math typesetter. This is the
@@ -420,7 +420,7 @@ of the kind Manim relies on.
   partial-movie reuse; every frame re-renders.
 - **GPU output is not reproducible.** GL backends are bitmap and driver-dependent;
   only `CairoMakie` is the deterministic oracle.
-- **SDF glyphs are monochrome on GL** — no emoji/colour fonts on `GLMakie`/`WGLMakie`
+- **SDF glyphs are monochrome on GL** — no emoji/color fonts on `GLMakie`/`WGLMakie`
   ([fonts docs][fonts-docs]).
 - **Time-to-first-plot latency** — Julia compilation cost on the first render.
 - **`RPRMakie` is experimental** — the raytracing backend is not production-stable.
@@ -436,7 +436,7 @@ of the kind Manim relies on.
 | `CairoMakie` = CPU vector reproducible; GL = fast bitmap    | Publication-quality SVG/PDF vs real-time interaction, each where it's best            | GL output not bit-identical; determinism only on the Cairo path             |
 | Native `MathTeXEngine.jl` for math, not a LaTeX toolchain   | Self-contained, no TeX install, faster equation typesetting                           | Less complete than a full LaTeX distribution for exotic macros              |
 | No per-frame content-hash cache                             | Reactive graph already minimizes intra-frame recompute via `lift` dependencies        | No cross-run reuse — every `record` frame re-renders (slower iterate loop)  |
-| GL glyphs via signed distance fields                        | Cheap, scalable, sharp monochrome text on the GPU                                     | Cannot render colour/emoji fonts on `GLMakie`/`WGLMakie`                    |
+| GL glyphs via signed distance fields                        | Cheap, scalable, sharp monochrome text on the GPU                                     | Cannot render color/emoji fonts on `GLMakie`/`WGLMakie`                     |
 | `@recipe` + `convert_arguments` extensibility seam          | Third-party/domain plot types are backend-agnostic and first-class                    | Recipe authors work against Makie's attribute/`ComputeGraph` model          |
 
 ---

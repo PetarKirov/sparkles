@@ -9,7 +9,7 @@ receive the identical target grid and differ only in how they turn a sequence of
 grids into bytes.
 
 Style is a truecolor-capable `CellStyle` (fg/bg/attrs), not
-`sparkles.base.term_style.Style` (16-colour SGR only): the scene paints with RGB,
+`sparkles.base.term_style.Style` (16-color SGR only): the scene paints with RGB,
 which the benchmark must exercise to be realistic (spec C1). SGR emission lives
 here so every renderer shares one honest encoder.
 +/
@@ -17,7 +17,7 @@ module sparkles.tui_render_bench.cell;
 
 import sparkles.tui_render_bench.sink : Sink;
 
-/// A terminal colour: terminal default, a 256-palette index, or 24-bit RGB.
+/// A terminal color: terminal default, a 256-palette index, or 24-bit RGB.
 struct Color
 {
     ///

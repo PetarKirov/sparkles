@@ -24,7 +24,7 @@ consequences organize this whole section:
 
 - **Suspend anywhere.** Because the _entire_ call stack is preserved across a suspension,
   a fiber can `yield` from any call depth, behind any indirect call — no function
-  "colouring," no `await` at the call site. The suspension is a raw **stack switch**: swap
+  "coloring," no `await` at the call site. The suspension is a raw **stack switch**: swap
   the CPU stack pointer to a saved one and keep going. This is the one axis where stackful
   wins outright over stackless (direct-style code where any nested call may block), and it
   is exactly what D's [`Fiber.yield()`][d-fiber] does.

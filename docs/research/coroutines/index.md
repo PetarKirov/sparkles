@@ -38,7 +38,7 @@ are precisely two strategies, and the entire survey is organised around them
   keep going. The state _is_ a real machine stack, addressable and opaque to the
   compiler. This is what D's `core.thread.Fiber` does today ([d-fiber]). It can
   suspend "from nested stack frames" (`n4134:106-108`) — from arbitrary call depth,
-  with no function colouring — at the cost of a whole reserved stack per instance
+  with no function coloring — at the cost of a whole reserved stack per instance
   (16 KiB + a guard page in D's `Fiber`; 1–2 MB by N4134's general-purpose default).
 
 The names come from the only question that distinguishes them: _does the saved state
@@ -102,7 +102,7 @@ treatment with verbatim N4134 / `Coroutines.rst` quotes is in [concepts].
 | **`@nogc`**              | yes — frame is a plain struct, caller-placeable / HALO-elidable, no GC           | no — constructor `mmap`s a stack + GC-allocates a `StackContext` ([d-fiber])          |
 | **Who lowers it**        | the **compiler** (frontend state machine, or LLVM `CoroSplit`) — _visible_       | the **runtime** (asm `fiber_switchContext`) — _opaque_ to the optimizer               |
 | **wasm**                 | a state machine in linear memory; the _only_ viable path on wasm today           | needs WasmFX / Asyncify — D's `Fiber` `assert(0)`s on WASI ([d-fiber], [wasm])        |
-| **Function colouring**   | yes — "is a coroutine" / "must `await`" is a static, signature-level fact        | no — any function may yield                                                           |
+| **Function coloring**    | yes — "is a coroutine" / "must `await`" is a static, signature-level fact        | no — any function may yield                                                           |
 
 ### When to use which
 

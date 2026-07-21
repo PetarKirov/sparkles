@@ -66,5 +66,5 @@ unittest
     assert(gridFingerprint(a) != gridFingerprint(b)); // content differs
 
     a.putText(0, 0, "x", CellStyle(Color.rgb(1, 0, 0), Color.init));
-    assert(gridFingerprint(a) != gridFingerprint(b)); // same glyph, different colour
+    assert(gridFingerprint(a) != gridFingerprint(b)); // same glyph, different color
 }

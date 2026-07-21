@@ -10,7 +10,7 @@ importPaths "src"
 
 dflags "-preview=in" "-preview=dip1000"
 
-// The library modules (runtime, backend, input, colour, layout, widgets) are
+// The library modules (runtime, backend, input, color, layout, widgets) are
 // intentionally not written yet: the rendering core (line-diff vs 2-D cell-grid)
 // is being decided by the render-cost benchmark under `bench/render/` — a
 // standalone package with its own manifest, exactly like `libs/wired/bench`.

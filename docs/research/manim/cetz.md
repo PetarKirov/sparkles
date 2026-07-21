@@ -187,7 +187,7 @@ static geometric lerp for _placing_ one element, not a temporal tween — the wo
 _native_ vector primitives — Typst `path`/`curve`/`line`/`polygon` elements with
 `fill`/`stroke`/`fill-rule` (`"non-zero"` or `"even-odd"`, per [styling][style-doc])
 — and hands all pixel production to the Typst compiler. Fill triangulation,
-coverage-based anti-aliasing, the [colour model and gamma][color-gamma] of the
+coverage-based anti-aliasing, the [color model and gamma][color-gamma] of the
 final raster, and PNG/SVG emission are therefore **Typst's** responsibility, not
 CeTZ's; the package's job ends at emitting correct vector geometry.
 
@@ -332,7 +332,7 @@ solve, not an iterative optimizer with seed sensitivity.
 - **No output/encoding pipeline** — output is a Typst document; video is out of
   scope ([axis 5](#output--encoding)).
 - **Not a renderer.** CeTZ emits vector geometry; all [rasterization][rasterization],
-  anti-aliasing, and [colour/gamma][color-gamma] behaviour is delegated to Typst —
+  anti-aliasing, and [color/gamma][color-gamma] behaviour is delegated to Typst —
   no direct pixel control.
 - **Typst-math, not LaTeX-math.** A large migration surface for authors who think
   in `amsmath`; some LaTeX constructs have no one-to-one Typst form.

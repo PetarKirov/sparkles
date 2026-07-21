@@ -41,7 +41,7 @@ rationale read the [spec](./index.md); item numbers (A1…E5) refer to its §2._
 - [x] A4: `ui/theme.d` — `BorderStyle` selector shared by box/header/table (reusing
       the table preset registry), `StatusGlyphs` with ASCII fallbacks, `Semantic`
       roles, `makeTheme(TermCaps)`
-- [x] A4 residue (M5): unify the `colored`/`useColors`/`noColours` parameter spelling
+- [x] A4 residue (M5): unify the `colored`/`useColors`/`noColors` parameter spelling
       across `base`/`test-runner-impl`
 
 ### M1 — Terminal control + live rendering

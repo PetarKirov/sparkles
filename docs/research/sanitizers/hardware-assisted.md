@@ -36,7 +36,7 @@ runner can ever reach.
 with an out-of-band [shadow map][shadow]. The tools on this page take two different
 bets on _where_ the check should live:
 
-- **Move it into a tag.** Instead of a shadow byte per granule, colour the pointer
+- **Move it into a tag.** Instead of a shadow byte per granule, color the pointer
   and the memory with a small tag and compare them on every access
   ([memory tagging][memory-tagging]). **HWASan** does this in software (an IR pass
   plus a tagging allocator); **Arm MTE** does it in hardware (the CPU checks the
@@ -76,7 +76,7 @@ memory overhead, by carrying the tag in the pointer's unused top bits and keepin
 
 ### Overview
 
-HWASan replaces ASan's "poison the neighbourhood" model with "colour every object."
+HWASan replaces ASan's "poison the neighbourhood" model with "color every object."
 The design document states the mechanism and its origin plainly
 ([`HardwareAssistedAddressSanitizerDesign.rst:22-27`][hwasan-design]):
 

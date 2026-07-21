@@ -116,7 +116,7 @@ Findings:
 1. **The fat cell, not the language, caused the gap.** Switching to a packed cell
    _halves_ D's instructions everywhere (sparse 125M → 63M). The bench's D `Cell`
    carries a 16-byte inline grapheme buffer and a branchy `Color`/`CellStyle`
-   equality (a `final switch` per colour) that ran for every cell every frame; the
+   equality (a `final switch` per color) that ran for every cell every frame; the
    packed cell compares flat fields on a codepoint.
 
 2. **D-packed reaches C parity on the common workload.** On the change-light profiles

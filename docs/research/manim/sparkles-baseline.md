@@ -28,8 +28,8 @@ It has union storage with named fields (`x`/`y`/`z`/`w`), component-wise
 arithmetic, scalar multiply/divide (both sides), `dot`, swizzling via
 `opDispatch` (`v.xzy`, `v.xy = …`), `toString`, and the aliases `Vec2f`/`Vec3f`/
 `Vec4f` and `ScreenSize`. Crucially, the `Vector` + `fieldNames` mechanism
-expresses an RGBA colour directly as `Vector!(float, 4, ["r","g","b","a"])` — so
-the [colour model](./concepts.md#color-model-and-gamma) falls out of the existing
+expresses an RGBA color directly as `Vector!(float, 4, ["r","g","b","a"])` — so
+the [color model](./concepts.md#color-model-and-gamma) falls out of the existing
 type, and only gamma conversion is new code. The manifest already puts the
 `test-runner-impl` attribute module on the import path so primitives can be
 tagged `@ctfe`/`@betterC`/`@wasm`, signalling the intent to keep this layer
@@ -39,7 +39,7 @@ wasm-clean.
 no [affine transform](./concepts.md#affine-transform-and-coordinate-space), no
 quaternion, no [Bézier](./concepts.md#bezier-basis-quadratic-vs-cubic) evaluate/
 subdivide/align, no [easing/lerp](./concepts.md#rate-function-and-easing), no
-gamma-correct colour. The catalog's probes
+gamma-correct color. The catalog's probes
 ([`bezier-eval.d`](./examples/bezier-eval.d),
 [`affine-transform.d`](./examples/affine-transform.d),
 [`rate-functions.d`](./examples/rate-functions.d)) already prototype exactly this
@@ -108,7 +108,7 @@ the `-preview=in -preview=dip1000` flags are the ambient style.
 | -------------------------------------------------------- | --------------------------------- | ---------------------------------------------- |
 | Matrix / affine / quaternion                             | ✗ none                            | extend `libs/math` `Vector`                    |
 | Bézier eval / subdivide / align                          | ✗ none                            | probes prototype it; new `libs/math` module    |
-| Easing / lerp / gamma colour                             | ✗ none                            | `Color = Vector!(float,4,…)` + a gamma module  |
+| Easing / lerp / gamma color                              | ✗ none                            | `Color = Vector!(float,4,…)` + a gamma module  |
 | Scene graph (`Mobject`/`VMobject`)                       | ✗ none                            | new; GC tree + SoA payload                     |
 | Animation & timing (`Transform`, groups, `ValueTracker`) | ✗ none                            | new; `libs/math` easing feeds it               |
 | Renderer abstraction                                     | ✗ none                            | DbI idiom (`versions/traits.d`)                |

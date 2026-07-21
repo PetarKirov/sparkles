@@ -9,7 +9,7 @@ for a **hybrid** target (native video _and_ web/wasm preview).
 These are **building blocks**, not engines. Together they answer the survey's
 analysis-spine **axis 3** (rendering backend & [rasterization][raster]) in full —
 [CPU-vector vs GPU-vector][cpugpu], [fill rule & triangulation][fill],
-[anti-aliasing][aa], [colour & gamma][color], [Bézier basis][basis] — and they
+[anti-aliasing][aa], [color & gamma][color], [Bézier basis][basis] — and they
 touch **axis 5** (output) at the [frame-capture & readback][capture] seam where a
 rendered buffer becomes an encoder's input. What every one of them _deliberately
 lacks_ is a scene graph, a timeline, and a typesetting model. That absence is the

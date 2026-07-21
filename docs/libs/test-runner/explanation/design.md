@@ -147,7 +147,7 @@ skipped entirely.
 
 The runner has three redraw-in-place displays, all answering to one policy —
 `progressEnabled`: an interactive terminal on the target stream and none of
-`--no-colours`/`$NO_COLOR`/`TERM=dumb` — and all bracketing repaints in
+`--no-colors`/`$NO_COLOR`/`TERM=dumb` — and all bracketing repaints in
 DEC-2026 synchronized output, so a repaint lands as one flicker-free frame.
 
 - The **default parallel run** polls a `ProgressLine` beneath the streaming
