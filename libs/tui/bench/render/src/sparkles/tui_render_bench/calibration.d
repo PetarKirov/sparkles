@@ -20,7 +20,7 @@ import sparkles.base.term_control : writeCursorTo;
 import sparkles.test_runner.attributes : benchmark;
 import sparkles.test_runner.bench : benchCase, blackBox, Metric, Unit;
 
-import sparkles.tui_render_bench.cell : calibAttrs, calibColorPayload, calibColorTag, encodeUtf8, Grid;
+import sparkles.tui_render_bench.cell : calibFillStyle, encodeUtf8, Grid;
 import sparkles.tui_render_bench.model : apply, initModel, Model;
 import sparkles.tui_render_bench.pocs.cell_grid : CellGrid;
 import sparkles.tui_render_bench.scenario : generateScenario, Profile, profileNames, Scenario;
@@ -85,11 +85,8 @@ private Frames precompute(in Scenario scn)
                 TuiCell t;
                 t.cp = c.codepoint;
                 t.width = c.width;
-                t.fg_kind = calibColorTag(c.style.fg);
-                calibColorPayload(c.style.fg, t.fr, t.fg_, t.fb);
-                t.bg_kind = calibColorTag(c.style.bg);
-                calibColorPayload(c.style.bg, t.br, t.bg_, t.bb);
-                t.attrs = calibAttrs(c.style);
+                calibFillStyle(c.style, t.fg_kind, t.fr, t.fg_, t.fb,
+                    t.bg_kind, t.br, t.bg_, t.bb, t.attrs);
                 fr.flat ~= t;
             }
     }
