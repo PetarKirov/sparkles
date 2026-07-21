@@ -39,9 +39,15 @@ theme selectors. The whole configure-time path is CTFE-able.
 
 ## Colors (`sparkles.syntax.color`)
 
+`sparkles.syntax.color` is a thin re-export of the color foundation in
+[`sparkles.base.term_color`](../../base/reference/api.md) — the same `Color`
+type is shared with `sparkles.base.styled_template` and any future cell-grid
+backend, since `base` cannot depend on `syntax`. Every symbol below resolves
+through either module.
+
 | Symbol                                | What it is                                                                                                    |
 | ------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `Color`                               | sum type: `unset` / `default_` / `palette(index)` / `rgb`                                                     |
+| `Color`                               | four-case value: `unset` / `default_` / `palette(index)` / `rgb`                                              |
 | `parseHexColor`                       | `#RGB`, `#RRGGBB`, `#RRGGBBAA` (bat's alpha conventions: `00` = palette index, `01` = terminal default)       |
 | `ColorDepth`                          | `none` / `ansi16` / `ansi256` / `trueColor` (re-exported from `sparkles.base.term_color`)                     |
 | `ansi256FromRgb` / `ansi16FromRgb`    | nearest-match tier folds (6×6×6 cube + gray ramp; xterm classic 16)                                           |
@@ -50,14 +56,15 @@ theme selectors. The whole configure-time path is CTFE-able.
 
 ## Themes (`sparkles.syntax.theme`, `.themes`)
 
-| Symbol                         | What it is                                                                                                       |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
-| `FontStyle`                    | backend-neutral flags: bold, dim, italic, underline, strikethrough                                               |
-| `StyleSpec`                    | `{ fg, bg, font }`; `Color.Kind.unset` = unspecified                                                             |
-| `Theme`                        | plain data: name, defaults, ordered `ThemeRule[]` (`selector` → `StyleSpec`)                                     |
-| `resolveTheme(theme, labels)`  | folds rules into a flat `ResolvedTheme` table — longest-dot-prefix, whole spec wins, last rule wins among equals |
-| `ResolvedTheme`                | `labelId → StyleSpec` in O(1); `theme[LabelId.none]` = the defaults                                              |
-| `builtinDark` / `builtinLight` | Catppuccin-Mocha- / Solarized-Light-derived data themes                                                          |
+| Symbol                         | What it is                                                                                                             |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `TextAttr`                     | attribute bitflag struct: bold, dim, italic, strikethrough, inverse, hidden (from `base.term_style`)                   |
+| `UnderlineStyle`               | underline shape: none/single/double\_/curly/dotted/dashed (from `base.term_style`)                                     |
+| `StyleSpec`                    | alias of `base.term_style.TermStyle`: `{ fg, bg, underlineColor, attrs, underline }`; `Color.Kind.unset` = unspecified |
+| `Theme`                        | plain data: name, defaults, ordered `ThemeRule[]` (`selector` → `StyleSpec`)                                           |
+| `resolveTheme(theme, labels)`  | folds rules into a flat `ResolvedTheme` table — longest-dot-prefix, whole spec wins, last rule wins among equals       |
+| `ResolvedTheme`                | `labelId → StyleSpec` in O(1); `theme[LabelId.none]` = the defaults                                                    |
+| `builtinDark` / `builtinLight` | Catppuccin-Mocha- / Solarized-Light-derived data themes                                                                |
 
 Theme _files_ (TOML/JSON) are a recorded seam: only a parser producing
 `ThemeRule[]` is missing.

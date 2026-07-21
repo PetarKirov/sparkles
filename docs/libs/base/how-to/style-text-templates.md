@@ -10,9 +10,24 @@ Style blocks use the `{styleName content}` syntax, where `styleName` is one or m
 - **Chained Styles:** `{bold.red critical}` combines styles (bold and red foreground).
 - **Nested Blocks:** `{bold outer {red inner}}` applies `bold` to the entire block, and `red` additionally to `inner`.
 - **Style Negation:** Use `~` prefix to remove a style from the inherited set: `{bold.red styled {~red plain}}`.
+- **True-color & palette:** `{#cba6f7 mauve}` (24-bit hex), `{@183 palette}` (256-color index); prefix with `bg` for the background (`{bg#1e1e2e …}`, `{bg@235 …}`).
+- **Underline shapes & color:** `{underline x}` (single), plus `{doubleUnderline …}`, `{curlyUnderline …}`, `{dottedUnderline …}`, `{dashedUnderline …}`; set an independent underline color with `{ul#ff5555 …}` or `{ul@N …}`. Curly red underlines make good inline diagnostics: `{curlyUnderline.ul#ff5555 typo}`.
 - **Escaped Braces:** Use `#{` and `#}` to write literal braces: `#{style#}` outputs `{style}`.
 
-All standard ANSI colors and formats (`red`, `green`, `blue`, `cyan`, `yellow`, `magenta`, `white`, `black`, `bold`, `dim`, `italic`, `underline`, `inverse`, `bgRed`, `bgGreen`, etc.) are supported.
+All standard ANSI colors and formats (`red`, `green`, `blue`, `cyan`, `yellow`, `magenta`, `white`, `black`, `bold`, `dim`, `italic`, `underline`, `inverse`, `strikethrough`, `hidden`, `bgRed`, `bgGreen`, etc.) are supported.
+
+## Terminal color depth
+
+Every entry point (`styledText`, `plainText`, `writeStyled`, `styledWrite*`, `styled`) accepts an optional **leading** `ColorDepth` argument. It folds 24-bit and 256-palette colors down to what the terminal can address — `trueColor` (the default) emits them verbatim, `ansi256` folds RGB to the nearest palette entry, and `ansi16` folds to the nearest classic color:
+
+```d
+import sparkles.base.term_color : ColorDepth, detectColorDepth;
+
+styledText(i"{#cba6f7 x}");                       // \x1b[38;2;203;166;247m…
+styledText(ColorDepth.ansi256, i"{#cba6f7 x}");   // \x1b[38;5;183m…
+styledText(ColorDepth.ansi16, i"{#cba6f7 x}");    // \x1b[37m…
+styledText(detectColorDepth(), i"{#cba6f7 x}");   // fold to the real terminal
+```
 
 ## Write directly to stdout or stderr
 

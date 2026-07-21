@@ -36,29 +36,41 @@ The package re-exports `text.writers`, `text.readers`, `text.enums`, and
 
 ## `sparkles.base.term_style`
 
-| Symbol                      | Description                                      |
-| --------------------------- | ------------------------------------------------ |
-| `Style`                     | ANSI foreground, background, and attribute enum. |
-| `stylize`                   | Wrap text in one ANSI style.                     |
-| `stylizedTextBuilder`       | CTFE-friendly chained styling builder.           |
-| `styleName` / `styleSample` | Style names and sample strings.                  |
+| Symbol                      | Description                                                                                                   |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `Style`                     | ANSI foreground, background, and attribute `[open, close]` code table.                                        |
+| `TermStyle`                 | Resolved style: `fg`/`bg`/`underlineColor`, `attrs`, `underline`.                                             |
+| `TextAttr`                  | Attribute bitflag struct (bold/dim/italic/strikethrough/inverse/hidden) with typed `\|`/`&`/`~` and `.has()`. |
+| `UnderlineStyle`            | Underline shape: none/single/double\_/curly/dotted/dashed.                                                    |
+| `writeStyleTransition`      | Differential ANSI encoder: minimal merged `ESC[…m` diff between two `TermStyle`s at a `ColorDepth`.           |
+| `stylize`                   | Wrap text in one ANSI style.                                                                                  |
+| `stylizedTextBuilder`       | CTFE-friendly chained styling builder.                                                                        |
+| `styleName` / `styleSample` | Style names and sample strings.                                                                               |
 
 ## `sparkles.base.term_color`
 
-| Symbol                                | Description                                                        |
-| ------------------------------------- | ------------------------------------------------------------------ |
-| `ColorDepth`                          | Terminal color tiers: `none` / `ansi16` / `ansi256` / `trueColor`. |
-| `classifyColorDepth(colorterm, term)` | Pure, CTFE-able tier classifier over `$COLORTERM`/`$TERM` values.  |
+| Symbol                                | Description                                                                     |
+| ------------------------------------- | ------------------------------------------------------------------------------- |
+| `Color`                               | Four-case color: `unset` / `default_` / `palette` / `rgb`.                      |
+| `RgbColor`                            | 24-bit RGB triple.                                                              |
+| `ColorChannel`                        | SGR channel: `foreground` (38/39) / `background` (48/49) / `underline` (58/59). |
+| `writeSgrColor`                       | Emit the SGR color parameters for a `Color` on a channel, depth-folded.         |
+| `parseHexColor`                       | Parse `#RGB`/`#RRGGBB`/`#RRGGBBAA` (bat alpha convention) → `Color`.            |
+| `ansi256FromRgb` / `ansi16FromRgb`    | Fold an RGB value to the nearest 256-/16-palette index.                         |
+| `xterm256ToRgb`                       | The RGB behind an xterm-256 palette index.                                      |
+| `ColorDepth`                          | Terminal color tiers: `none` / `ansi16` / `ansi256` / `trueColor`.              |
+| `classifyColorDepth(colorterm, term)` | Pure, CTFE-able tier classifier over `$COLORTERM`/`$TERM` values.               |
+| `detectColorDepth()`                  | Environment-reading wrapper over `classifyColorDepth`.                          |
 
 ## `sparkles.base.styled_template`
 
-| Symbol          | Description                                        |
-| --------------- | -------------------------------------------------- |
-| `writeStyled`   | Writes styled IES to an output range.              |
-| `styledText`    | Allocating styled string conversion.               |
-| `plainText`     | Allocating conversion with style markup stripped.  |
-| `styledWrite*`  | stdout/stderr helpers for styled IES.              |
-| `styleFromName` | Runtime lookup for style names used by the parser. |
+| Symbol          | Description                                                           |
+| --------------- | --------------------------------------------------------------------- |
+| `writeStyled`   | Writes styled IES to an output range (optional leading `ColorDepth`). |
+| `styledText`    | Allocating styled string conversion (optional leading `ColorDepth`).  |
+| `plainText`     | Allocating conversion with style markup stripped.                     |
+| `styledWrite*`  | stdout/stderr helpers for styled IES (optional leading `ColorDepth`). |
+| `styleFromName` | Runtime lookup for style names used by the parser.                    |
 
 ## `sparkles.base.logger`
 
