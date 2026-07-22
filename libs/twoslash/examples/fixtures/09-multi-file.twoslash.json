@@ -1,0 +1,86 @@
+{
+ "code": "// `@filename` splits a snippet into a virtual multi-file project.\n// @filename: math.ts\nexport function sum(a: number, b: number): number {\n  return a + b\n}\n\n// @filename: index.ts\nimport { sum } from \"./math\"\nconst result = sum(1, 2)\n",
+ "nodes": [
+  {
+   "type": "hover",
+   "text": "function sum(a: number, b: number): number",
+   "start": 105,
+   "length": 3,
+   "target": "sum",
+   "line": 2,
+   "character": 16
+  },
+  {
+   "type": "hover",
+   "text": "(parameter) a: number",
+   "start": 109,
+   "length": 1,
+   "target": "a",
+   "line": 2,
+   "character": 20
+  },
+  {
+   "type": "hover",
+   "text": "(parameter) b: number",
+   "start": 120,
+   "length": 1,
+   "target": "b",
+   "line": 2,
+   "character": 31
+  },
+  {
+   "type": "hover",
+   "text": "(parameter) a: number",
+   "start": 150,
+   "length": 1,
+   "target": "a",
+   "line": 3,
+   "character": 9
+  },
+  {
+   "type": "hover",
+   "text": "(parameter) b: number",
+   "start": 154,
+   "length": 1,
+   "target": "b",
+   "line": 3,
+   "character": 13
+  },
+  {
+   "type": "hover",
+   "text": "(alias) function sum(a: number, b: number): number\nimport sum",
+   "start": 191,
+   "length": 3,
+   "target": "sum",
+   "line": 7,
+   "character": 9
+  },
+  {
+   "type": "hover",
+   "text": "const result: number",
+   "start": 217,
+   "length": 6,
+   "target": "result",
+   "line": 8,
+   "character": 6
+  },
+  {
+   "type": "query",
+   "text": "const result: number",
+   "start": 217,
+   "length": 6,
+   "target": "result",
+   "line": 8,
+   "character": 6
+  },
+  {
+   "type": "hover",
+   "text": "(alias) sum(a: number, b: number): number\nimport sum",
+   "start": 226,
+   "length": 3,
+   "target": "sum",
+   "line": 8,
+   "character": 15
+  }
+ ]
+}

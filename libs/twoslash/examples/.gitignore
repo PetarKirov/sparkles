@@ -1,0 +1,2 @@
+# Dev-only fixture generator deps — never committed (the build is node-free).
+node_modules/

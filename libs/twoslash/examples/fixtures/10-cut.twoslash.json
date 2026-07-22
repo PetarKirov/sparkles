@@ -1,0 +1,32 @@
+{
+ "code": "const user = db[1]\n",
+ "nodes": [
+  {
+   "type": "hover",
+   "text": "const user: User",
+   "start": 6,
+   "length": 4,
+   "target": "user",
+   "line": 0,
+   "character": 6
+  },
+  {
+   "type": "query",
+   "text": "const user: User",
+   "start": 6,
+   "length": 4,
+   "target": "user",
+   "line": 0,
+   "character": 6
+  },
+  {
+   "type": "hover",
+   "text": "const db: Record<number, User>",
+   "start": 13,
+   "length": 2,
+   "target": "db",
+   "line": 0,
+   "character": 13
+  }
+ ]
+}

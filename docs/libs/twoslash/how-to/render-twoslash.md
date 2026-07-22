@@ -21,7 +21,13 @@ hue --gui --twoslash payload.twoslash.json
 ```
 
 Committed sample payloads live under
-`libs/twoslash/examples/fixtures/*.twoslash.json`.
+`libs/twoslash/examples/fixtures/*.twoslash.json` — one per feature (hover, `^?`
+query, `^|` completion, `@errors`, `^^^` highlight, `@annotate` tag, generics,
+JSDoc, multi-file, `---cut---`, TSX, async). They are generated from the
+twoslash-annotated sources in `libs/twoslash/examples/src/` by the reference
+TypeScript `twoslash`; run `libs/twoslash/examples/regen.sh` to refresh them (it
+installs the node deps first). The build itself is node-free — it reads only the
+committed JSON.
 
 ## From D
 
