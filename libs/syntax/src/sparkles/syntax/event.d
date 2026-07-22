@@ -280,6 +280,217 @@ unittest
     assert(spans.empty);
 }
 
+/// A $(LREF StyledSpan) clipped to a single source line, tagged with that
+/// line's 0-based index. The byte range `span.start .. span.end` never crosses
+/// a `\n` (the newline itself is not part of any run).
+struct StyledLineSpan
+{
+    size_t line;     /// 0-based source line this run sits on
+    StyledSpan span; /// the run, clipped so it lies within one line
+}
+
+/**
+Per-line adapter over $(LREF byStyledSpan): the same maximal innermost-wins
+runs, but every run is clipped at `\n` boundaries and tagged with its 0-based
+line number.
+
+This is the recorded per-line seam a viewport renderer wants: a GPU/text
+backend draws each run at a stable per-row `y = (span.line - topLine) * cellH`
+and accumulates `x` left-to-right (the underlying source events tile the input
+contiguously, so a line's runs cover it from column 0). Empty lines simply
+produce no element — the line counter still advances, so the consumer's `y`
+stays correct across blank rows. Splitting is `\n`-only (CR is left in the run,
+matching $(LREF renderAnsi)); offsets are clamped defensively to `source`.
+*/
+auto byStyledLine(Events)(const(char)[] source, Events events)
+if (isHighlightEventRange!Events)
+{
+    return StyledLineRange!Events(source, events);
+}
+
+/// ditto
+private struct StyledLineRange(Events)
+{
+    private const(char)[] _source;
+    private StyledSpanRange!Events _spans;
+    private size_t _line;
+    private size_t _pos;     // byte offset within the current span, not yet emitted
+    private size_t _spanEnd; // clamped end of the current span
+    private LabelId _label;
+    private bool _spanLive;  // a span is loaded and has bytes left
+    private StyledLineSpan _front;
+    private bool _empty;
+
+    this(const(char)[] source, Events events)
+    {
+        _source = source;
+        _spans = StyledSpanRange!Events(events);
+        advance();
+    }
+
+    bool empty() const => _empty;
+
+    StyledLineSpan front() const
+    in (!_empty, "front on an empty StyledLineRange")
+    {
+        return _front;
+    }
+
+    void popFront()
+    in (!_empty, "popFront on an empty StyledLineRange")
+    {
+        advance();
+    }
+
+    private static ptrdiff_t findNewline(scope const(char)[] s)
+    {
+        // `\n` is a single code unit and never a UTF-8 continuation byte, so a
+        // raw byte scan is correct (and keeps this @nogc/@safe, no imports).
+        foreach (i, ch; s)
+            if (ch == '\n')
+                return i;
+        return -1;
+    }
+
+    private void advance()
+    {
+        while (true)
+        {
+            if (!_spanLive)
+            {
+                if (_spans.empty)
+                {
+                    _empty = true;
+                    return;
+                }
+                const s = _spans.front;
+                _spans.popFront();
+                _pos = s.start < _source.length ? s.start : _source.length;
+                _spanEnd = s.end < _source.length ? s.end : _source.length;
+                if (_pos > _spanEnd)
+                    _pos = _spanEnd;
+                _label = s.label;
+                _spanLive = true;
+            }
+
+            if (_pos >= _spanEnd)
+            {
+                _spanLive = false;
+                continue;
+            }
+
+            const rel = findNewline(_source[_pos .. _spanEnd]);
+            if (rel < 0)
+            {
+                // no newline: the rest of the span is one run on the current line
+                _front = StyledLineSpan(_line, StyledSpan(_pos, _spanEnd, _label));
+                _pos = _spanEnd;
+                return;
+            }
+
+            const nl = _pos + cast(size_t) rel;
+            if (nl > _pos)
+            {
+                // run up to the newline; leave `_pos` at the newline so the next
+                // advance consumes it and bumps the line uniformly
+                _front = StyledLineSpan(_line, StyledSpan(_pos, nl, _label));
+                _pos = nl;
+                return;
+            }
+
+            // `_pos` sits on a newline: consume it, advance the line, no run
+            ++_line;
+            ++_pos;
+        }
+    }
+}
+
+///
+@("event.byStyledLine.clipsAtNewlines")
+@safe pure nothrow @nogc
+unittest
+{
+    alias E = HighlightEvent;
+    // "ab\ncd" with <k1> over "b\nc": the run is clipped into two lines.
+    static immutable E[5] events = [
+        E.sourceSpan(0, 1),         // "a"  line 0
+        E.pushLabel(LabelId(1)),
+        E.sourceSpan(1, 4),         // "b\nc" — spans the newline
+        E.popLabel(),
+        E.sourceSpan(4, 5),         // "d"  line 1
+    ];
+    const source = "ab\ncd";
+
+    auto lines = byStyledLine(source, events[]);
+    assert(lines.front == StyledLineSpan(0, StyledSpan(0, 1, LabelId.none))); // "a"
+    lines.popFront();
+    assert(lines.front == StyledLineSpan(0, StyledSpan(1, 2, LabelId(1))));   // "b"
+    lines.popFront();
+    assert(lines.front == StyledLineSpan(1, StyledSpan(3, 4, LabelId(1))));   // "c"
+    lines.popFront();
+    assert(lines.front == StyledLineSpan(1, StyledSpan(4, 5, LabelId.none))); // "d"
+    lines.popFront();
+    assert(lines.empty);
+}
+
+@("event.byStyledLine.emptyLinesAdvanceTheCounter")
+@safe pure nothrow @nogc
+unittest
+{
+    alias E = HighlightEvent;
+    // "a\n\n\nb": two blank lines between; the counter jumps but yields nothing.
+    static immutable E[2] events = [
+        E.sourceSpan(0, 6),
+        E.sourceSpan(6, 6), // zero-width tail (producers may emit these)
+    ];
+    const source = "a\n\n\nb";
+
+    auto lines = byStyledLine(source, events[]);
+    assert(lines.front == StyledLineSpan(0, StyledSpan(0, 1, LabelId.none))); // "a"
+    lines.popFront();
+    assert(lines.front == StyledLineSpan(3, StyledSpan(4, 5, LabelId.none))); // "b" on line 3
+    lines.popFront();
+    assert(lines.empty);
+}
+
+@("event.byStyledLine.emptyStream")
+@safe pure nothrow @nogc
+unittest
+{
+    const(HighlightEvent)[] events;
+    assert(byStyledLine("", events).empty);
+    assert(byStyledLine("abc", events).empty);
+}
+
+@("event.byStyledLine.trailingNewline")
+@safe pure nothrow @nogc
+unittest
+{
+    alias E = HighlightEvent;
+    static immutable E[1] events = [E.sourceSpan(0, 4)]; // "ab\n"
+    const source = "ab\n";
+
+    auto lines = byStyledLine(source, events[]);
+    assert(lines.front == StyledLineSpan(0, StyledSpan(0, 2, LabelId.none))); // "ab"
+    lines.popFront();
+    assert(lines.empty); // the trailing newline yields no run
+}
+
+@("event.byStyledLine.clampsOutOfRange")
+@safe pure nothrow @nogc
+unittest
+{
+    alias E = HighlightEvent;
+    // A span reaching past the source is clamped, not a crash (renderers total).
+    static immutable E[1] events = [E.sourceSpan(0, 999)];
+    const source = "hi";
+
+    auto lines = byStyledLine(source, events[]);
+    assert(lines.front == StyledLineSpan(0, StyledSpan(0, 2, LabelId.none)));
+    lines.popFront();
+    assert(lines.empty);
+}
+
 /**
 The label stack shared by $(LREF byStyledSpan) and the HTML renderer's
 close/reopen logic. Package-internal: consumers see only its effects.
