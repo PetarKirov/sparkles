@@ -297,7 +297,10 @@ private void writeBelowBlock(Writer)(ref Writer w, in ResolvedTheme theme,
 
         case NodeType.query:
             put(w, `<div class="twoslash-meta-line twoslash-query-line">`);
-            put(w, `<span class="twoslash-popup-container"><code class="twoslash-popup-code">`);
+            // The connector notch is emitted for the query popup only (not hover
+            // / completion), matching @shikijs/twoslash.
+            put(w, `<span class="twoslash-popup-container"><div class="twoslash-popup-arrow"></div>`);
+            put(w, `<code class="twoslash-popup-code">`);
             const text = options.stripQuickinfoPrefix ? withoutQuickinfoPrefix(node.text) : node.text;
             SmallBuffer!HighlightEvent sig;
             highlightSignature(cache, text, sig);
@@ -594,6 +597,28 @@ version (unittest)
     renderTwoslashHtml(tw, null, testTheme(), cache, cu,
         TwoslashHtmlOptions(customCompletionIcon: (scope const(char)[] k) => "★"));
     assert(canFind(cu[], `<span class="twoslash-completions-icon completions-method">★</span>`));
+}
+
+@("render_html.queryArrowOnlyOnQuery")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+
+    // A hover on token 0 and a query on token 1: the connector arrow appears on
+    // the query popup only, never the hover popup.
+    const tw = TwoslashReturn(code: "ab\n", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1, line: 0, character: 0, text: "T"),
+        Node(type: NodeType.query, start: 1, length: 1, line: 0, character: 1, text: "b: number"),
+    ]);
+    const html = renderTw(tw, null);
+    // Query popup opens with the arrow.
+    assert(canFind(html,
+        `twoslash-query-line"><span class="twoslash-popup-container">` ~
+        `<div class="twoslash-popup-arrow"></div><code`));
+    // Hover popup opens straight into the code — no arrow.
+    assert(canFind(html,
+        `twoslash-hover"><span class="twoslash-popup-container">` ~
+        `<code class="twoslash-popup-code">`));
 }
 
 @("render_html.escaping")
