@@ -34,8 +34,8 @@ configuration "application" {
 configuration "gui" {
     targetType "executable"
 
-    dependency "raylib-d" version="~>6.0.1"
-    libs "raylib"
+    // The shared raylib text core; pulls raylib-d + libs "raylib" transitively.
+    dependency "sparkles:raylib-text" path="../.."
     versions "HueGui"
 }
 
