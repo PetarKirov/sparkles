@@ -266,12 +266,14 @@ private bool writeSyntaxOpen(Writer)(ref Writer w, in ResolvedTheme theme, Label
     return true;
 }
 
-/// The hover/query popup: `<span class="twoslash-popup-container"><code
-/// class="twoslash-popup-code">{re-highlighted sig}</code>[docs]</span>`.
+/// The hover/query popup: `<span class="twoslash-popup-container"><div
+/// class="twoslash-popup-arrow"></div><code class="twoslash-popup-code">{sig}</code>
+/// [docs]</span>`. The connector arrow points the popup back at its token.
 private void writePopup(Writer)(ref Writer w, in ResolvedTheme theme,
     ref TsConfigCache cache, in Node node, in TwoslashHtmlOptions options) @system
 {
-    put(w, `<span class="twoslash-popup-container"><code class="twoslash-popup-code">`);
+    put(w, `<span class="twoslash-popup-container"><div class="twoslash-popup-arrow"></div>`);
+    put(w, `<code class="twoslash-popup-code">`);
     const text = options.stripQuickinfoPrefix ? withoutQuickinfoPrefix(node.text) : node.text;
     SmallBuffer!HighlightEvent sig;
     highlightSignature(cache, text, sig);
@@ -329,16 +331,18 @@ private void writeBelowBlock(Writer)(ref Writer w, in ResolvedTheme theme,
             break;
 
         case NodeType.query:
-            put(w, `<div class="twoslash-meta-line twoslash-query-line">`);
-            // The connector notch is emitted for the query popup only (not hover
-            // / completion), matching @shikijs/twoslash.
-            put(w, `<span class="twoslash-popup-container"><div class="twoslash-popup-arrow"></div>`);
+            // A single bare block element (like the completion `<ul>`), NOT a
+            // popup-container span inside a wrapper div — the wrapper's line box
+            // would inflate the top gap. `margin-left` sits it under the `^?`.
+            put(w, `<div class="twoslash-meta-line twoslash-query-line"`);
+            writeColumnOffset(w, node.character);
+            put(w, `><div class="twoslash-popup-arrow"></div>`);
             put(w, `<code class="twoslash-popup-code">`);
             const text = options.stripQuickinfoPrefix ? withoutQuickinfoPrefix(node.text) : node.text;
             SmallBuffer!HighlightEvent sig;
             highlightSignature(cache, text, sig);
             renderHtml(text, sig[], theme, w, HtmlOptions(mode: HtmlMode.cssClasses));
-            put(w, `</code></span></div>`);
+            put(w, `</code></div>`);
             break;
 
         case NodeType.completion:
@@ -368,7 +372,20 @@ private void writeBelowBlock(Writer)(ref Writer w, in ResolvedTheme theme,
 /// `@shikijs/twoslash` structure.
 private void writeCompletion(Writer)(ref Writer w, in Node node, in TwoslashHtmlOptions options)
 {
-    put(w, `<ul class="twoslash-completion-list">`);
+    put(w, `<ul class="twoslash-completion-list"`);
+    // Anchor under the START of the typed prefix (the caret column minus the
+    // prefix already typed), i.e. where the completed identifier begins — e.g.
+    // `Number.p|` anchors at column 7 (`Number.`), not the caret at 8.
+    const col = node.character >= node.completionsPrefix.length
+        ? node.character - node.completionsPrefix.length : 0;
+    writeColumnOffset(w, col);
+    put(w, `>`);
+    // The connector arrow points at the completion CARET — `prefix.length`
+    // columns right of the list's anchor (unlike the fixed-position arrow on
+    // hover/query popups, which points near the token start).
+    put(w, `<div class="twoslash-popup-arrow" style="left:`);
+    writeUint(w, node.completionsPrefix.length);
+    put(w, `ch"></div>`);
     foreach (ref const Completion c; node.completions)
     {
         put(w, `<li>`);
@@ -438,6 +455,26 @@ private bool startsWith(scope const(char)[] s, scope const(char)[] prefix)
     if (prefix.length > s.length)
         return false;
     return s[0 .. prefix.length] == prefix;
+}
+
+/// Writes a decimal `size_t` (no allocation).
+private void writeUint(Writer)(ref Writer w, size_t n)
+{
+    if (n >= 10)
+        writeUint(w, n / 10);
+    put(w, cast(char)('0' + cast(char)(n % 10)));
+}
+
+/// Emits ` style="margin-left:{character}ch"` (omitted at column 0) to shift a
+/// below-line query/completion popup under its caret column. `ch` tracks the
+/// monospace code grid so the popup and its arrow line up with the token above.
+private void writeColumnOffset(Writer)(ref Writer w, size_t character)
+{
+    if (!character)
+        return;
+    put(w, ` style="margin-left:`);
+    writeUint(w, character);
+    put(w, `ch"`);
 }
 
 version (unittest)
@@ -514,6 +551,7 @@ version (unittest)
     ]);
     assert(renderTw(tw, null) ==
         `<span class="twoslash-hover"><span class="twoslash-popup-container">` ~
+        `<div class="twoslash-popup-arrow"></div>` ~
         `<code class="twoslash-popup-code">const a: 1</code></span>a</span>`);
 }
 
@@ -551,6 +589,7 @@ version (unittest)
     ]);
     assert(renderTw(tw, null) ==
         `<span class="twoslash-hover"><span class="twoslash-popup-container">` ~
+        `<div class="twoslash-popup-arrow"></div>` ~
         `<code class="twoslash-popup-code">const a: 1</code>` ~
         `<div class="twoslash-popup-docs">the answer</div></span>a</span>`);
 }
@@ -567,6 +606,7 @@ version (unittest)
     ]);
     assert(renderTw(tw, null) ==
         `<span class="twoslash-hover"><span class="twoslash-popup-container">` ~
+        `<div class="twoslash-popup-arrow"></div>` ~
         `<code class="twoslash-popup-code">function ref(): void</code>` ~
         `<div class="twoslash-popup-docs twoslash-popup-docs-tags">` ~
         `<span class="twoslash-popup-docs-tag">` ~
@@ -655,8 +695,10 @@ version (unittest)
 @("render_html.completionList")
 @system unittest
 {
+    // character 8, prefix "a" (len 1) → the list anchors at column 8 − 1 = 7,
+    // under the start of the typed identifier.
     const tw = TwoslashReturn(code: "a\n", nodes: [
-        Node(type: NodeType.completion, start: 1, length: 0, line: 0, character: 1,
+        Node(type: NodeType.completion, start: 8, length: 0, line: 0, character: 8,
             completionsPrefix: "a", completions: [Completion("at", "method"),
                 Completion("apply", "method")]),
     ]);
@@ -670,7 +712,8 @@ version (unittest)
         TwoslashHtmlOptions(completionIcons: IconStyle.none));
     assert(buf[] ==
         "a\n" ~
-        `<ul class="twoslash-completion-list">` ~
+        `<ul class="twoslash-completion-list" style="margin-left:7ch">` ~
+        `<div class="twoslash-popup-arrow" style="left:1ch"></div>` ~
         `<li><span><span class="twoslash-completions-matched">a</span>` ~
         `<span class="twoslash-completions-unmatched">t</span></span></li>` ~
         `<li><span><span class="twoslash-completions-matched">a</span>` ~
@@ -706,26 +749,27 @@ version (unittest)
     assert(canFind(cu[], `<span class="twoslash-completions-icon completions-method">★</span>`));
 }
 
-@("render_html.queryArrowOnlyOnQuery")
+@("render_html.popupArrowAndOffset")
 @system unittest
 {
     import std.algorithm.searching : canFind;
 
-    // A hover on token 0 and a query on token 1: the connector arrow appears on
-    // the query popup only, never the hover popup.
+    // Both the hover and the query popup carry the connector arrow; the below-line
+    // query popup is offset under its caret column via `margin-left`.
     const tw = TwoslashReturn(code: "ab\n", nodes: [
         Node(type: NodeType.hover, start: 0, length: 1, line: 0, character: 0, text: "T"),
         Node(type: NodeType.query, start: 1, length: 1, line: 0, character: 1, text: "b: number"),
     ]);
     const html = renderTw(tw, null);
-    // Query popup opens with the arrow.
-    assert(canFind(html,
-        `twoslash-query-line"><span class="twoslash-popup-container">` ~
-        `<div class="twoslash-popup-arrow"></div><code`));
-    // Hover popup opens straight into the code — no arrow.
+    // Hover popup carries the arrow.
     assert(canFind(html,
         `twoslash-hover"><span class="twoslash-popup-container">` ~
-        `<code class="twoslash-popup-code">`));
+        `<div class="twoslash-popup-arrow"></div><code`));
+    // Query popup carries the arrow AND is offset under its caret column. It is a
+    // single bare block element (no popup-container wrapper span).
+    assert(canFind(html,
+        `twoslash-query-line" style="margin-left:1ch">` ~
+        `<div class="twoslash-popup-arrow"></div><code`));
 }
 
 @("render_html.escaping")

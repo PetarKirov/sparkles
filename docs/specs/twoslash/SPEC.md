@@ -89,7 +89,11 @@ Emitted markup (abridged):
 This tracks the `@shikijs/twoslash` `rendererRich` contract: per-kind completion
 **and** tag icons (the reference SVGs, string-imported; configurable to Unicode
 glyphs or off), the matched/unmatched split wrapped so the flex gap never bisects
-a candidate, the query-only connector **arrow**, and JSDoc `@tag` **chips**. A
+a candidate, a connector **arrow** on the popups (both hover and query — a
+deliberate step past shiki, which arrows the query only), and JSDoc `@tag`
+**chips**. The below-line query/completion popups are offset with
+`margin-left:{character}ch` so they sit under their `^?`/`^|` caret column (the
+completion list inherits the code font-size so `ch` tracks the monospace grid). A
 token carrying both a `hover` and a `query` renders the query only (the planner
 drops the redundant hover). `TwoslashHtmlOptions` also offers an opt-in
 quickinfo-prefix strip (`(property) ` → ``). Output is content-only; the caller
