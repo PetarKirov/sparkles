@@ -91,6 +91,20 @@
   border-top: 1px solid var(--twoslash-border-color);
 }
 
+/* Connector notch (query popups only). */
+.twoslash .twoslash-popup-arrow {
+  position: absolute;
+  top: -4px;
+  left: 1em;
+  border-top: 1px solid var(--twoslash-border-color);
+  border-right: 1px solid var(--twoslash-border-color);
+  background: var(--twoslash-popup-bg);
+  transform: rotate(-45deg);
+  width: 6px;
+  height: 6px;
+  pointer-events: none;
+}
+
 /* ===== Query line ===== */
 .twoslash .twoslash-query-line .twoslash-popup-container {
   position: relative;
