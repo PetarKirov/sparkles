@@ -183,10 +183,17 @@ ref Writer renderTwoslashHtml(Writer)(
         pos = next;
     }
 
-    // Close anything still open, then flush the final line's blocks.
+    // Close anything still open, then flush the final line's blocks plus any
+    // trailing ones anchored past the last line — twoslash gives a trailing
+    // `@tag`/query a line index one past the end (`below` is sorted, so the
+    // remainder is exactly those trailing blocks).
     foreach_reverse (_; 0 .. openDecos.length)
         closeDeco();
-    flushBelow(line);
+    while (bi < below.length)
+    {
+        writeBelowBlock(w, theme, cache, tw.nodes[below[bi].node]);
+        ++bi;
+    }
     return w;
 }
 
@@ -439,6 +446,20 @@ version (unittest)
     assert(renderTw(tw, null) ==
         "hi\n" ~
         `<div class="twoslash-tag-line twoslash-tag-log-line">hello</div>`);
+}
+
+@("render_html.trailingTagPastLastLine")
+@system unittest
+{
+    // A trailing `@tag` (as twoslash emits for `// @annotate: …` at the very end)
+    // anchors one line past the code's last line — it must still be flushed.
+    const tw = TwoslashReturn(code: "a\n", nodes: [
+        Node(type: NodeType.tag, start: 0, length: 0, line: 2, character: 0,
+            name: "annotate", text: "trailing note"),
+    ]);
+    assert(renderTw(tw, null) ==
+        "a\n" ~
+        `<div class="twoslash-tag-line twoslash-tag-annotate-line">trailing note</div>`);
 }
 
 @("render_html.completionList")
