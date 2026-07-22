@@ -39,9 +39,18 @@ import sparkles.syntax.ts.injection : TsConfigCache;
 
 import sparkles.base.smallbuffer : SmallBuffer;
 
+import sparkles.twoslash.completion_icons : completionIconGlyph, completionIconSvg;
 import sparkles.twoslash.overlay : BelowBlock, InlineDecoration, highlightSignature,
     planTwoslash, TwoslashPlan, withoutQuickinfoPrefix;
 import sparkles.twoslash.protocol : Completion, Node, NodeType, TwoslashReturn;
+
+/// How completion-kind icons are rendered before each candidate.
+enum CompletionIconStyle
+{
+    svg,   /// the reference inline SVGs (default)
+    glyph, /// a single Unicode glyph per kind
+    none,  /// no icon span
+}
 
 /// Options for $(LREF renderTwoslashHtml).
 struct TwoslashHtmlOptions
@@ -54,6 +63,15 @@ struct TwoslashHtmlOptions
     /// …) from hover/query signatures. Off by default (keep it — it is
     /// informative). See $(REF withoutQuickinfoPrefix, sparkles,twoslash,overlay).
     bool stripQuickinfoPrefix = false;
+
+    /// Which built-in completion-icon set to draw (default the reference SVGs).
+    CompletionIconStyle completionIcons = CompletionIconStyle.svg;
+
+    /// Optional per-kind icon override: given the completion `kind`, return the
+    /// icon markup to emit inside the `twoslash-completions-icon` span. A
+    /// non-empty return wins over `completionIcons`; an empty return (or a null
+    /// delegate) falls back to the chosen style. `null` by default.
+    const(char)[] delegate(scope const(char)[] kind) @safe customCompletionIcon = null;
 }
 
 /**
@@ -288,7 +306,7 @@ private void writeBelowBlock(Writer)(ref Writer w, in ResolvedTheme theme,
             break;
 
         case NodeType.completion:
-            writeCompletion(w, node);
+            writeCompletion(w, node, options);
             break;
 
         case NodeType.tag:
@@ -306,14 +324,19 @@ private void writeBelowBlock(Writer)(ref Writer w, in ResolvedTheme theme,
     }
 }
 
-/// The completion list: `<ul class="twoslash-completion-list">` with each
-/// candidate split into its matched prefix and unmatched remainder.
-private void writeCompletion(Writer)(ref Writer w, in Node node)
+/// The completion list: `<ul class="twoslash-completion-list">`. Each `<li>` is
+/// a per-kind icon span followed by a wrapper span holding the matched prefix +
+/// unmatched remainder (the wrapper keeps the list's flex `gap` off the word, so
+/// the candidate reads `parseFloat`, not `p arseFloat`) — matching the
+/// `@shikijs/twoslash` structure.
+private void writeCompletion(Writer)(ref Writer w, in Node node, in TwoslashHtmlOptions options)
 {
     put(w, `<ul class="twoslash-completion-list">`);
     foreach (ref const Completion c; node.completions)
     {
         put(w, `<li>`);
+        writeCompletionIcon(w, c.kind, options);
+        put(w, `<span>`);
         const pfx = node.completionsPrefix.length <= c.name.length
             && startsWith(c.name, node.completionsPrefix) ? node.completionsPrefix.length : 0;
         if (pfx)
@@ -324,9 +347,34 @@ private void writeCompletion(Writer)(ref Writer w, in Node node)
         }
         put(w, `<span class="twoslash-completions-unmatched">`);
         writeHtmlEscaped(w, c.name[pfx .. $]);
-        put(w, `</span></li>`);
+        put(w, `</span></span></li>`);
     }
     put(w, `</ul>`);
+}
+
+/// Emits `<span class="twoslash-completions-icon completions-{kind}">{icon}</span>`
+/// per the chosen style (custom override wins; `none` emits nothing).
+private void writeCompletionIcon(Writer)(ref Writer w, scope const(char)[] kind,
+    in TwoslashHtmlOptions options)
+{
+    const k = kind.length ? kind : "default";
+    const(char)[] custom = options.customCompletionIcon is null
+        ? null : options.customCompletionIcon(k);
+    const(char)[] icon;
+    if (custom.length)
+        icon = custom;
+    else final switch (options.completionIcons)
+    {
+        case CompletionIconStyle.svg:   icon = completionIconSvg(k);   break;
+        case CompletionIconStyle.glyph: icon = completionIconGlyph(k); break;
+        case CompletionIconStyle.none:  return; // no icon span at all
+    }
+    put(w, `<span class="twoslash-completions-icon completions-`);
+    foreach (char ch; k) // shiki: whitespace in the kind → '-' for the class name
+        put(w, (ch == ' ' || ch == '\t' || ch == '\n') ? '-' : ch);
+    put(w, `">`);
+    put(w, icon);
+    put(w, `</span>`);
 }
 
 private bool startsWith(scope const(char)[] s, scope const(char)[] prefix)
@@ -502,14 +550,50 @@ version (unittest)
             completionsPrefix: "a", completions: [Completion("at", "method"),
                 Completion("apply", "method")]),
     ]);
-    assert(renderTw(tw, null) ==
+    // Icons off → the golden is just the matched/unmatched wrapper structure. The
+    // inner `<span>` wrapping matched+unmatched is what keeps the list's flex gap
+    // off the word.
+    auto registry = GrammarRegistry.fromDirs([]);
+    auto cache = TsConfigCache.create(&registry, LabelSet.standard());
+    SmallBuffer!(char, 1024) buf;
+    renderTwoslashHtml(tw, null, testTheme(), cache, buf,
+        TwoslashHtmlOptions(completionIcons: CompletionIconStyle.none));
+    assert(buf[] ==
         "a\n" ~
         `<ul class="twoslash-completion-list">` ~
-        `<li><span class="twoslash-completions-matched">a</span>` ~
-        `<span class="twoslash-completions-unmatched">t</span></li>` ~
-        `<li><span class="twoslash-completions-matched">a</span>` ~
-        `<span class="twoslash-completions-unmatched">pply</span></li>` ~
+        `<li><span><span class="twoslash-completions-matched">a</span>` ~
+        `<span class="twoslash-completions-unmatched">t</span></span></li>` ~
+        `<li><span><span class="twoslash-completions-matched">a</span>` ~
+        `<span class="twoslash-completions-unmatched">pply</span></span></li>` ~
         `</ul>`);
+}
+
+@("render_html.completionIcons")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+
+    const tw = TwoslashReturn(code: "a\n", nodes: [
+        Node(type: NodeType.completion, start: 1, length: 0, line: 0, character: 1,
+            completionsPrefix: "a", completions: [Completion("apply", "method")]),
+    ]);
+    // Default (svg): the per-kind class + an inline <svg> icon.
+    assert(canFind(renderTw(tw, null),
+        `<li><span class="twoslash-completions-icon completions-method"><svg`));
+
+    auto registry = GrammarRegistry.fromDirs([]);
+    auto cache = TsConfigCache.create(&registry, LabelSet.standard());
+    // Glyph style: same class, a text glyph.
+    SmallBuffer!(char, 512) g;
+    renderTwoslashHtml(tw, null, testTheme(), cache, g,
+        TwoslashHtmlOptions(completionIcons: CompletionIconStyle.glyph));
+    assert(canFind(g[], `<span class="twoslash-completions-icon completions-method">ƒ</span>`));
+
+    // Custom override wins over the style.
+    SmallBuffer!(char, 512) cu;
+    renderTwoslashHtml(tw, null, testTheme(), cache, cu,
+        TwoslashHtmlOptions(customCompletionIcon: (scope const(char)[] k) => "★"));
+    assert(canFind(cu[], `<span class="twoslash-completions-icon completions-method">★</span>`));
 }
 
 @("render_html.escaping")

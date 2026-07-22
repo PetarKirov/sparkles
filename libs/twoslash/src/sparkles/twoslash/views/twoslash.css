@@ -161,6 +161,23 @@
   color: var(--twoslash-unmatched-color);
 }
 
+.twoslash .twoslash-completion-list .twoslash-completions-icon {
+  color: var(--twoslash-unmatched-color);
+  width: 1em;
+  flex: none;
+}
+
+.twoslash .twoslash-completion-list .twoslash-completions-icon svg {
+  width: 1em;
+  height: 1em;
+  display: block;
+}
+
+.twoslash .twoslash-completion-list .deprecated {
+  text-decoration: line-through;
+  opacity: 0.5;
+}
+
 /* ===== Highlights ===== */
 .twoslash .twoslash-highlighted {
   padding: 1px 2px;
