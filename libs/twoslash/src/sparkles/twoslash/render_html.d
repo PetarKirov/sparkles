@@ -40,7 +40,7 @@ import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.base.smallbuffer : SmallBuffer;
 
 import sparkles.twoslash.overlay : BelowBlock, InlineDecoration, highlightSignature,
-    planTwoslash, TwoslashPlan;
+    planTwoslash, TwoslashPlan, withoutQuickinfoPrefix;
 import sparkles.twoslash.protocol : Completion, Node, NodeType, TwoslashReturn;
 
 /// Options for $(LREF renderTwoslashHtml).
@@ -49,6 +49,11 @@ struct TwoslashHtmlOptions
     /// Class prefix for the inner syntax spans (the `twoslash-*` chrome classes
     /// are fixed by the reference contract).
     const(char)[] classPrefix = "syn-";
+
+    /// Strip a leading TS quickinfo kind prefix (`(property) `, `(parameter) `,
+    /// …) from hover/query signatures. Off by default (keep it — it is
+    /// informative). See $(REF withoutQuickinfoPrefix, sparkles,twoslash,overlay).
+    bool stripQuickinfoPrefix = false;
 }
 
 /**
@@ -99,7 +104,7 @@ ref Writer renderTwoslashHtml(Writer)(
         {
             case NodeType.hover:
                 put(w, `<span class="twoslash-hover">`);
-                writePopup(w, theme, cache, tw.nodes[d.node]);
+                writePopup(w, theme, cache, tw.nodes[d.node], options);
                 break;
             case NodeType.highlight:
                 put(w, `<span class="twoslash-highlighted">`);
@@ -127,7 +132,7 @@ ref Writer renderTwoslashHtml(Writer)(
     {
         while (bi < below.length && below[bi].line == flushedLine)
         {
-            writeBelowBlock(w, theme, cache, tw.nodes[below[bi].node]);
+            writeBelowBlock(w, theme, cache, tw.nodes[below[bi].node], options);
             ++bi;
         }
     }
@@ -191,7 +196,7 @@ ref Writer renderTwoslashHtml(Writer)(
         closeDeco();
     while (bi < below.length)
     {
-        writeBelowBlock(w, theme, cache, tw.nodes[below[bi].node]);
+        writeBelowBlock(w, theme, cache, tw.nodes[below[bi].node], options);
         ++bi;
     }
     return w;
@@ -241,12 +246,13 @@ private bool writeSyntaxOpen(Writer)(ref Writer w, in ResolvedTheme theme, Label
 /// The hover/query popup: `<span class="twoslash-popup-container"><code
 /// class="twoslash-popup-code">{re-highlighted sig}</code>[docs]</span>`.
 private void writePopup(Writer)(ref Writer w, in ResolvedTheme theme,
-    ref TsConfigCache cache, in Node node) @system
+    ref TsConfigCache cache, in Node node, in TwoslashHtmlOptions options) @system
 {
     put(w, `<span class="twoslash-popup-container"><code class="twoslash-popup-code">`);
+    const text = options.stripQuickinfoPrefix ? withoutQuickinfoPrefix(node.text) : node.text;
     SmallBuffer!HighlightEvent sig;
-    highlightSignature(cache, node.text, sig);
-    renderHtml(node.text, sig[], theme, w, HtmlOptions(mode: HtmlMode.cssClasses));
+    highlightSignature(cache, text, sig);
+    renderHtml(text, sig[], theme, w, HtmlOptions(mode: HtmlMode.cssClasses));
     put(w, `</code>`);
     if (node.docs.length)
     {
@@ -259,7 +265,7 @@ private void writePopup(Writer)(ref Writer w, in ResolvedTheme theme,
 
 /// A below-line block for a query / completion / error / tag node.
 private void writeBelowBlock(Writer)(ref Writer w, in ResolvedTheme theme,
-    ref TsConfigCache cache, in Node node) @system
+    ref TsConfigCache cache, in Node node, in TwoslashHtmlOptions options) @system
 {
     final switch (node.type)
     {
@@ -274,9 +280,10 @@ private void writeBelowBlock(Writer)(ref Writer w, in ResolvedTheme theme,
         case NodeType.query:
             put(w, `<div class="twoslash-meta-line twoslash-query-line">`);
             put(w, `<span class="twoslash-popup-container"><code class="twoslash-popup-code">`);
+            const text = options.stripQuickinfoPrefix ? withoutQuickinfoPrefix(node.text) : node.text;
             SmallBuffer!HighlightEvent sig;
-            highlightSignature(cache, node.text, sig);
-            renderHtml(node.text, sig[], theme, w, HtmlOptions(mode: HtmlMode.cssClasses));
+            highlightSignature(cache, text, sig);
+            renderHtml(text, sig[], theme, w, HtmlOptions(mode: HtmlMode.cssClasses));
             put(w, `</code></span></div>`);
             break;
 
@@ -405,6 +412,31 @@ version (unittest)
     assert(renderTw(tw, null) ==
         `<span class="twoslash-hover"><span class="twoslash-popup-container">` ~
         `<code class="twoslash-popup-code">const a: 1</code></span>a</span>`);
+}
+
+@("render_html.stripQuickinfoPrefix")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+
+    auto registry = GrammarRegistry.fromDirs([]); // empty → plain-text popups
+    auto cache = TsConfigCache.create(&registry, LabelSet.standard());
+    const tw = TwoslashReturn(code: "a", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1, line: 0, character: 0,
+            text: "(property) title: string"),
+    ]);
+
+    // Default keeps the quickinfo prefix.
+    SmallBuffer!(char, 512) keep;
+    renderTwoslashHtml(tw, null, testTheme(), cache, keep);
+    assert(canFind(keep[], "(property) title: string"));
+
+    // Opt-in strips it.
+    SmallBuffer!(char, 512) strip;
+    renderTwoslashHtml(tw, null, testTheme(), cache, strip,
+        TwoslashHtmlOptions(stripQuickinfoPrefix: true));
+    assert(!canFind(strip[], "(property)"));
+    assert(canFind(strip[], "title: string"));
 }
 
 @("render_html.hoverPopupWithDocs")
