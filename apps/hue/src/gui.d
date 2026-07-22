@@ -487,6 +487,11 @@ int runGui(
 
         EndDrawing();
 
+        // On-demand atlas growth: drawText requests any covered-but-unrasterized
+        // codepoints (emoji, CJK, higher-plane icons) as it draws; grow the atlas
+        // after EndDrawing so the reupload never lands mid-frame.
+        fonts.flushPending();
+
         if (shotPath.length)
         {
             // Warm up for a number of frames before capturing: the glyph atlas
