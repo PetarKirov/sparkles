@@ -404,6 +404,51 @@ unittest
     assert(xterm256ToRgb(244) == RgbColor(128, 128, 128));
 }
 
+/**
+Concretizes a theme $(LREF Color) to a real 24-bit $(LREF RgbColor) — the
+recorded `toRgb` seam a non-terminal (e.g. GPU) backend uses when it has no
+"terminal default" to defer to.
+
+$(LIST
+    * `unset` / `default_` — resolve to `fallback` (the backend's active default, e.g. `theme.defaults.fg`/`.bg` concretized);
+    * `palette` — the RGB behind the xterm-256 index via $(LREF xterm256ToRgb) (the baked ramp; theme-overridable base-16 is a later extension);
+    * `rgb` — the value itself.
+)
+*/
+RgbColor toRgb(in Color c, in RgbColor fallback) pure nothrow @nogc
+{
+    final switch (c.kind) with (Color.Kind)
+    {
+        case unset, default_:
+            return fallback;
+        case palette:
+            return xterm256ToRgb(c.index);
+        case rgb:
+            return c.rgb;
+    }
+}
+
+///
+@("color.toRgb.cases")
+pure nothrow @nogc
+unittest
+{
+    const fallback = RgbColor(0x12, 0x34, 0x56);
+
+    // unset and default_ both defer to the caller's fallback
+    assert(toRgb(Color.init, fallback) == fallback);
+    assert(toRgb(Color.defaultColor, fallback) == fallback);
+
+    // rgb passes through untouched, regardless of the fallback
+    assert(toRgb(Color.fromRgb(0xff, 0xaa, 0x00), fallback) == RgbColor(0xff, 0xaa, 0x00));
+
+    // palette resolves against the baked xterm-256 ramp (inverse of the fold)
+    assert(toRgb(Color.fromPalette(0), fallback) == RgbColor(0, 0, 0));
+    assert(toRgb(Color.fromPalette(196), fallback) == RgbColor(255, 0, 0));
+    foreach (i; 0 .. 256)
+        assert(toRgb(Color.fromPalette(cast(ubyte) i), fallback) == xterm256ToRgb(cast(ubyte) i));
+}
+
 @("color.ansi16FromRgb.basics")
 pure nothrow @nogc
 unittest
