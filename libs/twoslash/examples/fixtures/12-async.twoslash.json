@@ -1,0 +1,68 @@
+{
+ "code": "// Inferred Promise types surface through async/await queries.\nasync function fetchUser(id: number) {\n  return { id, name: \"Ada\" }\n}\n\nconst user = await fetchUser(1)\n",
+ "nodes": [
+  {
+   "type": "hover",
+   "text": "function fetchUser(id: number): Promise<{\n    id: number;\n    name: string;\n}>",
+   "start": 78,
+   "length": 9,
+   "target": "fetchUser",
+   "line": 1,
+   "character": 15
+  },
+  {
+   "type": "hover",
+   "text": "(parameter) id: number",
+   "start": 88,
+   "length": 2,
+   "target": "id",
+   "line": 1,
+   "character": 25
+  },
+  {
+   "type": "hover",
+   "text": "(property) id: number",
+   "start": 113,
+   "length": 2,
+   "target": "id",
+   "line": 2,
+   "character": 11
+  },
+  {
+   "type": "hover",
+   "text": "(property) name: string",
+   "start": 117,
+   "length": 4,
+   "target": "name",
+   "line": 2,
+   "character": 15
+  },
+  {
+   "type": "hover",
+   "text": "const user: {\n    id: number;\n    name: string;\n}",
+   "start": 140,
+   "length": 4,
+   "target": "user",
+   "line": 5,
+   "character": 6
+  },
+  {
+   "type": "query",
+   "text": "const user: {\n    id: number;\n    name: string;\n}",
+   "start": 140,
+   "length": 4,
+   "target": "user",
+   "line": 5,
+   "character": 6
+  },
+  {
+   "type": "hover",
+   "text": "function fetchUser(id: number): Promise<{\n    id: number;\n    name: string;\n}>",
+   "start": 153,
+   "length": 9,
+   "target": "fetchUser",
+   "line": 5,
+   "character": 19
+  }
+ ]
+}

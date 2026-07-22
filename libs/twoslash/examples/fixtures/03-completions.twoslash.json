@@ -1,0 +1,87 @@
+{
+ "code": "// `^|` captures the member-completion list at the cursor position.\nconst point = { x: 1, y: 2, label: \"origin\" }\npoint.x\n",
+ "nodes": [
+  {
+   "type": "hover",
+   "text": "const point: {\n    x: number;\n    y: number;\n    label: string;\n}",
+   "start": 74,
+   "length": 5,
+   "target": "point",
+   "line": 1,
+   "character": 6
+  },
+  {
+   "type": "hover",
+   "text": "(property) x: number",
+   "start": 84,
+   "length": 1,
+   "target": "x",
+   "line": 1,
+   "character": 16
+  },
+  {
+   "type": "hover",
+   "text": "(property) y: number",
+   "start": 90,
+   "length": 1,
+   "target": "y",
+   "line": 1,
+   "character": 22
+  },
+  {
+   "type": "hover",
+   "text": "(property) label: string",
+   "start": 96,
+   "length": 5,
+   "target": "label",
+   "line": 1,
+   "character": 28
+  },
+  {
+   "type": "hover",
+   "text": "const point: {\n    x: number;\n    y: number;\n    label: string;\n}",
+   "start": 114,
+   "length": 5,
+   "target": "point",
+   "line": 2,
+   "character": 0
+  },
+  {
+   "type": "completion",
+   "start": 120,
+   "length": 0,
+   "completions": [
+    {
+     "name": "label",
+     "kind": "property",
+     "kindModifiers": "",
+     "sortText": "11"
+    },
+    {
+     "name": "x",
+     "kind": "property",
+     "kindModifiers": "",
+     "sortText": "11"
+    },
+    {
+     "name": "y",
+     "kind": "property",
+     "kindModifiers": "",
+     "sortText": "11"
+    }
+   ],
+   "completionsPrefix": ".",
+   "line": 2,
+   "character": 6
+  },
+  {
+   "type": "hover",
+   "text": "(property) x: number",
+   "start": 120,
+   "length": 1,
+   "target": "x",
+   "line": 2,
+   "character": 6
+  }
+ ]
+}

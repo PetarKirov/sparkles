@@ -1,0 +1,60 @@
+{
+ "code": "// `^?` pins an inline type query under the token above it.\nconst message = \"Hello there\"\n\nconst shout = message.toUpperCase()\n",
+ "nodes": [
+  {
+   "type": "hover",
+   "text": "const message: \"Hello there\"",
+   "start": 66,
+   "length": 7,
+   "target": "message",
+   "line": 1,
+   "character": 6
+  },
+  {
+   "type": "query",
+   "text": "const message: \"Hello there\"",
+   "start": 66,
+   "length": 7,
+   "target": "message",
+   "line": 1,
+   "character": 6
+  },
+  {
+   "type": "hover",
+   "text": "const shout: string",
+   "start": 97,
+   "length": 5,
+   "target": "shout",
+   "line": 3,
+   "character": 6
+  },
+  {
+   "type": "query",
+   "text": "const shout: string",
+   "start": 97,
+   "length": 5,
+   "target": "shout",
+   "line": 3,
+   "character": 6
+  },
+  {
+   "type": "hover",
+   "text": "const message: \"Hello there\"",
+   "start": 105,
+   "length": 7,
+   "target": "message",
+   "line": 3,
+   "character": 14
+  },
+  {
+   "type": "hover",
+   "text": "(method) String.toUpperCase(): string",
+   "docs": "Converts all the alphabetic characters in a string to uppercase.",
+   "start": 113,
+   "length": 11,
+   "target": "toUpperCase",
+   "line": 3,
+   "character": 22
+  }
+ ]
+}

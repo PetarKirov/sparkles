@@ -1,0 +1,74 @@
+{
+ "code": "// Declared error codes turn into inline squiggles + a message block.\nconst answer: number = \"forty-two\"\n\nfunction greet(name: string) {\n  return `Hi, ${name}`\n}\ngreet(42)\n",
+ "nodes": [
+  {
+   "type": "error",
+   "start": 76,
+   "length": 6,
+   "code": 2322,
+   "filename": "index.ts",
+   "id": "err-2322-98-6",
+   "text": "Type 'string' is not assignable to type 'number'.",
+   "level": "error",
+   "line": 1,
+   "character": 6
+  },
+  {
+   "type": "hover",
+   "text": "const answer: number",
+   "start": 76,
+   "length": 6,
+   "target": "answer",
+   "line": 1,
+   "character": 6
+  },
+  {
+   "type": "hover",
+   "text": "function greet(name: string): string",
+   "start": 115,
+   "length": 5,
+   "target": "greet",
+   "line": 3,
+   "character": 9
+  },
+  {
+   "type": "hover",
+   "text": "(parameter) name: string",
+   "start": 121,
+   "length": 4,
+   "target": "name",
+   "line": 3,
+   "character": 15
+  },
+  {
+   "type": "hover",
+   "text": "(parameter) name: string",
+   "start": 153,
+   "length": 4,
+   "target": "name",
+   "line": 4,
+   "character": 16
+  },
+  {
+   "type": "hover",
+   "text": "function greet(name: string): string",
+   "start": 162,
+   "length": 5,
+   "target": "greet",
+   "line": 6,
+   "character": 0
+  },
+  {
+   "type": "error",
+   "start": 168,
+   "length": 2,
+   "code": 2345,
+   "filename": "index.ts",
+   "id": "err-2345-190-2",
+   "text": "Argument of type 'number' is not assignable to parameter of type 'string'.",
+   "level": "error",
+   "line": 6,
+   "character": 6
+  }
+ ]
+}

@@ -98,9 +98,17 @@ annotation rows; hovers → floating popup on mouse-over (the GPU analogue of CS
 
 ## 6. Data source & hermeticity
 
-Fixtures under `libs/twoslash/examples/fixtures/*.twoslash.json` are committed
-(reduced from the upstream twoslash test corpus to `{code, nodes}`). The build and
-`dub test` are **node-free**; `regen.sh` documents developer-only regeneration.
+`libs/twoslash/examples/` holds twoslash-annotated sources in `src/*.ts(x)` — one
+per feature (hover, `^?` query, `^|` completion, `@errors`, `^^^` highlight,
+`@annotate` tag, generics, JSDoc, multi-file, `---cut---`, TSX, async) — and the
+committed `fixtures/*.twoslash.json` overlays generated from them (the trimmed
+`{code, nodes}` slice the renderer reads). `examples/regen.sh` is a real,
+developer-only generator: it `npm install`s the reference TypeScript `twoslash`
+(+ `typescript`) and runs `regen.mjs` over every source. It is the **only** place
+node is invoked — the sparkles build and `dub test` are **node-free** and consume
+the committed JSON, so nothing downstream needs node. Because `nodes` is opaque
+input, the same `{code, nodes}` shape comes from any twoslash-compatible source
+(twoslash today, `sparkles:dmd-lsp` later).
 
 ## Deferred
 

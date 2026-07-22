@@ -1,0 +1,88 @@
+{
+ "code": "function compact(arr: (string | null)[]) {\n  return arr.filter(Boolean)\n}\n\nconst kept = compact([\"a\", null, \"b\"])\n",
+ "nodes": [
+  {
+   "type": "tag",
+   "name": "annotate",
+   "start": 0,
+   "length": 0,
+   "text": "compacts falsy values out of an array",
+   "line": 0,
+   "character": 0
+  },
+  {
+   "type": "hover",
+   "text": "function compact(arr: (string | null)[]): (string | null)[]",
+   "start": 9,
+   "length": 7,
+   "target": "compact",
+   "line": 0,
+   "character": 9
+  },
+  {
+   "type": "hover",
+   "text": "(parameter) arr: (string | null)[]",
+   "start": 17,
+   "length": 3,
+   "target": "arr",
+   "line": 0,
+   "character": 17
+  },
+  {
+   "type": "hover",
+   "text": "(parameter) arr: (string | null)[]",
+   "start": 52,
+   "length": 3,
+   "target": "arr",
+   "line": 1,
+   "character": 9
+  },
+  {
+   "type": "hover",
+   "text": "(method) Array<string | null>.filter(predicate: (value: string | null, index: number, array: (string | null)[]) => unknown, thisArg?: any): (string | null)[] (+1 overload)",
+   "docs": "Returns the elements of an array that meet the condition specified in a callback function.",
+   "tags": [
+    [
+     "param",
+     "predicate A function that accepts up to three arguments. The filter method calls the predicate function one time for each element in the array."
+    ],
+    [
+     "param",
+     "thisArg An object to which the this keyword can refer in the predicate function. If thisArg is omitted, undefined is used as the this value."
+    ]
+   ],
+   "start": 56,
+   "length": 6,
+   "target": "filter",
+   "line": 1,
+   "character": 13
+  },
+  {
+   "type": "hover",
+   "text": "var Boolean: BooleanConstructor",
+   "start": 63,
+   "length": 7,
+   "target": "Boolean",
+   "line": 1,
+   "character": 20
+  },
+  {
+   "type": "hover",
+   "text": "const kept: (string | null)[]",
+   "start": 81,
+   "length": 4,
+   "target": "kept",
+   "line": 4,
+   "character": 6
+  },
+  {
+   "type": "hover",
+   "text": "function compact(arr: (string | null)[]): (string | null)[]",
+   "start": 88,
+   "length": 7,
+   "target": "compact",
+   "line": 4,
+   "character": 13
+  }
+ ]
+}

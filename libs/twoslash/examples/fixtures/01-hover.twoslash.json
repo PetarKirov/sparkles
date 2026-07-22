@@ -1,0 +1,78 @@
+{
+ "code": "// Hovering any identifier reveals its inferred type.\nconst greeting = \"Hello, Twoslash\"\n\nfunction twice(n: number) {\n  return n * 2\n}\n\nconst doubled = twice(greeting.length)\n",
+ "nodes": [
+  {
+   "type": "hover",
+   "text": "const greeting: \"Hello, Twoslash\"",
+   "start": 60,
+   "length": 8,
+   "target": "greeting",
+   "line": 1,
+   "character": 6
+  },
+  {
+   "type": "hover",
+   "text": "function twice(n: number): number",
+   "start": 99,
+   "length": 5,
+   "target": "twice",
+   "line": 3,
+   "character": 9
+  },
+  {
+   "type": "hover",
+   "text": "(parameter) n: number",
+   "start": 105,
+   "length": 1,
+   "target": "n",
+   "line": 3,
+   "character": 15
+  },
+  {
+   "type": "hover",
+   "text": "(parameter) n: number",
+   "start": 127,
+   "length": 1,
+   "target": "n",
+   "line": 4,
+   "character": 9
+  },
+  {
+   "type": "hover",
+   "text": "const doubled: number",
+   "start": 142,
+   "length": 7,
+   "target": "doubled",
+   "line": 7,
+   "character": 6
+  },
+  {
+   "type": "hover",
+   "text": "function twice(n: number): number",
+   "start": 152,
+   "length": 5,
+   "target": "twice",
+   "line": 7,
+   "character": 16
+  },
+  {
+   "type": "hover",
+   "text": "const greeting: \"Hello, Twoslash\"",
+   "start": 158,
+   "length": 8,
+   "target": "greeting",
+   "line": 7,
+   "character": 22
+  },
+  {
+   "type": "hover",
+   "text": "(property) String.length: number",
+   "docs": "Returns the length of a String object.",
+   "start": 167,
+   "length": 6,
+   "target": "length",
+   "line": 7,
+   "character": 31
+  }
+ ]
+}

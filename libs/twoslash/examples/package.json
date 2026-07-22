@@ -1,0 +1,13 @@
+{
+  "name": "sparkles-twoslash-fixtures",
+  "private": true,
+  "type": "module",
+  "description": "Dev-only fixture generator: runs the reference TypeScript `twoslash` over src/*.ts(x) to regenerate the committed *.twoslash.json overlays. Never part of the sparkles build (which is node-free).",
+  "scripts": {
+    "regen": "node regen.mjs"
+  },
+  "dependencies": {
+    "twoslash": "^0.3.9",
+    "typescript": "^5.9.0"
+  }
+}
