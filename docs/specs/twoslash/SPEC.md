@@ -95,9 +95,12 @@ deliberate step past shiki, which arrows the query only), and JSDoc `@tag`
 `margin-left:{character}ch` so they sit under their `^?`/`^|` caret column (the
 completion list inherits the code font-size so `ch` tracks the monospace grid). A
 token carrying both a `hover` and a `query` renders the query only (the planner
-drops the redundant hover). `TwoslashHtmlOptions` also offers an opt-in
-quickinfo-prefix strip (`(property) ` → ``). Output is content-only; the caller
-wraps it in `<pre class="syn-root twoslash">`.
+drops the redundant hover). Hover/query `docs` and each JSDoc `@tag` value render
+as **markdown** (the block and inline `MdDoc → HTML` emitters in `sparkles:syntax`
+— Shiki's `renderMarkdown`/`renderMarkdownInline` seam), degrading to escaped text
+without a grammar bundle; `TwoslashHtmlOptions` gates it (`renderDocsMarkdown`,
+default on) alongside an opt-in quickinfo-prefix strip (`(property) ` → ``).
+Output is content-only; the caller wraps it in `<pre class="syn-root twoslash">`.
 
 Fidelity is guarded by `examples/compare-shiki.mjs` (§6): it diffs our `.twoslash-*`
 HTML-class vocabulary and CSS-selector coverage against Shiki's live `rendererRich`
@@ -153,11 +156,6 @@ them after touching the HTML renderer or the stylesheet):
 
 ## Deferred
 
-- **Markdown in docs/tags** — hover/query `docs` and `@tag` values render as escaped
-  text today. Rendering them as markdown (Shiki's `renderMarkdown`/`renderMarkdownInline`
-  seam) awaits the reusable `MdDoc`/`extractMarkdown` model in `sparkles:syntax`
-  (the `hue --gui` markdown-preview work); it slots in behind a new `MdDoc→HTML`
-  emitter with no bespoke parser here.
 - **Live VitePress swap** — depends on #122's VitePress highlighter seam (not built;
   the site still uses stock VitePress→Shiki with no `markdown.config` hook).
 - **Analyzer / D-native backend** — #124 (`sparkles:dmd-lsp`); this issue treats
