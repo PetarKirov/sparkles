@@ -69,8 +69,12 @@ struct Node
 
     /// hover/query type signature, error message, or tag text.
     @WireOptional() string text;
-    /// hover/query attached JSDoc, if any.
+    /// hover/query attached JSDoc description, if any.
     @WireOptional() string docs;
+    /// hover/query JSDoc tags: each inner array is `[name, text?]` (the wire
+    /// shape `[name, text][]`; e.g. `["param", "value - the wrapped object"]`).
+    /// The name is bare (no leading `@`); the renderer prepends it.
+    @WireOptional() string[][] tags;
 
     /// error level: `"error"` (default) | `"warning"` | `"suggestion"` | `"message"`.
     @WireOptional() string level;
