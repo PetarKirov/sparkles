@@ -19,7 +19,7 @@ module app;
 
 import std.file : readText;
 import std.path : baseName, extension;
-import std.stdio : write;
+import std.stdio : stderr, write;
 import std.string : chompPrefix;
 
 import sparkles.syntax;
@@ -40,6 +40,9 @@ struct CliParams
 
     @CliOption("theme", "Syntax highlighting theme name.")
     string theme = "catppuccin-mocha";
+
+    @CliOption("gui", "Open a raylib GPU window instead of terminal/HTML output (requires the 'gui' build configuration).")
+    bool gui;
 }
 
 int main(string[] args)
@@ -99,6 +102,38 @@ int main(string[] args)
         return 0;
     }
 
+    // Sorted theme names, plus the parallel theme values the previewer/GUI index
+    // per frame (avoids per-frame GC AA lookups; `.keys` already returns a fresh
+    // array, so no `.dup`). Shared by the GUI and terminal previewer paths.
+    string[] names = builtinThemes.keys;
+    import std.algorithm.sorting : sort;
+    import std.algorithm.iteration : map;
+    import std.array : array;
+    sort(names);
+    immutable(Theme)[] themes = names.map!(n => *(n in builtinThemes)).array;
+
+    size_t idx = 0;
+    foreach (i, n; names) if (n == themeName) { idx = i; break; }
+
+    // Third sink: the raylib GPU window. A third consumer of the same
+    // (source, events, theme) triple — folds styled runs into draw calls
+    // instead of ANSI/HTML. Gated behind the `gui` build configuration so the
+    // default terminal build stays raylib-free.
+    if (cli.gui)
+    {
+        version (HueGui)
+        {
+            import gui : runGui;
+            return runGui(baseName(sourcePath), source, events[], labels, names, themes, idx);
+        }
+        else
+        {
+            stderr.writeln("hue: this build has no GUI support; " ~
+                "rebuild the gui configuration: dub build :hue -c gui");
+            return 1;
+        }
+    }
+
     const interactive = !html &&
         isTerminal(StdStream.stdin) && isTerminal(StdStream.stdout);
 
@@ -121,19 +156,6 @@ int main(string[] args)
         }
         return emitAnsiWholeFile();
     }
-
-    // Sorted theme names, plus the parallel theme values the previewer indexes
-    // per frame (avoids per-frame GC AA lookups; `.keys` already returns a
-    // fresh array, so no `.dup`).
-    string[] names = builtinThemes.keys;
-    import std.algorithm.sorting : sort;
-    import std.algorithm.iteration : map;
-    import std.array : array;
-    sort(names);
-    immutable(Theme)[] themes = names.map!(n => *(n in builtinThemes)).array;
-
-    size_t idx = 0;
-    foreach (i, n; names) if (n == themeName) { idx = i; break; }
 
     auto sessFactory = stdioKeySession();
     if (sessFactory is null)

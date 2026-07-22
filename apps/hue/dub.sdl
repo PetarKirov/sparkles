@@ -19,11 +19,27 @@ dependency "sparkles:core-cli" path="../.."
 
 configuration "application" {
     targetType "executable"
+
+    // The raylib GPU backend (src/gui.d, version(HueGui)) is compiled only by
+    // the `gui` configuration — keep the default terminal build raylib-free.
+    excludedSourceFiles "src/gui.d"
+}
+
+// Optional raylib GPU rendering backend (`hue --gui`). Pulls raylib (a system
+// dependency), so it stays behind its own configuration; the default
+// `application` build and `dub test` never require it. Build with
+// `dub build :hue -c gui`.
+configuration "gui" {
+    targetType "executable"
+
+    dependency "raylib-d" version="~>6.0.1"
+    libs "raylib"
+    versions "HueGui"
 }
 
 configuration "unittest" {
     targetType "library"
-    excludedSourceFiles "src/app.d"
+    excludedSourceFiles "src/app.d" "src/gui.d"
 
     // hue has no unittests of its own, but `dub test` still compiles its
     // dependency sources with -unittest — and sparkles:syntax / sparkles:
