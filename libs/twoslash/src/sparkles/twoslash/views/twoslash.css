@@ -94,6 +94,9 @@
 /* ===== Query line ===== */
 .twoslash .twoslash-query-line .twoslash-popup-container {
   position: relative;
+  /* Below a hover popup's z-index (10) so an expanded hover on the line above
+     paints over this always-visible query popup, not behind it. */
+  z-index: 9;
   margin-bottom: 1.4em;
   transform: translateY(0.6em);
 }
