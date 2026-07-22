@@ -21,7 +21,7 @@ version (HueGui):
 import raylib;
 
 import gui_text : TextStyle, GlyphDrawOps, drawOps, guardCell, getRequiredCodepoints,
-    columnWidth, lineCount, FontSlot;
+    columnWidth, lineCount, Match, buildLineStarts, findMatches, FontSlot;
 
 // Selective import avoids sparkles.syntax.Color clashing with raylib.Color:
 // bare `Color` is unambiguously raylib's; the theme color type is reached only
@@ -37,6 +37,18 @@ private enum defaultFontSize = 18;
 /// (the GPU has no "terminal default" to defer to, unlike the ANSI backend).
 private enum RgbColor hardFallbackFg = RgbColor(0xcd, 0xd6, 0xf4);
 private enum RgbColor hardFallbackBg = RgbColor(0x1e, 0x1e, 0x2e);
+
+/// Translucent overlays for search matches: all matches, and the current one.
+private enum Color matchTint = Color(255, 215, 0, 70);
+private enum Color currentMatchTint = Color(255, 145, 0, 130);
+
+/// The interactive input mode (M4): normal keys, or typing a search / goto line.
+private enum Mode
+{
+    normal,
+    search,
+    gotoLine,
+}
 
 /**
 Opens the raylib window and paints the highlighted file. M1 draws the whole
@@ -115,9 +127,44 @@ int runGui(
 
     const total = lineCount(source);
     const gutterCols = digitCount(total) + 1; // digits + one padding cell
+    const lineStarts = buildLineStarts(source);
 
     SmallBuffer!(char, 4096) buf; // reused, NUL-terminated for raylib
     long top = initialTop; // index of the first visible line
+
+    // Search / goto state (M4).
+    Mode mode = Mode.normal;
+    SmallBuffer!(char, 256) query;
+    Match[] matches;
+    size_t curMatch;
+
+    // Recompute all match ranges for the current query — an extra decoration
+    // layer over the styled spans (the pure mapping lives in gui_text).
+    void recompute()
+    {
+        matches = findMatches(source, query[], lineStarts);
+        curMatch = 0;
+    }
+
+    // Center the given match's line in the viewport (as far as clamping allows).
+    void jumpToMatch(size_t i, int visibleRows)
+    {
+        if (matches.length == 0)
+            return;
+        curMatch = i % matches.length;
+        top = cast(long) matches[curMatch].line - visibleRows / 2;
+    }
+
+    // Debug/CI: HUE_GUI_SEARCH=<text> preselects a search (highlights + jump to
+    // the first match) so a golden capture exercises the match overlay.
+    foreach (ch; environment.get("HUE_GUI_SEARCH", ""))
+        query ~= ch;
+    if (query.length)
+    {
+        recompute();
+        if (matches.length)
+            top = cast(long) matches[0].line;
+    }
 
     int frame = 0;
     while (!WindowShouldClose())
@@ -129,38 +176,110 @@ int runGui(
         const visibleRows = screenH / cellH;
         const maxTop = total > visibleRows ? cast(long)(total - visibleRows) : 0;
 
-        // Scroll input. ↑/↓ are reserved for live theme cycling (M3), so scroll
-        // is mouse-wheel + PageUp/Down + Home/End + j/k (vi-style).
-        top -= cast(long)(GetMouseWheelMove() * 3);
-        if (pressed(KeyboardKey.KEY_PAGE_DOWN))
-            top += visibleRows;
-        if (pressed(KeyboardKey.KEY_PAGE_UP))
-            top -= visibleRows;
-        if (pressed(KeyboardKey.KEY_J))
-            ++top;
-        if (pressed(KeyboardKey.KEY_K))
-            --top;
-        if (pressed(KeyboardKey.KEY_HOME))
-            top = 0;
-        if (pressed(KeyboardKey.KEY_END))
-            top = maxTop;
+        const inputMode = mode != Mode.normal;
+        if (inputMode)
+        {
+            // Typing a search query or a goto-line number.
+            for (int c = GetCharPressed(); c > 0; c = GetCharPressed())
+            {
+                if (c < 32 || c >= 127)
+                    continue;
+                if (mode == Mode.gotoLine && (c < '0' || c > '9'))
+                    continue;
+                if (query.length < 255)
+                    query ~= cast(char) c;
+                if (mode == Mode.search)
+                    recompute();
+            }
+            if (IsKeyPressed(KeyboardKey.KEY_BACKSPACE) && query.length)
+            {
+                query.popBack();
+                if (mode == Mode.search)
+                    recompute();
+            }
+            if (IsKeyPressed(KeyboardKey.KEY_ENTER))
+            {
+                if (mode == Mode.search)
+                {
+                    // Jump to the first match at/after the current top, else wrap.
+                    size_t i;
+                    while (i < matches.length && matches[i].line < cast(size_t) top)
+                        ++i;
+                    jumpToMatch(i < matches.length ? i : 0, visibleRows);
+                }
+                else if (query.length) // gotoLine
+                {
+                    try
+                        top = query[].to!long - 1;
+                    catch (Exception)
+                    {
+                    }
+                }
+                mode = Mode.normal;
+            }
+            if (IsKeyPressed(KeyboardKey.KEY_ESCAPE))
+            {
+                mode = Mode.normal;
+                query.clear(); // cancelling clears the query (and search highlights)
+                matches = null;
+            }
+        }
+        else
+        {
+            // Normal mode: scroll, theme cycling, font sizing, match nav, and the
+            // keys that enter the input modes.
+            top -= cast(long)(GetMouseWheelMove() * 3);
+            if (pressed(KeyboardKey.KEY_PAGE_DOWN))
+                top += visibleRows;
+            if (pressed(KeyboardKey.KEY_PAGE_UP))
+                top -= visibleRows;
+            if (pressed(KeyboardKey.KEY_J))
+                ++top;
+            if (pressed(KeyboardKey.KEY_K))
+                --top;
+            if (pressed(KeyboardKey.KEY_HOME))
+                top = 0;
+            if (pressed(KeyboardKey.KEY_END))
+                top = maxTop;
+
+            // Live theme cycling (↑ previous, ↓ next, wrapping).
+            if (pressed(KeyboardKey.KEY_DOWN))
+                applyTheme(themeIdx + 1 == themes.length ? 0 : themeIdx + 1);
+            if (pressed(KeyboardKey.KEY_UP))
+                applyTheme(themeIdx == 0 ? themes.length - 1 : themeIdx - 1);
+
+            // Font sizing: Ctrl-'=' / Ctrl-'-' (reload faces + re-measure).
+            const ctrl = IsKeyDown(KeyboardKey.KEY_LEFT_CONTROL)
+                || IsKeyDown(KeyboardKey.KEY_RIGHT_CONTROL);
+            if (ctrl && pressed(KeyboardKey.KEY_EQUAL))
+                fonts.reload(fonts.size() + 2);
+            else if (ctrl && pressed(KeyboardKey.KEY_MINUS) && fonts.size() > 6)
+                fonts.reload(fonts.size() - 2);
+
+            // Match navigation: n next, Shift-n previous.
+            if (matches.length && pressed(KeyboardKey.KEY_N))
+            {
+                const shift = IsKeyDown(KeyboardKey.KEY_LEFT_SHIFT)
+                    || IsKeyDown(KeyboardKey.KEY_RIGHT_SHIFT);
+                jumpToMatch(shift ? curMatch + matches.length - 1 : curMatch + 1, visibleRows);
+            }
+
+            // Enter an input mode: '/' search, 'g' goto-line.
+            if (IsKeyPressed(KeyboardKey.KEY_SLASH))
+            {
+                mode = Mode.search;
+                query.clear();
+                matches = null;
+            }
+            else if (IsKeyPressed(KeyboardKey.KEY_G))
+            {
+                mode = Mode.gotoLine;
+                query.clear();
+            }
+        }
+
         top = top < 0 ? 0 : (top > maxTop ? maxTop : top);
         const topLine = cast(size_t) top;
-
-        // Live theme cycling (↑ previous, ↓ next, wrapping) — hue's previewer
-        // semantics on the GPU.
-        if (pressed(KeyboardKey.KEY_DOWN))
-            applyTheme(themeIdx + 1 == themes.length ? 0 : themeIdx + 1);
-        if (pressed(KeyboardKey.KEY_UP))
-            applyTheme(themeIdx == 0 ? themes.length - 1 : themeIdx - 1);
-
-        // Font sizing: Ctrl-'=' / Ctrl-'-' (reloads faces + re-measures the cell).
-        const ctrl = IsKeyDown(KeyboardKey.KEY_LEFT_CONTROL)
-            || IsKeyDown(KeyboardKey.KEY_RIGHT_CONTROL);
-        if (ctrl && pressed(KeyboardKey.KEY_EQUAL))
-            fonts.reload(fonts.size() + 2);
-        else if (ctrl && pressed(KeyboardKey.KEY_MINUS) && fonts.size() > 6)
-            fonts.reload(fonts.size() - 2);
 
         const gutterPx = cast(int)(gutterCols * cellW);
 
@@ -208,6 +327,18 @@ int runGui(
             x += wpx;
         }
 
+        // Search-match overlay: translucent tint over each visible match (the
+        // current one brighter), drawn over the text so the glyphs show through.
+        foreach (i, m; matches)
+        {
+            if (m.line < topLine || m.line >= topLine + visibleRows)
+                continue;
+            const mx = gutterPx + m.col * cellW;
+            const my = cast(int)((m.line - topLine) * cellH);
+            DrawRectangle(mx, my, m.cols * cellW, cellH,
+                i == curMatch ? currentMatchTint : matchTint);
+        }
+
         // Scrollbar: track + a thumb sized/positioned to the viewport.
         if (maxTop > 0)
         {
@@ -217,6 +348,18 @@ int runGui(
             const thumbY = cast(int)((screenH - h) * top / maxTop);
             DrawRectangle(screenW - sbWidth, 0, sbWidth, screenH, rl(mix(pageBg, gutterFg)));
             DrawRectangle(screenW - sbWidth, thumbY, sbWidth, h, rl(gutterFg));
+        }
+
+        // Input line at the bottom: '/query' while searching, ':n' while going
+        // to a line. Shows a match count for searches.
+        if (inputMode)
+        {
+            const barY = screenH - cellH;
+            DrawRectangle(0, barY, screenW, cellH, rl(gutterFg));
+            auto lineText = mode == Mode.search
+                ? text("/", query[], "   ", matches.length, " matches")
+                : text(":", query[]);
+            drawText(fonts, cstrOf(buf, lineText), 4, cast(float) barY, TextStyle(0), rl(pageBg));
         }
 
         EndDrawing();

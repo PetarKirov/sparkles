@@ -199,6 +199,79 @@ unittest
     assert(lineCount("\n\n") == 2);
 }
 
+/// A search hit resolved to monospace grid coordinates for drawing.
+struct Match
+{
+    size_t line; /// 0-based line the match starts on
+    int col;     /// start column (display cells) within the line
+    int cols;    /// width in display cells (clipped at the line end)
+}
+
+/// Byte offset where each display line starts (line 0 at 0, then after each
+/// `\n`). Sorted ascending, so a byte offset's line is a binary search away.
+size_t[] buildLineStarts(scope const(char)[] source) @safe
+{
+    size_t[] starts = [0];
+    foreach (i, c; source)
+        if (c == '\n')
+            starts ~= i + 1;
+    return starts;
+}
+
+/// All non-overlapping occurrences of `query` in `source`, each mapped to grid
+/// coordinates (line/col/width in display cells) via `lineStarts` — the extra
+/// decoration layer the GUI tints over the styled spans. A match spanning a
+/// newline is clipped to its first line. Empty query → no matches.
+Match[] findMatches(scope const(char)[] source, scope const(char)[] query,
+    scope const(size_t)[] lineStarts) @safe
+{
+    import std.string : indexOf;
+    import std.range : assumeSorted;
+
+    Match[] matches;
+    if (query.length == 0)
+        return matches;
+
+    size_t from;
+    while (from <= source.length)
+    {
+        const rel = source[from .. $].indexOf(query);
+        if (rel < 0)
+            break;
+        const start = from + cast(size_t) rel;
+        const line = lineStarts.assumeSorted.lowerBound(start + 1).length - 1;
+        const lineStart = lineStarts[line];
+        const nl = source[start .. $].indexOf('\n');
+        const end = nl < 0 || cast(size_t) nl >= query.length
+            ? start + query.length : start + cast(size_t) nl;
+        matches ~= Match(line, cast(int) columnWidth(source[lineStart .. start]),
+            cast(int) columnWidth(source[start .. end]));
+        from = start + query.length;
+    }
+    return matches;
+}
+
+///
+@("gui_text.findMatches.locatesAndMaps")
+@safe
+unittest
+{
+    const src = "ab\n  abc\nx";       // line 0 "ab", line 1 "  abc", line 2 "x"
+    const ls = buildLineStarts(src);  // [0, 3, 9]
+
+    auto m = findMatches(src, "ab", ls);
+    assert(m.length == 2);
+    assert(m[0] == Match(0, 0, 2));   // first "ab" at line 0, column 0
+    assert(m[1] == Match(1, 2, 2));   // "ab" inside "abc" at line 1, column 2
+
+    assert(findMatches(src, "zzz", ls).length == 0);
+    assert(findMatches(src, "", ls).length == 0);
+
+    // A run of the same char yields non-overlapping matches.
+    const dots = "....";
+    assert(findMatches(dots, "..", buildLineStarts(dots)).length == 2);
+}
+
 /// An inclusive codepoint range in the glyph atlas.
 struct CodepointRange
 {
