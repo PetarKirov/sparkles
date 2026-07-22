@@ -20,11 +20,12 @@ dependency "sparkles:core-cli" path="../.."
 configuration "application" {
     targetType "executable"
 
-    // The raylib GPU backend (src/gui.d, version(HueGui)) and its pure
-    // text-layout core (src/gui_text.d) are compiled only by the `gui`
-    // configuration (and gui_text.d by `unittest`) — the default terminal
-    // build has no use for them and stays raylib-free.
-    excludedSourceFiles "src/gui.d" "src/gui_text.d"
+    // The raylib GPU backend (src/gui.d, version(HueGui)) and the preview
+    // support modules (gui_text.d pure layout, gui_ansi.d libghostty bridge,
+    // gui_preview.d model+layout) are compiled only by the `gui` configuration
+    // (and by `unittest`, minus gui.d) — the default terminal build has no use
+    // for them and stays raylib- and ghostty-free.
+    excludedSourceFiles "src/gui.d" "src/gui_text.d" "src/gui_ansi.d" "src/gui_preview.d"
 }
 
 // Optional raylib GPU rendering backend (`hue --gui`). Pulls raylib (a system
@@ -36,12 +37,21 @@ configuration "gui" {
 
     // The shared raylib text core; pulls raylib-d + libs "raylib" transitively.
     dependency "sparkles:raylib-text" path="../.."
+    // The off-screen VT that decodes ` ```ansi ` fenced blocks (gui_ansi.d).
+    dependency "sparkles:ghostty" path="../.."
     versions "HueGui"
 }
 
 configuration "unittest" {
     targetType "library"
+    // gui.d (raylib) is excluded so `dub test :hue` links no GL/window; the
+    // preview support modules gui_text.d / gui_ansi.d / gui_preview.d ARE
+    // compiled and unit-tested here. gui_ansi.d drives an off-screen VT, so the
+    // test build links libghostty-vt (headless, no window).
     excludedSourceFiles "src/app.d" "src/gui.d"
+
+    // The off-screen VT bridge (gui_ansi.d) + preview model (gui_preview.d).
+    dependency "sparkles:ghostty" path="../.."
 
     // hue has no unittests of its own, but `dub test` still compiles its
     // dependency sources with -unittest — and sparkles:syntax / sparkles:
