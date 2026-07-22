@@ -25,5 +25,6 @@ module sparkles.twoslash;
 
 public import sparkles.twoslash.protocol;
 public import sparkles.twoslash.ingest;
-// overlay, render_html, render_ansi, style re-exports land with their
-// modules in the following commits.
+public import sparkles.twoslash.overlay;
+// render_html, render_ansi, style re-exports land with their modules in the
+// following commits.
