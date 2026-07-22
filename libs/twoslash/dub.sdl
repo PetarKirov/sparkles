@@ -1,0 +1,36 @@
+name "twoslash"
+description "Twoslash render overlay on sparkles:syntax — HTML, ANSI, and raylib GUI"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+
+importPaths "src"
+
+dflags "-preview=in" "-preview=dip1000"
+
+configuration "library" {
+    // sourceLibrary: sparkles:syntax is a sourceLibrary (ImportC types in its
+    // signatures), and twoslash re-exposes its TsConfigCache / highlightInjected
+    // in the overlay renderers' signatures, so it must compile inside each
+    // dependent too — see docs/guidelines/importc-c-libraries.md.
+    targetType "sourceLibrary"
+    dependency "sparkles:base" path="../.."
+    dependency "sparkles:syntax" path="../.."
+    dependency "sparkles:wired" path="../.."
+}
+
+configuration "unittest" {
+    // Fast path: depend on the runner shim (pulls the prebuilt impl library),
+    // so `dub test` recompiles only this package, not the runner sources.
+    dependency "sparkles:test-runner" path="../.."
+    dependency "sparkles:base" path="../.."
+    dependency "sparkles:syntax" path="../.."
+    dependency "sparkles:wired" path="../.."
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
