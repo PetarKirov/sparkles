@@ -266,8 +266,8 @@ private void render_kitty_images(GhosttyTerminal terminal, GhosttyKittyGraphics 
 struct LoadedFont
 {
     Font font;
-    SmallBuffer!(int, 256) glyphValues;  // ascending codepoint values present
-    SmallBuffer!(int, 256) glyphIndices; // font.glyphs index aligned with glyphValues
+    SmallBuffer!(int, 256, true) glyphValues;  // ascending codepoint values present
+    SmallBuffer!(int, 256, true) glyphIndices; // font.glyphs index aligned with glyphValues
     int fallbackIndex;                   // index of the '?' glyph (value 63), or 0
     Rectangle whiteSrc;                  // a solid-white texel in the atlas (U+2588 center)
     bool hasWhite;                       // whether whiteSrc is valid (full-block glyph present)
@@ -404,7 +404,7 @@ private LoadedFont* lookupCodepointMap(ref CoreState s, int cp)
 // Queue `cp` for inclusion in the primary atlas on the next reload, de-duping
 // within the frame's pending set (many cells in a frame share the same icon).
 @safe nothrow @nogc
-private void requestGlyph(ref SmallBuffer!(int, 64) pending, int cp)
+private void requestGlyph(ref SmallBuffer!(int, 64, true) pending, int cp)
 {
     foreach (existing; pending[])
         if (existing == cp)
@@ -655,7 +655,7 @@ private static immutable int[] loadedCodepoints = buildCodepoints();
 // (mirrors Ghostty's font-codepoint-map, e.g. Uiua glyphs → the Uiua386 font).
 struct CodepointMap
 {
-    SmallBuffer!(int, 256) cps;  // sorted codepoints this entry claims
+    SmallBuffer!(int, 256, true) cps;  // sorted codepoints this entry claims
     LoadedFont font;             // the mapped face (loaded with exactly `cps`)
 }
 
@@ -693,14 +693,14 @@ struct CoreState
     // U+F0000+ used by editor file-tree icons — that the fixed base set never
     // rasterized. Lazily requesting them keeps the atlas bounded to glyphs the
     // session actually touches instead of preloading the whole ~109k-glyph plane.
-    SmallBuffer!(int, 8192) requestedCps;
+    SmallBuffer!(int, 8192, true) requestedCps;
 
     // Sorted codepoint coverage of the primary font FACE, parsed from
     // `fc-query` at startup (ascending `lo`/`hi` range bounds). A missing glyph
     // is only re-requested from the primary when the face actually covers it;
     // otherwise it is left to the fallback chain (and ultimately the '?' glyph).
-    SmallBuffer!(int, 256) faceLo;
-    SmallBuffer!(int, 256) faceHi;
+    SmallBuffer!(int, 256, true) faceLo;
+    SmallBuffer!(int, 256, true) faceHi;
 
     int fontSize = 20;
     int cellWidth = 1;
@@ -1384,7 +1384,7 @@ private void feedPtyChunk(ref CoreState s, scope const(char)[] chunk)
             segStart = i + 1;
             if (!s.oscScan.overflowed)
             {
-                SmallBuffer!(int, 4) codes;
+                SmallBuffer!(int, 4, true) codes;
                 oscColorQueryCodes(s.oscScan.payload[], codes);
                 foreach (code; codes[])
                     replyColorQuery(s, code);
@@ -1429,7 +1429,7 @@ private void runCoreLoop(ref CoreState s)
     // Codepoints seen this frame that the primary face covers but the atlas has
     // not rasterized yet. Collected during the glyph pass and folded into the
     // primary font's request set after the frame (a single atlas reload).
-    SmallBuffer!(int, 64) pendingCps;
+    SmallBuffer!(int, 64, true) pendingCps;
 
     while (!WindowShouldClose())
     {
