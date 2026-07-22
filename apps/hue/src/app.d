@@ -124,7 +124,15 @@ int main(string[] args)
         version (HueGui)
         {
             import gui : runGui;
-            return runGui(baseName(sourcePath), source, events[], labels, names, themes, idx);
+            import gui_preview : buildPreviewModel, PreviewModel;
+
+            // Markdown files open in a rendered preview (Tab toggles to raw);
+            // other files pass an empty model and use the raw view only.
+            PreviewModel preview;
+            if (lang == "markdown")
+                preview = buildPreviewModel(registry, cache, source);
+            return runGui(baseName(sourcePath), source, events[], labels, names,
+                themes, idx, preview);
         }
         else
         {
