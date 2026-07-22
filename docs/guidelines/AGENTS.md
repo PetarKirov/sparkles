@@ -27,15 +27,17 @@ library backing `sparkles:test-runner` — see the runner integration notes belo
 | `sparkles:test-runner`      | `libs/test-runner`        | General-purpose `unittest` runner (silly successor): parallel runtime tests plus `@ctfe`, `@betterC`, `@wasm`, and `@benchmark` modes                                                                                                                                                                                                                                                                                                                    |
 | `sparkles:test-utils`       | `libs/test-utils`         | Testing helpers: diff tools, temp-filesystem helpers, string helpers                                                                                                                                                                                                                                                                                                                                                                                     |
 | `sparkles:tree-sitter`      | `libs/tree-sitter`        | D bindings for the tree-sitter C runtime: ImportC surface, RAII wrappers with `TsError` reporting, grammar dlopen (grammars supplied by the nix `ts-grammars` bundle via `$SPARKLES_TS_GRAMMAR_PATH`)                                                                                                                                                                                                                                                    |
+| `sparkles:twoslash`         | `libs/twoslash`           | Twoslash render overlay on `sparkles:syntax`: the TypeScript-`twoslash` node model as opaque data (JSON via `sparkles:wired`) rendered as type-annotation overlays in HTML (the `.twoslash-*` contract + CSS), ANSI meta-lines, and the `hue --gui` raylib backend                                                                                                                                                                                       |
 | `sparkles:versions`         | `libs/versions`           | Design-by-Introspection versioning library (SemVer, DMD, CalVer, PyPI, Maven, Deb, …) with VERS/pURL interop                                                                                                                                                                                                                                                                                                                                             |
 
 Each library **should** be documented under `docs/libs/<name>/` as a
 [Diátaxis](https://diataxis.fr/) tree (`tutorial/`, `how-to/`, `reference/`,
 `explanation/`). Today `sparkles:base`, `sparkles:syntax`,
-`sparkles:test-runner`, and `sparkles:versions` are documented
+`sparkles:test-runner`, `sparkles:twoslash`, and `sparkles:versions` are documented
 ([`docs/libs/base/`](../libs/base/index.md),
 [`docs/libs/syntax/`](../libs/syntax/index.md),
 [`docs/libs/test-runner/`](../libs/test-runner/index.md),
+[`docs/libs/twoslash/`](../libs/twoslash/index.md),
 [`docs/libs/versions/`](../libs/versions/index.md)); `core-cli`, `test-utils`,
 `math`, `ghostty`, and `tree-sitter` do not yet have a `docs/libs/<name>/`
 tree. When you add or substantially extend a library, add/extend its docs in
@@ -64,7 +66,7 @@ Cross-cutting guides live in `docs/guidelines/`:
 ```
 sparkles/
 ├── flake.nix                       # Nix flake (devshell, `ci` package, checks)
-├── dub.sdl                         # Root package; declares the 14 sub-packages
+├── dub.sdl                         # Root package; declares the 15 sub-packages
 ├── apps/
 │   ├── ci/                         # `ci` helper (executable sub-package)
 │   │   ├── src/app.d               # Markdown example runner / verifier, link maintenance
@@ -106,6 +108,7 @@ sparkles/
 │   │   ├── term_unstyle.d          # Strip ANSI escapes
 │   │   └── ui/                     # box, header, table, live, tasklist, progress, meter, tree, layout, theme, osc_link, demo
 │   ├── versions/src/sparkles/versions/
+│   ├── twoslash/src/sparkles/twoslash/  # protocol (node model) + ingest (wired JSON) + overlay planner + render_html/render_ansi + style
 │   │   ├── schemes/                # semver.d, dmd.d, calver_*.d, pypi.d, maven.d, deb.d, … + registry.d
 │   │   ├── operations.d, ranges.d, parsing.d, traits.d, any.d
 │   │   ├── purl.d, vers.d          # pURL / VERS interop
