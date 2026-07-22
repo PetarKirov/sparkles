@@ -1,0 +1,139 @@
+{
+ "code": "// Ported from @shikijs/twoslash docs: the four custom-tag notations.\nimport { createHighlighterCore } from 'shiki/core'\nimport { createJavaScriptRegexEngine } from 'shiki/engine/javascript'\n\nconst highlighter = await createHighlighterCore({\n  engine: createJavaScriptRegexEngine()\n})\n\nconst a = 1\nconst b = 1\nconst c = 1\n",
+ "nodes": [
+  {
+   "type": "hover",
+   "text": "(alias) function createHighlighterCore(options: HighlighterCoreOptions<false>): Promise<HighlighterCore>\nimport createHighlighterCore",
+   "docs": "Create a Shiki core highlighter instance, with no languages or themes bundled.\nWasm and each language and theme must be loaded manually.",
+   "tags": [
+    [
+     "see",
+     "http://shiki.style/guide/bundles#fine-grained-bundle"
+    ]
+   ],
+   "start": 79,
+   "length": 21,
+   "target": "createHighlighterCore",
+   "line": 1,
+   "character": 9
+  },
+  {
+   "type": "hover",
+   "text": "(alias) function createJavaScriptRegexEngine(options?: JavaScriptRegexEngineOptions): RegexEngine\nimport createJavaScriptRegexEngine",
+   "docs": "Use the modern JavaScript RegExp engine to implement the OnigScanner.\n\nAs Oniguruma supports some features that can't be emulated using native JavaScript regexes, some\npatterns are not supported. Errors will be thrown when parsing TextMate grammars with\nunsupported patterns, and when the grammar includes patterns that use invalid Oniguruma syntax.\nSet `forgiving` to `true` to ignore these errors and skip any unsupported or invalid patterns.",
+   "start": 130,
+   "length": 27,
+   "target": "createJavaScriptRegexEngine",
+   "line": 2,
+   "character": 9
+  },
+  {
+   "type": "hover",
+   "text": "const highlighter: HighlighterCore",
+   "start": 198,
+   "length": 11,
+   "target": "highlighter",
+   "line": 4,
+   "character": 6
+  },
+  {
+   "type": "hover",
+   "text": "(alias) createHighlighterCore(options: HighlighterCoreOptions<false>): Promise<HighlighterCore>\nimport createHighlighterCore",
+   "docs": "Create a Shiki core highlighter instance, with no languages or themes bundled.\nWasm and each language and theme must be loaded manually.",
+   "tags": [
+    [
+     "see",
+     "http://shiki.style/guide/bundles#fine-grained-bundle"
+    ]
+   ],
+   "start": 218,
+   "length": 21,
+   "target": "createHighlighterCore",
+   "line": 4,
+   "character": 26
+  },
+  {
+   "type": "hover",
+   "text": "(property) HighlighterCoreOptions<false>.engine: Awaitable<RegexEngine>",
+   "docs": "Custom RegExp engine.",
+   "start": 244,
+   "length": 6,
+   "target": "engine",
+   "line": 5,
+   "character": 2
+  },
+  {
+   "type": "hover",
+   "text": "(alias) createJavaScriptRegexEngine(options?: JavaScriptRegexEngineOptions): RegexEngine\nimport createJavaScriptRegexEngine",
+   "docs": "Use the modern JavaScript RegExp engine to implement the OnigScanner.\n\nAs Oniguruma supports some features that can't be emulated using native JavaScript regexes, some\npatterns are not supported. Errors will be thrown when parsing TextMate grammars with\nunsupported patterns, and when the grammar includes patterns that use invalid Oniguruma syntax.\nSet `forgiving` to `true` to ignore these errors and skip any unsupported or invalid patterns.",
+   "start": 252,
+   "length": 27,
+   "target": "createJavaScriptRegexEngine",
+   "line": 5,
+   "character": 10
+  },
+  {
+   "type": "tag",
+   "name": "log",
+   "start": 286,
+   "length": 0,
+   "text": "Custom log message",
+   "line": 8,
+   "character": 0
+  },
+  {
+   "type": "hover",
+   "text": "const a: 1",
+   "start": 292,
+   "length": 1,
+   "target": "a",
+   "line": 8,
+   "character": 6
+  },
+  {
+   "type": "tag",
+   "name": "error",
+   "start": 298,
+   "length": 0,
+   "text": "Custom error message",
+   "line": 9,
+   "character": 0
+  },
+  {
+   "type": "hover",
+   "text": "const b: 1",
+   "start": 304,
+   "length": 1,
+   "target": "b",
+   "line": 9,
+   "character": 6
+  },
+  {
+   "type": "tag",
+   "name": "warn",
+   "start": 310,
+   "length": 0,
+   "text": "Custom warning message",
+   "line": 10,
+   "character": 0
+  },
+  {
+   "type": "hover",
+   "text": "const c: 1",
+   "start": 316,
+   "length": 1,
+   "target": "c",
+   "line": 10,
+   "character": 6
+  },
+  {
+   "type": "tag",
+   "name": "annotate",
+   "start": 322,
+   "length": 0,
+   "text": "Custom annotation message",
+   "line": 12,
+   "character": 0
+  }
+ ]
+}
