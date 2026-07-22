@@ -20,9 +20,11 @@ dependency "sparkles:core-cli" path="../.."
 configuration "application" {
     targetType "executable"
 
-    // The raylib GPU backend (src/gui.d, version(HueGui)) is compiled only by
-    // the `gui` configuration — keep the default terminal build raylib-free.
-    excludedSourceFiles "src/gui.d"
+    // The raylib GPU backend (src/gui.d, version(HueGui)) and its pure
+    // text-layout core (src/gui_text.d) are compiled only by the `gui`
+    // configuration (and gui_text.d by `unittest`) — the default terminal
+    // build has no use for them and stays raylib-free.
+    excludedSourceFiles "src/gui.d" "src/gui_text.d"
 }
 
 // Optional raylib GPU rendering backend (`hue --gui`). Pulls raylib (a system
