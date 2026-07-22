@@ -15,18 +15,22 @@ Errors are returned (never thrown). Not `@nogc` (`std.json` + wired allocate).
 - `enum NodeType : ubyte { hover, query, completion, error, highlight, tag }` —
   lowercase members map the wire `type` verbatim.
 - `struct Node` — flat POD: `type`, `start`, `length`, `line`, `character`, plus the
-  `@WireOptional` payload fields (`text`, `docs`, `level`, `code`, `id`,
-  `completions`, `completionsPrefix`, `name`). `end() => start + length`.
+  `@WireOptional` payload fields (`text`, `docs`, `tags`, `level`, `code`, `id`,
+  `completions`, `completionsPrefix`, `name`). `tags` is `string[][]` (each inner
+  `[name, text?]` — hover/query JSDoc tags). `end() => start + length`.
 - `struct Completion { string name; string kind; }`
 - `struct TwoslashReturn { string code; Node[] nodes; }`
 
 ## Overlay planner (`sparkles.twoslash.overlay`)
 
 - `TwoslashPlan planTwoslash(in TwoslashReturn tw)` — partition into
-  `inlineDecorations` (sorted outer-first) and `belowBlocks` (sorted by line).
+  `inlineDecorations` (sorted outer-first) and `belowBlocks` (sorted by line). Drops
+  the inline `hover` on a token that also has a `query` (the query supersedes it).
 - `hasInlineDecoration(NodeType)` / `hasBelowBlock(NodeType)` — classification.
 - `highlightSignature(ref TsConfigCache, sig, ref sink)` — reentrant popup
   re-highlight (degrades to plain text on a missing grammar). `@system`.
+- `withoutQuickinfoPrefix(sig)` — strips a leading TS quickinfo kind prefix
+  (`(property) `, …); a real leading paren (`(a: number) => void`) is preserved.
 
 ## Renderers
 
@@ -36,6 +40,19 @@ Errors are returned (never thrown). Not `@nogc` (`std.json` + wired allocate).
 - `renderTwoslashAnsi(… , in TwoslashAnsiOptions = …)` — terminal overlay
   (`TwoslashAnsiOptions { ColorDepth depth; bool italics, emitBackground, hovers; }`).
   `@system`.
+
+`TwoslashHtmlOptions` controls the HTML fidelity/chrome:
+
+| Field | Default | Effect |
+| ----- | ------- | ------ |
+| `classPrefix` | `"syn-"` | class prefix for the inner syntax spans |
+| `completionIcons` | `IconStyle.svg` | completion-kind icon set (`svg` \| `glyph` \| `none`) |
+| `customCompletionIcon` | `null` | per-kind icon override delegate (non-empty return wins) |
+| `tagIcons` | `IconStyle.svg` | `// @tag` line icon set (`svg` \| `glyph` \| `none`) |
+| `stripQuickinfoPrefix` | `false` | strip `(property) ` etc. from popup signatures |
+
+The `svg` icon sets are the reference `@shikijs/twoslash` icons, string-imported from
+`views/icons/{completions,tags}/*.svg` by `sparkles.twoslash.icons`.
 
 Both take the snippet already highlighted into `events` (over `tw.code`) and the
 `cache` used to re-highlight popup signatures. Neither is `@nogc`.
