@@ -3,7 +3,7 @@
 **Status:** shipped (render-side). Backend (`sparkles:dmd-lsp`, #124) is future work.
 
 `sparkles:twoslash` proves the **render surface** of a D-native Twoslash (umbrella
-issue #120) by consuming the *existing* TypeScript
+issue #120) by consuming the _existing_ TypeScript
 [`twoslash`](https://github.com/twoslashes/twoslash) node model as **opaque data**
 and rendering it as a type-annotation overlay over `sparkles:syntax` — in **HTML**,
 **ANSI**, and the **raylib GUI** (`hue --gui`). Using the real, working TS twoslash
@@ -17,16 +17,16 @@ Ported from the reference `twoslash-protocol`. A `TwoslashReturn` is the trimmed
 display `code` plus a flat `nodes[]`. Each node has `type`, byte `start`/`length`,
 and 0-based `line`/`character`, with a per-`type` payload:
 
-| `type`       | payload we use                        | rendering |
-| ------------ | ------------------------------------- | --------- |
-| `hover`      | `text` (type sig), `docs?`            | inline dotted-underline token + popup |
-| `query`      | `text`, `docs?`                       | below-line popup at the `^?` column |
-| `completion` | `completions[] {name,kind?}`, `completionsPrefix` | below-line list |
-| `error`      | `text`, `level?`, `code?`, `id?`      | inline wavy underline + below-line message |
-| `highlight`  | —                                     | inline highlighted box |
-| `tag`        | `name`, `text?`                       | below-line `// @name` annotation |
+| `type`       | payload we use                                    | rendering                                  |
+| ------------ | ------------------------------------------------- | ------------------------------------------ |
+| `hover`      | `text` (type sig), `docs?`                        | inline dotted-underline token + popup      |
+| `query`      | `text`, `docs?`                                   | below-line popup at the `^?` column        |
+| `completion` | `completions[] {name,kind?}`, `completionsPrefix` | below-line list                            |
+| `error`      | `text`, `level?`, `code?`, `id?`                  | inline wavy underline + below-line message |
+| `highlight`  | —                                                 | inline highlighted box                     |
+| `tag`        | `name`, `text?`                                   | below-line `// @name` annotation           |
 
-**Modeling choice:** one flat `Node` POD with a `NodeType` discriminant, *not* a
+**Modeling choice:** one flat `Node` POD with a `NodeType` discriminant, _not_ a
 `SumType`. `sparkles:wired` decodes a sum by probing every variant, and twoslash
 nodes overlap too much (shared `start`/`length`/`line`/`character`) to disambiguate
 that way. A flat struct decodes uniformly (present fields fill, absent ones default
@@ -43,7 +43,7 @@ backends:
   desc so an enclosing span opens before a nested one.
 - **below-line blocks** (`error`/`query`/`completion`/`tag`) — sorted by line.
 
-An `error` is *both*. `highlightSignature` re-highlights a popup type signature by
+An `error` is _both_. `highlightSignature` re-highlights a popup type signature by
 re-entering `sparkles:syntax` as TypeScript; on a missing grammar it degrades to
 plain text, so the overlay never fails.
 
@@ -60,7 +60,7 @@ with a decoration stack (outer) + one syntax `<span>` per segment (inner). Below
 blocks are flushed at the newline seam (after tags close, before the next line) so
 every output line stays valid markup — the same per-line-validity discipline as
 `sparkles:syntax`'s `renderHtml`, which is called **reentrantly** to re-highlight
-each popup type signature. Any below-blocks anchored *past* the last code line are
+each popup type signature. Any below-blocks anchored _past_ the last code line are
 flushed after the sweep — twoslash gives a trailing `@tag`/query (e.g. an
 `// @annotate:` at the very end) a line index one past the end. The ANSI backend
 applies the same trailing-flush.
@@ -139,11 +139,17 @@ the committed JSON, so nothing downstream needs node. Because `nodes` is opaque
 input, the same `{code, nodes}` shape comes from any twoslash-compatible source
 (twoslash today, `sparkles:dmd-lsp` later).
 
-`examples/compare-shiki.mjs` (also dev-only, same node corner) is the HTML/CSS
-fidelity check: it renders each source through Shiki's `rendererRich` and through
-`hue --twoslash --html`, then compares the `.twoslash-*` class vocabulary and the
-CSS-selector coverage (see §3). Run it after touching the HTML renderer or the
-stylesheet; it never runs at build time.
+Two dev-only checks live in the same node corner (never run at build time; run
+them after touching the HTML renderer or the stylesheet):
+
+- `examples/compare-shiki.mjs` — the **fidelity** check: renders each source
+  through Shiki's `rendererRich` and through `hue --twoslash --html`, then compares
+  the `.twoslash-*` class vocabulary and CSS-selector coverage (see §3).
+- `examples/visual-check.mjs` — the **geometry** check: lays the rendered overlay
+  out in headless Chromium and asserts the popup positioning invariants a markup
+  diff can't see (below-line popups detach by a uniform ~1ch; the completion list
+  anchors under the caret column − prefix). The devshell provides Chromium and
+  exports `$CHROME_BIN`; the check skips cleanly if no browser is present.
 
 ## Deferred
 
