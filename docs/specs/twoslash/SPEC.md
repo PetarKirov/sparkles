@@ -70,16 +70,35 @@ Emitted markup (abridged):
 ```
 <span class="twoslash-hover"><span class="twoslash-popup-container">
   <code class="twoslash-popup-code">{re-highlighted sig}</code>
-  <div class="twoslash-popup-docs">{docs}</div></span>{token}</span>
+  <div class="twoslash-popup-docs">{docs}</div>
+  <div class="twoslash-popup-docs twoslash-popup-docs-tags">
+    <span class="twoslash-popup-docs-tag"><span class="twoslash-popup-docs-tag-name">@param</span>
+      <span class="twoslash-popup-docs-tag-value">{text}</span></span></div></span>{token}</span>
 <span class="twoslash-highlighted">…</span>
 <span class="twoslash-error twoslash-error-level-error">…</span>
-<div class="twoslash-error-line …">{message}</div>
-<div class="twoslash-meta-line twoslash-query-line">…popup…</div>
-<ul class="twoslash-completion-list"><li>…matched/unmatched…</li></ul>
-<div class="twoslash-tag-line twoslash-tag-{name}-line">{text}</div>
+<div class="twoslash-meta-line twoslash-error-line …">{message}</div>
+<div class="twoslash-meta-line twoslash-query-line"><span class="twoslash-popup-container">
+  <div class="twoslash-popup-arrow"></div>…popup…</span></div>
+<ul class="twoslash-completion-list"><li>
+  <span class="twoslash-completions-icon completions-{kind}">{svg}</span>
+  <span><span class="twoslash-completions-matched">…</span><span class="twoslash-completions-unmatched">…</span></span></li></ul>
+<div class="twoslash-tag-line twoslash-tag-{name}-line">
+  <span class="twoslash-tag-icon tag-{name}-icon">{svg}</span>{text}</div>
 ```
 
-Output is content-only; the caller wraps it in `<pre class="syn-root twoslash">`.
+This tracks the `@shikijs/twoslash` `rendererRich` contract: per-kind completion
+**and** tag icons (the reference SVGs, string-imported; configurable to Unicode
+glyphs or off), the matched/unmatched split wrapped so the flex gap never bisects
+a candidate, the query-only connector **arrow**, and JSDoc `@tag` **chips**. A
+token carrying both a `hover` and a `query` renders the query only (the planner
+drops the redundant hover). `TwoslashHtmlOptions` also offers an opt-in
+quickinfo-prefix strip (`(property) ` → ``). Output is content-only; the caller
+wraps it in `<pre class="syn-root twoslash">`.
+
+Fidelity is guarded by `examples/compare-shiki.mjs` (§6): it diffs our `.twoslash-*`
+HTML-class vocabulary and CSS-selector coverage against Shiki's live `rendererRich`
+output over the corpus, allowlisting the deliberate model differences (we render
+queries/errors as below-line blocks, not Shiki's inline `query-persisted` popups).
 
 ## 4. ANSI overlay (`render_ansi.d`) — the differentiator
 
@@ -116,8 +135,19 @@ the committed JSON, so nothing downstream needs node. Because `nodes` is opaque
 input, the same `{code, nodes}` shape comes from any twoslash-compatible source
 (twoslash today, `sparkles:dmd-lsp` later).
 
+`examples/compare-shiki.mjs` (also dev-only, same node corner) is the HTML/CSS
+fidelity check: it renders each source through Shiki's `rendererRich` and through
+`hue --twoslash --html`, then compares the `.twoslash-*` class vocabulary and the
+CSS-selector coverage (see §3). Run it after touching the HTML renderer or the
+stylesheet; it never runs at build time.
+
 ## Deferred
 
+- **Markdown in docs/tags** — hover/query `docs` and `@tag` values render as escaped
+  text today. Rendering them as markdown (Shiki's `renderMarkdown`/`renderMarkdownInline`
+  seam) awaits the reusable `MdDoc`/`extractMarkdown` model in `sparkles:syntax`
+  (the `hue --gui` markdown-preview work); it slots in behind a new `MdDoc→HTML`
+  emitter with no bespoke parser here.
 - **Live VitePress swap** — depends on #122's VitePress highlighter seam (not built;
   the site still uses stock VitePress→Shiki with no `markdown.config` hook).
 - **Analyzer / D-native backend** — #124 (`sparkles:dmd-lsp`); this issue treats
