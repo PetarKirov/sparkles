@@ -39,13 +39,14 @@ import sparkles.syntax.ts.injection : TsConfigCache;
 
 import sparkles.base.smallbuffer : SmallBuffer;
 
-import sparkles.twoslash.completion_icons : completionIconGlyph, completionIconSvg;
+import sparkles.twoslash.icons : completionIconGlyph, completionIconSvg,
+    tagIconGlyph, tagIconSvg;
 import sparkles.twoslash.overlay : BelowBlock, InlineDecoration, highlightSignature,
     planTwoslash, TwoslashPlan, withoutQuickinfoPrefix;
 import sparkles.twoslash.protocol : Completion, Node, NodeType, TwoslashReturn;
 
 /// How completion-kind icons are rendered before each candidate.
-enum CompletionIconStyle
+enum IconStyle
 {
     svg,   /// the reference inline SVGs (default)
     glyph, /// a single Unicode glyph per kind
@@ -65,13 +66,17 @@ struct TwoslashHtmlOptions
     bool stripQuickinfoPrefix = false;
 
     /// Which built-in completion-icon set to draw (default the reference SVGs).
-    CompletionIconStyle completionIcons = CompletionIconStyle.svg;
+    IconStyle completionIcons = IconStyle.svg;
 
     /// Optional per-kind icon override: given the completion `kind`, return the
     /// icon markup to emit inside the `twoslash-completions-icon` span. A
     /// non-empty return wins over `completionIcons`; an empty return (or a null
     /// delegate) falls back to the chosen style. `null` by default.
     const(char)[] delegate(scope const(char)[] kind) @safe customCompletionIcon = null;
+
+    /// Which built-in custom-tag icon set to draw on `// @tag` lines
+    /// (`@log`/`@error`/`@warn`/`@annotate`; default the reference SVGs).
+    IconStyle tagIcons = IconStyle.svg;
 }
 
 /**
@@ -316,7 +321,7 @@ private void writeBelowBlock(Writer)(ref Writer w, in ResolvedTheme theme,
     final switch (node.type)
     {
         case NodeType.error:
-            put(w, `<div class="twoslash-error-line `);
+            put(w, `<div class="twoslash-meta-line twoslash-error-line `);
             put(w, errorLevelClass(node.level));
             put(w, `">`);
             writeHtmlEscaped(w, node.text);
@@ -345,6 +350,7 @@ private void writeBelowBlock(Writer)(ref Writer w, in ResolvedTheme theme,
             foreach (char c; node.name)
                 put(w, c);
             put(w, `-line">`);
+            writeTagIcon(w, node.name, options);
             writeHtmlEscaped(w, node.text.length ? node.text : node.name);
             put(w, `</div>`);
             break;
@@ -370,13 +376,11 @@ private void writeCompletion(Writer)(ref Writer w, in Node node, in TwoslashHtml
         put(w, `<span>`);
         const pfx = node.completionsPrefix.length <= c.name.length
             && startsWith(c.name, node.completionsPrefix) ? node.completionsPrefix.length : 0;
-        if (pfx)
-        {
-            put(w, `<span class="twoslash-completions-matched">`);
-            writeHtmlEscaped(w, c.name[0 .. pfx]);
-            put(w, `</span>`);
-        }
-        put(w, `<span class="twoslash-completions-unmatched">`);
+        // Always emit both spans (matched empty when the name doesn't start with
+        // the prefix), matching @shikijs/twoslash.
+        put(w, `<span class="twoslash-completions-matched">`);
+        writeHtmlEscaped(w, c.name[0 .. pfx]);
+        put(w, `</span><span class="twoslash-completions-unmatched">`);
         writeHtmlEscaped(w, c.name[pfx .. $]);
         put(w, `</span></span></li>`);
     }
@@ -396,14 +400,34 @@ private void writeCompletionIcon(Writer)(ref Writer w, scope const(char)[] kind,
         icon = custom;
     else final switch (options.completionIcons)
     {
-        case CompletionIconStyle.svg:   icon = completionIconSvg(k);   break;
-        case CompletionIconStyle.glyph: icon = completionIconGlyph(k); break;
-        case CompletionIconStyle.none:  return; // no icon span at all
+        case IconStyle.svg:   icon = completionIconSvg(k);   break;
+        case IconStyle.glyph: icon = completionIconGlyph(k); break;
+        case IconStyle.none:  return; // no icon span at all
     }
     put(w, `<span class="twoslash-completions-icon completions-`);
     foreach (char ch; k) // shiki: whitespace in the kind → '-' for the class name
         put(w, (ch == ' ' || ch == '\t' || ch == '\n') ? '-' : ch);
     put(w, `">`);
+    put(w, icon);
+    put(w, `</span>`);
+}
+
+/// Emits `<span class="twoslash-tag-icon tag-{name}-icon">{icon}</span>` per the
+/// chosen `tagIcons` style (`none` emits nothing), matching @shikijs/twoslash.
+private void writeTagIcon(Writer)(ref Writer w, scope const(char)[] name,
+    in TwoslashHtmlOptions options)
+{
+    const(char)[] icon;
+    final switch (options.tagIcons)
+    {
+        case IconStyle.svg:   icon = tagIconSvg(name);   break;
+        case IconStyle.glyph: icon = tagIconGlyph(name); break;
+        case IconStyle.none:  return;
+    }
+    put(w, `<span class="twoslash-tag-icon tag-`);
+    foreach (char ch; name)
+        put(w, (ch == ' ' || ch == '\t' || ch == '\n') ? '-' : ch);
+    put(w, `-icon">`);
     put(w, icon);
     put(w, `</span>`);
 }
@@ -566,7 +590,7 @@ version (unittest)
     assert(renderTw(tw, null) ==
         `x = <span class="twoslash-error twoslash-error-level-error">y</span>` ~
         "\n" ~
-        `<div class="twoslash-error-line twoslash-error-level-error">no y</div>`);
+        `<div class="twoslash-meta-line twoslash-error-line twoslash-error-level-error">no y</div>`);
 }
 
 @("render_html.tagBelowLine")
@@ -576,9 +600,36 @@ version (unittest)
         Node(type: NodeType.tag, start: 0, length: 0, line: 0, character: 0,
             name: "log", text: "hello"),
     ]);
-    assert(renderTw(tw, null) ==
+    // Icons off → golden is just the tag line.
+    auto registry = GrammarRegistry.fromDirs([]);
+    auto cache = TsConfigCache.create(&registry, LabelSet.standard());
+    SmallBuffer!(char, 512) buf;
+    renderTwoslashHtml(tw, null, testTheme(), cache, buf,
+        TwoslashHtmlOptions(tagIcons: IconStyle.none));
+    assert(buf[] ==
         "hi\n" ~
         `<div class="twoslash-tag-line twoslash-tag-log-line">hello</div>`);
+}
+
+@("render_html.tagIcon")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+
+    const tw = TwoslashReturn(code: "hi\n", nodes: [
+        Node(type: NodeType.tag, start: 0, length: 0, line: 0, character: 0,
+            name: "annotate", text: "note"),
+    ]);
+    // Default (svg): a per-name tag-icon span with an inline <svg>.
+    assert(canFind(renderTw(tw, null),
+        `twoslash-tag-annotate-line"><span class="twoslash-tag-icon tag-annotate-icon"><svg`));
+
+    auto registry = GrammarRegistry.fromDirs([]);
+    auto cache = TsConfigCache.create(&registry, LabelSet.standard());
+    SmallBuffer!(char, 512) g;
+    renderTwoslashHtml(tw, null, testTheme(), cache, g,
+        TwoslashHtmlOptions(tagIcons: IconStyle.glyph));
+    assert(canFind(g[], `<span class="twoslash-tag-icon tag-annotate-icon">✎</span>`));
 }
 
 @("render_html.trailingTagPastLastLine")
@@ -590,7 +641,13 @@ version (unittest)
         Node(type: NodeType.tag, start: 0, length: 0, line: 2, character: 0,
             name: "annotate", text: "trailing note"),
     ]);
-    assert(renderTw(tw, null) ==
+    // Icons off → the golden isolates the trailing-flush behaviour.
+    auto registry = GrammarRegistry.fromDirs([]);
+    auto cache = TsConfigCache.create(&registry, LabelSet.standard());
+    SmallBuffer!(char, 512) buf;
+    renderTwoslashHtml(tw, null, testTheme(), cache, buf,
+        TwoslashHtmlOptions(tagIcons: IconStyle.none));
+    assert(buf[] ==
         "a\n" ~
         `<div class="twoslash-tag-line twoslash-tag-annotate-line">trailing note</div>`);
 }
@@ -610,7 +667,7 @@ version (unittest)
     auto cache = TsConfigCache.create(&registry, LabelSet.standard());
     SmallBuffer!(char, 1024) buf;
     renderTwoslashHtml(tw, null, testTheme(), cache, buf,
-        TwoslashHtmlOptions(completionIcons: CompletionIconStyle.none));
+        TwoslashHtmlOptions(completionIcons: IconStyle.none));
     assert(buf[] ==
         "a\n" ~
         `<ul class="twoslash-completion-list">` ~
@@ -639,7 +696,7 @@ version (unittest)
     // Glyph style: same class, a text glyph.
     SmallBuffer!(char, 512) g;
     renderTwoslashHtml(tw, null, testTheme(), cache, g,
-        TwoslashHtmlOptions(completionIcons: CompletionIconStyle.glyph));
+        TwoslashHtmlOptions(completionIcons: IconStyle.glyph));
     assert(canFind(g[], `<span class="twoslash-completions-icon completions-method">ƒ</span>`));
 
     // Custom override wins over the style.
