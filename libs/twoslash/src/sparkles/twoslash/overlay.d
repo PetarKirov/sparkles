@@ -103,10 +103,22 @@ TwoslashPlan planTwoslash(in TwoslashReturn tw)
 {
     import std.algorithm.sorting : sort;
 
+    // A `^?` query yields BOTH a hover and a query node on the same token; the
+    // query's below-line popup supersedes the hover's inline popup, so the
+    // redundant inline hover is dropped (matches @shikijs/twoslash).
+    bool queryCoversToken(size_t start, size_t line)
+    {
+        foreach (ref const n; tw.nodes)
+            if (n.type == NodeType.query && n.start == start && n.line == line)
+                return true;
+        return false;
+    }
+
     TwoslashPlan plan;
     foreach (i, ref const n; tw.nodes)
     {
-        if (hasInlineDecoration(n.type))
+        if (hasInlineDecoration(n.type)
+            && !(n.type == NodeType.hover && queryCoversToken(n.start, n.line)))
             plan.inlineDecorations ~= InlineDecoration(
                 start: n.start, end: n.end, line: n.line, character: n.character,
                 kind: n.type, node: i);
@@ -208,6 +220,35 @@ unittest
     assert(plan.belowBlocks[0].line == 0);
     assert(plan.belowBlocks[1].line == 1);
     assert(plan.belowBlocks[2].line == 1);
+}
+
+@("overlay.planTwoslash.hoverSuppressedByQuery")
+@system unittest
+{
+    // A `^?` yields overlapping hover + query on one token; the inline hover
+    // decoration is dropped, the query below-block kept.
+    const tw = TwoslashReturn(code: "let b = 1\n", nodes: [
+        Node(type: NodeType.hover, start: 4, length: 1, line: 0, character: 4,
+            text: "let b: number"),
+        Node(type: NodeType.query, start: 4, length: 1, line: 0, character: 4,
+            text: "let b: number"),
+    ]);
+    auto plan = planTwoslash(tw);
+    assert(plan.inlineDecorations.length == 0, "hover should be suppressed by the query");
+    assert(plan.belowBlocks.length == 1);
+    assert(plan.belowBlocks[0].kind == NodeType.query);
+}
+
+@("overlay.planTwoslash.hoverKeptWithoutQuery")
+@system unittest
+{
+    // A hover with no query on the same token survives.
+    const tw = TwoslashReturn(code: "let b = 1\n", nodes: [
+        Node(type: NodeType.hover, start: 4, length: 1, line: 0, character: 4, text: "T"),
+    ]);
+    auto plan = planTwoslash(tw);
+    assert(plan.inlineDecorations.length == 1);
+    assert(plan.inlineDecorations[0].kind == NodeType.hover);
 }
 
 @("overlay.planTwoslash.outerFirstOnTies")
