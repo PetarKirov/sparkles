@@ -34,6 +34,36 @@ import sparkles.twoslash.protocol : Node, NodeType, TwoslashReturn;
 /// Type signatures are TypeScript regardless of the snippet's own dialect.
 enum popupLanguage = "typescript";
 
+/**
+Strips a leading TypeScript quickinfo $(I kind) prefix — `(property) `,
+`(parameter) `, `(alias) `, `(local var) `, … — from a signature `sig`.
+
+Only a parenthesized run of ASCII letters and spaces immediately followed by a
+space is removed, so a signature that legitimately opens with a paren (a
+function type like `(a: number) => void`, a tuple) is left untouched (its
+content has a `:`/`,`/digit and so fails the letters-only test). Returns a slice
+of `sig`. Shared so every backend can offer the same opt-in.
+*/
+scope const(char)[] withoutQuickinfoPrefix(return scope const(char)[] sig)
+    @safe pure nothrow @nogc
+{
+    if (sig.length < 3 || sig[0] != '(')
+        return sig;
+    size_t i = 1;
+    bool sawLetter;
+    for (; i < sig.length; ++i)
+    {
+        const c = sig[i];
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'))
+            sawLetter = true;
+        else if (c != ' ')
+            break;
+    }
+    if (sawLetter && i + 1 < sig.length && sig[i] == ')' && sig[i + 1] == ' ')
+        return sig[i + 2 .. $];
+    return sig;
+}
+
 /// `true` iff `kind` decorates an inline span (hover / highlight / error).
 bool hasInlineDecoration(NodeType kind) @safe pure nothrow @nogc
 {
@@ -178,6 +208,19 @@ version (unittest)
                 Node(type: NodeType.tag, start: 0, length: 0, line: 0, character: 0, name: "log"),
             ]);
     }
+}
+
+@("overlay.withoutQuickinfoPrefix")
+@safe pure nothrow @nogc
+unittest
+{
+    assert(withoutQuickinfoPrefix("(property) title: string") == "title: string");
+    assert(withoutQuickinfoPrefix("(local var) x: number") == "x: number");
+    assert(withoutQuickinfoPrefix("(alias) function ref(): void") == "function ref(): void");
+    // Not a quickinfo prefix — a real leading paren must be preserved.
+    assert(withoutQuickinfoPrefix("(a: number) => void") == "(a: number) => void");
+    assert(withoutQuickinfoPrefix("const a: 1") == "const a: 1");
+    assert(withoutQuickinfoPrefix("()") == "()");
 }
 
 @("overlay.classification")
