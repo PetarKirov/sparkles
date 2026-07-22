@@ -37,9 +37,14 @@ import gui_ansi : Attr;
 // Selective import avoids sparkles.syntax.Color clashing with raylib.Color:
 // bare `Color` is unambiguously raylib's; the theme color type is reached only
 // through StyleSpec.fg/bg (never named here).
-import sparkles.syntax : HighlightEvent, LabelSet, Theme, StyleSpec, TextAttr, UnderlineStyle,
-    ResolvedTheme, resolveTheme, byStyledLine, RgbColor, toRgb;
+import sparkles.syntax : HighlightEvent, LabelId, LabelSet, Theme, StyleSpec, TextAttr, UnderlineStyle,
+    ResolvedTheme, resolveTheme, byStyledLine, byStyledSpan, RgbColor, toRgb;
 import sparkles.base.smallbuffer : SmallBuffer;
+
+import sparkles.syntax.ts.injection : TsConfigCache;
+import sparkles.twoslash.protocol : Completion, Node, NodeType, TwoslashReturn;
+import sparkles.twoslash.overlay : BelowBlock, highlightSignature, InlineDecoration,
+    planTwoslash, TwoslashPlan;
 
 /// The window's default font size in pixels (Ctrl-±/theme cycling arrive in M3).
 private enum defaultFontSize = 18;
@@ -908,6 +913,313 @@ private ThumbGeometry thumbGeometry(size_t total, int visibleRows, long top,
 /// An RGB triple as a raylib color with an explicit alpha (for overlays).
 private Color alpha(RgbColor c, ubyte a) pure nothrow @nogc @trusted
     => Color(c.r, c.g, c.b, a);
+
+/// The margin left of the code column, in cells (breathing room for decorations).
+private enum twoslashPadCells = 1;
+
+/**
+`hue --gui --twoslash`: the raylib overlay backend. Draws the highlighted
+snippet, then the twoslash decorations on top — highlight spans as translucent
+tint boxes, error spans as a wavy underline, and the below-line blocks
+(error / query / completion / tag) as annotation rows interleaved between the
+code lines. Hover popups (with the re-highlighted type signature) appear on
+mouse-over, the GPU counterpart of the HTML `:hover` popup.
+
+`theme` is already resolved and `cache` drives the reentrant popup highlight;
+unlike `runGui` this view does not cycle themes (a twoslash payload is a fixed
+annotated snippet, not a theme browser).
+*/
+int runGuiTwoslash(
+    string title,
+    in TwoslashReturn tw,
+    const(HighlightEvent)[] events,
+    LabelSet labels,
+    in ResolvedTheme theme,
+    ref TsConfigCache cache,
+) @system
+{
+    import std.stdio : stderr;
+    import std.string : toStringz;
+    import std.process : environment;
+    import std.conv : to;
+
+    const shotPath = environment.get("HUE_GUI_SCREENSHOT", "");
+    int fontSize = defaultFontSize;
+    try
+        fontSize = environment.get("HUE_GUI_FONTSIZE", null).length
+            ? environment.get("HUE_GUI_FONTSIZE").to!int : defaultFontSize;
+    catch (Exception)
+    {
+    }
+
+    InitWindow(900, 640, ("hue twoslash — " ~ title).toStringz);
+    scope (exit) CloseWindow();
+    SetWindowState(ConfigFlags.FLAG_WINDOW_RESIZABLE);
+    SetTargetFPS(60);
+    SetExitKey(KeyboardKey.KEY_ESCAPE);
+
+    FontSet fonts;
+    if (!FontSet.tryLoad("monospace", fontSize, fonts))
+    {
+        stderr.writeln("hue --gui: could not load a monospace font (is fontconfig available?)");
+        return 1;
+    }
+    scope (exit) fonts.unload();
+
+    const pageFg = toRgb(theme.defaults.fg, hardFallbackFg);
+    const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
+    const errColor = RgbColor(0xd4, 0x56, 0x56);
+    const warnColor = RgbColor(0xc3, 0x7d, 0x0d);
+    const tagColor = RgbColor(0x37, 0x72, 0xcf);
+    const highlightTint = Color(195, 125, 13, 45); // --twoslash-highlighted-bg
+
+    const code = tw.code;
+    auto plan = planTwoslash(tw);
+
+    // Per-line styled runs, bucketed for a top-to-bottom draw with annotation
+    // rows interleaved (so `y` cannot be `line * cellH` — it accumulates).
+    const lineTotal = lineCount(code) + 1;
+    StyledRun[][] runsByLine = new StyledRun[][](lineTotal);
+    foreach (ls; byStyledLine(code, events))
+        runsByLine[ls.line] ~= StyledRun(ls.span.start, ls.span.end, ls.span.label);
+
+    SmallBuffer!(char, 4096) buf;
+    float scrollY = 0;
+    int shotFrame = 0;
+
+    while (!WindowShouldClose())
+    {
+        const cellW = fonts.cellW();
+        const cellH = fonts.cellH();
+        const padPx = cast(float)(twoslashPadCells * cellW);
+        scrollY -= GetMouseWheelMove() * 3 * cellH;
+        if (scrollY < 0)
+            scrollY = 0;
+
+        BeginDrawing();
+        ClearBackground(rl(pageBg));
+
+        // Hover token rects captured this frame for the mouse hit-test.
+        HoverHit[] hovers;
+
+        float y = -scrollY;
+        foreach (line; 0 .. lineTotal)
+        {
+            // Code runs for this line.
+            float x = padPx;
+            foreach (ref const r; runsByLine[line])
+            {
+                const run = code[r.start .. r.end];
+                if (run.length == 0)
+                    continue;
+                const spec = theme[r.label];
+                const wpx = cast(int)(columnWidth(run) * cellW);
+                if (spec.bg.isSet)
+                    DrawRectangle(cast(int) x, cast(int) y, wpx, cellH, rl(toRgb(spec.bg, pageBg)));
+                drawText(fonts, cstrOf(buf, run), x, y, mapStyle(spec), rl(toRgb(spec.fg, pageFg)));
+                x += wpx;
+            }
+
+            // Inline decorations on this line.
+            foreach (ref const d; plan.inlineDecorations)
+            {
+                if (d.line != line)
+                    continue;
+                const dx = cast(int)(padPx + d.character * cellW);
+                const dw = cast(int)(columnWidth(code[d.start .. d.end]) * cellW);
+                final switch (d.kind)
+                {
+                    case NodeType.highlight:
+                        DrawRectangle(dx, cast(int) y, dw, cellH, highlightTint);
+                        break;
+                    case NodeType.error:
+                        drawWavyUnderline(dx, cast(int)(y + cellH - 2), dw, rl(errColor));
+                        break;
+                    case NodeType.hover:
+                        hovers ~= HoverHit(dx, cast(int) y, dw, cellH, d.node);
+                        break;
+                    case NodeType.query:
+                    case NodeType.completion:
+                    case NodeType.tag:
+                        break;
+                }
+            }
+            y += cellH;
+
+            // Below-line annotation rows.
+            foreach (ref const b; plan.belowBlocks)
+            {
+                if (b.line != line)
+                    continue;
+                drawBelowRow(fonts, buf, code, tw.nodes[b.node], padPx, y, cellW, cellH,
+                    theme, cache, pageFg, errColor, warnColor, tagColor);
+                y += cellH;
+            }
+        }
+
+        // Hover popups, drawn last (on top) for whichever token the mouse is over.
+        const mouse = GetMousePosition();
+        foreach (ref const h; hovers)
+        {
+            if (mouse.x < h.x || mouse.x > h.x + h.w || mouse.y < h.y || mouse.y > h.y + h.h)
+                continue;
+            drawPopup(fonts, buf, tw.nodes[h.node], cast(float) h.x, cast(float)(h.y + h.h),
+                cellW, cellH, theme, cache, pageFg, pageBg);
+        }
+
+        EndDrawing();
+
+        if (shotPath.length)
+        {
+            // Warm up ~20 frames before capturing (the glyph atlas uploads over
+            // the first frames and a headless GL swap lags the draw — see runGui).
+            if (++shotFrame == 20)
+                TakeScreenshot(shotPath.toStringz);
+            if (shotFrame >= 21)
+                break;
+        }
+    }
+    return 0;
+}
+
+/// A styled run within one line (byte offsets into the whole source).
+private struct StyledRun
+{
+    size_t start, end;
+    LabelId label;
+}
+
+/// A hover token's on-screen rect + its node index, for the mouse hit-test.
+private struct HoverHit
+{
+    int x, y, w, h;
+    size_t node;
+}
+
+/// Draws styled text `text` (highlighted into `ev`) run-by-run starting at
+/// `(x, y)`; returns the ending pen x. Used for popup / query type signatures.
+private float drawStyledRuns(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
+    scope const(char)[] text, const(HighlightEvent)[] ev, float x, float y,
+    in ResolvedTheme theme, RgbColor fallbackFg) @system
+{
+    const cellW = fonts.cellW();
+    float cx = x;
+    foreach (sp; byStyledSpan(ev))
+    {
+        const run = text[sp.start .. sp.end];
+        if (run.length == 0)
+            continue;
+        const spec = theme[sp.label];
+        drawText(fonts, cstrOf(buf, run), cx, y, mapStyle(spec), rl(toRgb(spec.fg, fallbackFg)));
+        cx += columnWidth(run) * cellW;
+    }
+    return cx;
+}
+
+/// One below-line annotation row for a query / error / completion / tag node.
+private void drawBelowRow(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
+    scope const(char)[] code, in Node node, float padPx, float y, int cellW, int cellH,
+    in ResolvedTheme theme, ref TsConfigCache cache, RgbColor pageFg,
+    RgbColor errColor, RgbColor warnColor, RgbColor tagColor) @system
+{
+    const x = padPx + node.character * cellW;
+    final switch (node.type)
+    {
+        case NodeType.error:
+            const col = errIsWarning(node.level) ? warnColor : errColor;
+            drawText(fonts, cstrOf(buf, node.text), x, y, TextStyle(0), rl(col));
+            break;
+
+        case NodeType.query:
+            SmallBuffer!HighlightEvent sig;
+            highlightSignature(cache, node.text, sig);
+            drawStyledRuns(fonts, buf, node.text, sig[], x, y, theme, pageFg);
+            break;
+
+        case NodeType.completion:
+            float cx = x;
+            foreach (i, ref const Completion c; node.completions)
+            {
+                const label = i == 0 ? cstrOf(buf, c.name) : cstrOf(buf, joinPrefix(c.name));
+                drawText(fonts, label, cx, y, TextStyle(0), rl(mix(pageFg, theme.defaults.bg.isSet
+                        ? toRgb(theme.defaults.bg, pageFg) : pageFg)));
+                cx += (columnWidth(c.name) + 2) * cellW;
+            }
+            break;
+
+        case NodeType.tag:
+            drawText(fonts, cstrOf(buf, tagText(node)), x, y, TextStyle(0), rl(tagColor));
+            break;
+
+        case NodeType.hover:
+        case NodeType.highlight:
+            break;
+    }
+}
+
+/// The floating hover popup: a bordered box with the re-highlighted type
+/// signature and (if present) the docs, anchored at `(x, y)`.
+private void drawPopup(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf, in Node node,
+    float x, float y, int cellW, int cellH, in ResolvedTheme theme, ref TsConfigCache cache,
+    RgbColor pageFg, RgbColor pageBg) @system
+{
+    SmallBuffer!HighlightEvent sig;
+    highlightSignature(cache, node.text, sig);
+
+    const sigW = cast(int)(columnWidth(node.text) * cellW) + cellW;
+    const hasDocs = node.docs.length > 0;
+    const boxH = hasDocs ? cellH * 2 + 6 : cellH + 6;
+    const boxColor = mix(pageBg, pageFg); // subtle border
+
+    DrawRectangle(cast(int) x - 2, cast(int) y - 1, sigW + 4, boxH, rl(boxColor));
+    DrawRectangle(cast(int) x - 1, cast(int) y, sigW + 2, boxH - 2, rl(pageBg));
+    drawStyledRuns(fonts, buf, node.text, sig[], x + 3, y + 2, theme, pageFg);
+    if (hasDocs)
+        drawText(fonts, cstrOf(buf, node.docs), x + 3, y + 2 + cellH, TextStyle(0),
+            rl(mix(pageFg, pageBg)));
+}
+
+/// A red wavy underline approximated by alternating 2px segments.
+private void drawWavyUnderline(int x, int y, int w, Color color) @system
+{
+    for (int i = 0; i < w; i += 4)
+    {
+        const seg = i + 2 <= w ? 2 : w - i;
+        DrawRectangle(x + i, y + (i / 2 % 2), seg, 1, color);
+    }
+}
+
+private bool errIsWarning(scope const(char)[] level) @safe pure nothrow @nogc
+    => level == "warning" || level == "suggestion" || level == "message";
+
+/// A join-with-leading-space label for completion candidates after the first.
+private const(char)[] joinPrefix(scope const(char)[] name) @safe nothrow
+{
+    static char[128] b;
+    b[0] = ' ';
+    const n = name.length < 126 ? name.length : 126;
+    b[1 .. 1 + n] = name[0 .. n];
+    return b[0 .. 1 + n];
+}
+
+/// The `@name text` label for a tag node, in a reused buffer.
+private const(char)[] tagText(in Node node) @safe nothrow
+{
+    static char[256] b;
+    size_t i = 0;
+    b[i++] = '@';
+    foreach (c; node.name)
+        if (i < b.length)
+            b[i++] = c;
+    if (node.text.length && i + 1 < b.length)
+    {
+        b[i++] = ' ';
+        foreach (c; node.text)
+            if (i < b.length)
+                b[i++] = c;
+    }
+    return b[0 .. i];
+}
 
 /// `IsKeyPressed` plus auto-repeat while held, so PageDown/j/k etc. repeat.
 private bool pressed(int key) @system

@@ -339,6 +339,21 @@ int runTwoslashMode(in CliParams cli, string themeName) @system
         events ~= HighlightEvent.sourceSpan(0, tw.code.length);
     }
 
+    if (cli.gui)
+    {
+        version (HueGui)
+        {
+            import gui : runGuiTwoslash;
+            return runGuiTwoslash(baseName(cli.twoslash), tw, events[], labels, theme, cache);
+        }
+        else
+        {
+            stderr.writeln("hue: this build has no GUI support; " ~
+                "rebuild the gui configuration: dub build :hue -c gui");
+            return 1;
+        }
+    }
+
     if (cli.html)
     {
         SmallBuffer!char output;
