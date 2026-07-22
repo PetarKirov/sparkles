@@ -5,7 +5,8 @@
   "description": "Dev-only fixture generator: runs the reference TypeScript `twoslash` over src/*.ts(x) to regenerate the committed *.twoslash.json overlays. Never part of the sparkles build (which is node-free).",
   "scripts": {
     "regen": "node regen.mjs",
-    "compare": "node compare-shiki.mjs"
+    "compare": "node compare-shiki.mjs",
+    "visual": "node visual-check.mjs"
   },
   "dependencies": {
     "twoslash": "^0.3.9",

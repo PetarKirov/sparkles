@@ -171,6 +171,12 @@
             # devshell-only package — the `nix run .#ci` wrapper deliberately
             # omits it to keep the .#ci closure small.
             pkgs.valgrind
+
+            # Headless Chromium for the sparkles:twoslash visual-regression check
+            # (libs/twoslash/examples/visual-check.mjs): it lays out the rendered
+            # HTML overlay and asserts popup geometry. Dev/CI-only ($CHROME_BIN
+            # exported below); never part of the hermetic build.
+            pkgs.chromium
           ]
           # perf is Linux-only; the harness/profiling flow is too (reads /proc).
           ++ lib.optionals pkgs.stdenv.isLinux [ pkgs.perf ]
@@ -201,6 +207,9 @@
               # `dub run --single` linking (`libs "dw" "elf"` / `libs "pfm"`).
               export LIBRARY_PATH="${pkgs.elfutils.out}/lib:${pkgs.libpfm}/lib''${LIBRARY_PATH:+:$LIBRARY_PATH}"
               export LD_LIBRARY_PATH="${pkgs.elfutils.out}/lib:${pkgs.libpfm}/lib''${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+              # Browser for the sparkles:twoslash visual-regression check.
+              export CHROME_BIN=${pkgs.chromium}/bin/chromium
             ''}
 
             ${lib.optionalString greeting "figlet 'sparkles : *'"}
