@@ -91,3 +91,23 @@
 # ui-layout/android-constraintlayout.md) currently 522s at the origin under
 # Cloudflare; the same citation is already mirrored at android.googlesource.com
 ^https?://androidx\.tech/
+# sourceforge.net and *.sourceforge.io block automated checkers from GitHub
+# Actions' shared IPs with HTTP 403 (same pattern as registry.khronos.org /
+# docs.vulkan.org / isocpp.org above; both are live major project sites for a
+# real browser). Cited for the libpfm4 source browser
+# (research/cpu-pmu/event-naming.md) and the Asymptote docs
+# (research/manim/asymptote.md), among other research surveys.
+^https?://([^/]+\.)?sourceforge\.net/
+^https?://([^/]+\.)?sourceforge\.io/
+# code.haverbeke.berlin (Marijn Haverbeke's site, cited in parsing surveys)
+# 403s GitHub Actions' shared IPs; live for a real browser.
+^https?://([^/]+\.)?haverbeke\.berlin/
+# cs.cmu.edu (CMU course/paper pages cited across parsing/PL research) times out
+# under GitHub Actions' concurrency (live + 200 locally).
+^https?://(www\.)?cs\.cmu\.edu/
+# earthly.dev (monorepo-tooling/earthly survey) times out under GitHub Actions'
+# concurrency (live + 200 locally).
+^https?://([^/]+\.)?earthly\.dev/
+# connectivity.fb.com (Facebook's ent ORM home, cited in research/sql/ent.md)
+# redirects to facebook.com/connectivity, which 400s automated checkers.
+^https?://([^/]+\.)?fb\.com
