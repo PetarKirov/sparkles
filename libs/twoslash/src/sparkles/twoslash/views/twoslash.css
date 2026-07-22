@@ -25,6 +25,8 @@
   --twoslash-warn-bg: #c37d0d20;
   --twoslash-tag-color: #3772cf;
   --twoslash-tag-bg: #3772cf20;
+  --twoslash-tag-annotate-color: #1ba673;
+  --twoslash-tag-annotate-bg: #1ba67320;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -231,6 +233,18 @@
   color: var(--twoslash-tag-color);
 }
 
+.twoslash .twoslash-tag-line .twoslash-tag-icon {
+  width: 1.1em;
+  flex: none;
+  color: inherit;
+}
+
+.twoslash .twoslash-tag-line .twoslash-tag-icon svg {
+  width: 1.1em;
+  height: 1.1em;
+  display: block;
+}
+
 .twoslash .twoslash-tag-line.twoslash-tag-error-line {
   background-color: var(--twoslash-error-bg);
   border-left: 3px solid var(--twoslash-error-color);
@@ -241,4 +255,10 @@
   background-color: var(--twoslash-warn-bg);
   border-left: 3px solid var(--twoslash-warn-color);
   color: var(--twoslash-warn-color);
+}
+
+.twoslash .twoslash-tag-line.twoslash-tag-annotate-line {
+  background-color: var(--twoslash-tag-annotate-bg);
+  border-left: 3px solid var(--twoslash-tag-annotate-color);
+  color: var(--twoslash-tag-annotate-color);
 }
