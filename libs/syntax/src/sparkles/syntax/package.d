@@ -19,6 +19,7 @@ module sparkles.syntax;
 public import sparkles.syntax.color;
 public import sparkles.syntax.event;
 public import sparkles.syntax.label;
+public import sparkles.syntax.md.model;
 public import sparkles.syntax.render.ansi;
 public import sparkles.syntax.render.html;
 public import sparkles.syntax.theme;
