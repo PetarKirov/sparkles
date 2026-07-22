@@ -27,6 +27,10 @@ import sparkles.raylib_text : TextStyle, FontSet, drawText;
 // hue-specific viewport/search layout (raylib-free, so it stays testable).
 import gui_text : columnWidth, lineCount, Match, buildLineStarts, findMatches;
 
+// Markdown-preview model + layout (raylib-free) and the ANSI attribute bits.
+import gui_preview : PreviewModel, PreviewLine, PreviewRun, BandKind, layoutPreview;
+import gui_ansi : Attr;
+
 // Selective import avoids sparkles.syntax.Color clashing with raylib.Color:
 // bare `Color` is unambiguously raylib's; the theme color type is reached only
 // through StyleSpec.fg/bg (never named here).
@@ -70,6 +74,7 @@ int runGui(
     const(string)[] names,
     immutable(Theme)[] themes,
     size_t startIdx,
+    PreviewModel preview = PreviewModel.init,
 ) @system
 {
     import std.stdio : stderr;
@@ -110,11 +115,38 @@ int runGui(
     }
     scope (exit) fonts.unload();
 
+    // Markdown-preview state (M4). A markdown file opens in preview by default;
+    // Tab toggles to the raw highlighted-source view. `HUE_GUI_PREVIEW=0/1`
+    // pins the initial mode for deterministic golden captures.
+    bool showPreview = preview.present;
+    if (environment.get("HUE_GUI_PREVIEW", "") == "0")
+        showPreview = false;
+    else if (environment.get("HUE_GUI_PREVIEW", "") == "1")
+        showPreview = preview.present;
+    PreviewLine[] plines;
+    int lastWidthCols = -1;
+
     // The live theme state: ↑/↓ browse `themes`, re-resolving and repainting —
     // the GPU counterpart of hue's terminal Previewer.
     size_t themeIdx = startIdx;
     ResolvedTheme current;
     RgbColor pageFg, pageBg, gutterFg;
+
+    // Preview columns available for the current window/font (leaves a small
+    // margin + the scrollbar). Re-laying-out on change keeps wrapping correct.
+    int widthCols()
+    {
+        const w = (GetScreenWidth() - 16) / fonts.cellW();
+        return w < 8 ? 8 : w;
+    }
+
+    void relayout()
+    {
+        if (!showPreview || !preview.present)
+            return;
+        lastWidthCols = widthCols();
+        plines = layoutPreview(preview, current, pageFg, pageBg, lastWidthCols);
+    }
 
     void applyTheme(size_t i)
     {
@@ -125,12 +157,13 @@ int runGui(
         gutterFg = mix(pageFg, pageBg); // muted line numbers
         SetWindowTitle(text("hue — ", title, " — ", names[i],
             " (", i + 1, "/", names.length, ")").toStringz);
+        relayout(); // preview colors follow the theme
     }
 
     applyTheme(themeIdx);
 
-    const total = lineCount(source);
-    const gutterCols = digitCount(total) + 1; // digits + one padding cell
+    const srcTotal = lineCount(source);
+    const gutterCols = digitCount(srcTotal) + 1; // digits + one padding cell
     const lineStarts = buildLineStarts(source);
 
     SmallBuffer!(char, 4096) buf; // reused, NUL-terminated for raylib
@@ -178,6 +211,11 @@ int runGui(
         const screenW = GetScreenWidth();
         const screenH = GetScreenHeight();
         const visibleRows = screenH / cellH;
+
+        // Reflow the preview when the window width (in columns) changes.
+        if (showPreview && widthCols() != lastWidthCols)
+            relayout();
+        const total = showPreview ? plines.length : srcTotal;
         const maxTop = total > visibleRows ? cast(long)(total - visibleRows) : 0;
 
         const inputMode = mode != Mode.normal;
@@ -268,8 +306,16 @@ int runGui(
                 jumpToMatch(shift ? curMatch + matches.length - 1 : curMatch + 1, visibleRows);
             }
 
-            // Enter an input mode: '/' search, 'g' goto-line.
-            if (IsKeyPressed(KeyboardKey.KEY_SLASH))
+            // Tab toggles markdown preview ↔ raw highlighted source.
+            if (preview.present && IsKeyPressed(KeyboardKey.KEY_TAB))
+            {
+                showPreview = !showPreview;
+                lastWidthCols = -1; // force a reflow on next frame
+                relayout();
+            }
+
+            // Enter an input mode: '/' search (raw view only), 'g' goto-line.
+            if (!showPreview && IsKeyPressed(KeyboardKey.KEY_SLASH))
             {
                 mode = Mode.search;
                 query.clear();
@@ -285,10 +331,17 @@ int runGui(
         top = top < 0 ? 0 : (top > maxTop ? maxTop : top);
         const topLine = cast(size_t) top;
 
-        const gutterPx = cast(int)(gutterCols * cellW);
-
         BeginDrawing();
         ClearBackground(rl(pageBg));
+
+        if (showPreview)
+        {
+            drawPreview(fonts, plines, topLine, visibleRows, cellW, cellH,
+                pageFg, pageBg, gutterFg, buf);
+        }
+        else
+        {
+        const gutterPx = cast(int)(gutterCols * cellW);
 
         // Line-number gutter (independent of runs, so blank lines still number).
         foreach (row; 0 .. visibleRows)
@@ -342,6 +395,7 @@ int runGui(
             DrawRectangle(mx, my, m.cols * cellW, cellH,
                 i == curMatch ? currentMatchTint : matchTint);
         }
+        } // end raw (!showPreview) view
 
         // Scrollbar: track + a thumb sized/positioned to the viewport.
         if (maxTop > 0)
@@ -382,6 +436,81 @@ int runGui(
     }
 
     return 0;
+}
+
+/// Paint the markdown preview: `plines` index-culled to the viewport. Each line
+/// draws its full-width band, then `quoteDepth` gutter bars, its muted `leader`
+/// (bullet/marker), and its styled runs (per-run background + `drawText`). The
+/// gutter/scrollbar/search of the raw view are intentionally absent (glow-like).
+private void drawPreview(
+    ref FontSet fonts,
+    const(PreviewLine)[] plines,
+    size_t topLine,
+    int visibleRows,
+    int cellW,
+    int cellH,
+    RgbColor pageFg,
+    RgbColor pageBg,
+    RgbColor gutterFg,
+    ref SmallBuffer!(char, 4096) buf,
+) @system
+{
+    const screenW = GetScreenWidth();
+    foreach (row; 0 .. visibleRows)
+    {
+        const li = topLine + row;
+        if (li >= plines.length)
+            break;
+        const pl = plines[li];
+        const y = row * cast(float) cellH;
+
+        // Full-width band behind the line (code panel / header / table row).
+        if (pl.band != BandKind.none && pl.band != BandKind.rule)
+            DrawRectangle(0, cast(int) y, screenW, cellH, rl(pl.bandBg));
+
+        // Quote gutter: one `│` bar per depth, at the far left (2 cols each).
+        foreach (d; 0 .. pl.quoteDepth)
+            drawText(fonts, cstrOf(buf, "│"), d * 2 * cast(float) cellW, y,
+                TextStyle(0), rl(gutterFg));
+
+        const contentCol = pl.quoteDepth * 2 + pl.indentCols;
+        float x = contentCol * cast(float) cellW;
+
+        // Leader (bullet / number / checkbox / heading marker), muted.
+        if (pl.leader.length)
+        {
+            drawText(fonts, cstrOf(buf, pl.leader), x, y, TextStyle(0), rl(gutterFg));
+            x += columnWidth(pl.leader) * cellW;
+        }
+
+        // Styled runs.
+        foreach (r; pl.runs)
+        {
+            if (r.text.length == 0)
+                continue;
+            const wpx = cast(int)(columnWidth(r.text) * cellW);
+            if (r.hasBg)
+                DrawRectangle(cast(int) x, cast(int) y, wpx, cellH, rl(r.bg));
+            drawText(fonts, cstrOf(buf, r.text), x, y, mapAttrs(r.attrs), rl(r.fg));
+            x += wpx;
+        }
+    }
+}
+
+/// Maps `gui_ansi.Attr` bits (used by the preview model) onto raylib-text's
+/// `TextStyle` — the preview counterpart of `mapStyle`.
+private TextStyle mapAttrs(ubyte attrs) pure nothrow @nogc @safe
+{
+    TextStyle t;
+    if (attrs & Attr.bold)
+        t.bits |= TextStyle.bold;
+    if (attrs & Attr.italic)
+        t.bits |= TextStyle.italic;
+    if (attrs & Attr.underline)
+        t.bits |= TextStyle.underline;
+    if (attrs & Attr.strikethrough)
+        t.bits |= TextStyle.strikethrough;
+    return t;
 }
 
 /// `IsKeyPressed` plus auto-repeat while held, so PageDown/j/k etc. repeat.
