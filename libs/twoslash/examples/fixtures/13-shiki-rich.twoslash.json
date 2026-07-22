@@ -1,0 +1,167 @@
+{
+ "code": "// Ported from @shikijs/twoslash docs (rendererRich showcase): a Readonly<T>\n// query, a read-only-assignment error, and a completion list in one snippet.\ninterface Todo {\n  title: string\n}\n\nconst todo: Readonly<Todo> = {\n  title: 'Delete inactive users'.toUpperCase(),\n}\n\ntodo.title = 'Hello'\n\nNumber.parseInt('123', 10)\n",
+ "nodes": [
+  {
+   "type": "hover",
+   "text": "interface Todo",
+   "start": 165,
+   "length": 4,
+   "target": "Todo",
+   "line": 2,
+   "character": 10
+  },
+  {
+   "type": "hover",
+   "text": "(property) Todo.title: string",
+   "start": 174,
+   "length": 5,
+   "target": "title",
+   "line": 3,
+   "character": 2
+  },
+  {
+   "type": "hover",
+   "text": "const todo: Readonly<Todo>",
+   "start": 197,
+   "length": 4,
+   "target": "todo",
+   "line": 6,
+   "character": 6
+  },
+  {
+   "type": "hover",
+   "text": "type Readonly<T> = { readonly [P in keyof T]: T[P]; }",
+   "docs": "Make all properties in T readonly",
+   "start": 203,
+   "length": 8,
+   "target": "Readonly",
+   "line": 6,
+   "character": 12
+  },
+  {
+   "type": "hover",
+   "text": "interface Todo",
+   "start": 212,
+   "length": 4,
+   "target": "Todo",
+   "line": 6,
+   "character": 21
+  },
+  {
+   "type": "hover",
+   "text": "(property) title: string",
+   "start": 224,
+   "length": 5,
+   "target": "title",
+   "line": 7,
+   "character": 2
+  },
+  {
+   "type": "query",
+   "text": "(property) title: string",
+   "start": 224,
+   "length": 5,
+   "target": "title",
+   "line": 7,
+   "character": 2
+  },
+  {
+   "type": "hover",
+   "text": "(method) String.toUpperCase(): string",
+   "docs": "Converts all the alphabetic characters in a string to uppercase.",
+   "start": 255,
+   "length": 11,
+   "target": "toUpperCase",
+   "line": 7,
+   "character": 33
+  },
+  {
+   "type": "hover",
+   "text": "const todo: Readonly<Todo>",
+   "start": 273,
+   "length": 4,
+   "target": "todo",
+   "line": 10,
+   "character": 0
+  },
+  {
+   "type": "error",
+   "start": 278,
+   "length": 5,
+   "code": 2540,
+   "filename": "index.ts",
+   "id": "err-2540-302-5",
+   "text": "Cannot assign to 'title' because it is a read-only property.",
+   "level": "error",
+   "line": 10,
+   "character": 5
+  },
+  {
+   "type": "hover",
+   "text": "(property) title: any",
+   "start": 278,
+   "length": 5,
+   "target": "title",
+   "line": 10,
+   "character": 5
+  },
+  {
+   "type": "hover",
+   "text": "var Number: NumberConstructor",
+   "docs": "An object that represents a number of any kind. All JavaScript numbers are 64-bit floating-point numbers.",
+   "start": 295,
+   "length": 6,
+   "target": "Number",
+   "line": 12,
+   "character": 0
+  },
+  {
+   "type": "hover",
+   "text": "(method) NumberConstructor.parseInt(string: string, radix?: number): number",
+   "docs": "Converts A string to an integer.",
+   "tags": [
+    [
+     "param",
+     "string A string to convert into a number."
+    ],
+    [
+     "param",
+     "radix A value between 2 and 36 that specifies the base of the number in `string`.\nIf this argument is not supplied, strings with a prefix of '0x' are considered hexadecimal.\nAll other strings are considered decimal."
+    ]
+   ],
+   "start": 302,
+   "length": 8,
+   "target": "parseInt",
+   "line": 12,
+   "character": 7
+  },
+  {
+   "type": "completion",
+   "start": 303,
+   "length": 0,
+   "completions": [
+    {
+     "name": "parseFloat",
+     "kind": "method",
+     "kindModifiers": "declare",
+     "sortText": "11"
+    },
+    {
+     "name": "parseInt",
+     "kind": "method",
+     "kindModifiers": "declare",
+     "sortText": "11"
+    },
+    {
+     "name": "prototype",
+     "kind": "property",
+     "kindModifiers": "declare",
+     "sortText": "11"
+    }
+   ],
+   "completionsPrefix": "p",
+   "line": 12,
+   "character": 8
+  }
+ ]
+}

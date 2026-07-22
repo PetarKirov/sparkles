@@ -100,7 +100,10 @@ annotation rows; hovers → floating popup on mouse-over (the GPU analogue of CS
 
 `libs/twoslash/examples/` holds twoslash-annotated sources in `src/*.ts(x)` — one
 per feature (hover, `^?` query, `^|` completion, `@errors`, `^^^` highlight,
-`@annotate` tag, generics, JSDoc, multi-file, `---cut---`, TSX, async) — and the
+`@annotate` tag, generics, JSDoc, multi-file, `---cut---`, TSX, async), plus two
+ported from the `@shikijs/twoslash` docs (its `rendererRich` showcase — a
+`Readonly<T>` query + read-only error + completion in one snippet — and the
+four custom-tag notations `@log`/`@error`/`@warn`/`@annotate`) — and the
 committed `fixtures/*.twoslash.json` overlays generated from them (the trimmed
 `{code, nodes}` slice the renderer reads). `examples/regen.sh` is a real,
 developer-only generator: it `npm install`s the reference TypeScript `twoslash`
