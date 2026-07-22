@@ -60,7 +60,10 @@ with a decoration stack (outer) + one syntax `<span>` per segment (inner). Below
 blocks are flushed at the newline seam (after tags close, before the next line) so
 every output line stays valid markup — the same per-line-validity discipline as
 `sparkles:syntax`'s `renderHtml`, which is called **reentrantly** to re-highlight
-each popup type signature.
+each popup type signature. Any below-blocks anchored *past* the last code line are
+flushed after the sweep — twoslash gives a trailing `@tag`/query (e.g. an
+`// @annotate:` at the very end) a line index one past the end. The ANSI backend
+applies the same trailing-flush.
 
 Emitted markup (abridged):
 

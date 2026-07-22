@@ -141,6 +141,14 @@ ref Writer renderTwoslashAnsi(Writer)(
         lineStart = lineEnd + 1;
         ++line;
     }
+
+    // Trailing below-blocks anchored past the final code line — twoslash gives a
+    // trailing `@tag`/query a line index one past the end. Flush them below the
+    // code (sorted by line, so this preserves their order).
+    foreach (ref const b; below[])
+        if (b.line > line)
+            writeMeta(w, theme, cache, tw.nodes[b.node], styled, options);
+
     return w;
 }
 
@@ -390,6 +398,19 @@ version (unittest)
     ]);
     assert(renderTw(tw, null, TwoslashAnsiOptions(depth: ColorDepth.none)) ==
         "hi\n@log hello\n");
+}
+
+@("render_ansi.trailingTagPastLastLine")
+@system unittest
+{
+    // A trailing `@tag` (twoslash's shape for `// @annotate: …` at the very end)
+    // anchors one line past the last code line — flush it below the code.
+    const tw = TwoslashReturn(code: "hi\n", nodes: [
+        Node(type: NodeType.tag, start: 0, length: 0, line: 2, character: 0,
+            name: "annotate", text: "trailing note"),
+    ]);
+    assert(renderTw(tw, null, TwoslashAnsiOptions(depth: ColorDepth.none)) ==
+        "hi\n@annotate trailing note\n");
 }
 
 @("render_ansi.completionList")
