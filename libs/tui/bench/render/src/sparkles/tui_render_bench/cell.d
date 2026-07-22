@@ -8,22 +8,26 @@ so neither the line-diff nor the cell-grid PoC is flattered by the encoding: bot
 receive the identical target grid and differ only in how they turn a sequence of
 grids into bytes.
 
-Style is `sparkles.base.term_style.TermStyle` (truecolor-capable `Color` fg/bg,
-`TextAttr`, underline shape). The scene paints with RGB, which the benchmark must
-exercise to be realistic (spec C1). SGR emission uses the same absolute
-reset-then-set encoder every renderer shares, so byte streams stay comparable
-across PoCs (and with the C calibration shim).
+Style is compact `TermStyle!false` (truecolor `Color` fg/bg, `TextAttr`, and an
+`UnderlineStyle` shape — the shaped layout minus the underline color, 8 bytes).
+The scene paints with RGB, which the benchmark must exercise to be realistic
+(spec C1). SGR emission uses the same absolute reset-then-set encoder every
+renderer shares, so byte streams stay comparable across PoCs (and with the C
+calibration shim).
 +/
 module sparkles.tui_render_bench.cell;
 
 public import sparkles.base.term_color : Color;
-public import sparkles.base.term_style : TermStyle, TextAttr, UnderlineStyle;
+public import sparkles.base.term_style : CompactTermStyle, TextAttr, TermStyle, UnderlineStyle;
 
 import sparkles.base.term_color : ColorChannel, ColorDepth, writeSgrColorPacked;
 import sparkles.tui_render_bench.sink : Sink;
 
-// Layout constants matching `sparkles.base.term_style` packing (bits 0–25 color,
-// 26–31 attrs/underline). Kept local so the emit path never materializes Color.
+/// Compact cell style: 2 packed words (shaped layout minus underline color).
+alias CellStyle = CompactTermStyle;
+
+// Layout constants matching compact `TermStyle!false` packing (bits 0–25 color,
+// 26–31 attrs in words[0] / underline shape in words[1]).
 private enum uint colorBits = 26;
 private enum uint colorMask = (1u << colorBits) - 1;
 private enum ubyte attrsMask = 0x3F;
@@ -41,13 +45,13 @@ struct Cell
     char[maxCellBytes] bytes = ' ';
     ubyte len = 1;
     ubyte width = 1;
-    TermStyle style;
+    CellStyle style;
 
     /// The grapheme cluster's bytes.
     const(char)[] grapheme() const @safe pure nothrow @nogc return => bytes[0 .. len];
 
     /// Set this cell to a single code point (encoded to UTF-8) with `width`.
-    void setCodepoint(dchar cp, ubyte w, in TermStyle st) @safe pure nothrow @nogc
+    void setCodepoint(dchar cp, ubyte w, in CellStyle st) @safe pure nothrow @nogc
     {
         char[4] buf = void;
         const n = encodeUtf8(cp, buf);
@@ -58,7 +62,7 @@ struct Cell
     }
 
     /// Set this cell to an already-encoded cluster slice (truncated to fit).
-    void setBytes(scope const(char)[] cluster, ubyte w, in TermStyle st) @safe pure nothrow @nogc
+    void setBytes(scope const(char)[] cluster, ubyte w, in CellStyle st) @safe pure nothrow @nogc
     {
         const n = cluster.length > maxCellBytes ? maxCellBytes : cluster.length;
         bytes[0 .. n] = cluster[0 .. n];
@@ -148,7 +152,7 @@ struct Grid
 
     /// Write a styled string starting at `(x, y)`, advancing by each code
     /// point's display width; stops at the right edge. Returns the next free x.
-    ushort putText(ushort x, ushort y, scope const(char)[] text, in TermStyle st) @safe pure nothrow @nogc
+    ushort putText(ushort x, ushort y, scope const(char)[] text, in CellStyle st) @safe pure nothrow @nogc
     {
         import std.utf : byDchar;
 
@@ -172,7 +176,7 @@ struct Grid
     }
 
     /// Fill a horizontal run `[x, x+n)` on row `y` with a styled space.
-    void fill(ushort x, ushort y, ushort n, in TermStyle st) @safe pure nothrow @nogc
+    void fill(ushort x, ushort y, ushort n, in CellStyle st) @safe pure nothrow @nogc
     {
         foreach (i; 0 .. n)
         {
@@ -232,7 +236,7 @@ ubyte encodeUtf8(dchar cp, ref char[4] buf) @safe pure nothrow @nogc
 /// Colors go through `writeSgrColorPacked` on the raw `TermStyle` words — no
 /// `Color` is materialized on this path. Unset/default colors are omitted (the
 /// leading `0` already selected them).
-void writeStyle(ref Sink s, in TermStyle st) @safe nothrow
+void writeStyle(ref Sink s, in CellStyle st) @safe nothrow
 {
     s.put("\x1b[0");
     const w0 = st.packed0;
@@ -244,7 +248,8 @@ void writeStyle(ref Sink s, in TermStyle st) @safe nothrow
         s.put(";2");
     if (attrs & TextAttr.italic.bits)
         s.put(";3");
-    // Underline shape (scene uses `single`; extended shapes use colon form).
+    // Underline shape lives in words[1] (scene uses `single`; extended shapes
+    // use the colon sub-parameter form).
     final switch (cast(UnderlineStyle)((w1 >> colorBits) & underlineMask))
     {
         case UnderlineStyle.none:
@@ -269,8 +274,6 @@ void writeStyle(ref Sink s, in TermStyle st) @safe nothrow
         s.put(";7");
     if (attrs & TextAttr.hidden.bits)
         s.put(";8");
-    if (attrs & TextAttr.strikethrough.bits)
-        s.put(";9");
     writeStyleColorPacked(s, w0, ColorChannel.foreground);
     writeStyleColorPacked(s, w1, ColorChannel.background);
     s.put("m");
@@ -329,8 +332,8 @@ void calibColorPayloadPacked(uint packedWord, out ubyte a, out ubyte b, out ubyt
 }
 
 /// Canonical attribute bits for calibration / VT oracle: bold=1, dim=2,
-/// italic=4, underline=8, reverse=16. Reads packed words only.
-ubyte calibAttrs(in TermStyle st) @safe pure nothrow @nogc
+/// italic=4, underline=8, reverse=16. Underline shape is read from words[1].
+ubyte calibAttrs(in CellStyle st) @safe pure nothrow @nogc
 {
     const attrs = cast(ubyte)((st.packed0 >> colorBits) & attrsMask);
     ubyte a;
@@ -347,8 +350,8 @@ ubyte calibAttrs(in TermStyle st) @safe pure nothrow @nogc
     return a;
 }
 
-/// Fill C-ABI color + attr fields from a `TermStyle` without unpacking `Color`.
-void calibFillStyle(in TermStyle st, out ubyte fgKind, out ubyte fr, out ubyte fg, out ubyte fb,
+/// Fill C-ABI color + attr fields from a compact style without unpacking `Color`.
+void calibFillStyle(in CellStyle st, out ubyte fgKind, out ubyte fr, out ubyte fg, out ubyte fb,
     out ubyte bgKind, out ubyte br, out ubyte bg, out ubyte bb, out ubyte attrs)
     @safe pure nothrow @nogc
 {
@@ -365,12 +368,14 @@ unittest
 {
     Grid g;
     g.resize(10, 2);
-    const st = TermStyle(fg: Color.fromRgb(255, 0, 0), attrs: TextAttr.bold);
+    const st = CellStyle(fg: Color.fromRgb(255, 0, 0), attrs: TextAttr.bold);
     const nx = g.putText(0, 0, "hi", st);
     assert(nx == 2);
     assert(g.at(0, 0).grapheme == "h");
     assert(g.at(1, 0).style.attrs == TextAttr.bold);
     assert(g.at(2, 0).grapheme == " "); // untouched blank
+    static assert(Cell.sizeof == 26);
+    static assert(CellStyle.sizeof == 8);
 }
 
 @("cell.writeStyle.rgbAndAttrs")
@@ -378,7 +383,7 @@ unittest
 unittest
 {
     Sink s;
-    writeStyle(s, TermStyle(
+    writeStyle(s, CellStyle(
         fg: Color.fromRgb(10, 20, 30),
         attrs: TextAttr.bold,
         underline: UnderlineStyle.single));

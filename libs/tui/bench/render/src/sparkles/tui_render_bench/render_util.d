@@ -10,7 +10,7 @@ line-diff renderer compares and re-emits).
 module sparkles.tui_render_bench.render_util;
 
 import sparkles.base.term_control : writeCursorTo;
-import sparkles.tui_render_bench.cell : Cell, Grid, TermStyle, writeStyle;
+import sparkles.tui_render_bench.cell : Cell, CellStyle, Grid, writeStyle;
 import sparkles.tui_render_bench.sink : Sink;
 
 /// Emit a row's cells (style coalesced per run, wide-glyph continuations
@@ -19,7 +19,7 @@ import sparkles.tui_render_bench.sink : Sink;
 void serializeRow(ref Sink s, in Cell[] row) @safe nothrow
 {
     bool first = true;
-    TermStyle cur;
+    CellStyle cur;
     foreach (const ref Cell c; row)
     {
         if (c.width == 0)
@@ -47,5 +47,5 @@ void paintFull(ref Sink s, in Grid g) @safe nothrow
 {
     foreach (ushort y; 0 .. g.rows)
         paintRow(s, g, y);
-    writeStyle(s, TermStyle.init);
+    writeStyle(s, CellStyle.init);
 }

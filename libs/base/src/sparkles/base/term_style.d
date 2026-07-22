@@ -12,10 +12,11 @@ import sparkles.base.term_color : Color, ColorChannel, ColorDepth,
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// The text attributes of a resolved style, as a typed bitflag set. `underline`
-/// is deliberately NOT here: it is a first-class $(LREF UnderlineStyle) (it
-/// carries a shape and an independent color). The typed `|`/`&`/`~` operators
-/// keep a set a `TextAttr` (no `cast` back from the integer promotion an `enum`
-/// would give).
+/// is deliberately NOT here — on both $(LREF TermStyle) forms it is a first-class
+/// $(LREF UnderlineStyle) stored in its own word (the shaped form additionally
+/// carries an independent underline color). Bit 3 is $(LREF strikethrough) in
+/// both modes. The typed `|`/`&`/`~` operators keep a set a `TextAttr` (no `cast`
+/// back from the integer promotion an `enum` would give).
 struct TextAttr
 {
     ubyte bits; /// the raw flag bits
@@ -63,58 +64,77 @@ enum UnderlineStyle : ubyte
 
 // ── TermStyle bit-packing ──
 //
-// The three independent colors, the text attributes, and the underline shape
-// are inlined into three 32-bit words rather than composed as sub-type fields.
-// A color needs 26 bits (a 2-bit `Color.Kind` tag over a 24-bit payload —
-// palette index or packed RGB), so one color fits per word with room for the
-// two small attribute groups alongside it (see the layout table on `TermStyle`).
+// Colors and attributes are inlined into 32-bit words rather than composed as
+// sub-type fields. A color needs 26 bits (a 2-bit `Color.Kind` tag over a
+// 24-bit payload), so one color fits per word with room for a small attribute
+// group alongside it. See the layout tables on $(LREF TermStyle).
 
 private enum uint colorBits = 26;               // bits 0-25 of a word hold one packed color
 private enum uint colorMask = (1u << colorBits) - 1;
 private enum ubyte attrsMask = 0x3F;            // 6 `TextAttr` flag bits
-private enum ubyte underlineMask = 0x07;        // 3 bits — `UnderlineStyle` 0-5
+private enum ubyte underlineMask = 0x07;        // 3 bits — `UnderlineStyle` 0-5 (both modes, in words[1])
 
 // The Color <-> 26-bit codec (packColor/unpackColor) and the bit-decoding SGR
 // emitter (writeSgrColorPacked) live in sparkles.base.term_color, which owns
 // the Color vocabulary; they are imported at the top of this module.
 
-/// The resolved terminal style of one span/block: fore/background/underline
-/// colors plus text attributes and underline shape, bit-packed into three
-/// 32-bit words. `TermStyle.init` (all words zero) is the terminal default
-/// (nothing set). The getters/setters below materialize the `Color` /
-/// `TextAttr` / `UnderlineStyle` domain types on demand; the packed layout is:
-///
-/// $(TABLE
-///   $(TR $(TH word) $(TH bits 0-25) $(TH bits 26-31))
-///   $(TR $(TD `words[0]`) $(TD `fg`) $(TD `attrs` (6 flags)))
-///   $(TR $(TD `words[1]`) $(TD `bg`) $(TD `underline` (3 bits) + 3 spare))
-///   $(TR $(TD `words[2]`) $(TD `underlineColor`) $(TD 6 spare)))
-///
-/// Storage is `align(1)` so a cell grid can pack styles without 4-byte padding
-/// between cells (the hot path for sparse terminal diffs). Equality compares the
-/// three packed words (canonical packing ⇒ field-wise equality). Shared by
-/// `sparkles.base.styled_template` and `sparkles.syntax` (which aliases it as
-/// `StyleSpec`).
-align(1) struct TermStyle
+/**
+The resolved terminal style of one span/block.
+
+The only difference between the two forms is the independent underline color:
+`attrs` (bit 3 = strikethrough) and the `underline` shape live in the same bit
+positions in both, so every getter/setter except `underlineColor` is shared.
+
+$(PARAM shapedUnderline)
+    $(LIST
+        * `true` (default) — full design: `UnderlineStyle` shapes $(I plus) an
+            independent underline color, bit-packed into $(B three) words. Used by
+            `styled_template` and `sparkles.syntax` (`StyleSpec`).
+        * `false` — compact cell-grid design: `UnderlineStyle` shapes but $(I no)
+            underline color, bit-packed into $(B two) words (8 bytes). Used by
+            `tui-render-bench` cells.
+    )
+
+Shaped layout (`shapedUnderline: true`):
+
+$(TABLE
+    $(TR $(TH word) $(TH bits 0-25) $(TH bits 26-31))
+    $(TR $(TD 0) $(TD `fg`) $(TD `attrs` (6 flags; bit 3 = strikethrough)))
+    $(TR $(TD 1) $(TD `bg`) $(TD `underline` shape (3 bits) + 3 spare))
+    $(TR $(TD 2) $(TD `underlineColor`) $(TD 6 spare)))
+)
+
+Compact layout (`shapedUnderline: false`) — the shaped layout minus word 2:
+
+$(TABLE
+    $(TR $(TH word) $(TH bits 0-25) $(TH bits 26-31))
+    $(TR $(TD 0) $(TD `fg`) $(TD `attrs` (6 flags; bit 3 = strikethrough)))
+    $(TR $(TD 1) $(TD `bg`) $(TD `underline` shape (3 bits) + 3 spare)))
+)
+
+Storage is `align(1)` so cell grids pack styles without padding.
+Bare $(LREF TermStyle) is an alias of the shaped form (`TermStyleImpl!true`).
+*/
+align(1) struct TermStyleImpl(bool shapedUnderline = true)
 {
-    /// The three packed words. `align(1)` so a cell grid packs styles without
-    /// 4-byte padding between cells (the hot path for sparse terminal diffs).
-    /// Stored as a bare array (not a `ubyte`/`uint` union): a union whose
-    /// *active* member is not the first-declared one serializes to the first
-    /// member's initializer when a value is baked into static data via CTFE —
-    /// so a `static immutable TermStyle` (every `sparkles.syntax` builtin theme
-    /// is one) would silently zero out, dropping all foreground colors and
-    /// attributes at render time.
-    align(1) private uint[3] _words;
+    enum wordCount = shapedUnderline ? 3 : 2;
+
+    /// The packed words. `align(1)` so a cell grid packs styles without
+    /// padding between cells. Stored as a bare array (not a `ubyte`/`uint`
+    /// union): a union whose *active* member is not the first-declared one
+    /// serializes to the first member's initializer when a value is baked
+    /// into static data via CTFE — so a `static immutable TermStyle` (every
+    /// `sparkles.syntax` builtin theme is one) would silently zero out,
+    /// dropping all foreground colors and attributes at render time.
+    align(1) private uint[wordCount] _words;
 
 @safe pure nothrow @nogc:
 
-    /// Construct from the logical fields. Named arguments (`TermStyle(fg: …,
-    /// attrs: …)`) bind to these parameters, so every existing named-arg call
-    /// site keeps compiling unchanged. This is a `static opCall` rather than a
-    /// constructor because D forbids a struct constructor whose parameters all
-    /// have defaults (it would be a disallowed default constructor).
-    static TermStyle opCall(
+    /// Construct from the logical fields. Named arguments bind to these
+    /// parameters. This is a `static opCall` rather than a constructor
+    /// because D forbids a struct constructor whose parameters all have
+    /// defaults.
+    static TermStyleImpl opCall(
         Color fg = Color.init,
         Color bg = Color.init,
         Color underlineColor = Color.init,
@@ -122,10 +142,12 @@ align(1) struct TermStyle
         UnderlineStyle underline = UnderlineStyle.none,
     )
     {
-        TermStyle s;
+        TermStyleImpl s;
         s._words[0] = packColor(fg) | (cast(uint)(attrs.bits & attrsMask) << colorBits);
         s._words[1] = packColor(bg) | (cast(uint)(underline & underlineMask) << colorBits);
-        s._words[2] = packColor(underlineColor);
+        static if (shapedUnderline)
+            s._words[2] = packColor(underlineColor);
+        // else: compact drops underlineColor (no word 2).
         return s;
     }
 
@@ -143,14 +165,25 @@ align(1) struct TermStyle
     pragma(inline, true)
     void bg(Color c) scope { _words[1] = packColor(c) | (_words[1] & ~colorMask); }
 
-    /// Underline color (SGR 58/59); `unset` = default.
+    /// Underline color (SGR 58/59); always `unset` in compact mode.
     pragma(inline, true)
-    Color underlineColor() const scope => unpackColor(_words[2]);
+    Color underlineColor() const scope
+    {
+        static if (shapedUnderline)
+            return unpackColor(_words[2]);
+        else
+            return Color.init;
+    }
     /// ditto
     pragma(inline, true)
-    void underlineColor(Color c) scope { _words[2] = packColor(c); }
+    void underlineColor(Color c) scope
+    {
+        static if (shapedUnderline)
+            _words[2] = packColor(c);
+        // compact: no storage — ignore
+    }
 
-    /// Text attributes: bold/dim/italic/strikethrough/inverse/hidden.
+    /// Text attributes (see `TextAttr` for mode-dependent bit 3).
     pragma(inline, true)
     TextAttr attrs() const scope => TextAttr(cast(ubyte)((_words[0] >> colorBits) & attrsMask));
     /// ditto
@@ -158,7 +191,7 @@ align(1) struct TermStyle
     void attrs(TextAttr a) scope
         { _words[0] = (_words[0] & colorMask) | (cast(uint)(a.bits & attrsMask) << colorBits); }
 
-    /// Underline shape (`none` = off).
+    /// Underline shape (`none` = off). Stored in `words[1]` in both modes.
     pragma(inline, true)
     UnderlineStyle underline() const scope
         => cast(UnderlineStyle)((_words[1] >> colorBits) & underlineMask);
@@ -169,22 +202,37 @@ align(1) struct TermStyle
 
     /// `true` iff nothing is set at all (renders unstyled).
     pragma(inline, true)
-    bool empty() const scope => _words[0] == 0 && _words[1] == 0 && _words[2] == 0;
+    bool empty() const scope
+    {
+        static if (shapedUnderline)
+            return _words[0] == 0 && _words[1] == 0 && _words[2] == 0;
+        else
+            return _words[0] == 0 && _words[1] == 0;
+    }
 
-    /// Packed words for hot-path emission/equality without materializing `Color`.
-    /// Bits 0–25 of each word are a `packColor` value; higher bits hold attrs /
-    /// underline (see the layout table above). `writeSgrColorPacked` ignores the
-    /// high bits, so the words may be passed to it directly.
-    /// Visible to `sparkles.*` (bench, syntax) — not part of the public style API.
+    /// Packed words for hot-path emission without materializing `Color`.
+    /// Visible to `sparkles.*` — not part of the public style API.
     pragma(inline, true)
     package(sparkles) uint packed0() const scope => _words[0];
     /// ditto
     pragma(inline, true)
     package(sparkles) uint packed1() const scope => _words[1];
-    /// ditto
+    /// ditto (always 0 in compact mode)
     pragma(inline, true)
-    package(sparkles) uint packed2() const scope => _words[2];
+    package(sparkles) uint packed2() const scope
+    {
+        static if (shapedUnderline)
+            return _words[2];
+        else
+            return 0;
+    }
 }
+
+/// Shaped form (three words) — the default for syntax / styled templates.
+alias TermStyle = TermStyleImpl!true;
+
+/// Compact cell-grid form (two words: the shaped layout without underline color).
+alias CompactTermStyle = TermStyleImpl!false;
 
 /// A differential ANSI encoder: writes the minimal merged SGR sequence moving
 /// the terminal FROM style `from` TO style `to` at color `depth` — a single
@@ -199,7 +247,12 @@ align(1) struct TermStyle
 /// The `from == to` guard is load-bearing: past it the `ESC[`/`m` wrapper is
 /// written unconditionally, and callers (e.g. `styled_template`) may issue no-op
 /// transitions that must emit nothing rather than a spurious `ESC[m`.
-void writeStyleTransition(Writer)(ref Writer w, in TermStyle from, in TermStyle to, ColorDepth depth)
+void writeStyleTransition(Writer, bool shapedUnderline = true)(
+    ref Writer w,
+    in TermStyleImpl!shapedUnderline from,
+    in TermStyleImpl!shapedUnderline to,
+    ColorDepth depth,
+)
 {
     import std.range.primitives : put;
     import sparkles.base.text.writers : writeInteger;
@@ -220,7 +273,6 @@ void writeStyleTransition(Writer)(ref Writer w, in TermStyle from, in TermStyle 
     // a Color is only rebuilt (`to.fg` etc.) on the rare span where it changed.
     const fromAttrs = from.attrs;
     const toAttrs = to.attrs;
-    const toUnderline = to.underline;
 
     // Intensity: bold and dim share the off-code 22 (Style.bold[1] == Style.dim[1]).
     // If either is cleared, 22 clears both, so re-issue the survivor.
@@ -244,6 +296,7 @@ void writeStyleTransition(Writer)(ref Writer w, in TermStyle from, in TermStyle 
     if (fromAttrs.has(TextAttr.italic) != toAttrs.has(TextAttr.italic))
         code(toAttrs.has(TextAttr.italic) ? Style.italic[0] : Style.italic[1]);
 
+    const toUnderline = to.underline;
     if (from.underline != toUnderline)
     {
         sep();
@@ -279,13 +332,15 @@ void writeStyleTransition(Writer)(ref Writer w, in TermStyle from, in TermStyle 
         sep();
         writeSgrColorPacked(w, to.packed1, depth, ColorChannel.background);
     }
-    // The underline color only exists at 256/truecolor; below that it is not
-    // emitted at all (rather than a redundant reset), so the sequence stays clean.
-    // words[2] holds only underlineColor, so any bit difference is a color change.
-    if (((from.packed2 ^ to.packed2) & colorMask) && depth >= ColorDepth.ansi256)
+    static if (shapedUnderline)
     {
-        sep();
-        writeSgrColorPacked(w, to.packed2, depth, ColorChannel.underline);
+        // The underline color only exists at 256/truecolor; below that it is not
+        // emitted at all (rather than a redundant reset), so the sequence stays clean.
+        if (((from.packed2 ^ to.packed2) & colorMask) && depth >= ColorDepth.ansi256)
+        {
+            sep();
+            writeSgrColorPacked(w, to.packed2, depth, ColorChannel.underline);
+        }
     }
 
     put(w, 'm');
@@ -339,9 +394,11 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    // Three words, byte-aligned so cell grids need no padding between styles.
+    // Shaped form is three words; compact is two — both byte-aligned.
     static assert(TermStyle.sizeof == 12);
     static assert(TermStyle.alignof == 1);
+    static assert(CompactTermStyle.sizeof == 8);
+    static assert(CompactTermStyle.alignof == 1);
 
     // Every Color.Kind round-trips through the packed representation.
     static foreach (c; [
@@ -388,6 +445,15 @@ unittest
     // Reconstructing from the getters compares equal to the original (canonical
     // packing → the default three-word opEquals is logical equality).
     assert(TermStyle(fg: m.fg, bg: m.bg, attrs: m.attrs, underline: m.underline) == m);
+
+    // Compact stores underline in words[1] (like shaped) rather than aliasing the
+    // strikethrough bit, so the two are fully independent — set together, read
+    // back distinctly.
+    const both = CompactTermStyle(attrs: TextAttr.strikethrough, underline: UnderlineStyle.single);
+    assert(both.attrs.has(TextAttr.strikethrough));
+    assert(both.underline == UnderlineStyle.single);
+    assert(CompactTermStyle(attrs: TextAttr.strikethrough).underline == UnderlineStyle.none);
+    assert(!CompactTermStyle(underline: UnderlineStyle.single).attrs.has(TextAttr.strikethrough));
 }
 
 /// A style baked into static data at compile time (every `sparkles.syntax`
@@ -419,6 +485,14 @@ unittest
         attrs: TextAttr.bold | TextAttr.italic,
         underline: UnderlineStyle.curly,
     ));
+
+    static immutable compact = CompactTermStyle(
+        fg: Color.fromRgb(1, 2, 3),
+        attrs: TextAttr.bold,
+    );
+    assert(!compact.empty);
+    assert(compact.fg == Color.fromRgb(1, 2, 3));
+    assert(compact.attrs.has(TextAttr.bold));
 }
 
 ///
