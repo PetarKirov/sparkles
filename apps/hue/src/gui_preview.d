@@ -1,0 +1,649 @@
+// Markdown-preview model + layout for `hue --gui`.
+//
+// Two stages, both raylib-free (gui.d does the painting):
+//
+//   buildPreviewModel  (@system, once at file load) — parse the markdown
+//       structure (sparkles.syntax.md.model), and for each fenced code block
+//       either syntax-highlight its body with the fence language (reusing the
+//       highlightInjected pipeline) or, for a ` ```ansi ` fence, decode it with
+//       the off-screen VT (gui_ansi.decodeAnsi). Theme-independent.
+//
+//   layoutPreview      (pure, rerun on theme / width / font change) — flatten the
+//       structural model into a flat PreviewLine[] with colors resolved from the
+//       live theme, prose soft-wrapped to the window width, and glow /
+//       render-markdown-style decoration (heading markers, code panels + language
+//       labels, list bullets + checkboxes, quote gutters, rules, tables).
+//
+// gui.d paints PreviewLine[] index-culled to the viewport, mapping the neutral
+// RgbColor + Attr bits onto raylib-text's TextStyle + raylib Color.
+module gui_preview;
+
+import gui_ansi : AnsiLine, AnsiSpan, Attr, decodeAnsi;
+import gui_text : columnWidth, lineCount;
+
+import sparkles.syntax : MdDoc, MdBlock, MdBlockKind, MdInline, MdInlineKind,
+    HighlightEvent, byStyledLine, ResolvedTheme, StyleSpec, TextAttr, UnderlineStyle,
+    LabelId, toRgb, RgbColor, GrammarRegistry, TsConfigCache, canonicalLanguage,
+    extractMarkdown, highlightInjected;
+import sparkles.base.smallbuffer : SmallBuffer;
+
+// ── Presentation model ───────────────────────────────────────────────────────
+
+/// A styled text fragment on a preview line. `hasBg` gates `bg` (most runs have
+/// no explicit background — the line's `band` provides one). `attrs` uses the
+/// `gui_ansi.Attr` bits.
+struct PreviewRun
+{
+    const(char)[] text;
+    RgbColor fg;
+    RgbColor bg;
+    bool hasBg;
+    ubyte attrs;
+}
+
+/// A full-width background band drawn behind a line (before its runs).
+enum BandKind : ubyte
+{
+    none,       /// no band (plain prose)
+    codePanel,  /// fenced-code body
+    codeHeader, /// fenced-code language-label bar
+    tableRow,   /// a table row
+    rule,       /// a thematic break (a horizontal line)
+}
+
+/// One laid-out visual line. `leader` (bullet / number / checkbox / heading
+/// marker) is drawn muted at `indentCols`; `quoteDepth` draws that many `│`
+/// gutter bars; `runs` follow. Blank `runs` with a non-`none` `band` still paint
+/// the band (e.g. a blank code-panel line).
+struct PreviewLine
+{
+    int indentCols;
+    ubyte quoteDepth;
+    BandKind band;
+    RgbColor bandBg;  /// full-width band color (when band != none)
+    string leader;
+    PreviewRun[] runs;
+}
+
+/// Per-fence highlight data, resolved once (theme-independent).
+struct CodeFence
+{
+    const(char)[] lang;      /// canonicalized language ("" if none)
+    const(char)[] label;     /// info-string remainder (e.g. "[file.d]")
+    bool isAnsi;             /// a ` ```ansi ` fence → decoded, not highlighted
+    const(char)[] body;      /// the code_fence_content bytes
+    HighlightEvent[] events; /// highlight events over `body` (when !isAnsi)
+    AnsiLine[] ansi;         /// decoded styled lines (when isAnsi)
+}
+
+/// The built preview model. `present` is false for a non-markdown file (the
+/// caller keeps the raw view).
+struct PreviewModel
+{
+    bool present;
+    MdDoc doc;
+    CodeFence[] fences; /// in document order, parallel to the codeFence blocks
+}
+
+// ── Stage 1: build (@system, once) ───────────────────────────────────────────
+
+/**
+Parse `source` as markdown and resolve every fenced code block's contents.
+Grammars come from `registry`; per-fence highlighting reuses `cache` (the same
+`TsConfigCache` the whole-file path uses). `@system`, GC-allocating — call once
+at file load.
+*/
+PreviewModel buildPreviewModel(ref GrammarRegistry registry, ref TsConfigCache cache,
+    scope const(char)[] source) @system
+{
+    PreviewModel m;
+    m.doc = extractMarkdown(registry, source);
+    m.present = true;
+    collectFences(m.doc.root, source, cache, m.fences);
+    return m;
+}
+
+private void collectFences(in MdBlock b, scope const(char)[] source,
+    ref TsConfigCache cache, ref CodeFence[] fences) @system
+{
+    if (b.kind == MdBlockKind.codeFence)
+    {
+        CodeFence f;
+        f.lang = canonicalLanguage(b.infoLang);
+        f.label = b.label;
+        f.body = source[b.codeBody.start .. b.codeBody.end];
+        if (f.lang == "ansi")
+        {
+            f.isAnsi = true;
+            f.ansi = decodeAnsi(f.body);
+        }
+        else
+        {
+            SmallBuffer!HighlightEvent ev;
+            auto r = highlightInjected(cache, f.lang, f.body, ev);
+            f.events = r.hasError
+                ? [HighlightEvent.sourceSpan(0, f.body.length)] : ev[].dup;
+        }
+        fences ~= f;
+    }
+    foreach (ref c; b.children)
+        collectFences(c, source, cache, fences);
+}
+
+// ── Stage 2: layout (pure) ───────────────────────────────────────────────────
+
+/**
+Flatten `m` into painted lines for `theme`, resolving default/ANSI colors against
+`pageFg`/`pageBg` and soft-wrapping prose to `widthCols` columns. Pure — rerun
+whenever the theme, window width, or font size changes.
+*/
+PreviewLine[] layoutPreview(PreviewModel m, ResolvedTheme theme,
+    RgbColor pageFg, RgbColor pageBg, int widthCols) @safe
+{
+    auto lay = Layouter(source: m.doc.source, theme: theme, pageFg: pageFg,
+        pageBg: pageBg, width: widthCols < 8 ? 8 : widthCols, fences: m.fences);
+    lay.resolvePalette();
+    foreach (ref b; m.doc.root.children)
+        lay.block(b, 0, 0);
+    return lay.lines;
+}
+
+private struct Layouter
+{
+    const(char)[] source;
+    ResolvedTheme theme;
+    RgbColor pageFg, pageBg;
+    int width;
+    const(CodeFence)[] fences;
+
+    PreviewLine[] lines;
+    size_t fenceIdx;
+
+    // Resolved role colors (from the theme's markup.* labels, page-fallback).
+    RgbColor headingFg, codeFg, linkFg, quoteFg;
+    RgbColor codePanelBg, codeHeaderBg, ruleFg, inlineCodeBg;
+
+    void resolvePalette() @safe
+    {
+        RgbColor role(string name, RgbColor fallback)
+        {
+            const spec = theme[theme.labels.resolve(name)];
+            return toRgb(spec.fg, fallback);
+        }
+        headingFg = role("markup.heading", pageFg);
+        codeFg = role("markup.raw", pageFg);
+        linkFg = role("markup.link", pageFg);
+        quoteFg = role("markup.quote", mix(pageFg, pageBg, 0.35));
+        codePanelBg = mix(pageBg, pageFg, 0.08);
+        codeHeaderBg = mix(pageBg, pageFg, 0.16);
+        inlineCodeBg = mix(pageBg, pageFg, 0.12);
+        ruleFg = mix(pageBg, pageFg, 0.4);
+    }
+
+    const(char)[] slice(size_t a, size_t b) @safe
+        => a <= b && b <= source.length ? source[a .. b] : "";
+
+    void push(PreviewLine l) @safe { lines ~= l; }
+    void blank() @safe { push(PreviewLine.init); }
+
+    void block(in MdBlock b, int indent, ubyte qdepth) @safe
+    {
+        final switch (b.kind) with (MdBlockKind)
+        {
+        case document:
+            foreach (ref c; b.children)
+                block(c, indent, qdepth);
+            break;
+        case heading:
+            this.heading(b, indent, qdepth);
+            break;
+        case paragraph:
+            emitFlow(inlineRuns(b.inlines, pageFg, 0), indent, qdepth, "");
+            blank();
+            break;
+        case codeFence:
+            this.codeFence(indent, qdepth);
+            break;
+        case blockQuote:
+            foreach (ref c; b.children)
+                block(c, indent, cast(ubyte)(qdepth + 1));
+            break;
+        case list:
+            this.list(b, indent, qdepth);
+            break;
+        case thematicBreak:
+            this.rule(indent, qdepth);
+            break;
+        case table:
+            this.table(b, indent, qdepth);
+            break;
+        case htmlBlock:
+            this.htmlBlock(b, indent, qdepth);
+            break;
+        // These never appear at block level (only inside a list/table).
+        case listItem:
+        case tableRow:
+        case tableCell:
+            break;
+        }
+    }
+
+    void heading(in MdBlock b, int indent, ubyte qdepth) @safe
+    {
+        char[6] hashes = '#';
+        string leader = hashes[0 .. b.level].idup ~ " ";
+        emitFlow(inlineRuns(b.inlines, headingFg, Attr.bold), indent, qdepth, leader);
+        blank();
+    }
+
+    void codeFence(int indent, ubyte qdepth) @safe
+    {
+        if (fenceIdx >= fences.length)
+            return;
+        const f = fences[fenceIdx++];
+
+        // Language-label header bar.
+        string lbl = f.lang.length ? f.lang.idup : "code";
+        if (f.label.length)
+            lbl ~= " " ~ f.label.idup;
+        push(PreviewLine(indentCols: indent, quoteDepth: qdepth, band: BandKind.codeHeader,
+            bandBg: codeHeaderBg, runs: [PreviewRun(lbl, codeFg, codeHeaderBg, true, 0)]));
+
+        if (f.isAnsi)
+        {
+            foreach (ref al; f.ansi)
+            {
+                PreviewRun[] runs;
+                foreach (ref sp; al.spans)
+                    runs ~= PreviewRun(sp.text, sp.fgDefault ? pageFg : sp.fg,
+                        sp.bg, !sp.bgDefault, sp.attrs);
+                push(PreviewLine(indentCols: indent, quoteDepth: qdepth,
+                    band: BandKind.codePanel, bandBg: codePanelBg, runs: runs));
+            }
+        }
+        else
+        {
+            const n = lineCount(f.body);
+            auto byLine = new PreviewRun[][](n);
+            foreach (ls; byStyledLine(f.body, f.events))
+            {
+                if (ls.line >= n)
+                    continue;
+                const spec = theme[ls.span.label];
+                // Only paint a per-token background when the theme gives this
+                // token a background distinct from the page default — an
+                // unlabeled run resolves to `defaults`, whose bg IS the page bg,
+                // and drawing that over the (lighter) code panel bleeds dark
+                // boxes. The panel band already provides the backdrop.
+                const bg = toRgb(spec.bg, pageBg);
+                const hasBg = spec.bg.isSet && bg != pageBg;
+                byLine[ls.line] ~= PreviewRun(f.body[ls.span.start .. ls.span.end],
+                    toRgb(spec.fg, codeFg), bg, hasBg, mapAttrs(spec));
+            }
+            foreach (row; byLine)
+                push(PreviewLine(indentCols: indent, quoteDepth: qdepth,
+                    band: BandKind.codePanel, bandBg: codePanelBg, runs: row));
+        }
+        blank();
+    }
+
+    void list(in MdBlock b, int indent, ubyte qdepth) @safe
+    {
+        static immutable string[3] bullets = ["•", "◦", "▪"];
+        int ord = 1;
+        foreach (ref item; b.children)
+        {
+            if (item.kind != MdBlockKind.listItem)
+                continue;
+            string leader;
+            if (item.checkbox == 0)
+                leader = "[ ] ";
+            else if (item.checkbox == 1)
+                leader = "[✓] ";
+            else if (b.ordered)
+            {
+                import std.conv : text;
+                leader = text(ord, ". ");
+            }
+            else
+                leader = bullets[(indent / 2) % 3] ~ " ";
+            ++ord;
+
+            // The item's first paragraph carries the leader; nested blocks indent.
+            bool first = true;
+            foreach (ref c; item.children)
+            {
+                if (c.kind == MdBlockKind.paragraph && first)
+                {
+                    emitFlow(inlineRuns(c.inlines, pageFg, 0), indent, qdepth, leader);
+                    first = false;
+                }
+                else
+                    block(c, indent + cast(int) columnWidth(leader), qdepth);
+            }
+            if (first) // an empty item still gets its marker
+                push(PreviewLine(indentCols: indent, quoteDepth: qdepth, leader: leader));
+        }
+        blank();
+    }
+
+    void table(in MdBlock b, int indent, ubyte qdepth) @safe
+    {
+        // Column widths from the widest cell text (display columns).
+        size_t cols;
+        foreach (ref row; b.children)
+            if (row.children.length > cols)
+                cols = row.children.length;
+        if (cols == 0)
+            return;
+        auto w = new int[](cols);
+        string[][] grid;
+        foreach (ref row; b.children)
+        {
+            string[] cells;
+            foreach (i, ref cell; row.children)
+            {
+                import std.string : strip;
+                string txt = plain(cell.inlines).strip.idup;
+                cells ~= txt;
+                if (i < cols && cast(int) columnWidth(txt) > w[i])
+                    w[i] = cast(int) columnWidth(txt);
+            }
+            grid ~= cells;
+        }
+        foreach (r, ref cells; grid)
+        {
+            PreviewRun[] runs;
+            foreach (i; 0 .. cols)
+            {
+                if (i)
+                    runs ~= PreviewRun(" │ ", ruleFg, RgbColor.init, false, 0);
+                const txt = i < cells.length ? cells[i] : "";
+                const pad = w[i] - cast(int) columnWidth(txt);
+                runs ~= PreviewRun(txt ~ spaces(pad), pageFg,
+                    RgbColor.init, false, cast(ubyte)(r == 0 ? Attr.bold : 0));
+            }
+            push(PreviewLine(indentCols: indent, quoteDepth: qdepth,
+                band: BandKind.tableRow, bandBg: mix(pageBg, pageFg, 0.05), runs: runs));
+        }
+        blank();
+    }
+
+    void rule(int indent, ubyte qdepth) @safe
+    {
+        const n = width - indent - qdepth * 2;
+        push(PreviewLine(indentCols: indent, quoteDepth: qdepth, band: BandKind.rule,
+            runs: [PreviewRun(repeat("─", n < 1 ? 1 : n), ruleFg, RgbColor.init, false, 0)]));
+        blank();
+    }
+
+    void htmlBlock(in MdBlock b, int indent, ubyte qdepth) @safe
+    {
+        import std.string : splitLines;
+        foreach (ln; slice(b.span.start, b.span.end).splitLines)
+            push(PreviewLine(indentCols: indent, quoteDepth: qdepth,
+                runs: [PreviewRun(ln.idup, mix(pageFg, pageBg, 0.35),
+                    RgbColor.init, false, Attr.italic)]));
+        blank();
+    }
+
+    // Flatten an inline tree into styled runs (unwrapped, in order).
+    PreviewRun[] inlineRuns(in MdInline[] inlines, RgbColor fg, ubyte attrs) @safe
+    {
+        PreviewRun[] runs;
+        foreach (ref inl; inlines)
+        {
+            final switch (inl.kind) with (MdInlineKind)
+            {
+            case text:
+                runs ~= PreviewRun(slice(inl.span.start, inl.span.end), fg,
+                    RgbColor.init, false, attrs);
+                break;
+            case emphasis:
+                runs ~= inlineRuns(inl.children, fg, cast(ubyte)(attrs | Attr.italic));
+                break;
+            case strong:
+                runs ~= inlineRuns(inl.children, fg, cast(ubyte)(attrs | Attr.bold));
+                break;
+            case strikethrough:
+                runs ~= inlineRuns(inl.children, fg, cast(ubyte)(attrs | Attr.strikethrough));
+                break;
+            case codeSpan:
+                runs ~= PreviewRun(slice(inl.span.start, inl.span.end), codeFg,
+                    inlineCodeBg, true, attrs);
+                break;
+            case link:
+                auto label = inl.children.length
+                    ? inlineRuns(inl.children, linkFg, cast(ubyte)(attrs | Attr.underline))
+                    : [PreviewRun(slice(inl.span.start, inl.span.end), linkFg,
+                        RgbColor.init, false, cast(ubyte)(attrs | Attr.underline))];
+                runs ~= label;
+                break;
+            case image:
+                const(char)[] alt = plain(inl.children);
+                runs ~= PreviewRun("🖼 " ~ alt ~ " → " ~ inl.linkDest,
+                    linkFg, RgbColor.init, false, attrs);
+                break;
+            case lineBreak:
+                runs ~= PreviewRun(" ", fg, RgbColor.init, false, attrs);
+                break;
+            }
+        }
+        return runs;
+    }
+
+    // Plain concatenated text of an inline subtree (for table cells / alt text).
+    const(char)[] plain(in MdInline[] inlines) @safe
+    {
+        const(char)[] s;
+        foreach (ref inl; inlines)
+            s = inl.children.length ? s ~ plain(inl.children)
+                : s ~ slice(inl.span.start, inl.span.end);
+        return s;
+    }
+
+    ubyte mapAttrs(in StyleSpec spec) @safe
+    {
+        ubyte a;
+        if (spec.attrs.has(TextAttr.bold)) a |= Attr.bold;
+        if (spec.attrs.has(TextAttr.italic)) a |= Attr.italic;
+        if (spec.attrs.has(TextAttr.strikethrough)) a |= Attr.strikethrough;
+        if (spec.underline != UnderlineStyle.none) a |= Attr.underline;
+        return a;
+    }
+
+    // Word-wrap `runs` to the available width and push the resulting lines. A
+    // "word" is a maximal whitespace-free unit that may span several runs (so a
+    // styled span touching punctuation — `**bold**,` — stays one word with no
+    // stray space); breaks happen only where the source had whitespace. The
+    // first line shows `leader` at `indent`; continuation lines hang-indent.
+    void emitFlow(PreviewRun[] runs, int indent, ubyte qdepth, string leader) @safe
+    {
+        const lead = cast(int) columnWidth(leader);
+        const avail = width - indent - qdepth * 2 - lead;
+        const a = avail < 4 ? 4 : avail;
+
+        // Tokenize into words carrying their styled fragments + preceding-space.
+        Word[] words;
+        bool spacePending, open;
+        foreach (r; runs)
+        {
+            size_t i;
+            while (i < r.text.length)
+            {
+                if (isSpace(r.text[i]))
+                {
+                    spacePending = true;
+                    open = false;
+                    ++i;
+                    continue;
+                }
+                const s = i;
+                while (i < r.text.length && !isSpace(r.text[i]))
+                    ++i;
+                const frag = r.text[s .. i];
+                if (!open)
+                {
+                    words ~= Word(spaceBefore: spacePending);
+                    open = true;
+                    spacePending = false;
+                }
+                words[$ - 1].parts ~= PreviewRun(frag, r.fg, r.bg, r.hasBg, r.attrs);
+                words[$ - 1].width += cast(int) columnWidth(frag);
+            }
+            // `open`/`spacePending` carry across the run boundary: a word joins
+            // fragments from adjacent runs unless whitespace fell between them.
+        }
+
+        PreviewRun[] line;
+        int col;
+        bool firstLine = true;
+        void flush()
+        {
+            push(PreviewLine(indentCols: firstLine ? indent : indent + lead,
+                quoteDepth: qdepth, leader: firstLine ? leader : "", runs: line));
+            line = null;
+            col = 0;
+            firstLine = false;
+        }
+        foreach (w; words)
+        {
+            if (col > 0 && col + (w.spaceBefore ? 1 : 0) + w.width > a)
+                flush();
+            if (col > 0 && w.spaceBefore)
+            {
+                line ~= PreviewRun(" ", w.parts[0].fg, RgbColor.init, false, 0);
+                ++col;
+            }
+            foreach (p; w.parts)
+            {
+                line ~= p;
+                col += cast(int) columnWidth(p.text);
+            }
+        }
+        if (line.length || firstLine)
+            flush();
+    }
+}
+
+// A wrap unit: whitespace-free, possibly spanning several styled fragments.
+private struct Word
+{
+    PreviewRun[] parts;
+    int width;
+    bool spaceBefore;
+}
+
+// ── small pure helpers ───────────────────────────────────────────────────────
+
+private bool isSpace(char c) @safe pure nothrow @nogc
+    => c == ' ' || c == '\t' || c == '\n' || c == '\r';
+
+private RgbColor mix(RgbColor a, RgbColor b, double t) @safe pure nothrow @nogc
+{
+    ubyte ch(ubyte x, ubyte y) => cast(ubyte)(x + (y - x) * t);
+    return RgbColor(ch(a.r, b.r), ch(a.g, b.g), ch(a.b, b.b));
+}
+
+private const(char)[] spaces(int n) @safe pure nothrow
+{
+    if (n <= 0)
+        return "";
+    auto s = new char[](n);
+    s[] = ' ';
+    return s;
+}
+
+private string repeat(string unit, int n) @safe pure nothrow
+{
+    string s;
+    foreach (_; 0 .. n)
+        s ~= unit;
+    return s;
+}
+
+// ── tests ────────────────────────────────────────────────────────────────────
+
+version (unittest)
+{
+    import sparkles.syntax : Span, resolveTheme, LabelSet, builtinDark;
+
+    private ResolvedTheme darkTheme() @safe
+        => resolveTheme(builtinDark, LabelSet.standard());
+
+    private enum RgbColor tPageFg = RgbColor(0xcd, 0xd6, 0xf4);
+    private enum RgbColor tPageBg = RgbColor(0x1e, 0x1e, 0x2e);
+}
+
+@("gui_preview.layout.wrapsProse")
+@safe
+unittest
+{
+    // A 24-word paragraph must wrap to several lines at width 20.
+    string src;
+    foreach (i; 0 .. 24)
+        src ~= "word ";
+    auto para = MdBlock(kind: MdBlockKind.paragraph,
+        inlines: [MdInline(kind: MdInlineKind.text, span: Span(0, src.length))]);
+    auto m = PreviewModel(present: true,
+        doc: MdDoc(MdBlock(kind: MdBlockKind.document, children: [para]), src));
+
+    auto lines = layoutPreview(m, darkTheme, tPageFg, tPageBg, 20);
+    import std.algorithm.iteration : filter;
+    import std.range : walkLength;
+    const nonblank = lines.filter!(l => l.runs.length).walkLength;
+    assert(nonblank >= 3);
+    // every wrapped line fits the width
+    foreach (l; lines)
+    {
+        int col;
+        foreach (r; l.runs)
+            col += cast(int) columnWidth(r.text);
+        assert(col <= 20);
+    }
+}
+
+@("gui_preview.build.fencesAndBands")
+@system
+unittest
+{
+    import std.process : environment;
+    import sparkles.test_runner.skip : skipTest;
+    import sparkles.syntax : GrammarRegistry, TsConfigCache, LabelSet;
+    import std.algorithm.searching : any, canFind;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+    auto reg = GrammarRegistry.fromEnvironment();
+    auto cache = TsConfigCache.create(&reg, LabelSet.standard());
+    const src = "# Title\n\nPara **bold** and `code`.\n\n- a\n- b\n\n> quote\n\n"
+        ~ "| a | b |\n|---|---|\n| 1 | 2 |\n\n---\n\n"
+        ~ "```d\nvoid main() {}\n```\n\n```ansi\n\x1b[31mred\x1b[0m\n```\n";
+
+    auto m = buildPreviewModel(reg, cache, src);
+    assert(m.present);
+    assert(m.fences.length == 2);
+    assert(!m.fences[0].isAnsi && m.fences[0].lang == "d");
+    assert(m.fences[0].events.length > 0);
+    assert(m.fences[1].isAnsi && m.fences[1].ansi.length == 1);
+
+    auto lines = layoutPreview(m, darkTheme, tPageFg, tPageBg, 80);
+    assert(lines.length > 0);
+    assert(lines.any!(l => l.band == BandKind.codeHeader));
+    assert(lines.any!(l => l.band == BandKind.codePanel));
+    assert(lines.any!(l => l.band == BandKind.rule));
+    assert(lines.any!(l => l.band == BandKind.tableRow));
+
+    // the ` ```ansi ` block produced a non-default-colored "red" run
+    bool redRun;
+    foreach (l; lines)
+        if (l.band == BandKind.codePanel)
+            foreach (r; l.runs)
+                if (r.text.canFind("red") && r.fg != tPageFg)
+                    redRun = true;
+    assert(redRun);
+
+    // the heading carries its level marker as a leader
+    assert(lines.any!(l => l.leader.length && l.leader[0] == '#'));
+}
