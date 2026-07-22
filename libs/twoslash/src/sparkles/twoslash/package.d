@@ -24,5 +24,6 @@ features (the runner does not discover tests in `package.d`).
 module sparkles.twoslash;
 
 public import sparkles.twoslash.protocol;
-// ingest, overlay, render_html, render_ansi, style re-exports land with their
+public import sparkles.twoslash.ingest;
+// overlay, render_html, render_ansi, style re-exports land with their
 // modules in the following commits.
