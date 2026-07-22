@@ -25,6 +25,7 @@ import std.stdio : stderr, write;
 import std.string : chompPrefix;
 
 import sparkles.syntax;
+import sparkles.twoslash;
 import sparkles.core_cli.args;
 
 import sparkles.base.logger : initLogger, LogLevel, warning;
@@ -51,6 +52,9 @@ struct CliParams
 
     @CliOption("tui", "Alias for --no-gui.")
     bool tui;
+
+    @CliOption("twoslash", "Render a TypeScript twoslash JSON payload (its `code` + nodes) as a type-annotated overlay.")
+    string twoslash;
 
     @CliOption("font", "--gui font: a path, a family name, or a fontconfig preference list (comma-separated; the first installed family wins).")
     string font = defaultGuiFont;
@@ -134,6 +138,12 @@ int main(string[] args)
     bool html = cli.html;
     string themeName = cli.theme;
     const bgMode = parseBackgroundMode(cli.background);
+
+    // Twoslash mode consumes a JSON payload (its own `code` + nodes) instead of
+    // a source file — a fourth consumer of the syntax pipeline that overlays the
+    // twoslash decorations. See src/twoslash_mode.d.
+    if (cli.twoslash.length)
+        return runTwoslashMode(cli, themeName);
 
     // With a path argument, highlight that file; otherwise highlight hue's own
     // source, embedded at compile time via `import()`. That works from any
@@ -292,5 +302,59 @@ int main(string[] args)
     if (result.selected)
         sink.put(prev.renderFull(result.idx, depth));
     sink.flush();
+    return 0;
+}
+
+/**
+The `--twoslash <nodes.json>` path: load a TypeScript twoslash payload, highlight
+its `code` as TypeScript, and render the twoslash overlay — as HTML (`--html`),
+the raylib GUI (`--gui`), or ANSI (the default). The nodes are opaque data; the
+overlay renderers live in `sparkles:twoslash`.
+*/
+int runTwoslashMode(in CliParams cli, string themeName) @system
+{
+    auto twRes = loadTwoslashFile(cli.twoslash);
+    if (twRes.hasError)
+    {
+        stderr.writeln("hue: ", twRes.error.msg);
+        return 1;
+    }
+    const tw = twRes.value;
+
+    const labels = LabelSet.standard();
+    const theme = resolveTheme(builtinThemes.get(themeName, {
+            warning(i"theme '$(themeName)' not found; falling back to the default dark theme");
+            return builtinDark;
+        }()), labels);
+
+    // Highlight the display source as TypeScript (twoslash's own language),
+    // degrading to plain text without the grammar — the overlay never fails.
+    auto registry = GrammarRegistry.fromEnvironment();
+    auto cache = TsConfigCache.create(&registry, labels);
+    SmallBuffer!HighlightEvent events;
+    auto res = highlightInjected(cache, "typescript", tw.code, events);
+    if (res.hasError)
+    {
+        warning(i"no typescript grammar — rendering the snippet as plain text");
+        events ~= HighlightEvent.sourceSpan(0, tw.code.length);
+    }
+
+    if (cli.html)
+    {
+        SmallBuffer!char output;
+        output ~= "<style>\n";
+        writeThemeStylesheet(theme, output);
+        writeTwoslashStyles(output);
+        output ~= "</style>\n<pre class=\"syn-root twoslash\"><code>";
+        renderTwoslashHtml(tw, events[], theme, cache, output);
+        output ~= "</code></pre>\n";
+        write(output[]);
+        return 0;
+    }
+
+    SmallBuffer!char output;
+    renderTwoslashAnsi(tw, events[], theme, cache, output,
+        TwoslashAnsiOptions(depth: detectColorDepth(), italics: true, emitBackground: true));
+    write(output[]);
     return 0;
 }
