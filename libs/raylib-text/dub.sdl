@@ -1,0 +1,40 @@
+name "raylib-text"
+description "Reusable raylib text rendering: font sets, glyph fallback, styled text drawing"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+
+importPaths "src"
+
+dflags "-preview=in" "-preview=dip1000"
+
+// raylib comes in two halves: the D bindings via dub, and the native library via
+// the linker. raylib-d's `library` config does NOT declare `libs "raylib"`, so
+// this package owns it; both propagate transitively to consuming executables
+// (each still needs the native raylib present at link/run time).
+dependency "raylib-d" version="~>6.0.1"
+libs "raylib"
+
+// SmallBuffer (unique mode) backs the per-face sorted glyph maps and the
+// on-demand request set — the same @nogc buffers apps/terminal uses.
+dependency "sparkles:base" path="../.."
+
+configuration "library" {
+    targetType "library"
+}
+
+configuration "unittest" {
+    // Fast path (no cycle: nothing in the impl closure depends on raylib-text,
+    // and this package's tests never call skipTest). Only the PURE modules carry
+    // unittests — the GL-backed FontSet/drawText are validated by the apps'
+    // screenshot goldens — so `dub test :raylib-text` runs headless (linking
+    // libraylib.so needs no display; only InitWindow/LoadFontEx/DrawTextEx do).
+    dependency "sparkles:test-runner" path="../.."
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
