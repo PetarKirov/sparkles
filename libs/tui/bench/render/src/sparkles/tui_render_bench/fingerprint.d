@@ -9,7 +9,7 @@ renderer's bytes against the fingerprint of the target grid.
 +/
 module sparkles.tui_render_bench.fingerprint;
 
-import sparkles.tui_render_bench.cell : Cell, Color, Grid, TermStyle;
+import sparkles.tui_render_bench.cell : Cell, CellStyle, Color, Grid;
 
 /// FNV-1a over the full grid (dimensions + every cell).
 ulong gridFingerprint(in Grid g) @safe pure nothrow @nogc
@@ -52,11 +52,10 @@ ulong gridFingerprint(in Grid g) @safe pure nothrow @nogc
         }
     }
 
-    void mixStyle(in TermStyle st) @safe pure nothrow @nogc
+    void mixStyle(in CellStyle st) @safe pure nothrow @nogc
     {
         mixColor(st.fg);
         mixColor(st.bg);
-        mixColor(st.underlineColor);
         mix(st.attrs.bits);
         mix(cast(ubyte) st.underline);
     }
@@ -78,16 +77,14 @@ ulong gridFingerprint(in Grid g) @safe pure nothrow @nogc
 @safe nothrow
 unittest
 {
-    import sparkles.tui_render_bench.cell : TermStyle;
-
     Grid a, b;
     a.resize(8, 2);
     b.resize(8, 2);
     assert(gridFingerprint(a) == gridFingerprint(b)); // both blank
 
-    b.putText(0, 0, "x", TermStyle.init);
+    b.putText(0, 0, "x", CellStyle.init);
     assert(gridFingerprint(a) != gridFingerprint(b)); // content differs
 
-    a.putText(0, 0, "x", TermStyle(fg: Color.fromRgb(1, 0, 0)));
+    a.putText(0, 0, "x", CellStyle(fg: Color.fromRgb(1, 0, 0)));
     assert(gridFingerprint(a) != gridFingerprint(b)); // same glyph, different color
 }

@@ -12,7 +12,7 @@ The target grid is a pure function of the model, recomputed in full each frame.
 +/
 module sparkles.tui_render_bench.scene;
 
-import sparkles.tui_render_bench.cell : Color, Grid, TermStyle, TextAttr, UnderlineStyle;
+import sparkles.tui_render_bench.cell : CellStyle, Color, Grid, TextAttr, UnderlineStyle;
 import sparkles.tui_render_bench.model : Model;
 import sparkles.tui_render_bench.scenario : sceneTableRows, sceneTreeNodes;
 
@@ -61,14 +61,14 @@ void renderScene(in Model m, ref Grid g) @safe nothrow
 
 private void drawHeader(in Model m, ref Grid g) @safe nothrow
 {
-    const st = TermStyle(fg: cAccent, bg: cBarBg, attrs: TextAttr.bold);
+    const st = CellStyle(fg: cAccent, bg: cBarBg, attrs: TextAttr.bold);
     g.fill(0, 0, m.cols, st);
     g.putText(1, 0, "sparkles ops dashboard", st);
 
     char[8] clock;
     formatClock(m.clockSecs, clock);
     const cx = cast(ushort)(m.cols >= 10 ? m.cols - 9 : 0);
-    g.putText(cx, 0, clock[], TermStyle(fg: cFg, bg: cBarBg));
+    g.putText(cx, 0, clock[], CellStyle(fg: cFg, bg: cBarBg));
 }
 
 private void drawLog(in Model m, ref Grid g, ushort top, ushort bottom, ushort width) @safe nothrow
@@ -87,7 +87,7 @@ private void drawLog(in Model m, ref Grid g, ushort top, ushort bottom, ushort w
     }
 }
 
-private TermStyle logStyle(scope const(string) line, ushort width) @safe nothrow
+private CellStyle logStyle(scope const(string) line, ushort width) @safe nothrow
 {
     Color fg = cFg;
     if (line.length >= 4)
@@ -101,7 +101,7 @@ private TermStyle logStyle(scope const(string) line, ushort width) @safe nothrow
         else if (line[0 .. 4] == "INFO")
             fg = cOk;
     }
-    return TermStyle(fg: fg);
+    return CellStyle(fg: fg);
 }
 
 private void drawTable(in Model m, ref Grid g, ushort x, ushort top, ushort bottom, ushort width) @safe nothrow
@@ -110,7 +110,7 @@ private void drawTable(in Model m, ref Grid g, ushort x, ushort top, ushort bott
         return;
     // Header row.
     g.putText(x, top, "NODE       PHASE     COUNT  STATE",
-        TermStyle(fg: cAccent, attrs: TextAttr.bold, underline: UnderlineStyle.single));
+        CellStyle(fg: cAccent, attrs: TextAttr.bold, underline: UnderlineStyle.single));
     foreach (r; 0 .. sceneTableRows)
     {
         const y = cast(ushort)(top + 1 + r);
@@ -119,17 +119,17 @@ private void drawTable(in Model m, ref Grid g, ushort x, ushort top, ushort bott
         const selected = r == m.selection;
         const rowBg = selected ? cSelBg : Color.init;
         const rowFg = selected ? Color.fromRgb(0xFF, 0xFF, 0xFF) : cFg;
-        g.fill(x, y, width, TermStyle(fg: rowFg, bg: rowBg));
+        g.fill(x, y, width, CellStyle(fg: rowFg, bg: rowBg));
 
         char[16] cnt;
         const n = formatUint(m.counters[r], cnt);
         const state = m.counters[r] % 3 == 0 ? "ok" : (m.counters[r] % 3 == 1 ? "run" : "wait");
         const stFg = state == "ok" ? cOk : (state == "run" ? cWarn : cMuted);
 
-        g.putText(x, y, nodeNames[r], TermStyle(fg: rowFg, bg: rowBg));
-        g.putText(cast(ushort)(x + 11), y, phases[r % phases.length], TermStyle(fg: rowFg, bg: rowBg));
-        g.putText(cast(ushort)(x + 21), y, cnt[$ - n .. $], TermStyle(fg: rowFg, bg: rowBg));
-        g.putText(cast(ushort)(x + 28), y, state, TermStyle(fg: stFg, bg: rowBg));
+        g.putText(x, y, nodeNames[r], CellStyle(fg: rowFg, bg: rowBg));
+        g.putText(cast(ushort)(x + 11), y, phases[r % phases.length], CellStyle(fg: rowFg, bg: rowBg));
+        g.putText(cast(ushort)(x + 21), y, cnt[$ - n .. $], CellStyle(fg: rowFg, bg: rowBg));
+        g.putText(cast(ushort)(x + 28), y, state, CellStyle(fg: stFg, bg: rowBg));
     }
 }
 
@@ -145,22 +145,22 @@ private void drawTree(in Model m, ref Grid g, ushort x, ushort top, ushort botto
         const expandable = n + 1 < sceneTreeNodes && treeLabels[n + 1].length > treeLabels[n].length;
         const expanded = (m.treeExpanded & (1u << n)) != 0;
         const marker = expandable ? (expanded ? "▾ " : "▸ ") : "· ";
-        g.putText(x, y, marker, TermStyle(fg: cAccent));
-        g.putText(cast(ushort)(x + 2), y, treeLabels[n], TermStyle(fg: cFg));
+        g.putText(x, y, marker, CellStyle(fg: cAccent));
+        g.putText(cast(ushort)(x + 2), y, treeLabels[n], CellStyle(fg: cFg));
         y++;
     }
 }
 
 private void drawFooter(in Model m, ref Grid g, ushort y) @safe nothrow
 {
-    const st = TermStyle(fg: cFg, bg: cBarBg);
+    const st = CellStyle(fg: cFg, bg: cBarBg);
     g.fill(0, y, m.cols, st);
     // Three spinners at different phases.
     ushort x = 1;
     foreach (i; 0 .. 3)
     {
         const frame = spinnerFrames[(m.spinnerFrame + i * 3) % spinnerFrames.length];
-        g.putText(x, y, frame, TermStyle(fg: cAccent, bg: cBarBg, attrs: TextAttr.bold));
+        g.putText(x, y, frame, CellStyle(fg: cAccent, bg: cBarBg, attrs: TextAttr.bold));
         x = cast(ushort)(x + 2);
     }
     // Progress bar.
@@ -173,7 +173,7 @@ private void drawFooter(in Model m, ref Grid g, ushort y) @safe nothrow
         {
             const on = i < filled;
             g.putText(cast(ushort)(barX + i), y, on ? "█" : "░",
-                TermStyle(fg: on ? cOk : cMuted, bg: cBarBg));
+                CellStyle(fg: on ? cOk : cMuted, bg: cBarBg));
         }
         char[16] pct;
         const pn = formatUint(m.progressMille / 10, pct);
@@ -184,7 +184,7 @@ private void drawFooter(in Model m, ref Grid g, ushort y) @safe nothrow
 
 private void drawStatus(in Model m, ref Grid g, ushort y) @safe nothrow
 {
-    const st = TermStyle(fg: cMuted);
+    const st = CellStyle(fg: cMuted);
     g.fill(0, y, m.cols, st);
     g.putText(1, y, "q quit  ↑↓ select  ⏎ open  r retry", st);
 }
