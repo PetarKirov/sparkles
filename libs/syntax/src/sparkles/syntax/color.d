@@ -28,4 +28,5 @@ public import sparkles.base.term_color :
     ansi256FromRgb,
     ansi16FromRgb,
     xterm256ToRgb,
+    toRgb,
     writeSgrColor;
