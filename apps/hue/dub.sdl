@@ -16,6 +16,7 @@ dflags "-preview=in" "-preview=dip1000"
 
 dependency "sparkles:syntax" path="../.."
 dependency "sparkles:core-cli" path="../.."
+dependency "sparkles:twoslash" path="../.."
 
 // Default build (BLD1): the raylib GPU backend (src/gui.d, version(HueGui)) and
 // the preview support modules (gui_text.d layout, gui_ansi.d libghostty bridge,
