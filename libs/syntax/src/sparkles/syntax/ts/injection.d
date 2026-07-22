@@ -196,6 +196,13 @@ struct TsConfigCache
         return cache;
     }
 
+    /// The borrowed grammar registry (never `null` — the constructor asserts
+    /// it). Exposed so callers that already hold a cache can drive registry-level
+    /// helpers such as $(REF extractMarkdown, sparkles,syntax,md,model) without
+    /// threading a second `GrammarRegistry*` alongside it.
+    ref inout(GrammarRegistry) registry() inout return @safe pure nothrow @nogc
+        => *_registry;
+
     /**
     The configured config for `language` (canonicalized), or `null` on any miss
     — missing grammar, missing highlights query, or a query that failed to
