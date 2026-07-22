@@ -91,6 +91,21 @@
   border-top: 1px solid var(--twoslash-border-color);
 }
 
+.twoslash .twoslash-popup-docs-tags {
+  display: flex;
+  flex-direction: column;
+  font-family: var(--twoslash-docs-font);
+}
+
+.twoslash .twoslash-popup-docs-tags,
+.twoslash .twoslash-popup-docs-tag-name {
+  margin-right: 0.5em;
+}
+
+.twoslash .twoslash-popup-docs-tag-name {
+  font-family: var(--twoslash-code-font);
+}
+
 /* Connector notch (query popups only). */
 .twoslash .twoslash-popup-arrow {
   position: absolute;

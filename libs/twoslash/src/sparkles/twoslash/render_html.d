@@ -278,7 +278,35 @@ private void writePopup(Writer)(ref Writer w, in ResolvedTheme theme,
         writeHtmlEscaped(w, node.docs);
         put(w, `</div>`);
     }
+    writePopupTags(w, node);
     put(w, `</span>`);
+}
+
+/// The JSDoc tags block: `<div class="twoslash-popup-docs twoslash-popup-docs-tags">`
+/// with each tag as `@{name}` (a `-tag-name` span) plus its optional value span —
+/// matching the `@shikijs/twoslash` structure. `text` is one opaque string (shiki
+/// does not split `name - description`); markdown rendering is a later phase.
+private void writePopupTags(Writer)(ref Writer w, in Node node)
+{
+    if (!node.tags.length)
+        return;
+    put(w, `<div class="twoslash-popup-docs twoslash-popup-docs-tags">`);
+    foreach (ref const tag; node.tags)
+    {
+        if (!tag.length)
+            continue;
+        put(w, `<span class="twoslash-popup-docs-tag"><span class="twoslash-popup-docs-tag-name">@`);
+        writeHtmlEscaped(w, tag[0]);
+        put(w, `</span>`);
+        if (tag.length > 1 && tag[1].length)
+        {
+            put(w, `<span class="twoslash-popup-docs-tag-value">`);
+            writeHtmlEscaped(w, tag[1]);
+            put(w, `</span>`);
+        }
+        put(w, `</span>`);
+    }
+    put(w, `</div>`);
 }
 
 /// A below-line block for a query / completion / error / tag node.
@@ -501,6 +529,28 @@ version (unittest)
         `<span class="twoslash-hover"><span class="twoslash-popup-container">` ~
         `<code class="twoslash-popup-code">const a: 1</code>` ~
         `<div class="twoslash-popup-docs">the answer</div></span>a</span>`);
+}
+
+@("render_html.hoverPopupTags")
+@system unittest
+{
+    // JSDoc tags render as `@name` chips after the docs; an empty value is
+    // omitted; `text` is one opaque string (no name/description split).
+    const tw = TwoslashReturn(code: "a", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1, line: 0, character: 0,
+            text: "function ref(): void",
+            tags: [["param", "value - the wrapped object"], ["returns", ""]]),
+    ]);
+    assert(renderTw(tw, null) ==
+        `<span class="twoslash-hover"><span class="twoslash-popup-container">` ~
+        `<code class="twoslash-popup-code">function ref(): void</code>` ~
+        `<div class="twoslash-popup-docs twoslash-popup-docs-tags">` ~
+        `<span class="twoslash-popup-docs-tag">` ~
+        `<span class="twoslash-popup-docs-tag-name">@param</span>` ~
+        `<span class="twoslash-popup-docs-tag-value">value - the wrapped object</span></span>` ~
+        `<span class="twoslash-popup-docs-tag">` ~
+        `<span class="twoslash-popup-docs-tag-name">@returns</span></span>` ~
+        `</div></span>a</span>`);
 }
 
 @("render_html.errorInlineAndBelow")
