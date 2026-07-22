@@ -143,7 +143,7 @@ int runGui(
     PreviewLine[] plines;
     int lastWidthCols = -1;
 
-    // The live theme state: ↑/↓ browse `themes`, re-resolving and repainting —
+    // The live theme state: ←/→ browse `themes`, re-resolving and repainting —
     // the GPU counterpart of hue's terminal Previewer.
     size_t themeIdx = startIdx;
     ResolvedTheme current;
@@ -220,6 +220,7 @@ int runGui(
             top = cast(long) matches[0].line;
     }
 
+    Scrollbar sb;
     int frame = 0;
     while (!WindowShouldClose())
     {
@@ -287,24 +288,25 @@ int runGui(
         {
             // Normal mode: scroll, theme cycling, font sizing, match nav, and the
             // keys that enter the input modes.
+            // Scroll: wheel, ↑/↓ (one line), j/k, PageUp/Down, Home/End.
             top -= cast(long)(GetMouseWheelMove() * 3);
             if (pressed(KeyboardKey.KEY_PAGE_DOWN))
                 top += visibleRows;
             if (pressed(KeyboardKey.KEY_PAGE_UP))
                 top -= visibleRows;
-            if (pressed(KeyboardKey.KEY_J))
+            if (pressed(KeyboardKey.KEY_J) || pressed(KeyboardKey.KEY_DOWN))
                 ++top;
-            if (pressed(KeyboardKey.KEY_K))
+            if (pressed(KeyboardKey.KEY_K) || pressed(KeyboardKey.KEY_UP))
                 --top;
             if (pressed(KeyboardKey.KEY_HOME))
                 top = 0;
             if (pressed(KeyboardKey.KEY_END))
                 top = maxTop;
 
-            // Live theme cycling (↑ previous, ↓ next, wrapping).
-            if (pressed(KeyboardKey.KEY_DOWN))
+            // Live theme cycling (← previous, → next, wrapping).
+            if (pressed(KeyboardKey.KEY_RIGHT))
                 applyTheme(themeIdx + 1 == themes.length ? 0 : themeIdx + 1);
-            if (pressed(KeyboardKey.KEY_UP))
+            if (pressed(KeyboardKey.KEY_LEFT))
                 applyTheme(themeIdx == 0 ? themes.length - 1 : themeIdx - 1);
 
             // Font sizing: Ctrl-'=' / Ctrl-'-' (reload faces + re-measure).
@@ -343,6 +345,50 @@ int runGui(
                 mode = Mode.gotoLine;
                 query.clear();
             }
+        }
+
+        // Interactive scrollbar (hover-expand + thumb drag + track click),
+        // adapted from apps/terminal's ScrollbarState. Runs every frame so the
+        // width animates even while a search is being typed.
+        {
+            enum float sbMaxW = 16.0f;
+            if (maxTop > 0)
+            {
+                const trackH = cast(float) screenH;
+                const g = thumbGeometry(total, visibleRows, top, maxTop, screenH);
+                const pos = GetMousePosition();
+                const hoverTrack = pos.x >= screenW - sbMaxW;
+                const hoverThumb = hoverTrack && pos.y >= g.y && pos.y <= g.y + g.h;
+                sb.isHovered = hoverTrack || sb.isDragging;
+                sb.targetWidth = sb.isHovered ? 12.0f : 4.0f;
+
+                if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT) && hoverTrack)
+                {
+                    if (hoverThumb)
+                    {
+                        sb.isDragging = true;
+                        sb.dragStartY = pos.y;
+                        sb.dragStartOffset = top;
+                    }
+                    else // click on the track: center the viewport on the click
+                        top = cast(long)(pos.y / trackH * total) - visibleRows / 2;
+                }
+                if (sb.isDragging)
+                {
+                    if (IsMouseButtonReleased(MouseButton.MOUSE_BUTTON_LEFT))
+                        sb.isDragging = false;
+                    else if (g.movable > 0)
+                        top = sb.dragStartOffset
+                            + cast(long)((pos.y - sb.dragStartY) * maxTop / g.movable);
+                }
+            }
+            else
+            {
+                sb.isHovered = false;
+                sb.targetWidth = 4.0f;
+            }
+            // Ease the width toward its target (matches the terminal's 15/s rate).
+            sb.currentWidth += (sb.targetWidth - sb.currentWidth) * 15.0f * GetFrameTime();
         }
 
         top = top < 0 ? 0 : (top > maxTop ? maxTop : top);
@@ -414,15 +460,17 @@ int runGui(
         }
         } // end raw (!showPreview) view
 
-        // Scrollbar: track + a thumb sized/positioned to the viewport.
+        // Scrollbar: an animated-width thumb, plus a faint track while hovered
+        // or dragging. Colors follow the theme's muted gutter tone.
         if (maxTop > 0)
         {
-            enum sbWidth = 10;
-            const thumbH = screenH * visibleRows / cast(int) total;
-            const h = thumbH < 24 ? 24 : thumbH;
-            const thumbY = cast(int)((screenH - h) * top / maxTop);
-            DrawRectangle(screenW - sbWidth, 0, sbWidth, screenH, rl(mix(pageBg, gutterFg)));
-            DrawRectangle(screenW - sbWidth, thumbY, sbWidth, h, rl(gutterFg));
+            const g = thumbGeometry(total, visibleRows, top, maxTop, screenH);
+            const w = sb.currentWidth;
+            const x = screenW - w;
+            if (sb.isHovered || sb.isDragging)
+                DrawRectangle(cast(int) x, 0, cast(int) w, screenH, alpha(gutterFg, 40));
+            DrawRectangle(cast(int) x, cast(int) g.y, cast(int) w, cast(int) g.h,
+                alpha(gutterFg, 200));
         }
 
         // Input line at the bottom: '/query' while searching, ':n' while going
@@ -529,6 +577,44 @@ private TextStyle mapAttrs(ubyte attrs) pure nothrow @nogc @safe
         t.bits |= TextStyle.strikethrough;
     return t;
 }
+
+/// Animated, draggable scrollbar state (mirrors apps/terminal's ScrollbarState):
+/// `currentWidth` eases toward `targetWidth` (4 idle → 12 on hover/drag); a drag
+/// records the grab point so the thumb tracks the cursor.
+private struct Scrollbar
+{
+    float currentWidth = 4.0f;
+    float targetWidth = 4.0f;
+    bool isHovered;
+    bool isDragging;
+    float dragStartY = 0.0f;
+    long dragStartOffset = 0;
+}
+
+/// The scrollbar thumb's vertical geometry for the current viewport.
+private struct ThumbGeometry
+{
+    float y;       /// thumb top (px)
+    float h;       /// thumb height (px, min 24)
+    float movable; /// track travel available to the thumb (px)
+}
+
+/// ditto — thumb sized to the visible fraction, positioned by scroll progress.
+private ThumbGeometry thumbGeometry(size_t total, int visibleRows, long top,
+    long maxTop, int screenH) pure nothrow @nogc @safe
+{
+    const trackH = cast(float) screenH;
+    float h = trackH * visibleRows / cast(float) total;
+    if (h < 24.0f)
+        h = 24.0f;
+    const movable = trackH - h;
+    const y = maxTop > 0 ? movable * top / cast(float) maxTop : 0.0f;
+    return ThumbGeometry(y, h, movable);
+}
+
+/// An RGB triple as a raylib color with an explicit alpha (for overlays).
+private Color alpha(RgbColor c, ubyte a) pure nothrow @nogc @trusted
+    => Color(c.r, c.g, c.b, a);
 
 /// `IsKeyPressed` plus auto-repeat while held, so PageDown/j/k etc. repeat.
 private bool pressed(int key) @system
