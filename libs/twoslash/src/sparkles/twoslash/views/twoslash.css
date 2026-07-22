@@ -104,6 +104,37 @@
   border-top: 1px solid var(--twoslash-border-color);
 }
 
+/* Rendered markdown inside the docs (paragraphs, lists, code fences, headings):
+   tame the browser's default block margins so a paragraph or list sits tight in
+   the small popup — collapse the outer edges, keep a modest inner rhythm.
+   (Shiki leans on the host page's prose styles; the overlay is self-contained.) */
+.twoslash .twoslash-popup-docs :first-child {
+  margin-top: 0;
+}
+.twoslash .twoslash-popup-docs :last-child {
+  margin-bottom: 0;
+}
+.twoslash .twoslash-popup-docs p,
+.twoslash .twoslash-popup-docs ul,
+.twoslash .twoslash-popup-docs ol,
+.twoslash .twoslash-popup-docs pre,
+.twoslash .twoslash-popup-docs blockquote {
+  margin: 0.5em 0;
+}
+.twoslash .twoslash-popup-docs code {
+  font-family: var(--twoslash-code-font);
+}
+.twoslash .twoslash-popup-docs pre {
+  padding: 4px 6px;
+  border-radius: 3px;
+  overflow-x: auto;
+  background: var(--twoslash-docs-code-bg, rgba(127, 127, 127, 0.1));
+}
+.twoslash .twoslash-popup-docs pre code {
+  padding: 0;
+  background: none;
+}
+
 .twoslash .twoslash-popup-docs-tags {
   display: flex;
   flex-direction: column;
