@@ -33,6 +33,8 @@ import std.range.primitives : put;
 import sparkles.base.text.html : writeHtmlEscaped;
 
 import sparkles.syntax.event : HighlightEvent, LabelId, StyledSpan, byStyledSpan;
+import sparkles.syntax.md.model : extractMarkdown, MdDoc;
+import sparkles.syntax.md.render_html : renderMarkdownHtml, renderMarkdownInlineHtml;
 import sparkles.syntax.render.html : renderHtml, HtmlMode, HtmlOptions;
 import sparkles.syntax.theme : ResolvedTheme;
 import sparkles.syntax.ts.injection : TsConfigCache;
@@ -77,6 +79,13 @@ struct TwoslashHtmlOptions
     /// Which built-in custom-tag icon set to draw on `// @tag` lines
     /// (`@log`/`@error`/`@warn`/`@annotate`; default the reference SVGs).
     IconStyle tagIcons = IconStyle.svg;
+
+    /// Render hover/query `docs` and `@tag` values as $(B markdown) (Shiki's
+    /// `renderMarkdown`/`renderMarkdownInline` seam) via
+    /// $(REF renderMarkdownHtml, sparkles,syntax,md,render_html). On by default;
+    /// falls back to escaped text automatically when the markdown grammars are
+    /// unavailable (so output degrades gracefully without a grammar bundle).
+    bool renderDocsMarkdown = true;
 }
 
 /**
@@ -282,18 +291,43 @@ private void writePopup(Writer)(ref Writer w, in ResolvedTheme theme,
     if (node.docs.length)
     {
         put(w, `<div class="twoslash-popup-docs">`);
-        writeHtmlEscaped(w, node.docs);
+        writeDocs(w, cache, node.docs, options, inline: false);
         put(w, `</div>`);
     }
-    writePopupTags(w, node);
+    writePopupTags(w, cache, node, options);
     put(w, `</span>`);
+}
+
+/// Emits `md` into `w` as markdown (via the `sparkles:syntax` `MdDoc → HTML`
+/// emitter) when `options.renderDocsMarkdown` and the markdown grammars parse it
+/// to a non-empty document; otherwise (option off, or no grammar bundle) falls
+/// back to escaped text, so docs never vanish. `inline` picks the paragraph-less
+/// inline entry point (for a short tag value) over the block one (for `docs`).
+private void writeDocs(Writer)(ref Writer w, ref TsConfigCache cache,
+    scope const(char)[] md, in TwoslashHtmlOptions options, bool inline) @system
+{
+    if (options.renderDocsMarkdown)
+    {
+        MdDoc doc = extractMarkdown(cache.registry, md);
+        if (doc.root.children.length) // grammars present and parse yielded blocks
+        {
+            if (inline)
+                renderMarkdownInlineHtml(doc, w);
+            else
+                renderMarkdownHtml(doc, w);
+            return;
+        }
+    }
+    writeHtmlEscaped(w, md);
 }
 
 /// The JSDoc tags block: `<div class="twoslash-popup-docs twoslash-popup-docs-tags">`
 /// with each tag as `@{name}` (a `-tag-name` span) plus its optional value span —
 /// matching the `@shikijs/twoslash` structure. `text` is one opaque string (shiki
-/// does not split `name - description`); markdown rendering is a later phase.
-private void writePopupTags(Writer)(ref Writer w, in Node node)
+/// does not split `name - description`), rendered as inline markdown (Shiki's
+/// `renderMarkdownInline`), degrading to escaped text without a grammar bundle.
+private void writePopupTags(Writer)(ref Writer w, ref TsConfigCache cache,
+    in Node node, in TwoslashHtmlOptions options) @system
 {
     if (!node.tags.length)
         return;
@@ -308,7 +342,7 @@ private void writePopupTags(Writer)(ref Writer w, in Node node)
         if (tag.length > 1 && tag[1].length)
         {
             put(w, `<span class="twoslash-popup-docs-tag-value">`);
-            writeHtmlEscaped(w, tag[1]);
+            writeDocs(w, cache, tag[1], options, inline: true);
             put(w, `</span>`);
         }
         put(w, `</span>`);
@@ -615,6 +649,43 @@ version (unittest)
         `<span class="twoslash-popup-docs-tag">` ~
         `<span class="twoslash-popup-docs-tag-name">@returns</span></span>` ~
         `</div></span>a</span>`);
+}
+
+@("render_html.docsMarkdown")
+@system unittest
+{
+    import std.process : environment;
+    import std.algorithm.searching : canFind;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+    // With the real markdown grammars, `docs` renders as markdown: a code span
+    // becomes <code>, a tag value renders inline (no surrounding <p>).
+    auto registry = GrammarRegistry.fromEnvironment();
+    auto cache = TsConfigCache.create(&registry, LabelSet.standard());
+    const tw = TwoslashReturn(code: "a", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1, line: 0, character: 0,
+            text: "const a: 1", docs: "the `answer` value",
+            tags: [["param", "the wrapped `obj`"]]),
+    ]);
+    SmallBuffer!(char, 2048) buf;
+    renderTwoslashHtml(tw, null, testTheme(), cache, buf);
+
+    // docs: block markdown → wrapped in a <p>, code span highlighted.
+    assert(canFind(buf[],
+        `<div class="twoslash-popup-docs"><p>the <code>answer</code> value</p></div>`));
+    // tag value: inline markdown → NO <p>, code span present.
+    assert(canFind(buf[],
+        `<span class="twoslash-popup-docs-tag-value">the wrapped <code>obj</code></span>`));
+
+    // Opt-out restores escaped text (no <code>/<p>).
+    SmallBuffer!(char, 2048) plain;
+    renderTwoslashHtml(tw, null, testTheme(), cache, plain,
+        TwoslashHtmlOptions(renderDocsMarkdown: false));
+    assert(canFind(plain[], `<div class="twoslash-popup-docs">the `~"`answer`"~` value</div>`));
+    assert(!canFind(plain[], "<code>"));
 }
 
 @("render_html.errorInlineAndBelow")
