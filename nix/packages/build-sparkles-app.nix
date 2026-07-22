@@ -89,7 +89,13 @@
           fileset = fs.unions (
             [ (fs.fileFilter isDubManifest root) ]
             ++ map (
-              path: fs.fileFilter (file: file.hasExt "d" || file.hasExt "c" || file.hasExt "i") (fromRoot path)
+              path:
+              fs.fileFilter (
+                # `.d`/`.c`/`.i` sources (`.c`/`.i` for ImportC shims) plus
+                # `.css` string-import view assets (e.g. sparkles:twoslash's
+                # `views/twoslash.css`, pulled in via `import()`).
+                file: file.hasExt "d" || file.hasExt "c" || file.hasExt "i" || file.hasExt "css"
+              ) (fromRoot path)
             ) sourceDirs
           );
         };
