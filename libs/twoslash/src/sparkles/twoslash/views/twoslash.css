@@ -54,26 +54,37 @@
   transition: border-color 0.3s;
 }
 
+/* All popup surfaces — the hover popup container, the below-line query popup, and
+   the completion list — share ONE design language (surface + a `1ch` detach gap
+   from the token or caret they annotate), so consistency is structural, not
+   per-rule. Only the positioning model differs (see the individual rules below).
+   The query and completion are bare block elements (direct children of the code)
+   so their gap is exactly `margin-top`; the hover popup is absolutely positioned. */
+.twoslash .twoslash-popup-container,
+.twoslash .twoslash-query-line,
+.twoslash .twoslash-completion-list {
+  margin-top: 1ch;
+  background: var(--twoslash-popup-bg);
+  color: var(--twoslash-popup-color);
+  border: 1px solid var(--twoslash-border-color);
+  border-radius: 4px;
+  box-shadow: var(--twoslash-popup-shadow);
+}
+
 .twoslash .twoslash-popup-container {
   position: absolute;
   z-index: 10;
   opacity: 0;
   display: inline-flex;
   flex-direction: column;
-  transform: translateY(1.1em);
-  background: var(--twoslash-popup-bg);
-  color: var(--twoslash-popup-color);
-  border: 1px solid var(--twoslash-border-color);
-  border-radius: 4px;
-  box-shadow: var(--twoslash-popup-shadow);
+  transform: translateY(1.1em); /* drop below the inline token it annotates */
   transition: opacity 0.3s;
   pointer-events: none;
   user-select: none;
   text-align: left;
 }
 
-.twoslash .twoslash-hover:hover .twoslash-popup-container,
-.twoslash .twoslash-query-line .twoslash-popup-container {
+.twoslash .twoslash-hover:hover .twoslash-popup-container {
   opacity: 1;
   pointer-events: auto;
 }
@@ -108,7 +119,8 @@
   font-family: var(--twoslash-code-font);
 }
 
-/* Connector notch (query popups only). */
+/* Connector notch — shared by every popup (the completion list overrides `left`
+   inline to point at its caret rather than the fixed token-start position). */
 .twoslash .twoslash-popup-arrow {
   position: absolute;
   top: -4px;
@@ -123,13 +135,16 @@
 }
 
 /* ===== Query line ===== */
-.twoslash .twoslash-query-line .twoslash-popup-container {
-  position: relative;
+.twoslash .twoslash-query-line {
+  position: relative; /* containing block for the arrow */
   /* Below a hover popup's z-index (10) so an expanded hover on the line above
      paints over this always-visible query popup, not behind it. */
   z-index: 9;
+  display: flex; /* block-level flex, content-width — same as the completion */
+  flex-direction: column;
+  width: max-content;
+  padding: 0;
   margin-bottom: 1.4em;
-  transform: translateY(0.6em);
 }
 
 /* ===== Error line ===== */
@@ -163,17 +178,19 @@
 }
 
 /* ===== Completions ===== */
+/* Surface + top gap come from the shared popup rule above. Only the completion's
+   own layout lives here. `margin-bottom` only (not the `margin` shorthand) so the
+   shared `margin-top: 1ch` survives; `margin-left` is set inline per node. The
+   font-size is left to inherit the code size so that inline `margin-left:Nch`
+   offset tracks the monospace column grid exactly. */
 .twoslash .twoslash-completion-list {
+  position: relative; /* containing block for the arrow */
   width: max-content;
-  margin: 3px 0;
+  margin-bottom: 3px;
   padding: 4px;
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 0.8rem;
-  background: var(--twoslash-popup-bg);
-  border: 1px solid var(--twoslash-border-color);
-  box-shadow: var(--twoslash-popup-shadow);
 }
 
 .twoslash .twoslash-completion-list li {
