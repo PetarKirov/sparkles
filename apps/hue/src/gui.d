@@ -21,7 +21,7 @@ version (HueGui):
 import raylib;
 
 import gui_text : TextStyle, GlyphDrawOps, drawOps, guardCell, getRequiredCodepoints,
-    columnWidth, FontSlot;
+    columnWidth, lineCount, FontSlot;
 
 // Selective import avoids sparkles.syntax.Color clashing with raylib.Color:
 // bare `Color` is unambiguously raylib's; the theme color type is reached only
@@ -59,11 +59,19 @@ int runGui(
     import std.stdio : stderr;
     import std.string : toStringz;
     import std.process : environment;
+    import std.conv : to;
 
     // Debug/CI capture: HUE_GUI_SCREENSHOT=<path> renders a few frames, writes a
     // PNG, and exits — the golden-frame harness the syntax spec's totality and
     // M5's byte-identical-render checks rely on (skipTest-gated when headless).
     const shotPath = environment.get("HUE_GUI_SCREENSHOT", "");
+    // Debug/CI: HUE_GUI_TOP=<n> sets the initial scroll line (clamped) so a
+    // golden capture can exercise the culled viewport.
+    long initialTop;
+    try
+        initialTop = environment.get("HUE_GUI_TOP", "0").to!long;
+    catch (Exception)
+        initialTop = 0;
 
     InitWindow(800, 600, ("hue — " ~ title).toStringz);
     scope (exit) CloseWindow();
@@ -80,50 +88,101 @@ int runGui(
     }
     scope (exit) fonts.unload();
 
-    // M1: a single resolved theme. M3 re-resolves on ↑/↓ over `themes`.
+    // M1/M2: a single resolved theme. M3 re-resolves on ↑/↓ over `themes`.
     const current = resolveTheme(themes[startIdx], labels);
     const pageFg = toRgb(current.defaults.fg, hardFallbackFg);
     const pageBg = toRgb(current.defaults.bg, hardFallbackBg);
+    const gutterFg = mix(pageFg, pageBg); // muted line numbers
 
-    SmallBuffer!(char, 4096) runBuf; // reused per run; NUL-terminated for raylib
+    const total = lineCount(source);
+    const gutterCols = digitCount(total) + 1; // digits + one padding cell
+
+    SmallBuffer!(char, 4096) buf; // reused, NUL-terminated for raylib
+    long top = initialTop; // index of the first visible line
 
     int frame = 0;
     while (!WindowShouldClose())
     {
+        const cellW = fonts.cellW();
+        const cellH = fonts.cellH();
+        const screenW = GetScreenWidth();
+        const screenH = GetScreenHeight();
+        const visibleRows = screenH / cellH;
+        const maxTop = total > visibleRows ? cast(long)(total - visibleRows) : 0;
+
+        // Scroll input. ↑/↓ are reserved for live theme cycling (M3), so scroll
+        // is mouse-wheel + PageUp/Down + Home/End + j/k (vi-style).
+        top -= cast(long)(GetMouseWheelMove() * 3);
+        if (pressed(KeyboardKey.KEY_PAGE_DOWN))
+            top += visibleRows;
+        if (pressed(KeyboardKey.KEY_PAGE_UP))
+            top -= visibleRows;
+        if (pressed(KeyboardKey.KEY_J))
+            ++top;
+        if (pressed(KeyboardKey.KEY_K))
+            --top;
+        if (pressed(KeyboardKey.KEY_HOME))
+            top = 0;
+        if (pressed(KeyboardKey.KEY_END))
+            top = maxTop;
+        top = top < 0 ? 0 : (top > maxTop ? maxTop : top);
+        const topLine = cast(size_t) top;
+
+        const gutterPx = cast(int)(gutterCols * cellW);
+
         BeginDrawing();
         ClearBackground(rl(pageBg));
 
+        // Line-number gutter (independent of runs, so blank lines still number).
+        foreach (row; 0 .. visibleRows)
+        {
+            const line = topLine + row;
+            if (line >= total)
+                break;
+            const s = cstrOf(buf, uintToBuf(line + 1));
+            // right-align, leaving one padding cell before the text column
+            const nx = gutterPx - cast(int)((s.length + 1) * cellW);
+            drawText(fonts, s, nx, row * cast(float) cellH, TextStyle(0), rl(gutterFg));
+        }
+
+        // Syntax runs, viewport-culled: skip lines above, stop past the bottom.
         size_t curLine = size_t.max;
         float x = 0;
-        float y = 0;
         foreach (ls; byStyledLine(source, events))
         {
+            if (ls.line < topLine)
+                continue;
+            if (ls.line >= topLine + visibleRows)
+                break;
             if (ls.line != curLine)
             {
                 curLine = ls.line;
-                x = 0;
-                y = ls.line * cast(float) fonts.cellH(); // no scroll offset yet (M2)
+                x = gutterPx;
             }
 
             const run = source[ls.span.start .. ls.span.end];
             if (run.length == 0)
                 continue;
 
-            // Copy the run into a NUL-terminated buffer raylib can read directly.
-            runBuf.clear();
-            runBuf ~= run;
-            runBuf ~= '\0';
-            const cstr = runBuf[][0 .. $ - 1];
-
+            const cstr = cstrOf(buf, run);
+            const y = (ls.line - topLine) * cast(float) cellH;
             const spec = current[ls.span.label];
-            // Fixed monospace advance: one cell per codepoint keeps runs on a
-            // perfect grid (no MeasureTextEx drift, no per-run GL measure).
-            const wpx = cast(int)(columnWidth(run) * fonts.cellW());
+            const wpx = cast(int)(columnWidth(run) * cellW);
             if (spec.bg.isSet)
-                DrawRectangle(cast(int) x, cast(int) y, wpx,
-                    fonts.cellH(), rl(toRgb(spec.bg, pageBg)));
+                DrawRectangle(cast(int) x, cast(int) y, wpx, cellH, rl(toRgb(spec.bg, pageBg)));
             drawText(fonts, cstr, x, y, mapStyle(spec), rl(toRgb(spec.fg, pageFg)));
             x += wpx;
+        }
+
+        // Scrollbar: track + a thumb sized/positioned to the viewport.
+        if (maxTop > 0)
+        {
+            enum sbWidth = 10;
+            const thumbH = screenH * visibleRows / cast(int) total;
+            const h = thumbH < 24 ? 24 : thumbH;
+            const thumbY = cast(int)((screenH - h) * top / maxTop);
+            DrawRectangle(screenW - sbWidth, 0, sbWidth, screenH, rl(mix(pageBg, gutterFg)));
+            DrawRectangle(screenW - sbWidth, thumbY, sbWidth, h, rl(gutterFg));
         }
 
         EndDrawing();
@@ -142,6 +201,55 @@ int runGui(
     }
 
     return 0;
+}
+
+/// `IsKeyPressed` plus auto-repeat while held, so PageDown/j/k etc. repeat.
+private bool pressed(int key) @system
+    => IsKeyPressed(key) || IsKeyPressedRepeat(key);
+
+/// Midpoint of two colors — used for muted gutter numbers and the scrollbar.
+private RgbColor mix(RgbColor a, RgbColor b) pure nothrow @nogc @safe
+    => RgbColor(cast(ubyte)((a.r + b.r) / 2), cast(ubyte)((a.g + b.g) / 2),
+        cast(ubyte)((a.b + b.b) / 2));
+
+/// Decimal digit count (at least 1, for 0).
+private int digitCount(size_t n) pure nothrow @nogc @safe
+{
+    int d = 1;
+    while (n >= 10)
+    {
+        n /= 10;
+        ++d;
+    }
+    return d;
+}
+
+/// Formats `v` into a thread-local buffer as decimal digits (no allocation).
+private char[] uintToBuf(size_t v) @safe nothrow
+{
+    static char[20] buf;
+    if (v == 0)
+    {
+        buf[0] = '0';
+        return buf[0 .. 1];
+    }
+    size_t i = buf.length;
+    while (v)
+    {
+        buf[--i] = cast(char)('0' + v % 10);
+        v /= 10;
+    }
+    return buf[i .. $];
+}
+
+/// Copies `s` into `buf` with a trailing NUL, returning the NUL-terminated
+/// slice (excluding the NUL) that raylib's `DrawTextEx` can read directly.
+private const(char)[] cstrOf(ref SmallBuffer!(char, 4096) buf, scope const(char)[] s) @safe
+{
+    buf.clear();
+    buf ~= s;
+    buf ~= '\0';
+    return buf[][0 .. $ - 1];
 }
 
 /// Translates sparkles:syntax's backend-neutral `TermStyle` attributes into the

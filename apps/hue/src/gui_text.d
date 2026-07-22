@@ -168,6 +168,37 @@ unittest
     assert(columnWidth("é") == 2);
 }
 
+/// The number of display lines in `source`, matching `byStyledLine`'s line
+/// indexing: one per `\n`, plus a final line for trailing content. A trailing
+/// newline does not add an empty last line (editor convention); empty source
+/// is zero lines. Used for viewport clamping, the gutter, and the scrollbar.
+size_t lineCount(scope const(char)[] source) pure nothrow @nogc
+{
+    if (source.length == 0)
+        return 0;
+    size_t n;
+    foreach (c; source)
+        if (c == '\n')
+            ++n;
+    if (source[$ - 1] != '\n')
+        ++n;
+    return n;
+}
+
+///
+@("gui_text.lineCount.conventions")
+pure nothrow @nogc
+unittest
+{
+    assert(lineCount("") == 0);
+    assert(lineCount("a") == 1);
+    assert(lineCount("a\n") == 1);      // trailing newline is not an extra line
+    assert(lineCount("a\nb") == 2);
+    assert(lineCount("a\nb\n") == 2);
+    assert(lineCount("\n") == 1);       // one (empty) line before the newline
+    assert(lineCount("\n\n") == 2);
+}
+
 /// An inclusive codepoint range in the glyph atlas.
 struct CodepointRange
 {
