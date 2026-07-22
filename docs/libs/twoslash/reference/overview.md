@@ -2,11 +2,11 @@
 
 ## Ingest (`sparkles.twoslash.ingest`)
 
-| Symbol | Signature | Notes |
-| ------ | --------- | ----- |
-| `parseTwoslash` | `JsonResult!TwoslashReturn parseTwoslash(scope const(char)[] json)` | parse + decode a JSON string |
-| `loadTwoslashFile` | `JsonResult!TwoslashReturn loadTwoslashFile(string path)` | read + parse + decode a file |
-| `fromTwoslashJson` | `JsonResult!TwoslashReturn fromTwoslashJson(JSONValue root)` | decode a pre-parsed object |
+| Symbol             | Signature                                                           | Notes                        |
+| ------------------ | ------------------------------------------------------------------- | ---------------------------- |
+| `parseTwoslash`    | `JsonResult!TwoslashReturn parseTwoslash(scope const(char)[] json)` | parse + decode a JSON string |
+| `loadTwoslashFile` | `JsonResult!TwoslashReturn loadTwoslashFile(string path)`           | read + parse + decode a file |
+| `fromTwoslashJson` | `JsonResult!TwoslashReturn fromTwoslashJson(JSONValue root)`        | decode a pre-parsed object   |
 
 Errors are returned (never thrown). Not `@nogc` (`std.json` + wired allocate).
 
@@ -35,24 +35,32 @@ Errors are returned (never thrown). Not `@nogc` (`std.json` + wired allocate).
 ## Renderers
 
 - `renderTwoslashHtml(in TwoslashReturn tw, const(HighlightEvent)[] events,
-  in ResolvedTheme theme, ref TsConfigCache cache, ref Writer w,
-  in TwoslashHtmlOptions = …)` — content-only HTML overlay. `@system`.
+in ResolvedTheme theme, ref TsConfigCache cache, ref Writer w,
+in TwoslashHtmlOptions = …)` — content-only HTML overlay. `@system`.
 - `renderTwoslashAnsi(… , in TwoslashAnsiOptions = …)` — terminal overlay
   (`TwoslashAnsiOptions { ColorDepth depth; bool italics, emitBackground, hovers; }`).
   `@system`.
 
 `TwoslashHtmlOptions` controls the HTML fidelity/chrome:
 
-| Field | Default | Effect |
-| ----- | ------- | ------ |
-| `classPrefix` | `"syn-"` | class prefix for the inner syntax spans |
-| `completionIcons` | `IconStyle.svg` | completion-kind icon set (`svg` \| `glyph` \| `none`) |
-| `customCompletionIcon` | `null` | per-kind icon override delegate (non-empty return wins) |
-| `tagIcons` | `IconStyle.svg` | `// @tag` line icon set (`svg` \| `glyph` \| `none`) |
-| `stripQuickinfoPrefix` | `false` | strip `(property) ` etc. from popup signatures |
+| Field                  | Default         | Effect                                                     |
+| ---------------------- | --------------- | ---------------------------------------------------------- |
+| `classPrefix`          | `"syn-"`        | class prefix for the inner syntax spans                    |
+| `completionIcons`      | `IconStyle.svg` | completion-kind icon set (`svg` \| `glyph` \| `none`)      |
+| `customCompletionIcon` | `null`          | per-kind icon override delegate (non-empty return wins)    |
+| `tagIcons`             | `IconStyle.svg` | `// @tag` line icon set (`svg` \| `glyph` \| `none`)       |
+| `stripQuickinfoPrefix` | `false`         | strip `(property) ` etc. from popup signatures             |
+| `renderDocsMarkdown`   | `true`          | render `docs` (block) + `@tag` values (inline) as markdown |
 
 The `svg` icon sets are the reference `@shikijs/twoslash` icons, string-imported from
 `views/icons/{completions,tags}/*.svg` by `sparkles.twoslash.icons`.
+
+With `renderDocsMarkdown` (default on), hover/query `docs` render as **block**
+markdown and each `@tag` value as **inline** markdown, via the `MdDoc → HTML`
+emitter in `sparkles:syntax` (`renderMarkdownHtml` / `renderMarkdownInlineHtml`,
+Shiki's `renderMarkdown`/`renderMarkdownInline` seam). It degrades to escaped text
+automatically when the markdown grammars are unavailable, so no grammar bundle is
+required for correct — if plainer — output.
 
 Both take the snippet already highlighted into `events` (over `tw.code`) and the
 `cache` used to re-highlight popup signatures. Neither is `@nogc`.
