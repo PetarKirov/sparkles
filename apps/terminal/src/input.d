@@ -283,7 +283,7 @@ struct HoverState {
     // Owned, NUL-terminated URL bytes (for Ctrl-click "open"). @nogc, grows via
     // pureMalloc. SmallBuffer is non-copyable, so HoverState must be kept as a
     // single stack-pinned instance and only passed by `ref`.
-    SmallBuffer!(char, 2048) url;
+    SmallBuffer!(char, 2048, true) url;
     int start_x = -1;
     int end_x = -1;
     int y = -1;
@@ -744,7 +744,7 @@ void handle_input(int pty_fd, GhosttyKeyEncoder encoder, GhosttyKeyEvent event, 
                     if (ghostty_formatter_format_alloc(formatter, null, &out_ptr, &out_len) == GHOSTTY_SUCCESS) {
                         // ghostty's buffer may not be NUL-terminated; copy it
                         // plus a NUL into a @nogc SmallBuffer for SetClipboardText.
-                        SmallBuffer!(char, 4096) clip;
+                        SmallBuffer!(char, 4096, true) clip;
                         clip ~= cast(const(char)[])out_ptr[0 .. out_len];
                         clip ~= '\0';
                         SetClipboardText(clip[].ptr);

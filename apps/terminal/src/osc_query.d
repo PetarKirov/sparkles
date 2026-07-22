@@ -22,7 +22,7 @@ struct OscScanner
     State state;
     bool overflowed;
     bool endedWithBel; /// sequence terminator: BEL (true) or ESC \ (false)
-    SmallBuffer!(char, 48) payload;
+    SmallBuffer!(char, 48, true) payload;
 }
 
 /// Advance the scanner by one byte. Returns true when an OSC sequence just
@@ -159,7 +159,7 @@ unittest
 /// (11). Only the dynamic colors 10–12 are supported; set/reset specs are
 /// skipped — the library already applied them when the bytes were fed to it.
 @safe nothrow @nogc
-void oscColorQueryCodes(scope const(char)[] payload, ref SmallBuffer!(int, 4) codes)
+void oscColorQueryCodes(scope const(char)[] payload, ref SmallBuffer!(int, 4, true) codes)
 {
     int code = 0;
     size_t i = 0;
@@ -188,7 +188,7 @@ void oscColorQueryCodes(scope const(char)[] payload, ref SmallBuffer!(int, 4) co
 @safe nothrow @nogc
 unittest
 {
-    SmallBuffer!(int, 4) codes;
+    SmallBuffer!(int, 4, true) codes;
     oscColorQueryCodes("11;?", codes);
     assert(codes[] == [11]);
 }
@@ -197,7 +197,7 @@ unittest
 @safe nothrow @nogc
 unittest
 {
-    SmallBuffer!(int, 4) codes;
+    SmallBuffer!(int, 4, true) codes;
     oscColorQueryCodes("10;?;?;?", codes);
     assert(codes[] == [10, 11, 12]);
 }
@@ -206,7 +206,7 @@ unittest
 @safe nothrow @nogc
 unittest
 {
-    SmallBuffer!(int, 4) codes;
+    SmallBuffer!(int, 4, true) codes;
     oscColorQueryCodes("10;#ff0000;?", codes); // set fg, query bg
     assert(codes[] == [11]);
 
@@ -219,7 +219,7 @@ unittest
 @safe nothrow @nogc
 unittest
 {
-    SmallBuffer!(int, 4) codes;
+    SmallBuffer!(int, 4, true) codes;
     oscColorQueryCodes("4;1;?", codes); // palette query: unsupported
     oscColorQueryCodes("52;c;?", codes); // clipboard: not a color query
     oscColorQueryCodes("2;title", codes); // title set
