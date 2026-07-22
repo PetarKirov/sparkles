@@ -59,7 +59,7 @@ int runGui(
     import std.stdio : stderr;
     import std.string : toStringz;
     import std.process : environment;
-    import std.conv : to;
+    import std.conv : to, text;
 
     // Debug/CI capture: HUE_GUI_SCREENSHOT=<path> renders a few frames, writes a
     // PNG, and exits — the golden-frame harness the syntax spec's totality and
@@ -68,10 +68,16 @@ int runGui(
     // Debug/CI: HUE_GUI_TOP=<n> sets the initial scroll line (clamped) so a
     // golden capture can exercise the culled viewport.
     long initialTop;
+    int fontSize = defaultFontSize;
     try
+    {
         initialTop = environment.get("HUE_GUI_TOP", "0").to!long;
+        fontSize = environment.get("HUE_GUI_FONTSIZE", null).length
+            ? environment.get("HUE_GUI_FONTSIZE").to!int : defaultFontSize;
+    }
     catch (Exception)
-        initialTop = 0;
+    {
+    }
 
     InitWindow(800, 600, ("hue — " ~ title).toStringz);
     scope (exit) CloseWindow();
@@ -81,18 +87,31 @@ int runGui(
 
     // LoadFontEx uploads a GPU texture, so the FontSet must load after InitWindow.
     FontSet fonts;
-    if (!FontSet.tryLoad("monospace", defaultFontSize, fonts))
+    if (!FontSet.tryLoad("monospace", fontSize, fonts))
     {
         stderr.writeln("hue --gui: could not load a monospace font (is fontconfig available?)");
         return 1;
     }
     scope (exit) fonts.unload();
 
-    // M1/M2: a single resolved theme. M3 re-resolves on ↑/↓ over `themes`.
-    const current = resolveTheme(themes[startIdx], labels);
-    const pageFg = toRgb(current.defaults.fg, hardFallbackFg);
-    const pageBg = toRgb(current.defaults.bg, hardFallbackBg);
-    const gutterFg = mix(pageFg, pageBg); // muted line numbers
+    // The live theme state: ↑/↓ browse `themes`, re-resolving and repainting —
+    // the GPU counterpart of hue's terminal Previewer.
+    size_t themeIdx = startIdx;
+    ResolvedTheme current;
+    RgbColor pageFg, pageBg, gutterFg;
+
+    void applyTheme(size_t i)
+    {
+        themeIdx = i;
+        current = resolveTheme(themes[i], labels);
+        pageFg = toRgb(current.defaults.fg, hardFallbackFg);
+        pageBg = toRgb(current.defaults.bg, hardFallbackBg);
+        gutterFg = mix(pageFg, pageBg); // muted line numbers
+        SetWindowTitle(text("hue — ", title, " — ", names[i],
+            " (", i + 1, "/", names.length, ")").toStringz);
+    }
+
+    applyTheme(themeIdx);
 
     const total = lineCount(source);
     const gutterCols = digitCount(total) + 1; // digits + one padding cell
@@ -127,6 +146,21 @@ int runGui(
             top = maxTop;
         top = top < 0 ? 0 : (top > maxTop ? maxTop : top);
         const topLine = cast(size_t) top;
+
+        // Live theme cycling (↑ previous, ↓ next, wrapping) — hue's previewer
+        // semantics on the GPU.
+        if (pressed(KeyboardKey.KEY_DOWN))
+            applyTheme(themeIdx + 1 == themes.length ? 0 : themeIdx + 1);
+        if (pressed(KeyboardKey.KEY_UP))
+            applyTheme(themeIdx == 0 ? themes.length - 1 : themeIdx - 1);
+
+        // Font sizing: Ctrl-'=' / Ctrl-'-' (reloads faces + re-measures the cell).
+        const ctrl = IsKeyDown(KeyboardKey.KEY_LEFT_CONTROL)
+            || IsKeyDown(KeyboardKey.KEY_RIGHT_CONTROL);
+        if (ctrl && pressed(KeyboardKey.KEY_EQUAL))
+            fonts.reload(fonts.size() + 2);
+        else if (ctrl && pressed(KeyboardKey.KEY_MINUS) && fonts.size() > 6)
+            fonts.reload(fonts.size() - 2);
 
         const gutterPx = cast(int)(gutterCols * cellW);
 
