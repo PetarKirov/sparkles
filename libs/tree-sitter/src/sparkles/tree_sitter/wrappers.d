@@ -27,7 +27,7 @@ import sparkles.tree_sitter.tree_sitter_c :
     ts_node_child, ts_node_child_count,
     ts_node_named_child, ts_node_named_child_count,
     ts_node_has_error, ts_node_start_byte, ts_node_end_byte,
-    ts_node_start_point, ts_node_end_point, ts_node_string,
+    ts_node_start_point, ts_node_end_point, ts_node_string, ts_node_type,
     ts_parser_delete, ts_parser_new, ts_parser_parse,
     ts_parser_parse_with_options, ts_parser_reset,
     ts_parser_set_included_ranges, ts_parser_set_language,
@@ -297,6 +297,24 @@ uint nodeStartByte(TSNode node) @trusted nothrow @nogc
 /// End byte offset of `node` (exclusive).
 uint nodeEndByte(TSNode node) @trusted nothrow @nogc
     => ts_node_end_byte(node);
+
+/// The grammar type name of `node` (e.g. `"document"`, `"atx_heading"`), as a
+/// slice of the borrowed NUL-terminated C string tree-sitter owns (valid for the
+/// node's grammar lifetime — a static string in the compiled parser). Returns
+/// `null` only on the null string a null node would yield. This is the seam a
+/// structural walk (as opposed to a highlight query) reads to branch on node
+/// kind; `TSNode` is a POD value type, so it is a free helper like the accessors
+/// above rather than a method.
+const(char)[] nodeType(TSNode node) @trusted nothrow @nogc
+{
+    const s = ts_node_type(node);
+    if (s is null)
+        return null;
+    size_t n = 0;
+    while (s[n] != '\0')
+        ++n;
+    return s[0 .. n];
+}
 
 /// Number of children of `node`, named and anonymous.
 uint nodeChildCount(TSNode node) @trusted nothrow @nogc
@@ -568,6 +586,11 @@ unittest
     writeSExpression(sexp, tree.rootNode);
     assert(sexp.length > 9);
     assert(sexp[0 .. 9] == "(document");
+
+    // the structural-walk seam: root node type name
+    assert(tree.rootNode.nodeType == "document");
+    assert(nodeChildCount(tree.rootNode) > 0);
+    assert(nodeChild(tree.rootNode, 0).nodeType == "object");
 
     // error recovery is diagnostic, not fatal
     auto broken = parser.parse(`{"a": ]`, error);
