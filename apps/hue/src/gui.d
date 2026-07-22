@@ -75,6 +75,10 @@ int runGui(
     immutable(Theme)[] themes,
     size_t startIdx,
     PreviewModel preview = PreviewModel.init,
+    string fontName = "monospace",
+    int fontSize = defaultFontSize,
+    int windowWidth = 800,
+    int windowHeight = 600,
 ) @system
 {
     import std.stdio : stderr;
@@ -87,18 +91,24 @@ int runGui(
     // M5's byte-identical-render checks rely on (skipTest-gated when headless).
     const shotPath = environment.get("HUE_GUI_SCREENSHOT", "");
     // Debug/CI: HUE_GUI_TOP=<n> sets the initial scroll line (clamped) so a
-    // golden capture can exercise the culled viewport.
+    // golden capture can exercise the culled viewport; HUE_GUI_FONTSIZE overrides
+    // the --font-size for deterministic captures.
+    // `--font-size` arrives in points; convert to pixels (96-DPI, 1pt = 1/72in)
+    // exactly like apps/terminal so both raylib apps size a font identically.
+    int fontSizePx = cast(int)(fontSize * 96.0 / 72.0 + 0.5);
     long initialTop;
-    int fontSize = defaultFontSize;
     try
     {
         initialTop = environment.get("HUE_GUI_TOP", "0").to!long;
-        fontSize = environment.get("HUE_GUI_FONTSIZE", null).length
-            ? environment.get("HUE_GUI_FONTSIZE").to!int : defaultFontSize;
+        // HUE_GUI_FONTSIZE stays in pixels so golden captures are deterministic.
+        if (environment.get("HUE_GUI_FONTSIZE", null).length)
+            fontSizePx = environment.get("HUE_GUI_FONTSIZE").to!int;
     }
     catch (Exception)
     {
     }
+    if (fontSizePx < 6)
+        fontSizePx = 6;
 
     InitWindow(800, 600, ("hue — " ~ title).toStringz);
     scope (exit) CloseWindow();
@@ -107,13 +117,20 @@ int runGui(
     SetExitKey(KeyboardKey.KEY_NULL); // arrow/close-button handling only (M3 adds keys)
 
     // LoadFontEx uploads a GPU texture, so the FontSet must load after InitWindow.
+    // `fontName` may be a path, a family, or a fontconfig preference list.
     FontSet fonts;
-    if (!FontSet.tryLoad("monospace", fontSize, fonts))
+    if (!FontSet.tryLoad(fontName, fontSizePx, fonts))
     {
-        stderr.writeln("hue --gui: could not load a monospace font (is fontconfig available?)");
+        stderr.writeln("hue --gui: could not load a font from '", fontName,
+            "' (is fontconfig available?)");
         return 1;
     }
     scope (exit) fonts.unload();
+
+    // `--window-width`/`--window-height` are in cells (like apps/terminal); size
+    // the window to the loaded cell metrics.
+    if (windowWidth > 0 && windowHeight > 0)
+        SetWindowSize(windowWidth * fonts.cellW(), windowHeight * fonts.cellH());
 
     // Markdown-preview state (M4). A markdown file opens in preview by default;
     // Tab toggles to the raw highlighted-source view. `HUE_GUI_PREVIEW=0/1`

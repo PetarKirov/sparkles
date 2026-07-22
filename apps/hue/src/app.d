@@ -43,7 +43,28 @@ struct CliParams
 
     @CliOption("gui", "Open a raylib GPU window instead of terminal/HTML output (requires the 'gui' build configuration).")
     bool gui;
+
+    @CliOption("font", "--gui font: a path, a family name, or a fontconfig preference list (comma-separated; the first installed family wins).")
+    string font = defaultGuiFont;
+
+    @CliOption("font-size", "--gui font size in points (like the terminal).")
+    int fontSize = 14;
+
+    @CliOption("window-width", "--gui initial window width in cells (like the terminal).")
+    int windowWidth = 100;
+
+    @CliOption("window-height", "--gui initial window height in cells.")
+    int windowHeight = 30;
 }
+
+/// Default `--gui` font: FiraCode Nerd Font Mono, then a fontconfig preference
+/// list of popular coding fonts (Nerd-Font variants first for icon glyphs),
+/// ending in a generic monospace — the first installed family wins, so hue
+/// renders on a sensible font even when none of the named ones are present.
+enum defaultGuiFont =
+    "FiraCode Nerd Font Mono,JetBrainsMono Nerd Font Mono,JetBrains Mono," ~
+    "CaskaydiaCove Nerd Font Mono,Cascadia Code,Hack Nerd Font Mono,Hack," ~
+    "Iosevka Term,Iosevka,Source Code Pro,DejaVu Sans Mono,monospace";
 
 int main(string[] args)
 {
@@ -132,7 +153,8 @@ int main(string[] args)
             if (lang == "markdown")
                 preview = buildPreviewModel(registry, cache, source);
             return runGui(baseName(sourcePath), source, events[], labels, names,
-                themes, idx, preview);
+                themes, idx, preview, cli.font, cli.fontSize,
+                cli.windowWidth, cli.windowHeight);
         }
         else
         {
