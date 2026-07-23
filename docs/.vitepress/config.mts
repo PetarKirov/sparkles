@@ -528,6 +528,10 @@ export default withMermaid(
                 },
                 { text: 'GUI (--gui)', link: '/specs/hue/gui' },
                 { text: 'TUI (planned)', link: '/specs/hue/tui' },
+                {
+                  text: 'Content folding (planned)',
+                  link: '/specs/hue/folding',
+                },
                 { text: 'Twoslash (planned)', link: '/specs/hue/twoslash' },
                 {
                   text: 'Web integration (planned)',
