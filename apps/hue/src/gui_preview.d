@@ -189,6 +189,7 @@ private struct Layouter
 
     PreviewLine[] lines;
     size_t fenceIdx;
+    int listDepth; // current list nesting (1-based inside list(); 0 outside)
 
     // Resolved role colors (from the theme's markup.* labels, page-fallback).
     RgbColor headingFg, codeFg, linkFg, quoteFg;
@@ -345,24 +346,43 @@ private struct Layouter
 
     void list(in MdBlock b, int indent, ubyte qdepth) @safe
     {
-        static immutable string[3] bullets = ["•", "◦", "▪"];
+        static immutable string[4] bullets = ["●", "○", "◆", "◇"];
+        ++listDepth;
+        scope (exit) --listDepth;
         int ord = 1;
         foreach (ref item; b.children)
         {
             if (item.kind != MdBlockKind.listItem)
                 continue;
+
+            // Leader: a Nerd checkbox (green when checked), an ordinal, or a
+            // depth-cycled bullet. `[-]` is a best-effort in-progress state the
+            // task-list grammar doesn't emit — detected from the item text and
+            // stripped from the rendered body.
             string leader;
-            if (item.checkbox == 0)
-                leader = "[ ] ";
-            else if (item.checkbox == 1)
-                leader = "[✓] ";
+            RgbColor leaderFg;
+            bool hasLeaderFg, stripCustom;
+            if (item.checkbox == 1)
+            {
+                leader = "\U000F0C52 "; // 󰱒 checked
+                leaderFg = accentGreen;
+                hasLeaderFg = true;
+            }
+            else if (item.checkbox == 0)
+                leader = "\U000F0131 "; // 󰄱 unchecked
+            else if (item.checkbox == -1 && itemStartsWith(item, "[-] "))
+            {
+                leader = "\U000F0856 "; // 󰡖 in-progress (checkbox-intermediate)
+                leaderFg = accentYellow;
+                hasLeaderFg = stripCustom = true;
+            }
             else if (b.ordered)
             {
                 import std.conv : text;
                 leader = text(ord, ". ");
             }
             else
-                leader = bullets[(indent / 2) % 3] ~ " ";
+                leader = bullets[(listDepth - 1) % bullets.length] ~ " ";
             ++ord;
 
             // The item's first paragraph carries the leader; nested blocks indent.
@@ -371,16 +391,53 @@ private struct Layouter
             {
                 if (c.kind == MdBlockKind.paragraph && first)
                 {
-                    emitFlow(inlineRuns(c.inlines, pageFg, 0), indent, qdepth, leader);
+                    auto runs = inlineRuns(c.inlines, pageFg, 0);
+                    if (stripCustom)
+                        runs = stripLeading(runs, 4); // drop the literal "[-] "
+                    emitFlow(runs, indent, qdepth, leader,
+                        leaderFg: leaderFg, hasLeaderFg: hasLeaderFg);
                     first = false;
                 }
                 else
                     block(c, indent + cast(int) columnWidth(leader), qdepth);
             }
             if (first) // an empty item still gets its marker
-                push(PreviewLine(indentCols: indent, quoteDepth: qdepth, leader: leader));
+                push(PreviewLine(indentCols: indent, quoteDepth: qdepth, leader: leader,
+                    leaderFg: leaderFg, hasLeaderFg: hasLeaderFg));
         }
         blank();
+    }
+
+    // True if `item`'s first paragraph begins with the literal `prefix` (used to
+    // spot a `[-]` in-progress checkbox the task grammar leaves as plain text).
+    bool itemStartsWith(in MdBlock item, string prefix) @safe
+    {
+        foreach (ref c; item.children)
+            if (c.kind == MdBlockKind.paragraph)
+                return c.inlines.length && c.inlines[0].kind == MdInlineKind.text
+                    && slice(c.inlines[0].span.start, c.inlines[0].span.end)
+                        .startsWithText(prefix);
+        return false;
+    }
+
+    // Drop the first `n` bytes across the leading run(s) (the `[-] ` marker lives
+    // in the first text run, but tolerate it spanning runs).
+    PreviewRun[] stripLeading(PreviewRun[] runs, size_t n) @safe
+    {
+        while (n > 0 && runs.length)
+        {
+            if (runs[0].text.length > n)
+            {
+                runs[0].text = runs[0].text[n .. $];
+                n = 0;
+            }
+            else
+            {
+                n -= runs[0].text.length;
+                runs = runs[1 .. $];
+            }
+        }
+        return runs;
     }
 
     void table(in MdBlock b, int indent, ubyte qdepth) @safe
@@ -602,6 +659,9 @@ private struct Word
 private bool isSpace(char c) @safe pure nothrow @nogc
     => c == ' ' || c == '\t' || c == '\n' || c == '\r';
 
+private bool startsWithText(const(char)[] s, const(char)[] prefix) @safe pure nothrow @nogc
+    => s.length >= prefix.length && s[0 .. prefix.length] == prefix;
+
 private RgbColor mix(RgbColor a, RgbColor b, double t) @safe pure nothrow @nogc
 {
     ubyte ch(ubyte x, ubyte y) => cast(ubyte)(x + (y - x) * t);
@@ -682,6 +742,28 @@ unittest
     import std.algorithm.searching : any;
     assert(lines.any!(l => l.band == BandKind.heading && l.hasLeaderFg
         && l.leader.length && l.leader[0] != '#'));
+}
+
+@("gui_preview.layout.checkboxes")
+@safe
+unittest
+{
+    // Checked item → colored (green) icon leader; unchecked → muted icon leader;
+    // neither uses the old ASCII `[ ]` marker.
+    string src = "done todo";
+    MdBlock item(byte state, size_t a, size_t b)
+        => MdBlock(kind: MdBlockKind.listItem, checkbox: state,
+            children: [MdBlock(kind: MdBlockKind.paragraph,
+                inlines: [MdInline(kind: MdInlineKind.text, span: Span(a, b))])]);
+    auto lst = MdBlock(kind: MdBlockKind.list,
+        children: [item(1, 0, 4), item(0, 5, 9)]);
+    auto m = PreviewModel(present: true,
+        doc: MdDoc(MdBlock(kind: MdBlockKind.document, children: [lst]), src));
+
+    auto lines = layoutPreview(m, darkTheme, tPageFg, tPageBg, 80);
+    import std.algorithm.searching : any;
+    assert(lines.any!(l => l.hasLeaderFg && l.leader.length && l.leader[0] != '['));
+    assert(lines.any!(l => !l.hasLeaderFg && l.leader.length && l.leader[0] != '['));
 }
 
 @("gui_preview.build.fencesAndBands")
