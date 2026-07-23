@@ -77,6 +77,9 @@ struct PreviewLine
     /// Source column this visual row starts at (raw view; for remapping search
     /// matches onto wrapped lines).
     int wrapColOffset;
+    /// Index into the model's `fences` when this is a code-header line — the code
+    /// block whose body the header's copy button copies; -1 otherwise.
+    int copyFence = -1;
     PreviewRun[] runs;
 }
 
@@ -508,7 +511,8 @@ private struct Layouter
             lbl ~= " " ~ f.label.idup;
         pendingNumber = false; // the language-header bar carries no line number
         push(PreviewLine(indentCols: indent, quoteDepth: qdepth, band: BandKind.codeHeader,
-            bandBg: codeHeaderBg, runs: [PreviewRun(lbl, codeFg, codeHeaderBg, true, 0)]));
+            bandBg: codeHeaderBg, copyFence: cast(int)(fenceIdx - 1),
+            runs: [PreviewRun(lbl, codeFg, codeHeaderBg, true, 0)]));
 
         // Code/ANSI lines are hard-wrapped to the panel width (like prose) so long
         // lines reflow onto continuation rows instead of overflowing + clipping.

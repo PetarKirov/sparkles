@@ -278,6 +278,11 @@ int runGui(
     bool isFullscreen;
     int savedX, savedY, savedW, savedH;
 
+    // Code-block copy button: the fence just copied + a countdown for the brief
+    // "copied" checkmark feedback.
+    int copiedFence = -1;
+    float copiedTimer = 0;
+
     int frame = 0;
     while (!WindowShouldClose())
     {
@@ -518,6 +523,41 @@ int runGui(
         // absent from raw lines, so it just paints runs + the line-number gutter).
         drawPreview(fonts, plines, topLine, visibleRows, cellW, cellH,
             pageFg, pageBg, gutterFg, quoteBars, padX, rightPad, gcols, buf);
+
+        if (copiedTimer > 0)
+            copiedTimer -= GetFrameTime();
+
+        // Copy-to-clipboard button on each visible code-header row (right side).
+        // Clicking copies the block's body and flips the icon to a checkmark for
+        // ~1.2s. Sits left of the scrollbar gutter, so it never overlaps content.
+        if (showPreview)
+        {
+            const mp = GetMousePosition();
+            const iconX = screenW - rightPad - cellW;
+            foreach (row; 0 .. visibleRows)
+            {
+                const vi = topLine + row;
+                if (vi >= plines.length)
+                    break;
+                const pl = plines[vi];
+                if (pl.band != BandKind.codeHeader || pl.copyFence < 0)
+                    continue;
+                const iy = row * cellH;
+                const hovered = mp.x >= iconX && mp.x < iconX + cellW
+                    && mp.y >= iy && mp.y < iy + cellH;
+                if (hovered && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT)
+                    && pl.copyFence < cast(int) preview.fences.length)
+                {
+                    SetClipboardText(preview.fences[pl.copyFence].body.toStringz);
+                    copiedFence = pl.copyFence;
+                    copiedTimer = 1.2f;
+                }
+                const copied = pl.copyFence == copiedFence && copiedTimer > 0;
+                const icon = copied ? "\U0000F00C" : "\U0000F0C5"; //  /
+                const col = copied ? quoteBars[2] : (hovered ? pageFg : gutterFg);
+                drawText(fonts, cstrOf(buf, icon), iconX, iy, TextStyle(0), rl(col));
+            }
+        }
 
         // Search-match overlay (raw view only): translucent tint over each visible
         // match, remapped onto the wrapped visual line via each line's srcLine +
