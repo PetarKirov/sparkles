@@ -402,6 +402,17 @@ private struct Layouter
         push(PreviewLine(indentCols: indent, quoteDepth: qdepth, band: BandKind.codeHeader,
             bandBg: codeHeaderBg, runs: [PreviewRun(lbl, codeFg, codeHeaderBg, true, 0)]));
 
+        // Code/ANSI lines are hard-wrapped to the panel width (like prose) so long
+        // lines reflow onto continuation rows instead of overflowing + clipping.
+        const avail = width - indent - qdepth * 2;
+        const aw = avail < 1 ? 1 : avail;
+        void pushCode(PreviewRun[] row)
+        {
+            foreach (wl; hardWrapRuns(row, aw))
+                push(PreviewLine(indentCols: indent, quoteDepth: qdepth,
+                    band: BandKind.codePanel, bandBg: codePanelBg, runs: wl));
+        }
+
         if (f.isAnsi)
         {
             foreach (ref al; f.ansi)
@@ -410,8 +421,7 @@ private struct Layouter
                 foreach (ref sp; al.spans)
                     runs ~= PreviewRun(sp.text, sp.fgDefault ? pageFg : sp.fg,
                         sp.bg, !sp.bgDefault, sp.attrs);
-                push(PreviewLine(indentCols: indent, quoteDepth: qdepth,
-                    band: BandKind.codePanel, bandBg: codePanelBg, runs: runs));
+                pushCode(runs);
             }
         }
         else
@@ -434,8 +444,7 @@ private struct Layouter
                     toRgb(spec.fg, codeFg), bg, hasBg, mapAttrs(spec));
             }
             foreach (row; byLine)
-                push(PreviewLine(indentCols: indent, quoteDepth: qdepth,
-                    band: BandKind.codePanel, bandBg: codePanelBg, runs: row));
+                pushCode(row);
         }
 
         // Bottom border, so the panel reads as a framed block (the header bar is
@@ -795,6 +804,45 @@ private struct Word
 
 private bool isSpace(char c) @safe pure nothrow @nogc
     => c == ' ' || c == '\t' || c == '\n' || c == '\r';
+
+// Hard-wrap a code/ANSI line's styled runs to `width` display columns, splitting
+// runs at the column boundary (code has long unbreakable tokens, so break on any
+// codepoint rather than word boundaries). Returns one run list per wrapped line;
+// an empty input yields a single empty line (a blank code row).
+private PreviewRun[][] hardWrapRuns(const(PreviewRun)[] runs, int width) @safe
+{
+    import std.utf : decode;
+    if (width < 1)
+        width = 1;
+    PreviewRun[][] lines;
+    PreviewRun[] cur;
+    int col;
+    foreach (r; runs)
+    {
+        size_t segStart, i;
+        while (i < r.text.length)
+        {
+            const cpStart = i;
+            decode(r.text, i); // advance one codepoint
+            const cw = cast(int) columnWidth(r.text[cpStart .. i]);
+            if (col + cw > width && col > 0)
+            {
+                if (cpStart > segStart)
+                    cur ~= PreviewRun(r.text[segStart .. cpStart], r.fg, r.bg, r.hasBg, r.attrs);
+                lines ~= cur;
+                cur = null;
+                col = 0;
+                segStart = cpStart;
+            }
+            col += cw;
+        }
+        if (r.text.length > segStart)
+            cur ~= PreviewRun(r.text[segStart .. $], r.fg, r.bg, r.hasBg, r.attrs);
+    }
+    if (cur.length || lines.length == 0)
+        lines ~= cur;
+    return lines;
+}
 
 private bool startsWithText(const(char)[] s, const(char)[] prefix) @safe pure nothrow @nogc
     => s.length >= prefix.length && s[0 .. prefix.length] == prefix;
