@@ -11,7 +11,7 @@ rendering modes and the raylib twoslash overlay._
 > hue specs describe). On the current branch there is no `libs/twoslash/` and no
 > `twoslash`/`--markdown` code in `apps/hue/`. These rows are therefore **planned
 > (branch-only)** relative to the shipped hue: the design and code exist and are
-> green (`dub test :twoslash` ≈ 35 tests, `nix build .#hue`), but they land in hue
+> green (`dub test :twoslash` ≈ 37 tests, `nix build .#hue`), but they land in hue
 > only when `feat/syntax-twoslash` merges. The library-side requirements are
 > owned by `docs/specs/twoslash/SPEC.md` (also on that branch); this doc covers
 > the **hue surface** and references the library for internals.
@@ -94,6 +94,60 @@ hue drives these entry points (all **planned/branch-only**):
 | HTML backend          | `.twoslash-*` class contract, 100% CSS `:hover`, completion/tag icons (`svg`/`glyph`/`none`), popup arrows, JSDoc `@tag` chips, `docs` rendered as markdown via the `MdDoc→HTML` emitter.     | `render_html.d`, `style.d`, `icons.d` |
 | ANSI backend          | Terminal twoslash: per-line-valid SGR, caret meta-lines (`^^^`/`^?`) below code, error underline, hovers silent unless `opts.hovers`.                                                         | `render_ansi.d`                       |
 
+## Twoslash HTML overlay: chrome, docs, selection (`TWH`)
+
+`hue --twoslash --html` emits the Shiki `.twoslash-*` contract with pure-CSS
+`:hover` (`TWM2`); this section pins the overlay's concrete **chrome**, its
+**markdown-rendered docs**, and its VSCode-like **selection/copy** behaviour — the
+render-fidelity and selection work of [#123](https://github.com/PetarKirov/sparkles/issues/123).
+Library internals are in `docs/specs/twoslash/SPEC.md`; the rows below are the
+hue-observable surface. All **planned/branch-only**.
+
+**Chrome & docs.**
+
+| ID   | Requirement                                                                                                                                                                                                                                                                                                                    | Status                                       | Traces to                                                                                                    |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| TWH1 | Completion-kind and custom-tag **icons** must be configurable — `svg` (the reference Shiki SVGs, string-imported) / `glyph` (a Unicode glyph per kind) / `none` — plus a custom per-kind delegate; an unknown kind falls back to `property`.                                                                                   | planned/branch-only (`0d9e062b`, `ff403ff3`) | `libs/twoslash` `render_html.d`, `icons.d`, `views/icons/**`                                                 |
+| TWH2 | Both the hover and the query popup must carry a connector **arrow**; the completion list's arrow must point at the caret column (a deliberate step past Shiki, which arrows the query only).                                                                                                                                   | planned/branch-only (`5e06c2d6`, `7f5277c7`) | `render_html.d`, `views/twoslash.css`                                                                        |
+| TWH3 | JSDoc `@tag` values must render as **chips** (`@name` + optional value span); inline `` `code` `` must get a code surface; and links (`[text](url)` and `<url>` autolinks) must render as styled links.                                                                                                                        | planned/branch-only (`27cb50d4`, `c51377a8`) | `render_html.d`, `views/twoslash.css` (+ `<url>` autolink fix in `sparkles:syntax` `md/model.d`, `41bae140`) |
+| TWH4 | Hover/query `docs` (block) and each `@tag` value (inline) must render as **markdown** via the shared `sparkles:syntax` `MdDoc → HTML` emitter (`renderMarkdownHtml` / `renderMarkdownInlineHtml`), gated by `TwoslashHtmlOptions.renderDocsMarkdown` (default on) and degrading to escaped text without the markdown grammars. | planned/branch-only (`66ba52a8`, `bf8fac9e`) | `render_html.d`; syntax `md/render_html.d` (`DEF3`)                                                          |
+| TWH5 | An opt-in **quickinfo-prefix strip** must remove a leading `(property) `/`(parameter) `/… from popup signatures; the default keeps it.                                                                                                                                                                                         | planned/branch-only (`bf6f40ac`)             | `overlay.withoutQuickinfoPrefix`                                                                             |
+
+**Selection & copy** — the HTML analogue of the GUI's [`SEL`](./gui.md); realizes
+the "decorations excluded" half of
+[`HTM3`](./feature-requirements.md#html-output-htm) for the overlay, in pure CSS:
+
+| ID   | Requirement                                                                                                                                                                                                                                                                                                                                                             | Status                           | Traces to            |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- | -------------------- |
+| TWH6 | **Code-only selection:** the annotation surfaces (`.twoslash-meta-line`, `.twoslash-completion-list`, `.twoslash-tag-line`, `.twoslash-popup-container`) must be `user-select: none`, so a browser copy of the code yields **only the code** — for every consumer (hue `--html`, VitePress, the preview). Inline decoration spans wrapping code tokens stay selectable. | planned/branch-only (`8092af01`) | `views/twoslash.css` |
+| TWH7 | Hover popups must be hidden with **`display: none`** (not `opacity: 0`), so a hidden popup adds no layout: a copied code selection carries no popup-injected newlines and there is no hidden-popup horizontal scrollbar. (Trades Shiki's opacity fade for a clean copy.)                                                                                                | planned/branch-only (`ab3abfc6`) | `views/twoslash.css` |
+| TWH8 | Full-width below-line blocks (`.twoslash-error-line`, `.twoslash-tag-line`, `min-width: 100%`) must set `box-sizing: border-box`, so their padding + border stay inside the line — self-contained (no host CSS reset needed; no stray horizontal scrollbar).                                                                                                            | planned/branch-only (`ef6e0aa1`) | `views/twoslash.css` |
+
+> [!NOTE]
+> The **UTF-16 → UTF-8** offset remap (`ingest.d`, `1c6f9079`) and the
+> **query-suppresses-hover** rule (`overlay.planTwoslash`) from the library summary
+> are shared by all three backends, but they are what let the HTML overlay position
+> decorations correctly on non-ASCII code and drop a redundant hover popup.
+
+## Verification & preview tooling (branch-only)
+
+The HTML overlay is guarded by dev-only harnesses in `libs/twoslash/examples/`
+(node + Chromium; the sparkles build itself stays node-free):
+
+- **`render-html.mjs`** (`npm run render`) — renders every fixture through
+  `hue --twoslash --html` into a git-ignored `html/` gallery: a full-height code
+  pane, a non-selectable physical-line **gutter**, prev/next nav, and the `TWD3`
+  **selection domains**.
+- **`compare-shiki.mjs`** — asserts our `.twoslash-*` **class vocabulary** and
+  **CSS-selector coverage** ⊇ Shiki `rendererRich` over the same corpus
+  (allowlisting the deliberate model differences).
+- **`visual-check.mjs`** — lays the overlay out in **headless Chrome** and asserts
+  popup **geometry** (below-line gaps, caret-aligned completion column) a markup
+  diff can't see.
+
+`hue --markdown <file.md>` (`TWM4`) is the standalone exercise of the same
+`MdDoc → HTML` emitter (`TWH4`), with no twoslash involved.
+
 ## Notation syntax (`NOT`, issue [#120](https://github.com/PetarKirov/sparkles/issues/120) §3)
 
 The D-native analyzer (the notation parser that turns annotated D into the node
@@ -147,11 +201,11 @@ in **behind the proven node-model seam** (no renderer change).
 
 ## Deferred twoslash sub-parts (`TWD`)
 
-| ID   | Requirement                                                                                                                                         | Status               | Traces to                                              |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | ------------------------------------------------------ |
-| TWD1 | Rendering hover/query `docs` (and `@tag` values) as **markdown** in the **ANSI and GUI** overlays (HTML does it today; ANSI/GUI show escaped text). | deferred/not-started | memory `twoslash-render-side-123` (optional follow-up) |
-| TWD2 | Live **VitePress** swap (Shiki → `sparkles:syntax`+twoslash in the docs site) — blocked on the unbuilt #122 markdown-highlighter seam + playground. | deferred/not-started | issue #122; memory `twoslash-d-native-design`          |
-| TWD3 | Independent selection domains in the twoslash HTML preview (popup content selectable separately; `Ctrl/Cmd+A` excluding annotations).               | researched           | plan (preview shell)                                   |
+| ID   | Requirement                                                                                                                                                                                                                                                                                                                                                                                                                               | Status                                            | Traces to                                              |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------ |
+| TWD1 | Rendering hover/query `docs` (and `@tag` values) as **markdown** in the **ANSI and GUI** overlays (HTML does it today; ANSI/GUI show escaped text).                                                                                                                                                                                                                                                                                       | deferred/not-started                              | memory `twoslash-render-side-123` (optional follow-up) |
+| TWD2 | Live **VitePress** swap (Shiki → `sparkles:syntax`+twoslash in the docs site) — blocked on the unbuilt #122 markdown-highlighter seam + playground.                                                                                                                                                                                                                                                                                       | deferred/not-started                              | issue #122; memory `twoslash-d-native-design`          |
+| TWD3 | The dev **preview** (`render-html.mjs`) implements VSCode-like **selection domains** — a `mousedown` handler confines a drag to the domain it starts in (code-only, or one contained annotation), layered on `TWH6`; plus a physical-line **gutter** (non-selectable numbers) that preserves blank lines in the copy. Limits: hover-popup content is not independently selectable (hover-ephemeral); `Ctrl/Cmd+A` uses the default state. | full (branch; `87ee7e62`, `21d722b4`, `3fa8324d`) | `libs/twoslash/examples/render-html.mjs`               |
 
 ## Non-goals (v1, issue [#120](https://github.com/PetarKirov/sparkles/issues/120) §7)
 
@@ -188,11 +242,12 @@ type oracle (`findTip`/`findDefinition`) · D3 completions + semantic tokens + r
 
 ## Module coverage (twoslash surface)
 
-| Source (branch `feat/syntax-twoslash`)                      | Requirements                                                                |
-| ----------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `apps/hue/src/app.d` (`runTwoslashMode`, `runMarkdownMode`) | `TWM1`–`TWM5`                                                               |
-| `apps/hue/src/gui.d` (`runGuiTwoslash`)                     | `TWO1`–`TWO3`                                                               |
-| `libs/twoslash/src/sparkles/twoslash/*.d`                   | library summary (→ `docs/specs/twoslash/SPEC.md` on `feat/syntax-twoslash`) |
-| `sparkles:dmd-lsp` (proposed)                               | `DMD1`–`DMD3`                                                               |
+| Source (branch `feat/syntax-twoslash`)                                                                                          | Requirements                                                                               |
+| ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `apps/hue/src/app.d` (`runTwoslashMode`, `runMarkdownMode`)                                                                     | `TWM1`–`TWM5`                                                                              |
+| `apps/hue/src/gui.d` (`runGuiTwoslash`)                                                                                         | `TWO1`–`TWO3`                                                                              |
+| `libs/twoslash/src/sparkles/twoslash/*.d` (`render_html.d`, `style.d`/`views/twoslash.css`, `icons.d`, `ingest.d`, `overlay.d`) | `TWH1`–`TWH8`; library summary (→ `docs/specs/twoslash/SPEC.md` on `feat/syntax-twoslash`) |
+| `libs/twoslash/examples/` (`render-html.mjs`, `compare-shiki.mjs`, `visual-check.mjs`)                                          | `TWD3`; verification & preview tooling                                                     |
+| `sparkles:dmd-lsp` (proposed)                                                                                                   | `DMD1`–`DMD3`                                                                              |
 
 → [General requirements](./feature-requirements.md) · [GUI requirements](./gui.md) · [Overview](./index.md)

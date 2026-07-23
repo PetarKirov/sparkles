@@ -27,7 +27,7 @@ issues as the requirement of record):
 | [#121](https://github.com/PetarKirov/sparkles/issues/121) | hue: raylib GPU rendering backend (`--gui`) — styled runs as data on `sparkles:syntax` + the shared `sparkles:raylib-text` | [gui.md](./gui.md) (§ Design & scope, milestones) |
 | [#120](https://github.com/PetarKirov/sparkles/issues/120) | `sparkles:twoslash` — D-native Twoslash (umbrella)                                                                         | [twoslash.md](./twoslash.md)                      |
 | [#122](https://github.com/PetarKirov/sparkles/issues/122) | Render-side 1/2 — `sparkles:syntax` as a Shiki replacement (SSG HTML, playground, VitePress)                               | [twoslash.md](./twoslash.md) `RS1*`               |
-| [#123](https://github.com/PetarKirov/sparkles/issues/123) | Render-side 2/2 — twoslash × `sparkles:syntax` via `apps/hue` (HTML + ANSI)                                                | [twoslash.md](./twoslash.md) `TWM*`/`TWO*`        |
+| [#123](https://github.com/PetarKirov/sparkles/issues/123) | Render-side 2/2 — twoslash × `sparkles:syntax` via `apps/hue` (HTML + ANSI)                                                | [twoslash.md](./twoslash.md) `TWM*`/`TWO*`/`TWH*` |
 
 ## Documentation map
 
