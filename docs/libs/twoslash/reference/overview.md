@@ -62,6 +62,12 @@ Shiki's `renderMarkdown`/`renderMarkdownInline` seam). It degrades to escaped te
 automatically when the markdown grammars are unavailable, so no grammar bundle is
 required for correct — if plainer — output.
 
+The `15-markdown-docs` fixture is the showcase: `hue --twoslash --html
+fixtures/15-markdown-docs.twoslash.json`, then hover the `answer` token. To
+exercise that same `MdDoc → HTML` emitter **without** twoslash, `hue --markdown
+<file.md>` renders any Markdown file straight through `extractMarkdown` +
+`renderMarkdownHtml`.
+
 Both take the snippet already highlighted into `events` (over `tw.code`) and the
 `cache` used to re-highlight popup signatures. Neither is `@nogc`.
 
