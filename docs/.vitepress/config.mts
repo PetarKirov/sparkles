@@ -536,6 +536,7 @@ export default withMermaid(
                   text: 'Tree / DAG view (planned)',
                   link: '/specs/hue/tree-view',
                 },
+                { text: 'Tab view (planned)', link: '/specs/hue/tab-view' },
                 { text: 'Navigation (planned)', link: '/specs/hue/navigation' },
                 {
                   text: 'Images & diagrams (planned)',
