@@ -537,6 +537,10 @@ export default withMermaid(
                   link: '/specs/hue/tree-view',
                 },
                 { text: 'Navigation (planned)', link: '/specs/hue/navigation' },
+                {
+                  text: 'Images & diagrams (planned)',
+                  link: '/specs/hue/media',
+                },
                 { text: 'Twoslash (planned)', link: '/specs/hue/twoslash' },
                 {
                   text: 'Web integration (planned)',
