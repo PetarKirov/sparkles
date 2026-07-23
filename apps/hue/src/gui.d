@@ -28,7 +28,8 @@ import sparkles.raylib_text : TextStyle, FontSet, drawText;
 import gui_text : columnWidth, lineCount, Match, buildLineStarts, findMatches;
 
 // Markdown-preview model + layout (raylib-free) and the ANSI attribute bits.
-import gui_preview : PreviewModel, PreviewLine, PreviewRun, BandKind, layoutPreview;
+import gui_preview : PreviewModel, PreviewLine, PreviewRun, BandKind, layoutPreview,
+    quoteBarColors, quoteBarCycle;
 import gui_ansi : Attr;
 
 // Selective import avoids sparkles.syntax.Color clashing with raylib.Color:
@@ -148,6 +149,7 @@ int runGui(
     size_t themeIdx = startIdx;
     ResolvedTheme current;
     RgbColor pageFg, pageBg, gutterFg;
+    RgbColor[quoteBarCycle] quoteBars; // per-depth block-quote gutter colors
 
     // Preview columns available for the current window/font (leaves a small
     // margin + the scrollbar). Re-laying-out on change keeps wrapping correct.
@@ -172,6 +174,7 @@ int runGui(
         pageFg = toRgb(current.defaults.fg, hardFallbackFg);
         pageBg = toRgb(current.defaults.bg, hardFallbackBg);
         gutterFg = mix(pageFg, pageBg); // muted line numbers
+        quoteBars = quoteBarColors(current, pageFg, pageBg);
         SetWindowTitle(text("hue — ", title, " — ", names[i],
             " (", i + 1, "/", names.length, ")").toStringz);
         relayout(); // preview colors follow the theme
@@ -400,7 +403,7 @@ int runGui(
         if (showPreview)
         {
             drawPreview(fonts, plines, topLine, visibleRows, cellW, cellH,
-                pageFg, pageBg, gutterFg, buf);
+                pageFg, pageBg, gutterFg, quoteBars, buf);
         }
         else
         {
@@ -522,6 +525,7 @@ private void drawPreview(
     RgbColor pageFg,
     RgbColor pageBg,
     RgbColor gutterFg,
+    const RgbColor[quoteBarCycle] quoteBars,
     ref SmallBuffer!(char, 4096) buf,
 ) @system
 {
@@ -534,22 +538,29 @@ private void drawPreview(
         const pl = plines[li];
         const y = row * cast(float) cellH;
 
-        // Full-width band behind the line (code panel / header / table row).
+        // Full-width band behind the line (code panel / header / table / heading).
         if (pl.band != BandKind.none && pl.band != BandKind.rule)
             DrawRectangle(0, cast(int) y, screenW, cellH, rl(pl.bandBg));
 
         // Quote gutter: one `│` bar per depth, at the far left (2 cols each).
+        // A callout paints every bar in its accent (`barFg`); otherwise each
+        // depth takes its color from the theme-derived cycle.
         foreach (d; 0 .. pl.quoteDepth)
+        {
+            const barColor = pl.hasBarFg ? pl.barFg : quoteBars[d % quoteBarCycle];
             drawText(fonts, cstrOf(buf, "│"), d * 2 * cast(float) cellW, y,
-                TextStyle(0), rl(gutterFg));
+                TextStyle(0), rl(barColor));
+        }
 
         const contentCol = pl.quoteDepth * 2 + pl.indentCols;
         float x = contentCol * cast(float) cellW;
 
-        // Leader (bullet / number / checkbox / heading marker), muted.
+        // Leader (bullet / number / checkbox / heading marker) — colored when the
+        // layouter gave it an accent (heading icon, checked box, callout icon).
         if (pl.leader.length)
         {
-            drawText(fonts, cstrOf(buf, pl.leader), x, y, TextStyle(0), rl(gutterFg));
+            const lfg = pl.hasLeaderFg ? pl.leaderFg : gutterFg;
+            drawText(fonts, cstrOf(buf, pl.leader), x, y, TextStyle(0), rl(lfg));
             x += columnWidth(pl.leader) * cellW;
         }
 

@@ -49,12 +49,15 @@ enum BandKind : ubyte
     codeHeader, /// fenced-code language-label bar
     tableRow,   /// a table row
     rule,       /// a thematic break (a horizontal line)
+    heading,    /// a heading line (subtle per-level accent band)
 }
 
 /// One laid-out visual line. `leader` (bullet / number / checkbox / heading
-/// marker) is drawn muted at `indentCols`; `quoteDepth` draws that many `│`
-/// gutter bars; `runs` follow. Blank `runs` with a non-`none` `band` still paint
-/// the band (e.g. a blank code-panel line).
+/// marker) is drawn at `indentCols` — muted by default, or in `leaderFg` when
+/// `hasLeaderFg` (a colored heading icon / checked box / callout icon).
+/// `quoteDepth` draws that many `│` gutter bars (per-depth colored, or all in
+/// `barFg` when `hasBarFg` — a callout accent). Blank `runs` with a non-`none`
+/// `band` still paint the band (e.g. a blank code-panel line).
 struct PreviewLine
 {
     int indentCols;
@@ -62,6 +65,10 @@ struct PreviewLine
     BandKind band;
     RgbColor bandBg;  /// full-width band color (when band != none)
     string leader;
+    RgbColor leaderFg; /// colored-leader tint (when hasLeaderFg)
+    bool hasLeaderFg;  /// paint the leader in leaderFg instead of muted gutterFg
+    RgbColor barFg;    /// quote-bar override color (when hasBarFg)
+    bool hasBarFg;     /// paint all this line's quote bars in barFg (callout accent)
     PreviewRun[] runs;
 }
 
@@ -148,6 +155,30 @@ PreviewLine[] layoutPreview(PreviewModel m, ResolvedTheme theme,
     return lay.lines;
 }
 
+/// The number of distinct nested-quote gutter-bar colors before the cycle repeats.
+enum quoteBarCycle = 4;
+
+/**
+Theme-derived colors for nested block-quote gutter bars, indexed by depth (mod
+$(LREF quoteBarCycle)). Exposed for the painter (`gui.d`), which draws the bars
+but has no access to the layouter's resolved palette. Pure — recomputed per theme.
+*/
+RgbColor[quoteBarCycle] quoteBarColors(ResolvedTheme theme, RgbColor pageFg, RgbColor pageBg) @safe
+{
+    RgbColor role(string name, RgbColor fallback)
+    {
+        const spec = theme[theme.labels.resolve(name)];
+        return toRgb(spec.fg, fallback);
+    }
+    const quoteFg = role("markup.quote", mix(pageFg, pageBg, 0.35));
+    return [
+        quoteFg,
+        role("function", quoteFg),
+        role("string", quoteFg),
+        role("keyword", quoteFg),
+    ];
+}
+
 private struct Layouter
 {
     const(char)[] source;
@@ -162,6 +193,10 @@ private struct Layouter
     // Resolved role colors (from the theme's markup.* labels, page-fallback).
     RgbColor headingFg, codeFg, linkFg, quoteFg;
     RgbColor codePanelBg, codeHeaderBg, ruleFg, inlineCodeBg;
+    // Accent hues borrowed from syntax roles (theme-derived, page-fallback), used
+    // for heading levels, checkbox green, and callout accents.
+    RgbColor accentBlue, accentGreen, accentRed, accentYellow, accentPurple;
+    RgbColor[6] headingAccents; /// per heading level (index = level-1)
 
     void resolvePalette() @safe
     {
@@ -178,6 +213,17 @@ private struct Layouter
         codeHeaderBg = mix(pageBg, pageFg, 0.16);
         inlineCodeBg = mix(pageBg, pageFg, 0.12);
         ruleFg = mix(pageBg, pageFg, 0.4);
+
+        // Syntax roles carry a stable-ish hue across themes: functions blue,
+        // strings green, numbers red/orange, types yellow, keywords purple.
+        accentBlue = role("function", linkFg);
+        accentGreen = role("string", RgbColor(0x40, 0xc0, 0x60));
+        accentRed = role("number", RgbColor(0xe0, 0x60, 0x50));
+        accentYellow = role("type", RgbColor(0xd8, 0xb0, 0x40));
+        accentPurple = role("keyword", RgbColor(0xb0, 0x70, 0xd0));
+        headingAccents = [
+            headingFg, accentBlue, accentPurple, accentGreen, accentYellow, accentRed,
+        ];
     }
 
     const(char)[] slice(size_t a, size_t b) @safe
