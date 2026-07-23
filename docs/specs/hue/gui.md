@@ -36,6 +36,15 @@ not** a text editor, an incremental/LSP-backed surface, a terminal emulator, or
 the Vulkan engine (#47) — it is the smallest honest GPU consumer of the styled-run
 API, hosted in the app that already produces it.
 
+> [!NOTE]
+> Most GUI areas below — `SEL` (selection), `MDP` (markdown constructs), `NUM`
+> (line numbers), `RND`/`VIW`/`WRP`/`NAV`/`SCB`/`FND`/`COD` — are **not
+> GPU-specific**; they apply **best-effort** to the other interactive backends.
+> The full terminal port and its GUI→TUI parity map are in
+> [tui.md](./tui.md); the HTML best-effort rows are `HTM3`–`HTM5` in the
+> [general spec](./feature-requirements.md). This document remains the source of
+> truth for the raylib backend itself.
+
 ## Window & lifecycle (`WIN`)
 
 | ID   | Requirement                                                                                                                                                                                                                                                                                     | Status            | Traces to                                                           |
