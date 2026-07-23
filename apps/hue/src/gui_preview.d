@@ -252,8 +252,7 @@ private struct Layouter
             this.codeFence(indent, qdepth);
             break;
         case blockQuote:
-            foreach (ref c; b.children)
-                block(c, indent, cast(ubyte)(qdepth + 1));
+            this.blockQuote(b, indent, qdepth);
             break;
         case list:
             this.list(b, indent, qdepth);
@@ -290,6 +289,97 @@ private struct Layouter
         emitFlow(inlineRuns(b.inlines, accent, Attr.bold), indent, qdepth,
             icons[lvl - 1] ~ " ", leaderFg: accent, hasLeaderFg: true,
             band: BandKind.heading, bandBg: band);
+        blank();
+    }
+
+    // A block quote, or — when its first line is a GitHub `[!TYPE]` marker — a
+    // callout/admonition: a titled, iconed block with an accent gutter bar.
+    void blockQuote(in MdBlock b, int indent, ubyte qdepth) @safe
+    {
+        Callout co;
+        if (detectCallout(b, co))
+        {
+            renderCallout(b, co, indent, qdepth);
+            return;
+        }
+        foreach (ref c; b.children)
+            block(c, indent, cast(ubyte)(qdepth + 1));
+    }
+
+    // Recognize `> [!NOTE]` (and TIP/IMPORTANT/WARNING/CAUTION) on the quote's
+    // first paragraph. `markerLen` is the byte length of the `[!TYPE]` marker
+    // (incl. any leading space) to strip from the rendered body.
+    bool detectCallout(in MdBlock b, out Callout co) @safe
+    {
+        const(MdBlock)* p;
+        foreach (ref c; b.children)
+            if (c.kind == MdBlockKind.paragraph)
+            {
+                p = &c;
+                break;
+            }
+        if (p is null || p.inlines.length == 0 || p.inlines[0].kind != MdInlineKind.text)
+            return false;
+
+        const txt = slice(p.inlines[0].span.start, p.inlines[0].span.end);
+        size_t i;
+        while (i < txt.length && (txt[i] == ' ' || txt[i] == '\t'))
+            ++i;
+        if (i + 2 >= txt.length || txt[i] != '[' || txt[i + 1] != '!')
+            return false;
+        const s = i + 2;
+        size_t e = s;
+        while (e < txt.length && txt[e] != ']')
+            ++e;
+        if (e >= txt.length || !matchCalloutType(txt[s .. e], co))
+            return false;
+        co.markerLen = e + 1; // through the closing `]`
+        return true;
+    }
+
+    bool matchCalloutType(const(char)[] type, out Callout co) @safe
+    {
+        switch (upperAscii(type))
+        {
+        case "NOTE": co = Callout("\U000F02FD", accentBlue, "Note"); return true;      // 󰋽
+        case "TIP": co = Callout("\U000F0336", accentGreen, "Tip"); return true;       // 󰌶
+        case "IMPORTANT": co = Callout("\U000F017E", accentPurple, "Important"); return true; // 󰅾
+        case "WARNING": co = Callout("\U000F002A", accentYellow, "Warning"); return true;     // 󰀪
+        case "CAUTION": co = Callout("\U000F0CE6", accentRed, "Caution"); return true;        // 󰳦
+        default: return false;
+        }
+    }
+
+    void renderCallout(in MdBlock b, Callout co, int indent, ubyte qdepth) @safe
+    {
+        const bodyDepth = cast(ubyte)(qdepth + 1);
+        // Title line: icon + Title-case type, in the accent (bold), with the bar.
+        push(PreviewLine(indentCols: indent, quoteDepth: bodyDepth,
+            leader: co.icon ~ " ", leaderFg: co.accent, hasLeaderFg: true,
+            barFg: co.accent, hasBarFg: true,
+            runs: [PreviewRun(co.title, co.accent, RgbColor.init, false, Attr.bold)]));
+
+        // Body: the quoted blocks, with the `[!TYPE]` marker stripped from the
+        // first paragraph. Force the accent bar on every line the body emits.
+        const start = lines.length;
+        bool firstPara = true;
+        foreach (ref c; b.children)
+        {
+            if (c.kind == MdBlockKind.paragraph && firstPara)
+            {
+                firstPara = false;
+                auto runs = stripLeading(inlineRuns(c.inlines, pageFg, 0), co.markerLen);
+                emitFlow(runs, indent, bodyDepth, "");
+                blank();
+            }
+            else
+                block(c, indent, bodyDepth);
+        }
+        foreach (ref l; lines[start .. $])
+        {
+            l.hasBarFg = true;
+            l.barFg = co.accent;
+        }
         blank();
     }
 
@@ -661,6 +751,16 @@ private struct Layouter
     }
 }
 
+// A recognized GitHub callout/admonition: its icon, accent, Title-case name, and
+// the byte length of the `[!TYPE]` marker to strip from the rendered body.
+private struct Callout
+{
+    string icon;
+    RgbColor accent;
+    string title;
+    size_t markerLen;
+}
+
 // A wrap unit: whitespace-free, possibly spanning several styled fragments.
 private struct Word
 {
@@ -676,6 +776,15 @@ private bool isSpace(char c) @safe pure nothrow @nogc
 
 private bool startsWithText(const(char)[] s, const(char)[] prefix) @safe pure nothrow @nogc
     => s.length >= prefix.length && s[0 .. prefix.length] == prefix;
+
+// ASCII-uppercase a string (for case-insensitive callout-type matching).
+private string upperAscii(const(char)[] s) @safe pure
+{
+    auto r = new char[s.length];
+    foreach (i, c; s)
+        r[i] = (c >= 'a' && c <= 'z') ? cast(char)(c - 32) : c;
+    return (() @trusted => cast(string) r)();
+}
 
 private bool containsText(const(char)[] hay, const(char)[] needle) @safe pure nothrow @nogc
 {
@@ -845,6 +954,28 @@ unittest
             if (r.text.length && cast(ubyte) r.text[0] >= 0x80)
                 hasIcon = true;
     assert(hasIcon);
+}
+
+@("gui_preview.layout.callout")
+@safe
+unittest
+{
+    // `> [!NOTE] …` renders a titled callout: an accent bar + icon-leader title
+    // line, with the `[!NOTE]` marker stripped from the body.
+    string src = "[!NOTE] pay attention";
+    auto para = MdBlock(kind: MdBlockKind.paragraph,
+        inlines: [MdInline(kind: MdInlineKind.text, span: Span(0, src.length))]);
+    auto quote = MdBlock(kind: MdBlockKind.blockQuote, children: [para]);
+    auto m = PreviewModel(present: true,
+        doc: MdDoc(MdBlock(kind: MdBlockKind.document, children: [quote]), src));
+
+    auto lines = layoutPreview(m, darkTheme, tPageFg, tPageBg, 80);
+    import std.algorithm.searching : any, canFind;
+    assert(lines.any!(l => l.hasBarFg && l.hasLeaderFg)); // title line
+    assert(lines.any!(l => l.runs.canFind!(r => r.text == "Note")));
+    foreach (l; lines) // marker stripped everywhere
+        foreach (r; l.runs)
+            assert(!r.text.canFind("[!NOTE]"));
 }
 
 @("gui_preview.build.fencesAndBands")
