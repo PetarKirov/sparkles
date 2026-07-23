@@ -85,18 +85,20 @@
 .twoslash .twoslash-popup-container {
   position: absolute;
   z-index: 10;
-  opacity: 0;
-  display: inline-flex;
+  /* Hidden with `display` (not opacity) so a hidden popup takes no layout: it
+     neither widens the scroll area (stray horizontal scrollbar) nor injects
+     block-boundary newlines into a copied code selection. Revealed on hover
+     below. (Trades Shiki's opacity fade for a clean copy + no overflow.) */
+  display: none;
   flex-direction: column;
   transform: translateY(1.1em); /* drop below the inline token it annotates */
-  transition: opacity 0.3s;
   pointer-events: none;
   user-select: none;
   text-align: left;
 }
 
 .twoslash .twoslash-hover:hover .twoslash-popup-container {
-  opacity: 1;
+  display: inline-flex;
   pointer-events: auto;
 }
 
