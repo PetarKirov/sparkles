@@ -80,6 +80,7 @@ int runGui(
     int fontSize = defaultFontSize,
     int windowWidth = 800,
     int windowHeight = 600,
+    bool lineNumbers = false,
 ) @system
 {
     import std.stdio : stderr;
@@ -151,11 +152,22 @@ int runGui(
     RgbColor pageFg, pageBg, gutterFg;
     RgbColor[quoteBarCycle] quoteBars; // per-depth block-quote gutter colors
 
-    // Preview columns available for the current window/font (leaves a small
-    // margin + the scrollbar). Re-laying-out on change keeps wrapping correct.
+    const srcTotal = lineCount(source);
+    // Line-number gutter width in cells (0 when off) — a stable size from the
+    // source line count so toggling wrapping never oscillates the layout.
+    int gutterCols() => lineNumbers ? digitCount(srcTotal) + 1 : 0;
+
+    // The right gutter reserved for the scrollbar == its expanded (hover) width,
+    // so the expanded handle fills the gutter exactly instead of overlapping text.
+    int scrollbarGutter() => cast(int)(fonts.cellW() * 1.5f);
+
+    // Preview columns available for the current window/font: the screen minus the
+    // 1-cell left text padding, the scrollbar gutter on the right, and the line-
+    // number gutter. Re-laying-out on change keeps wrapping correct.
     int widthCols()
     {
-        const w = (GetScreenWidth() - 16) / fonts.cellW();
+        const cw = fonts.cellW();
+        const w = (GetScreenWidth() - cw - scrollbarGutter() - gutterCols() * cw) / cw;
         return w < 8 ? 8 : w;
     }
 
@@ -182,8 +194,6 @@ int runGui(
 
     applyTheme(themeIdx);
 
-    const srcTotal = lineCount(source);
-    const gutterCols = digitCount(srcTotal) + 1; // digits + one padding cell
     const lineStarts = buildLineStarts(source);
 
     SmallBuffer!(char, 4096) buf; // reused, NUL-terminated for raylib
@@ -336,6 +346,14 @@ int runGui(
                 relayout();
             }
 
+            // 'l' toggles the line-number gutter (changes the preview wrap width).
+            if (pressed(KeyboardKey.KEY_L))
+            {
+                lineNumbers = !lineNumbers;
+                lastWidthCols = -1; // gutter width changed → reflow the preview
+                relayout();
+            }
+
             // Enter an input mode: '/' search (raw view only), 'g' goto-line.
             if (!showPreview && IsKeyPressed(KeyboardKey.KEY_SLASH))
             {
@@ -354,7 +372,12 @@ int runGui(
         // adapted from apps/terminal's ScrollbarState. Runs every frame so the
         // width animates even while a search is being typed.
         {
-            enum float sbMaxW = 16.0f;
+            // Both widths scale with the font: the expanded (hover) handle equals
+            // the reserved scrollbar gutter (1.5 cells) so it fills the gutter
+            // without overlapping text; the idle rail is a thin ~⅓ cell.
+            const float hoverW = cast(float) scrollbarGutter();
+            const float idleW = cellW / 3.0f < 2.0f ? 2.0f : cellW / 3.0f;
+            const float sbMaxW = hoverW;
             if (maxTop > 0)
             {
                 const trackH = cast(float) screenH;
@@ -363,7 +386,7 @@ int runGui(
                 const hoverTrack = pos.x >= screenW - sbMaxW;
                 const hoverThumb = hoverTrack && pos.y >= g.y && pos.y <= g.y + g.h;
                 sb.isHovered = hoverTrack || sb.isDragging;
-                sb.targetWidth = sb.isHovered ? 12.0f : 4.0f;
+                sb.targetWidth = sb.isHovered ? hoverW : idleW;
 
                 if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT) && hoverTrack)
                 {
@@ -388,7 +411,7 @@ int runGui(
             else
             {
                 sb.isHovered = false;
-                sb.targetWidth = 4.0f;
+                sb.targetWidth = idleW;
             }
             // Ease the width toward its target (matches the terminal's 15/s rate).
             sb.currentWidth += (sb.targetWidth - sb.currentWidth) * 15.0f * GetFrameTime();
@@ -400,26 +423,32 @@ int runGui(
         BeginDrawing();
         ClearBackground(rl(pageBg));
 
+        // One-cell background padding on the left, the scrollbar gutter on the
+        // right, plus the optional line-number gutter; text starts at `contentX`.
+        const padX = cellW;
+        const rightPad = scrollbarGutter();
+        const gcols = gutterCols();
+        const gutterPx = padX + gcols * cellW; // == contentX (text column start)
+
         if (showPreview)
         {
             drawPreview(fonts, plines, topLine, visibleRows, cellW, cellH,
-                pageFg, pageBg, gutterFg, quoteBars, buf);
+                pageFg, pageBg, gutterFg, quoteBars, padX, rightPad, gcols, buf);
         }
         else
         {
-        const gutterPx = cast(int)(gutterCols * cellW);
-
         // Line-number gutter (independent of runs, so blank lines still number).
-        foreach (row; 0 .. visibleRows)
-        {
-            const line = topLine + row;
-            if (line >= total)
-                break;
-            const s = cstrOf(buf, uintToBuf(line + 1));
-            // right-align, leaving one padding cell before the text column
-            const nx = gutterPx - cast(int)((s.length + 1) * cellW);
-            drawText(fonts, s, nx, row * cast(float) cellH, TextStyle(0), rl(gutterFg));
-        }
+        if (gcols > 0)
+            foreach (row; 0 .. visibleRows)
+            {
+                const line = topLine + row;
+                if (line >= total)
+                    break;
+                const s = cstrOf(buf, uintToBuf(line + 1));
+                // right-align, leaving one padding cell before the text column
+                const nx = gutterPx - cast(int)((s.length + 1) * cellW);
+                drawText(fonts, s, nx, row * cast(float) cellH, TextStyle(0), rl(gutterFg));
+            }
 
         // Syntax runs, viewport-culled: skip lines above, stop past the bottom.
         size_t curLine = size_t.max;
@@ -526,10 +555,17 @@ private void drawPreview(
     RgbColor pageBg,
     RgbColor gutterFg,
     const RgbColor[quoteBarCycle] quoteBars,
+    int padX,
+    int rightPad,
+    int gutterCols,
     ref SmallBuffer!(char, 4096) buf,
 ) @system
 {
     const screenW = GetScreenWidth();
+    // Content starts after the 1-cell left padding and the line-number gutter;
+    // bands span from there to the scrollbar gutter on the right.
+    const originX = padX + gutterCols * cellW;
+    const bandW = (screenW - rightPad) - originX;
     foreach (row; 0 .. visibleRows)
     {
         const li = topLine + row;
@@ -538,22 +574,31 @@ private void drawPreview(
         const pl = plines[li];
         const y = row * cast(float) cellH;
 
-        // Full-width band behind the line (code panel / header / table / heading).
+        // Band behind the line (code panel / header / table / heading), inset to
+        // the padded content column so the padding stays page-background.
         if (pl.band != BandKind.none && pl.band != BandKind.rule)
-            DrawRectangle(0, cast(int) y, screenW, cellH, rl(pl.bandBg));
+            DrawRectangle(originX, cast(int) y, bandW, cellH, rl(pl.bandBg));
 
-        // Quote gutter: one `│` bar per depth, at the far left (2 cols each).
-        // A callout paints every bar in its accent (`barFg`); otherwise each
-        // depth takes its color from the theme-derived cycle.
+        // Visual-line number in the gutter (right-aligned, one padding cell).
+        if (gutterCols > 0)
+        {
+            const s = cstrOf(buf, uintToBuf(li + 1));
+            drawText(fonts, s, originX - (s.length + 1) * cast(float) cellW, y,
+                TextStyle(0), rl(gutterFg));
+        }
+
+        // Quote gutter: one `│` bar per depth (2 cols each). A callout paints
+        // every bar in its accent (`barFg`); otherwise each depth takes its color
+        // from the theme-derived cycle.
         foreach (d; 0 .. pl.quoteDepth)
         {
             const barColor = pl.hasBarFg ? pl.barFg : quoteBars[d % quoteBarCycle];
-            drawText(fonts, cstrOf(buf, "│"), d * 2 * cast(float) cellW, y,
+            drawText(fonts, cstrOf(buf, "│"), originX + d * 2 * cast(float) cellW, y,
                 TextStyle(0), rl(barColor));
         }
 
         const contentCol = pl.quoteDepth * 2 + pl.indentCols;
-        float x = contentCol * cast(float) cellW;
+        float x = originX + contentCol * cast(float) cellW;
 
         // Leader (bullet / number / checkbox / heading marker) — colored when the
         // layouter gave it an accent (heading icon, checked box, callout icon).
