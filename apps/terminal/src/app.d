@@ -11,7 +11,7 @@ import raylib;
 
 import sparkles.ghostty.c;
 import sparkles.base.smallbuffer : SmallBuffer;
-import sparkles.raylib_text : FontSet, LoadedFont, drawGrapheme, drawSolid;
+import sparkles.raylib_text : FontSet, LoadedFont, drawGrapheme, drawSolid, drawBox;
 import input : ExitBehavior, SelectionState, ScrollbarState, HoverState;
 import osc_query : OscScanner;
 
@@ -1124,32 +1124,40 @@ private void runCoreLoop(ref CoreState s)
 
                 if (rc.hasGrapheme)
                 {
-                    // Route the cell's base codepoint to its face — codepoint-map
-                    // override → real bold/italic face → regular/Nerd fallback →
-                    // on-demand request — all in the shared library (identical
-                    // routing to the pre-extraction inline version).
-                    bool fakeBold, fakeItalic;
-                    LoadedFont* activeFont = s.fonts.resolveFace(
-                        rc.codepoints[0], rc.style.bold, rc.style.italic, fakeBold, fakeItalic);
-
                     // Draw the whole grapheme cluster (base codepoint plus any
                     // combining marks, ZWJ joiners, variation selectors, …) as one
                     // unit. Drawing only codepoints[0] would drop accents and emoji
                     // modifiers.
                     const cp_count = rc.graphemeLen < 16 ? rc.graphemeLen : 16;
 
-                    // Fake italic only when no real italic face is in use: shift
-                    // the glyph right by a fraction of the font size (a crude
-                    // slant; raylib can't shear a glyph).
-                    const italic_offset = fakeItalic ? (s.fontSize / 6) : 0;
-                    drawGrapheme(*activeFont, rc.codepoints[0 .. cp_count],
-                        cast(float)(x + italic_offset), cast(float)y, s.fontSize, rc.fgCol);
+                    // A single box-drawing codepoint is rendered procedurally so its
+                    // arms fill the cell and connect across neighbouring cells (font
+                    // glyphs leave gaps); everything else goes through the face-
+                    // routing + fake-bold/italic glyph path.
+                    if (cp_count != 1 || !drawBox(s.fonts.whiteFace, rc.codepoints[0],
+                            cast(float) x, cast(float) y, s.cellWidth, s.cellHeight, rc.fgCol))
+                    {
+                        // Route the cell's base codepoint to its face — codepoint-map
+                        // override → real bold/italic face → regular/Nerd fallback →
+                        // on-demand request — all in the shared library (identical
+                        // routing to the pre-extraction inline version).
+                        bool fakeBold, fakeItalic;
+                        LoadedFont* activeFont = s.fonts.resolveFace(
+                            rc.codepoints[0], rc.style.bold, rc.style.italic, fakeBold, fakeItalic);
 
-                    // Fake bold only when no real bold face is in use: redraw 1px
-                    // to the right to thicken strokes.
-                    if (fakeBold)
+                        // Fake italic only when no real italic face is in use: shift
+                        // the glyph right by a fraction of the font size (a crude
+                        // slant; raylib can't shear a glyph).
+                        const italic_offset = fakeItalic ? (s.fontSize / 6) : 0;
                         drawGrapheme(*activeFont, rc.codepoints[0 .. cp_count],
-                            cast(float)(x + italic_offset + 1), cast(float)y, s.fontSize, rc.fgCol);
+                            cast(float)(x + italic_offset), cast(float)y, s.fontSize, rc.fgCol);
+
+                        // Fake bold only when no real bold face is in use: redraw 1px
+                        // to the right to thicken strokes.
+                        if (fakeBold)
+                            drawGrapheme(*activeFont, rc.codepoints[0 .. cp_count],
+                                cast(float)(x + italic_offset + 1), cast(float)y, s.fontSize, rc.fgCol);
+                    }
 
                     // Underline (any SGR underline style) and strikethrough.
                     if (rc.style.underline != 0)
