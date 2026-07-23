@@ -29,7 +29,7 @@ import gui_text : columnWidth, lineCount, Match, buildLineStarts, findMatches;
 
 // Markdown-preview model + layout (raylib-free) and the ANSI attribute bits.
 import gui_preview : PreviewModel, PreviewLine, PreviewRun, BandKind, layoutPreview,
-    quoteBarColors, quoteBarCycle;
+    buildRawPlines, quoteBarColors, quoteBarCycle;
 import gui_ansi : Attr;
 
 // Selective import avoids sparkles.syntax.Color clashing with raylib.Color:
@@ -173,12 +173,17 @@ int runGui(
         return w < 8 ? 8 : w;
     }
 
+    // Both views are wrapped visual-line lists (`PreviewLine[]`) so long lines
+    // reflow on resize and line numbers track the source (physical) line. The
+    // markdown preview lays out the rendered model; the raw view wraps the
+    // highlighted source.
     void relayout()
     {
-        if (!showPreview || !preview.present)
-            return;
         lastWidthCols = widthCols();
-        plines = layoutPreview(preview, current, pageFg, pageBg, lastWidthCols);
+        if (showPreview && preview.present)
+            plines = layoutPreview(preview, current, pageFg, pageBg, lastWidthCols);
+        else
+            plines = buildRawPlines(source, events, current, pageFg, pageBg, lastWidthCols);
     }
 
     void applyTheme(size_t i)
@@ -220,13 +225,34 @@ int runGui(
         curMatch = 0;
     }
 
-    // Center the given match's line in the viewport (as far as clamping allows).
+    // Lines wrap, so source coordinates must be mapped to visual (`plines`) rows.
+    // The first visual row at/after source line `srcLine`.
+    long visualOfSrc(size_t srcLine)
+    {
+        foreach (idx, ref pl; plines)
+            if (pl.showNumber && pl.srcLine >= srcLine)
+                return cast(long) idx;
+        return plines.length ? cast(long) plines.length - 1 : 0;
+    }
+
+    // The visual row a match falls on (its source line's wrapped row covering the
+    // match column), else that source line's first row.
+    long visualOfMatch(in Match m)
+    {
+        foreach (idx, ref pl; plines)
+            if (pl.srcLine == m.line && pl.wrapColOffset <= cast(long) m.col
+                && cast(long) m.col < pl.wrapColOffset + lineCols(pl))
+                return cast(long) idx;
+        return visualOfSrc(m.line);
+    }
+
+    // Center the given match in the viewport (as far as clamping allows).
     void jumpToMatch(size_t i, int visibleRows)
     {
         if (matches.length == 0)
             return;
         curMatch = i % matches.length;
-        top = cast(long) matches[curMatch].line - visibleRows / 2;
+        top = visualOfMatch(matches[curMatch]) - visibleRows / 2;
     }
 
     // Debug/CI: HUE_GUI_SEARCH=<text> preselects a search (highlights + jump to
@@ -237,10 +263,20 @@ int runGui(
     {
         recompute();
         if (matches.length)
-            top = cast(long) matches[0].line;
+            top = visualOfMatch(matches[0]);
     }
 
     Scrollbar sb;
+
+    // Fullscreen (F11): a manual borderless toggle. raylib's
+    // ToggleBorderlessWindowed forces the primary monitor and, on some
+    // compositors, drops the window decorations on the way back. Managing the
+    // undecorated flag + geometry ourselves restores decorations reliably and
+    // keeps the window on its current monitor (on X11; on Wayland the app can't
+    // set its own position, so it stays put — never yanked to the primary).
+    bool isFullscreen;
+    int savedX, savedY, savedW, savedH;
+
     int frame = 0;
     while (!WindowShouldClose())
     {
@@ -250,16 +286,39 @@ int runGui(
         const screenH = GetScreenHeight();
         const visibleRows = screenH / cellH;
 
-        // Reflow the preview when the window width (in columns) changes.
-        if (showPreview && widthCols() != lastWidthCols)
+        // Reflow (both views wrap) when the window width in columns changes.
+        if (widthCols() != lastWidthCols)
             relayout();
-        const total = showPreview ? plines.length : srcTotal;
+        const total = plines.length;
         const maxTop = total > visibleRows ? cast(long)(total - visibleRows) : 0;
 
-        // F11 toggles fullscreen (borderless, so the desktop resolution and the
-        // reflow-on-resize both keep working); active in any input mode.
+        // F11 toggles borderless fullscreen on the window's current monitor;
+        // active in any input mode. Reflow-on-resize keeps working because the
+        // screen size changes.
         if (IsKeyPressed(KeyboardKey.KEY_F11))
-            ToggleBorderlessWindowed();
+        {
+            if (!isFullscreen)
+            {
+                const wp = GetWindowPosition();
+                savedX = cast(int) wp.x;
+                savedY = cast(int) wp.y;
+                savedW = GetScreenWidth();
+                savedH = GetScreenHeight();
+                const mon = GetCurrentMonitor();
+                const mp = GetMonitorPosition(mon);
+                SetWindowState(ConfigFlags.FLAG_WINDOW_UNDECORATED);
+                SetWindowPosition(cast(int) mp.x, cast(int) mp.y);
+                SetWindowSize(GetMonitorWidth(mon), GetMonitorHeight(mon));
+                isFullscreen = true;
+            }
+            else
+            {
+                ClearWindowState(ConfigFlags.FLAG_WINDOW_UNDECORATED);
+                SetWindowSize(savedW, savedH);
+                SetWindowPosition(savedX, savedY);
+                isFullscreen = false;
+            }
+        }
 
         const inputMode = mode != Mode.normal;
         if (inputMode)
@@ -286,16 +345,20 @@ int runGui(
             {
                 if (mode == Mode.search)
                 {
-                    // Jump to the first match at/after the current top, else wrap.
+                    // Jump to the first match whose visual row is at/after the
+                    // current top (matches are in source order → visual order), wrap.
                     size_t i;
-                    while (i < matches.length && matches[i].line < cast(size_t) top)
+                    while (i < matches.length && visualOfMatch(matches[i]) < top)
                         ++i;
                     jumpToMatch(i < matches.length ? i : 0, visibleRows);
                 }
-                else if (query.length) // gotoLine
+                else if (query.length) // gotoLine → the source line's visual row
                 {
                     try
-                        top = query[].to!long - 1;
+                    {
+                        const n = query[].to!long;
+                        top = visualOfSrc(cast(size_t)(n > 0 ? n - 1 : 0));
+                    }
                     catch (Exception)
                     {
                     }
@@ -442,67 +505,34 @@ int runGui(
         const gcols = gutterCols();
         const gutterPx = padX + gcols * cellW; // == contentX (text column start)
 
-        if (showPreview)
-        {
-            drawPreview(fonts, plines, topLine, visibleRows, cellW, cellH,
-                pageFg, pageBg, gutterFg, quoteBars, padX, rightPad, gcols, buf);
-        }
-        else
-        {
-        // Line-number gutter (independent of runs, so blank lines still number).
-        if (gcols > 0)
-            foreach (row; 0 .. visibleRows)
-            {
-                const line = topLine + row;
-                if (line >= total)
-                    break;
-                const s = cstrOf(buf, uintToBuf(line + 1));
-                // right-align, leaving one padding cell before the text column
-                const nx = gutterPx - cast(int)((s.length + 1) * cellW);
-                drawText(fonts, s, nx, row * cast(float) cellH, TextStyle(0), rl(gutterFg));
-            }
+        // Both views draw through the same wrapped-line painter (bands/leaders are
+        // absent from raw lines, so it just paints runs + the line-number gutter).
+        drawPreview(fonts, plines, topLine, visibleRows, cellW, cellH,
+            pageFg, pageBg, gutterFg, quoteBars, padX, rightPad, gcols, buf);
 
-        // Syntax runs, viewport-culled: skip lines above, stop past the bottom.
-        size_t curLine = size_t.max;
-        float x = 0;
-        foreach (ls; byStyledLine(source, events))
-        {
-            if (ls.line < topLine)
-                continue;
-            if (ls.line >= topLine + visibleRows)
-                break;
-            if (ls.line != curLine)
-            {
-                curLine = ls.line;
-                x = gutterPx;
-            }
-
-            const run = source[ls.span.start .. ls.span.end];
-            if (run.length == 0)
-                continue;
-
-            const cstr = cstrOf(buf, run);
-            const y = (ls.line - topLine) * cast(float) cellH;
-            const spec = current[ls.span.label];
-            const wpx = cast(int)(columnWidth(run) * cellW);
-            if (spec.bg.isSet)
-                DrawRectangle(cast(int) x, cast(int) y, wpx, cellH, rl(toRgb(spec.bg, pageBg)));
-            drawText(fonts, cstr, x, y, mapStyle(spec), rl(toRgb(spec.fg, pageFg)));
-            x += wpx;
-        }
-
-        // Search-match overlay: translucent tint over each visible match (the
-        // current one brighter), drawn over the text so the glyphs show through.
-        foreach (i, m; matches)
-        {
-            if (m.line < topLine || m.line >= topLine + visibleRows)
-                continue;
-            const mx = gutterPx + m.col * cellW;
-            const my = cast(int)((m.line - topLine) * cellH);
-            DrawRectangle(mx, my, m.cols * cellW, cellH,
-                i == curMatch ? currentMatchTint : matchTint);
-        }
-        } // end raw (!showPreview) view
+        // Search-match overlay (raw view only): translucent tint over each visible
+        // match, remapped onto the wrapped visual line via each line's srcLine +
+        // wrapColOffset (the current match brighter).
+        if (!showPreview)
+            foreach (i, m; matches)
+                foreach (row; 0 .. visibleRows)
+                {
+                    const vi = topLine + row;
+                    if (vi >= plines.length)
+                        break;
+                    const pl = plines[vi];
+                    const off = pl.wrapColOffset;
+                    const rowCols = lineCols(pl);
+                    if (pl.srcLine != m.line || cast(long) m.col < off
+                        || cast(long) m.col >= off + rowCols)
+                        continue;
+                    const vc = cast(int) m.col - off;
+                    const remain = off + rowCols - cast(int) m.col;
+                    const cols = cast(int) m.cols < remain ? cast(int) m.cols : remain;
+                    DrawRectangle(gutterPx + vc * cellW, cast(int)(row * cellH),
+                        cols * cellW, cellH, i == curMatch ? currentMatchTint : matchTint);
+                    break; // the match starts on this visual row
+                }
 
         // Scrollbar: an animated-width thumb, plus a faint track while hovered
         // or dragging. Colors follow the theme's muted gutter tone.
@@ -593,10 +623,11 @@ private void drawPreview(
         if (pl.band != BandKind.none && pl.band != BandKind.rule)
             DrawRectangle(originX, cast(int) y, bandW, cellH, rl(pl.bandBg));
 
-        // Visual-line number in the gutter (right-aligned, one padding cell).
-        if (gutterCols > 0)
+        // Source (physical) line number in the gutter, right-aligned — only on the
+        // first visual row of a wrapped physical line.
+        if (gutterCols > 0 && pl.showNumber)
         {
-            const s = cstrOf(buf, uintToBuf(li + 1));
+            const s = cstrOf(buf, uintToBuf(pl.srcLine + 1));
             drawText(fonts, s, originX - (s.length + 1) * cast(float) cellW, y,
                 TextStyle(0), rl(gutterFg));
         }
@@ -763,6 +794,15 @@ TextStyle mapStyle(in StyleSpec spec) pure nothrow @nogc @safe
     if (spec.underline != UnderlineStyle.none)
         t.bits |= TextStyle.underline;
     return t;
+}
+
+/// Total display columns of a wrapped line's runs (for search-overlay remapping).
+private int lineCols(in PreviewLine pl) @safe
+{
+    int c;
+    foreach (r; pl.runs)
+        c += cast(int) columnWidth(r.text);
+    return c;
 }
 
 /// An RGB triple as a raylib color (fully opaque).
