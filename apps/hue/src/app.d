@@ -61,6 +61,8 @@ struct CliParams
 /// list of popular coding fonts (Nerd-Font variants first for icon glyphs),
 /// ending in a generic monospace — the first installed family wins, so hue
 /// renders on a sensible font even when none of the named ones are present.
+/// The markdown preview's decorations (heading/callout/link icons, checkboxes)
+/// are Nerd-Font glyphs; with a non-Nerd `--font` they degrade to tofu.
 enum defaultGuiFont =
     "FiraCode Nerd Font Mono,JetBrainsMono Nerd Font Mono,JetBrains Mono," ~
     "CaskaydiaCove Nerd Font Mono,Cascadia Code,Hack Nerd Font Mono,Hack," ~
