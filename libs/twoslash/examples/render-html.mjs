@@ -204,12 +204,9 @@ function page(name, kinds, fragment, prev, next) {
     `  .ln::before { content: counter(lineno); position: absolute;\n` +
     `                left: -${gutter}ch; width: ${gutter - 1}ch; text-align: right;\n` +
     `                color: #6c7086; -webkit-user-select: none; user-select: none; }\n` +
-    // A hover popup is `opacity: 0` (kept for the shiki-parity fade) but stays
-    // laid out, so a wide hidden popup widens the scroll area into a stray
-    // horizontal scrollbar. In the preview, hide it with `display` instead so a
-    // hidden popup takes no space; it still appears on hover.
-    `  main .twoslash .twoslash-popup-container { display: none; }\n` +
-    `  main .twoslash .twoslash-hover:hover .twoslash-popup-container { display: inline-flex; }\n` +
+    // (Hidden hover popups take no layout — the shipped twoslash.css now hides
+    // them with `display:none`, so no preview override is needed for the
+    // scroll-width / newline artifacts they used to cause.)
     // Selection domains (VSCode-like). The shipped twoslash.css sets the
     // below-line annotations `user-select: none` (code copies cleanly for every
     // consumer). The preview goes further: a drag is confined to whichever
