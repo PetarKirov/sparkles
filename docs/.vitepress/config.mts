@@ -532,6 +532,10 @@ export default withMermaid(
                   text: 'Content folding (planned)',
                   link: '/specs/hue/folding',
                 },
+                {
+                  text: 'Tree / DAG view (planned)',
+                  link: '/specs/hue/tree-view',
+                },
                 { text: 'Twoslash (planned)', link: '/specs/hue/twoslash' },
                 {
                   text: 'Web integration (planned)',
