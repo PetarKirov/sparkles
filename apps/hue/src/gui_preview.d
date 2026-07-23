@@ -69,6 +69,14 @@ struct PreviewLine
     bool hasLeaderFg;  /// paint the leader in leaderFg instead of muted gutterFg
     RgbColor barFg;    /// quote-bar override color (when hasBarFg)
     bool hasBarFg;     /// paint all this line's quote bars in barFg (callout accent)
+    /// 0-based source (physical) line this visual line came from.
+    size_t srcLine;
+    /// Gutter shows `srcLine+1` — true only on the first visual row of a wrapped
+    /// physical line (continuations are blank).
+    bool showNumber;
+    /// Source column this visual row starts at (raw view; for remapping search
+    /// matches onto wrapped lines).
+    int wrapColOffset;
     PreviewRun[] runs;
 }
 
@@ -79,6 +87,7 @@ struct CodeFence
     const(char)[] label;     /// info-string remainder (e.g. "[file.d]")
     bool isAnsi;             /// a ` ```ansi ` fence → decoded, not highlighted
     const(char)[] body;      /// the code_fence_content bytes
+    size_t bodyStart;        /// source byte offset of `body` (for line numbering)
     HighlightEvent[] events; /// highlight events over `body` (when !isAnsi)
     AnsiLine[] ansi;         /// decoded styled lines (when isAnsi)
 }
@@ -119,6 +128,7 @@ private void collectFences(in MdBlock b, scope const(char)[] source,
         f.lang = canonicalLanguage(b.infoLang);
         f.label = b.label;
         f.body = source[b.codeBody.start .. b.codeBody.end];
+        f.bodyStart = b.codeBody.start;
         if (f.lang == "ansi")
         {
             f.isAnsi = true;
@@ -150,9 +160,48 @@ PreviewLine[] layoutPreview(PreviewModel m, ResolvedTheme theme,
     auto lay = Layouter(source: m.doc.source, theme: theme, pageFg: pageFg,
         pageBg: pageBg, width: widthCols < 8 ? 8 : widthCols, fences: m.fences);
     lay.resolvePalette();
+    lay.buildLineStarts();
     foreach (ref b; m.doc.root.children)
         lay.block(b, 0, 0);
     return lay.lines;
+}
+
+/**
+Build the raw highlighted-source view as wrapped $(LREF PreviewLine)s: each source
+line's styled runs (from `events`) are hard-wrapped to `widthCols`, tagged with the
+source line number (`showNumber` on the first wrapped row only, so a wrapped
+physical line is numbered once) and the source column each visual row starts at
+(`wrapColOffset`, for remapping search matches). Reuses the preview's draw path.
+*/
+PreviewLine[] buildRawPlines(const(char)[] source, const(HighlightEvent)[] events,
+    ResolvedTheme theme, RgbColor pageFg, RgbColor pageBg, int widthCols) @safe
+{
+    const w = widthCols < 1 ? 1 : widthCols;
+    const n = lineCount(source);
+    auto byLine = new PreviewRun[][](n);
+    foreach (ls; byStyledLine(source, events))
+    {
+        if (ls.line >= n)
+            continue;
+        const spec = theme[ls.span.label];
+        byLine[ls.line] ~= PreviewRun(source[ls.span.start .. ls.span.end],
+            toRgb(spec.fg, pageFg), toRgb(spec.bg, pageBg), spec.bg.isSet, mapSpecAttrs(spec));
+    }
+
+    PreviewLine[] out_;
+    foreach (li, row; byLine)
+    {
+        int colOff;
+        bool first = true;
+        foreach (wl; hardWrapRuns(row, w))
+        {
+            out_ ~= PreviewLine(srcLine: li, showNumber: first, wrapColOffset: colOff, runs: wl);
+            foreach (r; wl)
+                colOff += cast(int) columnWidth(r.text);
+            first = false;
+        }
+    }
+    return out_;
 }
 
 /// The number of distinct nested-quote gutter-bar colors before the cycle repeats.
@@ -190,6 +239,13 @@ private struct Layouter
     PreviewLine[] lines;
     size_t fenceIdx;
     int listDepth; // current list nesting (1-based inside list(); 0 outside)
+
+    // Source-line numbering: `curSrcLine`/`pendingNumber` are set by `beginLine`
+    // right before a logical line's content push; `push` stamps every line with
+    // `curSrcLine` and gives the first push after `beginLine` the number.
+    size_t[] lineStarts;
+    size_t curSrcLine;
+    bool pendingNumber;
 
     // Resolved role colors (from the theme's markup.* labels, page-fallback).
     RgbColor headingFg, codeFg, linkFg, quoteFg;
@@ -230,11 +286,56 @@ private struct Layouter
     const(char)[] slice(size_t a, size_t b) @safe
         => a <= b && b <= source.length ? source[a .. b] : "";
 
-    void push(PreviewLine l) @safe { lines ~= l; }
-    void blank() @safe { push(PreviewLine.init); }
+    // Byte offset of each source line's start (for byte → line-number lookup).
+    void buildLineStarts() @safe
+    {
+        lineStarts = [0];
+        foreach (i, c; source)
+            if (c == '\n')
+                lineStarts ~= i + 1;
+    }
+
+    // The 0-based source line containing byte `off`.
+    size_t srcLineOf(size_t off) @safe
+    {
+        size_t lo, hi = lineStarts.length;
+        while (lo < hi)
+        {
+            const mid = (lo + hi) / 2;
+            if (lineStarts[mid] <= off)
+                lo = mid + 1;
+            else
+                hi = mid;
+        }
+        return lo == 0 ? 0 : lo - 1;
+    }
+
+    // Mark the source line for the next logical line's content; its first pushed
+    // visual row carries the gutter number, wrapped continuations do not.
+    void beginLine(size_t off) @safe
+    {
+        curSrcLine = srcLineOf(off);
+        pendingNumber = true;
+    }
+
+    void push(PreviewLine l) @safe
+    {
+        l.srcLine = curSrcLine;
+        if (pendingNumber)
+        {
+            l.showNumber = true;
+            pendingNumber = false;
+        }
+        lines ~= l;
+    }
+
+    void blank() @safe { lines ~= PreviewLine.init; } // spacer: never numbered
 
     void block(in MdBlock b, int indent, ubyte qdepth) @safe
     {
+        // Number this block by its source line; multi-line blocks (list, code)
+        // re-mark per sub-line below.
+        beginLine(b.span.start);
         final switch (b.kind) with (MdBlockKind)
         {
         case document:
@@ -372,8 +473,11 @@ private struct Layouter
             {
                 firstPara = false;
                 const cutoff = c.span.start + co.markerLen;
-                auto runs = inlineRuns(trimLeadingBytes(c.inlines, cutoff), pageFg, 0);
-                emitFlow(runs, indent, bodyDepth, "");
+                auto trimmed = trimLeadingBytes(c.inlines, cutoff);
+                // Number the body by where its text actually starts (the line
+                // after the `[!TYPE]` marker), not the marker's line.
+                beginLine(trimmed.length ? trimmed[0].span.start : cutoff);
+                emitFlow(inlineRuns(trimmed, pageFg, 0), indent, bodyDepth, "");
                 blank();
             }
             else
@@ -399,15 +503,21 @@ private struct Layouter
         string lbl = (icon.length ? icon ~ " " : "") ~ (f.lang.length ? f.lang.idup : "code");
         if (f.label.length)
             lbl ~= " " ~ f.label.idup;
+        pendingNumber = false; // the language-header bar carries no line number
         push(PreviewLine(indentCols: indent, quoteDepth: qdepth, band: BandKind.codeHeader,
             bandBg: codeHeaderBg, runs: [PreviewRun(lbl, codeFg, codeHeaderBg, true, 0)]));
 
         // Code/ANSI lines are hard-wrapped to the panel width (like prose) so long
         // lines reflow onto continuation rows instead of overflowing + clipping.
+        // Each source code line is numbered by its document line (first wrapped
+        // row only).
         const avail = width - indent - qdepth * 2;
         const aw = avail < 1 ? 1 : avail;
-        void pushCode(PreviewRun[] row)
+        const baseLine = srcLineOf(f.bodyStart);
+        void pushCode(size_t bodyRow, PreviewRun[] row)
         {
+            curSrcLine = baseLine + bodyRow;
+            pendingNumber = true;
             foreach (wl; hardWrapRuns(row, aw))
                 push(PreviewLine(indentCols: indent, quoteDepth: qdepth,
                     band: BandKind.codePanel, bandBg: codePanelBg, runs: wl));
@@ -415,13 +525,13 @@ private struct Layouter
 
         if (f.isAnsi)
         {
-            foreach (ref al; f.ansi)
+            foreach (i, ref al; f.ansi)
             {
                 PreviewRun[] runs;
                 foreach (ref sp; al.spans)
                     runs ~= PreviewRun(sp.text, sp.fgDefault ? pageFg : sp.fg,
                         sp.bg, !sp.bgDefault, sp.attrs);
-                pushCode(runs);
+                pushCode(i, runs);
             }
         }
         else
@@ -443,13 +553,14 @@ private struct Layouter
                 byLine[ls.line] ~= PreviewRun(f.body[ls.span.start .. ls.span.end],
                     toRgb(spec.fg, codeFg), bg, hasBg, mapAttrs(spec));
             }
-            foreach (row; byLine)
-                pushCode(row);
+            foreach (i, row; byLine)
+                pushCode(i, row);
         }
 
         // Bottom border, so the panel reads as a framed block (the header bar is
         // the top edge).
         const bw = width - indent - qdepth * 2;
+        pendingNumber = false; // the border carries no line number
         push(PreviewLine(indentCols: indent, quoteDepth: qdepth, band: BandKind.codePanel,
             bandBg: codePanelBg,
             runs: [PreviewRun(repeat("─", bw < 1 ? 1 : bw), ruleFg, codePanelBg, true, 0)]));
@@ -466,6 +577,7 @@ private struct Layouter
         {
             if (item.kind != MdBlockKind.listItem)
                 continue;
+            beginLine(item.span.start); // number each item by its source line
 
             // Leader: a Nerd checkbox (green when checked), an ordinal, or a
             // depth-cycled bullet.
@@ -691,15 +803,7 @@ private struct Layouter
         return s;
     }
 
-    ubyte mapAttrs(in StyleSpec spec) @safe
-    {
-        ubyte a;
-        if (spec.attrs.has(TextAttr.bold)) a |= Attr.bold;
-        if (spec.attrs.has(TextAttr.italic)) a |= Attr.italic;
-        if (spec.attrs.has(TextAttr.strikethrough)) a |= Attr.strikethrough;
-        if (spec.underline != UnderlineStyle.none) a |= Attr.underline;
-        return a;
-    }
+    ubyte mapAttrs(in StyleSpec spec) @safe => mapSpecAttrs(spec);
 
     // Word-wrap `runs` to the available width and push the resulting lines. A
     // "word" is a maximal whitespace-free unit that may span several runs (so a
@@ -804,6 +908,18 @@ private struct Word
 
 private bool isSpace(char c) @safe pure nothrow @nogc
     => c == ' ' || c == '\t' || c == '\n' || c == '\r';
+
+// Map a syntax `StyleSpec`'s attributes onto the `gui_ansi.Attr` bits the preview
+// runs use. Shared by the Layouter and the raw-view builder.
+private ubyte mapSpecAttrs(in StyleSpec spec) @safe
+{
+    ubyte a;
+    if (spec.attrs.has(TextAttr.bold)) a |= Attr.bold;
+    if (spec.attrs.has(TextAttr.italic)) a |= Attr.italic;
+    if (spec.attrs.has(TextAttr.strikethrough)) a |= Attr.strikethrough;
+    if (spec.underline != UnderlineStyle.none) a |= Attr.underline;
+    return a;
+}
 
 // Hard-wrap a code/ANSI line's styled runs to `width` display columns, splitting
 // runs at the column boundary (code has long unbreakable tokens, so break on any
