@@ -150,7 +150,9 @@ int runGui(
     size_t themeIdx = startIdx;
     ResolvedTheme current;
     RgbColor pageFg, pageBg, gutterFg;
-    RgbColor[quoteBarCycle] quoteBars; // per-depth block-quote gutter colors
+    RgbColor[quoteBarCycle] quoteBars;   // per-depth block-quote gutter colors
+    RgbColor scrollbarTrack, scrollbarThumb; // link-tinted — distinct from the
+    // grayscale structural bands (page / code header / code panel)
 
     const srcTotal = lineCount(source);
     // Line-number gutter width in cells (0 when off) — a stable size from the
@@ -187,6 +189,11 @@ int runGui(
         pageBg = toRgb(current.defaults.bg, hardFallbackBg);
         gutterFg = mix(pageFg, pageBg); // muted line numbers
         quoteBars = quoteBarColors(current, pageFg, pageBg);
+        // Scrollbar chrome: tint toward the theme's link color so the hover track
+        // and thumb read as a distinct hue against the grayscale bg/code bands.
+        const linkC = toRgb(current[current.labels.resolve("markup.link")].fg, pageFg);
+        scrollbarTrack = mix(pageBg, linkC, 0.22);
+        scrollbarThumb = mix(pageBg, linkC, 0.5);
         SetWindowTitle(text("hue — ", title, " — ", names[i],
             " (", i + 1, "/", names.length, ")").toStringz);
         relayout(); // preview colors follow the theme
@@ -248,6 +255,11 @@ int runGui(
             relayout();
         const total = showPreview ? plines.length : srcTotal;
         const maxTop = total > visibleRows ? cast(long)(total - visibleRows) : 0;
+
+        // F11 toggles fullscreen (borderless, so the desktop resolution and the
+        // reflow-on-resize both keep working); active in any input mode.
+        if (IsKeyPressed(KeyboardKey.KEY_F11))
+            ToggleBorderlessWindowed();
 
         const inputMode = mode != Mode.normal;
         if (inputMode)
@@ -499,10 +511,12 @@ int runGui(
             const g = thumbGeometry(total, visibleRows, top, maxTop, screenH);
             const w = sb.currentWidth;
             const x = screenW - w;
+            // Distinct link-tinted chrome (the gutter behind it is empty page bg):
+            // a subtle full-height track on hover, a brighter thumb on top.
             if (sb.isHovered || sb.isDragging)
-                DrawRectangle(cast(int) x, 0, cast(int) w, screenH, alpha(gutterFg, 40));
+                DrawRectangle(cast(int) x, 0, cast(int) w, screenH, rl(scrollbarTrack));
             DrawRectangle(cast(int) x, cast(int) g.y, cast(int) w, cast(int) g.h,
-                alpha(gutterFg, 200));
+                rl(scrollbarThumb));
         }
 
         // Input line at the bottom: '/query' while searching, ':n' while going
@@ -685,6 +699,13 @@ private bool pressed(int key) @system
 private RgbColor mix(RgbColor a, RgbColor b) pure nothrow @nogc @safe
     => RgbColor(cast(ubyte)((a.r + b.r) / 2), cast(ubyte)((a.g + b.g) / 2),
         cast(ubyte)((a.b + b.b) / 2));
+
+/// `a` blended `t` of the way toward `b` (0 = `a`, 1 = `b`).
+private RgbColor mix(RgbColor a, RgbColor b, double t) pure nothrow @nogc @safe
+{
+    ubyte ch(ubyte x, ubyte y) => cast(ubyte)(x + (y - x) * t);
+    return RgbColor(ch(a.r, b.r), ch(a.g, b.g), ch(a.b, b.b));
+}
 
 /// Decimal digit count (at least 1, for 0).
 private int digitCount(size_t n) pure nothrow @nogc @safe
