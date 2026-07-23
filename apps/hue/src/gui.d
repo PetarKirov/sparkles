@@ -283,6 +283,11 @@ int runGui(
     int copiedFence = -1;
     float copiedTimer = 0;
 
+    // Mouse text selection over content: a half-open [min, max) byte range into
+    // the source file. Gutters / decorations are excluded (they have no srcStart).
+    long selAnchor = -1, selHead = -1;
+    bool selecting;
+
     int frame = 0;
     while (!WindowShouldClose())
     {
@@ -435,8 +440,19 @@ int runGui(
                 relayout();
             }
 
-            // 'c' toggles the in-panel code-block line numbers.
-            if (pressed(KeyboardKey.KEY_C))
+            // Ctrl-C copies the current selection to the clipboard; plain 'c'
+            // toggles the in-panel code-block line numbers.
+            if (ctrl && IsKeyPressed(KeyboardKey.KEY_C))
+            {
+                if (selAnchor >= 0 && selHead >= 0 && selAnchor != selHead)
+                {
+                    const a = selAnchor < selHead ? selAnchor : selHead;
+                    const b = selAnchor < selHead ? selHead : selAnchor;
+                    if (b <= source.length)
+                        SetClipboardText(source[cast(size_t) a .. cast(size_t) b].toStringz);
+                }
+            }
+            else if (!ctrl && pressed(KeyboardKey.KEY_C))
             {
                 codeLineNumbers = !codeLineNumbers;
                 lastWidthCols = -1;
@@ -527,13 +543,15 @@ int runGui(
         if (copiedTimer > 0)
             copiedTimer -= GetFrameTime();
 
-        // Copy-to-clipboard button on each visible code-header row (right side).
-        // Clicking copies the block's body and flips the icon to a checkmark for
-        // ~1.2s. Sits left of the scrollbar gutter, so it never overlaps content.
+        bool copyClicked; // a click landing on a copy button is not a selection
+
+        // Copy-to-clipboard button on each visible code-header row. Sits one cell
+        // in from the scrollbar gutter (1-char right padding, mirroring the header's
+        // left padding). Clicking copies the block's body and flips the icon to a
+        // checkmark for ~1.2s.
         if (showPreview)
         {
             const mp = GetMousePosition();
-            const iconX = screenW - rightPad - cellW;
             foreach (row; 0 .. visibleRows)
             {
                 const vi = topLine + row;
@@ -542,6 +560,11 @@ int runGui(
                 const pl = plines[vi];
                 if (pl.band != BandKind.codeHeader || pl.copyFence < 0)
                     continue;
+                // Anchor the button to the border's copy cutout (the middle of the
+                // three-space gap, at `lineCols-3`), so it has a space on each side
+                // and lands exactly in the gap regardless of wrap-width rounding.
+                const iconX = gutterPx
+                    + (runStartCells(pl) + lineCols(pl) - 3) * cellW;
                 const iy = row * cellH;
                 const hovered = mp.x >= iconX && mp.x < iconX + cellW
                     && mp.y >= iy && mp.y < iy + cellH;
@@ -551,11 +574,82 @@ int runGui(
                     SetClipboardText(preview.fences[pl.copyFence].body.toStringz);
                     copiedFence = pl.copyFence;
                     copiedTimer = 1.2f;
+                    copyClicked = true;
                 }
                 const copied = pl.copyFence == copiedFence && copiedTimer > 0;
                 const icon = copied ? "\U0000F00C" : "\U0000F0C5"; //  /
                 const col = copied ? quoteBars[2] : (hovered ? pageFg : gutterFg);
                 drawText(fonts, cstrOf(buf, icon), iconX, iy, TextStyle(0), rl(col));
+            }
+        }
+
+        // Mouse text selection over content (both views). A drag maps the cursor to
+        // a source-file byte offset via each run's srcStart, so the selection is a
+        // range into the original `const(char)[]` (gutters/decorations excluded).
+        long offsetAt(float mx, float my)
+        {
+            if (my < 0)
+                return -1;
+            const row = cast(int)(my / cellH);
+            if (row < 0 || topLine + row >= plines.length)
+                return -1;
+            const pl = plines[topLine + row];
+            const rx = gutterPx + runStartCells(pl) * cellW;
+            const col = mx <= rx ? 0 : cast(int)((mx - rx) / cellW);
+            return srcOffsetAtCol(pl, col);
+        }
+
+        {
+            const mp = GetMousePosition();
+            const overSb = mp.x >= screenW - scrollbarGutter();
+            if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT) && !overSb && !copyClicked)
+            {
+                const o = offsetAt(mp.x, mp.y);
+                selAnchor = selHead = o;
+                selecting = o >= 0;
+            }
+            if (selecting && IsMouseButtonDown(MouseButton.MOUSE_BUTTON_LEFT))
+            {
+                const o = offsetAt(mp.x, mp.y);
+                if (o >= 0)
+                    selHead = o;
+            }
+            if (IsMouseButtonReleased(MouseButton.MOUSE_BUTTON_LEFT))
+                selecting = false;
+        }
+
+        // Selection highlight: a translucent tint over each selected source run.
+        if (selAnchor >= 0 && selHead >= 0 && selAnchor != selHead)
+        {
+            const selMin = selAnchor < selHead ? selAnchor : selHead;
+            const selMax = selAnchor < selHead ? selHead : selAnchor;
+            foreach (row; 0 .. visibleRows)
+            {
+                const vi = topLine + row;
+                if (vi >= plines.length)
+                    break;
+                const pl = plines[vi];
+                const rx0 = gutterPx + runStartCells(pl) * cellW;
+                int c;
+                foreach (r; pl.runs)
+                {
+                    const rc = cast(int) columnWidth(r.text);
+                    if (r.srcStart != size_t.max)
+                    {
+                        const rStart = cast(long) r.srcStart;
+                        const rEnd = rStart + cast(long) r.text.length;
+                        if (rEnd > selMin && rStart < selMax)
+                        {
+                            const bStart = (selMin > rStart ? selMin : rStart) - rStart;
+                            const bEnd = (selMax < rEnd ? selMax : rEnd) - rStart;
+                            const colStart = cast(int) columnWidth(r.text[0 .. bStart]);
+                            const colEnd = cast(int) columnWidth(r.text[0 .. bEnd]);
+                            DrawRectangle(rx0 + (c + colStart) * cellW, cast(int)(row * cellH),
+                                (colEnd - colStart) * cellW, cellH, alpha(quoteBars[1], 80));
+                        }
+                    }
+                    c += rc;
+                }
             }
         }
 
@@ -853,6 +947,49 @@ private int lineCols(in PreviewLine pl) @safe
         c += cast(int) columnWidth(r.text);
     return c;
 }
+
+/// The byte index in `t` at display column `targetCol` (for column → file-offset).
+private size_t byteAtColumn(const(char)[] t, int targetCol) @safe
+{
+    import std.utf : decode;
+    size_t i;
+    int c;
+    while (i < t.length && c < targetCol)
+    {
+        const s = i;
+        decode(t, i);
+        c += cast(int) columnWidth(t[s .. i]);
+    }
+    return i;
+}
+
+/// The source-file offset at display column `col` within a line's runs — walking
+/// only source-backed runs (decorations/gutters are skipped), so a click in a
+/// gutter snaps to the adjacent content. -1 if the line has no selectable content.
+private long srcOffsetAtCol(in PreviewLine pl, int col) @safe
+{
+    long lastEnd = -1;
+    int c;
+    foreach (r; pl.runs)
+    {
+        const rc = cast(int) columnWidth(r.text);
+        if (r.srcStart != size_t.max)
+        {
+            if (col <= c)
+                return cast(long) r.srcStart;
+            if (col < c + rc)
+                return cast(long) r.srcStart + cast(long) byteAtColumn(r.text, col - c);
+            lastEnd = cast(long)(r.srcStart + r.text.length);
+        }
+        c += rc;
+    }
+    return lastEnd;
+}
+
+/// Columns from the content origin to where a line's runs begin (after the quote
+/// gutter, indent, and leader), matching `drawPreview`'s layout.
+private int runStartCells(in PreviewLine pl) @safe
+    => pl.quoteDepth * 2 + pl.indentCols + cast(int) columnWidth(pl.leader);
 
 /// An RGB triple as a raylib color (fully opaque).
 Color rl(RgbColor c) pure nothrow @nogc @trusted => Color(c.r, c.g, c.b, 255);
