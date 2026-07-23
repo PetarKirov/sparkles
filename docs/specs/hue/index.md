@@ -38,6 +38,7 @@ issues as the requirement of record):
 | [GUI (`--gui`) requirements](./gui.md)                         | the raylib GPU window: window/font, the wrapped-line render model, the raw & markdown-preview views, navigation, scrollbar, live theme cycling, search/goto, every markdown construct, code blocks, mouse selection & clipboard, fullscreen, debug hooks |
 | [Twoslash requirements](./twoslash.md) _(planned/branch-only)_ | the `--twoslash` / `--markdown` modes and the raylib twoslash overlay — the **first overlay** of hue's pluggable overlay layer; implemented on `feat/syntax-twoslash`, not yet on this branch                                                            |
 | [Overlay requirements](./overlays.md) _(planned)_              | the **pluggable overlay** framework generalized from twoslash, plus the additional overlay kinds: source map, code coverage, tracing, tree-sitter inspector, function code size                                                                          |
+| [Notifier requirements](./notifier.md) _(planned)_             | the cross-backend **interactive popup** component (snacks.nvim-style: collapse to a floating icon, expand back, buttons, expandable items) and the startup-info / file-info popups                                                                       |
 
 ## Rendering modes
 
