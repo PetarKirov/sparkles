@@ -21,7 +21,7 @@ module gui_preview;
 import gui_ansi : AnsiLine, AnsiSpan, Attr, decodeAnsi;
 import gui_text : columnWidth, lineCount;
 
-import sparkles.syntax : MdDoc, MdBlock, MdBlockKind, MdInline, MdInlineKind, ColAlign,
+import sparkles.syntax : MdDoc, MdBlock, MdBlockKind, MdInline, MdInlineKind, ColAlign, Span,
     HighlightEvent, byStyledLine, ResolvedTheme, StyleSpec, TextAttr, UnderlineStyle,
     LabelId, toRgb, RgbColor, GrammarRegistry, TsConfigCache, canonicalLanguage,
     extractMarkdown, highlightInjected;
@@ -307,8 +307,10 @@ private struct Layouter
     }
 
     // Recognize `> [!NOTE]` (and TIP/IMPORTANT/WARNING/CAUTION) on the quote's
-    // first paragraph. `markerLen` is the byte length of the `[!TYPE]` marker
-    // (incl. any leading space) to strip from the rendered body.
+    // first paragraph. Detection reads the paragraph's raw source (not the parsed
+    // inlines: `[!NOTE]` parses as a *shortcut link*, not text). `markerLen` is
+    // the byte length of `[!TYPE]` (incl. any leading space) to strip from the
+    // rendered body.
     bool detectCallout(in MdBlock b, out Callout co) @safe
     {
         const(MdBlock)* p;
@@ -318,10 +320,10 @@ private struct Layouter
                 p = &c;
                 break;
             }
-        if (p is null || p.inlines.length == 0 || p.inlines[0].kind != MdInlineKind.text)
+        if (p is null)
             return false;
 
-        const txt = slice(p.inlines[0].span.start, p.inlines[0].span.end);
+        const txt = slice(p.span.start, p.span.end);
         size_t i;
         while (i < txt.length && (txt[i] == ' ' || txt[i] == '\t'))
             ++i;
@@ -333,7 +335,7 @@ private struct Layouter
             ++e;
         if (e >= txt.length || !matchCalloutType(txt[s .. e], co))
             return false;
-        co.markerLen = e + 1; // through the closing `]`
+        co.markerLen = e + 1; // through the closing `]` (incl. leading ws)
         return true;
     }
 
@@ -359,8 +361,9 @@ private struct Layouter
             barFg: co.accent, hasBarFg: true,
             runs: [PreviewRun(co.title, co.accent, RgbColor.init, false, Attr.bold)]));
 
-        // Body: the quoted blocks, with the `[!TYPE]` marker stripped from the
-        // first paragraph. Force the accent bar on every line the body emits.
+        // Body: the quoted blocks, with the `[!TYPE]` marker dropped from the
+        // first paragraph (it parses as a leading link/text inline). Force the
+        // accent bar on every line the body emits.
         const start = lines.length;
         bool firstPara = true;
         foreach (ref c; b.children)
@@ -368,7 +371,8 @@ private struct Layouter
             if (c.kind == MdBlockKind.paragraph && firstPara)
             {
                 firstPara = false;
-                auto runs = stripLeading(inlineRuns(c.inlines, pageFg, 0), co.markerLen);
+                const cutoff = c.span.start + co.markerLen;
+                auto runs = inlineRuns(trimLeadingBytes(c.inlines, cutoff), pageFg, 0);
                 emitFlow(runs, indent, bodyDepth, "");
                 blank();
             }
@@ -455,12 +459,10 @@ private struct Layouter
                 continue;
 
             // Leader: a Nerd checkbox (green when checked), an ordinal, or a
-            // depth-cycled bullet. `[-]` is a best-effort in-progress state the
-            // task-list grammar doesn't emit — detected from the item text and
-            // stripped from the rendered body.
+            // depth-cycled bullet.
             string leader;
             RgbColor leaderFg;
-            bool hasLeaderFg, stripCustom;
+            bool hasLeaderFg;
             if (item.checkbox == 1)
             {
                 leader = "\U000F0C52 "; // 󰱒 checked
@@ -469,12 +471,6 @@ private struct Layouter
             }
             else if (item.checkbox == 0)
                 leader = "\U000F0131 "; // 󰄱 unchecked
-            else if (item.checkbox == -1 && itemStartsWith(item, "[-] "))
-            {
-                leader = "\U000F0856 "; // 󰡖 in-progress (checkbox-intermediate)
-                leaderFg = accentYellow;
-                hasLeaderFg = stripCustom = true;
-            }
             else if (b.ordered)
             {
                 import std.conv : text;
@@ -490,10 +486,7 @@ private struct Layouter
             {
                 if (c.kind == MdBlockKind.paragraph && first)
                 {
-                    auto runs = inlineRuns(c.inlines, pageFg, 0);
-                    if (stripCustom)
-                        runs = stripLeading(runs, 4); // drop the literal "[-] "
-                    emitFlow(runs, indent, qdepth, leader,
+                    emitFlow(inlineRuns(c.inlines, pageFg, 0), indent, qdepth, leader,
                         leaderFg: leaderFg, hasLeaderFg: hasLeaderFg);
                     first = false;
                 }
@@ -507,36 +500,25 @@ private struct Layouter
         blank();
     }
 
-    // True if `item`'s first paragraph begins with the literal `prefix` (used to
-    // spot a `[-]` in-progress checkbox the task grammar leaves as plain text).
-    bool itemStartsWith(in MdBlock item, string prefix) @safe
+    // Drop any inline fully within `[0, cutoff)` (an absolute byte offset) and
+    // clip a straddling leading text inline — used to remove a callout's
+    // `[!TYPE]` marker (which parses as a leading link/text inline) from the body.
+    const(MdInline)[] trimLeadingBytes(in MdInline[] inlines, size_t cutoff) @safe
     {
-        foreach (ref c; item.children)
-            if (c.kind == MdBlockKind.paragraph)
-                return c.inlines.length && c.inlines[0].kind == MdInlineKind.text
-                    && slice(c.inlines[0].span.start, c.inlines[0].span.end)
-                        .startsWithText(prefix);
-        return false;
-    }
-
-    // Drop the first `n` bytes across the leading run(s) (the `[-] ` marker lives
-    // in the first text run, but tolerate it spanning runs).
-    PreviewRun[] stripLeading(PreviewRun[] runs, size_t n) @safe
-    {
-        while (n > 0 && runs.length)
+        const(MdInline)[] kept;
+        foreach (ref inl; inlines)
         {
-            if (runs[0].text.length > n)
+            if (inl.span.end <= cutoff)
+                continue;
+            if (inl.span.start < cutoff && inl.kind == MdInlineKind.text)
             {
-                runs[0].text = runs[0].text[n .. $];
-                n = 0;
+                kept ~= MdInline(kind: MdInlineKind.text,
+                    span: Span(cutoff, inl.span.end));
             }
             else
-            {
-                n -= runs[0].text.length;
-                runs = runs[1 .. $];
-            }
+                kept ~= inl;
         }
-        return runs;
+        return kept;
     }
 
     void table(in MdBlock b, int indent, ubyte qdepth) @safe
@@ -1033,7 +1015,7 @@ unittest
     // `> [!NOTE] …` renders a titled callout: an accent bar + icon-leader title
     // line, with the `[!NOTE]` marker stripped from the body.
     string src = "[!NOTE] pay attention";
-    auto para = MdBlock(kind: MdBlockKind.paragraph,
+    auto para = MdBlock(kind: MdBlockKind.paragraph, span: Span(0, src.length),
         inlines: [MdInline(kind: MdInlineKind.text, span: Span(0, src.length))]);
     auto quote = MdBlock(kind: MdBlockKind.blockQuote, children: [para]);
     auto m = PreviewModel(present: true,
