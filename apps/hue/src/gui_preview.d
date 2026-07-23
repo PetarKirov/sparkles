@@ -276,9 +276,19 @@ private struct Layouter
 
     void heading(in MdBlock b, int indent, ubyte qdepth) @safe
     {
-        char[6] hashes = '#';
-        string leader = hashes[0 .. b.level].idup ~ " ";
-        emitFlow(inlineRuns(b.inlines, headingFg, Attr.bold), indent, qdepth, leader);
+        // Per-level MDI section glyphs (nf-md-format-header-1..6), each painted in
+        // that level's accent; the heading text takes the same accent (bold) and a
+        // subtle full-width band tints the line by level.
+        static immutable string[6] icons = [
+            "\U000F0CA1", "\U000F0CA3", "\U000F0CA5",
+            "\U000F0CA7", "\U000F0CA9", "\U000F0CAB",
+        ];
+        const lvl = b.level < 1 ? 1 : (b.level > 6 ? 6 : b.level);
+        const accent = headingAccents[lvl - 1];
+        const band = mix(pageBg, accent, 0.12);
+        emitFlow(inlineRuns(b.inlines, accent, Attr.bold), indent, qdepth,
+            icons[lvl - 1] ~ " ", leaderFg: accent, hasLeaderFg: true,
+            band: BandKind.heading, bandBg: band);
         blank();
     }
 
@@ -503,7 +513,9 @@ private struct Layouter
     // styled span touching punctuation — `**bold**,` — stays one word with no
     // stray space); breaks happen only where the source had whitespace. The
     // first line shows `leader` at `indent`; continuation lines hang-indent.
-    void emitFlow(PreviewRun[] runs, int indent, ubyte qdepth, string leader) @safe
+    void emitFlow(PreviewRun[] runs, int indent, ubyte qdepth, string leader,
+        RgbColor leaderFg = RgbColor.init, bool hasLeaderFg = false,
+        BandKind band = BandKind.none, RgbColor bandBg = RgbColor.init) @safe
     {
         const lead = cast(int) columnWidth(leader);
         const avail = width - indent - qdepth * 2 - lead;
@@ -546,8 +558,13 @@ private struct Layouter
         bool firstLine = true;
         void flush()
         {
+            // The leader (and its accent) rides the first line only; the band
+            // spans every wrapped line so a wrapped heading stays fully tinted.
             push(PreviewLine(indentCols: firstLine ? indent : indent + lead,
-                quoteDepth: qdepth, leader: firstLine ? leader : "", runs: line));
+                quoteDepth: qdepth, band: band, bandBg: bandBg,
+                leader: firstLine ? leader : "",
+                leaderFg: leaderFg, hasLeaderFg: firstLine && hasLeaderFg,
+                runs: line));
             line = null;
             col = 0;
             firstLine = false;
@@ -649,6 +666,24 @@ unittest
     }
 }
 
+@("gui_preview.layout.headingDecoration")
+@safe
+unittest
+{
+    // A level-2 heading gets an accent-colored icon leader (not a `#` hash) and a
+    // subtle heading band — no grammar needed, the model is built directly.
+    string src = "Title";
+    auto h = MdBlock(kind: MdBlockKind.heading, level: 2,
+        inlines: [MdInline(kind: MdInlineKind.text, span: Span(0, src.length))]);
+    auto m = PreviewModel(present: true,
+        doc: MdDoc(MdBlock(kind: MdBlockKind.document, children: [h]), src));
+
+    auto lines = layoutPreview(m, darkTheme, tPageFg, tPageBg, 80);
+    import std.algorithm.searching : any;
+    assert(lines.any!(l => l.band == BandKind.heading && l.hasLeaderFg
+        && l.leader.length && l.leader[0] != '#'));
+}
+
 @("gui_preview.build.fencesAndBands")
 @system
 unittest
@@ -690,6 +725,7 @@ unittest
                     redRun = true;
     assert(redRun);
 
-    // the heading carries its level marker as a leader
-    assert(lines.any!(l => l.leader.length && l.leader[0] == '#'));
+    // the heading renders as an accent-colored icon-leader band (not a `#` hash)
+    assert(lines.any!(l => l.band == BandKind.heading && l.hasLeaderFg
+        && l.leader.length && l.leader[0] != '#'));
 }
