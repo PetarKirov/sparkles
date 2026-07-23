@@ -4,6 +4,12 @@
 // them. Handy for eyeballing the overlay after touching the HTML renderer or the
 // stylesheet — open `html/index.html` and hover the underlined tokens.
 //
+// Each page adds a preview shell around hue's content-only fragment: a header
+// (name · node-kind tally · prev/next/index nav), a full-height code pane, and a
+// physical-line-numbered gutter (numbers are CSS `::before`, so they never enter
+// a text selection; below-line twoslash annotations and any soft wrapping do not
+// advance the count).
+//
 // NOT part of the build. Needs node + a built hue:
 //   dub build :hue
 //   node render-html.mjs          # or: npm run render
@@ -55,25 +61,152 @@ const esc = s =>
     c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c],
   );
 
+const VOID = new Set([
+  'br',
+  'hr',
+  'img',
+  'input',
+  'wbr',
+  'col',
+  'area',
+  'base',
+  'link',
+  'meta',
+  'source',
+  'track',
+]);
+
+// Split the outer `<code>` HTML into PHYSICAL lines and below-line annotations,
+// wrapping each physical line in `<span class="ln">` (which carries the line
+// counter) and passing annotations through untouched (no number). Physical-line
+// boundaries are the `'\n'`s at tag-depth 0 — hue balances every tag at each
+// line seam, and popup markup (with its own newlines) stays nested at depth > 0,
+// so those newlines never split a line. Returns `{ html, lines }`.
+function relayout(code) {
+  let depth = 0;
+  let line = '';
+  let anno = '';
+  let inAnno = false;
+  const out = [];
+  let lines = 0;
+  const flushLine = () => {
+    out.push(`<span class="ln">${line}</span>`);
+    line = '';
+    lines++;
+  };
+
+  let i = 0;
+  while (i < code.length) {
+    const ch = code[i];
+    if (ch === '<') {
+      const gt = code.indexOf('>', i);
+      const raw = code.slice(i, gt + 1);
+      const m = /^<(\/?)([a-zA-Z0-9]+)/.exec(raw);
+      const closing = !!(m && m[1]);
+      const name = m ? m[2].toLowerCase() : '';
+      const isVoid = VOID.has(name) || raw.endsWith('/>');
+
+      // A below-line block opens at depth 0 (query/error/tag `<div>` or the
+      // completion `<ul>`). Everything until it balances back to depth 0 is one
+      // annotation, emitted verbatim with no line number.
+      if (
+        !inAnno &&
+        depth === 0 &&
+        !closing &&
+        /class="[^"]*\b(?:twoslash-meta-line|twoslash-completion-list|twoslash-tag-line)\b/.test(
+          raw,
+        )
+      ) {
+        if (line.length) flushLine(); // defensive; the '\n' already flushed it
+        inAnno = true;
+        anno = '';
+      }
+
+      inAnno ? (anno += raw) : (line += raw);
+      if (!isVoid) depth += closing ? -1 : 1;
+      if (inAnno && depth === 0) {
+        out.push(anno);
+        inAnno = false;
+      }
+      i = gt + 1;
+    } else if (ch === '\n') {
+      if (inAnno) anno += ch;
+      else if (depth === 0)
+        flushLine(); // physical line boundary
+      else line += ch; // newline nested in popup markup — keep verbatim
+      i++;
+    } else {
+      let j = i;
+      while (j < code.length && code[j] !== '<' && code[j] !== '\n') j++;
+      const text = code.slice(i, j);
+      inAnno ? (anno += text) : (line += text);
+      i = j;
+    }
+  }
+  if (line.length) flushLine();
+  return { html: out.join(''), lines };
+}
+
 // Wrap hue's content-only fragment (its own <style> + <pre class="syn-root">) in
-// a minimal dark page so each file opens cleanly on its own.
-function page(name, kinds, fragment) {
+// a full-height preview shell with a numbered gutter and prev/next nav.
+function page(name, kinds, fragment, prev, next) {
+  // Match <main>'s background to the code block's, extracted from the theme.
+  const bg =
+    (fragment.match(/\.syn-root\s*{[^}]*background-color:\s*(#[0-9a-fA-F]+)/) ||
+      [])[1] || '#1e1e2e';
+
+  // Number the physical lines inside the outer <pre><code>.
+  let gutter = 3;
+  const withLines = fragment.replace(
+    /(<pre class="syn-root twoslash"><code>)([\s\S]*)(<\/code><\/pre>)/,
+    (_, open, inner, close) => {
+      const r = relayout(inner);
+      gutter = String(r.lines).length + 2; // digits + 1ch number-gap + 1ch pad
+      return open + r.html + close;
+    },
+  );
+
+  const navLink = (target, label, cls) =>
+    target
+      ? `<a class="${cls}" href="${target}.html">${label}</a>`
+      : `<span class="${cls} disabled">${label}</span>`;
+
   return (
     `<!doctype html>\n<html lang="en"><head><meta charset="utf-8">\n` +
     `<meta name="viewport" content="width=device-width,initial-scale=1">\n` +
     `<title>twoslash · ${esc(name)}</title>\n` +
     `<style>\n` +
-    `  body { margin: 0; background: #11111b; color: #cdd6f4;\n` +
-    `         font: 14px/1.5 system-ui, sans-serif; }\n` +
-    `  header { padding: 0.7em 1em; border-bottom: 1px solid #313244;\n` +
-    `           display: flex; gap: 1em; align-items: baseline; flex-wrap: wrap; }\n` +
-    `  header b { font-size: 1.1em; } header code { color: #a6adc8; }\n` +
-    `  header a { color: #89b4fa; margin-left: auto; }\n` +
-    `  main { padding: 1.2em; overflow-x: auto; }\n` +
+    `  html, body { height: 100%; }\n` +
+    `  body { margin: 0; background: ${bg}; color: #cdd6f4;\n` +
+    `         font: 14px/1.5 system-ui, sans-serif;\n` +
+    `         display: flex; flex-direction: column; }\n` +
+    `  header { flex: none; display: flex; gap: 0.9em; align-items: baseline;\n` +
+    `           flex-wrap: wrap; padding: 0.7em 1em;\n` +
+    `           background: #181825; border-bottom: 1px solid #313244; }\n` +
+    `  header b { font-size: 1.05em; } header .kinds { color: #a6adc8; }\n` +
+    `  header .spacer { flex: 1; } header a { color: #89b4fa; text-decoration: none; }\n` +
+    `  header a:hover { text-decoration: underline; }\n` +
+    `  header .disabled { color: #45475a; }\n` +
+    // The single scroll container: the code pane fills the remaining height, so
+    // only ONE scrollbar ever appears (no nested body + pre scrollbars).
+    `  main { flex: 1; min-height: 0; overflow: auto; background: ${bg}; }\n` +
+    `  main pre.syn-root { margin: 0; padding: 0.6em 1ch; min-height: 100%;\n` +
+    `                      box-sizing: border-box; }\n` +
+    // Line-number gutter: a left pad on <code> holds the numbers; each physical
+    // line's number is generated content (never selected/copied). Below-line
+    // annotations aren't `.ln`, so they carry no number and don't advance it.
+    `  main pre.syn-root > code { display: block; counter-reset: lineno;\n` +
+    `                             padding-left: ${gutter}ch; }\n` +
+    `  .ln { display: block; position: relative; counter-increment: lineno; }\n` +
+    `  .ln::before { content: counter(lineno); position: absolute;\n` +
+    `                left: -${gutter}ch; width: ${gutter - 1}ch; text-align: right;\n` +
+    `                color: #6c7086; -webkit-user-select: none; user-select: none; }\n` +
     `</style></head><body>\n` +
-    `<header><b>${esc(name)}</b><code>${esc(kinds)}</code>` +
-    `<a href="index.html">← all examples</a></header>\n` +
-    `<main>${fragment}</main>\n</body></html>\n`
+    `<header>${navLink(prev, '← prev', 'prev')}` +
+    `<b>${esc(name)}</b><span class="kinds">${esc(kinds)}</span>` +
+    `<span class="spacer"></span><a href="index.html">all</a>` +
+    `${navLink(next, 'next →', 'next')}</header>\n` +
+    `<main>${withLines}</main>\n</body></html>\n`
   );
 }
 
@@ -81,15 +214,19 @@ const fixtures = readdirSync(fixturesDir)
   .filter(f => f.endsWith('.twoslash.json'))
   .sort();
 
+const names = fixtures.map(f => f.replace(/\.twoslash\.json$/, ''));
 const rendered = [];
-for (const file of fixtures) {
-  const name = file.replace(/\.twoslash\.json$/, '');
-  const fixture = join(fixturesDir, file);
+for (let k = 0; k < fixtures.length; k++) {
+  const name = names[k];
+  const fixture = join(fixturesDir, fixtures[k]);
   const kinds = tally(JSON.parse(readFileSync(fixture, 'utf8')).nodes);
   const fragment = execFileSync(hue, ['--twoslash', '--html', fixture], {
     encoding: 'utf8',
   });
-  writeFileSync(join(outDir, `${name}.html`), page(name, kinds, fragment));
+  writeFileSync(
+    join(outDir, `${name}.html`),
+    page(name, kinds, fragment, names[k - 1], names[k + 1]),
+  );
   rendered.push({ name, kinds });
   console.log(`  ✓ ${name.padEnd(20)} [${kinds}]`);
 }
