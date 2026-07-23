@@ -77,11 +77,15 @@ const VOID = new Set([
 ]);
 
 // Split the outer `<code>` HTML into PHYSICAL lines and below-line annotations,
-// wrapping each physical line in `<span class="ln">` (which carries the line
-// counter) and passing annotations through untouched (no number). Physical-line
-// boundaries are the `'\n'`s at tag-depth 0 — hue balances every tag at each
-// line seam, and popup markup (with its own newlines) stays nested at depth > 0,
-// so those newlines never split a line. Returns `{ html, lines }`.
+// wrapping each physical line's content in an inline `<span class="ln">` (which
+// carries the line counter) and passing annotations through untouched (no
+// number). Physical-line boundaries are the `'\n'`s at tag-depth 0 — hue balances
+// every tag at each line seam, and popup markup (with its own newlines) stays
+// nested at depth > 0, so those newlines never split a line. The `'\n'` is KEPT
+// (a literal text node after the span), so `white-space: pre` draws the line
+// breaks and a copied selection preserves every line — including blank ones,
+// which would vanish if each line were a self-collapsing block. Returns
+// `{ html, lines }`.
 function relayout(code) {
   let depth = 0;
   let line = '';
@@ -89,8 +93,10 @@ function relayout(code) {
   let inAnno = false;
   const out = [];
   let lines = 0;
-  const flushLine = () => {
-    out.push(`<span class="ln">${line}</span>`);
+  // `nl` appends the physical newline after the line span (omitted only for a
+  // final line the source didn't newline-terminate, or a defensive mid-line flush).
+  const emitLine = nl => {
+    out.push(`<span class="ln">${line}</span>` + (nl ? '\n' : ''));
     line = '';
     lines++;
   };
@@ -117,7 +123,7 @@ function relayout(code) {
           raw,
         )
       ) {
-        if (line.length) flushLine(); // defensive; the '\n' already flushed it
+        if (line.length) emitLine(false); // defensive; a '\n' already flushed it
         inAnno = true;
         anno = '';
       }
@@ -132,7 +138,7 @@ function relayout(code) {
     } else if (ch === '\n') {
       if (inAnno) anno += ch;
       else if (depth === 0)
-        flushLine(); // physical line boundary
+        emitLine(true); // physical line boundary — keep the newline
       else line += ch; // newline nested in popup markup — keep verbatim
       i++;
     } else {
@@ -143,7 +149,7 @@ function relayout(code) {
       i = j;
     }
   }
-  if (line.length) flushLine();
+  if (line.length) emitLine(false);
   return { html: out.join(''), lines };
 }
 
@@ -197,10 +203,11 @@ function page(name, kinds, fragment, prev, next) {
     // annotations aren't `.ln`, so they carry no number and don't advance it.
     `  main pre.syn-root > code { display: block; counter-reset: lineno;\n` +
     `                             padding-left: ${gutter}ch; }\n` +
-    // `min-height: 1lh` keeps a BLANK source line one row tall — an empty
-    // block would collapse to zero height and its number would overlap the next.
-    `  .ln { display: block; position: relative; min-height: 1lh;\n` +
-    `        counter-increment: lineno; }\n` +
+    // `.ln` is INLINE — the physical `\n` after each span (kept by relayout)
+    // draws the line breaks under `white-space: pre` and gives blank lines their
+    // height, and a copied selection keeps every line. `position: relative` +
+    // `counter-increment` anchor the gutter number to each line's start.
+    `  .ln { position: relative; counter-increment: lineno; }\n` +
     `  .ln::before { content: counter(lineno); position: absolute;\n` +
     `                left: -${gutter}ch; width: ${gutter - 1}ch; text-align: right;\n` +
     `                color: #6c7086; -webkit-user-select: none; user-select: none; }\n` +
