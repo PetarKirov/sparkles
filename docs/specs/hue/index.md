@@ -11,9 +11,23 @@ one of four **rendering modes**: non-interactive **ANSI**, **HTML**, an
 interactive terminal **previewer**, and an optional raylib **GUI** window with a
 render-markdown.nvim-style markdown preview.
 
-This spec is a **traceable feature inventory**: every requirement carries an ID,
-a status, and a link to the code that implements it, so every part of the
-codebase maps to a requirement (see [Traceability](#traceability) below).
+This spec is a **traceable feature inventory** and the **source of truth** for
+hue: every requirement carries an ID, a status, and a link to the code that
+implements it, so every part of the codebase maps to a requirement (see
+[Traceability](#traceability) below).
+
+## Design sources
+
+The design and rationale for the two large hue efforts live in GitHub issues,
+whose normative requirements are folded into these specs (the specs supersede the
+issues as the requirement of record):
+
+| Issue                                                     | Title                                                                                                                      | Folded into                                       |
+| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| [#121](https://github.com/PetarKirov/sparkles/issues/121) | hue: raylib GPU rendering backend (`--gui`) — styled runs as data on `sparkles:syntax` + the shared `sparkles:raylib-text` | [gui.md](./gui.md) (§ Design & scope, milestones) |
+| [#120](https://github.com/PetarKirov/sparkles/issues/120) | `sparkles:twoslash` — D-native Twoslash (umbrella)                                                                         | [twoslash.md](./twoslash.md)                      |
+| [#122](https://github.com/PetarKirov/sparkles/issues/122) | Render-side 1/2 — `sparkles:syntax` as a Shiki replacement (SSG HTML, playground, VitePress)                               | [twoslash.md](./twoslash.md) `RS1*`               |
+| [#123](https://github.com/PetarKirov/sparkles/issues/123) | Render-side 2/2 — twoslash × `sparkles:syntax` via `apps/hue` (HTML + ANSI)                                                | [twoslash.md](./twoslash.md) `TWM*`/`TWO*`        |
 
 ## Documentation map
 

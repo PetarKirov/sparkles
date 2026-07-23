@@ -15,6 +15,24 @@ behaviour (source, engine, themes) is in
 [feature-requirements.md](./feature-requirements.md); this doc covers only the
 GUI. The entry point is `gui.runGui`.
 
+## Design & scope (issue [#121](https://github.com/PetarKirov/sparkles/issues/121))
+
+`hue --gui` is a **third consumer of hue's identical `(source, events, theme)`
+triple** — the same triple `renderAnsi`/`renderHtml` consume — folded into raylib
+draw calls instead of ANSI escapes or HTML markup. Nothing in hue's producer
+pipeline changes (file read, `canonicalLanguage`, `highlightInjected`, theme
+resolution, the plain-text fallback); only the sink is new. This is the
+"styled runs as data" GPU backend `sparkles:syntax` was designed around
+(`StyledSpan`/`byStyledSpan`/`ResolvedTheme` are its third-backend contract, and
+`FontStyle` stays backend-neutral), and building it forced the two seams the
+syntax spec reserved: `toRgb(Color, palette, default)` and `byStyledLine`.
+
+**It is** a read-only, windowed, syntax-highlighted view with a live theme
+previewer and a render-markdown.nvim-style markdown preview. **It is deliberately
+not** a text editor, an incremental/LSP-backed surface, a terminal emulator, or
+the Vulkan engine (#47) — it is the smallest honest GPU consumer of the styled-run
+API, hosted in the app that already produces it.
+
 ## Window & lifecycle (`WIN`)
 
 | ID   | Requirement                                                                                                              | Status            | Traces to                                                           |
@@ -44,12 +62,15 @@ Fonts are owned by `sparkles:raylib-text` (`FontSet`); hue configures and drives
 
 ## Render model (`RND`)
 
-| ID   | Requirement                                                                                                                         | Status            | Traces to                                      |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ---------------------------------------------- |
-| RND1 | Each frame must clear to the page background and paint only the viewport-visible rows (index-culled by `topLine`).                  | full (`a0b0f93a`) | `drawPreview` `foreach(row; 0..visibleRows)`   |
-| RND2 | Both views must be one wrapped visual-line list (`PreviewLine[]`), painted by a single painter; content scrolls by visual line.     | full (`8a03bff1`) | `plines`; `drawPreview`; `relayout`            |
-| RND3 | A styled run must draw per grid column via the shared per-run `drawText` (per-codepoint face routing).                              | full (`b55be7aa`) | `sparkles.raylib_text.drawText`                |
-| RND4 | Content must have a 1-cell background-filled left padding and a scrollbar gutter on the right; the left padding is page background. | full (`5ca88625`) | `padX`, `rightPad`, `originX` in `drawPreview` |
+| ID   | Requirement                                                                                                                                                                                                                                           | Status            | Traces to                                      |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ---------------------------------------------- |
+| RND1 | Each frame must clear to the page background and paint only the viewport-visible rows (index-culled by `topLine`).                                                                                                                                    | full (`a0b0f93a`) | `drawPreview` `foreach(row; 0..visibleRows)`   |
+| RND2 | Both views must be one wrapped visual-line list (`PreviewLine[]`), painted by a single painter; content scrolls by visual line.                                                                                                                       | full (`8a03bff1`) | `plines`; `drawPreview`; `relayout`            |
+| RND3 | A styled run must draw per grid column via the shared per-run `drawText` (per-codepoint face routing).                                                                                                                                                | full (`b55be7aa`) | `sparkles.raylib_text.drawText`                |
+| RND4 | Content must have a 1-cell background-filled left padding and a scrollbar gutter on the right; the left padding is page background.                                                                                                                   | full (`5ca88625`) | `padX`, `rightPad`, `originX` in `drawPreview` |
+| RND5 | **Totality is the law:** an unknown language, missing grammar, oversized file, or parse failure must degrade to plain uncolored text in the window — never a crash, never half-colored output.                                                        | full (`74d8f6a3`) | `ENG4` fallback (general spec); `drawText`     |
+| RND6 | The grid is **monospace with a fixed cell advance** (v1) — keeps column/gutter math and hit-testing trivial and matches `apps/terminal`.                                                                                                              | full (`b55be7aa`) | `cellW`/`cellH`; `gui_text.columnWidth`        |
+| RND7 | The render fold must go through the two `sparkles:syntax` seams this backend motivated: `byStyledLine` (spans clipped at `\n`, stable per-row y) and `toRgb(Color, palette, default)` (the `unset`/`default_`/`palette`/`rgb` sum type → `RgbColor`). | full (`b55be7aa`) | `byStyledLine`; `toRgb` (`sparkles:syntax`)    |
 
 ## Views & toggle (`VIW`)
 
@@ -186,6 +207,29 @@ boxes, and quote bars.
 | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | -------------------------------------------- |
 | BOX1 | Box-drawing glyphs (`─│┼╭╮╰╯` + heavy/header-rule forms) must render **procedurally** (arms drawn to the cell edges) so rules connect across cells instead of using gappy font glyphs. | full (`1ab4e71d`) | `sparkles.raylib_text.box.drawBox`/`boxSpec` |
 | BOX2 | Uncovered forms (dashed/double/diagonal) must fall back to the font glyph.                                                                                                             | full (`1ab4e71d`) | `boxSpec` returns `valid == false`           |
+
+## Semantic refinement (`SEM`)
+
+| ID   | Requirement                                                                                                                                                                                                 | Status                 | Traces to                            |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------- | ------------------------------------ |
+| SEM1 | The tree-sitter base highlighting may be refined with semantic kinds (member vs local, `@safe` call, …) from `sparkles:dmd-lsp`'s `identifierTypes` — the semantic-tokens overlay the syntax spec reserves. | researched/not-started | issue #121 M6; issue #120 §5 (bonus) |
+
+## Milestones (issue [#121](https://github.com/PetarKirov/sparkles/issues/121))
+
+The GUI backend shipped as milestones M0–M5; M6 is optional/future. (There is no
+M7+ in the hue-GUI track; the M0–M8 / D1–D3 ladder belongs to the twoslash /
+`dmd-lsp` design — see [twoslash.md](./twoslash.md).)
+
+| Milestone | Scope                                                                        | Status            | Requirements                       |
+| --------- | ---------------------------------------------------------------------------- | ----------------- | ---------------------------------- |
+| M0        | `gui` config + `--gui` gate + `version(HueGui)` seam                         | full (`e6063309`) | `WIN1/5`, general `MOD1/2`, `NFR3` |
+| M1        | The render fold (`toRgb`/`byStyledLine` seams; draw the triple on the GPU)   | full (`b55be7aa`) | `RND1/3/6/7`, `VIW1`               |
+| M2        | Viewport culling + line-number gutter + scrollbar                            | full (`a0b0f93a`) | `RND1`, `NUM1`, `SCB1`             |
+| M3        | Font sizing + window resize + live theme cycling                             | full (`2febf905`) | `FNT3`, `WIN3`, `THG1`             |
+| M4        | Incremental search + goto-line                                               | full (`1e218180`) | `FND*`, `NAV2`                     |
+| M5        | Extract `sparkles:raylib-text`; refactor terminal + hue onto it              | full (`d1dd79d5`) | `FNT*`, `RND3`, `BOX*`             |
+| M6        | _(optional)_ Semantic refine via `sparkles:dmd-lsp` `identifierTypes`        | not started       | `SEM1`                             |
+| —         | Markdown preview (render-markdown.nvim parity) — a later effort on top of M5 | full              | `WRP*`, `MDP*`, `COD*`, `SEL*`     |
 
 ## Module coverage (GUI spec)
 
