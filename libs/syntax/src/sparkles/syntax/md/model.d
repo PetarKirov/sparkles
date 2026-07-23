@@ -57,6 +57,16 @@ enum MdBlockKind
     htmlBlock,     /// raw HTML; `span` covers the verbatim bytes
 }
 
+/// A table column's text alignment, from the delimiter row (`:---`/`:--:`/`---:`).
+/// `none` is an unspecified column (`---`), rendered left by convention.
+enum ColAlign : ubyte
+{
+    none,   /// `---` — unspecified (renders left)
+    left,   /// `:---`
+    center, /// `:--:`
+    right,  /// `---:`
+}
+
 /// A block-level markdown construct. A tree: `list ▸ listItem ▸ paragraph`,
 /// `blockQuote ▸ …`, `table ▸ tableRow ▸ tableCell` all nest through `children`.
 struct MdBlock
@@ -68,6 +78,7 @@ struct MdBlock
     const(char)[] infoLang; /// codeFence: the info-string language tag (raw), else ""
     const(char)[] label;    /// codeFence: info-string remainder (e.g. "[file.d]"), else ""
     Span codeBody;          /// codeFence: the `code_fence_content` byte extent
+    ColAlign[] aligns;      /// table: per-column alignment (from the delimiter row), else null
     MdInline[] inlines;     /// heading / paragraph / tableCell: resolved inline spans
     MdBlock[] children;     /// nested blocks (see the per-kind notes above)
     Span span;              /// the whole block's byte extent
@@ -356,7 +367,10 @@ private struct Extractor
             const rt = nodeType(row);
             if (rt == "pipe_table_header" || rt == "pipe_table_row")
                 b.children ~= tableRow(row);
-            // pipe_table_delimiter_row (|---|---|) carries no content — skip.
+            else if (rt == "pipe_table_delimiter_row")
+                // The `|---|:--:|---:|` row carries no content, but its cells'
+                // leading/trailing `:` encode per-column alignment.
+                b.aligns = parseAligns(textOf(row));
         }
         return b;
     }
@@ -533,6 +547,37 @@ private struct Extractor
     }
 }
 
+// Parse a `pipe_table_delimiter_row`'s raw text (`|:---|:--:|---:|`) into one
+// `ColAlign` per column: split on `|`, drop the empty edges from the outer pipes,
+// then read each segment's leading/trailing `:`.
+private ColAlign[] parseAligns(const(char)[] row) @safe pure nothrow
+{
+    ColAlign[] aligns;
+    size_t i;
+    while (i <= row.length)
+    {
+        // Next segment [s, e) up to the following `|` (or end of row).
+        const s = i;
+        while (i < row.length && row[i] != '|')
+            ++i;
+        const seg = strip(row[s .. i]);
+        // Skip the empty edges produced by leading/trailing pipes.
+        if (seg.length)
+        {
+            const lead = seg[0] == ':';
+            const trail = seg[$ - 1] == ':';
+            aligns ~= lead && trail ? ColAlign.center
+                : lead ? ColAlign.left
+                : trail ? ColAlign.right
+                : ColAlign.none;
+        }
+        if (i == row.length)
+            break;
+        ++i; // step past the `|`
+    }
+    return aligns;
+}
+
 private bool isDelim(const(char)[] t) @safe pure nothrow @nogc
 {
     // "emphasis_delimiter", "code_span_delimiter", …
@@ -666,6 +711,16 @@ unittest
     assert(t.children[0].children.length == 2); // two cells
     import std.string : strip;
     assert(inlineText(d, t.children[0].children[0]).strip == "a");
+}
+
+@("md.model.table.alignment")
+@system
+unittest
+{
+    auto d = extractForTest("| a | b | c | d |\n|:--|:-:|--:|---|\n| 1 | 2 | 3 | 4 |\n");
+    auto t = d.root.children[0];
+    assert(t.kind == MdBlockKind.table);
+    assert(t.aligns == [ColAlign.left, ColAlign.center, ColAlign.right, ColAlign.none]);
 }
 
 @("md.model.linkAndImage")
