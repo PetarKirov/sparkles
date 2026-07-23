@@ -43,25 +43,25 @@ How each GUI requirement area applies to the TUI. **full** = ports directly ·
 **future** = backend-agnostic, deferred with the GUI's. All GUI areas are in
 [gui.md](./gui.md); IDs below are bare references into it.
 
-| GUI area                     | Applies                    | Terminal note                                                                                                                |
-| ---------------------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `RND` render model           | full                       | same wrapped `PreviewLine[]`; `byStyledLine`/`toRgb` fold to **SGR** runs; the terminal is natively monospace (`RND6` free)  |
-| `VIW` views & toggle         | full                       | raw + markdown preview, Tab toggles                                                                                          |
-| `WRP` wrapping               | full                       | same soft/hard wrap; reflow on `SIGWINCH` (`TSF2`)                                                                           |
-| `NUM` line numbers           | full                       | file gutter + per-code-block gutter, in cells                                                                                |
-| `NAV` navigation & scroll    | full                       | wheel (SGR mouse), `j`/`k`, PageUp/Down, Home/End, goto-line                                                                 |
-| `SCB` scrollbar              | best-effort → `TSB`        | cell-column bar, block-glyph thumb, mouse drag / track-click; no smooth width easing                                         |
-| `THG` live theme cycling     | full _(partial now)_       | ←/→ cycle — the shipped previewer already does this (`PRV2`)                                                                 |
-| `FND` search & goto          | full                       | incremental search; matches via reverse-video / tint                                                                         |
-| `MDP` markdown constructs    | best-effort → `MDP` (here) | all decorations; Nerd-glyph dependence like `FNT8`; box-drawing is native; ` ```ansi ` fences pass through the real terminal |
-| `COD` code blocks            | full (best-effort)         | code gutter + highlighted body + border via native box glyphs; copy region + OSC 52 (`TCL`)                                  |
-| `SEL` selection & clipboard  | best-effort → `TSL`        | app-level drag-select → source offsets; clipboard via OSC 52; suppresses the terminal's native selection                     |
-| `FNT` font                   | n/a                        | the terminal owns the font/cell; bold/italic/underline → SGR attributes (the `FNT5` analog)                                  |
-| `WIN` window & lifecycle     | n/a                        | no window; the alt-screen is the surface; resize arrives as `SIGWINCH`                                                       |
-| `FSC` fullscreen             | n/a                        | the terminal emulator's concern, not hue's                                                                                   |
-| `BOX` procedural box-drawing | n/a _(solved)_             | box glyphs render natively without gaps — the GPU arms-to-edges workaround isn't needed                                      |
-| `DBG` debug/CI hooks         | best-effort                | a headless frame-dump analog for golden capture (the previewer already assembles a frame buffer)                             |
-| `SEM` semantic refinement    | future                     | backend-agnostic, deferred with the GUI's `SEM1`                                                                             |
+| GUI area                     | Applies                      | Terminal note                                                                                                                |
+| ---------------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `RND` render model           | full                         | same wrapped `PreviewLine[]`; `byStyledLine`/`toRgb` fold to **SGR** runs; the terminal is natively monospace (`RND6` free)  |
+| `VIW` views & toggle         | full                         | raw + markdown preview, Tab toggles                                                                                          |
+| `WRP` wrapping               | full                         | same soft/hard wrap; reflow on `SIGWINCH` (`TSF2`)                                                                           |
+| `NUM` line numbers           | full                         | file gutter + per-code-block gutter, in cells                                                                                |
+| `NAV` navigation & scroll    | full                         | wheel (SGR mouse), `j`/`k`, PageUp/Down, Home/End, goto-line                                                                 |
+| `SCB` scrollbar              | best-effort → `TSB`          | cell-column bar, block-glyph thumb, mouse drag / track-click; no smooth width easing                                         |
+| `THG` live theme cycling     | full _(partial now)_         | ←/→ cycle — the shipped previewer already does this (`PRV2`)                                                                 |
+| `FND` search & goto          | full                         | incremental search; matches via reverse-video / tint                                                                         |
+| `MDP` markdown constructs    | best-effort → `MDP-T` (here) | all decorations; Nerd-glyph dependence like `FNT8`; box-drawing is native; ` ```ansi ` fences pass through the real terminal |
+| `COD` code blocks            | full (best-effort)           | code gutter + highlighted body + border via native box glyphs; copy region + OSC 52 (`TCL`)                                  |
+| `SEL` selection & clipboard  | best-effort → `TSL`          | app-level drag-select → source offsets; clipboard via OSC 52; suppresses the terminal's native selection                     |
+| `FNT` font                   | n/a                          | the terminal owns the font/cell; bold/italic/underline → SGR attributes (the `FNT5` analog)                                  |
+| `WIN` window & lifecycle     | n/a                          | no window; the alt-screen is the surface; resize arrives as `SIGWINCH`                                                       |
+| `FSC` fullscreen             | n/a                          | the terminal emulator's concern, not hue's                                                                                   |
+| `BOX` procedural box-drawing | n/a _(solved)_               | box glyphs render natively without gaps — the GPU arms-to-edges workaround isn't needed                                      |
+| `DBG` debug/CI hooks         | best-effort                  | a headless frame-dump analog for golden capture (the previewer already assembles a frame buffer)                             |
+| `SEM` semantic refinement    | future                       | backend-agnostic, deferred with the GUI's `SEM1`                                                                             |
 
 ## Terminal input (`TIN`)
 
@@ -114,7 +114,7 @@ Extends the shipped previewer's frame discipline.
 | TSL2 | The selection must be tinted (reverse-video / SGR); a copy key must write `source[a..b]` to the clipboard via **OSC 52** (`TCL1`) — the terminal analog of `SEL4`.                                                     | not started | selection pass; `TCL1`                        |
 | TSL3 | App-level mouse selection requires SGR mouse tracking, which **suppresses the terminal emulator's native selection** — hue must provide its own; ` ```ansi ` and table runs remain unmapped to source (`SEL6`).        | not started | `TIN2`; synthetic runs lack `srcStart`        |
 
-## Markdown preview in the terminal (`MDP`, best-effort → gui.md `MDP`)
+## Markdown preview in the terminal (`MDP-T`, best-effort → gui.md `MDP`)
 
 The GUI's markdown constructs (`MDP*`) all port; the terminal-specific deltas:
 
