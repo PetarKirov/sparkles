@@ -197,10 +197,19 @@ function page(name, kinds, fragment, prev, next) {
     // annotations aren't `.ln`, so they carry no number and don't advance it.
     `  main pre.syn-root > code { display: block; counter-reset: lineno;\n` +
     `                             padding-left: ${gutter}ch; }\n` +
-    `  .ln { display: block; position: relative; counter-increment: lineno; }\n` +
+    // `min-height: 1lh` keeps a BLANK source line one row tall — an empty
+    // block would collapse to zero height and its number would overlap the next.
+    `  .ln { display: block; position: relative; min-height: 1lh;\n` +
+    `        counter-increment: lineno; }\n` +
     `  .ln::before { content: counter(lineno); position: absolute;\n` +
     `                left: -${gutter}ch; width: ${gutter - 1}ch; text-align: right;\n` +
     `                color: #6c7086; -webkit-user-select: none; user-select: none; }\n` +
+    // A hover popup is `opacity: 0` (kept for the shiki-parity fade) but stays
+    // laid out, so a wide hidden popup widens the scroll area into a stray
+    // horizontal scrollbar. In the preview, hide it with `display` instead so a
+    // hidden popup takes no space; it still appears on hover.
+    `  main .twoslash .twoslash-popup-container { display: none; }\n` +
+    `  main .twoslash .twoslash-hover:hover .twoslash-popup-container { display: inline-flex; }\n` +
     `</style></head><body>\n` +
     `<header>${navLink(prev, '← prev', 'prev')}` +
     `<b>${esc(name)}</b><span class="kinds">${esc(kinds)}</span>` +
