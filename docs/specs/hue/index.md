@@ -36,7 +36,8 @@ issues as the requirement of record):
 | **Overview** (this page)                                       | what `hue` is · the rendering modes · the status/ID/traceability scheme · module coverage                                                                                                                                                                |
 | [Feature requirements](./feature-requirements.md)              | app-wide requirements common to **all** rendering modes: invocation & CLI, source acquisition, language detection, the highlight engine, themes, color depth, output-mode dispatch, the ANSI/HTML/previewer sinks, degradation, non-functional           |
 | [GUI (`--gui`) requirements](./gui.md)                         | the raylib GPU window: window/font, the wrapped-line render model, the raw & markdown-preview views, navigation, scrollbar, live theme cycling, search/goto, every markdown construct, code blocks, mouse selection & clipboard, fullscreen, debug hooks |
-| [Twoslash requirements](./twoslash.md) _(planned/branch-only)_ | the `--twoslash` / `--markdown` modes and the raylib twoslash overlay — implemented on `feat/syntax-twoslash`, not yet on this branch                                                                                                                    |
+| [Twoslash requirements](./twoslash.md) _(planned/branch-only)_ | the `--twoslash` / `--markdown` modes and the raylib twoslash overlay — the **first overlay** of hue's pluggable overlay layer; implemented on `feat/syntax-twoslash`, not yet on this branch                                                            |
+| [Overlay requirements](./overlays.md) _(planned)_              | the **pluggable overlay** framework generalized from twoslash, plus the additional overlay kinds: source map, code coverage, tracing, tree-sitter inspector, function code size                                                                          |
 
 ## Rendering modes
 

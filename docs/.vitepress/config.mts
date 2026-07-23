@@ -528,6 +528,7 @@ export default withMermaid(
                 },
                 { text: 'GUI (--gui)', link: '/specs/hue/gui' },
                 { text: 'Twoslash (planned)', link: '/specs/hue/twoslash' },
+                { text: 'Overlays (planned)', link: '/specs/hue/overlays' },
               ],
             },
             {
