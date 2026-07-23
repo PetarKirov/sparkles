@@ -527,6 +527,7 @@ export default withMermaid(
                   link: '/specs/hue/feature-requirements',
                 },
                 { text: 'GUI (--gui)', link: '/specs/hue/gui' },
+                { text: 'TUI (planned)', link: '/specs/hue/tui' },
                 { text: 'Twoslash (planned)', link: '/specs/hue/twoslash' },
                 { text: 'Overlays (planned)', link: '/specs/hue/overlays' },
                 { text: 'Notifier (planned)', link: '/specs/hue/notifier' },
