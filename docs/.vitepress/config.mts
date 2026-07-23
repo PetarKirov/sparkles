@@ -531,6 +531,10 @@ export default withMermaid(
                 { text: 'Twoslash (planned)', link: '/specs/hue/twoslash' },
                 { text: 'Overlays (planned)', link: '/specs/hue/overlays' },
                 { text: 'Notifier (planned)', link: '/specs/hue/notifier' },
+                {
+                  text: 'UI architecture',
+                  link: '/specs/hue/ui-architecture',
+                },
               ],
             },
             {
