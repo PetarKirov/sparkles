@@ -24,6 +24,16 @@ completions, errors, highlights, and custom tags onto the highlighted code, in
 `.twoslash-*` fidelity, no JS), and the raylib GUI. Status legend and conventions:
 see the [overview](./index.md).
 
+> [!NOTE]
+> Twoslash is the **first overlay** of hue's pluggable overlay layer. The
+> decoration model and renderer contract it establishes here — decorations as
+> extra `(start,length)` spans + below-line blocks + hover popups, painted by an
+> overlay-agnostic renderer — are generalized in
+> [overlays.md](./overlays.md) (`OVL*`), which specifies the additional overlay
+> kinds (source map, coverage, tracing, tree-sitter inspector, code size) built
+> on the same seam. This document remains the source of truth for the twoslash
+> overlay itself.
+
 ## Architecture (issue [#120](https://github.com/PetarKirov/sparkles/issues/120))
 
 Twoslash copies the reference stack's clean layer separation — this is the single
