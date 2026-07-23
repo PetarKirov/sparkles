@@ -155,10 +155,11 @@ Flatten `m` into painted lines for `theme`, resolving default/ANSI colors agains
 whenever the theme, window width, or font size changes.
 */
 PreviewLine[] layoutPreview(PreviewModel m, ResolvedTheme theme,
-    RgbColor pageFg, RgbColor pageBg, int widthCols) @safe
+    RgbColor pageFg, RgbColor pageBg, int widthCols, bool codeLineNumbers = true) @safe
 {
     auto lay = Layouter(source: m.doc.source, theme: theme, pageFg: pageFg,
-        pageBg: pageBg, width: widthCols < 8 ? 8 : widthCols, fences: m.fences);
+        pageBg: pageBg, width: widthCols < 8 ? 8 : widthCols, fences: m.fences,
+        codeLineNumbers: codeLineNumbers);
     lay.resolvePalette();
     lay.buildLineStarts();
     foreach (ref b; m.doc.root.children)
@@ -235,6 +236,7 @@ private struct Layouter
     RgbColor pageFg, pageBg;
     int width;
     const(CodeFence)[] fences;
+    bool codeLineNumbers;
 
     PreviewLine[] lines;
     size_t fenceIdx;
@@ -249,7 +251,7 @@ private struct Layouter
 
     // Resolved role colors (from the theme's markup.* labels, page-fallback).
     RgbColor headingFg, codeFg, linkFg, quoteFg;
-    RgbColor codePanelBg, codeHeaderBg, ruleFg, inlineCodeBg;
+    RgbColor codePanelBg, codeHeaderBg, ruleFg, inlineCodeBg, codeLineNoFg;
     // Accent hues borrowed from syntax roles (theme-derived, page-fallback), used
     // for heading levels, checkbox green, and callout accents.
     RgbColor accentBlue, accentGreen, accentRed, accentYellow, accentPurple;
@@ -270,6 +272,7 @@ private struct Layouter
         codeHeaderBg = mix(pageBg, pageFg, 0.16);
         inlineCodeBg = mix(pageBg, pageFg, 0.12);
         ruleFg = mix(pageBg, pageFg, 0.4);
+        codeLineNoFg = mix(codePanelBg, codeFg, 0.45); // dim in-panel code numbers
 
         // Syntax roles carry a stable-ish hue across themes: functions blue,
         // strings green, numbers red/orange, types yellow, keywords purple.
@@ -514,13 +517,26 @@ private struct Layouter
         const avail = width - indent - qdepth * 2;
         const aw = avail < 1 ? 1 : avail;
         const baseLine = srcLineOf(f.bodyStart);
+        // Optional in-panel gutter of code-relative line numbers (1..N).
+        const nLines = f.isAnsi ? f.ansi.length : lineCount(f.body);
+        const gw = codeLineNumbers ? numDigits(nLines) + 1 : 0; // number + 1 separator
+        const codeW = aw - gw < 1 ? 1 : aw - gw;
         void pushCode(size_t bodyRow, PreviewRun[] row)
         {
             curSrcLine = baseLine + bodyRow;
             pendingNumber = true;
-            foreach (wl; hardWrapRuns(row, aw))
+            bool firstWrap = true;
+            foreach (wl; hardWrapRuns(row, codeW))
+            {
+                PreviewRun[] full;
+                if (gw > 0)
+                    full ~= PreviewRun(codeGutterStr(bodyRow + 1, firstWrap, gw),
+                        codeLineNoFg, codePanelBg, true, 0);
+                full ~= wl;
                 push(PreviewLine(indentCols: indent, quoteDepth: qdepth,
-                    band: BandKind.codePanel, bandBg: codePanelBg, runs: wl));
+                    band: BandKind.codePanel, bandBg: codePanelBg, runs: full));
+                firstWrap = false;
+            }
         }
 
         if (f.isAnsi)
@@ -908,6 +924,33 @@ private struct Word
 
 private bool isSpace(char c) @safe pure nothrow @nogc
     => c == ' ' || c == '\t' || c == '\n' || c == '\r';
+
+private int numDigits(size_t n) @safe pure nothrow @nogc
+{
+    int d = 1;
+    while (n >= 10) { n /= 10; ++d; }
+    return d;
+}
+
+// An in-panel code-line-number gutter cell: `num` right-aligned in `gw-1` columns
+// plus a trailing separator space, or all spaces on a wrapped continuation row.
+private string codeGutterStr(size_t num, bool first, int gw) @safe pure nothrow
+{
+    if (gw <= 0)
+        return "";
+    if (!first)
+    {
+        auto s = new char[](gw);
+        s[] = ' ';
+        return (() @trusted => cast(string) s)();
+    }
+    import std.conv : text;
+    string ns = text(num);
+    string s;
+    foreach (_; 0 .. (gw - 1) - cast(int) ns.length)
+        s ~= ' ';
+    return s ~ ns ~ " ";
+}
 
 // Map a syntax `StyleSpec`'s attributes onto the `gui_ansi.Attr` bits the preview
 // runs use. Shared by the Layouter and the raw-view builder.
