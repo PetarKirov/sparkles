@@ -23,9 +23,15 @@ import sparkles.wired.json : fromJSON, JsonResult, readJSONFile;
 
 import sparkles.twoslash.protocol : TwoslashReturn;
 
-/// Decodes an already-parsed `TwoslashReturn` JSON object.
+/// Decodes an already-parsed `TwoslashReturn` JSON object, normalizing node
+/// offsets to UTF-8 bytes (see $(LREF utf16ToUtf8Offsets)).
 JsonResult!TwoslashReturn fromTwoslashJson(JSONValue root)
-    => fromJSON!TwoslashReturn(root);
+{
+    auto res = fromJSON!TwoslashReturn(root);
+    if (!res.hasError)
+        utf16ToUtf8Offsets(res.value);
+    return res;
+}
 
 /// Parses and decodes a twoslash JSON payload from a string, without throwing.
 JsonResult!TwoslashReturn parseTwoslash(scope const(char)[] json)
@@ -40,7 +46,58 @@ JsonResult!TwoslashReturn parseTwoslash(scope const(char)[] json)
 
 /// Reads, parses, and decodes a twoslash JSON file, without throwing.
 JsonResult!TwoslashReturn loadTwoslashFile(string path)
-    => readJSONFile!TwoslashReturn(path);
+{
+    auto res = readJSONFile!TwoslashReturn(path);
+    if (!res.hasError)
+        utf16ToUtf8Offsets(res.value);
+    return res;
+}
+
+/**
+Rewrites every node's `start`/`length` from TypeScript's **UTF-16 code-unit**
+offsets (what the reference `twoslash` emits — TS AST positions are UTF-16) into
+**UTF-8 byte** offsets into `tw.code`, the coordinate system every renderer and
+`sparkles:syntax` actually use. Without this a snippet containing any non-ASCII
+before a decorated token (an em-dash in a comment, an accented identifier, an
+emoji in a string) mis-positions every later hover/highlight/error — the offsets
+drift by the extra UTF-8 bytes.
+
+Pure-ASCII `code` is a fixed point (byte offset == UTF-16 offset), so the common
+case is unchanged. Astral characters count as two UTF-16 units, matching TS; a
+`character` column is a display column already (≈ UTF-16 for BMP), so it is left
+as-is. Idempotent only on ASCII — call exactly once, at ingest.
+*/
+void utf16ToUtf8Offsets(ref TwoslashReturn tw) @safe
+{
+    import std.utf : decode;
+
+    const code = tw.code;
+    // byteOf[u] = the UTF-8 byte offset of UTF-16 code unit `u`; the trailing
+    // sentinel maps the end-of-string unit. An astral char spans two units, both
+    // anchored to its start byte (a node boundary never splits a surrogate pair).
+    size_t[] byteOf;
+    byteOf.reserve(code.length + 1);
+    size_t idx = 0;
+    while (idx < code.length)
+    {
+        const at = idx;
+        const c = decode(code, idx); // advances idx past the whole UTF-8 sequence
+        byteOf ~= at;
+        if (c > 0xFFFF)
+            byteOf ~= at;
+    }
+    byteOf ~= code.length;
+
+    size_t toByte(size_t u16) => byteOf[u16 < byteOf.length ? u16 : byteOf.length - 1];
+
+    foreach (ref n; tw.nodes)
+    {
+        const byteStart = toByte(n.start);
+        const byteEnd = toByte(n.start + n.length);
+        n.start = byteStart;
+        n.length = byteEnd - byteStart;
+    }
+}
 
 version (unittest)
 {
@@ -121,6 +178,35 @@ unittest
     // tag: name + text.
     assert(tw.nodes[5].name == "log");
     assert(tw.nodes[5].text == "hello");
+}
+
+@("ingest.utf16ToUtf8Offsets")
+unittest
+{
+    // `code` has an em-dash (U+2014, 1 UTF-16 unit, 3 UTF-8 bytes) before the
+    // decorated token, so TS's UTF-16 offset must be shifted +2 bytes.
+    //   code:  "// — x\nconst y = x"
+    //   UTF-16 index of `y` (line 1) = 6 (dash counts 1) + 1 (\n) + 6 = 13
+    //   UTF-8  byte  of `y`          = 13 + 2 (dash's extra bytes) = 15
+    const json = `{
+        "code": "// — x\nconst y = x",
+        "nodes": [
+            { "type": "hover", "start": 13, "length": 1, "line": 1, "character": 6,
+              "text": "const y: string" }
+        ]
+    }`;
+    const tw = parseTwoslash(json).value;
+    // The offset was remapped to the byte position, so slicing `code` yields the
+    // right token — the whole point of the normalization.
+    assert(tw.code[tw.nodes[0].start .. tw.nodes[0].end] == "y",
+        tw.code[tw.nodes[0].start .. tw.nodes[0].end]);
+
+    // Pure-ASCII code is a fixed point — offsets pass through unchanged.
+    const ascii = parseTwoslash(
+        `{ "code": "const y = x", "nodes": [` ~
+        `{ "type": "hover", "start": 6, "length": 1, "line": 0, "character": 6, "text": "t" } ] }`).value;
+    assert(ascii.nodes[0].start == 6 && ascii.nodes[0].length == 1);
+    assert(ascii.code[ascii.nodes[0].start .. ascii.nodes[0].end] == "y");
 }
 
 @("ingest.parseTwoslash.invalidJson")
