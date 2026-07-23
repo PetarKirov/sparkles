@@ -17,15 +17,15 @@ primary commit is in the Status cell.
 
 Parsed by `sparkles.core_cli.args.parseCliArgs!CliParams` in `app.d`.
 
-| ID   | Requirement                                                                                                           | Status            | Traces to                                 |
-| ---- | --------------------------------------------------------------------------------------------------------------------- | ----------------- | ----------------------------------------- |
-| CLI1 | `hue [options] [path]` must highlight `path`; with no path it highlights hue's own bundled source.                    | full (`74d8f6a3`) | `app.main`; `sourcePath`/`source`         |
-| CLI2 | `--html` must select HTML output instead of ANSI.                                                                     | full (`74d8f6a3`) | `CliParams.html`                          |
-| CLI3 | `--theme <name>` must select a built-in theme (default `catppuccin-mocha`).                                           | full (`74d8f6a3`) | `CliParams.theme`                         |
-| CLI4 | `--gui` must select the raylib window (needs the `gui` build config); on a non-GUI build it must error out cleanly.   | full (`e6063309`) | `CliParams.gui`; `version(HueGui)` branch |
-| CLI5 | `--font`, `--font-size`, `--window-width`, `--window-height` must configure the GUI window (see `gui.md`).            | full (`c2b49e99`) | `CliParams.font*`/`window*`               |
-| CLI6 | `--line-numbers` / `--code-line-numbers` (both default on, disableable with `=false`) must configure the GUI gutters. | full (`5b862346`) | `CliParams.lineNumbers`/`codeLineNumbers` |
-| CLI7 | `--help` must print a usage/description header for the program and every option.                                      | full (`d87397b3`) | `HelpInfo` in `app.main`                  |
+| ID   | Requirement                                                                                                                                                                                                                                                                  | Status               | Traces to                                 |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | ----------------------------------------- |
+| CLI1 | `hue [options] [path]` must highlight `path`; with no path it highlights hue's own bundled source.                                                                                                                                                                           | full (`74d8f6a3`)    | `app.main`; `sourcePath`/`source`         |
+| CLI2 | `--html` must select HTML output instead of ANSI.                                                                                                                                                                                                                            | full (`74d8f6a3`)    | `CliParams.html`                          |
+| CLI3 | `--theme <name>` must select a built-in theme (default `catppuccin-mocha`).                                                                                                                                                                                                  | full (`74d8f6a3`)    | `CliParams.theme`                         |
+| CLI4 | `--gui` must force the raylib window and `--no-gui` (alias `--tui`) must force terminal output; with neither, hue must autodetect (see `MOD6`). On a no-gui build, `--gui` must error out cleanly. (`--gui` force + no-gui-build error done; `--no-gui`/autodetect pending.) | partial (`e6063309`) | `CliParams.gui`; `version(HueGui)` branch |
+| CLI5 | `--font`, `--font-size`, `--window-width`, `--window-height` must configure the GUI window (see `gui.md`).                                                                                                                                                                   | full (`c2b49e99`)    | `CliParams.font*`/`window*`               |
+| CLI6 | `--line-numbers` / `--code-line-numbers` (both default on, disableable with `=false`) must configure the GUI gutters.                                                                                                                                                        | full (`5b862346`)    | `CliParams.lineNumbers`/`codeLineNumbers` |
+| CLI7 | `--help` must print a usage/description header for the program and every option.                                                                                                                                                                                             | full (`d87397b3`)    | `HelpInfo` in `app.main`                  |
 
 ## Source acquisition (`SRC`)
 
@@ -70,13 +70,15 @@ specified in [`docs/specs/syntax`](../syntax/index.md).
 
 Exactly one mode runs per invocation; see the [mode map](./index.md#rendering-modes).
 
-| ID   | Requirement                                                                                                                  | Status            | Traces to                                   |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------- | ----------------- | ------------------------------------------- |
-| MOD1 | `--gui` on a GUI build must dispatch to the raylib window and return its exit code.                                          | full (`e6063309`) | `if (cli.gui) version(HueGui)`              |
-| MOD2 | `--gui` on a non-GUI build must print a rebuild hint to stderr and exit non-zero.                                            | full (`e6063309`) | `else stderr.writeln(…); return 1`          |
-| MOD3 | Non-interactive (`stdout` not a tty) must emit the whole file once (HTML if `--html`, else ANSI) and exit.                   | full (`74d8f6a3`) | `!interactive` branch                       |
-| MOD4 | An interactive tty (no `--html`) must open the live terminal previewer.                                                      | full (`74d8f6a3`) | `interactive` branch → `runLoop`            |
-| MOD5 | If a raw-key session can't be acquired in an otherwise-interactive tty, hue must degrade to emitting the whole file as ANSI. | full (`74d8f6a3`) | `sessFactory is null` → `emitAnsiWholeFile` |
+| ID   | Requirement                                                                                                                                                                                                                                                                                                                                                           | Status            | Traces to                                   |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ------------------------------------------- |
+| MOD1 | `--gui` (explicit or autodetected) on a GUI-enabled build must dispatch to the raylib window and return its exit code.                                                                                                                                                                                                                                                | full (`e6063309`) | `if (cli.gui) version(HueGui)`              |
+| MOD2 | `--gui` on a no-gui build must print a rebuild hint to stderr and exit non-zero.                                                                                                                                                                                                                                                                                      | full (`e6063309`) | `else stderr.writeln(…); return 1`          |
+| MOD3 | Non-interactive (`stdout` not a tty) must emit the whole file once (HTML if `--html`, else ANSI) and exit.                                                                                                                                                                                                                                                            | full (`74d8f6a3`) | `!interactive` branch                       |
+| MOD4 | An interactive tty (no `--html`) must open the live terminal previewer.                                                                                                                                                                                                                                                                                               | full (`74d8f6a3`) | `interactive` branch → `runLoop`            |
+| MOD5 | If a raw-key session can't be acquired in an otherwise-interactive tty, hue must degrade to emitting the whole file as ANSI.                                                                                                                                                                                                                                          | full (`74d8f6a3`) | `sessFactory is null` → `emitAnsiWholeFile` |
+| MOD6 | With no explicit mode flag (`--gui`/`--no-gui`/`--html`) on a GUI-enabled build, hue must default to the GUI window when a graphical display is available (Linux/BSD: `$DISPLAY` or `$WAYLAND_DISPLAY` set; macOS/Windows: a local, non-SSH session), and otherwise fall through to the terminal dispatch (`MOD3`–`MOD5`). On a no-gui build it always falls through. | not started       | `app.main` (display probe)                  |
+| MOD7 | The mode flags must override autodetection: `--no-gui`/`--tui` forces the terminal path even with a display present; `--gui` forces the window even with no display detected (raylib surfaces any failure).                                                                                                                                                           | not started       | `app.main` (flag precedence)                |
 
 ## ANSI terminal output (`ANS`)
 
@@ -116,13 +118,26 @@ Exactly one mode runs per invocation; see the [mode map](./index.md#rendering-mo
 | DEG3 | An unknown `--theme` must warn and use the default dark theme.                                                     | full (`74d8f6a3`) | `builtinThemes.get` fallback      |
 | DEG4 | Without `$SPARKLES_TS_GRAMMAR_PATH`, hue must still run — degrading to plain text for grammar-requiring languages. | full (`74d8f6a3`) | `GrammarRegistry.fromEnvironment` |
 
+## Build and packaging (`BLD`)
+
+How hue is compiled and shipped. The GUI backend is included in the default
+build; a raylib-/ghostty-free variant stays available for terminal-only use and
+minimal dependency closures.
+
+| ID   | Requirement                                                                                                                                                                                                                                            | Status            | Traces to                                        |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------- | ------------------------------------------------ |
+| BLD1 | The default dub configuration (`application`) must compile the GUI backend in (pulling `sparkles:raylib-text` + `sparkles:ghostty`), so a stock `dub build :hue` and the installed binary have `--gui` and the markdown preview with no special build. | not started       | `apps/hue/dub.sdl` `configuration "application"` |
+| BLD2 | A `no-gui` dub configuration must build the raylib-/ghostty-free variant (today's `application` behaviour) for terminal-only installs and minimal closures.                                                                                            | not started       | `apps/hue/dub.sdl` `configuration "no-gui"`      |
+| BLD3 | The nix `packages.hue` must build the GUI-enabled default; a `packages.hue-no-gui` must build the headless variant with no raylib/GL in its closure.                                                                                                   | not started       | `nix/packages/hue.nix`                           |
+| BLD4 | `dub test :hue` must stay headless — linking no window/GL — regardless of the default flip; `gui.d` stays excluded from the `unittest` config.                                                                                                         | full (`e6063309`) | `apps/hue/dub.sdl` `configuration "unittest"`    |
+
 ## Non-functional (`NFR`)
 
-| ID   | Requirement                                                                                                                                                                      | Status            | Traces to                                 |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ----------------------------------------- |
-| NFR1 | Startup (file read, parse, theme-list build) may allocate on the GC; the previewer's per-frame render/output core must be `@nogc nothrow` (a theme switch triggers no GC pause). | full (`0657c94a`) | `Previewer` `@nogc` methods; `TermOut`    |
-| NFR2 | Each previewer repaint must assemble into one reused `SmallBuffer` and flush with a single write; the resolved theme table is reused and only rebuilt on change.                 | full (`0657c94a`) | `Previewer.frame`/`styleBuf`; `themeView` |
-| NFR3 | The default (`application`) build must stay raylib- and ghostty-free; the GUI + preview modules compile only under the `gui`/`unittest` configs.                                 | full (`e6063309`) | `apps/hue/dub.sdl` `excludedSourceFiles`  |
+| ID   | Requirement                                                                                                                                                                                                                   | Status            | Traces to                                 |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ----------------------------------------- |
+| NFR1 | Startup (file read, parse, theme-list build) may allocate on the GC; the previewer's per-frame render/output core must be `@nogc nothrow` (a theme switch triggers no GC pause).                                              | full (`0657c94a`) | `Previewer` `@nogc` methods; `TermOut`    |
+| NFR2 | Each previewer repaint must assemble into one reused `SmallBuffer` and flush with a single write; the resolved theme table is reused and only rebuilt on change.                                                              | full (`0657c94a`) | `Previewer.frame`/`styleBuf`; `themeView` |
+| NFR3 | A raylib-/ghostty-free build of hue must remain available (the `no-gui` config, `BLD2`); the GUI + preview modules compile only under the GUI-enabled configs (`application`/`gui`) and the `unittest` build (minus `gui.d`). | full (`e6063309`) | `apps/hue/dub.sdl` `excludedSourceFiles`  |
 
 ## Deferred, researched & branch-only (`DEF`)
 
@@ -151,6 +166,7 @@ Every non-GUI source file maps to the requirements above:
 | -------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
 | `apps/hue/src/app.d`       | `CliParams`, `main`, `emitAnsiWholeFile`, mode dispatch                                   | `CLI*`, `SRC*`, `LNG1`, `ENG*`, `THM*`, `CLR1`, `MOD*`, `ANS*`, `HTM*`, `DEG*` |
 | `apps/hue/src/previewer.d` | `Previewer`, `runLoop`, `buildFrame`, `renderFull`, `firstLines`, `TermOut`, `LoopResult` | `PRV*`, `NFR1`, `NFR2`                                                         |
-| `apps/hue/dub.sdl`         | build configurations                                                                      | `CLI4`, `MOD1/2`, `NFR3`                                                       |
+| `apps/hue/dub.sdl`         | build configurations (`application`/`gui`/`no-gui`/`unittest`)                            | `CLI4`, `MOD1/2`, `BLD1/2/4`, `NFR3`                                           |
+| `nix/packages/hue.nix`     | `packages.hue`, `packages.hue-no-gui`                                                     | `BLD3`                                                                         |
 
 → [GUI requirements](./gui.md) · [Overview](./index.md)

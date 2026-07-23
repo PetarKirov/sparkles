@@ -8,8 +8,11 @@ drives: `sparkles:raylib-text` (fonts, glyph draw, procedural box-drawing),
 `sparkles:ghostty` (off-screen VT), `sparkles:syntax` (the markdown model), and
 `sparkles:core-cli` (table renderer)._
 
-Compiled only by the `gui` build configuration (`version(HueGui)`); the default
-terminal build stays raylib-/ghostty-free ([`NFR3`](./feature-requirements.md#non-functional-nfr)).
+Compiled into hue's **default** build (the GUI backend is included by default —
+[`BLD1`](./feature-requirements.md#build-and-packaging-bld)); a raylib-/ghostty-free
+variant is the `no-gui` config ([`BLD2`](./feature-requirements.md#build-and-packaging-bld)).
+The window opens automatically when a display is detected and can be forced or
+suppressed with `--gui`/`--no-gui` (general [`MOD6`](./feature-requirements.md#output-mode-dispatch-mod)).
 Status scheme and ID conventions: see the [overview](./index.md). App-wide
 behaviour (source, engine, themes) is in
 [feature-requirements.md](./feature-requirements.md); this doc covers only the
@@ -35,13 +38,14 @@ API, hosted in the app that already produces it.
 
 ## Window & lifecycle (`WIN`)
 
-| ID   | Requirement                                                                                                              | Status            | Traces to                                                           |
-| ---- | ------------------------------------------------------------------------------------------------------------------------ | ----------------- | ------------------------------------------------------------------- |
-| WIN1 | `--gui` must open a resizable raylib window titled `hue — <file>` and run a 60 fps event loop until closed.              | full (`e6063309`) | `runGui`: `InitWindow`, `FLAG_WINDOW_RESIZABLE`, `SetTargetFPS(60)` |
-| WIN2 | The window's initial size must follow `--window-width`/`--window-height` **in cells**, sized to the loaded cell metrics. | full (`c2b49e99`) | `SetWindowSize(w*cellW, h*cellH)`                                   |
-| WIN3 | Resizing must reflow content: any change in the available column count re-runs layout.                                   | full (`2febf905`) | `widthCols() != lastWidthCols` → `relayout`                         |
-| WIN4 | The window title must always show the current theme name and index (`file — theme (i/n)`).                               | full (`2febf905`) | `applyTheme` → `SetWindowTitle`                                     |
-| WIN5 | The close button must exit; app keys must not be hijacked by raylib's default exit key.                                  | full (`e6063309`) | `SetExitKey(KEY_NULL)`; `WindowShouldClose`                         |
+| ID   | Requirement                                                                                                                                                                                                                                                                                     | Status            | Traces to                                                           |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------------- |
+| WIN1 | `--gui` must open a resizable raylib window titled `hue — <file>` and run a 60 fps event loop until closed.                                                                                                                                                                                     | full (`e6063309`) | `runGui`: `InitWindow`, `FLAG_WINDOW_RESIZABLE`, `SetTargetFPS(60)` |
+| WIN2 | The window's initial size must follow `--window-width`/`--window-height` **in cells**, sized to the loaded cell metrics.                                                                                                                                                                        | full (`c2b49e99`) | `SetWindowSize(w*cellW, h*cellH)`                                   |
+| WIN3 | Resizing must reflow content: any change in the available column count re-runs layout.                                                                                                                                                                                                          | full (`2febf905`) | `widthCols() != lastWidthCols` → `relayout`                         |
+| WIN4 | The window title must always show the current theme name and index (`file — theme (i/n)`).                                                                                                                                                                                                      | full (`2febf905`) | `applyTheme` → `SetWindowTitle`                                     |
+| WIN5 | The close button must exit; app keys must not be hijacked by raylib's default exit key.                                                                                                                                                                                                         | full (`e6063309`) | `SetExitKey(KEY_NULL)`; `WindowShouldClose`                         |
+| WIN6 | With neither `--gui` nor `--no-gui`, the window must open by default when a display is available; `--no-gui`/`--tui` forces the terminal previewer instead (general [`MOD6`](./feature-requirements.md#output-mode-dispatch-mod)/[`MOD7`](./feature-requirements.md#output-mode-dispatch-mod)). | not started       | general `MOD6`/`MOD7`; `app.main` display probe                     |
 
 ## Font (`FNT`)
 
@@ -230,6 +234,7 @@ M7+ in the hue-GUI track; the M0–M8 / D1–D3 ladder belongs to the twoslash /
 | M5        | Extract `sparkles:raylib-text`; refactor terminal + hue onto it              | full (`d1dd79d5`) | `FNT*`, `RND3`, `BOX*`             |
 | M6        | _(optional)_ Semantic refine via `sparkles:dmd-lsp` `identifierTypes`        | not started       | `SEM1`                             |
 | —         | Markdown preview (render-markdown.nvim parity) — a later effort on top of M5 | full              | `WRP*`, `MDP*`, `COD*`, `SEL*`     |
+| —         | GUI-by-default: gui/tui autodetection + `no-gui` config/package              | not started       | `BLD*`, general `MOD6/7`, `WIN6`   |
 
 ## Module coverage (GUI spec)
 
