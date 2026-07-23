@@ -41,6 +41,7 @@ issues as the requirement of record):
 | [Overlay requirements](./overlays.md) _(planned)_              | the **pluggable overlay** framework generalized from twoslash, plus the additional overlay kinds: source map, code coverage, tracing, tree-sitter inspector, function code size                                                                          |
 | [Notifier requirements](./notifier.md) _(planned)_             | the cross-backend **interactive popup** component (snacks.nvim-style: collapse to a floating icon, expand back, buttons, expandable items) and the startup-info / file-info popups                                                                       |
 | [UI architecture](./ui-architecture.md) _(architecture)_       | the **canvas-first component library** (proposed `sparkles:ui`) hue's widgets are built on — GUI/TUI/HTML targets, three levels (abstract state machines · layout containers · `view(state)→widget` widgets), immediate/retained/SSG render modes        |
+| [Web integration](./web-integration.md) _(planned)_            | the **`@sparkles/hue` npm package** — a Shiki drop-in for JS frameworks (VitePress/Next/Solid Start) via SSG/SSR process shell-out, then a future wasm client-side backend                                                                               |
 
 ## Rendering modes
 
