@@ -210,12 +210,42 @@ function page(name, kinds, fragment, prev, next) {
     // hidden popup takes no space; it still appears on hover.
     `  main .twoslash .twoslash-popup-container { display: none; }\n` +
     `  main .twoslash .twoslash-hover:hover .twoslash-popup-container { display: inline-flex; }\n` +
+    // Selection domains (VSCode-like). The shipped twoslash.css sets the
+    // below-line annotations `user-select: none` (code copies cleanly for every
+    // consumer). The preview goes further: a drag is confined to whichever
+    // domain it STARTS in — the code, or one annotation. Override the shipped
+    // `none` back to selectable so a drag can begin inside an annotation…
+    `  main .twoslash :is(.twoslash-meta-line, .twoslash-completion-list, .twoslash-tag-line) {\n` +
+    `    -webkit-user-select: text; user-select: text; }\n` +
+    // …started in code → annotations drop out of the selection;
+    `  body.sel-code :is(.twoslash-meta-line, .twoslash-completion-list, .twoslash-tag-line) {\n` +
+    `    -webkit-user-select: none; user-select: none; }\n` +
+    // …started in an annotation → only that one stays selectable (contained).
+    `  body.sel-anno main pre.syn-root > code { -webkit-user-select: none; user-select: none; }\n` +
+    `  body.sel-anno :is(.twoslash-meta-line, .twoslash-completion-list, .twoslash-tag-line) {\n` +
+    `    -webkit-user-select: none; user-select: none; }\n` +
+    `  body.sel-anno .sel-active, body.sel-anno .sel-active * {\n` +
+    `    -webkit-user-select: text; user-select: text; }\n` +
     `</style></head><body>\n` +
     `<header>${navLink(prev, '← prev', 'prev')}` +
     `<b>${esc(name)}</b><span class="kinds">${esc(kinds)}</span>` +
     `<span class="spacer"></span><a href="index.html">all</a>` +
     `${navLink(next, 'next →', 'next')}</header>\n` +
-    `<main>${withLines}</main>\n</body></html>\n`
+    `<main>${withLines}</main>\n` +
+    // Confine each drag to the domain it started in: mark the annotation the
+    // mousedown landed in (if any) and flag the body so the CSS above restricts
+    // the other domain. Runs before the drag extends, so the restriction applies
+    // to the selection this mousedown begins.
+    `<script>\n` +
+    `const A = '.twoslash-meta-line,.twoslash-completion-list,.twoslash-tag-line';\n` +
+    `addEventListener('mousedown', e => {\n` +
+    `  document.querySelectorAll('.sel-active').forEach(el => el.classList.remove('sel-active'));\n` +
+    `  const a = e.target.closest(A);\n` +
+    `  if (a) a.classList.add('sel-active');\n` +
+    `  document.body.classList.toggle('sel-anno', !!a);\n` +
+    `  document.body.classList.toggle('sel-code', !a);\n` +
+    `});\n` +
+    `</script>\n</body></html>\n`
   );
 }
 
