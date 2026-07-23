@@ -21,7 +21,7 @@ module gui_preview;
 import gui_ansi : AnsiLine, AnsiSpan, Attr, decodeAnsi;
 import gui_text : columnWidth, lineCount;
 
-import sparkles.syntax : MdDoc, MdBlock, MdBlockKind, MdInline, MdInlineKind,
+import sparkles.syntax : MdDoc, MdBlock, MdBlockKind, MdInline, MdInlineKind, ColAlign,
     HighlightEvent, byStyledLine, ResolvedTheme, StyleSpec, TextAttr, UnderlineStyle,
     LabelId, toRgb, RgbColor, GrammarRegistry, TsConfigCache, canonicalLanguage,
     extractMarkdown, highlightInjected;
@@ -541,44 +541,84 @@ private struct Layouter
 
     void table(in MdBlock b, int indent, ubyte qdepth) @safe
     {
-        // Column widths from the widest cell text (display columns).
+        // Flatten to a plain-text grid (cells are already flattened today, so no
+        // inline styling is lost) and hand it to core-cli's table renderer for
+        // box-drawing borders + per-column alignment.
         size_t cols;
         foreach (ref row; b.children)
             if (row.children.length > cols)
                 cols = row.children.length;
         if (cols == 0)
             return;
-        auto w = new int[](cols);
+
+        import std.string : strip;
         string[][] grid;
         foreach (ref row; b.children)
         {
             string[] cells;
-            foreach (i, ref cell; row.children)
-            {
-                import std.string : strip;
-                string txt = plain(cell.inlines).strip.idup;
-                cells ~= txt;
-                if (i < cols && cast(int) columnWidth(txt) > w[i])
-                    w[i] = cast(int) columnWidth(txt);
-            }
+            foreach (ref cell; row.children)
+                cells ~= plain(cell.inlines).strip.idup;
+            while (cells.length < cols) // pad ragged rows
+                cells ~= "";
             grid ~= cells;
         }
-        foreach (r, ref cells; grid)
+
+        const avail = width - indent - qdepth * 2;
+        auto rows = renderTableLines(grid, b.aligns, cols, avail < 8 ? 8 : avail);
+
+        // Colorize each rendered line: box-drawing muted (ruleFg), content pageFg,
+        // the single header content row bold. No band — the borders frame it.
+        bool headerDone;
+        foreach (ln; rows)
         {
-            PreviewRun[] runs;
-            foreach (i; 0 .. cols)
-            {
-                if (i)
-                    runs ~= PreviewRun(" │ ", ruleFg, RgbColor.init, false, 0);
-                const txt = i < cells.length ? cells[i] : "";
-                const pad = w[i] - cast(int) columnWidth(txt);
-                runs ~= PreviewRun(txt ~ spaces(pad), pageFg,
-                    RgbColor.init, false, cast(ubyte)(r == 0 ? Attr.bold : 0));
-            }
+            const content = lineHasContent(ln);
+            const bold = content && !headerDone;
+            if (content)
+                headerDone = true;
             push(PreviewLine(indentCols: indent, quoteDepth: qdepth,
-                band: BandKind.tableRow, bandBg: mix(pageBg, pageFg, 0.05), runs: runs));
+                runs: colorizeTableLine(ln, bold)));
         }
         blank();
+    }
+
+    // Split a rendered table line into box-drawing runs (ruleFg) and content runs
+    // (pageFg, optionally bold for the header row).
+    PreviewRun[] colorizeTableLine(const(char)[] ln, bool bold) @safe
+    {
+        import std.utf : decode;
+        PreviewRun[] runs;
+        size_t i;
+        while (i < ln.length)
+        {
+            const start = i;
+            size_t probe = i;
+            const firstBox = isBoxDrawing(decode(ln, probe));
+            i = probe;
+            while (i < ln.length)
+            {
+                size_t k = i;
+                if (isBoxDrawing(decode(ln, k)) != firstBox)
+                    break;
+                i = k;
+            }
+            runs ~= PreviewRun(ln[start .. i], firstBox ? ruleFg : pageFg,
+                RgbColor.init, false, firstBox ? 0 : (bold ? cast(ubyte) Attr.bold : 0));
+        }
+        return runs;
+    }
+
+    // A rendered table line carries real cell text (not just borders / padding).
+    bool lineHasContent(const(char)[] ln) @safe
+    {
+        import std.utf : decode;
+        size_t i;
+        while (i < ln.length)
+        {
+            const cp = decode(ln, i);
+            if (cp != ' ' && !isBoxDrawing(cp))
+                return true;
+        }
+        return false;
     }
 
     void rule(int indent, ubyte qdepth) @safe
@@ -777,6 +817,45 @@ private bool isSpace(char c) @safe pure nothrow @nogc
 private bool startsWithText(const(char)[] s, const(char)[] prefix) @safe pure nothrow @nogc
     => s.length >= prefix.length && s[0 .. prefix.length] == prefix;
 
+private bool isBoxDrawing(dchar cp) @safe pure nothrow @nogc
+    => cp >= 0x2500 && cp <= 0x257F;
+
+/**
+Lay a plain-text grid out with box-drawing borders and per-column alignment via
+`core-cli`'s table renderer, returning the newline-free lines.
+
+`@trusted`: the renderer takes plain `string`s and returns plain box-drawing
+`string` lines — string-in / string-out, no unsafe operations — but it is not
+attributed `@safe` (it GC-allocates during layout). Wrapping the one call keeps
+`table()` / `layoutPreview` `@safe`. It runs in the layout stage (per theme /
+width change), never per frame.
+*/
+private string[] renderTableLines(string[][] grid, scope const(ColAlign)[] aligns,
+    size_t cols, int maxWidth) @trusted
+{
+    import sparkles.core_cli.ui.table : drawTableLines, TableProps;
+    import sparkles.base.text.width : Align;
+
+    auto cAligns = new Align[](cols);
+    foreach (i; 0 .. cols)
+    {
+        const a = i < aligns.length ? aligns[i] : ColAlign.none;
+        final switch (a) with (ColAlign)
+        {
+        case center: cAligns[i] = Align.center; break;
+        case right: cAligns[i] = Align.right; break;
+        case none:
+        case left: cAligns[i] = Align.left; break; // `none` renders left by convention
+        }
+    }
+    auto props = TableProps(headerRows: 1, columnAligns: cAligns,
+        maxWidth: maxWidth > 0 ? cast(size_t) maxWidth : 0);
+    string[] rows;
+    foreach (ln; drawTableLines(grid, props))
+        rows ~= ln;
+    return rows;
+}
+
 // ASCII-uppercase a string (for case-insensitive callout-type matching).
 private string upperAscii(const(char)[] s) @safe pure
 {
@@ -833,15 +912,6 @@ private RgbColor mix(RgbColor a, RgbColor b, double t) @safe pure nothrow @nogc
 {
     ubyte ch(ubyte x, ubyte y) => cast(ubyte)(x + (y - x) * t);
     return RgbColor(ch(a.r, b.r), ch(a.g, b.g), ch(a.b, b.b));
-}
-
-private const(char)[] spaces(int n) @safe pure nothrow
-{
-    if (n <= 0)
-        return "";
-    auto s = new char[](n);
-    s[] = ' ';
-    return s;
 }
 
 private string repeat(string unit, int n) @safe pure nothrow
@@ -978,6 +1048,32 @@ unittest
             assert(!r.text.canFind("[!NOTE]"));
 }
 
+@("gui_preview.layout.tableBorders")
+@safe
+unittest
+{
+    // A 2-column table renders box-drawing borders; a right-aligned column pads
+    // its short cell on the left. Model built directly (no grammar).
+    string src = "h1 h2 x 9";
+    MdBlock cell(size_t a, size_t b)
+        => MdBlock(kind: MdBlockKind.tableCell,
+            inlines: [MdInline(kind: MdInlineKind.text, span: Span(a, b))]);
+    auto header = MdBlock(kind: MdBlockKind.tableRow, children: [cell(0, 2), cell(3, 5)]);
+    auto row = MdBlock(kind: MdBlockKind.tableRow, children: [cell(6, 7), cell(8, 9)]);
+    auto tbl = MdBlock(kind: MdBlockKind.table,
+        aligns: [ColAlign.left, ColAlign.right], children: [header, row]);
+    auto m = PreviewModel(present: true,
+        doc: MdDoc(MdBlock(kind: MdBlockKind.document, children: [tbl]), src));
+
+    auto lines = layoutPreview(m, darkTheme, tPageFg, tPageBg, 80);
+    import std.algorithm.searching : any, canFind;
+    // vertical + horizontal box-drawing runs present
+    assert(lines.any!(l => l.runs.canFind!(r => r.text.canFind("│"))));
+    assert(lines.any!(l => l.runs.canFind!(r => r.text.canFind("─"))));
+    // the right-aligned "9" sits flush right — a space precedes it in its cell
+    assert(lines.any!(l => l.runs.canFind!(r => r.text.canFind(" 9"))));
+}
+
 @("gui_preview.build.fencesAndBands")
 @system
 unittest
@@ -1008,7 +1104,8 @@ unittest
     assert(lines.any!(l => l.band == BandKind.codeHeader));
     assert(lines.any!(l => l.band == BandKind.codePanel));
     assert(lines.any!(l => l.band == BandKind.rule));
-    assert(lines.any!(l => l.band == BandKind.tableRow));
+    // the table renders with box-drawing borders (a `│` vertical rule)
+    assert(lines.any!(l => l.runs.canFind!(r => r.text.canFind("│"))));
 
     // the ` ```ansi ` block produced a non-default-colored "red" run
     bool redRun;
