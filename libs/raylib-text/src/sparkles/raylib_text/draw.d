@@ -10,6 +10,7 @@ import raylib;
 import sparkles.raylib_text.font : LoadedFont, glyphIndexFor;
 import sparkles.raylib_text.font_set : FontSet;
 import sparkles.raylib_text.style : TextStyle;
+import sparkles.raylib_text.box : drawBox;
 
 /**
 Draw a grapheme cluster (base codepoint plus any combining marks) at `(x, y)`,
@@ -89,15 +90,25 @@ void drawText(ref FontSet fonts, scope const(char)[] str, float x, float y,
     const italic = style.has(TextStyle.italic);
     const size = fonts.size();
     const cellW = fonts.cellW();
+    const cellH = fonts.cellH();
 
     int col;
     size_t i = 0;
     while (i < str.length)
     {
         const cp = cast(int) decode!(Yes.useReplacementDchar)(str, i);
+        const gxCol = x + col * cellW;
+        // Box-drawing glyphs are rendered procedurally so their arms fill the cell
+        // and connect across neighbouring cells (fonts leave gaps); anything the
+        // box table doesn't cover falls through to the font glyph.
+        if (drawBox(fonts.whiteFace, cast(uint) cp, gxCol, y, cellW, cellH, fg))
+        {
+            ++col;
+            continue;
+        }
         bool fakeBold, fakeItalic;
         auto face = fonts.resolveFace(cp, bold, italic, fakeBold, fakeItalic);
-        const gx = x + col * cellW + (fakeItalic ? size / 6 : 0);
+        const gx = gxCol + (fakeItalic ? size / 6 : 0);
         const uint[1] one = [cast(uint) cp];
         drawGrapheme(*face, one[], gx, y, size, fg);
         if (fakeBold)
