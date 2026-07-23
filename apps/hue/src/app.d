@@ -56,8 +56,11 @@ struct CliParams
     @CliOption("window-height", "--gui initial window height in cells.")
     int windowHeight = 30;
 
-    @CliOption("line-numbers", "--gui: show a line-number gutter in the viewer (toggle at runtime with 'l').")
-    bool lineNumbers;
+    @CliOption("line-numbers", "--gui: show the file line-number gutter (default on; disable with =false; toggle at runtime with 'l').")
+    bool lineNumbers = true;
+
+    @CliOption("code-line-numbers", "--gui: number the lines inside each code block (default on; disable with =false; toggle at runtime with 'c').")
+    bool codeLineNumbers = true;
 }
 
 /// Default `--gui` font: FiraCode Nerd Font Mono, then a fontconfig preference
@@ -159,7 +162,7 @@ int main(string[] args)
                 preview = buildPreviewModel(registry, cache, source);
             return runGui(baseName(sourcePath), source, events[], labels, names,
                 themes, idx, preview, cli.font, cli.fontSize,
-                cli.windowWidth, cli.windowHeight, cli.lineNumbers);
+                cli.windowWidth, cli.windowHeight, cli.lineNumbers, cli.codeLineNumbers);
         }
         else
         {

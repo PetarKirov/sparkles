@@ -80,7 +80,8 @@ int runGui(
     int fontSize = defaultFontSize,
     int windowWidth = 800,
     int windowHeight = 600,
-    bool lineNumbers = false,
+    bool lineNumbers = true,
+    bool codeLineNumbers = true,
 ) @system
 {
     import std.stdio : stderr;
@@ -181,7 +182,7 @@ int runGui(
     {
         lastWidthCols = widthCols();
         if (showPreview && preview.present)
-            plines = layoutPreview(preview, current, pageFg, pageBg, lastWidthCols);
+            plines = layoutPreview(preview, current, pageFg, pageBg, lastWidthCols, codeLineNumbers);
         else
             plines = buildRawPlines(source, events, current, pageFg, pageBg, lastWidthCols);
     }
@@ -421,11 +422,19 @@ int runGui(
                 relayout();
             }
 
-            // 'l' toggles the line-number gutter (changes the preview wrap width).
+            // 'l' toggles the file line-number gutter (changes the wrap width).
             if (pressed(KeyboardKey.KEY_L))
             {
                 lineNumbers = !lineNumbers;
-                lastWidthCols = -1; // gutter width changed → reflow the preview
+                lastWidthCols = -1; // gutter width changed → reflow
+                relayout();
+            }
+
+            // 'c' toggles the in-panel code-block line numbers.
+            if (pressed(KeyboardKey.KEY_C))
+            {
+                codeLineNumbers = !codeLineNumbers;
+                lastWidthCols = -1;
                 relayout();
             }
 
