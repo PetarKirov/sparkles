@@ -299,8 +299,10 @@ private struct Layouter
             return;
         const f = fences[fenceIdx++];
 
-        // Language-label header bar.
-        string lbl = f.lang.length ? f.lang.idup : "code";
+        // Language-label header bar, prefixed with a devicon for the fence
+        // language.
+        const icon = langIcon(f.lang);
+        string lbl = (icon.length ? icon ~ " " : "") ~ (f.lang.length ? f.lang.idup : "code");
         if (f.label.length)
             lbl ~= " " ~ f.label.idup;
         push(PreviewLine(indentCols: indent, quoteDepth: qdepth, band: BandKind.codeHeader,
@@ -341,6 +343,13 @@ private struct Layouter
                 push(PreviewLine(indentCols: indent, quoteDepth: qdepth,
                     band: BandKind.codePanel, bandBg: codePanelBg, runs: row));
         }
+
+        // Bottom border, so the panel reads as a framed block (the header bar is
+        // the top edge).
+        const bw = width - indent - qdepth * 2;
+        push(PreviewLine(indentCols: indent, quoteDepth: qdepth, band: BandKind.codePanel,
+            bandBg: codePanelBg,
+            runs: [PreviewRun(repeat("─", bw < 1 ? 1 : bw), ruleFg, codePanelBg, true, 0)]));
         blank();
     }
 
@@ -526,6 +535,10 @@ private struct Layouter
                     inlineCodeBg, true, attrs);
                 break;
             case link:
+                // A per-destination icon (github / web / mail / file), then the
+                // underlined label.
+                runs ~= PreviewRun(linkIcon(inl.linkDest) ~ " ", linkFg,
+                    RgbColor.init, false, attrs);
                 auto label = inl.children.length
                     ? inlineRuns(inl.children, linkFg, cast(ubyte)(attrs | Attr.underline))
                     : [PreviewRun(slice(inl.span.start, inl.span.end), linkFg,
@@ -533,8 +546,10 @@ private struct Layouter
                 runs ~= label;
                 break;
             case image:
+                // 󰥶 image glyph (a Nerd Font monochrome icon — the previous 🖼
+                // color emoji rasterizes as tofu under raylib/stb_truetype).
                 const(char)[] alt = plain(inl.children);
-                runs ~= PreviewRun("🖼 " ~ alt ~ " → " ~ inl.linkDest,
+                runs ~= PreviewRun("\U000F0976 " ~ alt ~ " → " ~ inl.linkDest,
                     linkFg, RgbColor.init, false, attrs);
                 break;
             case lineBreak:
@@ -662,6 +677,49 @@ private bool isSpace(char c) @safe pure nothrow @nogc
 private bool startsWithText(const(char)[] s, const(char)[] prefix) @safe pure nothrow @nogc
     => s.length >= prefix.length && s[0 .. prefix.length] == prefix;
 
+private bool containsText(const(char)[] hay, const(char)[] needle) @safe pure nothrow @nogc
+{
+    if (needle.length == 0 || needle.length > hay.length)
+        return needle.length == 0;
+    foreach (i; 0 .. hay.length - needle.length + 1)
+        if (hay[i .. i + needle.length] == needle)
+            return true;
+    return false;
+}
+
+/// A Nerd-Font glyph for a link destination (by host / scheme), else a file icon.
+private string linkIcon(const(char)[] dest) @safe pure nothrow
+{
+    if (dest.containsText("github.com")) return "\U0000F09B";  //  github
+    if (dest.containsText("gitlab")) return "\U0000F296";       //  gitlab
+    if (dest.startsWithText("mailto:")) return "\U000F01EE";    // 󰇮 email
+    if (dest.startsWithText("http://") || dest.startsWithText("https://"))
+        return "\U000F059F";                                   // 󰖟 web
+    return "\U0000F15C";                                       //  file / local
+}
+
+/// A devicon glyph for a fenced-code language (canonicalized), else a generic
+/// code glyph; empty when the fence has no language.
+private string langIcon(const(char)[] lang) @safe pure nothrow
+{
+    switch (lang)
+    {
+    case "python": return "\U0000E606"; //
+    case "rust": return "\U0000E7A8"; //
+    case "javascript", "typescript", "jsx", "tsx": return "\U0000E781"; //
+    case "bash", "shell", "sh", "zsh", "fish": return "\U0000E795"; //
+    case "nix": return "\U000F1105"; // 󱄅
+    case "json": return "\U0000E60B"; //
+    case "markdown", "md": return "\U0000E609"; //
+    case "c", "cpp", "c++": return "\U0000E61E"; //
+    case "html": return "\U0000E736"; //
+    case "css": return "\U0000E749"; //
+    case "go": return "\U0000E627"; //
+    case "": return "";
+    default: return "\U0000F121"; //  generic code
+    }
+}
+
 private RgbColor mix(RgbColor a, RgbColor b, double t) @safe pure nothrow @nogc
 {
     ubyte ch(ubyte x, ubyte y) => cast(ubyte)(x + (y - x) * t);
@@ -764,6 +822,29 @@ unittest
     import std.algorithm.searching : any;
     assert(lines.any!(l => l.hasLeaderFg && l.leader.length && l.leader[0] != '['));
     assert(lines.any!(l => !l.hasLeaderFg && l.leader.length && l.leader[0] != '['));
+}
+
+@("gui_preview.layout.linkIcon")
+@safe
+unittest
+{
+    // A link prepends a per-destination Nerd-Font icon (a multibyte run) before
+    // its underlined label.
+    string src = "gh";
+    auto link = MdInline(kind: MdInlineKind.link, span: Span(0, 2),
+        linkDest: "https://github.com/x",
+        children: [MdInline(kind: MdInlineKind.text, span: Span(0, 2))]);
+    auto para = MdBlock(kind: MdBlockKind.paragraph, inlines: [link]);
+    auto m = PreviewModel(present: true,
+        doc: MdDoc(MdBlock(kind: MdBlockKind.document, children: [para]), src));
+
+    auto lines = layoutPreview(m, darkTheme, tPageFg, tPageBg, 80);
+    bool hasIcon;
+    foreach (l; lines)
+        foreach (r; l.runs)
+            if (r.text.length && cast(ubyte) r.text[0] >= 0x80)
+                hasIcon = true;
+    assert(hasIcon);
 }
 
 @("gui_preview.build.fencesAndBands")
