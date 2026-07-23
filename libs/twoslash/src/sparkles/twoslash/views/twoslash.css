@@ -71,6 +71,17 @@
   box-shadow: var(--twoslash-popup-shadow);
 }
 
+/* Annotation surfaces are decorations, not code: keep them out of a text
+   selection of the code (VSCode-like — the code copies cleanly). The hover
+   popup container sets this on itself below; these are the below-line blocks
+   (query/error `-meta-line`, completions, and `// @tag` lines). */
+.twoslash .twoslash-meta-line,
+.twoslash .twoslash-completion-list,
+.twoslash .twoslash-tag-line {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 .twoslash .twoslash-popup-container {
   position: absolute;
   z-index: 10;
