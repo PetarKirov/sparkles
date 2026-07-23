@@ -40,14 +40,14 @@ issues as the requirement of record):
 
 ## Rendering modes
 
-`hue` dispatches to exactly one mode per invocation ([`MOD1`–`MOD5`](./feature-requirements.md#output-mode-dispatch-mod)):
+`hue` dispatches to exactly one mode per invocation ([`MOD1`–`MOD7`](./feature-requirements.md#output-mode-dispatch-mod)):
 
 | Mode          | When                                                                                                   | Entry code                                | Spec                           |
 | ------------- | ------------------------------------------------------------------------------------------------------ | ----------------------------------------- | ------------------------------ |
 | **ANSI**      | `stdout` is not a tty, or no key session (piped/redirected)                                            | `app.emitAnsiWholeFile`                   | `ANS*`                         |
 | **HTML**      | `--html`                                                                                               | `app.main` (HTML branch)                  | `HTM*`                         |
-| **Previewer** | interactive tty (default)                                                                              | `previewer.runLoop`                       | `PRV*`                         |
-| **GUI**       | `--gui` (needs the `gui` build configuration)                                                          | `gui.runGui`                              | [`gui.md`](./gui.md)           |
+| **Previewer** | interactive tty with no display (e.g. SSH), or `--no-gui`/`--tui`                                      | `previewer.runLoop`                       | `PRV*`                         |
+| **GUI**       | default on a GUI-enabled build when a display is detected, or forced with `--gui`                      | `gui.runGui`                              | [`gui.md`](./gui.md)           |
 | **Twoslash**  | `--twoslash <nodes.json>` (ANSI / `--html` / `--gui`) · `--markdown <file.md>` — _planned/branch-only_ | `app.runTwoslashMode` / `runMarkdownMode` | [`twoslash.md`](./twoslash.md) |
 
 ## Status scheme
