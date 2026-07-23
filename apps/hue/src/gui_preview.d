@@ -39,6 +39,10 @@ struct PreviewRun
     RgbColor bg;
     bool hasBg;
     ubyte attrs;
+    /// Byte offset into the source file of this run's first char, or `size_t.max`
+    /// for synthetic runs (icons, bullets, gutters, box-drawing) — used to map a
+    /// mouse selection back to file offsets, and to exclude decorations from it.
+    size_t srcStart = size_t.max;
 }
 
 /// A full-width background band drawn behind a line (before its runs).
@@ -189,7 +193,8 @@ PreviewLine[] buildRawPlines(const(char)[] source, const(HighlightEvent)[] event
             continue;
         const spec = theme[ls.span.label];
         byLine[ls.line] ~= PreviewRun(source[ls.span.start .. ls.span.end],
-            toRgb(spec.fg, pageFg), toRgb(spec.bg, pageBg), spec.bg.isSet, mapSpecAttrs(spec));
+            toRgb(spec.fg, pageFg), toRgb(spec.bg, pageBg), spec.bg.isSet,
+            mapSpecAttrs(spec), ls.span.start);
     }
 
     PreviewLine[] out_;
@@ -503,28 +508,38 @@ private struct Layouter
             return;
         const f = fences[fenceIdx++];
 
-        // Language-label header bar, prefixed with a devicon for the fence
-        // language.
+        // The block is a rounded box: a top border carrying the language label +
+        // copy button (`╭─ lang ──╮`), side borders `│…│` per code row, and a
+        // rounded bottom (`╰──╯`). Box-drawing renders procedurally so it connects.
+        const avail = width - indent - qdepth * 2;
+        const boxW = avail < 4 ? 4 : avail; // total box width in columns
+        const inner = boxW - 2;             // columns between the two `│`
+        const baseLine = srcLineOf(f.bodyStart);
+        const nLines = f.isAnsi ? f.ansi.length : lineCount(f.body);
+        const gw = codeLineNumbers ? numDigits(nLines) + 1 : 0; // in-panel number + sep
+        const codeW = inner - gw < 1 ? 1 : inner - gw;
+
+        // Top border with the devicon + language embedded.
         const icon = langIcon(f.lang);
         string lbl = (icon.length ? icon ~ " " : "") ~ (f.lang.length ? f.lang.idup : "code");
         if (f.label.length)
             lbl ~= " " ~ f.label.idup;
-        pendingNumber = false; // the language-header bar carries no line number
+        // "╭─ " + label + " " + fill + "   ╮" — the trailing three spaces are a
+        // cutout for the copy button (a space on each side of it, drawn by gui.d),
+        // mirroring the language cutout on the left.
+        const usedTop = 8 + cast(int) columnWidth(lbl);
+        const fillTop = boxW - usedTop < 0 ? 0 : boxW - usedTop;
+        pendingNumber = false; // borders carry no line number
         push(PreviewLine(indentCols: indent, quoteDepth: qdepth, band: BandKind.codeHeader,
-            bandBg: codeHeaderBg, copyFence: cast(int)(fenceIdx - 1),
-            runs: [PreviewRun(lbl, codeFg, codeHeaderBg, true, 0)]));
+            bandBg: codePanelBg, copyFence: cast(int)(fenceIdx - 1), runs: [
+                PreviewRun("╭─ ", ruleFg, codePanelBg, true, 0),
+                PreviewRun(lbl, codeFg, codePanelBg, true, 0),
+                PreviewRun(" " ~ repeat("─", fillTop) ~ "   ╮", ruleFg, codePanelBg, true, 0),
+            ]));
 
-        // Code/ANSI lines are hard-wrapped to the panel width (like prose) so long
-        // lines reflow onto continuation rows instead of overflowing + clipping.
-        // Each source code line is numbered by its document line (first wrapped
-        // row only).
-        const avail = width - indent - qdepth * 2;
-        const aw = avail < 1 ? 1 : avail;
-        const baseLine = srcLineOf(f.bodyStart);
-        // Optional in-panel gutter of code-relative line numbers (1..N).
-        const nLines = f.isAnsi ? f.ansi.length : lineCount(f.body);
-        const gw = codeLineNumbers ? numDigits(nLines) + 1 : 0; // number + 1 separator
-        const codeW = aw - gw < 1 ? 1 : aw - gw;
+        // Code/ANSI lines hard-wrap to the inner width (like prose) so long lines
+        // reflow instead of overflowing; each source line is numbered by its
+        // document line (first wrapped row only).
         void pushCode(size_t bodyRow, PreviewRun[] row)
         {
             curSrcLine = baseLine + bodyRow;
@@ -533,10 +548,22 @@ private struct Layouter
             foreach (wl; hardWrapRuns(row, codeW))
             {
                 PreviewRun[] full;
+                full ~= PreviewRun("│", ruleFg, codePanelBg, true, 0);
+                int used;
                 if (gw > 0)
+                {
                     full ~= PreviewRun(codeGutterStr(bodyRow + 1, firstWrap, gw),
                         codeLineNoFg, codePanelBg, true, 0);
-                full ~= wl;
+                    used += gw;
+                }
+                foreach (r; wl)
+                {
+                    full ~= r;
+                    used += cast(int) columnWidth(r.text);
+                }
+                if (inner - used > 0) // pad to the right border
+                    full ~= PreviewRun(repeat(" ", inner - used), codeFg, codePanelBg, true, 0);
+                full ~= PreviewRun("│", ruleFg, codePanelBg, true, 0);
                 push(PreviewLine(indentCols: indent, quoteDepth: qdepth,
                     band: BandKind.codePanel, bandBg: codePanelBg, runs: full));
                 firstWrap = false;
@@ -571,19 +598,17 @@ private struct Layouter
                 const bg = toRgb(spec.bg, pageBg);
                 const hasBg = spec.bg.isSet && bg != pageBg;
                 byLine[ls.line] ~= PreviewRun(f.body[ls.span.start .. ls.span.end],
-                    toRgb(spec.fg, codeFg), bg, hasBg, mapAttrs(spec));
+                    toRgb(spec.fg, codeFg), bg, hasBg, mapAttrs(spec), f.bodyStart + ls.span.start);
             }
             foreach (i, row; byLine)
                 pushCode(i, row);
         }
 
-        // Bottom border, so the panel reads as a framed block (the header bar is
-        // the top edge).
-        const bw = width - indent - qdepth * 2;
-        pendingNumber = false; // the border carries no line number
+        // Rounded bottom border.
+        pendingNumber = false;
         push(PreviewLine(indentCols: indent, quoteDepth: qdepth, band: BandKind.codePanel,
             bandBg: codePanelBg,
-            runs: [PreviewRun(repeat("─", bw < 1 ? 1 : bw), ruleFg, codePanelBg, true, 0)]));
+            runs: [PreviewRun("╰" ~ repeat("─", inner) ~ "╯", ruleFg, codePanelBg, true, 0)]));
         blank();
     }
 
@@ -772,7 +797,7 @@ private struct Layouter
             {
             case text:
                 runs ~= PreviewRun(slice(inl.span.start, inl.span.end), fg,
-                    RgbColor.init, false, attrs);
+                    RgbColor.init, false, attrs, inl.span.start);
                 break;
             case emphasis:
                 runs ~= inlineRuns(inl.children, fg, cast(ubyte)(attrs | Attr.italic));
@@ -785,7 +810,7 @@ private struct Layouter
                 break;
             case codeSpan:
                 runs ~= PreviewRun(slice(inl.span.start, inl.span.end), codeFg,
-                    inlineCodeBg, true, attrs);
+                    inlineCodeBg, true, attrs, inl.span.start);
                 break;
             case link:
                 // A per-destination icon (github / web / mail / file), then the
@@ -795,7 +820,8 @@ private struct Layouter
                 auto label = inl.children.length
                     ? inlineRuns(inl.children, linkFg, cast(ubyte)(attrs | Attr.underline))
                     : [PreviewRun(slice(inl.span.start, inl.span.end), linkFg,
-                        RgbColor.init, false, cast(ubyte)(attrs | Attr.underline))];
+                        RgbColor.init, false, cast(ubyte)(attrs | Attr.underline),
+                        inl.span.start)];
                 runs ~= label;
                 break;
             case image:
@@ -863,7 +889,10 @@ private struct Layouter
                     open = true;
                     spacePending = false;
                 }
-                words[$ - 1].parts ~= PreviewRun(frag, r.fg, r.bg, r.hasBg, r.attrs);
+                // Carry the fragment's byte offset into the run so selection maps
+                // back to the right file bytes.
+                const fragSrc = r.srcStart == size_t.max ? size_t.max : r.srcStart + s;
+                words[$ - 1].parts ~= PreviewRun(frag, r.fg, r.bg, r.hasBg, r.attrs, fragSrc);
                 words[$ - 1].width += cast(int) columnWidth(frag);
             }
             // `open`/`spacePending` carry across the run boundary: a word joins
@@ -983,6 +1012,9 @@ private PreviewRun[][] hardWrapRuns(const(PreviewRun)[] runs, int width) @safe
     foreach (r; runs)
     {
         size_t segStart, i;
+        // The split piece keeps its byte offset into the original run (added to the
+        // run's srcStart) so selection still maps to the right file bytes.
+        size_t pieceSrc(size_t off) => r.srcStart == size_t.max ? size_t.max : r.srcStart + off;
         while (i < r.text.length)
         {
             const cpStart = i;
@@ -991,7 +1023,8 @@ private PreviewRun[][] hardWrapRuns(const(PreviewRun)[] runs, int width) @safe
             if (col + cw > width && col > 0)
             {
                 if (cpStart > segStart)
-                    cur ~= PreviewRun(r.text[segStart .. cpStart], r.fg, r.bg, r.hasBg, r.attrs);
+                    cur ~= PreviewRun(r.text[segStart .. cpStart], r.fg, r.bg, r.hasBg,
+                        r.attrs, pieceSrc(segStart));
                 lines ~= cur;
                 cur = null;
                 col = 0;
@@ -1000,7 +1033,8 @@ private PreviewRun[][] hardWrapRuns(const(PreviewRun)[] runs, int width) @safe
             col += cw;
         }
         if (r.text.length > segStart)
-            cur ~= PreviewRun(r.text[segStart .. $], r.fg, r.bg, r.hasBg, r.attrs);
+            cur ~= PreviewRun(r.text[segStart .. $], r.fg, r.bg, r.hasBg, r.attrs,
+                pieceSrc(segStart));
     }
     if (cur.length || lines.length == 0)
         lines ~= cur;
