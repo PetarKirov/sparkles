@@ -122,6 +122,14 @@ The render-side substrate (independent of any D backend) that twoslash builds on
 | RS2 | A grammar/theme **playground** (the TextMate-playground equivalent): SSG-prerendered first, then an optional wasm client-side renderer (LDC WASI).                                                    | not started | issue #122 §2                                                                         |
 | RS3 | **VitePress integration**: replace Shiki with `sparkles:syntax` in `docs/.vitepress/config.mts` (custom `markdown.highlight`), porting the `languageAlias` set and light/dark parity.                 | not started | issue #122 §3                                                                         |
 
+> [!NOTE]
+> `RS1`–`RS3` are the D-side render substrate. Their distribution as a **JS npm
+> package** (`@sparkles/hue`, a Shiki drop-in for VitePress / Next / Solid Start,
+> shell-out then wasm) is specified in
+> [web-integration.md](./web-integration.md) — where `RS1` is the shell-out
+> target, `RS2`'s playground is a consumer, and `RS3` (VitePress) is absorbed as
+> framework integration `FWK1`.
+
 ## Backend: DMD-as-a-library (`DMD`, researched)
 
 The current modes consume a **pre-parsed** node model (produced by the reference
