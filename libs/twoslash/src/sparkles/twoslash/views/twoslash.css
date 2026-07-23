@@ -121,8 +121,13 @@
 .twoslash .twoslash-popup-docs blockquote {
   margin: 0.5em 0;
 }
+/* Inline `code` in docs / tag values: a subtle surface so it reads as code,
+   not prose. (The code-fence `pre code` below resets this back to flat.) */
 .twoslash .twoslash-popup-docs code {
   font-family: var(--twoslash-code-font);
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+  background: var(--twoslash-docs-code-bg, rgba(127, 127, 127, 0.14));
 }
 .twoslash .twoslash-popup-docs pre {
   padding: 4px 6px;
@@ -134,10 +139,16 @@
   padding: 0;
   background: none;
 }
+/* Links in docs / tag values (`[text](url)`, `<url>`) look like links. */
+.twoslash .twoslash-popup-docs a {
+  color: var(--twoslash-docs-link-color, #4c8dff);
+  text-decoration: underline;
+}
 
 .twoslash .twoslash-popup-docs-tags {
   display: flex;
   flex-direction: column;
+  gap: 0.2em;
   font-family: var(--twoslash-docs-font);
 }
 
@@ -146,8 +157,14 @@
   margin-right: 0.5em;
 }
 
+/* Each JSDoc tag name (@param, @returns, @see) as a small chip. */
 .twoslash .twoslash-popup-docs-tag-name {
+  display: inline-block;
   font-family: var(--twoslash-code-font);
+  font-size: 0.92em;
+  padding: 0.05em 0.4em;
+  border-radius: 4px;
+  background: var(--twoslash-docs-tag-bg, rgba(127, 127, 127, 0.18));
 }
 
 /* Connector notch — shared by every popup (the completion list overrides `left`
