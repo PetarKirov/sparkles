@@ -200,6 +200,10 @@
   position: relative;
   margin: 0.2em 0;
   padding: 6px 12px;
+  /* `min-width: 100%` + padding + border overflows its line unless the padding
+     is counted inside the width — Shiki leans on a host `box-sizing` reset; the
+     overlay is self-contained, so set it here (else a stray horizontal scrollbar). */
+  box-sizing: border-box;
   min-width: 100%;
   width: max-content;
   background-color: var(--twoslash-error-bg);
@@ -288,6 +292,7 @@
   position: relative;
   margin: 0.2em 0;
   padding: 6px 10px;
+  box-sizing: border-box; /* keep `min-width: 100%` + padding inside the line */
   min-width: 100%;
   width: max-content;
   display: flex;
