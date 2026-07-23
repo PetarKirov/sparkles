@@ -518,6 +518,19 @@ export default withMermaid(
               ],
             },
             {
+              text: 'Hue',
+              collapsed: false,
+              items: [
+                { text: 'Overview', link: '/specs/hue/' },
+                {
+                  text: 'Feature Requirements',
+                  link: '/specs/hue/feature-requirements',
+                },
+                { text: 'GUI (--gui)', link: '/specs/hue/gui' },
+                { text: 'Twoslash (planned)', link: '/specs/hue/twoslash' },
+              ],
+            },
+            {
               text: 'Parsing (proposal)',
               collapsed: true,
               items: [
