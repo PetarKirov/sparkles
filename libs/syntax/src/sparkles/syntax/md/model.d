@@ -456,8 +456,13 @@ private struct Extractor
                 cur = ce;
                 break;
             case "uri_autolink":
-                out_ ~= MdInline(kind: MdInlineKind.link, span: Span(base + cs, base + ce),
-                    linkDest: source[base + cs .. base + ce]);
+                // `<https://x>` — strip the angle brackets; the visible text is
+                // the URL itself (a `text` child), the destination the same URL.
+                const inner = Span(base + cs + 1, base + ce - 1);
+                MdInline al = {kind: MdInlineKind.link, span: inner,
+                    linkDest: source[base + cs + 1 .. base + ce - 1]};
+                al.children ~= MdInline(kind: MdInlineKind.text, span: inner);
+                out_ ~= al;
                 cur = ce;
                 break;
             case "hard_line_break":
@@ -737,6 +742,22 @@ unittest
     }
     assert(linkP !is null && linkP.linkDest == "http://x");
     assert(imgP !is null && imgP.linkDest == "img.png");
+}
+
+@("md.model.autolink")
+@system
+unittest
+{
+    // `<url>` autolink: brackets stripped, dest == visible text (the URL).
+    auto d = extractForTest("see <http://example.com/x> now\n");
+    auto p = d.root.children[0];
+    MdInline* a;
+    foreach (ref inl; p.inlines)
+        if (inl.kind == MdInlineKind.link) a = &inl;
+    assert(a !is null);
+    assert(a.linkDest == "http://example.com/x", a.linkDest);
+    assert(a.children.length == 1 && a.children[0].kind == MdInlineKind.text);
+    assert(d.source[a.children[0].span.start .. a.children[0].span.end] == "http://example.com/x");
 }
 
 @("md.model.htmlBlock")
