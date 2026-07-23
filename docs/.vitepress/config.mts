@@ -553,6 +553,10 @@ export default withMermaid(
                   text: 'UI architecture',
                   link: '/specs/hue/ui-architecture',
                 },
+                {
+                  text: 'Transformer pipeline',
+                  link: '/specs/hue/pipeline',
+                },
               ],
             },
             {
