@@ -1,2 +1,5 @@
 # Dev-only fixture generator deps — never committed (the build is node-free).
 node_modules/
+
+# Rendered overlay previews (`render-html.mjs`) — regenerable, never committed.
+html/
