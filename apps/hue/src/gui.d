@@ -48,8 +48,15 @@ import sparkles.base.smallbuffer : SmallBuffer;
 
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : Completion, Node, NodeType, TwoslashReturn;
-import sparkles.twoslash.overlay : BelowBlock, highlightSignature, InlineDecoration,
-    planTwoslash, TwoslashPlan;
+import sparkles.twoslash.overlay : BelowBlock, errIsWarning, highlightSignature,
+    InlineDecoration, planTwoslash, TwoslashPlan;
+
+// The shared visual language: the twoslash palette is the single source for the
+// error/warn/tag/highlight colors this backend used to hand-copy as literals.
+import sparkles.ui.style : defaultTwoslashPalette, resolveSlot, Slot, Visual;
+import sparkles.ui.geometry : Point, Rect;
+import sparkles.ui.canvas : LineStyle;
+import gui_canvas : RaylibCanvas;
 
 /// The window's default font size in pixels (Ctrl-±/theme cycling arrive in M3).
 private enum defaultFontSize = 18;
@@ -1217,10 +1224,16 @@ int runGuiTwoslash(
 
     const pageFg = toRgb(theme.defaults.fg, hardFallbackFg);
     const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
-    const errColor = RgbColor(0xd4, 0x56, 0x56);
-    const warnColor = RgbColor(0xc3, 0x7d, 0x0d);
-    const tagColor = RgbColor(0x37, 0x72, 0xcf);
-    const highlightTint = Color(195, 125, 13, 45); // --twoslash-highlighted-bg
+
+    // Twoslash brand colors from the single-source palette (retiring the four
+    // hand-copied literals). error/warn/tag are theme-independent; the highlight
+    // tint is a translucent background. The popup surface stays theme-derived
+    // (pageBg), so a dark GUI theme isn't forced onto the light CSS surface.
+    const pal = defaultTwoslashPalette();
+    const errVis = resolveSlot(pal, Slot.error, pageFg, pageBg);
+    const warnVis = resolveSlot(pal, Slot.warn, pageFg, pageBg);
+    const tagVis = resolveSlot(pal, Slot.info, pageFg, pageBg);
+    const highlightVis = resolveSlot(pal, Slot.highlight, pageFg, pageBg);
 
     const code = tw.code;
     auto plan = planTwoslash(tw);
@@ -1244,6 +1257,11 @@ int runGuiTwoslash(
         scrollY -= GetMouseWheelMove() * 3 * cellH;
         if (scrollY < 0)
             scrollY = 0;
+
+        // The sparkles:ui raylib backend — cell-space primitives (highlight
+        // fill, error squiggle, below-line rows) route through it; its origin is
+        // moved per use to the current row's screen position.
+        auto canvas = RaylibCanvas(&fonts, &buf, cellW, cellH);
 
         BeginDrawing();
         ClearBackground(rl(pageBg));
@@ -1275,17 +1293,20 @@ int runGuiTwoslash(
                 if (d.line != line)
                     continue;
                 const dx = cast(int)(padPx + d.character * cellW);
-                const dw = cast(int)(columnWidth(code[d.start .. d.end]) * cellW);
+                const dcols = cast(int) columnWidth(code[d.start .. d.end]);
+                canvas.originX = padPx;
+                canvas.originY = y;
                 final switch (d.kind)
                 {
                     case NodeType.highlight:
-                        DrawRectangle(dx, cast(int) y, dw, cellH, highlightTint);
+                        canvas.fillRect(Rect(cast(int) d.character, 0, dcols, 1), highlightVis);
                         break;
                     case NodeType.error:
-                        drawWavyUnderline(dx, cast(int)(y + cellH - 2), dw, rl(errColor));
+                        canvas.line(Point(cast(int) d.character, 0),
+                            Point(cast(int) d.character + dcols, 0), errVis, LineStyle.wavy);
                         break;
                     case NodeType.hover:
-                        hovers ~= HoverHit(dx, cast(int) y, dw, cellH, d.node);
+                        hovers ~= HoverHit(dx, cast(int) y, dcols * cellW, cellH, d.node);
                         break;
                     case NodeType.query:
                     case NodeType.completion:
@@ -1300,8 +1321,10 @@ int runGuiTwoslash(
             {
                 if (b.line != line)
                     continue;
-                drawBelowRow(fonts, buf, code, tw.nodes[b.node], padPx, y, cellW, cellH,
-                    theme, cache, pageFg, errColor, warnColor, tagColor);
+                canvas.originX = padPx;
+                canvas.originY = y;
+                drawBelowRow(canvas, fonts, buf, code, tw.nodes[b.node], padPx, y, cellW, cellH,
+                    theme, cache, pageFg, errVis, warnVis, tagVis);
                 y += cellH;
             }
         }
@@ -1366,17 +1389,22 @@ private float drawStyledRuns(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf
 }
 
 /// One below-line annotation row for a query / error / completion / tag node.
-private void drawBelowRow(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
-    scope const(char)[] code, in Node node, float padPx, float y, int cellW, int cellH,
-    in ResolvedTheme theme, ref TsConfigCache cache, RgbColor pageFg,
-    RgbColor errColor, RgbColor warnColor, RgbColor tagColor) @system
+/// The `canvas` origin is already at the row (its `padPx`/`y`); cell-space text
+/// draws relative to `node.character`. Query signatures keep their per-token
+/// re-highlighting (a backend concern the widget model leaves to the painter).
+private void drawBelowRow(ref RaylibCanvas canvas, ref FontSet fonts,
+    ref SmallBuffer!(char, 4096) buf, scope const(char)[] code, in Node node,
+    float padPx, float y, int cellW, int cellH, in ResolvedTheme theme,
+    ref TsConfigCache cache, RgbColor pageFg,
+    in Visual errVis, in Visual warnVis, in Visual tagVis) @system
 {
+    const col = cast(int) node.character;
     const x = padPx + node.character * cellW;
     final switch (node.type)
     {
         case NodeType.error:
-            const col = errIsWarning(node.level) ? warnColor : errColor;
-            drawText(fonts, cstrOf(buf, node.text), x, y, TextStyle(0), rl(col));
+            canvas.textRun(Point(col, 0), node.text,
+                errIsWarning(node.level) ? warnVis : errVis);
             break;
 
         case NodeType.query:
@@ -1397,7 +1425,7 @@ private void drawBelowRow(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
             break;
 
         case NodeType.tag:
-            drawText(fonts, cstrOf(buf, tagText(node)), x, y, TextStyle(0), rl(tagColor));
+            canvas.textRun(Point(col, 0), tagText(node), tagVis);
             break;
 
         case NodeType.hover:
@@ -1427,19 +1455,6 @@ private void drawPopup(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf, in N
         drawText(fonts, cstrOf(buf, node.docs), x + 3, y + 2 + cellH, TextStyle(0),
             rl(mix(pageFg, pageBg)));
 }
-
-/// A red wavy underline approximated by alternating 2px segments.
-private void drawWavyUnderline(int x, int y, int w, Color color) @system
-{
-    for (int i = 0; i < w; i += 4)
-    {
-        const seg = i + 2 <= w ? 2 : w - i;
-        DrawRectangle(x + i, y + (i / 2 % 2), seg, 1, color);
-    }
-}
-
-private bool errIsWarning(scope const(char)[] level) @safe pure nothrow @nogc
-    => level == "warning" || level == "suggestion" || level == "message";
 
 /// A join-with-leading-space label for completion candidates after the first.
 private const(char)[] joinPrefix(scope const(char)[] name) @safe nothrow
