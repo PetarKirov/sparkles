@@ -33,7 +33,7 @@ import sparkles.base.term_control : CtlSeq;
 import sparkles.core_cli.key_input : stdioKeySession;
 import sparkles.core_cli.term_caps : isTerminal, StdStream;
 
-import previewer : Previewer, runLoop, TermOut;
+import previewer : BackgroundMode, backgroundOptions, Previewer, runLoop, TermOut;
 
 struct CliParams
 {
@@ -69,6 +69,24 @@ struct CliParams
 
     @CliOption("code-line-numbers", "--gui: number the lines inside each code block (default on; disable with =false; toggle at runtime with 'c').")
     bool codeLineNumbers = true;
+
+    @CliOption("background", "Terminal background mode: no-background (foreground only), spans (only where the theme sets one), or full (fill every line edge-to-edge; the default).")
+    string background = "full";
+}
+
+/// Parses the `--background` value (`CLI8`) into a `BackgroundMode`; an unknown
+/// name warns and falls back to `full` (mirrors the `--theme` fallback).
+private BackgroundMode parseBackgroundMode(string name)
+{
+    switch (name)
+    {
+        case "no-background": return BackgroundMode.noBackground;
+        case "spans":         return BackgroundMode.spans;
+        case "full":          return BackgroundMode.full;
+        default:
+            warning(i"unknown --background '$(name)'; using 'full'");
+            return BackgroundMode.full;
+    }
 }
 
 /// Default `--gui` font: FiraCode Nerd Font Mono, then a fontconfig preference
@@ -115,6 +133,7 @@ int main(string[] args)
 
     bool html = cli.html;
     string themeName = cli.theme;
+    const bgMode = parseBackgroundMode(cli.background);
 
     // With a path argument, highlight that file; otherwise highlight hue's own
     // source, embedded at compile time via `import()`. That works from any
@@ -153,7 +172,7 @@ int main(string[] args)
     {
         SmallBuffer!char output;
         renderAnsi(source, events[], theme, output,
-            AnsiOptions(depth: detectColorDepth(), italics: true, emitBackground: true));
+            bgMode.backgroundOptions(detectColorDepth(), italics: true));
         write(output[]);
         return 0;
     }
@@ -255,6 +274,7 @@ int main(string[] args)
         labels: labels,
         names: names,
         themes: themes,
+        background: bgMode,
     );
 
     auto sink = TermOut.standard();
