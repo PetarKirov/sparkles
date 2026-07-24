@@ -40,6 +40,28 @@ private RgbColor mix(RgbColor a, RgbColor b, double t) @safe pure nothrow @nogc
     return RgbColor(c(a.r, b.r), c(a.g, b.g), c(a.b, b.b));
 }
 
+// Byte prefix of `s` holding at most `maxCols` codepoints (≈ display columns for
+// the ASCII + single-width glyphs the chrome lines use), cut on a UTF-8 boundary.
+// Keeps the header / status from overflowing the terminal width — with autowrap
+// off, an overflow would otherwise pile onto the last column (the scrollbar's).
+private const(char)[] clipCols(return scope const(char)[] s, int maxCols) @safe pure nothrow @nogc
+{
+    if (maxCols <= 0)
+        return null;
+    int cols;
+    size_t i;
+    while (i < s.length && cols < maxCols)
+    {
+        const c = s[i];
+        size_t n = c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : c >= 0xC0 ? 2 : 1;
+        if (i + n > s.length)
+            n = s.length - i;
+        i += n;
+        ++cols;
+    }
+    return s[0 .. i];
+}
+
 private char lowerAscii(char c) @safe pure nothrow @nogc
     => (c >= 'A' && c <= 'Z') ? cast(char)(c + 32) : c;
 
@@ -224,13 +246,14 @@ struct PreviewTui
         }
     }
 
-    // Emit a chrome-styled (theme fg/bg) full-width line: text, erase to EOL,
-    // reset. `nl` ends the row (the final status line omits it to avoid scroll).
+    // Emit a chrome-styled (theme fg/bg) full-width line: text (clipped so it
+    // can't spill past the edge into the scrollbar column), erase to EOL, reset.
+    // `nl` ends the row (the final status line omits it to avoid scroll).
     private void chromeLine(scope const(char)[] text, bool nl) @safe
     {
         writeStyleTransition(frame, TermStyle.init,
             TermStyle(fg: Color.fromRgb(pageFg), bg: Color.fromRgb(pageBg)), depth);
-        frame.put(text);
+        frame.put(clipCols(text, width - 1)); // leave the last column for the scrollbar
         frame.put(cast(string) CtlSeq.eraseToEnd);
         writeStyleTransition(frame,
             TermStyle(fg: Color.fromRgb(pageFg), bg: Color.fromRgb(pageBg)),
