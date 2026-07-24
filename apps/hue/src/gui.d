@@ -20,6 +20,8 @@ version (HueGui):
 
 import raylib;
 
+import core.stdc.stdarg : va_list; // for the TraceLogCallback bridge (NFR7)
+
 // The shared raylib text core (extracted in M5). Pulls raylib-d + libs
 // "raylib" transitively, so it is present only in the `gui` build.
 import sparkles.raylib_text : TextStyle, FontSet, drawText;
@@ -41,6 +43,42 @@ import sparkles.base.smallbuffer : SmallBuffer;
 
 /// The window's default font size in pixels (Ctrl-±/theme cycling arrive in M3).
 private enum defaultFontSize = 18;
+
+/// A short tag for a raylib `TraceLogLevel`, embedded in the bridged message.
+private string raylibLevelTag(int logLevel) @safe pure nothrow @nogc
+{
+    switch (logLevel)
+    {
+        case TraceLogLevel.LOG_TRACE:   return "trace";
+        case TraceLogLevel.LOG_DEBUG:   return "debug";
+        case TraceLogLevel.LOG_INFO:    return "info";
+        case TraceLogLevel.LOG_WARNING: return "warning";
+        case TraceLogLevel.LOG_ERROR:   return "error";
+        case TraceLogLevel.LOG_FATAL:   return "fatal";
+        default:                        return "log";
+    }
+}
+
+/// Bridges raylib's `TraceLog` output into `sparkles.base.logger` (hue spec
+/// `NFR7`). raylib hands us a printf-style format + `va_list`; we render it
+/// into a stack buffer and emit through the logger at $(B trace) level, so its
+/// chatter obeys hue's log level — silent under the default warning threshold
+/// (`DEG1`) — instead of going straight to stderr. `extern(C) @nogc nothrow`
+/// to match `TraceLogCallback`; installed before `InitWindow`.
+extern (C) private void raylibTraceLog(int logLevel, const(char)* text, va_list args)
+    @nogc nothrow
+{
+    import core.stdc.stdio : vsnprintf;
+    import sparkles.base.logger : trace;
+
+    char[1024] buf = void;
+    const written = () @trusted { return vsnprintf(buf.ptr, buf.length, text, args); }();
+    if (written <= 0)
+        return;
+    const len = written < cast(int) buf.length ? cast(size_t) written : buf.length - 1;
+    const msg = () @trusted { return cast(const(char)[]) buf[0 .. len]; }();
+    trace(i"raylib[$(raylibLevelTag(logLevel))]: $(msg)");
+}
 
 /// Sane concrete fallbacks when a theme leaves the page fore-/background unset
 /// (the GPU has no "terminal default" to defer to, unlike the ANSI backend).
@@ -112,6 +150,12 @@ int runGui(
     }
     if (fontSizePx < 6)
         fontSizePx = 6;
+
+    // Route raylib's own trace log through sparkles' logger (NFR7) before it
+    // opens anything, so its init chatter obeys hue's log level instead of
+    // writing to stderr. Its default LOG_INFO threshold still gates what it
+    // hands us; everything bridged lands at trace level (silent by default).
+    SetTraceLogCallback(&raylibTraceLog);
 
     InitWindow(800, 600, ("hue — " ~ title).toStringz);
     scope (exit) CloseWindow();
