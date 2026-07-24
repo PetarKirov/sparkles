@@ -1,0 +1,81 @@
+/**
+The state level (STM) of $(MREF sparkles,ui): presentation-free interaction
+state machines fed abstract input events. U1 ships $(LREF HoverState) — a pure
+hit-test over $(LREF HoverTarget)s that factors out `runGuiTwoslash`'s ad-hoc
+`HoverHit[]` scan, so the GUI and the interactive TUI overlay compute "which node
+is hot" identically. Scroll, selection, and disclosure machines are later work.
+*/
+module sparkles.ui.state;
+
+import sparkles.ui.canvas : PointerEvent;
+import sparkles.ui.geometry : Point, Rect;
+
+@safe:
+
+/// A hit-testable region: the node's frame plus the id reported when the pointer
+/// is over it. `hitId == 0` means "not hit-testable" and is never reported hot.
+struct HoverTarget
+{
+    Rect rect;
+    size_t hitId;
+}
+
+/// Tracks which target is currently under the pointer. Backend-agnostic: the GUI
+/// feeds it `GetMousePosition`, the TUI feeds it terminal mouse reports.
+struct HoverState
+{
+@safe pure nothrow @nogc:
+
+    /// The hot target's id (0 = nothing hot).
+    size_t hot;
+
+    /**
+    Recomputes `hot` from `ev` against `targets` (topmost — latest in the slice —
+    wins on overlap). When the pointer is outside the viewport nothing is hot.
+    Returns `true` iff `hot` changed (the caller's cue to repaint).
+    */
+    bool update(in PointerEvent ev, scope const HoverTarget[] targets)
+    {
+        const size_t previous = hot;
+        size_t found;
+        if (ev.inside)
+            foreach (t; targets)
+                if (t.hitId != 0 && t.rect.contains(ev.pos))
+                    found = t.hitId; // later target wins → topmost
+        hot = found;
+        return hot != previous;
+    }
+
+    /// `true` iff `id` is the hot target (and non-zero).
+    bool isHot(size_t id) const scope
+        => id != 0 && id == hot;
+}
+
+@("ui.state.hover.topmostWinsAndChangeDetect")
+@safe
+unittest
+{
+    const targets = [
+        HoverTarget(Rect(0, 0, 10, 3), 1),
+        HoverTarget(Rect(2, 1, 4, 1), 2), // overlaps target 1, added later ⇒ topmost
+    ];
+
+    HoverState h;
+    assert(h.hot == 0);
+
+    // Over the overlap region: the later (topmost) target wins.
+    assert(h.update(PointerEvent(pos: Point(3, 1), inside: true), targets));
+    assert(h.hot == 2 && h.isHot(2) && !h.isHot(1));
+
+    // Move to a region only target 1 covers.
+    assert(h.update(PointerEvent(pos: Point(8, 0), inside: true), targets));
+    assert(h.hot == 1);
+
+    // No change ⇒ returns false.
+    assert(!h.update(PointerEvent(pos: Point(9, 2), inside: true), targets));
+    assert(h.hot == 1);
+
+    // Pointer leaves the viewport ⇒ nothing hot.
+    assert(h.update(PointerEvent(pos: Point(3, 1), inside: false), targets));
+    assert(h.hot == 0);
+}
