@@ -27,8 +27,8 @@ import sparkles.syntax.render.ansi : renderAnsi, AnsiOptions;
 import sparkles.syntax.theme : ResolvedTheme;
 import sparkles.syntax.ts.injection : TsConfigCache;
 
-import sparkles.twoslash.overlay : BelowBlock, highlightSignature, InlineDecoration,
-    planTwoslash, TwoslashPlan;
+import sparkles.twoslash.overlay : BelowBlock, errIsWarning, highlightSignature,
+    InlineDecoration, planTwoslash, TwoslashPlan;
 import sparkles.twoslash.protocol : Completion, Node, NodeType, TwoslashReturn;
 
 /// Options for $(LREF renderTwoslashAnsi).
@@ -279,9 +279,6 @@ private void writeHover(Writer)(ref Writer w, in ResolvedTheme theme, ref TsConf
         AnsiOptions(depth: styled ? ColorDepth.ansi256 : ColorDepth.none));
     put(w, '\n');
 }
-
-private bool errIsWarning(scope const(char)[] level) @safe pure nothrow @nogc
-    => level == "warning" || level == "suggestion" || level == "message";
 
 /// A caret row: `col` spaces then `width` copies of the caret glyph (default `^`).
 private void writeCaret(Writer)(ref Writer w, size_t col, size_t width,

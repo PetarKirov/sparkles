@@ -97,6 +97,13 @@ bool hasBelowBlock(NodeType kind) @safe pure nothrow @nogc
     }
 }
 
+/// `true` iff an $(D error) node's `level` is a non-fatal diagnostic
+/// (warning / suggestion / message) — rendered in the warn palette rather than
+/// the error one. Shared by every backend (ANSI meta-lines, the GUI, the
+/// $(MREF sparkles,ui) widget view) so the error↔warning split can't drift.
+bool errIsWarning(scope const(char)[] level) @safe pure nothrow @nogc
+    => level == "warning" || level == "suggestion" || level == "message";
+
 /// An in-place decoration over `code[start .. end]`, all on line `line`.
 struct InlineDecoration
 {
@@ -128,8 +135,10 @@ struct TwoslashPlan
     BelowBlock[] belowBlocks;             /// sorted by line, stable
 }
 
-/// Partitions `tw.nodes` into the inline / below-line work-lists.
-TwoslashPlan planTwoslash(in TwoslashReturn tw)
+/// Partitions `tw.nodes` into the inline / below-line work-lists. `@safe`: the
+/// plan carries only integer offsets/indices (no borrowed slices), so it never
+/// escapes `tw`.
+TwoslashPlan planTwoslash(in TwoslashReturn tw) @safe
 {
     import std.algorithm.sorting : sort;
 
