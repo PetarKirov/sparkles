@@ -155,16 +155,16 @@ model) is **not built** — the shipped modes consume a pre-parsed node model
 produced by the reference TS twoslash. The notation grammar (markers point at the
 line above, aligned by caret column) it must reproduce:
 
-| ID   | Marker                                                | Meaning                                                                                                         | Status      |
-| ---- | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ----------- |
-| NOT1 | `// ^?`                                               | Query: inferred type of the identifier above the `^`.                                                           | not started |
-| NOT2 | `// ^\|`                                              | Completions at the `^` position.                                                                                | not started |
-| NOT3 | `// ^^^`                                              | Highlight the caret-spanned range (optional annotation).                                                        | not started |
-| NOT4 | `// ---cut---` / `---cut-{before,after,start,end}---` | Drop code from the shown output (still compiled).                                                               | not started |
-| NOT5 | `// @errors: <patterns>` / `// @noErrors`             | Expected diagnostics as a contract — **matched by message/`{{_}}` glob** (D has no stable numeric error codes). | not started |
-| NOT6 | `// @filename: <name>`                                | Multi-file split (kept in output).                                                                              | not started |
-| NOT7 | `// @dflags:` / `// @import:` / `// @dub:`            | D project config for the sample's analysis (compiler flags, import path, dub dep).                              | not started |
-| NOT8 | `// @<tag>: …`                                        | Custom tags (`annotate`/`log`/`warn`/`error`).                                                                  | not started |
+| ID   | Marker                                                | Meaning                                                                                                                          | Status      |
+| ---- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| NOT1 | `// ^?`                                               | Query: inferred type of the identifier above the `^`.                                                                            | not started |
+| NOT2 | `// ^\|`                                              | Completions at the `^` position.                                                                                                 | not started |
+| NOT3 | `// ^^^`                                              | Highlight the caret-spanned range (optional annotation).                                                                         | not started |
+| NOT4 | `// ---cut---` / `---cut-{before,after,start,end}---` | Drop code from the shown output (still compiled).                                                                                | not started |
+| NOT5 | `// @errors: <patterns>` / `// @noErrors`             | Expected diagnostics as a contract — **matched by message/<code v-pre>{{_}}</code> glob** (D has no stable numeric error codes). | not started |
+| NOT6 | `// @filename: <name>`                                | Multi-file split (kept in output).                                                                                               | not started |
+| NOT7 | `// @dflags:` / `// @import:` / `// @dub:`            | D project config for the sample's analysis (compiler flags, import path, dub dep).                                               | not started |
+| NOT8 | `// @<tag>: …`                                        | Custom tags (`annotate`/`log`/`warn`/`error`).                                                                                   | not started |
 
 ## Render-side 1/2 — `sparkles:syntax` as a Shiki replacement (`RS1`, issue [#122](https://github.com/PetarKirov/sparkles/issues/122))
 
