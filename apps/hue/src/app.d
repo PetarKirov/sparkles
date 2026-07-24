@@ -304,39 +304,70 @@ int main(string[] args)
         return emitAnsiWholeFile();
     }
 
-    auto sessFactory = stdioKeySession();
-    if (sessFactory is null)
-        return emitAnsiWholeFile();
-    auto sess = sessFactory();
-    scope (exit) sess.finish();
-
     const depth = detectColorDepth();
-    auto prev = Previewer(
-        title: baseName(sourcePath),
-        source: source,
-        events: events[],
-        labels: labels,
-        names: names,
-        themes: themes,
-        background: bgMode,
-    );
 
-    auto sink = TermOut.standard();
-    sink.put(CtlSeq.enterAltScreen);
-    sink.put(CtlSeq.hideCursor);
-    sink.flush();
+    version (Posix)
+    {
+        // The full-screen scrolling viewer (tui.md T1): the terminal port of the
+        // GUI, painting the shared PreviewLine[] into alt-screen cells. A markdown
+        // file starts in the decorated preview (Tab toggles to raw source); other
+        // files show highlighted source. Scroll with arrows / PageUp-Down /
+        // Home-End (or j/k/g/G), cycle themes with ←/→, quit with q.
+        import gui_preview : PreviewModel;
+        import tui : PreviewTui, runPreviewTui;
 
-    const result = runLoop(prev, sink, sess, idx, depth);
+        PreviewModel tuiModel;
+        if (isMarkdownPreview)
+            tuiModel = buildMdPreview(registry, cache, source);
+        auto t = PreviewTui(
+            title: baseName(sourcePath),
+            source: source,
+            events: events[],
+            model: tuiModel,
+            labels: labels,
+            names: names,
+            themes: themes,
+            background: bgMode,
+            depth: depth,
+        );
+        return runPreviewTui(t, idx, isMarkdownPreview);
+    }
+    else
+    {
+        // Non-Posix: the shipped theme-selection previewer (no raw-termios TUI).
+        auto sessFactory = stdioKeySession();
+        if (sessFactory is null)
+            return emitAnsiWholeFile();
+        auto sess = sessFactory();
+        scope (exit) sess.finish();
 
-    // Restore the terminal (the alt screen's contents are discarded on exit).
-    // On selection (Enter), print the whole file highlighted with the chosen
-    // theme onto the primary screen; on quit/abort, print nothing.
-    sink.put(CtlSeq.showCursor);
-    sink.put(CtlSeq.exitAltScreen);
-    if (result.selected)
-        sink.put(prev.renderFull(result.idx, depth));
-    sink.flush();
-    return 0;
+        auto prev = Previewer(
+            title: baseName(sourcePath),
+            source: source,
+            events: events[],
+            labels: labels,
+            names: names,
+            themes: themes,
+            background: bgMode,
+        );
+
+        auto sink = TermOut.standard();
+        sink.put(CtlSeq.enterAltScreen);
+        sink.put(CtlSeq.hideCursor);
+        sink.flush();
+
+        const result = runLoop(prev, sink, sess, idx, depth);
+
+        // Restore the terminal (the alt screen's contents are discarded on exit).
+        // On selection (Enter), print the whole file highlighted with the chosen
+        // theme; on quit/abort, print nothing.
+        sink.put(CtlSeq.showCursor);
+        sink.put(CtlSeq.exitAltScreen);
+        if (result.selected)
+            sink.put(prev.renderFull(result.idx, depth));
+        sink.flush();
+        return 0;
+    }
 }
 
 /// Prose + callout + table styling for the markdown HTML preview, layered over
