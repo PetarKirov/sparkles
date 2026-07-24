@@ -1,8 +1,8 @@
 /* Twoslash overlay stylesheet — ported from @shikijs/twoslash `style-rich.css`.
-   Styles only the `.twoslash-*` chrome; syntax token colors come from the
-   sparkles:syntax theme stylesheet (`.syn-*` / `.syn-root`). Interactivity is
-   100% CSS `:hover` — no JavaScript. Pair with a `.twoslash` container wrapping
-   the rendered <pre><code>. */
+  Styles only the `.twoslash-*` chrome; syntax token colors come from the
+  sparkles:syntax theme stylesheet (`.syn-*` / `.syn-root`). Interactivity is
+  100% CSS `:hover` — no JavaScript. Pair with a `.twoslash` container wrapping
+  the rendered <pre><code>. */
 
 :root {
   --twoslash-border-color: #8888;
@@ -55,11 +55,11 @@
 }
 
 /* All popup surfaces — the hover popup container, the below-line query popup, and
-   the completion list — share ONE design language (surface + a `1ch` detach gap
-   from the token or caret they annotate), so consistency is structural, not
-   per-rule. Only the positioning model differs (see the individual rules below).
-   The query and completion are bare block elements (direct children of the code)
-   so their gap is exactly `margin-top`; the hover popup is absolutely positioned. */
+  the completion list — share ONE design language (surface + a `1ch` detach gap
+  from the token or caret they annotate), so consistency is structural, not
+  per-rule. Only the positioning model differs (see the individual rules below).
+  The query and completion are bare block elements (direct children of the code)
+  so their gap is exactly `margin-top`; the hover popup is absolutely positioned. */
 .twoslash .twoslash-popup-container,
 .twoslash .twoslash-query-line,
 .twoslash .twoslash-completion-list {
@@ -72,9 +72,9 @@
 }
 
 /* Annotation surfaces are decorations, not code: keep them out of a text
-   selection of the code (VSCode-like — the code copies cleanly). The hover
-   popup container sets this on itself below; these are the below-line blocks
-   (query/error `-meta-line`, completions, and `// @tag` lines). */
+  selection of the code (VSCode-like — the code copies cleanly). The hover
+  popup container sets this on itself below; these are the below-line blocks
+  (query/error `-meta-line`, completions, and `// @tag` lines). */
 .twoslash .twoslash-meta-line,
 .twoslash .twoslash-completion-list,
 .twoslash .twoslash-tag-line {
@@ -86,9 +86,9 @@
   position: absolute;
   z-index: 10;
   /* Hidden with `display` (not opacity) so a hidden popup takes no layout: it
-     neither widens the scroll area (stray horizontal scrollbar) nor injects
-     block-boundary newlines into a copied code selection. Revealed on hover
-     below. (Trades Shiki's opacity fade for a clean copy + no overflow.) */
+    neither widens the scroll area (stray horizontal scrollbar) nor injects
+    block-boundary newlines into a copied code selection. Revealed on hover
+    below. (Trades Shiki's opacity fade for a clean copy + no overflow.) */
   display: none;
   flex-direction: column;
   transform: translateY(1.1em); /* drop below the inline token it annotates */
@@ -118,9 +118,9 @@
 }
 
 /* Rendered markdown inside the docs (paragraphs, lists, code fences, headings):
-   tame the browser's default block margins so a paragraph or list sits tight in
-   the small popup — collapse the outer edges, keep a modest inner rhythm.
-   (Shiki leans on the host page's prose styles; the overlay is self-contained.) */
+  tame the browser's default block margins so a paragraph or list sits tight in
+  the small popup — collapse the outer edges, keep a modest inner rhythm.
+  (Shiki leans on the host page's prose styles; the overlay is self-contained.) */
 .twoslash .twoslash-popup-docs :first-child {
   margin-top: 0;
 }
@@ -135,7 +135,7 @@
   margin: 0.5em 0;
 }
 /* Inline `code` in docs / tag values: a subtle surface so it reads as code,
-   not prose. (The code-fence `pre code` below resets this back to flat.) */
+  not prose. (The code-fence `pre code` below resets this back to flat.) */
 .twoslash .twoslash-popup-docs code {
   font-family: var(--twoslash-code-font);
   padding: 0.1em 0.3em;
@@ -181,7 +181,7 @@
 }
 
 /* Connector notch — shared by every popup (the completion list overrides `left`
-   inline to point at its caret rather than the fixed token-start position). */
+  inline to point at its caret rather than the fixed token-start position). */
 .twoslash .twoslash-popup-arrow {
   position: absolute;
   top: -4px;
@@ -199,7 +199,7 @@
 .twoslash .twoslash-query-line {
   position: relative; /* containing block for the arrow */
   /* Below a hover popup's z-index (10) so an expanded hover on the line above
-     paints over this always-visible query popup, not behind it. */
+    paints over this always-visible query popup, not behind it. */
   z-index: 9;
   display: flex; /* block-level flex, content-width — same as the completion */
   flex-direction: column;
@@ -214,8 +214,8 @@
   margin: 0.2em 0;
   padding: 6px 12px;
   /* `min-width: 100%` + padding + border overflows its line unless the padding
-     is counted inside the width — Shiki leans on a host `box-sizing` reset; the
-     overlay is self-contained, so set it here (else a stray horizontal scrollbar). */
+    is counted inside the width — Shiki leans on a host `box-sizing` reset; the
+    overlay is self-contained, so set it here (else a stray horizontal scrollbar). */
   box-sizing: border-box;
   min-width: 100%;
   width: max-content;
@@ -244,10 +244,10 @@
 
 /* ===== Completions ===== */
 /* Surface + top gap come from the shared popup rule above. Only the completion's
-   own layout lives here. `margin-bottom` only (not the `margin` shorthand) so the
-   shared `margin-top: 1ch` survives; `margin-left` is set inline per node. The
-   font-size is left to inherit the code size so that inline `margin-left:Nch`
-   offset tracks the monospace column grid exactly. */
+  own layout lives here. `margin-bottom` only (not the `margin` shorthand) so the
+  shared `margin-top: 1ch` survives; `margin-left` is set inline per node. The
+  font-size is left to inherit the code size so that inline `margin-left:Nch`
+  offset tracks the monospace column grid exactly. */
 .twoslash .twoslash-completion-list {
   position: relative; /* containing block for the arrow */
   width: max-content;
