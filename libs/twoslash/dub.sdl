@@ -20,6 +20,7 @@ configuration "library" {
     dependency "sparkles:base" path="../.."
     dependency "sparkles:syntax" path="../.."
     dependency "sparkles:wired" path="../.."
+    dependency "sparkles:ui" path="../.."
 }
 
 configuration "unittest" {
@@ -29,6 +30,7 @@ configuration "unittest" {
     dependency "sparkles:base" path="../.."
     dependency "sparkles:syntax" path="../.."
     dependency "sparkles:wired" path="../.."
+    dependency "sparkles:ui" path="../.."
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"

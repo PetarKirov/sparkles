@@ -28,4 +28,5 @@ public import sparkles.twoslash.ingest;
 public import sparkles.twoslash.overlay;
 public import sparkles.twoslash.render_html;
 public import sparkles.twoslash.render_ansi;
+public import sparkles.twoslash.render_widgets;
 public import sparkles.twoslash.style;
