@@ -54,7 +54,7 @@ API, hosted in the app that already produces it.
 | WIN3 | Resizing must reflow content: any change in the available column count re-runs layout.                                                                                                                                                                                                          | full (`2febf905`) | `widthCols() != lastWidthCols` → `relayout`                         |
 | WIN4 | The window title must always show the current theme name and index (`file — theme (i/n)`).                                                                                                                                                                                                      | full (`2febf905`) | `applyTheme` → `SetWindowTitle`                                     |
 | WIN5 | The close button must exit; app keys must not be hijacked by raylib's default exit key.                                                                                                                                                                                                         | full (`e6063309`) | `SetExitKey(KEY_NULL)`; `WindowShouldClose`                         |
-| WIN6 | With neither `--gui` nor `--no-gui`, the window must open by default when a display is available; `--no-gui`/`--tui` forces the terminal previewer instead (general [`MOD6`](./feature-requirements.md#output-mode-dispatch-mod)/[`MOD7`](./feature-requirements.md#output-mode-dispatch-mod)). | not started       | general `MOD6`/`MOD7`; `app.main` display probe                     |
+| WIN6 | With neither `--gui` nor `--no-gui`, the window must open by default when a display is available; `--no-gui`/`--tui` forces the terminal previewer instead (general [`MOD6`](./feature-requirements.md#output-mode-dispatch-mod)/[`MOD7`](./feature-requirements.md#output-mode-dispatch-mod)). | full (`cdc813f6`) | general `MOD6`/`MOD7`; `displayAvailable`/`wantGui` in `app.main`   |
 
 ## Font (`FNT`)
 
@@ -233,17 +233,17 @@ The GUI backend shipped as milestones M0–M5; M6 is optional/future. (There is 
 M7+ in the hue-GUI track; the M0–M8 / D1–D3 ladder belongs to the twoslash /
 `dmd-lsp` design — see [twoslash.md](./twoslash.md).)
 
-| Milestone | Scope                                                                        | Status            | Requirements                       |
-| --------- | ---------------------------------------------------------------------------- | ----------------- | ---------------------------------- |
-| M0        | `gui` config + `--gui` gate + `version(HueGui)` seam                         | full (`e6063309`) | `WIN1/5`, general `MOD1/2`, `NFR3` |
-| M1        | The render fold (`toRgb`/`byStyledLine` seams; draw the triple on the GPU)   | full (`b55be7aa`) | `RND1/3/6/7`, `VIW1`               |
-| M2        | Viewport culling + line-number gutter + scrollbar                            | full (`a0b0f93a`) | `RND1`, `NUM1`, `SCB1`             |
-| M3        | Font sizing + window resize + live theme cycling                             | full (`2febf905`) | `FNT3`, `WIN3`, `THG1`             |
-| M4        | Incremental search + goto-line                                               | full (`1e218180`) | `FND*`, `NAV2`                     |
-| M5        | Extract `sparkles:raylib-text`; refactor terminal + hue onto it              | full (`d1dd79d5`) | `FNT*`, `RND3`, `BOX*`             |
-| M6        | _(optional)_ Semantic refine via `sparkles:dmd-lsp` `identifierTypes`        | not started       | `SEM1`                             |
-| —         | Markdown preview (render-markdown.nvim parity) — a later effort on top of M5 | full              | `WRP*`, `MDP*`, `COD*`, `SEL*`     |
-| —         | GUI-by-default: gui/tui autodetection + `no-gui` config/package              | not started       | `BLD*`, general `MOD6/7`, `WIN6`   |
+| Milestone | Scope                                                                        | Status               | Requirements                                               |
+| --------- | ---------------------------------------------------------------------------- | -------------------- | ---------------------------------------------------------- |
+| M0        | `gui` config + `--gui` gate + `version(HueGui)` seam                         | full (`e6063309`)    | `WIN1/5`, general `MOD1/2`, `NFR3`                         |
+| M1        | The render fold (`toRgb`/`byStyledLine` seams; draw the triple on the GPU)   | full (`b55be7aa`)    | `RND1/3/6/7`, `VIW1`                                       |
+| M2        | Viewport culling + line-number gutter + scrollbar                            | full (`a0b0f93a`)    | `RND1`, `NUM1`, `SCB1`                                     |
+| M3        | Font sizing + window resize + live theme cycling                             | full (`2febf905`)    | `FNT3`, `WIN3`, `THG1`                                     |
+| M4        | Incremental search + goto-line                                               | full (`1e218180`)    | `FND*`, `NAV2`                                             |
+| M5        | Extract `sparkles:raylib-text`; refactor terminal + hue onto it              | full (`d1dd79d5`)    | `FNT*`, `RND3`, `BOX*`                                     |
+| M6        | _(optional)_ Semantic refine via `sparkles:dmd-lsp` `identifierTypes`        | not started          | `SEM1`                                                     |
+| —         | Markdown preview (render-markdown.nvim parity) — a later effort on top of M5 | full                 | `WRP*`, `MDP*`, `COD*`, `SEL*`                             |
+| —         | GUI-by-default: gui/tui autodetection + `no-gui` config/package              | partial (`cdc813f6`) | `WIN6`, general `MOD6/7` done; `BLD*` (build flip) pending |
 
 ## Module coverage (GUI spec)
 
