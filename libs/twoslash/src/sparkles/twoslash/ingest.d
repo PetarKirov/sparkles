@@ -112,18 +112,18 @@ version (unittest)
         "flags": {},
         "nodes": [
             { "type": "hover", "start": 6, "length": 1, "line": 0, "character": 6,
-              "target": "a", "text": "const a: 1" },
+                "target": "a", "text": "const a: 1" },
             { "type": "query", "start": 18, "length": 1, "line": 1, "character": 6,
-              "target": "b", "text": "const b: number", "docs": "the sum" },
+                "target": "b", "text": "const b: number", "docs": "the sum" },
             { "type": "highlight", "start": 0, "length": 5, "line": 0, "character": 0 },
             { "type": "error", "start": 18, "length": 1, "line": 1, "character": 6,
-              "code": 2339, "id": "err-2339", "filename": "index.ts",
-              "text": "Property does not exist.", "level": "error" },
+                "code": 2339, "id": "err-2339", "filename": "index.ts",
+                "text": "Property does not exist.", "level": "error" },
             { "type": "completion", "start": 10, "length": 0, "line": 0, "character": 10,
-              "completionsPrefix": "a",
-              "completions": [ { "name": "at", "kind": "method", "kindModifiers": "", "sortText": "11" } ] },
+                "completionsPrefix": "a",
+                "completions": [ { "name": "at", "kind": "method", "kindModifiers": "", "sortText": "11" } ] },
             { "type": "tag", "start": 0, "length": 0, "line": 0, "character": 0,
-              "name": "log", "text": "hello" }
+                "name": "log", "text": "hello" }
         ]
     }`;
 }
@@ -192,7 +192,7 @@ unittest
         "code": "// — x\nconst y = x",
         "nodes": [
             { "type": "hover", "start": 13, "length": 1, "line": 1, "character": 6,
-              "text": "const y: string" }
+                "text": "const y: string" }
         ]
     }`;
     const tw = parseTwoslash(json).value;

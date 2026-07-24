@@ -98,7 +98,17 @@ in
           # * https://prek.j178.dev/
           package = pkgs.prek;
 
-          excludes = [ "^.*\.age$" ];
+          excludes = [
+            "^.*\.age$"
+            # The twoslash example corpus is owned by `regen.mjs`: hand-authored
+            # `.ts` sources plus generated `.json` fixtures in its canonical
+            # 1-space / insertion-order form — which is neither Prettier's nor
+            # pretty-format-json's shape. Exclude `src/` and `fixtures/` from
+            # every hook and let regen own them (the harness `.mjs` files under
+            # `examples/` stay formatted).
+            "^libs/twoslash/examples/src/"
+            "^libs/twoslash/examples/fixtures/"
+          ];
 
           hooks = {
             editorconfig-checker.enable = true;

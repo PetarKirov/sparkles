@@ -14,14 +14,14 @@ backend that will one day replace TypeScript `twoslash` as the data source is
 
 ## Modules
 
-| Module        | Role |
-| ------------- | ---- |
-| `protocol`    | the flat node model (`Node` + `NodeType` + `Completion` + `TwoslashReturn`) |
-| `ingest`      | decode a `TwoslashReturn` from JSON via `sparkles:wired` (`parseTwoslash`, `loadTwoslashFile`) |
+| Module        | Role                                                                                                  |
+| ------------- | ----------------------------------------------------------------------------------------------------- |
+| `protocol`    | the flat node model (`Node` + `NodeType` + `Completion` + `TwoslashReturn`)                           |
+| `ingest`      | decode a `TwoslashReturn` from JSON via `sparkles:wired` (`parseTwoslash`, `loadTwoslashFile`)        |
 | `overlay`     | the backend-agnostic planner (`planTwoslash`) + reentrant popup re-highlighter (`highlightSignature`) |
-| `render_html` | the HTML overlay matching the `.twoslash-*` class contract |
-| `render_ansi` | the terminal overlay (meta-lines below the code) |
-| `style`       | the ported `style-rich.css` (`writeTwoslashStyles`) |
+| `render_html` | the HTML overlay matching the `.twoslash-*` class contract                                            |
+| `render_ansi` | the terminal overlay (meta-lines below the code)                                                      |
+| `style`       | the ported `style-rich.css` (`writeTwoslashStyles`)                                                   |
 
 The raylib GUI backend lives in `apps/hue` (`hue --gui --twoslash`), consuming the
 same `overlay` plan.

@@ -94,8 +94,8 @@
                 # `.d`/`.c`/`.i` sources (`.c`/`.i` for ImportC shims) plus
                 # `.css`/`.svg` string-import view assets (e.g. sparkles:twoslash's
                 # `views/twoslash.css` and `views/icons/**/*.svg`, pulled in via `import()`).
-                file: file.hasExt "d" || file.hasExt "c" || file.hasExt "i"
-                  || file.hasExt "css" || file.hasExt "svg"
+                file:
+                file.hasExt "d" || file.hasExt "c" || file.hasExt "i" || file.hasExt "css" || file.hasExt "svg"
               ) (fromRoot path)
             ) sourceDirs
           );
