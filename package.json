@@ -4,8 +4,9 @@
   "type": "module",
   "scripts": {
     "build:wasm": "bash docs/scripts/build-wasm.sh",
-    "docs:dev": "npm run build:wasm && vitepress dev docs --host",
-    "docs:build": "npm run build:wasm && vitepress build docs",
+    "build:twoslash-showcase": "bash docs/scripts/build-twoslash-showcase.sh",
+    "docs:dev": "npm run build:wasm && npm run build:twoslash-showcase && vitepress dev docs --host",
+    "docs:build": "npm run build:wasm && npm run build:twoslash-showcase && vitepress build docs",
     "docs:preview": "vitepress preview docs"
   },
   "devDependencies": {

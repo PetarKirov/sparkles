@@ -54,6 +54,10 @@ docs/.vitepress/cache/
 # rebuilt by docs:dev / docs:build via docs/scripts/build-wasm.sh
 docs/public/spk-table.wasm
 
+# Twoslash showcase: rendered `hue --twoslash --html` gallery, rebuilt by
+# docs:dev / docs:build via docs/scripts/build-twoslash-showcase.sh
+docs/public/apps/hue/twoslash/
+
 # Research sample-workspace build artifacts / dependency stores
 # (docs/research/monorepo-tooling/<tool>/sample/ holds source-only example
 # workspaces; these are what each tool generates if someone actually runs it)

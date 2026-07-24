@@ -24,15 +24,22 @@ import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, '..', '..', '..');
-const hue = join(repoRoot, 'apps', 'hue', 'build', 'hue');
+// Overridable so the docs build can point at the nix-built hue and emit into
+// `docs/public/` (see docs/scripts/build-twoslash-showcase.sh); defaults render
+// the local `dub build :hue` binary into the git-ignored `html/` gallery.
+const hue =
+  process.env.HUE_BIN || join(repoRoot, 'apps', 'hue', 'build', 'hue');
 const fixturesDir = join(here, 'fixtures');
-const outDir = join(here, 'html'); // git-ignored, sibling of fixtures/
+const outDir = process.env.OUT_DIR
+  ? join(repoRoot, process.env.OUT_DIR)
+  : join(here, 'html');
 
 try {
   execFileSync(hue, ['--help'], { stdio: 'ignore' });
 } catch {
   console.error(
-    `✗ hue binary not found or not runnable at ${hue}\n  build it first: dub build :hue`,
+    `✗ hue binary not found or not runnable at ${hue}\n` +
+      `  build it first (dub build :hue) or set HUE_BIN to a hue binary.`,
   );
   process.exit(2);
 }

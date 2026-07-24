@@ -25,6 +25,9 @@ export default withMermaid(
       /\/libs\/wired\/bench\//,
       /\/specs\/event-horizon\//,
       /\/research\/application-packaging\/grounding\//,
+      // The twoslash showcase is a static gallery generated into docs/public/ at
+      // build time (docs/scripts/build-twoslash-showcase.sh), not a markdown page.
+      /\/apps\/hue\/twoslash\//,
     ],
 
     // The parsing and units-of-measure grounding ledgers are internal QA
@@ -192,6 +195,10 @@ export default withMermaid(
                   ],
                 },
               ],
+            },
+            {
+              text: 'hue',
+              link: '/apps/hue/',
             },
           ],
         },

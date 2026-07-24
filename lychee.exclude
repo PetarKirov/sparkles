@@ -87,3 +87,9 @@ specs/event-horizon/
 # link and the remapped API contents URL lychee uses for github.com/PetarKirov/sparkles.
 ^https://github\.com/PetarKirov/sparkles/blob/main/libs/syntax/examples/highlight-file\.d$
 /libs/syntax/examples/highlight-file\.d\?ref=main$
+
+# The twoslash showcase gallery is generated into docs/public/apps/hue/twoslash/
+# at docs-build time (docs/scripts/build-twoslash-showcase.sh) and served at
+# /apps/hue/twoslash/ on the deployed site — it is not a repo file, so lychee's
+# local-file check can't resolve it.
+apps/hue/twoslash

@@ -5,12 +5,20 @@ on:
     branches: [main]
     paths:
       - 'docs/**'
+      # The twoslash showcase gallery is rendered from these at docs-build time
+      # (docs/scripts/build-twoslash-showcase.sh), so a fixture/renderer change
+      # must redeploy the docs too.
+      - 'libs/twoslash/**'
       - 'package.json'
       - 'package-lock.json'
   pull_request:
     branches: [main]
     paths:
       - 'docs/**'
+      # The twoslash showcase gallery is rendered from these at docs-build time
+      # (docs/scripts/build-twoslash-showcase.sh), so a fixture/renderer change
+      # must redeploy the docs too.
+      - 'libs/twoslash/**'
       - 'package.json'
       - 'package-lock.json'
   workflow_dispatch:
