@@ -21,6 +21,36 @@ import sparkles.syntax : AnsiOptions, ColorDepth, HighlightEvent, LabelSet,
 import sparkles.core_cli.key_input : Key, KeySession;
 import sparkles.core_cli.term_caps : StdStream, terminalSize;
 
+/// How the theme background is applied in terminal rendering (`--background`,
+/// hue spec `BGM`) — shared by the whole-file ANSI emit and this previewer.
+enum BackgroundMode
+{
+    /// `no-background`: foreground only; the terminal's own background shows
+    /// through (`BGM1`). The previewer skips the theme backdrop too.
+    noBackground,
+    /// `spans`: emit a background only where a theme rule sets one, stopping at
+    /// each line's last glyph (`BGM2`).
+    spans,
+    /// `full`: fill every line edge-to-edge with the theme's page background
+    /// (`BGM3`, the default), matching the previewer's back-color-erase look.
+    full,
+}
+
+/// The `AnsiOptions` background flags for whole-file rendering under `mode`
+/// (`emitAnsiWholeFile` and `renderFull`). The previewer's per-frame viewport
+/// derives its own `emitBackground` inline — its backdrop erase already fills
+/// each line, so it never needs `fillLine`.
+AnsiOptions backgroundOptions(BackgroundMode mode, ColorDepth depth, bool italics)
+    @safe pure nothrow @nogc
+{
+    return AnsiOptions(
+        depth: depth,
+        italics: italics,
+        emitBackground: mode != BackgroundMode.noBackground,
+        fillLine: mode == BackgroundMode.full,
+    );
+}
+
 /// The first `n` lines of `s` (including the newline that ends line `n`), or all
 /// of `s` when it has fewer. The previewer only shows the top of the file, so
 /// slicing here keeps the highlight fold O(visible lines), not O(file).
@@ -86,6 +116,7 @@ struct Previewer
     LabelSet labels;              /// the vocabulary `styleBuf` is sized against
     const(string)[] names;        /// sorted theme names (parallel to `themes`)
     immutable(Theme)[] themes;    /// theme data (parallel to `names`)
+    BackgroundMode background;    /// how the theme backdrop is applied (`BGM`)
 
     // Reused per-frame scratch — no per-frame heap (spills to malloc, never GC,
     // only on very large terminals).
@@ -113,7 +144,7 @@ struct Previewer
         const theme = themeView(idx);
         frame.clear();
         renderAnsi(source, events, theme, frame,
-            AnsiOptions(depth: depth, italics: true, emitBackground: true));
+            background.backgroundOptions(depth, italics: true));
         return frame[];
     }
 
@@ -147,7 +178,12 @@ struct Previewer
         import std.algorithm.comparison : min;
 
         const theme = themeView(idx);
-        const chrome = StyleSpec(fg: resolvedDefaults.fg, bg: resolvedDefaults.bg);
+        // In `no-background` mode the chrome carries no bg, so the erase below
+        // clears to the terminal's own background instead of a theme backdrop.
+        const useBg = background != BackgroundMode.noBackground;
+        const chrome = useBg
+            ? StyleSpec(fg: resolvedDefaults.fg, bg: resolvedDefaults.bg)
+            : StyleSpec(fg: resolvedDefaults.fg);
 
         enum win = 7;
         const reserved = 4u + win; // header + hint + 2 separators + theme list
@@ -172,8 +208,10 @@ struct Previewer
         // Code lines carry their own per-span styling — start from a clean slate.
         writeStyleTransition(frame, chrome, StyleSpec.init, depth);
         codeStart = frame[].length;
+        // The viewport backdrop is already erased edge-to-edge above, so the
+        // code render only needs per-run backgrounds (never `fillLine`).
         renderAnsi(shown, events, theme, frame,
-            AnsiOptions(depth: depth, italics: true, emitBackground: true));
+            AnsiOptions(depth: depth, italics: true, emitBackground: useBg));
         codeEnd = frame[].length;
         writeStyleTransition(frame, StyleSpec.init, chrome, depth);
 
