@@ -23,6 +23,7 @@ module sparkles.syntax.render.ansi;
 import std.range.primitives : put;
 
 import sparkles.base.text.ansi : writeSgrReset;
+import sparkles.base.term_control : CtlSeq;
 import sparkles.base.term_style : writeStyleTransition;
 
 import sparkles.syntax.color : Color, ColorDepth;
@@ -44,6 +45,15 @@ struct AnsiOptions
     /// Emit italics. Off by default (bat's defensive gate — some terminals
     /// render italics poorly); italic font flags are dropped when off.
     bool italics = false;
+
+    /// Fill every line to the terminal's right edge with the theme's page
+    /// background (`ResolvedTheme.defaults.bg`), by emitting `EL`
+    /// (erase-to-end-of-line) before each newline so back-color-erase paints
+    /// the remainder of the line edge-to-edge. Off by default. Requires
+    /// `emitBackground`; gives whole-file output the same uninterrupted
+    /// backdrop as an alt-screen previewer, instead of the background stopping
+    /// at each line's last glyph.
+    bool fillLine = false;
 }
 
 /**
@@ -88,6 +98,18 @@ if (isHighlightEventRange!Events)
         }
     }
 
+    // Full-line fill (BGM `full`): before terminating a line, open just the
+    // page background and erase to the right edge, so back-color-erase paints
+    // the rest of the line — including empty lines and the region past the
+    // last glyph — with the theme backdrop.
+    void fillToEol()
+    {
+        transitionTo(StyleSpec(bg: theme.defaults.bg));
+        put(w, cast(string) CtlSeq.eraseToEnd);
+    }
+
+    bool pendingLine = false; // content on the current line, not yet terminated
+
     foreach (span; byStyledSpan(events))
     {
         auto spec = theme[span.label];
@@ -114,6 +136,7 @@ if (isHighlightEventRange!Events)
             {
                 transitionTo(spec);
                 put(w, text);
+                pendingLine = true;
                 break;
             }
 
@@ -123,13 +146,19 @@ if (isHighlightEventRange!Events)
                 transitionTo(spec);
                 put(w, text[0 .. nl]);
             }
+            if (options.fillLine)
+                fillToEol();
             // reset before the newline; re-open lazily at the next text
             transitionTo(StyleSpec.init);
             put(w, '\n');
+            pendingLine = false;
             text = text[nl + 1 .. $];
         }
     }
 
+    // The last line has no trailing newline of its own to hang the fill on.
+    if (pendingLine && options.fillLine)
+        fillToEol();
     transitionTo(StyleSpec.init);
     return w;
 }
@@ -246,6 +275,29 @@ unittest
     checkWriter!((ref w) => renderAnsi(source, events[], resolved, w,
         AnsiOptions(depth: ColorDepth.ansi256)))(
         "\x1b[1;" ~ kwFg256 ~ "mif\x1b[0m x");
+}
+
+@("render.ansi.fillLineErasesToEol")
+@safe pure nothrow
+unittest
+{
+    const resolved = testTheme();
+    alias E = HighlightEvent;
+    // Two lines, unlabeled: every glyph and the region past it should carry the
+    // page background. `fillLine` emits `EL` (erase-to-end-of-line) under the
+    // page bg before each newline and on the trailing content line.
+    const source = "a\nb";
+    const events = [E.sourceSpan(0, source.length)];
+
+    checkWriter!((ref w) => renderAnsi(source, events[], resolved, w,
+        AnsiOptions(depth: ColorDepth.ansi256, emitBackground: true, fillLine: true)))(
+        "\x1b[" ~ pageBg256 ~ "ma\x1b[0K\x1b[0m\n" ~
+        "\x1b[" ~ pageBg256 ~ "mb\x1b[0K\x1b[0m");
+
+    // Without fillLine the background stops at the last glyph — no `EL`.
+    checkWriter!((ref w) => renderAnsi(source, events[], resolved, w,
+        AnsiOptions(depth: ColorDepth.ansi256, emitBackground: true)))(
+        "\x1b[" ~ pageBg256 ~ "ma\x1b[0m\n\x1b[" ~ pageBg256 ~ "mb\x1b[0m");
 }
 
 @("render.ansi.italicsGateAndBackground")
