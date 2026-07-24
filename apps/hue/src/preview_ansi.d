@@ -59,7 +59,8 @@ terminal's `depth`. `bars` are the per-depth quote-bar colors
 */
 void renderPreviewAnsi(Writer)(ref Writer w, in PreviewLine[] lines,
     RgbColor pageFg, RgbColor pageBg, in RgbColor[quoteBarCycle] bars,
-    ColorDepth depth, BackgroundMode bg)
+    ColorDepth depth, BackgroundMode bg,
+    RgbColor selBg = RgbColor.init, long absStart = 0, long selLo = -1, long selHi = -1)
 {
     import std.range.primitives : put;
 
@@ -83,8 +84,13 @@ void renderPreviewAnsi(Writer)(ref Writer w, in PreviewLine[] lines,
         put(w, text);
     }
 
-    foreach (ref pl; lines)
+    foreach (idx, ref pl; lines)
     {
+        // A selected line (its absolute index within [selLo, selHi]) paints every
+        // cell — content and fill — with the uniform selection background.
+        const sel = selLo >= 0 && absStart + cast(long) idx >= selLo
+            && absStart + cast(long) idx <= selHi;
+
         // The fill color for indent / leader / trailing cells (a band's own runs
         // carry their bg). Heading bands tint full width; `full` fills with the
         // page bg; `spans` / `no-background` leave the terminal's bg showing.
@@ -103,6 +109,11 @@ void renderPreviewAnsi(Writer)(ref Writer w, in PreviewLine[] lines,
                 hasFill = true;
                 fillBg = pl.band == BandKind.heading ? pl.bandBg : pageBg;
                 break;
+        }
+        if (sel)
+        {
+            hasFill = true;
+            fillBg = selBg;
         }
 
         if (pl.indentCols > 0)
@@ -125,7 +136,8 @@ void renderPreviewAnsi(Writer)(ref Writer w, in PreviewLine[] lines,
         {
             bool rHasBg;
             RgbColor rBg;
-            if (bg != BackgroundMode.noBackground)
+            if (sel) { rHasBg = true; rBg = selBg; }
+            else if (bg != BackgroundMode.noBackground)
             {
                 if (r.hasBg) { rHasBg = true; rBg = r.bg; }
                 else if (hasFill) { rHasBg = true; rBg = fillBg; }
