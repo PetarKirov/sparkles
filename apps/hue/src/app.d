@@ -1,11 +1,13 @@
 /**
 `hue` — an interactive syntax-highlighting file viewer and live theme previewer.
 
-Highlights a source file in the terminal (ANSI) or as HTML. In a tty it opens a
-live previewer: browse the built-in themes with ↑/↓, and press Enter to print
-the whole file in the chosen theme.
+Highlights a source file in the terminal (ANSI) or as HTML. On a GUI-enabled
+build hue opens the raylib window automatically when a display is available
+(force with `--gui`, suppress with `--no-gui`/`--tui`); otherwise, in a tty it
+opens the live terminal previewer: browse the built-in themes with ↑/↓, and
+press Enter to print the whole file in the chosen theme.
 
-    hue [--html] [--theme <name>] [path]
+    hue [--html] [--gui|--no-gui] [--theme <name>] [path]
 
 With no path, `hue` highlights its own source.
 
@@ -41,8 +43,14 @@ struct CliParams
     @CliOption("theme", "Syntax highlighting theme name.")
     string theme = "catppuccin-mocha";
 
-    @CliOption("gui", "Open a raylib GPU window instead of terminal/HTML output (requires the 'gui' build configuration).")
+    @CliOption("gui", "Force the raylib GPU window (requires the 'gui' build configuration). With neither --gui nor --no-gui, hue opens the window automatically when a display is available and falls back to the terminal otherwise.")
     bool gui;
+
+    @CliOption("no-gui", "Force terminal output (previewer / ANSI / HTML) even when a display is available.")
+    bool noGui;
+
+    @CliOption("tui", "Alias for --no-gui.")
+    bool tui;
 
     @CliOption("font", "--gui font: a path, a family name, or a fontconfig preference list (comma-separated; the first installed family wins).")
     string font = defaultGuiFont;
@@ -73,6 +81,25 @@ enum defaultGuiFont =
     "FiraCode Nerd Font Mono,JetBrainsMono Nerd Font Mono,JetBrains Mono," ~
     "CaskaydiaCove Nerd Font Mono,Cascadia Code,Hack Nerd Font Mono,Hack," ~
     "Iosevka Term,Iosevka,Source Code Pro,DejaVu Sans Mono,monospace";
+
+/// Heuristic for whether a graphical display is available, used to pick the GUI
+/// vs the terminal by default (no `--gui`/`--no-gui`). On Linux/BSD a display is
+/// present when `$DISPLAY` (X11) or `$WAYLAND_DISPLAY` is set; on macOS/Windows a
+/// local session is assumed to have one unless we are in an SSH login
+/// (`$SSH_CONNECTION`). A false negative just falls back to the terminal, and
+/// `--gui` overrides it, so the heuristic only has to be right most of the time.
+private bool displayAvailable()
+{
+    import std.process : environment;
+
+    version (OSX)
+        return environment.get("SSH_CONNECTION", "").length == 0;
+    else version (Windows)
+        return environment.get("SSH_CONNECTION", "").length == 0;
+    else
+        return environment.get("DISPLAY", "").length != 0
+            || environment.get("WAYLAND_DISPLAY", "").length != 0;
+}
 
 int main(string[] args)
 {
@@ -146,9 +173,26 @@ int main(string[] args)
 
     // Third sink: the raylib GPU window. A third consumer of the same
     // (source, events, theme) triple — folds styled runs into draw calls
-    // instead of ANSI/HTML. Gated behind the `gui` build configuration so the
-    // default terminal build stays raylib-free.
+    // instead of ANSI/HTML. Compiled only into the `gui` build; the default
+    // terminal build has no window.
+    //
+    // Mode selection: explicit flags win — `--gui` forces the window (even with
+    // no display; raylib surfaces any failure), `--no-gui`/`--tui`/`--html`
+    // force the terminal. With no mode flag, autodetect on a GUI-enabled build:
+    // open the window when a display is available and stdout is a tty, otherwise
+    // fall through to the terminal dispatch below.
+    bool guiCompiledIn = false;
+    version (HueGui) guiCompiledIn = true;
+
+    bool wantGui;
     if (cli.gui)
+        wantGui = true;
+    else if (cli.noGui || cli.tui || html)
+        wantGui = false;
+    else
+        wantGui = guiCompiledIn && isTerminal(StdStream.stdout) && displayAvailable();
+
+    if (wantGui)
     {
         version (HueGui)
         {
@@ -166,6 +210,8 @@ int main(string[] args)
         }
         else
         {
+            // Reached only via explicit `--gui` on a build without GUI support
+            // (autodetect never sets wantGui here — guiCompiledIn is false).
             stderr.writeln("hue: this build has no GUI support; " ~
                 "rebuild the gui configuration: dub build :hue -c gui");
             return 1;
