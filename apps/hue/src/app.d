@@ -190,9 +190,28 @@ int main(string[] args)
     // paths (piped/redirected output, and no key session available).
     int emitAnsiWholeFile()
     {
+        import gui_preview : layoutPreview, quoteBarColors;
+        import preview_ansi : renderPreviewAnsi;
+
         SmallBuffer!char output;
-        renderAnsi(source, events[], theme, output,
-            bgMode.backgroundOptions(detectColorDepth(), italics: true));
+        const depth = detectColorDepth();
+        if (isMarkdownPreview)
+        {
+            // A markdown file renders the decorated preview (ANS3): the shared
+            // layoutPreview painted to SGR cells by preview_ansi, so the terminal
+            // matches the GUI. `--raw` takes the source path below.
+            const pageFg = toRgb(theme.defaults.fg, hardFallbackFg);
+            const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
+            auto model = buildMdPreview(registry, cache, source);
+            auto plines = layoutPreview(model, theme, pageFg, pageBg, previewWidth());
+            renderPreviewAnsi(output, plines, pageFg, pageBg,
+                quoteBarColors(theme, pageFg, pageBg), depth, bgMode);
+        }
+        else
+        {
+            renderAnsi(source, events[], theme, output,
+                bgMode.backgroundOptions(depth, italics: true));
+        }
         write(output[]);
         return 0;
     }
@@ -236,13 +255,13 @@ int main(string[] args)
         version (HueGui)
         {
             import gui : runGui;
-            import gui_preview : buildPreviewModel, PreviewModel;
+            import gui_preview : PreviewModel;
 
             // Markdown files open in a rendered preview (Tab toggles to raw);
             // other files pass an empty model and use the raw view only.
             PreviewModel preview;
             if (isMarkdownPreview)
-                preview = buildPreviewModel(registry, cache, source);
+                preview = buildMdPreview(registry, cache, source);
             return runGui(baseName(sourcePath), source, events[], labels, names,
                 themes, idx, preview, cli.font, cli.fontSize,
                 cli.windowWidth, cli.windowHeight, cli.lineNumbers, cli.codeLineNumbers);
@@ -383,6 +402,41 @@ int emitMarkdownHtml(scope const(char)[] source, in ResolvedTheme theme,
     write(output[]);
     return 0;
 }
+
+/// Build the markdown preview model, supplying the off-screen-VT ansi-fence
+/// decoder only on a GUI-enabled build (`gui_ansi.decodeAnsi` pulls
+/// sparkles:ghostty). Without it — the terminal / HTML paths and the `no-gui`
+/// build — ` ```ansi ` fences degrade to stripped plain text (see gui_preview).
+private auto buildMdPreview(ref GrammarRegistry registry, ref TsConfigCache cache,
+    scope const(char)[] source) @system
+{
+    import gui_preview : buildPreviewModel;
+
+    version (HueGui)
+    {
+        import gui_ansi : decodeAnsi;
+        return buildPreviewModel(registry, cache, source, &decodeAnsi);
+    }
+    else
+        return buildPreviewModel(registry, cache, source);
+}
+
+/// The column width the terminal markdown preview wraps to: the terminal width
+/// (capped for prose readability), or 80 when it can't be detected (piped).
+private int previewWidth() @system
+{
+    import sparkles.core_cli.term_caps : terminalSize, StdStream;
+
+    const w = terminalSize(StdStream.stdout).width;
+    if (w <= 0)
+        return 80;
+    return w > 120 ? 120 : cast(int) w;
+}
+
+/// Fallback page colors when a theme leaves the default fg/bg unset (mirrors the
+/// GUI's `hardFallback*`), so the preview always has a sane backdrop.
+private enum RgbColor hardFallbackFg = RgbColor(0xcc, 0xcc, 0xcc);
+private enum RgbColor hardFallbackBg = RgbColor(0x1e, 0x1e, 0x1e);
 
 /**
 The `--twoslash <nodes.json>` path: load a TypeScript twoslash payload, highlight

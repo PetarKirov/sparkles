@@ -17,36 +17,12 @@ module gui_ansi;
 import sparkles.ghostty;
 import sparkles.base.term_color : RgbColor;
 
-/// Neutral text-attribute bits shared by the preview presentation model
-/// (`gui_preview.PreviewRun`) and this decoder; gui.d maps them onto
-/// `sparkles.raylib_text.TextStyle`.
-enum Attr : ubyte
-{
-    bold          = 1 << 0,
-    italic        = 1 << 1,
-    underline     = 1 << 2,
-    strikethrough = 1 << 3,
-}
-
-/// A maximal run of same-styled cells on one line. `fgDefault`/`bgDefault` mark
-/// a cell that used the terminal *default* color (SGR 39/49 or never set): the
-/// layout substitutes the theme's page fg/bg so ` ```ansi ` blocks stay
-/// theme-consistent. `text` is owned (GC) UTF-8.
-struct AnsiSpan
-{
-    string text;
-    RgbColor fg;
-    RgbColor bg;
-    bool fgDefault;
-    bool bgDefault;
-    ubyte attrs;
-}
-
-/// One decoded line: its styled spans, left to right.
-struct AnsiLine
-{
-    AnsiSpan[] spans;
-}
+// The neutral presentation types (Attr / AnsiSpan / AnsiLine) live in the
+// ghostty-free `ansi_model` module so the preview model (`gui_preview`) and the
+// terminal painter (`preview_ansi`) can use them without pulling libghostty-vt;
+// this module keeps only `decodeAnsi` (the off-screen VT). Re-exported so
+// existing `import gui_ansi : Attr, …` sites keep working.
+public import ansi_model : Attr, AnsiSpan, AnsiLine;
 
 /**
 Decode `block` (bytes containing SGR escapes) into styled lines by parsing it

@@ -34,12 +34,17 @@ configuration "application" {
 }
 
 // Raylib-/ghostty-free terminal-only build (BLD2) — the minimal-closure variant
-// for headless installs. Excludes the GUI + preview modules; `--gui` errors
-// cleanly. Build with `dub build :hue -c no-gui`.
+// for headless installs. It still ships the markdown preview: the preview model
+// (gui_preview.d), its metrics (gui_text.d), the neutral types (ansi_model.d),
+// and the terminal SGR painter (preview_ansi.d) are all raylib- and ghostty-free.
+// Only the raylib window (gui.d) and the off-screen-VT ansi-fence decoder
+// (gui_ansi.d, which pulls sparkles:ghostty) are excluded — `--gui` errors
+// cleanly, and ` ```ansi ` fences degrade to stripped plain text (no VT). Build
+// with `dub build :hue -c no-gui`.
 configuration "no-gui" {
     targetType "executable"
 
-    excludedSourceFiles "src/gui.d" "src/gui_text.d" "src/gui_ansi.d" "src/gui_preview.d"
+    excludedSourceFiles "src/gui.d" "src/gui_ansi.d"
 }
 
 configuration "unittest" {

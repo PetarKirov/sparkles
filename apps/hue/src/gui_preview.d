@@ -18,7 +18,7 @@
 // RgbColor + Attr bits onto raylib-text's TextStyle + raylib Color.
 module gui_preview;
 
-import gui_ansi : AnsiLine, AnsiSpan, Attr, decodeAnsi;
+import ansi_model : AnsiLine, AnsiSpan, Attr;
 import gui_text : columnWidth, lineCount;
 
 import sparkles.syntax : MdDoc, MdBlock, MdBlockKind, MdInline, MdInlineKind, ColAlign, Span,
@@ -115,19 +115,27 @@ Parse `source` as markdown and resolve every fenced code block's contents.
 Grammars come from `registry`; per-fence highlighting reuses `cache` (the same
 `TsConfigCache` the whole-file path uses). `@system`, GC-allocating — call once
 at file load.
+
+`decodeAnsiFn`, when passed, decodes a ` ```ansi ` fence into styled
+`AnsiLine[]` (the GUI supplies `gui_ansi.decodeAnsi`, an off-screen libghostty-vt
+bridge). When omitted (the terminal / HTML paths and the ghostty-free `no-gui`
+build), an ansi fence keeps its raw body and `layoutPreview` strips the SGR to
+plain text — so this module never depends on `sparkles:ghostty`. The parameter is
+a `static if`-guarded template argument, so the no-decoder instantiation compiles
+without any reference to a decoder.
 */
-PreviewModel buildPreviewModel(ref GrammarRegistry registry, ref TsConfigCache cache,
-    scope const(char)[] source) @system
+PreviewModel buildPreviewModel(Decode = typeof(null))(ref GrammarRegistry registry,
+    ref TsConfigCache cache, scope const(char)[] source, Decode decodeAnsiFn = null) @system
 {
     PreviewModel m;
     m.doc = extractMarkdown(registry, source);
     m.present = true;
-    collectFences(m.doc.root, source, cache, m.fences);
+    collectFences(m.doc.root, source, cache, m.fences, decodeAnsiFn);
     return m;
 }
 
-private void collectFences(in MdBlock b, scope const(char)[] source,
-    ref TsConfigCache cache, ref CodeFence[] fences) @system
+private void collectFences(Decode)(in MdBlock b, scope const(char)[] source,
+    ref TsConfigCache cache, ref CodeFence[] fences, Decode decodeAnsiFn) @system
 {
     if (b.kind == MdBlockKind.codeFence)
     {
@@ -139,7 +147,9 @@ private void collectFences(in MdBlock b, scope const(char)[] source,
         if (f.lang == "ansi")
         {
             f.isAnsi = true;
-            f.ansi = decodeAnsi(f.body);
+            static if (!is(Decode == typeof(null)))
+                f.ansi = decodeAnsiFn(f.body); // GUI: off-screen VT decode
+            // else: no decoder — layoutPreview strips the SGR to plain text.
         }
         else
         {
@@ -151,7 +161,7 @@ private void collectFences(in MdBlock b, scope const(char)[] source,
         fences ~= f;
     }
     foreach (ref c; b.children)
-        collectFences(c, source, cache, fences);
+        collectFences(c, source, cache, fences, decodeAnsiFn);
 }
 
 // ── Stage 2: layout (pure) ───────────────────────────────────────────────────
@@ -515,7 +525,8 @@ private struct Layouter
         const boxW = avail < 4 ? 4 : avail; // total box width in columns
         const inner = boxW - 2;             // columns between the two `│`
         const baseLine = srcLineOf(f.bodyStart);
-        const nLines = f.isAnsi ? f.ansi.length : lineCount(f.body);
+        const decoded = f.isAnsi && f.ansi.length;
+        const nLines = decoded ? f.ansi.length : lineCount(f.body);
         const gw = codeLineNumbers ? numDigits(nLines) + 1 : 0; // in-panel number + sep
         const codeW = inner - gw < 1 ? 1 : inner - gw;
 
@@ -570,7 +581,7 @@ private struct Layouter
             }
         }
 
-        if (f.isAnsi)
+        if (decoded)
         {
             foreach (i, ref al; f.ansi)
             {
@@ -580,6 +591,23 @@ private struct Layouter
                         sp.bg, !sp.bgDefault, sp.attrs);
                 pushCode(i, runs);
             }
+        }
+        else if (f.isAnsi)
+        {
+            // No off-screen VT decoder (terminal / HTML paths, `no-gui` build):
+            // strip the SGR escapes and render the fence as plain code lines.
+            const plain = stripSgr(f.body);
+            size_t bodyRow, lineStart;
+            foreach (i, char c; plain)
+                if (c == '\n')
+                {
+                    pushCode(bodyRow++, [PreviewRun(plain[lineStart .. i], codeFg,
+                        RgbColor.init, false, 0)]);
+                    lineStart = i + 1;
+                }
+            if (lineStart < plain.length)
+                pushCode(bodyRow, [PreviewRun(plain[lineStart .. $], codeFg,
+                    RgbColor.init, false, 0)]);
         }
         else
         {
@@ -1092,6 +1120,47 @@ private string upperAscii(const(char)[] s) @safe pure
     return (() @trusted => cast(string) r)();
 }
 
+// Strip ANSI escape sequences (CSI `ESC[…<final>`, OSC `ESC]…(BEL|ST)`, and other
+// two-byte `ESC<x>`) from `s`, keeping printable text and newlines. Used to
+// degrade a ` ```ansi ` fence to plain text when no off-screen VT is available to
+// decode it (terminal / HTML paths, `no-gui` build).
+private string stripSgr(scope const(char)[] s) @safe pure nothrow
+{
+    auto r = new char[s.length];
+    size_t n, i;
+    while (i < s.length)
+    {
+        if (s[i] == '\x1b' && i + 1 < s.length)
+        {
+            const c = s[i + 1];
+            if (c == '[') // CSI: params until a final byte in @…~
+            {
+                i += 2;
+                while (i < s.length && !(s[i] >= '@' && s[i] <= '~'))
+                    ++i;
+                if (i < s.length)
+                    ++i;
+                continue;
+            }
+            if (c == ']') // OSC: until BEL or ST (ESC \)
+            {
+                i += 2;
+                while (i < s.length && s[i] != '\x07' && s[i] != '\x1b')
+                    ++i;
+                if (i < s.length && s[i] == '\x07')
+                    ++i;
+                else if (i + 1 < s.length && s[i] == '\x1b')
+                    i += 2;
+                continue;
+            }
+            i += 2; // other two-byte escape
+            continue;
+        }
+        r[n++] = s[i++];
+    }
+    return (() @trusted => cast(string) r[0 .. n])();
+}
+
 private bool containsText(const(char)[] hay, const(char)[] needle) @safe pure nothrow @nogc
 {
     if (needle.length == 0 || needle.length > hay.length)
@@ -1310,6 +1379,8 @@ unittest
     import sparkles.syntax : GrammarRegistry, TsConfigCache, LabelSet;
     import std.algorithm.searching : any, canFind;
 
+    import gui_ansi : decodeAnsi;
+
     if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
         skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
 
@@ -1319,7 +1390,8 @@ unittest
         ~ "| a | b |\n|---|---|\n| 1 | 2 |\n\n---\n\n"
         ~ "```d\nvoid main() {}\n```\n\n```ansi\n\x1b[31mred\x1b[0m\n```\n";
 
-    auto m = buildPreviewModel(reg, cache, src);
+    // The GUI supplies the off-screen-VT decoder for ` ```ansi ` fences.
+    auto m = buildPreviewModel(reg, cache, src, &decodeAnsi);
     assert(m.present);
     assert(m.fences.length == 2);
     assert(!m.fences[0].isAnsi && m.fences[0].lang == "d");
@@ -1346,4 +1418,40 @@ unittest
     // the heading renders as an accent-colored icon-leader band (not a `#` hash)
     assert(lines.any!(l => l.band == BandKind.heading && l.hasLeaderFg
         && l.leader.length && l.leader[0] != '#'));
+}
+
+@("gui_preview.build.ansiFenceStrippedWithoutDecoder")
+@system
+unittest
+{
+    import std.process : environment;
+    import sparkles.test_runner.skip : skipTest;
+    import sparkles.syntax : GrammarRegistry, TsConfigCache, LabelSet;
+    import std.algorithm.searching : any, canFind;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+    auto reg = GrammarRegistry.fromEnvironment();
+    auto cache = TsConfigCache.create(&reg, LabelSet.standard());
+    const src = "```ansi\n\x1b[31mred\x1b[0m text\n```\n";
+
+    // No decoder passed (the terminal / HTML paths and the `no-gui` build): the
+    // ansi fence keeps its raw body and layout strips the SGR to plain text.
+    auto m = buildPreviewModel(reg, cache, src);
+    assert(m.fences.length == 1);
+    assert(m.fences[0].isAnsi && m.fences[0].ansi.length == 0);
+
+    auto lines = layoutPreview(m, darkTheme, tPageFg, tPageBg, 80);
+    // "red text" survives inside the code panel, with the SGR escapes gone.
+    bool sawStripped;
+    foreach (l; lines)
+        if (l.band == BandKind.codePanel)
+            foreach (r; l.runs)
+            {
+                assert(!r.text.canFind('\x1b'), "SGR escape leaked into a stripped run");
+                if (r.text.canFind("red") && r.text.canFind("text"))
+                    sawStripped = true;
+            }
+    assert(sawStripped, "the stripped ansi fence text is missing");
 }
