@@ -233,17 +233,17 @@ The GUI backend shipped as milestones M0–M5; M6 is optional/future. (There is 
 M7+ in the hue-GUI track; the M0–M8 / D1–D3 ladder belongs to the twoslash /
 `dmd-lsp` design — see [twoslash.md](./twoslash.md).)
 
-| Milestone | Scope                                                                        | Status               | Requirements                                               |
-| --------- | ---------------------------------------------------------------------------- | -------------------- | ---------------------------------------------------------- |
-| M0        | `gui` config + `--gui` gate + `version(HueGui)` seam                         | full (`e6063309`)    | `WIN1/5`, general `MOD1/2`, `NFR3`                         |
-| M1        | The render fold (`toRgb`/`byStyledLine` seams; draw the triple on the GPU)   | full (`b55be7aa`)    | `RND1/3/6/7`, `VIW1`                                       |
-| M2        | Viewport culling + line-number gutter + scrollbar                            | full (`a0b0f93a`)    | `RND1`, `NUM1`, `SCB1`                                     |
-| M3        | Font sizing + window resize + live theme cycling                             | full (`2febf905`)    | `FNT3`, `WIN3`, `THG1`                                     |
-| M4        | Incremental search + goto-line                                               | full (`1e218180`)    | `FND*`, `NAV2`                                             |
-| M5        | Extract `sparkles:raylib-text`; refactor terminal + hue onto it              | full (`d1dd79d5`)    | `FNT*`, `RND3`, `BOX*`                                     |
-| M6        | _(optional)_ Semantic refine via `sparkles:dmd-lsp` `identifierTypes`        | not started          | `SEM1`                                                     |
-| —         | Markdown preview (render-markdown.nvim parity) — a later effort on top of M5 | full                 | `WRP*`, `MDP*`, `COD*`, `SEL*`                             |
-| —         | GUI-by-default: gui/tui autodetection + `no-gui` config/package              | partial (`cdc813f6`) | `WIN6`, general `MOD6/7` done; `BLD*` (build flip) pending |
+| Milestone | Scope                                                                        | Status                           | Requirements                                                                |
+| --------- | ---------------------------------------------------------------------------- | -------------------------------- | --------------------------------------------------------------------------- |
+| M0        | `gui` config + `--gui` gate + `version(HueGui)` seam                         | full (`e6063309`)                | `WIN1/5`, general `MOD1/2`, `NFR3`                                          |
+| M1        | The render fold (`toRgb`/`byStyledLine` seams; draw the triple on the GPU)   | full (`b55be7aa`)                | `RND1/3/6/7`, `VIW1`                                                        |
+| M2        | Viewport culling + line-number gutter + scrollbar                            | full (`a0b0f93a`)                | `RND1`, `NUM1`, `SCB1`                                                      |
+| M3        | Font sizing + window resize + live theme cycling                             | full (`2febf905`)                | `FNT3`, `WIN3`, `THG1`                                                      |
+| M4        | Incremental search + goto-line                                               | full (`1e218180`)                | `FND*`, `NAV2`                                                              |
+| M5        | Extract `sparkles:raylib-text`; refactor terminal + hue onto it              | full (`d1dd79d5`)                | `FNT*`, `RND3`, `BOX*`                                                      |
+| M6        | _(optional)_ Semantic refine via `sparkles:dmd-lsp` `identifierTypes`        | not started                      | `SEM1`                                                                      |
+| —         | Markdown preview (render-markdown.nvim parity) — a later effort on top of M5 | full                             | `WRP*`, `MDP*`, `COD*`, `SEL*`                                              |
+| —         | GUI-by-default: gui/tui autodetection + `no-gui` config/package              | partial (`cdc813f6`, `29bf1a65`) | `WIN6`/`MOD6/7`/`BLD1`/`BLD2` done; `BLD3` `hue-no-gui` nix package pending |
 
 ## Module coverage (GUI spec)
 
