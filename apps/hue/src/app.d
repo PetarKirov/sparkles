@@ -56,8 +56,11 @@ struct CliParams
     @CliOption("twoslash", "Render a TypeScript twoslash JSON payload (its `code` + nodes) as a type-annotated overlay.")
     string twoslash;
 
-    @CliOption("markdown", "Render a Markdown file to HTML via the structural model (sparkles:syntax extractMarkdown then renderMarkdownHtml); no twoslash, no syntax theme.")
+    @CliOption("markdown", "Treat the input as Markdown and render the decorated preview (the default for .md files) in the active sink; forces the preview for a non-.md extension or stdin.")
     bool markdown;
+
+    @CliOption("raw", "Render highlighted source instead of the markdown preview, in every sink (the preview is the default for .md files).")
+    bool raw;
 
     @CliOption("font", "--gui font: a path, a family name, or a fontconfig preference list (comma-separated; the first installed family wins).")
     string font = defaultGuiFont;
@@ -148,11 +151,6 @@ int main(string[] args)
     if (cli.twoslash.length)
         return runTwoslashMode(cli, themeName);
 
-    // Markdown mode exercises the MdDoc → HTML emitter on its own (no twoslash,
-    // no syntax theme) — parse a .md file into the structural model and render.
-    if (cli.markdown)
-        return runMarkdownMode(args);
-
     // With a path argument, highlight that file; otherwise highlight hue's own
     // source, embedded at compile time via `import()`. That works from any
     // install location — the build-time `__FILE_FULL_PATH__` would not exist in
@@ -161,6 +159,10 @@ int main(string[] args)
     const sourcePath = hasFile ? args[1] : "app.d";
     const source = hasFile ? readText(sourcePath) : import("app.d");
     const lang = canonicalLanguage(sourcePath.extension.chompPrefix("."));
+
+    // Markdown files render the decorated preview by default in every sink (MOD8);
+    // `--markdown` forces it for a non-.md extension, `--raw` suppresses it.
+    const isMarkdownPreview = !cli.raw && (lang == "markdown" || cli.markdown);
 
     const labels = LabelSet.standard();
 
@@ -239,7 +241,7 @@ int main(string[] args)
             // Markdown files open in a rendered preview (Tab toggles to raw);
             // other files pass an empty model and use the raw view only.
             PreviewModel preview;
-            if (lang == "markdown")
+            if (isMarkdownPreview)
                 preview = buildPreviewModel(registry, cache, source);
             return runGui(baseName(sourcePath), source, events[], labels, names,
                 themes, idx, preview, cli.font, cli.fontSize,
@@ -262,6 +264,11 @@ int main(string[] args)
     {
         if (html)
         {
+            // A markdown file renders the rich HTML preview (HTM5); `--raw` and a
+            // non-markdown file emit highlighted source.
+            if (isMarkdownPreview)
+                return emitMarkdownHtml(source, theme, registry, cache);
+
             // The `.syn-root` rule writeThemeStylesheet emits carries the
             // default fg/bg; give the wrapper that class so it applies, instead
             // of re-deriving the same colors into a duplicate `pre {}` rule.
@@ -313,43 +320,66 @@ int main(string[] args)
     return 0;
 }
 
-/**
-The `--markdown <file.md>` path: parse a Markdown file into the structural `MdDoc`
-model (`extractMarkdown`) and emit it as HTML through `renderMarkdownHtml` — the
-same `MdDoc → HTML` emitter the twoslash overlay uses for hover/query docs,
-exercised on its own with no twoslash and no syntax theme involved. Always HTML
-(the model has no ANSI backend). The markdown grammars come from the nix bundle
-($SPARKLES_TS_GRAMMAR_PATH); without them `extractMarkdown` yields an empty
-document and the output is empty (a warning is logged).
-*/
-int runMarkdownMode(string[] args) @system
-{
-    if (args.length <= 1)
-    {
-        stderr.writeln("hue --markdown: needs a Markdown file path");
-        return 2;
-    }
-    const source = readText(args[1]);
+/// Prose + callout + table styling for the markdown HTML preview, layered over
+/// the theme's syntax stylesheet (`.syn-root` carries the page fg/bg). Callout
+/// accents mirror the GUI preview (blue / green / purple / yellow / red).
+private enum markdownPreviewCss =
+    ".md { max-width: 48em; margin: 2rem auto; padding: 0 1rem; line-height: 1.6; }\n" ~
+    ".md pre.code-fence { padding: .75em 1em; overflow-x: auto; border-radius: 6px; }\n" ~
+    ".md :not(pre) > code { padding: .1em .35em; border-radius: 3px; background: #8882; }\n" ~
+    ".md blockquote { border-left: 3px solid #8888; margin: 1em 0; padding: 0 1em; opacity: .85; }\n" ~
+    ".md table { border-collapse: collapse; margin: 1em 0; }\n" ~
+    ".md th, .md td { border: 1px solid #8884; padding: .3em .6em; }\n" ~
+    ".md img { max-width: 100%; }\n" ~
+    ".callout { border-left: 4px solid; margin: 1em 0; padding: .1em 1em; border-radius: 4px; background: #8881; }\n" ~
+    ".callout-title { font-weight: 600; margin: .4em 0; }\n" ~
+    ".callout-note { border-color: #539bf5; }\n" ~
+    ".callout-tip { border-color: #57ab5a; }\n" ~
+    ".callout-important { border-color: #986ee2; }\n" ~
+    ".callout-warning { border-color: #c69026; }\n" ~
+    ".callout-caution { border-color: #e5534b; }\n";
 
-    auto registry = GrammarRegistry.fromEnvironment();
+/**
+Render `source` as a rich HTML markdown preview (`HTM5`): the `MdDoc → HTML`
+emitter (`renderMarkdownHtml`) wrapped in the theme's stylesheet, with fenced
+code blocks syntax-highlighted (a `fence` hook reusing the injection-aware
+pipeline) and callouts / aligned tables styled. This is the default for a `.md`
+file under `--html`; `--raw` emits highlighted source instead. The markdown
+grammars come from the nix bundle ($SPARKLES_TS_GRAMMAR_PATH); without them
+`extractMarkdown` yields an empty document (a warning is logged). Writes to
+stdout and returns the exit code.
+*/
+int emitMarkdownHtml(scope const(char)[] source, in ResolvedTheme theme,
+    ref GrammarRegistry registry, ref TsConfigCache cache) @system
+{
     auto doc = extractMarkdown(registry, source);
     if (doc.root.children.length == 0 && source.length)
         warning(i"no markdown grammar (set SPARKLES_TS_GRAMMAR_PATH) — empty output");
 
-    // A tiny self-contained page: minimal prose CSS so the emitted markup is
-    // directly viewable, then the content the emitter produces.
+    // Highlight a fence body with its language, wrapped in the same `.syn-root`
+    // classes the theme stylesheet defines — so fences match the GUI preview
+    // instead of rendering as plain escaped text.
+    const(char)[] highlightFence(const(char)[] infoLang, const(char)[] code)
+    {
+        SmallBuffer!HighlightEvent ev;
+        const canon = canonicalLanguage(infoLang);
+        auto r = highlightInjected(cache, canon, code, ev);
+        if (r.hasError)
+            ev ~= HighlightEvent.sourceSpan(0, code.length);
+        SmallBuffer!char b;
+        b ~= `<pre class="syn-root code-fence"><code>`;
+        renderHtml(code, ev[], theme, b, HtmlOptions(mode: HtmlMode.cssClasses));
+        b ~= "</code></pre>";
+        return b[].idup;
+    }
+
     SmallBuffer!char output;
-    output ~= "<style>\n" ~
-        "body { max-width: 44em; margin: 2em auto; padding: 0 1em; " ~
-        "font: 16px/1.6 system-ui, sans-serif; }\n" ~
-        "pre { padding: .75em 1em; overflow-x: auto; background: #0001; border-radius: 6px; }\n" ~
-        "code { background: #0001; padding: .1em .3em; border-radius: 3px; }\n" ~
-        "pre code { padding: 0; background: none; }\n" ~
-        "blockquote { border-left: 3px solid #8888; margin: 0; padding-left: 1em; color: #666; }\n" ~
-        "table { border-collapse: collapse; } th, td { border: 1px solid #8884; padding: .3em .6em; }\n" ~
-        "</style>\n<article class=\"md\">";
-    renderMarkdownHtml(doc, output);
-    output ~= "</article>\n";
+    output ~= "<style>\n";
+    writeThemeStylesheet(theme, output);
+    output ~= markdownPreviewCss;
+    output ~= "</style>\n<article class=\"syn-root md\">\n";
+    renderMarkdownHtml(doc, output, MarkdownHtmlOptions(), &highlightFence);
+    output ~= "\n</article>\n";
     write(output[]);
     return 0;
 }
