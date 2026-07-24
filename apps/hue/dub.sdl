@@ -17,22 +17,12 @@ dflags "-preview=in" "-preview=dip1000"
 dependency "sparkles:syntax" path="../.."
 dependency "sparkles:core-cli" path="../.."
 
+// Default build (BLD1): the raylib GPU backend (src/gui.d, version(HueGui)) and
+// the preview support modules (gui_text.d layout, gui_ansi.d libghostty bridge,
+// gui_preview.d model+layout) are compiled in, so a stock `dub build :hue` and
+// the installed binary have `--gui` and the markdown preview out of the box.
+// Pulls raylib (a system dependency) + libghostty-vt.
 configuration "application" {
-    targetType "executable"
-
-    // The raylib GPU backend (src/gui.d, version(HueGui)) and the preview
-    // support modules (gui_text.d pure layout, gui_ansi.d libghostty bridge,
-    // gui_preview.d model+layout) are compiled only by the `gui` configuration
-    // (and by `unittest`, minus gui.d) — the default terminal build has no use
-    // for them and stays raylib- and ghostty-free.
-    excludedSourceFiles "src/gui.d" "src/gui_text.d" "src/gui_ansi.d" "src/gui_preview.d"
-}
-
-// Optional raylib GPU rendering backend (`hue --gui`). Pulls raylib (a system
-// dependency), so it stays behind its own configuration; the default
-// `application` build and `dub test` never require it. Build with
-// `dub build :hue -c gui`.
-configuration "gui" {
     targetType "executable"
 
     // The shared raylib text core; pulls raylib-d + libs "raylib" transitively.
@@ -40,6 +30,15 @@ configuration "gui" {
     // The off-screen VT that decodes ` ```ansi ` fenced blocks (gui_ansi.d).
     dependency "sparkles:ghostty" path="../.."
     versions "HueGui"
+}
+
+// Raylib-/ghostty-free terminal-only build (BLD2) — the minimal-closure variant
+// for headless installs. Excludes the GUI + preview modules; `--gui` errors
+// cleanly. Build with `dub build :hue -c no-gui`.
+configuration "no-gui" {
+    targetType "executable"
+
+    excludedSourceFiles "src/gui.d" "src/gui_text.d" "src/gui_ansi.d" "src/gui_preview.d"
 }
 
 configuration "unittest" {

@@ -212,8 +212,8 @@ int main(string[] args)
         {
             // Reached only via explicit `--gui` on a build without GUI support
             // (autodetect never sets wantGui here — guiCompiledIn is false).
-            stderr.writeln("hue: this build has no GUI support; " ~
-                "rebuild the gui configuration: dub build :hue -c gui");
+            stderr.writeln("hue: this build has no GUI support (built with " ~
+                "-c no-gui); use the default build: dub build :hue");
             return 1;
         }
     }
