@@ -94,6 +94,14 @@ struct PreviewTui
     private size_t qlen;
     private SmallBuffer!(char, 4096) scratch;
 
+    // Selection (mouse drag) → OSC 52 copy. `selAnchor`/`selCursor` are visual
+    // line indices (-1 ⇒ no selection); `selBg` tints the selected lines. `clip`
+    // holds a pending OSC 52 sequence that runPreviewTui flushes after a copy.
+    private long selAnchor = -1, selCursor = -1;
+    private RgbColor selBg;
+    private SmallBuffer!char clip;
+    private bool clipReady;
+
     private const(char)[] query() const return @safe pure nothrow @nogc => qbuf[0 .. qlen];
 
     /// Rebuild the laid-out lines for the current theme / width / view mode (GC;
@@ -108,6 +116,7 @@ struct PreviewTui
         const linkC = toRgb(theme[theme.labels.resolve("markup.link")].fg, pageFg);
         sbTrack = mix(pageBg, linkC, 0.22);
         sbThumb = mix(pageBg, linkC, 0.5);
+        selBg = mix(pageBg, linkC, 0.4); // selection highlight
         // Lay out to one column narrower — the last column holds the scrollbar.
         const w = width < 9 ? 8 : width - 1;
         if (showPreview && model.present)
@@ -130,6 +139,59 @@ struct PreviewTui
     {
         if (top > maxTop) top = maxTop;
         if (top < 0) top = 0;
+    }
+
+    private void clampSel() @safe pure nothrow @nogc
+    {
+        const last = cast(long) plines.length - 1;
+        if (selAnchor > last) selAnchor = last;
+        if (selCursor > last) selCursor = last;
+        if (selAnchor < 0) selAnchor = 0;
+        if (selCursor < 0) selCursor = 0;
+    }
+
+    // Copy the selected visual lines' **original source** (SEL parity): the min
+    // src offset .. max src end over the selected lines' content runs (decoration
+    // runs have no src offset and are excluded), written to the system clipboard
+    // via OSC 52. Clears the selection.
+    private void copySelection() @system
+    {
+        if (selAnchor < 0 || plines.length == 0)
+            return;
+        const lo = selAnchor < selCursor ? selAnchor : selCursor;
+        const hi = selAnchor < selCursor ? selCursor : selAnchor;
+        size_t a = size_t.max, b;
+        bool any;
+        foreach (i; lo .. hi + 1)
+        {
+            if (i < 0 || i >= cast(long) plines.length)
+                continue;
+            foreach (ref r; plines[cast(size_t) i].runs)
+            {
+                if (r.srcStart == size_t.max)
+                    continue; // a synthetic decoration run (gutter / bullet / box)
+                any = true;
+                if (r.srcStart < a)
+                    a = r.srcStart;
+                const e = r.srcStart + r.text.length;
+                if (e > b)
+                    b = e;
+            }
+        }
+        if (!any || a >= b || b > source.length)
+        {
+            selAnchor = selCursor = -1;
+            return;
+        }
+        // OSC 52: ESC ] 52 ; c ; <base64> BEL
+        import std.base64 : Base64;
+
+        clip.clear();
+        clip.put("\x1b]52;c;");
+        clip.put(Base64.encode(cast(const(ubyte)[]) source[a .. b]));
+        clip.put("\x07");
+        clipReady = true;
+        selAnchor = selCursor = -1;
     }
 
     // Does visual line `i` contain the query (case-insensitive, across runs)?
@@ -207,8 +269,16 @@ struct PreviewTui
         const first = cast(size_t) top;
         const last = first + rows > plines.length ? plines.length : first + rows;
         if (first < last)
+        {
+            long sLo = -1, sHi = -1;
+            if (selAnchor >= 0)
+            {
+                sLo = selAnchor < selCursor ? selAnchor : selCursor;
+                sHi = selAnchor < selCursor ? selCursor : selAnchor;
+            }
             renderPreviewAnsi(frame, plines[first .. last], pageFg, pageBg, bars,
-                depth, background);
+                depth, background, selBg, cast(long) first, sLo, sHi);
+        }
         // Pad any rows beyond the document's end with blank chrome lines.
         foreach (_; 0 .. rows - (last - first))
             chromeLine("", nl: true);
@@ -223,7 +293,7 @@ struct PreviewTui
             chromeLine(st[], nl: false);
         }
         else
-            chromeLine(" ↑↓/PgUp/PgDn/Home/End scroll · ←→ theme · Tab raw/preview · / search · n next · q quit",
+            chromeLine(" scroll ↑↓/PgUp/PgDn · ←→ theme · Tab raw/preview · / search · drag+y copy · q quit",
                 nl: false);
 
         drawScrollbar();
@@ -293,13 +363,24 @@ struct PreviewTui
                 if (k.mb == 64)        { top -= 3; clampTop(); }   // wheel up
                 else if (k.mb == 65)   { top += 3; clampTop(); }   // wheel down
                 else if ((k.mb & 0b1000011) == 0 && k.mdown // left press / drag
-                    && k.mx == width && k.my >= 2 && k.my <= 1 + rows)
+                    && k.my >= 2 && k.my <= 1 + rows)
                 {
-                    // Clicked / dragged on the scrollbar column — jump there.
-                    const r = k.my - 2;                            // 0-based body row
-                    const span = rows > 1 ? rows - 1 : 1;
-                    top = cast(long) r * maxTop / span;
-                    clampTop();
+                    if (k.mx == width)
+                    {
+                        // Scrollbar column — jump proportionally.
+                        const span = rows > 1 ? rows - 1 : 1;
+                        top = cast(long)(k.my - 2) * maxTop / span;
+                        clampTop();
+                    }
+                    else
+                    {
+                        // Body — start (press) or extend (drag) a line selection.
+                        const line = top + (k.my - 2);
+                        if ((k.mb & 32) == 0) // press (motion bit clear) → anchor
+                            selAnchor = line;
+                        selCursor = line;
+                        clampSel();
+                    }
                 }
                 break;
             case TuiKind.resize:
@@ -316,6 +397,7 @@ struct PreviewTui
                     case '/': searching = true; qlen = 0; break; // start a search
                     case 'n': jumpMatch(top + 1, true); break;   // next match
                     case 'N': jumpMatch(top - 1, false); break;  // previous match
+                    case 'y': copySelection(); break;            // copy selection (OSC 52)
                     default: break;
                 }
                 break;
@@ -414,6 +496,12 @@ int runPreviewTui(ref PreviewTui t, size_t themeIdx, bool startPreview) @system
         sink.flush();
         if (!t.handle(input.next()))
             break;
+        if (t.clipReady)
+        {
+            sink.put(t.clip[]); // flush the OSC 52 clipboard write
+            sink.flush();
+            t.clipReady = false;
+        }
     }
     return 0;
 }
