@@ -1,0 +1,95 @@
+{
+ "code": "// Showcases MARKDOWN in hover/query docs and @tag values — the reason the\n// overlay routes `docs` through the `sparkles:syntax` MdDoc → HTML emitter.\n// Every construct below (bold, inline `code`, a bullet list, a fenced block,\n// links, and the @param/@returns/@see tag chips) round-trips into the popup.\n\n/**\n * Computes the **ultimate answer** to `life`, the universe, and everything.\n *\n * The procedure, in short:\n *\n * - consult the `Deep Thought` computer\n * - wait ~7.5 million years\n * - read off the result\n *\n * ```ts\n * const answer = compute(true) // 42\n * ```\n *\n * See the [reference](https://example.com/hitchhikers) for the long version.\n *\n * @param verbose when set, logs the `progress` at each step\n * @returns the _magic_ number every question resolves to\n * @see [The Hitchhiker's Guide](https://example.com/guide) — a markdown link\n * @see <https://example.com/towel> — an autolink\n */\nfunction compute(verbose?: boolean): number {\n  return 42\n}\n\nconst answer = compute(true)\n",
+ "nodes": [
+  {
+   "type": "hover",
+   "text": "function compute(verbose?: boolean): number",
+   "docs": "Computes the **ultimate answer** to `life`, the universe, and everything.\n\nThe procedure, in short:\n\n- consult the `Deep Thought` computer\n- wait ~7.5 million years\n- read off the result\n\n```ts\nconst answer = compute(true) // 42\n```\n\nSee the [reference](https://example.com/hitchhikers) for the long version.",
+   "tags": [
+    [
+     "param",
+     "verbose when set, logs the `progress` at each step"
+    ],
+    [
+     "returns",
+     "the _magic_ number every question resolves to"
+    ],
+    [
+     "see",
+     "[The Hitchhiker's Guide](https://example.com/guide) — a markdown link"
+    ],
+    [
+     "see",
+     " <https://example.com/towel> — an autolink"
+    ]
+   ],
+   "start": 920,
+   "length": 7,
+   "target": "compute",
+   "line": 25,
+   "character": 9
+  },
+  {
+   "type": "hover",
+   "text": "(parameter) verbose: boolean | undefined",
+   "docs": "when set, logs the `progress` at each step",
+   "tags": [
+    [
+     "param",
+     "verbose when set, logs the `progress` at each step"
+    ]
+   ],
+   "start": 928,
+   "length": 7,
+   "target": "verbose",
+   "line": 25,
+   "character": 17
+  },
+  {
+   "type": "hover",
+   "text": "const answer: number",
+   "start": 978,
+   "length": 6,
+   "target": "answer",
+   "line": 29,
+   "character": 6
+  },
+  {
+   "type": "query",
+   "text": "const answer: number",
+   "start": 978,
+   "length": 6,
+   "target": "answer",
+   "line": 29,
+   "character": 6
+  },
+  {
+   "type": "hover",
+   "text": "function compute(verbose?: boolean): number",
+   "docs": "Computes the **ultimate answer** to `life`, the universe, and everything.\n\nThe procedure, in short:\n\n- consult the `Deep Thought` computer\n- wait ~7.5 million years\n- read off the result\n\n```ts\nconst answer = compute(true) // 42\n```\n\nSee the [reference](https://example.com/hitchhikers) for the long version.",
+   "tags": [
+    [
+     "param",
+     "verbose when set, logs the `progress` at each step"
+    ],
+    [
+     "returns",
+     "the _magic_ number every question resolves to"
+    ],
+    [
+     "see",
+     "[The Hitchhiker's Guide](https://example.com/guide) — a markdown link"
+    ],
+    [
+     "see",
+     " <https://example.com/towel> — an autolink"
+    ]
+   ],
+   "start": 987,
+   "length": 7,
+   "target": "compute",
+   "line": 29,
+   "character": 15
+  }
+ ]
+}

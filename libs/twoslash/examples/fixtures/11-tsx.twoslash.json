@@ -1,0 +1,59 @@
+{
+ "code": "// TSX highlights the JSX grammar; hovers still work over the logic.\nconst heading = \"Hello world\"\n\nexport function App() {\n  return <h1 className=\"title\">{heading}</h1>\n}\n",
+ "nodes": [
+  {
+   "type": "hover",
+   "text": "const heading: \"Hello world\"",
+   "start": 75,
+   "length": 7,
+   "target": "heading",
+   "line": 1,
+   "character": 6
+  },
+  {
+   "type": "hover",
+   "text": "function App(): any",
+   "start": 116,
+   "length": 3,
+   "target": "App",
+   "line": 3,
+   "character": 16
+  },
+  {
+   "type": "hover",
+   "text": "any",
+   "start": 134,
+   "length": 2,
+   "target": "h1",
+   "line": 4,
+   "character": 10
+  },
+  {
+   "type": "hover",
+   "text": "(property) className: string",
+   "start": 137,
+   "length": 9,
+   "target": "className",
+   "line": 4,
+   "character": 13
+  },
+  {
+   "type": "hover",
+   "text": "const heading: \"Hello world\"",
+   "start": 156,
+   "length": 7,
+   "target": "heading",
+   "line": 4,
+   "character": 32
+  },
+  {
+   "type": "hover",
+   "text": "any",
+   "start": 166,
+   "length": 2,
+   "target": "h1",
+   "line": 4,
+   "character": 42
+  }
+ ]
+}

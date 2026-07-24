@@ -1,0 +1,135 @@
+{
+ "code": "// JSDoc on a symbol renders as documentation inside its hover popup.\n/**\n * Adds two numbers together.\n * @param a the first addend\n * @param b the second addend\n * @returns their sum\n */\nfunction add(a: number, b: number) {\n  return a + b\n}\n\nconst total = add(1, 2)\n",
+ "nodes": [
+  {
+   "type": "hover",
+   "text": "function add(a: number, b: number): number",
+   "docs": "Adds two numbers together.",
+   "tags": [
+    [
+     "param",
+     "a the first addend"
+    ],
+    [
+     "param",
+     "b the second addend"
+    ],
+    [
+     "returns",
+     "their sum"
+    ]
+   ],
+   "start": 198,
+   "length": 3,
+   "target": "add",
+   "line": 7,
+   "character": 9
+  },
+  {
+   "type": "hover",
+   "text": "(parameter) a: number",
+   "docs": "the first addend",
+   "tags": [
+    [
+     "param",
+     "a the first addend"
+    ]
+   ],
+   "start": 202,
+   "length": 1,
+   "target": "a",
+   "line": 7,
+   "character": 13
+  },
+  {
+   "type": "hover",
+   "text": "(parameter) b: number",
+   "docs": "the second addend",
+   "tags": [
+    [
+     "param",
+     "b the second addend"
+    ]
+   ],
+   "start": 213,
+   "length": 1,
+   "target": "b",
+   "line": 7,
+   "character": 24
+  },
+  {
+   "type": "hover",
+   "text": "(parameter) a: number",
+   "docs": "the first addend",
+   "tags": [
+    [
+     "param",
+     "a the first addend"
+    ]
+   ],
+   "start": 235,
+   "length": 1,
+   "target": "a",
+   "line": 8,
+   "character": 9
+  },
+  {
+   "type": "hover",
+   "text": "(parameter) b: number",
+   "docs": "the second addend",
+   "tags": [
+    [
+     "param",
+     "b the second addend"
+    ]
+   ],
+   "start": 239,
+   "length": 1,
+   "target": "b",
+   "line": 8,
+   "character": 13
+  },
+  {
+   "type": "hover",
+   "text": "const total: number",
+   "start": 250,
+   "length": 5,
+   "target": "total",
+   "line": 11,
+   "character": 6
+  },
+  {
+   "type": "query",
+   "text": "const total: number",
+   "start": 250,
+   "length": 5,
+   "target": "total",
+   "line": 11,
+   "character": 6
+  },
+  {
+   "type": "hover",
+   "text": "function add(a: number, b: number): number",
+   "docs": "Adds two numbers together.",
+   "tags": [
+    [
+     "param",
+     "a the first addend"
+    ],
+    [
+     "param",
+     "b the second addend"
+    ],
+    [
+     "returns",
+     "their sum"
+    ]
+   ],
+   "start": 258,
+   "length": 3,
+   "target": "add",
+   "line": 11,
+   "character": 14
+  }
+ ]
+}

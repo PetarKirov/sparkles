@@ -1,0 +1,86 @@
+{
+ "code": "// A tuple type flows through a destructuring query.\ntype Either2dOr3d = [number, number, number?]\n\nfunction setCoordinate(coord: Either2dOr3d) {\n  const [x, y, z] = coord\n}\n",
+ "nodes": [
+  {
+   "type": "hover",
+   "text": "type Either2dOr3d = [number, number, (number | undefined)?]",
+   "start": 58,
+   "length": 12,
+   "target": "Either2dOr3d",
+   "line": 1,
+   "character": 5
+  },
+  {
+   "type": "hover",
+   "text": "function setCoordinate(coord: Either2dOr3d): void",
+   "start": 109,
+   "length": 13,
+   "target": "setCoordinate",
+   "line": 3,
+   "character": 9
+  },
+  {
+   "type": "hover",
+   "text": "(parameter) coord: Either2dOr3d",
+   "start": 123,
+   "length": 5,
+   "target": "coord",
+   "line": 3,
+   "character": 23
+  },
+  {
+   "type": "hover",
+   "text": "type Either2dOr3d = [number, number, (number | undefined)?]",
+   "start": 130,
+   "length": 12,
+   "target": "Either2dOr3d",
+   "line": 3,
+   "character": 30
+  },
+  {
+   "type": "hover",
+   "text": "const x: number",
+   "start": 155,
+   "length": 1,
+   "target": "x",
+   "line": 4,
+   "character": 9
+  },
+  {
+   "type": "hover",
+   "text": "const y: number",
+   "start": 158,
+   "length": 1,
+   "target": "y",
+   "line": 4,
+   "character": 12
+  },
+  {
+   "type": "hover",
+   "text": "const z: number | undefined",
+   "start": 161,
+   "length": 1,
+   "target": "z",
+   "line": 4,
+   "character": 15
+  },
+  {
+   "type": "query",
+   "text": "const z: number | undefined",
+   "start": 161,
+   "length": 1,
+   "target": "z",
+   "line": 4,
+   "character": 15
+  },
+  {
+   "type": "hover",
+   "text": "(parameter) coord: Either2dOr3d",
+   "start": 166,
+   "length": 5,
+   "target": "coord",
+   "line": 4,
+   "character": 20
+  }
+ ]
+}

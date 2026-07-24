@@ -25,6 +25,7 @@ import std.stdio : stderr, write;
 import std.string : chompPrefix;
 
 import sparkles.syntax;
+import sparkles.twoslash;
 import sparkles.core_cli.args;
 
 import sparkles.base.logger : initLogger, LogLevel, warning;
@@ -51,6 +52,12 @@ struct CliParams
 
     @CliOption("tui", "Alias for --no-gui.")
     bool tui;
+
+    @CliOption("twoslash", "Render a TypeScript twoslash JSON payload (its `code` + nodes) as a type-annotated overlay.")
+    string twoslash;
+
+    @CliOption("markdown", "Render a Markdown file to HTML via the structural model (sparkles:syntax extractMarkdown then renderMarkdownHtml); no twoslash, no syntax theme.")
+    bool markdown;
 
     @CliOption("font", "--gui font: a path, a family name, or a fontconfig preference list (comma-separated; the first installed family wins).")
     string font = defaultGuiFont;
@@ -134,6 +141,17 @@ int main(string[] args)
     bool html = cli.html;
     string themeName = cli.theme;
     const bgMode = parseBackgroundMode(cli.background);
+
+    // Twoslash mode consumes a JSON payload (its own `code` + nodes) instead of
+    // a source file — a fourth consumer of the syntax pipeline that overlays the
+    // twoslash decorations. See src/twoslash_mode.d.
+    if (cli.twoslash.length)
+        return runTwoslashMode(cli, themeName);
+
+    // Markdown mode exercises the MdDoc → HTML emitter on its own (no twoslash,
+    // no syntax theme) — parse a .md file into the structural model and render.
+    if (cli.markdown)
+        return runMarkdownMode(args);
 
     // With a path argument, highlight that file; otherwise highlight hue's own
     // source, embedded at compile time via `import()`. That works from any
@@ -292,5 +310,115 @@ int main(string[] args)
     if (result.selected)
         sink.put(prev.renderFull(result.idx, depth));
     sink.flush();
+    return 0;
+}
+
+/**
+The `--markdown <file.md>` path: parse a Markdown file into the structural `MdDoc`
+model (`extractMarkdown`) and emit it as HTML through `renderMarkdownHtml` — the
+same `MdDoc → HTML` emitter the twoslash overlay uses for hover/query docs,
+exercised on its own with no twoslash and no syntax theme involved. Always HTML
+(the model has no ANSI backend). The markdown grammars come from the nix bundle
+($SPARKLES_TS_GRAMMAR_PATH); without them `extractMarkdown` yields an empty
+document and the output is empty (a warning is logged).
+*/
+int runMarkdownMode(string[] args) @system
+{
+    if (args.length <= 1)
+    {
+        stderr.writeln("hue --markdown: needs a Markdown file path");
+        return 2;
+    }
+    const source = readText(args[1]);
+
+    auto registry = GrammarRegistry.fromEnvironment();
+    auto doc = extractMarkdown(registry, source);
+    if (doc.root.children.length == 0 && source.length)
+        warning(i"no markdown grammar (set SPARKLES_TS_GRAMMAR_PATH) — empty output");
+
+    // A tiny self-contained page: minimal prose CSS so the emitted markup is
+    // directly viewable, then the content the emitter produces.
+    SmallBuffer!char output;
+    output ~= "<style>\n" ~
+        "body { max-width: 44em; margin: 2em auto; padding: 0 1em; " ~
+        "font: 16px/1.6 system-ui, sans-serif; }\n" ~
+        "pre { padding: .75em 1em; overflow-x: auto; background: #0001; border-radius: 6px; }\n" ~
+        "code { background: #0001; padding: .1em .3em; border-radius: 3px; }\n" ~
+        "pre code { padding: 0; background: none; }\n" ~
+        "blockquote { border-left: 3px solid #8888; margin: 0; padding-left: 1em; color: #666; }\n" ~
+        "table { border-collapse: collapse; } th, td { border: 1px solid #8884; padding: .3em .6em; }\n" ~
+        "</style>\n<article class=\"md\">";
+    renderMarkdownHtml(doc, output);
+    output ~= "</article>\n";
+    write(output[]);
+    return 0;
+}
+
+/**
+The `--twoslash <nodes.json>` path: load a TypeScript twoslash payload, highlight
+its `code` as TypeScript, and render the twoslash overlay — as HTML (`--html`),
+the raylib GUI (`--gui`), or ANSI (the default). The nodes are opaque data; the
+overlay renderers live in `sparkles:twoslash`.
+*/
+int runTwoslashMode(in CliParams cli, string themeName) @system
+{
+    auto twRes = loadTwoslashFile(cli.twoslash);
+    if (twRes.hasError)
+    {
+        stderr.writeln("hue: ", twRes.error.msg);
+        return 1;
+    }
+    const tw = twRes.value;
+
+    const labels = LabelSet.standard();
+    const theme = resolveTheme(builtinThemes.get(themeName, {
+            warning(i"theme '$(themeName)' not found; falling back to the default dark theme");
+            return builtinDark;
+        }()), labels);
+
+    // Highlight the display source as TypeScript (twoslash's own language),
+    // degrading to plain text without the grammar — the overlay never fails.
+    auto registry = GrammarRegistry.fromEnvironment();
+    auto cache = TsConfigCache.create(&registry, labels);
+    SmallBuffer!HighlightEvent events;
+    auto res = highlightInjected(cache, "typescript", tw.code, events);
+    if (res.hasError)
+    {
+        warning(i"no typescript grammar — rendering the snippet as plain text");
+        events ~= HighlightEvent.sourceSpan(0, tw.code.length);
+    }
+
+    if (cli.gui)
+    {
+        version (HueGui)
+        {
+            import gui : runGuiTwoslash;
+            return runGuiTwoslash(baseName(cli.twoslash), tw, events[], labels, theme, cache);
+        }
+        else
+        {
+            stderr.writeln("hue: this build has no GUI support; " ~
+                "rebuild the gui configuration: dub build :hue -c gui");
+            return 1;
+        }
+    }
+
+    if (cli.html)
+    {
+        SmallBuffer!char output;
+        output ~= "<style>\n";
+        writeThemeStylesheet(theme, output);
+        writeTwoslashStyles(output);
+        output ~= "</style>\n<pre class=\"syn-root twoslash\"><code>";
+        renderTwoslashHtml(tw, events[], theme, cache, output);
+        output ~= "</code></pre>\n";
+        write(output[]);
+        return 0;
+    }
+
+    SmallBuffer!char output;
+    renderTwoslashAnsi(tw, events[], theme, cache, output,
+        TwoslashAnsiOptions(depth: detectColorDepth(), italics: true, emitBackground: true));
+    write(output[]);
     return 0;
 }
