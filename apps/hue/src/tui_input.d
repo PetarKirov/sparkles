@@ -33,13 +33,19 @@ enum TuiKind : ubyte
     up, down, left, right,
     pageUp, pageDown, home, end,
     enter, tab, escape, resize, eof,
+    mouse,
 }
 
-/// One decoded key. `ch` is meaningful only when `kind == character`.
+/// One decoded key. `ch` is meaningful only when `kind == character`; the
+/// `mb`/`mx`/`my`/`mdown` fields only when `kind == mouse` (SGR 1006 report:
+/// `mb` is the raw button code, `mx`/`my` are 1-based cell coordinates, `mdown`
+/// is press vs release).
 struct TuiKey
 {
     TuiKind kind;
     char ch = 0;
+    int mb, mx, my;
+    bool mdown;
 }
 
 /// A raw-mode reading session over stdin: `next` blocks for one decoded key,
@@ -104,6 +110,9 @@ struct TuiInput
         if (!readRaw(c))
             return TuiKey(TuiKind.escape);
 
+        if (c == '<') // SGR 1006 mouse report: `ESC [ < b ; x ; y (M|m)`
+            return readMouse();
+
         switch (c)
         {
             case 'A': return TuiKey(TuiKind.up);
@@ -136,6 +145,41 @@ struct TuiInput
             case '6':      return TuiKey(TuiKind.pageDown);
             default:       return TuiKey(TuiKind.escape);
         }
+    }
+
+    // Parse the tail of an SGR mouse report (after `ESC [ <`): `b ; x ; y (M|m)`.
+    private TuiKey readMouse() @trusted @nogc nothrow
+    {
+        char t;
+        const b = readNum(t);
+        if (t != ';')
+            return TuiKey(TuiKind.escape);
+        const x = readNum(t);
+        if (t != ';')
+            return TuiKey(TuiKind.escape);
+        const y = readNum(t);
+        if (t != 'M' && t != 'm')
+            return TuiKey(TuiKind.escape);
+        TuiKey k = { kind: TuiKind.mouse, mb: b, mx: x, my: y, mdown: t == 'M' };
+        return k;
+    }
+
+    // Read a base-10 run; `term` receives the first non-digit byte (0 on EOF).
+    private int readNum(ref char term) @trusted @nogc nothrow
+    {
+        int v;
+        char b;
+        while (readRaw(b))
+        {
+            if (b < '0' || b > '9')
+            {
+                term = b;
+                return v;
+            }
+            v = v * 10 + (b - '0');
+        }
+        term = 0;
+        return v;
     }
 
     // Read one byte, blocking (retrying EINTR here would swallow a resize mid

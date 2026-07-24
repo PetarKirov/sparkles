@@ -33,6 +33,13 @@ import tui_input : beginTuiInput, TuiInput, TuiKey, TuiKind;
 private enum RgbColor fallbackFg = RgbColor(0xcc, 0xcc, 0xcc);
 private enum RgbColor fallbackBg = RgbColor(0x1e, 0x1e, 0x1e);
 
+// Linear blend a→b by t∈[0,1] (matches gui.d's 3-arg `mix`, a private helper).
+private RgbColor mix(RgbColor a, RgbColor b, double t) @safe pure nothrow @nogc
+{
+    ubyte c(ubyte x, ubyte y) => cast(ubyte)(x + cast(int)((cast(int) y - x) * t));
+    return RgbColor(c(a.r, b.r), c(a.g, b.g), c(a.b, b.b));
+}
+
 /// The scrolling viewer state: the document (markdown model or raw source), the
 /// theme list, and the current scroll / theme / view-mode. Laid out once per
 /// theme / width / view change into `plines`; each frame culls a viewport slice
@@ -57,6 +64,7 @@ struct PreviewTui
     private ResolvedTheme theme;
     private RgbColor pageFg, pageBg;
     private RgbColor[quoteBarCycle] bars;
+    private RgbColor sbTrack, sbThumb; // scrollbar track / thumb (theme-tinted)
     private SmallBuffer!(char, 16384) frame;
 
     /// Rebuild the laid-out lines for the current theme / width / view mode (GC;
@@ -67,7 +75,12 @@ struct PreviewTui
         pageFg = toRgb(theme.defaults.fg, fallbackFg);
         pageBg = toRgb(theme.defaults.bg, fallbackBg);
         bars = quoteBarColors(theme, pageFg, pageBg);
-        const w = width < 8 ? 8 : width;
+        // Scrollbar chrome: tint toward the theme link color (matches gui.d).
+        const linkC = toRgb(theme[theme.labels.resolve("markup.link")].fg, pageFg);
+        sbTrack = mix(pageBg, linkC, 0.22);
+        sbThumb = mix(pageBg, linkC, 0.5);
+        // Lay out to one column narrower — the last column holds the scrollbar.
+        const w = width < 9 ? 8 : width - 1;
         if (showPreview && model.present)
             plines = layoutPreview(model, theme, pageFg, pageBg, w);
         else
@@ -145,7 +158,38 @@ struct PreviewTui
         chromeLine(" ↑↓ PgUp/PgDn Home/End scroll · ←→ theme · Tab raw/preview · q quit",
             nl: false);
 
+        drawScrollbar();
         frame.put(CtlSeq.syncEnd);
+    }
+
+    // Overlay a cell scrollbar in the last column across the body rows (screen
+    // rows 2 .. 1+bodyRows). Absolute-positioned, so it runs after the sequential
+    // body/status writes. Only shown when the document overflows the viewport.
+    private void drawScrollbar() @system
+    {
+        const rows = bodyRows();
+        if (cast(long) plines.length <= rows || width < 2)
+            return;
+        int thumb = cast(int)(cast(long) rows * rows / cast(long) plines.length);
+        if (thumb < 1) thumb = 1;
+        if (thumb > rows) thumb = rows;
+        const denom = maxTop();
+        const thumbTop = denom > 0 ? cast(int)(top * (rows - thumb) / denom) : 0;
+
+        foreach (r; 0 .. rows)
+        {
+            frame.put("\x1b[");
+            writeInteger(frame, r + 2); // body starts at screen row 2
+            frame.put(";");
+            writeInteger(frame, width);
+            frame.put("H");
+            const inThumb = r >= thumbTop && r < thumbTop + thumb;
+            const col = inThumb ? sbThumb : sbTrack;
+            const st = TermStyle(fg: Color.fromRgb(col), bg: Color.fromRgb(pageBg));
+            writeStyleTransition(frame, TermStyle.init, st, depth);
+            frame.put(inThumb ? "█" : "░");
+            writeStyleTransition(frame, st, TermStyle.init, depth);
+        }
     }
 
     // Apply a key; returns false to quit.
@@ -173,6 +217,19 @@ struct PreviewTui
                 {
                     showPreview = !showPreview;
                     relayout();
+                }
+                break;
+            case TuiKind.mouse:
+                if (k.mb == 64)        { top -= 3; clampTop(); }   // wheel up
+                else if (k.mb == 65)   { top += 3; clampTop(); }   // wheel down
+                else if ((k.mb & 0b1000011) == 0 && k.mdown // left press / drag
+                    && k.mx == width && k.my >= 2 && k.my <= 1 + rows)
+                {
+                    // Clicked / dragged on the scrollbar column — jump there.
+                    const r = k.my - 2;                            // 0-based body row
+                    const span = rows > 1 ? rows - 1 : 1;
+                    top = cast(long) r * maxTop / span;
+                    clampTop();
                 }
                 break;
             case TuiKind.resize:
@@ -228,9 +285,11 @@ int runPreviewTui(ref PreviewTui t, size_t themeIdx, bool startPreview) @system
     auto sink = TermOut.standard();
     sink.put(CtlSeq.enterAltScreen);
     sink.put(CtlSeq.hideCursor);
-    sink.put("\x1b[?7l"); // autowrap off — full-width lines must not wrap
+    sink.put("\x1b[?7l");             // autowrap off — full-width lines must not wrap
+    sink.put("\x1b[?1000;1002;1006h"); // SGR mouse: click + drag + wheel
     scope (exit)
     {
+        sink.put("\x1b[?1000;1002;1006l"); // must be restored so the terminal isn't left in mouse mode
         sink.put("\x1b[?7h");
         sink.put(CtlSeq.showCursor);
         sink.put(CtlSeq.exitAltScreen);
