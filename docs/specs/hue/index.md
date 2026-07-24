@@ -61,6 +61,13 @@ issues as the requirement of record):
 | **GUI**       | default on a GUI-enabled build when a display is detected, or forced with `--gui`                      | `gui.runGui`                              | [`gui.md`](./gui.md)           |
 | **Twoslash**  | `--twoslash <nodes.json>` (ANSI / `--html` / `--gui`) · `--markdown <file.md>` — _planned/branch-only_ | `app.runTwoslashMode` / `runMarkdownMode` | [`twoslash.md`](./twoslash.md) |
 
+> [!NOTE]
+> For a **markdown** file every sink renders the render-markdown **decorated
+> preview** by default (general [`MOD8`](./feature-requirements.md)) — ANSI
+> (`ANS3`), HTML (`HTM5`), the terminal previewer ([`MDP-T`](./tui.md)), and the
+> GUI ([`MDP`](./gui.md)) — over the shared `MdDoc` / `PreviewLine[]` model; `--raw`
+> forces highlighted source.
+
 ## Status scheme
 
 Every requirement row carries one **Status**:
