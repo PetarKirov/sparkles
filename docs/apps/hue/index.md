@@ -34,11 +34,15 @@ Every example fixture, rendered by `hue --twoslash --html` and served exactly as
 the overlay emits it — hover the dotted-underline tokens for the type popups,
 and use prev/next to browse:
 
-[![The hue twoslash HTML overlay: a Readonly<Todo> snippet with a `^?` query popup, a read-only-assignment error (wavy underline + message), and a completion list](./twoslash-preview.png)](/apps/hue/twoslash/)
+<!-- The gallery is a static page under docs/public/, not a VitePress route, so
+     the links open in a new tab (target=_blank) to bypass the SPA router — an
+     in-app navigation to it would 404. -->
+
+<a href="/apps/hue/twoslash/" target="_blank" rel="noreferrer"><img src="./twoslash-preview.png" alt="The hue twoslash HTML overlay: a Readonly&lt;Todo&gt; snippet with a query popup, a read-only-assignment error (wavy underline plus message), and a completion list" /></a>
 
 <div style="text-align:center">
 
-**[→ Open the interactive twoslash showcase](/apps/hue/twoslash/)**
+<a href="/apps/hue/twoslash/" target="_blank" rel="noreferrer"><strong>→ Open the interactive twoslash showcase ↗</strong></a>
 
 </div>
 
