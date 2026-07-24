@@ -26,6 +26,7 @@ Parsed by `sparkles.core_cli.args.parseCliArgs!CliParams` in `app.d`.
 | CLI5 | `--font`, `--font-size`, `--window-width`, `--window-height` must configure the GUI window (see `gui.md`).                                                                                         | full (`c2b49e99`)    | `CliParams.font*`/`window*`                         |
 | CLI6 | `--line-numbers` / `--code-line-numbers` (both default on, disableable with `=false`) must configure the GUI gutters.                                                                              | full (`5b862346`)    | `CliParams.lineNumbers`/`codeLineNumbers`           |
 | CLI7 | `--help` must print a usage/description header for the program and every option.                                                                                                                   | full (`d87397b3`)    | `HelpInfo` in `app.main`                            |
+| CLI8 | `--background <no-background\|spans\|full>` must select the terminal background mode (`BGM`); the default is `full`.                                                                               | not started          | proposed `CliParams.background`                     |
 
 ## Source acquisition (`SRC`)
 
@@ -88,6 +89,18 @@ Exactly one mode runs per invocation; see the [mode map](./index.md#rendering-mo
 | ---- | ------------------------------------------------------------------------------------------------------------------ | ----------------- | --------------------------------- |
 | ANS1 | Non-interactive/piped output must render the whole file to ANSI with italics and background emission enabled.      | full (`74d8f6a3`) | `emitAnsiWholeFile`; `renderAnsi` |
 | ANS2 | ` ```ansi ` fenced blocks embedded in a doc are passed through as literal SGR (the tty renders them) in ANSI mode. | full (`74d8f6a3`) | (renderer pass-through)           |
+
+## Background mode (`BGM`)
+
+How the theme background is applied in **terminal** rendering — the whole-file
+ANSI emit and the interactive previewer — selected by `--background` (`CLI8`).
+The three modes; `full` is the new default (today's fixed behaviour is `spans`).
+
+| ID   | Requirement                                                                                                                                                                                                                                                          | Status      | Traces to                                                             |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | --------------------------------------------------------------------- |
+| BGM1 | **`no-background`** — emit foreground colors only; the terminal's own background shows through (the theme background is ignored). Useful for piped output over a themed terminal.                                                                                    | not started | `AnsiOptions.emitBackground: false`; previewer skips back-color-erase |
+| BGM2 | **`spans`** — emit a background only where the theme sets a span background (today's fixed whole-file behaviour, `AnsiOptions(emitBackground: true)`); selectable via the flag.                                                                                      | partial     | `emitAnsiWholeFile` (current default)                                 |
+| BGM3 | **`full`** (the new default) — fill every line with the theme's default background edge-to-edge, matching the previewer's back-color-erase look ([`PRV7`](#interactive-terminal-previewer-prv)). May need a full-line-fill option in `sparkles:syntax` `renderAnsi`. | not started | `renderAnsi` full-line fill (proposed); previewer `PRV7`              |
 
 ## HTML output (`HTM`)
 
