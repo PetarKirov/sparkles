@@ -32,7 +32,7 @@ enum TuiKind : ubyte
     character,
     up, down, left, right,
     pageUp, pageDown, home, end,
-    enter, tab, escape, resize, eof,
+    enter, tab, backspace, escape, resize, eof,
     mouse,
 }
 
@@ -87,11 +87,12 @@ struct TuiInput
     {
         switch (b)
         {
-            case 0x03, 0x04: return TuiKey(TuiKind.eof);      // Ctrl-C / Ctrl-D
-            case '\r', '\n': return TuiKey(TuiKind.enter);
-            case '\t':       return TuiKey(TuiKind.tab);
-            case 0x1b:       return readEscape();
-            default:         return TuiKey(TuiKind.character, b);
+            case 0x03, 0x04:   return TuiKey(TuiKind.eof);      // Ctrl-C / Ctrl-D
+            case '\r', '\n':   return TuiKey(TuiKind.enter);
+            case '\t':         return TuiKey(TuiKind.tab);
+            case 0x7f, 0x08:   return TuiKey(TuiKind.backspace); // DEL / BS
+            case 0x1b:         return readEscape();
+            default:           return TuiKey(TuiKind.character, b);
         }
     }
 
