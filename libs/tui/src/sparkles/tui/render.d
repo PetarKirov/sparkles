@@ -30,6 +30,7 @@ struct Screen
     {
         Grid _prev;
         bool _havePrev;
+        ColorDepth _depth = ColorDepth.trueColor;
     }
 
     /// Forget the retained frame so the next $(LREF render) repaints in full
@@ -39,6 +40,17 @@ struct Screen
         _havePrev = false;
     }
 
+    /// Fold colors to this terminal's real depth (truecolor cells degrade to the
+    /// nearest 256/16 entry). The next frame repaints in full so the new depth
+    /// applies uniformly.
+    void colorDepth(ColorDepth d) @safe nothrow
+    {
+        if (d != _depth)
+        {
+            _depth = d;
+            _havePrev = false;
+        }
+    }
 
     /// Diff `target` against the retained frame and emit the minimal byte stream
     /// into `w`. The first frame (and any resize) repaints fully; afterwards only
@@ -48,7 +60,7 @@ struct Screen
         const resized = target.cols != _prev.cols || target.rows != _prev.rows;
         if (!_havePrev || resized)
         {
-            paintFull(w, target, ColorDepth.trueColor);
+            paintFull(w, target, _depth);
             _prev = target;
             _havePrev = true;
             return;
@@ -90,7 +102,7 @@ struct Screen
                     }
                     if (!haveStyle || c.style != cur)
                     {
-                        writeStyle(w, c.style, ColorDepth.trueColor);
+                        writeStyle(w, c.style, _depth);
                         cur = c.style;
                         haveStyle = true;
                     }
