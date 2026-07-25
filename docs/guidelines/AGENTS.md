@@ -196,6 +196,16 @@ dub --root /path/to/worktree test :core-cli
 > `lib.getExe config.packages.ci` (or the equivalent for other packages)
 > from pre-commit hooks and other Nix expressions.
 >
+> **This applies to one-off and throwaway scripts too — not just committed
+> tooling.** When you reach for a quick script (a data/table transform, a bulk
+> spec edit, a repro, a PTY or integration probe), write it as a D single-file
+> program (`#!/usr/bin/env dub` + `dub run --single foo.d`) rather than ad-hoc
+> Python or Node. It costs about the same, runs on the same toolchain, and — the
+> real leverage — can `import` the `sparkles` libraries and be promoted into
+> `apps/ci`, a test, or an example when it proves useful, so the effort compounds
+> in our codebase instead of evaporating. Reserve `python`/`node`/shell for a
+> genuinely trivial one-liner; anything with real logic should be D.
+>
 > The `detailed-scope` pre-commit hook (commit-msg stage) was originally a
 > large inline shell script in `nix/checks/pre-commit.nix`; it has been
 > ported to a `--check-commit-scope` subcommand inside the D `ci` tool.
