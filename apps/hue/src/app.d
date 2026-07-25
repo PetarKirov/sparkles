@@ -554,6 +554,42 @@ int runTwoslashMode(in CliParams cli, string themeName) @system
         return 0;
     }
 
+    // QA-capture hook: HUE_TWOSLASH_TUI_CAPTURE=<cols>x<rows>[,<selIdx>] renders one
+    // TUI frame to a styled <pre> on stdout (a headless browser screenshots it), so
+    // the TUI mode is captured headlessly alongside GUI/HTML. See apps/hue/tools.
+    version (Posix)
+    {
+        import std.process : environment;
+
+        const cap = environment.get("HUE_TWOSLASH_TUI_CAPTURE", "");
+        if (cap.length)
+        {
+            import twoslash_tui : captureTuiFrameHtml;
+            import std.string : split;
+            import std.conv : to;
+
+            int cols = 100, rows = 30, sel = -1;
+            try
+            {
+                auto parts = cap.split(",");
+                auto wh = parts[0].split("x");
+                if (wh.length == 2)
+                {
+                    cols = wh[0].to!int;
+                    rows = wh[1].to!int;
+                }
+                if (parts.length > 1)
+                    sel = parts[1].to!int;
+            }
+            catch (Exception)
+            {
+            }
+            write(captureTuiFrameHtml(baseName(cli.twoslash), tw, events[], theme, cache,
+                cols, rows, sel));
+            return 0;
+        }
+    }
+
     // An interactive terminal: the live TUI overlay (mouse + keyboard). A pipe or
     // redirect (not a tty) falls through to the non-interactive ANSI render below,
     // so `hue --twoslash x.json | less` and CI capture still work.

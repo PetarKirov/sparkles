@@ -71,6 +71,108 @@ int runTuiTwoslash(
     return 0;
 }
 
+/**
+Renders a single TUI frame (no terminal, no input) to a self-contained styled
+`<pre>` HTML string — the QA-capture path. A headless browser screenshots it, so
+the TUI mode is captured uniformly with the HTML mode. `selIdx >= 0` pre-selects
+that hover token so its popup composites into the frame; `-1` is the resting
+frame.
+*/
+string captureTuiFrameHtml(
+    string title,
+    in TwoslashReturn tw,
+    const(HighlightEvent)[] events,
+    in ResolvedTheme theme,
+    ref TsConfigCache cache,
+    int cols,
+    int rows,
+    int selIdx,
+) @system
+{
+    auto app = TwoslashTui(tw, theme);
+    foreach (ls; byStyledLine(tw.code, events))
+        app.runsByLine[ls.line] ~= Run(ls.span.start, ls.span.end, ls.span.label);
+    app.selIdx = selIdx;
+
+    Grid g;
+    g.resize(cast(ushort) cols, cast(ushort) rows);
+    app.render(g, TermSize(cast(ushort) cols, cast(ushort) rows));
+    return gridToHtml(g, app.pageFg, app.pageBg);
+}
+
+/// Serializes a rendered `Grid` to a styled `<pre>`: each run of same-style cells
+/// becomes one `<span>` with inline `color`/`background`/`text-decoration` (the
+/// undercurl maps to `text-decoration: underline wavy <color>`).
+private string gridToHtml(in Grid g, RgbColor pageFg, RgbColor pageBg) @system
+{
+    import std.array : appender;
+    import sparkles.base.term_style : UnderlineStyle;
+
+    auto sb = appender!string;
+
+    void hex(RgbColor c)
+    {
+        static immutable d = "0123456789abcdef";
+        foreach (v; [c.r, c.g, c.b])
+        {
+            sb ~= d[v >> 4];
+            sb ~= d[v & 0x0F];
+        }
+    }
+
+    void esc(scope const(char)[] s)
+    {
+        foreach (ch; s)
+            switch (ch)
+            {
+                case '<': sb ~= "&lt;"; break;
+                case '>': sb ~= "&gt;"; break;
+                case '&': sb ~= "&amp;"; break;
+                default: sb ~= ch; break;
+            }
+    }
+
+    sb ~= `<pre style="margin:0;padding:10px;line-height:1.3;`
+        ~ `font:15px ui-monospace,Menlo,Consolas,monospace;background:#`;
+    hex(pageBg);
+    sb ~= ";color:#";
+    hex(pageFg);
+    sb ~= `">`;
+
+    foreach (ushort y; 0 .. g.rows)
+    {
+        ushort x = 0;
+        while (x < g.cols)
+        {
+            const st = g.at(x, y).style;
+            sb ~= `<span style="color:#`;
+            hex(toRgb(st.fg, pageFg));
+            sb ~= ";background:#";
+            hex(toRgb(st.bg, pageBg));
+            if (st.underline != UnderlineStyle.none)
+            {
+                sb ~= ";text-decoration:underline ";
+                sb ~= st.underline == UnderlineStyle.curly ? "wavy #" : "solid #";
+                hex(toRgb(st.underlineColor, pageFg));
+            }
+            sb ~= `">`;
+            for (; x < g.cols; ++x)
+            {
+                const c = g.at(x, y);
+                if (c.width == 0)
+                    continue; // wide-glyph continuation carries no bytes
+                if (c.style != st)
+                    break;
+                esc(c.grapheme);
+            }
+            sb ~= "</span>";
+        }
+        sb ~= '\n';
+    }
+    sb ~= "</pre>";
+    return sb[];
+}
+
 /// The interactive overlay's state + frame painter. One instance per session; its
 /// `render`/`handle` are handed to `sparkles.tui.runApp`.
 private struct TwoslashTui
