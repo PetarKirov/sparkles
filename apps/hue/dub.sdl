@@ -17,8 +17,10 @@ dflags "-preview=in" "-preview=dip1000"
 dependency "sparkles:syntax" path="../.."
 dependency "sparkles:core-cli" path="../.."
 dependency "sparkles:twoslash" path="../.."
-// The interactive TUI viewer (src/tui.d) paints into a sparkles:tui cell grid and
-// lets the library cell-diff each frame; pulled by every config (tui.d is Posix).
+// The terminal UI stack: the interactive viewer (src/tui.d) and the `--twoslash`
+// overlay (src/twoslash_tui.d) both paint into a sparkles:tui cell grid and let
+// the library cell-diff each frame. Pulled by every config (the cell grid is
+// cross-platform; the raw-mode loop is Posix-gated inside the lib).
 dependency "sparkles:tui" path="../.."
 
 // Default build (BLD1): the raylib GPU backend (src/gui.d, version(HueGui)) and
