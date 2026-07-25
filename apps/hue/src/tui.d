@@ -62,6 +62,18 @@ private const(char)[] clipCols(return scope const(char)[] s, int maxCols) @safe 
     return s[0 .. i];
 }
 
+// A comparable snapshot of the viewer's rendered state (see PreviewTui.viewState).
+private struct ViewState
+{
+    long top;
+    size_t themeIdx;
+    bool showPreview;
+    bool searching;
+    size_t qlen;
+    long selAnchor, selCursor;
+    int width, height;
+}
+
 private char lowerAscii(char c) @safe pure nothrow @nogc
     => (c >= 'A' && c <= 'Z') ? cast(char)(c + 32) : c;
 
@@ -171,6 +183,14 @@ struct PreviewTui
         if (selAnchor < 0) selAnchor = 0;
         if (selCursor < 0) selCursor = 0;
     }
+
+    // Everything that affects the rendered frame. The loop repaints only when this
+    // changes, so a key that does nothing — e.g. scrolling past the end, where
+    // `top` is already clamped — triggers no redundant full repaint (which
+    // flickers on a slow / SSH terminal that lacks synchronized-output support).
+    private ViewState viewState() const @safe pure nothrow @nogc
+        => ViewState(top, themeIdx, showPreview, searching, qlen,
+            selAnchor, selCursor, width, height);
 
     // Copy the selected visual lines' **original source** (SEL parity): the min
     // src offset .. max src end over the selected lines' content runs (decoration
@@ -511,13 +531,20 @@ int runPreviewTui(ref PreviewTui t, size_t themeIdx, bool startPreview) @system
         sink.flush();
     }
 
-    t.measureAndReflow(); // sets width/height and lays out
-    for (;;)
+    void paint()
     {
         t.buildFrame();
         sink.put(t.frame[]);
         sink.flush();
-        if (!t.handle(input.next()))
+    }
+
+    t.measureAndReflow(); // sets width/height and lays out
+    paint();              // initial frame
+    for (;;)
+    {
+        const k = input.next();      // blocks for one key
+        const before = t.viewState();
+        if (!t.handle(k))
             break;
         if (t.clipReady)
         {
@@ -525,6 +552,10 @@ int runPreviewTui(ref PreviewTui t, size_t themeIdx, bool startPreview) @system
             sink.flush();
             t.clipReady = false;
         }
+        // Repaint only when the key actually changed the view — a no-op key (e.g.
+        // scrolling past the end) leaves the screen untouched, so no flicker.
+        if (t.viewState() != before)
+            paint();
     }
     return 0;
 }
