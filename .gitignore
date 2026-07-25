@@ -72,3 +72,6 @@ __pycache__/
 bazel-*
 .pants.d/
 .pdm-build/
+
+# Compiled output of the single-file QA capture tool (dub run --single)
+/apps/hue/tools/capture-modes
