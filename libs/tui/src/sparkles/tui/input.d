@@ -244,13 +244,16 @@ version (Posix)
     {
         private sigaction_t _oldWinch;
         private bool _installed;
+        private int _fd = STDIN_FILENO;
 
         @disable this(this);
 
-        /// Begin: install the SIGWINCH handler so resizes surface as events.
-        static PosixEvents start() @trusted nothrow
+        /// Begin: install the SIGWINCH handler so resizes surface as events, and
+        /// read from `fd` (default stdin; pass a pty slave fd to drive a test).
+        static PosixEvents start(int fd = STDIN_FILENO) @trusted nothrow
         {
             PosixEvents e;
+            e._fd = fd;
             sigaction_t sa;
             sa.sa_handler = &tuiWinchNoop;
             if (sigaction(SIGWINCH, &sa, &e._oldWinch) == 0)
@@ -270,7 +273,7 @@ version (Posix)
         Event next() @trusted nothrow
         {
             char b;
-            const n = read(STDIN_FILENO, &b, 1);
+            const n = read(_fd, &b, 1);
             if (n < 0)
                 return errno == EINTR
                     ? Event(kind: EventKind.resize) : Event(kind: EventKind.eof);
@@ -327,7 +330,7 @@ version (Posix)
 
         private bool readRaw(ref char b) @trusted nothrow
         {
-            return read(STDIN_FILENO, &b, 1) == 1;
+            return read(_fd, &b, 1) == 1;
         }
 
         private bool readTimed(ref char b, Duration timeout) @trusted nothrow
@@ -335,11 +338,11 @@ version (Posix)
             import core.sys.posix.poll : poll, pollfd, POLLIN;
 
             pollfd pfd;
-            pfd.fd = STDIN_FILENO;
+            pfd.fd = _fd;
             pfd.events = POLLIN;
             if (poll(&pfd, 1, cast(int) timeout.total!"msecs") <= 0)
                 return false;
-            return read(STDIN_FILENO, &b, 1) == 1;
+            return read(_fd, &b, 1) == 1;
         }
     }
 }
