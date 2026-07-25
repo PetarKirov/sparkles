@@ -1,179 +1,221 @@
 #!/usr/bin/env dub
 /+ dub.sdl:
     name "capture-modes"
+    dependency "sparkles:core-cli" path="../../.."
+    dependency "sparkles:syntax" path="../../.."
+    dependency "sparkles:twoslash" path="../../.."
+    dependency "sparkles:base" path="../../.."
 +/
 // Twoslash QA capture harness: renders every fixture in all three `hue --twoslash`
 // backends — GUI (raylib), TUI (terminal cell grid), and HTML — to PNGs in one
-// directory, so a reviewer can eyeball parity across modes without hand-driving
-// each backend. Speeds up the GUI↔TUI↔HTML parity QA loop.
+// directory, so a reviewer eyeballs parity across modes without hand-driving each
+// backend. Speeds up the GUI↔TUI↔HTML parity QA loop.
 //
-// It drives the built `hue` binary plus two external tools:
-//   * a headless Chrome (`google-chrome-stable`/`chromium`) turns the HTML and the
-//     TUI-frame HTML into PNGs;
-//   * `xvfb-run` gives the raylib GUI an off-screen display for its screenshot.
-// Missing tools degrade gracefully (that mode is skipped with a note).
+// A real `sparkles` consumer (per the D-tooling guideline): it renders the HTML
+// mode IN-PROCESS through `sparkles:twoslash` + `sparkles:syntax` (the same
+// catppuccin theme + grammar the binary uses, so the comparison is apples-to-
+// apples) and parses its own CLI with `sparkles:core-cli`. Only the two modes that
+// are irreducibly a separate process shell out to the built `hue` binary: the
+// raylib GUI (needs an X server, via `xvfb-run`) and the interactive TUI (its
+// cell-frame renderer still lives in `apps/hue`; it moves to a lib with the
+// GUI→widget migration, after which this tool renders the TUI in-process too).
 //
-// The TUI is captured headlessly via hue's `HUE_TWOSLASH_TUI_CAPTURE` hook (one
-// frame → styled `<pre>` → Chrome), and the GUI via its `HUE_GUI_SCREENSHOT` hook;
-// `--hover N` opens the Nth hover popup in every mode (GUI `HUE_GUI_HOVER`, TUI
-// selIdx, HTML forced `:hover` via injected CSS).
+// PNGs come from a headless Chrome (`google-chrome-stable`/`chromium`) for HTML +
+// the TUI frame, and from raylib's screenshot for the GUI. Missing tools degrade
+// gracefully. `--hover N` opens the Nth hover popup in every mode.
 //
-// Run from the repo root (after `dub build :hue`):
-//   dub run --single apps/hue/tools/capture-modes.d -- --out /tmp/parity
-//   dub run --single apps/hue/tools/capture-modes.d -- --hover 0 08-jsdoc 02-query
-//
-// Substantial QA logic in D per the repo guideline (not a shell script).
+//   dub run --single apps/hue/tools/capture-modes.d -- --out /tmp/parity --hover 0
+//   dub run --single apps/hue/tools/capture-modes.d -- --modes html 08-jsdoc 02-query
 module capture_modes;
 
-import std.algorithm : canFind, filter, map, sort;
-import std.array : array, join, replace;
-import std.file : dirEntries, exists, mkdirRecurse, readText, write, SpanMode;
+import std.algorithm : canFind, map, sort;
+import std.array : array, replace;
+import std.file : dirEntries, exists, mkdirRecurse, write, SpanMode;
 import std.format : format;
-import std.getopt : defaultGetoptPrinter, getopt;
-import std.path : absolutePath, baseName, buildPath, stripExtension;
+import std.path : absolutePath, baseName, buildPath;
 import std.process : Config, environment, execute, executeShell, spawnProcess, wait;
 import std.stdio : stderr, writeln;
 import std.string : split, strip;
 
+import sparkles.core_cli.args : CliOption, HelpInfo, parseCliArgs;
+
+import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.syntax;
+import sparkles.twoslash;
+
+/// CLI surface (parsed by `sparkles:core-cli`). Descriptions carry no double
+/// quotes — `parseCliArgs` splices them into generated code verbatim.
+struct Params
+{
+    @CliOption("out|o", "Output directory for the PNGs")
+    string outDir = "capture-out";
+
+    @CliOption("fixtures|f", "Directory of *.twoslash.json fixtures")
+    string fixturesDir = "libs/twoslash/examples/fixtures";
+
+    @CliOption("hue", "Path to the built hue binary (GUI + TUI modes)")
+    string hueBin = "apps/hue/build/hue";
+
+    @CliOption("modes|m", "Comma list of modes to render: gui, tui, html")
+    string modes = "gui,tui,html";
+
+    @CliOption("size|s", "TUI capture grid as cols x rows")
+    string size = "100x30";
+
+    @CliOption("theme", "Syntax theme name (matches the hue default)")
+    string theme = "catppuccin-mocha";
+
+    @CliOption("hover", "Open the Nth hover popup in every mode (-1 = resting)")
+    int hover = -1;
+}
+
 int main(string[] args)
 {
-    string outDir = "capture-out";
-    string fixturesDir = "libs/twoslash/examples/fixtures";
-    string hueBin = "apps/hue/build/hue";
-    string modes = "gui,tui,html";
-    string size = "100x30";
-    int hover = -1;
+    auto p = args.parseCliArgs!Params(HelpInfo("capture-modes",
+        "Render twoslash fixtures in GUI, TUI and HTML to PNGs for parity QA. " ~
+        "Positional args pick fixtures by stem (e.g. 08-jsdoc); default is all.", null));
 
-    auto help = getopt(args,
-        "out|o", "Output directory for the PNGs (default: capture-out)", &outDir,
-        "fixtures|f", "Fixtures directory (default: libs/twoslash/examples/fixtures)", &fixturesDir,
-        "hue", "Path to the built hue binary (default: apps/hue/build/hue)", &hueBin,
-        "modes|m", "Comma list of modes: gui,tui,html (default: all)", &modes,
-        "size|s", "TUI capture grid, <cols>x<rows> (default: 100x30)", &size,
-        "hover", "Open the Nth hover popup in every mode (default: -1 = resting)", &hover,
-    );
-    if (help.helpWanted)
+    const wantModes = p.modes.split(",").map!strip.array;
+    const needBinary = wantModes.canFind("gui") || wantModes.canFind("tui");
+    if (needBinary && !p.hueBin.exists)
     {
-        defaultGetoptPrinter("capture-modes — twoslash GUI/TUI/HTML QA screenshots\n" ~
-            "Positional args: specific fixture stems (e.g. 08-jsdoc); default: all.", help.options);
-        return 0;
-    }
-
-    if (!hueBin.exists)
-    {
-        stderr.writeln("capture-modes: hue binary not found at '", hueBin,
-            "' — run `dub build :hue` first (or pass --hue).");
+        stderr.writeln("capture-modes: hue binary not found at '", p.hueBin,
+            "' — run `dub build :hue` first, or pass --hue (or --modes html).");
         return 1;
     }
 
-    const wantModes = modes.split(",").map!strip.array;
-    const hueAbs = hueBin.absolutePath;
-    outDir.mkdirRecurse;
-    const outAbs = outDir.absolutePath;
-
-    // The fixture stems to render: positional args (if any) else every fixture.
-    string[] stems = args[1 .. $];
-    if (stems.length == 0)
-        stems = dirEntries(fixturesDir, "*.twoslash.json", SpanMode.shallow)
-            .map!(e => e.name.baseName.replace(".twoslash.json", "")).array;
-    stems.sort();
-
-    // External-tool discovery (degrade gracefully when one is missing).
-    const chrome = findFirst(["google-chrome-stable", "google-chrome", "chromium", "chromium-browser"]);
-    const haveXvfb = findFirst(["xvfb-run"]).length > 0;
-
-    // Grammar bundle: honour the env, else resolve it from the flake once.
-    auto env = environment.toAA;
-    if ("SPARKLES_TS_GRAMMAR_PATH" !in env)
+    // The grammar bundle drives highlighting (in-process and in the binary). Honour
+    // the env, else resolve it from the flake once and export it for both.
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
     {
         const g = nixGrammarPath();
         if (g.length)
-            env["SPARKLES_TS_GRAMMAR_PATH"] = g;
+            environment["SPARKLES_TS_GRAMMAR_PATH"] = g;
     }
 
-    if (wantModes.canFind("html") || wantModes.canFind("tui"))
-        if (chrome.length == 0)
-            stderr.writeln("capture-modes: no Chrome found — html/tui PNGs skipped (HTML files still written).");
+    p.outDir.mkdirRecurse;
+    const outAbs = p.outDir.absolutePath;
+    const hueAbs = p.hueBin.exists ? p.hueBin.absolutePath : p.hueBin;
+
+    string[] stems = args[1 .. $];
+    if (stems.length == 0)
+        stems = dirEntries(p.fixturesDir, "*.twoslash.json", SpanMode.shallow)
+            .map!(e => e.name.baseName.replace(".twoslash.json", "")).array;
+    stems.sort();
+
+    const chrome = findFirst(["google-chrome-stable", "google-chrome", "chromium", "chromium-browser"]);
+    const haveXvfb = findFirst(["xvfb-run"]).length > 0;
+    if ((wantModes.canFind("html") || wantModes.canFind("tui")) && chrome.length == 0)
+        stderr.writeln("capture-modes: no Chrome found — html/tui PNGs skipped (HTML still written).");
     if (wantModes.canFind("gui") && !haveXvfb)
         stderr.writeln("capture-modes: no xvfb-run — gui mode skipped.");
 
     int made;
     foreach (stem; stems)
     {
-        const fixture = buildPath(fixturesDir, stem ~ ".twoslash.json").absolutePath;
+        const fixture = buildPath(p.fixturesDir, stem ~ ".twoslash.json").absolutePath;
         if (!fixture.exists)
         {
             stderr.writeln("capture-modes: no fixture '", stem, "' — skipping.");
             continue;
         }
         foreach (mode; wantModes)
-        {
-            final switch (mode)
+            switch (mode)
             {
                 case "html":
-                    made += captureHtml(hueAbs, fixture, outAbs, stem, hover, chrome, env);
+                    made += captureHtml(fixture, outAbs, stem, p.theme, p.hover, chrome);
                     break;
                 case "tui":
-                    made += captureTui(hueAbs, fixture, outAbs, stem, size, hover, chrome, env);
+                    made += captureTui(hueAbs, fixture, outAbs, stem, p.size, p.hover, chrome);
                     break;
                 case "gui":
                     if (haveXvfb)
-                        made += captureGui(hueAbs, fixture, outAbs, stem, hover, env);
+                        made += captureGui(hueAbs, fixture, outAbs, stem, p.hover);
+                    break;
+                default:
+                    stderr.writeln("capture-modes: unknown mode '", mode, "'");
                     break;
             }
-        }
     }
-    writeln("capture-modes: wrote ", made, " image(s) to ", outDir);
+    writeln("capture-modes: wrote ", made, " image(s) to ", p.outDir);
     return 0;
 }
 
-/// HTML mode: `hue --twoslash --html` → a page; force the Nth hover popup open via
-/// injected CSS when requested; Chrome screenshots it.
-private int captureHtml(string hue, string fixture, string outDir, string stem,
-    int hover, string chrome, string[string] env)
+/// HTML mode, rendered IN-PROCESS through `sparkles:twoslash`/`sparkles:syntax`
+/// (the exact markup `hue --twoslash --html` emits), then screenshot by Chrome.
+private int captureHtml(string fixture, string outDir, string stem, string themeName,
+    int hover, string chrome) @system
 {
-    const htmlPath = buildPath(outDir, stem ~ ".html.html");
-    auto r = execute([hue, "--twoslash", "--html", fixture], env);
-    if (r.status != 0)
+    auto html = renderTwoslashPage(fixture, themeName);
+    if (html.length == 0)
     {
-        stderr.writeln("  html ", stem, ": hue failed");
+        stderr.writeln("  html ", stem, ": render failed");
         return 0;
     }
-    auto html = r.output;
     if (hover >= 0)
         html = forceHtmlHover(html, hover);
+    const htmlPath = buildPath(outDir, stem ~ ".html.html");
     write(htmlPath, html);
     return shot(chrome, htmlPath, buildPath(outDir, stem ~ ".html.png"), "760,320");
 }
 
-/// TUI mode: `HUE_TWOSLASH_TUI_CAPTURE` renders one frame to a styled `<pre>`;
-/// Chrome screenshots it.
-private int captureTui(string hue, string fixture, string outDir, string stem,
-    string size, int hover, string chrome, string[string] env)
+/// Renders a fixture to a self-contained twoslash HTML page (inline theme + overlay
+/// stylesheet + the `.twoslash-*` markup) — the same pipeline as `runTwoslashMode`.
+private string renderTwoslashPage(string fixture, string themeName) @system
 {
-    auto e = env.dup;
+    auto twRes = loadTwoslashFile(fixture);
+    if (twRes.hasError)
+        return "";
+    const tw = twRes.value;
+
+    const labels = LabelSet.standard();
+    const theme = resolveTheme(builtinThemes.get(themeName, builtinDark), labels);
+
+    auto registry = GrammarRegistry.fromEnvironment();
+    auto cache = TsConfigCache.create(&registry, labels);
+    SmallBuffer!HighlightEvent events;
+    auto res = highlightInjected(cache, "typescript", tw.code, events);
+    if (res.hasError)
+        events ~= HighlightEvent.sourceSpan(0, tw.code.length);
+
+    SmallBuffer!char output;
+    output ~= "<style>\n";
+    writeThemeStylesheet(theme, output);
+    writeTwoslashStyles(output);
+    output ~= "</style>\n<pre class=\"syn-root twoslash\"><code>";
+    renderTwoslashHtml(tw, events[], theme, cache, output);
+    output ~= "</code></pre>\n";
+    return output[].idup;
+}
+
+/// TUI mode: `HUE_TWOSLASH_TUI_CAPTURE` makes the binary render one cell frame to a
+/// styled `<pre>`; Chrome screenshots it. (In-process once the frame renderer moves
+/// to a lib with the GUI→widget migration.)
+private int captureTui(string hue, string fixture, string outDir, string stem,
+    string size, int hover, string chrome)
+{
+    auto e = environment.toAA;
     e["HUE_TWOSLASH_TUI_CAPTURE"] = hover >= 0 ? format("%s,%s", size, hover) : size;
-    const htmlPath = buildPath(outDir, stem ~ ".tui.html");
     auto r = execute([hue, "--twoslash", fixture], e);
     if (r.status != 0)
     {
         stderr.writeln("  tui ", stem, ": hue failed");
         return 0;
     }
+    const htmlPath = buildPath(outDir, stem ~ ".tui.html");
     write(htmlPath, r.output);
     return shot(chrome, htmlPath, buildPath(outDir, stem ~ ".tui.png"), "760,320");
 }
 
-/// GUI mode: xvfb + `HUE_GUI_SCREENSHOT` (+ `HUE_GUI_HOVER`) write the PNG directly.
-private int captureGui(string hue, string fixture, string outDir, string stem,
-    int hover, string[string] env)
+/// GUI mode: xvfb + `HUE_GUI_SCREENSHOT` (+ `HUE_GUI_HOVER`) write the PNG directly
+/// — the one backend that is irreducibly a separate raylib-window process.
+private int captureGui(string hue, string fixture, string outDir, string stem, int hover)
 {
     const png = stem ~ ".gui.png"; // relative — raylib TakeScreenshot prepends CWD
-    auto e = env.dup;
+    auto e = environment.toAA;
     e["HUE_GUI_SCREENSHOT"] = png;
     if (hover >= 0)
         e["HUE_GUI_HOVER"] = format("%s", hover);
-    // Run inside outDir so the relative screenshot lands there.
     auto pid = spawnProcess(["xvfb-run", "-a", hue, "--gui", "--twoslash", fixture],
         env: e, config: Config.none, workDir: outDir);
     if (pid.wait != 0 || !buildPath(outDir, png).exists)
@@ -198,20 +240,16 @@ private int shot(string chrome, string htmlPath, string pngPath, string windowSi
 /// Marks the Nth `.twoslash-hover` and injects CSS forcing its popup visible.
 private string forceHtmlHover(string html, int n)
 {
-    // Tag the (n+1)-th hover token, then a rule shows its popup unconditionally.
-    size_t idx;
-    int seen = -1;
-    string marker = "<span class=\"twoslash-hover\">";
-    auto pos = html;
+    enum marker = "<span class=\"twoslash-hover\">";
     string outp;
+    int seen = -1;
     size_t cursor;
     while (true)
     {
         const at = indexOfFrom(html, marker, cursor);
         if (at == size_t.max)
             break;
-        seen++;
-        if (seen == n)
+        if (++seen == n)
         {
             outp = html[0 .. at] ~ "<span class=\"twoslash-hover\" data-fh=\"1\">"
                 ~ html[at + marker.length .. $];
@@ -221,7 +259,7 @@ private string forceHtmlHover(string html, int n)
     }
     if (outp.length == 0)
         outp = html; // fewer than n hovers — leave as-is
-    const rule = ".twoslash-hover[data-fh] .twoslash-popup-container" ~
+    enum rule = ".twoslash-hover[data-fh] .twoslash-popup-container" ~
         "{display:inline-flex!important;position:static!important;margin-top:4px!important}";
     return outp.replace("</style>", rule ~ "</style>");
 }
@@ -234,12 +272,12 @@ private size_t indexOfFrom(string s, string needle, size_t from)
     return r < 0 ? size_t.max : from + cast(size_t) r;
 }
 
-/// The first of `names` found on `PATH` (via `command -v`), or "".
+/// The first of `names` found on `PATH` (via the `command` shell builtin), or "".
 private string findFirst(string[] names)
 {
     foreach (n; names)
     {
-        auto r = executeShell("command -v " ~ n); // `command` is a shell builtin
+        auto r = executeShell("command -v " ~ n);
         if (r.status == 0 && r.output.strip.length)
             return n;
     }
