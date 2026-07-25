@@ -19,6 +19,7 @@ module sparkles.tui.render;
 import std.range.primitives : put;
 
 import sparkles.base.term_control : writeCursorTo;
+import sparkles.base.text.writers : writeInteger;
 import sparkles.tui.cell : Cell, CellStyle, ColorDepth, Grid, writeStyle;
 
 /// The retained-grid diff renderer. Hold one per output surface; call
@@ -38,6 +39,7 @@ struct Screen
         _havePrev = false;
     }
 
+
     /// Diff `target` against the retained frame and emit the minimal byte stream
     /// into `w`. The first frame (and any resize) repaints fully; afterwards only
     /// changed cell runs are written. `target` becomes the new retained frame.
@@ -46,12 +48,21 @@ struct Screen
         const resized = target.cols != _prev.cols || target.rows != _prev.rows;
         if (!_havePrev || resized)
         {
-            paintFull(w, target);
+            paintFull(w, target, ColorDepth.trueColor);
             _prev = target;
             _havePrev = true;
             return;
         }
 
+
+        // The emitted style is tracked across the whole frame, not reset per
+        // changed run: a cursor move (CUP) does not reset the terminal's SGR
+        // state, so a run whose style matches the last one emitted needs no new
+        // `ESC[…m`. This matters for scrolled / churned content, where the diff
+        // fragments into many short runs that would otherwise each re-establish
+        // the same style.
+        bool haveStyle;
+        CellStyle cur;
         foreach (ushort y; 0 .. target.rows)
         {
             ushort x = 0;
@@ -64,8 +75,6 @@ struct Screen
                 }
                 // A run of changed cells: one cursor move, then the run's bytes.
                 writeCursorTo(w, cast(uint)(y + 1), cast(uint)(x + 1));
-                bool first = true;
-                CellStyle cur;
                 while (x < target.cols && target[x, y] != _prev[x, y])
                 {
                     const c = target[x, y];
@@ -74,11 +83,11 @@ struct Screen
                         x++;
                         continue; // wide-glyph continuation — no bytes, cursor advanced
                     }
-                    if (first || c.style != cur)
+                    if (!haveStyle || c.style != cur)
                     {
                         writeStyle(w, c.style, ColorDepth.trueColor);
                         cur = c.style;
-                        first = false;
+                        haveStyle = true;
                     }
                     put(w, c.grapheme);
                     x++;
@@ -88,12 +97,13 @@ struct Screen
 
         _prev = target;
     }
+
 }
 
 /// Emit a row's cells (style coalesced per run, wide-glyph continuations
-/// skipped), with no cursor positioning. The first cell always emits its style
-/// (a full `ESC[0;…m`), so the row is self-establishing.
-void serializeRow(Writer)(ref Writer w, in Cell[] row)
+/// skipped), folded to `depth`, with no cursor positioning. The first cell always
+/// emits its style (a full `ESC[0;…m`), so the row is self-establishing.
+void serializeRow(Writer)(ref Writer w, in Cell[] row, ColorDepth depth = ColorDepth.trueColor)
 {
     bool first = true;
     CellStyle cur;
@@ -103,7 +113,7 @@ void serializeRow(Writer)(ref Writer w, in Cell[] row)
             continue; // wide-glyph continuation — occupies no bytes
         if (first || c.style != cur)
         {
-            writeStyle(w, c.style, ColorDepth.trueColor);
+            writeStyle(w, c.style, depth);
             cur = c.style;
             first = false;
         }
@@ -112,18 +122,18 @@ void serializeRow(Writer)(ref Writer w, in Cell[] row)
 }
 
 /// Emit one absolutely-positioned row: `CUP(y+1,1)` then the serialized row.
-void paintRow(Writer)(ref Writer w, in Grid g, ushort y)
+void paintRow(Writer)(ref Writer w, in Grid g, ushort y, ColorDepth depth = ColorDepth.trueColor)
 {
     writeCursorTo(w, cast(uint)(y + 1), 1);
-    serializeRow(w, g.row(y));
+    serializeRow(w, g.row(y), depth);
 }
 
 /// Full repaint: every row absolutely positioned, then park in the default style.
-void paintFull(Writer)(ref Writer w, in Grid g)
+void paintFull(Writer)(ref Writer w, in Grid g, ColorDepth depth = ColorDepth.trueColor)
 {
     foreach (ushort y; 0 .. g.rows)
-        paintRow(w, g, y);
-    writeStyle(w, CellStyle.init, ColorDepth.trueColor);
+        paintRow(w, g, y, depth);
+    writeStyle(w, CellStyle.init, depth);
 }
 
 @("render.screen.fullThenDiff")
@@ -175,3 +185,4 @@ unittest
     scr.render(g, b); // identical frame → no output
     assert(b[].length == 0, b[]);
 }
+

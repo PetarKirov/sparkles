@@ -146,6 +146,13 @@ struct Terminal
         _screen.invalidate();
     }
 
+    /// Write a raw byte sequence straight to the terminal (an out-of-band control
+    /// like an OSC 52 clipboard write or an OSC 0 title set — not screen content).
+    void writeRaw(scope const(char)[] s) @trusted
+    {
+        writeAll(_outFd, s);
+    }
+
 }
 
 /// Write all of `data` to `fd`, looping over partial / EINTR-interrupted writes.
