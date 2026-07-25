@@ -11,11 +11,13 @@ The rendering core (2-D cell-grid with a compact packed cell) was chosen by the
 [render-cost benchmark](../../../../../docs/specs/tui/render-bench-baseline.md);
 this module is that benchmark's winning `cell.d` PoC, promoted into the library.
 
-Style is a compact `TermStyle!false` (truecolor `Color` fg/bg, `TextAttr`, and an
-`UnderlineStyle` shape — 8 bytes). SGR emission reuses the absolute reset-then-set
-encoder $(REF writeStyle, sparkles,base,term_style) so a style-run is
-self-establishing and trivial for a VT to reconstruct; the renderer coalesces it
-per run so the byte cost stays realistic.
+Style is the shaped `TermStyle` (truecolor `Color` fg/bg, `TextAttr`, an
+`UnderlineStyle` shape, and an independent SGR-58 underline color — 12 bytes), so
+a cell can carry a colored undercurl (the twoslash error squiggle). SGR emission
+reuses the absolute reset-then-set encoder
+$(REF writeStyle, sparkles,base,term_style) so a style-run is self-establishing
+and trivial for a VT to reconstruct; the renderer coalesces it per run so the
+byte cost stays realistic.
 +/
 module sparkles.tui.cell;
 
@@ -27,8 +29,13 @@ import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.text.utf : encodeUtf8, decodeFirstUtf8;
 import sparkles.base.text.width : codepointWidth;
 
-/// Compact cell style: 2 packed words (shaped layout minus the underline color).
-alias CellStyle = CompactTermStyle;
+/// The cell's style: the shaped `TermStyle` (3 packed words, 12 bytes) so a cell
+/// can hold an SGR-58 underline color — the twoslash error undercurl and other
+/// rich underlines. (The compact `TermStyle!false`, 2 words, drops the underline
+/// color; the frozen render-bench PoC copy stays on it.) The base `writeStyle`
+/// emits the undercurl color for the shaped form; this alias is the single seam a
+/// size-sensitive consumer flips back.
+alias CellStyle = TermStyle;
 
 /// One display cell: a grapheme cluster (inline UTF-8, up to `MaxBytes`), its
 /// display width in columns (0/1/2), and its style. `MaxBytes` (default 16) bounds
@@ -290,8 +297,9 @@ unittest
     assert(g[0, 0].grapheme == "h");
     assert(g[1, 0].style.attrs == TextAttr.bold);
     assert(g[2, 0].grapheme == " "); // untouched blank
-    static assert(Cell.sizeof == 26);
-    static assert(CellStyle.sizeof == 8);
+    // 16 grapheme bytes + len + width + the shaped 3-word (12 B) style.
+    static assert(CellStyle.sizeof == 12);
+    static assert(Cell.sizeof == 30);
 }
 
 @("cell.grid.wideGlyphContinuation")
