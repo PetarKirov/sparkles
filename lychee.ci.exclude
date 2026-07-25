@@ -111,3 +111,34 @@
 # connectivity.fb.com (Facebook's ent ORM home, cited in research/sql/ent.md)
 # redirects to facebook.com/connectivity, which 400s automated checkers.
 ^https?://([^/]+\.)?fb\.com
+# salsa.debian.org (Debian's GitLab) times out under GitHub Actions' concurrency
+# — same pattern as gitlab.freedesktop.org / cs.cmu.edu / earthly.dev above; the
+# commit-pinned dpkg/apt/policy sources it fronts are live + 200 locally. Cited
+# across the application-packaging surveys (linux-native-packages, linux-repositories).
+^https?://([^/]+\.)?salsa\.debian\.org/
+# embeddedartistry.com times out for automated checkers under CI (live for a real
+# browser); cited for the build-system-rules article in monorepo-tooling/tup.
+^https?://([^/]+\.)?embeddedartistry\.com/
+# liacs.leidenuniv.nl 403s GitHub Actions' shared IPs on the hosted PDF (bot-block;
+# 200 locally); cited for the coding-computations notes in parsing/theory/formal-languages.
+^https?://([^/]+\.)?liacs\.leidenuniv\.nl/
+# javadoc.io intermittently 522s (Cloudflare "origin timed out") and rate-limits
+# GitHub Actions' shared IPs (2m backoff) — live + 200 locally; cited across the
+# JVM research surveys (units-of-measure/scala-coulomb, scala-squants, sql/doobie).
+^https?://([^/]+\.)?javadoc\.io/
+# nix.dev (the Nix documentation site) times out under GitHub Actions' concurrency
+# (live + 200 locally); cited from the guidelines (release, benchmarking-and-profiling).
+^https?://([^/]+\.)?nix\.dev/
+# twoslash.netlify.app (the Twoslash demo playground) times out for GitHub Actions'
+# shared IPs (up + 200 locally); cited from the hue twoslash spec + apps/hue docs.
+^https?://([^/]+\.)?twoslash\.netlify\.app/
+# 3blue1brown.com (Grant Sanderson's site, behind Cloudflare) times out under CI's
+# concurrency (live + 200 locally); cited from manim/manimgl.md.
+^https?://([^/]+\.)?3blue1brown\.com/
+# dantb.dev (a personal blog, cited for the effects bibliography in
+# algebraic-effects/papers.md) times out under GitHub Actions' concurrency (200 locally).
+^https?://([^/]+\.)?dantb\.dev/
+# gitlab.com/ita1024/waf (the waf build system's repo) intermittently 502s for
+# GitHub Actions' shared IPs — companion to the already-excluded waf.io above; the
+# repo is live + 200 locally. Scoped to the waf project, not all of gitlab.com.
+^https?://gitlab\.com/ita1024/
