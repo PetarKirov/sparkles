@@ -54,6 +54,11 @@ struct Screen
             return;
         }
 
+        // When the frame is the previous one shifted vertically (scrolling), let
+        // the terminal hardware-scroll the band and mirror it in `_prev`, so the
+        // per-cell diff below only redraws the newly-exposed rows + local changes
+        // instead of re-emitting the whole shifted body.
+        scrollOptimize(target, w);
 
         // The emitted style is tracked across the whole frame, not reset per
         // changed run: a cursor move (CUP) does not reset the terminal's SGR
@@ -98,6 +103,87 @@ struct Screen
         _prev = target;
     }
 
+    // Detect a vertical scroll (the largest contiguous band of rows that `target`
+    // shares with `_prev` at a non-zero row offset) and, when it is worth it,
+    // emit a hardware scroll (DECSTBM region + SU/SD) and mirror the shift in
+    // `_prev` (via `scrollRect`). The subsequent per-cell diff then only redraws
+    // the exposed rows and any local changes. A false positive is harmless — the
+    // diff still corrects every cell; it only costs a few wasted bytes.
+    private void scrollOptimize(Writer)(in Grid target, ref Writer w)
+    {
+        const rows = target.rows;
+        if (rows < 4)
+            return;
+
+        // Quick reject: a scroll shifts many rows. If few rows changed at all,
+        // it is a local update — skip the O(rows²) search below.
+        int changed;
+        foreach (ushort y; 0 .. rows)
+            if (target.row(y) != _prev.row(y))
+                ++changed;
+        if (changed < 4)
+            return;
+
+        // For each candidate offset `d`, the longest run of rows where
+        // `target.row(y) == _prev.row(y + d)` is a shift by `d` (d>0 ⇒ content
+        // moved up ⇒ SU; d<0 ⇒ down ⇒ SD).
+        int bestD, bestLen, bestStart;
+        for (int d = -(rows - 1); d <= rows - 1; ++d)
+        {
+            if (d == 0)
+                continue;
+            int run, curStart;
+            foreach (ushort y; 0 .. rows)
+            {
+                const yp = cast(int) y + d;
+                const m = yp >= 0 && yp < rows && target.row(y) == _prev.row(cast(ushort) yp);
+                if (m)
+                {
+                    if (run == 0)
+                        curStart = y;
+                    ++run;
+                    if (run > bestLen)
+                    {
+                        bestLen = run;
+                        bestD = d;
+                        bestStart = curStart;
+                    }
+                }
+                else
+                    run = 0;
+            }
+        }
+        const absD = bestD > 0 ? bestD : -bestD;
+        if (bestLen < 4 || bestLen <= absD)
+            return; // no worthwhile scroll (preserves too little)
+
+        // The scroll region spans the preserved run plus the `absD` exposed rows.
+        int r0 = bestD > 0 ? bestStart : bestStart + bestD;
+        int r1 = bestD > 0 ? bestStart + bestLen - 1 + bestD : bestStart + bestLen - 1;
+        if (r0 < 0)
+            r0 = 0;
+        if (r1 > rows - 1)
+            r1 = rows - 1;
+        if (r1 - r0 + 1 <= absD)
+            return;
+
+        // Set the scroll region, scroll it, reset the region.
+        put(w, "\x1b[");
+        writeInteger(w, cast(uint)(r0 + 1));
+        put(w, ';');
+        writeInteger(w, cast(uint)(r1 + 1));
+        put(w, 'r');
+        put(w, "\x1b[");
+        writeInteger(w, cast(uint) absD);
+        put(w, bestD > 0 ? 'S' : 'T'); // SU / SD
+        put(w, "\x1b[r"); // reset the scroll region to full screen
+
+        // Mirror the terminal's shift in the retained grid (blank the vacated
+        // rows with the default cell — they differ from `target`'s exposed
+        // content, so the diff redraws them).
+        _prev.scrollRect(0, cast(ushort) r0, _prev.cols, cast(ushort)(r1 - r0 + 1),
+            -bestD, CellStyle.init);
+    }
 }
 
 /// Emit a row's cells (style coalesced per run, wide-glyph continuations
@@ -186,3 +272,34 @@ unittest
     assert(b[].length == 0, b[]);
 }
 
+@("render.screen.scrollEmitsHardwareScroll")
+@safe nothrow
+unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+    import sparkles.tui.cell : CellStyle;
+    import std.algorithm.searching : canFind;
+
+    static immutable string[8] labels = ["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7"];
+    Grid g;
+    g.resize(6, 8);
+    foreach (ushort y; 0 .. 8)
+        g.putText(0, y, labels[y], CellStyle.init);
+
+    Screen scr;
+    SmallBuffer!char full;
+    scr.render(g, full); // first frame — full paint
+
+    // Scroll the whole grid up by 2 and expose two new rows at the bottom.
+    g.scrollRect(0, 0, 6, 8, -2, CellStyle.init);
+    g.putText(0, 6, "nA", CellStyle.init);
+    g.putText(0, 7, "nB", CellStyle.init);
+
+    SmallBuffer!char diff;
+    scr.render(g, diff);
+    const s = diff[];
+    assert(s.canFind("\x1b[1;8r"), s);            // DECSTBM region rows 1..8
+    assert(s.canFind("\x1b[2S"), s);              // scroll up by 2 (SU)
+    assert(s.canFind("nA") && s.canFind("nB"), s); // only the exposed rows are drawn
+    assert(!s.canFind("r2") && !s.canFind("r7"), s); // preserved rows are NOT re-emitted
+}

@@ -191,7 +191,48 @@ struct GridT(uint MaxBytes = 16)
         }
     }
 
+    /// Fill a rectangle `[x, x+w) × [y, y+h)` with a styled space — a bulk clear
+    /// (e.g. a widget's background panel).
+    void fillRect(ushort x, ushort y, ushort w, ushort h, in CellStyle st) @safe pure nothrow @nogc
+    {
+        foreach (yy; y .. y + h)
+        {
+            if (yy >= _rows)
+                break;
+            fill(x, cast(ushort) yy, w, st);
+        }
+    }
 
+    /// Translate a rectangle's content vertically by `dy` rows (positive = down,
+    /// negative = up): rows scrolled out of the rect are dropped and the `|dy|`
+    /// vacated rows filled with a styled space. A **full-width** rect (`x == 0`,
+    /// `w >= cols`) is what $(REF Screen, sparkles,tui,render) recognizes and
+    /// turns into a terminal hardware scroll — a bulk update instead of a per-cell
+    /// diff; a sub-width rect is a plain content move (no hardware scroll).
+    void scrollRect(ushort x, ushort y, ushort w, ushort h, int dy, in CellStyle st)
+        @safe pure nothrow @nogc
+    {
+        if (dy == 0 || h == 0 || w == 0)
+            return;
+        const ad = dy > 0 ? dy : -dy;
+        if (ad >= h)
+        {
+            fillRect(x, y, w, h, st); // everything scrolled out
+            return;
+        }
+        if (dy > 0) // content moves down: copy high → low, blank the top band
+        {
+            for (int i = h - 1; i >= ad; --i)
+                copySeg(cast(ushort)(y + i), cast(ushort)(y + i - dy), x, w);
+            fillRect(x, y, w, cast(ushort) ad, st);
+        }
+        else // content moves up: copy low → high, blank the bottom band
+        {
+            for (int i = 0; i + ad < h; ++i)
+                copySeg(cast(ushort)(y + i), cast(ushort)(y + i + ad), x, w);
+            fillRect(x, cast(ushort)(y + h - ad), w, cast(ushort) ad, st);
+        }
+    }
 
     private:
 
@@ -218,6 +259,20 @@ struct GridT(uint MaxBytes = 16)
         _cells[][0 .. n] = other._cells[][0 .. n];
     }
 
+    // Copy the cell segment `[x, x+w)` from row `srcY` to row `dstY`.
+    void copySeg(ushort dstY, ushort srcY, ushort x, ushort w) @safe pure nothrow @nogc
+    {
+        if (dstY >= _rows || srcY >= _rows)
+            return;
+        if (x == 0 && w >= _cols)
+        {
+            row(dstY)[] = row(srcY)[]; // whole-row fast path
+            return;
+        }
+        const x1 = x + w > _cols ? _cols : x + w;
+        foreach (xx; x .. x1)
+            this[cast(ushort) xx, dstY] = this[cast(ushort) xx, srcY];
+    }
 }
 
 /// The grid type used across the library — cells with the default inline size.
@@ -269,4 +324,33 @@ unittest
     Grid c;
     c = a;
     assert(c[0, 0].grapheme == "h" && c[1, 0].grapheme == "i");
+}
+
+@("cell.grid.scrollRectAndFillRect")
+@safe nothrow
+unittest
+{
+    static immutable string[5] labels = ["aa", "bb", "cc", "dd", "ee"];
+    Grid g;
+    g.resize(4, 5);
+    foreach (ushort y; 0 .. 5)
+        g.putText(0, y, labels[y], CellStyle.init);
+
+    // Scroll the content up by 2: "aa"/"bb" drop off, "cc" is at the top, the
+    // bottom two rows are blanked.
+    g.scrollRect(0, 0, 4, 5, -2, CellStyle.init);
+    assert(g[0, 0].grapheme == "c"); // "cc" now at row 0
+    assert(g[0, 2].grapheme == "e"); // "ee" now at row 2
+    assert(g[0, 3].grapheme == " "); // vacated
+    assert(g[0, 4].grapheme == " ");
+
+    // Scroll down by 1: everything moves down one, the top row blanks.
+    g.scrollRect(0, 0, 4, 5, 1, CellStyle.init);
+    assert(g[0, 0].grapheme == " ");
+    assert(g[0, 1].grapheme == "c");
+
+    // fillRect paints a styled blank rectangle.
+    const st = CellStyle(fg: Color.fromRgb(1, 2, 3));
+    g.fillRect(0, 0, 4, 5, st);
+    assert(g[2, 2].grapheme == " " && g[2, 2].style.fg == Color.fromRgb(1, 2, 3));
 }
