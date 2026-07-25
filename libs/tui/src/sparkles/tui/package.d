@@ -1,17 +1,18 @@
 /++
 `sparkles:tui` — a full-screen, interactive terminal-UI library.
 
-$(B Status: scaffolding.) The library's runtime, backend, input, color,
-layout, and widget modules are intentionally not written yet. The core
-rendering architecture — a $(I line-diff) buffer of styled byte-lines versus a
-$(I 2-D cell-grid) with per-cell diffing — is being decided by measurement, not
-picked up front. The deciding evidence is the render-cost benchmark under
-`libs/tui/bench/render/` (a standalone package with its own manifest, like
-`libs/wired/bench`), driven by `sparkles:test-runner --bench --perf`.
+The rendering core is a $(B 2-D cell-grid with a compact packed cell), chosen by
+the [render-cost benchmark](../../../../../docs/specs/tui/render-bench-baseline.md)
+under `libs/tui/bench/render/` (line-diff vs cell-grid, decided by measurement).
+Paint a frame into a $(REF Grid, sparkles,tui,cell) and hand it to a
+$(REF Screen, sparkles,tui,render): only the cells that changed since the last
+frame are emitted.
 
-The feature inventory, the delta from the existing `sparkles:core-cli`
-substrate, and the open architectural questions live in the spec at
-`docs/specs/tui/` (`index.md` + `PLAN.md`). Until the benchmark resolves the
-rendering core, only this package skeleton and the benchmark harness exist.
+$(B Shipped:) the render core ($(MREF sparkles,tui,cell) + $(MREF sparkles,tui,render)).
+The backend/lifecycle, input, event loop, layout, and widget layers are being
+built out on top of it (see `docs/specs/tui/`).
 +/
 module sparkles.tui;
+
+public import sparkles.tui.cell;
+public import sparkles.tui.render;
