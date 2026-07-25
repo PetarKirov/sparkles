@@ -27,6 +27,9 @@ import sparkles.syntax.render.ansi : renderAnsi, AnsiOptions;
 import sparkles.syntax.theme : ResolvedTheme;
 import sparkles.syntax.ts.injection : TsConfigCache;
 
+import sparkles.base.term_color : ColorChannel;
+import sparkles.ui.style : defaultTwoslashPalette, Palette, Slot, writeSlotSgr;
+
 import sparkles.twoslash.overlay : BelowBlock, errIsWarning, highlightSignature,
     InlineDecoration, planTwoslash, TwoslashPlan;
 import sparkles.twoslash.protocol : Completion, Node, NodeType, TwoslashReturn;
@@ -40,16 +43,29 @@ struct TwoslashAnsiOptions
     bool hovers = false;       /// expand hovers as `↳ type` meta-lines
 }
 
-// Meta chrome uses plain 16-color SGR (depth-independent, terminal-native).
+// Meta-chrome *attributes* stay terminal-native (dim/reverse/underline are not
+// brand colors). The brand *colors* (error/warn/tag) come from the single-source
+// twoslash palette via `slotFgSeq`, so all three backends agree — at `depth`,
+// the palette color downsamples to the terminal's tier (truecolor → exact,
+// ansi256/16 → nearest).
 private enum sgrReset = "\x1b[0m";
 private enum sgrDim = "\x1b[2m";
-private enum sgrRed = "\x1b[31m";
-private enum sgrYellow = "\x1b[33m";
-private enum sgrCyan = "\x1b[36m";
 private enum sgrReverse = "\x1b[7m";
 private enum sgrReverseOff = "\x1b[27m";
 private enum sgrUnderline = "\x1b[4m";
 private enum sgrUnderlineOff = "\x1b[24m";
+
+/// Builds the `ESC[…m` foreground sequence selecting `slot` from `pal` at
+/// `depth`, into `buf` (returns its slice — valid until `buf` is next reused).
+private const(char)[] slotFgSeq(ref SmallBuffer!(char, 32) buf, in Palette pal,
+    Slot slot, ColorDepth depth) @safe
+{
+    buf.clear();
+    buf ~= "\x1b[";
+    writeSlotSgr(buf, pal, slot, ColorChannel.foreground, depth);
+    buf ~= "m";
+    return buf[];
+}
 
 /**
 Renders `tw` (its `code` already highlighted into `events`) as the ANSI
@@ -70,6 +86,7 @@ ref Writer renderTwoslashAnsi(Writer)(
     const decos = plan.inlineDecorations;
     const below = plan.belowBlocks;
     const styled = options.depth != ColorDepth.none;
+    const pal = defaultTwoslashPalette();
 
     // Materialize per-line styled runs (absolute byte offsets, clipped to line).
     SmallBuffer!StyledLineSpan lineRuns;
@@ -128,7 +145,7 @@ ref Writer renderTwoslashAnsi(Writer)(
         // Below-line meta blocks anchored to this line.
         foreach (ref const b; below[])
             if (b.line == line)
-                writeMeta(w, theme, cache, tw.nodes[b.node], styled, options);
+                writeMeta(w, theme, cache, pal, tw.nodes[b.node], styled, options);
 
         // Hover expansion (opt-in): a `↳ type` line under the hovered token.
         if (options.hovers)
@@ -147,7 +164,7 @@ ref Writer renderTwoslashAnsi(Writer)(
     // code (sorted by line, so this preserves their order).
     foreach (ref const b; below[])
         if (b.line > line)
-            writeMeta(w, theme, cache, tw.nodes[b.node], styled, options);
+            writeMeta(w, theme, cache, pal, tw.nodes[b.node], styled, options);
 
     return w;
 }
@@ -201,21 +218,26 @@ private void renderCodeLine(Writer)(ref Writer w, scope const(char)[] code,
     }
 }
 
-/// A below-line meta block: caret row + payload.
+/// A below-line meta block: caret row + payload. Brand colors (error/warn/tag)
+/// come from `pal` via $(LREF slotFgSeq); `dim` completion de-emphasis stays a
+/// terminal attribute.
 private void writeMeta(Writer)(ref Writer w, in ResolvedTheme theme, ref TsConfigCache cache,
-    in Node node, bool styled, in TwoslashAnsiOptions options) @system
+    in Palette pal, in Node node, bool styled, in TwoslashAnsiOptions options) @system
 {
+    SmallBuffer!(char, 32) seqBuf;
     final switch (node.type)
     {
         case NodeType.error:
-            writeCaret(w, node.character, node.length ? node.length : 1,
-                styled ? (errIsWarning(node.level) ? sgrYellow : sgrRed) : "", styled);
-            writeIndented(w, node.character, node.text,
-                styled ? (errIsWarning(node.level) ? sgrYellow : sgrRed) : "", styled);
+            const seq = styled
+                ? slotFgSeq(seqBuf, pal, errIsWarning(node.level) ? Slot.warn : Slot.error, options.depth)
+                : "";
+            writeCaret(w, node.character, node.length ? node.length : 1, seq, styled);
+            writeIndented(w, node.character, node.text, seq, styled);
             break;
 
         case NodeType.query:
-            writeCaret(w, node.character, 2, styled ? sgrCyan : "", styled, "^?");
+            writeCaret(w, node.character, 2,
+                styled ? slotFgSeq(seqBuf, pal, Slot.info, options.depth) : "", styled, "^?");
             // Re-highlight the query type signature, indented under the caret.
             writeSpaces(w, node.character);
             SmallBuffer!HighlightEvent sig;
@@ -244,7 +266,7 @@ private void writeMeta(Writer)(ref Writer w, in ResolvedTheme theme, ref TsConfi
         case NodeType.tag:
             writeSpaces(w, node.character);
             if (styled)
-                put(w, sgrCyan);
+                put(w, slotFgSeq(seqBuf, pal, Slot.info, options.depth));
             put(w, "@");
             put(w, node.name);
             if (node.text.length)
@@ -395,6 +417,36 @@ version (unittest)
     ]);
     assert(renderTw(tw, null, TwoslashAnsiOptions(depth: ColorDepth.none)) ==
         "hi\n@log hello\n");
+}
+
+@("render_ansi.metaColorsFromPalette")
+@system unittest
+{
+    import std.algorithm.searching : canFind;
+
+    // At trueColor the brand chrome carries the single-source palette colors
+    // (error #d45656, tag/info #3772cf) — the same values the CSS/GUI use.
+    const err = TwoslashReturn(code: "x = y\n", nodes: [
+        Node(type: NodeType.error, start: 4, length: 1, line: 0, character: 4,
+            text: "no y", level: "error"),
+    ]);
+    const eOut = renderTw(err, null, TwoslashAnsiOptions(depth: ColorDepth.trueColor));
+    assert(eOut.canFind("\x1b[38;2;212;86;86m")); // Slot.error fg
+    assert(eOut.canFind("\x1b[0m"));
+
+    const warn = TwoslashReturn(code: "x = y\n", nodes: [
+        Node(type: NodeType.error, start: 4, length: 1, line: 0, character: 4,
+            text: "meh", level: "warning"),
+    ]);
+    assert(renderTw(warn, null, TwoslashAnsiOptions(depth: ColorDepth.trueColor))
+        .canFind("\x1b[38;2;195;125;13m")); // Slot.warn fg
+
+    const tag = TwoslashReturn(code: "hi\n", nodes: [
+        Node(type: NodeType.tag, start: 0, length: 0, line: 0, character: 0,
+            name: "log", text: "hello"),
+    ]);
+    assert(renderTw(tag, null, TwoslashAnsiOptions(depth: ColorDepth.trueColor))
+        .canFind("\x1b[38;2;55;114;207m")); // Slot.info fg
 }
 
 @("render_ansi.trailingTagPastLastLine")
