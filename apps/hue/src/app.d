@@ -554,6 +554,19 @@ int runTwoslashMode(in CliParams cli, string themeName) @system
         return 0;
     }
 
+    // An interactive terminal: the live TUI overlay (mouse + keyboard). A pipe or
+    // redirect (not a tty) falls through to the non-interactive ANSI render below,
+    // so `hue --twoslash x.json | less` and CI capture still work.
+    version (Posix)
+    {
+        if (isTerminal(StdStream.stdout) && isTerminal(StdStream.stdin))
+        {
+            import twoslash_tui : runTuiTwoslash;
+
+            return runTuiTwoslash(baseName(cli.twoslash), tw, events[], theme, cache);
+        }
+    }
+
     SmallBuffer!char output;
     renderTwoslashAnsi(tw, events[], theme, cache, output,
         TwoslashAnsiOptions(depth: detectColorDepth(), italics: true, emitBackground: true));
