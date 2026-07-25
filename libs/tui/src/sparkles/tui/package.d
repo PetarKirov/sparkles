@@ -17,3 +17,4 @@ module sparkles.tui;
 public import sparkles.tui.cell;
 public import sparkles.tui.render;
 public import sparkles.tui.terminal;
+public import sparkles.tui.input;
