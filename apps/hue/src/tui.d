@@ -1,34 +1,31 @@
-// hue's full-screen terminal viewer — the interactive TUI port of the GUI, painted
-// into alt-screen cells (tui.md T1). It reuses the GUI's raylib-free layout
-// (`gui_preview.layoutPreview` / `buildRawPlines` → the wrapped `PreviewLine[]`)
-// and paints it with the shared terminal painter (`preview_ansi`), so the same
-// model drives the terminal and the GPU window ("one model, two painters").
+// hue's full-screen terminal viewer — the interactive TUI port of the GUI, built
+// on `sparkles:tui`. It reuses the GUI's raylib-free layout (`gui_preview`
+// `layoutPreview` / `buildRawPlines` → the wrapped `PreviewLine[]`) and paints it
+// into a `sparkles.tui.Grid`; the library's `Terminal` cell-diffs each frame and
+// writes only the changed cells (so scrolling emits a minimal update — no full
+// repaint, no flicker), and `PosixEvents` decodes input.
 //
-// This milestone (T1) covers scrolling over the reused layout, a raw/preview
-// toggle, live theme cycling, and reflow on terminal resize. Mouse + a cell
-// scrollbar (T2), selection → OSC 52 (T3), and incremental search (T4) build on
-// it. Posix-only (raw termios via tui_input); Windows degrades to the
-// non-interactive preview emit upstream.
+// Covers scrolling, a raw/preview toggle, live theme cycling, a cell scrollbar,
+// mouse (wheel + scrollbar + drag-selection → OSC 52), incremental search, and
+// reflow on resize. Posix-only; Windows degrades to the non-interactive emit.
 module tui;
 
 version (Posix):
 
 import sparkles.base.smallbuffer : SmallBuffer;
-import sparkles.base.term_color : Color;
-import sparkles.base.term_control : CtlSeq;
-import sparkles.base.term_style : TermStyle, writeStyleTransition;
 import sparkles.base.text.writers : writeInteger;
 
 import sparkles.syntax : ColorDepth, HighlightEvent, LabelSet, ResolvedTheme,
     resolveTheme, RgbColor, Theme, toRgb;
 
-import sparkles.core_cli.term_caps : StdStream, terminalSize;
+import sparkles.tui : Cell, CellStyle, Color, Grid, PosixEvents, Terminal,
+    TerminalOptions, TextAttr, UnderlineStyle;
+import sparkles.tui.input : Event, EventKind, Key, MouseAction, MouseButton;
 
-import gui_preview : buildRawPlines, layoutPreview, PreviewLine, PreviewModel,
-    quoteBarColors, quoteBarCycle;
-import preview_ansi : renderPreviewAnsi;
-import previewer : BackgroundMode, TermOut;
-import tui_input : beginTuiInput, TuiInput, TuiKey, TuiKind;
+import ansi_model : Attr;
+import gui_preview : BandKind, buildRawPlines, layoutPreview, PreviewLine,
+    PreviewModel, quoteBarColors, quoteBarCycle;
+import previewer : BackgroundMode;
 
 private enum RgbColor fallbackFg = RgbColor(0xcc, 0xcc, 0xcc);
 private enum RgbColor fallbackBg = RgbColor(0x1e, 0x1e, 0x1e);
@@ -40,38 +37,20 @@ private RgbColor mix(RgbColor a, RgbColor b, double t) @safe pure nothrow @nogc
     return RgbColor(c(a.r, b.r), c(a.g, b.g), c(a.b, b.b));
 }
 
-// Byte prefix of `s` holding at most `maxCols` codepoints (≈ display columns for
-// the ASCII + single-width glyphs the chrome lines use), cut on a UTF-8 boundary.
-// Keeps the header / status from overflowing the terminal width — with autowrap
-// off, an overflow would otherwise pile onto the last column (the scrollbar's).
-private const(char)[] clipCols(return scope const(char)[] s, int maxCols) @safe pure nothrow @nogc
+// A cell style from the preview's neutral RgbColor + `Attr` bits (underline is a
+// first-class field on the compact style, not a `TextAttr` bit).
+private CellStyle cellStyle(RgbColor fg, bool hasBg, RgbColor bg, ubyte attrs)
+    @safe pure nothrow @nogc
 {
-    if (maxCols <= 0)
-        return null;
-    int cols;
-    size_t i;
-    while (i < s.length && cols < maxCols)
-    {
-        const c = s[i];
-        size_t n = c >= 0xF0 ? 4 : c >= 0xE0 ? 3 : c >= 0xC0 ? 2 : 1;
-        if (i + n > s.length)
-            n = s.length - i;
-        i += n;
-        ++cols;
-    }
-    return s[0 .. i];
-}
-
-// A comparable snapshot of the viewer's rendered state (see PreviewTui.viewState).
-private struct ViewState
-{
-    long top;
-    size_t themeIdx;
-    bool showPreview;
-    bool searching;
-    size_t qlen;
-    long selAnchor, selCursor;
-    int width, height;
+    TextAttr ta;
+    if (attrs & Attr.bold)          ta = ta | TextAttr.bold;
+    if (attrs & Attr.italic)        ta = ta | TextAttr.italic;
+    if (attrs & Attr.strikethrough) ta = ta | TextAttr.strikethrough;
+    return CellStyle(
+        fg: Color.fromRgb(fg),
+        bg: hasBg ? Color.fromRgb(bg) : Color.init,
+        attrs: ta,
+        underline: (attrs & Attr.underline) ? UnderlineStyle.single : UnderlineStyle.none);
 }
 
 private char lowerAscii(char c) @safe pure nothrow @nogc
@@ -96,7 +75,7 @@ private bool containsIC(scope const(char)[] hay, scope const(char)[] needle) @sa
 /// The scrolling viewer state: the document (markdown model or raw source), the
 /// theme list, and the current scroll / theme / view-mode. Laid out once per
 /// theme / width / view change into `plines`; each frame culls a viewport slice
-/// and paints it.
+/// and paints it into a cell grid.
 struct PreviewTui
 {
     string title;
@@ -106,8 +85,8 @@ struct PreviewTui
     LabelSet labels;
     const(string)[] names;          // theme names, parallel to `themes`
     immutable(Theme)[] themes;
-    BackgroundMode background;
-    ColorDepth depth;
+    BackgroundMode background;      // (kept for the caller; the viewer paints full-bg)
+    ColorDepth depth;               // (unused: the cell renderer emits truecolor)
 
     private size_t themeIdx;
     private long top;               // first visible visual line
@@ -115,10 +94,9 @@ struct PreviewTui
     private int width, height;      // last-measured terminal size
     private PreviewLine[] plines;   // laid out for (themeIdx, width, showPreview)
     private ResolvedTheme theme;
-    private RgbColor pageFg, pageBg;
+    private RgbColor pageFg, pageBg, gutterFg;
     private RgbColor[quoteBarCycle] bars;
     private RgbColor sbTrack, sbThumb; // scrollbar track / thumb (theme-tinted)
-    private SmallBuffer!(char, 16384) frame;
 
     // Incremental search (`/`): `searching` is input mode; `qbuf[0 .. qlen]` is
     // the query, reused by `n`/`N`. `scratch` concatenates a line's run text for
@@ -130,7 +108,7 @@ struct PreviewTui
 
     // Selection (mouse drag) → OSC 52 copy. `selAnchor`/`selCursor` are visual
     // line indices (-1 ⇒ no selection); `selBg` tints the selected lines. `clip`
-    // holds a pending OSC 52 sequence that runPreviewTui flushes after a copy.
+    // holds a pending OSC 52 sequence that the loop flushes after a copy.
     private long selAnchor = -1, selCursor = -1;
     private RgbColor selBg;
     private SmallBuffer!char clip;
@@ -145,12 +123,13 @@ struct PreviewTui
         theme = resolveTheme(themes[themeIdx], labels);
         pageFg = toRgb(theme.defaults.fg, fallbackFg);
         pageBg = toRgb(theme.defaults.bg, fallbackBg);
+        gutterFg = mix(pageFg, pageBg, 0.5); // muted leader / decorations
         bars = quoteBarColors(theme, pageFg, pageBg);
-        // Scrollbar chrome: tint toward the theme link color (matches gui.d).
+        // Scrollbar chrome + selection: tint toward the theme link color (gui.d).
         const linkC = toRgb(theme[theme.labels.resolve("markup.link")].fg, pageFg);
         sbTrack = mix(pageBg, linkC, 0.22);
         sbThumb = mix(pageBg, linkC, 0.5);
-        selBg = mix(pageBg, linkC, 0.4); // selection highlight
+        selBg = mix(pageBg, linkC, 0.4);
         // Lay out to one column narrower — the last column holds the scrollbar.
         const w = width < 9 ? 8 : width - 1;
         if (showPreview && model.present)
@@ -183,14 +162,6 @@ struct PreviewTui
         if (selAnchor < 0) selAnchor = 0;
         if (selCursor < 0) selCursor = 0;
     }
-
-    // Everything that affects the rendered frame. The loop repaints only when this
-    // changes, so a key that does nothing — e.g. scrolling past the end, where
-    // `top` is already clamped — triggers no redundant full repaint (which
-    // flickers on a slow / SSH terminal that lacks synchronized-output support).
-    private ViewState viewState() const @safe pure nothrow @nogc
-        => ViewState(top, themeIdx, showPreview, searching, qlen,
-            selAnchor, selCursor, width, height);
 
     // Copy the selected visual lines' **original source** (SEL parity): the min
     // src offset .. max src end over the selected lines' content runs (decoration
@@ -247,8 +218,8 @@ struct PreviewTui
         return containsIC(scratch[], query);
     }
 
-    // The nearest matching line from `from` in the given direction (wrapping), or
-    // -1 if none. Scrolls that line to the top when found.
+    // The nearest matching line from `from` in the given direction (wrapping);
+    // scrolls it to the top when found.
     private void jumpMatch(long from, bool forward) @safe
     {
         const n = cast(long) plines.length;
@@ -266,90 +237,107 @@ struct PreviewTui
         }
     }
 
-    // Emit a chrome-styled (theme fg/bg) full-width line: text (clipped so it
-    // can't spill past the edge into the scrollbar column), erase to EOL, reset.
-    // `nl` ends the row (the final status line omits it to avoid scroll).
-    private void chromeLine(scope const(char)[] text, bool nl) @safe
-    {
-        writeStyleTransition(frame, TermStyle.init,
-            TermStyle(fg: Color.fromRgb(pageFg), bg: Color.fromRgb(pageBg)), depth);
-        frame.put(clipCols(text, width - 1)); // leave the last column for the scrollbar
-        frame.put(cast(string) CtlSeq.eraseToEnd);
-        writeStyleTransition(frame,
-            TermStyle(fg: Color.fromRgb(pageFg), bg: Color.fromRgb(pageBg)),
-            TermStyle.init, depth);
-        if (nl)
-            frame.put("\n");
-    }
+    // ── Painting into the cell grid ──────────────────────────────────────────
 
-    // Assemble one full-screen frame into `frame`.
-    private void buildFrame() @system
+    /// Paint the whole frame into `g` (immediate mode). The library diffs it
+    /// against the last frame, so only changed cells reach the wire.
+    void paint(ref Grid g) @system
     {
+        // Fill the screen with the theme background (the full-screen look).
+        g.clearTo(cellStyle(pageFg, true, pageBg, 0));
+        paintHeader(g);
+
         const rows = bodyRows();
-        frame.clear();
-        frame.put(CtlSeq.syncBegin);
-        frame.put(CtlSeq.cursorHome);
-
-        // Header.
-        SmallBuffer!(char, 256) hdr;
-        hdr.put(" ");
-        hdr.put(title);
-        hdr.put("  ·  ");
-        hdr.put(names[themeIdx]);
-        hdr.put(" (");
-        writeInteger(hdr, themeIdx + 1);
-        hdr.put("/");
-        writeInteger(hdr, names.length);
-        hdr.put(")  ·  ");
-        hdr.put((showPreview && model.present) ? "preview" : "raw");
-        hdr.put("  ·  ");
-        writeInteger(hdr, cast(size_t)(top + 1));
-        hdr.put("/");
-        writeInteger(hdr, plines.length);
-        chromeLine(hdr[], nl: true);
-
-        // Body viewport.
         const first = cast(size_t) top;
         const last = first + rows > plines.length ? plines.length : first + rows;
-        if (first < last)
+        long sLo = -1, sHi = -1;
+        if (selAnchor >= 0)
         {
-            long sLo = -1, sHi = -1;
-            if (selAnchor >= 0)
-            {
-                sLo = selAnchor < selCursor ? selAnchor : selCursor;
-                sHi = selAnchor < selCursor ? selCursor : selAnchor;
-            }
-            renderPreviewAnsi(frame, plines[first .. last], pageFg, pageBg, bars,
-                depth, background, selBg, cast(long) first, sLo, sHi);
+            sLo = selAnchor < selCursor ? selAnchor : selCursor;
+            sHi = selAnchor < selCursor ? selCursor : selAnchor;
         }
-        // Pad any rows beyond the document's end with blank chrome lines.
-        foreach (_; 0 .. rows - (last - first))
-            chromeLine("", nl: true);
-
-        // Status / hint line (no trailing newline — keeps the last row put).
-        if (searching)
+        ushort y = 1;
+        foreach (i; first .. last)
         {
-            SmallBuffer!(char, 300) st;
-            st.put(" /");
-            st.put(query);
-            st.put("▏");
-            chromeLine(st[], nl: false);
+            const sel = sLo >= 0 && cast(long) i >= sLo && cast(long) i <= sHi;
+            paintLine(g, y, plines[i], sel);
+            ++y;
         }
-        else
-            chromeLine(" scroll ↑↓/PgUp/PgDn · ←→ theme · Tab raw/preview · / search · drag+y copy · q quit",
-                nl: false);
-
-        drawScrollbar();
-        frame.put(CtlSeq.syncEnd);
+        paintScrollbar(g);
+        paintStatus(g);
     }
 
-    // Overlay a cell scrollbar in the last column across the body rows (screen
-    // rows 2 .. 1+bodyRows). Absolute-positioned, so it runs after the sequential
-    // body/status writes. Only shown when the document overflows the viewport.
-    private void drawScrollbar() @system
+    private void paintHeader(ref Grid g) @system
+    {
+        SmallBuffer!(char, 256) h;
+        h.put(" ");
+        h.put(title);
+        h.put("  ·  ");
+        h.put(names[themeIdx]);
+        h.put(" (");
+        writeInteger(h, themeIdx + 1);
+        h.put("/");
+        writeInteger(h, names.length);
+        h.put(")  ·  ");
+        h.put((showPreview && model.present) ? "preview" : "raw");
+        h.put("  ·  ");
+        writeInteger(h, cast(size_t)(top + 1));
+        h.put("/");
+        writeInteger(h, plines.length);
+        g.putText(0, 0, h[], cellStyle(pageFg, true, pageBg, 0)); // Grid clips at the edge
+    }
+
+    private void paintStatus(ref Grid g) @system
+    {
+        const y = cast(ushort)(height > 0 ? height - 1 : 0);
+        if (searching)
+        {
+            SmallBuffer!(char, 300) s;
+            s.put(" /");
+            s.put(query);
+            s.put("▏");
+            g.putText(0, y, s[], cellStyle(pageFg, true, pageBg, 0));
+        }
+        else
+            g.putText(0, y,
+                " scroll ↑↓/PgUp/PgDn · ←→ theme · Tab raw/preview · / search · drag+y copy · q quit",
+                cellStyle(pageFg, true, pageBg, 0));
+    }
+
+    // Paint one laid-out preview line into grid row `y`: the row-fill background
+    // (selection / heading band / page), then quote bars, the leader, and runs.
+    private void paintLine(ref Grid g, ushort y, in PreviewLine pl, bool sel) @system
+    {
+        const fillBg = sel ? selBg : (pl.band == BandKind.heading ? pl.bandBg : pageBg);
+        g.fill(0, y, g.cols, cellStyle(pageFg, true, fillBg, 0));
+
+        ushort x = pl.indentCols > 0 ? cast(ushort) pl.indentCols : 0;
+        foreach (d; 0 .. pl.quoteDepth)
+        {
+            const barFg = pl.hasBarFg ? pl.barFg : bars[d % quoteBarCycle];
+            if (x < g.cols)
+                x = g.putText(x, y, "│", cellStyle(barFg, true, fillBg, 0));
+            if (x < g.cols)
+                ++x; // the 2-column bar spacing (already fillBg from the row fill)
+        }
+        if (pl.leader.length && x < g.cols)
+            x = g.putText(x, y, pl.leader,
+                cellStyle(pl.hasLeaderFg ? pl.leaderFg : gutterFg, true, fillBg, 0));
+        foreach (ref r; pl.runs)
+        {
+            if (x >= g.cols)
+                break;
+            const rbg = sel ? selBg : (r.hasBg ? r.bg : fillBg);
+            x = g.putText(x, y, r.text, cellStyle(r.fg, true, rbg, r.attrs));
+        }
+    }
+
+    // A cell scrollbar in the last column across the body rows, sized/positioned
+    // to the visible fraction. Only shown when the document overflows the viewport.
+    private void paintScrollbar(ref Grid g) @system
     {
         const rows = bodyRows();
-        if (cast(long) plines.length <= rows || width < 2)
+        if (cast(long) plines.length <= rows || g.cols < 2)
             return;
         int thumb = cast(int)(cast(long) rows * rows / cast(long) plines.length);
         if (thumb < 1) thumb = 1;
@@ -357,205 +345,227 @@ struct PreviewTui
         const denom = maxTop();
         const thumbTop = denom > 0 ? cast(int)(top * (rows - thumb) / denom) : 0;
 
+        const col = cast(ushort)(g.cols - 1);
         foreach (r; 0 .. rows)
         {
-            frame.put("\x1b[");
-            writeInteger(frame, r + 2); // body starts at screen row 2
-            frame.put(";");
-            writeInteger(frame, width);
-            frame.put("H");
             const inThumb = r >= thumbTop && r < thumbTop + thumb;
-            const col = inThumb ? sbThumb : sbTrack;
-            const st = TermStyle(fg: Color.fromRgb(col), bg: Color.fromRgb(pageBg));
-            writeStyleTransition(frame, TermStyle.init, st, depth);
-            frame.put(inThumb ? "█" : "░");
-            writeStyleTransition(frame, st, TermStyle.init, depth);
+            g.putText(col, cast(ushort)(r + 1), inThumb ? "█" : "░",
+                cellStyle(inThumb ? sbThumb : sbTrack, true, pageBg, 0));
         }
     }
 
-    // Apply a key; returns false to quit.
-    private bool handle(TuiKey k) @system
+    // ── Input ────────────────────────────────────────────────────────────────
+
+    // Apply an event; returns false to quit.
+    private bool handle(in Event e) @system
     {
-        const rows = bodyRows();
         if (searching)
-            return handleSearch(k);
-        switch (k.kind)
+            return handleSearch(e);
+        if (e.kind == EventKind.mouse)
+            return handleMouse(e);
+        if (e.kind == EventKind.eof)
+            return false;
+        if (e.kind != EventKind.key)
+            return true;
+
+        const rows = bodyRows();
+        switch (e.key)
         {
-            case TuiKind.up:       top -= 1; clampTop(); break;
-            case TuiKind.down:     top += 1; clampTop(); break;
-            case TuiKind.pageUp:   top -= rows; clampTop(); break;
-            case TuiKind.pageDown: top += rows; clampTop(); break;
-            case TuiKind.home:     top = 0; break;
-            case TuiKind.end:      top = maxTop; break;
-            case TuiKind.left:
+            case Key.up:       top -= 1; clampTop(); break;
+            case Key.down:     top += 1; clampTop(); break;
+            case Key.pageUp:   top -= rows; clampTop(); break;
+            case Key.pageDown: top += rows; clampTop(); break;
+            case Key.home:     top = 0; break;
+            case Key.end:      top = maxTop; break;
+            case Key.left:
                 themeIdx = themeIdx == 0 ? names.length - 1 : themeIdx - 1;
                 relayout();
                 break;
-            case TuiKind.right:
+            case Key.right:
                 themeIdx = themeIdx + 1 == names.length ? 0 : themeIdx + 1;
                 relayout();
                 break;
-            case TuiKind.tab:
+            case Key.tab:
                 if (model.present)
                 {
                     showPreview = !showPreview;
                     relayout();
                 }
                 break;
-            case TuiKind.mouse:
-                if (k.mb == 64)        { top -= 3; clampTop(); }   // wheel up
-                else if (k.mb == 65)   { top += 3; clampTop(); }   // wheel down
-                else if ((k.mb & 0b1000011) == 0 && k.mdown // left press / drag
-                    && k.my >= 2 && k.my <= 1 + rows)
-                {
-                    if (k.mx == width)
-                    {
-                        // Scrollbar column — jump proportionally.
-                        const span = rows > 1 ? rows - 1 : 1;
-                        top = cast(long)(k.my - 2) * maxTop / span;
-                        clampTop();
-                    }
-                    else
-                    {
-                        // Body — start (press) or extend (drag) a line selection.
-                        const line = top + (k.my - 2);
-                        if ((k.mb & 32) == 0) // press (motion bit clear) → anchor
-                            selAnchor = line;
-                        selCursor = line;
-                        clampSel();
-                    }
-                }
-                break;
-            case TuiKind.resize:
-                measureAndReflow();
-                break;
-            case TuiKind.character:
-                switch (k.ch)
+            case Key.escape:
+                return false;
+            case Key.char_:
+                switch (e.ch)
                 {
                     case 'q': return false;
                     case 'j': top += 1; clampTop(); break;
                     case 'k': top -= 1; clampTop(); break;
                     case 'g': top = 0; break;
                     case 'G': top = maxTop; break;
-                    case '/': searching = true; qlen = 0; break; // start a search
-                    case 'n': jumpMatch(top + 1, true); break;   // next match
-                    case 'N': jumpMatch(top - 1, false); break;  // previous match
-                    case 'y': copySelection(); break;            // copy selection (OSC 52)
+                    case '/': searching = true; qlen = 0; break;
+                    case 'n': jumpMatch(top + 1, true); break;
+                    case 'N': jumpMatch(top - 1, false); break;
+                    case 'y': copySelection(); break;
                     default: break;
                 }
                 break;
-            case TuiKind.escape, TuiKind.eof:
-                return false;
-            default:
-                break;
+            default: break;
+        }
+        return true;
+    }
+
+    private bool handleMouse(in Event e) @system
+    {
+        const rows = bodyRows();
+        if (e.action == MouseAction.wheelUp)        { top -= 3; clampTop(); }
+        else if (e.action == MouseAction.wheelDown) { top += 3; clampTop(); }
+        else if (e.button == MouseButton.left
+            && (e.action == MouseAction.press || e.action == MouseAction.drag)
+            && e.my >= 2 && e.my <= 1 + rows)
+        {
+            if (e.mx == width) // the scrollbar column (last, 1-based == width)
+            {
+                const span = rows > 1 ? rows - 1 : 1;
+                top = cast(long)(e.my - 2) * maxTop / span;
+                clampTop();
+            }
+            else
+            {
+                // Body — start (press) or extend (drag) a line selection.
+                const line = top + (e.my - 2);
+                if (e.action == MouseAction.press)
+                    selAnchor = line;
+                selCursor = line;
+                clampSel();
+            }
         }
         return true;
     }
 
     // Key handling while typing a search query (`/…`): printable keys extend it,
-    // backspace trims, Enter commits, Esc cancels. The view live-jumps to the
+    // backspace trims, Enter commits, Esc cancels; the view live-jumps to the
     // first match as the query changes.
-    private bool handleSearch(TuiKey k) @system
+    private bool handleSearch(in Event e) @system
     {
-        switch (k.kind)
+        if (e.kind != EventKind.key)
+            return true;
+        switch (e.key)
         {
-            case TuiKind.character:
+            case Key.char_:
                 if (qlen < qbuf.length)
-                    qbuf[qlen++] = k.ch;
+                    qbuf[qlen++] = cast(char) e.ch;
                 jumpMatch(top, true);
                 break;
-            case TuiKind.backspace:
+            case Key.backspace:
                 if (qlen)
                     --qlen;
                 jumpMatch(top, true);
                 break;
-            case TuiKind.enter:
+            case Key.enter:
                 searching = false;
                 jumpMatch(top + 1, true); // move off the current match
                 break;
-            case TuiKind.escape, TuiKind.eof:
+            case Key.escape:
                 searching = false;
                 qlen = 0;
                 break;
-            case TuiKind.resize:
-                measureAndReflow();
-                break;
-            default:
-                break;
+            default: break;
         }
         return true;
     }
-
-    // Re-measure the terminal; relayout if the width changed, else just reclamp.
-    private void measureAndReflow() @system
-    {
-        const sz = terminalSize(StdStream.stdout);
-        const w = sz.width > 0 ? sz.width : 80;
-        const h = sz.height > 0 ? sz.height : 24;
-        const widthChanged = w != width;
-        width = w;
-        height = h;
-        if (widthChanged)
-            relayout();
-        else
-            clampTop();
-    }
 }
 
-/// Run the interactive scrolling viewer until the user quits. Enters the
-/// alt-screen (hidden cursor, autowrap off), lays out the document, then loops
-/// build-frame → flush → read-key. Restores the terminal on exit. `themeIdx` is
-/// the starting theme; `startPreview` opens a markdown file in the decorated
-/// preview (else raw source). Returns 0.
+/// Run the interactive scrolling viewer until the user quits. Uses `sparkles:tui`
+/// for the terminal lifecycle + cell-diffed frame flush and for input decoding.
+/// `themeIdx` is the starting theme; `startPreview` opens a markdown file in the
+/// decorated preview (else raw source). Returns 0 (1 if stdin isn't a tty).
 int runPreviewTui(ref PreviewTui t, size_t themeIdx, bool startPreview) @system
 {
     t.themeIdx = themeIdx < t.names.length ? themeIdx : 0;
     t.showPreview = startPreview;
 
-    auto input = beginTuiInput();
-    if (!input.active)
-        return 1; // not a real tty — caller should have used the ANSI emit
-    scope (exit) input.finish();
+    auto term = Terminal.open();
+    if (!term.active)
+        return 1; // not a real tty — the caller should have used the ANSI emit
+    scope (exit) term.close();
 
-    auto sink = TermOut.standard();
-    sink.put(CtlSeq.enterAltScreen);
-    sink.put(CtlSeq.hideCursor);
-    sink.put("\x1b[?7l");             // autowrap off — full-width lines must not wrap
-    sink.put("\x1b[?1000;1002;1006h"); // SGR mouse: click + drag + wheel
-    scope (exit)
-    {
-        sink.put("\x1b[?1000;1002;1006l"); // must be restored so the terminal isn't left in mouse mode
-        sink.put("\x1b[?7h");
-        sink.put(CtlSeq.showCursor);
-        sink.put(CtlSeq.exitAltScreen);
-        sink.flush();
-    }
+    auto events = PosixEvents.start();
 
-    void paint()
-    {
-        t.buildFrame();
-        sink.put(t.frame[]);
-        sink.flush();
-    }
-
-    t.measureAndReflow(); // sets width/height and lays out
-    paint();              // initial frame
+    Grid g;
     for (;;)
     {
-        const k = input.next();      // blocks for one key
-        const before = t.viewState();
-        if (!t.handle(k))
-            break;
+        const sz = term.size();
+        if (sz.cols != t.width) // width changed (or first frame) → reflow layout
+        {
+            t.width = sz.cols;
+            t.height = sz.rows;
+            t.relayout();
+        }
+        else
+        {
+            t.height = sz.rows;
+            t.clampTop();
+        }
+
+        g.resize(sz.cols, sz.rows);
+        t.paint(g);
+        term.draw(g); // cell-diff: only changed cells reach the terminal
+
         if (t.clipReady)
         {
-            sink.put(t.clip[]); // flush the OSC 52 clipboard write
-            sink.flush();
+            term.writeRaw(t.clip[]); // OSC 52 clipboard write (out of band)
             t.clipReady = false;
         }
-        // Repaint only when the key actually changed the view — a no-op key (e.g.
-        // scrolling past the end) leaves the screen untouched, so no flicker.
-        if (t.viewState() != before)
-            paint();
+
+        const ev = events.next();
+        if (ev.kind == EventKind.eof)
+            break;
+        if (ev.kind == EventKind.resize)
+            continue; // next iteration re-measures + reflows
+        if (!t.handle(ev))
+            break;
     }
     return 0;
+}
+
+@("tui.paint.rawGridContent")
+@system
+unittest
+{
+    import sparkles.syntax : builtinDark, HighlightEvent, LabelSet;
+    import std.algorithm.searching : canFind;
+
+    static immutable src = "hello\nworld\n";
+    static HighlightEvent[1] ev = [HighlightEvent.sourceSpan(0, src.length)];
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+
+    PreviewTui t;
+    t.title = "doc.md";
+    t.source = src;
+    t.events = ev[];
+    t.labels = LabelSet.standard();
+    t.names = names[];
+    t.themes = themes[];
+    t.width = 60;
+    t.height = 6;
+    t.relayout(); // raw view (no markdown model present)
+
+    Grid g;
+    g.resize(60, 6);
+    t.paint(g);
+
+    string row(ushort y)
+    {
+        string s;
+        foreach (x; 0 .. g.cols)
+            s ~= g.at(cast(ushort) x, y).grapheme;
+        return s;
+    }
+
+    assert(row(0).canFind("doc.md"), row(0)); // header: title
+    assert(row(0).canFind("dark"), row(0));   // header: theme name
+    assert(row(0).canFind("raw"), row(0));    // header: view mode
+    assert(row(1).canFind("hello"), row(1));  // first source line, painted into the grid
+    assert(row(2).canFind("world"), row(2));  // second source line
 }
