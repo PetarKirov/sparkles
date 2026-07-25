@@ -17,6 +17,9 @@ dflags "-preview=in" "-preview=dip1000"
 dependency "sparkles:syntax" path="../.."
 dependency "sparkles:core-cli" path="../.."
 dependency "sparkles:twoslash" path="../.."
+// The interactive TUI viewer (src/tui.d) paints into a sparkles:tui cell grid and
+// lets the library cell-diff each frame; pulled by every config (tui.d is Posix).
+dependency "sparkles:tui" path="../.."
 
 // Default build (BLD1): the raylib GPU backend (src/gui.d, version(HueGui)) and
 // the preview support modules (gui_text.d layout, gui_ansi.d libghostty bridge,
