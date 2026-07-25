@@ -205,9 +205,12 @@ Milestones, dependencies, and the benchmark that resolves §3.1 live in the
 [delivery plan](./PLAN.md). The benchmark harness under `libs/tui/bench/` landed
 first and decided the core; the library proper is now being built on that
 decision. **Landed** in `libs/tui/src/sparkles/tui/`: the render core
-(`cell.d` + `render.d` — the 2-D cell-grid + per-cell diff), the terminal backend
-(`terminal.d` — raw mode / alt-screen / mouse / sync-framed diff flush + restore),
-the input decoder (`input.d` — keys/mouse/resize → `Event`), and an app-owned
-event loop (`app.d`) with a runnable demo (`examples/demo.d`). The color-depth
-degradation (C1), style/layout (S1/L1–L2), widget model + widgets (W1–W5), and
-inline images (G1) build on top next.
+(`cell.d` + `render.d` — the 2-D cell-grid + per-cell diff, with **scroll-region
+hardware scrolling** (DECSTBM + SU/SD auto-detected between frames) and the
+retained-mode compositing primitives `Grid.fillRect` / `Grid.scrollRect`), the
+terminal backend (`terminal.d` — raw mode / alt-screen / mouse / sync-framed diff
+flush + restore), the input decoder (`input.d` — keys/mouse/resize → `Event`), and
+an app-owned event loop (`app.d`) with a runnable demo (`examples/demo.d`). First
+consumer: `apps/hue`'s interactive TUI viewer renders through this stack. The
+color-depth degradation (C1), style/layout (S1/L1–L2), widget model + widgets
+(W1–W5), and inline images (G1) build on top next.
