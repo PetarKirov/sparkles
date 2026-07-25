@@ -20,3 +20,4 @@ public import sparkles.ui.layout;
 public import sparkles.ui.state;
 public import sparkles.ui.display_list;
 public import sparkles.ui.interp.immediate;
+public import sparkles.ui.interp.cells;
