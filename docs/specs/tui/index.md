@@ -86,7 +86,7 @@ layer) · **open** (net-new) · **deferred**.
 | I3  | Input        | Resize-as-event; bracketed paste; input read decoupled from the render loop                                                                            | partial | [libvaxis](../../research/tui-libraries/libvaxis.md), [Textual](../../research/tui-libraries/textual.md) (SIGWINCH handler exists in `term_caps`)                                                                                                                                              |
 | E1  | Runtime      | Event loop + command/async-effect model; optional MVU overlay (`Model`/`update`/`view` + `Cmd`/`Msg`) or app-owned loop (§3.2)                         | partial | [Bubble Tea](../../research/tui-libraries/bubbletea.md) (MVU), [Ratatui](../../research/tui-libraries/ratatui.md) (app owns loop), [Brick](../../research/tui-libraries/brick.md)                                                                                                              |
 | E2  | Runtime      | Frame scheduler / tick source for animation (spinner/gradient/progress cadence), coalesced to a max frame rate                                         | open    | [Bubble Tea](../../research/tui-libraries/bubbletea.md) (`Tick`), [Mosaic](../../research/tui-libraries/mosaic.md), [Textual](../../research/tui-libraries/textual.md)                                                                                                                         |
-| C1  | Color        | Truecolor (24-bit) + 256-color + adaptive degradation to the terminal's real depth (today: 16-color only)                                              | partial | [libvaxis](../../research/tui-libraries/libvaxis.md), [Notcurses](../../research/tui-libraries/notcurses.md) (RGBA channels), Lip Gloss (via [Bubble Tea](../../research/tui-libraries/bubbletea.md))                                                                                          |
+| C1  | Color        | Truecolor (24-bit) + 256-color + adaptive degradation to the terminal's real depth                                                                     | landed  | [libvaxis](../../research/tui-libraries/libvaxis.md), [Notcurses](../../research/tui-libraries/notcurses.md) (RGBA channels), Lip Gloss (via [Bubble Tea](../../research/tui-libraries/bubbletea.md))                                                                                          |
 | C2  | Color        | Color-depth probing in `TermCaps` (today `colors` is a bool); gradient/blend helpers                                                                   | partial | [Notcurses](../../research/tui-libraries/notcurses.md), [libvaxis](../../research/tui-libraries/libvaxis.md)                                                                                                                                                                                   |
 | S1  | Style        | Structured cell-style value (fg/bg/modifiers) for the cell path, plus copy-on-write block styling (padding/margin/border/align/width)                  | partial | Lip Gloss (via [Bubble Tea](../../research/tui-libraries/bubbletea.md)), [FTXUI](../../research/tui-libraries/ftxui.md) decorators, [Brick](../../research/tui-libraries/brick.md) `AttrMap` (`term_style`/`theme` exist)                                                                      |
 | L1  | Layout       | `vjoin` + `place` (positional alignment) — `hjoin` landed                                                                                              | partial | Lip Gloss `Join*`/`Place`, [FTXUI](../../research/tui-libraries/ftxui.md) (`hjoin` landed in `ui.layout`)                                                                                                                                                                                      |
@@ -206,11 +206,12 @@ Milestones, dependencies, and the benchmark that resolves §3.1 live in the
 first and decided the core; the library proper is now being built on that
 decision. **Landed** in `libs/tui/src/sparkles/tui/`: the render core
 (`cell.d` + `render.d` — the 2-D cell-grid + per-cell diff, with **scroll-region
-hardware scrolling** (DECSTBM + SU/SD auto-detected between frames) and the
-retained-mode compositing primitives `Grid.fillRect` / `Grid.scrollRect`), the
-terminal backend (`terminal.d` — raw mode / alt-screen / mouse / sync-framed diff
-flush + restore), the input decoder (`input.d` — keys/mouse/resize → `Event`), and
-an app-owned event loop (`app.d`) with a runnable demo (`examples/demo.d`). First
-consumer: `apps/hue`'s interactive TUI viewer renders through this stack. The
-color-depth degradation (C1), style/layout (S1/L1–L2), widget model + widgets
-(W1–W5), and inline images (G1) build on top next.
+hardware scrolling** (DECSTBM + SU/SD auto-detected between frames), the
+retained-mode compositing primitives `Grid.fillRect` / `Grid.scrollRect`, and
+**color-depth folding** (C1 — truecolor cells degrade to 256/16 for the detected
+terminal)), the terminal backend (`terminal.d` — raw mode / alt-screen / mouse /
+sync-framed diff flush + restore + depth detection), the input decoder (`input.d`
+— keys/mouse/resize → `Event`), and an app-owned event loop (`app.d`) with a
+runnable demo (`examples/demo.d`). First consumer: `apps/hue`'s interactive TUI
+viewer renders through this stack. The style/layout (S1/L1–L2), widget model +
+widgets (W1–W5), and inline images (G1) build on top next.
