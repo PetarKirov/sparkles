@@ -1207,6 +1207,14 @@ int runGuiTwoslash(
     catch (Exception)
     {
     }
+    // Golden-capture hook: force the Nth hover popup open (no live mouse needed).
+    int forceHover = -1;
+    try
+        forceHover = environment.get("HUE_GUI_HOVER", null).length
+            ? environment.get("HUE_GUI_HOVER").to!int : -1;
+    catch (Exception)
+    {
+    }
 
     InitWindow(900, 640, ("hue twoslash — " ~ title).toStringz);
     scope (exit) CloseWindow();
@@ -1330,10 +1338,13 @@ int runGuiTwoslash(
         }
 
         // Hover popups, drawn last (on top) for whichever token the mouse is over.
+        // HUE_GUI_HOVER=<index> force-shows the Nth hover popup (golden captures).
         const mouse = GetMousePosition();
-        foreach (ref const h; hovers)
+        foreach (i, ref const h; hovers)
         {
-            if (mouse.x < h.x || mouse.x > h.x + h.w || mouse.y < h.y || mouse.y > h.y + h.h)
+            const forced = forceHover >= 0 && cast(int) i == forceHover;
+            if (!forced && (mouse.x < h.x || mouse.x > h.x + h.w
+                    || mouse.y < h.y || mouse.y > h.y + h.h))
                 continue;
             drawPopup(fonts, buf, tw.nodes[h.node], cast(float) h.x, cast(float)(h.y + h.h),
                 cellW, cellH, theme, cache, pageFg, pageBg);
