@@ -60,6 +60,20 @@ WidgetTree viewTwoslash(const TwoslashReturn tw)
     return b.finish(col);
 }
 
+/**
+Builds a single below-line block (node `nodeIndex`) as its own `WidgetTree` — the
+error message, `^?` query, completion list, or `// @tag` line, indented to its
+source column. Used by an interleaved renderer (the interactive terminal overlay)
+that places each block directly under its code line instead of stacking them all.
+*/
+WidgetTree viewBelowBlock(const TwoslashReturn tw, size_t nodeIndex)
+in (nodeIndex < tw.nodes.length)
+{
+    auto b = Builder();
+    const root = buildBelowBlock(b, tw.nodes[nodeIndex], nodeIndex);
+    return b.finish(root);
+}
+
 /// One below-line block: a left-indented `column` of a caret row + payload.
 private uint buildBelowBlock(ref Builder b, const Node node, size_t nodeIndex)
 {

@@ -38,9 +38,10 @@ $(REF paint, sparkles,ui,interp,immediate)) keeps the borrowed-`Grid` canvas
 `scope`-local — it never leaves this call, so no stack `Grid` pointer escapes and
 the whole path stays `@safe` under dip1000.
 */
-void paintGrid(ref Grid grid, in RgbColor pageBg, in DrawOp[] ops)
+void paintGrid(ref Grid grid, in RgbColor pageBg, in DrawOp[] ops,
+    int originX = 0, int originY = 0)
 {
-    auto canvas = GridCanvas(&grid, pageBg);
+    auto canvas = GridCanvas(&grid, pageBg, originX, originY);
     foreach (ref op; ops)
     {
         final switch (op.kind) with (OpKind)
@@ -71,9 +72,17 @@ struct GridCanvas
 {
     Grid* grid;      /// the target grid (borrowed; must outlive the canvas)
     RgbColor pageBg; /// blend base for translucent fills / unset backgrounds
+    int originX = 0; /// grid column of cell x = 0 (place a laid-out subtree)
+    int originY = 0; /// grid row of cell y = 0
 
     private bool inBounds(int x, int y) const scope pure nothrow @nogc
-        => grid !is null && x >= 0 && x < grid.cols && y >= 0 && y < grid.rows;
+    {
+        const gx = originX + x, gy = originY + y;
+        return grid !is null && gx >= 0 && gx < grid.cols && gy >= 0 && gy < grid.rows;
+    }
+
+    private ref auto cell(int x, int y) scope
+        => grid.at(cast(ushort)(originX + x), cast(ushort)(originY + y));
 
     private RgbColor cellBg(in CellStyle st) const scope pure nothrow @nogc
         => toRgb(st.bg, pageBg);
@@ -88,7 +97,7 @@ struct GridCanvas
             foreach (x; r.x .. r.x + r.w)
                 if (inBounds(x, y))
                 {
-                    auto c = &grid.at(cast(ushort) x, cast(ushort) y);
+                    auto c = &cell(x, y);
                     c.style.bg = Color.fromRgb(blend(cellBg(c.style), v.bg, v.bgAlpha));
                 }
     }
@@ -121,7 +130,7 @@ struct GridCanvas
 
     private void putGlyph(int x, int y, dchar cp, ubyte w, in Visual v) scope
     {
-        auto c = &grid.at(cast(ushort) x, cast(ushort) y);
+        auto c = &cell(x, y);
         auto st = c.style; // keep bg / underline already composited here
         st.fg = Color.fromRgb(v.fg);
         if (v.hasBg)
@@ -129,7 +138,7 @@ struct GridCanvas
         c.setCodepoint(cp, w, st);
         // A wide glyph claims the next column as a zero-width continuation.
         if (w == 2 && inBounds(x + 1, y))
-            grid.at(cast(ushort)(x + 1), cast(ushort) y).setCodepoint(' ', 0, st);
+            cell(x + 1, y).setCodepoint(' ', 0, st);
     }
 
     /// Underlines the cells `from` → `to` in `v.fg`: `wavy` → an SGR-58 curly
@@ -141,7 +150,7 @@ struct GridCanvas
         foreach (x; from.x .. to.x)
             if (inBounds(x, y))
             {
-                auto c = &grid.at(cast(ushort) x, cast(ushort) y);
+                auto c = &cell(x, y);
                 c.style.underline = style == LineStyle.wavy
                     ? UnderlineStyle.curly : UnderlineStyle.single;
                 c.style.underlineColor = Color.fromRgb(v.fg);
