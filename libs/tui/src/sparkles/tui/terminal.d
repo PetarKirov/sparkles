@@ -19,11 +19,14 @@ module sparkles.tui.terminal;
 
 version (Posix):
 
+import core.stdc.stdlib : getenv;
+import core.stdc.string : strlen;
 import core.sys.posix.termios : ECHO, ICANON, IEXTEN, ISIG, tcgetattr, TCSAFLUSH,
     TCSANOW, tcsetattr, termios, VMIN, VTIME;
 import core.sys.posix.unistd : STDIN_FILENO, STDOUT_FILENO, write;
 
 import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.term_color : classifyColorDepth, ColorDepth;
 import sparkles.base.term_control : CtlSeq, DecMode, writeEscapeSeq, writeMouseTracking;
 import sparkles.core_cli.term_caps : StdStream, terminalSize, TermSize;
 
@@ -79,6 +82,7 @@ struct Terminal
         raw.c_cc[VTIME] = 0;
         tcsetattr(inFd, TCSAFLUSH, &raw);
         t._active = true;
+        t._screen.colorDepth(detectColorDepthEnv()); // fold styles to the real depth
 
         SmallBuffer!char s;
         if (opts.altScreen)
@@ -153,6 +157,25 @@ struct Terminal
         writeAll(_outFd, s);
     }
 
+    /// Override the color depth used to fold styles (auto-detected from
+    /// `$COLORTERM`/`$TERM` at open). The next frame repaints in full.
+    void colorDepth(ColorDepth d) @safe
+    {
+        _screen.colorDepth(d);
+    }
+}
+
+/// Classify the terminal's color depth from `$COLORTERM`/`$TERM` without the
+/// throwing/GC `std.process` path, so `open` stays `nothrow @nogc`.
+private ColorDepth detectColorDepthEnv() @trusted nothrow @nogc
+{
+    static const(char)[] env(const(char)* name) @trusted nothrow @nogc
+    {
+        const p = getenv(name);
+        return p ? p[0 .. strlen(p)] : null;
+    }
+
+    return classifyColorDepth(env("COLORTERM"), env("TERM"));
 }
 
 /// Write all of `data` to `fd`, looping over partial / EINTR-interrupted writes.
