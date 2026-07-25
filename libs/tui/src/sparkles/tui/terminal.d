@@ -47,6 +47,8 @@ struct Terminal
         TerminalOptions _opts;
         Screen _screen;
         SmallBuffer!char _buf;
+        int _inFd = STDIN_FILENO;
+        int _outFd = STDOUT_FILENO;
         bool _active;
     }
 
@@ -58,20 +60,24 @@ struct Terminal
     // hoisted into this label.
     nothrow:
 
-    /// Enter raw mode and apply `opts`. `active` is false if stdin isn't a real
-    /// terminal (nothing was changed); check it before use.
-    static Terminal open(TerminalOptions opts = TerminalOptions()) @trusted
+    /// Enter raw mode on `inFd` and apply `opts`, writing setup to `outFd` (both
+    /// default to stdin/stdout; pass an explicit tty fd to drive, say, a pty).
+    /// `active` is false if `inFd` isn't a real terminal (nothing was changed).
+    static Terminal open(TerminalOptions opts = TerminalOptions(),
+        int inFd = STDIN_FILENO, int outFd = STDOUT_FILENO) @trusted
     {
         Terminal t;
         t._opts = opts;
-        if (tcgetattr(STDIN_FILENO, &t._orig) != 0)
+        t._inFd = inFd;
+        t._outFd = outFd;
+        if (tcgetattr(inFd, &t._orig) != 0)
             return t; // not a tty — leave inactive
 
         auto raw = t._orig;
         raw.c_lflag &= ~(ECHO | ICANON | ISIG | IEXTEN);
         raw.c_cc[VMIN] = 1;
         raw.c_cc[VTIME] = 0;
-        tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw);
+        tcsetattr(inFd, TCSAFLUSH, &raw);
         t._active = true;
 
         SmallBuffer!char s;
@@ -82,7 +88,7 @@ struct Terminal
         writeEscapeSeq!(DecMode.autowrap, false)(s); // a full-width cell must not wrap/scroll
         if (opts.mouse)
             writeMouseTracking(s, true); // SGR mouse: click + drag + wheel
-        writeAll(STDOUT_FILENO, s[]);
+        writeAll(outFd, s[]);
         return t;
     }
 
@@ -110,9 +116,9 @@ struct Terminal
             writeEscapeSeq!(CtlSeq.showCursor)(s);
         if (_opts.altScreen)
             writeEscapeSeq!(CtlSeq.exitAltScreen)(s);
-        writeAll(STDOUT_FILENO, s[]);
+        writeAll(_outFd, s[]);
 
-        tcsetattr(STDIN_FILENO, TCSANOW, &_orig);
+        tcsetattr(_inFd, TCSANOW, &_orig);
     }
 
     /// The current terminal size (falls back to 80×24 if it can't be queried).
@@ -130,7 +136,7 @@ struct Terminal
         writeEscapeSeq!(CtlSeq.syncBegin)(_buf);
         _screen.render(grid, _buf);
         writeEscapeSeq!(CtlSeq.syncEnd)(_buf);
-        writeAll(STDOUT_FILENO, _buf[]);
+        writeAll(_outFd, _buf[]);
     }
 
     /// Force the next $(LREF draw) to repaint in full (after out-of-band output,
@@ -139,6 +145,7 @@ struct Terminal
     {
         _screen.invalidate();
     }
+
 }
 
 /// Write all of `data` to `fd`, looping over partial / EINTR-interrupted writes.
