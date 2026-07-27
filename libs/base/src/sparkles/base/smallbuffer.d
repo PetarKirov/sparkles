@@ -242,53 +242,61 @@ pure nothrow @nogc:
     // overloads).
     // ─────────────────────────────────────────────────────────────────────────
 
-    // Current element slice; element constness follows `this`.
-    private inout(T)[] view() inout @trusted
+    // Current element slice; element constness follows `this`. `return scope`: the
+    // slice may alias `this` (inline storage), so `this` can't escape and the
+    // result's lifetime is bounded by the buffer.
+    private inout(T)[] view() inout return scope @trusted
         => onHeap ? _block[0 .. _length] : _inline[0 .. _length];
 
+    // The element accessors below all return storage that may alias `this` (the
+    // inline small-buffer or the shared heap block), so each is `return scope` —
+    // the result is lifetime-bounded by the buffer, which lets `-dip1000` prove a
+    // container that holds a `SmallBuffer` and exposes `return scope` views over it
+    // (e.g. `sparkles.tui.cell.Grid`) doesn't leak the storage. See the
+    // `SmallBuffer.unique.returnScopeContainer` regression test.
     @safe
     {
         /// Returns a read-only slice of all elements (shares storage).
-        const(T)[] opSlice() const => view();
+        const(T)[] opSlice() const return scope => view();
 
         /// Returns a mutable slice of all elements (clones if shared).
-        T[] opSlice()
+        T[] opSlice() return scope
         {
             ensureUniqueStorage();
             return view();
         }
 
         /// Returns a read-only sub-slice from `start` to `end`.
-        const(T)[] opSlice(size_t start, size_t end) const
+        const(T)[] opSlice(size_t start, size_t end) const return scope
         in (start <= end, "Invalid slice bounds: start > end")
         in (end <= _length, "Slice end out of bounds")
             => this[][start .. end];
 
         /// Returns a mutable sub-slice from `start` to `end` (clones if shared).
-        T[] opSlice(size_t start, size_t end)
+        T[] opSlice(size_t start, size_t end) return scope
         in (start <= end, "Invalid slice bounds: start > end")
         in (end <= _length, "Slice end out of bounds")
             => this[][start .. end];
 
         /// Returns a read-only reference to the element at the given index.
-        ref const(T) opIndex(size_t index) const
+        ref const(T) opIndex(size_t index) const return scope
         in (index < _length, "Index out of bounds") => this[][index];
 
         /// Returns a mutable reference to the element at the given index.
-        ref T opIndex(size_t index)
+        ref T opIndex(size_t index) return scope
         in (index < _length, "Index out of bounds") => this[][index];
 
         /// Returns a read-only reference to the first element.
-        ref const(T) front() const => this[0];
+        ref const(T) front() const return scope => this[0];
 
         /// Returns a mutable reference to the first element.
-        ref T front() => this[0];
+        ref T front() return scope => this[0];
 
         /// Returns a read-only reference to the last element.
-        ref const(T) back() const => this[$ - 1];
+        ref const(T) back() const return scope => this[$ - 1];
 
         /// Returns a mutable reference to the last element.
-        ref T back() => this[$ - 1];
+        ref T back() return scope => this[$ - 1];
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -603,7 +611,10 @@ pure nothrow @nogc:
     // Ensure this buffer has unique mutable storage with room for `extraLen`
     // additional elements (and at least `minCapacity` total slots). `_length`
     // is deliberately unchanged; callers fill the returned tail and then commit.
-    private T[] ensureUniqueStorage(size_t extraLen = 0, size_t minCapacity = 0) @safe
+    // `return`: the returned tail may alias `this` (the inline small-buffer), so
+    // the mutable `opSlice`/`opIndex` that call it stay valid on a `scope this`
+    // (e.g. a container exposing `return scope` views — see the regression test).
+    private T[] ensureUniqueStorage(size_t extraLen = 0, size_t minCapacity = 0) return scope @safe
     {
         const oldLen = _length;
         const newLen = oldLen + extraLen;
@@ -1776,4 +1787,39 @@ unittest
     w ~= 5;                              // CoW clone
     assert(reader[] == [0, 1, 2, 3, 4]); // original intact
     assert(w[] == [0, 1, 2, 3, 4, 5]);
+}
+
+@("SmallBuffer.unique.returnScopeContainer")
+@safe pure nothrow @nogc
+unittest
+{
+    // A container that owns a `unique` SmallBuffer and exposes `return scope` views
+    // into it — the `sparkles.tui.cell.Grid` pattern. Under `-dip1000` the accessor
+    // body indexes/slices a `scope this._buf`, which only type-checks because the
+    // buffer's element accessors (and the `ensureUniqueStorage` the mutable path
+    // calls) are `return`-qualified. Dropping that `return` regresses right here:
+    // "scope variable `this._buf` calling non-scope member function ...".
+    static struct Holder
+    {
+        private SmallBuffer!(int, 2, true) _buf;
+        void push(int v) @safe => _buf.put(v);
+        ref int opIndex(size_t i) return scope @safe => _buf[i];
+        ref const(int) opIndex(size_t i) const return scope @safe => _buf[i];
+        int[] all() return scope @safe => _buf[];
+        const(int)[] all() const return scope @safe => _buf[];
+        static int firstOf(ref const Holder h) @safe => h[0]; // exercises the const path
+    }
+
+    Holder h;
+    h.push(10);
+    h.push(20);
+    h.push(30); // N == 2 → now on the heap
+    assert(h[0] == 10 && h[2] == 30);
+    h[1] = 99; // mutable ref write through the `return scope` accessor
+    assert(h[1] == 99 && Holder.firstOf(h) == 10);
+
+    int sum;
+    foreach (v; h.all) // mutable `return scope` slice
+        sum += v;
+    assert(sum == 10 + 99 + 30);
 }
