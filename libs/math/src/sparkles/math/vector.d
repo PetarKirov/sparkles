@@ -127,6 +127,12 @@ if (isNumeric!T && N > 0)
         }
     }
 
+    /// Component-wise equality (compares the backing components directly, so it is
+    /// well-defined despite the `union` — the compiler-generated `==` over a union
+    /// is not).
+    bool opEquals(in Vector rhs) const @safe pure nothrow @nogc
+        => data == rhs.data;
+
     /// Component-wise vector addition/subtraction.
     CommonVector!U opBinary(string op, U)(in Vector!(U, N) rhs) const
     if ((op == "+" || op == "-") && isNumeric!U)
@@ -249,6 +255,11 @@ alias Vec4f = Vector!(float, 4);
 
 /// Named 2D vector for pixel dimensions.
 alias ScreenSize(T) = Vector!(T, 2, ["width", "height"]);
+
+/// 2D vector for a position / coordinate (fields `x`, `y`). The companion of
+/// $(LREF ScreenSize) for absolute points (mouse cell, cursor cell) rather than
+/// extents.
+alias ScreenPosition(T) = Vector!(T, 2);
 
 /// Default initialization and partial constructors.
 @("Vector.initialization")
