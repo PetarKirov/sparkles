@@ -389,6 +389,81 @@ unittest
         ColorDepth.ansi16))("\x1b[4:3m");
 }
 
+/// Emit `ESC[0;…m` establishing `st` absolutely from a clean slate
+/// (reset-then-set) into any `char` output range `w`. The absolute companion of
+/// $(LREF writeStyleTransition): the leading `0` fully resets, so it is robust
+/// after an out-of-band cursor move where the terminal's live SGR state is unknown
+/// (the cell-grid renderer emits one per style-run). Colors fold to `depth` via
+/// `writeSgrColorPacked`; unset/default groups are omitted — the `0` already
+/// selected the terminal defaults.
+void writeStyle(Writer, bool shapedUnderline = true)(
+    ref Writer w,
+    in TermStyleImpl!shapedUnderline st,
+    ColorDepth depth,
+)
+{
+    import std.range.primitives : put;
+
+    put(w, "\x1b[0");
+    const attrs = st.attrs;
+    if (attrs.has(TextAttr.bold))          put(w, ";1");
+    if (attrs.has(TextAttr.dim))           put(w, ";2");
+    if (attrs.has(TextAttr.italic))        put(w, ";3");
+    // Underline shape: `single` = SGR 4; extended shapes use the colon sub-parameter.
+    final switch (st.underline)
+    {
+        case UnderlineStyle.none:    break;
+        case UnderlineStyle.single:  put(w, ";4");   break;
+        case UnderlineStyle.double_: put(w, ";4:2"); break;
+        case UnderlineStyle.curly:   put(w, ";4:3"); break;
+        case UnderlineStyle.dotted:  put(w, ";4:4"); break;
+        case UnderlineStyle.dashed:  put(w, ";4:5"); break;
+    }
+    if (attrs.has(TextAttr.inverse))       put(w, ";7");
+    if (attrs.has(TextAttr.hidden))        put(w, ";8");
+    if (attrs.has(TextAttr.strikethrough)) put(w, ";9");
+    writeStyleColorAbsolute(w, st.packed0, ColorChannel.foreground, depth);
+    writeStyleColorAbsolute(w, st.packed1, ColorChannel.background, depth);
+    static if (shapedUnderline)
+        if (depth >= ColorDepth.ansi256)
+            writeStyleColorAbsolute(w, st.packed2, ColorChannel.underline, depth);
+    put(w, "m");
+}
+
+/// Append a packed color after a leading `;`, folded to `depth`, skipping
+/// unset/default (the absolute `0` reset already selected the terminal defaults).
+private void writeStyleColorAbsolute(Writer)(ref Writer w, uint packedWord,
+    ColorChannel channel, ColorDepth depth)
+{
+    import std.range.primitives : put;
+
+    // Kind tag lives in bits 24–25 of the packColor payload (low 26 bits).
+    const kind = (packedWord >> 24) & 3;
+    if (kind == Color.Kind.unset || kind == Color.Kind.default_)
+        return;
+    put(w, ';');
+    writeSgrColorPacked(w, packedWord, depth, channel);
+}
+
+///
+@("term_style.writeStyle.absolute")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.smallbuffer : checkWriter;
+
+    // Empty style → bare reset.
+    checkWriter!((ref w) => writeStyle(w, CompactTermStyle.init, ColorDepth.trueColor))("\x1b[0m");
+    // bold + palette-red fg (self-establishing, so the reset `0` leads).
+    checkWriter!((ref w) => writeStyle(w,
+        CompactTermStyle(fg: Color.fromPalette(1), attrs: TextAttr.bold), ColorDepth.trueColor))("\x1b[0;1;31m");
+    // italic + single underline + rgb fg/bg at truecolor.
+    checkWriter!((ref w) => writeStyle(w,
+        CompactTermStyle(fg: Color.fromRgb(10, 20, 30), bg: Color.fromRgb(1, 2, 3),
+            attrs: TextAttr.italic, underline: UnderlineStyle.single), ColorDepth.trueColor))(
+        "\x1b[0;3;4;38;2;10;20;30;48;2;1;2;3m");
+}
+
 ///
 @("term_style.TermStyle.packing")
 @safe pure nothrow @nogc
