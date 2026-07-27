@@ -9,7 +9,16 @@ stay pure producers that take explicit widths/flags.
 module sparkles.core_cli.term_caps;
 
 import sparkles.base.term_color : ColorDepth, classifyColorDepth;
-import sparkles.math : ScreenSize;
+import sparkles.math : ScreenSize, Vector;
+
+/// The terminal domain's canonical 2-D types: a size in cells (`.width`/`.height`)
+/// and a cell position (`.col`/`.row`). Both are `ushort` — a terminal never spans
+/// more cells than that. Reuse these instead of ad-hoc `ushort cols, rows;` pairs.
+/// A position uses terminal-native field names (`col`/`row`, matching SGR mouse,
+/// `winsize`, and `CSI row;col`) rather than the generic pixel `x`/`y` of
+/// $(REF ScreenPosition, sparkles,math,vector).
+alias TermSize = ScreenSize!ushort;
+alias TermPosition = Vector!(ushort, 2, ["col", "row"]); /// ditto
 
 // The SIGWINCH resize-notification machinery is POSIX-only; `terminalSize`
 // below is cross-platform. Guarding the POSIX import keeps the module
@@ -67,7 +76,7 @@ version (Posix)
 /// wrap/truncate/clamp". The streams can point at different terminals (or none):
 /// `dub test -- --bench > file` leaves stderr — a progress line — on the
 /// terminal while stdout is a file, so the line's budget is stderr's width.
-ScreenSize!ushort terminalSize(StdStream stream = StdStream.stdout) @safe nothrow @nogc
+TermSize terminalSize(StdStream stream = StdStream.stdout) @safe nothrow @nogc
 {
     version (Posix)
     {
