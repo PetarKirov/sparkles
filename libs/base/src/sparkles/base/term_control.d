@@ -40,6 +40,7 @@ enum CtlSeq : string
 /// need are pre-rendered in $(LREF CtlSeq).
 enum DecMode : ushort
 {
+    autowrap       = 7,    /// Autowrap (DECAWM); reset so a full-width last cell can't wrap.
     altScreen      = 1049, /// Alternate screen buffer.
     bracketedPaste = 2004, /// Bracketed paste.
     syncOutput     = 2026, /// Synchronized output (atomic frame flush).
@@ -109,6 +110,36 @@ void writeModeReset(Writer)(ref Writer w, DecMode m)
     put(w, 'l');
 }
 
+/// Emit a fixed $(LREF CtlSeq) in a single `put`. Because `seq` is a compile-time
+/// parameter this is just `put(w, cast(string) seq)` — but writing
+/// `writeEscapeSeq!(CtlSeq.hideCursor)(w)` keeps call sites uniform with the
+/// parameterized overload below, whose whole point is CTFE-collapsing a multi-part
+/// sequence into one `put`.
+void writeEscapeSeq(CtlSeq seq, Writer)(ref Writer w)
+{
+    put(w, cast(string) seq);
+}
+
+/// Emit a DEC private-mode set/reset (`CSI ? mode h|l`) in a **single** `put`:
+/// because `mode`/`set` are compile-time, the whole sequence is assembled by CTFE
+/// into one string constant, rather than the several `put`s ($(D CSI), digits,
+/// `h`/`l`) that the runtime $(LREF writeModeSet)/$(LREF writeModeReset) emit.
+void writeEscapeSeq(DecMode mode, bool set, Writer)(ref Writer w)
+{
+    import std.conv : to;
+
+    enum string seq = "\x1b[?" ~ (cast(uint) mode).to!string ~ (set ? "h" : "l");
+    put(w, seq);
+}
+
+/// Enable/disable SGR mouse reporting — button press/release (1000), drag (1002),
+/// and the SGR extended coordinate encoding (1006) — in a single `put`. The
+/// composite mode string is a compile-time constant selected by `on`.
+void writeMouseTracking(Writer)(ref Writer w, bool on)
+{
+    put(w, on ? "\x1b[?1000;1002;1006h" : "\x1b[?1000;1002;1006l");
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -170,4 +201,32 @@ unittest
     b.clear();
     writeModeReset(b, DecMode.bracketedPaste);
     assert(b[] == "\x1b[?2004l");
+}
+
+@("termControl.writeEscapeSeq.compileTime")
+@safe pure nothrow @nogc
+unittest
+{
+    import sparkles.base.smallbuffer : SmallBuffer;
+
+    SmallBuffer!(char, 32) b;
+    // Fixed CtlSeq → its literal in one put.
+    writeEscapeSeq!(CtlSeq.hideCursor)(b);
+    assert(b[] == "\x1b[?25l");
+
+    // DEC mode set/reset assembled at compile time; must match the runtime writers.
+    b.clear();
+    writeEscapeSeq!(DecMode.autowrap, false)(b);
+    assert(b[] == "\x1b[?7l");
+    b.clear();
+    writeEscapeSeq!(DecMode.syncOutput, true)(b);
+    assert(b[] == CtlSeq.syncBegin);
+
+    // Composite SGR-mouse enable/disable.
+    b.clear();
+    writeMouseTracking(b, true);
+    assert(b[] == "\x1b[?1000;1002;1006h");
+    b.clear();
+    writeMouseTracking(b, false);
+    assert(b[] == "\x1b[?1000;1002;1006l");
 }
