@@ -317,6 +317,27 @@ auto result = items
 
 See [Functional & Declarative Programming Guidelines](./functional-declarative-programming-guidelines.md).
 
+### Shortened function syntax & imports
+
+Prefer the **shortened function form** `T fn(args) => expr;` for any function whose
+body is a single expression (or `return`):
+
+```d
+bool active() const @safe pure nothrow @nogc => _active;
+string sizeText(ScreenSize!ushort sz) @safe => text(sz.width, "×", sz.height, " cells");
+```
+
+A **local (in-body) `import`** forces a braced `{ … }` body and so blocks the `=>`
+form. For single-expression functions, hoist the needed **module-level selective
+import** (`import std.conv : text;` at module scope) so the function can use `=>`.
+Reserve local imports for bodies that are already braced and where scoping a heavy
+dependency to one function is worth it.
+
+**Example programs** (`libs/*/examples/*.d`) should use **module-level selective
+imports** rather than repeating the same local import in each function — one
+`import std.conv : text;` at the top reads more concisely than three in-body copies,
+and it lets the example's helpers use the `=>` shortened form.
+
 ### Safety attributes — annotate non-templates, infer on templates
 
 Strive for maximum safety, but apply attributes correctly:
