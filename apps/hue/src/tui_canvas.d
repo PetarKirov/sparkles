@@ -26,7 +26,7 @@ import sparkles.base.text.width : codepointWidth;
 import sparkles.ui.canvas : DrawOp, isCanvas, LineStyle, OpKind;
 import sparkles.ui.geometry : Point, Rect, Size;
 import sparkles.ui.interp.cells : blend;
-import sparkles.ui.style : Visual;
+import sparkles.ui.style : BorderStyle, Visual;
 
 import sparkles.base.term_color : Color, RgbColor, toRgb;
 import sparkles.base.term_style : UnderlineStyle;
@@ -96,19 +96,89 @@ struct GridCanvas
     private RgbColor cellBg(in CellStyle st) const scope pure nothrow @nogc
         => toRgb(st.bg, pageBg);
 
-    /// Composites `v.bg` (with its alpha) over the background of each cell in `r`,
-    /// leaving glyphs and foregrounds intact.
+    /// Composites `v.bg` (with its alpha) over each cell in `r`, then draws the
+    /// box border the cell grid can express. Cell-grid degradations (documented in
+    /// `docs/libs/ui/`): a sub-cell corner `radius` and the drop `shadow` have no
+    /// cell representation and are dropped; a 1px border becomes either a cell
+    /// underline (a bottom-only border — the `.twoslash-hover` dotted underline)
+    /// or box-drawing glyphs on the rect perimeter (a full box — the popup).
     void fillRect(in Rect r, in Visual v) scope
     {
-        if (!v.hasBg)
+        if (v.hasBg)
+            foreach (y; r.y .. r.y + r.h)
+                foreach (x; r.x .. r.x + r.w)
+                    if (inBounds(x, y))
+                    {
+                        auto c = &cell(x, y);
+                        c.style.bg = Color.fromRgb(blend(cellBg(c.style), v.bg, v.bgAlpha));
+                    }
+
+        if (v.border.any)
+        {
+            const bw = v.border.width;
+            const bottomOnly = bw.bottom > 0 && bw.top == 0 && bw.left == 0 && bw.right == 0;
+            if (bottomOnly)
+                underlineRow(r, v);
+            else
+                drawBoxBorder(r, v);
+        }
+    }
+
+    /// A bottom-only border → a cell underline on the rect's last row (dotted /
+    /// dashed / single, matching the border style; the fade alpha has no cell
+    /// analog so the underline is drawn at full strength).
+    private void underlineRow(in Rect r, in Visual v) scope
+    {
+        const us = v.border.style == BorderStyle.dotted ? UnderlineStyle.dotted
+            : v.border.style == BorderStyle.dashed ? UnderlineStyle.dashed
+            : UnderlineStyle.single;
+        const y = r.y + r.h - 1;
+        foreach (x; r.x .. r.x + r.w)
+            if (inBounds(x, y))
+            {
+                auto c = &cell(x, y);
+                c.style.underline = us;
+                c.style.underlineColor = Color.fromRgb(v.border.color);
+            }
+    }
+
+    /// A full box border → box-drawing glyphs on the rect perimeter (which the
+    /// popup's 1-cell padding leaves blank). Rounded corners approximate a
+    /// `borderRadius`; a popup `arrow` becomes a `┴` notch on the top edge.
+    private void drawBoxBorder(in Rect r, in Visual v) scope
+    {
+        if (r.w < 2 || r.h < 2)
             return;
-        foreach (y; r.y .. r.y + r.h)
-            foreach (x; r.x .. r.x + r.w)
-                if (inBounds(x, y))
-                {
-                    auto c = &cell(x, y);
-                    c.style.bg = Color.fromRgb(blend(cellBg(c.style), v.bg, v.bgAlpha));
-                }
+        const fg = Color.fromRgb(v.border.color);
+        const rounded = v.borderRadius > 0;
+        const x0 = r.x, y0 = r.y, x1 = r.x + r.w - 1, y1 = r.y + r.h - 1;
+
+        void setc(int x, int y, dchar g) scope
+        {
+            if (!inBounds(x, y))
+                return;
+            auto c = &cell(x, y);
+            auto st = c.style;
+            st.fg = fg;
+            c.setCodepoint(g, 1, st);
+        }
+
+        foreach (x; x0 + 1 .. x1)
+        {
+            setc(x, y0, '─');
+            setc(x, y1, '─');
+        }
+        foreach (y; y0 + 1 .. y1)
+        {
+            setc(x0, y, '│');
+            setc(x1, y, '│');
+        }
+        setc(x0, y0, rounded ? '╭' : '┌');
+        setc(x1, y0, rounded ? '╮' : '┐');
+        setc(x0, y1, rounded ? '╰' : '└');
+        setc(x1, y1, rounded ? '╯' : '┘');
+        if (v.arrow)
+            setc(x0 + 1 + v.arrowOffset, y0, '┴');
     }
 
     /// Writes `text` at `at` in `v.fg`, advancing by each glyph's display width
@@ -245,6 +315,36 @@ static assert(isCanvas!GridCanvas);
         assert(g[cast(ushort) x, 0].style.underlineColor == Color.fromRgb(0xd4, 0x56, 0x56));
     }
     assert(g[3, 0].style.underline == UnderlineStyle.none);
+}
+
+@("tui_canvas.boxBorderAndDottedUnderline")
+@safe unittest
+{
+    import sparkles.ui.style : BorderStyle;
+    import sparkles.ui.geometry : Insets;
+
+    // A rounded 4×3 popup surface with a full border and an arrow at offset 1 →
+    // box-drawing perimeter with rounded corners and a `┴` arrow notch.
+    Grid g;
+    g.resize(6, 4);
+    auto canvas = GridCanvas(&g, RgbColor(0, 0, 0));
+    canvas.fillRect(Rect(0, 0, 4, 3),
+        Visual(bg: RgbColor(0xf8, 0xf8, 0xf8), hasBg: true, borderRadius: 4, arrow: true,
+            arrowOffset: 1, border: typeof(Visual.border)(width: Insets.all(1),
+                style: BorderStyle.solid, color: RgbColor(0x88, 0x88, 0x88))));
+    assert(g[0, 0].grapheme == "╭" && g[3, 0].grapheme == "╮");
+    assert(g[0, 2].grapheme == "╰" && g[3, 2].grapheme == "╯");
+    assert(g[2, 0].grapheme == "┴"); // arrow notch at x0 + 1 + arrowOffset(1)
+
+    // A bottom-only dotted border → a dotted cell underline (no glyphs disturbed).
+    Grid u;
+    u.resize(3, 1);
+    auto uc = GridCanvas(&u, RgbColor(0, 0, 0));
+    uc.fillRect(Rect(0, 0, 3, 1),
+        Visual(border: typeof(Visual.border)(width: Insets(0, 0, 1, 0),
+            style: BorderStyle.dotted, color: RgbColor(0x22, 0x22, 0x22))));
+    foreach (x; 0 .. 3)
+        assert(u[cast(ushort) x, 0].style.underline == UnderlineStyle.dotted);
 }
 
 @("tui_canvas.translucentHighlightBlends")

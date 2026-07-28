@@ -22,10 +22,11 @@ import raylib;
 
 import sparkles.raylib_text : TextStyle, FontSet, drawText;
 import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.term_style : TextAttr, UnderlineStyle;
 
 import sparkles.ui.canvas : isCanvas, LineStyle;
-import sparkles.ui.geometry : Point, Rect, Size;
-import sparkles.ui.style : Visual;
+import sparkles.ui.geometry : Insets, Point, Rect, Size;
+import sparkles.ui.style : BorderStyle, Visual;
 
 import gui_text : columnWidth;
 
@@ -36,6 +37,27 @@ Color rlFg(in Visual v) pure nothrow @nogc @trusted
 /// A resolved `Visual`'s background as a raylib `Color` (with its alpha).
 Color rlBg(in Visual v) pure nothrow @nogc @trusted
     => Color(v.bg.r, v.bg.g, v.bg.b, v.bgAlpha);
+
+/// The resolved box border as a raylib `Color` (edge color + fade alpha).
+private Color rlBorder(in Visual v) pure nothrow @nogc @trusted
+    => Color(v.border.color.r, v.border.color.g, v.border.color.b, v.border.alpha);
+
+/// Maps a `Visual`'s packed `TextAttr` bits + underline into the raylib-text
+/// `TextStyle` (real bold/italic faces, strike, underline). `FontRole`/`fontScale`
+/// are HTML-honored; the fixed-size cell grid keeps mono at 1em (documented).
+TextStyle rlTextStyle(in Visual v) pure nothrow @nogc @safe
+{
+    TextStyle t;
+    if (v.styleBits & TextAttr.bold.bits)
+        t.bits |= TextStyle.bold;
+    if (v.styleBits & TextAttr.italic.bits)
+        t.bits |= TextStyle.italic;
+    if (v.styleBits & TextAttr.strikethrough.bits)
+        t.bits |= TextStyle.strikethrough;
+    if (v.underline != UnderlineStyle.none)
+        t.bits |= TextStyle.underline;
+    return t;
+}
 
 /**
 The raylib canvas: a `sparkles:ui` drawing backend over a `FontSet`. Cell
@@ -57,29 +79,60 @@ struct RaylibCanvas
     private float px(int cx) const @safe pure nothrow @nogc => originX + cx * cellW;
     private float py(int cy) const @safe pure nothrow @nogc => originY + cy * cellH;
 
-    /// Fills `r` with `v.bg` (no-op when the visual has no background).
+    /// Paints a box: drop shadow (behind), background fill (rounded when
+    /// `borderRadius`), border (per-side, dotted/solid), and a popup arrow —
+    /// each gated on the resolved `Visual`. A plain filled cell is the common
+    /// fast path (no chrome ⇒ one `DrawRectangle`).
     void fillRect(in Rect r, in Visual v) @system
     {
-        if (!v.hasBg)
-            return;
-        DrawRectangle(cast(int) px(r.x), cast(int) py(r.y),
-            r.w * cellW, r.h * cellH, rlBg(v));
+        const x = px(r.x), y = py(r.y);
+        const w = cast(float)(r.w * cellW), h = cast(float)(r.h * cellH);
+
+        // Drop shadow first, behind the surface: an offset translucent rect.
+        if (v.shadow.any)
+        {
+            const s = v.shadow;
+            const sc = Color(s.color.r, s.color.g, s.color.b, s.alpha);
+            const sr = Rectangle(x + s.dx - s.blur / 2.0f, y + s.dy,
+                w + s.blur, h + s.blur / 2.0f);
+            if (v.borderRadius > 0)
+                DrawRectangleRounded(sr, roundnessOf(v.borderRadius, sr.width, sr.height), 8, sc);
+            else
+                DrawRectangleRec(sr, sc);
+        }
+
+        // Background fill.
+        if (v.hasBg)
+        {
+            if (v.borderRadius > 0)
+                DrawRectangleRounded(Rectangle(x, y, w, h),
+                    roundnessOf(v.borderRadius, w, h), 8, rlBg(v));
+            else
+                DrawRectangle(cast(int) x, cast(int) y, r.w * cellW, r.h * cellH, rlBg(v));
+        }
+
+        // Border and popup arrow.
+        if (v.border.any)
+            drawBorder(x, y, w, h, v);
+        if (v.arrow)
+            drawArrow(x, y, v);
     }
 
-    /// Draws `text` at `at` in `v.fg`.
+    /// Draws `text` at `at`, selecting the real bold/italic/strike/underline face
+    /// from the resolved `Visual`.
     void textRun(in Point at, scope const(char)[] text, in Visual v) @system
     {
-        drawText(*fonts, cstr(text), px(at.x), py(at.y), TextStyle(0), rlFg(v));
+        drawText(*fonts, cstr(text), px(at.x), py(at.y), rlTextStyle(v), rlFg(v));
     }
 
-    /// Draws a single glyph `g` at `at` in `v.fg`.
+    /// Draws a single glyph `g` at `at` in `v.fg` (with its face).
     void glyph(in Point at, dchar g, in Visual v) @system
     {
         import std.utf : encode;
 
         char[4] enc;
         const n = encode(enc, g);
-        drawText(*fonts, cstr(enc[0 .. n]), px(at.x), py(at.y), TextStyle(0), rlFg(v));
+        drawText(*fonts, cstr(enc[0 .. n]), px(at.x), py(at.y), rlTextStyle(v), rlFg(v));
     }
 
     /// Strokes `from` -> `to` in `v.fg`. A `wavy` line is the twoslash error
@@ -102,6 +155,96 @@ struct RaylibCanvas
         }
         else
             DrawRectangle(x0, y0, w, 1, rlFg(v));
+    }
+
+    /// raylib's rounded-rect `roundness` (0..1 of the shorter half-side) for a
+    /// px corner radius on a `w × h` box.
+    private static float roundnessOf(int radiusPx, float w, float h) pure nothrow @nogc @safe
+    {
+        const half = (w < h ? w : h) / 2.0f;
+        if (half <= 0)
+            return 0;
+        const rr = radiusPx / half;
+        return rr > 1 ? 1 : rr;
+    }
+
+    /// Strokes the box border. A rounded box (`borderRadius > 0`) gets a uniform
+    /// rounded outline; a square box strokes each present side, honoring the
+    /// dotted/dashed style (the `.twoslash-hover` bottom underline is dotted).
+    private void drawBorder(float x, float y, float w, float h, in Visual v) @system
+    {
+        const b = v.border;
+        const c = rlBorder(v);
+        if (v.borderRadius > 0)
+        {
+            const thick = maxSide(b.width);
+            DrawRectangleRoundedLinesEx(Rectangle(x, y, w, h),
+                roundnessOf(v.borderRadius, w, h), 8, thick, c);
+            return;
+        }
+        strokeEdge(x, y, w, b.width.top, true, b.style, c);                    // top
+        strokeEdge(x, y + h - b.width.bottom, w, b.width.bottom, true, b.style, c); // bottom
+        strokeEdge(x, y, b.width.left, h, false, b.style, c);                  // left
+        strokeEdge(x + w - b.width.right, y, b.width.right, h, false, b.style, c);  // right
+    }
+
+    /// Strokes one horizontal/vertical edge of thickness `thick`, dashed for a
+    /// dotted/dashed style, solid otherwise.
+    private void strokeEdge(float x, float y, float len, float thick, bool horizontal,
+        BorderStyle style, Color c) @system
+    {
+        if (thick <= 0 || len <= 0)
+            return;
+        if (style == BorderStyle.dotted || style == BorderStyle.dashed)
+        {
+            const dash = style == BorderStyle.dotted ? thick : thick * 3;
+            const gap = style == BorderStyle.dotted ? thick : thick * 2;
+            for (float p = 0; p < len; p += dash + gap)
+            {
+                const seg = (p + dash <= len) ? dash : (len - p);
+                if (horizontal)
+                    DrawRectangle(cast(int)(x + p), cast(int) y, cast(int) seg, cast(int) thick, c);
+                else
+                    DrawRectangle(cast(int) x, cast(int)(y + p), cast(int) thick, cast(int) seg, c);
+            }
+        }
+        else if (horizontal)
+            DrawRectangle(cast(int) x, cast(int) y, cast(int) len, cast(int) thick, c);
+        else
+            DrawRectangle(cast(int) x, cast(int) y, cast(int) thick, cast(int) len, c);
+    }
+
+    /// Draws the popup arrow/tail: a small upward triangle off the box's top edge
+    /// at `arrowOffset` cells, filled with the surface color and outlined in the
+    /// border color (approximating the CSS 6×6 rotated-square notch).
+    private void drawArrow(float boxX, float boxY, in Visual v) @system
+    {
+        const asz = cellH / 3 < 4 ? 4.0f : cast(float)(cellH / 3);
+        const cx = boxX + v.arrowOffset * cellW + cellW * 0.5f;
+        const apex = Vector2(cx, boxY - asz);
+        const left = Vector2(cx - asz, boxY);
+        const right = Vector2(cx + asz, boxY);
+        if (v.hasBg)
+            DrawTriangle(apex, right, left, rlBg(v)); // CCW (screen y-down)
+        if (v.border.any)
+        {
+            const c = rlBorder(v);
+            DrawLineEx(left, apex, 1, c);
+            DrawLineEx(apex, right, 1, c);
+        }
+    }
+
+    /// The greatest of an `Insets`' four sides (border outline thickness).
+    private static float maxSide(in Insets i) pure nothrow @nogc @safe
+    {
+        int m = i.top;
+        if (i.right > m)
+            m = i.right;
+        if (i.bottom > m)
+            m = i.bottom;
+        if (i.left > m)
+            m = i.left;
+        return m <= 0 ? 1 : cast(float) m;
     }
 
     /// The cell extent of a text run (height 1). The width authority is
