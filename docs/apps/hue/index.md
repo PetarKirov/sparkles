@@ -47,6 +47,6 @@ and use prev/next to browse:
 </div>
 
 The gallery is generated at docs-build time from the committed
-`libs/twoslash/examples/fixtures/*.twoslash.json` (the same
-`libs/twoslash/examples/render-html.mjs` previewer developers run with
-`npm run render`), so it always matches the shipped overlay.
+`libs/twoslash/examples/fixtures/*.twoslash.json` by hue itself
+(`hue <fixtures> --twoslash --html --out`), so it always matches the shipped
+overlay — and you can render the same gallery for any directory locally.

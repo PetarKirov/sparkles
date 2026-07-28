@@ -1,5 +1,6 @@
 # Dev-only fixture generator deps — never committed (the build is node-free).
 node_modules/
 
-# Rendered overlay previews (`render-html.mjs`) — regenerable, never committed.
+# Rendered overlay previews — regenerable, never committed. Regenerate with:
+#   hue --twoslash libs/twoslash/examples/fixtures --html --out libs/twoslash/examples/html
 html/
