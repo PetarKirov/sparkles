@@ -49,14 +49,20 @@ import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : Completion, Node, NodeType, TwoslashReturn;
 import sparkles.twoslash.overlay : BelowBlock, errIsWarning, highlightSignature,
-    InlineDecoration, planTwoslash, TwoslashPlan;
+    InlineDecoration, planTwoslash, TwoslashPlan, withoutQuickinfoPrefix;
+import sparkles.twoslash.render_widgets : viewHoverPopup;
 
 // The shared visual language: the twoslash palette is the single source for the
-// error/warn/tag/highlight colors this backend used to hand-copy as literals.
-import sparkles.ui.style : defaultTwoslashPalette, resolveSlot, Slot, Visual;
+// error/warn/tag/highlight colors this backend used to hand-copy as literals, and
+// the widget views drive the hover popup (so the GUI matches the TUI/HTML chrome).
+import sparkles.ui.style : defaultTwoslashPalette, Palette, resolveSlot,
+    schemeForBackground, Slot, Visual;
 import sparkles.ui.geometry : Point, Rect;
-import sparkles.ui.canvas : LineStyle;
-import gui_canvas : RaylibCanvas;
+import sparkles.ui.canvas : LineStyle, OpKind;
+import sparkles.ui.layout : layout;
+import sparkles.ui.display_list : buildDisplayList;
+import sparkles.ui.interp.immediate : paint;
+import gui_canvas : RaylibCanvas, rlBg;
 
 /// The window's default font size in pixels (Ctrl-±/theme cycling arrive in M3).
 private enum defaultFontSize = 18;
@@ -1237,7 +1243,7 @@ int runGuiTwoslash(
     // hand-copied literals). error/warn/tag are theme-independent; the highlight
     // tint is a translucent background. The popup surface stays theme-derived
     // (pageBg), so a dark GUI theme isn't forced onto the light CSS surface.
-    const pal = defaultTwoslashPalette();
+    const pal = defaultTwoslashPalette(schemeForBackground(pageBg));
     const errVis = resolveSlot(pal, Slot.error, pageFg, pageBg);
     const warnVis = resolveSlot(pal, Slot.warn, pageFg, pageBg);
     const tagVis = resolveSlot(pal, Slot.info, pageFg, pageBg);
@@ -1346,8 +1352,8 @@ int runGuiTwoslash(
             if (!forced && (mouse.x < h.x || mouse.x > h.x + h.w
                     || mouse.y < h.y || mouse.y > h.y + h.h))
                 continue;
-            drawPopup(fonts, buf, tw.nodes[h.node], cast(float) h.x, cast(float)(h.y + h.h),
-                cellW, cellH, theme, cache, pageFg, pageBg);
+            drawPopup(fonts, buf, tw, h.node, cast(float) h.x, cast(float)(h.y + h.h),
+                cellW, cellH, theme, cache, pal, pageFg, pageBg);
         }
 
         EndDrawing();
@@ -1447,24 +1453,39 @@ private void drawBelowRow(ref RaylibCanvas canvas, ref FontSet fonts,
 
 /// The floating hover popup: a bordered box with the re-highlighted type
 /// signature and (if present) the docs, anchored at `(x, y)`.
-private void drawPopup(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf, in Node node,
-    float x, float y, int cellW, int cellH, in ResolvedTheme theme, ref TsConfigCache cache,
+/// The floating hover popup, built from the shared `viewHoverPopup` widget view
+/// (surface panel + docs + `@param` chips — the same chrome as the TUI/HTML) and
+/// painted through `RaylibCanvas`. The type signature (row 0) is a single
+/// `Slot.code` run in the widget model, so it is overpainted with the per-token
+/// re-highlighted signature — the one thing the widget model leaves to the painter.
+private void drawPopup(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
+    in TwoslashReturn tw, size_t nodeIndex, float x, float y, int cellW, int cellH,
+    in ResolvedTheme theme, ref TsConfigCache cache, in Palette pal,
     RgbColor pageFg, RgbColor pageBg) @system
 {
-    SmallBuffer!HighlightEvent sig;
-    highlightSignature(cache, node.text, sig);
+    auto tree = viewHoverPopup(tw, nodeIndex);
+    auto frames = layout(tree);
+    auto ops = buildDisplayList(tree, frames, pal, pageFg, pageBg);
 
-    const sigW = cast(int)(columnWidth(node.text) * cellW) + cellW;
-    const hasDocs = node.docs.length > 0;
-    const boxH = hasDocs ? cellH * 2 + 6 : cellH + 6;
-    const boxColor = mix(pageBg, pageFg); // subtle border
+    auto canvas = RaylibCanvas(&fonts, &buf, cellW, cellH, x, y);
+    paint(canvas, ops);
 
-    DrawRectangle(cast(int) x - 2, cast(int) y - 1, sigW + 4, boxH, rl(boxColor));
-    DrawRectangle(cast(int) x - 1, cast(int) y, sigW + 2, boxH - 2, rl(pageBg));
-    drawStyledRuns(fonts, buf, node.text, sig[], x + 3, y + 2, theme, pageFg);
-    if (hasDocs)
-        drawText(fonts, cstrOf(buf, node.docs), x + 3, y + 2 + cellH, TextStyle(0),
-            rl(mix(pageFg, pageBg)));
+    // Overpaint the signature row with the re-highlighted signature (same text
+    // and cell position the widget reserved), clearing its `Slot.code` glyphs
+    // back to the surface first so nothing double-strikes.
+    const sigText = withoutQuickinfoPrefix(tw.nodes[nodeIndex].text);
+    const surf = resolveSlot(pal, Slot.surface, pageFg, pageBg);
+    foreach (ref op; ops)
+        if (op.kind == OpKind.textRun)
+        {
+            const sx = x + op.rect.x * cellW;
+            const sy = y + op.rect.y * cellH;
+            DrawRectangle(cast(int) sx, cast(int) sy, op.rect.w * cellW, cellH, rlBg(surf));
+            SmallBuffer!HighlightEvent sig;
+            highlightSignature(cache, sigText, sig);
+            drawStyledRuns(fonts, buf, sigText, sig[], sx, sy, theme, pageFg);
+            break;
+        }
 }
 
 /// A join-with-leading-space label for completion candidates after the first.
