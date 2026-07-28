@@ -602,11 +602,34 @@ overlay renderers live in `sparkles:twoslash`.
 */
 int runTwoslashMode(in CliParams cli, string themeName) @system
 {
-    // `--twoslash <dir>` is a set of payloads — the twoslash gallery (`GAL2`).
-    if (isDirectoryPath(cli.twoslash))
-        return runDirectoryTarget(cli, cli.twoslash, twoslash: true, themeName);
+    import source_set : SourceSet;
 
-    auto twRes = loadTwoslashFile(cli.twoslash);
+    // The document set, when `--twoslash` names a directory (`GNV1`).
+    SourceSet docSet;
+    bool haveSet;
+
+    // `--twoslash <dir>` is a set of payloads: `--html` renders the static gallery
+    // (`GAL2`), `--gui` opens the first payload with `[`/`]` navigation (`GNV1`).
+    string[] setPaths;
+    if (isDirectoryPath(cli.twoslash))
+    {
+        if (!cli.gui)
+            return runDirectoryTarget(cli, cli.twoslash, twoslash: true, themeName);
+
+        import source_set : collectSources;
+
+        auto found = collectSources(cli.twoslash, twoslash: true);
+        if (found.empty)
+        {
+            stderr.writeln("hue: no *.twoslash.json payloads in '", cli.twoslash, "'");
+            return 1;
+        }
+        docSet = found;
+        haveSet = true;
+        setPaths = [found.current.path];
+    }
+
+    auto twRes = loadTwoslashFile(setPaths.length ? setPaths[0] : cli.twoslash);
     if (twRes.hasError)
     {
         stderr.writeln("hue: ", twRes.error.msg);
@@ -637,7 +660,10 @@ int runTwoslashMode(in CliParams cli, string themeName) @system
         version (HueGui)
         {
             import gui : runGuiTwoslash;
-            return runGuiTwoslash(baseName(cli.twoslash), tw, events[], labels, theme, cache);
+
+            const guiTitle = haveSet ? docSet.current.name : baseName(cli.twoslash);
+            return runGuiTwoslash(guiTitle, tw, events[], labels, theme, cache,
+                haveSet ? &docSet : null, cli.lineNumbers);
         }
         else
         {
