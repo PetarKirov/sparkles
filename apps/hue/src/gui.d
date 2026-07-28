@@ -66,7 +66,7 @@ import gui_canvas : RaylibCanvas, rlBg;
 
 // The multi-document set the twoslash view navigates with `[`/`]` (`GNV1`), plus
 // the two entry points a navigation reload needs.
-import source_set : SourceSet;
+import source_set : SourceEntry, SourceSet;
 import sparkles.twoslash.ingest : loadTwoslashFile;
 import sparkles.syntax.ts.highlighter : highlightInjected;
 
@@ -126,6 +126,19 @@ private enum Mode
     gotoLine,
 }
 
+/// A loaded document — the highlight inputs the viewer needs to show one file.
+struct LoadedDoc
+{
+    const(char)[] source;
+    const(HighlightEvent)[] events;
+    PreviewModel preview;
+}
+
+/// Loads a document by path. Supplied by `app.d`, which owns the grammar registry
+/// and cache, so the GUI navigates a set (`GNV1`) without duplicating that
+/// pipeline — the same delegate seam `gallery.writeGallery` uses.
+alias DocLoader = LoadedDoc delegate(string path) @system;
+
 /**
 Opens the raylib window and paints the highlighted file. M1 draws the whole
 file with the initially selected theme; scrolling/gutter (M2), sizing/resize
@@ -151,6 +164,8 @@ int runGui(
     bool codeLineNumbers = true,
     bool ansiCopyStrip = false,          // --ansi-copy=strip (SEL7/CLI10); default raw
     TableCopyFormat tableCopy = TableCopyFormat.tsv, // --table-copy (TBL2/CLI11)
+    SourceSet* set = null,               // the document set to navigate (GNV1)
+    DocLoader loadDoc = null,            // loads a set entry (supplied by app.d)
 ) @system
 {
     import std.stdio : stderr;
@@ -210,14 +225,24 @@ int runGui(
     if (windowWidth > 0 && windowHeight > 0)
         SetWindowSize(windowWidth * fonts.cellW(), windowHeight * fonts.cellH());
 
+    // The current document. Mutable so a document set can be navigated in place
+    // (`GNV1`) — the window, font atlas and grammar cache are reused; only these
+    // change. With no set they are simply the arguments, unchanged.
+    const(char)[] curSource = source;
+    const(HighlightEvent)[] curEvents = events;
+    PreviewModel curPreview = preview;
+    string curName = title;
+    string curSummary = set !is null && !set.empty ? set.current.summary : "";
+    size_t srcTotal = lineCount(curSource);
+
     // Markdown-preview state (M4). A markdown file opens in preview by default;
     // Tab toggles to the raw highlighted-source view. `HUE_GUI_PREVIEW=0/1`
     // pins the initial mode for deterministic golden captures.
-    bool showPreview = preview.present;
+    bool showPreview = curPreview.present;
     if (environment.get("HUE_GUI_PREVIEW", "") == "0")
         showPreview = false;
     else if (environment.get("HUE_GUI_PREVIEW", "") == "1")
-        showPreview = preview.present;
+        showPreview = curPreview.present;
     PreviewLine[] plines;
     TableView[] tables; // per-table screen↔cell maps for 2D selection (TBL); markdown preview only
     int lastWidthCols = -1;
@@ -244,7 +269,6 @@ int runGui(
     RgbColor scrollbarTrack, scrollbarThumb; // link-tinted — distinct from the
     // grayscale structural bands (page / code header / code panel)
 
-    const srcTotal = lineCount(source);
     // Line-number gutter width in cells (0 when off) — a stable size from the
     // source line count so toggling wrapping never oscillates the layout.
     int gutterCols() => lineNumbers ? digitCount(srcTotal) + 1 : 0;
@@ -267,8 +291,8 @@ int runGui(
     // Called on theme change and at startup — NOT on resize.
     void reflatten()
     {
-        if (preview.present)
-            flatDoc = flattenPreview(preview, current, pageFg, pageBg);
+        if (curPreview.present)
+            flatDoc = flattenPreview(curPreview, current, pageFg, pageBg);
     }
 
     // Both views are wrapped visual-line lists (`PreviewLine[]`) so long lines
@@ -278,7 +302,7 @@ int runGui(
     void relayout()
     {
         lastWidthCols = widthCols();
-        if (showPreview && preview.present)
+        if (showPreview && curPreview.present)
         {
             auto wp = wrapPreview(flatDoc, lastWidthCols, codeLineNumbers);
             plines = wp.lines;
@@ -286,7 +310,7 @@ int runGui(
         }
         else
         {
-            plines = buildRawPlines(source, events, current, pageFg, pageBg, lastWidthCols);
+            plines = buildRawPlines(curSource, curEvents, current, pageFg, pageBg, lastWidthCols);
             tables = null; // the raw view has no table maps
         }
     }
@@ -312,7 +336,7 @@ int runGui(
 
     applyTheme(themeIdx);
 
-    const lineStarts = buildLineStarts(source);
+    auto lineStarts = buildLineStarts(curSource);
 
     SmallBuffer!(char, 4096) buf; // reused, NUL-terminated for raylib
     long top = initialTop; // index of the first visible line
@@ -323,11 +347,58 @@ int runGui(
     Match[] matches;
     size_t curMatch;
 
+    // The index view (`GAL5`): a directory target opens on the list of documents.
+    // A deliberately minimal list — the file-tree explorer (`TVU1`) supersedes it.
+    bool indexMode = set !is null && !set.empty && loadDoc !is null;
+    long indexTop;
+
+    /// Loads the set's currently-selected document in place (`GNV1`): re-read,
+    /// re-highlight, rebuild the preview model, relayout. Scroll and search reset;
+    /// the theme and the view toggles persist (`GNV3`). A document that fails to
+    /// load is reported and the previous one stays on screen.
+    bool loadSelected()
+    {
+        if (set is null || set.empty || loadDoc is null)
+            return false;
+        const entry = set.current;
+        LoadedDoc doc;
+        try
+            doc = loadDoc(entry.path);
+        catch (Exception ex)
+        {
+            stderr.writeln("hue: ", entry.path, ": ", ex.msg);
+            return false;
+        }
+
+        curSource = doc.source;
+        curEvents = doc.events;
+        curPreview = doc.preview;
+        curName = entry.name;
+        curSummary = entry.summary;
+        srcTotal = lineCount(curSource);
+        lineStarts = buildLineStarts(curSource);
+        showPreview = curPreview.present;
+
+        top = 0;            // a new document starts at the top (`GNV3`)
+        query.clear();
+        matches = null;
+        curMatch = 0;
+        mode = Mode.normal;
+
+        // The flattened preview is width-independent but model+theme dependent, so
+        // a new document must re-flatten before the width-only re-wrap.
+        reflatten();
+        lastWidthCols = -1; // force the re-wrap even at an unchanged width
+        relayout();
+        SetWindowTitle(("hue — " ~ curName).toStringz);
+        return true;
+    }
+
     // Recompute all match ranges for the current query — an extra decoration
     // layer over the styled spans (the pure mapping lives in gui_text).
     void recompute()
     {
-        matches = findMatches(source, query[], lineStarts);
+        matches = findMatches(curSource, query[], lineStarts);
         curMatch = 0;
     }
 
@@ -445,6 +516,80 @@ int runGui(
         const screenW = GetScreenWidth();
         const screenH = GetScreenHeight();
         const visibleRows = screenH / cellH;
+
+        // The index view (`GAL5`): the document list a directory target opens on.
+        // ↑/↓ (j/k) move, Enter/click opens, `i` returns here from a document.
+        if (indexMode)
+        {
+            const rows = set.entries.length;
+            if (pressed(KeyboardKey.KEY_DOWN) || pressed(KeyboardKey.KEY_J))
+                set.move(1);
+            if (pressed(KeyboardKey.KEY_UP) || pressed(KeyboardKey.KEY_K))
+                set.move(-1);
+            if (IsKeyPressed(KeyboardKey.KEY_HOME))
+                set.index = 0;
+            if (IsKeyPressed(KeyboardKey.KEY_END) && rows)
+                set.index = rows - 1;
+
+            // Keep the selection in view.
+            const listRows = visibleRows - 2;
+            if (cast(long) set.index < indexTop)
+                indexTop = cast(long) set.index;
+            if (listRows > 0 && cast(long) set.index >= indexTop + listRows)
+                indexTop = cast(long) set.index - listRows + 1;
+
+            const my = GetMouseY();
+            const hoveredRow = indexTop + (my - 2 * cellH) / cellH;
+            if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT)
+                && hoveredRow >= 0 && hoveredRow < cast(long) rows)
+            {
+                set.index = cast(size_t) hoveredRow;
+                if (loadSelected())
+                    indexMode = false;
+            }
+            if (IsKeyPressed(KeyboardKey.KEY_ENTER) || IsKeyPressed(KeyboardKey.KEY_SPACE))
+                if (loadSelected())
+                    indexMode = false;
+
+            BeginDrawing();
+            ClearBackground(rl(pageBg));
+
+            drawText(fonts, cstrOf(buf, text(rows, " documents   ↑↓ move   enter open   q quit")),
+                cast(float) cellW, 0, TextStyle(0), rl(gutterFg));
+
+            foreach (r; 0 .. listRows)
+            {
+                const e = indexTop + r;
+                if (e < 0 || e >= cast(long) rows)
+                    break;
+                const yy = cast(float)((r + 2) * cellH);
+                const selected = cast(size_t) e == set.index;
+                if (selected)
+                    DrawRectangle(0, cast(int) yy, screenW, cellH,
+                        rl(mix(pageBg, pageFg, 0.14)));
+                drawText(fonts, cstrOf(buf, set.entries[e].name), cast(float) cellW, yy,
+                    TextStyle(selected ? TextStyle.bold : 0), rl(pageFg));
+                const sx = cast(float)((2 + maxNameCols(set.entries)) * cellW);
+                drawText(fonts, cstrOf(buf, set.entries[e].summary), sx, yy,
+                    TextStyle(0), rl(gutterFg));
+            }
+
+            EndDrawing();
+            fonts.flushPending();
+
+            // The index is a capturable frame too, so the QA harness can golden it.
+            if (shotPath.length)
+            {
+                if (++frame == 20)
+                    TakeScreenshot(shotPath.toStringz);
+                if (frame >= 21)
+                    break;
+            }
+
+            if (IsKeyPressed(KeyboardKey.KEY_Q) || IsKeyPressed(KeyboardKey.KEY_ESCAPE))
+                break;
+            continue;
+        }
 
         // Reflow (both views wrap) when the window width in columns changes — but
         // debounced: only once the width has held steady for `resizeSettleFrames`
@@ -590,8 +735,25 @@ int runGui(
                 jumpToMatch(shift ? curMatch + matches.length - 1 : curMatch + 1, visibleRows);
             }
 
+            // `[` / `]` (and the mouse back/forward buttons) walk the document
+            // set; `i` returns to the index view (`GNV1`/`GAL5`).
+            if (set !is null && !set.empty && loadDoc !is null)
+            {
+                const back = IsKeyPressed(KeyboardKey.KEY_LEFT_BRACKET)
+                    || IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_BACK);
+                const fwd = IsKeyPressed(KeyboardKey.KEY_RIGHT_BRACKET)
+                    || IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_FORWARD);
+                if ((back || fwd) && set.move(back ? -1 : 1))
+                    loadSelected();
+                if (IsKeyPressed(KeyboardKey.KEY_I))
+                {
+                    indexMode = true;
+                    continue;
+                }
+            }
+
             // Tab toggles markdown preview ↔ raw highlighted source.
-            if (preview.present && IsKeyPressed(KeyboardKey.KEY_TAB))
+            if (curPreview.present && IsKeyPressed(KeyboardKey.KEY_TAB))
             {
                 showPreview = !showPreview;
                 lastWidthCols = -1; // force a reflow on next frame
@@ -999,6 +1161,20 @@ int runGui(
                 DrawRectangle(cast(int) x, 0, cast(int) w, screenH, rl(scrollbarTrack));
             DrawRectangle(cast(int) x, cast(int) g.y, cast(int) w, cast(int) g.h,
                 rl(scrollbarThumb));
+        }
+
+        // A header bar when navigating a document set (`GNV2`): the entry name and
+        // summary on the left, the set position + keys on the right. Drawn over the
+        // top row so scrolled content passes under it.
+        if (set !is null && !set.empty && loadDoc !is null)
+        {
+            DrawRectangle(0, 0, screenW, cellH, rl(mix(pageBg, pageFg, 0.12)));
+            DrawRectangle(0, cellH - 1, screenW, 1, rl(gutterFg));
+            const left = curSummary.length ? curName ~ "  " ~ curSummary : curName;
+            drawText(fonts, cstrOf(buf, left), cast(float) cellW, 0, TextStyle(0), rl(pageFg));
+            const pos = text(set.index + 1, "/", set.length, "   [ ] prev/next   i index");
+            const px = cast(float)(screenW - cast(int)((pos.length + 1) * cellW));
+            drawText(fonts, cstrOf(buf, pos), px, 0, TextStyle(0), rl(gutterFg));
         }
 
         // Input line at the bottom: '/query' while searching, ':n' while going
@@ -1630,6 +1806,16 @@ private Rectangle drawPopup(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
     return Rectangle(x, y, cast(float)(box.w * cellW), cast(float)(box.h * cellH));
 }
 
+
+/// The widest entry name in cells — the index view's summary column offset.
+private size_t maxNameCols(scope const SourceEntry[] entries) @safe pure nothrow
+{
+    size_t w;
+    foreach (ref const e; entries)
+        if (e.name.length > w)
+            w = e.name.length;
+    return w;
+}
 
 /// `IsKeyPressed` plus auto-repeat while held, so PageDown/j/k etc. repeat.
 private bool pressed(int key) @system

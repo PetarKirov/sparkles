@@ -20,6 +20,7 @@ import sparkles.tui.cell : CellStyle, Grid;
 import sparkles.tui.input : Event, EventKind, Key, MouseAction;
 import sparkles.tui.terminal : TerminalOptions;
 
+import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.text.width : codepointWidth;
 import sparkles.core_cli.term_caps : TermSize;
 
@@ -30,6 +31,9 @@ import sparkles.twoslash.render_widgets : viewBelowBlock, viewHoverPopup;
 import sparkles.syntax : byStyledLine, HighlightEvent, LabelId, LabelSet,
     ResolvedTheme, RgbColor, StyledLineSpan, toRgb;
 import sparkles.syntax.ts.injection : TsConfigCache;
+import sparkles.syntax.ts.highlighter : highlightInjected;
+import sparkles.twoslash.ingest : loadTwoslashFile;
+import source_set : SourceSet;
 
 import sparkles.ui.canvas : LineStyle;
 import sparkles.ui.display_list : buildDisplayList;
@@ -63,11 +67,18 @@ int runTuiTwoslash(
     const(HighlightEvent)[] events,
     in ResolvedTheme theme,
     ref TsConfigCache cache,
+    SourceSet* set = null,
 ) @system
 {
-    auto app = TwoslashTui(tw, theme);
+    auto app = TwoslashTui(&tw, theme);
+    app.name = title;
+    app.set = set;
+    app.cache = &cache;
+    if (set !is null && !set.empty)
+        app.summary = set.current.summary;
 
-    // Per-line styled runs (theme colors), materialized once — the code is static.
+    // Per-line styled runs (theme colors), materialized once — the code is static
+    // (a set navigation rebuilds them; see `loadSelected`).
     foreach (ls; byStyledLine(tw.code, events))
         app.runsByLine[ls.line] ~= Run(ls.span.start, ls.span.end, ls.span.label);
 
@@ -93,7 +104,7 @@ string captureTuiFrameHtml(
     int selIdx,
 ) @system
 {
-    auto app = TwoslashTui(tw, theme);
+    auto app = TwoslashTui(&tw, theme);
     foreach (ls; byStyledLine(tw.code, events))
         app.runsByLine[ls.line] ~= Run(ls.span.start, ls.span.end, ls.span.label);
     app.selIdx = selIdx;
@@ -181,7 +192,10 @@ private string gridToHtml(in Grid g, RgbColor pageFg, RgbColor pageBg) @system
 /// `render`/`handle` are handed to `sparkles.tui.runApp`.
 private struct TwoslashTui
 {
-    const(TwoslashReturn) tw; // borrowed slices (code/nodes) — caller keeps them alive
+    // The current payload, by pointer so navigating a set can rebind it (`Node[]`
+    // is mutable, so a const payload cannot be copied into a mutable field).
+    // Borrowed slices (code/nodes) — the caller keeps them alive.
+    const(TwoslashReturn)* twPtr;
     const(ResolvedTheme) theme;
     TwoslashPlan plan;
     Palette pal;
@@ -195,11 +209,21 @@ private struct TwoslashTui
     int scrollRow;
     int selIdx = -1;      // index into `selectable`, or -1 for none
 
-    this(in TwoslashReturn t, in ResolvedTheme th) @system
+    // Document-set navigation (`GNV1`/`GNV2`): `[`/`]` walk the set, the status
+    // bar names the current entry. Null when viewing a single payload.
+    SourceSet* set;
+    TsConfigCache* cache;
+    string name;
+    string summary;
+
+    /// The payload being viewed.
+    ref const(TwoslashReturn) tw() const scope return => *twPtr;
+
+    this(const(TwoslashReturn)* t, in ResolvedTheme th) @system
     {
-        tw = t;
+        twPtr = t;
         theme = th;
-        plan = planTwoslash(t);
+        plan = planTwoslash(*t);
         pageFg = toRgb(th.defaults.fg, RgbColor(0xcd, 0xd6, 0xf4));
         pageBg = toRgb(th.defaults.bg, RgbColor(0x1e, 0x1e, 0x2e));
         // Pick the popup surface/docs shade to match the theme (dark bg ⇒ dark
@@ -346,6 +370,58 @@ private struct TwoslashTui
         const y = cast(ushort)(grid.rows - 1);
         grid.fill(0, y, grid.cols, st);
         grid.putText(0, y, " Tab/→ next  ← prev  ↑↓ scroll  click: select  q: quit ", st);
+
+        // With a document set, name the current entry and its position on the
+        // right of the same bar (`GNV2`).
+        if (set !is null && !set.empty)
+        {
+            import std.conv : text;
+
+            const right = text(name, "  ", summary, "  ", set.index + 1, "/", set.length,
+                "  [ ] prev/next ");
+            if (right.length + 2 < grid.cols)
+                grid.putText(cast(ushort)(grid.cols - right.length), y, right, st);
+        }
+    }
+
+    /// Loads the set's currently-selected payload in place (`GNV1`): re-read,
+    /// re-highlight, re-plan. A payload that fails to load leaves the current one.
+    private bool loadSelected() @system
+    {
+        if (set is null || set.empty || cache is null)
+            return false;
+        const entry = set.current;
+        auto res = loadTwoslashFile(entry.path);
+        if (res.hasError)
+            return false;
+
+        auto owned = new TwoslashReturn;
+        *owned = res.value;
+
+        SmallBuffer!HighlightEvent ev;
+        if (highlightInjected(*cache, "typescript", owned.code, ev).hasError)
+            ev ~= HighlightEvent.sourceSpan(0, owned.code.length);
+
+        twPtr = owned;
+        plan = planTwoslash(*owned);
+        lineTotal = 1;
+        foreach (c; owned.code)
+            if (c == '\n')
+                ++lineTotal;
+        runsByLine = new Run[][](lineTotal);
+        foreach (ls; byStyledLine(owned.code, ev[]))
+            runsByLine[ls.line] ~= Run(ls.span.start, ls.span.end, ls.span.label);
+
+        selectable = null;
+        foreach (ref const d; plan.inlineDecorations)
+            if (d.kind == NodeType.hover)
+                selectable ~= d.node;
+
+        name = entry.name;
+        summary = entry.summary;
+        scrollRow = 0;   // a new document starts at the top (`GNV3`)
+        selIdx = -1;
+        return true;
     }
 
     /// Handles one input event; returns `false` to quit.
@@ -375,6 +451,10 @@ private struct TwoslashTui
             case Key.char_:
                 if (ev.ch == 'q')
                     return false;
+                // `[` / `]` walk the document set (`GNV1`).
+                if ((ev.ch == '[' || ev.ch == ']') && set !is null && !set.empty)
+                    if (set.move(ev.ch == '[' ? -1 : 1))
+                        loadSelected();
                 break;
             case Key.tab:
                 cycle(ev.mods.shift ? -1 : 1);
