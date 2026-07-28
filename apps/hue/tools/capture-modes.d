@@ -4,6 +4,7 @@
     dependency "sparkles:core-cli" path="../../.."
     dependency "sparkles:syntax" path="../../.."
     dependency "sparkles:twoslash" path="../../.."
+    dependency "sparkles:ui" path="../../.."
     dependency "sparkles:base" path="../../.."
 +/
 // Twoslash QA capture harness: renders every fixture in all three `hue --twoslash`
@@ -56,8 +57,8 @@ struct Params
     @CliOption("hue", "Path to the built hue binary (GUI + TUI modes)")
     string hueBin = "apps/hue/build/hue";
 
-    @CliOption("modes|m", "Comma list of modes to render: gui, tui, html")
-    string modes = "gui,tui,html";
+    @CliOption("modes|m", "Comma list of modes to render: gui, tui, html, widgets-html")
+    string modes = "gui,tui,html,widgets-html";
 
     @CliOption("size|s", "TUI capture grid as cols x rows")
     string size = "100x30";
@@ -105,7 +106,8 @@ int main(string[] args)
 
     const chrome = findFirst(["google-chrome-stable", "google-chrome", "chromium", "chromium-browser"]);
     const haveXvfb = findFirst(["xvfb-run"]).length > 0;
-    if ((wantModes.canFind("html") || wantModes.canFind("tui")) && chrome.length == 0)
+    if ((wantModes.canFind("html") || wantModes.canFind("tui")
+            || wantModes.canFind("widgets-html")) && chrome.length == 0)
         stderr.writeln("capture-modes: no Chrome found — html/tui PNGs skipped (HTML still written).");
     if (wantModes.canFind("gui") && !haveXvfb)
         stderr.writeln("capture-modes: no xvfb-run — gui mode skipped.");
@@ -124,6 +126,9 @@ int main(string[] args)
             {
                 case "html":
                     made += captureHtml(fixture, outAbs, stem, p.theme, p.hover, chrome);
+                    break;
+                case "widgets-html":
+                    made += captureWidgetsHtml(fixture, outAbs, stem, p.hover, chrome);
                     break;
                 case "tui":
                     made += captureTui(hueAbs, fixture, outAbs, stem, p.size, p.hover, chrome);
@@ -186,6 +191,63 @@ private string renderTwoslashPage(string fixture, string themeName) @system
     renderTwoslashHtml(tw, events[], theme, cache, output);
     output ~= "</code></pre>\n";
     return output[].idup;
+}
+
+/// widgets-html mode: renders the SAME `sparkles:ui` widget tree the GUI/TUI paint
+/// (via `render_widgets` + `interp/html`) to a self-contained page, then Chrome
+/// screenshots it. This is the two-direction parity ground truth: a browser render
+/// of the widget spec, to compare the GUI/TUI rasters against (and the generated
+/// vs the hand-authored `html` mode).
+private int captureWidgetsHtml(string fixture, string outDir, string stem, int hover,
+    string chrome) @system
+{
+    import sparkles.ui.interp.html : writeWidgetHtmlPage;
+    import sparkles.ui.style : defaultTwoslashPalette, schemeForBackground;
+    import sparkles.ui.widget : WidgetTree;
+    import sparkles.twoslash.render_widgets : viewHoverPopup, viewTwoslash;
+    import sparkles.base.term_color : RgbColor;
+    import std.array : appender;
+
+    auto twRes = loadTwoslashFile(fixture);
+    if (twRes.hasError)
+    {
+        stderr.writeln("  widgets-html ", stem, ": load failed");
+        return 0;
+    }
+    const tw = twRes.value;
+
+    // Match the GUI page colors (catppuccin-mocha) so the palette selects the same
+    // dark surface/docs the raster backends resolve.
+    const pageFg = RgbColor(0xcd, 0xd6, 0xf4);
+    const pageBg = RgbColor(0x1e, 0x1e, 0x2e);
+    const pal = defaultTwoslashPalette(schemeForBackground(pageBg));
+
+    WidgetTree tree;
+    if (hover >= 0)
+    {
+        int seen = -1;
+        size_t idx = size_t.max;
+        foreach (i, ref const n; tw.nodes)
+            if (n.type == NodeType.hover && ++seen == hover)
+            {
+                idx = i;
+                break;
+            }
+        if (idx == size_t.max)
+        {
+            stderr.writeln("  widgets-html ", stem, ": no hover ", hover);
+            return 0;
+        }
+        tree = viewHoverPopup(tw, idx);
+    }
+    else
+        tree = viewTwoslash(tw);
+
+    auto w = appender!string;
+    writeWidgetHtmlPage(w, tree, pal, pageFg, pageBg, stem);
+    const htmlPath = buildPath(outDir, stem ~ ".widgets.html");
+    write(htmlPath, w[]);
+    return shot(chrome, htmlPath, buildPath(outDir, stem ~ ".widgets.png"), "760,320");
 }
 
 /// TUI mode: `HUE_TWOSLASH_TUI_CAPTURE` makes the binary render one cell frame to a
