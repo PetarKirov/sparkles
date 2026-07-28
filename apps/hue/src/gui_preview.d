@@ -26,6 +26,7 @@ import sparkles.syntax : MdDoc, MdBlock, MdBlockKind, MdInline, MdInlineKind, Co
     LabelId, toRgb, RgbColor, GrammarRegistry, TsConfigCache, canonicalLanguage,
     extractMarkdown, highlightInjected;
 import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.test_runner.attributes : benchmark;
 
 // ── Presentation model ───────────────────────────────────────────────────────
 
@@ -1229,6 +1230,72 @@ version (unittest)
 
     private enum RgbColor tPageFg = RgbColor(0xcd, 0xd6, 0xf4);
     private enum RgbColor tPageBg = RgbColor(0x1e, 0x1e, 0x2e);
+
+    // Register one relayout case. The state lives in a heap struct captured by
+    // pointer, so the deferred `benchCase` closure shares stable storage (a
+    // body-local / `foreach` variable is one shared slot under deferred
+    // execution; capturing the large model/theme aggregates by value segfaults).
+    // Heap state whose measured `run` is bound as a method delegate — its context
+    // pointer IS the GC-owned `St`, so (unlike a stack-captured closure literal,
+    // which `benchCase`'s deferred execution turns into a dangling stack read) it
+    // stays valid until the case is measured.
+    private static struct RelayoutState
+    {
+        PreviewModel model;
+        ResolvedTheme theme;
+        int w;
+        size_t run()
+        {
+            import sparkles.test_runner.bench : blackBox;
+            return blackBox(layoutPreview(model, theme, tPageFg, tPageBg, w).length);
+        }
+    }
+
+    private void registerRelayoutCase(PreviewModel model, ResolvedTheme theme, int w)
+    {
+        import sparkles.test_runner.bench : benchCase;
+        import std.conv : text;
+        auto st = new RelayoutState(model, theme, w);
+        benchCase(
+            name: text("w=", st.w),
+            labels: ["op": "layoutPreview"],
+            timed: &st.run,
+            after: (ref size_t _) {},
+        );
+    }
+}
+
+// The window-resize hot path: `gui.d` re-runs `layoutPreview` every frame the
+// column count changes (i.e. continuously during a resize drag). Benchmark it
+// across a sweep of widths on a real document (`HUE_BENCH_FILE`, else the
+// committed `docs/specs/base/text/index.md`). The tree-sitter model build is
+// one-time setup (not measured); only the per-frame relayout is timed.
+@("gui_preview.layout.resizeSweep")
+@benchmark
+@system
+unittest
+{
+    import std.process : environment;
+    import std.file : exists, readText;
+    import sparkles.test_runner.skip : skipTest;
+    import sparkles.syntax : GrammarRegistry, TsConfigCache, LabelSet;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+    const path = environment.get("HUE_BENCH_FILE", "../../docs/specs/base/text/index.md");
+    if (!path.exists)
+        skipTest("bench doc not found: " ~ path ~ " (set HUE_BENCH_FILE)");
+    const source = readText(path);
+
+    auto reg = GrammarRegistry.fromEnvironment();
+    auto cache = TsConfigCache.create(&reg, LabelSet.standard());
+    auto model = buildPreviewModel(reg, cache, source); // one-time (no ansi decoder)
+    const theme = darkTheme();
+
+    // A resize drag walks the column count; each stop is one full relayout.
+    foreach (w; [40, 60, 80, 100, 120, 160])
+        registerRelayoutCase(model, theme, w);
 }
 
 @("gui_preview.layout.wrapsProse")
