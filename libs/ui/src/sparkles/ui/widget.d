@@ -66,6 +66,9 @@ struct Widget
     uint[] children;         /// child node indices (empty for leaves)
     size_t hitId;            /// hover/hit id (0 = not hit-testable)
     bool paintBackground;    /// fill `slot`'s background (box/panel/popup)
+    /// In a `column`, widen to the column's content width (cross-axis stretch —
+    /// full-width section dividers); the child's descendants stay left-aligned.
+    bool stretch;
 }
 
 /// A complete widget tree: the arena plus the index of the root node.
