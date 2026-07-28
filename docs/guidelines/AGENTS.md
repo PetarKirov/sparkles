@@ -34,11 +34,13 @@ library backing `sparkles:test-runner` — see the runner integration notes belo
 Each library **should** be documented under `docs/libs/<name>/` as a
 [Diátaxis](https://diataxis.fr/) tree (`tutorial/`, `how-to/`, `reference/`,
 `explanation/`). Today `sparkles:base`, `sparkles:syntax`,
-`sparkles:test-runner`, `sparkles:twoslash`, and `sparkles:versions` are documented
+`sparkles:test-runner`, `sparkles:twoslash`, `sparkles:ui`, and `sparkles:versions`
+are documented
 ([`docs/libs/base/`](../libs/base/index.md),
 [`docs/libs/syntax/`](../libs/syntax/index.md),
 [`docs/libs/test-runner/`](../libs/test-runner/index.md),
 [`docs/libs/twoslash/`](../libs/twoslash/index.md),
+[`docs/libs/ui/`](../libs/ui/index.md),
 [`docs/libs/versions/`](../libs/versions/index.md)); `core-cli`, `test-utils`,
 `math`, `ghostty`, and `tree-sitter` do not yet have a `docs/libs/<name>/`
 tree. When you add or substantially extend a library, add/extend its docs in
