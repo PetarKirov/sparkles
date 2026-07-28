@@ -35,6 +35,7 @@ import sparkles.core_cli.key_input : stdioKeySession;
 import sparkles.core_cli.term_caps : isTerminal, StdStream;
 
 import previewer : BackgroundMode, backgroundOptions, Previewer, runLoop, TermOut;
+import table_select : TableCopyFormat;
 
 struct CliParams
 {
@@ -82,6 +83,27 @@ struct CliParams
 
     @CliOption("background", "Terminal background mode: no-background (foreground only), spans (only where the theme sets one), or full (fill every line edge-to-edge; the default).")
     string background = "full";
+
+    @CliOption("ansi-copy", "--gui: how a selection over a ```ansi block copies — 'raw' (escape codes) or 'strip' (SGR removed). Default raw; toggle at runtime with 'y'.")
+    string ansiCopy = "raw";
+
+    @CliOption("table-copy", "--gui: how a table grid selection copies — 'tsv' (tab-separated) or 'markdown'. Default tsv; toggle at runtime with 't'.")
+    string tableCopy = "tsv";
+}
+
+/// Parses `--table-copy` (`CLI11`) into a `TableCopyFormat`; unknown → `tsv`.
+private TableCopyFormat parseTableCopy(string name)
+{
+    import table_select : TableCopyFormat;
+
+    switch (name)
+    {
+        case "markdown": return TableCopyFormat.markdown;
+        case "tsv":      return TableCopyFormat.tsv;
+        default:
+            warning(i"unknown --table-copy '$(name)'; using 'tsv'");
+            return TableCopyFormat.tsv;
+    }
 }
 
 /// Parses the `--background` value (`CLI8`) into a `BackgroundMode`; an unknown
@@ -264,7 +286,8 @@ int main(string[] args)
                 preview = buildMdPreview(registry, cache, source);
             return runGui(baseName(sourcePath), source, events[], labels, names,
                 themes, idx, preview, cli.font, cli.fontSize,
-                cli.windowWidth, cli.windowHeight, cli.lineNumbers, cli.codeLineNumbers);
+                cli.windowWidth, cli.windowHeight, cli.lineNumbers, cli.codeLineNumbers,
+                cli.ansiCopy == "strip", parseTableCopy(cli.tableCopy));
         }
         else
         {

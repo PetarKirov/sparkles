@@ -33,6 +33,7 @@ import sparkles.syntax : MdDoc, MdBlock, MdBlockKind, MdInline, MdInlineKind, Co
     LabelId, toRgb, RgbColor, GrammarRegistry, TsConfigCache, canonicalLanguage,
     extractMarkdown, highlightInjected;
 import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.core_cli.ui.table : MappedTable, TableGridMap, drawTableMapped;
 import sparkles.test_runner.attributes : benchmark;
 
 // ── Presentation model ───────────────────────────────────────────────────────
@@ -92,6 +93,15 @@ struct PreviewLine
     /// Index into the model's `fences` when this is a code-header line — the code
     /// block whose body the header's copy button copies; -1 otherwise.
     int copyFence = -1;
+    /// Block-granular selection span (`SEL6`): the source byte range a drag over
+    /// this whole line selects — used for lines whose runs don't map char-by-char
+    /// to source (` ```ansi ` bodies). `size_t.max` ⇒ use the per-run `srcStart`
+    /// (char-level, the prose/code default).
+    size_t selSrcStart = size_t.max;
+    size_t selSrcEnd;
+    /// Index of the table this line belongs to (into `WrappedPreview.tables`), or
+    /// -1. Table lines use the 2D grid selection regime (`TBL`), not `srcStart`.
+    int tableIndex = -1;
     PreviewRun[] runs;
 }
 
@@ -222,6 +232,8 @@ struct PreviewItem
     PreviewRun[][] codeLines; /// per body line, unwrapped highlighted runs
     size_t[] codeSrcLines;    /// parallel to codeLines: each body line's source line
     int copyFence = -1;
+    bool isAnsi;              /// a ` ```ansi ` fence → body lines are selectable (`SEL6`)
+    size_t bodyStart, bodyEnd; /// source byte span of the fence body (for `isAnsi`)
 
     // table
     string[][] grid;
@@ -245,6 +257,25 @@ struct PreviewDoc
     RgbColor ruleFg, codePanelBg, codeFg, codeLineNoFg, pageFg;
 }
 
+/// A rendered table's on-screen placement + selection map (`TBL3`). `firstLine`
+/// is the index into `WrappedPreview.lines` where the table's lines begin; a
+/// `PreviewLine.tableIndex` points into `WrappedPreview.tables`. The `map` hit-
+/// tests screen `(outLine = plineIndex - firstLine, x)` and reads cell text.
+struct TableView
+{
+    int firstLine;
+    int lineCount;
+    TableGridMap map;
+}
+
+/// The result of $(LREF wrapPreview): the painted lines plus the per-table maps
+/// the GUI needs for 2D table selection. (`layoutPreview` returns just `.lines`.)
+struct WrappedPreview
+{
+    PreviewLine[] lines;
+    TableView[] tables;
+}
+
 /**
 Flatten `m` into painted lines for `theme`, resolving colors against
 `pageFg`/`pageBg` and soft-wrapping to `widthCols`. Kept as the composition of
@@ -253,7 +284,7 @@ for callers (and tests) that don't cache. Pure.
 */
 PreviewLine[] layoutPreview(PreviewModel m, ResolvedTheme theme,
     RgbColor pageFg, RgbColor pageBg, int widthCols, bool codeLineNumbers = true) @safe
-    => wrapPreview(flattenPreview(m, theme, pageFg, pageBg), widthCols, codeLineNumbers);
+    => wrapPreview(flattenPreview(m, theme, pageFg, pageBg), widthCols, codeLineNumbers).lines;
 
 /**
 Stage 2a — the width-INDEPENDENT flatten. Runs the block recursion, resolving
@@ -678,7 +709,8 @@ private struct Flattener
         pendingNumber = false; // the header carries no line number
         emit(PreviewItem(kind: ItemKind.code, indentCols: indent, qdepth: qdepth,
             codeLabel: lbl, codeLines: codeLines, codeSrcLines: srcLines,
-            copyFence: cast(int)(fenceIdx - 1)));
+            copyFence: cast(int)(fenceIdx - 1), isAnsi: f.isAnsi,
+            bodyStart: f.bodyStart, bodyEnd: f.bodyStart + f.body.length));
         blank();
     }
 
@@ -928,27 +960,27 @@ A single `SmallBuffer!(PreviewRun)` scratch is reused across every emitted line
 allocates roughly one right-sized array per emitted line instead of a
 `~=`-growth chain — the bulk of the old per-frame allocation churn.
 */
-PreviewLine[] wrapPreview(PreviewDoc doc, int widthCols, bool codeLineNumbers = true) @safe
+WrappedPreview wrapPreview(PreviewDoc doc, int widthCols, bool codeLineNumbers = true) @safe
 {
     const width = widthCols < 8 ? 8 : widthCols;
-    PreviewLine[] lines;
+    WrappedPreview wp;
     // Most items emit one line; flow/code emit a few. Reserve generously to dodge
     // growth reallocs without over-allocating.
-    lines.reserve(doc.items.length + doc.items.length / 2 + 8);
+    wp.lines.reserve(doc.items.length + doc.items.length / 2 + 8);
     PreviewRun[] scratch; // reused per emitted line (see takeRuns)
     foreach (ref it; doc.items)
     {
         final switch (it.kind) with (ItemKind)
         {
-        case flow:  wrapFlow(it, width, scratch, lines); break;
-        case code:  wrapCode(it, width, codeLineNumbers, doc, scratch, lines); break;
-        case table: wrapTable(it, width, doc, lines); break;
-        case rule:  wrapRule(it, width, doc, lines); break;
-        case html:  lines ~= wrapHtmlLine(it); break;
-        case blank: lines ~= PreviewLine.init; break;
+        case flow:  wrapFlow(it, width, scratch, wp.lines); break;
+        case code:  wrapCode(it, width, codeLineNumbers, doc, scratch, wp.lines); break;
+        case table: wrapTable(it, width, doc, wp); break;
+        case rule:  wrapRule(it, width, doc, wp.lines); break;
+        case html:  wp.lines ~= wrapHtmlLine(it); break;
+        case blank: wp.lines ~= PreviewLine.init; break;
         }
     }
-    return lines;
+    return wp;
 }
 
 // Take the scratch buffer's contents as a freshly-owned run array and reset it
@@ -1058,7 +1090,11 @@ private void wrapCode(ref PreviewItem it, int width, bool codeLineNumbers,
             lines ~= PreviewLine(indentCols: it.indentCols, quoteDepth: it.qdepth,
                 band: BandKind.codePanel, bandBg: pal.codePanelBg,
                 barFg: it.barFg, hasBarFg: it.hasBarFg,
-                srcLine: srcLine, showNumber: firstWrap, runs: takeRuns(scratch));
+                srcLine: srcLine, showNumber: firstWrap,
+                // ANSI bodies select block-granular over the whole fence body (SEL6);
+                // their runs are decoded, so they carry no per-char `srcStart`.
+                selSrcStart: it.isAnsi ? it.bodyStart : size_t.max, selSrcEnd: it.bodyEnd,
+                runs: takeRuns(scratch));
             firstWrap = false;
         }
     }
@@ -1071,31 +1107,36 @@ private void wrapCode(ref PreviewItem it, int width, bool codeLineNumbers,
         runs: [PreviewRun("╰" ~ repeat("─", inner) ~ "╯", pal.ruleFg, pal.codePanelBg, true, 0)]);
 }
 
-// Render a table: hand the flattened grid to core-cli's renderer at the width,
-// then colorize each rendered line (box-drawing muted, content page-fg, the
-// single header content row bold).
+// Render a table: hand the flattened grid to core-cli's mapped renderer at the
+// width, colorize each rendered line (box-drawing muted, content page-fg, header
+// row bold), tag the lines with the table index, and record the `TableView` (the
+// screen↔cell map) for the GUI's 2D selection (`TBL3`).
 private void wrapTable(ref PreviewItem it, int width, ref PreviewDoc pal,
-    ref PreviewLine[] lines) @safe
+    ref WrappedPreview wp) @safe
 {
     const cols = it.grid.length ? it.grid[0].length : 0;
     if (cols == 0)
         return;
     const avail = width - it.indentCols - it.qdepth * 2;
-    auto rows = renderTableLines(it.grid, it.aligns, cols, avail < 8 ? 8 : avail);
+    auto mt = renderTableMapped(it.grid, it.aligns, cols, avail < 8 ? 8 : avail);
 
-    bool headerDone, firstLine = true;
-    foreach (ln; rows)
+    const tableIndex = cast(int) wp.tables.length;
+    const firstLine = cast(int) wp.lines.length;
+    bool headerDone, firstLn = true;
+    foreach (ln; mt.lines)
     {
         const content = lineHasContent(ln);
         const bold = content && !headerDone;
         if (content)
             headerDone = true;
-        lines ~= PreviewLine(indentCols: it.indentCols, quoteDepth: it.qdepth,
+        wp.lines ~= PreviewLine(indentCols: it.indentCols, quoteDepth: it.qdepth,
             barFg: it.barFg, hasBarFg: it.hasBarFg,
-            srcLine: it.srcLine, showNumber: firstLine && it.number,
+            srcLine: it.srcLine, showNumber: firstLn && it.number,
+            tableIndex: tableIndex,
             runs: colorizeTableLine(ln, bold, pal.ruleFg, pal.pageFg));
-        firstLine = false;
+        firstLn = false;
     }
+    wp.tables ~= TableView(firstLine, cast(int) mt.lines.length, mt.map);
 }
 
 private void wrapRule(ref PreviewItem it, int width, ref PreviewDoc pal,
@@ -1276,10 +1317,9 @@ attributed `@safe` (it GC-allocates during layout). Wrapping the one call keeps
 `table()` / `layoutPreview` `@safe`. It runs in the layout stage (per theme /
 width change), never per frame.
 */
-private string[] renderTableLines(string[][] grid, scope const(ColAlign)[] aligns,
-    size_t cols, int maxWidth) @trusted
+private auto tableProps(scope const(ColAlign)[] aligns, size_t cols, int maxWidth) @trusted
 {
-    import sparkles.core_cli.ui.table : drawTableLines, TableProps;
+    import sparkles.core_cli.ui.table : TableProps;
     import sparkles.base.text.width : Align;
 
     auto cAligns = new Align[](cols);
@@ -1294,13 +1334,27 @@ private string[] renderTableLines(string[][] grid, scope const(ColAlign)[] align
         case left: cAligns[i] = Align.left; break; // `none` renders left by convention
         }
     }
-    auto props = TableProps(headerRows: 1, columnAligns: cAligns,
+    return TableProps(headerRows: 1, columnAligns: cAligns,
         maxWidth: maxWidth > 0 ? cast(size_t) maxWidth : 0);
+}
+
+private string[] renderTableLines(string[][] grid, scope const(ColAlign)[] aligns,
+    size_t cols, int maxWidth) @trusted
+{
+    import sparkles.core_cli.ui.table : drawTableLines;
+
     string[] rows;
-    foreach (ln; drawTableLines(grid, props))
+    foreach (ln; drawTableLines(grid, tableProps(aligns, cols, maxWidth)))
         rows ~= ln;
     return rows;
 }
+
+/// Render the table AND its screen↔cell map (for GUI 2D selection, `TBL3`).
+/// `@trusted`: `drawTableMapped` GC-allocates but is otherwise pure data-in /
+/// data-out (`renderTableLines` covers the same for the non-GUI path).
+private MappedTable renderTableMapped(string[][] grid, scope const(ColAlign)[] aligns,
+    size_t cols, int maxWidth) @trusted
+    => drawTableMapped(grid, tableProps(aligns, cols, maxWidth));
 
 // ASCII-uppercase a string (for case-insensitive callout-type matching).
 private string upperAscii(const(char)[] s) @safe pure
@@ -1315,7 +1369,7 @@ private string upperAscii(const(char)[] s) @safe pure
 // two-byte `ESC<x>`) from `s`, keeping printable text and newlines. Used to
 // degrade a ` ```ansi ` fence to plain text when no off-screen VT is available to
 // decode it (terminal / HTML paths, `no-gui` build).
-private string stripSgr(scope const(char)[] s) @safe pure nothrow
+string stripSgr(scope const(char)[] s) @safe pure nothrow
 {
     auto r = new char[s.length];
     size_t n, i;
@@ -1458,7 +1512,7 @@ version (unittest)
         size_t run()
         {
             import sparkles.test_runner.bench : blackBox;
-            return blackBox(wrapPreview(doc, w).length);
+            return blackBox(wrapPreview(doc, w).lines.length);
         }
     }
 
@@ -1781,10 +1835,47 @@ unittest
 
     foreach (w; [24, 40, 80])
     {
-        auto a = wrapPreview(doc, w);   // re-wrap the SAME cached doc…
-        auto b = wrapPreview(doc, w);   // …twice: must be byte-identical
+        auto a = wrapPreview(doc, w).lines;   // re-wrap the SAME cached doc…
+        auto b = wrapPreview(doc, w).lines;   // …twice: must be byte-identical
         auto oneShot = layoutPreview(m, darkTheme, tPageFg, tPageBg, w);
         assert(a == b, "wrapPreview mutated the cached doc");
         assert(a == oneShot, "cached wrap differs from a one-shot layout");
     }
+}
+
+@("gui_preview.wrap.ansiAndTableSelection")
+@system
+unittest
+{
+    import std.process : environment;
+    import std.algorithm.searching : any, canFind;
+    import sparkles.test_runner.skip : skipTest;
+    import sparkles.syntax : GrammarRegistry, TsConfigCache, LabelSet;
+    import gui_ansi : decodeAnsi;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+    auto reg = GrammarRegistry.fromEnvironment();
+    auto cache = TsConfigCache.create(&reg, LabelSet.standard());
+    const src = "| a | b |\n|---|---|\n| 1 | 2 |\n\n```ansi\n\x1b[31mred\x1b[0m\n```\n";
+    auto m = buildPreviewModel(reg, cache, src, &decodeAnsi);
+    auto wp = wrapPreview(flattenPreview(m, darkTheme, tPageFg, tPageBg), 80);
+
+    // The table produced a TableView, its lines are tagged, and the map reads back.
+    assert(wp.tables.length == 1);
+    assert(wp.lines.any!(l => l.tableIndex == 0));
+    assert(wp.tables[0].map.numRows >= 2 && wp.tables[0].map.numCols == 2);
+
+    // ANSI body lines carry the fence-body source span (block-granular SEL6);
+    // the span covers the raw ANSI (escapes included).
+    bool ansiSel;
+    foreach (l; wp.lines)
+        if (l.band == BandKind.codePanel && l.selSrcStart != size_t.max)
+        {
+            ansiSel = true;
+            assert(l.selSrcEnd > l.selSrcStart);
+            assert(src[l.selSrcStart .. l.selSrcEnd].canFind("red"));
+        }
+    assert(ansiSel, "ANSI body line missing its selSrc span");
 }

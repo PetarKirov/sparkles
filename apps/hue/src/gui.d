@@ -31,8 +31,13 @@ import gui_text : columnWidth, lineCount, Match, buildLineStarts, findMatches;
 
 // Markdown-preview model + layout (raylib-free) and the ANSI attribute bits.
 import gui_preview : PreviewModel, PreviewLine, PreviewRun, BandKind, PreviewDoc,
-    flattenPreview, wrapPreview, buildRawPlines, quoteBarColors, quoteBarCycle;
+    TableView, flattenPreview, wrapPreview, buildRawPlines, quoteBarColors,
+    quoteBarCycle, stripSgr;
 import gui_ansi : Attr;
+
+// 2D table grid selection (TBL): the screen↔cell map + pure region/serialize logic.
+import sparkles.core_cli.ui.table : GridHit, CellSpan;
+import table_select : TableRegion, TableCopyFormat, tableSelection, serializeTable;
 
 // Selective import avoids sparkles.syntax.Color clashing with raylib.Color:
 // bare `Color` is unambiguously raylib's; the theme color type is reached only
@@ -125,6 +130,8 @@ int runGui(
     int windowHeight = 600,
     bool lineNumbers = true,
     bool codeLineNumbers = true,
+    bool ansiCopyStrip = false,          // --ansi-copy=strip (SEL7/CLI10); default raw
+    TableCopyFormat tableCopy = TableCopyFormat.tsv, // --table-copy (TBL2/CLI11)
 ) @system
 {
     import std.stdio : stderr;
@@ -193,6 +200,7 @@ int runGui(
     else if (environment.get("HUE_GUI_PREVIEW", "") == "1")
         showPreview = preview.present;
     PreviewLine[] plines;
+    TableView[] tables; // per-table screen↔cell maps for 2D selection (TBL); markdown preview only
     int lastWidthCols = -1;
     // Resize debounce: during a drag the column count changes almost every frame,
     // so re-wrap only once the width has held steady for a few frames — the drag
@@ -252,9 +260,16 @@ int runGui(
     {
         lastWidthCols = widthCols();
         if (showPreview && preview.present)
-            plines = wrapPreview(flatDoc, lastWidthCols, codeLineNumbers);
+        {
+            auto wp = wrapPreview(flatDoc, lastWidthCols, codeLineNumbers);
+            plines = wp.lines;
+            tables = wp.tables;
+        }
         else
+        {
             plines = buildRawPlines(source, events, current, pageFg, pageBg, lastWidthCols);
+            tables = null; // the raw view has no table maps
+        }
     }
 
     void applyTheme(size_t i)
@@ -354,10 +369,53 @@ int runGui(
     int copiedFence = -1;
     float copiedTimer = 0;
 
-    // Mouse text selection over content: a half-open [min, max) byte range into
-    // the source file. Gutters / decorations are excluded (they have no srcStart).
-    long selAnchor = -1, selHead = -1;
+    // Mouse selection has two regimes (a drag stays in the one it starts in, TBL4):
+    //  • text  (SEL): a source byte range [selMin, selMax). Prose/code map a click
+    //    char-precisely; an ANSI body line selects its whole fence-body span (SEL6).
+    //  • table (TBL): a 2D grid selection inside one table, resolved from anchor +
+    //    head cells (from the table map) under Shift/Alt.
+    enum Regime { none, text, table }
+    Regime regime;
     bool selecting;
+    // text regime — anchor/head each a source span (char ⇒ lo==hi; ANSI ⇒ block).
+    long anchorLo, anchorHi, headLo, headHi;
+    // table regime.
+    int selTable = -1;
+    GridHit tblAnchor, tblHead;
+    bool tblShift, tblAlt;
+
+    // Copy modes (SEL7/TBL2), toggleable at runtime ('y' ANSI, 't' table); a
+    // toggle flashes the new mode in the status bar for a moment.
+    bool ansiStrip = ansiCopyStrip;
+    TableCopyFormat tableFmt = tableCopy;
+    string copyModeMsg;
+    float copyModeTimer = 0;
+
+    // The text-regime selection as a source range [selMin, selMax) — the union of
+    // the anchor and head spans (a char point is a zero-width span).
+    long selMin() => anchorLo < headLo ? anchorLo : headLo;
+    long selMax() => anchorHi > headHi ? anchorHi : headHi;
+
+    // Copy the current selection: a text range → `source[min..max]` (SGR-stripped
+    // when `ansiStrip`); a table region → TSV / markdown cells (SEL7/TBL2).
+    void copySelection()
+    {
+        if (regime == Regime.text && selMax() > selMin() && selMax() <= source.length)
+        {
+            auto txt = source[cast(size_t) selMin() .. cast(size_t) selMax()];
+            SetClipboardText((ansiStrip ? stripSgr(txt) : txt).toStringz);
+        }
+        else if (regime == Regime.table && selTable >= 0 && selTable < tables.length)
+        {
+            const tv = tables[selTable];
+            const reg = tableSelection(tblAnchor, tblHead, tblShift, tblAlt,
+                tv.map.numRows, tv.map.numCols);
+            const txt = serializeTable(reg,
+                (size_t r, size_t c) => tv.map.cellText(r, c), tableFmt);
+            if (txt.length)
+                SetClipboardText(txt.toStringz);
+        }
+    }
 
     int frame = 0;
     while (!WindowShouldClose())
@@ -531,20 +589,29 @@ int runGui(
             // Ctrl-C copies the current selection to the clipboard; plain 'c'
             // toggles the in-panel code-block line numbers.
             if (ctrl && IsKeyPressed(KeyboardKey.KEY_C))
-            {
-                if (selAnchor >= 0 && selHead >= 0 && selAnchor != selHead)
-                {
-                    const a = selAnchor < selHead ? selAnchor : selHead;
-                    const b = selAnchor < selHead ? selHead : selAnchor;
-                    if (b <= source.length)
-                        SetClipboardText(source[cast(size_t) a .. cast(size_t) b].toStringz);
-                }
-            }
+                copySelection();
             else if (!ctrl && pressed(KeyboardKey.KEY_C))
             {
                 codeLineNumbers = !codeLineNumbers;
                 lastWidthCols = -1;
                 relayout();
+            }
+
+            // Copy-mode toggles (SEL7/TBL2): 'y' ANSI raw↔strip, 't' table
+            // TSV↔markdown. They only change how a copy renders — no relayout.
+            if (pressed(KeyboardKey.KEY_Y))
+            {
+                ansiStrip = !ansiStrip;
+                copyModeMsg = ansiStrip ? "ansi-copy: strip" : "ansi-copy: raw";
+                copyModeTimer = 1.6f;
+            }
+            if (pressed(KeyboardKey.KEY_T))
+            {
+                tableFmt = tableFmt == TableCopyFormat.tsv
+                    ? TableCopyFormat.markdown : TableCopyFormat.tsv;
+                copyModeMsg = tableFmt == TableCopyFormat.tsv
+                    ? "table-copy: tsv" : "table-copy: markdown";
+                copyModeTimer = 1.6f;
             }
 
             // Enter an input mode: '/' search (raw view only), 'g' goto-line.
@@ -671,53 +738,121 @@ int runGui(
             }
         }
 
-        // Mouse text selection over content (both views). A drag maps the cursor to
-        // a source-file byte offset via each run's srcStart, so the selection is a
-        // range into the original `const(char)[]` (gutters/decorations excluded).
-        long offsetAt(float mx, float my)
+        // Mouse selection (both views). `hitAt` classifies the cursor: over a
+        // table → a grid cell (`TBL`); else a source byte span (`SEL`) — a char
+        // point for prose/code, or an ANSI body line's whole fence-body span
+        // (`SEL6`, block-granular).
+        struct Hit { bool ok, table; long lo, hi; int tableIdx; GridHit cell; }
+        Hit hitAt(float mx, float my)
         {
+            Hit h;
             if (my < 0)
-                return -1;
+                return h;
             const row = cast(int)(my / cellH);
             if (row < 0 || topLine + row >= plines.length)
-                return -1;
+                return h;
             const pl = plines[topLine + row];
             const rx = gutterPx + runStartCells(pl) * cellW;
-            const col = mx <= rx ? 0 : cast(int)((mx - rx) / cellW);
-            return srcOffsetAtCol(pl, col);
+            const x = mx <= rx ? 0 : cast(int)((mx - rx) / cellW);
+            if (pl.tableIndex >= 0 && pl.tableIndex < tables.length)
+            {
+                const tv = tables[pl.tableIndex];
+                auto gh = tv.map.hit(cast(size_t)((topLine + row) - tv.firstLine), cast(size_t) x);
+                if (!gh.isNull)
+                {
+                    h.ok = true;
+                    h.table = true;
+                    h.tableIdx = pl.tableIndex;
+                    h.cell = gh.get;
+                }
+                return h;
+            }
+            if (pl.selSrcStart != size_t.max) // ANSI body → whole-block span
+            {
+                h.ok = true;
+                h.lo = cast(long) pl.selSrcStart;
+                h.hi = cast(long) pl.selSrcEnd;
+                return h;
+            }
+            const o = srcOffsetAtCol(pl, x);
+            if (o >= 0)
+            {
+                h.ok = true;
+                h.lo = o;
+                h.hi = o;
+            }
+            return h;
         }
 
         {
             const mp = GetMousePosition();
             const overSb = mp.x >= screenW - scrollbarGutter();
+            const shiftMod = IsKeyDown(KeyboardKey.KEY_LEFT_SHIFT) || IsKeyDown(KeyboardKey.KEY_RIGHT_SHIFT);
+            const altMod = IsKeyDown(KeyboardKey.KEY_LEFT_ALT) || IsKeyDown(KeyboardKey.KEY_RIGHT_ALT);
             if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT) && !overSb && !copyClicked)
             {
-                const o = offsetAt(mp.x, mp.y);
-                selAnchor = selHead = o;
-                selecting = o >= 0;
+                const h = hitAt(mp.x, mp.y);
+                selecting = h.ok;
+                if (h.table)
+                {
+                    regime = Regime.table;
+                    selTable = h.tableIdx;
+                    tblAnchor = tblHead = h.cell;
+                    tblShift = tblAlt = false;
+                }
+                else if (h.ok)
+                {
+                    regime = Regime.text;
+                    anchorLo = headLo = h.lo;
+                    anchorHi = headHi = h.hi;
+                }
+                else
+                    regime = Regime.none;
             }
             if (selecting && IsMouseButtonDown(MouseButton.MOUSE_BUTTON_LEFT))
             {
-                const o = offsetAt(mp.x, mp.y);
-                if (o >= 0)
-                    selHead = o;
+                const h = hitAt(mp.x, mp.y);
+                if (regime == Regime.table && h.ok && h.table && h.tableIdx == selTable)
+                {
+                    tblHead = h.cell;
+                    tblShift = shiftMod;
+                    tblAlt = altMod;
+                }
+                else if (regime == Regime.text && h.ok && !h.table)
+                {
+                    headLo = h.lo;
+                    headHi = h.hi;
+                }
             }
             if (IsMouseButtonReleased(MouseButton.MOUSE_BUTTON_LEFT))
                 selecting = false;
         }
 
-        // Selection highlight: a translucent tint over each selected source run.
-        if (selAnchor >= 0 && selHead >= 0 && selAnchor != selHead)
+        // Selection highlight — a translucent tint. `tintRow` takes content columns
+        // (0 = the content origin, i.e. after `gutterPx`).
+        void tintRow(long screenRow, int xStartCol, int xEndCol)
         {
-            const selMin = selAnchor < selHead ? selAnchor : selHead;
-            const selMax = selAnchor < selHead ? selHead : selAnchor;
+            if (screenRow < 0 || screenRow >= visibleRows || xEndCol <= xStartCol)
+                return;
+            DrawRectangle(gutterPx + xStartCol * cellW, cast(int)(screenRow * cellH),
+                (xEndCol - xStartCol) * cellW, cellH, alpha(quoteBars[1], 80));
+        }
+        if (regime == Regime.text && selMax() > selMin())
+        {
+            const smin = selMin(), smax = selMax();
             foreach (row; 0 .. visibleRows)
             {
                 const vi = topLine + row;
                 if (vi >= plines.length)
                     break;
                 const pl = plines[vi];
-                const rx0 = gutterPx + runStartCells(pl) * cellW;
+                const startCol = runStartCells(pl);
+                if (pl.selSrcStart != size_t.max) // ANSI body: whole-line tint
+                {
+                    if (cast(long) pl.selSrcEnd > smin && cast(long) pl.selSrcStart < smax)
+                        tintRow(row, startCol, startCol + lineCols(pl));
+                    continue;
+                }
                 int c;
                 foreach (r; pl.runs)
                 {
@@ -726,19 +861,38 @@ int runGui(
                     {
                         const rStart = cast(long) r.srcStart;
                         const rEnd = rStart + cast(long) r.text.length;
-                        if (rEnd > selMin && rStart < selMax)
+                        if (rEnd > smin && rStart < smax)
                         {
-                            const bStart = (selMin > rStart ? selMin : rStart) - rStart;
-                            const bEnd = (selMax < rEnd ? selMax : rEnd) - rStart;
+                            const bStart = (smin > rStart ? smin : rStart) - rStart;
+                            const bEnd = (smax < rEnd ? smax : rEnd) - rStart;
                             const colStart = cast(int) columnWidth(r.text[0 .. bStart]);
                             const colEnd = cast(int) columnWidth(r.text[0 .. bEnd]);
-                            DrawRectangle(rx0 + (c + colStart) * cellW, cast(int)(row * cellH),
-                                (colEnd - colStart) * cellW, cellH, alpha(quoteBars[1], 80));
+                            tintRow(row, startCol + c + colStart, startCol + c + colEnd);
                         }
                     }
                     c += rc;
                 }
             }
+        }
+        else if (regime == Regime.table && selTable >= 0 && selTable < tables.length)
+        {
+            const tv = tables[selTable];
+            const reg = tableSelection(tblAnchor, tblHead, tblShift, tblAlt,
+                tv.map.numRows, tv.map.numCols);
+            const tableStartCol = runStartCells(plines[tv.firstLine]);
+            void tintSpan(CellSpan sp)
+            {
+                tintRow(cast(long)(tv.firstLine + sp.line) - topLine,
+                    tableStartCol + cast(int) sp.xStart, tableStartCol + cast(int) sp.xEnd);
+            }
+            if (reg.subCell)
+                foreach (sp; tv.map.charSpans(reg.row, reg.col, reg.charLo, reg.charHi))
+                    tintSpan(sp);
+            else
+                foreach (rr; reg.rowLo .. reg.rowHi + 1)
+                    foreach (cc; reg.colLo .. reg.colHi + 1)
+                        foreach (sp; tv.map.cellSpans(rr, cc))
+                            tintSpan(sp);
         }
 
         // Search-match overlay (raw view only): translucent tint over each visible
@@ -790,6 +944,14 @@ int runGui(
                 ? text("/", query[], "   ", matches.length, " matches")
                 : text(":", query[]);
             drawText(fonts, cstrOf(buf, lineText), 4, cast(float) barY, TextStyle(0), rl(pageBg));
+        }
+        // Copy-mode toast (when not typing): flashes the mode after a 'y'/'t' toggle.
+        else if (copyModeTimer > 0)
+        {
+            copyModeTimer -= GetFrameTime();
+            const barY = screenH - cellH;
+            DrawRectangle(0, barY, screenW, cellH, rl(gutterFg));
+            drawText(fonts, cstrOf(buf, copyModeMsg), 4, cast(float) barY, TextStyle(0), rl(pageBg));
         }
 
         EndDrawing();
