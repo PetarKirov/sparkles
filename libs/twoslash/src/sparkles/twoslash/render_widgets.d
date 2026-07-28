@@ -211,7 +211,10 @@ in (nodeIndex < tw.nodes.length)
     // must not reach a backend as a literal control char). The `registry` overlay
     // below renders them as full markdown.
     uint[] docsRows = node.docs.length ? plainDocsRows(b, node.docs, hit) : null;
-    return finishHoverPopup(b, node, hit, docsRows);
+    uint[] tagRows;
+    foreach (ref const string[] tag; node.tags)
+        tagRows ~= buildPopupTag(b, tag, hit);
+    return finishHoverPopup(b, node, hit, docsRows, tagRows);
 }
 
 /**
@@ -229,39 +232,49 @@ in (nodeIndex < tw.nodes.length)
     const node = tw.nodes[nodeIndex];
     const hit = hitOf(nodeIndex);
     uint[] docsRows = node.docs.length ? markdownDocsRows(b, registry, node.docs, hit) : null;
-    return finishHoverPopup(b, node, hit, docsRows);
+    uint[] tagRows;
+    foreach (ref const string[] tag; node.tags)
+        tagRows ~= buildPopupTagMd(b, registry, tag, hit);
+    return finishHoverPopup(b, node, hit, docsRows, tagRows);
 }
 
-/// Assembles the popup shell shared by both `viewHoverPopup` overloads: the
-/// signature (code face), the already-built `docsRows` under a 1px top divider,
-/// and the `@tag` chips, wrapped in the floating surface (border/radius/shadow/arrow).
+/// Assembles the popup shell shared by both `viewHoverPopup` overloads: three
+/// full-width sections — the signature (code face), the description (`docsRows`),
+/// and the JSDoc tags (`tagRows`) — each separated by a horizontal divider (a top
+/// border spanning border-to-border, CSS `.twoslash-popup-docs border-top`), all
+/// inside the floating surface (border/radius/shadow/arrow). The popup carries no
+/// horizontal padding so the dividers reach the edges; each section pads its own.
 private WidgetTree finishHoverPopup(ref Builder b, const Node node, size_t hit,
-    uint[] docsRows)
+    uint[] docsRows, uint[] tagRows)
 {
-    uint[] rows;
-    // Signature: the code/monospace face at 1em (CSS `.twoslash-popup-code`).
-    rows ~= b.add(Widget(kind: WidgetKind.text,
+    // Signature (CSS `.twoslash-popup-code`): the code face at 1em.
+    const sig = b.add(Widget(kind: WidgetKind.text,
         text: withoutQuickinfoPrefix(node.text), slot: Slot.code, hitId: hit,
         textStyle: TextStyle(fontRole: FontRole.code, fontScale: M.codeFontScale)));
 
-    // Docs block under a 1px top divider (CSS `.twoslash-popup-docs border-top`).
+    uint[] sections = [popupSection(b, [sig], divider: false)];
     if (docsRows.length)
-        rows ~= b.container(WidgetKind.column, docsRows,
-            padding: Insets(1, 0, 0, 0),
-            decoration: Decoration(borderWidth: Insets(M.borderWidth, 0, 0, 0),
-                borderStyle: BorderStyle.solid, borderSlot: Slot.border));
+        sections ~= popupSection(b, docsRows, divider: true);
+    if (tagRows.length)
+        sections ~= popupSection(b, tagRows, divider: true);
 
-    foreach (ref const string[] tag; node.tags)
-        rows ~= buildPopupTag(b, tag, hit);
-
-    const col = b.container(WidgetKind.column, rows);
-    // The floating surface: opaque background + 1px border + 4px radius + shadow +
-    // an arrow tail (CSS `.twoslash-popup-container` + `.twoslash-popup-arrow`).
+    const col = b.container(WidgetKind.column, sections);
     const popup = b.add(Widget(kind: WidgetKind.popup, slot: Slot.surface,
-        padding: Insets.all(1), paintBackground: true, decoration: surfaceDeco(arrow: true),
-        children: [col], hitId: hit));
+        padding: Insets(1, 0, 1, 0), paintBackground: true,
+        decoration: surfaceDeco(arrow: true), children: [col], hitId: hit));
     return b.finish(popup);
 }
+
+/// A full-width popup section: a `stretch` column with its own horizontal padding
+/// (`6px 8px` in the CSS) and, when `divider`, a 1px top border that — because the
+/// section stretches to the popup width and the popup has no horizontal padding —
+/// spans border-to-border as the section separator.
+private uint popupSection(ref Builder b, uint[] rows, bool divider)
+    => b.add(Widget(kind: WidgetKind.column, children: rows, stretch: true,
+        padding: Insets(0, 1, 0, 1),
+        decoration: divider
+            ? Decoration(borderWidth: Insets(M.borderWidth, 0, 0, 0),
+                borderStyle: BorderStyle.solid, borderSlot: Slot.border) : Decoration.init));
 
 // ── JSDoc docs → widget rows (markdown, wrapped) ───────────────────────────
 
@@ -478,22 +491,25 @@ private void pushWords(const(char)[] text, TextStyle style, Slot slot, bool chip
 }
 
 /// Greedily packs styled words into `row` widgets no wider than `docsMaxWidth`
-/// (minus `indent`); a `"\n"` word forces a break. Each word is its own styled text
-/// widget (an inline `code` word becomes a rounded pill), joined by a 1-cell gap.
-private void packWords(ref Builder b, in DocWord[] words, size_t hit, int indent,
+/// (minus `indent`); a `"\n"` word forces a break. Words join with an explicit
+/// space widget (`gap: 0` rows) EXCEPT before closing punctuation (`,`/`.`/`)`…),
+/// so an inline `code` pill followed by a comma reads `code,` not `code ,`.
+private void packWords(ref Builder b, DocWord[] words, size_t hit, int indent,
     ref uint[] rows) @safe
 {
     uint[] cur;
     int curW;
+    bool first = true;
     const limit = docsMaxWidth - indent > 8 ? docsMaxWidth - indent : 8;
 
     void flush()
     {
         if (cur.length)
-            rows ~= b.container(WidgetKind.row, cur.dup, gap: 1,
+            rows ~= b.container(WidgetKind.row, cur.dup, gap: 0,
                 padding: indent > 0 ? Insets(0, 0, 0, indent) : Insets.init);
         cur = null;
         curW = 0;
+        first = true;
     }
 
     foreach (ref const w; words)
@@ -504,14 +520,44 @@ private void packWords(ref Builder b, in DocWord[] words, size_t hit, int indent
             continue;
         }
         const ww = cast(int) cellsOf(w.text);
-        if (cur.length && curW + 1 + ww > limit)
+        const sep = !first && !startsWithClosePunct(w.text);
+        if (!first && curW + (sep ? 1 : 0) + ww > limit)
             flush();
-        cur ~= b.add(Widget(kind: WidgetKind.text, text: w.text, slot: w.slot,
-            hitId: hit, paintBackground: w.chip, textStyle: w.style,
-            decoration: w.chip ? Decoration(borderRadius: M.popupRadius) : Decoration.init));
-        curW += cur.length == 1 ? ww : 1 + ww;
+        if (!first && !startsWithClosePunct(w.text))
+        {
+            cur ~= spaceWidget(b, hit);
+            ++curW;
+        }
+        cur ~= wordWidget(b, w, hit);
+        curW += ww;
+        first = false;
     }
     flush();
+}
+
+/// A single styled word widget (an inline `code` word ⇒ a rounded mono pill).
+private uint wordWidget(ref Builder b, DocWord w, size_t hit) @safe
+    => b.add(Widget(kind: WidgetKind.text, text: w.text, slot: w.slot, hitId: hit,
+        paintBackground: w.chip, textStyle: w.style,
+        decoration: w.chip ? Decoration(borderRadius: M.popupRadius) : Decoration.init));
+
+/// A 1-cell space between inline words (docs face, no background).
+private uint spaceWidget(ref Builder b, size_t hit) @safe
+    => b.add(Widget(kind: WidgetKind.text, text: " ", slot: Slot.docs, hitId: hit,
+        textStyle: docsBase()));
+
+/// `true` iff `t` begins with punctuation that hugs the preceding word (no space).
+private bool startsWithClosePunct(const(char)[] t) @safe pure nothrow @nogc
+{
+    if (t.length == 0)
+        return false;
+    switch (t[0])
+    {
+        case ',', '.', ';', ':', '!', '?', ')', ']', '}', '%':
+            return true;
+        default:
+            return false;
+    }
 }
 
 /// `src[span]` guarded against a malformed range.
@@ -535,6 +581,43 @@ private uint buildPopupTag(ref Builder b, const string[] tag, size_t hit)
             slot: Slot.docs, hitId: hit,
             textStyle: TextStyle(fontRole: FontRole.docs, fontScale: M.docsFontScale)));
     return b.container(WidgetKind.row, parts, gap: 1);
+}
+
+/// As `buildPopupTag`, but the tag $(I value) renders as inline markdown (a `@see`
+/// value's `[label](url)` becomes an underlined link, `` `code` `` a pill, etc.),
+/// via the grammar `registry`. `@system` (the tree-sitter parse).
+private uint buildPopupTagMd(ref Builder b, ref GrammarRegistry registry,
+    const string[] tag, size_t hit) @system
+{
+    const nameText = tag.length ? tagName(b, tag[0]) : tagName(b, "");
+    uint[] parts;
+    parts ~= b.add(Widget(kind: WidgetKind.text, text: nameText,
+        slot: Slot.chip, hitId: hit, paintBackground: true,
+        decoration: Decoration(borderRadius: M.popupRadius),
+        textStyle: TextStyle(fontRole: FontRole.code, fontScale: M.tagFontScale)));
+
+    if (tag.length > 1 && tag[1].length)
+    {
+        DocWord[] words;
+        MdDoc doc = extractMarkdown(registry, tag[1]);
+        if (doc.root.children.length)
+            foreach (ref const blk; doc.root.children)
+                flattenInlines(blk.inlines, tag[1], docsBase(), Slot.docs, words);
+        else
+            pushWords(tag[1], docsBase(), Slot.docs, false, words);
+
+        // A space before the chip's value, then each word (no space before hugging
+        // punctuation), on one row (tag values are short).
+        foreach (ref const w; words)
+        {
+            if (w.text == "\n")
+                continue;
+            if (!startsWithClosePunct(w.text))
+                parts ~= spaceWidget(b, hit);
+            parts ~= wordWidget(b, w, hit);
+        }
+    }
+    return b.container(WidgetKind.row, parts, gap: 0);
 }
 
 /// `"^" * n` from a small static pool (avoids per-node allocation for the common

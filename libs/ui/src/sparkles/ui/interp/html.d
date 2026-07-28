@@ -231,7 +231,9 @@ private void borderStyle(Writer)(ref Writer w, in Visual vis)
 /// for a text or glyph run.
 private void textStyle(Writer)(ref Writer w, in Visual vis)
 {
-    put(w, "color:");
+    // `pre` so a whitespace-only run (the inter-word space widget the cell backends
+    // rely on) isn't collapsed by the browser's flex layout.
+    put(w, "white-space:pre;color:");
     rgba(w, vis.fg, vis.fgAlpha);
     final switch (vis.fontRole) with (FontRole)
     {

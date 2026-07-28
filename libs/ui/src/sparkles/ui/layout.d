@@ -141,10 +141,16 @@ private void place(in WidgetTree tree, uint idx, in Point origin,
             }
             break;
         case column:
+            const cw = size.w - node.padding.horizontal; // column content width
             int y = contentY;
             foreach (child; node.children)
             {
                 place(tree, child, Point(contentX, y), sizes, frames);
+                // Cross-axis stretch: widen a `stretch` child to the column width so
+                // its background/border spans edge-to-edge (full-width dividers). Its
+                // own descendants stay left-aligned within the widened box.
+                if (tree.nodes[child].stretch && cw > frames[child].rect.w)
+                    frames[child].rect.w = cw;
                 y += sizes[child].h + node.gap;
             }
             break;
@@ -190,6 +196,28 @@ private int absInt(int v) nothrow @nogc pure => v < 0 ? -v : v;
     assert(frames[col].rect == Rect(0, 0, 11, 2)); // widest child, stacked heights
     assert(frames[r0].rect == Rect(0, 0, 5, 1));
     assert(frames[r1].rect == Rect(0, 1, 11, 1));  // second row below the first
+}
+
+@("ui.layout.columnStretchWidensChild")
+@safe unittest
+{
+    import sparkles.ui.widget : Builder;
+
+    // A narrow `stretch` row above a wide row in a column: the narrow one widens to
+    // the column's content width (so its border/background spans full-width), while
+    // its own descendants stay left-aligned.
+    auto b = Builder();
+    const narrow = b.add(Widget(kind: WidgetKind.text, text: "ab")); // 2×1
+    Widget stretchRow = Widget(kind: WidgetKind.column, children: [narrow], stretch: true);
+    const sec = b.add(stretchRow);
+    const wide = b.add(Widget(kind: WidgetKind.text, text: "wide content")); // 12×1
+    const col = b.container(WidgetKind.column, [sec, wide]);
+    auto tree = b.finish(col);
+
+    auto frames = layout(tree);
+    assert(frames[col].rect.w == 12);
+    assert(frames[sec].rect.w == 12); // stretched from its intrinsic 2 to the column width
+    assert(frames[narrow].rect.w == 2); // the descendant keeps its own width, left-aligned
 }
 
 @("ui.layout.panelPadding")
