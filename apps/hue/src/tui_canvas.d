@@ -19,7 +19,9 @@
 // terminal-free — `dub test :hue` exercises it against a real `Grid`.
 module tui_canvas;
 
-import sparkles.tui.cell : CellStyle, codepointCellWidth, Grid;
+import sparkles.tui.cell : CellStyle, Grid;
+
+import sparkles.base.text.width : codepointWidth;
 
 import sparkles.ui.canvas : DrawOp, isCanvas, LineStyle, OpKind;
 import sparkles.ui.geometry : Point, Rect, Size;
@@ -82,7 +84,14 @@ struct GridCanvas
     }
 
     private ref auto cell(int x, int y) scope
-        => grid.at(cast(ushort)(originX + x), cast(ushort)(originY + y));
+        => (*grid)[cast(ushort)(originX + x), cast(ushort)(originY + y)];
+
+    /// Display width of `cp` in cells (control chars clamp to 1; combining = 0).
+    private static int cellCols(dchar cp)
+    {
+        const w = codepointWidth(cp);
+        return w < 0 ? 1 : w;
+    }
 
     private RgbColor cellBg(in CellStyle st) const scope pure nothrow @nogc
         => toRgb(st.bg, pageBg);
@@ -111,7 +120,7 @@ struct GridCanvas
         int x = at.x;
         foreach (dchar cp; text.byDchar)
         {
-            const w = codepointCellWidth(cp);
+            const w = cellCols(cp);
             if (w == 0)
                 continue; // combining mark — no advance (cluster merge out of scope)
             if (inBounds(x, at.y))
@@ -123,7 +132,7 @@ struct GridCanvas
     /// Writes a single glyph `g` at `at` in `v.fg`.
     void glyph(in Point at, dchar g, in Visual v) scope
     {
-        const w = codepointCellWidth(g);
+        const w = cellCols(g);
         if (w != 0 && inBounds(at.x, at.y))
             putGlyph(at.x, at.y, g, cast(ubyte) w, v);
     }
@@ -165,7 +174,7 @@ struct GridCanvas
 
         int cols;
         foreach (dchar cp; text.byDchar)
-            cols += codepointCellWidth(cp);
+            cols += cellCols(cp);
         return Size(cols, 1);
     }
 }
@@ -201,11 +210,11 @@ static assert(isCanvas!GridCanvas);
 
     // The popup padding puts the signature at (1,1). Its cell shows the code
     // glyph with the surface background PRESERVED underneath (not the page bg).
-    const sig = g.at(1, 1);
+    const sig = g[1, 1];
     assert(sig.grapheme == "c"); // "const x: number"[0]
     assert(sig.style.bg == Color.fromRgb(0xf8, 0xf8, 0xf8)); // opaque surface, kept under text
     // The corner of the surface fill (no glyph) is the surface color too.
-    assert(g.at(0, 0).style.bg == Color.fromRgb(0xf8, 0xf8, 0xf8));
+    assert(g[0, 0].style.bg == Color.fromRgb(0xf8, 0xf8, 0xf8));
 }
 
 @("tui_canvas.errorSquiggleIsUndercurl")
@@ -232,10 +241,10 @@ static assert(isCanvas!GridCanvas);
 
     foreach (x; 0 .. 3)
     {
-        assert(g.at(cast(ushort) x, 0).style.underline == UnderlineStyle.curly);
-        assert(g.at(cast(ushort) x, 0).style.underlineColor == Color.fromRgb(0xd4, 0x56, 0x56));
+        assert(g[cast(ushort) x, 0].style.underline == UnderlineStyle.curly);
+        assert(g[cast(ushort) x, 0].style.underlineColor == Color.fromRgb(0xd4, 0x56, 0x56));
     }
-    assert(g.at(3, 0).style.underline == UnderlineStyle.none);
+    assert(g[3, 0].style.underline == UnderlineStyle.none);
 }
 
 @("tui_canvas.translucentHighlightBlends")
@@ -244,11 +253,11 @@ static assert(isCanvas!GridCanvas);
     Grid g;
     g.resize(2, 1);
     // Seed a known cell background, then composite a 0x20 warm tint over it.
-    g.at(0, 0).style.bg = Color.fromRgb(0x30, 0x30, 0x30);
+    g[0, 0].style.bg = Color.fromRgb(0x30, 0x30, 0x30);
     auto canvas = GridCanvas(&g, RgbColor(0, 0, 0));
     canvas.fillRect(Rect(0, 0, 1, 1),
         Visual(bg: RgbColor(0xc3, 0x7d, 0x0d), bgAlpha: 0x20, hasBg: true));
-    const bg = g.at(0, 0).style.bg;
+    const bg = g[0, 0].style.bg;
     // Blended toward the tint but still mostly the original dark grey.
     assert(bg != Color.fromRgb(0x30, 0x30, 0x30));
     assert(bg.rgb.r > 0x30 && bg.rgb.r < 0x50);
