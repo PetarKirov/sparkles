@@ -180,13 +180,14 @@ in (nodeIndex < tw.nodes.length)
     return b.finish(popup);
 }
 
-/// A JSDoc tag row inside a hover popup: `@name` chip (`Slot.info`) + its text.
+/// A JSDoc tag row inside a hover popup: a `@name` pill (`Slot.chip` — muted text
+/// on a grey fill, like the HTML `.twoslash-popup-docs-tag-name`) + its text.
 private uint buildPopupTag(ref Builder b, const string[] tag, size_t hit)
 {
     const nameText = tag.length ? tagName(b, tag[0]) : tagName(b, "");
     uint[] parts;
     parts ~= b.add(Widget(kind: WidgetKind.text, text: nameText,
-        slot: Slot.info, hitId: hit));
+        slot: Slot.chip, hitId: hit, paintBackground: true));
     if (tag.length > 1 && tag[1].length)
         parts ~= b.add(Widget(kind: WidgetKind.text, text: tag[1],
             slot: Slot.docs, hitId: hit));
@@ -320,7 +321,8 @@ version (unittest)
             sawSig = true; // quickinfo prefix "(alias) " stripped
         if (op.text == "Wraps a value in a Box." && op.visual.fg == RgbColor(0x88, 0x88, 0x88))
             sawDocs = true;
-        if (op.text == "@param" && op.visual.fg == RgbColor(0x37, 0x72, 0xcf))
+        if (op.text == "@param" && op.visual.fg == RgbColor(0x88, 0x88, 0x88)
+            && op.visual.hasBg) // the chip pill: muted text on a grey fill
             sawTag = true;
     }
     assert(sawSig && sawDocs && sawTag);

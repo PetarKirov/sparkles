@@ -49,6 +49,7 @@ enum Slot : ubyte
     unmatched,       /// unmatched remainder in a completion list (muted)
     caret,           /// query caret / cursor marker
     muted,           /// generic de-emphasized text
+    chip,            /// a JSDoc `@tag` name pill in a popup (muted text on a grey bg)
 }
 
 private enum slotCount = Slot.max + 1;
@@ -153,6 +154,12 @@ Palette defaultTwoslashPalette(ColorScheme scheme = ColorScheme.light) pure noth
         p.fgAlpha[border] = 0x88;
         p.fg[shadow] = Color.fromRgb(0x00, 0x00, 0x00);
         p.fgAlpha[shadow] = 0x14; // rgba(0,0,0,0.08)
+
+        // JSDoc `@tag` name pill — muted text on a subtle grey fill (the CSS
+        // `.twoslash-popup-docs-tag-name` background: rgba(127,127,127,0.18)).
+        p.fg[chip] = Color.fromRgb(0x88, 0x88, 0x88);
+        p.bg[chip] = Color.fromRgb(0x7f, 0x7f, 0x7f);
+        p.bgAlpha[chip] = 0x2e; // 0.18 * 255
 
         // completion / caret (scheme-independent).
         p.fg[unmatched] = Color.fromRgb(0x88, 0x88, 0x88);
