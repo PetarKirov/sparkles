@@ -12,7 +12,7 @@ module sparkles.ui.display_list;
 import sparkles.ui.canvas : DrawOp, OpKind;
 import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.layout : Frame;
-import sparkles.ui.style : Palette, resolveSlot, Slot, Visual;
+import sparkles.ui.style : Palette, resolveVisual, Slot, Visual;
 import sparkles.ui.widget : Widget, WidgetKind, WidgetTree;
 import sparkles.base.term_color : RgbColor;
 
@@ -36,10 +36,14 @@ private void emit(in WidgetTree tree, uint idx, in Frame[] frames, in Palette pa
 {
     const node = tree.nodes[idx];
     const rect = frames[idx].rect;
-    const vis = resolveSlot(pal, node.slot, pageFg, pageBg);
+    Visual vis = resolveVisual(pal, node.slot, node.decoration, node.textStyle, pageFg, pageBg);
 
-    // Container/box background first (children paint over it).
-    if (node.paintBackground && vis.hasBg)
+    // The background fill is gated by `paintBackground`; a border/shadow/arrow rides
+    // the decoration independently (a box can have a border but no fill — the
+    // `.twoslash-hover` dotted underline). Mask `hasBg` so the op means exactly
+    // "fill this bg", then emit the decorated box first (children paint over it).
+    vis.hasBg = node.paintBackground && vis.hasBg;
+    if (vis.hasBg || vis.border.any || vis.shadow.any || vis.arrow)
         ops ~= DrawOp(kind: OpKind.fillRect, rect: rect, slot: node.slot, visual: vis);
 
     final switch (node.kind) with (WidgetKind)
@@ -132,4 +136,67 @@ private void emit(in WidgetTree tree, uint idx, in Frame[] frames, in Palette pa
     assert(ops[0].visual.fg == RgbColor(0xd4, 0x56, 0x56));
     assert(ops[0].to == Point(5, 0)); // origin (0,0) + lineTo (5,0)
     assert(ops[1].kind == OpKind.textRun && ops[1].visual.fg == RgbColor(0xd4, 0x56, 0x56));
+}
+
+@("ui.display_list.decoratedBoxAndStyledText")
+@safe unittest
+{
+    import sparkles.ui.widget : Builder;
+    import sparkles.ui.geometry : Insets;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : BorderStyle, Decoration, defaultTwoslashPalette,
+        FontRole, TextStyle;
+    import sparkles.base.term_style : TextAttr;
+
+    // A popup surface (fill + 1px solid border + radius 4 + shadow) over a docs run
+    // (sans face, 0.8em, italic).
+    auto b = Builder();
+    const docs = b.add(Widget(kind: WidgetKind.text, text: "The title.", slot: Slot.docs,
+        textStyle: TextStyle(fontRole: FontRole.docs, fontScale: 80, italic: true)));
+    const popup = b.container(WidgetKind.popup, [docs],
+        slot: Slot.surface, padding: Insets.all(1), paintBackground: true,
+        decoration: Decoration(borderWidth: Insets.all(1), borderStyle: BorderStyle.solid,
+            borderRadius: 4, shadow: true));
+    auto tree = b.finish(popup);
+
+    const pal = defaultTwoslashPalette();
+    auto ops = buildDisplayList(tree, layout(tree), pal,
+        RgbColor(0x22, 0x22, 0x22), RgbColor(0xff, 0xff, 0xff));
+
+    // The box op carries fill + border + radius + shadow in one resolved Visual.
+    assert(ops[0].kind == OpKind.fillRect && ops[0].visual.hasBg);
+    assert(ops[0].visual.border.any && ops[0].visual.border.style == BorderStyle.solid);
+    assert(ops[0].visual.borderRadius == 4 && ops[0].visual.shadow.any);
+
+    // The text op carries the resolved font role/scale + the packed italic bit.
+    const t = ops[$ - 1];
+    assert(t.kind == OpKind.textRun && t.text == "The title.");
+    assert(t.visual.fontRole == FontRole.docs && t.visual.fontScale == 80);
+    assert((t.visual.styleBits & TextAttr.italic.bits) != 0);
+}
+
+@("ui.display_list.borderOnlyBoxStillEmits")
+@safe unittest
+{
+    import sparkles.ui.widget : Builder;
+    import sparkles.ui.geometry : Insets;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : BorderStyle, Decoration, defaultTwoslashPalette;
+
+    // The `.twoslash-hover` token: a bottom-only dotted border, no background fill,
+    // `paintBackground` false — the decorated box op must still be emitted.
+    auto b = Builder();
+    const tok = b.add(Widget(kind: WidgetKind.box, slot: Slot.code,
+        decoration: Decoration(borderWidth: Insets(0, 0, 1, 0),
+            borderStyle: BorderStyle.dotted, borderSlot: Slot.code)));
+    auto tree = b.finish(tok);
+
+    const pal = defaultTwoslashPalette();
+    auto ops = buildDisplayList(tree, layout(tree), pal,
+        RgbColor(0x22, 0x22, 0x22), RgbColor(0xff, 0xff, 0xff));
+
+    assert(ops.length == 1 && ops[0].kind == OpKind.fillRect);
+    assert(!ops[0].visual.hasBg); // border-only, no fill
+    assert(ops[0].visual.border.any && ops[0].visual.border.style == BorderStyle.dotted);
+    assert(ops[0].visual.border.width == Insets(0, 0, 1, 0));
 }

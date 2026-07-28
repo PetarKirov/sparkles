@@ -17,7 +17,7 @@ module sparkles.ui.widget;
 
 import sparkles.ui.canvas : LineStyle;
 import sparkles.ui.geometry : Insets, Point, SizeSpec;
-import sparkles.ui.style : Slot;
+import sparkles.ui.style : Decoration, Slot, TextStyle;
 
 @safe:
 
@@ -59,6 +59,9 @@ struct Widget
     dchar glyph;             /// `glyph` payload
     LineStyle lineStyle;     /// `line` stroke style
     Point lineTo;            /// `line` end, relative to the node origin
+
+    Decoration decoration;   /// box chrome (border/radius/shadow/arrow) — slot-referencing
+    TextStyle textStyle;     /// text chrome (font role/size, bold/italic/underline)
 
     uint[] children;         /// child node indices (empty for leaves)
     size_t hitId;            /// hover/hit id (0 = not hit-testable)
@@ -105,13 +108,14 @@ struct Builder
     /// Appends a container over the child nodes named by `children`.
     uint container(WidgetKind kind, uint[] children,
         Slot slot = Slot.inherit, Insets padding = Insets.init, int gap = 0,
-        bool paintBackground = false)
+        bool paintBackground = false, Decoration decoration = Decoration.init)
     {
         return add(Widget(
             kind: kind,
             slot: slot,
             padding: padding,
             gap: gap,
+            decoration: decoration,
             children: children,
             paintBackground: paintBackground,
         ));
