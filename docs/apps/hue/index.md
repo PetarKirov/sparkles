@@ -14,7 +14,8 @@ dub run :hue -- --gui file.md           # raylib window + markdown preview
 ```
 
 The full, traceable feature inventory lives in the
-[hue feature spec](../../specs/hue/).
+[hue feature spec](../../specs/hue/). Known issues and deferred work are tracked in
+[open issues](./open-issues.md).
 
 ## Twoslash overlay
 
