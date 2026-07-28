@@ -35,7 +35,8 @@ import sparkles.ui.canvas : LineStyle;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Point, Rect, Size;
 import sparkles.ui.layout : layout;
-import sparkles.ui.style : defaultTwoslashPalette, Palette, resolveSlot, Slot, Visual;
+import sparkles.ui.style : defaultTwoslashPalette, Palette, resolveSlot,
+    schemeForBackground, Slot, Visual;
 import sparkles.ui.widget : WidgetTree;
 
 import sparkles.base.term_color : Color;
@@ -199,9 +200,11 @@ private struct TwoslashTui
         tw = t;
         theme = th;
         plan = planTwoslash(t);
-        pal = defaultTwoslashPalette();
         pageFg = toRgb(th.defaults.fg, RgbColor(0xcd, 0xd6, 0xf4));
         pageBg = toRgb(th.defaults.bg, RgbColor(0x1e, 0x1e, 0x2e));
+        // Pick the popup surface/docs shade to match the theme (dark bg ⇒ dark
+        // surface), so the signature stays readable — the QA-surfaced contrast fix.
+        pal = defaultTwoslashPalette(schemeForBackground(pageBg));
         lineTotal = 1;
         foreach (c; t.code)
             if (c == '\n')
