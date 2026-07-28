@@ -222,10 +222,12 @@ struct RaylibCanvas
         const asz = cellH / 3 < 4 ? 4.0f : cast(float)(cellH / 3);
         const cx = boxX + v.arrowOffset * cellW + cellW * 0.5f;
         const apex = Vector2(cx, boxY - asz);
-        const left = Vector2(cx - asz, boxY);
-        const right = Vector2(cx + asz, boxY);
+        const left = Vector2(cx - asz, boxY + 1); // +1: overlap the border so the
+        const right = Vector2(cx + asz, boxY + 1); // notch merges into the surface
+        // Screen space is y-down, so apex→left→right is the counter-clockwise
+        // winding raylib needs (apex→right→left is culled as a back face).
         if (v.hasBg)
-            DrawTriangle(apex, right, left, rlBg(v)); // CCW (screen y-down)
+            DrawTriangle(apex, left, right, rlBg(v));
         if (v.border.any)
         {
             const c = rlBorder(v);
