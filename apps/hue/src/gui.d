@@ -30,8 +30,8 @@ import sparkles.raylib_text : TextStyle, FontSet, drawText;
 import gui_text : columnWidth, lineCount, Match, buildLineStarts, findMatches;
 
 // Markdown-preview model + layout (raylib-free) and the ANSI attribute bits.
-import gui_preview : PreviewModel, PreviewLine, PreviewRun, BandKind, layoutPreview,
-    buildRawPlines, quoteBarColors, quoteBarCycle;
+import gui_preview : PreviewModel, PreviewLine, PreviewRun, BandKind, PreviewDoc,
+    flattenPreview, wrapPreview, buildRawPlines, quoteBarColors, quoteBarCycle;
 import gui_ansi : Attr;
 
 // Selective import avoids sparkles.syntax.Color clashing with raylib.Color:
@@ -194,6 +194,11 @@ int runGui(
         showPreview = preview.present;
     PreviewLine[] plines;
     int lastWidthCols = -1;
+    // The width-independent flattened preview, cached per theme. A resize / font-
+    // size change / gutter toggle only re-wraps this (`relayout`), never re-flattens
+    // it (`reflatten`) — flattening (inline layout, prose tokenization, code
+    // highlighting) is the expensive part and depends only on the model + theme.
+    PreviewDoc flatDoc;
 
     // The live theme state: ←/→ browse `themes`, re-resolving and repainting —
     // the GPU counterpart of hue's terminal Previewer.
@@ -223,15 +228,23 @@ int runGui(
         return w < 8 ? 8 : w;
     }
 
+    // Rebuild the width-independent flattened preview (model + theme dependent).
+    // Called on theme change and at startup — NOT on resize.
+    void reflatten()
+    {
+        if (preview.present)
+            flatDoc = flattenPreview(preview, current, pageFg, pageBg);
+    }
+
     // Both views are wrapped visual-line lists (`PreviewLine[]`) so long lines
     // reflow on resize and line numbers track the source (physical) line. The
-    // markdown preview lays out the rendered model; the raw view wraps the
-    // highlighted source.
+    // markdown preview re-wraps the cached `flatDoc` (the resize hot path); the raw
+    // view wraps the highlighted source directly.
     void relayout()
     {
         lastWidthCols = widthCols();
         if (showPreview && preview.present)
-            plines = layoutPreview(preview, current, pageFg, pageBg, lastWidthCols, codeLineNumbers);
+            plines = wrapPreview(flatDoc, lastWidthCols, codeLineNumbers);
         else
             plines = buildRawPlines(source, events, current, pageFg, pageBg, lastWidthCols);
     }
@@ -251,7 +264,8 @@ int runGui(
         scrollbarThumb = mix(pageBg, linkC, 0.5);
         SetWindowTitle(text("hue — ", title, " — ", names[i],
             " (", i + 1, "/", names.length, ")").toStringz);
-        relayout(); // preview colors follow the theme
+        reflatten(); // theme colors change → re-flatten, then re-wrap
+        relayout();  // preview colors follow the theme
     }
 
     applyTheme(themeIdx);
