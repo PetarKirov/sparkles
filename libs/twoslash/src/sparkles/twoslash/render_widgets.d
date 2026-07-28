@@ -120,7 +120,12 @@ private uint buildBelowBlock(ref Builder b, const Node node, size_t nodeIndex)
                 text: repeatCaret(width), slot: slot, hitId: hit));
             const msg = b.add(Widget(kind: WidgetKind.text, text: node.text,
                 slot: slot, hitId: hit));
-            return b.container(WidgetKind.column, [caret, msg], padding: indent);
+            // The message sits in an accent block: a 3px left bar + a translucent
+            // background tint (CSS `.twoslash-error-line` / `-warn-line`).
+            const block = b.add(Widget(kind: WidgetKind.panel, slot: slot,
+                paintBackground: true, decoration: accentDeco(slot),
+                padding: Insets.symmetric(0, 1), children: [msg], hitId: hit));
+            return b.container(WidgetKind.column, [caret, block], padding: indent);
 
         case NodeType.query:
             const caret = b.add(Widget(kind: WidgetKind.text,
@@ -148,7 +153,12 @@ private uint buildBelowBlock(ref Builder b, const Node node, size_t nodeIndex)
             if (node.text.length)
                 parts ~= b.add(Widget(kind: WidgetKind.text, text: node.text,
                     slot: Slot.docs, hitId: hit));
-            return b.container(WidgetKind.row, parts, gap: 1, padding: indent);
+            const row = b.container(WidgetKind.row, parts, gap: 1);
+            // An accent block: a 3px left bar + bg tint (CSS `.twoslash-tag-line`).
+            const block = b.add(Widget(kind: WidgetKind.panel, slot: Slot.info,
+                paintBackground: true, decoration: accentDeco(Slot.info),
+                padding: Insets.symmetric(0, 1), children: [row], hitId: hit));
+            return b.container(WidgetKind.column, [block], padding: indent);
 
         case NodeType.hover:
         case NodeType.highlight:
@@ -297,13 +307,23 @@ version (unittest)
 
     auto c = render(viewTwoslash(tw));
 
-    // caret ("^") + message, both in the error color, indented to column 6.
+    // caret ("^") + an accent block (bg tint + 3px left bar) + message, all in the
+    // error color, indented to column 6.
     const err = RgbColor(0xd4, 0x56, 0x56);
-    assert(c.ops.length == 2);
-    assert(c.ops[0].kind == OpKind.textRun && c.ops[0].text == "^");
-    assert(c.ops[0].visual.fg == err && c.ops[0].rect.x == 6);
-    assert(c.ops[1].text == "Cannot find name 'a'." && c.ops[1].visual.fg == err);
-    assert(c.ops[1].rect.x == 6);
+    bool sawCaret, sawAccent, sawMsg;
+    foreach (ref op; c.ops)
+    {
+        if (op.kind == OpKind.textRun && op.text == "^"
+            && op.visual.fg == err && op.rect.x == 6)
+            sawCaret = true;
+        if (op.kind == OpKind.fillRect && op.visual.hasBg
+            && op.visual.border.any && op.visual.border.color == err)
+            sawAccent = true;
+        if (op.kind == OpKind.textRun && op.text == "Cannot find name 'a'."
+            && op.visual.fg == err)
+            sawMsg = true;
+    }
+    assert(sawCaret && sawAccent && sawMsg);
 }
 
 @("render_widgets.viewTwoslash.warningUsesWarnSlot")
