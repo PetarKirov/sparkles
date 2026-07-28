@@ -128,7 +128,7 @@ spellings (`#8888` vs `#88888888`) don't matter.
 @safe unittest
 {
     import sparkles.base.smallbuffer : SmallBuffer;
-    import sparkles.ui.style : defaultTwoslashPalette, writeTwoslashVars;
+    import sparkles.ui.style : ColorScheme, defaultTwoslashPalette, writeTwoslashVars;
     import std.string : indexOf;
 
     // Extract the FIRST (light) `:root { … }` block from the stylesheet.
@@ -152,5 +152,23 @@ spellings (`#8888` vs `#88888888`) don't matter.
         const inCss = name in cssVars;
         assert(inCss !is null, "CSS is missing palette var " ~ name);
         assert(*inCss == expected, "palette/CSS drift on " ~ name);
+    }
+
+    // The dark `@media` block (the SECOND `:root`) overrides only popup-bg +
+    // docs-color; those must match the dark palette variant.
+    const darkAt = css.indexOf(":root", close);
+    assert(darkAt >= 0, "no dark :root block");
+    const dOpen = css.indexOf('{', darkAt);
+    const dClose = css.indexOf('}', dOpen);
+    auto darkCss = cssColorVars(css[dOpen + 1 .. dClose]);
+    assert(darkCss.length >= 2);
+
+    SmallBuffer!(char, 2048) dbuf;
+    writeTwoslashVars(dbuf, defaultTwoslashPalette(ColorScheme.dark));
+    auto darkGen = cssColorVars(dbuf[]);
+    foreach (name, expected; darkCss)
+    {
+        const inGen = name in darkGen;
+        assert(inGen !is null && *inGen == expected, "dark palette/CSS drift on " ~ name);
     }
 }

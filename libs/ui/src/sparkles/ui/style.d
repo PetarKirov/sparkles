@@ -95,10 +95,28 @@ struct Palette
     dchar queryGlyph = '│';   /// vertical connector under a `^?` query
 }
 
+/// Light or dark color scheme — only the popup surface and docs text differ (the
+/// brand colors are shared), matching `views/twoslash.css`'s dark `@media` block.
+enum ColorScheme : ubyte
+{
+    light, /// the default `:root`
+    dark,  /// the `@media (prefers-color-scheme: dark)` overrides
+}
+
+/// Picks the scheme a page background implies (dark bg ⇒ dark scheme), by
+/// perceptual luminance. Backends resolve the popup surface against their theme.
+ColorScheme schemeForBackground(in RgbColor bg) pure nothrow @nogc
+{
+    // Rec. 601 luma; < ~40% brightness reads as a dark surface.
+    const luma = (bg.r * 299 + bg.g * 587 + bg.b * 114) / 1000;
+    return luma < 110 ? ColorScheme.dark : ColorScheme.light;
+}
+
 /// The canonical twoslash palette — the $(B one) place the twoslash hexes are
 /// authored. Mirrors `libs/twoslash/src/sparkles/twoslash/views/twoslash.css`
-/// (`:root`), which a unittest checks byte-for-value via $(LREF writeTwoslashVars).
-Palette defaultTwoslashPalette() pure nothrow @nogc
+/// (`:root` + its dark `@media` overrides), which a unittest checks byte-for-value
+/// via $(LREF writeTwoslashVars). `scheme` selects the surface/docs pair.
+Palette defaultTwoslashPalette(ColorScheme scheme = ColorScheme.light) pure nothrow @nogc
 {
     Palette p;
     with (Slot)
@@ -126,15 +144,17 @@ Palette defaultTwoslashPalette() pure nothrow @nogc
         p.fg[highlightBorder] = Color.fromRgb(0xc3, 0x7d, 0x0d);
         p.fgAlpha[highlightBorder] = 0x50;
 
-        // popup surface / border / shadow.
-        p.bg[surface] = Color.fromRgb(0xf8, 0xf8, 0xf8); // opaque
+        // popup surface / border / shadow. Surface + docs are the only
+        // scheme-dependent slots (the dark `@media` block overrides just these two).
+        const dark = scheme == ColorScheme.dark;
+        p.bg[surface] = dark ? Color.fromRgb(0x23, 0x23, 0x23) : Color.fromRgb(0xf8, 0xf8, 0xf8);
+        p.fg[docs] = dark ? Color.fromRgb(0xa0, 0xa0, 0xa0) : Color.fromRgb(0x88, 0x88, 0x88);
         p.fg[border] = Color.fromRgb(0x88, 0x88, 0x88);
         p.fgAlpha[border] = 0x88;
         p.fg[shadow] = Color.fromRgb(0x00, 0x00, 0x00);
         p.fgAlpha[shadow] = 0x14; // rgba(0,0,0,0.08)
 
-        // docs / completion / caret.
-        p.fg[docs] = Color.fromRgb(0x88, 0x88, 0x88);
+        // completion / caret (scheme-independent).
         p.fg[unmatched] = Color.fromRgb(0x88, 0x88, 0x88);
         p.fg[caret] = Color.fromRgb(0x88, 0x88, 0x88);
         p.fgAlpha[caret] = 0x88;
@@ -270,6 +290,24 @@ unittest
     // surface: opaque light background.
     const s = resolveSlot(pal, Slot.surface, pageFg, pageBg);
     assert(s.hasBg && s.bg == RgbColor(0xf8, 0xf8, 0xf8) && s.bgAlpha == 0xFF);
+}
+
+@("ui.style.scheme.darkSurfaceAndDocs")
+@safe pure nothrow @nogc
+unittest
+{
+    const dark = defaultTwoslashPalette(ColorScheme.dark);
+    const fg = RgbColor(0xcd, 0xd6, 0xf4), bg = RgbColor(0x1e, 0x1e, 0x2e);
+
+    // Dark scheme flips only the surface + docs (matches the CSS dark @media block).
+    assert(resolveSlot(dark, Slot.surface, fg, bg).bg == RgbColor(0x23, 0x23, 0x23));
+    assert(resolveSlot(dark, Slot.docs, fg, bg).fg == RgbColor(0xa0, 0xa0, 0xa0));
+    // Brand colors are shared across schemes.
+    assert(resolveSlot(dark, Slot.error, fg, bg).fg == RgbColor(0xd4, 0x56, 0x56));
+
+    // A dark page background selects the dark scheme; a light one the light scheme.
+    assert(schemeForBackground(bg) == ColorScheme.dark);
+    assert(schemeForBackground(RgbColor(0xf5, 0xf5, 0xf5)) == ColorScheme.light);
 }
 
 @("ui.style.writeSlotSgr.viaBase")
