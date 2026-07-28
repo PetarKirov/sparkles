@@ -47,6 +47,17 @@ Each decision cites the prior-art page it reifies and the in-tree code it builds
   configure time; capture-name and theme-selector resolution share one algorithm —
   **longest-dot-prefix** ([Helix][helix]'s semantics, chosen over the reference crate's
   part-subset rule for predictability; the divergence is documented).
+
+  > [!WARNING]
+  > **This premise does not hold for the queries we ship**, and both claims in this
+  > bullet need revising. Upstream tree-sitter moved to short flat capture names
+  > (`number`, `property`, `boolean`) that do not track TextMate scope names, so
+  > merging the two name sets produced synonym pairs that nothing reconciles — 33% of
+  > what the bundled grammars emit cannot be styled by any built-in theme. The fix
+  > also makes capture-name resolution deliberately _stop_ sharing one algorithm with
+  > theme-selector resolution. See
+  > [label-vocabulary dialects](./label-vocabulary-dialects.md).
+
 - **Themes resolve once, then index in O(1).** `Theme` (ordered `selector → StyleSpec`
   rules) resolves against a `LabelSet` into a flat `labelId → StyleSpec` table at
   configure time — the [Helix][helix] load-time model, not per-token selector scoring.
