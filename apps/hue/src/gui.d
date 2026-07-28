@@ -754,24 +754,25 @@ int runGui(
             const pl = plines[topLine + row];
             const rx = gutterPx + runStartCells(pl) * cellW;
             const x = mx <= rx ? 0 : cast(int)((mx - rx) / cellW);
+            // A table line yields both a grid cell (for a drag that STARTS here →
+            // the 2D regime) and the table's whole source span (for a text-regime
+            // drag that merely CROSSES it, TBL4).
             if (pl.tableIndex >= 0 && pl.tableIndex < tables.length)
             {
                 const tv = tables[pl.tableIndex];
                 auto gh = tv.map.hit(cast(size_t)((topLine + row) - tv.firstLine), cast(size_t) x);
                 if (!gh.isNull)
                 {
-                    h.ok = true;
                     h.table = true;
                     h.tableIdx = pl.tableIndex;
                     h.cell = gh.get;
                 }
-                return h;
             }
-            if (pl.selSrcStart != size_t.max) // ANSI body → whole-block span
+            if (pl.selSrcStart != size_t.max) // table line → block span (text regime)
             {
-                h.ok = true;
                 h.lo = cast(long) pl.selSrcStart;
                 h.hi = cast(long) pl.selSrcEnd;
+                h.ok = true;
                 return h;
             }
             const o = srcOffsetAtCol(pl, x);
@@ -812,14 +813,16 @@ int runGui(
             if (selecting && IsMouseButtonDown(MouseButton.MOUSE_BUTTON_LEFT))
             {
                 const h = hitAt(mp.x, mp.y);
-                if (regime == Regime.table && h.ok && h.table && h.tableIdx == selTable)
+                if (regime == Regime.table && h.table && h.tableIdx == selTable)
                 {
                     tblHead = h.cell;
                     tblShift = shiftMod;
                     tblAlt = altMod;
                 }
-                else if (regime == Regime.text && h.ok && !h.table)
+                else if (regime == Regime.text && h.ok)
                 {
+                    // Extend over anything with a source span — including a table
+                    // line's block span, so a drag from outside sweeps across it.
                     headLo = h.lo;
                     headHi = h.hi;
                 }
