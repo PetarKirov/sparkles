@@ -243,6 +243,10 @@ platform" — the [Flutter][flutter] and [MAUI][maui] story.
   cheat sheet, cross-linked to the deep-dive that hit each one.
 - **[Recommendations][recommendations]** — the resolved position on every fork and a
   prioritized roadmap for the cross-platform Sparkles windowing layer.
+- **[End-to-end testing the windowing layer](./e2e-testing.md)** — why input-behaviour
+  bugs (a drag released on the window decoration) evade in-process tests, and the
+  real-WM + synthetic-input harness that catches them. Motivated by raylib
+  `hue --gui` / `apps/terminal` drag bugs.
 
 ### Library deep-dives
 
