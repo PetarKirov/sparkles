@@ -766,9 +766,14 @@ int runGui(
                     h.table = true;
                     h.tableIdx = pl.tableIndex;
                     h.cell = gh.get;
+                    // Char-level source offset for a text-regime drag crossing the
+                    // table: the cell's source start + the char within it.
+                    h.lo = h.hi = cast(long)(tv.cellSrc[gh.get.row][gh.get.col] + gh.get.charInCell);
+                    h.ok = true;
+                    return h;
                 }
             }
-            if (pl.selSrcStart != size_t.max) // table line → block span (text regime)
+            if (pl.selSrcStart != size_t.max) // table border/gutter → block span (fallback)
             {
                 h.lo = cast(long) pl.selSrcStart;
                 h.hi = cast(long) pl.selSrcEnd;
@@ -840,6 +845,14 @@ int runGui(
             DrawRectangle(gutterPx + xStartCol * cellW, cast(int)(screenRow * cellH),
                 (xEndCol - xStartCol) * cellW, cellH, alpha(quoteBars[1], 80));
         }
+        // A cell/char span from a table map → its on-screen rect (its content
+        // columns sit after the table line's own indent/quote gutter).
+        void tintTableSpan(in TableView tv, CellSpan sp)
+        {
+            const startCol = runStartCells(plines[tv.firstLine]);
+            tintRow(cast(long)(tv.firstLine + sp.line) - topLine,
+                startCol + cast(int) sp.xStart, startCol + cast(int) sp.xEnd);
+        }
         if (regime == Regime.text && selMax() > selMin())
         {
             const smin = selMin(), smax = selMax();
@@ -849,13 +862,9 @@ int runGui(
                 if (vi >= plines.length)
                     break;
                 const pl = plines[vi];
+                if (pl.tableIndex >= 0)
+                    continue; // tables tinted per-cell below
                 const startCol = runStartCells(pl);
-                if (pl.selSrcStart != size_t.max) // ANSI body: whole-line tint
-                {
-                    if (cast(long) pl.selSrcEnd > smin && cast(long) pl.selSrcStart < smax)
-                        tintRow(row, startCol, startCol + lineCols(pl));
-                    continue;
-                }
                 int c;
                 foreach (r; pl.runs)
                 {
@@ -876,26 +885,36 @@ int runGui(
                     c += rc;
                 }
             }
+            // Tables the text selection crosses: tint the covered part of each
+            // cell — character-precise (clip to [smin, smax) within the cell), so
+            // a selection ending mid-cell highlights only up to that character.
+            foreach (ref tv; tables)
+                foreach (rr; 0 .. tv.map.numRows)
+                    foreach (cc; 0 .. tv.map.numCols)
+                    {
+                        const cLo = cast(long) tv.cellSrc[rr][cc];
+                        const cHi = cLo + cast(long) tv.map.cellText(rr, cc).length;
+                        if (cHi <= smin || cLo >= smax)
+                            continue;
+                        const lo = cast(size_t)((smin > cLo ? smin : cLo) - cLo);
+                        const hi = cast(size_t)((smax < cHi ? smax : cHi) - cLo);
+                        foreach (sp; tv.map.charSpans(rr, cc, lo, hi))
+                            tintTableSpan(tv, sp);
+                    }
         }
         else if (regime == Regime.table && selTable >= 0 && selTable < tables.length)
         {
             const tv = tables[selTable];
             const reg = tableSelection(tblAnchor, tblHead, tblShift, tblAlt,
                 tv.map.numRows, tv.map.numCols);
-            const tableStartCol = runStartCells(plines[tv.firstLine]);
-            void tintSpan(CellSpan sp)
-            {
-                tintRow(cast(long)(tv.firstLine + sp.line) - topLine,
-                    tableStartCol + cast(int) sp.xStart, tableStartCol + cast(int) sp.xEnd);
-            }
             if (reg.subCell)
                 foreach (sp; tv.map.charSpans(reg.row, reg.col, reg.charLo, reg.charHi))
-                    tintSpan(sp);
+                    tintTableSpan(tv, sp);
             else
                 foreach (rr; reg.rowLo .. reg.rowHi + 1)
                     foreach (cc; reg.colLo .. reg.colHi + 1)
                         foreach (sp; tv.map.cellSpans(rr, cc))
-                            tintSpan(sp);
+                            tintTableSpan(tv, sp);
         }
 
         // Search-match overlay (raw view only): translucent tint over each visible
