@@ -240,6 +240,15 @@ reference `tools/download_themes.d` (mapping), `theme.d` (target model +
 theme `settings` entry with no `scope` is the document default (`defaultFg/Bg`).
 De-dup rules (`download_themes.d` uses a `seen` set).
 
+> [!IMPORTANT]
+> **Read [label-vocabulary dialects](./label-vocabulary-dialects.md) before
+> lifting `mapScopeToLabel`.** "Many scopes map to `null` (drop them)" is listed
+> above as behavior to preserve, but part of that dropping is a defect: labels the
+> shipped grammars emit have no route from TextMate scope space at all. Lifting the
+> mapping as-is propagates it into the runtime parser. The generator has since
+> gained `excessBudget`/`mergeByLabel` (specificity ranking and per-property
+> merging) — lift those too, not just the table.
+
 **Tests.** Round-trip a known `Theme` through native JSON (`==`); parse a small
 TextMate JSON fixture and assert specific `ThemeRule`s resolve
 (`resolveTheme(parsed, LabelSet.standard())[find("keyword")]` matches expected).

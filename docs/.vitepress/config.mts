@@ -602,6 +602,10 @@ export default withMermaid(
               items: [
                 { text: 'Design Proposal', link: '/specs/syntax/' },
                 { text: 'Delivery Plan', link: '/specs/syntax/PLAN' },
+                {
+                  text: 'Label-Vocabulary Dialects',
+                  link: '/specs/syntax/label-vocabulary-dialects',
+                },
               ],
             },
             {
