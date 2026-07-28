@@ -134,8 +134,9 @@ the "decorations excluded" half of
 The HTML overlay is guarded by dev-only harnesses in `libs/twoslash/examples/`
 (node + Chromium; the sparkles build itself stays node-free):
 
-- **The preview gallery** is no longer a harness: `hue <fixtures> --twoslash --html --out
-  <dir>` renders every fixture into a git-ignored `html/` gallery — a full-height code
+- **The preview gallery** is no longer a harness:
+  `hue <fixtures> --twoslash --html --out <dir>`
+  renders every fixture into a git-ignored `html/` gallery — a full-height code
   pane, a non-selectable physical-line **gutter**, prev/next nav, and the `TWD3`
   **selection domains**. It lives in `apps/hue/src/gallery.d` (unit-tested); the
   `render-html.mjs` script it replaces is deleted.
