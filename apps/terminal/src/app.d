@@ -510,6 +510,7 @@ int main(string[] args)
     int fontSizePt = 13;
     int windowCols = 100;
     int windowRows = 30;
+    size_t scrollbackLimit = size_t.max;
     bool debugScreenshotAndExit = false;
     string exitBehaviorOpt = "hold-on-failure";
     string[] codepointMapOpt;
@@ -523,6 +524,7 @@ int main(string[] args)
         "font-size|s", "Font size in points (default: 13)", &fontSizePt,
         "window-width", "Initial window width in columns (default: 100)", &windowCols,
         "window-height", "Initial window height in rows (default: 30)", &windowRows,
+        "scrollback-limit", "Maximum number of lines to keep in scrollback history (0 to disable, default: infinite)", &scrollbackLimit,
         "font-codepoint-map", "Render codepoints from a specific font (repeatable): 'U+XXXX-U+YYYY,U+ZZZZ=Family'", &codepointMapOpt,
         "exit-behavior", "On child exit: close | wait-for-key | hold | hold-on-failure (default)", &exitBehaviorOpt,
         "debug-take-screenshot-and-exit", "Takes a screenshot after 2 seconds and exits", &debugScreenshotAndExit
@@ -604,7 +606,7 @@ int main(string[] args)
     // must be done before any terminal is created.
     ghostty_sys_set(GHOSTTY_SYS_OPT_DECODE_PNG, cast(const(void)*)&decode_png);
 
-    GhosttyTerminalOptions opts = { cols: s.cols, rows: s.rows, max_scrollback: 1000 };
+    GhosttyTerminalOptions opts = { cols: s.cols, rows: s.rows, max_scrollback: scrollbackLimit };
     ghostty_terminal_new(null, &s.terminal, opts);
 
     // The terminal options carry no cell pixel size, so set it up front with an

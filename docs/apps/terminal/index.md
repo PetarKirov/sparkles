@@ -68,7 +68,7 @@ redraw is a handful of draw calls.
 ### Everyday terminal ergonomics
 
 Selection with rectangular (Alt) mode, clipboard copy/paste, mouse reporting
-for TUI apps, a hover-activated scrollbar over 1000 lines of scrollback,
+for TUI apps, a hover-activated scrollbar over infinite scrollback (configurable),
 focus reporting, a visual bell, window-title updates, live window resizing,
 and Ctrl +/- font zoom. See [key and mouse bindings](./reference/bindings.md).
 

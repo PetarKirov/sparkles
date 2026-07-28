@@ -20,6 +20,7 @@ When invoking through dub, remember dub consumes the first `--`:
 | `--font-size`, `-s`                | `13`              | Font size in points (converted to pixels at 96 DPI)                    |
 | `--window-width`                   | `100`             | Initial window width in columns                                        |
 | `--window-height`                  | `30`              | Initial window height in rows                                          |
+| `--scrollback-limit`               | `infinite`        | Maximum number of lines to keep in scrollback (0 to disable)           |
 | `--font-codepoint-map`             | —                 | Render codepoint ranges from a specific font (repeatable); see below   |
 | `--exit-behavior`                  | `hold-on-failure` | What to do when the child exits; see below                             |
 | `--debug-take-screenshot-and-exit` | off               | Take a screenshot after ~2 seconds and exit (used by tests/benchmarks) |
