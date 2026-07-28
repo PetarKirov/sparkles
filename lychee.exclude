@@ -93,3 +93,12 @@ specs/event-horizon/
 # /apps/hue/twoslash/ on the deployed site — it is not a repo file, so lychee's
 # local-file check can't resolve it.
 apps/hue/twoslash
+
+# www.x.org/releases/* 301-redirects (via /archive/) to xorg.freedesktop.org,
+# whose TLS certificate is currently expired (verified directly with curl: expired
+# 2026-07-28T11:20:31Z, "certificate has expired"). Reproduces both locally and in
+# CI, so this is a real upstream outage, not GitHub Actions network flakiness —
+# scoped to /releases/ (the X11 protocol/library doc tree cited across the
+# window-system-integration surveys) rather than all of x.org, since
+# www.x.org/wiki/ (uno-platform.md) does not redirect through the broken host.
+^https?://([^/]+\.)?x\.org/releases/
