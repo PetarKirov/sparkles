@@ -5,6 +5,7 @@ import std.algorithm : map, all, maxElement, sort;
 import std.algorithm.comparison : max, min;
 import std.range : iota;
 import std.range.primitives : isOutputRange;
+import std.typecons : Nullable, nullable;
 
 import expected : Expected, ok, err;
 
@@ -984,6 +985,219 @@ ref Writer drawTable(Writer)(return ref Writer w, Placement[] cells,
 if (isOutputRange!(Writer, char))
 {
     return putTable(w, tableLineRange(resolveGrid(cells).grid, props));
+}
+
+// ── screen ↔ cell mapping (hue `TBL3`) ────────────────────────────────────────
+
+/// A grid cell under a point, plus the byte offset within that cell's content.
+struct GridHit
+{
+    size_t row;        /// grid row of the covering cell
+    size_t col;        /// grid column of the covering cell
+    size_t charInCell; /// byte offset into `TableGridMap.cellText(row, col)`
+}
+
+/// One on-screen extent `[xStart, xEnd)` (columns from the table's left edge) on
+/// output line `line` — a whole cell, or a sub-range of one.
+struct CellSpan
+{
+    size_t line, xStart, xEnd;
+}
+
+/// A visible content field: the on-screen placement of one (wrapped) content line
+/// of a cell, and where it maps in the cell's content.
+private struct MapField
+{
+    size_t line, row, col, xStart, width, charBase;
+    Align align_;
+    string text; // the wrapped content line shown in this field
+}
+
+/// Screen ↔ grid-cell mapping for a rendered table (hue `TBL3`): map a click to a
+/// cell + character, a cell (or a character range) to its on-screen rects, and
+/// read a cell's text. Built by $(LREF drawTableMapped) from the renderer's own
+/// layout, so its coordinates line up with the emitted `lines` exactly (`x` is a
+/// column from the table's left edge; `line` indexes the emitted lines).
+struct TableGridMap
+{
+    private size_t _rows, _cols;
+    private MapField[] _fields;
+    private string[] _cellText; // [r*_cols + c]
+
+    /// Grid dimensions.
+    size_t numRows() const @safe pure nothrow @nogc => _rows;
+    size_t numCols() const @safe pure nothrow @nogc => _cols; /// ditto
+
+    /// The raw text of cell `(row, col)` (the covering anchor's content).
+    string cellText(size_t row, size_t col) const @safe pure nothrow @nogc
+        => (row < _rows && col < _cols) ? _cellText[row * _cols + col] : null;
+
+    /// The cell (and char offset) under output line `line`, screen column `x` —
+    /// null on a border / gutter / outside any cell.
+    Nullable!GridHit hit(size_t line, size_t x) const @safe
+    {
+        foreach (ref f; _fields)
+        {
+            if (f.line != line || x < f.xStart || x >= f.xStart + f.width)
+                continue;
+            const inField = x - f.xStart;
+            const lead = leadPad(f.width, visibleWidth(f.text), f.align_);
+            const w = visibleWidth(f.text);
+            const contentCol = inField < lead ? 0
+                : (inField - lead > w ? w : inField - lead);
+            return nullable(GridHit(f.row, f.col, f.charBase + columnToByte(f.text, contentCol)));
+        }
+        return Nullable!GridHit.init;
+    }
+
+    /// Every on-screen rect of cell `(row, col)` (several if it wraps).
+    CellSpan[] cellSpans(size_t row, size_t col) const @safe
+    {
+        CellSpan[] r;
+        foreach (ref f; _fields)
+            if (f.row == row && f.col == col)
+                r ~= CellSpan(f.line, f.xStart, f.xStart + f.width);
+        return r;
+    }
+
+    /// The on-screen rects covering byte range `[lo, hi)` of cell `(row, col)`'s
+    /// content — for sub-cell highlight; clipped per wrapped line.
+    CellSpan[] charSpans(size_t row, size_t col, size_t lo, size_t hi) const @safe
+    {
+        CellSpan[] r;
+        foreach (ref f; _fields)
+        {
+            if (f.row != row || f.col != col)
+                continue;
+            const lineLo = f.charBase, lineHi = f.charBase + f.text.length;
+            const a = lo > lineLo ? lo : lineLo;
+            const b = hi < lineHi ? hi : lineHi;
+            if (a >= b)
+                continue;
+            const lead = leadPad(f.width, visibleWidth(f.text), f.align_);
+            const c0 = f.xStart + lead + byteToColumn(f.text, a - f.charBase);
+            const c1 = f.xStart + lead + byteToColumn(f.text, b - f.charBase);
+            if (c1 > c0)
+                r ~= CellSpan(f.line, c0, c1);
+        }
+        return r;
+    }
+}
+
+/// A rendered table plus its screen↔cell map (hue `TBL3`).
+struct MappedTable
+{
+    string[] lines;
+    TableGridMap map;
+}
+
+/// Render `cells` and return the lines together with a $(LREF TableGridMap) for
+/// screen↔cell hit-testing (the GUI's table selection). Layout is identical to
+/// $(LREF drawTableLines); only the map is extra.
+MappedTable drawTableMapped(string[][] cells, TableProps props = TableProps.init)
+in (hasRectangularShape(cells))
+{
+    return buildMappedTable(computeTableLayout(resolveGrid(toCells(cells)).grid, props), props);
+}
+
+private MappedTable buildMappedTable(in TableLayout lay, in TableProps p)
+{
+    const g = lay.grid;
+    string[] lines;
+    MapField[] fields;
+    size_t outLine;
+    foreach (d; lineDescs(lay))
+    {
+        lines ~= renderLine(lay, d);
+        if (d.kind == LineKind.body)
+            collectRowFields(lay, p, d.r, d.t, outLine, fields);
+        outLine++;
+    }
+    auto cellText = new string[g.numRows * g.numCols];
+    foreach (r; 0 .. g.numRows)
+        foreach (c; 0 .. g.numCols)
+            cellText[r * g.numCols + c] = g.anchors[owner(g, r, c)].content;
+    return MappedTable(lines, TableGridMap(g.numRows, g.numCols, fields, cellText));
+}
+
+// Mirror `bodyLineSegments`' column walk for text line `t` of grid row `r`,
+// recording each visible content field's screen x-range. Uses the same width
+// arithmetic (leading/trailing gutters, `contentField`, interior separators) so
+// the recorded `xStart` matches the emitted line byte-for-byte.
+private void collectRowFields(in TableLayout lay, in TableProps p, size_t r, size_t t,
+    size_t outLine, ref MapField[] fields)
+{
+    const g = lay.grid;
+    size_t x = p.border ? 1 : 0;
+    size_t c = 0;
+    while (c < g.numCols)
+    {
+        const idx = owner(g, r, c);
+        const a = g.anchors[idx];
+        const f = contentField(a, lay.widths, p, g.numCols);
+        x += 1; // leading gutter
+        const fieldX = x;
+        size_t li = t; // the cell's wrapped-line index at this row/text-line
+        foreach (rr; a.row .. r)
+            li += lay.rowHeights[rr];
+        size_t hh = 0;
+        foreach (rr; a.row .. a.row + a.rowSpan)
+            hh += lay.rowHeights[rr];
+        const top = padTop(hh, lay.cellLines[idx].length, anchorVAlign(a, p));
+        if (li >= top && li - top < lay.cellLines[idx].length)
+        {
+            const k = li - top;
+            size_t charBase;
+            foreach (j; 0 .. k)
+                charBase += lay.cellLines[idx][j].length;
+            fields ~= MapField(outLine, a.row, a.col, fieldX, f, charBase,
+                anchorAlign(a, p), lay.cellLines[idx][k]);
+        }
+        x += f + 1; // field + trailing gutter
+        c += a.colSpan;
+        if (c < g.numCols && vSeg(g, p, r, c))
+            x += 1; // interior separator
+    }
+}
+
+/// Leading pad an aligned field puts before its content (for column mapping).
+private size_t leadPad(size_t width, size_t contentW, Align a) @safe pure nothrow @nogc
+{
+    if (contentW >= width)
+        return 0;
+    const pad = width - contentW;
+    final switch (a)
+    {
+        case Align.inherit:
+        case Align.left:    return 0;
+        case Align.right:
+        case Align.decimal: return pad;
+        case Align.center:  return pad / 2;
+    }
+}
+
+/// Byte offset in `s` at display column `col` (clamped to `s.length`).
+private size_t columnToByte(string s, size_t col) @safe
+{
+    import std.utf : decode;
+    import std.typecons : Yes;
+
+    size_t i, w;
+    while (i < s.length && w < col)
+    {
+        const start = i;
+        decode!(Yes.useReplacementDchar)(s, i);
+        w += visibleWidth(s[start .. i]);
+    }
+    return i;
+}
+
+/// Display column at byte offset `b` in `s`.
+private size_t byteToColumn(string s, size_t b) @safe
+{
+    if (b > s.length)
+        b = s.length;
+    return visibleWidth(s[0 .. b]);
 }
 
 private ref Writer putTable(Writer)(return ref Writer w, TableLineRange lines)
@@ -2072,4 +2286,82 @@ private struct TableChunkRange(bool lineBuffered)
         [Cell("alpha"), Cell("1")],
     ]);
     assert(sparse == dense);
+}
+
+@("drawTableMapped.hit.basic")
+@system unittest
+{
+    import std.string : indexOf;
+
+    auto mt = drawTableMapped([["Name", "Status"], ["web-01", "Running"]],
+        TableProps(headerRows: 1));
+    assert(mt.map.numRows == 2 && mt.map.numCols == 2);
+
+    // Locate the two body lines and each cell's display column (box glyphs are
+    // multibyte, so map the byte index through visibleWidth).
+    size_t nameLine, dataLine;
+    foreach (i, ln; mt.lines)
+    {
+        if (ln.indexOf("Name") >= 0) nameLine = i;
+        if (ln.indexOf("web-01") >= 0) dataLine = i;
+    }
+    size_t dcol(size_t line, string needle)
+    {
+        const b = mt.lines[line].indexOf(needle);
+        return visibleWidth(mt.lines[line][0 .. b]);
+    }
+
+    const nx = dcol(nameLine, "Name");
+    auto h = mt.map.hit(nameLine, nx);
+    assert(!h.isNull && h.get.row == 0 && h.get.col == 0 && h.get.charInCell == 0);
+    assert(mt.map.hit(nameLine, nx + 2).get.charInCell == 2); // the 'm' of Name
+    assert(mt.map.cellText(0, 0) == "Name");
+
+    auto h2 = mt.map.hit(dataLine, dcol(dataLine, "Running"));
+    assert(!h2.isNull && h2.get.row == 1 && h2.get.col == 1 && h2.get.charInCell == 0);
+    assert(mt.map.cellText(1, 1) == "Running");
+
+    // Borders / other lines are not cells.
+    assert(mt.map.hit(nameLine, 0).isNull);   // left border │
+    assert(mt.map.hit(0, nx).isNull);         // the top rule
+
+    auto sp = mt.map.cellSpans(0, 0);
+    assert(sp.length == 1 && sp[0].line == nameLine && sp[0].xStart <= nx);
+    auto cs = mt.map.charSpans(0, 0, 0, 2); // "Na"
+    assert(cs.length == 1 && cs[0].line == nameLine && cs[0].xStart == nx);
+}
+
+@("drawTableMapped.hit.rightAlign")
+@system unittest
+{
+    import std.string : indexOf;
+
+    // col0 right-aligned, width 6 (max "header", "ab"): row 1 renders "    ab".
+    auto mt = drawTableMapped([["header"], ["ab"]], TableProps(columnAligns: [Align.right]));
+    size_t abLine;
+    foreach (i, ln; mt.lines)
+        if (ln.indexOf("ab") >= 0) abLine = i;
+    const bIdx = mt.lines[abLine].indexOf("ab");
+    const ax = visibleWidth(mt.lines[abLine][0 .. bIdx]); // display col of 'a'
+
+    // A click one column into the leading pad snaps to char 0 of the cell.
+    auto hpad = mt.map.hit(abLine, ax - 1);
+    assert(!hpad.isNull && hpad.get.row == 1 && hpad.get.col == 0 && hpad.get.charInCell == 0);
+    assert(mt.map.hit(abLine, ax + 1).get.charInCell == 1); // the 'b'
+    assert(mt.map.cellText(1, 0) == "ab");
+}
+
+@("drawTableMapped.hit.wrappedCell")
+@system unittest
+{
+    // A width cap forces the single cell to wrap across body lines; the map must
+    // still resolve all of them to cell (0,0) with advancing char offsets.
+    auto mt = drawTableMapped([["aaa bbb ccc"]], TableProps(maxWidth: 7));
+    auto sp = mt.map.cellSpans(0, 0);
+    assert(sp.length >= 2); // wrapped
+    auto h0 = mt.map.hit(sp[0].line, sp[0].xStart);
+    auto h1 = mt.map.hit(sp[1].line, sp[1].xStart);
+    assert(!h1.isNull && h1.get.row == 0 && h1.get.col == 0);
+    assert(h1.get.charInCell > h0.get.charInCell); // second wrapped line is later
+    assert(mt.map.cellText(0, 0) == "aaa bbb ccc");
 }
