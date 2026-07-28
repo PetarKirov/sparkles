@@ -89,6 +89,9 @@ struct CliParams
 
     @CliOption("table-copy", "--gui: how a table grid selection copies — 'tsv' (tab-separated) or 'markdown'. Default tsv; toggle at runtime with 't'.")
     string tableCopy = "tsv";
+
+    @CliOption("out", "Output directory for the static HTML gallery a directory target renders into (with --html); defaults to <target>/html.")
+    string outDir;
 }
 
 /// Parses `--table-copy` (`CLI11`) into a `TableCopyFormat`; unknown → `tsv`.
@@ -104,6 +107,104 @@ private TableCopyFormat parseTableCopy(string name)
             warning(i"unknown --table-copy '$(name)'; using 'tsv'");
             return TableCopyFormat.tsv;
     }
+}
+
+/// `true` iff `path` names an existing directory — the multi-document target
+/// (`SRC4`). A missing or unreadable path is not a directory (the file paths
+/// below then report it).
+private bool isDirectoryPath(string path) @trusted nothrow
+{
+    import std.file : exists, isDir;
+
+    try
+        return path.length != 0 && path.exists && path.isDir;
+    catch (Exception)
+        return false;
+}
+
+/**
+Renders a directory of documents (`SRC4`) — the static HTML **gallery** under
+`--html` (`HTM6`/`GAL2`): one page per entry plus an `index.html`, into `--out`
+(default `<dir>/html`). Without `--html` a directory degrades to a static listing
+rather than a crash (the interactive index view is `GAL5`).
+*/
+private int runDirectoryTarget(in CliParams cli, string dir, bool twoslash,
+    string themeName) @system
+{
+    import std.path : buildPath;
+    import std.stdio : writeln;
+
+    import gallery : GalleryOptions, plainFragment, twoslashFragment, writeGallery;
+    import source_set : collectSources, SourceEntry;
+
+    auto set = collectSources(dir, twoslash);
+
+    if (!cli.html)
+    {
+        // A static listing — the `SRC4` degradation for a directory in a mode that
+        // renders one document at a time.
+        if (set.empty)
+        {
+            stderr.writeln("hue: no renderable files in '", dir, "'");
+            return 1;
+        }
+        foreach (ref const e; set.entries)
+            writeln(e.name, "  ", e.summary);
+        stderr.writeln("hue: ", set.length, " document(s); add --html [--out <dir>] " ~
+            "to render them as a gallery");
+        return 0;
+    }
+
+    if (set.empty)
+        warning(i"no renderable files in '$(dir)' — writing an empty gallery index");
+
+    const labels = LabelSet.standard();
+    const theme = resolveTheme(builtinThemes.get(themeName, {
+            warning(i"theme '$(themeName)' not found; falling back to the default dark theme");
+            return builtinDark;
+        }()), labels);
+
+    auto registry = GrammarRegistry.fromEnvironment();
+    auto cache = TsConfigCache.create(&registry, labels);
+
+    // One entry → its content fragment. Throwing here is how `writeGallery` learns
+    // to report-and-skip the entry (`GAL9`).
+    string renderOne(in SourceEntry e)
+    {
+        SmallBuffer!HighlightEvent ev;
+        if (twoslash)
+        {
+            auto twRes = loadTwoslashFile(e.path);
+            if (twRes.hasError)
+                throw new Exception(twRes.error.msg);
+            const tw = twRes.value;
+            if (highlightInjected(cache, "typescript", tw.code, ev).hasError)
+                ev ~= HighlightEvent.sourceSpan(0, tw.code.length);
+            return twoslashFragment(tw, ev[], theme, cache);
+        }
+        const src = readText(e.path);
+        const lang = canonicalLanguage(e.path.extension.chompPrefix("."));
+        if (highlightInjected(cache, lang, src, ev).hasError)
+            ev ~= HighlightEvent.sourceSpan(0, src.length);
+        return plainFragment(src, ev[], theme);
+    }
+
+    const outDir = cli.outDir.length ? cli.outDir : buildPath(dir, "html");
+    const opt = twoslash
+        ? GalleryOptions(
+            titlePrefix: "twoslash",
+            heading: "twoslash overlay examples",
+            indexTitle: "twoslash examples",
+            blurb: "Rendered by <code>hue --twoslash --html</code>. Open one and " ~
+                "hover the underlined tokens to see the popups.")
+        : GalleryOptions(
+            titlePrefix: "hue",
+            heading: "hue gallery",
+            blurb: "Rendered by <code>hue --html</code>.");
+
+    const n = writeGallery(set, outDir, opt, &renderOne);
+    stderr.writeln("hue: wrote ", n, " page(s) + index.html to ", outDir);
+    return 0;
 }
 
 /// Parses the `--background` value (`CLI8`) into a `BackgroundMode`; an unknown
@@ -172,6 +273,11 @@ int main(string[] args)
     // twoslash decorations. See src/twoslash_mode.d.
     if (cli.twoslash.length)
         return runTwoslashMode(cli, themeName);
+
+    // A directory target is a multi-document set (`SRC4`): with `--html` it renders
+    // as a static gallery, otherwise it degrades to a listing.
+    if (args.length > 1 && isDirectoryPath(args[1]))
+        return runDirectoryTarget(cli, args[1], twoslash: false, themeName);
 
     // With a path argument, highlight that file; otherwise highlight hue's own
     // source, embedded at compile time via `import()`. That works from any
@@ -314,14 +420,10 @@ int main(string[] args)
             // The `.syn-root` rule writeThemeStylesheet emits carries the
             // default fg/bg; give the wrapper that class so it applies, instead
             // of re-deriving the same colors into a duplicate `pre {}` rule.
-            SmallBuffer!char output;
-            output ~= "<style>\npre { padding: 1em; }\n";
-            writeThemeStylesheet(theme, output);
-            output ~= "</style>\n<pre class=\"syn-root\"><code>";
-            renderHtml(source, events[], theme, output,
-                HtmlOptions(mode: HtmlMode.cssClasses));
-            output ~= "</code></pre>\n";
-            write(output[]);
+            // The same builder feeds the gallery, so both emit identical content.
+            import gallery : plainFragment;
+
+            write(plainFragment(source, events[], theme));
             return 0;
         }
         return emitAnsiWholeFile();
@@ -500,6 +602,10 @@ overlay renderers live in `sparkles:twoslash`.
 */
 int runTwoslashMode(in CliParams cli, string themeName) @system
 {
+    // `--twoslash <dir>` is a set of payloads — the twoslash gallery (`GAL2`).
+    if (isDirectoryPath(cli.twoslash))
+        return runDirectoryTarget(cli, cli.twoslash, twoslash: true, themeName);
+
     auto twRes = loadTwoslashFile(cli.twoslash);
     if (twRes.hasError)
     {
@@ -543,14 +649,9 @@ int runTwoslashMode(in CliParams cli, string themeName) @system
 
     if (cli.html)
     {
-        SmallBuffer!char output;
-        output ~= "<style>\n";
-        writeThemeStylesheet(theme, output);
-        writeTwoslashStyles(output);
-        output ~= "</style>\n<pre class=\"syn-root twoslash\"><code>";
-        renderTwoslashHtml(tw, events[], theme, cache, output);
-        output ~= "</code></pre>\n";
-        write(output[]);
+        import gallery : twoslashFragment;
+
+        write(twoslashFragment(tw, events[], theme, cache));
         return 0;
     }
 
