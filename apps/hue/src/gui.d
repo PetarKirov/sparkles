@@ -194,6 +194,14 @@ int runGui(
         showPreview = preview.present;
     PreviewLine[] plines;
     int lastWidthCols = -1;
+    // Resize debounce: during a drag the column count changes almost every frame,
+    // so re-wrap only once the width has held steady for a few frames — the drag
+    // pays one relayout when it settles instead of one per frame. Discrete width
+    // changes (theme / font size / gutter toggles) relayout immediately, so this
+    // branch only ever debounces a live window resize.
+    int prevWidthCols = -1;
+    int resizeSettle;
+    enum resizeSettleFrames = 4; // ~66 ms at 60 FPS
     // The width-independent flattened preview, cached per theme. A resize / font-
     // size change / gutter toggle only re-wraps this (`relayout`), never re-flattens
     // it (`reflatten`) — flattening (inline layout, prose tokenization, code
@@ -360,9 +368,18 @@ int runGui(
         const screenH = GetScreenHeight();
         const visibleRows = screenH / cellH;
 
-        // Reflow (both views wrap) when the window width in columns changes.
-        if (widthCols() != lastWidthCols)
-            relayout();
+        // Reflow (both views wrap) when the window width in columns changes — but
+        // debounced: only once the width has held steady for `resizeSettleFrames`
+        // frames, so a drag that sweeps many widths re-wraps once at the end. While
+        // the drag is in flight the (slightly stale) wrapped lines keep painting.
+        const wc = widthCols();
+        if (wc != lastWidthCols)
+        {
+            resizeSettle = (wc == prevWidthCols) ? resizeSettle + 1 : 0;
+            if (resizeSettle >= resizeSettleFrames)
+                relayout();
+        }
+        prevWidthCols = wc;
         const total = plines.length;
         const maxTop = total > visibleRows ? cast(long)(total - visibleRows) : 0;
 
@@ -471,13 +488,21 @@ int runGui(
             if (pressed(KeyboardKey.KEY_LEFT))
                 applyTheme(themeIdx == 0 ? themes.length - 1 : themeIdx - 1);
 
-            // Font sizing: Ctrl-'=' / Ctrl-'-' (reload faces + re-measure).
+            // Font sizing: Ctrl-'=' / Ctrl-'-' (reload faces + re-measure). A
+            // discrete keypress, so reflow immediately (the cell size — and thus
+            // the column count — changed) rather than waiting out the resize debounce.
             const ctrl = IsKeyDown(KeyboardKey.KEY_LEFT_CONTROL)
                 || IsKeyDown(KeyboardKey.KEY_RIGHT_CONTROL);
             if (ctrl && pressed(KeyboardKey.KEY_EQUAL))
+            {
                 fonts.reload(fonts.size() + 2);
+                relayout();
+            }
             else if (ctrl && pressed(KeyboardKey.KEY_MINUS) && fonts.size() > 6)
+            {
                 fonts.reload(fonts.size() - 2);
+                relayout();
+            }
 
             // Match navigation: n next, Shift-n previous.
             if (matches.length && pressed(KeyboardKey.KEY_N))
