@@ -24,7 +24,6 @@ void drawGrapheme(ref LoadedFont lf, scope const(uint)[] cps,
 {
     const font = lf.font;
     const float scale = font.baseSize > 0 ? cast(float) fontSize / font.baseSize : 1.0f;
-    const float pad = cast(float) font.glyphPadding;
 
     float ox = x;
     foreach (cp; cps)
@@ -35,13 +34,24 @@ void drawGrapheme(ref LoadedFont lf, scope const(uint)[] cps,
         // Whitespace and other zero-area glyphs draw nothing; just advance.
         if (rec.width > 0 && rec.height > 0)
         {
-            const Rectangle src = Rectangle(
-                rec.x - pad, rec.y - pad, rec.width + 2 * pad, rec.height + 2 * pad);
+            // Sample the glyph's EXACT atlas rectangle. raylib's own
+            // DrawTextCodepoint expands the source rect by `glyphPadding` on
+            // every side — a margin that helps only when bilinear-scaling the
+            // atlas to a different size. This pipeline always rasterizes the
+            // atlas at the render size (`FontSet` reloads on every size change,
+            // so `scale` is 1), and the expansion instead samples whatever sits
+            // in the atlas gap: a neighbouring glyph that overflows its row's
+            // nominal height (raylib packs rows only `fontSize + 2*padding`
+            // tall) bleeds a stray "tail" into this glyph. The set of affected
+            // glyphs shifts with the atlas packing, so the artifact changes with
+            // font size. Sampling `rec` verbatim removes it (nothing of the
+            // glyph lives outside its own rect).
+            const Rectangle src = Rectangle(rec.x, rec.y, rec.width, rec.height);
             const Rectangle dst = Rectangle(
-                ox + font.glyphs[idx].offsetX * scale - pad * scale,
-                y + font.glyphs[idx].offsetY * scale - pad * scale,
-                (rec.width + 2 * pad) * scale,
-                (rec.height + 2 * pad) * scale);
+                ox + font.glyphs[idx].offsetX * scale,
+                y + font.glyphs[idx].offsetY * scale,
+                rec.width * scale,
+                rec.height * scale);
             DrawTexturePro(font.texture, src, dst, Vector2(0, 0), 0.0f, tint);
         }
 
