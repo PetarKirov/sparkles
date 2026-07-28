@@ -93,14 +93,14 @@ struct PreviewLine
     /// Index into the model's `fences` when this is a code-header line — the code
     /// block whose body the header's copy button copies; -1 otherwise.
     int copyFence = -1;
-    /// Block-granular selection span (`SEL6`): the source byte range a drag over
-    /// this whole line selects — used for lines whose runs don't map char-by-char
-    /// to source (` ```ansi ` bodies). `size_t.max` ⇒ use the per-run `srcStart`
-    /// (char-level, the prose/code default).
+    /// Block-granular selection span: the source byte range a **text-regime** drag
+    /// crossing this whole line selects. Set on table lines (`TBL4`) so a drag that
+    /// starts outside a table still covers its markdown source; `size_t.max` ⇒ use
+    /// the per-run `srcStart` (char-level — prose, code, and ANSI cells).
     size_t selSrcStart = size_t.max;
     size_t selSrcEnd;
     /// Index of the table this line belongs to (into `WrappedPreview.tables`), or
-    /// -1. Table lines use the 2D grid selection regime (`TBL`), not `srcStart`.
+    /// -1. A drag starting on a table line uses the 2D grid regime (`TBL`).
     int tableIndex = -1;
     PreviewRun[] runs;
 }
@@ -232,12 +232,11 @@ struct PreviewItem
     PreviewRun[][] codeLines; /// per body line, unwrapped highlighted runs
     size_t[] codeSrcLines;    /// parallel to codeLines: each body line's source line
     int copyFence = -1;
-    bool isAnsi;              /// a ` ```ansi ` fence → body lines are selectable (`SEL6`)
-    size_t bodyStart, bodyEnd; /// source byte span of the fence body (for `isAnsi`)
 
     // table
     string[][] grid;
     const(ColAlign)[] aligns;
+    size_t blockStart, blockEnd; /// the table's source byte span (text-regime cross, TBL4)
 
     // html
     PreviewRun[] preRuns;     /// one prebuilt line's runs (emitted unwrapped)
@@ -657,13 +656,30 @@ private struct Flattener
         const decoded = f.isAnsi && f.ansi.length;
         if (decoded)
         {
+            // Cell-granular ANSI selection (SEL6): the off-screen VT is 1:1 with
+            // source lines, and each decoded span's text is the contiguous source
+            // between two escapes, so map each span back to its source bytes via
+            // `ansiColToSrc` over the raw source line. Selectable like code — the
+            // `│`/gutter/padding runs (no srcStart) stay excluded.
+            size_t lineStart; // byte offset of the current source line in f.body
             foreach (i, ref al; f.ansi)
             {
+                size_t lineEnd = lineStart;
+                while (lineEnd < f.body.length && f.body[lineEnd] != '\n')
+                    ++lineEnd;
+                auto colSrc = ansiColToSrc(f.body[lineStart .. lineEnd]);
+
                 PreviewRun[] runs;
+                size_t col;
                 foreach (ref sp; al.spans)
+                {
+                    const off = col < colSrc.length ? colSrc[col] : (lineEnd - lineStart);
                     runs ~= PreviewRun(sp.text, sp.fgDefault ? pageFg : sp.fg,
-                        sp.bg, !sp.bgDefault, sp.attrs);
+                        sp.bg, !sp.bgDefault, sp.attrs, f.bodyStart + lineStart + off);
+                    col += columnWidth(sp.text);
+                }
                 addLine(i, runs);
+                lineStart = lineEnd < f.body.length ? lineEnd + 1 : lineEnd;
             }
         }
         else if (f.isAnsi)
@@ -709,8 +725,7 @@ private struct Flattener
         pendingNumber = false; // the header carries no line number
         emit(PreviewItem(kind: ItemKind.code, indentCols: indent, qdepth: qdepth,
             codeLabel: lbl, codeLines: codeLines, codeSrcLines: srcLines,
-            copyFence: cast(int)(fenceIdx - 1), isAnsi: f.isAnsi,
-            bodyStart: f.bodyStart, bodyEnd: f.bodyStart + f.body.length));
+            copyFence: cast(int)(fenceIdx - 1)));
         blank();
     }
 
@@ -814,7 +829,8 @@ private struct Flattener
         }
 
         emit(PreviewItem(kind: ItemKind.table, indentCols: indent, qdepth: qdepth,
-            grid: grid, aligns: b.aligns.dup)); // dup: b is `scope`, item outlives it
+            grid: grid, aligns: b.aligns.dup, // dup: b is `scope`, item outlives it
+            blockStart: b.span.start, blockEnd: b.span.end));
         blank();
     }
 
@@ -1091,9 +1107,6 @@ private void wrapCode(ref PreviewItem it, int width, bool codeLineNumbers,
                 band: BandKind.codePanel, bandBg: pal.codePanelBg,
                 barFg: it.barFg, hasBarFg: it.hasBarFg,
                 srcLine: srcLine, showNumber: firstWrap,
-                // ANSI bodies select block-granular over the whole fence body (SEL6);
-                // their runs are decoded, so they carry no per-char `srcStart`.
-                selSrcStart: it.isAnsi ? it.bodyStart : size_t.max, selSrcEnd: it.bodyEnd,
                 runs: takeRuns(scratch));
             firstWrap = false;
         }
@@ -1133,6 +1146,9 @@ private void wrapTable(ref PreviewItem it, int width, ref PreviewDoc pal,
             barFg: it.barFg, hasBarFg: it.hasBarFg,
             srcLine: it.srcLine, showNumber: firstLn && it.number,
             tableIndex: tableIndex,
+            // A text-regime drag crossing the table selects its whole markdown
+            // source span (a drag starting inside uses the 2D grid regime, TBL4).
+            selSrcStart: it.blockStart, selSrcEnd: it.blockEnd,
             runs: colorizeTableLine(ln, bold, pal.ruleFg, pal.pageFg));
         firstLn = false;
     }
@@ -1377,33 +1393,69 @@ string stripSgr(scope const(char)[] s) @safe pure nothrow
     {
         if (s[i] == '\x1b' && i + 1 < s.length)
         {
-            const c = s[i + 1];
-            if (c == '[') // CSI: params until a final byte in @…~
-            {
-                i += 2;
-                while (i < s.length && !(s[i] >= '@' && s[i] <= '~'))
-                    ++i;
-                if (i < s.length)
-                    ++i;
-                continue;
-            }
-            if (c == ']') // OSC: until BEL or ST (ESC \)
-            {
-                i += 2;
-                while (i < s.length && s[i] != '\x07' && s[i] != '\x1b')
-                    ++i;
-                if (i < s.length && s[i] == '\x07')
-                    ++i;
-                else if (i + 1 < s.length && s[i] == '\x1b')
-                    i += 2;
-                continue;
-            }
-            i += 2; // other two-byte escape
+            i = skipAnsiEscape(s, i);
             continue;
         }
         r[n++] = s[i++];
     }
     return (() @trusted => cast(string) r[0 .. n])();
+}
+
+// Advance past the ANSI escape starting at `s[i] == ESC`, returning the index
+// just after it: CSI (`ESC[…<final @-~>`), OSC (`ESC]…<BEL|ST>`), or a two-byte
+// `ESC<x>`. On a lone trailing ESC returns `i + 1`.
+private size_t skipAnsiEscape(scope const(char)[] s, size_t i) @safe pure nothrow @nogc
+{
+    if (i + 1 >= s.length)
+        return i + 1;
+    const c = s[i + 1];
+    if (c == '[') // CSI: params until a final byte in @…~
+    {
+        i += 2;
+        while (i < s.length && !(s[i] >= '@' && s[i] <= '~'))
+            ++i;
+        return i < s.length ? i + 1 : i;
+    }
+    if (c == ']') // OSC: until BEL or ST (ESC \)
+    {
+        i += 2;
+        while (i < s.length && s[i] != '\x07' && s[i] != '\x1b')
+            ++i;
+        if (i < s.length && s[i] == '\x07')
+            return i + 1;
+        if (i + 1 < s.length && s[i] == '\x1b')
+            return i + 2;
+        return i;
+    }
+    return i + 2; // other two-byte escape
+}
+
+// Map each visible display column of an ANSI source line to the byte offset (in
+// `s`) of the character that occupies it — skipping SGR/other escapes. Lets a
+// decoded span be mapped back to its source bytes for cell-granular selection
+// (SEL6): the span's text is the contiguous source between two escapes, so its
+// source offset is `map[<span start column>]`.
+private size_t[] ansiColToSrc(scope const(char)[] s) @safe
+{
+    import std.utf : decode;
+    import std.typecons : Yes;
+
+    size_t[] map;
+    size_t i;
+    while (i < s.length)
+    {
+        if (s[i] == '\x1b')
+        {
+            i = skipAnsiEscape(s, i);
+            continue;
+        }
+        const start = i;
+        decode!(Yes.useReplacementDchar)(s, i);
+        const w = cast(int) columnWidth(s[start .. i]);
+        foreach (_; 0 .. (w < 1 ? 1 : w))
+            map ~= start;
+    }
+    return map;
 }
 
 private bool containsText(const(char)[] hay, const(char)[] needle) @safe pure nothrow @nogc
@@ -1862,20 +1914,39 @@ unittest
     auto m = buildPreviewModel(reg, cache, src, &decodeAnsi);
     auto wp = wrapPreview(flattenPreview(m, darkTheme, tPageFg, tPageBg), 80);
 
-    // The table produced a TableView, its lines are tagged, and the map reads back.
+    // The table produced a TableView + tagged lines + a readable map, and each
+    // table line carries the table's block source span for text-regime crossing
+    // (`TBL4`) — the span covers the raw markdown table.
     assert(wp.tables.length == 1);
     assert(wp.lines.any!(l => l.tableIndex == 0));
     assert(wp.tables[0].map.numRows >= 2 && wp.tables[0].map.numCols == 2);
-
-    // ANSI body lines carry the fence-body source span (block-granular SEL6);
-    // the span covers the raw ANSI (escapes included).
-    bool ansiSel;
     foreach (l; wp.lines)
-        if (l.band == BandKind.codePanel && l.selSrcStart != size_t.max)
+        if (l.tableIndex == 0)
         {
-            ansiSel = true;
-            assert(l.selSrcEnd > l.selSrcStart);
-            assert(src[l.selSrcStart .. l.selSrcEnd].canFind("red"));
+            assert(l.selSrcStart != size_t.max && l.selSrcEnd > l.selSrcStart);
+            assert(src[l.selSrcStart .. l.selSrcEnd].canFind("| a | b |"));
         }
-    assert(ansiSel, "ANSI body line missing its selSrc span");
+
+    // ANSI body cells are char-level source-backed (`SEL6`): a content run maps
+    // to the raw source "red" and carries no block `selSrcStart`.
+    bool ansiCell;
+    foreach (l; wp.lines)
+        if (l.band == BandKind.codePanel)
+        {
+            assert(l.selSrcStart == size_t.max); // no longer block-granular
+            foreach (r; l.runs)
+                if (r.srcStart != size_t.max && src[r.srcStart .. r.srcStart + r.text.length] == "red")
+                    ansiCell = true;
+        }
+    assert(ansiCell, "ANSI content run not mapped char-level to source");
+}
+
+@("gui_preview.ansiColToSrc.skipsEscapes")
+@safe
+unittest
+{
+    // Each visible column maps to the source byte of its char, skipping the SGR
+    // escapes: "red" at bytes 5-7 (after ESC[31m), " x" at 12-13 (after ESC[0m).
+    assert(ansiColToSrc("\x1b[31mred\x1b[0m x") == [5, 6, 7, 12, 13]);
+    assert(ansiColToSrc("ab") == [0, 1]); // no escapes → identity
 }
