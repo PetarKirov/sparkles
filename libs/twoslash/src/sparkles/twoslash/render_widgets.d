@@ -34,6 +34,7 @@ import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 import sparkles.twoslash.overlay : BelowBlock, errIsWarning, planTwoslash,
     TwoslashPlan, withoutQuickinfoPrefix;
 import sparkles.twoslash.protocol : Completion, Node, NodeType, TwoslashReturn;
+import sparkles.twoslash.icons : completionIconGlyph, tagIconGlyph;
 
 @safe:
 
@@ -108,6 +109,10 @@ private uint buildBelowBlock(ref Builder b, const Node node, size_t nodeIndex)
 
         case NodeType.tag:
             uint[] parts;
+            // A tag-kind icon (⌗ log, ⚠ warn, ✗ error, ✎ annotate) then the `@name`
+            // chip — mirroring the HTML `// @tag` line's icon.
+            parts ~= b.add(Widget(kind: WidgetKind.text,
+                text: tagIconGlyph(node.name), slot: Slot.info, hitId: hit));
             parts ~= b.add(Widget(kind: WidgetKind.text,
                 text: tagName(b, node.name), slot: Slot.info, hitId: hit));
             if (node.text.length)
@@ -132,7 +137,9 @@ private uint buildCompletionRow(ref Builder b, const Completion c,
         && c.name[0 .. prefix.length] == prefix ? prefix.length : 0;
 
     uint[] parts;
-    parts ~= b.add(Widget(kind: WidgetKind.glyph, glyph: '-',
+    // A per-kind completion icon (◰ class, ƒ method, ▪ property, …), matching the
+    // HTML overlay's icon column; unknown kinds fall back to `•`.
+    parts ~= b.add(Widget(kind: WidgetKind.text, text: completionIconGlyph(c.kind),
         slot: Slot.muted, hitId: hit));
     if (matchedLen)
         parts ~= b.add(Widget(kind: WidgetKind.text, text: c.name[0 .. matchedLen],
@@ -273,12 +280,12 @@ version (unittest)
 
     auto c = render(viewTwoslash(tw));
 
-    // The '-' marker glyph appears, and "map" splits into matched "m" +
-    // unmatched "ap" with the two completion slots.
+    // The completion icon (kindless ⇒ `•`) appears, and "map" splits into matched
+    // "m" + unmatched "ap" with the two completion slots.
     bool sawMarker, sawMatched, sawUnmatched;
     foreach (ref op; c.ops)
     {
-        if (op.kind == OpKind.glyph && op.glyph == '-')
+        if (op.kind == OpKind.textRun && op.text == "•")
             sawMarker = true;
         if (op.kind == OpKind.textRun && op.text == "m"
             && op.visual.fg == RgbColor(0x22, 0x22, 0x22)) // matched inherits page fg
