@@ -33,8 +33,8 @@ forwarded to it instead — hold Shift to bypass that and select locally.
 
 ### Scrolling
 
-The mouse wheel scrolls the viewport three lines per notch through up to
-1000 lines of scrollback. When the application has mouse reporting enabled,
+The mouse wheel scrolls the viewport three lines per notch through the scrollback
+history. When the application has mouse reporting enabled,
 wheel events are forwarded to it as button 4/5 presses instead.
 
 A scrollbar appears on the right edge whenever there is scrollback; it widens
