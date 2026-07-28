@@ -172,3 +172,52 @@ spellings (`#8888` vs `#88888888`) don't matter.
         assert(inGen !is null && *inGen == expected, "dark palette/CSS drift on " ~ name);
     }
 }
+
+/**
+The metrics lockstep: the D $(REF Palette, sparkles,ui,style) scalar chrome
+geometry — border widths, radius, shadow, and font sizes the widget views author
+from `Palette.init` — must match the literal px/em values in `views/twoslash.css`.
+Each expected token is built $(I from) the D metric, so a change on either side
+(the palette default or the stylesheet) breaks the test. Guards direction 1 of the
+parity harness: "do the widget settings match the CSS?".
+*/
+@("style.twoslashCss.metricsLockstep")
+@safe unittest
+{
+    import sparkles.ui.style : Palette;
+    import std.algorithm.searching : canFind;
+    import std.conv : to;
+
+    const css = twoslashStyleCss;
+    const m = Palette.init;
+
+    // A font scale (percent of 1em) as its CSS `em` spelling: 100→"1em", 80→"0.8em",
+    // 92→"0.92em".
+    static string em(int pct)
+    {
+        if (pct % 100 == 0)
+            return (pct / 100).to!string ~ "em";
+        if (pct % 10 == 0)
+            return "0." ~ (pct / 10).to!string ~ "em";
+        return "0." ~ pct.to!string ~ "em";
+    }
+
+    // border: 1px solid  (popup surface) / border-left: 3px solid  (accent bars)
+    assert(css.canFind("border: " ~ m.borderWidth.to!string ~ "px solid"),
+        "borderWidth drift");
+    assert(css.canFind("border-left: " ~ m.accentBorder.to!string ~ "px solid"),
+        "accentBorder drift");
+    // border-radius: 4px  (popup surface)
+    assert(css.canFind("border-radius: " ~ m.popupRadius.to!string ~ "px"),
+        "popupRadius drift");
+    // box-shadow: … 0px 1px 4px  (--twoslash-popup-shadow)
+    assert(css.canFind(m.shadowDx.to!string ~ "px " ~ m.shadowDy.to!string
+            ~ "px " ~ m.shadowBlur.to!string ~ "px"), "shadow geometry drift");
+    // --twoslash-code-font-size: 1em  /  docs 0.8em  /  tag chip 0.92em
+    assert(css.canFind("--twoslash-code-font-size: " ~ em(m.codeFontScale)),
+        "codeFontScale drift");
+    assert(css.canFind("font-size: " ~ em(m.docsFontScale)), "docsFontScale drift");
+    assert(css.canFind("font-size: " ~ em(m.tagFontScale)), "tagFontScale drift");
+    // .twoslash-popup-arrow { width: 6px; … }
+    assert(css.canFind("width: " ~ m.arrowSize.to!string ~ "px"), "arrowSize drift");
+}
