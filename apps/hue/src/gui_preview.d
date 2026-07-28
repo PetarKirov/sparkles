@@ -1,6 +1,6 @@
 // Markdown-preview model + layout for `hue --gui`.
 //
-// Two stages, both raylib-free (gui.d does the painting):
+// Three stages, all raylib-free (gui.d does the painting):
 //
 //   buildPreviewModel  (@system, once at file load) — parse the markdown
 //       structure (sparkles.syntax.md.model), and for each fenced code block
@@ -8,11 +8,18 @@
 //       highlightInjected pipeline) or, for a ` ```ansi ` fence, decode it with
 //       the off-screen VT (gui_ansi.decodeAnsi). Theme-independent.
 //
-//   layoutPreview      (pure, rerun on theme / width / font change) — flatten the
-//       structural model into a flat PreviewLine[] with colors resolved from the
-//       live theme, prose soft-wrapped to the window width, and glow /
-//       render-markdown-style decoration (heading markers, code panels + language
-//       labels, list bullets + checkboxes, quote gutters, rules, tables).
+//   flattenPreview     (pure, rerun on theme / file change) — resolve the model
+//       into a width-INDEPENDENT PreviewItem[] with live-theme colors: heading
+//       markers, code panels + language labels, list bullets + checkboxes, quote
+//       gutters, callouts, tables. Prose is tokenized into words but not yet
+//       broken; code is highlighted but not yet framed. This is the expensive
+//       part, so the GUI caches its PreviewDoc.
+//
+//   wrapPreview        (pure, rerun on resize / font-size / gutter change) — wrap
+//       the cached PreviewDoc to the window width into a flat PreviewLine[]:
+//       place prose line breaks, frame code boxes, render table borders. The only
+//       stage a resize re-runs (`layoutPreview` composes the two for non-cached
+//       callers — the terminal ANSI + interactive-viewer paths).
 //
 // gui.d paints PreviewLine[] index-culled to the viewport, mapping the neutral
 // RgbColor + Attr bits onto raylib-text's TextStyle + raylib Color.
@@ -165,24 +172,107 @@ private void collectFences(Decode)(in MdBlock b, scope const(char)[] source,
         collectFences(c, source, cache, fences, decodeAnsiFn);
 }
 
-// ── Stage 2: layout (pure) ───────────────────────────────────────────────────
+// ── Stage 2: layout ──────────────────────────────────────────────────────────
+//
+// Split into a width-INDEPENDENT flatten (`flattenPreview`) and a width-DEPENDENT
+// wrap (`wrapPreview`). The GUI caches the flattened `PreviewDoc` per theme and
+// re-wraps it on resize / font-size / gutter toggles, so a resize no longer
+// re-does inline flattening, prose tokenization, or code highlighting — the
+// dominant per-frame cost — and pays only the wrap.
+
+/// The kind of a $(LREF PreviewItem); selects which of its fields are meaningful.
+enum ItemKind : ubyte
+{
+    flow,  /// prose / heading / list-item / callout line: width-independent `words`
+    code,  /// a fenced code block: pre-highlighted, unwrapped `codeLines`
+    table, /// a table: the flattened `grid` + `aligns`
+    rule,  /// a thematic break
+    html,  /// a raw HTML line (one prebuilt, non-wrapping line)
+    blank, /// a spacer
+}
 
 /**
-Flatten `m` into painted lines for `theme`, resolving default/ANSI colors against
-`pageFg`/`pageBg` and soft-wrapping prose to `widthCols` columns. Pure — rerun
-whenever the theme, window width, or font size changes.
+A width-independent, theme-resolved layout item. $(LREF wrapPreview) turns each
+into one or more $(LREF PreviewLine)s at a given width. A flat tagged POD (not a
+`SumType`): only the fields named for `kind` carry meaning. Everything expensive
+and width-independent — inline flattening, prose tokenization into `words`, code
+highlighting, table-grid flattening — is precomputed here so a resize replays
+only the wrap.
+*/
+struct PreviewItem
+{
+    ItemKind kind;
+    int indentCols;
+    ubyte qdepth;
+    size_t srcLine;
+    bool number;      /// the item's first emitted line carries the gutter number
+    RgbColor barFg;   /// callout accent bar (any kind, inside a callout body)
+    bool hasBarFg;
+
+    // flow
+    Word[] words;     /// pre-tokenized, width-independent
+    string leader;
+    RgbColor leaderFg;
+    bool hasLeaderFg;
+    BandKind band;
+    RgbColor bandBg;
+
+    // code
+    string codeLabel;         /// devicon + language + info label for the header
+    PreviewRun[][] codeLines; /// per body line, unwrapped highlighted runs
+    size_t[] codeSrcLines;    /// parallel to codeLines: each body line's source line
+    int copyFence = -1;
+
+    // table
+    string[][] grid;
+    const(ColAlign)[] aligns;
+
+    // html
+    PreviewRun[] preRuns;     /// one prebuilt line's runs (emitted unwrapped)
+}
+
+/**
+A flattened preview document: the width-independent $(LREF PreviewItem) stream
+plus the wrap-time palette colors (resolved once at flatten). Built by
+$(LREF flattenPreview) and consumed by $(LREF wrapPreview); the GUI caches one of
+these per theme and re-wraps it on every resize.
+*/
+struct PreviewDoc
+{
+    PreviewItem[] items;
+    const(char)[] source; /// retained so callers can map selections back to file bytes
+    // Palette colors the wrap pass needs (frame borders, code panel, table text).
+    RgbColor ruleFg, codePanelBg, codeFg, codeLineNoFg, pageFg;
+}
+
+/**
+Flatten `m` into painted lines for `theme`, resolving colors against
+`pageFg`/`pageBg` and soft-wrapping to `widthCols`. Kept as the composition of
+$(LREF flattenPreview) and $(LREF wrapPreview) — the previous one-shot signature,
+for callers (and tests) that don't cache. Pure.
 */
 PreviewLine[] layoutPreview(PreviewModel m, ResolvedTheme theme,
     RgbColor pageFg, RgbColor pageBg, int widthCols, bool codeLineNumbers = true) @safe
+    => wrapPreview(flattenPreview(m, theme, pageFg, pageBg), widthCols, codeLineNumbers);
+
+/**
+Stage 2a — the width-INDEPENDENT flatten. Runs the block recursion, resolving
+theme colors and precomputing every width-independent input to the wrap (prose
+tokenized into `words`, code highlighted, tables flattened). Rerun only when the
+theme or the document changes — never on resize. Pure.
+*/
+PreviewDoc flattenPreview(PreviewModel m, ResolvedTheme theme,
+    RgbColor pageFg, RgbColor pageBg) @safe
 {
-    auto lay = Layouter(source: m.doc.source, theme: theme, pageFg: pageFg,
-        pageBg: pageBg, width: widthCols < 8 ? 8 : widthCols, fences: m.fences,
-        codeLineNumbers: codeLineNumbers);
-    lay.resolvePalette();
-    lay.buildLineStarts();
+    auto fl = Flattener(source: m.doc.source, theme: theme, pageFg: pageFg,
+        pageBg: pageBg, fences: m.fences);
+    fl.resolvePalette();
+    fl.buildLineStarts();
     foreach (ref b; m.doc.root.children)
-        lay.block(b, 0, 0);
-    return lay.lines;
+        fl.block(b, 0, 0);
+    return PreviewDoc(items: fl.items, source: m.doc.source,
+        ruleFg: fl.ruleFg, codePanelBg: fl.codePanelBg, codeFg: fl.codeFg,
+        codeLineNoFg: fl.codeLineNoFg, pageFg: fl.pageFg);
 }
 
 /**
@@ -248,22 +338,20 @@ RgbColor[quoteBarCycle] quoteBarColors(ResolvedTheme theme, RgbColor pageFg, Rgb
     ];
 }
 
-private struct Layouter
+private struct Flattener
 {
     const(char)[] source;
     ResolvedTheme theme;
     RgbColor pageFg, pageBg;
-    int width;
     const(CodeFence)[] fences;
-    bool codeLineNumbers;
 
-    PreviewLine[] lines;
+    PreviewItem[] items;
     size_t fenceIdx;
     int listDepth; // current list nesting (1-based inside list(); 0 outside)
 
     // Source-line numbering: `curSrcLine`/`pendingNumber` are set by `beginLine`
-    // right before a logical line's content push; `push` stamps every line with
-    // `curSrcLine` and gives the first push after `beginLine` the number.
+    // right before a logical line's content; `emit` stamps every item with
+    // `curSrcLine` and gives the first item after `beginLine` the number.
     size_t[] lineStarts;
     size_t curSrcLine;
     bool pendingNumber;
@@ -340,18 +428,19 @@ private struct Layouter
         pendingNumber = true;
     }
 
-    void push(PreviewLine l) @safe
+    // Stamp `it` with the current source line + gutter-number flag and append it.
+    void emit(PreviewItem it) @safe
     {
-        l.srcLine = curSrcLine;
+        it.srcLine = curSrcLine;
         if (pendingNumber)
         {
-            l.showNumber = true;
+            it.number = true;
             pendingNumber = false;
         }
-        lines ~= l;
+        items ~= it;
     }
 
-    void blank() @safe { lines ~= PreviewLine.init; } // spacer: never numbered
+    void blank() @safe { items ~= PreviewItem(kind: ItemKind.blank); } // spacer
 
     void block(in MdBlock b, int indent, ubyte qdepth) @safe
     {
@@ -368,7 +457,7 @@ private struct Layouter
             this.heading(b, indent, qdepth);
             break;
         case paragraph:
-            emitFlow(inlineRuns(b.inlines, pageFg, 0), indent, qdepth, "");
+            flow(inlineRuns(b.inlines, pageFg, 0), indent, qdepth, "");
             blank();
             break;
         case codeFence:
@@ -409,7 +498,7 @@ private struct Layouter
         const lvl = b.level < 1 ? 1 : (b.level > 6 ? 6 : b.level);
         const accent = headingAccents[lvl - 1];
         const band = mix(pageBg, accent, 0.12);
-        emitFlow(inlineRuns(b.inlines, accent, Attr.bold), indent, qdepth,
+        flow(inlineRuns(b.inlines, accent, Attr.bold), indent, qdepth,
             icons[lvl - 1] ~ " ", leaderFg: accent, hasLeaderFg: true,
             band: BandKind.heading, bandBg: band);
         blank();
@@ -478,16 +567,14 @@ private struct Layouter
     void renderCallout(in MdBlock b, Callout co, int indent, ubyte qdepth) @safe
     {
         const bodyDepth = cast(ubyte)(qdepth + 1);
-        // Title line: icon + Title-case type, in the accent (bold), with the bar.
-        push(PreviewLine(indentCols: indent, quoteDepth: bodyDepth,
-            leader: co.icon ~ " ", leaderFg: co.accent, hasLeaderFg: true,
-            barFg: co.accent, hasBarFg: true,
-            runs: [PreviewRun(co.title, co.accent, RgbColor.init, false, Attr.bold)]));
+        // Title line: icon + Title-case type, in the accent (bold). The accent bar
+        // is applied to the title + every body item below.
+        const start = items.length;
+        flow([PreviewRun(co.title, co.accent, RgbColor.init, false, Attr.bold)],
+            indent, bodyDepth, co.icon ~ " ", leaderFg: co.accent, hasLeaderFg: true);
 
         // Body: the quoted blocks, with the `[!TYPE]` marker dropped from the
-        // first paragraph (it parses as a leading link/text inline). Force the
-        // accent bar on every line the body emits.
-        const start = lines.length;
+        // first paragraph (it parses as a leading link/text inline).
         bool firstPara = true;
         foreach (ref c; b.children)
         {
@@ -499,16 +586,16 @@ private struct Layouter
                 // Number the body by where its text actually starts (the line
                 // after the `[!TYPE]` marker), not the marker's line.
                 beginLine(trimmed.length ? trimmed[0].span.start : cutoff);
-                emitFlow(inlineRuns(trimmed, pageFg, 0), indent, bodyDepth, "");
+                flow(inlineRuns(trimmed, pageFg, 0), indent, bodyDepth, "");
                 blank();
             }
             else
                 block(c, indent, bodyDepth);
         }
-        foreach (ref l; lines[start .. $])
+        foreach (ref it; items[start .. $])
         {
-            l.hasBarFg = true;
-            l.barFg = co.accent;
+            it.hasBarFg = true;
+            it.barFg = co.accent;
         }
         blank();
     }
@@ -518,70 +605,25 @@ private struct Layouter
         if (fenceIdx >= fences.length)
             return;
         const f = fences[fenceIdx++];
-
-        // The block is a rounded box: a top border carrying the language label +
-        // copy button (`╭─ lang ──╮`), side borders `│…│` per code row, and a
-        // rounded bottom (`╰──╯`). Box-drawing renders procedurally so it connects.
-        const avail = width - indent - qdepth * 2;
-        const boxW = avail < 4 ? 4 : avail; // total box width in columns
-        const inner = boxW - 2;             // columns between the two `│`
         const baseLine = srcLineOf(f.bodyStart);
-        const decoded = f.isAnsi && f.ansi.length;
-        const nLines = decoded ? f.ansi.length : lineCount(f.body);
-        const gw = codeLineNumbers ? numDigits(nLines) + 1 : 0; // in-panel number + sep
-        const codeW = inner - gw < 1 ? 1 : inner - gw;
 
-        // Top border with the devicon + language embedded.
+        // The devicon + language label for the header (width-independent). The box
+        // framing (`╭─ … ╮`, `│ … │`, `╰──╯`), gutter, and wrapping are the wrap
+        // pass's job; here we just resolve the per-body-line highlighted runs.
         const icon = langIcon(f.lang);
         string lbl = (icon.length ? icon ~ " " : "") ~ (f.lang.length ? f.lang.idup : "code");
         if (f.label.length)
             lbl ~= " " ~ f.label.idup;
-        // "╭─ " + label + " " + fill + "   ╮" — the trailing three spaces are a
-        // cutout for the copy button (a space on each side of it, drawn by gui.d),
-        // mirroring the language cutout on the left.
-        const usedTop = 8 + cast(int) columnWidth(lbl);
-        const fillTop = boxW - usedTop < 0 ? 0 : boxW - usedTop;
-        pendingNumber = false; // borders carry no line number
-        push(PreviewLine(indentCols: indent, quoteDepth: qdepth, band: BandKind.codeHeader,
-            bandBg: codePanelBg, copyFence: cast(int)(fenceIdx - 1), runs: [
-                PreviewRun("╭─ ", ruleFg, codePanelBg, true, 0),
-                PreviewRun(lbl, codeFg, codePanelBg, true, 0),
-                PreviewRun(" " ~ repeat("─", fillTop) ~ "   ╮", ruleFg, codePanelBg, true, 0),
-            ]));
 
-        // Code/ANSI lines hard-wrap to the inner width (like prose) so long lines
-        // reflow instead of overflowing; each source line is numbered by its
-        // document line (first wrapped row only).
-        void pushCode(size_t bodyRow, PreviewRun[] row)
+        PreviewRun[][] codeLines;
+        size_t[] srcLines;
+        void addLine(size_t bodyRow, PreviewRun[] row)
         {
-            curSrcLine = baseLine + bodyRow;
-            pendingNumber = true;
-            bool firstWrap = true;
-            foreach (wl; hardWrapRuns(row, codeW))
-            {
-                PreviewRun[] full;
-                full ~= PreviewRun("│", ruleFg, codePanelBg, true, 0);
-                int used;
-                if (gw > 0)
-                {
-                    full ~= PreviewRun(codeGutterStr(bodyRow + 1, firstWrap, gw),
-                        codeLineNoFg, codePanelBg, true, 0);
-                    used += gw;
-                }
-                foreach (r; wl)
-                {
-                    full ~= r;
-                    used += cast(int) columnWidth(r.text);
-                }
-                if (inner - used > 0) // pad to the right border
-                    full ~= PreviewRun(repeat(" ", inner - used), codeFg, codePanelBg, true, 0);
-                full ~= PreviewRun("│", ruleFg, codePanelBg, true, 0);
-                push(PreviewLine(indentCols: indent, quoteDepth: qdepth,
-                    band: BandKind.codePanel, bandBg: codePanelBg, runs: full));
-                firstWrap = false;
-            }
+            codeLines ~= row;
+            srcLines ~= baseLine + bodyRow;
         }
 
+        const decoded = f.isAnsi && f.ansi.length;
         if (decoded)
         {
             foreach (i, ref al; f.ansi)
@@ -590,24 +632,24 @@ private struct Layouter
                 foreach (ref sp; al.spans)
                     runs ~= PreviewRun(sp.text, sp.fgDefault ? pageFg : sp.fg,
                         sp.bg, !sp.bgDefault, sp.attrs);
-                pushCode(i, runs);
+                addLine(i, runs);
             }
         }
         else if (f.isAnsi)
         {
             // No off-screen VT decoder (terminal / HTML paths, `no-gui` build):
             // strip the SGR escapes and render the fence as plain code lines.
-            const plain = stripSgr(f.body);
+            const plainTxt = stripSgr(f.body);
             size_t bodyRow, lineStart;
-            foreach (i, char c; plain)
+            foreach (i, char c; plainTxt)
                 if (c == '\n')
                 {
-                    pushCode(bodyRow++, [PreviewRun(plain[lineStart .. i], codeFg,
+                    addLine(bodyRow++, [PreviewRun(plainTxt[lineStart .. i], codeFg,
                         RgbColor.init, false, 0)]);
                     lineStart = i + 1;
                 }
-            if (lineStart < plain.length)
-                pushCode(bodyRow, [PreviewRun(plain[lineStart .. $], codeFg,
+            if (lineStart < plainTxt.length)
+                addLine(bodyRow, [PreviewRun(plainTxt[lineStart .. $], codeFg,
                     RgbColor.init, false, 0)]);
         }
         else
@@ -630,14 +672,13 @@ private struct Layouter
                     toRgb(spec.fg, codeFg), bg, hasBg, mapAttrs(spec), f.bodyStart + ls.span.start);
             }
             foreach (i, row; byLine)
-                pushCode(i, row);
+                addLine(i, row);
         }
 
-        // Rounded bottom border.
-        pendingNumber = false;
-        push(PreviewLine(indentCols: indent, quoteDepth: qdepth, band: BandKind.codePanel,
-            bandBg: codePanelBg,
-            runs: [PreviewRun("╰" ~ repeat("─", inner) ~ "╯", ruleFg, codePanelBg, true, 0)]));
+        pendingNumber = false; // the header carries no line number
+        emit(PreviewItem(kind: ItemKind.code, indentCols: indent, qdepth: qdepth,
+            codeLabel: lbl, codeLines: codeLines, codeSrcLines: srcLines,
+            copyFence: cast(int)(fenceIdx - 1)));
         blank();
     }
 
@@ -681,16 +722,16 @@ private struct Layouter
             {
                 if (c.kind == MdBlockKind.paragraph && first)
                 {
-                    emitFlow(inlineRuns(c.inlines, pageFg, 0), indent, qdepth, leader,
+                    flow(inlineRuns(c.inlines, pageFg, 0), indent, qdepth, leader,
                         leaderFg: leaderFg, hasLeaderFg: hasLeaderFg);
                     first = false;
                 }
                 else
                     block(c, indent + cast(int) columnWidth(leader), qdepth);
             }
-            if (first) // an empty item still gets its marker
-                push(PreviewLine(indentCols: indent, quoteDepth: qdepth, leader: leader,
-                    leaderFg: leaderFg, hasLeaderFg: hasLeaderFg));
+            if (first) // an empty item still gets its marker (a leader-only line)
+                flow([], indent, qdepth, leader,
+                    leaderFg: leaderFg, hasLeaderFg: hasLeaderFg);
         }
         blank();
     }
@@ -719,8 +760,8 @@ private struct Layouter
     void table(in MdBlock b, int indent, ubyte qdepth) @safe
     {
         // Flatten to a plain-text grid (cells are already flattened today, so no
-        // inline styling is lost) and hand it to core-cli's table renderer for
-        // box-drawing borders + per-column alignment.
+        // inline styling is lost); the wrap pass hands it to core-cli's table
+        // renderer for box-drawing borders + per-column alignment at the width.
         size_t cols;
         foreach (ref row; b.children)
             if (row.children.length > cols)
@@ -740,69 +781,14 @@ private struct Layouter
             grid ~= cells;
         }
 
-        const avail = width - indent - qdepth * 2;
-        auto rows = renderTableLines(grid, b.aligns, cols, avail < 8 ? 8 : avail);
-
-        // Colorize each rendered line: box-drawing muted (ruleFg), content pageFg,
-        // the single header content row bold. No band — the borders frame it.
-        bool headerDone;
-        foreach (ln; rows)
-        {
-            const content = lineHasContent(ln);
-            const bold = content && !headerDone;
-            if (content)
-                headerDone = true;
-            push(PreviewLine(indentCols: indent, quoteDepth: qdepth,
-                runs: colorizeTableLine(ln, bold)));
-        }
+        emit(PreviewItem(kind: ItemKind.table, indentCols: indent, qdepth: qdepth,
+            grid: grid, aligns: b.aligns.dup)); // dup: b is `scope`, item outlives it
         blank();
-    }
-
-    // Split a rendered table line into box-drawing runs (ruleFg) and content runs
-    // (pageFg, optionally bold for the header row).
-    PreviewRun[] colorizeTableLine(const(char)[] ln, bool bold) @safe
-    {
-        import std.utf : decode;
-        PreviewRun[] runs;
-        size_t i;
-        while (i < ln.length)
-        {
-            const start = i;
-            size_t probe = i;
-            const firstBox = isBoxDrawing(decode(ln, probe));
-            i = probe;
-            while (i < ln.length)
-            {
-                size_t k = i;
-                if (isBoxDrawing(decode(ln, k)) != firstBox)
-                    break;
-                i = k;
-            }
-            runs ~= PreviewRun(ln[start .. i], firstBox ? ruleFg : pageFg,
-                RgbColor.init, false, firstBox ? 0 : (bold ? cast(ubyte) Attr.bold : 0));
-        }
-        return runs;
-    }
-
-    // A rendered table line carries real cell text (not just borders / padding).
-    bool lineHasContent(const(char)[] ln) @safe
-    {
-        import std.utf : decode;
-        size_t i;
-        while (i < ln.length)
-        {
-            const cp = decode(ln, i);
-            if (cp != ' ' && !isBoxDrawing(cp))
-                return true;
-        }
-        return false;
     }
 
     void rule(int indent, ubyte qdepth) @safe
     {
-        const n = width - indent - qdepth * 2;
-        push(PreviewLine(indentCols: indent, quoteDepth: qdepth, band: BandKind.rule,
-            runs: [PreviewRun(repeat("─", n < 1 ? 1 : n), ruleFg, RgbColor.init, false, 0)]));
+        emit(PreviewItem(kind: ItemKind.rule, indentCols: indent, qdepth: qdepth));
         blank();
     }
 
@@ -810,8 +796,8 @@ private struct Layouter
     {
         import std.string : splitLines;
         foreach (ln; slice(b.span.start, b.span.end).splitLines)
-            push(PreviewLine(indentCols: indent, quoteDepth: qdepth,
-                runs: [PreviewRun(ln.idup, mix(pageFg, pageBg, 0.35),
+            emit(PreviewItem(kind: ItemKind.html, indentCols: indent, qdepth: qdepth,
+                preRuns: [PreviewRun(ln.idup, mix(pageFg, pageBg, 0.35),
                     RgbColor.init, false, Attr.italic)]));
         blank();
     }
@@ -880,20 +866,15 @@ private struct Layouter
 
     ubyte mapAttrs(in StyleSpec spec) @safe => mapSpecAttrs(spec);
 
-    // Word-wrap `runs` to the available width and push the resulting lines. A
-    // "word" is a maximal whitespace-free unit that may span several runs (so a
-    // styled span touching punctuation — `**bold**,` — stays one word with no
-    // stray space); breaks happen only where the source had whitespace. The
-    // first line shows `leader` at `indent`; continuation lines hang-indent.
-    void emitFlow(PreviewRun[] runs, int indent, ubyte qdepth, string leader,
+    // Tokenize `runs` into words and emit a width-independent `flow` item; the
+    // wrap pass places the line breaks. A "word" is a maximal whitespace-free unit
+    // that may span several runs (so a styled span touching punctuation —
+    // `**bold**,` — stays one word with no stray space); breaks happen only where
+    // the source had whitespace.
+    void flow(PreviewRun[] runs, int indent, ubyte qdepth, string leader,
         RgbColor leaderFg = RgbColor.init, bool hasLeaderFg = false,
         BandKind band = BandKind.none, RgbColor bandBg = RgbColor.init) @safe
     {
-        const lead = cast(int) columnWidth(leader);
-        const avail = width - indent - qdepth * 2 - lead;
-        const a = avail < 4 ? 4 : avail;
-
-        // Tokenize into words carrying their styled fragments + preceding-space.
         Word[] words;
         bool spacePending, open;
         foreach (r; runs)
@@ -928,40 +909,249 @@ private struct Layouter
             // fragments from adjacent runs unless whitespace fell between them.
         }
 
-        PreviewRun[] line;
-        int col;
-        bool firstLine = true;
-        void flush()
-        {
-            // The leader (and its accent) rides the first line only; the band
-            // spans every wrapped line so a wrapped heading stays fully tinted.
-            push(PreviewLine(indentCols: firstLine ? indent : indent + lead,
-                quoteDepth: qdepth, band: band, bandBg: bandBg,
-                leader: firstLine ? leader : "",
-                leaderFg: leaderFg, hasLeaderFg: firstLine && hasLeaderFg,
-                runs: line));
-            line = null;
-            col = 0;
-            firstLine = false;
-        }
-        foreach (w; words)
-        {
-            if (col > 0 && col + (w.spaceBefore ? 1 : 0) + w.width > a)
-                flush();
-            if (col > 0 && w.spaceBefore)
-            {
-                line ~= PreviewRun(" ", w.parts[0].fg, RgbColor.init, false, 0);
-                ++col;
-            }
-            foreach (p; w.parts)
-            {
-                line ~= p;
-                col += cast(int) columnWidth(p.text);
-            }
-        }
-        if (line.length || firstLine)
-            flush();
+        emit(PreviewItem(kind: ItemKind.flow, indentCols: indent, qdepth: qdepth,
+            words: words, leader: leader, leaderFg: leaderFg, hasLeaderFg: hasLeaderFg,
+            band: band, bandBg: bandBg));
     }
+}
+
+// ── Stage 2b: wrap (width-dependent — the resize hot path) ────────────────────
+
+/**
+Wrap the cached width-independent $(LREF PreviewDoc) to `widthCols` columns —
+framing code blocks and tables, placing prose line breaks, drawing rules. This is
+the only stage a resize / font-size change / gutter toggle re-runs.
+`codeLineNumbers` toggles the in-panel code-number gutter. Pure.
+
+A single `SmallBuffer!(PreviewRun)` scratch is reused across every emitted line
+(cleared, refilled, then `.dup`'d once into `PreviewLine.runs`), so a relayout
+allocates roughly one right-sized array per emitted line instead of a
+`~=`-growth chain — the bulk of the old per-frame allocation churn.
+*/
+PreviewLine[] wrapPreview(PreviewDoc doc, int widthCols, bool codeLineNumbers = true) @safe
+{
+    const width = widthCols < 8 ? 8 : widthCols;
+    PreviewLine[] lines;
+    // Most items emit one line; flow/code emit a few. Reserve generously to dodge
+    // growth reallocs without over-allocating.
+    lines.reserve(doc.items.length + doc.items.length / 2 + 8);
+    PreviewRun[] scratch; // reused per emitted line (see takeRuns)
+    foreach (ref it; doc.items)
+    {
+        final switch (it.kind) with (ItemKind)
+        {
+        case flow:  wrapFlow(it, width, scratch, lines); break;
+        case code:  wrapCode(it, width, codeLineNumbers, doc, scratch, lines); break;
+        case table: wrapTable(it, width, doc, lines); break;
+        case rule:  wrapRule(it, width, doc, lines); break;
+        case html:  lines ~= wrapHtmlLine(it); break;
+        case blank: lines ~= PreviewLine.init; break;
+        }
+    }
+    return lines;
+}
+
+// Take the scratch buffer's contents as a freshly-owned run array and reset it
+// for reuse. `assumeSafeAppend` lets the next line refill the same buffer in
+// place, so a relayout allocates one right-sized array per emitted line instead
+// of a `~=`-growth chain per line.
+private PreviewRun[] takeRuns(ref PreviewRun[] scratch) @trusted
+{
+    auto r = scratch.dup;
+    scratch.length = 0;
+    scratch.assumeSafeAppend();
+    return r;
+}
+
+// Wrap a prose/heading/list-item/callout item: place words into lines at the
+// available width. The leader rides the first line; continuations hang-indent;
+// the band spans every wrapped line; only the first line shows the gutter number.
+private void wrapFlow(ref PreviewItem it, int width,
+    ref PreviewRun[] scratch, ref PreviewLine[] lines) @safe
+{
+    const lead = cast(int) columnWidth(it.leader);
+    const avail = width - it.indentCols - it.qdepth * 2 - lead;
+    const a = avail < 4 ? 4 : avail;
+
+    int col;
+    bool firstLine = true;
+    void flush()
+    {
+        lines ~= PreviewLine(indentCols: firstLine ? it.indentCols : it.indentCols + lead,
+            quoteDepth: it.qdepth, band: it.band, bandBg: it.bandBg,
+            leader: firstLine ? it.leader : "",
+            leaderFg: it.leaderFg, hasLeaderFg: firstLine && it.hasLeaderFg,
+            barFg: it.barFg, hasBarFg: it.hasBarFg,
+            srcLine: it.srcLine, showNumber: firstLine && it.number,
+            runs: takeRuns(scratch));
+        col = 0;
+        firstLine = false;
+    }
+    foreach (w; it.words)
+    {
+        if (col > 0 && col + (w.spaceBefore ? 1 : 0) + w.width > a)
+            flush();
+        if (col > 0 && w.spaceBefore)
+        {
+            scratch ~= PreviewRun(" ", w.parts[0].fg, RgbColor.init, false, 0);
+            ++col;
+        }
+        foreach (p; w.parts)
+        {
+            scratch ~= p;
+            col += cast(int) columnWidth(p.text);
+        }
+    }
+    if (scratch.length || firstLine)
+        flush();
+}
+
+// Frame a code block: a rounded box (`╭─ label ╮` header with a copy-button
+// cutout, `│ … │` body rows with an optional in-panel number gutter, `╰──╯`
+// footer). Body lines hard-wrap to the inner width; each is numbered by its
+// document line (first wrapped row only).
+private void wrapCode(ref PreviewItem it, int width, bool codeLineNumbers,
+    ref PreviewDoc pal, ref PreviewRun[] scratch, ref PreviewLine[] lines) @safe
+{
+    const avail = width - it.indentCols - it.qdepth * 2;
+    const boxW = avail < 4 ? 4 : avail; // total box width in columns
+    const inner = boxW - 2;             // columns between the two `│`
+    const nLines = it.codeLines.length;
+    const gw = codeLineNumbers ? numDigits(nLines) + 1 : 0; // in-panel number + sep
+    const codeW = inner - gw < 1 ? 1 : inner - gw;
+
+    // "╭─ " + label + " " + fill + "   ╮" — the trailing three spaces are a cutout
+    // for the copy button (a space on each side of it, drawn by gui.d).
+    const usedTop = 8 + cast(int) columnWidth(it.codeLabel);
+    const fillTop = boxW - usedTop < 0 ? 0 : boxW - usedTop;
+    lines ~= PreviewLine(indentCols: it.indentCols, quoteDepth: it.qdepth,
+        band: BandKind.codeHeader, bandBg: pal.codePanelBg,
+        barFg: it.barFg, hasBarFg: it.hasBarFg, srcLine: it.srcLine,
+        copyFence: it.copyFence, runs: [
+            PreviewRun("╭─ ", pal.ruleFg, pal.codePanelBg, true, 0),
+            PreviewRun(it.codeLabel, pal.codeFg, pal.codePanelBg, true, 0),
+            PreviewRun(" " ~ repeat("─", fillTop) ~ "   ╮", pal.ruleFg, pal.codePanelBg, true, 0),
+        ]);
+
+    foreach (bi, row; it.codeLines)
+    {
+        const srcLine = it.codeSrcLines[bi];
+        bool firstWrap = true;
+        foreach (wl; hardWrapRuns(row, codeW))
+        {
+            scratch ~= PreviewRun("│", pal.ruleFg, pal.codePanelBg, true, 0);
+            int used;
+            if (gw > 0)
+            {
+                scratch ~= PreviewRun(codeGutterStr(bi + 1, firstWrap, gw),
+                    pal.codeLineNoFg, pal.codePanelBg, true, 0);
+                used += gw;
+            }
+            foreach (r; wl)
+            {
+                scratch ~= r;
+                used += cast(int) columnWidth(r.text);
+            }
+            if (inner - used > 0) // pad to the right border
+                scratch ~= PreviewRun(repeat(" ", inner - used), pal.codeFg, pal.codePanelBg, true, 0);
+            scratch ~= PreviewRun("│", pal.ruleFg, pal.codePanelBg, true, 0);
+            lines ~= PreviewLine(indentCols: it.indentCols, quoteDepth: it.qdepth,
+                band: BandKind.codePanel, bandBg: pal.codePanelBg,
+                barFg: it.barFg, hasBarFg: it.hasBarFg,
+                srcLine: srcLine, showNumber: firstWrap, runs: takeRuns(scratch));
+            firstWrap = false;
+        }
+    }
+
+    // Rounded bottom border (numbered like the last body line, as before).
+    lines ~= PreviewLine(indentCols: it.indentCols, quoteDepth: it.qdepth,
+        band: BandKind.codePanel, bandBg: pal.codePanelBg,
+        barFg: it.barFg, hasBarFg: it.hasBarFg,
+        srcLine: nLines ? it.codeSrcLines[nLines - 1] : it.srcLine,
+        runs: [PreviewRun("╰" ~ repeat("─", inner) ~ "╯", pal.ruleFg, pal.codePanelBg, true, 0)]);
+}
+
+// Render a table: hand the flattened grid to core-cli's renderer at the width,
+// then colorize each rendered line (box-drawing muted, content page-fg, the
+// single header content row bold).
+private void wrapTable(ref PreviewItem it, int width, ref PreviewDoc pal,
+    ref PreviewLine[] lines) @safe
+{
+    const cols = it.grid.length ? it.grid[0].length : 0;
+    if (cols == 0)
+        return;
+    const avail = width - it.indentCols - it.qdepth * 2;
+    auto rows = renderTableLines(it.grid, it.aligns, cols, avail < 8 ? 8 : avail);
+
+    bool headerDone, firstLine = true;
+    foreach (ln; rows)
+    {
+        const content = lineHasContent(ln);
+        const bold = content && !headerDone;
+        if (content)
+            headerDone = true;
+        lines ~= PreviewLine(indentCols: it.indentCols, quoteDepth: it.qdepth,
+            barFg: it.barFg, hasBarFg: it.hasBarFg,
+            srcLine: it.srcLine, showNumber: firstLine && it.number,
+            runs: colorizeTableLine(ln, bold, pal.ruleFg, pal.pageFg));
+        firstLine = false;
+    }
+}
+
+private void wrapRule(ref PreviewItem it, int width, ref PreviewDoc pal,
+    ref PreviewLine[] lines) @safe
+{
+    const n = width - it.indentCols - it.qdepth * 2;
+    lines ~= PreviewLine(indentCols: it.indentCols, quoteDepth: it.qdepth,
+        band: BandKind.rule, barFg: it.barFg, hasBarFg: it.hasBarFg,
+        srcLine: it.srcLine, showNumber: it.number,
+        runs: [PreviewRun(repeat("─", n < 1 ? 1 : n), pal.ruleFg, RgbColor.init, false, 0)]);
+}
+
+private PreviewLine wrapHtmlLine(ref PreviewItem it) @safe
+    => PreviewLine(indentCols: it.indentCols, quoteDepth: it.qdepth,
+        barFg: it.barFg, hasBarFg: it.hasBarFg, srcLine: it.srcLine,
+        showNumber: it.number, runs: it.preRuns);
+
+// Split a rendered table line into box-drawing runs (ruleFg) and content runs
+// (pageFg, optionally bold for the header row).
+private PreviewRun[] colorizeTableLine(const(char)[] ln, bool bold,
+    RgbColor ruleFg, RgbColor pageFg) @safe
+{
+    import std.utf : decode;
+    PreviewRun[] runs;
+    size_t i;
+    while (i < ln.length)
+    {
+        const start = i;
+        size_t probe = i;
+        const firstBox = isBoxDrawing(decode(ln, probe));
+        i = probe;
+        while (i < ln.length)
+        {
+            size_t k = i;
+            if (isBoxDrawing(decode(ln, k)) != firstBox)
+                break;
+            i = k;
+        }
+        runs ~= PreviewRun(ln[start .. i], firstBox ? ruleFg : pageFg,
+            RgbColor.init, false, firstBox ? 0 : (bold ? cast(ubyte) Attr.bold : 0));
+    }
+    return runs;
+}
+
+// A rendered table line carries real cell text (not just borders / padding).
+private bool lineHasContent(const(char)[] ln) @safe
+{
+    import std.utf : decode;
+    size_t i;
+    while (i < ln.length)
+    {
+        const cp = decode(ln, i);
+        if (cp != ' ' && !isBoxDrawing(cp))
+            return true;
+    }
+    return false;
 }
 
 // A recognized GitHub callout/admonition: its icon, accent, Title-case name, and
@@ -1015,7 +1205,7 @@ private string codeGutterStr(size_t num, bool first, int gw) @safe pure nothrow
 }
 
 // Map a syntax `StyleSpec`'s attributes onto the `gui_ansi.Attr` bits the preview
-// runs use. Shared by the Layouter and the raw-view builder.
+// runs use. Shared by the Flattener and the raw-view builder.
 private ubyte mapSpecAttrs(in StyleSpec spec) @safe
 {
     ubyte a;
@@ -1211,12 +1401,32 @@ private RgbColor mix(RgbColor a, RgbColor b, double t) @safe pure nothrow @nogc
     return RgbColor(ch(a.r, b.r), ch(a.g, b.g), ch(a.b, b.b));
 }
 
-private string repeat(string unit, int n) @safe pure nothrow
+// Shared, CTFE-built fillers of the only two units `repeat` is ever called with
+// (─ and space). Slicing these makes box borders / rules / code padding
+// allocation-free on the wrap (resize) hot path; the old char-by-char `~=`
+// reallocated ~log2(n) times, hundreds of times per relayout.
+private enum size_t fillerCap = 1024;
+private static immutable string dashFiller =
+    () { string s; foreach (_; 0 .. fillerCap) s ~= "─"; return s; }();
+private static immutable string spaceFiller =
+    () { string s; foreach (_; 0 .. fillerCap) s ~= " "; return s; }();
+
+// `n` copies of `unit`. For the fixed units above it returns a slice of the
+// shared filler (zero allocation); anything else — or a width past the cap (a
+// very wide window) — falls back to a single materializing allocation.
+private const(char)[] repeat(string unit, int n) @safe pure nothrow
 {
-    string s;
-    foreach (_; 0 .. n)
-        s ~= unit;
-    return s;
+    if (n <= 0 || unit.length == 0)
+        return "";
+    const total = n * unit.length;
+    if (unit == "─" && total <= dashFiller.length)
+        return dashFiller[0 .. total];
+    if (unit == " " && total <= spaceFiller.length)
+        return spaceFiller[0 .. total];
+    auto s = new char[total];
+    foreach (k; 0 .. n)
+        s[k * unit.length .. (k + 1) * unit.length] = unit[];
+    return (() @trusted => cast(string) s)();
 }
 
 // ── tests ────────────────────────────────────────────────────────────────────
@@ -1239,37 +1449,56 @@ version (unittest)
     // pointer IS the GC-owned `St`, so (unlike a stack-captured closure literal,
     // which `benchCase`'s deferred execution turns into a dangling stack read) it
     // stays valid until the case is measured.
-    private static struct RelayoutState
+    // Times `wrapPreview` over an already-flattened doc — the actual resize hot
+    // path (the GUI caches the flatten and only re-wraps on resize).
+    private static struct WrapState
     {
-        PreviewModel model;
-        ResolvedTheme theme;
+        PreviewDoc doc;
         int w;
         size_t run()
         {
             import sparkles.test_runner.bench : blackBox;
-            return blackBox(layoutPreview(model, theme, tPageFg, tPageBg, w).length);
+            return blackBox(wrapPreview(doc, w).length);
         }
     }
 
-    private void registerRelayoutCase(PreviewModel model, ResolvedTheme theme, int w)
+    // Times `flattenPreview` — the one-time-per-theme cost a resize no longer pays.
+    private static struct FlattenState
+    {
+        PreviewModel model;
+        ResolvedTheme theme;
+        size_t run()
+        {
+            import sparkles.test_runner.bench : blackBox;
+            return blackBox(flattenPreview(model, theme, tPageFg, tPageBg).items.length);
+        }
+    }
+
+    private void registerWrapCase(PreviewDoc doc, int w)
     {
         import sparkles.test_runner.bench : benchCase;
         import std.conv : text;
-        auto st = new RelayoutState(model, theme, w);
-        benchCase(
-            name: text("w=", st.w),
-            labels: ["op": "layoutPreview"],
-            timed: &st.run,
-            after: (ref size_t _) {},
-        );
+        auto st = new WrapState(doc, w);
+        benchCase(name: text("w=", st.w), labels: ["op": "wrap"],
+            timed: &st.run, after: (ref size_t _) {});
+    }
+
+    private void registerFlattenCase(PreviewModel model, ResolvedTheme theme)
+    {
+        import sparkles.test_runner.bench : benchCase;
+        auto st = new FlattenState(model, theme);
+        benchCase(name: "flatten", labels: ["op": "flatten"],
+            timed: &st.run, after: (ref size_t _) {});
     }
 }
 
-// The window-resize hot path: `gui.d` re-runs `layoutPreview` every frame the
-// column count changes (i.e. continuously during a resize drag). Benchmark it
-// across a sweep of widths on a real document (`HUE_BENCH_FILE`, else the
-// committed `docs/specs/base/text/index.md`). The tree-sitter model build is
-// one-time setup (not measured); only the per-frame relayout is timed.
+// The window-resize hot path. `gui.d` caches the width-independent flatten and
+// re-runs only `wrapPreview` every frame the column count changes (continuously
+// during a resize drag). Benchmark that wrap across a width sweep on a real
+// document (`HUE_BENCH_FILE`, else the committed `docs/specs/base/text/index.md`),
+// plus one `flatten` case for the one-time per-theme cost a resize no longer
+// pays. The tree-sitter model build and the flatten are setup (not measured on
+// the `wrap` cases).
 @("gui_preview.layout.resizeSweep")
 @benchmark
 @system
@@ -1292,10 +1521,12 @@ unittest
     auto cache = TsConfigCache.create(&reg, LabelSet.standard());
     auto model = buildPreviewModel(reg, cache, source); // one-time (no ansi decoder)
     const theme = darkTheme();
+    auto doc = flattenPreview(model, theme, tPageFg, tPageBg); // cached once, as the GUI does
 
-    // A resize drag walks the column count; each stop is one full relayout.
+    // A resize drag walks the column count; each stop re-wraps the cached doc.
     foreach (w; [40, 60, 80, 100, 120, 160])
-        registerRelayoutCase(model, theme, w);
+        registerWrapCase(doc, w);
+    registerFlattenCase(model, theme);
 }
 
 @("gui_preview.layout.wrapsProse")
@@ -1521,4 +1752,39 @@ unittest
                     sawStripped = true;
             }
     assert(sawStripped, "the stripped ansi fence text is missing");
+}
+
+@("gui_preview.layout.wrapCacheStable")
+@system
+unittest
+{
+    // The GUI caches one flattened `PreviewDoc` per theme and re-wraps it on every
+    // resize. Guard the two properties that makes safe: re-wrapping the same doc
+    // must be idempotent (wrapPreview must not mutate it), and a cached re-wrap
+    // must equal a fresh one-shot `layoutPreview` at each width. Uses a rich source
+    // so every item kind is exercised (flow / heading / list / callout / table /
+    // rule / code).
+    import std.process : environment;
+    import sparkles.test_runner.skip : skipTest;
+    import sparkles.syntax : GrammarRegistry, TsConfigCache, LabelSet;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+    auto reg = GrammarRegistry.fromEnvironment();
+    auto cache = TsConfigCache.create(&reg, LabelSet.standard());
+    const src = "# Title\n\nSome **bold** prose with a [link](x.md) that wraps.\n\n"
+        ~ "- first\n- second\n\n> [!NOTE] heed this\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n"
+        ~ "---\n\n```d\nvoid main() {}\n```\n";
+    auto m = buildPreviewModel(reg, cache, src);
+    auto doc = flattenPreview(m, darkTheme, tPageFg, tPageBg);
+
+    foreach (w; [24, 40, 80])
+    {
+        auto a = wrapPreview(doc, w);   // re-wrap the SAME cached doc…
+        auto b = wrapPreview(doc, w);   // …twice: must be byte-identical
+        auto oneShot = layoutPreview(m, darkTheme, tPageFg, tPageBg, w);
+        assert(a == b, "wrapPreview mutated the cached doc");
+        assert(a == oneShot, "cached wrap differs from a one-shot layout");
+    }
 }
