@@ -142,3 +142,7 @@
 # GitHub Actions' shared IPs — companion to the already-excluded waf.io above; the
 # repo is live + 200 locally. Scoped to the waf project, not all of gitlab.com.
 ^https?://gitlab\.com/ita1024/
+# vis.csail.mit.edu (the MIT CSAIL Visualization Group, cited for the Bluefish
+# paper in manim/bluefish.md) times out under GitHub Actions' concurrency (live +
+# 200 locally). Surfaces on a cold lychee cache; same class as cs.cmu.edu above.
+^https?://vis\.csail\.mit\.edu/
