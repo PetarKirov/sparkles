@@ -421,18 +421,18 @@ struct PreviewTui
         else if (e.action == MouseAction.wheelDown) { top += 3; clampTop(); }
         else if (e.button == MouseButton.left
             && (e.action == MouseAction.press || e.action == MouseAction.drag)
-            && e.my >= 2 && e.my <= 1 + rows)
+            && e.mouse.row >= 2 && e.mouse.row <= 1 + rows)
         {
-            if (e.mx == width) // the scrollbar column (last, 1-based == width)
+            if (e.mouse.col == width) // the scrollbar column (last, 1-based == width)
             {
                 const span = rows > 1 ? rows - 1 : 1;
-                top = cast(long)(e.my - 2) * maxTop / span;
+                top = cast(long)(e.mouse.row - 2) * maxTop / span;
                 clampTop();
             }
             else
             {
                 // Body — start (press) or extend (drag) a line selection.
-                const line = top + (e.my - 2);
+                const line = top + (e.mouse.row - 2);
                 if (e.action == MouseAction.press)
                     selAnchor = line;
                 selCursor = line;
@@ -495,19 +495,19 @@ int runPreviewTui(ref PreviewTui t, size_t themeIdx, bool startPreview) @system
     for (;;)
     {
         const sz = term.size();
-        if (sz.cols != t.width) // width changed (or first frame) → reflow layout
+        if (sz.width != t.width) // width changed (or first frame) → reflow layout
         {
-            t.width = sz.cols;
-            t.height = sz.rows;
+            t.width = sz.width;
+            t.height = sz.height;
             t.relayout();
         }
         else
         {
-            t.height = sz.rows;
+            t.height = sz.height;
             t.clampTop();
         }
 
-        g.resize(sz.cols, sz.rows);
+        g.resize(sz.width, sz.height);
         t.paint(g);
         term.draw(g); // cell-diff: only changed cells reach the terminal
 
@@ -559,7 +559,7 @@ unittest
     {
         string s;
         foreach (x; 0 .. g.cols)
-            s ~= g.at(cast(ushort) x, y).grapheme;
+            s ~= g[cast(ushort) x, y].grapheme;
         return s;
     }
 
