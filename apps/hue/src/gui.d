@@ -367,6 +367,7 @@ int runGui(
     // Code-block copy button: the fence just copied + a countdown for the brief
     // "copied" checkmark feedback.
     int copiedFence = -1;
+    int copiedTable = -1;
     float copiedTimer = 0;
 
     // Mouse selection has two regimes (a drag stays in the one it starts in, TBL4):
@@ -700,10 +701,10 @@ int runGui(
 
         bool copyClicked; // a click landing on a copy button is not a selection
 
-        // Copy-to-clipboard button on each visible code-header row. Sits one cell
-        // in from the scrollbar gutter (1-char right padding, mirroring the header's
-        // left padding). Clicking copies the block's body and flips the icon to a
-        // checkmark for ~1.2s.
+        // Copy-to-clipboard button in a code-header row's cutout — and, the same
+        // way, a whole-table copy button in a table's top-border cutout. Both sit
+        // in the right-side cutout (the middle of the three-space gap, `lineCols-3`,
+        // a space on each side) and flip to a checkmark for ~1.2s on click.
         if (showPreview)
         {
             const mp = GetMousePosition();
@@ -713,25 +714,50 @@ int runGui(
                 if (vi >= plines.length)
                     break;
                 const pl = plines[vi];
-                if (pl.band != BandKind.codeHeader || pl.copyFence < 0)
+                const isCode = pl.band == BandKind.codeHeader && pl.copyFence >= 0;
+                const isTable = pl.copyTable >= 0;
+                if (!isCode && !isTable)
                     continue;
-                // Anchor the button to the border's copy cutout (the middle of the
-                // three-space gap, at `lineCols-3`), so it has a space on each side
-                // and lands exactly in the gap regardless of wrap-width rounding.
-                const iconX = gutterPx
-                    + (runStartCells(pl) + lineCols(pl) - 3) * cellW;
+                const iconX = gutterPx + (runStartCells(pl) + lineCols(pl) - 3) * cellW;
                 const iy = row * cellH;
                 const hovered = mp.x >= iconX && mp.x < iconX + cellW
                     && mp.y >= iy && mp.y < iy + cellH;
-                if (hovered && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT)
-                    && pl.copyFence < cast(int) preview.fences.length)
+                const clicked = hovered && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT);
+                bool copied;
+                if (isCode)
                 {
-                    SetClipboardText(preview.fences[pl.copyFence].body.toStringz);
-                    copiedFence = pl.copyFence;
-                    copiedTimer = 1.2f;
-                    copyClicked = true;
+                    if (clicked && pl.copyFence < cast(int) preview.fences.length)
+                    {
+                        auto fbody = preview.fences[pl.copyFence].body;
+                        // Match the selection copy mode: strip SGR from an ANSI fence.
+                        const txt = (ansiStrip && preview.fences[pl.copyFence].isAnsi)
+                            ? stripSgr(fbody) : fbody;
+                        SetClipboardText(txt.toStringz);
+                        copiedFence = pl.copyFence;
+                        copiedTable = -1;
+                        copiedTimer = 1.2f;
+                        copyClicked = true;
+                    }
+                    copied = pl.copyFence == copiedFence && copiedTimer > 0;
                 }
-                const copied = pl.copyFence == copiedFence && copiedTimer > 0;
+                else // whole-table copy (per --table-copy), like a grid selection
+                {
+                    if (clicked && pl.copyTable < cast(int) tables.length)
+                    {
+                        const tv = tables[pl.copyTable];
+                        const reg = TableRegion(rowLo: 0, rowHi: tv.map.numRows - 1,
+                            colLo: 0, colHi: tv.map.numCols - 1);
+                        const txt = serializeTable(reg,
+                            (size_t r, size_t c) => tv.map.cellText(r, c), tableFmt);
+                        if (txt.length)
+                            SetClipboardText(txt.toStringz);
+                        copiedTable = pl.copyTable;
+                        copiedFence = -1;
+                        copiedTimer = 1.2f;
+                        copyClicked = true;
+                    }
+                    copied = pl.copyTable == copiedTable && copiedTimer > 0;
+                }
                 const icon = copied ? "\U0000F00C" : "\U0000F0C5"; //  /
                 const col = copied ? quoteBars[2] : (hovered ? pageFg : gutterFg);
                 drawText(fonts, cstrOf(buf, icon), iconX, iy, TextStyle(0), rl(col));
