@@ -1262,6 +1262,15 @@ int runGuiTwoslash(
     float scrollY = 0;
     int shotFrame = 0;
 
+    // Hover latch, persisted across frames: the open popup's node (+1; 0 = none),
+    // its on-screen rect (for pointer hysteresis — the popup stays open while the
+    // pointer is over token-or-popup), and the hovered-token underline fade (0..1
+    // over 0.3s, matching the CSS `.twoslash-hover` `border-color 0.3s` affordance).
+    size_t hotNode = 0;
+    Rectangle hotPopup;
+    bool havePopup = false;
+    float fadeT = 0;
+
     while (!WindowShouldClose())
     {
         const cellW = fonts.cellW();
@@ -1341,18 +1350,55 @@ int runGuiTwoslash(
             }
         }
 
-        // Hover popups, drawn last (on top) for whichever token the mouse is over.
-        // HUE_GUI_HOVER=<index> force-shows the Nth hover popup (golden captures).
+        // Hover: latch the token under the pointer — or keep the open popup while
+        // the pointer is over IT (hysteresis, so you can move down into the popup)
+        // — fade in the token's dotted underline, and draw the popup last (on top).
+        // HUE_GUI_HOVER=<index> force-shows the Nth popup (golden captures).
         const mouse = GetMousePosition();
-        foreach (i, ref const h; hovers)
+        size_t overNode = 0;
+        foreach (ref const h; hovers)
+            if (mouse.x >= h.x && mouse.x <= h.x + h.w
+                    && mouse.y >= h.y && mouse.y <= h.y + h.h)
+                overNode = h.node + 1;
+        if (overNode == 0 && hotNode != 0 && havePopup
+                && mouse.x >= hotPopup.x && mouse.x <= hotPopup.x + hotPopup.width
+                && mouse.y >= hotPopup.y && mouse.y <= hotPopup.y + hotPopup.height)
+            overNode = hotNode; // still over the open popup → keep it open
+        bool forced = false;
+        if (forceHover >= 0 && forceHover < cast(int) hovers.length)
         {
-            const forced = forceHover >= 0 && cast(int) i == forceHover;
-            if (!forced && (mouse.x < h.x || mouse.x > h.x + h.w
-                    || mouse.y < h.y || mouse.y > h.y + h.h))
-                continue;
-            drawPopup(fonts, buf, tw, h.node, cast(float) h.x, cast(float)(h.y + h.h),
-                cellW, cellH, theme, cache, pal, pageFg, pageBg);
+            overNode = hovers[forceHover].node + 1;
+            forced = true;
         }
+
+        // Advance the underline fade while the same token stays hot; reset on change.
+        if (overNode != hotNode)
+            fadeT = 0;
+        hotNode = overNode;
+        if (hotNode != 0)
+        {
+            fadeT += GetFrameTime() / 0.3f;
+            if (fadeT > 1 || forced)
+                fadeT = 1;
+        }
+
+        havePopup = false;
+        if (hotNode != 0)
+            foreach (ref const h; hovers)
+                if (h.node + 1 == hotNode)
+                {
+                    // The hovered token's dotted underline (currentColor), faded in.
+                    const uy = h.y + h.h - 2;
+                    const uc = Color(pageFg.r, pageFg.g, pageFg.b, cast(ubyte)(fadeT * 255));
+                    for (int i = 0; i + 2 <= h.w; i += 4)
+                        DrawRectangle(h.x + i, uy, 2, 1, uc);
+                    // The popup on top; remember its rect for next-frame hysteresis.
+                    hotPopup = drawPopup(fonts, buf, tw, h.node,
+                        cast(float) h.x, cast(float)(h.y + h.h),
+                        cellW, cellH, theme, cache, pal, pageFg, pageBg);
+                    havePopup = true;
+                    break;
+                }
 
         EndDrawing();
 
@@ -1448,7 +1494,7 @@ private int drawBelowBlock(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
 /// painted through `RaylibCanvas`. The type signature (row 0) is a single
 /// `Slot.code` run in the widget model, so it is overpainted with the per-token
 /// re-highlighted signature — the one thing the widget model leaves to the painter.
-private void drawPopup(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
+private Rectangle drawPopup(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
     in TwoslashReturn tw, size_t nodeIndex, float x, float y, int cellW, int cellH,
     in ResolvedTheme theme, ref TsConfigCache cache, in Palette pal,
     RgbColor pageFg, RgbColor pageBg) @system
@@ -1476,6 +1522,10 @@ private void drawPopup(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
             drawStyledRuns(fonts, buf, sigText, sig[], sx, sy, theme, pageFg);
             break;
         }
+
+    // The popup's on-screen rect (px), for the caller's pointer hysteresis.
+    const box = frames[tree.root].rect;
+    return Rectangle(x, y, cast(float)(box.w * cellW), cast(float)(box.h * cellH));
 }
 
 
