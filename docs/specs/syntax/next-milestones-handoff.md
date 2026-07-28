@@ -242,12 +242,17 @@ De-dup rules (`download_themes.d` uses a `seen` set).
 
 > [!IMPORTANT]
 > **Read [label-vocabulary dialects](./label-vocabulary-dialects.md) before
-> lifting `mapScopeToLabel`.** "Many scopes map to `null` (drop them)" is listed
-> above as behavior to preserve, but part of that dropping is a defect: labels the
-> shipped grammars emit have no route from TextMate scope space at all. Lifting the
-> mapping as-is propagates it into the runtime parser. The generator has since
-> gained `excessBudget`/`mergeByLabel` (specificity ranking and per-property
-> merging) — lift those too, not just the table.
+> lifting `mapScopeToLabel`.** "Many scopes map to `null` (drop them)" is only
+> half right: some of that dropping was a defect, since labels the shipped
+> grammars emit had no route from TextMate scope space at all. The table has since
+> gained those routes, and the tool gained `excessBudget` (specificity ranking, so
+> a narrow scope cannot repaint a broad label) and `mergeByLabel` (per-property
+> merging, reproducing the cascade a `ThemeRule` cannot express). **Lift all
+> three, not just the table** — and note that `mergeByLabel` means one emitted
+> rule per label, so the parser should merge rather than append.
+>
+> `sparkles.syntax.ts.coverage` audits the result against the grammar bundle and
+> fails `dub test :syntax` on a regression; point it at a parsed theme too.
 
 **Tests.** Round-trip a known `Theme` through native JSON (`==`); parse a small
 TextMate JSON fixture and assert specific `ThemeRule`s resolve

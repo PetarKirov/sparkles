@@ -670,10 +670,12 @@ unittest
     assertWellFormed(events, source);
 
     const spans = labeledSpans(events, source);
-    // Bundled json highlights: numbers and constants are unambiguous.
+    // Bundled json highlights: numbers and constants are unambiguous. The
+    // grammar captures `@number`, which is an upstream spelling — it arrives
+    // as the canonical `constant.numeric` via `standardAliases`.
     import std.algorithm.searching : canFind;
 
-    assert(spans.canFind("number:1"), spans.length ? spans[0] : "no spans");
+    assert(spans.canFind("constant.numeric:1"), spans.length ? spans[0] : "no spans");
     assert(spans.canFind("constant.builtin:true"));
 }
 
@@ -700,7 +702,7 @@ unittest
     const source = `[42, 17, 43]`;
     auto events = eventsForTest(config, source);
     assertWellFormed(events, source);
-    assert(labeledSpans(events, source) == ["number:42", "number:43"]);
+    assert(labeledSpans(events, source) == ["constant.numeric:42", "constant.numeric:43"]);
 }
 
 @("ts.highlighter.anyOfPredicate")
@@ -711,7 +713,7 @@ unittest
         `((number) @number (#any-of? @number "1" "3"))`);
     const source = `[1, 2, 3]`;
     auto events = eventsForTest(config, source);
-    assert(labeledSpans(events, source) == ["number:1", "number:3"]);
+    assert(labeledSpans(events, source) == ["constant.numeric:1", "constant.numeric:3"]);
 }
 
 @("ts.highlighter.unsupportedPredicateDegrades")
@@ -726,7 +728,7 @@ unittest
 
     const source = `["s", 1]`;
     auto events = eventsForTest(config, source);
-    assert(labeledSpans(events, source) == ["number:1"]);
+    assert(labeledSpans(events, source) == ["constant.numeric:1"]);
 }
 
 @("ts.highlighter.invalidRegexDegrades")
@@ -739,7 +741,7 @@ unittest
 
     const source = `["s", 1]`;
     auto events = eventsForTest(config, source);
-    assert(labeledSpans(events, source) == ["number:1"]);
+    assert(labeledSpans(events, source) == ["constant.numeric:1"]);
 }
 
 @("ts.highlighter.nestingIsWellFormed")
@@ -784,7 +786,7 @@ unittest
     auto html = appender!string;
     renderHtml(source, events, resolved, html,
         HtmlOptions(mode: HtmlMode.cssClasses));
-    assert(html[].canFind(`<span class="syn-number">1</span>`), html[]);
+    assert(html[].canFind(`<span class="syn-constant-numeric">1</span>`), html[]);
     assert(html[].canFind(`<span class="syn-constant-builtin">true</span>`), html[]);
 }
 
@@ -867,9 +869,8 @@ unittest
     import std.algorithm.searching : canFind;
 
     // markdown injects its `(inline)` content into markdown_inline. A backslash
-    // escape is inline-only and markdown_inline labels it `@string.escape`
-    // (which resolves in our vocabulary — unlike its neovim-style
-    // `@text.strong`), so the label proves the self-injection recursed.
+    // escape is inline-only and markdown_inline labels it `@string.escape`, so
+    // the label proves the self-injection recursed.
     const source = "a paragraph with an escape \\* here\n";
     auto events = injectedEventsForTest("markdown", source);
     assertWellFormed(events, source);
@@ -877,6 +878,30 @@ unittest
     const spans = labeledSpans(events, source);
     assert(spans.canFind!(s => s.canFind("string.escape")),
         spans.length ? spans[0] : "no string.escape — inline injection did not fire");
+}
+
+@("ts.highlighter.markdownNeovimDialectResolves")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind;
+
+    // The bundled markdown grammars still speak the old neovim dialect —
+    // `@text.title`, `@text.strong`, `@text.emphasis` — none of which chops to
+    // anything in our hierarchical vocabulary. Before `standardAliases` this
+    // whole path emitted no styleable label, so headings and emphasis rendered
+    // as plain text in every theme.
+    const source = "# Title\n\ntext with **bold** and *italic*\n";
+    auto events = injectedEventsForTest("markdown", source);
+    assertWellFormed(events, source);
+
+    const spans = labeledSpans(events, source);
+    assert(spans.canFind!(s => s.canFind("markup.heading")),
+        spans.length ? spans[0] : "no markup.heading — @text.title did not resolve");
+    assert(spans.canFind!(s => s.canFind("markup.bold")),
+        spans.length ? spans[0] : "no markup.bold — @text.strong did not resolve");
+    assert(spans.canFind!(s => s.canFind("markup.italic")),
+        spans.length ? spans[0] : "no markup.italic — @text.emphasis did not resolve");
 }
 
 @("ts.highlighter.markdownStaticSetLanguage")

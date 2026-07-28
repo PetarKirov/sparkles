@@ -17,13 +17,21 @@ nixpkgs); a TextMate-style fast mode plugs into the same seam later.
 
 ## Scope-compatible names, resolved once
 
-tree-sitter capture names deliberately track TextMate scope names — the
-convergence that lets **one theme layer drive every engine**. The canonical
-vocabulary merges the reference highlighter's names with Helix's theme
-scopes; both capture names and theme selectors resolve by
-**longest-dot-prefix** (Helix's rule) — one algorithm, run once at configure
-time into flat integer-indexed tables, so the render path never matches
-strings.
+tree-sitter capture names broadly track TextMate scope names — the convergence
+that lets **one theme layer drive every engine**. The canonical vocabulary is
+hierarchical (Helix's theme scopes), because resolution is
+**longest-dot-prefix** and only a hierarchy gives it somewhere to degrade to:
+`constant.numeric.float` falls back to `constant.numeric`, then `constant`.
+Both capture names and theme selectors resolve that way, run once at configure
+time into flat integer-indexed tables, so the render path never matches strings.
+
+The convergence is only broad, though. Upstream tree-sitter and older neovim
+queries spell many of the same concepts flat — `number`, `property`,
+`text.strong` — which chop to nothing. `standardAliases` maps those onto the
+canonical names during **capture** resolution only; theme selectors never
+consult it. Without that layer a third of what the shipped grammars emit
+reaches no styleable label. See
+[label-vocabulary dialects](../../../specs/syntax/label-vocabulary-dialects.md).
 
 ## Totality and guards
 
