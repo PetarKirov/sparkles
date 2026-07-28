@@ -27,15 +27,24 @@ a paginator) folds these instead of parsing markup.
 
 | Symbol                      | What it is                                                                          |
 | --------------------------- | ----------------------------------------------------------------------------------- |
-| `standardLabels`            | the canonical vocabulary: 72 dotted names, sorted                                   |
-| `LabelSet.standard()`       | wraps `standardLabels`, allocation-free                                             |
-| `LabelSet.fromNames(names)` | custom vocabulary (sorted + deduplicated)                                           |
+| `standardLabels`            | the canonical vocabulary: 65 dotted names, sorted                                   |
+| `standardAliases`           | 26 other-dialect capture spellings mapped onto it                                   |
+| `LabelSet.standard()`       | wraps both, allocation-free                                                         |
+| `LabelSet.fromNames(names)` | custom vocabulary (sorted + deduplicated); carries no aliases                       |
 | `find(name)`                | exact lookup, binary search                                                         |
 | `resolve(name)`             | **longest-dot-prefix**: `function.builtin.static` → `function.builtin` → `function` |
 
 Resolution is Helix's rule, deliberately not the reference crate's
-part-subset match — one predictable algorithm shared by capture names and
-theme selectors. The whole configure-time path is CTFE-able.
+part-subset match. The whole configure-time path is CTFE-able.
+
+`resolve` also consults `standardAliases` at each prefix depth, after the
+vocabulary misses — so `number` arrives as `constant.numeric` and
+`text.strong` as `markup.bold`. This is why capture-name resolution is **not**
+the same algorithm as theme-selector resolution: selectors are written in our
+own vocabulary, while capture names arrive from a grammar supply chain that
+spells the same concepts several ways. `find` is unaffected, and an alias can
+never shadow a real label. See
+[label-vocabulary dialects](../../../specs/syntax/label-vocabulary-dialects.md).
 
 ## Colors (`sparkles.syntax.color`)
 

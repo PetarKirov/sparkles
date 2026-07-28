@@ -73,6 +73,7 @@ static immutable ScopeMapRule[] scopeMappingRules = [
 
     ScopeMapRule("string.regexp", "string.regexp"),
     ScopeMapRule("string.quoted", "string"),
+    ScopeMapRule("string.other.link", "string.special.url"),
     ScopeMapRule("string.special", "string.special"),
     ScopeMapRule("string", "string"),
 
@@ -80,8 +81,14 @@ static immutable ScopeMapRule[] scopeMappingRules = [
     ScopeMapRule("constant.numeric.float", "constant.numeric.float"),
     ScopeMapRule("constant.numeric.integer", "constant.numeric.integer"),
     ScopeMapRule("constant.numeric", "constant.numeric"),
+    ScopeMapRule("constant.language.boolean", "constant.builtin.boolean"),
     ScopeMapRule("constant.language", "constant.builtin"),
     ScopeMapRule("constant.builtin", "constant.builtin"),
+    // A format placeholder (`%s`, `{}`) is the `punctuation.special` a
+    // tree-sitter grammar captures, not a constant; a symbol literal (`:sym`)
+    // is `string.special.symbol`. Both must precede the bare `constant` rule.
+    ScopeMapRule("constant.other.placeholder", "punctuation.special"),
+    ScopeMapRule("constant.other.symbol", "string.special.symbol"),
     ScopeMapRule("constant", "constant"),
 
     ScopeMapRule("variable.language", "variable.builtin"),
@@ -91,23 +98,39 @@ static immutable ScopeMapRule[] scopeMappingRules = [
     ScopeMapRule("variable.other", "variable"),
     ScopeMapRule("variable", "variable"),
 
+    // `label` and `embedded` have no dotted parent, so unlike `string.special`
+    // (which inherits a `string` rule through longest-dot-prefix) they stay
+    // unstyled unless some scope routes to them. These routes are their only
+    // path from TextMate scope space.
+    ScopeMapRule("entity.name.function.constructor", "function.constructor"),
     ScopeMapRule("entity.name.function.member", "function.method"),
     ScopeMapRule("entity.name.function", "function"),
     ScopeMapRule("entity.name.method", "function.method"),
+    ScopeMapRule("entity.name.label", "label"),
     ScopeMapRule("support.function", "function.builtin"),
 
+    // Namespace/module names, which grammars capture as `@module`/`@namespace`.
+    // These precede `entity.name.type`, which would otherwise claim them as
+    // plain types and leave `module` with no rule at all.
+    ScopeMapRule("entity.name.type.namespace", "module"),
+    ScopeMapRule("entity.name.namespace", "module"),
+    ScopeMapRule("entity.name.module", "module"),
     ScopeMapRule("entity.name.type.class", "type"),
     ScopeMapRule("entity.name.type", "type"),
     ScopeMapRule("entity.name.class", "type"),
     ScopeMapRule("entity.other.inherited-class", "type"),
+    ScopeMapRule("support.type.property-name", "string.special.key"),
     ScopeMapRule("support.type", "type.builtin"),
+    ScopeMapRule("support.class.constructor", "function.constructor"),
     ScopeMapRule("support.class", "type"),
 
+    ScopeMapRule("keyword.control.directive", "keyword.directive"),
     ScopeMapRule("keyword.control", "keyword.control"),
     ScopeMapRule("keyword.operator", "operator"),
     ScopeMapRule("keyword.directive", "keyword.directive"),
     ScopeMapRule("keyword.storage", "keyword.storage"),
     ScopeMapRule("keyword", "keyword"),
+    ScopeMapRule("storage.type.function", "keyword.function"),
     ScopeMapRule("storage.type", "keyword.storage"),
     ScopeMapRule("storage.modifier", "keyword.storage"),
     ScopeMapRule("storage", "keyword.storage"),
@@ -115,6 +138,8 @@ static immutable ScopeMapRule[] scopeMappingRules = [
     ScopeMapRule("entity.name.tag", "tag"),
     ScopeMapRule("entity.other.attribute-name", "tag.attribute"),
     ScopeMapRule("meta.attribute", "tag.attribute"),
+    ScopeMapRule("meta.embedded", "embedded"),
+    ScopeMapRule("meta.preprocessor", "keyword.directive"),
     ScopeMapRule("punctuation.definition.tag", "tag"),
 
     // Diff decoration has first-class labels. These must precede the generic
@@ -127,6 +152,10 @@ static immutable ScopeMapRule[] scopeMappingRules = [
     ScopeMapRule("markup.changed", "diff.delta"),
     ScopeMapRule("punctuation.definition.changed", "diff.delta"),
 
+    // A template-expression delimiter (`${`, `#{`) is what grammars capture as
+    // `punctuation.special`. An exact route keeps it at excess 0, which the
+    // punctuation family's zero budget requires.
+    ScopeMapRule("punctuation.definition.template-expression", "punctuation.special"),
     ScopeMapRule("punctuation.section", "punctuation.bracket"),
     ScopeMapRule("punctuation.separator", "punctuation.delimiter"),
     ScopeMapRule("punctuation.terminator", "punctuation.delimiter"),

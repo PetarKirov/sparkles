@@ -1,16 +1,22 @@
 # `sparkles:syntax` — label-vocabulary dialect reconciliation
 
-_A defect report and remediation plan for `label.d`'s `standardLabels`. The
-vocabulary merges two capture-name dialects that are synonyms of each other and
-reconciles neither, so a third of what the shipped grammars emit can never be
+_A defect report and remediation record for `label.d`'s `standardLabels`. The
+vocabulary merged two capture-name dialects that are synonyms of each other and
+reconciled neither, so a third of what the shipped grammars emit could not be
 styled by any built-in theme. Written after the theme-generator specificity fix
 (`tools/download_themes.d`), which addressed a different, smaller problem in the
 same area. File:line references are anchors, not gospel — confirm before
 editing._
 
-## 1. Symptom
+> [!NOTE]
+> **Status: D1–D4 implemented.** Sections 1–3 describe the defect as found and
+> are kept as the rationale; §4 records what each change did, §5 how it is
+> verified, and §6 what is left. `sparkles.syntax.ts.coverage` now fails
+> `dub test :syntax` if this regresses.
 
-Numbers are uncolored in every built-in theme, in 20 of the 26 bundled grammars:
+## 1. Symptom (as found)
+
+Numbers were uncolored in every built-in theme, in 20 of the 26 bundled grammars:
 
 ```bash
 printf 'x = 42\n' > /tmp/t.py
@@ -56,10 +62,11 @@ upstream has since moved to short flat names (`number`, `property`, `boolean`)
 that do not track TextMate at all — and the nixpkgs bundle behind
 `$SPARKLES_TS_GRAMMAR_PATH` ships exactly those queries.
 
-The codebase already brushed against this without generalizing it:
-`ts/highlighter.d:871` notes a markdown capture "which resolves in our
-vocabulary — unlike its neovim-style `@text.strong`". That is this defect, seen
-once and read as a quirk.
+The codebase already brushed against this without generalizing it: the
+`markdownInlineSelfInjection` test carried a comment noting that a markdown
+capture "resolves in our vocabulary — unlike its neovim-style `@text.strong`".
+That is this defect, seen once and read as a quirk. The aside is now gone and
+`markdownNeovimDialectResolves` asserts the general case instead.
 
 ### Measured coverage
 
@@ -87,6 +94,22 @@ The gap splits into two distinct sub-problems that need different fixes:
   `string.special` (7), `embedded` (6), `label` (6), `keyword.directive` (3),
   `keyword.function` (3), `string.special.key|path|symbol`. Fixable only on the
   **theme** side, by extending `scopeMappingRules`.
+
+  > [!IMPORTANT]
+  > The A2 list above **overstates the gap**, and the correction shaped the
+  > design. It was measured against the set of selectors themes emit, but theme
+  > lookup is `ResolvedTheme`, which is longest-dot-prefix: a label with no rule
+  > of its own still inherits an ancestor's. `string.special` is styled by any
+  > `string` rule, `keyword.directive` by any `keyword` rule. Only a label whose
+  > **whole dotted chain** is unstyled is a real gap — which, of the list above,
+  > means the flat ones: `constructor`, `embedded`, `label`, and
+  > `punctuation.special` in themes that have no bare `punctuation` rule.
+  >
+  > Hence the D1 preference for hierarchical canonical names is not only about
+  > `resolve` degrading — it is what makes a label inheritable. A flat label is
+  > unstylable unless something routes to it exactly; `function.constructor` and
+  > `constant.builtin.boolean` inherit for free. `sparkles.syntax.ts.coverage`
+  > measures the resolved style, not selector membership, for this reason.
 
 A third group is pure waste in the other direction — labels every theme defines
 that no grammar ever emits: `punctuation` (bare), `constant.character.escape`,
@@ -140,12 +163,19 @@ class behind the punctuation/underline bugs, it is already contained by
 TextMate is one selector dialect among several; removing it reconciles nothing.
 The remediation below is identical with or without it.
 
-## 4. Remediation
+## 4. Remediation (implemented)
 
-### D1 — Canonical dialect + alias table (capture side)
+### D1 — Canonical dialect + alias table (capture side) — **done**
 
 **Goal.** One canonical name per concept; every other dialect spelling resolves
 onto it at configure time.
+
+**Landed as** `standardAliases` + `LabelAlias` in `label.d`, consulted by
+`LabelSet.resolve` after the vocabulary misses at each prefix depth. 26 aliases;
+`standardLabels` went from 73 entries to 65 as the duplicate spellings became
+aliases. `LabelSet.fromNames` carries none — a caller supplying its own
+vocabulary owns the spellings that reach it. Two `static assert`s hold the
+invariants: every alias target is a real label, and no alias is also a label.
 
 **Canonical direction: the hierarchical (Helix-style) names.** Not taste — the
 vocabulary's own resolution algorithm rewards it. Longest-dot-prefix degrades
@@ -191,81 +221,116 @@ vocabulary. That premise change must be written into `index.md` (§5 D3).
 
 `@none` and `@spell` stay unresolved — they are intentional no-ops upstream.
 
-**Vocabulary cleanup.** The aliased spellings stop being labels and become
-alias entries; `boolean` needs `constant.builtin.boolean` added as its canonical
-target. `variable.other.member` is a TextMate-side duplicate of
-`variable.member` that no grammar emits — demote it to an alias too.
+**Vocabulary cleanup.** The aliased spellings stopped being labels.
+`constant.builtin.boolean` and `function.constructor` were **added** as
+canonical targets: `boolean` and `constructor` are flat upstream names, and a
+flat label inherits nothing, so parking them under an existing branch is what
+makes them styleable at all (see the correction in §2). `variable.other.member`
+was a TextMate-side duplicate of `variable.member` that no grammar emits —
+demoted to an alias, which also stopped the generator's identity fast-path from
+emitting rules for it.
 
 **Traps.** `standardLabels` carries `static assert`s for byte-wise sorted +
-unique and for `LabelId` capacity (`label.d:108-111`); the alias table needs the
-same discipline or its own. Removing a label changes `LabelId` values, so any
-persisted/golden id must be re-derived — grep for hardcoded ids before touching
-the list. `resolveTheme` resolves theme selectors against the same `LabelSet`,
-so an alias must not be reachable as a _selector_ or two rules could target one
-label.
+unique and for `LabelId` capacity (`label.d`); the alias table now carries its
+own. Removing a label changes `LabelId` values, so any persisted/golden id must
+be re-derived. `resolveTheme` resolves theme selectors against the same
+`LabelSet`, so an alias must not be reachable as a _selector_ — enforced by the
+"no alias is also a label" assert.
 
-### D2 — Missing scope routes (theme side)
+### D2 — Missing scope routes (theme side) — **done**
 
 **Goal.** Give the (A2) labels a path from TextMate scope space so generated
-themes define them. Extends `scopeMappingRules` in `tools/download_themes.d`;
-same class as the diff-label routes already added.
+themes define them. Extended `scopeMappingRules` in `tools/download_themes.d`;
+same class as the diff-label routes added earlier.
 
-| label                 | candidate TextMate scopes                                                  |
-| --------------------- | -------------------------------------------------------------------------- |
-| `constructor`         | `entity.name.function.constructor`, `support.class.constructor`            |
-| `punctuation.special` | `punctuation.definition.template-expression`, `constant.other.placeholder` |
-| `string.special.key`  | `support.type.property-name`                                               |
-| `string.special.url`  | `string.other.link`                                                        |
-| `embedded`            | `meta.embedded`                                                            |
-| `label`               | `entity.name.label`                                                        |
-| `keyword.directive`   | `keyword.control.directive`, `meta.preprocessor`                           |
-| `keyword.function`    | `storage.type.function`                                                    |
+| label                      | TextMate scopes routed                                                      |
+| -------------------------- | --------------------------------------------------------------------------- |
+| `function.constructor`     | `entity.name.function.constructor`, `support.class.constructor`             |
+| `punctuation.special`      | `punctuation.definition.template-expression`, `constant.other.placeholder`  |
+| `module`                   | `entity.name.type.namespace`, `entity.name.namespace`, `entity.name.module` |
+| `string.special.key`       | `support.type.property-name`                                                |
+| `string.special.url`       | `string.other.link`                                                         |
+| `string.special.symbol`    | `constant.other.symbol`                                                     |
+| `constant.builtin.boolean` | `constant.language.boolean`                                                 |
+| `embedded`                 | `meta.embedded`                                                             |
+| `label`                    | `entity.name.label`                                                         |
+| `keyword.directive`        | `keyword.control.directive`, `meta.preprocessor`                            |
+| `keyword.function`         | `storage.type.function`                                                     |
 
-Several of these appear in the generator's `--report` dropped-scope list today,
-so the fix is routing what is already being discarded rather than inventing
-mappings.
+Most of these were already in the generator's `--report` dropped-scope list, so
+the fix was routing what was being discarded rather than inventing mappings.
+Ordering matters: each must precede the broader rule that would otherwise claim
+it — the `module` routes before `entity.name.type`, the placeholder/symbol
+routes before bare `constant`.
 
-### D3 — Documentation corrections
+### D3 — Documentation corrections — **done**
 
-- [`index.md`](./index.md) §2 — the claim that capture names track TextMate
-  scope names is false for the queries actually shipped; and "one algorithm for
-  captures and themes" (also §5's prior-art table) stops holding once D1 lands.
-- [`next-milestones-handoff.md`](./next-milestones-handoff.md) item 3 lists
-  "many scopes map to `null` (drop them)" as a **trap to preserve** when lifting
-  `mapScopeToLabel` into the runtime theme parser. As written, item 3 would
-  inherit this defect. It needs a pointer here.
+- [`index.md`](./index.md) §2 — the vocabulary bullet now states that the
+  convergence is only broad, that the vocabulary is hierarchical for a reason,
+  and that capture and selector resolution deliberately differ. §5's prior-art
+  table row was corrected to match.
+- [`next-milestones-handoff.md`](./next-milestones-handoff.md) item 3 — the
+  "drop them" trap now points here, and tells the runtime parser to lift
+  `excessBudget` and `mergeByLabel` alongside the table.
+- `label.d`'s module header, `docs/libs/syntax/explanation/design.md`, and
+  `docs/libs/syntax/reference/core.md` carried the same premise; all corrected.
 
-### D4 — A coverage audit that fails CI
+### D4 — A coverage audit that fails CI — **done**
 
-The numbers above came from ad-hoc analysis. They should be a checked-in D tool
-(per the repo's D-over-throwaway-script rule) — the natural home is a
-`--coverage` mode beside the generator's existing `--report`, or an `apps/ci`
-subcommand: walk `$SPARKLES_TS_GRAMMAR_PATH`, resolve every capture through
-`LabelSet.standard()`, and fail when a capture emitted by N or more grammars
-resolves to a label no built-in theme styles. That turns this class of defect
-into a build error instead of something a user notices in a screenshot.
+Landed as `sparkles.syntax.ts.coverage`: `auditBundle` walks every
+`<lang>/queries/highlights.scm` under `$SPARKLES_TS_GRAMMAR_PATH`, resolves each
+capture through a `LabelSet`, and reports what a `ResolvedTheme` makes of it. A
+unittest asserts that no capture the bundle emits goes unstyled by `builtinDark`,
+skipping when the bundle is absent, so `dub test :syntax` fails on a regression
+with the offending captures and their languages listed.
 
-## 5. Suggested order
+It measures the **resolved** style, not selector membership — the mistake §2
+corrects. The query scanner skips `;` comments and string literals (a `#match?`
+pattern or an email in a header comment otherwise reads as a capture) and drops
+`_`-prefixed predicate-only captures.
 
-```
-D1 alias table        ──► D3 doc corrections   (D3 records what D1 changed)
-D2 scope routes           (independent, small — generator only)
-D4 coverage audit         (after D1+D2, to lock the result in)
-```
+An explicit `plainText` allowlist carries the captures that are _supposed_ to
+render unstyled: `none` and `spell` (upstream no-ops), `text` (D's `__EOF__`
+region), `embedded` (the injected grammar supplies the colors), and `label`
+(goto labels read as ordinary identifiers in TextMate themes). Every entry is a
+capture the audit can no longer protect, so the list should stay short.
 
-D2 is independently shippable and low-risk. D1 is the substantive change and
-the one that fixes numbers. D4 is what prevents the regression from recurring
-silently.
+## 5. Verification
 
-## 6. Verification
+All of these are in place:
 
 - **Direct:** `hue --tui --theme=catppuccin-mocha` over a Python file — `42`
-  renders peach, not `ESC[39m`.
-- **Unit:** `LabelSet.standard().resolve("number") == find("constant.numeric")`
-  for each alias-table row; `@none`/`@spell` still resolve to `LabelId.none`.
-- **Regression:** the existing `themes.builtins.resolveCleanly` unittest in the
-  generated `themes.d`, plus a new assertion that every label a bundled grammar
-  emits has a rule in `builtinDark`.
-- **Markdown end-to-end:** a `# heading` and `**bold**` through the tree-sitter
-  markdown path emit `markup.heading` / `markup.bold` spans (they emit nothing
-  today).
+  renders `ESC[38;5;216m` (Catppuccin's peach), not `ESC[39m`.
+- **Unit:** `label.LabelSet.resolveAlias` covers the dialect spellings and the
+  chop around them (`number.float` exact, `number.weird` → `constant.numeric`);
+  `label.LabelSet.aliasesNeverShadowLabels` asserts every canonical name still
+  resolves to itself and every alias lands on a real, distinct label;
+  `@none`/`@spell` still resolve to `LabelId.none`.
+- **Regression:** `ts.coverage.auditBundle.everyCaptureIsStyled` over the whole
+  bundle, plus `ts.coverage.captureNames.skipsCommentsAndStrings` for the
+  scanner.
+- **Markdown end-to-end:** `ts.highlighter.markdownNeovimDialectResolves` — a
+  `# Title` with `**bold**` and `*italic*` now emits `markup.heading`,
+  `markup.bold` and `markup.italic` spans, where the neovim `@text.*` dialect
+  previously emitted nothing styleable.
+- The six `ts.highlighter` tests that asserted `number:…` spans now assert
+  `constant.numeric:…`, which is the alias working end-to-end through a real
+  grammar.
+
+## 6. What is left
+
+- **`punctuation.special` is still unstyled in themes with no bare `punctuation`
+  rule.** The two routes only fire for themes that define template-expression or
+  placeholder scopes. It inherits `punctuation` where that exists, so the visible
+  effect is limited to `${`-style delimiters rendering as plain text in some
+  themes.
+- **The `plainText` allowlist is a judgement call.** `label` and `embedded` are
+  in it because TextMate themes essentially never style them, not because that
+  is provably right; a Helix-TOML theme source would define both.
+- **Descendant selectors are still mis-parsed.** A TextMate scope like
+  `"markup.raw.block markup.inline.raw"` (space-separated = descendant) is
+  treated as one scope by the generator, so it maps through its first element.
+  Correct handling is to use the last element. Low impact today because
+  `excessBudget` drops most of them, but it is a real gap in the importer.
+- **Only `builtinDark` is audited.** Extending `auditBundle` across all 36 themes
+  would catch per-theme holes, at the cost of a much noisier assertion.

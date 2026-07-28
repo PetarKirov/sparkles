@@ -2,10 +2,9 @@
 The label vocabulary: canonical dotted highlight names and their interning.
 
 Both engine families converge on dot-separated semantic names — tree-sitter
-capture names deliberately track TextMate scope names — so one vocabulary
-(and one theme layer) drives every engine. $(LREF standardLabels) is the
-canonical list (the union of the reference tree-sitter highlighter's
-recognized names and Helix's theme scopes); $(LREF LabelSet) interns names to
+capture names broadly track TextMate scope names — so one vocabulary (and one
+theme layer) drives every engine. $(LREF standardLabels) is the canonical list,
+following Helix's hierarchical theme scopes; $(LREF LabelSet) interns names to
 `LabelId`s at configure time.
 
 Resolution semantics are $(B longest-dot-prefix) (Helix's rule, shared with
@@ -13,10 +12,18 @@ theme resolution): `"function.builtin.static"` tries the full name, then
 `"function.builtin"`, then `"function"`. This deliberately diverges from the
 reference crate's part-subset rule (`"a.c"` matching capture `"a.b.c"`) —
 prefix matching is order-preserving and uses one algorithm everywhere.
+
+The convergence is only broad, which is why the vocabulary is hierarchical and
+why $(LREF standardAliases) exists: upstream tree-sitter and older neovim
+queries spell many of the same concepts flat (`number`, `property`,
+`text.strong`), and a flat name gives longest-dot-prefix nothing to fall back
+to. $(LREF LabelSet.resolve) folds those spellings onto the canonical names —
+$(B capture names only), never theme selectors.
 */
 module sparkles.syntax.label;
 
 import std.algorithm.comparison : cmp;
+import std.algorithm.iteration : map;
 import std.algorithm.sorting : isStrictlyMonotonic;
 
 import sparkles.syntax.event : LabelId;
@@ -24,34 +31,33 @@ import sparkles.syntax.event : LabelId;
 /**
 The canonical scope-compatible label names, sorted (byte-wise) and unique.
 
-Sources: the reference tree-sitter highlighter's recognized capture names and
-Helix's theme scopes, merged. Consumers with different needs can build a
-custom vocabulary via $(LREF LabelSet.fromNames).
+Hierarchical throughout, following Helix's theme scopes: a flat name would
+give $(LREF LabelSet.resolve) nothing to degrade to, and a theme nothing to
+inherit from. Other dialects' flat spellings live in $(LREF standardAliases)
+rather than here, so each concept has exactly one label. Consumers with
+different needs can build a custom vocabulary via $(LREF LabelSet.fromNames).
 */
 static immutable string[] standardLabels = [
-    "attribute",
-    "boolean",
     "comment",
     "comment.block",
     "comment.documentation",
     "comment.line",
     "constant",
     "constant.builtin",
+    "constant.builtin.boolean",
     "constant.character",
     "constant.character.escape",
     "constant.numeric",
     "constant.numeric.float",
     "constant.numeric.integer",
-    "constructor",
-    "constructor.builtin",
     "diff.delta",
     "diff.minus",
     "diff.plus",
     "embedded",
     "error",
-    "escape",
     "function",
     "function.builtin",
+    "function.constructor",
     "function.macro",
     "function.method",
     "keyword",
@@ -76,11 +82,7 @@ static immutable string[] standardLabels = [
     "markup.raw.inline",
     "markup.strikethrough",
     "module",
-    "namespace",
-    "number",
     "operator",
-    "property",
-    "property.builtin",
     "punctuation",
     "punctuation.bracket",
     "punctuation.delimiter",
@@ -100,7 +102,6 @@ static immutable string[] standardLabels = [
     "variable",
     "variable.builtin",
     "variable.member",
-    "variable.other.member",
     "variable.parameter",
 ];
 
@@ -109,6 +110,100 @@ static assert(standardLabels.isStrictlyMonotonic,
     "standardLabels must be byte-wise sorted and unique");
 static assert(standardLabels.length < LabelId.none.value,
     "standardLabels exceeds the LabelId capacity");
+
+/// One dialect spelling and the $(LREF standardLabels) entry it means.
+struct LabelAlias
+{
+    string name;      /// the non-canonical capture name, as grammars write it
+    string canonical; /// the vocabulary entry it resolves to
+}
+
+/**
+Capture-name spellings from other dialects, mapped onto the canonical
+vocabulary.
+
+$(LREF standardLabels) is hierarchical (`constant.numeric`, `variable.member`)
+because $(LREF LabelSet.resolve) degrades by chopping dotted segments, and only
+a hierarchy gives it somewhere to degrade to: `constant.numeric.float` falls
+back to `constant.numeric`, then `constant`. Upstream tree-sitter and older
+neovim queries spell many of the same concepts flat (`number`, `property`,
+`text.strong`), which chop to nothing.
+
+The grammars behind `$SPARKLES_TS_GRAMMAR_PATH` are shipped as upstream wrote
+them, so both dialects arrive at `resolve`. Without this table a third of what
+they emit reaches no label a theme can style — numbers, properties, booleans
+and the whole of markdown render unstyled. See
+$(LINK2 ../../../../docs/specs/syntax/label-vocabulary-dialects.md, the spec).
+
+This applies to $(B capture names) only. Theme selectors are written against
+the canonical vocabulary and resolve through `writeThemeStyles`, which never
+consults this table — so an alias can never be a theme selector, and one label
+can never be targeted by two spellings of the same rule.
+*/
+static immutable LabelAlias[] standardAliases = [
+    LabelAlias("attribute", "tag.attribute"),
+    LabelAlias("boolean", "constant.builtin.boolean"),
+    LabelAlias("character", "constant.character"),
+    LabelAlias("conditional", "keyword.control"),
+    // TextMate has no constructor scope — it writes them `entity.name.function`
+    // — so a flat `constructor` label would be styled by nothing. Under
+    // `function` it inherits the function color through longest-dot-prefix, and
+    // a theme that does distinguish constructors can still say so.
+    LabelAlias("constructor", "function.constructor"),
+    LabelAlias("delimiter", "punctuation.delimiter"),
+    LabelAlias("escape", "string.escape"),
+    LabelAlias("exception", "keyword.control"),
+    LabelAlias("float", "constant.numeric.float"),
+    LabelAlias("import", "keyword.control"),
+    LabelAlias("include", "keyword.control"),
+    LabelAlias("method", "function.method"),
+    LabelAlias("namespace", "module"),
+    LabelAlias("number", "constant.numeric"),
+    // Explicit: chopping would reach `number` and lose the float distinction.
+    LabelAlias("number.float", "constant.numeric.float"),
+    LabelAlias("parameter", "variable.parameter"),
+    LabelAlias("property", "variable.member"),
+    LabelAlias("repeat", "keyword.control"),
+    LabelAlias("storageclass", "keyword.storage"),
+    // The neovim markdown dialect the bundled markdown grammars still use.
+    LabelAlias("text.emphasis", "markup.italic"),
+    LabelAlias("text.literal", "markup.raw.inline"),
+    LabelAlias("text.reference", "markup.link"),
+    LabelAlias("text.strong", "markup.bold"),
+    LabelAlias("text.title", "markup.heading"),
+    LabelAlias("text.uri", "markup.link.url"),
+    LabelAlias("variable.other.member", "variable.member"),
+];
+
+// Same byte-wise order as `standardLabels` — `aliasFor` binary-searches it.
+static assert(standardAliases.map!(a => a.name).isStrictlyMonotonic,
+    "standardAliases must be byte-wise sorted and unique by name");
+
+// An alias that resolves to nothing is a silent hole: the capture would land on
+// `LabelId.none` and render unstyled, which is the defect this table exists to
+// close. Every target must be a real vocabulary entry.
+static assert(() {
+    foreach (a; standardAliases)
+        if (!assumeSortedNames.contains(a.canonical))
+            return false;
+    return true;
+}(), "every standardAliases target must be in standardLabels");
+
+// `@none` and `@spell` are deliberately absent: upstream uses them to suppress
+// highlighting and to hint spellcheckers, so resolving to nothing is correct.
+static assert(() {
+    foreach (a; standardAliases)
+        if (assumeSortedNames.contains(a.name))
+            return false;
+    return true;
+}(), "a standardAliases name must not also be a standardLabels entry");
+
+private auto assumeSortedNames()
+{
+    import std.range : assumeSorted;
+
+    return assumeSorted(standardLabels);
+}
 
 /**
 An interned label vocabulary: a sorted, unique list of dotted names indexed
@@ -121,14 +216,19 @@ $(LREF standard); custom vocabularies come from $(LREF fromNames).
 struct LabelSet
 {
     private immutable(string)[] _names;
+    private immutable(LabelAlias)[] _aliases;
 
-    /// The canonical vocabulary ($(LREF standardLabels)). Allocation-free.
+    /// The canonical vocabulary ($(LREF standardLabels)) plus the dialect
+    /// spellings in $(LREF standardAliases). Allocation-free.
     static LabelSet standard() @safe pure nothrow @nogc
-        => LabelSet(standardLabels);
+        => LabelSet(standardLabels, standardAliases);
 
     /**
     Builds a custom vocabulary: sorts and de-duplicates `names`.
     Configure-time only (allocates the interned table).
+
+    Carries no aliases — a caller who supplies its own vocabulary also owns the
+    spellings that reach it.
     */
     static LabelSet fromNames(scope const(string)[] names) @safe pure nothrow
     {
@@ -176,6 +276,13 @@ struct LabelSet
     `.part` segments until a recognized name matches.
     `"function.builtin.static"` → `"function.builtin"` → `"function"`.
     Returns `LabelId.none` when no prefix matches.
+
+    Each prefix is tried against the vocabulary first and against
+    $(LREF standardAliases) second, so a dialect spelling resolves at the same
+    depth a canonical name would: `"number.float"` hits the alias table whole,
+    while `"number.weird"` chops to `"number"` and lands on `constant.numeric`.
+    Checking aliases only after the vocabulary misses keeps a real label
+    unshadowable.
     */
     LabelId resolve(scope const(char)[] captureName) const scope @safe pure nothrow @nogc
     {
@@ -184,6 +291,9 @@ struct LabelSet
         {
             if (const id = find(candidate))
                 return id;
+            if (const canonical = aliasFor(candidate))
+                if (const id = find(canonical))
+                    return id;
 
             size_t i = candidate.length;
             while (i > 0 && candidate[i - 1] != '.')
@@ -193,6 +303,26 @@ struct LabelSet
             candidate = candidate[0 .. i - 1];
         }
         return LabelId.none;
+    }
+
+    /// The canonical name `spelling` aliases, or `null` when it is not an
+    /// alias. Exact match only — `resolve` supplies the prefix chopping.
+    private const(char)[] aliasFor(scope const(char)[] spelling)
+        const scope @safe pure nothrow @nogc
+    {
+        size_t lo = 0, hi = _aliases.length;
+        while (lo < hi)
+        {
+            const mid = lo + (hi - lo) / 2;
+            const c = cmp(_aliases[mid].name, spelling);
+            if (c == 0)
+                return _aliases[mid].canonical;
+            if (c < 0)
+                lo = mid + 1;
+            else
+                hi = mid;
+        }
+        return null;
     }
 }
 
@@ -222,6 +352,58 @@ unittest
     static assert(LabelSet.standard().resolve("function.builtin.weird")
         == LabelSet.standard().find("function.builtin"));
     static assert(LabelSet.standard().resolve("no.such.label") == LabelId.none);
+}
+
+///
+@("label.LabelSet.resolveAlias")
+@safe pure nothrow @nogc
+unittest
+{
+    const labels = LabelSet.standard();
+
+    // The dialect spellings the bundled grammars actually emit.
+    assert(labels.resolve("number") == labels.find("constant.numeric"));
+    assert(labels.resolve("property") == labels.find("variable.member"));
+    assert(labels.resolve("boolean") == labels.find("constant.builtin.boolean"));
+    assert(labels.resolve("text.strong") == labels.find("markup.bold"));
+
+    // An alias is exact; the chop still applies around it.
+    assert(labels.resolve("number.float") == labels.find("constant.numeric.float"));
+    assert(labels.resolve("number.weird") == labels.find("constant.numeric"));
+    assert(labels.resolve("property.definition") == labels.find("variable.member"));
+
+    // Upstream's deliberate no-ops must keep resolving to nothing.
+    assert(labels.resolve("none") == LabelId.none);
+    assert(labels.resolve("spell") == LabelId.none);
+}
+
+@("label.LabelSet.fromNamesHasNoAliases")
+@safe pure nothrow
+unittest
+{
+    // A caller supplying its own vocabulary owns the spellings that reach it.
+    static immutable string[] custom = ["constant.numeric"];
+    const labels = LabelSet.fromNames(custom);
+    assert(labels.find("constant.numeric"));
+    assert(labels.resolve("number") == LabelId.none);
+}
+
+@("label.LabelSet.aliasesNeverShadowLabels")
+@safe pure nothrow @nogc
+unittest
+{
+    const labels = LabelSet.standard();
+
+    // A canonical name always wins over the alias table, at every depth.
+    foreach (name; standardLabels)
+        assert(labels.resolve(name) == labels.find(name));
+
+    // And every alias lands on a real, distinct label.
+    foreach (a; standardAliases)
+    {
+        assert(labels.find(a.name) == LabelId.none, "alias leaked into the vocabulary");
+        assert(labels.resolve(a.name) == labels.find(a.canonical));
+    }
 }
 
 @("label.LabelSet.findAndName")

@@ -40,23 +40,22 @@ Each decision cites the prior-art page it reifies and the in-tree code it builds
   [totality law][sh-problem]: the worst legal output is uncolored text). This is the
   [tree-sitter-highlight][ts-highlight] event model; TextMate scope stacks map onto
   push/pop at stack deltas, so the future fast engine needs no adaptation layer.
-- **A canonical, scope-compatible label vocabulary.** Dotted names (`keyword.control`,
-  `string.special.key`, ~55 entries) drawn from the convergence the survey documents:
-  tree-sitter capture names [deliberately track TextMate scope names][ts-highlight], so
-  **one theme layer drives both engines**. `LabelSet` interns names to `LabelId`s at
-  configure time; capture-name and theme-selector resolution share one algorithm —
-  **longest-dot-prefix** ([Helix][helix]'s semantics, chosen over the reference crate's
-  part-subset rule for predictability; the divergence is documented).
+- **A canonical, scope-compatible label vocabulary, plus an alias layer.** Dotted names
+  (`keyword.control`, `string.special.key`, ~65 entries) drawn from the convergence the
+  survey documents: tree-sitter capture names [broadly track TextMate scope
+  names][ts-highlight], so **one theme layer drives both engines**. The vocabulary is
+  **hierarchical**, because resolution is longest-dot-prefix and only a hierarchy gives
+  it somewhere to degrade to. `LabelSet` interns names to `LabelId`s at configure time.
 
-  > [!WARNING]
-  > **This premise does not hold for the queries we ship**, and both claims in this
-  > bullet need revising. Upstream tree-sitter moved to short flat capture names
-  > (`number`, `property`, `boolean`) that do not track TextMate scope names, so
-  > merging the two name sets produced synonym pairs that nothing reconciles — 33% of
-  > what the bundled grammars emit cannot be styled by any built-in theme. The fix
-  > also makes capture-name resolution deliberately _stop_ sharing one algorithm with
-  > theme-selector resolution. See
-  > [label-vocabulary dialects](./label-vocabulary-dialects.md).
+  The convergence is only broad: upstream tree-sitter and older neovim queries spell
+  many of the same concepts flat (`number`, `property`, `text.strong`), and those chop
+  to nothing. So **capture-name and theme-selector resolution deliberately differ** —
+  both use longest-dot-prefix ([Helix][helix]'s semantics, chosen over the reference
+  crate's part-subset rule for predictability), but capture names additionally consult
+  `standardAliases` at each depth. Selectors are written in our own vocabulary; capture
+  names arrive from a supply chain that spells things several ways. Treating the two
+  name sets as interchangeable is what left a third of the bundle's captures unstyled —
+  see [label-vocabulary dialects](./label-vocabulary-dialects.md).
 
 - **Themes resolve once, then index in O(1).** `Theme` (ordered `selector → StyleSpec`
   rules) resolves against a `LabelSet` into a flat `labelId → StyleSpec` table at
@@ -153,20 +152,20 @@ palette)` concretizer and a `byStyledLine` per-line adapter are recorded seams.
 
 Where each design decision comes from in the survey:
 
-| Decision                                     | Prior art (survey page)                       | What to borrow                                                 |
-| -------------------------------------------- | --------------------------------------------- | -------------------------------------------------------------- |
-| Event stream `source/push/pop`               | [tree-sitter-highlight][ts-highlight]         | the event vocabulary; streaming, early-stop rendering          |
-| Scope-compatible dotted labels               | [ts-highlight][ts-highlight] · [syntect]      | one theme layer across engines (the stated convergence)        |
-| Longest-dot-prefix resolution, resolved once | [Helix][helix]                                | load-time theme tables; one algorithm for captures and themes  |
-| Color tiers + palette encodings              | [bat]                                         | `ansi256_from_rgb` fold; `#RRGGBBAA` semantics (as a sum type) |
-| Per-line-valid ANSI                          | [bat] · in-tree `ansi.d`                      | reset/re-open at `\n`; SGR state discipline                    |
-| Per-line-valid HTML, class/inline modes      | [ts-highlight][ts-highlight] · [Shiki][shiki] | HtmlRenderer newline rule; structured output doctrine          |
-| Multi-theme CSS variables (reserved)         | [Shiki][shiki]                                | `--syn-*` custom properties, `light-dark()`                    |
-| Guard checklist                              | [Helix][helix] · [Shiki][shiki] · [bat]       | size cap, parse budget, match limit, cancellation              |
-| Predicate posture: degrade, don't fail       | [Helix][helix] (dialect drift)                | disable pattern + warn; plain-text fallback stays reachable    |
-| Grammar supply as packaged artifacts         | [Helix][helix]                                | fetch/build pipeline shape, moved into Nix                     |
-| Detection deferred to a cascade later        | [Linguist][linguist]                          | the composite cascade recorded for the product layer           |
-| GPU backend as styled-run consumer           | [sh-fit][sh-fit] · in-tree `terminal`         | data-not-markup third backend; public flatten fold             |
+| Decision                                     | Prior art (survey page)                       | What to borrow                                                    |
+| -------------------------------------------- | --------------------------------------------- | ----------------------------------------------------------------- |
+| Event stream `source/push/pop`               | [tree-sitter-highlight][ts-highlight]         | the event vocabulary; streaming, early-stop rendering             |
+| Scope-compatible dotted labels               | [ts-highlight][ts-highlight] · [syntect]      | one theme layer across engines (the stated convergence)           |
+| Longest-dot-prefix resolution, resolved once | [Helix][helix]                                | load-time theme tables; captures add an alias layer, themes don't |
+| Color tiers + palette encodings              | [bat]                                         | `ansi256_from_rgb` fold; `#RRGGBBAA` semantics (as a sum type)    |
+| Per-line-valid ANSI                          | [bat] · in-tree `ansi.d`                      | reset/re-open at `\n`; SGR state discipline                       |
+| Per-line-valid HTML, class/inline modes      | [ts-highlight][ts-highlight] · [Shiki][shiki] | HtmlRenderer newline rule; structured output doctrine             |
+| Multi-theme CSS variables (reserved)         | [Shiki][shiki]                                | `--syn-*` custom properties, `light-dark()`                       |
+| Guard checklist                              | [Helix][helix] · [Shiki][shiki] · [bat]       | size cap, parse budget, match limit, cancellation                 |
+| Predicate posture: degrade, don't fail       | [Helix][helix] (dialect drift)                | disable pattern + warn; plain-text fallback stays reachable       |
+| Grammar supply as packaged artifacts         | [Helix][helix]                                | fetch/build pipeline shape, moved into Nix                        |
+| Detection deferred to a cascade later        | [Linguist][linguist]                          | the composite cascade recorded for the product layer              |
+| GPU backend as styled-run consumer           | [sh-fit][sh-fit] · in-tree `terminal`         | data-not-markup third backend; public flatten fold                |
 
 The milestones that build this — bottom-up, each independently useful — are in
 [PLAN.md](./PLAN.md).
