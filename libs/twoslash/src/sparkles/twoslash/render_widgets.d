@@ -28,7 +28,7 @@ signature text under $(D Slot.code).
 module sparkles.twoslash.render_widgets;
 
 import sparkles.ui.geometry : Insets;
-import sparkles.ui.style : Slot;
+import sparkles.ui.style : BorderStyle, Decoration, FontRole, Palette, Slot, TextStyle;
 import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 
 import sparkles.twoslash.overlay : BelowBlock, errIsWarning, planTwoslash,
@@ -38,8 +38,38 @@ import sparkles.twoslash.icons : completionIconGlyph, tagIconGlyph;
 
 @safe:
 
+/// The canonical twoslash chrome metrics (border widths, radius, font scales,
+/// arrow) — the palette's scalar defaults, read at compile time so the views
+/// author the exact `twoslash.css` values without a runtime palette or literal
+/// duplication. The CSS-lockstep test (W4) guards these against the stylesheet.
+private enum M = Palette.init;
+
 /// The hit id a widget derived from node `nodeIndex` carries (0 = none).
 private size_t hitOf(size_t nodeIndex) pure nothrow @nogc => nodeIndex + 1;
+
+/// A popup/surface decoration: a hairline border (`Slot.border`), the `4px`
+/// corner radius, and a drop shadow — the shared chrome behind the hover popup,
+/// the `^?` query line, and the completion list (all one surface rule in the CSS).
+private Decoration surfaceDeco(bool arrow, int arrowOffset = 1) pure nothrow @nogc
+    => Decoration(
+        borderWidth: Insets.all(M.borderWidth),
+        borderStyle: BorderStyle.solid,
+        borderSlot: Slot.border,
+        borderRadius: M.popupRadius,
+        shadow: true,
+        arrow: arrow,
+        arrowOffset: arrowOffset,
+    );
+
+/// A left accent bar (`3px solid`) — the `.twoslash-error-line` / `-tag-line`
+/// marker, colored from `slot`. The block's translucent background comes from the
+/// same slot via `paintBackground`.
+private Decoration accentDeco(Slot slot) pure nothrow @nogc
+    => Decoration(
+        borderWidth: Insets(0, 0, 0, M.accentBorder),
+        borderStyle: BorderStyle.solid,
+        borderSlot: slot,
+    );
 
 /**
 Builds the below-line meta overlay for `tw`: a `column` of per-node blocks in
@@ -164,19 +194,30 @@ in (nodeIndex < tw.nodes.length)
     auto b = Builder();
 
     uint[] rows;
+    // Signature: the code/monospace face at 1em (CSS `.twoslash-popup-code`).
     rows ~= b.add(Widget(kind: WidgetKind.text,
-        text: withoutQuickinfoPrefix(node.text), slot: Slot.code, hitId: hit));
+        text: withoutQuickinfoPrefix(node.text), slot: Slot.code, hitId: hit,
+        textStyle: TextStyle(fontRole: FontRole.code, fontScale: M.codeFontScale)));
 
+    // Docs prose: the sans face at 0.8em, separated by a 1px top divider (CSS
+    // `.twoslash-popup-docs` `font-family: sans-serif; font-size: 0.8em;
+    // border-top: 1px solid`).
     if (node.docs.length)
         rows ~= b.add(Widget(kind: WidgetKind.text, text: node.docs,
-            slot: Slot.docs, hitId: hit));
+            slot: Slot.docs, hitId: hit,
+            textStyle: TextStyle(fontRole: FontRole.docs, fontScale: M.docsFontScale),
+            decoration: Decoration(borderWidth: Insets(M.borderWidth, 0, 0, 0),
+                borderStyle: BorderStyle.solid, borderSlot: Slot.border)));
 
     foreach (ref const string[] tag; node.tags)
         rows ~= buildPopupTag(b, tag, hit);
 
     const col = b.container(WidgetKind.column, rows);
-    const popup = b.container(WidgetKind.popup, [col],
-        slot: Slot.surface, padding: Insets.all(1), paintBackground: true);
+    // The floating surface: opaque background + 1px border + 4px radius + shadow +
+    // an arrow tail (CSS `.twoslash-popup-container` + `.twoslash-popup-arrow`).
+    const popup = b.add(Widget(kind: WidgetKind.popup, slot: Slot.surface,
+        padding: Insets.all(1), paintBackground: true, decoration: surfaceDeco(arrow: true),
+        children: [col], hitId: hit));
     return b.finish(popup);
 }
 
@@ -186,11 +227,16 @@ private uint buildPopupTag(ref Builder b, const string[] tag, size_t hit)
 {
     const nameText = tag.length ? tagName(b, tag[0]) : tagName(b, "");
     uint[] parts;
+    // The `@name` chip: a rounded grey pill in the code face at 0.92em (CSS
+    // `.twoslash-popup-docs-tag-name` — `border-radius: 4px; font-size: 0.92em`).
     parts ~= b.add(Widget(kind: WidgetKind.text, text: nameText,
-        slot: Slot.chip, hitId: hit, paintBackground: true));
+        slot: Slot.chip, hitId: hit, paintBackground: true,
+        decoration: Decoration(borderRadius: M.popupRadius),
+        textStyle: TextStyle(fontRole: FontRole.code, fontScale: M.tagFontScale)));
     if (tag.length > 1 && tag[1].length)
         parts ~= b.add(Widget(kind: WidgetKind.text, text: tag[1],
-            slot: Slot.docs, hitId: hit));
+            slot: Slot.docs, hitId: hit,
+            textStyle: TextStyle(fontRole: FontRole.docs, fontScale: M.docsFontScale)));
     return b.container(WidgetKind.row, parts, gap: 1);
 }
 
@@ -309,20 +355,27 @@ version (unittest)
 
     auto c = render(viewHoverPopup(tw, 0));
 
-    // A surface background fill comes first, then the signature (page fg),
-    // the docs (muted), and the tag chips (info color).
+    // The surface fill comes first and now carries the popup chrome: a 1px border,
+    // a 4px radius, a drop shadow, and an arrow tail.
     assert(c.ops[0].kind == OpKind.fillRect);
     assert(c.ops[0].visual.bg == RgbColor(0xf8, 0xf8, 0xf8));
+    assert(c.ops[0].visual.border.any && c.ops[0].visual.borderRadius == 4);
+    assert(c.ops[0].visual.shadow.any && c.ops[0].visual.arrow);
+    assert(c.ops[0].visual.border.color == RgbColor(0x88, 0x88, 0x88));
 
     bool sawSig, sawDocs, sawTag;
     foreach (ref op; c.ops)
     {
+        // Signature: the code face at 1em.
         if (op.text == "function wrap<T>(value: T): Box<T>")
-            sawSig = true; // quickinfo prefix "(alias) " stripped
+            sawSig = op.visual.fontRole == FontRole.code && op.visual.fontScale == 100;
+        // Docs: the sans face at 0.8em, muted.
         if (op.text == "Wraps a value in a Box." && op.visual.fg == RgbColor(0x88, 0x88, 0x88))
-            sawDocs = true;
+            sawDocs = op.visual.fontRole == FontRole.docs && op.visual.fontScale == 80;
+        // The `@param` chip: a rounded grey pill in the code face at 0.92em.
         if (op.text == "@param" && op.visual.fg == RgbColor(0x88, 0x88, 0x88)
-            && op.visual.hasBg) // the chip pill: muted text on a grey fill
+            && op.visual.hasBg && op.visual.borderRadius == 4
+            && op.visual.fontRole == FontRole.code && op.visual.fontScale == 92)
             sawTag = true;
     }
     assert(sawSig && sawDocs && sawTag);

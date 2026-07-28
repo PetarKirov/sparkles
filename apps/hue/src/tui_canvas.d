@@ -117,10 +117,14 @@ struct GridCanvas
         {
             const bw = v.border.width;
             const bottomOnly = bw.bottom > 0 && bw.top == 0 && bw.left == 0 && bw.right == 0;
+            const fullBox = bw.top > 0 && bw.bottom > 0 && bw.left > 0 && bw.right > 0;
             if (bottomOnly)
                 underlineRow(r, v);
-            else
+            else if (fullBox)
                 drawBoxBorder(r, v);
+            // else: a single-side sub-cell accent (the docs top divider, the
+            // error/tag left bar) has no cell analog and is dropped — the block's
+            // background tint (if any) still conveys it.
         }
     }
 
