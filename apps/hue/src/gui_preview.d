@@ -235,6 +235,7 @@ struct PreviewItem
 
     // table
     string[][] grid;
+    size_t[][] cellSrc; /// parallel to grid: each cell's (stripped) content source offset
     const(ColAlign)[] aligns;
     size_t blockStart, blockEnd; /// the table's source byte span (text-regime cross, TBL4)
 
@@ -265,6 +266,9 @@ struct TableView
     int firstLine;
     int lineCount;
     TableGridMap map;
+    /// Parallel to the grid: each cell's source offset, so a text-regime drag
+    /// crossing the table maps a cell char to `cellSrc[row][col] + charInCell`.
+    size_t[][] cellSrc;
 }
 
 /// The result of $(LREF wrapPreview): the painted lines plus the per-table maps
@@ -818,18 +822,32 @@ private struct Flattener
 
         import std.string : strip;
         string[][] grid;
+        size_t[][] cellSrc; // source offset of each cell's (stripped) content start
         foreach (ref row; b.children)
         {
             string[] cells;
+            size_t[] srcs;
             foreach (ref cell; row.children)
-                cells ~= plain(cell.inlines).strip.idup;
+            {
+                const content = plain(cell.inlines);
+                size_t lead;
+                while (lead < content.length && (content[lead] == ' ' || content[lead] == '\t'))
+                    ++lead;
+                const cs = contentStart(cell.inlines);
+                cells ~= content.strip.idup;
+                srcs ~= cs == size_t.max ? cell.span.start : cs + lead;
+            }
             while (cells.length < cols) // pad ragged rows
+            {
                 cells ~= "";
+                srcs ~= row.span.end;
+            }
             grid ~= cells;
+            cellSrc ~= srcs;
         }
 
         emit(PreviewItem(kind: ItemKind.table, indentCols: indent, qdepth: qdepth,
-            grid: grid, aligns: b.aligns.dup, // dup: b is `scope`, item outlives it
+            grid: grid, cellSrc: cellSrc, aligns: b.aligns.dup, // dup: b is `scope`
             blockStart: b.span.start, blockEnd: b.span.end));
         blank();
     }
@@ -910,6 +928,17 @@ private struct Flattener
             s = inl.children.length ? s ~ plain(inl.children)
                 : s ~ slice(inl.span.start, inl.span.end);
         return s;
+    }
+
+    // Source byte offset of the first character `plain(inlines)` yields (the
+    // deepest leading inline's span start), or `size_t.max` when empty — used to
+    // map a table cell's rendered chars back to source for cell-level selection.
+    size_t contentStart(in MdInline[] inlines) @safe
+    {
+        if (inlines.length == 0)
+            return size_t.max;
+        return inlines[0].children.length
+            ? contentStart(inlines[0].children) : inlines[0].span.start;
     }
 
     ubyte mapAttrs(in StyleSpec spec) @safe => mapSpecAttrs(spec);
@@ -1152,7 +1181,7 @@ private void wrapTable(ref PreviewItem it, int width, ref PreviewDoc pal,
             runs: colorizeTableLine(ln, bold, pal.ruleFg, pal.pageFg));
         firstLn = false;
     }
-    wp.tables ~= TableView(firstLine, cast(int) mt.lines.length, mt.map);
+    wp.tables ~= TableView(firstLine, cast(int) mt.lines.length, mt.map, it.cellSrc);
 }
 
 private void wrapRule(ref PreviewItem it, int width, ref PreviewDoc pal,
@@ -1919,13 +1948,18 @@ unittest
     // (`TBL4`) — the span covers the raw markdown table.
     assert(wp.tables.length == 1);
     assert(wp.lines.any!(l => l.tableIndex == 0));
-    assert(wp.tables[0].map.numRows >= 2 && wp.tables[0].map.numCols == 2);
+    const tv = wp.tables[0];
+    assert(tv.map.numRows >= 2 && tv.map.numCols == 2);
     foreach (l; wp.lines)
         if (l.tableIndex == 0)
         {
             assert(l.selSrcStart != size_t.max && l.selSrcEnd > l.selSrcStart);
             assert(src[l.selSrcStart .. l.selSrcEnd].canFind("| a | b |"));
         }
+    // Each cell maps char-level back to source ("| a | b |" → 'a' at byte 2), so a
+    // text drag crossing the table is character-precise (not whole-table).
+    assert(src[tv.cellSrc[0][0] .. tv.cellSrc[0][0] + 1] == "a");
+    assert(src[tv.cellSrc[0][1] .. tv.cellSrc[0][1] + 1] == "b");
 
     // ANSI body cells are char-level source-backed (`SEL6`): a content run maps
     // to the raw source "red" and carries no block `selSrcStart`.
