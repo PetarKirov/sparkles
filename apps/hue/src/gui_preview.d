@@ -102,6 +102,9 @@ struct PreviewLine
     /// Index of the table this line belongs to (into `WrappedPreview.tables`), or
     /// -1. A drag starting on a table line uses the 2D grid regime (`TBL`).
     int tableIndex = -1;
+    /// Index of the table whose whole-table **copy button** sits in this line's
+    /// top-border cutout (into `WrappedPreview.tables`), or -1. Mirrors `copyFence`.
+    int copyTable = -1;
     PreviewRun[] runs;
 }
 
@@ -1165,20 +1168,24 @@ private void wrapTable(ref PreviewItem it, int width, ref PreviewDoc pal,
     const tableIndex = cast(int) wp.tables.length;
     const firstLine = cast(int) wp.lines.length;
     bool headerDone, firstLn = true;
-    foreach (ln; mt.lines)
+    foreach (li, ln; mt.lines)
     {
         const content = lineHasContent(ln);
         const bold = content && !headerDone;
         if (content)
             headerDone = true;
+        // The top border carries a copy-whole-table button in a right-side cutout
+        // (mirrors the code header's `COD3`), drawn + hit-tested by gui.d.
+        const isTop = li == 0 && !content;
         wp.lines ~= PreviewLine(indentCols: it.indentCols, quoteDepth: it.qdepth,
             barFg: it.barFg, hasBarFg: it.hasBarFg,
             srcLine: it.srcLine, showNumber: firstLn && it.number,
-            tableIndex: tableIndex,
+            tableIndex: tableIndex, copyTable: isTop ? tableIndex : -1,
             // A text-regime drag crossing the table selects its whole markdown
             // source span (a drag starting inside uses the 2D grid regime, TBL4).
             selSrcStart: it.blockStart, selSrcEnd: it.blockEnd,
-            runs: colorizeTableLine(ln, bold, pal.ruleFg, pal.pageFg));
+            runs: colorizeTableLine(isTop ? withCopyCutout(ln) : ln, bold,
+                pal.ruleFg, pal.pageFg));
         firstLn = false;
     }
     wp.tables ~= TableView(firstLine, cast(int) mt.lines.length, mt.map, it.cellSrc);
@@ -1238,6 +1245,30 @@ private bool lineHasContent(const(char)[] ln) @safe
             return true;
     }
     return false;
+}
+
+// Punch a 3-column cutout into a table's top border just before the final corner
+// (`╭───   ╮`) for the whole-table copy button — the same idiom as the code
+// header. The button anchors at column `lineCols - 3` (the middle space), so
+// gui.d reuses its code-button placement. Left unchanged if the border is too
+// narrow to spare the columns.
+private string withCopyCutout(scope const(char)[] border) @safe
+{
+    import std.utf : decode;
+    import std.typecons : Yes;
+
+    size_t[] starts;
+    size_t i;
+    while (i < border.length)
+    {
+        starts ~= i;
+        decode!(Yes.useReplacementDchar)(border, i);
+    }
+    const n = starts.length; // codepoint (== column) count
+    if (n < 6)
+        return border.idup;
+    // Replace the 3 columns before the final corner (`n-4,n-3,n-2`) with spaces.
+    return (border[0 .. starts[n - 4]] ~ "   " ~ border[starts[n - 1] .. $]).idup;
 }
 
 // A recognized GitHub callout/admonition: its icon, accent, Title-case name, and
@@ -1961,6 +1992,10 @@ unittest
     assert(src[tv.cellSrc[0][0] .. tv.cellSrc[0][0] + 1] == "a");
     assert(src[tv.cellSrc[0][1] .. tv.cellSrc[0][1] + 1] == "b");
 
+    // The table's top border carries the whole-table copy button (`copyTable`).
+    assert(wp.lines[tv.firstLine].copyTable == 0);
+    assert(wp.lines.any!(l => l.tableIndex == 0 && l.copyTable < 0)); // body lines don't
+
     // ANSI body cells are char-level source-backed (`SEL6`): a content run maps
     // to the raw source "red" and carries no block `selSrcStart`.
     bool ansiCell;
@@ -1983,4 +2018,17 @@ unittest
     // escapes: "red" at bytes 5-7 (after ESC[31m), " x" at 12-13 (after ESC[0m).
     assert(ansiColToSrc("\x1b[31mred\x1b[0m x") == [5, 6, 7, 12, 13]);
     assert(ansiColToSrc("ab") == [0, 1]); // no escapes → identity
+}
+
+@("gui_preview.withCopyCutout")
+@safe
+unittest
+{
+    import std.algorithm.searching : endsWith;
+
+    // A 3-column cutout is punched before the final corner; total width unchanged.
+    const cut = withCopyCutout("╭────────╮");
+    assert(cut.endsWith("   ╮"));
+    assert(columnWidth(cut) == columnWidth("╭────────╮"));
+    assert(withCopyCutout("╭─╮") == "╭─╮"); // too narrow → unchanged
 }
