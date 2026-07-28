@@ -64,6 +64,12 @@ import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.interp.immediate : paint;
 import gui_canvas : RaylibCanvas, rlBg;
 
+// The multi-document set the twoslash view navigates with `[`/`]` (`GNV1`), plus
+// the two entry points a navigation reload needs.
+import source_set : SourceSet;
+import sparkles.twoslash.ingest : loadTwoslashFile;
+import sparkles.syntax.ts.highlighter : highlightInjected;
+
 /// The window's default font size in pixels (Ctrl-±/theme cycling arrive in M3).
 private enum defaultFontSize = 18;
 
@@ -1198,12 +1204,14 @@ int runGuiTwoslash(
     LabelSet labels,
     in ResolvedTheme theme,
     ref TsConfigCache cache,
+    SourceSet* set = null,
+    bool lineNumbers = true,
 ) @system
 {
     import std.stdio : stderr;
     import std.string : toStringz;
     import std.process : environment;
-    import std.conv : to;
+    import std.conv : text, to;
 
     const shotPath = environment.get("HUE_GUI_SCREENSHOT", "");
     int fontSize = defaultFontSize;
@@ -1248,19 +1256,66 @@ int runGuiTwoslash(
     const warnVis = resolveSlot(pal, Slot.warn, pageFg, pageBg);
     const highlightVis = resolveSlot(pal, Slot.highlight, pageFg, pageBg);
 
-    const code = tw.code;
-    auto plan = planTwoslash(tw);
+    // The current document. A pointer-to-const so navigating a set can rebind it
+    // (`Node[]` is mutable, so a const payload cannot be copied into a mutable
+    // local — the same constraint `TwoslashTui` hit).
+    const(TwoslashReturn)* cur = &tw;
+    const(HighlightEvent)[] curEvents = events;
+    string curName = title;
+    string curSummary = set !is null && !set.empty ? set.current.summary : "";
 
+    auto plan = planTwoslash(*cur);
     // Per-line styled runs, bucketed for a top-to-bottom draw with annotation
     // rows interleaved (so `y` cannot be `line * cellH` — it accumulates).
-    const lineTotal = lineCount(code) + 1;
-    StyledRun[][] runsByLine = new StyledRun[][](lineTotal);
-    foreach (ls; byStyledLine(code, events))
-        runsByLine[ls.line] ~= StyledRun(ls.span.start, ls.span.end, ls.span.label);
+    size_t lineTotal;
+    StyledRun[][] runsByLine;
+
+    void rebuild()
+    {
+        plan = planTwoslash(*cur);
+        lineTotal = lineCount(cur.code) + 1;
+        runsByLine = new StyledRun[][](lineTotal);
+        foreach (ls; byStyledLine(cur.code, curEvents))
+            runsByLine[ls.line] ~= StyledRun(ls.span.start, ls.span.end, ls.span.label);
+    }
+
+    rebuild();
 
     SmallBuffer!(char, 4096) buf;
     float scrollY = 0;
     int shotFrame = 0;
+
+    /// Loads the set's currently-selected payload in place (`GNV1`): re-read,
+    /// re-highlight, re-plan. The window, font atlas and grammar cache are reused —
+    /// only the document changes. A payload that fails to load is reported and the
+    /// previous one stays on screen.
+    bool loadSelected()
+    {
+        if (set is null || set.empty)
+            return false;
+        const entry = set.current;
+        auto res = loadTwoslashFile(entry.path);
+        if (res.hasError)
+        {
+            stderr.writeln("hue: ", res.error.msg);
+            return false;
+        }
+        auto owned = new TwoslashReturn;
+        *owned = res.value;
+
+        SmallBuffer!HighlightEvent ev;
+        if (highlightInjected(cache, "typescript", owned.code, ev).hasError)
+            ev ~= HighlightEvent.sourceSpan(0, owned.code.length);
+
+        cur = owned;
+        curEvents = ev[].dup;
+        curName = entry.name;
+        curSummary = entry.summary;
+        rebuild();
+        scrollY = 0; // a new document starts at the top (`GNV3`)
+        SetWindowTitle(("hue twoslash — " ~ curName).toStringz);
+        return true;
+    }
 
     // Hover latch, persisted across frames: the open popup's node (+1; 0 = none),
     // its on-screen rect (for pointer hysteresis — the popup stays open while the
@@ -1275,7 +1330,24 @@ int runGuiTwoslash(
     {
         const cellW = fonts.cellW();
         const cellH = fonts.cellH();
-        const padPx = cast(float)(twoslashPadCells * cellW);
+
+        // `[` / `]` (and the mouse back/forward buttons) walk the document set —
+        // the reload primitive navigation (`LNK3`/`LNK4`) will reuse (`GNV1`).
+        if (set !is null && !set.empty)
+        {
+            const back = IsKeyPressed(KeyboardKey.KEY_LEFT_BRACKET)
+                || IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_BACK);
+            const fwd = IsKeyPressed(KeyboardKey.KEY_RIGHT_BRACKET)
+                || IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_FORWARD);
+            if ((back || fwd) && set.move(back ? -1 : 1))
+                loadSelected();
+        }
+
+        // A header bar (name · summary · i/n) when navigating a set (`GNV2`), and
+        // the physical-line gutter (`GNV4`) — both shift the code's origin.
+        const headerH = set !is null && !set.empty ? cast(float) cellH : 0.0f;
+        const gutterCols = lineNumbers ? cast(int)(digitCount(lineTotal - 1) + 1) : 0;
+        const padPx = cast(float)((twoslashPadCells + gutterCols) * cellW);
         scrollY -= GetMouseWheelMove() * 3 * cellH;
         if (scrollY < 0)
             scrollY = 0;
@@ -1291,14 +1363,25 @@ int runGuiTwoslash(
         // Hover token rects captured this frame for the mouse hit-test.
         HoverHit[] hovers;
 
-        float y = -scrollY;
+        float y = headerH - scrollY;
         foreach (line; 0 .. lineTotal)
         {
+            // The physical source-line number, right-aligned in the gutter and
+            // muted — the same rule the raw view uses (`NUM1`), so the GUI, the
+            // TUI and the HTML gallery number lines alike (`GNV4`).
+            if (gutterCols > 0 && y >= headerH - cellH && y < GetScreenHeight())
+            {
+                const numText = text(line + 1);
+                const nx = padPx - cast(float)((numText.length + 1) * cellW);
+                drawText(fonts, cstrOf(buf, numText), nx, y, TextStyle(0),
+                    rl(mix(pageFg, pageBg)));
+            }
+
             // Code runs for this line.
             float x = padPx;
             foreach (ref const r; runsByLine[line])
             {
-                const run = code[r.start .. r.end];
+                const run = cur.code[r.start .. r.end];
                 if (run.length == 0)
                     continue;
                 const spec = theme[r.label];
@@ -1315,7 +1398,7 @@ int runGuiTwoslash(
                 if (d.line != line)
                     continue;
                 const dx = cast(int)(padPx + d.character * cellW);
-                const dcols = cast(int) columnWidth(code[d.start .. d.end]);
+                const dcols = cast(int) columnWidth(cur.code[d.start .. d.end]);
                 canvas.originX = padPx;
                 canvas.originY = y;
                 final switch (d.kind)
@@ -1345,7 +1428,7 @@ int runGuiTwoslash(
             {
                 if (b.line != line)
                     continue;
-                y += drawBelowBlock(fonts, buf, tw, b.node, padPx, y, cellW, cellH,
+                y += drawBelowBlock(fonts, buf, *cur, b.node, padPx, y, cellW, cellH,
                     theme, cache, pal, pageFg, pageBg) * cellH;
             }
         }
@@ -1393,12 +1476,29 @@ int runGuiTwoslash(
                     for (int i = 0; i + 2 <= h.w; i += 4)
                         DrawRectangle(h.x + i, uy, 2, 1, uc);
                     // The popup on top; remember its rect for next-frame hysteresis.
-                    hotPopup = drawPopup(fonts, buf, tw, h.node,
+                    hotPopup = drawPopup(fonts, buf, *cur, h.node,
                         cast(float) h.x, cast(float)(h.y + h.h),
                         cellW, cellH, theme, cache, pal, pageFg, pageBg);
                     havePopup = true;
                     break;
                 }
+
+        // The header bar last, so scrolled code passes UNDER it (`GNV2`):
+        // `name · summary` on the left, the set position on the right.
+        if (headerH > 0)
+        {
+            const w = GetScreenWidth();
+            DrawRectangle(0, 0, w, cast(int) headerH, rl(mix(pageBg, pageFg, 0.12)));
+            DrawRectangle(0, cast(int) headerH - 1, w, 1, rl(mix(pageFg, pageBg)));
+
+            const left = curSummary.length ? curName ~ "  " ~ curSummary : curName;
+            drawText(fonts, cstrOf(buf, left), cast(float) cellW, 0,
+                TextStyle(0), rl(pageFg));
+
+            const pos = text(set.index + 1, "/", set.length, "   [ ] prev/next");
+            const px = cast(float)(w - cast(int)((pos.length + 1) * cellW));
+            drawText(fonts, cstrOf(buf, pos), px, 0, TextStyle(0), rl(mix(pageFg, pageBg)));
+        }
 
         EndDrawing();
 
