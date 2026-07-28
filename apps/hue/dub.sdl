@@ -50,6 +50,15 @@ configuration "no-gui" {
     excludedSourceFiles "src/gui.d" "src/gui_ansi.d"
 }
 
+// Optimized unittest build for `@benchmark` runs (the resize-path relayout
+// bench in gui_preview.d). `unittests` is load-bearing — without it `dub test`
+// registers zero tests; a plain `-b release` drops it and the runner never
+// takes over. Run: `dub test :hue -b bench -- --bench -i resizeSweep`.
+buildType "bench" {
+    buildOptions "unittests" "releaseMode" "optimize" "inline"
+    dflags "-mcpu=native" platform="ldc"
+}
+
 configuration "unittest" {
     targetType "library"
     // gui.d (raylib) is excluded so `dub test :hue` links no GL/window; the
