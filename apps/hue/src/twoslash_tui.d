@@ -16,9 +16,12 @@ module twoslash_tui;
 version (Posix):
 
 import sparkles.tui.app : runApp;
-import sparkles.tui.cell : CellStyle, codepointCellWidth, Grid;
+import sparkles.tui.cell : CellStyle, Grid;
 import sparkles.tui.input : Event, EventKind, Key, MouseAction;
-import sparkles.tui.terminal : TerminalOptions, TermSize;
+import sparkles.tui.terminal : TerminalOptions;
+
+import sparkles.base.text.width : codepointWidth;
+import sparkles.core_cli.term_caps : TermSize;
 
 import sparkles.twoslash.overlay : errIsWarning, InlineDecoration, planTwoslash, TwoslashPlan;
 import sparkles.twoslash.protocol : Node, NodeType, TwoslashReturn;
@@ -144,7 +147,7 @@ private string gridToHtml(in Grid g, RgbColor pageFg, RgbColor pageBg) @system
         ushort x = 0;
         while (x < g.cols)
         {
-            const st = g.at(x, y).style;
+            const st = g[x, y].style;
             sb ~= `<span style="color:#`;
             hex(toRgb(st.fg, pageFg));
             sb ~= ";background:#";
@@ -158,7 +161,7 @@ private string gridToHtml(in Grid g, RgbColor pageFg, RgbColor pageBg) @system
             sb ~= `">`;
             for (; x < g.cols; ++x)
             {
-                const c = g.at(x, y);
+                const c = g[x, y];
                 if (c.width == 0)
                     continue; // wide-glyph continuation carries no bytes
                 if (c.style != st)
@@ -228,7 +231,7 @@ private struct TwoslashTui
 
         int cols;
         foreach (dchar cp; tw.code[a .. b].byDchar)
-            cols += codepointCellWidth(cp);
+            cols += codepointWidth(cp) < 0 ? 1 : codepointWidth(cp);
         return cols;
     }
 
@@ -414,7 +417,7 @@ private struct TwoslashTui
         if (ev.action != MouseAction.press)
             return;
         // SGR mouse is 1-based; the grid is 0-based.
-        const px = cast(int) ev.mx - 1, py = cast(int) ev.my - 1;
+        const px = cast(int) ev.mouse.col - 1, py = cast(int) ev.mouse.row - 1;
         foreach (i, ref const rect; targetRects)
             if (rect.contains(Point(px, py)))
             {
