@@ -238,7 +238,9 @@ private int captureWidgetsHtml(string fixture, string outDir, string stem, int h
             stderr.writeln("  widgets-html ", stem, ": no hover ", hover);
             return 0;
         }
-        tree = viewHoverPopup(tw, idx);
+        // Render JSDoc docs as markdown, matching the GUI (needs the grammar bundle).
+        auto registry = GrammarRegistry.fromEnvironment();
+        tree = viewHoverPopup(tw, idx, registry);
     }
     else
         tree = viewTwoslash(tw);

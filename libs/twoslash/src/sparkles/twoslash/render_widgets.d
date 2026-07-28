@@ -27,7 +27,7 @@ signature text under $(D Slot.code).
 */
 module sparkles.twoslash.render_widgets;
 
-import sparkles.ui.geometry : Insets;
+import sparkles.ui.geometry : cellsOf, Insets;
 import sparkles.ui.style : BorderStyle, Decoration, FontRole, Palette, Slot, TextStyle;
 import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 
@@ -35,6 +35,11 @@ import sparkles.twoslash.overlay : BelowBlock, errIsWarning, planTwoslash,
     TwoslashPlan, withoutQuickinfoPrefix;
 import sparkles.twoslash.protocol : Completion, Node, NodeType, TwoslashReturn;
 import sparkles.twoslash.icons : completionIconGlyph, tagIconGlyph;
+
+import sparkles.syntax.md.model : extractMarkdown, MdBlock, MdBlockKind, MdDoc,
+    MdInline, MdInlineKind, Span;
+import sparkles.syntax.ts.registry : GrammarRegistry;
+import sparkles.base.term_style : UnderlineStyle;
 
 @safe:
 
@@ -199,25 +204,52 @@ hovered token) — the tree is laid out at the origin.
 WidgetTree viewHoverPopup(const TwoslashReturn tw, size_t nodeIndex)
 in (nodeIndex < tw.nodes.length)
 {
+    auto b = Builder();
     const node = tw.nodes[nodeIndex];
     const hit = hitOf(nodeIndex);
-    auto b = Builder();
+    // No grammar registry ⇒ docs render as plain newline-split lines (JSDoc `\n`
+    // must not reach a backend as a literal control char). The `registry` overlay
+    // below renders them as full markdown.
+    uint[] docsRows = node.docs.length ? plainDocsRows(b, node.docs, hit) : null;
+    return finishHoverPopup(b, node, hit, docsRows);
+}
 
+/**
+As above, but renders the JSDoc `docs` as $(B markdown) (bold / italic / inline
+code / links / lists / fenced code, wrapped to the popup width) via the
+`sparkles:syntax` `MdDoc` model driven by `registry` — the same markdown seam the
+HTML backend uses. Falls back to plain newline-split lines when the markdown
+grammars are unavailable, so docs never vanish. `@system` (the tree-sitter parse).
+*/
+WidgetTree viewHoverPopup(const TwoslashReturn tw, size_t nodeIndex,
+    ref GrammarRegistry registry) @system
+in (nodeIndex < tw.nodes.length)
+{
+    auto b = Builder();
+    const node = tw.nodes[nodeIndex];
+    const hit = hitOf(nodeIndex);
+    uint[] docsRows = node.docs.length ? markdownDocsRows(b, registry, node.docs, hit) : null;
+    return finishHoverPopup(b, node, hit, docsRows);
+}
+
+/// Assembles the popup shell shared by both `viewHoverPopup` overloads: the
+/// signature (code face), the already-built `docsRows` under a 1px top divider,
+/// and the `@tag` chips, wrapped in the floating surface (border/radius/shadow/arrow).
+private WidgetTree finishHoverPopup(ref Builder b, const Node node, size_t hit,
+    uint[] docsRows)
+{
     uint[] rows;
     // Signature: the code/monospace face at 1em (CSS `.twoslash-popup-code`).
     rows ~= b.add(Widget(kind: WidgetKind.text,
         text: withoutQuickinfoPrefix(node.text), slot: Slot.code, hitId: hit,
         textStyle: TextStyle(fontRole: FontRole.code, fontScale: M.codeFontScale)));
 
-    // Docs prose: the sans face at 0.8em, separated by a 1px top divider (CSS
-    // `.twoslash-popup-docs` `font-family: sans-serif; font-size: 0.8em;
-    // border-top: 1px solid`).
-    if (node.docs.length)
-        rows ~= b.add(Widget(kind: WidgetKind.text, text: node.docs,
-            slot: Slot.docs, hitId: hit,
-            textStyle: TextStyle(fontRole: FontRole.docs, fontScale: M.docsFontScale),
+    // Docs block under a 1px top divider (CSS `.twoslash-popup-docs border-top`).
+    if (docsRows.length)
+        rows ~= b.container(WidgetKind.column, docsRows,
+            padding: Insets(1, 0, 0, 0),
             decoration: Decoration(borderWidth: Insets(M.borderWidth, 0, 0, 0),
-                borderStyle: BorderStyle.solid, borderSlot: Slot.border)));
+                borderStyle: BorderStyle.solid, borderSlot: Slot.border));
 
     foreach (ref const string[] tag; node.tags)
         rows ~= buildPopupTag(b, tag, hit);
@@ -230,6 +262,261 @@ in (nodeIndex < tw.nodes.length)
         children: [col], hitId: hit));
     return b.finish(popup);
 }
+
+// ── JSDoc docs → widget rows (markdown, wrapped) ───────────────────────────
+
+/// The popup docs wrap width, in cells.
+private enum docsMaxWidth = 56;
+
+/// A word carrying its resolved inline style, for greedy line-wrapping.
+private struct DocWord
+{
+    const(char)[] text;
+    TextStyle style;
+    Slot slot;
+    bool chip; /// inline `code` ⇒ a rounded mono pill
+}
+
+/// Renders `docs` (JSDoc markdown) into wrapped, inline-styled widget rows via the
+/// `sparkles:syntax` `MdDoc` model. Empty parse (no grammar) ⇒ plain-line fallback.
+private uint[] markdownDocsRows(ref Builder b, ref GrammarRegistry registry,
+    const(char)[] docs, size_t hit) @system
+{
+    MdDoc doc = extractMarkdown(registry, docs);
+    if (doc.root.children.length == 0)
+        return plainDocsRows(b, docs, hit);
+    uint[] rows;
+    blocksToRows(b, doc.root.children, docs, hit, 0, rows);
+    return rows;
+}
+
+/// Docs fallback (no markdown grammar): the raw text split on newlines into rows,
+/// so a `\n` reads as a line break instead of a tofu glyph.
+private uint[] plainDocsRows(ref Builder b, const(char)[] docs, size_t hit)
+{
+    uint[] rows;
+    size_t start = 0;
+    foreach (i, char c; docs)
+        if (c == '\n')
+        {
+            rows ~= docsLine(b, docs[start .. i], hit);
+            start = i + 1;
+        }
+    rows ~= docsLine(b, docs[start .. $], hit);
+    return rows;
+}
+
+private uint docsLine(ref Builder b, const(char)[] text, size_t hit)
+    => b.add(Widget(kind: WidgetKind.text, text: text.length ? text : " ",
+        slot: Slot.docs, hitId: hit,
+        textStyle: TextStyle(fontRole: FontRole.docs, fontScale: M.docsFontScale)));
+
+/// A blank spacer row between markdown blocks.
+private uint docsSpacer(ref Builder b, size_t hit)
+    => docsLine(b, " ", hit);
+
+private TextStyle docsBase() pure nothrow @nogc
+    => TextStyle(fontRole: FontRole.docs, fontScale: M.docsFontScale);
+
+/// Maps a run of markdown blocks to widget rows (a blank spacer between blocks).
+private void blocksToRows(ref Builder b, in MdBlock[] blocks, const(char)[] src,
+    size_t hit, int indent, ref uint[] rows) @safe
+{
+    foreach (i, ref const blk; blocks)
+    {
+        if (i && rows.length)
+            rows ~= docsSpacer(b, hit);
+        final switch (blk.kind) with (MdBlockKind)
+        {
+            case paragraph:
+                wrapInlines(b, blk.inlines, src, docsBase(), Slot.docs, hit, indent, rows);
+                break;
+            case heading:
+                {
+                    auto h = docsBase();
+                    h.bold = true;
+                    wrapInlines(b, blk.inlines, src, h, Slot.docs, hit, indent, rows);
+                }
+                break;
+            case list:
+                foreach (ref const item; blk.children)
+                    listItemRows(b, item, src, hit, indent, rows);
+                break;
+            case codeFence:
+                codeFenceRows(b, blk, src, hit, indent, rows);
+                break;
+            case blockQuote:
+                blocksToRows(b, blk.children, src, hit, indent + 2, rows);
+                break;
+            case thematicBreak:
+                rows ~= docsLine(b, "───", hit); // a horizontal rule
+                break;
+            case document, listItem, table, tableRow, tableCell, htmlBlock:
+                // Unexpected here / handled by their parent — flatten any inlines.
+                wrapInlines(b, blk.inlines, src, docsBase(), Slot.docs, hit, indent, rows);
+                break;
+        }
+    }
+}
+
+/// A list item: a `•` bullet then the item's (first paragraph's) inline text,
+/// wrapped with a hanging indent.
+private void listItemRows(ref Builder b, in MdBlock item, const(char)[] src,
+    size_t hit, int indent, ref uint[] rows) @safe
+{
+    const inls = item.inlines.length ? item.inlines
+        : (item.children.length ? item.children[0].inlines : null);
+    DocWord[] words;
+    words ~= DocWord(text: "•", style: docsBase(), slot: Slot.muted);
+    flattenInlines(inls, src, docsBase(), Slot.docs, words);
+    packWords(b, words, hit, indent + 1, rows);
+}
+
+/// A fenced code block: each source line as a mono row (pre-formatted, not wrapped).
+private void codeFenceRows(ref Builder b, in MdBlock blk, const(char)[] src,
+    size_t hit, int indent, ref uint[] rows) @safe
+{
+    const code = sliceOf(src, blk.codeBody);
+    size_t start = 0;
+    foreach (i, char c; code)
+        if (c == '\n')
+        {
+            rows ~= codeLine(b, code[start .. i], hit, indent + 1);
+            start = i + 1;
+        }
+    if (start < code.length)
+        rows ~= codeLine(b, code[start .. $], hit, indent + 1);
+}
+
+private uint codeLine(ref Builder b, const(char)[] text, size_t hit, int indent)
+    => b.add(Widget(kind: WidgetKind.text, text: text, slot: Slot.code, hitId: hit,
+        padding: Insets(0, 0, 0, indent),
+        textStyle: TextStyle(fontRole: FontRole.code, fontScale: M.docsFontScale)));
+
+/// Flattens an inline run into `words`, threading style through emphasis/strong/
+/// strikethrough/link and slicing text/codeSpan leaves from `src`.
+private void wrapInlines(ref Builder b, in MdInline[] inls, const(char)[] src,
+    TextStyle base, Slot slot, size_t hit, int indent, ref uint[] rows) @safe
+{
+    DocWord[] words;
+    flattenInlines(inls, src, base, slot, words);
+    packWords(b, words, hit, indent, rows);
+}
+
+private void flattenInlines(in MdInline[] inls, const(char)[] src, TextStyle base,
+    Slot slot, ref DocWord[] words) @safe
+{
+    foreach (ref const inl; inls)
+        final switch (inl.kind) with (MdInlineKind)
+        {
+            case text:
+                pushWords(sliceOf(src, inl.span), base, slot, false, words);
+                break;
+            case strong:
+                {
+                    auto sb = base;
+                    sb.bold = true;
+                    flattenInlines(inl.children, src, sb, slot, words);
+                }
+                break;
+            case emphasis:
+                {
+                    auto se = base;
+                    se.italic = true;
+                    flattenInlines(inl.children, src, se, slot, words);
+                }
+                break;
+            case strikethrough:
+                {
+                    auto ss = base;
+                    ss.strikethrough = true;
+                    flattenInlines(inl.children, src, ss, slot, words);
+                }
+                break;
+            case codeSpan:
+                {
+                    // A code span stays one pill (not word-split), so `Deep Thought`
+                    // reads as a single chip.
+                    auto sc = base;
+                    sc.fontRole = FontRole.code;
+                    const t = sliceOf(src, inl.span);
+                    if (t.length)
+                        words ~= DocWord(text: t, style: sc, slot: Slot.chip, chip: true);
+                }
+                break;
+            case link:
+                {
+                    auto sl = base;
+                    sl.underline = UnderlineStyle.single;
+                    flattenInlines(inl.children, src, sl, Slot.info, words);
+                }
+                break;
+            case image:
+                flattenInlines(inl.children, src, base, slot, words);
+                break;
+            case lineBreak:
+                words ~= DocWord(text: "\n", style: base, slot: slot); // hard break
+                break;
+        }
+}
+
+/// Splits `text` on ASCII whitespace, appending each word with the given style.
+private void pushWords(const(char)[] text, TextStyle style, Slot slot, bool chip,
+    ref DocWord[] words) @safe
+{
+    size_t i;
+    while (i < text.length)
+    {
+        while (i < text.length && (text[i] == ' ' || text[i] == '\t' || text[i] == '\n'))
+            ++i;
+        const start = i;
+        while (i < text.length && text[i] != ' ' && text[i] != '\t' && text[i] != '\n')
+            ++i;
+        if (i > start)
+            words ~= DocWord(text: text[start .. i], style: style, slot: slot, chip: chip);
+    }
+}
+
+/// Greedily packs styled words into `row` widgets no wider than `docsMaxWidth`
+/// (minus `indent`); a `"\n"` word forces a break. Each word is its own styled text
+/// widget (an inline `code` word becomes a rounded pill), joined by a 1-cell gap.
+private void packWords(ref Builder b, in DocWord[] words, size_t hit, int indent,
+    ref uint[] rows) @safe
+{
+    uint[] cur;
+    int curW;
+    const limit = docsMaxWidth - indent > 8 ? docsMaxWidth - indent : 8;
+
+    void flush()
+    {
+        if (cur.length)
+            rows ~= b.container(WidgetKind.row, cur.dup, gap: 1,
+                padding: indent > 0 ? Insets(0, 0, 0, indent) : Insets.init);
+        cur = null;
+        curW = 0;
+    }
+
+    foreach (ref const w; words)
+    {
+        if (w.text == "\n")
+        {
+            flush();
+            continue;
+        }
+        const ww = cast(int) cellsOf(w.text);
+        if (cur.length && curW + 1 + ww > limit)
+            flush();
+        cur ~= b.add(Widget(kind: WidgetKind.text, text: w.text, slot: w.slot,
+            hitId: hit, paintBackground: w.chip, textStyle: w.style,
+            decoration: w.chip ? Decoration(borderRadius: M.popupRadius) : Decoration.init));
+        curW += cur.length == 1 ? ww : 1 + ww;
+    }
+    flush();
+}
+
+/// `src[span]` guarded against a malformed range.
+private const(char)[] sliceOf(const(char)[] src, in Span s) @safe
+    => s.start <= s.end && s.end <= src.length ? src[s.start .. s.end] : "";
 
 /// A JSDoc tag row inside a hover popup: a `@name` pill (`Slot.chip` — muted text
 /// on a grey fill, like the HTML `.twoslash-popup-docs-tag-name`) + its text.
@@ -407,4 +694,62 @@ version (unittest)
     const tw = TwoslashReturn(code: "ok\n", nodes: []);
     auto c = render(viewTwoslash(tw)); // no below-blocks
     assert(c.ops.length == 0);
+}
+
+@("render_widgets.docs.markdownInlineStyling")
+@safe unittest
+{
+    import sparkles.base.term_style : TextAttr;
+
+    // A hand-built paragraph "x b c" where "b" is strong and "c" is a code span —
+    // exercises the markdown mapper without needing a grammar bundle.
+    const src = "x b c";
+    MdInline[] inls = [
+        MdInline(kind: MdInlineKind.text, span: Span(0, 2)), // "x "
+        MdInline(kind: MdInlineKind.strong, span: Span(2, 3),
+            children: [MdInline(kind: MdInlineKind.text, span: Span(2, 3))]), // "b"
+        MdInline(kind: MdInlineKind.text, span: Span(3, 4)), // " "
+        MdInline(kind: MdInlineKind.codeSpan, span: Span(4, 5)), // "c"
+    ];
+    MdBlock[] blocks = [MdBlock(kind: MdBlockKind.paragraph, inlines: inls)];
+
+    auto b = Builder();
+    uint[] rows;
+    blocksToRows(b, blocks, src, 1, 0, rows);
+    auto c = render(b.finish(b.container(WidgetKind.column, rows)));
+
+    bool sawBold, sawChip;
+    foreach (ref op; c.ops)
+    {
+        if (op.text == "b" && (op.visual.styleBits & TextAttr.bold.bits))
+            sawBold = true;
+        // The code span is a mono pill: its own background + code face.
+        if (op.text == "c" && op.visual.hasBg && op.visual.fontRole == FontRole.code)
+            sawChip = true;
+    }
+    assert(sawBold && sawChip);
+}
+
+@("render_widgets.docs.plainNewlinesSplitIntoRows")
+@safe unittest
+{
+    // The no-grammar fallback: a `\n` in docs must become a row break, never a
+    // literal control char (which a backend would draw as tofu).
+    const tw = TwoslashReturn(code: "x\n", nodes: [
+        Node(type: NodeType.hover, start: 0, length: 1, line: 0, character: 0,
+            text: "const x: 1", docs: "first line\nsecond line"),
+    ]);
+    auto c = render(viewHoverPopup(tw, 0));
+
+    bool sawFirst, sawSecond, sawNewlineGlyph;
+    foreach (ref op; c.ops)
+    {
+        if (op.text == "first line")
+            sawFirst = true;
+        if (op.text == "second line")
+            sawSecond = true;
+        if (op.text == "first line\nsecond line")
+            sawNewlineGlyph = true; // the OLD single-run bug
+    }
+    assert(sawFirst && sawSecond && !sawNewlineGlyph);
 }

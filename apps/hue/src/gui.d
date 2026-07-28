@@ -1499,7 +1499,9 @@ private Rectangle drawPopup(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
     in ResolvedTheme theme, ref TsConfigCache cache, in Palette pal,
     RgbColor pageFg, RgbColor pageBg) @system
 {
-    auto tree = viewHoverPopup(tw, nodeIndex);
+    // Render JSDoc docs as markdown (bold/italic/code/links/lists/fences), via the
+    // grammar registry — falls back to plain lines without it.
+    auto tree = viewHoverPopup(tw, nodeIndex, cache.registry);
     auto frames = layout(tree);
     auto ops = buildDisplayList(tree, frames, pal, pageFg, pageBg);
 
