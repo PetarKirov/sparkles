@@ -22,6 +22,8 @@ module sparkles.ui.style;
 
 import sparkles.base.term_color :
     Color, ColorChannel, ColorDepth, RgbColor, toRgb, writeSgrColor;
+import sparkles.base.term_style : TextAttr, UnderlineStyle;
+import sparkles.ui.geometry : Insets;
 
 @safe:
 
@@ -54,10 +56,64 @@ enum Slot : ubyte
 
 private enum slotCount = Slot.max + 1;
 
+/// How a box edge is stroked. Mirrors the CSS `border-style` keywords the
+/// twoslash chrome uses (the `.twoslash-hover` bottom border is `dotted`; the
+/// popup / accent bars are `solid`). A text-decoration underline uses the base
+/// $(REF UnderlineStyle, sparkles,base,term_style) instead.
+enum BorderStyle : ubyte
+{
+    none,   /// no edge drawn
+    solid,  /// a solid rule (popup border, 3px accent bars, docs top divider)
+    dotted, /// a dotted rule (the `.twoslash-hover` 1px underline)
+    dashed, /// a dashed rule (available; unused by twoslash today)
+}
+
+/// Which font family a text run wants. The concrete faces live in the backend
+/// (`sparkles:raylib-text`'s `FontSet`, the browser's monospace/sans stacks);
+/// the model only names the role — CSS `--twoslash-code-font` (mono / `inherit`)
+/// vs `--twoslash-docs-font` (`sans-serif`).
+enum FontRole : ubyte
+{
+    inherit, /// the surrounding text font (monospace code)
+    code,    /// the code/monospace face
+    docs,    /// the documentation/sans face
+}
+
+/// A resolved box border: per-side widths in device px, one stroke style, and
+/// the already-resolved edge color+alpha. A zero-width side draws nothing; the
+/// `alpha` channel drives the `.twoslash-hover` underline's 0.3s fade-in.
+struct BoxBorder
+{
+    Insets width;       /// per-side widths in px (top / right / bottom / left)
+    BorderStyle style;  /// how present edges are stroked
+    RgbColor color;     /// resolved edge color
+    ubyte alpha = 0xFF; /// edge opacity
+
+    /// `true` iff any edge is actually drawn.
+    bool any() const scope @safe pure nothrow @nogc
+        => style != BorderStyle.none
+            && (width.top | width.right | width.bottom | width.left) != 0;
+}
+
+/// A resolved drop shadow (CSS `box-shadow: color dx dy blur`), offsets in px.
+struct Shadow
+{
+    int dx;             /// horizontal offset in px
+    int dy;             /// vertical offset in px
+    int blur;           /// blur radius in px
+    RgbColor color;     /// resolved shadow color
+    ubyte alpha;        /// shadow opacity (0 ⇒ no shadow)
+
+    /// `true` iff the shadow is visible.
+    bool any() const scope @safe pure nothrow @nogc => alpha != 0;
+}
+
 /// A fully-resolved appearance: concrete RGB fore/background with alpha, whether
-/// a background should be painted at all, and packed text-style bits
-/// ($(REF TextAttr, sparkles,base,term_style)). Produced by $(LREF resolveSlot);
-/// consumed by every backend painter.
+/// a background should be painted at all, packed text-style bits
+/// ($(REF TextAttr, sparkles,base,term_style)), and — new — the resolved box
+/// chrome (border / radius / shadow / arrow) and text chrome (font role / size /
+/// underline). Produced by $(LREF resolveSlot) (colors only) or $(LREF resolveVisual)
+/// (colors + chrome); consumed by every backend painter.
 struct Visual
 {
     RgbColor fg;          /// foreground RGB (already resolved against the page)
@@ -65,7 +121,48 @@ struct Visual
     RgbColor bg;          /// background RGB (valid only when `hasBg`)
     ubyte bgAlpha = 0xFF; /// background opacity
     bool hasBg;           /// paint a background rectangle?
-    ushort styleBits;     /// packed `TextAttr` flags (bold/italic/…)
+    ushort styleBits;     /// packed `TextAttr` flags (bold/italic/strikethrough/…)
+
+    // --- box chrome (resolved from a widget's Decoration) ---
+    BoxBorder border;     /// resolved box border (default: none)
+    int borderRadius;     /// corner radius in px (0 = square corners)
+    Shadow shadow;        /// resolved drop shadow (default: none)
+    bool arrow;           /// draw a popup arrow/tail off this box's top edge?
+    int arrowOffset;      /// arrow horizontal offset from the left, in cells
+
+    // --- text chrome (resolved from a widget's TextStyle) ---
+    FontRole fontRole;      /// which font family the run wants
+    ushort fontScale = 100; /// font size as a percentage of 1em (100 = 1em)
+    UnderlineStyle underline; /// text-decoration underline (default: none)
+    ubyte underlineAlpha = 0xFF; /// underline opacity (hover-fade)
+}
+
+/// A widget's declared box decoration — slot-referencing and presentation-free
+/// (the palette resolves the border/shadow colors). Widths, radius, and offsets
+/// are the literal CSS px values, so a reviewer can read them against
+/// `views/twoslash.css`. $(LREF resolveVisual) folds it into a $(LREF Visual).
+struct Decoration
+{
+    Insets borderWidth;             /// per-side border widths in px
+    BorderStyle borderStyle;        /// how the border is stroked (none ⇒ off)
+    Slot borderSlot = Slot.border;  /// palette slot the border color comes from
+    int borderRadius;               /// corner radius in px
+    bool shadow;                    /// draw the palette's popup drop shadow?
+    bool arrow;                     /// draw a popup arrow/tail (backends place it)
+    int arrowOffset;                /// arrow horizontal offset from the left, in cells
+}
+
+/// A widget's declared text style — font role, relative size, weight/italic/
+/// strike, and a text-decoration underline. $(LREF resolveVisual) packs the
+/// boolean flags into $(LREF Visual)'s `styleBits`.
+struct TextStyle
+{
+    FontRole fontRole;          /// code (mono) / docs (sans) / inherit
+    ushort fontScale = 100;     /// percent of 1em
+    bool bold;
+    bool italic;
+    bool strikethrough;
+    UnderlineStyle underline;   /// text-decoration underline shape
 }
 
 /**
@@ -90,6 +187,20 @@ struct Palette
     int popupPadX = 1;   /// popup horizontal padding, in cells
     int popupPadY = 1;   /// popup vertical padding, in cells
     int detachGap = 1;   /// blank rows between code and a detached meta block
+
+    // Sub-cell chrome geometry, in device px, authored to match `twoslash.css`
+    // (the CSS-lockstep test guards these against the stylesheet). The TUI cell
+    // grid approximates: any non-zero border → a 1-cell box-drawing rule; radius
+    // and shadow are ignored (and logged), since a cell grid has no sub-cell edge.
+    int borderWidth = 1;   /// hairline border (popup / `.twoslash-hover` underline)
+    int accentBorder = 3;  /// left accent bar (error / warn / tag / query lines)
+    int shadowDx = 0;      /// popup drop-shadow x offset (`box-shadow` 0 1px 4px)
+    int shadowDy = 1;      /// popup drop-shadow y offset
+    int shadowBlur = 4;    /// popup drop-shadow blur radius
+    ushort codeFontScale = 100; /// popup code/signature size (`--twoslash-code-font-size` 1em)
+    ushort docsFontScale = 80;  /// popup docs size (`.twoslash-popup-docs` 0.8em)
+    ushort tagFontScale = 92;   /// JSDoc `@tag` chip size (`.twoslash-popup-docs-tag-name` 0.92em)
+    int arrowSize = 6;     /// popup arrow square size (`.twoslash-popup-arrow` 6px)
 
     dchar caretGlyph = '^';   /// query caret marker (the `^` twoslash draws)
     dchar arrowGlyph = '─';   /// leader from a meta line up to its column
@@ -187,6 +298,62 @@ Visual resolveSlot(in Palette pal, Slot slot, in RgbColor pageFg, in RgbColor pa
     v.hasBg = pal.bg[i].isSet;
     v.bg = toRgb(pal.bg[i], pageBg);
     v.bgAlpha = pal.bgAlpha[i];
+    return v;
+}
+
+/**
+Resolves a slot $(I plus) a widget's box $(LREF Decoration) and $(LREF TextStyle)
+into a full $(LREF Visual): the slot supplies fore/background (via
+$(LREF resolveSlot)); the decoration's border/shadow colors are resolved from
+$(I their) slots against the same page colors; the palette's scalar shadow
+geometry fills a requested drop shadow; and the text flags pack into `styleBits`.
+This is the display-list path (colors + chrome); $(LREF resolveSlot) stays the
+colors-only path used by the CSS-var and SGR generators.
+*/
+Visual resolveVisual(in Palette pal, Slot slot, in Decoration deco, in TextStyle text,
+    in RgbColor pageFg, in RgbColor pageBg) pure nothrow @nogc
+{
+    Visual v = resolveSlot(pal, slot, pageFg, pageBg);
+
+    // Box border: resolve the edge color from the decoration's own slot.
+    if (deco.borderStyle != BorderStyle.none)
+    {
+        const bc = resolveSlot(pal, deco.borderSlot, pageFg, pageBg);
+        v.border = BoxBorder(
+            width: deco.borderWidth,
+            style: deco.borderStyle,
+            color: bc.fg,
+            alpha: bc.fgAlpha,
+        );
+    }
+    v.borderRadius = deco.borderRadius;
+
+    // Drop shadow: the palette owns the geometry (0 1px 4px), Slot.shadow the color.
+    if (deco.shadow)
+    {
+        const sc = resolveSlot(pal, Slot.shadow, pageFg, pageBg);
+        v.shadow = Shadow(
+            dx: pal.shadowDx, dy: pal.shadowDy, blur: pal.shadowBlur,
+            color: sc.fg, alpha: sc.fgAlpha,
+        );
+    }
+
+    v.arrow = deco.arrow;
+    v.arrowOffset = deco.arrowOffset;
+
+    // Text chrome.
+    v.fontRole = text.fontRole;
+    v.fontScale = text.fontScale;
+    v.underline = text.underline;
+    TextAttr attrs;
+    if (text.bold)
+        attrs = attrs | TextAttr.bold;
+    if (text.italic)
+        attrs = attrs | TextAttr.italic;
+    if (text.strikethrough)
+        attrs = attrs | TextAttr.strikethrough;
+    v.styleBits = attrs.bits;
+
     return v;
 }
 
@@ -297,6 +464,75 @@ unittest
     // surface: opaque light background.
     const s = resolveSlot(pal, Slot.surface, pageFg, pageBg);
     assert(s.hasBg && s.bg == RgbColor(0xf8, 0xf8, 0xf8) && s.bgAlpha == 0xFF);
+}
+
+@("ui.style.resolveVisual.popupChrome")
+@safe pure nothrow @nogc
+unittest
+{
+    const pal = defaultTwoslashPalette();
+    const pageFg = RgbColor(0x22, 0x22, 0x22);
+    const pageBg = RgbColor(0xff, 0xff, 0xff);
+
+    // A popup: surface fill + a 1px solid border (Slot.border) + radius 4 + shadow.
+    const deco = Decoration(
+        borderWidth: Insets.all(pal.borderWidth),
+        borderStyle: BorderStyle.solid,
+        borderSlot: Slot.border,
+        borderRadius: pal.popupRadius,
+        shadow: true,
+    );
+    const v = resolveVisual(pal, Slot.surface, deco, TextStyle.init, pageFg, pageBg);
+
+    // Colors come from the slot, chrome from the decoration + palette.
+    assert(v.hasBg && v.bg == RgbColor(0xf8, 0xf8, 0xf8));
+    assert(v.border.any);
+    assert(v.border.style == BorderStyle.solid && v.border.width == Insets.all(1));
+    assert(v.border.color == RgbColor(0x88, 0x88, 0x88) && v.border.alpha == 0x88);
+    assert(v.borderRadius == 4);
+    assert(v.shadow.any);
+    assert(v.shadow.dx == 0 && v.shadow.dy == 1 && v.shadow.blur == 4);
+    assert(v.shadow.color == RgbColor(0, 0, 0) && v.shadow.alpha == 0x14);
+}
+
+@("ui.style.resolveVisual.textStyleAndHoverUnderline")
+@safe pure nothrow @nogc
+unittest
+{
+    const pal = defaultTwoslashPalette();
+    const pageFg = RgbColor(0x22, 0x22, 0x22);
+    const pageBg = RgbColor(0xff, 0xff, 0xff);
+
+    // Docs prose: sans face, 0.8em, italic → fontRole/scale carried, italic packed.
+    const docs = resolveVisual(pal, Slot.docs,
+        Decoration.init, TextStyle(fontRole: FontRole.docs, fontScale: 80, italic: true),
+        pageFg, pageBg);
+    assert(docs.fontRole == FontRole.docs && docs.fontScale == 80);
+    assert((docs.styleBits & TextAttr.italic.bits) != 0);
+    assert((docs.styleBits & TextAttr.bold.bits) == 0);
+
+    // The `.twoslash-hover` token: a bottom-only 1px dotted border (currentColor),
+    // which the TUI later degrades to a dotted cell underline.
+    const hover = resolveVisual(pal, Slot.code,
+        Decoration(borderWidth: Insets(0, 0, pal.borderWidth, 0),
+            borderStyle: BorderStyle.dotted, borderSlot: Slot.code),
+        TextStyle.init, pageFg, pageBg);
+    assert(hover.border.any && hover.border.style == BorderStyle.dotted);
+    assert(hover.border.width == Insets(0, 0, 1, 0));
+    assert(hover.border.color == pageFg); // Slot.code inherits currentColor
+}
+
+@("ui.style.boxBorderAndShadow.anyPredicates")
+@safe pure nothrow @nogc
+unittest
+{
+    // A zero-width or BorderStyle.none border draws nothing.
+    assert(!BoxBorder.init.any);
+    assert(!BoxBorder(width: Insets.all(2), style: BorderStyle.none).any);
+    assert(BoxBorder(width: Insets(0, 0, 1, 0), style: BorderStyle.dotted).any);
+    // A zero-alpha shadow is invisible.
+    assert(!Shadow.init.any);
+    assert(Shadow(dy: 1, blur: 4, alpha: 0x14).any);
 }
 
 @("ui.style.scheme.darkSurfaceAndDocs")
