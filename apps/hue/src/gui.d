@@ -1246,7 +1246,6 @@ int runGuiTwoslash(
     const pal = defaultTwoslashPalette(schemeForBackground(pageBg));
     const errVis = resolveSlot(pal, Slot.error, pageFg, pageBg);
     const warnVis = resolveSlot(pal, Slot.warn, pageFg, pageBg);
-    const tagVis = resolveSlot(pal, Slot.info, pageFg, pageBg);
     const highlightVis = resolveSlot(pal, Slot.highlight, pageFg, pageBg);
 
     const code = tw.code;
@@ -1330,16 +1329,15 @@ int runGuiTwoslash(
             }
             y += cellH;
 
-            // Below-line annotation rows.
+            // Below-line meta blocks, from the shared `viewBelowBlock` widget view
+            // (caret + message / ^? / completion list / @tag chip), so the GUI grows
+            // the same chrome as the TUI/HTML. Each block is multiple rows.
             foreach (ref const b; plan.belowBlocks)
             {
                 if (b.line != line)
                     continue;
-                canvas.originX = padPx;
-                canvas.originY = y;
-                drawBelowRow(canvas, fonts, buf, code, tw.nodes[b.node], padPx, y, cellW, cellH,
-                    theme, cache, pageFg, errVis, warnVis, tagVis);
-                y += cellH;
+                y += drawBelowBlock(fonts, buf, tw, b.node, padPx, y, cellW, cellH,
+                    theme, cache, pal, pageFg, pageBg) * cellH;
             }
         }
 
@@ -1405,50 +1403,42 @@ private float drawStyledRuns(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf
     return cx;
 }
 
-/// One below-line annotation row for a query / error / completion / tag node.
-/// The `canvas` origin is already at the row (its `padPx`/`y`); cell-space text
-/// draws relative to `node.character`. Query signatures keep their per-token
-/// re-highlighting (a backend concern the widget model leaves to the painter).
-private void drawBelowRow(ref RaylibCanvas canvas, ref FontSet fonts,
-    ref SmallBuffer!(char, 4096) buf, scope const(char)[] code, in Node node,
-    float padPx, float y, int cellW, int cellH, in ResolvedTheme theme,
-    ref TsConfigCache cache, RgbColor pageFg,
-    in Visual errVis, in Visual warnVis, in Visual tagVis) @system
+/// One below-line meta block (error / query / completion / tag), built from the
+/// shared `viewBelowBlock` widget view and painted at `(padPx, y)` through
+/// `RaylibCanvas`; returns its height in rows so the caller advances `y`. A query's
+/// type signature is a single `Slot.code` run in the widget model, so it is
+/// overpainted with the per-token re-highlighted signature (the painter's job).
+private int drawBelowBlock(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
+    in TwoslashReturn tw, size_t nodeIndex, float padPx, float y, int cellW, int cellH,
+    in ResolvedTheme theme, ref TsConfigCache cache, in Palette pal,
+    RgbColor pageFg, RgbColor pageBg) @system
 {
-    const col = cast(int) node.character;
-    const x = padPx + node.character * cellW;
-    final switch (node.type)
-    {
-        case NodeType.error:
-            canvas.textRun(Point(col, 0), node.text,
-                errIsWarning(node.level) ? warnVis : errVis);
-            break;
+    import sparkles.twoslash.render_widgets : viewBelowBlock;
 
-        case NodeType.query:
-            SmallBuffer!HighlightEvent sig;
-            highlightSignature(cache, node.text, sig);
-            drawStyledRuns(fonts, buf, node.text, sig[], x, y, theme, pageFg);
-            break;
+    const node = tw.nodes[nodeIndex];
+    auto tree = viewBelowBlock(tw, nodeIndex);
+    auto frames = layout(tree);
+    auto ops = buildDisplayList(tree, frames, pal, pageFg, pageBg);
 
-        case NodeType.completion:
-            float cx = x;
-            foreach (i, ref const Completion c; node.completions)
+    auto canvas = RaylibCanvas(&fonts, &buf, cellW, cellH, padPx, y);
+    paint(canvas, ops);
+
+    // Re-highlight the query signature (its `Slot.code` run), clearing to the page
+    // background first so the flat widget glyphs don't double-strike.
+    if (node.type == NodeType.query)
+        foreach (ref op; ops)
+            if (op.kind == OpKind.textRun && op.slot == Slot.code)
             {
-                const label = i == 0 ? cstrOf(buf, c.name) : cstrOf(buf, joinPrefix(c.name));
-                drawText(fonts, label, cx, y, TextStyle(0), rl(mix(pageFg, theme.defaults.bg.isSet
-                        ? toRgb(theme.defaults.bg, pageFg) : pageFg)));
-                cx += (columnWidth(c.name) + 2) * cellW;
+                const sx = padPx + op.rect.x * cellW;
+                const sy = y + op.rect.y * cellH;
+                DrawRectangle(cast(int) sx, cast(int) sy, op.rect.w * cellW, cellH, rl(pageBg));
+                SmallBuffer!HighlightEvent sig;
+                highlightSignature(cache, node.text, sig);
+                drawStyledRuns(fonts, buf, node.text, sig[], sx, sy, theme, pageFg);
+                break;
             }
-            break;
 
-        case NodeType.tag:
-            canvas.textRun(Point(col, 0), tagText(node), tagVis);
-            break;
-
-        case NodeType.hover:
-        case NodeType.highlight:
-            break;
-    }
+    return frames[tree.root].rect.h;
 }
 
 /// The floating hover popup: a bordered box with the re-highlighted type
@@ -1488,34 +1478,6 @@ private void drawPopup(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
         }
 }
 
-/// A join-with-leading-space label for completion candidates after the first.
-private const(char)[] joinPrefix(scope const(char)[] name) @safe nothrow
-{
-    static char[128] b;
-    b[0] = ' ';
-    const n = name.length < 126 ? name.length : 126;
-    b[1 .. 1 + n] = name[0 .. n];
-    return b[0 .. 1 + n];
-}
-
-/// The `@name text` label for a tag node, in a reused buffer.
-private const(char)[] tagText(in Node node) @safe nothrow
-{
-    static char[256] b;
-    size_t i = 0;
-    b[i++] = '@';
-    foreach (c; node.name)
-        if (i < b.length)
-            b[i++] = c;
-    if (node.text.length && i + 1 < b.length)
-    {
-        b[i++] = ' ';
-        foreach (c; node.text)
-            if (i < b.length)
-                b[i++] = c;
-    }
-    return b[0 .. i];
-}
 
 /// `IsKeyPressed` plus auto-repeat while held, so PageDown/j/k etc. repeat.
 private bool pressed(int key) @system
