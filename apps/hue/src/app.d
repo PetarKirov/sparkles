@@ -274,18 +274,38 @@ int main(string[] args)
     if (cli.twoslash.length)
         return runTwoslashMode(cli, themeName);
 
-    // A directory target is a multi-document set (`SRC4`): with `--html` it renders
-    // as a static gallery, otherwise it degrades to a listing.
-    if (args.length > 1 && isDirectoryPath(args[1]))
+    // A directory target is a multi-document set (`SRC4`). With `--html` it renders
+    // as a static gallery; with `--gui` it opens the interactive index view
+    // (`GAL5`) below; otherwise it degrades to a listing.
+    const dirTarget = args.length > 1 && isDirectoryPath(args[1]);
+    if (dirTarget && !cli.gui)
         return runDirectoryTarget(cli, args[1], twoslash: false, themeName);
 
     // With a path argument, highlight that file; otherwise highlight hue's own
     // source, embedded at compile time via `import()`. That works from any
     // install location — the build-time `__FILE_FULL_PATH__` would not exist in
     // a released (nix-packaged or copied) binary.
+    import source_set : collectSources, SourceSet;
+
+    // With a directory target the set drives the viewer; the first entry is the
+    // document loaded up front (the index view opens on top of it).
+    SourceSet docSet;
+    bool haveSet;
+    if (dirTarget)
+    {
+        docSet = collectSources(args[1], twoslash: false);
+        if (docSet.empty)
+        {
+            stderr.writeln("hue: no renderable files in '", args[1], "'");
+            return 1;
+        }
+        haveSet = true;
+    }
+
     const hasFile = args.length > 1;
-    const sourcePath = hasFile ? args[1] : "app.d";
-    const source = hasFile ? readText(sourcePath) : import("app.d");
+    const sourcePath = haveSet ? docSet.current.path : (hasFile ? args[1] : "app.d");
+    const source = haveSet ? readText(sourcePath)
+        : (hasFile ? readText(sourcePath) : import("app.d"));
     const lang = canonicalLanguage(sourcePath.extension.chompPrefix("."));
 
     // Markdown files render the decorated preview by default in every sink (MOD8);
@@ -390,10 +410,32 @@ int main(string[] args)
             PreviewModel preview;
             if (isMarkdownPreview)
                 preview = buildMdPreview(registry, cache, source);
+
+            // The document loader the viewer calls when navigating a set (`GNV1`):
+            // app.d owns the grammar registry + cache, so the GUI never duplicates
+            // this pipeline.
+            import gui : LoadedDoc;
+
+            LoadedDoc loadDoc(string path) @system
+            {
+                LoadedDoc doc;
+                doc.source = readText(path);
+                const l = canonicalLanguage(path.extension.chompPrefix("."));
+                SmallBuffer!HighlightEvent ev;
+                if (highlightInjected(cache, l, doc.source, ev).hasError)
+                    ev ~= HighlightEvent.sourceSpan(0, doc.source.length);
+                doc.events = ev[].dup;
+                // Same rule as the up-front document (`CLI9` --raw wins).
+                if (!cli.raw && (l == "markdown" || cli.markdown))
+                    doc.preview = buildMdPreview(registry, cache, doc.source);
+                return doc;
+            }
+
             return runGui(baseName(sourcePath), source, events[], labels, names,
                 themes, idx, preview, cli.font, cli.fontSize,
                 cli.windowWidth, cli.windowHeight, cli.lineNumbers, cli.codeLineNumbers,
-                cli.ansiCopy == "strip", parseTableCopy(cli.tableCopy));
+                cli.ansiCopy == "strip", parseTableCopy(cli.tableCopy),
+                haveSet ? &docSet : null, haveSet ? &loadDoc : null);
         }
         else
         {
@@ -613,7 +655,11 @@ int runTwoslashMode(in CliParams cli, string themeName) @system
     string[] setPaths;
     if (isDirectoryPath(cli.twoslash))
     {
-        if (!cli.gui)
+        // `--html` renders the static gallery; an interactive run (GUI or TUI)
+        // opens the set and navigates it.
+        const wantInteractive = cli.gui
+            || (isTerminal(StdStream.stdout) && isTerminal(StdStream.stdin));
+        if (cli.html || !wantInteractive)
             return runDirectoryTarget(cli, cli.twoslash, twoslash: true, themeName);
 
         import source_set : collectSources;
@@ -726,7 +772,9 @@ int runTwoslashMode(in CliParams cli, string themeName) @system
         {
             import twoslash_tui : runTuiTwoslash;
 
-            return runTuiTwoslash(baseName(cli.twoslash), tw, events[], theme, cache);
+            const tuiTitle = haveSet ? docSet.current.name : baseName(cli.twoslash);
+            return runTuiTwoslash(tuiTitle, tw, events[], theme, cache,
+                haveSet ? &docSet : null);
         }
     }
 
