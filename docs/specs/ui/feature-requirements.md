@@ -18,22 +18,31 @@ its build constraints (`PKG`), and non-functional properties (`NFR`)._
 
 ## Package graph (`PKG`)
 
-| ID   | Requirement                                                                                                                                                                                                                                                                                                                                | Status      | Traces to                                 |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------- | ----------------------------------------- |
-| PKG1 | **Backends adapt to `sparkles:ui`, never the reverse.** `libs/ui` must not depend on any backend package (`raylib-text`, `tui`, a GPU library) nor on `core-cli`.                                                                                                                                                                          | full        | `libs/ui/dub.sdl`                         |
-| PKG2 | `sparkles:ui` depends only on `sparkles:base`, `sparkles:input`, and `sparkles:math`. Concrete canvases live in sibling packages — `sparkles:ui-tui`, `sparkles:ui-raylib` — so every consumer picks the backends it wants.                                                                                                                | not started | proposed `libs/ui-tui`, `libs/ui-raylib`  |
-| PKG3 | Terminal **capability probing** belongs to `sparkles:base` (it is an environment query, not a UI concern); the terminal's **cell-geometry types** belong to `sparkles:tui`. Neither may pull `core-cli` into a UI dependency chain.                                                                                                        | not started | proposed `base.term_caps`; `tui` geometry |
-| PKG4 | `sparkles:core-cli` is scoped to **CLI concerns** — argument parsing, help, prompts, process utilities. Its UI components move into `sparkles:ui`; its help output is expressed as widgets.                                                                                                                                                | not started | [migration.md](./migration.md) `MIG2`     |
-| PKG5 | Packages inside the test-runner implementation's dependency closure must take the **cycle-safe integration path** — `sparkles:math` on `importPaths` rather than as a `dependency`, and the test-runner shim/impl source-included rather than depended upon. This applies to `ui` and `input` once the runner's reporting depends on them. | not started | `libs/ui/dub.sdl`; `libs/input/dub.sdl`   |
-| PKG6 | `sparkles:ui` is a `library`, not a `sourceLibrary` — its component set is too large to recompile inside every consumer.                                                                                                                                                                                                                   | not started | `libs/ui/dub.sdl`                         |
+| ID   | Requirement                                                                                                                                                                                                                                                                                                                                                                  | Status            | Traces to                                |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ---------------------------------------- |
+| PKG1 | **Backends adapt to `sparkles:ui`, never the reverse.** `libs/ui` must not depend on any backend package (`raylib-text`, `tui`, a GPU library) nor on `core-cli`.                                                                                                                                                                                                            | full              | `libs/ui/dub.sdl`                        |
+| PKG2 | `sparkles:ui` depends only on `sparkles:base`, `sparkles:input`, `sparkles:math` and `expected` (the last two both already `base`'s own). Concrete canvases live in sibling packages — `sparkles:ui-tui`, `sparkles:ui-raylib` — so every consumer picks the backends it wants. Every dependency must be **declared**, not inherited through another package's import paths. | not started       | proposed `libs/ui-tui`, `libs/ui-raylib` |
+| PKG3 | Terminal **capability probing** belongs to `sparkles:base` (it is an environment query, not a UI concern); the terminal's **cell-geometry types** belong to `sparkles:tui`. Neither may pull `core-cli` into a UI dependency chain.                                                                                                                                          | full (`31fb39c5`) | `base.term_caps`; `tui.geometry`         |
+| PKG4 | `sparkles:core-cli` is scoped to **CLI concerns** — argument parsing, help, prompts, process utilities. Its UI components move into `sparkles:ui`; its help output is expressed as widgets.                                                                                                                                                                                  | not started       | [migration.md](./migration.md) `MIG2`    |
+| PKG5 | Packages that `core-cli` depends on must take the **cycle-safe integration path** — `sparkles:math` on `importPaths` rather than as a `dependency`, and the test-runner shim/impl source-included rather than depended upon. This applies to `ui` and `input` once `core-cli` depends on them.                                                                               | not started       | `libs/ui/dub.sdl`; `libs/input/dub.sdl`  |
+| PKG6 | `sparkles:ui` is a `library`, not a `sourceLibrary` — its component set is too large to recompile inside every consumer.                                                                                                                                                                                                                                                     | not started       | `libs/ui/dub.sdl`                        |
 
 > [!IMPORTANT]
 > `PKG5` is not hypothetical. Dub unions dependencies across configurations, so
-> once the test-runner implementation depends on `sparkles:ui`, a real
-> `sparkles:math` dependency closes the cycle
-> `ui → math → (math's unittest) → test-runner → impl → ui`. `sparkles:core-cli`
-> already documents and solves this exact cycle by making `../math/src`
-> import-only; `ui` and `input` must do the same.
+> once **`core-cli` depends on `sparkles:ui`** (which `PKG4` requires, for help
+> output), a real `sparkles:math` dependency closes
+> `core-cli → ui → math → (math's unittest) → test-runner → impl → core-cli`, and
+> `ui`'s own `dependency "sparkles:test-runner"` closes
+> `ui → test-runner → impl → core-cli → ui`. `sparkles:core-cli` already
+> documents and solves the first by making `../math/src` import-only, and
+> `base`/`core-cli`/`test-utils` solve the second by source-including the runner.
+> `ui` and `input` need both.
+>
+> Note the pressure does **not** come from the test runner's own use of these
+> components: it reaches them by introspection (`__traits(compiles, …)`), never
+> by dependency — precisely because `base` and `core-cli` source-include the
+> runner when testing themselves. That guard must survive the move
+> ([`MIG6`](./migration.md)).
 
 ### Target graph
 
@@ -41,24 +50,24 @@ its build constraints (`PKG`), and non-functional properties (`NFR`)._
 base          → expected                        (+ terminal capability probing)
 math          → (base, test-runner in unittest)
 input         → base, math (import-only)
-ui            → base, input, math (import-only)
+ui            → base, input, expected, math (import-only)
 ui-tui        → ui, tui
 ui-raylib     → ui, raylib-text
 tui           → base, input, math (import-only)
-raylib-text   → base
+raylib-text   → base, raylib-d
 syntax        → base, ui, tree-sitter
 core-cli      → base, ui, expected
 ```
 
 ## Non-functional (`NFR`)
 
-| ID   | Requirement                                                                                                                                                                                                                               | Status      | Traces to                                    |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | -------------------------------------------- |
-| NFR1 | Layout and display-list construction must be `@safe pure nothrow` and run in `O(n)` over the node count.                                                                                                                                  | partial     | `layout.d`; `display_list.d`                 |
-| NFR2 | The widget arena, display list and per-frame scratch buffers must have a **`@nogc` path** via `SmallBuffer`, so a per-frame rebuild allocates nothing steady-state. The node and operation types are chosen so this swap is non-breaking. | not started | `widget.d`; `display_list.d`                 |
-| NFR3 | Every stage before `paint` must be exercisable with **no GPU context and no terminal**, through the recording canvas.                                                                                                                     | full        | `canvas.d` `RecordingCanvas`                 |
-| NFR4 | A full-screen relayout and repaint must fit comfortably within an interactive frame budget at terminal-scale trees; incremental relayout is deferred until measurement shows it is needed.                                                | researched  | [layout.md](./layout.md) `LAY13`             |
-| NFR5 | The toolkit must carry a **parity harness**: the same widget tree rendered through every backend, with the HTML target usable as a browser ground-truth oracle, and theme values asserted in lockstep against the stylesheet they mirror. | partial     | `interp/html.d`; twoslash CSS lockstep tests |
+| ID   | Requirement                                                                                                                                                                                                                                                     | Status      | Traces to                                    |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | -------------------------------------------- |
+| NFR1 | Layout and display-list construction must be `@safe pure nothrow` and run in `O(n)` over the node count.                                                                                                                                                        | partial     | `layout.d`; `display_list.d`                 |
+| NFR2 | The widget arena, display list and per-frame scratch buffers must have a **`@nogc` path** via `SmallBuffer`, so a per-frame rebuild allocates nothing steady-state. The node and operation types are chosen so this swap is non-breaking.                       | not started | `widget.d`; `display_list.d`                 |
+| NFR3 | Every stage before `paint` must be exercisable with **no GPU context and no terminal**, through the recording canvas.                                                                                                                                           | full        | `canvas.d` `RecordingCanvas`                 |
+| NFR4 | A full-screen relayout plus display-list construction must complete in **under 1 ms** for a tree of 2 000 nodes (a full terminal of decorated content), measured by a `@benchmark` test. Incremental relayout is deferred until that budget is actually missed. | researched  | [layout.md](./layout.md) `LAY13`             |
+| NFR5 | The toolkit must carry a **parity harness**: the same widget tree rendered through every backend, with the HTML target usable as a browser ground-truth oracle, and theme values asserted in lockstep against the stylesheet they mirror.                       | partial     | `interp/html.d`; twoslash CSS lockstep tests |
 
 ## Module coverage
 

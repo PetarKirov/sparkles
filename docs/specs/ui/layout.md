@@ -147,7 +147,7 @@ revisited:
 
 | Milestone | Scope                                                                  | Status      | Requirements             |
 | --------- | ---------------------------------------------------------------------- | ----------- | ------------------------ |
-| L0        | Decision record (this page) — model, units, exclusions                 | full        | `LAY2`, `LAY3`           |
+| L0        | Decision record (this page) — model, units, exclusions                 | decided     | `LAY2`, `LAY3`           |
 | L1        | Orientation-aware measure + injected grapheme-correct text measurement | not started | `LAY4`, `LAY5`           |
 | L2        | Integer-exact `grow`/`percent` distribution                            | not started | `LAY6`                   |
 | L3        | Clip, child offset and scissor emission                                | not started | `LAY7`                   |
