@@ -101,6 +101,8 @@ private void emit(in WidgetTree tree, uint idx, in Frame[] frames, in Palette pa
                     const w = cast(int) cellsOf(span.text);
                     auto vis = resolveVisual(pal, slot, node.decoration, style,
                         pageFg, pageBg);
+                    if (span.hasFg) // the syntax channel: a resolved color
+                        vis.fg = span.fg;
                     vis.hasBg = span.paintBackground && vis.hasBg;
                     const r = Rect(x, y, w, 1);
                     if (vis.hasBg)

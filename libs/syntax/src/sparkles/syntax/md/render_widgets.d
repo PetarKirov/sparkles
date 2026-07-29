@@ -16,9 +16,15 @@ pills are unbreakable spans, and the wrap width is the node's width maximum
 */
 module sparkles.syntax.md.render_widgets;
 
+import sparkles.base.term_color : RgbColor, toRgb;
 import sparkles.base.term_style : UnderlineStyle;
+import sparkles.syntax.event : byStyledLine, HighlightEvent;
 import sparkles.syntax.md.model : ColAlign, MdBlock, MdBlockKind, MdDoc,
     MdInline, MdInlineKind, Span;
+import sparkles.syntax.theme : ResolvedTheme;
+import sparkles.syntax.ts.highlighter : highlightInjected;
+import sparkles.syntax.ts.injection : TsConfigCache;
+import sparkles.syntax.ts.registry : canonicalLanguage;
 import sparkles.ui.geometry : Insets, SizeSpec;
 import sparkles.ui.style : BorderStyle, Decoration, FontRole, Slot, TextStyle;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
@@ -325,6 +331,39 @@ void pushProse(const(char)[] text, TextStyle style, Slot slot,
 private const(char)[] sliceOf(const(char)[] src, Span s) pure nothrow @nogc
     => s.start <= s.end && s.end <= src.length ? src[s.start .. s.end] : null;
 
+/**
+A `fenceRenderer` backed by the injection-aware highlighter — the real nested
+pipeline (`XFM3`): the fence body highlights in its info language (unknown or
+unbundled → one plain span), colors resolved from `theme` with `pageFg` for
+unstyled text. Spans carry $(B resolved) colors — the theme's syntax channel
+bypasses the slot vocabulary, exactly the split the unified theme makes.
+
+`cache` and `theme` are borrowed; the returned delegate must not outlive them.
+*/
+TextSpan[][] delegate(const(char)[], const(char)[]) @safe highlightedFenceRenderer(
+    TsConfigCache* cache, const(ResolvedTheme)* theme, RgbColor pageFg)
+{
+    return delegate TextSpan[][] (const(char)[] lang, const(char)[] body_) @trusted {
+        import sparkles.base.smallbuffer : SmallBuffer;
+
+        SmallBuffer!HighlightEvent ev;
+        if (highlightInjected(*cache, canonicalLanguage(lang), body_, ev).hasError)
+            ev ~= HighlightEvent.sourceSpan(0, body_.length);
+
+        TextSpan[][] lines;
+        foreach (ls; byStyledLine(body_, ev[]))
+        {
+            while (lines.length <= ls.line)
+                lines ~= new TextSpan[](0); // empty lines advance the counter
+            const spec = (*theme)[ls.span.label];
+            lines[ls.line] ~= TextSpan(
+                body_[ls.span.start .. ls.span.end], Slot.code,
+                TextStyle.init, fg: toRgb(spec.fg, pageFg), hasFg: true);
+        }
+        return lines;
+    };
+}
+
 // ---------------------------------------------------------------------------
 // Tests (hand-built models — no grammar bundle needed)
 // ---------------------------------------------------------------------------
@@ -487,6 +526,30 @@ version (unittest)
             sawRest = true;
     }
     assert(sawKeyword && sawRest);
+}
+
+@("md.render_widgets.highlightedFenceRendererFallsBackTotal")
+@system unittest
+{
+    import sparkles.syntax.theme : resolveTheme;
+    import sparkles.syntax.label : LabelSet;
+    import sparkles.syntax.themes : builtinDark;
+    import sparkles.syntax.ts.registry : GrammarRegistry;
+
+    // An unknown language degrades to one plain resolved-color span per line —
+    // the totality half of the nested pipeline, testable with no grammars.
+    auto registry = GrammarRegistry(); // empty: every language misses
+    const labels = LabelSet.standard();
+    const theme = resolveTheme(builtinDark, labels);
+    auto cache = TsConfigCache.create(&registry, labels);
+    const pageFg = RgbColor(0xcc, 0xcc, 0xcc);
+
+    auto render = highlightedFenceRenderer(&cache, &theme, pageFg);
+    auto lines = render("no-such-language", "one\ntwo\n");
+    assert(lines.length == 2);
+    assert(lines[0].length == 1 && lines[0][0].text == "one");
+    assert(lines[0][0].hasFg); // resolved color rides the span
+    assert(lines[1][0].text == "two");
 }
 
 @("md.render_widgets.depthBudgetDegradesToPlainText")

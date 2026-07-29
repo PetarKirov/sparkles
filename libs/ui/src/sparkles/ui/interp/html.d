@@ -111,8 +111,10 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx,
                 const slot = span.slot == Slot.inherit ? node.slot : span.slot;
                 const style = span.textStyle == TextStyle.init
                     ? node.textStyle : span.textStyle;
-                const sv = resolveVisual(pal, slot, node.decoration, style,
+                auto sv = resolveVisual(pal, slot, node.decoration, style,
                     pageFg, pageBg);
+                if (span.hasFg) // the syntax channel: a resolved color
+                    sv.fg = span.fg;
                 put(w, "<span style=\"");
                 textStyle(w, sv);
                 if (node.wrap != TextWrap.none)
