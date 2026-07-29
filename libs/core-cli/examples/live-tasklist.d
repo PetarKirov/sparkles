@@ -21,7 +21,7 @@ import core.thread : Thread;
 import core.time : msecs;
 
 import sparkles.core_cli.process_utils : runStreaming;
-import sparkles.core_cli.term_caps : detectTermCaps;
+import sparkles.base.term_caps : detectTermCaps;
 import sparkles.core_cli.ui.live : stdoutLiveRegion;
 import sparkles.core_cli.ui.tasklist : TaskReporter;
 import sparkles.core_cli.ui.theme : makeTheme;

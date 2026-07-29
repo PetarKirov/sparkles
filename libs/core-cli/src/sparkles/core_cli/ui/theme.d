@@ -12,7 +12,7 @@ parameters.
 module sparkles.core_cli.ui.theme;
 
 import sparkles.base.term_style : Style, stylize;
-import sparkles.core_cli.term_caps : TermCaps;
+import sparkles.base.term_caps : TermCaps;
 import sparkles.core_cli.ui.box : BoxProps;
 import sparkles.core_cli.ui.table : presetGlyphs, TableGlyphs;
 
@@ -236,7 +236,7 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    import sparkles.core_cli.term_caps : TermCaps;
+    import sparkles.base.term_caps : TermCaps;
 
     const dumb = makeTheme(TermCaps(tty: false, colors: false, unicode: false));
     assert(dumb.border == BorderStyle.ascii);

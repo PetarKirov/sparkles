@@ -6,19 +6,21 @@ license "BSL-1.0"
 
 targetPath "build"
 
-importPaths "src"
+// `../math/src` is import-only (all-template `Vector`, which `tui.geometry`
+// specializes into `TermPosition`): a real `dependency "sparkles:math"` would
+// close a dub dependency cycle through math's unittest config
+// (math -> test-runner -> test-runner-impl -> core-cli), the same reason
+// `sparkles:core-cli` takes the import-only route.
+importPaths "src" "../math/src"
 
 dflags "-preview=in" "-preview=dip1000"
 
-// The library modules (runtime, backend, input, color, layout, widgets) are
-// intentionally not written yet: the rendering core (line-diff vs 2-D cell-grid)
-// is being decided by the render-cost benchmark under `bench/render/` — a
-// standalone package with its own manifest, exactly like `libs/wired/bench`.
-// Only the package skeleton exists here today.
+// The render core (2-D cell grid + diff compositor), terminal lifecycle, input
+// decoding and the event loop are shipped; layout and widgets are not — those
+// belong to `sparkles:ui`, which adapts to this library rather than the reverse.
 
 configuration "library" {
     targetType "library"
-    dependency "sparkles:core-cli" path="../.."
     dependency "sparkles:base" path="../.."
 }
 
@@ -27,7 +29,6 @@ configuration "unittest" {
     // `tui` is not in the impl library's dependency closure, so — unlike
     // `core-cli`/`base` — it can take the normal `dependency` route.
     dependency "sparkles:test-runner" path="../.."
-    dependency "sparkles:core-cli" path="../.."
     dependency "sparkles:base" path="../.."
 
     dflags "-checkaction=context" "-allinst"

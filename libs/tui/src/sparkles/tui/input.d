@@ -12,7 +12,7 @@ blocking read returns `EINTR` on resize). Posix-only.
 +/
 module sparkles.tui.input;
 
-import sparkles.core_cli.term_caps : TermSize, TermPosition;
+import sparkles.tui.geometry : TermSize, TermPosition;
 
 /// A decoded key. `char_` carries a printable code point in `Event.ch`; the rest
 /// are named keys. `none` is an unrecognized / incomplete sequence.

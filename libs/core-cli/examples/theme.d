@@ -16,7 +16,7 @@ module theme_example;
 
 import std.stdio : writefln, writeln;
 
-import sparkles.core_cli.term_caps : detectTermCaps, TermCaps;
+import sparkles.base.term_caps : detectTermCaps, TermCaps;
 import sparkles.core_cli.ui.box : drawBox;
 import sparkles.core_cli.ui.header : drawHeader, HeaderProps;
 import sparkles.core_cli.ui.table : drawTable, TableProps;

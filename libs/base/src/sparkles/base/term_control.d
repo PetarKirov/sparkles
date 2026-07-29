@@ -8,7 +8,7 @@ no-terminfo consensus surveyed in `docs/research/tui-libraries/` (libvaxis's
 parameterized ones are `@nogc` writer functions per the `writers.d` idiom.
 
 Emission only: whether a terminal *interprets* these is the caller's decision,
-gated by `sparkles.core_cli.term_caps` (piped output should never see them).
+gated by `sparkles.base.term_caps` (piped output should never see them).
 Parsing/tokenizing escapes lives in `sparkles.base.text.ansi`.
 +/
 module sparkles.base.term_control;

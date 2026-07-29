@@ -28,7 +28,7 @@ import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_color : Color, ColorDepth;
 import sparkles.base.term_style : TermStyle, TextAttr, UnderlineStyle, writeStyleTransition;
 import sparkles.base.text.width : Align, alignField;
-import sparkles.core_cli.term_caps : detectTermCaps;
+import sparkles.base.term_caps : detectTermCaps;
 import sparkles.core_cli.ui.header : drawHeader;
 
 /// One assembled output line; inline, so reuse across rows never allocates.

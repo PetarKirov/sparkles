@@ -162,7 +162,7 @@ struct LiveRegion
 LiveRegion stdoutLiveRegion()
 {
     import std.stdio : stdout;
-    import sparkles.core_cli.term_caps : isTerminal, terminalSize;
+    import sparkles.base.term_caps : isTerminal, terminalSize;
 
     return LiveRegion(
         (scope const(char)[] bytes) { stdout.rawWrite(bytes); stdout.flush(); },

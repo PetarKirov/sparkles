@@ -74,7 +74,7 @@ import sparkles.base.term_color : Color, ColorDepth;
 import sparkles.base.term_control : CtlSeq;
 import sparkles.base.term_style : TermStyle, writeStyleTransition;
 import sparkles.base.text.writers : writeInteger;
-import sparkles.core_cli.term_caps : detectTermCaps, terminalSize;
+import sparkles.base.term_caps : detectTermCaps, terminalSize;
 
 /// One built row (title or a spectrum line) of the frame. Sized so it never
 /// spills to the heap for any realistic terminal width (~40 bytes/cell), which

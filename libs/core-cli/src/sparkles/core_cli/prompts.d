@@ -181,7 +181,7 @@ private Expected!(size_t, string) selectWithArrowKeys(
     bool wrapAround,
 )
 {
-    import sparkles.core_cli.term_caps : terminalSize;
+    import sparkles.base.term_caps : terminalSize;
     import sparkles.core_cli.ui.live : LiveRegion;
 
     io.write(question ~ "\n");

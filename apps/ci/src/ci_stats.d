@@ -36,7 +36,7 @@ import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.styled_template : styledWriteln;
 import sparkles.base.text.writers : writeDuration, writeFixedPoint, writeInteger;
 
-import sparkles.core_cli.term_caps : detectTermCaps;
+import sparkles.base.term_caps : detectTermCaps;
 import sparkles.core_cli.ui.live : stdoutLiveRegion;
 import sparkles.core_cli.ui.table : drawTable, drawTableLines, TableProps;
 import sparkles.core_cli.ui.tasklist : TaskReporter;

@@ -28,7 +28,7 @@ import core.sys.posix.unistd : STDIN_FILENO, STDOUT_FILENO, write;
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_color : classifyColorDepth, ColorDepth;
 import sparkles.base.term_control : CtlSeq, DecMode, writeEscapeSeq, writeMouseTracking;
-import sparkles.core_cli.term_caps : StdStream, terminalSize, TermSize;
+import sparkles.base.term_caps : StdStream, terminalSize, TermSize;
 
 import sparkles.tui.cell : Grid;
 import sparkles.tui.render : Screen;

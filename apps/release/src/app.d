@@ -28,7 +28,7 @@ import sparkles.base.logger : initLogger, LogLevel, info, warning, error;
 import sparkles.base.term_style : Style, stylize;
 import sparkles.core_cli.args : parseCliArgs, CliOption, HelpInfo;
 import sparkles.core_cli.process_utils : isInPath, runCaptured;
-import sparkles.core_cli.term_caps : detectTermCaps;
+import sparkles.base.term_caps : detectTermCaps;
 import sparkles.core_cli.ui.box : drawBox, BoxProps;
 import sparkles.core_cli.ui.header : drawHeader, HeaderProps, HeaderStyle;
 import sparkles.core_cli.ui.live : LiveRegion, stdoutLiveRegion;
@@ -525,7 +525,7 @@ private void renderPlan(in ReleasePlan plan, in SegmentInput[] rows, in Theme th
 {
     import std.conv : text;
     import sparkles.base.text.width : Align;
-    import sparkles.core_cli.term_caps : terminalSize;
+    import sparkles.base.term_caps : terminalSize;
     import sparkles.core_cli.ui.table : TableProps;
 
     string[][] table = [["Version", "Commits", "PRs", "Theme", "Bump"]];
@@ -755,7 +755,7 @@ private void renderStats(in ReleaseStats rs, string rangeLabel)
 {
     import std.conv : text;
     import sparkles.base.text.width : Align;
-    import sparkles.core_cli.term_caps : terminalSize;
+    import sparkles.base.term_caps : terminalSize;
     import sparkles.core_cli.ui.table : TableProps;
 
     // Numbers right-align; every table caps at the terminal width (0 = no cap

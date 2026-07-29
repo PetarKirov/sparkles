@@ -22,7 +22,7 @@ import sparkles.tui.terminal : TerminalOptions;
 
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.text.width : codepointWidth;
-import sparkles.core_cli.term_caps : TermSize;
+import sparkles.base.term_caps : TermSize;
 
 import sparkles.twoslash.overlay : errIsWarning, InlineDecoration, planTwoslash, TwoslashPlan;
 import sparkles.twoslash.protocol : Node, NodeType, TwoslashReturn;
