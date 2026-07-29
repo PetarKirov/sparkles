@@ -22,6 +22,7 @@ breaker is as grapheme-correct as its measurer (`LAY5`).
 */
 module sparkles.ui.wrap;
 
+import sparkles.base.term_color : RgbColor;
 import sparkles.ui.style : Slot, TextStyle;
 
 @safe:
@@ -40,6 +41,12 @@ struct TextSpan
     /// Never break inside this span — it wraps as one token (a pill's name
     /// stays whole; hugging punctuation in a neighbouring span still joins it).
     bool noBreak;
+    /// A $(B resolved) foreground override, gated by `hasFg` — the theme's
+    /// syntax channel: highlight rules resolve outside the slot vocabulary
+    /// (`THM1`), so a syntax-colored token carries its color directly.
+    RgbColor fg;
+    /// ditto
+    bool hasFg;
 }
 
 /// How a text widget breaks into lines (the `LAY10` strategy seam). `none`
