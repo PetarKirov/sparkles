@@ -49,10 +49,25 @@ private void emit(in WidgetTree tree, uint idx, in Frame[] frames, in Palette pa
     final switch (node.kind) with (WidgetKind)
     {
         case text:
-            ops ~= DrawOp(
-                kind: OpKind.textRun, rect: rect, text: node.text,
-                slot: node.slot, visual: vis,
-            );
+            const lines = frames[idx].lines;
+            if (lines.length == 0)
+            {
+                ops ~= DrawOp(
+                    kind: OpKind.textRun, rect: rect, text: node.text,
+                    slot: node.slot, visual: vis,
+                );
+                break;
+            }
+            // A wrapped run: one op per broken line, stacked down the frame.
+            // Each op keeps the node's allocated content width (the painters
+            // take their advance from the text itself).
+            const inner = rect.deflate(node.padding);
+            foreach (li, ln; lines)
+                ops ~= DrawOp(
+                    kind: OpKind.textRun,
+                    rect: Rect(inner.x, inner.y + cast(int) li, inner.width, 1),
+                    text: ln, slot: node.slot, visual: vis,
+                );
             break;
         case glyph:
             ops ~= DrawOp(
@@ -173,6 +188,34 @@ private void emit(in WidgetTree tree, uint idx, in Frame[] frames, in Palette pa
     assert(t.kind == OpKind.textRun && t.text == "The title.");
     assert(t.visual.fontRole == FontRole.docs && t.visual.fontScale == 80);
     assert((t.visual.styleBits & TextAttr.italic.bits) != 0);
+}
+
+@("ui.display_list.wrappedTextEmitsOneRunPerLine")
+@safe unittest
+{
+    import sparkles.ui.widget : Builder;
+    import sparkles.ui.geometry : Constraints;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    import sparkles.ui.wrap : TextWrap;
+
+    auto b = Builder();
+    Widget para = Widget(kind: WidgetKind.text,
+        text: "the quick brown fox", slot: Slot.docs, wrap: TextWrap.greedy);
+    const t = b.add(para);
+    const col = b.container(WidgetKind.column, [t]);
+    auto tree = b.finish(col);
+
+    const pal = defaultTwoslashPalette();
+    auto ops = buildDisplayList(tree, layout(tree, Constraints(maxW: 10)), pal,
+        RgbColor(0, 0, 0), RgbColor(255, 255, 255));
+
+    // One run per broken line, stacked one row apart, same resolved visual.
+    assert(ops.length == 2);
+    assert(ops[0].kind == OpKind.textRun && ops[0].text == "the quick");
+    assert(ops[1].kind == OpKind.textRun && ops[1].text == "brown fox");
+    assert(ops[0].rect.y == 0 && ops[1].rect.y == 1);
+    assert(ops[0].visual == ops[1].visual);
 }
 
 @("ui.display_list.borderOnlyBoxStillEmits")
