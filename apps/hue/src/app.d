@@ -3,9 +3,9 @@
 
 Highlights a source file in the terminal (ANSI) or as HTML. On a GUI-enabled
 build hue opens the raylib window automatically when a display is available
-(force with `--gui`, suppress with `--no-gui`/`--tui`); otherwise, in a tty it
-opens the live terminal previewer: browse the built-in themes with ↑/↓, and
-press Enter to print the whole file in the chosen theme.
+(force with `--gui`, suppress with `--no-gui`/`--tui`); otherwise, in a Posix
+tty it opens the full-screen terminal viewer (scrolling, ←/→ theme cycling,
+search, mouse selection).
 
     hue [--html] [--gui|--no-gui] [--theme <name>] [path]
 
@@ -14,8 +14,7 @@ With no path, `hue` highlights its own source.
 $(B Implementation:) the full `sparkles:syntax` precise pipeline (tree-sitter
 parse → highlights query → event stream → ANSI/HTML renderer). Grammars come
 from the nix bundle ($SPARKLES_TS_GRAMMAR_PATH); without it the program degrades
-to plain text. Startup is GC; the interactive render/output core
-($(MREF previewer)) is `@nogc`.
+to plain text.
 */
 module app;
 
@@ -30,12 +29,10 @@ import sparkles.core_cli.args;
 
 import sparkles.base.logger : initLogger, LogLevel, warning;
 import sparkles.base.smallbuffer : SmallBuffer;
-import sparkles.base.term_control : CtlSeq;
-import sparkles.core_cli.key_input : stdioKeySession;
 import sparkles.base.term_caps : isTerminal, StdStream;
 
+import ansi_model : BackgroundMode, backgroundOptions;
 import document : ContentKind, Document, DocumentPipeline;
-import previewer : BackgroundMode, backgroundOptions, Previewer, runLoop, TermOut;
 import source_set : SourceSet;
 import table_select : TableCopyFormat;
 
@@ -518,39 +515,9 @@ private int runTuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
     }
     else
     {
-        // Non-Posix: the shipped theme-selection previewer.
-        auto sessFactory = stdioKeySession();
-        if (sessFactory is null)
-            return runAnsiSink(cli, doc, theme, cache);
-        auto sess = sessFactory();
-        scope (exit) sess.finish();
-
-        auto prev = Previewer(
-            title: doc.title,
-            source: doc.source,
-            events: doc.events,
-            labels: labels,
-            names: themeSet.names,
-            themes: themeSet.themes,
-            background: bgMode,
-        );
-
-        auto sink = TermOut.standard();
-        sink.put(CtlSeq.enterAltScreen);
-        sink.put(CtlSeq.hideCursor);
-        sink.flush();
-
-        const result = runLoop(prev, sink, sess, themeSet.idx, depth);
-
-        // Restore the terminal (the alt screen's contents are discarded on exit).
-        // On selection (Enter), print the whole file highlighted with the chosen
-        // theme; on quit/abort, print nothing.
-        sink.put(CtlSeq.showCursor);
-        sink.put(CtlSeq.exitAltScreen);
-        if (result.selected)
-            sink.put(prev.renderFull(result.idx, depth));
-        sink.flush();
-        return 0;
+        // Non-Posix: no raw-termios TUI (sparkles:tui's reader is Posix-only) —
+        // degrade to the whole-file ANSI emit (D6 retired the previewer).
+        return runAnsiSink(cli, doc, theme, cache);
     }
 }
 

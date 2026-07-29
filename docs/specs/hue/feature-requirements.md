@@ -152,8 +152,15 @@ and (optionally) a preview/gutter:
 
 ## Interactive terminal previewer (`PRV`)
 
+> [!IMPORTANT]
+> **Retired** (`D6`, M9): `previewer.d` is deleted. Everything it did is
+> subsumed by the full TUI ([tui.md](./tui.md)) — live theme cycling is ←/→
+> there — and the non-Posix tty path degrades to the whole-file ANSI emit
+> (`sparkles:tui`'s input reader is Posix-only). The rows below are kept as
+> the historical record of what the TUI absorbed; none traces to live code.
+
 `previewer.d` — the live theme browser (the baseline the **full TUI**
-([tui.md](./tui.md)) extends). Its render/output core is `@nogc nothrow`.
+([tui.md](./tui.md)) extends). Its render/output core was `@nogc nothrow`.
 
 | ID   | Requirement                                                                                                                                                                   | Status            | Traces to                                   |
 | ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ------------------------------------------- |
@@ -235,13 +242,13 @@ surface as **hue** capabilities.
 
 Every non-GUI source file maps to the requirements above:
 
-| Source                      | Key symbols                                                                               | Requirements                                                                   |
-| --------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `apps/hue/src/app.d`        | `CliParams`, `main`, `emitAnsiWholeFile`, mode dispatch                                   | `CLI*`, `SRC*`, `LNG1`, `ENG*`, `THM*`, `CLR1`, `MOD*`, `ANS*`, `HTM*`, `DEG*` |
-| `apps/hue/src/source_set.d` | `SourceEntry`, `SourceSet`, `collectSources`, `twoslashTally`, `plainTally`               | `SRC4`–`SRC6`, [gallery.md](./gallery.md) `GAL1`                               |
-| `apps/hue/src/gallery.d`    | `relayoutGutter`, `pageShell`, `galleryIndex`, `writeGallery`                             | `HTM4`, `HTM6`–`HTM8`, [gallery.md](./gallery.md) `GAL2`/`GAL4`/`GAL6`/`GAL7`  |
-| `apps/hue/src/previewer.d`  | `Previewer`, `runLoop`, `buildFrame`, `renderFull`, `firstLines`, `TermOut`, `LoopResult` | `PRV*`, `NFR1`, `NFR2`                                                         |
-| `apps/hue/dub.sdl`          | build configurations (`application` [GUI] / `no-gui` / `unittest`)                        | `CLI4`, `MOD1/2`, `BLD1/2/4`, `NFR3`                                           |
-| `nix/packages/hue.nix`      | `packages.hue`, `packages.hue-no-gui`                                                     | `BLD3`                                                                         |
+| Source                      | Key symbols                                                                                       | Requirements                                                                   |
+| --------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| `apps/hue/src/app.d`        | `CliParams`, `main`, `emitAnsiWholeFile`, mode dispatch                                           | `CLI*`, `SRC*`, `LNG1`, `ENG*`, `THM*`, `CLR1`, `MOD*`, `ANS*`, `HTM*`, `DEG*` |
+| `apps/hue/src/source_set.d` | `SourceEntry`, `SourceSet`, `collectSources`, `twoslashTally`, `plainTally`                       | `SRC4`–`SRC6`, [gallery.md](./gallery.md) `GAL1`                               |
+| `apps/hue/src/gallery.d`    | `relayoutGutter`, `pageShell`, `galleryIndex`, `writeGallery`                                     | `HTM4`, `HTM6`–`HTM8`, [gallery.md](./gallery.md) `GAL2`/`GAL4`/`GAL6`/`GAL7`  |
+| `apps/hue/src/previewer.d`  | **deleted** (`D6`, M9) — theme cycling lives in the TUI; `BackgroundMode` moved to `ansi_model.d` | `PRV*` (retired)                                                               |
+| `apps/hue/dub.sdl`          | build configurations (`application` [GUI] / `no-gui` / `unittest`)                                | `CLI4`, `MOD1/2`, `BLD1/2/4`, `NFR3`                                           |
+| `nix/packages/hue.nix`      | `packages.hue`, `packages.hue-no-gui`                                                             | `BLD3`                                                                         |
 
 → [GUI requirements](./gui.md) · [Overview](./index.md)

@@ -25,11 +25,10 @@ import sparkles.tui.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
     match, PointerAction, PointerButton, PointerEvent, ResizeEvent, WheelEvent;
 import sparkles.ui.state : scrollbarThumb, ScrollState, Selection;
 
-import ansi_model : Attr;
+import ansi_model : Attr, BackgroundMode;
 import gui_preview : BandKind, buildRawPlines, layoutPreview, PreviewLine,
     PreviewModel, quoteBarColors, quoteBarCycle;
 import gui_text : columnWidth;
-import previewer : BackgroundMode;
 
 private enum RgbColor fallbackFg = RgbColor(0xcc, 0xcc, 0xcc);
 private enum RgbColor fallbackBg = RgbColor(0x1e, 0x1e, 0x1e);
