@@ -23,4 +23,4 @@ public import sparkles.tui.app;
 // The terminal-cell size / position vocabulary the API speaks (a `Terminal.size`,
 // an `Event.mouse`, a `runApp` paint callback) — re-exported so consumers get it
 // with the library.
-public import sparkles.core_cli.term_caps : TermSize, TermPosition;
+public import sparkles.tui.geometry;

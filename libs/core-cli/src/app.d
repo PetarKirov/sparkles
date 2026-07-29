@@ -27,7 +27,7 @@ void main(string[] args)
         "p|parallel", "Enable parallel verification", &parallel,
     );
 
-    import sparkles.core_cli.term_caps : setTermWindowSizeHandler;
+    import sparkles.base.term_caps : setTermWindowSizeHandler;
     import sparkles.math : ScreenSize;
     setTermWindowSizeHandler((ScreenSize!ushort size) {
         import core.stdc.stdio : printf;

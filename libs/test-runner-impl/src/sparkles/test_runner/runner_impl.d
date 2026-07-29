@@ -1093,7 +1093,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
 /// (see `reporting.d` for the pattern) — its `detectTermCaps` is the shared
 /// implementation of the console-preparation policy this runner used to inline.
 private enum bool hasCoreCliTermCaps = __traits(compiles, {
-    import sparkles.core_cli.term_caps : detectTermCaps;
+    import sparkles.base.term_caps : detectTermCaps;
 });
 
 /// The per-test `BenchConfig` under the CLI knobs: `--bench-min-time` overrides
@@ -1133,7 +1133,7 @@ private bool prepareConsole(bool noColors)
 {
     static if (hasCoreCliTermCaps)
     {
-        import sparkles.core_cli.term_caps : detectTermCaps;
+        import sparkles.base.term_caps : detectTermCaps;
 
         return detectTermCaps(noColors).colors;
     }

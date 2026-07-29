@@ -12,6 +12,7 @@ public import sparkles.base.prettyprint;
 public import sparkles.base.smallbuffer;
 public import sparkles.base.source_uri;
 public import sparkles.base.styled_template;
+public import sparkles.base.term_caps;
 public import sparkles.base.term_color;
 public import sparkles.base.term_style;
 public import sparkles.base.text;

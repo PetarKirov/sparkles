@@ -601,7 +601,7 @@ EOF is an error, never an accidental default.
 +/
 import std.stdio : writefln;
 import sparkles.core_cli.prompts;
-import sparkles.core_cli.term_caps : isTerminal, StdStream;
+import sparkles.base.term_caps : isTerminal, StdStream;
 
 void main()
 {
@@ -625,7 +625,7 @@ bump=2 push=true
 
 ## Terminal Capabilities & Themes
 
-`sparkles.core_cli.term_caps` is the single place the "what can this terminal
+`sparkles.base.term_caps` is the single place the "what can this terminal
 do" decision is made: `terminalSize()` (a `ScreenSize!ushort`; `0` components
 mean unknown), `isTerminal(stream)`, and `detectTermCaps()` — the one-shot
 snapshot combining tty-ness, the color decision (`$NO_COLOR`, `TERM=dumb`,

@@ -1,24 +1,31 @@
 /++
-Terminal capability probing: the synchronous size query ($(LREF terminalSize))
-and resize notifications ($(LREF setTermWindowSizeHandler)).
+Terminal capability probing: the synchronous size query ($(LREF terminalSize)),
+tty and color detection ($(LREF detectTermCaps)), and resize notifications
+($(LREF setTermWindowSizeHandler)).
 
-Per the `docs/specs/core-cli/tui-components` decision ledger this module is the
-single place the "what can this terminal do" *decision* is made; UI components
-stay pure producers that take explicit widths/flags.
+This is the single place the "what can this terminal do" *decision* is made;
+renderers stay pure producers that take explicit widths/flags. It lives in
+`sparkles:base` rather than a UI package because it is an **environment query**,
+not a presentation concern — a logger, a CLI tool and a full-screen UI all need
+it, and none of them should pull in a UI stack to ask.
+
+$(LREF TermSize) is deliberately a plain POD rather than a
+$(REF Vector, sparkles,math,vector) specialization: `base` sits below
+`sparkles:math`, and a capability snapshot never does vector arithmetic. The
+terminal's *geometry* types — positions you add offsets to — live in
+`sparkles:tui` (`TermPosition`), which is free to specialize `Vector`.
 +/
-module sparkles.core_cli.term_caps;
+module sparkles.base.term_caps;
 
 import sparkles.base.term_color : ColorDepth, classifyColorDepth;
-import sparkles.math : ScreenSize, Vector;
 
-/// The terminal domain's canonical 2-D types: a size in cells (`.width`/`.height`)
-/// and a cell position (`.col`/`.row`). Both are `ushort` — a terminal never spans
-/// more cells than that. Reuse these instead of ad-hoc `ushort cols, rows;` pairs.
-/// A position uses terminal-native field names (`col`/`row`, matching SGR mouse,
-/// `winsize`, and `CSI row;col`) rather than the generic pixel `x`/`y` of
-/// $(REF ScreenPosition, sparkles,math,vector).
-alias TermSize = ScreenSize!ushort;
-alias TermPosition = Vector!(ushort, 2, ["col", "row"]); /// ditto
+/// A terminal size in cells. A `0` component means that axis is unknown — see
+/// $(LREF terminalSize).
+struct TermSize
+{
+    ushort width;  /// columns
+    ushort height; /// rows
+}
 
 // The SIGWINCH resize-notification machinery is POSIX-only; `terminalSize`
 // below is cross-platform. Guarding the POSIX import keeps the module
@@ -34,7 +41,7 @@ version (Posix)
     /// Resize callback: receives the new size on every SIGWINCH. Runs in signal
     /// context, hence the `nothrow @nogc` requirement — keep handlers to
     /// async-signal-safe work (storing the size, setting a flag).
-    alias Handler = void delegate(ScreenSize!ushort size) nothrow @nogc;
+    alias Handler = void delegate(TermSize size) nothrow @nogc;
 
     @nogc nothrow
     void setTermWindowSizeHandler(Handler handler)
@@ -64,13 +71,13 @@ version (Posix)
         ioctl(STDIN_FILENO, TIOCGWINSZ, &s);
 
         assert (_handler, "No user-defined handler for SIGWINCH set");
-        _handler(ScreenSize!ushort(s.ws_col, s.ws_row));
+        _handler(TermSize(s.ws_col, s.ws_row));
     }
 }
 
 /// Current terminal size in cells (columns × rows). A `0` component means that
 /// axis can't be determined — `stream` not a tty, redirected to a pipe/file, or
-/// the OS query failed; `ScreenSize!ushort.init` (0×0) is the fully-unknown
+/// the OS query failed; `TermSize.init` (0×0) is the fully-unknown
 /// value. A synchronous one-shot query, distinct from the async
 /// `setTermWindowSizeHandler` above. Callers use `0` to mean "unknown, don't
 /// wrap/truncate/clamp". The streams can point at different terminals (or none):
@@ -96,8 +103,8 @@ TermSize terminalSize(StdStream stream = StdStream.stdout) @safe nothrow @nogc
         return (int fd) @trusted {
             winsize s;
             if (ioctl(fd, TIOCGWINSZ, &s) != 0)
-                return ScreenSize!ushort.init;
-            return ScreenSize!ushort(s.ws_col, s.ws_row);
+                return TermSize.init;
+            return TermSize(s.ws_col, s.ws_row);
         }(fd);
     }
     else version (Windows)
@@ -117,19 +124,19 @@ TermSize terminalSize(StdStream stream = StdStream.stdout) @safe nothrow @nogc
         return (DWORD id) @trusted {
             auto handle = GetStdHandle(id);
             if (handle is null || handle == INVALID_HANDLE_VALUE)
-                return ScreenSize!ushort.init;
+                return TermSize.init;
             CONSOLE_SCREEN_BUFFER_INFO info;
             if (!GetConsoleScreenBufferInfo(handle, &info))
-                return ScreenSize!ushort.init;
+                return TermSize.init;
             const width = info.srWindow.Right - info.srWindow.Left + 1;
             const height = info.srWindow.Bottom - info.srWindow.Top + 1;
             if (width <= 0 || height <= 0)
-                return ScreenSize!ushort.init;
-            return ScreenSize!ushort(cast(ushort) width, cast(ushort) height);
+                return TermSize.init;
+            return TermSize(cast(ushort) width, cast(ushort) height);
         }(id);
     }
     else
-        return ScreenSize!ushort.init;
+        return TermSize.init;
 }
 
 /// The query is `@safe nothrow @nogc` and never throws; the value itself is
@@ -203,11 +210,11 @@ unittest
 /// $(LREF detectTermCaps) once at startup and thread the fields through.
 struct TermCaps
 {
-    bool tty;                 /// stdout is attached to a terminal
-    bool colors;              /// emit SGR color/attribute escapes
-    ColorDepth colorDepth;    /// color tier to emit; `none` when `colors` is off
-    bool unicode;             /// emit non-ASCII glyphs (box drawing, ✓/✗ marks)
-    ScreenSize!ushort size;   /// terminal size; `0` components mean unknown
+    bool tty;              /// stdout is attached to a terminal
+    bool colors;           /// emit SGR color/attribute escapes
+    ColorDepth colorDepth; /// color tier to emit; `none` when `colors` is off
+    bool unicode;          /// emit non-ASCII glyphs (box drawing, ✓/✗ marks)
+    TermSize size;         /// terminal size; `0` components mean unknown
 }
 
 /// Detects capabilities and prepares the console.

@@ -602,7 +602,7 @@ an error, never an accidental default:
 import std.stdio : writefln;
 
 import sparkles.core_cli.prompts;
-import sparkles.core_cli.term_caps : isTerminal, StdStream;
+import sparkles.base.term_caps : isTerminal, StdStream;
 
 void main()
 {
@@ -793,7 +793,7 @@ dub run --single libs/core-cli/examples/tree.d -- [path] # gitignore-aware tree(
 dub run --single libs/core-cli/examples/layout.d
 dub run --single libs/core-cli/examples/prompts.d       # interactive
 dub run --single libs/core-cli/examples/live-tasklist.d # animated
-dub run --single libs/core-cli/examples/term-caps.d
+dub run --single libs/base/examples/term-caps.d
 ```
 
 ## Building & Testing

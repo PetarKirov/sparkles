@@ -19,7 +19,7 @@ import sparkles.syntax : AnsiOptions, ColorDepth, HighlightEvent, LabelSet,
     renderAnsi, ResolvedTheme, StyleSpec, Theme, writeThemeStyles;
 
 import sparkles.core_cli.key_input : Key, KeySession;
-import sparkles.core_cli.term_caps : StdStream, terminalSize;
+import sparkles.base.term_caps : StdStream, terminalSize;
 
 /// How the theme background is applied in terminal rendering (`--background`,
 /// hue spec `BGM`) — shared by the whole-file ANSI emit and this previewer.

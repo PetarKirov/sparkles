@@ -16,7 +16,7 @@ module sparkles.tui.app;
 
 version (Posix):
 
-import sparkles.core_cli.term_caps : TermSize;
+import sparkles.base.term_caps : TermSize;
 import sparkles.tui.cell : Grid;
 import sparkles.tui.input : Event, EventKind, PosixEvents;
 import sparkles.tui.terminal : Terminal, TerminalOptions;

@@ -33,7 +33,7 @@ struct KeySession
 /// navigation isn't available (stdin/stdout aren't both real terminals).
 KeySession delegate() stdioKeySession() @safe nothrow
 {
-    import sparkles.core_cli.term_caps : isTerminal, StdStream;
+    import sparkles.base.term_caps : isTerminal, StdStream;
 
     if (!isTerminal(StdStream.stdin) || !isTerminal(StdStream.stdout))
         return null;

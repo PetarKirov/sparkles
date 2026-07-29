@@ -33,7 +33,7 @@ private enum bool hasCoreCliUi = __traits(compiles, {
 /// lines. Absent in `base`'s own test build (no `core-cli` there), where it
 /// degrades to `0` = unknown = no truncation.
 private enum bool hasCoreCliTermCaps = __traits(compiles, {
-    import sparkles.core_cli.term_caps : terminalSize;
+    import sparkles.base.term_caps : terminalSize;
 });
 
 /// Terminal width in cells via `core-cli` when available, else `0` (unknown →
@@ -45,7 +45,7 @@ package uint detectTerminalWidth(bool stderrStream = false)
 {
     static if (hasCoreCliTermCaps)
     {
-        import sparkles.core_cli.term_caps : StdStream, terminalSize;
+        import sparkles.base.term_caps : StdStream, terminalSize;
 
         return terminalSize(stderrStream ? StdStream.stderr : StdStream.stdout).width;
     }
@@ -1329,7 +1329,7 @@ package bool progressEnabled(bool noColors, bool stderrStream = true)
         return false;
     static if (hasCoreCliTermCaps)
     {
-        import sparkles.core_cli.term_caps : isTerminal, StdStream;
+        import sparkles.base.term_caps : isTerminal, StdStream;
 
         return isTerminal(stderrStream ? StdStream.stderr : StdStream.stdout);
     }

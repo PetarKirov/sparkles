@@ -124,7 +124,7 @@ import example_manifest : exampleRunsOnHost;
 /// defaulting to 120 when stdout is not a tty (piped output, CI).
 private size_t uiWidth()
 {
-    import sparkles.core_cli.term_caps : terminalSize;
+    import sparkles.base.term_caps : terminalSize;
 
     const w = terminalSize().width;
     return w == 0 ? 120 : min(120, w);
@@ -957,7 +957,7 @@ private ExecutionResult[] executeExamplesParallel(Example[] examples, string rep
     import std.array : appender;
     import std.parallelism : task;
     import std.range : take;
-    import sparkles.core_cli.term_caps : detectTermCaps;
+    import sparkles.base.term_caps : detectTermCaps;
     import sparkles.core_cli.ui.live : stdoutLiveRegion;
     import sparkles.core_cli.ui.meter : ProgressBar;
     import sparkles.core_cli.ui.progress : spinnerFrame;
@@ -1546,7 +1546,7 @@ private int runDubTestsMode(bool failFast)
     // bounded tail pane) replaces the per-package result boxes; piped output
     // keeps today's box-per-package log byte-stable for CI.
     {
-        import sparkles.core_cli.term_caps : isTerminal;
+        import sparkles.base.term_caps : isTerminal;
 
         if (isTerminal())
             return runDubTestsChecklist(repoRoot, subPackages, failFast);
@@ -1612,7 +1612,7 @@ private int runDubTestsMode(bool failFast)
 private int runDubTestsChecklist(string repoRoot, string[] subPackages, bool failFast)
 {
     import sparkles.core_cli.process_utils : runStreaming;
-    import sparkles.core_cli.term_caps : detectTermCaps;
+    import sparkles.base.term_caps : detectTermCaps;
     import sparkles.core_cli.ui.live : stdoutLiveRegion;
     import sparkles.core_cli.ui.tasklist : TaskReporter;
     import sparkles.core_cli.ui.theme : makeTheme;

@@ -153,7 +153,7 @@ and console preparation (they all interrogate the same stdout handle under the s
 `version (Posix)` / `version (Windows)` plumbing).
 
 ```d
-module sparkles.core_cli.term_caps;
+module sparkles.base.term_caps;
 
 import sparkles.math : ScreenSize;
 

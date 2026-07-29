@@ -18,9 +18,9 @@ module prompts_example;
 import std.stdio : writefln, writeln;
 
 import sparkles.core_cli.prompts;
-import sparkles.core_cli.term_caps : isTerminal, StdStream;
+import sparkles.base.term_caps : isTerminal, StdStream;
 import sparkles.core_cli.ui.theme : makeTheme, Theme;
-import sparkles.core_cli.term_caps : detectTermCaps;
+import sparkles.base.term_caps : detectTermCaps;
 
 void main()
 {

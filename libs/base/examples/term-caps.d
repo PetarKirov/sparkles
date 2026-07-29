@@ -2,16 +2,16 @@
 
 /+ dub.sdl:
 name "term-caps"
-dependency "sparkles:core-cli" path="../../.."
+dependency "sparkles:base" path="../../.."
 targetPath "build"
 +/
 // ci: build-only
 
 module term_caps_example;
 
-import sparkles.core_cli.term_caps :
+import sparkles.base.term_caps :
     detectTermCaps, isTerminal, setTermWindowSizeHandler, StdStream, terminalSize;
-import sparkles.math : ScreenSize;
+import sparkles.base.term_caps : TermSize;
 import core.stdc.stdio : fflush, printf, stdout;
 import std.stdio : readln, writefln;
 
@@ -55,7 +55,7 @@ void main()
     printf("%d/%d", initial.width, initial.height);
     fflush(stdout);
 
-    setTermWindowSizeHandler((ScreenSize!ushort size)
+    setTermWindowSizeHandler((TermSize size)
     {
         printf("\r         \r");
         if (size.width < 5 && size.height < 4)

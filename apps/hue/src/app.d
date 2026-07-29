@@ -32,7 +32,7 @@ import sparkles.base.logger : initLogger, LogLevel, warning;
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_control : CtlSeq;
 import sparkles.core_cli.key_input : stdioKeySession;
-import sparkles.core_cli.term_caps : isTerminal, StdStream;
+import sparkles.base.term_caps : isTerminal, StdStream;
 
 import previewer : BackgroundMode, backgroundOptions, Previewer, runLoop, TermOut;
 import table_select : TableCopyFormat;
@@ -623,7 +623,7 @@ private auto buildMdPreview(ref GrammarRegistry registry, ref TsConfigCache cach
 /// (capped for prose readability), or 80 when it can't be detected (piped).
 private int previewWidth() @system
 {
-    import sparkles.core_cli.term_caps : terminalSize, StdStream;
+    import sparkles.base.term_caps : terminalSize, StdStream;
 
     const w = terminalSize(StdStream.stdout).width;
     if (w <= 0)
