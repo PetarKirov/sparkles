@@ -25,6 +25,7 @@ import sparkles.tui.input : Event, EventKind, Key, MouseAction, MouseButton;
 import ansi_model : Attr;
 import gui_preview : BandKind, buildRawPlines, layoutPreview, PreviewLine,
     PreviewModel, quoteBarColors, quoteBarCycle;
+import gui_text : columnWidth;
 import previewer : BackgroundMode;
 
 private enum RgbColor fallbackFg = RgbColor(0xcc, 0xcc, 0xcc);
@@ -114,6 +115,10 @@ struct PreviewTui
     private SmallBuffer!char clip;
     private bool clipReady;
 
+    // Copy-button feedback: the fence/table just copied shows a ✔ until the next
+    // event (the loop is event-driven, so there is no timed flash). -1 ⇒ none.
+    private int copiedFence = -1, copiedTable = -1;
+
     private const(char)[] query() const return @safe pure nothrow @nogc => qbuf[0 .. qlen];
 
     /// Rebuild the laid-out lines for the current theme / width / view mode (GC;
@@ -196,15 +201,35 @@ struct PreviewTui
             selAnchor = selCursor = -1;
             return;
         }
-        // OSC 52: ESC ] 52 ; c ; <base64> BEL
+        writeClipboard(source[a .. b]);
+        selAnchor = selCursor = -1;
+    }
+
+    // Queue `text` for the system clipboard via OSC 52 (`ESC ] 52 ; c ; <b64> BEL`),
+    // the only portable in-band terminal clipboard; the loop flushes `clip` after.
+    private void writeClipboard(scope const(char)[] text) @system
+    {
         import std.base64 : Base64;
 
         clip.clear();
         clip.put("\x1b]52;c;");
-        clip.put(Base64.encode(cast(const(ubyte)[]) source[a .. b]));
+        clip.put(Base64.encode(cast(const(ubyte)[]) text));
         clip.put("\x07");
         clipReady = true;
-        selAnchor = selCursor = -1;
+    }
+
+    // Column of a line's copy button (code header / table top border) — the middle
+    // of the border's 3-space cutout, `lineCols-3` from the content origin. -1 when
+    // the line has no button.
+    private int copyButtonCol(in PreviewLine pl) @safe
+    {
+        if (pl.copyFence < 0 && pl.copyTable < 0)
+            return -1;
+        int start = pl.quoteDepth * 2 + pl.indentCols + cast(int) columnWidth(pl.leader);
+        int cols;
+        foreach (ref r; pl.runs)
+            cols += cast(int) columnWidth(r.text);
+        return start + cols - 3;
     }
 
     // Does visual line `i` contain the query (case-insensitive, across runs)?
@@ -330,6 +355,18 @@ struct PreviewTui
             const rbg = sel ? selBg : (r.hasBg ? r.bg : fillBg);
             x = g.putText(x, y, r.text, cellStyle(r.fg, true, rbg, r.attrs));
         }
+
+        // Copy button in the border cutout (code header / table top border),
+        // preserving the cutout cell's background.
+        const bcol = copyButtonCol(pl);
+        if (bcol >= 0 && bcol < g.cols)
+        {
+            const copied = (pl.copyFence >= 0 && pl.copyFence == copiedFence)
+                || (pl.copyTable >= 0 && pl.copyTable == copiedTable);
+            auto st = cellStyle(copied ? bars[2] : gutterFg, false, RgbColor.init, 0);
+            st.bg = g[cast(ushort) bcol, y].style.bg;
+            g.putText(cast(ushort) bcol, y, copied ? "\U0000F00C" : "\U0000F0C5", st); //  /
+        }
     }
 
     // A cell scrollbar in the last column across the body rows, sized/positioned
@@ -356,9 +393,29 @@ struct PreviewTui
 
     // ── Input ────────────────────────────────────────────────────────────────
 
+    // Copy a copy-button's target to the clipboard (OSC 52): a code fence copies
+    // its raw body, a table its raw markdown source. Sets the ✔ marker.
+    private void copyButton(in PreviewLine pl) @system
+    {
+        if (pl.copyFence >= 0 && pl.copyFence < cast(int) model.fences.length)
+        {
+            writeClipboard(model.fences[pl.copyFence].body);
+            copiedFence = pl.copyFence;
+            copiedTable = -1;
+        }
+        else if (pl.copyTable >= 0 && pl.selSrcStart != size_t.max
+            && pl.selSrcEnd <= source.length)
+        {
+            writeClipboard(source[pl.selSrcStart .. pl.selSrcEnd]);
+            copiedTable = pl.copyTable;
+            copiedFence = -1;
+        }
+    }
+
     // Apply an event; returns false to quit.
     private bool handle(in Event e) @system
     {
+        copiedFence = copiedTable = -1; // the ✔ flash lasts until the next event
         if (searching)
             return handleSearch(e);
         if (e.kind == EventKind.mouse)
@@ -431,8 +488,20 @@ struct PreviewTui
             }
             else
             {
-                // Body — start (press) or extend (drag) a line selection.
+                // Body — a click on a copy button copies (and doesn't select);
+                // otherwise start (press) or extend (drag) a line selection.
                 const line = top + (e.mouse.row - 2);
+                if (e.action == MouseAction.press && line >= 0
+                    && line < cast(long) plines.length)
+                {
+                    const pl = plines[cast(size_t) line];
+                    const bcol = copyButtonCol(pl);
+                    if (bcol >= 0 && cast(int)(e.mouse.col - 1) == bcol)
+                    {
+                        copyButton(pl);
+                        return true;
+                    }
+                }
                 if (e.action == MouseAction.press)
                     selAnchor = line;
                 selCursor = line;
@@ -568,4 +637,51 @@ unittest
     assert(row(0).canFind("raw"), row(0));    // header: view mode
     assert(row(1).canFind("hello"), row(1));  // first source line, painted into the grid
     assert(row(2).canFind("world"), row(2));  // second source line
+}
+
+@("tui.paint.copyButton")
+@system
+unittest
+{
+    import sparkles.syntax : builtinDark, ColAlign, MdBlock, MdBlockKind, MdDoc,
+        MdInline, MdInlineKind, Span, LabelSet;
+    import std.algorithm.searching : canFind;
+
+    // A hand-built 2×2 table model (no grammar needed) rendered in preview mode.
+    static immutable src = "a b c d";
+    static MdBlock cell(size_t a, size_t b)
+        => MdBlock(kind: MdBlockKind.tableCell,
+            inlines: [MdInline(kind: MdInlineKind.text, span: Span(a, b))]);
+    auto tbl = MdBlock(kind: MdBlockKind.table, span: Span(0, src.length),
+        aligns: [ColAlign.left, ColAlign.left], children: [
+            MdBlock(kind: MdBlockKind.tableRow, children: [cell(0, 1), cell(2, 3)]),
+            MdBlock(kind: MdBlockKind.tableRow, children: [cell(4, 5), cell(6, 7)]),
+        ]);
+
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    PreviewTui t;
+    t.title = "t.md";
+    t.source = src;
+    t.model = PreviewModel(present: true, doc: MdDoc(
+        MdBlock(kind: MdBlockKind.document, children: [tbl]), src));
+    t.labels = LabelSet.standard();
+    t.names = names[];
+    t.themes = themes[];
+    t.width = 40;
+    t.height = 10;
+    t.showPreview = true;
+    t.relayout();
+
+    Grid g;
+    g.resize(40, 10);
+    t.paint(g);
+
+    // The whole-table copy button () is painted in the top border's cutout.
+    bool found;
+    foreach (y; 0 .. g.rows)
+        foreach (x; 0 .. g.cols)
+            if (g[cast(ushort) x, cast(ushort) y].grapheme == "\U0000F0C5")
+                found = true;
+    assert(found, "table copy button not painted in the TUI");
 }
