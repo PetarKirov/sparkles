@@ -10,6 +10,8 @@ module sparkles.ui.state;
 
 import sparkles.input : PointerAction, PointerEvent;
 import sparkles.ui.geometry : Point, Rect;
+import sparkles.ui.layout : childClipOf, Frame, unclipped;
+import sparkles.ui.widget : Visibility, WidgetTree;
 
 @safe:
 
@@ -19,6 +21,42 @@ struct HoverTarget
 {
     Rect rect;
     size_t hitId;
+}
+
+/**
+Extracts the hit-testable regions of a laid-out tree, in paint order — the
+topmost element comes last, matching $(LREF HoverState)'s later-wins rule — so
+hit testing is computed $(B once) by the toolkit and every backend consumes the
+result (`INP10`).
+
+Invisible subtrees contribute nothing, and a clipping container clips its
+descendants' targets through the same $(REF childClipOf, sparkles,ui,layout)
+the display list scissors with — a token scrolled out of a viewport can
+neither be painted nor be hot, by construction.
+*/
+HoverTarget[] hoverTargets(in WidgetTree tree, in Frame[] frames) pure nothrow
+{
+    HoverTarget[] targets;
+
+    void walk(uint idx, in Rect clip)
+    {
+        const node = tree.nodes[idx];
+        if (node.visibility != Visibility.visible)
+            return;
+        const rect = frames[idx].rect;
+        if (node.hitId != 0)
+        {
+            const visible = rect.intersection(clip);
+            if (!visible.empty)
+                targets ~= HoverTarget(visible, node.hitId);
+        }
+        const childClip = childClipOf(node, rect, clip);
+        foreach (ci; node.children)
+            walk(ci, childClip);
+    }
+
+    walk(tree.root, unclipped());
+    return targets;
 }
 
 /// Tracks which target is currently under the pointer. Backend-agnostic: the GUI
@@ -79,5 +117,43 @@ unittest
 
     // Pointer leaves the viewport ⇒ nothing hot.
     assert(h.update(PointerEvent(action: PointerAction.leave, pos: Point(3, 1)), targets));
+    assert(h.hot == 0);
+}
+
+@("ui.state.hoverTargets.pipelineRoundTrip")
+@safe unittest
+{
+    import sparkles.ui.geometry : SizeSpec;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+    // A widget's hit identity survives the pipeline: two hover tokens in a
+    // 2-row scrolled viewport — one visible, one scrolled out — plus a hidden
+    // one. Only the visible token is hit-testable, and HoverState consumes
+    // the result directly.
+    auto b = Builder();
+    const seen = b.add(Widget(kind: WidgetKind.text, text: "visible", hitId: 7));
+    Widget hiddenW = Widget(kind: WidgetKind.text, text: "ghost", hitId: 8,
+        visibility: Visibility.hidden);
+    const hidden = b.add(hiddenW);
+    const gone = b.add(Widget(kind: WidgetKind.text, text: "scrolled", hitId: 9));
+    Widget viewW = Widget(kind: WidgetKind.column,
+        children: [seen, hidden, gone],
+        height: SizeSpec.fixed(2), clipY: true);
+    const view = b.add(viewW);
+    auto tree = b.finish(view);
+
+    auto frames = layout(tree);
+    const targets = hoverTargets(tree, frames);
+    assert(targets.length == 1);
+    assert(targets[0].hitId == 7);
+    assert(targets[0].rect == Rect(0, 0, 7, 1));
+
+    // The state machine's first real consumer: hover the visible token.
+    HoverState h;
+    assert(h.update(PointerEvent(action: PointerAction.move, pos: Point(2, 0)), targets));
+    assert(h.isHot(7));
+    // Row 2 belongs to the scrolled-out token — but it is clipped, so nothing.
+    h.update(PointerEvent(action: PointerAction.move, pos: Point(2, 2)), targets);
     assert(h.hot == 0);
 }
