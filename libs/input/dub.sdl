@@ -1,0 +1,29 @@
+name "input"
+description "Abstract, capability-tiered input event vocabulary shared by every sparkles:ui target"
+license "BSL-1.0"
+
+targetType "library"
+targetPath "../../build"
+
+// `sparkles:math` stays import-only (no `dependency`): this package sits inside
+// the test-runner-impl's dependency closure (impl → ui → input), and dub's
+// cycle detection unions dependencies across configurations — a real math
+// dependency would close input → math → (math unittest) → test-runner → impl.
+// Same recipe as libs/tui and libs/core-cli document.
+importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../math/src"
+sourcePaths "src"
+
+dflags "-preview=in" "-preview=dip1000"
+
+dependency "sparkles:base" path="../.."
+
+configuration "library" {
+    targetType "library"
+}
+
+// Cycle-safe unittest integration: source-include the runner shim + impl
+// rather than `dependency "sparkles:test-runner"` (see the note above).
+configuration "unittest" {
+    sourcePaths "../test-runner/src" "../test-runner-impl/src"
+    dflags "-checkaction=context" "-allinst"
+}
