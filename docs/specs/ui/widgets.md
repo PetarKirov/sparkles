@@ -45,14 +45,14 @@ and lets a single traversal serve every algorithm.
 
 ## Widget tree (`WGT1`–`WGT6`)
 
-| ID   | Requirement                                                                                                                                                                                                                               | Status      | Traces to                               |
-| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | --------------------------------------- |
-| WGT1 | A widget tree must be a **flat arena** — one relocatable buffer of nodes, containers referencing children by explicit index list — not a class hierarchy or a recursive value.                                                            | full        | `widget.d` `Widget`, `WidgetTree`       |
-| WGT2 | A view must be a **pure function** `view(model, ctx) → WidgetTree`, with no dependence on frame state, so it is **re-entrant**: any view may embed the output of another view at any depth.                                               | partial     | `widget.d` `Builder`                    |
-| WGT3 | A widget's payload must be a **sum type** over the widget kinds, so only the fields meaningful for a kind exist, the compiler enforces exhaustive handling, and adding a kind cannot silently skip a backend.                             | not started | proposed `Widget` payload sum type      |
-| WGT4 | Widget **props must be Regular** with total structural equality; handlers and other non-comparable payloads must be excluded from the compared value.                                                                                     | not started | [principles.md](./principles.md) `PRN6` |
-| WGT5 | A widget may carry a **key**, and the renderer must maintain a store of per-element state addressed by key, so scroll offsets, focus and animation phase survive a rebuild. Element state lives in that store, never in the widget value. | not started | proposed key + element-state store      |
-| WGT6 | Text must support **styled runs within a single node** — a sequence of (text, slot) spans — so syntax-highlighted content is expressible directly, without a backend overpainting the toolkit's own output to re-colour it.               | not started | proposed rich-text widget               |
+| ID   | Requirement                                                                                                                                                                                                                               | Status            | Traces to                                                                                                                                                                                                              |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| WGT1 | A widget tree must be a **flat arena** — one relocatable buffer of nodes, containers referencing children by explicit index list — not a class hierarchy or a recursive value.                                                            | full              | `widget.d` `Widget`, `WidgetTree`                                                                                                                                                                                      |
+| WGT2 | A view must be a **pure function** `view(model, ctx) → WidgetTree`, with no dependence on frame state, so it is **re-entrant**: any view may embed the output of another view at any depth.                                               | partial           | `widget.d` `Builder`                                                                                                                                                                                                   |
+| WGT3 | A widget's payload must be a **sum type** over the widget kinds, so only the fields meaningful for a kind exist, the compiler enforces exhaustive handling, and adding a kind cannot silently skip a backend.                             | not started       | deliberately sequenced **after** W2–W5: freezing the payload sum before the component catalog exists would mean re-cutting it per component. Exhaustiveness is meanwhile enforced by `final switch` over `WidgetKind`. |
+| WGT4 | Widget **props must be Regular** with total structural equality; handlers and other non-comparable payloads must be excluded from the compared value.                                                                                     | full (`00b331ad`) | `Widget.==` is total today (the tree carries no handlers); element state lives in the store, keeping it so                                                                                                             |
+| WGT5 | A widget may carry a **key**, and the renderer must maintain a store of per-element state addressed by key, so scroll offsets, focus and animation phase survive a rebuild. Element state lives in that store, never in the widget value. | full (`00b331ad`) | `Widget.key`; `state.d` `ElementStore`/`elementKeys`                                                                                                                                                                   |
+| WGT6 | Text must support **styled runs within a single node** — a sequence of (text, slot) spans — so syntax-highlighted content is expressible directly, without a backend overpainting the toolkit's own output to re-colour it.               | partial           | `WidgetKind.rich` + `TextSpan` end to end (`a6c6c69f`); the overpaint itself retires when the twoslash view emits rich signatures (M9/M10), and wrapping styled runs lands with that migration                         |
 
 > [!NOTE]
 > `WGT5` deliberately separates two different relationships. **Equality** decides
@@ -124,15 +124,15 @@ The exemplar of the view-model/view split.
 
 ## Milestones
 
-| Milestone | Scope                                                             | Status      | Requirements                     |
-| --------- | ----------------------------------------------------------------- | ----------- | -------------------------------- |
-| W0        | Sum-typed payload, Regular props, keys and element state          | not started | `WGT3`–`WGT5`                    |
-| W1        | Styled-run text; hit identity through the pipeline                | not started | `WGT6`                           |
-| W2        | Chrome components — scroll view, scrollbar, header/status, gutter | not started | `WGT9`–`WGT10`, `WGT17`–`WGT18`  |
-| W3        | Content components — table, list, rich text                       | not started | `WGT11`, `WGT13`                 |
-| W4        | Tree component per the case study                                 | not started | `WGT12`, `VMD1`–`VMD6`           |
-| W5        | Interactive components — input, button, tabs, disclosure, toast   | not started | `WGT14`–`WGT16`, `WGT23`–`WGT24` |
-| W6        | Media and links                                                   | not started | `WGT21`, `WGT22`                 |
+| Milestone | Scope                                                             | Status                                              | Requirements                     |
+| --------- | ----------------------------------------------------------------- | --------------------------------------------------- | -------------------------------- |
+| W0        | Sum-typed payload, Regular props, keys and element state          | partial (`00b331ad`; the payload sum follows W2–W5) | `WGT3`–`WGT5`                    |
+| W1        | Styled-run text; hit identity through the pipeline                | full (`a6c6c69f`, `f166e099`)                       | `WGT6`                           |
+| W2        | Chrome components — scroll view, scrollbar, header/status, gutter | not started                                         | `WGT9`–`WGT10`, `WGT17`–`WGT18`  |
+| W3        | Content components — table, list, rich text                       | not started                                         | `WGT11`, `WGT13`                 |
+| W4        | Tree component per the case study                                 | not started                                         | `WGT12`, `VMD1`–`VMD6`           |
+| W5        | Interactive components — input, button, tabs, disclosure, toast   | not started                                         | `WGT14`–`WGT16`, `WGT23`–`WGT24` |
+| W6        | Media and links                                                   | not started                                         | `WGT21`, `WGT22`                 |
 
 ## Module coverage
 

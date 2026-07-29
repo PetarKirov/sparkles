@@ -73,19 +73,19 @@ interaction — instead of aspirational.
 
 ## Hit testing (`INP10`)
 
-| ID    | Requirement                                                                                                                                                                                                                                       | Status      | Traces to                                                |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | -------------------------------------------------------- |
-| INP10 | A widget's **hit identity must survive the pipeline** — from the widget, through layout frames, into the display list — so hit testing is done once by the toolkit and every backend consumes the result, instead of each rebuilding its own map. | not started | `widget.d` `hitId`; `layout.d` `Frame`; `display_list.d` |
+| ID    | Requirement                                                                                                                                                                                                                                       | Status  | Traces to                                                                                                                                                                                                                              |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| INP10 | A widget's **hit identity must survive the pipeline** — from the widget, through layout frames, into the display list — so hit testing is done once by the toolkit and every backend consumes the result, instead of each rebuilding its own map. | partial | `state.d` `hoverTargets` (`f166e099` — visibility- and clip-aware, sharing `childClipOf` with the scissor emission); the hue backends still derive hit maps from overlay-plan decorations until the document is a widget tree (M9/M10) |
 
 ## Milestones
 
-| Milestone | Scope                                                    | Status                                      | Requirements   |
-| --------- | -------------------------------------------------------- | ------------------------------------------- | -------------- |
-| N0        | Package + event vocabulary + tier classification         | full (`97f931e5`; widget declaration in M6) | `INP1`–`INP5`  |
-| N1        | Terminal decoding retargeted to the shared vocabulary    | full (`b9aeb102`)                           | `INP7`         |
-| N2        | Hit identity plumbed through layout and the display list | not started                                 | `INP10`        |
-| N3        | GPU adapter: event synthesis + pointer grab              | not started                                 | `INP8`, `INP9` |
-| N4        | Declared target tiers, with reported degradation         | not started                                 | `INP6`         |
+| Milestone | Scope                                                    | Status                                           | Requirements   |
+| --------- | -------------------------------------------------------- | ------------------------------------------------ | -------------- |
+| N0        | Package + event vocabulary + tier classification         | full (`97f931e5`; widget declaration in M6)      | `INP1`–`INP5`  |
+| N1        | Terminal decoding retargeted to the shared vocabulary    | full (`b9aeb102`)                                | `INP7`         |
+| N2        | Hit identity plumbed through layout and the display list | partial (`f166e099`; backends consume in M9/M10) | `INP10`        |
+| N3        | GPU adapter: event synthesis + pointer grab              | not started                                      | `INP8`, `INP9` |
+| N4        | Declared target tiers, with reported degradation         | not started                                      | `INP6`         |
 
 ## Module coverage
 
