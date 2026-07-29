@@ -31,7 +31,7 @@ module sparkles.ui.layout;
 
 import sparkles.ui.geometry : cellsOf, Constraints, Insets, Point, Rect, Size, SizeSpec;
 import sparkles.ui.widget : Alignment, Visibility, Widget, WidgetKind, WidgetTree;
-import sparkles.ui.wrap : TextWrap, wrapLines;
+import sparkles.ui.wrap : TextSpan, TextWrap, wrapLines, wrapSpans;
 
 @safe:
 
@@ -45,6 +45,9 @@ struct Frame
     /// `text` — the display list emits one run per line. Empty means the run
     /// is the single unbroken `text` (every non-text node, and `TextWrap.none`).
     const(char)[][] lines;
+
+    /// For a wrapping `rich` node: the broken lines of styled span slices.
+    TextSpan[][] spanLines;
 }
 
 /// The default text measurer: one column per codepoint
@@ -367,7 +370,19 @@ if (isTextMeasure!TM)
                     content = 1;
                 break;
             case rich:
-                content = 1; // wrapping styled runs arrives with the rich breaker
+                if (node.wrap != TextWrap.none)
+                {
+                    auto avail = alloW[idx] - node.padding.horizontal;
+                    if (avail < 1)
+                        avail = 1;
+                    frames[idx].spanLines = wrapSpans(node.spans, avail,
+                        (scope const(char)[] s) => tm.width(s));
+                    content = cast(int) frames[idx].spanLines.length;
+                    if (content < 1)
+                        content = 1;
+                }
+                else
+                    content = 1;
                 break;
             case glyph:
                 content = 1;
@@ -978,6 +993,29 @@ string dumpTree(in WidgetTree tree, in Frame[] frames)
         "column 11×2 @(0,0)\n" ~
         "    text 5×1 @(0,0) \"short\"\n" ~
         "    text 11×1 @(0,1) \"much longer\"\n");
+}
+
+@("ui.layout.wrappingRichRunReportsItsLineCount")
+@safe unittest
+{
+    import sparkles.ui.widget : Builder, TextSpan;
+
+    // A styled run with an unbreakable pill, wrapped by the engine itself —
+    // the WGT6 + LAY10 composition that retires view-side word packing.
+    auto b = Builder();
+    Widget para = Widget(kind: WidgetKind.rich, wrap: TextWrap.greedy, spans: [
+        TextSpan("use the "),
+        TextSpan("run", noBreak: true),
+        TextSpan(" helper today"),
+    ]);
+    para.width.max = 14; // a style metric, not a packing loop
+    const t = b.add(para);
+    auto tree = b.finish(t);
+
+    auto frames = layout(tree);
+    assert(frames[t].rect.height == 2);
+    assert(frames[t].spanLines.length == 2);
+    assert(frames[t].spanLines[1][0].text == "helper today");
 }
 
 @("ui.layout.injectedTextMeasure")
