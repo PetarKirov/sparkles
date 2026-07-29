@@ -15,6 +15,23 @@ graph._
 > state, cursor, mouse, filtering) and **DAG** support. Status legend and IDs: see
 > the [overview](./index.md).
 
+> [!IMPORTANT]
+> The generic tree is a **toolkit** component, specified as
+> [`WGT12`/`VMD1`–`VMD6`](../ui/widgets.md); this page specifies hue's _use_ of
+> it. Two consequences worth stating up front:
+>
+> - **`TVU1` becomes the directory target.** A directory argument opens the file
+>   explorer rather than the bespoke index view, and the static
+>   [gallery](./gallery.md) becomes the explorer's HTML flavor.
+> - The case study's verdict is **take snacks' features, ratatui's architecture**:
+>   snacks' own tree is an incidental data structure (a mutable singleton with
+>   parent back-references, and view state and decoration stored on data nodes),
+>   so the feature set is the reference but the three-layer split — data /
+>   interaction state / view, with a pure `flatten` between them — is the shape.
+> - Expand/collapse state is the toolkit's shared disclosure machine
+>   ([`STM5`](../ui/state-machines.md)), the same one [folding](./folding.md)
+>   uses.
+
 ## Design & rationale
 
 The tree/DAG view is a **level-3 widget** in the UI component library

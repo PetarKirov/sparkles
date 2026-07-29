@@ -1,6 +1,6 @@
 # `hue` gallery & multi-document navigation — Feature Requirements
 
-_**Status:** planned · **Date:** 2026-07-29 · **Scope:** rendering a **set** of
+_**Status:** shipped (G0–G3) · **Date:** 2026-07-29 · **Scope:** rendering a **set** of
 documents rather than a single file — the static **HTML gallery** (`index.html` +
 one page per file, with a prev/next header, a physical-line gutter and selection
 domains) and the **interactive** equivalent in the GUI/TUI (prev/next, an index
