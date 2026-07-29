@@ -138,12 +138,32 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx,
                 num(w, node.gap);
                 put(w, "ch");
             }
+            // A clipping container is CSS overflow; the browser does the rest.
+            if (node.clipX && node.clipY)
+                put(w, ";overflow:hidden");
+            else if (node.clipX)
+                put(w, ";overflow-x:hidden");
+            else if (node.clipY)
+                put(w, ";overflow-y:hidden");
             put(w, "\">");
             // A popup arrow renders as a rotated bordered square, as in the CSS.
             if (vis.arrow)
                 emitArrow(w, vis, node.decoration.arrowOffset);
+            // A scroll offset translates the children inside the clipped box
+            // (`lh` = one text row, the cell-grid row analog).
+            const scrolled = node.childOffset.x != 0 || node.childOffset.y != 0;
+            if (scrolled)
+            {
+                put(w, "<div style=\"transform:translate(");
+                num(w, -node.childOffset.x);
+                put(w, "ch,");
+                num(w, -node.childOffset.y);
+                put(w, "lh)\">");
+            }
             foreach (child; node.children)
                 emitNode(w, tree, child, pal, pageFg, pageBg);
+            if (scrolled)
+                put(w, "</div>");
             put(w, "</div>");
             break;
     }

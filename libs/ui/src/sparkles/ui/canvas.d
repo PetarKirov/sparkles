@@ -24,7 +24,7 @@ enum LineStyle : ubyte
     wavy,  /// a wavy underline (the twoslash error squiggle)
 }
 
-/// The four drawing primitives, reified so the pure model can hand a painter a
+/// The drawing primitives, reified so the pure model can hand a painter a
 /// flat `DrawOp[]` with no backend in sight.
 enum OpKind : ubyte
 {
@@ -32,6 +32,8 @@ enum OpKind : ubyte
     textRun,  /// draw `text` at `rect.origin` (`rect.width` = advance in cells)
     glyph,    /// draw a single `glyph` at `rect.origin`
     line,     /// stroke `rect.origin` → `to` in `lineStyle`
+    pushClip, /// clip subsequent ops to `rect` (nested clips intersect)
+    popClip,  /// undo the matching `pushClip`
 }
 
 /**
@@ -92,6 +94,12 @@ $(LIST
 Attributes are deliberately $(I not) constrained here — the interpreter infers
 them from the concrete type, so a `@system` GPU canvas and a `@safe @nogc`
 recorder both satisfy the same concept.
+
+A canvas $(B may) additionally implement the optional clipping pair
+`void pushClip(Rect)` / `void popClip()` (nested clips intersect). The painter
+forwards the display list's scissor ops to it by introspection; a canvas
+without the pair paints unclipped, relying on the display list's subtree
+culling for fully-hidden content.
 */
 enum bool isCanvas(T) = __traits(compiles, (ref T c) {
     Rect r;
@@ -155,6 +163,19 @@ struct RecordingCanvas
             lineStyle: style,
             visual: v,
         );
+    }
+
+    // The optional clipping pair — recorded so tests can assert scissor
+    // bracketing without a real backend.
+    void pushClip(in Rect r)
+    {
+        ops ~= DrawOp(kind: OpKind.pushClip, rect: r);
+    }
+
+    /// ditto
+    void popClip()
+    {
+        ops ~= DrawOp(kind: OpKind.popClip);
     }
 
     Size measure(scope const(char)[] text) const

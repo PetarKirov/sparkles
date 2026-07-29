@@ -79,11 +79,31 @@ struct CellGrid
             c = Cell(glyph: ' ', fg: pageFg, bg: pageBg);
     }
 
+    /// The active clip stack (empty = unclipped). The display list pushes
+    /// *effective* rects (ancestors already intersected), so only the top
+    /// matters for the write guard.
+    private Rect[] clips;
+
     private bool inBounds(int x, int y) const scope pure nothrow @nogc
-        => x >= 0 && x < width && y >= 0 && y < height;
+        => x >= 0 && x < width && y >= 0 && y < height
+            && (clips.length == 0 || clips[$ - 1].contains(Point(x, y)));
 
     private ref Cell at(int x, int y) pure nothrow @nogc
         => cells[y * width + x];
+
+    /// The optional clipping pair: cell writes outside the pushed rect are
+    /// dropped, so a scrolled viewport cannot bleed into the chrome around it.
+    void pushClip(in Rect r)
+    {
+        clips ~= r;
+    }
+
+    /// ditto
+    void popClip()
+    {
+        if (clips.length)
+            clips = clips[0 .. $ - 1];
+    }
 
     // --- isCanvas primitives ---
 
@@ -265,6 +285,28 @@ static assert(isCanvas!CellGrid);
     assert(grid.at(0, 0).hasBg && grid.at(0, 0).bg == RgbColor(0xf8, 0xf8, 0xf8));
     // An untouched cell keeps the page colors and a blank.
     assert(grid.at(3, 1).glyph == ' ' && !grid.at(3, 1).hasBg);
+}
+
+@("ui.cells.clipDropsWritesOutsideTheViewport")
+@safe unittest
+{
+    import sparkles.ui.style : Visual;
+
+    // A 2-row clip on a 4×4 grid: a run crossing the right edge and rows
+    // outside the clip never reach the cells; after popClip writes land again.
+    auto grid = CellGrid(4, 4, RgbColor(0xff, 0xff, 0xff), RgbColor(0, 0, 0));
+    const v = Visual(fg: RgbColor(1, 2, 3));
+
+    grid.pushClip(Rect(0, 0, 2, 2));
+    grid.textRun(Point(0, 0), "abcd", v); // only "ab" lands
+    grid.textRun(Point(0, 2), "yy", v);   // fully below the clip
+    grid.popClip();
+    grid.textRun(Point(0, 3), "zz", v);   // unclipped again
+
+    assert(grid.at(0, 0).glyph == 'a' && grid.at(1, 0).glyph == 'b');
+    assert(grid.at(2, 0).glyph == ' ' && grid.at(3, 0).glyph == ' ');
+    assert(grid.at(0, 2).glyph == ' '); // clipped row untouched
+    assert(grid.at(0, 3).glyph == 'z'); // popClip restored writes
 }
 
 @("ui.cells.translucentFillBlends")

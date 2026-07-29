@@ -68,6 +68,19 @@ struct Widget
 
     uint[] children;         /// child node indices (empty for leaves)
     size_t hitId;            /// hover/hit id (0 = not hit-testable)
+
+    /// Scroll offset subtracted from every child's origin, in cells (`LAY7`).
+    /// The *value* is written by the view; the scroll position it mirrors is
+    /// interaction state and lives in a state machine, never in the arena.
+    Point childOffset;
+    /// Clip painting of the subtree to this node's padded content box, per
+    /// axis (`LAY7`) — the display list brackets the children in scissor ops
+    /// and culls children that fall fully outside. A clipping container plus
+    /// `childOffset` is a viewport.
+    bool clipX;
+    /// ditto
+    bool clipY;
+
     bool paintBackground;    /// fill `slot`'s background (box/panel/popup)
     /// In a `column`, widen to the column's content width (cross-axis stretch —
     /// full-width section dividers); the child's descendants stay left-aligned.

@@ -92,6 +92,19 @@ struct Rect
         return Rect(origin.x + ins.left, origin.y + ins.top,
             nw > 0 ? nw : 0, nh > 0 ? nh : 0);
     }
+
+    /// `true` iff the rectangle covers no cells.
+    bool empty() const scope => size.width <= 0 || size.height <= 0;
+
+    /// The overlap of two rectangles (an $(LREF empty) one when disjoint).
+    Rect intersection(in Rect other) const scope
+    {
+        const x0 = origin.x > other.origin.x ? origin.x : other.origin.x;
+        const y0 = origin.y > other.origin.y ? origin.y : other.origin.y;
+        const x1 = right < other.right ? right : other.right;
+        const y1 = bottom < other.bottom ? bottom : other.bottom;
+        return Rect(x0, y0, x1 > x0 ? x1 - x0 : 0, y1 > y0 ? y1 - y0 : 0);
+    }
 }
 
 /**
@@ -227,6 +240,18 @@ unittest
     assert(r.x == 2 && r.y == 3 && r.width == 10 && r.height == 4);
     assert(r.origin == Point(2, 3) && r.size == Size(10, 4));
     assert(r.right == 12 && r.bottom == 7);
+}
+
+@("ui.geometry.rect.intersection")
+@safe pure nothrow @nogc
+unittest
+{
+    const r = Rect(2, 3, 10, 4);
+    assert(r.intersection(Rect(0, 0, 5, 5)) == Rect(2, 3, 3, 2));
+    assert(r.intersection(r) == r);                     // idempotent
+    assert(r.intersection(Rect(20, 20, 3, 3)).empty);   // disjoint
+    assert(r.intersection(Rect(12, 3, 3, 3)).empty);    // edge-adjacent
+    assert(!r.empty && Rect(0, 0, 0, 5).empty);
 }
 
 @("ui.geometry.insets.sidesAndTotals")

@@ -27,15 +27,23 @@ DrawOp[] buildDisplayList(in WidgetTree tree, in Frame[] frames, in Palette pal,
     in RgbColor pageFg, in RgbColor pageBg)
 {
     DrawOp[] ops;
-    emit(tree, tree.root, frames, pal, pageFg, pageBg, ops);
+    // "No clip yet": a practically-infinite rectangle (runtime-built — the
+    // union-backed geometry vocabulary is not CTFE-constructible).
+    const noClip = Rect(int.min / 2, int.min / 2, int.max, int.max);
+    emit(tree, tree.root, frames, pal, pageFg, pageBg, noClip, ops);
     return ops;
 }
 
 private void emit(in WidgetTree tree, uint idx, in Frame[] frames, in Palette pal,
-    in RgbColor pageFg, in RgbColor pageBg, ref DrawOp[] ops)
+    in RgbColor pageFg, in RgbColor pageBg, in Rect clip, ref DrawOp[] ops)
 {
     const node = tree.nodes[idx];
     const rect = frames[idx].rect;
+
+    // Cull a subtree that lies fully outside the effective clip (scrolled off
+    // a viewport). Zero-sized frames are kept — a border-only box measures 0×0.
+    if (!rect.empty && rect.intersection(clip).empty)
+        return;
     Visual vis = resolveVisual(pal, node.slot, node.decoration, node.textStyle, pageFg, pageBg);
 
     // The background fill is gated by `paintBackground`; a border/shadow/arrow rides
@@ -85,8 +93,33 @@ private void emit(in WidgetTree tree, uint idx, in Frame[] frames, in Palette pa
         case box:
             break; // background (if any) already emitted
         case row, column, stack, panel, popup:
+            // A clipping container brackets its children in scissor ops. The
+            // pushed rect is the *effective* clip — this node's padded content
+            // box on each clipped axis, already intersected with the ancestor
+            // clip — so a canvas replaces rather than intersects.
+            Rect childClip = clip;
+            const clips = node.clipX || node.clipY;
+            if (clips)
+            {
+                const box_ = rect.deflate(node.padding);
+                Rect mine = clip;
+                if (node.clipX)
+                {
+                    mine.origin.x = box_.x;
+                    mine.size.width = box_.width;
+                }
+                if (node.clipY)
+                {
+                    mine.origin.y = box_.y;
+                    mine.size.height = box_.height;
+                }
+                childClip = clip.intersection(mine);
+                ops ~= DrawOp(kind: OpKind.pushClip, rect: childClip);
+            }
             foreach (child; node.children)
-                emit(tree, child, frames, pal, pageFg, pageBg, ops);
+                emit(tree, child, frames, pal, pageFg, pageBg, childClip, ops);
+            if (clips)
+                ops ~= DrawOp(kind: OpKind.popClip);
             break;
     }
 }
@@ -216,6 +249,44 @@ private void emit(in WidgetTree tree, uint idx, in Frame[] frames, in Palette pa
     assert(ops[1].kind == OpKind.textRun && ops[1].text == "brown fox");
     assert(ops[0].rect.y == 0 && ops[1].rect.y == 1);
     assert(ops[0].visual == ops[1].visual);
+}
+
+@("ui.display_list.viewportClipsScrollsAndCulls")
+@safe unittest
+{
+    import sparkles.ui.widget : Builder;
+    import sparkles.ui.geometry : SizeSpec;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : defaultTwoslashPalette;
+
+    // A 2-row viewport over 5 rows, scrolled down by one: rows 1..2 visible,
+    // rows 0/3/4 culled, and the children bracketed in scissor ops.
+    auto b = Builder();
+    uint[] rows;
+    foreach (t; ["zero", "one", "two", "three", "four"])
+        rows ~= b.add(Widget(kind: WidgetKind.text, text: t));
+    Widget viewW = Widget(kind: WidgetKind.column, children: rows,
+        height: SizeSpec.fixed(2), clipY: true, childOffset: Point(0, 1));
+    const view = b.add(viewW);
+    auto tree = b.finish(view);
+
+    const pal = defaultTwoslashPalette();
+    auto frames = layout(tree);
+    assert(frames[rows[0]].rect.y == -1); // scrolled above the viewport
+    assert(frames[rows[1]].rect.y == 0);
+
+    auto ops = buildDisplayList(tree, frames, pal,
+        RgbColor(0, 0, 0), RgbColor(255, 255, 255));
+
+    // pushClip, the two visible rows, popClip — nothing else.
+    assert(ops.length == 4);
+    assert(ops[0].kind == OpKind.pushClip);
+    // Only y is clipped: the rect covers rows 0..2 and stays unbounded on x.
+    assert(ops[0].rect.y == 0 && ops[0].rect.height == 2);
+    assert(ops[0].rect.x < -1_000_000 && ops[0].rect.width > 1_000_000);
+    assert(ops[1].kind == OpKind.textRun && ops[1].text == "one");
+    assert(ops[2].kind == OpKind.textRun && ops[2].text == "two");
+    assert(ops[3].kind == OpKind.popClip);
 }
 
 @("ui.display_list.borderOnlyBoxStillEmits")
