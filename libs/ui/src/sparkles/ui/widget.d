@@ -22,6 +22,24 @@ import sparkles.ui.wrap : TextWrap;
 
 @safe:
 
+/// Child alignment along one axis of a container (`LAY8`): each child is
+/// offset within its allocated band. Distribution effects (`space-between`
+/// and friends) are built by inserting `grow` spacer children instead.
+enum Alignment : ubyte
+{
+    start,  /// left / top (the default)
+    center, /// centered in the leftover space
+    end,    /// right / bottom
+}
+
+/// Tri-state visibility (`LAY11`), so chrome can toggle without a layout jump.
+enum Visibility : ubyte
+{
+    visible,   /// laid out and painted (the default)
+    hidden,    /// laid out (occupies space) but not painted — CSS `visibility:hidden`
+    collapsed, /// removed from flow entirely — CSS `display:none`
+}
+
 /// The kind of a $(LREF Widget) node.
 enum WidgetKind : ubyte
 {
@@ -54,6 +72,9 @@ struct Widget
     SizeSpec height = SizeSpec.fit_; /// vertical sizing
     Insets padding;                  /// inner padding (containers)
     int gap;                         /// inter-child gap (row/column)
+    Alignment alignX;                /// children's horizontal alignment (`LAY8`)
+    Alignment alignY;                /// children's vertical alignment (`LAY8`)
+    Visibility visibility;           /// tri-state visibility (`LAY11`)
 
     const(char)[] text;      /// `text` payload (borrowed — must outlive the tree)
     /// How the `text` run breaks into lines when its allocated width is

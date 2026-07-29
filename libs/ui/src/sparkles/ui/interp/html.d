@@ -21,7 +21,7 @@ module sparkles.ui.interp.html;
 import sparkles.ui.geometry : Insets;
 import sparkles.ui.style :
     BorderStyle, FontRole, Palette, resolveVisual, Slot, Visual;
-import sparkles.ui.widget : Widget, WidgetKind, WidgetTree;
+import sparkles.ui.widget : Alignment, Visibility, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap;
 import sparkles.base.term_color : RgbColor;
 
@@ -78,6 +78,7 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx,
             // break through `layout`; here the layout engine *is* the browser).
             if (node.wrap != TextWrap.none)
                 put(w, ";white-space:pre-wrap");
+            visibilityCss(w, node);
             // A text widget can be a chip/pill (`paintBackground` + radius, e.g. the
             // JSDoc `@tag` name) — carry its background, radius, and pill padding.
             if (node.paintBackground && vis.hasBg)
@@ -100,6 +101,7 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx,
         case glyph:
             put(w, "<span style=\"");
             textStyle(w, vis);
+            visibilityCss(w, node);
             put(w, "\">");
             char[4] enc;
             import std.utf : encode;
@@ -113,6 +115,7 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx,
             // A stroked connector → a thin element with a bottom border.
             put(w, "<div style=\"height:1px;border-bottom:1px solid ");
             rgba(w, vis.fg, vis.fgAlpha);
+            visibilityCss(w, node);
             put(w, "\"></div>");
             break;
 
@@ -125,13 +128,36 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx,
         case row, column, stack, panel, popup:
             put(w, "<div style=\"");
             boxStyle(w, node, vis);
-            // Flow direction for the flex containers.
+            // Flow direction for the flex containers, with the container's
+            // per-axis alignment (LAY8). A row centers its items vertically
+            // only when the tree says so — the cell backends are the parity
+            // reference, and they top-align by default.
             if (node.kind == row)
-                put(w, ";display:flex;flex-direction:row;align-items:center");
-            else if (node.kind == column)
-                put(w, ";display:flex;flex-direction:column");
+            {
+                put(w, ";display:flex;flex-direction:row;align-items:");
+                put(w, flexAlign(node.alignY));
+                if (node.alignX != Alignment.start)
+                {
+                    put(w, ";justify-content:");
+                    put(w, flexAlign(node.alignX));
+                }
+            }
             else
-                put(w, ";position:relative;display:flex;flex-direction:column");
+            {
+                if (node.kind != column)
+                    put(w, ";position:relative");
+                put(w, ";display:flex;flex-direction:column");
+                if (node.alignX != Alignment.start)
+                {
+                    put(w, ";align-items:");
+                    put(w, flexAlign(node.alignX));
+                }
+                if (node.alignY != Alignment.start)
+                {
+                    put(w, ";justify-content:");
+                    put(w, flexAlign(node.alignY));
+                }
+            }
             if (node.gap != 0)
             {
                 put(w, ";gap:");
@@ -187,11 +213,28 @@ private void emitArrow(Writer)(ref Writer w, in Visual vis, int arrowOffset)
     put(w, "\"></div>");
 }
 
+/// The flex keyword for a per-axis $(REF Alignment, sparkles,ui,widget)
+/// (`align-items` and `justify-content` share the vocabulary).
+private string flexAlign(Alignment a)
+    => a == Alignment.center ? "center"
+        : a == Alignment.end ? "flex-end" : "flex-start";
+
+/// The `LAY11` tri-state as CSS: `hidden` keeps its space, `collapsed`
+/// leaves the flow entirely.
+private void visibilityCss(Writer)(ref Writer w, in Widget node)
+{
+    if (node.visibility == Visibility.hidden)
+        put(w, ";visibility:hidden");
+    else if (node.visibility == Visibility.collapsed)
+        put(w, ";display:none");
+}
+
 /// Writes the box CSS declarations (background / border / radius / shadow /
 /// padding) for a container or `box` from its resolved `Visual`.
 private void boxStyle(Writer)(ref Writer w, in Widget node, in Visual vis)
 {
     put(w, "box-sizing:border-box");
+    visibilityCss(w, node);
     if (vis.hasBg)
     {
         put(w, ";background:");
