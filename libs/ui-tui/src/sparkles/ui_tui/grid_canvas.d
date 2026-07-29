@@ -1,10 +1,11 @@
-// `hue --twoslash` (terminal) — the sparkles:tui adapter for `sparkles:ui`.
+// The sparkles:tui adapter for `sparkles:ui` (`TGT6`).
 //
 // `GridCanvas` satisfies the `sparkles.ui.canvas.isCanvas` capability concept by
 // painting the ui primitives into a `sparkles.tui.Grid`, so the same
 // `view() -> layout() -> buildDisplayList() -> paint(canvas)` pipeline that
-// drives the raylib GUI (`gui_canvas.RaylibCanvas`) also drives the terminal —
-// and `sparkles:tui`'s retained `Screen` diffs the grid to a minimal byte stream.
+// drives the raylib GUI (hue's `gui_canvas.RaylibCanvas`, until it too is
+// extracted) also drives the terminal — and `sparkles:tui`'s retained `Screen`
+// diffs the grid to a minimal byte stream.
 //
 // Composites, so a twoslash popup renders correctly over the code:
 //   * a translucent `fillRect` (the highlight tint) blends over the cell's
@@ -16,8 +17,8 @@
 //
 // Uses only `sparkles.tui.cell` (a cross-platform cell grid; the raw-mode loop is
 // Posix-gated elsewhere in the lib), so this module and its tests are GL-free and
-// terminal-free — `dub test :hue` exercises it against a real `Grid`.
-module tui_canvas;
+// terminal-free — `dub test :ui-tui` exercises it against a real `Grid`.
+module sparkles.ui_tui.grid_canvas;
 
 import sparkles.tui.cell : CellStyle, Grid;
 
@@ -285,18 +286,21 @@ static assert(isCanvas!GridCanvas);
 @("tui_canvas.popupCompositesOverCode")
 @safe unittest
 {
-    import sparkles.twoslash.protocol : Node, NodeType, TwoslashReturn;
-    import sparkles.twoslash.render_widgets : viewHoverPopup;
     import sparkles.ui.display_list : buildDisplayList;
+    import sparkles.ui.geometry : Insets;
     import sparkles.ui.layout : layout;
-    import sparkles.ui.style : defaultTwoslashPalette;
+    import sparkles.ui.style : defaultTwoslashPalette, Slot;
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
 
-    // A hover popup: surface panel over a code signature.
-    const tw = TwoslashReturn(code: "x\n", nodes: [
-        Node(type: NodeType.hover, start: 0, length: 1, line: 0, character: 0,
-            text: "const x: number"),
-    ]);
-    auto tree = viewHoverPopup(tw, 0);
+    // A hover popup shape: an opaque surface panel padded around a code
+    // signature (the tree the twoslash view builds, hand-authored here so the
+    // backend has no dependency on any particular view).
+    auto b = Builder();
+    const sigNode = b.add(Widget(kind: WidgetKind.text, text: "const x: number",
+        slot: Slot.code));
+    const popup = b.container(WidgetKind.popup, [sigNode],
+        slot: Slot.surface, padding: Insets.all(1), paintBackground: true);
+    auto tree = b.finish(popup);
 
     const pageFg = RgbColor(0xcd, 0xd6, 0xf4);
     const pageBg = RgbColor(0x1e, 0x1e, 0x2e);

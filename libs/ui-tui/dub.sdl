@@ -1,0 +1,25 @@
+name "ui-tui"
+description "sparkles:ui terminal backend: paints the toolkit's display list into a sparkles:tui cell grid"
+license "BSL-1.0"
+
+targetType "library"
+targetPath "../../build"
+
+importPaths "src"
+sourcePaths "src"
+
+dflags "-preview=in" "-preview=dip1000"
+
+dependency "sparkles:ui" path="../.."
+dependency "sparkles:tui" path="../.."
+
+configuration "library" {
+    targetType "library"
+}
+
+configuration "unittest" {
+    // Not in the runner impl's dependency closure, so the normal shim route
+    // (unlike ui/input, which source-include it).
+    dependency "sparkles:test-runner" path="../.."
+    dflags "-checkaction=context" "-allinst"
+}
