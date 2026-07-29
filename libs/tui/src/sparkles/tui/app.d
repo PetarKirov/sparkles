@@ -18,7 +18,7 @@ version (Posix):
 
 import sparkles.base.term_caps : TermSize;
 import sparkles.tui.cell : Grid;
-import sparkles.tui.input : Event, EventKind, PosixEvents;
+import sparkles.tui.input : Event, isEndOfInput, match, PosixEvents, ResizeEvent;
 import sparkles.tui.terminal : Terminal, TerminalOptions;
 
 /// Drive a full-screen application until it asks to quit.
@@ -49,9 +49,9 @@ void runApp(scope void delegate(ref Grid, TermSize) present,
         term.draw(grid);
 
         const ev = events.next();
-        if (ev.kind == EventKind.eof)
+        if (ev.isEndOfInput)
             break;
-        if (ev.kind == EventKind.resize)
+        if (ev.match!((in ResizeEvent _) => true, _ => false))
             continue; // next iteration re-measures + reflows
         if (!handle(ev))
             break;

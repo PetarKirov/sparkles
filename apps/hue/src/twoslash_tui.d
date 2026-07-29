@@ -17,7 +17,8 @@ version (Posix):
 
 import sparkles.tui.app : runApp;
 import sparkles.tui.cell : CellStyle, Grid;
-import sparkles.tui.input : Event, EventKind, Key, MouseAction;
+import sparkles.tui.input : EndOfInput, Event, Key, KeyEvent, match,
+    PointerAction, PointerEvent, WheelEvent;
 import sparkles.tui.terminal : TerminalOptions;
 
 import sparkles.base.smallbuffer : SmallBuffer;
@@ -427,22 +428,24 @@ private struct TwoslashTui
     /// Handles one input event; returns `false` to quit.
     bool handle(in Event ev) @system
     {
-        final switch (ev.kind)
-        {
-            case EventKind.key:
-                return handleKey(ev);
-            case EventKind.mouse:
-                handleMouse(ev);
-                return true;
-            case EventKind.resize:
-            case EventKind.none:
-                return true;
-            case EventKind.eof:
-                return false;
-        }
+        return ev.match!(
+            (in KeyEvent k) => handleKey(k),
+            (in PointerEvent p) { handlePointer(p); return true; },
+            (in WheelEvent w) { scroll(w.dy); return true; },
+            (in EndOfInput _) => false,
+            _ => true,
+        );
     }
 
-    private bool handleKey(in Event ev) scope
+    private void scroll(int dy) scope
+    {
+        if (dy < 0 && scrollRow > 0)
+            --scrollRow;
+        else if (dy > 0)
+            ++scrollRow;
+    }
+
+    private bool handleKey(in KeyEvent ev) scope
     {
         switch (ev.key)
         {
@@ -484,25 +487,13 @@ private struct TwoslashTui
         return true;
     }
 
-    private void handleMouse(in Event ev) scope
+    private void handlePointer(in PointerEvent ev) scope
     {
-        if (ev.action == MouseAction.wheelUp)
-        {
-            if (scrollRow > 0)
-                --scrollRow;
+        if (ev.action != PointerAction.press)
             return;
-        }
-        if (ev.action == MouseAction.wheelDown)
-        {
-            ++scrollRow;
-            return;
-        }
-        if (ev.action != MouseAction.press)
-            return;
-        // SGR mouse is 1-based; the grid is 0-based.
-        const px = cast(int) ev.mouse.col - 1, py = cast(int) ev.mouse.row - 1;
+        // The decoder already delivers the toolkit's 0-based cells.
         foreach (i, ref const rect; targetRects)
-            if (rect.contains(Point(px, py)))
+            if (rect.contains(Point(ev.pos.x, ev.pos.y)))
             {
                 selIdx = cast(int) i;
                 return;

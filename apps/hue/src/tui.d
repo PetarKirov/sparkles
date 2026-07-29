@@ -20,7 +20,8 @@ import sparkles.syntax : ColorDepth, HighlightEvent, LabelSet, ResolvedTheme,
 
 import sparkles.tui : Cell, CellStyle, Color, Grid, PosixEvents, Terminal,
     TerminalOptions, TextAttr, UnderlineStyle;
-import sparkles.tui.input : Event, EventKind, Key, MouseAction, MouseButton;
+import sparkles.tui.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
+    match, PointerAction, PointerButton, PointerEvent, ResizeEvent, WheelEvent;
 
 import ansi_model : Attr;
 import gui_preview : BandKind, buildRawPlines, layoutPreview, PreviewLine,
@@ -418,13 +419,17 @@ struct PreviewTui
         copiedFence = copiedTable = -1; // the ✔ flash lasts until the next event
         if (searching)
             return handleSearch(e);
-        if (e.kind == EventKind.mouse)
-            return handleMouse(e);
-        if (e.kind == EventKind.eof)
-            return false;
-        if (e.kind != EventKind.key)
-            return true;
+        return e.match!(
+            (in PointerEvent p) => handlePointer(p),
+            (in WheelEvent w) { top += 3 * w.dy; clampTop(); return true; },
+            (in KeyEvent k) => handleKey(k),
+            (in EndOfInput _) => false,
+            _ => true,
+        );
+    }
 
+    private bool handleKey(in KeyEvent e) @system
+    {
         const rows = bodyRows();
         switch (e.key)
         {
@@ -471,38 +476,37 @@ struct PreviewTui
         return true;
     }
 
-    private bool handleMouse(in Event e) @system
+    private bool handlePointer(in PointerEvent e) @system
     {
         const rows = bodyRows();
-        if (e.action == MouseAction.wheelUp)        { top -= 3; clampTop(); }
-        else if (e.action == MouseAction.wheelDown) { top += 3; clampTop(); }
-        else if (e.button == MouseButton.left
-            && (e.action == MouseAction.press || e.action == MouseAction.drag)
-            && e.mouse.row >= 2 && e.mouse.row <= 1 + rows)
+        // 0-based cells: row 0 is the header, the body spans rows 1 .. rows.
+        if (e.button == PointerButton.left
+            && (e.action == PointerAction.press || e.action == PointerAction.drag)
+            && e.pos.y >= 1 && e.pos.y <= rows)
         {
-            if (e.mouse.col == width) // the scrollbar column (last, 1-based == width)
+            if (e.pos.x == width - 1) // the scrollbar column (last)
             {
                 const span = rows > 1 ? rows - 1 : 1;
-                top = cast(long)(e.mouse.row - 2) * maxTop / span;
+                top = cast(long)(e.pos.y - 1) * maxTop / span;
                 clampTop();
             }
             else
             {
                 // Body — a click on a copy button copies (and doesn't select);
                 // otherwise start (press) or extend (drag) a line selection.
-                const line = top + (e.mouse.row - 2);
-                if (e.action == MouseAction.press && line >= 0
+                const line = top + (e.pos.y - 1);
+                if (e.action == PointerAction.press && line >= 0
                     && line < cast(long) plines.length)
                 {
                     const pl = plines[cast(size_t) line];
                     const bcol = copyButtonCol(pl);
-                    if (bcol >= 0 && cast(int)(e.mouse.col - 1) == bcol)
+                    if (bcol >= 0 && e.pos.x == bcol)
                     {
                         copyButton(pl);
                         return true;
                     }
                 }
-                if (e.action == MouseAction.press)
+                if (e.action == PointerAction.press)
                     selAnchor = line;
                 selCursor = line;
                 clampSel();
@@ -514,10 +518,16 @@ struct PreviewTui
     // Key handling while typing a search query (`/…`): printable keys extend it,
     // backspace trims, Enter commits, Esc cancels; the view live-jumps to the
     // first match as the query changes.
-    private bool handleSearch(in Event e) @system
+    private bool handleSearch(in Event ev) @system
     {
-        if (e.kind != EventKind.key)
+        return ev.match!((in KeyEvent e) {
+            searchKey(e);
             return true;
+        }, (in EndOfInput _) => false, _ => true);
+    }
+
+    private void searchKey(in KeyEvent e) @system
+    {
         switch (e.key)
         {
             case Key.char_:
@@ -540,7 +550,6 @@ struct PreviewTui
                 break;
             default: break;
         }
-        return true;
     }
 }
 
@@ -587,9 +596,9 @@ int runPreviewTui(ref PreviewTui t, size_t themeIdx, bool startPreview) @system
         }
 
         const ev = events.next();
-        if (ev.kind == EventKind.eof)
+        if (ev.isEndOfInput)
             break;
-        if (ev.kind == EventKind.resize)
+        if (ev.match!((in ResizeEvent _) => true, _ => false))
             continue; // next iteration re-measures + reflows
         if (!t.handle(ev))
             break;

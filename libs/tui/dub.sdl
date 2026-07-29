@@ -22,6 +22,7 @@ dflags "-preview=in" "-preview=dip1000"
 configuration "library" {
     targetType "library"
     dependency "sparkles:base" path="../.."
+    dependency "sparkles:input" path="../.."
 }
 
 configuration "unittest" {
@@ -30,6 +31,7 @@ configuration "unittest" {
     // `core-cli`/`base` — it can take the normal `dependency` route.
     dependency "sparkles:test-runner" path="../.."
     dependency "sparkles:base" path="../.."
+    dependency "sparkles:input" path="../.."
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"

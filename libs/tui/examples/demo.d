@@ -52,28 +52,34 @@ void main() @system
                 g.putText(1, cast(ushort)(sz.height - 1), " q/Esc quit · arrows · click/drag/wheel", footer);
             }
         },
-        // handle — return false to quit.
-        (in Event e) {
-            if (e.kind == EventKind.key)
-            {
-                if (e.key == Key.escape || (e.key == Key.char_ && e.ch == 'q'))
+        // handle — return false to quit (events are the shared sparkles:input
+        // vocabulary; positions arrive already 0-based).
+        (in Event e) => e.match!(
+            (in KeyEvent k) {
+                if (k.key == Key.escape || (k.key == Key.char_ && k.ch == 'q'))
                     return false;
-                status = describeKey(e);
-            }
-            else if (e.kind == EventKind.mouse)
-            {
-                mouse.col = e.mouse.col ? cast(ushort)(e.mouse.col - 1) : 0;
-                mouse.row = e.mouse.row ? cast(ushort)(e.mouse.row - 1) : 0;
-                status = describeMouse(e);
-            }
-            return true;
-        },
+                status = describeKey(k);
+                return true;
+            },
+            (in PointerEvent p) {
+                mouse.col = cast(ushort) p.pos.x;
+                mouse.row = cast(ushort) p.pos.y;
+                status = text("mouse ", p.action, " ", p.button,
+                    " @ ", p.pos.x, ",", p.pos.y);
+                return true;
+            },
+            (in WheelEvent w) {
+                status = text("wheel ", w.dy < 0 ? "up" : "down");
+                return true;
+            },
+            _ => true,
+        ),
     );
 }
 
 string sizeText(TermSize sz) @safe => text(sz.width, "×", sz.height, " cells");
 
-string describeKey(in Event e) @safe
+string describeKey(in KeyEvent e) @safe
 {
     string m;
     if (e.mods.ctrl) m ~= "Ctrl+";
@@ -83,6 +89,3 @@ string describeKey(in Event e) @safe
         return text("key ", m, "'", e.ch, "'");
     return text("key ", m, e.key);
 }
-
-string describeMouse(in Event e) @safe
-    => text("mouse ", e.action, " ", e.button, " @ ", e.mouse.col, ",", e.mouse.row);

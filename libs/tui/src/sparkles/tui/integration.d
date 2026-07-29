@@ -26,7 +26,8 @@ import expected : Expected, ok, err;
 
 import sparkles.base.text.errors : NoGcHook;
 import sparkles.tui.cell : Cell, CellStyle, Color, Grid;
-import sparkles.tui.input : EventKind, Key, MouseAction, MouseButton, PosixEvents;
+import sparkles.tui.input : charEvent, Event, Key, keyEvent, Mods, Point,
+    PointerAction, PointerButton, PointerEvent, PosixEvents;
 import sparkles.tui.terminal : Terminal, TerminalOptions;
 
 /// Which libc step failed while opening a pty.
@@ -210,24 +211,21 @@ unittest
 
     auto events = PosixEvents.start(pty.slave);
 
-    // An arrow key typed at the master decodes on the slave.
+    // An arrow key typed at the master decodes on the slave. Events are Regular
+    // values, so the assertions are whole-event equality — no field poking.
     feed(pty.master, "\x1b[A");
-    const up = events.next();
-    assert(up.kind == EventKind.key && up.key == Key.up, "up arrow");
+    assert(events.next() == keyEvent(Key.up), "up arrow");
 
     // A Ctrl-modified nav key.
     feed(pty.master, "\x1b[6;5~");
-    const cpgdn = events.next();
-    assert(cpgdn.key == Key.pageDown && cpgdn.mods.ctrl, "Ctrl+PageDown");
+    assert(events.next() == keyEvent(Key.pageDown, Mods(ctrl: true)), "Ctrl+PageDown");
 
-    // An SGR mouse press.
+    // An SGR mouse press: wire 1-based (5,3) decodes to toolkit 0-based (4,2).
     feed(pty.master, "\x1b[<0;5;3M");
-    const m = events.next();
-    assert(m.kind == EventKind.mouse && m.button == MouseButton.left
-        && m.action == MouseAction.press && m.mouse.col == 5 && m.mouse.row == 3, "left press @ 5,3");
+    assert(events.next() == Event(PointerEvent(action: PointerAction.press,
+        button: PointerButton.left, pos: Point(4, 2))), "left press @ 5,3");
 
     // A printable key.
     feed(pty.master, "q");
-    const q = events.next();
-    assert(q.kind == EventKind.key && q.key == Key.char_ && q.ch == 'q', "q");
+    assert(events.next() == charEvent('q'), "q");
 }
