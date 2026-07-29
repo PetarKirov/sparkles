@@ -45,6 +45,7 @@ import table_select : TableRegion, TableCopyFormat, tableSelection, serializeTab
 import sparkles.syntax : HighlightEvent, LabelId, LabelSet, Theme, StyleSpec, TextAttr, UnderlineStyle,
     ResolvedTheme, resolveTheme, byStyledLine, byStyledSpan, RgbColor, toRgb;
 import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.term_color : mix;
 
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.twoslash.protocol : Completion, Node, NodeType, TwoslashReturn;
@@ -60,6 +61,7 @@ import sparkles.ui.style : defaultTwoslashPalette, Palette, resolveSlot,
 import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.canvas : LineStyle, OpKind;
 import sparkles.ui.layout : layout;
+import sparkles.ui.state : scrollbarThumb, Timeline;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.interp.immediate : paint;
 import sparkles.ui_raylib : RaylibCanvas, rlBg;
@@ -321,7 +323,7 @@ int runGui(
         current = resolveTheme(themes[i], labels);
         pageFg = toRgb(current.defaults.fg, hardFallbackFg);
         pageBg = toRgb(current.defaults.bg, hardFallbackBg);
-        gutterFg = mix(pageFg, pageBg); // muted line numbers
+        gutterFg = mix(pageFg, pageBg, 0.5); // muted line numbers
         quoteBars = quoteBarColors(current, pageFg, pageBg);
         // Scrollbar chrome: tint toward the theme's link color so the hover track
         // and thumb read as a distinct hue against the grayscale bg/code bands.
@@ -454,11 +456,11 @@ int runGui(
     bool isFullscreen;
     int savedX, savedY, savedW, savedH;
 
-    // Code-block copy button: the fence just copied + a countdown for the brief
-    // "copied" checkmark feedback.
+    // Code-block copy button: the fence just copied + the STM6 timeline for
+    // the brief "copied" checkmark feedback.
     int copiedFence = -1;
     int copiedTable = -1;
-    float copiedTimer = 0;
+    Timeline copiedFlash;
 
     // Mouse selection has two regimes (a drag stays in the one it starts in, TBL4):
     //  • text  (SEL): a source byte range [selMin, selMax). Prose/code map a click
@@ -480,7 +482,7 @@ int runGui(
     bool ansiStrip = ansiCopyStrip;
     TableCopyFormat tableFmt = tableCopy;
     string copyModeMsg;
-    float copyModeTimer = 0;
+    Timeline toast;
 
     // The text-regime selection as a source range [selMin, selMax) — the union of
     // the anchor and head spans (a char point is a zero-width span).
@@ -785,7 +787,7 @@ int runGui(
             {
                 ansiStrip = !ansiStrip;
                 copyModeMsg = ansiStrip ? "ansi-copy: strip" : "ansi-copy: raw";
-                copyModeTimer = 1.6f;
+                toast = Timeline.triggered(toastCfg);
             }
             if (pressed(KeyboardKey.KEY_T))
             {
@@ -793,7 +795,7 @@ int runGui(
                     ? TableCopyFormat.markdown : TableCopyFormat.tsv;
                 copyModeMsg = tableFmt == TableCopyFormat.tsv
                     ? "table-copy: tsv" : "table-copy: markdown";
-                copyModeTimer = 1.6f;
+                toast = Timeline.triggered(toastCfg);
             }
 
             // Enter an input mode: '/' search (raw view only), 'g' goto-line.
@@ -877,8 +879,7 @@ int runGui(
         drawPreview(fonts, plines, topLine, visibleRows, cellW, cellH,
             pageFg, pageBg, gutterFg, quoteBars, padX, rightPad, gcols, buf);
 
-        if (copiedTimer > 0)
-            copiedTimer -= GetFrameTime();
+        copiedFlash = copiedFlash.stepped(frameMs(), copiedCfg);
 
         bool copyClicked; // a click landing on a copy button is not a selection
 
@@ -916,10 +917,10 @@ int runGui(
                         SetClipboardText(txt.toStringz);
                         copiedFence = pl.copyFence;
                         copiedTable = -1;
-                        copiedTimer = 1.2f;
+                        copiedFlash = Timeline.triggered(copiedCfg);
                         copyClicked = true;
                     }
-                    copied = pl.copyFence == copiedFence && copiedTimer > 0;
+                    copied = pl.copyFence == copiedFence && copiedFlash.visible;
                 }
                 else // whole-table copy: the raw markdown source (like the code button)
                 {
@@ -929,10 +930,10 @@ int runGui(
                         SetClipboardText(source[pl.selSrcStart .. pl.selSrcEnd].toStringz);
                         copiedTable = pl.copyTable;
                         copiedFence = -1;
-                        copiedTimer = 1.2f;
+                        copiedFlash = Timeline.triggered(copiedCfg);
                         copyClicked = true;
                     }
-                    copied = pl.copyTable == copiedTable && copiedTimer > 0;
+                    copied = pl.copyTable == copiedTable && copiedFlash.visible;
                 }
                 const icon = copied ? "\U0000F00C" : "\U0000F0C5"; //  /
                 const col = copied ? quoteBars[2] : (hovered ? pageFg : gutterFg);
@@ -1184,9 +1185,9 @@ int runGui(
             drawText(fonts, cstrOf(buf, lineText), 4, cast(float) barY, TextStyle(0), rl(pageBg));
         }
         // Copy-mode toast (when not typing): flashes the mode after a 'y'/'t' toggle.
-        else if (copyModeTimer > 0)
+        else if (toast.visible)
         {
-            copyModeTimer -= GetFrameTime();
+            toast = toast.stepped(frameMs(), toastCfg);
             const barY = screenH - cellH;
             DrawRectangle(0, barY, screenW, cellH, rl(gutterFg));
             drawText(fonts, cstrOf(buf, copyModeMsg), 4, cast(float) barY, TextStyle(0), rl(pageBg));
@@ -1336,17 +1337,13 @@ private struct ThumbGeometry
     float movable; /// track travel available to the thumb (px)
 }
 
-/// ditto — thumb sized to the visible fraction, positioned by scroll progress.
+/// ditto — the one STM2 formula (the TUI renders the same geometry), with the
+/// GUI's 24 px grabbable minimum; the float fields only carry the animation.
 private ThumbGeometry thumbGeometry(size_t total, int visibleRows, long top,
     long maxTop, int screenH) pure nothrow @nogc @safe
 {
-    const trackH = cast(float) screenH;
-    float h = trackH * visibleRows / cast(float) total;
-    if (h < 24.0f)
-        h = 24.0f;
-    const movable = trackH - h;
-    const y = maxTop > 0 ? movable * top / cast(float) maxTop : 0.0f;
-    return ThumbGeometry(y, h, movable);
+    const g = scrollbarThumb(total, visibleRows, top, screenH, minExtent: 24);
+    return ThumbGeometry(g.start, g.extent, screenH - g.extent);
 }
 
 /// An RGB triple as a raylib color with an explicit alpha (for overlays).
@@ -1495,7 +1492,7 @@ int runGuiTwoslash(
     size_t hotNode = 0;
     Rectangle hotPopup;
     bool havePopup = false;
-    float fadeT = 0;
+    Timeline fade;
 
     while (!WindowShouldClose())
     {
@@ -1545,7 +1542,7 @@ int runGuiTwoslash(
                 const numText = text(line + 1);
                 const nx = padPx - cast(float)((numText.length + 1) * cellW);
                 drawText(fonts, cstrOf(buf, numText), nx, y, TextStyle(0),
-                    rl(mix(pageFg, pageBg)));
+                    rl(mix(pageFg, pageBg, 0.5)));
             }
 
             // Code runs for this line.
@@ -1627,13 +1624,14 @@ int runGuiTwoslash(
 
         // Advance the underline fade while the same token stays hot; reset on change.
         if (overNode != hotNode)
-            fadeT = 0;
+            fade = Timeline.init;
         hotNode = overNode;
         if (hotNode != 0)
         {
-            fadeT += GetFrameTime() / 0.3f;
-            if (fadeT > 1 || forced)
-                fadeT = 1;
+            if (!fade.visible)
+                fade = Timeline.triggered(fadeCfg);
+            fade = forced ? Timeline(Timeline.Phase.hold, 0)
+                : fade.stepped(frameMs(), fadeCfg);
         }
 
         havePopup = false;
@@ -1643,7 +1641,7 @@ int runGuiTwoslash(
                 {
                     // The hovered token's dotted underline (currentColor), faded in.
                     const uy = h.y + h.h - 2;
-                    const uc = Color(pageFg.r, pageFg.g, pageFg.b, cast(ubyte)(fadeT * 255));
+                    const uc = Color(pageFg.r, pageFg.g, pageFg.b, cast(ubyte)(fade.alphaPercent(fadeCfg) * 255 / 100));
                     for (int i = 0; i + 2 <= h.w; i += 4)
                         DrawRectangle(h.x + i, uy, 2, 1, uc);
                     // The popup on top; remember its rect for next-frame hysteresis.
@@ -1660,7 +1658,7 @@ int runGuiTwoslash(
         {
             const w = GetScreenWidth();
             DrawRectangle(0, 0, w, cast(int) headerH, rl(mix(pageBg, pageFg, 0.12)));
-            DrawRectangle(0, cast(int) headerH - 1, w, 1, rl(mix(pageFg, pageBg)));
+            DrawRectangle(0, cast(int) headerH - 1, w, 1, rl(mix(pageFg, pageBg, 0.5)));
 
             const left = curSummary.length ? curName ~ "  " ~ curSummary : curName;
             drawText(fonts, cstrOf(buf, left), cast(float) cellW, 0,
@@ -1668,7 +1666,7 @@ int runGuiTwoslash(
 
             const pos = text(set.index + 1, "/", set.length, "   [ ] prev/next");
             const px = cast(float)(w - cast(int)((pos.length + 1) * cellW));
-            drawText(fonts, cstrOf(buf, pos), px, 0, TextStyle(0), rl(mix(pageFg, pageBg)));
+            drawText(fonts, cstrOf(buf, pos), px, 0, TextStyle(0), rl(mix(pageFg, pageBg, 0.5)));
         }
 
         EndDrawing();
@@ -1816,17 +1814,15 @@ private size_t maxNameCols(scope const SourceEntry[] entries) @safe pure nothrow
 private bool pressed(int key) @system
     => IsKeyPressed(key) || IsKeyPressedRepeat(key);
 
-/// Midpoint of two colors — used for muted gutter numbers and the scrollbar.
-private RgbColor mix(RgbColor a, RgbColor b) pure nothrow @nogc @safe
-    => RgbColor(cast(ubyte)((a.r + b.r) / 2), cast(ubyte)((a.g + b.g) / 2),
-        cast(ubyte)((a.b + b.b) / 2));
+// Transient-effect configs (STM6): the copy-✔ flash, the copy-mode toast, and
+// the hover-underline fade — one Timeline machine, three configurations. The
+// TUI runs the same machine with `holdUntilDismissed` (no frame clock).
+private enum copiedCfg = Timeline.Config(holdMs: 1200);
+private enum toastCfg = Timeline.Config(holdMs: 1600);
+private enum fadeCfg = Timeline.Config(fadeInMs: 300, holdUntilDismissed: true);
 
-/// `a` blended `t` of the way toward `b` (0 = `a`, 1 = `b`).
-private RgbColor mix(RgbColor a, RgbColor b, double t) pure nothrow @nogc @safe
-{
-    ubyte ch(ubyte x, ubyte y) => cast(ubyte)(x + (y - x) * t);
-    return RgbColor(ch(a.r, b.r), ch(a.g, b.g), ch(a.b, b.b));
-}
+/// This frame's duration in Timeline milliseconds.
+private int frameMs() @system => cast(int)(GetFrameTime() * 1000);
 
 /// Decimal digit count (at least 1, for 0).
 private int digitCount(size_t n) pure nothrow @nogc @safe

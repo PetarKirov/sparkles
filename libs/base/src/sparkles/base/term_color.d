@@ -105,6 +105,25 @@ struct RgbColor
     ubyte r, g, b;
 }
 
+/// `a` blended `t` of the way toward `b` (`0` = `a`, `1` = `b`) — the one
+/// linear color mix (four private copies of this drifted across hue's
+/// backends; a midpoint is `mix(a, b, 0.5)`).
+RgbColor mix(RgbColor a, RgbColor b, double t) @safe pure nothrow @nogc
+{
+    ubyte ch(ubyte x, ubyte y) => cast(ubyte)(x + cast(int)((cast(int) y - x) * t));
+    return RgbColor(ch(a.r, b.r), ch(a.g, b.g), ch(a.b, b.b));
+}
+
+@("term_color.mix.endpointsAndMidpoint")
+@safe pure nothrow @nogc
+unittest
+{
+    const a = RgbColor(0x10, 0x20, 0x30), b = RgbColor(0x50, 0x60, 0x70);
+    assert(mix(a, b, 0) == a);
+    assert(mix(a, b, 1) == b);
+    assert(mix(a, b, 0.5) == RgbColor(0x30, 0x40, 0x50));
+}
+
 /**
 A terminal color: one of four cases.
 
