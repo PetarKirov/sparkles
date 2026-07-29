@@ -525,6 +525,35 @@ if (isTextMeasure!TM)
 
 private int absInt(int v) nothrow @nogc pure => v < 0 ? -v : v;
 
+/// "No clip yet": a practically-infinite rectangle. Runtime-built — the
+/// union-backed geometry vocabulary is not CTFE-constructible.
+Rect unclipped() pure nothrow @nogc
+    => Rect(int.min / 2, int.min / 2, int.max, int.max);
+
+/// The effective clip a node's children paint (and hit-test) under: the
+/// ancestor `clip`, narrowed on each axis this node clips to its padded
+/// content box (`LAY7`). Shared by the display list's scissor emission and
+/// the hit-target extraction, so painting and hit testing can never disagree
+/// about visibility.
+Rect childClipOf(in Widget node, in Rect rect, in Rect clip) pure nothrow @nogc
+{
+    if (!node.clipX && !node.clipY)
+        return clip;
+    const box_ = rect.deflate(node.padding);
+    Rect mine = clip;
+    if (node.clipX)
+    {
+        mine.origin.x = box_.x;
+        mine.size.width = box_.width;
+    }
+    if (node.clipY)
+    {
+        mine.origin.y = box_.y;
+        mine.size.height = box_.height;
+    }
+    return clip.intersection(mine);
+}
+
 /**
 Serializes a laid-out tree to `w`, one depth-indented line per node — kind,
 resolved rectangle, slot, and the payload/flags that explain a layout at a

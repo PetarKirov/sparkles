@@ -11,7 +11,7 @@ module sparkles.ui.display_list;
 
 import sparkles.ui.canvas : DrawOp, OpKind;
 import sparkles.ui.geometry : Point, Rect;
-import sparkles.ui.layout : Frame;
+import sparkles.ui.layout : childClipOf, Frame, unclipped;
 import sparkles.ui.style : Palette, resolveVisual, Slot, Visual;
 import sparkles.ui.widget : Visibility, Widget, WidgetKind, WidgetTree;
 import sparkles.base.term_color : RgbColor;
@@ -27,10 +27,7 @@ DrawOp[] buildDisplayList(in WidgetTree tree, in Frame[] frames, in Palette pal,
     in RgbColor pageFg, in RgbColor pageBg)
 {
     DrawOp[] ops;
-    // "No clip yet": a practically-infinite rectangle (runtime-built — the
-    // union-backed geometry vocabulary is not CTFE-constructible).
-    const noClip = Rect(int.min / 2, int.min / 2, int.max, int.max);
-    emit(tree, tree.root, frames, pal, pageFg, pageBg, noClip, ops);
+    emit(tree, tree.root, frames, pal, pageFg, pageBg, unclipped(), ops);
     return ops;
 }
 
@@ -102,25 +99,10 @@ private void emit(in WidgetTree tree, uint idx, in Frame[] frames, in Palette pa
             // pushed rect is the *effective* clip — this node's padded content
             // box on each clipped axis, already intersected with the ancestor
             // clip — so a canvas replaces rather than intersects.
-            Rect childClip = clip;
             const clips = node.clipX || node.clipY;
+            const childClip = childClipOf(node, rect, clip);
             if (clips)
-            {
-                const box_ = rect.deflate(node.padding);
-                Rect mine = clip;
-                if (node.clipX)
-                {
-                    mine.origin.x = box_.x;
-                    mine.size.width = box_.width;
-                }
-                if (node.clipY)
-                {
-                    mine.origin.y = box_.y;
-                    mine.size.height = box_.height;
-                }
-                childClip = clip.intersection(mine);
                 ops ~= DrawOp(kind: OpKind.pushClip, rect: childClip);
-            }
             foreach (child; node.children)
                 emit(tree, child, frames, pal, pageFg, pageBg, childClip, ops);
             if (clips)
