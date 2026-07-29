@@ -1,78 +1,33 @@
 /++
-Input: decode a terminal byte stream into structured $(LREF Event)s (spec I1/I2/I3)
-— an expanded key vocabulary (arrows, Home/End, PageUp/Down, Insert/Delete,
-F1–F12, with Ctrl/Alt/Shift modifiers, plus printable Unicode), SGR-1006 mouse
-(press/release/drag/wheel), and terminal resize delivered as an event.
+Input: decode a terminal byte stream into the $(B shared)
+$(REF Event, sparkles,input,events) vocabulary of `sparkles:input` (spec
+I1/I2/I3 + `INP7`) — an expanded key vocabulary (arrows, Home/End, PageUp/Down,
+Insert/Delete, F1–F12, with Ctrl/Alt/Shift modifiers, plus printable Unicode),
+SGR-1006 mouse (press/release/drag + wheel), and terminal resize delivered as
+an event. The library keeps no private key/modifier/event types: what the
+toolkit's state machines consume is exactly what the decoder produces.
+
+Pointer positions are converted from the wire's 1-based cells to the toolkit's
+0-based $(REF Point, sparkles,input,events) at the decode boundary, so nothing
+downstream ever re-subtracts 1.
 
 The escape/mouse $(B decoding) ($(LREF decodeEscape), $(LREF decodeMouse)) is pure
 and unit-tested over byte slices. The $(LREF PosixEvents) reader is the thin fd
 layer that assembles sequences from stdin and turns a SIGWINCH into a
-$(LREF EventKind.resize) event (a no-op signal handler with no `SA_RESTART`, so a
-blocking read returns `EINTR` on resize). Posix-only.
+$(REF ResizeEvent, sparkles,input,events) (a no-op signal handler with no
+`SA_RESTART`, so a blocking read returns `EINTR` on resize). Posix-only.
 +/
 module sparkles.tui.input;
 
-import sparkles.tui.geometry : TermSize, TermPosition;
-
-/// A decoded key. `char_` carries a printable code point in `Event.ch`; the rest
-/// are named keys. `none` is an unrecognized / incomplete sequence.
-enum Key : ubyte
-{
-    none, char_,
-    up, down, left, right,
-    home, end, pageUp, pageDown, insert, delete_,
-    enter, tab, backspace, escape,
-    f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12,
-}
-
-/// Keyboard modifiers carried on a key or mouse event.
-struct Mods
-{
-    bool ctrl;
-    bool alt;
-    bool shift;
-}
-
-/// The mouse button of a $(LREF EventKind.mouse) event.
-enum MouseButton : ubyte { left, middle, right, none }
-
-/// What the mouse did.
-enum MouseAction : ubyte { press, release, drag, wheelUp, wheelDown }
-
-/// The kind of an $(LREF Event) (selects which fields are meaningful).
-enum EventKind : ubyte { none, key, mouse, resize, eof }
-
-/// One input event. A flat tagged record: `kind` selects the live fields.
-struct Event
-{
-    EventKind kind;
-
-    // kind == key
-    Key key;
-    dchar ch;   /// the code point when `key == Key.char_`
-    Mods mods;
-
-    // kind == mouse
-    MouseButton button;
-    MouseAction action;
-    TermPosition mouse; /// 1-based cell coordinates (`.col` / `.row`)
-
-    // kind == resize
-    TermSize size;
-}
-
-/// A named-key event.
-Event keyEvent(Key k, Mods m = Mods()) @safe pure nothrow @nogc
-    => Event(kind: EventKind.key, key: k, mods: m);
-
-/// A printable code-point event.
-Event charEvent(dchar c, Mods m = Mods()) @safe pure nothrow @nogc
-    => Event(kind: EventKind.key, key: Key.char_, ch: c, mods: m);
+/// The shared vocabulary is the module's surface: importing `sparkles.tui.input`
+/// gives you `Event`, `Key`, `Mods`, `match` and friends.
+public import sparkles.input;
 
 // ── Pure decoding ────────────────────────────────────────────────────────────
 
 /// Decode the bytes $(I after) an `ESC` — a CSI (`[…`) or SS3 (`O…`) sequence, or
-/// a bare printable (Alt+key). An empty slice is a lone `Esc`.
+/// a bare printable (Alt+key). An empty slice is a lone `Esc`; an unrecognized
+/// or incomplete sequence is `NoEvent`.
 Event decodeEscape(scope const(char)[] s) @safe pure nothrow @nogc
 {
     if (s.length == 0)
@@ -108,7 +63,7 @@ Event decodeEscape(scope const(char)[] s) @safe pure nothrow @nogc
     if (sawDigit && np < p.length)
         ++np;
     if (i >= s.length)
-        return keyEvent(Key.none); // incomplete
+        return Event(NoEvent()); // incomplete
     const f = s[i];
     // The modifier param (`[1;<m><final>`), 1-based: m-1 is the modifier bitset.
     const mods = np >= 2 ? modsFromParam(p[1]) : Mods();
@@ -146,9 +101,9 @@ Event decodeEscape(scope const(char)[] s) @safe pure nothrow @nogc
                 case 21:    return keyEvent(Key.f10, mods);
                 case 23:    return keyEvent(Key.f11, mods);
                 case 24:    return keyEvent(Key.f12, mods);
-                default:    return keyEvent(Key.none);
+                default:    return Event(NoEvent());
             }
-        default: return keyEvent(Key.none);
+        default: return Event(NoEvent());
     }
 }
 
@@ -162,7 +117,8 @@ private Mods modsFromParam(uint m) @safe pure nothrow @nogc
 
 /// Decode the tail of an SGR-1006 mouse report (the bytes after `ESC [ <`):
 /// `b ; x ; y (M|m)`. `b`'s low bits select the button, bit 5 is drag/motion,
-/// bit 6 is the wheel; a trailing `m` is a release.
+/// bit 6 is the wheel; a trailing `m` is a release. Wire coordinates are
+/// 1-based; the returned position is the toolkit's 0-based cell.
 Event decodeMouse(scope const(char)[] s) @safe pure nothrow @nogc
 {
     uint b, x, y, field;
@@ -185,19 +141,26 @@ Event decodeMouse(scope const(char)[] s) @safe pure nothrow @nogc
         }
     }
     if (fin != 'M' && fin != 'm')
-        return keyEvent(Key.none);
+        return Event(NoEvent());
 
-    Event e = {kind: EventKind.mouse, mouse: TermPosition(cast(ushort) x, cast(ushort) y),
-        mods: modsFromParam(1 + ((b >> 2) & 7))};
-    if (b & 64) // wheel
-        e.action = (b & 1) ? MouseAction.wheelDown : MouseAction.wheelUp;
-    else
-    {
-        e.button = cast(MouseButton)(b & 3);
-        e.action = fin == 'm' ? MouseAction.release
-            : (b & 32) ? MouseAction.drag : MouseAction.press;
-    }
-    return e;
+    const pos = Point(x > 0 ? cast(int) x - 1 : 0, y > 0 ? cast(int) y - 1 : 0);
+    const mods = modsFromParam(1 + ((b >> 2) & 7));
+
+    if (b & 64) // wheel: 64=up 65=down 66=left 67=right (deltaY/deltaX signs)
+        switch (b & 3)
+        {
+            case 0: return Event(WheelEvent(dy: -1, pos: pos, mods: mods));
+            case 1: return Event(WheelEvent(dy: +1, pos: pos, mods: mods));
+            case 2: return Event(WheelEvent(dx: -1, pos: pos, mods: mods));
+            default: return Event(WheelEvent(dx: +1, pos: pos, mods: mods));
+        }
+
+    const button = cast(PointerButton)(b & 3);
+    const action = fin == 'm' ? PointerAction.release
+        : (b & 32) ? (button == PointerButton.none
+            ? PointerAction.move : PointerAction.drag)
+        : PointerAction.press;
+    return Event(PointerEvent(action: action, button: button, pos: pos, mods: mods));
 }
 
 /// Classify a single non-escape input byte: control bytes to named keys /
@@ -267,18 +230,18 @@ version (Posix)
                 sigaction(SIGWINCH, &_oldWinch, null);
         }
 
-        /// Block for the next event. A SIGWINCH mid-read yields a `resize` event
+        /// Block for the next event. A SIGWINCH mid-read yields a `ResizeEvent`
         /// (with a zero size — the caller re-queries the terminal); EOF / read
-        /// error yields `eof`.
+        /// error yields `EndOfInput`.
         Event next() @trusted nothrow
         {
             char b;
             const n = read(_fd, &b, 1);
             if (n < 0)
                 return errno == EINTR
-                    ? Event(kind: EventKind.resize) : Event(kind: EventKind.eof);
+                    ? Event(ResizeEvent()) : Event(EndOfInput());
             if (n == 0)
-                return Event(kind: EventKind.eof);
+                return Event(EndOfInput());
             if (b == 0x1b)
                 return readEscape();
             if ((cast(ubyte) b) >= 0x80)
@@ -355,11 +318,9 @@ unittest
     assert(decodeEscape("OB") == keyEvent(Key.down)); // SS3 form
     assert(decodeEscape("[C") == keyEvent(Key.right));
     // Ctrl+Up = `ESC [ 1 ; 5 A` (modifier param 5 → ctrl).
-    const ctrlUp = decodeEscape("[1;5A");
-    assert(ctrlUp.key == Key.up && ctrlUp.mods.ctrl && !ctrlUp.mods.alt);
+    assert(decodeEscape("[1;5A") == keyEvent(Key.up, Mods(ctrl: true)));
     // Shift+Alt+Left = param 4 (bits 3 = shift|alt).
-    const saLeft = decodeEscape("[1;4D");
-    assert(saLeft.key == Key.left && saLeft.mods.shift && saLeft.mods.alt && !saLeft.mods.ctrl);
+    assert(decodeEscape("[1;4D") == keyEvent(Key.left, Mods(alt: true, shift: true)));
 }
 
 @("input.decodeEscape.navAndFunctionKeys")
@@ -389,14 +350,20 @@ unittest
 @safe pure nothrow @nogc
 unittest
 {
-    const press = decodeMouse("0;10;5M");
-    assert(press.kind == EventKind.mouse && press.button == MouseButton.left
-        && press.action == MouseAction.press && press.mouse.col == 10 && press.mouse.row == 5);
-    assert(decodeMouse("0;1;1m").action == MouseAction.release);
-    assert(decodeMouse("32;3;4M").action == MouseAction.drag);  // motion bit
-    assert(decodeMouse("64;1;1M").action == MouseAction.wheelUp);
-    assert(decodeMouse("65;1;1M").action == MouseAction.wheelDown);
-    assert(decodeMouse("2;1;1M").button == MouseButton.right);
+    // Wire cells are 1-based; the decoded position is 0-based toolkit cells.
+    assert(decodeMouse("0;10;5M") == Event(PointerEvent(
+        action: PointerAction.press, button: PointerButton.left, pos: Point(9, 4))));
+    assert(decodeMouse("0;1;1m") == Event(PointerEvent(
+        action: PointerAction.release, button: PointerButton.left, pos: Point(0, 0))));
+    assert(decodeMouse("32;3;4M") == Event(PointerEvent(  // motion bit
+        action: PointerAction.drag, button: PointerButton.left, pos: Point(2, 3))));
+    assert(decodeMouse("2;1;1M") == Event(PointerEvent(
+        action: PointerAction.press, button: PointerButton.right, pos: Point(0, 0))));
+    // Wheel signs follow the web's deltaY/deltaX: up/left negative.
+    assert(decodeMouse("64;1;1M") == Event(WheelEvent(dy: -1)));
+    assert(decodeMouse("65;1;1M") == Event(WheelEvent(dy: +1)));
+    assert(decodeMouse("66;1;1M") == Event(WheelEvent(dx: -1)));
+    assert(decodeMouse("67;1;1M") == Event(WheelEvent(dx: +1)));
 }
 
 @("input.classifyByte.controlAndPrintable")
@@ -406,7 +373,6 @@ unittest
     assert(classifyByte('\r') == keyEvent(Key.enter));
     assert(classifyByte('\t') == keyEvent(Key.tab));
     assert(classifyByte(0x7f) == keyEvent(Key.backspace));
-    assert(classifyByte('a').ch == 'a');
-    const cA = classifyByte(0x01); // Ctrl-A
-    assert(cA.ch == 'a' && cA.mods.ctrl);
+    assert(classifyByte('a') == charEvent('a'));
+    assert(classifyByte(0x01) == charEvent('a', Mods(ctrl: true))); // Ctrl-A
 }
