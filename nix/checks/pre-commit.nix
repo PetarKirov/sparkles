@@ -303,7 +303,7 @@ in
                 {
                   id = "end-of-file-fixer";
                   # Test data files contain exact byte sequences — no trailing newline
-                  exclude = "^libs/core-cli/test/data/";
+                  exclude = "^libs/ui/test/data/";
                 }
                 { id = "file-contents-sorter"; }
                 { id = "fix-byte-order-marker"; }

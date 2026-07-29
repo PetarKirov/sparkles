@@ -4,7 +4,7 @@ OSC 8 terminal hyperlink rendering.
 Provides functions to wrap text in OSC 8 escape sequences, making it
 clickable in terminal emulators that support hyperlinks.
 +/
-module sparkles.core_cli.ui.osc_link;
+module sparkles.ui.components.osc_link;
 
 import sparkles.base.term_style : Style;
 
@@ -162,7 +162,7 @@ string oscLink(string text, string uri, Style style, OscLinkProps props = OscLin
 // Legacy test using test files
 @system unittest
 {
-    import sparkles.core_cli.test_utils : readFromTestDir;
+    import sparkles.ui.test_utils : readFromTestDir;
 
     // out0.txt: plain OSC 8 link with BEL terminator
     assert(oscLink(text: "example", uri: "https://example.com") == readFromTestDir("out0.txt"));

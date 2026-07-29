@@ -4,7 +4,7 @@ aside: false
 
 # `drawTable` — interactive playground
 
-`sparkles.core_cli.ui.table.drawTable` renders a boxed table entirely in terminal
+`sparkles.ui.components.table.drawTable` renders a boxed table entirely in terminal
 cells — it measures every cell with `sparkles.base.text` (the same width engine
 documented in the [text spec](../../specs/base/text/)), so CJK, emoji, combining
 marks, and ANSI-styled content all stay aligned.
@@ -55,5 +55,5 @@ also renders lazily: `drawTableLines` (a forward range of lines, ready for a
 overload all emit `drawTable`'s exact bytes.
 
 For the full API — spans, alignment, glyph presets, custom glyphs, validation,
-streaming — see the module `libs/core-cli/src/sparkles/core_cli/ui/table/` and
+streaming — see the module `libs/ui/src/sparkles/ui/components/table/` and
 the runnable gallery `libs/core-cli/examples/table.d`.

@@ -21,7 +21,7 @@ import expected : Expected, err, ok;
 
 import sparkles.base.term_style : Style, stylize;
 import sparkles.core_cli.key_input : Key, KeySession;
-import sparkles.core_cli.ui.theme : Semantic, Theme;
+import sparkles.ui.components.theme : Semantic, Theme;
 
 /// How a prompt resolves when it cannot, or should not, actually ask.
 enum PromptPolicy
@@ -182,7 +182,7 @@ private Expected!(size_t, string) selectWithArrowKeys(
 )
 {
     import sparkles.base.term_caps : terminalSize;
-    import sparkles.core_cli.ui.live : LiveRegion;
+    import sparkles.ui.components.live : LiveRegion;
 
     io.write(question ~ "\n");
     io.write(theme.paint(Semantic.muted, arrowNavHint(theme.unicode)) ~ "\n");

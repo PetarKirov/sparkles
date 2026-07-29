@@ -5,7 +5,7 @@
     targetPath "build"
 +/
 
-// Horizontal composition (`sparkles.core_cli.ui.layout`): `hjoin` zips
+// Horizontal composition (`sparkles.ui.components.layout`): `hjoin` zips
 // pre-rendered blocks side by side (top-aligned, padded by visible width, so
 // boxes sit next to tables next to plain text, ANSI styling and all), and
 // `kvList` renders aligned label/value lines — the release tool's receipt.
@@ -15,9 +15,9 @@ module layout_example;
 import std.stdio : writeln;
 
 import sparkles.base.text.width : Align;
-import sparkles.core_cli.ui.box : BoxProps, drawBox;
-import sparkles.core_cli.ui.layout : hjoin, kvList;
-import sparkles.core_cli.ui.table : drawTable, TableProps;
+import sparkles.ui.components.box : BoxProps, drawBox;
+import sparkles.ui.components.layout : hjoin, kvList;
+import sparkles.ui.components.table : drawTable, TableProps;
 
 void main()
 {

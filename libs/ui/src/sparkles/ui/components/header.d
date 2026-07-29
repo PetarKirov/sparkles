@@ -4,7 +4,7 @@ Section header rendering utilities.
 Provides functions to draw styled section headers in terminal applications,
 supporting divider and banner styles.
 +/
-module sparkles.core_cli.ui.header;
+module sparkles.ui.components.header;
 
 import std.algorithm : map, maxElement;
 import std.array : appender;

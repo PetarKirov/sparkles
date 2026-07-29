@@ -21,6 +21,11 @@ importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../math/src"
 // sparkles:ui, never the reverse.
 dependency "sparkles:base" path="../.."
 
+// `expected` is declared rather than inherited through base's import paths: the
+// table component returns `Expected` in its public API, so it is this package's
+// dependency (`PKG2`).
+dependency "expected" version="~>0.4.1"
+
 dflags "-preview=in" "-preview=dip1000"
 
 configuration "library" {
@@ -39,6 +44,10 @@ configuration "unittest" {
     // include the shim and the impl instead, as `base`/`core-cli`/`test-utils`
     // do for the same reason.
     sourcePaths "../test-runner/src" "../test-runner-impl/src"
+
+    // The component tests use the diff/outdent helpers. `test-utils` depends on
+    // `base` alone, so this edge closes no cycle.
+    dependency "sparkles:test-utils" path="../.."
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"

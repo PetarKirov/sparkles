@@ -8,8 +8,8 @@
 module styled_template_example;
 
 import sparkles.base.styled_template;
-import sparkles.core_cli.ui.box : drawBox;
-import sparkles.core_cli.ui.demo : Section, runDemo;
+import sparkles.ui.components.box : drawBox;
+import sparkles.ui.components.demo : Section, runDemo;
 
 void main()
 {

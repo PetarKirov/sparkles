@@ -278,7 +278,7 @@ Render data as ASCII tables with Unicode box-drawing characters.
     dependency "sparkles:core-cli" version="*"
 +/
 import std.stdio : writeln;
-import sparkles.core_cli.ui.table : drawTable;
+import sparkles.ui.components.table : drawTable;
 import sparkles.base.term_style : Style, stylize;
 
 void main()
@@ -311,7 +311,7 @@ Draw bordered boxes around content with optional titles.
     dependency "sparkles:core-cli" version="*"
 +/
 import std.stdio : writeln;
-import sparkles.core_cli.ui.box : drawBox;
+import sparkles.ui.components.box : drawBox;
 
 void main()
 {
@@ -338,7 +338,7 @@ Use `BoxProps` to add a footer to boxes:
     dependency "sparkles:core-cli" version="*"
 +/
 import std.stdio : writeln;
-import sparkles.core_cli.ui.box : drawBox, BoxProps;
+import sparkles.ui.components.box : drawBox, BoxProps;
 
 void main()
 {
@@ -363,7 +363,7 @@ Create section dividers and banners.
     dependency "sparkles:core-cli" version="*"
 +/
 import std.stdio : writeln;
-import sparkles.core_cli.ui.header : drawHeader, HeaderProps, HeaderStyle;
+import sparkles.ui.components.header : drawHeader, HeaderProps, HeaderStyle;
 
 void main()
 {
@@ -396,7 +396,7 @@ Make text clickable in terminal emulators that support [OSC 8](https://gist.gith
     dependency "sparkles:core-cli" version="*"
 +/
 import std.stdio : writeln;
-import sparkles.core_cli.ui.osc_link : oscLink;
+import sparkles.ui.components.osc_link : oscLink;
 import sparkles.base.term_style : Style;
 
 void main()
@@ -444,8 +444,8 @@ ASCII fallback, and the composed `ProgressBar` (determinate) / `ProgressLine`
 +/
 import core.time : msecs;
 import std.stdio : writeln;
-import sparkles.core_cli.ui.meter : meter, meterGlyphs, ProgressBar;
-import sparkles.core_cli.ui.progress : ProgressLine;
+import sparkles.ui.components.meter : meter, meterGlyphs, ProgressBar;
+import sparkles.ui.components.progress : ProgressLine;
 
 void main()
 {
@@ -477,7 +477,7 @@ example for that variation).
     dependency "sparkles:core-cli" version="*"
 +/
 import std.stdio : writeln;
-import sparkles.core_cli.ui.tree : renderTree, TreeNode;
+import sparkles.ui.components.tree : renderTree, TreeNode;
 
 void main()
 {
@@ -513,8 +513,8 @@ label/value lines.
     dependency "sparkles:core-cli" version="*"
 +/
 import std.stdio : writeln;
-import sparkles.core_cli.ui.box : drawBox;
-import sparkles.core_cli.ui.layout : hjoin, kvList;
+import sparkles.ui.components.box : drawBox;
+import sparkles.ui.components.layout : hjoin, kvList;
 
 void main()
 {
@@ -534,7 +534,7 @@ void main()
 
 ## Live Regions & Task Lists
 
-`sparkles.core_cli.ui.live.LiveRegion` repaints a block of lines in place at
+`sparkles.ui.components.live.LiveRegion` repaints a block of lines in place at
 the bottom of the normal scrollback flow — no alternate screen. Every repaint
 is wrapped in DEC 2026 synchronized-output markers (no tearing), rows are
 clamped to the terminal width, and `printAbove` graduates permanent lines into
@@ -542,7 +542,7 @@ the scrollback above the block. On piped output the frames are skipped
 entirely and only the permanent lines appear, so redirected runs see no escape
 codes.
 
-`sparkles.core_cli.ui.tasklist.TaskReporter` drives a checklist through a
+`sparkles.ui.components.tasklist.TaskReporter` drives a checklist through a
 region: `add`/`start`/`succeed`/`fail`/`skip` per task, with each running
 task's output streaming into a bounded tail pane via
 `TaskReporter.output(id, line)` — pair it with
@@ -559,8 +559,8 @@ terminal:
     dependency "sparkles:core-cli" version="*"
 +/
 import std.stdio : writeln;
-import sparkles.core_cli.ui.tasklist : renderTaskList, TaskItem, TaskStatus;
-import sparkles.core_cli.ui.theme : Theme;
+import sparkles.ui.components.tasklist : renderTaskList, TaskItem, TaskStatus;
+import sparkles.ui.components.theme : Theme;
 
 void main()
 {
@@ -633,7 +633,7 @@ snapshot combining tty-ness, the color decision (`$NO_COLOR`, `TERM=dumb`,
 processing), a UTF-8 locale heuristic, and the size. `setTermWindowSizeHandler`
 delivers resize notifications (POSIX `SIGWINCH`).
 
-`sparkles.core_cli.ui.theme` turns a `TermCaps` into rendering decisions:
+`sparkles.ui.components.theme` turns a `TermCaps` into rendering decisions:
 `makeTheme(detectTermCaps())` yields a `Theme` with semantic styles
 (`Semantic.success/failure/warning/accent/muted` via `paint`/`mark`), a
 status-glyph vocabulary (`✔ ✖ ⚠ ○ ┄` with ASCII fallbacks), and one

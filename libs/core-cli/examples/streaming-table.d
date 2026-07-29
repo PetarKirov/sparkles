@@ -53,7 +53,7 @@ import std.range.primitives : ElementType, empty, front, popFront;
 import std.stdio : stderr, stdout, write;
 
 import sparkles.core_cli.args;
-import sparkles.core_cli.ui.table :
+import sparkles.ui.components.table :
     builtinPresetNames, Cell, drawTable, drawTableChunks, presetGlyphs, TableProps;
 import sparkles.base.styled_template : styledText;
 import sparkles.base.text.grapheme : visibleWidth;
@@ -191,7 +191,7 @@ void main(string[] args)
 void runRace(DemoTable table, int delayMs)
 {
     import std.string : splitLines;
-    import sparkles.core_cli.ui.live : stdoutLiveRegion;
+    import sparkles.ui.components.live : stdoutLiveRegion;
 
     const lineLabel =
         styledText(i"{bold.cyan ── line-buffered (drawTableChunks!true) ──}");

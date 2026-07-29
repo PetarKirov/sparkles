@@ -1,4 +1,4 @@
-module sparkles.core_cli.ui.table.render;
+module sparkles.ui.components.table.render;
 
 import std.array : array, appender;
 import std.algorithm : map, all, maxElement, sort;
@@ -12,7 +12,7 @@ import expected : Expected, ok, err;
 import sparkles.base.text.grapheme : visibleWidth;
 import sparkles.base.text.width : Align, alignField;
 
-import sparkles.core_cli.ui.table.grid;
+import sparkles.ui.components.table.grid;
 
 
 // ---------------------------------------------------------------------------
@@ -759,7 +759,7 @@ private string spliceIntoRule(string rule, string label, in TableProps p)
 /// emission stage needs, computed once ("eager layout") so that line/chunk
 /// production can be lazy. Shared by the eager `drawGrid` and the streaming
 /// views, which therefore cannot drift.
-package(sparkles.core_cli.ui.table) struct TableLayout
+package(sparkles.ui.components.table) struct TableLayout
 {
     SlotGrid grid;
     TableProps props;
@@ -770,7 +770,7 @@ package(sparkles.core_cli.ui.table) struct TableLayout
 }
 
 /// Resolve `g` under `p` into a $(LREF TableLayout).
-package(sparkles.core_cli.ui.table) TableLayout computeTableLayout(
+package(sparkles.ui.components.table) TableLayout computeTableLayout(
     SlotGrid g, TableProps p)
 {
     auto decimalPads = anchorDecimalPads(g, p);

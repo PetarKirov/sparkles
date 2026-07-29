@@ -4,7 +4,7 @@
 // `sparkles:core-cli` table map) and a cell-text accessor, so it is unit-testable.
 module table_select;
 
-import sparkles.core_cli.ui.table : GridHit;
+import sparkles.ui.components.table : GridHit;
 
 /// How a table grid selection serializes to the clipboard (`CLI11`/`TBL2`).
 enum TableCopyFormat : ubyte

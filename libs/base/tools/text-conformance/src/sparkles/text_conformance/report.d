@@ -12,8 +12,8 @@ import std.array : array;
 import std.algorithm : any, map;
 import std.conv : to;
 
-import sparkles.core_cli.ui.table : drawTable;
-import sparkles.core_cli.ui.header : drawHeader, HeaderProps, HeaderStyle;
+import sparkles.ui.components.table : drawTable;
+import sparkles.ui.components.header : drawHeader, HeaderProps, HeaderStyle;
 import sparkles.base.styled_template : styledText;
 
 /// One observed disagreement between the library and an oracle.

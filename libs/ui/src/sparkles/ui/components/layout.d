@@ -4,7 +4,7 @@ several multi-line strings side by side (top-aligned), padding every line of a
 block to that block's visible width so columns stay straight — boxes next to
 tables next to plain text, ANSI styling and all.
 +/
-module sparkles.core_cli.ui.layout;
+module sparkles.ui.components.layout;
 
 /// Join `blocks` (each a rendered multi-line string) side by side with `gap`
 /// spaces between columns. Blocks are top-aligned; a block shorter than the

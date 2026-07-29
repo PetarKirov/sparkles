@@ -37,10 +37,10 @@ import sparkles.base.styled_template : styledWriteln;
 import sparkles.base.text.writers : writeDuration, writeFixedPoint, writeInteger;
 
 import sparkles.base.term_caps : detectTermCaps;
-import sparkles.core_cli.ui.live : stdoutLiveRegion;
-import sparkles.core_cli.ui.table : drawTable, drawTableLines, TableProps;
-import sparkles.core_cli.ui.tasklist : TaskReporter;
-import sparkles.core_cli.ui.theme : makeTheme, Theme;
+import sparkles.ui.components.live : stdoutLiveRegion;
+import sparkles.ui.components.table : drawTable, drawTableLines, TableProps;
+import sparkles.ui.components.tasklist : TaskReporter;
+import sparkles.ui.components.theme : makeTheme, Theme;
 
 import sparkles.wired : fromJSON, WireName;
 
@@ -391,7 +391,7 @@ if (isInputRange!R && is(ElementType!R == Job))
 void renderReport(in JobStats overall, in RunnerAggregate[] byRunner, Job[] slowJobs, in Theme theme)
 {
     import std.stdio : writeln;
-    import sparkles.core_cli.ui.header : drawHeader, HeaderProps, HeaderStyle;
+    import sparkles.ui.components.header : drawHeader, HeaderProps, HeaderStyle;
 
     writeln();
     writeln(drawHeader("CI Usage Statistics", HeaderProps(style: HeaderStyle.banner)));

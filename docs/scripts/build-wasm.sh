@@ -2,7 +2,7 @@
 # Build the drawTable playground wasm module and copy it into docs/public/ so the
 # interactive playground (docs/libs/core-cli/table.md) can fetch it at runtime.
 #
-# The module is the REAL `sparkles.core_cli.ui.table` (drawTable) plus a
+# The module is the REAL `sparkles.ui.components.table` (drawTable) plus a
 # grapheme-segmentation oracle, compiled to wasm32-wasip1 by
 # nix/packages/table-wasm.nix (dlang.nix's ldc-wasm toolchain, full Phobos + GC).
 #

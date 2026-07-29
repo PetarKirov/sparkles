@@ -6,7 +6,7 @@ counterpart of `ui/progress.d`'s spinner line.
 Pure producers into any output range (`@nogc` with a `SmallBuffer`); an ASCII
 fallback charset is provided for non-UTF-8 terminals (`TermCaps.unicode`).
 +/
-module sparkles.core_cli.ui.meter;
+module sparkles.ui.components.meter;
 
 /// The partial-cell glyphs, indexed by eighths (index 0 unused).
 private static immutable string[8] eighthBlocks = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];

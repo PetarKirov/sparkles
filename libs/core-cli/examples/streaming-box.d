@@ -32,7 +32,7 @@ import std.range.primitives : ElementType, empty, front, popFront;
 import std.stdio : stderr, stdout, write, writeln;
 
 import sparkles.core_cli.args;
-import sparkles.core_cli.ui.box : BoxProps, drawBoxChunks, TitleOverflow;
+import sparkles.ui.components.box : BoxProps, drawBoxChunks, TitleOverflow;
 import sparkles.base.term_style : Style, stylize;
 
 /// Default visible length of a generated title / content when no length is given.

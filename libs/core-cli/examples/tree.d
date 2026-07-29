@@ -7,7 +7,7 @@
 +/
 
 // A miniature `tree(1)`: lists the directory given as the first argument
-// (default: the current directory) with `sparkles.core_cli.ui.tree` guides.
+// (default: the current directory) with `sparkles.ui.components.tree` guides.
 //
 //     dub run --single libs/core-cli/examples/tree.d -- [path]
 //
@@ -28,7 +28,7 @@ import std.stdio : stderr, writefln, writeln;
 
 import sparkles.build_primitives.dir_walk :
     GitRepositoryFilter, repositoryGitIgnoreStack, walkDir;
-import sparkles.core_cli.ui.tree : renderTree, TreeNode;
+import sparkles.ui.components.tree : renderTree, TreeNode;
 
 /// Wraps `GitRepositoryFilter` (nested-`.gitignore` pruning) with tree's own
 /// policies — skip dotfiles, record every shown entry as a `TreeNode`, and

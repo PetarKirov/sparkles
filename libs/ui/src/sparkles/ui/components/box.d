@@ -1,4 +1,4 @@
-module sparkles.core_cli.ui.box;
+module sparkles.ui.components.box;
 
 import std.algorithm.comparison : max;
 import std.algorithm.iteration : map;
@@ -980,7 +980,7 @@ unittest
     import std.array : array;
     import std.string : lineSplitter;
     import std.stdio : writeln;
-    import sparkles.core_cli.test_utils : readFromTestDir;
+    import sparkles.ui.test_utils : readFromTestDir;
 
     void drawFileInBox(string path, bool omitLeftBorder = false)
     {

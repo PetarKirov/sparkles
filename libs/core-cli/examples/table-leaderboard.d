@@ -28,8 +28,8 @@ import std.conv : text;
 import std.stdio : writeln;
 
 import sparkles.core_cli.args;
-import sparkles.core_cli.ui.live : stdoutLiveRegion;
-import sparkles.core_cli.ui.table : drawTableLines, TableProps;
+import sparkles.ui.components.live : stdoutLiveRegion;
+import sparkles.ui.components.table : drawTableLines, TableProps;
 import sparkles.base.styled_template : styledText;
 import sparkles.base.text.width : Align;
 

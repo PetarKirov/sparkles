@@ -22,9 +22,9 @@ import core.time : msecs;
 
 import sparkles.core_cli.process_utils : runStreaming;
 import sparkles.base.term_caps : detectTermCaps;
-import sparkles.core_cli.ui.live : stdoutLiveRegion;
-import sparkles.core_cli.ui.tasklist : TaskReporter;
-import sparkles.core_cli.ui.theme : makeTheme;
+import sparkles.ui.components.live : stdoutLiveRegion;
+import sparkles.ui.components.tasklist : TaskReporter;
+import sparkles.ui.components.theme : makeTheme;
 
 void main()
 {

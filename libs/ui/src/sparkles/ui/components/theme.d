@@ -9,12 +9,12 @@ the edge (typically `makeTheme(detectTermCaps())` at app startup); callers threa
 the resulting values through the existing `BoxProps`/`TableProps`/`colored`
 parameters.
 +/
-module sparkles.core_cli.ui.theme;
+module sparkles.ui.components.theme;
 
 import sparkles.base.term_style : Style, stylize;
 import sparkles.base.term_caps : TermCaps;
-import sparkles.core_cli.ui.box : BoxProps;
-import sparkles.core_cli.ui.table : presetGlyphs, TableGlyphs;
+import sparkles.ui.components.box : BoxProps;
+import sparkles.ui.components.table : presetGlyphs, TableGlyphs;
 
 @safe:
 

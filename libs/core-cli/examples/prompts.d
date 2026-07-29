@@ -19,7 +19,7 @@ import std.stdio : writefln, writeln;
 
 import sparkles.core_cli.prompts;
 import sparkles.base.term_caps : isTerminal, StdStream;
-import sparkles.core_cli.ui.theme : makeTheme, Theme;
+import sparkles.ui.components.theme : makeTheme, Theme;
 import sparkles.base.term_caps : detectTermCaps;
 
 void main()

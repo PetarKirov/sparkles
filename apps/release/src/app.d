@@ -29,12 +29,12 @@ import sparkles.base.term_style : Style, stylize;
 import sparkles.core_cli.args : parseCliArgs, CliOption, HelpInfo;
 import sparkles.core_cli.process_utils : isInPath, runCaptured;
 import sparkles.base.term_caps : detectTermCaps;
-import sparkles.core_cli.ui.box : drawBox, BoxProps;
-import sparkles.core_cli.ui.header : drawHeader, HeaderProps, HeaderStyle;
-import sparkles.core_cli.ui.live : LiveRegion, stdoutLiveRegion;
-import sparkles.core_cli.ui.table : drawTable;
-import sparkles.core_cli.ui.tasklist : TaskReporter;
-import sparkles.core_cli.ui.theme : makeTheme, Theme;
+import sparkles.ui.components.box : drawBox, BoxProps;
+import sparkles.ui.components.header : drawHeader, HeaderProps, HeaderStyle;
+import sparkles.ui.components.live : LiveRegion, stdoutLiveRegion;
+import sparkles.ui.components.table : drawTable;
+import sparkles.ui.components.tasklist : TaskReporter;
+import sparkles.ui.components.theme : makeTheme, Theme;
 import sparkles.versions.schemes.semver : SemVer;
 
 import sparkles.release.agents : AgentSpec, availableAgents, buildAgentPrompt, buildSegmentationPrompt, capLogStat, buildSegmentationRetryCoda, buildSegmentNotesSection, findAgent, runAgent, resolveBinary;
@@ -526,7 +526,7 @@ private void renderPlan(in ReleasePlan plan, in SegmentInput[] rows, in Theme th
     import std.conv : text;
     import sparkles.base.text.width : Align;
     import sparkles.base.term_caps : terminalSize;
-    import sparkles.core_cli.ui.table : TableProps;
+    import sparkles.ui.components.table : TableProps;
 
     string[][] table = [["Version", "Commits", "PRs", "Theme", "Bump"]];
     foreach (ref seg; plan.segments)
@@ -625,8 +625,8 @@ private void printSplitReceipt(
     Stage stage, const(SegmentPlan)[] done, size_t planned, in Theme theme)
 {
     import std.conv : text;
-    import sparkles.core_cli.ui.layout : kvList;
-    import sparkles.core_cli.ui.theme : Semantic;
+    import sparkles.ui.components.layout : kvList;
+    import sparkles.ui.components.theme : Semantic;
 
     if (done.length == 0)
     {
@@ -756,7 +756,7 @@ private void renderStats(in ReleaseStats rs, string rangeLabel)
     import std.conv : text;
     import sparkles.base.text.width : Align;
     import sparkles.base.term_caps : terminalSize;
-    import sparkles.core_cli.ui.table : TableProps;
+    import sparkles.ui.components.table : TableProps;
 
     // Numbers right-align; every table caps at the terminal width (0 = no cap
     // when piped); titles ride the frame instead of a separate banner line.
@@ -781,7 +781,7 @@ private void renderStats(in ReleaseStats rs, string rangeLabel)
     // Conventional-commit type breakdown (only non-zero rows), with a
     // count-proportional bar per row.
     import std.algorithm.comparison : max;
-    import sparkles.core_cli.ui.meter : meter;
+    import sparkles.ui.components.meter : meter;
 
     size_t maxTypeCount = 0;
     foreach (count; rs.typeCounts)
@@ -808,7 +808,7 @@ private void renderStats(in ReleaseStats rs, string rangeLabel)
         // old two-space indent.
         import std.algorithm.iteration : map;
         import std.array : array;
-        import sparkles.core_cli.ui.tree : renderTree, TreeNode;
+        import sparkles.ui.components.tree : renderTree, TreeNode;
 
         const guides = renderTree(rs.areas.map!(a => TreeNode(a.label, a.depth)).array);
         string[][] areaRows = [["Area", "Changed"]];
@@ -1114,10 +1114,10 @@ private AgentSpec promptAgent(const(AgentSpec)[] avail, in Theme theme)
 private void printReceipt(Stage stage, string tag, string notesBody, in Theme theme)
 {
     import std.string : lineSplitter;
-    import sparkles.core_cli.ui.osc_link : oscLink;
-    import sparkles.core_cli.ui.theme : Semantic;
+    import sparkles.ui.components.osc_link : oscLink;
+    import sparkles.ui.components.theme : Semantic;
 
-    import sparkles.core_cli.ui.layout : kvList;
+    import sparkles.ui.components.layout : kvList;
 
     string subject = tag;
     foreach (line; notesBody.lineSplitter)

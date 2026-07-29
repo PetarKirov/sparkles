@@ -9,6 +9,12 @@ dflags "-preview=in" "-preview=dip1000"
 dependency "sparkles:base" path="../.."
 dependency "expected" version="~>0.4.1"
 
+// The UI components moved to the canvas-first toolkit; `core-cli` keeps
+// command-line concerns and consumes them (prompts style their output with the
+// theme and drive a live region). `sparkles:ui` takes the cycle-safe recipe
+// precisely so this edge is legal — see `libs/ui/dub.sdl`.
+dependency "sparkles:ui" path="../.."
+
 targetType "library"
 targetPath "build"
 

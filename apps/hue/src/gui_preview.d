@@ -33,7 +33,7 @@ import sparkles.syntax : MdDoc, MdBlock, MdBlockKind, MdInline, MdInlineKind, Co
     LabelId, toRgb, RgbColor, GrammarRegistry, TsConfigCache, canonicalLanguage,
     extractMarkdown, highlightInjected;
 import sparkles.base.smallbuffer : SmallBuffer;
-import sparkles.core_cli.ui.table : MappedTable, TableGridMap, drawTableMapped;
+import sparkles.ui.components.table : MappedTable, TableGridMap, drawTableMapped;
 import sparkles.test_runner.attributes : benchmark;
 
 // ── Presentation model ───────────────────────────────────────────────────────
@@ -1395,7 +1395,7 @@ width change), never per frame.
 */
 private auto tableProps(scope const(ColAlign)[] aligns, size_t cols, int maxWidth) @trusted
 {
-    import sparkles.core_cli.ui.table : TableProps;
+    import sparkles.ui.components.table : TableProps;
     import sparkles.base.text.width : Align;
 
     auto cAligns = new Align[](cols);
@@ -1417,7 +1417,7 @@ private auto tableProps(scope const(ColAlign)[] aligns, size_t cols, int maxWidt
 private string[] renderTableLines(string[][] grid, scope const(ColAlign)[] aligns,
     size_t cols, int maxWidth) @trusted
 {
-    import sparkles.core_cli.ui.table : drawTableLines;
+    import sparkles.ui.components.table : drawTableLines;
 
     string[] rows;
     foreach (ln; drawTableLines(grid, tableProps(aligns, cols, maxWidth)))

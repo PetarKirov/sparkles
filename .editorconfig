@@ -26,7 +26,7 @@ indent_style = space
 indent_size = unset
 
 # Test data files contain exact byte sequences — no trailing newline
-[libs/core-cli/test/data/**]
+[libs/ui/test/data/**]
 charset = unset
 insert_final_newline = unset
 

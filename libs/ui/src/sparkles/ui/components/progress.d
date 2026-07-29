@@ -9,7 +9,7 @@ caller: frame a `ProgressLine` with `CtlSeq.carriageReturn` +
 `CtlSeq.eraseLine` from `sparkles.base.term_control` (the former `AnsiControl`
 enum here, moved and extended), or drive it through a live region.
 +/
-module sparkles.core_cli.ui.progress;
+module sparkles.ui.components.progress;
 
 import core.time : Duration;
 
