@@ -1753,14 +1753,14 @@ private int drawBelowBlock(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
             {
                 const sx = padPx + op.rect.x * cellW;
                 const sy = y + op.rect.y * cellH;
-                DrawRectangle(cast(int) sx, cast(int) sy, op.rect.w * cellW, cellH, rl(pageBg));
+                DrawRectangle(cast(int) sx, cast(int) sy, op.rect.width * cellW, cellH, rl(pageBg));
                 SmallBuffer!HighlightEvent sig;
                 highlightSignature(cache, node.text, sig);
                 drawStyledRuns(fonts, buf, node.text, sig[], sx, sy, theme, pageFg);
                 break;
             }
 
-    return frames[tree.root].rect.h;
+    return frames[tree.root].rect.height;
 }
 
 /// The floating hover popup: a bordered box with the re-highlighted type
@@ -1794,7 +1794,7 @@ private Rectangle drawPopup(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
         {
             const sx = x + op.rect.x * cellW;
             const sy = y + op.rect.y * cellH;
-            DrawRectangle(cast(int) sx, cast(int) sy, op.rect.w * cellW, cellH, rlBg(surf));
+            DrawRectangle(cast(int) sx, cast(int) sy, op.rect.width * cellW, cellH, rlBg(surf));
             SmallBuffer!HighlightEvent sig;
             highlightSignature(cache, sigText, sig);
             drawStyledRuns(fonts, buf, sigText, sig[], sx, sy, theme, pageFg);
@@ -1803,7 +1803,7 @@ private Rectangle drawPopup(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
 
     // The popup's on-screen rect (px), for the caller's pointer hysteresis.
     const box = frames[tree.root].rect;
-    return Rectangle(x, y, cast(float)(box.w * cellW), cast(float)(box.h * cellH));
+    return Rectangle(x, y, cast(float)(box.width * cellW), cast(float)(box.height * cellH));
 }
 
 

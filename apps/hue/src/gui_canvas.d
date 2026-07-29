@@ -86,7 +86,7 @@ struct RaylibCanvas
     void fillRect(in Rect r, in Visual v) @system
     {
         const x = px(r.x), y = py(r.y);
-        const w = cast(float)(r.w * cellW), h = cast(float)(r.h * cellH);
+        const w = cast(float)(r.width * cellW), h = cast(float)(r.height * cellH);
 
         // Drop shadow first, behind the surface: an offset translucent rect.
         if (v.shadow.any)
@@ -108,7 +108,7 @@ struct RaylibCanvas
                 DrawRectangleRounded(Rectangle(x, y, w, h),
                     roundnessOf(v.borderRadius, w, h), 8, rlBg(v));
             else
-                DrawRectangle(cast(int) x, cast(int) y, r.w * cellW, r.h * cellH, rlBg(v));
+                DrawRectangle(cast(int) x, cast(int) y, r.width * cellW, r.height * cellH, rlBg(v));
         }
 
         // Border and popup arrow.

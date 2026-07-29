@@ -8,23 +8,29 @@ targetPath "build"
 
 importPaths "src"
 
+// The core's only two dependencies, in every configuration: sparkles:base for the
+// color/style vocabulary (RgbColor/Color/toRgb — the toolkit adds no color type of
+// its own) and sparkles:math for the numeric `Vector` its geometry specializes into
+// `Point`/`Size` (the same way `TermSize`/`TermPosition` specialize it for the
+// terminal). Both are library-level, so they belong here rather than duplicated per
+// configuration. Concrete canvas backends adapt to sparkles:ui, never the reverse.
+dependency "sparkles:base" path="../.."
+dependency "sparkles:math" path="../.."
+
 dflags "-preview=in" "-preview=dip1000"
 
 configuration "library" {
     // sourceLibrary: the toolkit is largely templates (the `isCanvas` capability
     // concept, the attribute-inferring `paint` interpreter) plus small pure
     // functions, so it compiles inside each dependent — matching sparkles:syntax
-    // / sparkles:twoslash. The core depends ONLY on sparkles:base (it reuses
-    // RgbColor/Color/toRgb and adds no color type); backends adapt to it.
+    // / sparkles:twoslash.
     targetType "sourceLibrary"
-    dependency "sparkles:base" path="../.."
 }
 
 configuration "unittest" {
     // Fast path: depend on the runner shim (pulls the prebuilt impl library),
     // so `dub test` recompiles only this package, not the runner sources.
     dependency "sparkles:test-runner" path="../.."
-    dependency "sparkles:base" path="../.."
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"

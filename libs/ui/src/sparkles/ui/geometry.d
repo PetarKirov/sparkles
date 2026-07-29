@@ -11,64 +11,110 @@ $(LREF cellsOf) — the $(B one) width authority: the display-column width of a
 string, counting one column per codepoint to match the grid advance the GUI
 painter (`drawText`) and the terminal both use. (Proper wide/combining width is
 the deferred grapheme-width upgrade; see the hue `FNT6`/`DEF7` roadmap item.)
+
+The 2-D types specialize $(MREF sparkles,math,vector)'s numeric `Vector`, the same
+way $(REF TermSize, sparkles,core_cli,term_caps)/`TermPosition` do for the
+terminal — one vector implementation and one field vocabulary across the stack.
 */
 module sparkles.ui.geometry;
 
-/// A position on the cell grid (column `x`, row `y`); may be negative for
-/// off-viewport content.
-struct Point
-{
-    int x;
-    int y;
-}
+import sparkles.math : ScreenPosition, ScreenSize, Vector;
 
-/// A size in cells (`w` columns × `h` rows).
-struct Size
-{
-    int w;
-    int h;
-}
+/**
+The UI domain's canonical 2-D types: a position on the cell grid (`.x`/`.y`) and
+an extent in cells (`.width`/`.height`). Reuse these instead of ad-hoc `int x, y;`
+pairs.
 
-/// A rectangle on the cell grid, `[x, x+w) × [y, y+h)`.
+Both are `int` — unlike the terminal's `ushort`
+($(REF TermSize, sparkles,core_cli,term_caps)), a laid-out position may be
+$(B negative) for content scrolled above or left of the viewport, and a document
+may exceed 65535 cells. A size keeps $(REF ScreenSize, sparkles,math,vector)'s
+`width`/`height` names rather than inventing `w`/`h`, so the whole repo spells an
+extent one way.
+
+$(B Note) these are `union`-backed (`Vector` overlays named fields on a
+`T[N] data` array), so a named-field read is $(B not) available in CTFE — geometry
+is a runtime vocabulary. `Point` keeps the default `x`/`y` names, so it also keeps
+`Vector`'s `+`/`-`; `Size`'s custom names mean two `Size`s support `+=`/`-=` but
+not `+`/`-` (no site needs it — every offset here is field-wise `int` math).
+*/
+alias Point = ScreenPosition!int;
+/// ditto
+alias Size = ScreenSize!int;
+
+/// A rectangle on the cell grid, `[x, x+width) × [y, y+height)` — a
+/// $(LREF Point) origin plus a $(LREF Size) extent.
 struct Rect
 {
-    int x;
-    int y;
-    int w;
-    int h;
+    Point origin; /// the top-left corner
+    Size size;    /// the extent, in cells
 
 @safe pure nothrow @nogc:
 
-    /// The top-left corner.
-    Point origin() const scope => Point(x, y);
+    /// From an origin + extent, or from the four components directly (the
+    /// spelling every call site uses).
+    this(in Point origin, in Size size)
+    {
+        this.origin = origin;
+        this.size = size;
+    }
+
+    /// ditto
+    this(int x, int y, int width, int height)
+    {
+        origin = Point(x, y);
+        size = Size(width, height);
+    }
+
+    /// The components, forwarded from `origin`/`size`.
+    int x() const scope => origin.x;
+    /// ditto
+    int y() const scope => origin.y;
+    /// ditto
+    int width() const scope => size.width;
+    /// ditto
+    int height() const scope => size.height;
 
     /// Right edge (exclusive) and bottom edge (exclusive).
-    int right() const scope => x + w;
+    int right() const scope => origin.x + size.width;
     /// ditto
-    int bottom() const scope => y + h;
+    int bottom() const scope => origin.y + size.height;
 
     /// `true` iff `p` lies inside the half-open rectangle.
     bool contains(in Point p) const scope
-        => p.x >= x && p.x < x + w && p.y >= y && p.y < y + h;
+        => p.x >= origin.x && p.x < right && p.y >= origin.y && p.y < bottom;
 
     /// This rectangle shrunk by `ins` on each side (never below zero size).
     Rect deflate(in Insets ins) const scope
     {
-        const nw = w - ins.left - ins.right;
-        const nh = h - ins.top - ins.bottom;
-        return Rect(x + ins.left, y + ins.top, nw > 0 ? nw : 0, nh > 0 ? nh : 0);
+        const nw = size.width - ins.left - ins.right;
+        const nh = size.height - ins.top - ins.bottom;
+        return Rect(origin.x + ins.left, origin.y + ins.top,
+            nw > 0 ? nw : 0, nh > 0 ? nh : 0);
     }
 }
 
-/// Per-side padding/margin in cells (CSS order: top, right, bottom, left).
+/**
+Per-side padding/margin in cells (CSS order: top, right, bottom, left).
+
+A thin wrapper rather than a bare alias: `Vector`'s `opDispatch` swallows unknown
+members, so the helpers below would become confusing swizzle errors on an alias.
+`alias this` forwards the four side fields to the vector.
+*/
 struct Insets
 {
-    int top;
-    int right;
-    int bottom;
-    int left;
+    /// The four sides, in CSS order.
+    Vector!(int, 4, ["top", "right", "bottom", "left"]) sides;
+    alias sides this;
 
 @safe pure nothrow @nogc:
+
+    /// The four sides in CSS order (the wrapper needs its own constructor —
+    /// otherwise a struct literal would try to fill `sides` alone).
+    this(int top, int right, int bottom, int left)
+    {
+        sides = typeof(sides)(top, right, bottom, left);
+    }
 
     /// Uniform inset on all four sides.
     static Insets all(int n) => Insets(n, n, n, n);
@@ -78,9 +124,9 @@ struct Insets
         => Insets(vertical, horizontal, vertical, horizontal);
 
     /// Total horizontal / vertical inset.
-    int horizontal() const scope => left + right;
+    int horizontal() const scope => sides.left + sides.right;
     /// ditto
-    int vertical() const scope => top + bottom;
+    int vertical() const scope => sides.top + sides.bottom;
 }
 
 /// How a widget claims space along one axis (the sizing vocabulary the layout
@@ -173,6 +219,36 @@ unittest
     assert(d == Rect(3, 4, 8, 2));
     // Over-deflation clamps to zero, never negative.
     assert(Rect(0, 0, 1, 1).deflate(Insets.all(3)) == Rect(3, 3, 0, 0));
+
+    // The two constructors agree, and the components forward to origin/size.
+    assert(Rect(Point(2, 3), Size(10, 4)) == r);
+    assert(r.x == 2 && r.y == 3 && r.width == 10 && r.height == 4);
+    assert(r.origin == Point(2, 3) && r.size == Size(10, 4));
+    assert(r.right == 12 && r.bottom == 7);
+}
+
+@("ui.geometry.insets.sidesAndTotals")
+@safe pure nothrow @nogc
+unittest
+{
+    const i = Insets(1, 2, 3, 4); // CSS order: top, right, bottom, left
+    assert(i.top == 1 && i.right == 2 && i.bottom == 3 && i.left == 4);
+    assert(i.horizontal == 6 && i.vertical == 4);
+
+    assert(Insets.all(2) == Insets(2, 2, 2, 2));
+    assert(Insets.symmetric(1, 5) == Insets(1, 5, 1, 5));
+    assert(Insets.init == Insets(0, 0, 0, 0));
+}
+
+@("ui.geometry.point.vectorOps")
+@safe pure nothrow @nogc
+unittest
+{
+    // `Point` keeps `Vector`'s default `x`/`y` names, so it keeps `+`/`-`.
+    assert(Point(1, 2) + Point(3, 4) == Point(4, 6));
+    auto s = Size(3, 4);
+    s += Size(1, 1); // custom-named vectors get `+=`, not `+`
+    assert(s == Size(4, 5));
 }
 
 @("ui.geometry.sizeSpec.clampAndFactories")
