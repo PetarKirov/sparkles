@@ -30,7 +30,7 @@ its canvas's grapheme-aware measurer instead.
 module sparkles.ui.layout;
 
 import sparkles.ui.geometry : cellsOf, Constraints, Insets, Point, Rect, Size, SizeSpec;
-import sparkles.ui.widget : Widget, WidgetKind, WidgetTree;
+import sparkles.ui.widget : Alignment, Visibility, Widget, WidgetKind, WidgetTree;
 import sparkles.ui.wrap : TextWrap, wrapLines;
 
 @safe:
@@ -83,6 +83,23 @@ if (isTextMeasure!TM)
 
     // -- shared helpers ------------------------------------------------------
 
+    // A `collapsed` child is removed from flow (LAY11): zero extent, no gap.
+    bool isCollapsed(uint ci)
+        => tree.nodes[ci].visibility == Visibility.collapsed;
+
+    // The offset aligning a child within `slack` leftover cells (LAY8).
+    static int alignOffset(Alignment a, int slack)
+    {
+        if (slack <= 0)
+            return 0;
+        final switch (a) with (Alignment)
+        {
+            case start: return 0;
+            case center: return slack / 2;
+            case end: return slack;
+        }
+    }
+
     // A child's extent within `avail` cells of parent content, on the axis
     // where no leftover distribution happens (the cross axis, or the root).
     // On a *clipped* axis (`unclampedFit`) a `fit` child keeps its natural
@@ -134,11 +151,17 @@ if (isTextMeasure!TM)
         scope const(uint)[] children, bool horizontal, int avail, int gap,
         scope int[] extents, bool noShrink = false)
     {
-        int used = children.length > 1 ? gap * (cast(int) children.length - 1) : 0;
+        int used;
         int totalWeight;
+        bool first = true;
 
         foreach (k, ci; children)
         {
+            if (isCollapsed(ci))
+            {
+                extents[k] = 0; // out of flow: no extent, no gap
+                continue;
+            }
             const child = tree.nodes[ci];
             const spec = horizontal ? child.width : child.height;
             const natural = horizontal ? natW[ci] : natH[ci];
@@ -154,7 +177,8 @@ if (isTextMeasure!TM)
                     extents[k] = spec.clamp(avail * spec.value / 100);
                     break;
             }
-            used += extents[k];
+            used += extents[k] + (first ? 0 : gap);
+            first = false;
             if (spec.kind == SizeSpec.Kind.grow)
                 totalWeight += spec.value > 0 ? spec.value : 1;
         }
@@ -168,7 +192,7 @@ if (isTextMeasure!TM)
             foreach (k, ci; children)
             {
                 const spec = horizontal ? tree.nodes[ci].width : tree.nodes[ci].height;
-                if (spec.kind != SizeSpec.Kind.grow)
+                if (spec.kind != SizeSpec.Kind.grow || isCollapsed(ci))
                     continue;
                 const weight = spec.value > 0 ? spec.value : 1;
                 const share = leftover * weight / totalWeight;
@@ -181,7 +205,7 @@ if (isTextMeasure!TM)
                 if (remainder == 0)
                     break;
                 const spec = horizontal ? tree.nodes[ci].width : tree.nodes[ci].height;
-                if (spec.kind != SizeSpec.Kind.grow)
+                if (spec.kind != SizeSpec.Kind.grow || isCollapsed(ci))
                     continue;
                 extents[k] = spec.clamp(extents[k] + 1);
                 remainder--;
@@ -253,12 +277,18 @@ if (isTextMeasure!TM)
             case box:
                 break;
             case row:
-                foreach (k, ci; node.children)
-                    content += natW[ci] + (k ? node.gap : 0);
+                bool first = true;
+                foreach (ci; node.children)
+                {
+                    if (isCollapsed(ci))
+                        continue;
+                    content += natW[ci] + (first ? 0 : node.gap);
+                    first = false;
+                }
                 break;
             case column, stack, panel, popup:
                 foreach (ci; node.children)
-                    if (natW[ci] > content)
+                    if (!isCollapsed(ci) && natW[ci] > content)
                         content = natW[ci];
                 break;
         }
@@ -289,6 +319,11 @@ if (isTextMeasure!TM)
         {
             foreach (ci; node.children)
             {
+                if (isCollapsed(ci))
+                {
+                    allocWidth(ci, 0);
+                    continue;
+                }
                 const child = tree.nodes[ci];
                 auto cw = resolveAgainst(child.width, natW[ci], content,
                     node.clipX);
@@ -337,16 +372,22 @@ if (isTextMeasure!TM)
                 break;
             case row:
                 foreach (ci; node.children)
-                    if (natH[ci] > content)
+                    if (!isCollapsed(ci) && natH[ci] > content)
                         content = natH[ci];
                 break;
             case column:
-                foreach (k, ci; node.children)
-                    content += natH[ci] + (k ? node.gap : 0);
+                bool first = true;
+                foreach (ci; node.children)
+                {
+                    if (isCollapsed(ci))
+                        continue;
+                    content += natH[ci] + (first ? 0 : node.gap);
+                    first = false;
+                }
                 break;
             case stack, panel, popup:
                 foreach (ci; node.children)
-                    if (natH[ci] > content)
+                    if (!isCollapsed(ci) && natH[ci] > content)
                         content = natH[ci];
                 break;
         }
@@ -366,47 +407,101 @@ if (isTextMeasure!TM)
         // node's content box when it also sets `clipX`/`clipY`.
         const contentX = origin.x + node.padding.left - node.childOffset.x;
         const contentY = origin.y + node.padding.top - node.childOffset.y;
-        auto content = allocatedH - node.padding.vertical;
-        if (content < 0)
-            content = 0;
+        auto contentW = alloW[idx] - node.padding.horizontal;
+        if (contentW < 0)
+            contentW = 0;
+        auto contentH = allocatedH - node.padding.vertical;
+        if (contentH < 0)
+            contentH = 0;
 
         final switch (node.kind) with (WidgetKind)
         {
             case text, glyph, line, box:
                 break; // leaves (children.length == 0 already returned)
             case row:
-                int x = contentX;
+            {
+                // Main-axis alignment shifts the whole run in the leftover.
+                int used;
+                bool first = true;
                 foreach (ci; node.children)
                 {
+                    if (isCollapsed(ci))
+                        continue;
+                    used += alloW[ci] + (first ? 0 : node.gap);
+                    first = false;
+                }
+                int x = contentX + alignOffset(node.alignX, contentW - used);
+                first = true;
+                foreach (ci; node.children)
+                {
+                    if (isCollapsed(ci))
+                    {
+                        place(ci, Point(contentX, contentY), 0);
+                        continue;
+                    }
+                    if (!first)
+                        x += node.gap;
+                    first = false;
                     const child = tree.nodes[ci];
-                    auto ch = resolveAgainst(child.height, natH[ci], content,
+                    auto ch = resolveAgainst(child.height, natH[ci], contentH,
                         node.clipY);
-                    if (child.stretch && ch < content)
-                        ch = content;
-                    place(ci, Point(x, contentY), ch);
-                    x += alloW[ci] + node.gap;
+                    if (child.stretch && ch < contentH)
+                        ch = contentH;
+                    place(ci, Point(x,
+                        contentY + alignOffset(node.alignY, contentH - ch)), ch);
+                    x += alloW[ci];
                 }
                 break;
+            }
             case column:
+            {
                 auto heights = new int[](node.children.length);
-                distributeMain(node.children, false, content, node.gap, heights,
+                distributeMain(node.children, false, contentH, node.gap, heights,
                     node.clipY);
-                int y = contentY;
+                int used;
+                bool first = true;
                 foreach (k, ci; node.children)
                 {
-                    place(ci, Point(contentX, y), heights[k]);
-                    y += heights[k] + node.gap;
+                    if (isCollapsed(ci))
+                        continue;
+                    used += heights[k] + (first ? 0 : node.gap);
+                    first = false;
+                }
+                int y = contentY + alignOffset(node.alignY, contentH - used);
+                first = true;
+                foreach (k, ci; node.children)
+                {
+                    if (isCollapsed(ci))
+                    {
+                        place(ci, Point(contentX, contentY), 0);
+                        continue;
+                    }
+                    if (!first)
+                        y += node.gap;
+                    first = false;
+                    place(ci, Point(
+                        contentX + alignOffset(node.alignX, contentW - alloW[ci]),
+                        y), heights[k]);
+                    y += heights[k];
                 }
                 break;
+            }
             case stack, panel, popup:
                 foreach (ci; node.children)
                 {
+                    if (isCollapsed(ci))
+                    {
+                        place(ci, Point(contentX, contentY), 0);
+                        continue;
+                    }
                     const child = tree.nodes[ci];
-                    auto ch = resolveAgainst(child.height, natH[ci], content,
+                    auto ch = resolveAgainst(child.height, natH[ci], contentH,
                         node.clipY);
-                    if (child.stretch && ch < content)
-                        ch = content;
-                    place(ci, Point(contentX, contentY), ch);
+                    if (child.stretch && ch < contentH)
+                        ch = contentH;
+                    place(ci, Point(
+                        contentX + alignOffset(node.alignX, contentW - alloW[ci]),
+                        contentY + alignOffset(node.alignY, contentH - ch)), ch);
                 }
                 break;
         }
@@ -429,6 +524,104 @@ if (isTextMeasure!TM)
 }
 
 private int absInt(int v) nothrow @nogc pure => v < 0 ? -v : v;
+
+/**
+Serializes a laid-out tree to `w`, one depth-indented line per node — kind,
+resolved rectangle, slot, and the payload/flags that explain a layout at a
+glance (`LAY12`; the tiling-WM catalog calls an introspectable tree the
+highest-leverage layout-debugging investment):
+
+---
+column 11×2 @(0,0)
+    text 5×1 @(0,0) "short"
+    text 11×1 @(0,1) "much longer"
+---
+*/
+void dumpTree(Writer)(ref Writer w, in WidgetTree tree, in Frame[] frames)
+{
+    import std.conv : to;
+    import std.range.primitives : put;
+    import sparkles.base.text.writers : writeInteger;
+    import sparkles.ui.style : Slot;
+
+    void num(int v)
+    {
+        if (v < 0)
+        {
+            put(w, '-');
+            v = -v;
+        }
+        writeInteger(w, cast(uint) v);
+    }
+
+    void rec(uint idx, int depth)
+    {
+        const node = tree.nodes[idx];
+        const r = frames[idx].rect;
+        foreach (_; 0 .. depth * 4)
+            put(w, ' ');
+        put(w, node.kind.to!string);
+        put(w, ' ');
+        num(r.width);
+        put(w, '×');
+        num(r.height);
+        put(w, " @(");
+        num(r.x);
+        put(w, ',');
+        num(r.y);
+        put(w, ')');
+        if (node.slot != Slot.inherit)
+        {
+            put(w, " slot=");
+            put(w, node.slot.to!string);
+        }
+        if (node.visibility != Visibility.visible)
+        {
+            put(w, ' ');
+            put(w, node.visibility.to!string);
+        }
+        if (node.clipX || node.clipY)
+        {
+            put(w, " clip=");
+            if (node.clipX)
+                put(w, 'x');
+            if (node.clipY)
+                put(w, 'y');
+        }
+        if (frames[idx].lines.length > 1)
+        {
+            put(w, " lines=");
+            writeInteger(w, frames[idx].lines.length);
+        }
+        if (node.kind == WidgetKind.text)
+        {
+            put(w, " \"");
+            const t = node.text;
+            size_t cut = t.length <= 32 ? t.length : 32;
+            while (cut < t.length && cut > 0 && (t[cut] & 0xC0) == 0x80)
+                cut--; // don't split a codepoint
+            put(w, t[0 .. cut]);
+            if (cut < t.length)
+                put(w, "…");
+            put(w, '"');
+        }
+        put(w, '\n');
+        foreach (ci; node.children)
+            rec(ci, depth + 1);
+    }
+
+    rec(tree.root, 0);
+}
+
+/// ditto
+string dumpTree(in WidgetTree tree, in Frame[] frames)
+{
+    import std.array : appender;
+
+    auto w = appender!string;
+    dumpTree(w, tree, frames);
+    return w[];
+}
 
 @("ui.layout.rowFlowWithGap")
 @safe unittest
@@ -649,6 +842,106 @@ private int absInt(int v) nothrow @nogc pure => v < 0 ? -v : v;
     auto loose = layout(tree);
     assert(loose[t].lines == ["the quick brown fox"]);
     assert(loose[t].rect == Rect(0, 0, 19, 1));
+}
+
+@("ui.layout.alignmentOffsetsWithinTheBand")
+@safe unittest
+{
+    import sparkles.ui.widget : Builder;
+
+    // A 1-cell glyph centered in a 3-row row band, and a short text
+    // right-aligned in a 12-cell column.
+    auto b = Builder();
+    const tall = b.add(Widget(kind: WidgetKind.box,
+        width: SizeSpec.fixed(1), height: SizeSpec.fixed(3)));
+    const dot = b.add(Widget(kind: WidgetKind.glyph, glyph: '•'));
+    Widget rowW = Widget(kind: WidgetKind.row, children: [tall, dot],
+        alignY: Alignment.center);
+    const row = b.add(rowW);
+    auto tree = b.finish(row);
+
+    auto frames = layout(tree);
+    assert(frames[row].rect.height == 3);
+    assert(frames[dot].rect == Rect(1, 1, 1, 1)); // centered in the 3-row band
+
+    auto b2 = Builder();
+    const t = b2.add(Widget(kind: WidgetKind.text, text: "end"));
+    Widget colW = Widget(kind: WidgetKind.column, children: [t],
+        width: SizeSpec.fixed(12), alignX: Alignment.end);
+    const col = b2.add(colW);
+    auto fr2 = layout(b2.finish(col));
+    assert(fr2[t].rect == Rect(9, 0, 3, 1)); // flush right in 12 cells
+}
+
+@("ui.layout.mainAxisAlignmentShiftsTheRun")
+@safe unittest
+{
+    import sparkles.ui.widget : Builder;
+
+    // Two 2-cell boxes centered in a 10-cell row: the 4-cell leftover splits
+    // around the run (integer floor: offset 2).
+    auto b = Builder();
+    const c0 = b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(2)));
+    const c1 = b.add(Widget(kind: WidgetKind.box, width: SizeSpec.fixed(2)));
+    Widget rowW = Widget(kind: WidgetKind.row, children: [c0, c1],
+        width: SizeSpec.fixed(10), gap: 1, alignX: Alignment.center);
+    const row = b.add(rowW);
+    auto frames = layout(b.finish(row));
+    assert(frames[c0].rect.x == 2 && frames[c1].rect.x == 5);
+}
+
+@("ui.layout.visibilityTriState")
+@safe unittest
+{
+    import sparkles.ui.widget : Builder;
+
+    // hidden keeps its space; collapsed leaves the flow (including its gap).
+    auto b = Builder();
+    const a0 = b.add(Widget(kind: WidgetKind.text, text: "aa"));
+    Widget hid = Widget(kind: WidgetKind.text, text: "bb",
+        visibility: Visibility.hidden);
+    const a1 = b.add(hid);
+    Widget gone = Widget(kind: WidgetKind.text, text: "cc",
+        visibility: Visibility.collapsed);
+    const a2 = b.add(gone);
+    const a3 = b.add(Widget(kind: WidgetKind.text, text: "dd"));
+    const row = b.container(WidgetKind.row, [a0, a1, a2, a3], gap: 1);
+    auto tree = b.finish(row);
+
+    auto frames = layout(tree);
+    // aa | (hidden bb) | dd — the collapsed cc contributes no width and no gap.
+    assert(frames[row].rect.width == 8); // 2+1+2+1+2
+    assert(frames[a1].rect == Rect(3, 0, 2, 1)); // hidden still occupies space
+    assert(frames[a2].rect.size == Size(0, 0));  // collapsed has no extent
+    assert(frames[a3].rect.x == 6);
+
+    // The display list paints neither the hidden nor the collapsed run.
+    import sparkles.ui.display_list : buildDisplayList;
+    import sparkles.ui.style : defaultTwoslashPalette;
+    import sparkles.base.term_color : RgbColor;
+
+    auto ops = buildDisplayList(tree, frames, defaultTwoslashPalette(),
+        RgbColor(0, 0, 0), RgbColor(255, 255, 255));
+    assert(ops.length == 2);
+    assert(ops[0].text == "aa" && ops[1].text == "dd");
+}
+
+@("ui.layout.dumpTreeReadsAtAGlance")
+@safe unittest
+{
+    import sparkles.ui.widget : Builder;
+
+    auto b = Builder();
+    const r0 = b.add(Widget(kind: WidgetKind.text, text: "short"));
+    const r1 = b.add(Widget(kind: WidgetKind.text, text: "much longer"));
+    const col = b.container(WidgetKind.column, [r0, r1]);
+    auto tree = b.finish(col);
+    auto frames = layout(tree);
+
+    assert(dumpTree(tree, frames) ==
+        "column 11×2 @(0,0)\n" ~
+        "    text 5×1 @(0,0) \"short\"\n" ~
+        "    text 11×1 @(0,1) \"much longer\"\n");
 }
 
 @("ui.layout.injectedTextMeasure")

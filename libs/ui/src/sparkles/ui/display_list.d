@@ -13,7 +13,7 @@ import sparkles.ui.canvas : DrawOp, OpKind;
 import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.layout : Frame;
 import sparkles.ui.style : Palette, resolveVisual, Slot, Visual;
-import sparkles.ui.widget : Widget, WidgetKind, WidgetTree;
+import sparkles.ui.widget : Visibility, Widget, WidgetKind, WidgetTree;
 import sparkles.base.term_color : RgbColor;
 
 @safe:
@@ -39,6 +39,11 @@ private void emit(in WidgetTree tree, uint idx, in Frame[] frames, in Palette pa
 {
     const node = tree.nodes[idx];
     const rect = frames[idx].rect;
+
+    // `hidden` occupies its frame but paints nothing; `collapsed` was already
+    // removed from flow by layout (LAY11). Either way the subtree emits no ops.
+    if (node.visibility != Visibility.visible)
+        return;
 
     // Cull a subtree that lies fully outside the effective clip (scrolled off
     // a viewport). Zero-sized frames are kept — a border-only box measures 0×0.
