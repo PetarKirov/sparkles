@@ -33,6 +33,17 @@ if (isCanvas!Canvas)
             case line:
                 canvas.line(op.rect.origin, op.to, op.visual, op.lineStyle);
                 break;
+            case pushClip:
+                // The clipping pair is an optional canvas capability: forward
+                // when present, else paint unclipped (the display list already
+                // culled fully-hidden subtrees).
+                static if (__traits(compiles, canvas.pushClip(op.rect)))
+                    canvas.pushClip(op.rect);
+                break;
+            case popClip:
+                static if (__traits(compiles, canvas.popClip()))
+                    canvas.popClip();
+                break;
         }
     }
 }

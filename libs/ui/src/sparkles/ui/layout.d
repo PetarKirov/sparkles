@@ -85,13 +85,16 @@ if (isTextMeasure!TM)
 
     // A child's extent within `avail` cells of parent content, on the axis
     // where no leftover distribution happens (the cross axis, or the root).
-    int resolveAgainst(in SizeSpec spec, int natural, int avail)
+    // On a *clipped* axis (`unclampedFit`) a `fit` child keeps its natural
+    // extent — overflowing the viewport is the point; painting clips it.
+    int resolveAgainst(in SizeSpec spec, int natural, int avail,
+        bool unclampedFit = false)
     {
         int v;
         final switch (spec.kind) with (SizeSpec.Kind)
         {
             case fit:
-                v = natural <= avail ? natural : avail;
+                v = natural <= avail || unclampedFit ? natural : avail;
                 break;
             case fixed:
                 v = spec.value;
@@ -125,9 +128,11 @@ if (isTextMeasure!TM)
     // divmod, the remaining cells one each to the first growers — and overflow
     // is reclaimed from non-`fixed` children in proportion to their slack above
     // `min`. The parts always sum exactly to the whole while no clamp binds.
+    // A clipping container (`noShrink`) skips the reclaim: its content is
+    // *meant* to overflow, scrolled by `childOffset` and clipped by paint.
     void distributeMain(
         scope const(uint)[] children, bool horizontal, int avail, int gap,
-        scope int[] extents)
+        scope int[] extents, bool noShrink = false)
     {
         int used = children.length > 1 ? gap * (cast(int) children.length - 1) : 0;
         int totalWeight;
@@ -182,7 +187,7 @@ if (isTextMeasure!TM)
                 remainder--;
             }
         }
-        else if (used > avail)
+        else if (used > avail && !noShrink)
         {
             // Overflow: reclaim from non-`fixed` children in proportion to
             // their slack above `min` (divmod again; if total slack cannot
@@ -275,7 +280,8 @@ if (isTextMeasure!TM)
         if (node.kind == WidgetKind.row)
         {
             auto widths = new int[](node.children.length);
-            distributeMain(node.children, true, content, node.gap, widths);
+            distributeMain(node.children, true, content, node.gap, widths,
+                node.clipX);
             foreach (k, ci; node.children)
                 allocWidth(ci, widths[k]);
         }
@@ -284,7 +290,8 @@ if (isTextMeasure!TM)
             foreach (ci; node.children)
             {
                 const child = tree.nodes[ci];
-                auto cw = resolveAgainst(child.width, natW[ci], content);
+                auto cw = resolveAgainst(child.width, natW[ci], content,
+                    node.clipX);
                 // Cross-axis stretch: widen the child's box to the content
                 // width (full-width dividers/sections); its own descendants
                 // stay start-aligned at their natural widths.
@@ -355,8 +362,10 @@ if (isTextMeasure!TM)
         if (node.children.length == 0)
             return;
 
-        const contentX = origin.x + node.padding.left;
-        const contentY = origin.y + node.padding.top;
+        // The scroll offset shifts every child (LAY7); painting clips at this
+        // node's content box when it also sets `clipX`/`clipY`.
+        const contentX = origin.x + node.padding.left - node.childOffset.x;
+        const contentY = origin.y + node.padding.top - node.childOffset.y;
         auto content = allocatedH - node.padding.vertical;
         if (content < 0)
             content = 0;
@@ -370,7 +379,8 @@ if (isTextMeasure!TM)
                 foreach (ci; node.children)
                 {
                     const child = tree.nodes[ci];
-                    auto ch = resolveAgainst(child.height, natH[ci], content);
+                    auto ch = resolveAgainst(child.height, natH[ci], content,
+                        node.clipY);
                     if (child.stretch && ch < content)
                         ch = content;
                     place(ci, Point(x, contentY), ch);
@@ -379,7 +389,8 @@ if (isTextMeasure!TM)
                 break;
             case column:
                 auto heights = new int[](node.children.length);
-                distributeMain(node.children, false, content, node.gap, heights);
+                distributeMain(node.children, false, content, node.gap, heights,
+                    node.clipY);
                 int y = contentY;
                 foreach (k, ci; node.children)
                 {
@@ -391,7 +402,8 @@ if (isTextMeasure!TM)
                 foreach (ci; node.children)
                 {
                     const child = tree.nodes[ci];
-                    auto ch = resolveAgainst(child.height, natH[ci], content);
+                    auto ch = resolveAgainst(child.height, natH[ci], content,
+                        node.clipY);
                     if (child.stretch && ch < content)
                         ch = content;
                     place(ci, Point(contentX, contentY), ch);

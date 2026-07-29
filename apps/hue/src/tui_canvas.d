@@ -60,6 +60,12 @@ void paintGrid(ref Grid grid, in RgbColor pageBg, in DrawOp[] ops,
             case line:
                 canvas.line(op.rect.origin, op.to, op.visual, op.lineStyle);
                 break;
+            case pushClip:
+                canvas.pushClip(op.rect);
+                break;
+            case popClip:
+                canvas.popClip();
+                break;
         }
     }
 }
@@ -77,10 +83,29 @@ struct GridCanvas
     int originX = 0; /// grid column of cell x = 0 (place a laid-out subtree)
     int originY = 0; /// grid row of cell y = 0
 
+    /// The active clip stack in canvas cell coordinates (empty = unclipped).
+    /// The display list pushes *effective* rects, so only the top gates writes.
+    private Rect[] clips;
+
     private bool inBounds(int x, int y) const scope pure nothrow @nogc
     {
         const gx = originX + x, gy = originY + y;
-        return grid !is null && gx >= 0 && gx < grid.cols && gy >= 0 && gy < grid.rows;
+        return grid !is null && gx >= 0 && gx < grid.cols && gy >= 0 && gy < grid.rows
+            && (clips.length == 0 || clips[$ - 1].contains(Point(x, y)));
+    }
+
+    /// The optional `sparkles:ui` clipping pair: cell writes outside the
+    /// pushed rect are dropped (a scrolled viewport cannot bleed into chrome).
+    void pushClip(in Rect r) scope
+    {
+        clips ~= r;
+    }
+
+    /// ditto
+    void popClip() scope
+    {
+        if (clips.length)
+            clips = clips[0 .. $ - 1];
     }
 
     private ref auto cell(int x, int y) scope
