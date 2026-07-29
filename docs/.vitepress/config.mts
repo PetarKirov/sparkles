@@ -476,6 +476,14 @@ export default withMermaid(
               ],
             },
             {
+              text: 'twoslash',
+              link: '/libs/twoslash/',
+            },
+            {
+              text: 'ui',
+              link: '/libs/ui/',
+            },
+            {
               text: 'wired',
               link: '/libs/wired/',
             },
@@ -558,6 +566,10 @@ export default withMermaid(
                   link: '/specs/hue/tree-view',
                 },
                 { text: 'Tab view (planned)', link: '/specs/hue/tab-view' },
+                {
+                  text: 'Gallery & multi-document nav',
+                  link: '/specs/hue/gallery',
+                },
                 { text: 'Navigation (planned)', link: '/specs/hue/navigation' },
                 {
                   text: 'Images & diagrams (planned)',
@@ -614,6 +626,28 @@ export default withMermaid(
               items: [
                 { text: 'Specification', link: '/specs/test-runner/SPEC' },
                 { text: 'Delivery Plan', link: '/specs/test-runner/PLAN' },
+              ],
+            },
+            {
+              text: 'UI',
+              collapsed: false,
+              items: [
+                { text: 'Overview', link: '/specs/ui/' },
+                {
+                  text: 'Feature Requirements',
+                  link: '/specs/ui/feature-requirements',
+                },
+                { text: 'Principles', link: '/specs/ui/principles' },
+                { text: 'Layout (decision)', link: '/specs/ui/layout' },
+                { text: 'Theme (planned)', link: '/specs/ui/theme' },
+                { text: 'Widgets', link: '/specs/ui/widgets' },
+                { text: 'Input (planned)', link: '/specs/ui/input' },
+                {
+                  text: 'State machines',
+                  link: '/specs/ui/state-machines',
+                },
+                { text: 'Backends', link: '/specs/ui/backends' },
+                { text: 'Migration (planned)', link: '/specs/ui/migration' },
               ],
             },
             {
