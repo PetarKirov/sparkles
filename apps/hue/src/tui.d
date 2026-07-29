@@ -23,7 +23,14 @@ import sparkles.tui : Cell, CellStyle, Color, Grid, PosixEvents, Terminal,
     TerminalOptions, TextAttr, UnderlineStyle;
 import sparkles.tui.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
     match, PointerAction, PointerButton, PointerEvent, ResizeEvent, WheelEvent;
+import sparkles.ui.components.chrome : headerBar;
+import sparkles.ui.display_list : buildDisplayList;
+import sparkles.ui.geometry : SizeSpec;
+import sparkles.ui.layout : layout;
 import sparkles.ui.state : scrollbarThumb, ScrollState, Selection;
+import sparkles.ui.style : Slot;
+import sparkles.ui.widget : Builder, Widget, WidgetKind;
+import sparkles.ui_tui : paintGrid;
 
 import ansi_model : Attr, BackgroundMode;
 import gui_preview : BandKind, buildRawPlines, layoutPreview, PreviewLine,
@@ -280,41 +287,48 @@ struct PreviewTui
         paintStatus(g);
     }
 
+    // Paint a one-row chrome bar (the shared WGT17 headerBar view) at grid row
+    // `y` through the full widget pipeline: view → layout → display list →
+    // the ui-tui GridCanvas. The slots resolve against the theme's palette.
+    private void paintBar(ref Grid g, int y, uint[] leading, uint[] center,
+        uint[] trailing, ref Builder b) @system
+    {
+        const bar = headerBar(b, leading, center, trailing);
+        Widget colW = Widget(kind: WidgetKind.column, children: [bar],
+            width: SizeSpec.fixed(width));
+        const col = b.add(colW);
+        auto tree = b.finish(col);
+        auto ops = buildDisplayList(tree, layout(tree),
+            themes[themeIdx].effectivePalette, pageFg, pageBg);
+        paintGrid(g, pageBg, ops, 0, y);
+    }
+
     private void paintHeader(ref Grid g) @system
     {
-        SmallBuffer!(char, 256) h;
-        h.put(" ");
-        h.put(title);
-        h.put("  ·  ");
-        h.put(names[themeIdx]);
-        h.put(" (");
-        writeInteger(h, themeIdx + 1);
-        h.put("/");
-        writeInteger(h, names.length);
-        h.put(")  ·  ");
-        h.put((showPreview && model.present) ? "preview" : "raw");
-        h.put("  ·  ");
-        writeInteger(h, cast(size_t)(top + 1));
-        h.put("/");
-        writeInteger(h, plines.length);
-        g.putText(0, 0, h[], cellStyle(pageFg, true, pageBg, 0)); // Grid clips at the edge
+        import std.conv : text;
+
+        auto b = Builder();
+        const name = b.add(Widget(kind: WidgetKind.text, text: title,
+            slot: Slot.chromeAccent));
+        const mid = b.add(Widget(kind: WidgetKind.text, text: text(
+            names[themeIdx], " (", themeIdx + 1, "/", names.length, ")  ·  ",
+            (showPreview && model.present) ? "preview" : "raw")));
+        const pos = b.add(Widget(kind: WidgetKind.text,
+            text: text(top + 1, "/", plines.length), slot: Slot.gutter));
+        paintBar(g, 0, [name], [mid], [pos], b);
     }
 
     private void paintStatus(ref Grid g) @system
     {
-        const y = cast(ushort)(height > 0 ? height - 1 : 0);
-        if (searching)
-        {
-            SmallBuffer!(char, 300) s;
-            s.put(" /");
-            s.put(query);
-            s.put("▏");
-            g.putText(0, y, s[], cellStyle(pageFg, true, pageBg, 0));
-        }
-        else
-            g.putText(0, y,
-                " scroll ↑↓/PgUp/PgDn · ←→ theme · Tab raw/preview · / search · drag+y copy · q quit",
-                cellStyle(pageFg, true, pageBg, 0));
+        import std.conv : text;
+
+        const y = height > 0 ? height - 1 : 0;
+        auto b = Builder();
+        const line = b.add(Widget(kind: WidgetKind.text,
+            text: searching ? text("/", query, "▏")
+                : "scroll ↑↓/PgUp/PgDn · ←→ theme · Tab raw/preview · / search · drag+y copy · q quit",
+            slot: searching ? Slot.inherit : Slot.gutter));
+        paintBar(g, y, [line], null, null, b);
     }
 
     // Paint one laid-out preview line into grid row `y`: the row-fill background
