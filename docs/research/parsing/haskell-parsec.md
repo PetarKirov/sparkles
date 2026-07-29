@@ -381,7 +381,7 @@ The lineage is among the **most battle-tested parsing infrastructure in any lang
 [bison]: ./bison-yacc.md
 [menhir]: ./menhir.md
 [parsec-paper]: https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/parsec-paper-letter.pdf
-[hutton-meijer]: https://people.cs.nott.ac.uk/pszgmh/monparsing.pdf
+[hutton-meijer]: https://web.archive.org/web/20260727060832/https://people.cs.nott.ac.uk/pszgmh/monparsing.pdf
 [parsec-hackage]: https://hackage.haskell.org/package/parsec
 [parsec-repo]: https://github.com/haskell/parsec
 [mega-hackage]: https://hackage.haskell.org/package/megaparsec
