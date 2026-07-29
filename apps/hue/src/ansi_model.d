@@ -6,6 +6,35 @@
 module ansi_model;
 
 import sparkles.base.term_color : RgbColor;
+import sparkles.syntax : AnsiOptions, ColorDepth;
+
+/// How the theme background is applied in terminal rendering (`--background`,
+/// hue spec `BGM`) — shared by the whole-file ANSI emit, the markdown-preview
+/// painter and the TUI. (Moved here from the retired `previewer.d`.)
+enum BackgroundMode
+{
+    /// `no-background`: foreground only; the terminal's own background shows
+    /// through (`BGM1`).
+    noBackground,
+    /// `spans`: emit a background only where a theme rule sets one, stopping at
+    /// each line's last glyph (`BGM2`).
+    spans,
+    /// `full`: fill every line edge-to-edge with the theme's page background
+    /// (`BGM3`, the default), matching a back-color-erase look.
+    full,
+}
+
+/// The `AnsiOptions` background flags for whole-file rendering under `mode`.
+AnsiOptions backgroundOptions(BackgroundMode mode, ColorDepth depth, bool italics)
+    @safe pure nothrow @nogc
+{
+    return AnsiOptions(
+        depth: depth,
+        italics: italics,
+        emitBackground: mode != BackgroundMode.noBackground,
+        fillLine: mode == BackgroundMode.full,
+    );
+}
 
 /// Neutral text-attribute bits shared by the preview presentation model
 /// (`gui_preview.PreviewRun`), the ANSI decoder (`gui_ansi`), and the painters

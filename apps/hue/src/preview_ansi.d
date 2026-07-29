@@ -16,7 +16,7 @@ import sparkles.base.term_control : CtlSeq;
 
 import ansi_model : Attr;
 import gui_preview : BandKind, PreviewLine, PreviewRun, quoteBarCycle;
-import previewer : BackgroundMode;
+import ansi_model : BackgroundMode;
 
 // Emit `n` spaces without allocating (chunks of a static blank run).
 private void putSpaces(Writer)(ref Writer w, size_t n)
