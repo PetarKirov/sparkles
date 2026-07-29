@@ -20,6 +20,7 @@ importPaths "src" "../test-runner/src" "../test-runner-impl/src" "../math/src"
 // toolkit adds no color type of its own). Concrete canvas backends adapt to
 // sparkles:ui, never the reverse.
 dependency "sparkles:base" path="../.."
+dependency "sparkles:input" path="../.."
 
 // `expected` is declared rather than inherited through base's import paths: the
 // table component returns `Expected` in its public API, so it is this package's

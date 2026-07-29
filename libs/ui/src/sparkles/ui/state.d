@@ -1,13 +1,14 @@
 /**
 The state level (STM) of $(MREF sparkles,ui): presentation-free interaction
-state machines fed abstract input events. U1 ships $(LREF HoverState) — a pure
-hit-test over $(LREF HoverTarget)s that factors out `runGuiTwoslash`'s ad-hoc
-`HoverHit[]` scan, so the GUI and the interactive TUI overlay compute "which node
-is hot" identically. Scroll, selection, and disclosure machines are later work.
+state machines fed the shared `sparkles:input` events. U1 ships
+$(LREF HoverState) — a pure hit-test over $(LREF HoverTarget)s that factors out
+`runGuiTwoslash`'s ad-hoc `HoverHit[]` scan, so the GUI and the interactive TUI
+overlay compute "which node is hot" identically. Scroll, selection, and
+disclosure machines are later work.
 */
 module sparkles.ui.state;
 
-import sparkles.ui.canvas : PointerEvent;
+import sparkles.input : PointerAction, PointerEvent;
 import sparkles.ui.geometry : Point, Rect;
 
 @safe:
@@ -31,14 +32,15 @@ struct HoverState
 
     /**
     Recomputes `hot` from `ev` against `targets` (topmost — latest in the slice —
-    wins on overlap). When the pointer is outside the viewport nothing is hot.
+    wins on overlap). A `PointerAction.leave` event makes nothing hot — that is
+    how "the pointer left the viewport" is spelled in the shared vocabulary.
     Returns `true` iff `hot` changed (the caller's cue to repaint).
     */
     bool update(in PointerEvent ev, scope const HoverTarget[] targets)
     {
         const size_t previous = hot;
         size_t found;
-        if (ev.inside)
+        if (ev.action != PointerAction.leave)
             foreach (t; targets)
                 if (t.hitId != 0 && t.rect.contains(ev.pos))
                     found = t.hitId; // later target wins → topmost
@@ -64,18 +66,18 @@ unittest
     assert(h.hot == 0);
 
     // Over the overlap region: the later (topmost) target wins.
-    assert(h.update(PointerEvent(pos: Point(3, 1), inside: true), targets));
+    assert(h.update(PointerEvent(action: PointerAction.move, pos: Point(3, 1)), targets));
     assert(h.hot == 2 && h.isHot(2) && !h.isHot(1));
 
     // Move to a region only target 1 covers.
-    assert(h.update(PointerEvent(pos: Point(8, 0), inside: true), targets));
+    assert(h.update(PointerEvent(action: PointerAction.move, pos: Point(8, 0)), targets));
     assert(h.hot == 1);
 
     // No change ⇒ returns false.
-    assert(!h.update(PointerEvent(pos: Point(9, 2), inside: true), targets));
+    assert(!h.update(PointerEvent(action: PointerAction.move, pos: Point(9, 2)), targets));
     assert(h.hot == 1);
 
     // Pointer leaves the viewport ⇒ nothing hot.
-    assert(h.update(PointerEvent(pos: Point(3, 1), inside: false), targets));
+    assert(h.update(PointerEvent(action: PointerAction.leave, pos: Point(3, 1)), targets));
     assert(h.hot == 0);
 }
