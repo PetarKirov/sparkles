@@ -80,27 +80,43 @@ private void emit(in WidgetTree tree, uint idx, in Frame[] frames, in Palette pa
                 );
             break;
         case rich:
-            // One op per styled span, advancing along the row; each span
-            // resolves its own slot/chrome against the node's as fallback.
+            // One op per styled span, advancing along the row (one row per
+            // wrapped line); each span resolves its own slot/chrome against
+            // the node's as fallback, and a `paintBackground` span (an inline
+            // pill) fills its cells first.
             import sparkles.ui.geometry : cellsOf;
             import sparkles.ui.style : TextStyle;
+            import sparkles.ui.widget : TextSpan;
 
-            int x = rect.x;
-            foreach (ref span; node.spans)
+            const inner = rect.deflate(node.padding);
+
+            void emitSpanRow(scope const TextSpan[] spans, int y)
             {
-                const slot = span.slot == Slot.inherit ? node.slot : span.slot;
-                const style = span.textStyle == TextStyle.init
-                    ? node.textStyle : span.textStyle;
-                const w = cast(int) cellsOf(span.text);
-                ops ~= DrawOp(
-                    kind: OpKind.textRun,
-                    rect: Rect(x, rect.y, w, 1),
-                    text: span.text, slot: slot,
-                    visual: resolveVisual(pal, slot, node.decoration, style,
-                        pageFg, pageBg),
-                );
-                x += w;
+                int x = inner.x;
+                foreach (ref span; spans)
+                {
+                    const slot = span.slot == Slot.inherit ? node.slot : span.slot;
+                    const style = span.textStyle == TextStyle.init
+                        ? node.textStyle : span.textStyle;
+                    const w = cast(int) cellsOf(span.text);
+                    auto vis = resolveVisual(pal, slot, node.decoration, style,
+                        pageFg, pageBg);
+                    vis.hasBg = span.paintBackground && vis.hasBg;
+                    const r = Rect(x, y, w, 1);
+                    if (vis.hasBg)
+                        ops ~= DrawOp(kind: OpKind.fillRect, rect: r,
+                            slot: slot, visual: vis);
+                    ops ~= DrawOp(kind: OpKind.textRun, rect: r,
+                        text: span.text, slot: slot, visual: vis);
+                    x += w;
+                }
             }
+
+            if (frames[idx].spanLines.length)
+                foreach (li, line; frames[idx].spanLines)
+                    emitSpanRow(line, inner.y + cast(int) li);
+            else
+                emitSpanRow(node.spans, inner.y);
             break;
         case glyph:
             ops ~= DrawOp(

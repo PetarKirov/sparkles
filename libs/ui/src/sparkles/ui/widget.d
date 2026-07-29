@@ -55,16 +55,9 @@ enum WidgetKind : ubyte
     popup,  /// a `panel` that floats (shadow, detached from flow)
 }
 
-/// One styled span of a $(D WidgetKind.rich) run (`WGT6`): a slice of text
-/// with its own semantic slot (and optional text chrome), so syntax-highlighted
-/// content is one node — not a backend overpainting the toolkit's output to
-/// re-colour it, and not a row of per-token widgets fighting the line breaker.
-struct TextSpan
-{
-    const(char)[] text;      /// borrowed — must outlive the tree
-    Slot slot = Slot.inherit;
-    TextStyle textStyle;     /// per-span bold/italic/underline etc.
-}
+/// One styled span of a $(D WidgetKind.rich) run (`WGT6`) — defined in
+/// $(MREF sparkles,ui,wrap) beside its line breaker, re-exported here.
+public import sparkles.ui.wrap : TextSpan;
 
 /**
 One node in the widget arena. All fields default, so DIP1030 named-argument

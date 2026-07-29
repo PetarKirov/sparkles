@@ -101,7 +101,9 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx,
         case rich:
             // One <span> per styled span; each resolves its own slot/chrome
             // against the node's as fallback (the browser concatenates them
-            // inline, matching the cell backends' advance).
+            // inline, matching the cell backends' advance). A wrapping run
+            // lets the browser break lines; a `paintBackground` span is an
+            // inline pill (background + the node's radius + pill padding).
             import sparkles.ui.style : TextStyle;
 
             foreach (ref span; node.spans)
@@ -113,6 +115,20 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx,
                     pageFg, pageBg);
                 put(w, "<span style=\"");
                 textStyle(w, sv);
+                if (node.wrap != TextWrap.none)
+                    put(w, ";white-space:pre-wrap");
+                if (span.paintBackground && sv.hasBg)
+                {
+                    put(w, ";background:");
+                    rgba(w, sv.bg, sv.bgAlpha);
+                    put(w, ";padding:0.05em 0.4em");
+                    if (sv.borderRadius > 0)
+                    {
+                        put(w, ";border-radius:");
+                        num(w, sv.borderRadius);
+                        put(w, "px");
+                    }
+                }
                 visibilityCss(w, node);
                 put(w, "\">");
                 escape(w, span.text);

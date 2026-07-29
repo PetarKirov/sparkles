@@ -22,7 +22,25 @@ breaker is as grapheme-correct as its measurer (`LAY5`).
 */
 module sparkles.ui.wrap;
 
+import sparkles.ui.style : Slot, TextStyle;
+
 @safe:
+
+/// One styled span of a rich text run (`WGT6`): a slice of text with its own
+/// semantic slot and text chrome, so syntax-highlighted or inline-styled
+/// content is one node — not a backend overpainting the toolkit's output to
+/// re-colour it, and not a row of per-token widgets fighting the line breaker.
+struct TextSpan
+{
+    const(char)[] text;      /// borrowed — must outlive the tree
+    Slot slot = Slot.inherit;
+    TextStyle textStyle;     /// per-span bold/italic/underline etc.
+    /// Fill the span's slot background (an inline-`code` pill).
+    bool paintBackground;
+    /// Never break inside this span — it wraps as one token (a pill's name
+    /// stays whole; hugging punctuation in a neighbouring span still joins it).
+    bool noBreak;
+}
 
 /// How a text widget breaks into lines (the `LAY10` strategy seam). `none`
 /// (the default) keeps the run a single line regardless of allocated width.
@@ -314,4 +332,205 @@ version (unittest)
     const lines = wrapLines("one two three four five", 12, &cols,
         TextWrap.greedy, 8);
     assert(lines == ["one two", "three four", "five"]);
+}
+
+// ── Styled-run breaking ─────────────────────────────────────────────────────
+
+/**
+Breaks a rich run — a sequence of styled $(LREF TextSpan)s — into lines no
+wider than `width`, measuring through `measure`. The other half of `WGT6`:
+prose with inline pills and styled words wraps as $(B text), not as a row of
+word widgets fighting the box layout.
+
+Break opportunities are the spaces inside breakable spans (a break consumes
+them); a `noBreak` span wraps as one token, and adjacent non-space content in
+neighbouring spans $(B joins) its token — so a pill followed by `", and"`
+carries its comma to the next line with it. A `'\n'` anywhere forces a break.
+Lines are lists of span $(I slices) — no text is copied.
+
+Greedy only (the balanced strategy applies to plain runs; styled prose is
+ragged-right by design).
+*/
+TextSpan[][] wrapSpans(F)(
+    const(TextSpan)[] spans, int width, scope F measure)
+if (is(typeof(measure("")) : int))
+{
+    // A fragment is a maximal unbreakable piece of one span: either a word
+    // fragment / whole noBreak span (glue = false), a run of spaces
+    // (glue = true), or a forced break (newline = true).
+    static struct Fragment
+    {
+        size_t span;
+        const(char)[] text;
+        bool glue;
+        bool newline;
+    }
+
+    Fragment[] frags;
+    foreach (si, ref span; spans)
+    {
+        const t = span.text;
+        if (span.noBreak)
+        {
+            if (t.length)
+                frags ~= Fragment(si, t);
+            continue;
+        }
+        size_t i = 0;
+        while (i < t.length)
+        {
+            if (t[i] == '\n')
+            {
+                frags ~= Fragment(si, t[i .. i + 1], glue: false, newline: true);
+                ++i;
+                continue;
+            }
+            const start = i;
+            const isGlue = t[i] == ' ';
+            while (i < t.length && (t[i] == ' ') == isGlue && t[i] != '\n')
+                ++i;
+            frags ~= Fragment(si, t[start .. i], glue: isGlue);
+        }
+    }
+
+    TextSpan[][] lines;
+    TextSpan[] cur;
+    int curW;
+    size_t pendingGlue = size_t.max; // index into frags of glue awaiting content
+
+    void append(size_t fi)
+    {
+        const f = frags[fi];
+        const w = measure(f.text);
+        // Merge into the previous slice when it continues the same span.
+        if (cur.length && cur[$ - 1].text.length
+            && &spans[f.span].text[0] <= &f.text[0]
+            && cur[$ - 1].slot == spans[f.span].slot
+            && isContiguous(cur[$ - 1].text, f.text))
+            cur[$ - 1].text = joinSlices(cur[$ - 1].text, f.text);
+        else
+        {
+            auto s = cast() spans[f.span];
+            s.text = f.text;
+            cur ~= s;
+        }
+        curW += w;
+    }
+
+    void flush()
+    {
+        lines ~= cur;
+        cur = null;
+        curW = 0;
+        pendingGlue = size_t.max;
+    }
+
+    size_t i = 0;
+    while (i < frags.length)
+    {
+        const f = frags[i];
+        if (f.newline)
+        {
+            flush();
+            ++i;
+            continue;
+        }
+        if (f.glue)
+        {
+            pendingGlue = cur.length ? i : size_t.max; // leading glue drops
+            ++i;
+            continue;
+        }
+        // A token: this fragment plus every directly-adjacent non-glue
+        // fragment (spanning pills and hugging punctuation).
+        int tokenW = 0;
+        size_t j = i;
+        while (j < frags.length && !frags[j].glue && !frags[j].newline)
+        {
+            tokenW += measure(frags[j].text);
+            ++j;
+        }
+        const glueW = pendingGlue != size_t.max
+            ? measure(frags[pendingGlue].text) : 0;
+        if (cur.length && curW + glueW + tokenW > width)
+            flush(); // the pending glue is consumed by the break
+        else if (pendingGlue != size_t.max && cur.length)
+            append(pendingGlue);
+        foreach (k; i .. j)
+            append(k);
+        pendingGlue = size_t.max;
+        i = j;
+    }
+    flush();
+    return lines;
+}
+
+// `b` starts exactly where `a` ends (slices of one buffer).
+private bool isContiguous(scope const(char)[] a, scope const(char)[] b)
+    @trusted pure nothrow @nogc
+    => a.length && b.length && a.ptr + a.length is b.ptr;
+
+// The single slice covering contiguous `a` then `b`.
+private const(char)[] joinSlices(return scope const(char)[] a,
+    scope const(char)[] b) @trusted pure nothrow @nogc
+    => a.ptr[0 .. a.length + b.length];
+
+@("ui.wrap.spans.greedyAcrossStyles")
+@safe pure nothrow unittest
+{
+    import sparkles.ui.geometry : cellsOf;
+
+    static int cols2(scope const(char)[] s) @safe pure nothrow @nogc
+        => cast(int) cellsOf(s);
+
+    // "use the |run| helper today" with |run| a pill, width 14:
+    const spans = [
+        TextSpan("use the "),
+        TextSpan("run", Slot.chip, TextStyle.init, paintBackground: true, noBreak: true),
+        TextSpan(" helper today"),
+    ];
+    const lines = wrapSpans(spans, 14, &cols2);
+    assert(lines.length == 2);
+    // "use the " + pill(3) = 11 fits; " helper" would make 18 > 14 → wraps.
+    // The inter-word gap before the pill is preserved (painters draw it).
+    assert(lines[0].length == 2);
+    assert(lines[0][0].text == "use the " && lines[0][1].text == "run");
+    assert(lines[0][1].paintBackground);          // the pill's style survives
+    assert(lines[1][0].text == "helper today");   // merged back into one slice
+}
+
+@("ui.wrap.spans.punctuationHugsThePill")
+@safe pure nothrow unittest
+{
+    import sparkles.ui.geometry : cellsOf;
+
+    static int cols2(scope const(char)[] s) @safe pure nothrow @nogc
+        => cast(int) cellsOf(s);
+
+    // A pill followed by ", x" in the next span: the comma joins the pill's
+    // token, so a break never strands it at a line start.
+    const spans = [
+        TextSpan("aaaa bbbb "),
+        TextSpan("pill", Slot.chip, TextStyle.init, true, true),
+        TextSpan(", x"),
+    ];
+    const lines = wrapSpans(spans, 9, &cols2);
+    // "aaaa bbbb" fills line 1; "pill," + " x" go to line 2 together.
+    assert(lines.length == 2);
+    assert(lines[0].length == 1 && lines[0][0].text == "aaaa bbbb");
+    assert(lines[1][0].text == "pill" && lines[1][1].text == ", x");
+}
+
+@("ui.wrap.spans.forcedBreakAndWhitespaceCollapse")
+@safe pure nothrow unittest
+{
+    import sparkles.ui.geometry : cellsOf;
+
+    static int cols2(scope const(char)[] s) @safe pure nothrow @nogc
+        => cast(int) cellsOf(s);
+
+    const spans = [TextSpan("one\ntwo three")];
+    const lines = wrapSpans(spans, 80, &cols2);
+    assert(lines.length == 2);
+    assert(lines[0][0].text == "one" && lines[1][0].text == "two three");
 }
