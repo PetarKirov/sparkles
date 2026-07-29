@@ -268,6 +268,10 @@ if (isTextMeasure!TM)
             case text:
                 content = tm.width(node.text);
                 break;
+            case rich:
+                foreach (ref span; node.spans)
+                    content += tm.width(span.text);
+                break;
             case glyph:
                 content = 1;
                 break;
@@ -362,6 +366,9 @@ if (isTextMeasure!TM)
                 else
                     content = 1;
                 break;
+            case rich:
+                content = 1; // wrapping styled runs arrives with the rich breaker
+                break;
             case glyph:
                 content = 1;
                 break;
@@ -416,7 +423,7 @@ if (isTextMeasure!TM)
 
         final switch (node.kind) with (WidgetKind)
         {
-            case text, glyph, line, box:
+            case text, rich, glyph, line, box:
                 break; // leaves (children.length == 0 already returned)
             case row:
             {

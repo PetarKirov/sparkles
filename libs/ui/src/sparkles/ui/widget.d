@@ -45,6 +45,7 @@ enum WidgetKind : ubyte
 {
     box,    /// a leaf rectangle (optionally with a slot background)
     text,   /// a text run
+    rich,   /// a text run of styled spans (`spans` payload; `WGT6`)
     glyph,  /// a single glyph
     line,   /// a stroked line (connector / underline)
     row,    /// horizontal container (children left→right, `gap` between)
@@ -52,6 +53,17 @@ enum WidgetKind : ubyte
     stack,  /// overlay container (children share the origin; z = order)
     panel,  /// a `box` container with padding + a slot background/border
     popup,  /// a `panel` that floats (shadow, detached from flow)
+}
+
+/// One styled span of a $(D WidgetKind.rich) run (`WGT6`): a slice of text
+/// with its own semantic slot (and optional text chrome), so syntax-highlighted
+/// content is one node — not a backend overpainting the toolkit's output to
+/// re-colour it, and not a row of per-token widgets fighting the line breaker.
+struct TextSpan
+{
+    const(char)[] text;      /// borrowed — must outlive the tree
+    Slot slot = Slot.inherit;
+    TextStyle textStyle;     /// per-span bold/italic/underline etc.
 }
 
 /**
@@ -77,6 +89,7 @@ struct Widget
     Visibility visibility;           /// tri-state visibility (`LAY11`)
 
     const(char)[] text;      /// `text` payload (borrowed — must outlive the tree)
+    TextSpan[] spans;        /// `rich` payload: styled spans of one run
     /// How the `text` run breaks into lines when its allocated width is
     /// narrower than its content (`none` keeps it a single line).
     TextWrap wrap;
