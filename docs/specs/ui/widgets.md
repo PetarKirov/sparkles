@@ -66,26 +66,42 @@ and lets a single traversal serve every algorithm.
 Each row is a view model plus its view. Status reflects the toolkit, not any one
 consumer.
 
-| ID    | Component                                                               | Status      | Notes                                                |
-| ----- | ----------------------------------------------------------------------- | ----------- | ---------------------------------------------------- |
-| WGT7  | **Containers** — row, column, stack, panel, popup                       | full        | shipped                                              |
-| WGT8  | **Primitives** — box, text, glyph, line                                 | full        | shipped                                              |
-| WGT9  | **Scroll view** — clipped viewport with an offset                       | not started | needs [`LAY7`](./layout.md)                          |
-| WGT10 | **Scrollbar** — track and thumb, hover/drag affordance                  | not started | view over [`STM2`](./state-machines.md)              |
-| WGT11 | **Table** — columns with alignment and spans, header, optional borders  | not started | view model over [`LAY9`](./layout.md)'s track sizer  |
-| WGT12 | **Tree** — the exemplar; flat arena, opened set, guides, lazy children  | not started | see below                                            |
-| WGT13 | **List** — selectable rows, optional virtualization                     | not started | degenerate tree; shares the selection machine        |
-| WGT14 | **Text input** — caret, editing, submission                             | not started | tier 1                                               |
-| WGT15 | **Button** — label, press state, activation                             | not started | tier 1                                               |
-| WGT16 | **Toast / notification** — transient, timed or event-scoped             | not started | view over [`STM6`](./state-machines.md)              |
-| WGT17 | **Header / status bar** — leading, centre and trailing segment groups   | not started | replaces per-backend chrome                          |
-| WGT18 | **Gutter** — line numbers, markers, fold indicators                     | not started | consumed by the document view                        |
-| WGT19 | **Meter / progress** — determinate and indeterminate                    | not started | indeterminate is a mode, not a sentinel value        |
-| WGT20 | **Divider / spacer**                                                    | not started | spacer is a `grow` box, per [`LAY8`](./layout.md)    |
-| WGT21 | **Link** — activatable reference; hyperlink escape on capable terminals | not started | needs a link concept in the visual vocabulary        |
-| WGT22 | **Image / media** — sized placeholder with per-target realisation       | not started | degrades to alt text                                 |
-| WGT23 | **Tabs** — tab bar plus one visible panel                               | not started | tier 0 on HTML via checked-radio idiom               |
-| WGT24 | **Disclosure** — collapsible region with a placeholder                  | not started | tier 0 on HTML; shares [`STM5`](./state-machines.md) |
+| ID    | Component                                                                         | Status      | Notes                                                          |
+| ----- | --------------------------------------------------------------------------------- | ----------- | -------------------------------------------------------------- |
+| WGT7  | **Containers** — row, column, stack, panel, popup                                 | full        | shipped                                                        |
+| WGT8  | **Primitives** — box, text, glyph, line                                           | full        | shipped                                                        |
+| WGT9  | **Scroll view** — clipped viewport with an offset                                 | not started | needs [`LAY7`](./layout.md)                                    |
+| WGT10 | **Scrollbar** — track and thumb, hover/drag affordance                            | not started | view over [`STM2`](./state-machines.md)                        |
+| WGT11 | **Table** — columns with alignment and spans, header, optional borders            | not started | view model over [`LAY9`](./layout.md)'s track sizer            |
+| WGT12 | **Tree** — the exemplar; flat arena, opened set, guides, lazy children            | not started | see below                                                      |
+| WGT13 | **List** — selectable rows, optional virtualization                               | not started | degenerate tree; shares the selection machine                  |
+| WGT14 | **Text input** — caret, editing, submission                                       | not started | tier 1                                                         |
+| WGT15 | **Button** — label, press state, activation                                       | not started | tier 1                                                         |
+| WGT16 | **Toast / notification** — transient, timed or event-scoped                       | not started | view over [`STM6`](./state-machines.md)                        |
+| WGT17 | **Header / status bar** — leading, centre and trailing segment groups             | not started | replaces per-backend chrome                                    |
+| WGT18 | **Gutter** — line numbers, markers, fold indicators                               | not started | consumed by the document view                                  |
+| WGT19 | **Meter / progress** — determinate and indeterminate                              | not started | indeterminate is a mode, not a sentinel value                  |
+| WGT20 | **Divider / spacer**                                                              | not started | spacer is a `grow` box, per [`LAY8`](./layout.md)              |
+| WGT21 | **Link** — activatable reference; hyperlink escape on capable terminals           | not started | needs a link concept in the visual vocabulary                  |
+| WGT22 | **Image / media** — sized placeholder with per-target realisation                 | not started | degrades to alt text                                           |
+| WGT23 | **Tabs** — tab bar plus one visible panel                                         | not started | tier 0 on HTML via checked-radio idiom                         |
+| WGT24 | **Disclosure** — collapsible region with a placeholder                            | not started | tier 0 on HTML; shares [`STM5`](./state-machines.md)           |
+| WGT25 | **Task list** — ordered items with status marks and a running/blocked distinction | not started | view model is presentation-free; its driver is not — see below |
+
+> [!IMPORTANT]
+> **The live region is not a widget, and must not become one.** It repaints the
+> bottom of a scrolling terminal in place: it writes cursor-control escapes to a
+> stream and owns output sequencing. That is a _line-oriented incremental output
+> sink_, not a canvas — it has no rectangle, no clip and no frame. Putting it
+> behind `isCanvas` would violate the canvas-first posture
+> ([`UIA1`](./feature-requirements.md)) and force every backend to pretend it has
+> a cursor.
+>
+> The split: a **task list's view model** (items, statuses, ordering) is
+> presentation-free and belongs here as `WGT25`; the **live region and the
+> reporter that drives it** stay a terminal concern owned by the cell backend's
+> package. Spinner and progress _glyphs_ are theme data
+> ([`THM`](./theme.md)); the meter/progress **view** is `WGT19`.
 
 ## Tree component (`VMD1`–`VMD6`)
 

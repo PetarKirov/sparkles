@@ -80,12 +80,13 @@ The toolkit itself is backend-agnostic; a target is a type satisfying
 
 Every requirement row carries one **Status**:
 
-| Status             | Meaning                                                                                                                                                                                 |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **not started**    | no implementation yet.                                                                                                                                                                  |
-| **researched**     | design/notes exist (in code comments or a sibling doc), but no implementation.                                                                                                          |
-| **partial**        | implemented with a documented limitation or missing sub-case (the row's notes say what is missing).                                                                                     |
-| **full (`<sha>`)** | fully implemented; `<sha>` is the primary commit (the "commit hash evidence"). Where several commits contributed, the earliest feature commit is cited and later refinements are noted. |
+| Status             | Meaning                                                                                                                                                                                                 |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **not started**    | no implementation yet.                                                                                                                                                                                  |
+| **researched**     | design/notes exist (in code comments or a sibling doc), but no implementation.                                                                                                                          |
+| **partial**        | implemented with a documented limitation or missing sub-case (the row's notes say what is missing).                                                                                                     |
+| **full (`<sha>`)** | fully implemented; `<sha>` is the primary commit (the "commit hash evidence"). Where several commits contributed, the earliest feature commit is cited and later refinements are noted.                 |
+| **decided**        | a _decision_ requirement rather than an implementation one — the choice is settled and recorded on the page itself. Used only where there is nothing to implement, e.g. "the layout model is box-flow". |
 
 This matches the [hue spec's scheme](../hue/index.md#status-scheme) so the two
 trees can cross-reference status without translation.
@@ -107,21 +108,22 @@ table at the foot of each spec lists each file against the requirement IDs that
 own it, so coverage is auditable in both directions: requirement → code (the
 "Traces to" column of every row) and code → requirement (the coverage tables).
 
-| Source file                                  | Primary spec + areas                                  |
-| -------------------------------------------- | ----------------------------------------------------- |
-| `libs/ui/src/sparkles/ui/geometry.d`         | [layout](./layout.md) — `LAY1`, `LAY5`                |
-| `libs/ui/src/sparkles/ui/layout.d`           | [layout](./layout.md) — `LAY2`–`LAY9`                 |
-| `libs/ui/src/sparkles/ui/style.d`            | [theme](./theme.md) — `THM1`–`THM5`                   |
-| `libs/ui/src/sparkles/ui/theme.d`            | [theme](./theme.md) — `THM6`–`THM9`                   |
-| `libs/ui/src/sparkles/ui/canvas.d`           | [backends](./backends.md) — `TGT1`, `TGT5`            |
-| `libs/ui/src/sparkles/ui/widget.d`           | [widgets](./widgets.md) — `WGT1`–`WGT6`               |
-| `libs/ui/src/sparkles/ui/display_list.d`     | [backends](./backends.md) — `TGT2`                    |
-| `libs/ui/src/sparkles/ui/state.d`            | [state machines](./state-machines.md) — `STM1`–`STM7` |
-| `libs/ui/src/sparkles/ui/interp/immediate.d` | [backends](./backends.md) — `TGT3`                    |
-| `libs/ui/src/sparkles/ui/interp/html.d`      | [backends](./backends.md) — `TGT4`, `TGT7`            |
-| `libs/ui/src/sparkles/ui/components/`        | [widgets](./widgets.md) — `VMD*`, `WGT7`+             |
-| `libs/input/src/sparkles/input/`             | [input](./input.md) — `INP1`–`INP8`                   |
-| `libs/ui-tui/src/`                           | [backends](./backends.md) — `TGT6`                    |
-| `libs/ui-raylib/src/`                        | [backends](./backends.md) — `TGT6`                    |
+| Source file                                  | Primary spec + areas                                                                   |
+| -------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `libs/ui/src/sparkles/ui/geometry.d`         | [layout](./layout.md) — `LAY3`, `LAY5`, `LAY6`                                         |
+| `libs/ui/src/sparkles/ui/layout.d`           | [layout](./layout.md) — `LAY2`–`LAY9`                                                  |
+| `libs/ui/src/sparkles/ui/style.d`            | [theme](./theme.md) — `THM1`–`THM5`                                                    |
+| `libs/ui/src/sparkles/ui/theme.d`            | [theme](./theme.md) — `THM6`–`THM9`                                                    |
+| `libs/ui/src/sparkles/ui/canvas.d`           | [backends](./backends.md) — `TGT1`, `TGT5`                                             |
+| `libs/ui/src/sparkles/ui/widget.d`           | [widgets](./widgets.md) — `WGT1`–`WGT6`                                                |
+| `libs/ui/src/sparkles/ui/display_list.d`     | [backends](./backends.md) — `TGT2`                                                     |
+| `libs/ui/src/sparkles/ui/state.d`            | [state machines](./state-machines.md) — `STM1`–`STM7`                                  |
+| `libs/ui/src/sparkles/ui/interp/immediate.d` | [backends](./backends.md) — `TGT3`                                                     |
+| `libs/ui/src/sparkles/ui/interp/cells.d`     | [backends](./backends.md) — `TGT6`; superseded by the cell adapter and retired with it |
+| `libs/ui/src/sparkles/ui/interp/html.d`      | [backends](./backends.md) — `TGT4`, `TGT7`                                             |
+| `libs/ui/src/sparkles/ui/components/`        | [widgets](./widgets.md) — `VMD*`, `WGT7`+                                              |
+| `libs/input/src/sparkles/input/`             | [input](./input.md) — `INP1`–`INP8`                                                    |
+| `libs/ui-tui/src/`                           | [backends](./backends.md) — `TGT6`                                                     |
+| `libs/ui-raylib/src/`                        | [backends](./backends.md) — `TGT6`                                                     |
 
 → [Feature requirements](./feature-requirements.md) · [Principles](./principles.md) · [Layout](./layout.md) · [Widgets](./widgets.md)
