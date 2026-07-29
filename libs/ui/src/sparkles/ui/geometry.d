@@ -95,7 +95,9 @@ struct Rect
 }
 
 /**
-Per-side padding/margin in cells (CSS order: top, right, bottom, left).
+Per-side insets in cells — padding, border widths (CSS order: top, right,
+bottom, left). There is deliberately no `margin` (see
+`docs/specs/ui/layout.md` § out of scope): `gap` + `padding` cover our cases.
 
 A thin wrapper rather than a bare alias: `Vector`'s `opDispatch` swallows unknown
 members, so the helpers below would become confusing swizzle errors on an alias.
