@@ -56,8 +56,14 @@ struct CliParams
     @CliOption("tui", "Alias for --no-gui.")
     bool tui;
 
-    @CliOption("twoslash", "Render a TypeScript twoslash JSON payload (its `code` + nodes) as a type-annotated overlay.")
+    @CliOption("twoslash", "Render a TypeScript twoslash JSON payload (its `code` + nodes) as a type-annotated overlay. Compatibility spelling of --overlay twoslash=<path>; a *.twoslash.json target needs no flag.")
     string twoslash;
+
+    @CliOption("overlay", "Attach an overlay to the document: <kind>[=<artifact>] (see --list-overlays). E.g. --overlay twoslash=nodes.json.")
+    string overlay;
+
+    @CliOption("list-overlays", "List the registered overlay kinds and exit.")
+    bool listOverlays;
 
     @CliOption("markdown", "Treat the input as Markdown and render the decorated preview (the default for .md files) in the active sink; forces the preview for a non-.md extension or stdin.")
     bool markdown;
@@ -298,10 +304,38 @@ int main(string[] args)
 
     initLogger(LogLevel.warning); // hue only emits degradation warnings
 
-    // `--twoslash <path>` is the old mode spelling: it now only names the
-    // target and forces the kind (a `*.twoslash.json` path needs no flag).
-    const forceTwoslash = cli.twoslash.length != 0;
+    if (cli.listOverlays)
+    {
+        import std.stdio : writeln;
+
+        // The registry has one kind today; fold ranges, coverage and tracing
+        // overlays register here as they land (`OVL1`).
+        writeln("twoslash    type annotations from a twoslash JSON payload " ~
+            "(artifact: the payload; or make it the target — *.twoslash.json)");
+        return 0;
+    }
+
+    // `--overlay <kind>[=<artifact>]` (`OVL4`); `--twoslash <path>` is the old
+    // spelling of `--overlay twoslash=<path>`. Either only names the target
+    // and forces the kind — a `*.twoslash.json` path needs no flag at all.
+    bool forceTwoslash = cli.twoslash.length != 0;
     string target = forceTwoslash ? cli.twoslash : (args.length > 1 ? args[1] : "");
+    if (cli.overlay.length)
+    {
+        import std.string : indexOf;
+
+        const eq = cli.overlay.indexOf('=');
+        const kind = eq >= 0 ? cli.overlay[0 .. eq] : cli.overlay;
+        if (kind != "twoslash")
+        {
+            stderr.writeln("hue: unknown overlay kind '", kind,
+                "' (see --list-overlays)");
+            return 1;
+        }
+        forceTwoslash = true;
+        if (eq >= 0)
+            target = cli.overlay[eq + 1 .. $];
+    }
 
     const labels = LabelSet.standard();
     // `.get`'s default is `lazy`, so the warning fires only on a miss.
