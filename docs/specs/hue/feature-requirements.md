@@ -88,9 +88,16 @@ Exactly one mode runs per invocation; see the [mode map](./index.md#rendering-mo
 > view. `--markdown`, `--raw` and `--twoslash` therefore stop selecting code
 > paths and become content kinds and [overlays](./overlays.md) (`OVL4`), and a
 > directory target opens the [file explorer](./tree-view.md) (`TVU1`) rather than
-> a bespoke index view. The rows below describe the dispatch as it stands; see
-> [ui-architecture.md](./ui-architecture.md) `UIA6` and
-> [pipeline.md](./pipeline.md) `XFM3` for the target shape.
+> a bespoke index view. **The dispatch collapse shipped** (`a75f1fc9`):
+> `document.d` owns one `Document` value with a content-detected `kind`
+> (code / markdown / twoslash — a `*.twoslash.json` target needs no flag), one
+> `DocumentPipeline.load` replaces the four load-pipeline copies, and `app.main`
+> picks a backend once (`pickBackend`) then dispatches to one of four sinks,
+> each a `final switch` over the kind. `--twoslash`/`--markdown`/`--raw` are
+> now detection inputs (`--overlay twoslash=…` is the `OVL4` spelling).
+> Content-kind _composition_ (a markdown document embedding a twoslash block)
+> is the remaining piece — see [ui-architecture.md](./ui-architecture.md)
+> `UIA6` and [pipeline.md](./pipeline.md) `XFM3`.
 
 | ID   | Requirement                                                                                                                                                                                                                                                                                                                                                                                   | Status            | Traces to                                                                       |
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ------------------------------------------------------------------------------- |
