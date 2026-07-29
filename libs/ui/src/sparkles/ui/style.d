@@ -52,6 +52,15 @@ enum Slot : ubyte
     caret,           /// query caret / cursor marker
     muted,           /// generic de-emphasized text
     chip,            /// a JSDoc `@tag` name pill in a popup (muted text on a grey bg)
+
+    // Application-chrome slots (the widened vocabulary the component catalog
+    // requires — `THM2`): bands, gutters and scroll affordances.
+    chrome,          /// header / status-bar band (its background + text)
+    chromeAccent,    /// emphasized chrome text (title, active segment, key hints)
+    gutter,          /// line-number / marker column
+    track,           /// scrollbar track
+    thumb,           /// scrollbar thumb
+    selection,       /// selected-content tint (background only)
 }
 
 private enum slotCount = Slot.max + 1;
@@ -279,6 +288,19 @@ Palette defaultTwoslashPalette(ColorScheme scheme = ColorScheme.light) pure noth
         p.fg[muted] = Color.fromRgb(0x88, 0x88, 0x88);
 
         // code / matched / inherit stay unset ⇒ page foreground.
+
+        // Application chrome: a neutral band, muted gutters/tracks, a solid
+        // thumb, a cool selection tint. Colors only — the glyphs (thumb/track
+        // characters) are the theme's glyph channel.
+        p.bg[chrome] = Color.fromRgb(0x7f, 0x7f, 0x7f);
+        p.bgAlpha[chrome] = 0x20;
+        p.fg[chromeAccent] = Color.fromRgb(0x37, 0x72, 0xcf);
+        p.fg[gutter] = Color.fromRgb(0x88, 0x88, 0x88);
+        p.fg[track] = Color.fromRgb(0x88, 0x88, 0x88);
+        p.fgAlpha[track] = 0x50;
+        p.fg[thumb] = Color.fromRgb(0x88, 0x88, 0x88);
+        p.bg[selection] = Color.fromRgb(0x37, 0x72, 0xcf);
+        p.bgAlpha[selection] = 0x30;
     }
     return p;
 }
