@@ -5,9 +5,11 @@ terminal, and static HTML. The pipeline is `view() → layout() →
 buildDisplayList() → paint(canvas)`; every stage before `paint` is `@safe pure`
 and testable against a $(REF RecordingCanvas, sparkles,ui,canvas) with no GL.
 
-The core depends only on `sparkles:base` and `sparkles:syntax` (it reuses their
-color/style types and adds no color type of its own); concrete canvas backends
-are adapters that depend on $(D sparkles:ui), never the reverse. See
+The core depends only on `sparkles:base` (whose color/style types it reuses — it
+adds no color type of its own) and `sparkles:math` (whose numeric `Vector` its
+geometry specializes into `Point`/`Size`, the way `TermSize`/`TermPosition`
+specialize it for the terminal); concrete canvas backends are adapters that
+depend on $(D sparkles:ui), never the reverse. See
 `docs/specs/hue/ui-architecture.md`.
 */
 module sparkles.ui;

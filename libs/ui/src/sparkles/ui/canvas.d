@@ -29,7 +29,7 @@ enum LineStyle : ubyte
 enum OpKind : ubyte
 {
     fillRect, /// fill `rect` with `visual.bg`
-    textRun,  /// draw `text` at `rect.origin` (`rect.w` = advance in cells)
+    textRun,  /// draw `text` at `rect.origin` (`rect.width` = advance in cells)
     glyph,    /// draw a single `glyph` at `rect.origin`
     line,     /// stroke `rect.origin` → `to` in `lineStyle`
 }
@@ -43,7 +43,7 @@ names) and the already-resolved `visual` (for pixel backends).
 struct DrawOp
 {
     OpKind kind;
-    Rect rect;          /// fill area; text/glyph anchor (`rect.w` = cell advance)
+    Rect rect;          /// fill area; text/glyph anchor (`rect.width` = cell advance)
     Point to;           /// `line` end point (`rect.origin` is the start)
     const(char)[] text; /// `textRun` payload (borrowed; must outlive the op)
     dchar glyph;        /// `glyph` payload

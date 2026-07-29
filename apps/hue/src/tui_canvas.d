@@ -105,8 +105,8 @@ struct GridCanvas
     void fillRect(in Rect r, in Visual v) scope
     {
         if (v.hasBg)
-            foreach (y; r.y .. r.y + r.h)
-                foreach (x; r.x .. r.x + r.w)
+            foreach (y; r.y .. r.y + r.height)
+                foreach (x; r.x .. r.x + r.width)
                     if (inBounds(x, y))
                     {
                         auto c = &cell(x, y);
@@ -136,8 +136,8 @@ struct GridCanvas
         const us = v.border.style == BorderStyle.dotted ? UnderlineStyle.dotted
             : v.border.style == BorderStyle.dashed ? UnderlineStyle.dashed
             : UnderlineStyle.single;
-        const y = r.y + r.h - 1;
-        foreach (x; r.x .. r.x + r.w)
+        const y = r.y + r.height - 1;
+        foreach (x; r.x .. r.x + r.width)
             if (inBounds(x, y))
             {
                 auto c = &cell(x, y);
@@ -151,11 +151,11 @@ struct GridCanvas
     /// `borderRadius`; a popup `arrow` becomes a `┴` notch on the top edge.
     private void drawBoxBorder(in Rect r, in Visual v) scope
     {
-        if (r.w < 2 || r.h < 2)
+        if (r.width < 2 || r.height < 2)
             return;
         const fg = Color.fromRgb(v.border.color);
         const rounded = v.borderRadius > 0;
-        const x0 = r.x, y0 = r.y, x1 = r.x + r.w - 1, y1 = r.y + r.h - 1;
+        const x0 = r.x, y0 = r.y, x1 = r.x + r.width - 1, y1 = r.y + r.height - 1;
 
         void setc(int x, int y, dchar g) scope
         {

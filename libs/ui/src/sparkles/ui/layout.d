@@ -63,39 +63,39 @@ private Size measure(in WidgetTree tree, uint idx, in Size[] sizes) pure nothrow
             foreach (k, ci; node.children)
             {
                 const cs = sizes[ci];
-                content.w += cs.w + (k ? node.gap : 0);
-                if (cs.h > content.h)
-                    content.h = cs.h;
+                content.width += cs.width + (k ? node.gap : 0);
+                if (cs.height > content.height)
+                    content.height = cs.height;
             }
             break;
         case column:
             foreach (k, ci; node.children)
             {
                 const cs = sizes[ci];
-                content.h += cs.h + (k ? node.gap : 0);
-                if (cs.w > content.w)
-                    content.w = cs.w;
+                content.height += cs.height + (k ? node.gap : 0);
+                if (cs.width > content.width)
+                    content.width = cs.width;
             }
             break;
         case stack, panel, popup:
             foreach (ci; node.children)
             {
                 const cs = sizes[ci];
-                if (cs.w > content.w)
-                    content.w = cs.w;
-                if (cs.h > content.h)
-                    content.h = cs.h;
+                if (cs.width > content.width)
+                    content.width = cs.width;
+                if (cs.height > content.height)
+                    content.height = cs.height;
             }
             break;
     }
 
     // Padding grows a container's box; margins are handled by the parent's flow.
-    content.w += node.padding.horizontal;
-    content.h += node.padding.vertical;
+    content.width += node.padding.horizontal;
+    content.height += node.padding.vertical;
 
     return Size(
-        resolveAxis(node.width, content.w),
-        resolveAxis(node.height, content.h),
+        resolveAxis(node.width, content.width),
+        resolveAxis(node.height, content.height),
     );
 }
 
@@ -123,7 +123,7 @@ private void place(in WidgetTree tree, uint idx, in Point origin,
 {
     const node = tree.nodes[idx];
     const size = sizes[idx];
-    frames[idx].rect = Rect(origin.x, origin.y, size.w, size.h);
+    frames[idx].rect = Rect(origin, size);
 
     const contentX = origin.x + node.padding.left;
     const contentY = origin.y + node.padding.top;
@@ -137,11 +137,11 @@ private void place(in WidgetTree tree, uint idx, in Point origin,
             foreach (child; node.children)
             {
                 place(tree, child, Point(x, contentY), sizes, frames);
-                x += sizes[child].w + node.gap;
+                x += sizes[child].width + node.gap;
             }
             break;
         case column:
-            const cw = size.w - node.padding.horizontal; // column content width
+            const cw = size.width - node.padding.horizontal; // column content width
             int y = contentY;
             foreach (child; node.children)
             {
@@ -149,9 +149,9 @@ private void place(in WidgetTree tree, uint idx, in Point origin,
                 // Cross-axis stretch: widen a `stretch` child to the column width so
                 // its background/border spans edge-to-edge (full-width dividers). Its
                 // own descendants stay left-aligned within the widened box.
-                if (tree.nodes[child].stretch && cw > frames[child].rect.w)
-                    frames[child].rect.w = cw;
-                y += sizes[child].h + node.gap;
+                if (tree.nodes[child].stretch && cw > frames[child].rect.width)
+                    frames[child].rect.size.width = cw;
+                y += sizes[child].height + node.gap;
             }
             break;
         case stack, panel, popup:
@@ -215,9 +215,9 @@ private int absInt(int v) nothrow @nogc pure => v < 0 ? -v : v;
     auto tree = b.finish(col);
 
     auto frames = layout(tree);
-    assert(frames[col].rect.w == 12);
-    assert(frames[sec].rect.w == 12); // stretched from its intrinsic 2 to the column width
-    assert(frames[narrow].rect.w == 2); // the descendant keeps its own width, left-aligned
+    assert(frames[col].rect.width == 12);
+    assert(frames[sec].rect.width == 12); // stretched from its intrinsic 2 to the column width
+    assert(frames[narrow].rect.width == 2); // the descendant keeps its own width, left-aligned
 }
 
 @("ui.layout.panelPadding")

@@ -92,8 +92,8 @@ struct CellGrid
     {
         if (!v.hasBg)
             return;
-        foreach (y; r.y .. r.y + r.h)
-            foreach (x; r.x .. r.x + r.w)
+        foreach (y; r.y .. r.y + r.height)
+            foreach (x; r.x .. r.x + r.width)
                 if (inBounds(x, y))
                 {
                     auto c = &at(x, y);

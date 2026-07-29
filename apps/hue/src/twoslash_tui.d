@@ -356,7 +356,7 @@ private struct TwoslashTui
         auto frames = layout(tree);
         auto ops = buildDisplayList(tree, frames, pal, pageFg, pageBg);
         paintGrid(grid, pageBg, ops, ox, oy);
-        return frames[tree.root].rect.h;
+        return frames[tree.root].rect.height;
     }
 
     /// A one-line help/status bar on the bottom row (inverse of the page colors).
