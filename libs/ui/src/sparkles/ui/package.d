@@ -22,6 +22,7 @@ public import sparkles.ui.canvas;
 public import sparkles.ui.widget;
 public import sparkles.ui.wrap;
 public import sparkles.ui.layout;
+public import sparkles.ui.tracks;
 public import sparkles.ui.state;
 public import sparkles.ui.display_list;
 public import sparkles.ui.interp.immediate;
