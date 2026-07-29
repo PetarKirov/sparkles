@@ -18,6 +18,7 @@ module sparkles.ui.widget;
 import sparkles.ui.canvas : LineStyle;
 import sparkles.ui.geometry : Insets, Point, SizeSpec;
 import sparkles.ui.style : Decoration, Slot, TextStyle;
+import sparkles.ui.wrap : TextWrap;
 
 @safe:
 
@@ -55,6 +56,9 @@ struct Widget
     int gap;                         /// inter-child gap (row/column)
 
     const(char)[] text;      /// `text` payload (borrowed — must outlive the tree)
+    /// How the `text` run breaks into lines when its allocated width is
+    /// narrower than its content (`none` keeps it a single line).
+    TextWrap wrap;
     dchar glyph;             /// `glyph` payload
     LineStyle lineStyle;     /// `line` stroke style
     Point lineTo;            /// `line` end, relative to the node origin

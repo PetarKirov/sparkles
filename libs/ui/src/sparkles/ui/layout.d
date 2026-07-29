@@ -31,6 +31,7 @@ module sparkles.ui.layout;
 
 import sparkles.ui.geometry : cellsOf, Constraints, Insets, Point, Rect, Size, SizeSpec;
 import sparkles.ui.widget : Widget, WidgetKind, WidgetTree;
+import sparkles.ui.wrap : TextWrap, wrapLines;
 
 @safe:
 
@@ -39,6 +40,11 @@ import sparkles.ui.widget : Widget, WidgetKind, WidgetTree;
 struct Frame
 {
     Rect rect;
+
+    /// For a wrapping text node: the broken lines, as slices of the widget's
+    /// `text` — the display list emits one run per line. Empty means the run
+    /// is the single unbroken `text` (every non-text node, and `TextWrap.none`).
+    const(char)[][] lines;
 }
 
 /// The default text measurer: one column per codepoint
@@ -298,7 +304,21 @@ if (isTextMeasure!TM)
         final switch (node.kind) with (WidgetKind)
         {
             case text:
-                content = 1;
+                if (node.wrap != TextWrap.none)
+                {
+                    // The cross-axis measure: break against the width this
+                    // node was *allocated* (LAY4's forSize), not a guess.
+                    auto avail = alloW[idx] - node.padding.horizontal;
+                    if (avail < 1)
+                        avail = 1;
+                    frames[idx].lines = wrapLines(node.text, avail,
+                        (scope const(char)[] s) => tm.width(s), node.wrap);
+                    content = cast(int) frames[idx].lines.length;
+                    if (content < 1)
+                        content = 1;
+                }
+                else
+                    content = 1;
                 break;
             case glyph:
                 content = 1;
@@ -592,6 +612,31 @@ private int absInt(int v) nothrow @nogc pure => v < 0 ? -v : v;
     assert(frames[t1].rect.width == 6);                     // held at min
     assert(frames[t0].rect.width == 4);                     // absorbed the deficit
     assert(frames[t0].rect.width + frames[t1].rect.width == 10);
+}
+
+@("ui.layout.wrappingTextReportsItsLineCount")
+@safe unittest
+{
+    import sparkles.ui.widget : Builder;
+
+    // A wrapping run in a 10-column viewport: the height-for-width pass breaks
+    // it and the frame carries both the line count and the line slices.
+    auto b = Builder();
+    Widget para = Widget(kind: WidgetKind.text,
+        text: "the quick brown fox", wrap: TextWrap.greedy);
+    const t = b.add(para);
+    const col = b.container(WidgetKind.column, [t]);
+    auto tree = b.finish(col);
+
+    auto frames = layout(tree, Constraints(maxW: 10));
+    assert(frames[t].lines == ["the quick", "brown fox"]);
+    assert(frames[t].rect == Rect(0, 0, 10, 2));  // two rows tall
+    assert(frames[col].rect.height == 2);         // the container grew with it
+
+    // Unconstrained, the same tree stays a single line.
+    auto loose = layout(tree);
+    assert(loose[t].lines == ["the quick brown fox"]);
+    assert(loose[t].rect == Rect(0, 0, 19, 1));
 }
 
 @("ui.layout.injectedTextMeasure")

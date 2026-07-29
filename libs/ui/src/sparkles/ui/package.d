@@ -20,6 +20,7 @@ public import sparkles.ui.theme;
 public import sparkles.ui.themes;
 public import sparkles.ui.canvas;
 public import sparkles.ui.widget;
+public import sparkles.ui.wrap;
 public import sparkles.ui.layout;
 public import sparkles.ui.state;
 public import sparkles.ui.display_list;

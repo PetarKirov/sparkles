@@ -22,6 +22,7 @@ import sparkles.ui.geometry : Insets;
 import sparkles.ui.style :
     BorderStyle, FontRole, Palette, resolveVisual, Slot, Visual;
 import sparkles.ui.widget : Widget, WidgetKind, WidgetTree;
+import sparkles.ui.wrap : TextWrap;
 import sparkles.base.term_color : RgbColor;
 
 import std.range.primitives : isOutputRange, put;
@@ -73,6 +74,10 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx,
         case text:
             put(w, "<span style=\"");
             textStyle(w, vis);
+            // A wrapping run lets the browser break lines (the cell backends
+            // break through `layout`; here the layout engine *is* the browser).
+            if (node.wrap != TextWrap.none)
+                put(w, ";white-space:pre-wrap");
             // A text widget can be a chip/pill (`paintBackground` + radius, e.g. the
             // JSDoc `@tag` name) — carry its background, radius, and pill padding.
             if (node.paintBackground && vis.hasBg)
