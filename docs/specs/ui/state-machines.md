@@ -27,22 +27,22 @@ state`, a pure function; the caller assigns the result. Timers are not bare
 
 ## Requirements
 
-| ID   | Requirement                                                                                                                                                                                                                                              | Status      | Traces to                                     |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | --------------------------------------------- |
-| STM1 | A state machine must be **fully presentation-independent**: pure logic over abstract input producing state plus derived geometry in abstract units, with no draw calls and no device units. `@safe`, ideally `@nogc`, and testable with no canvas.       | partial     | `state.d`                                     |
-| STM2 | **Scrollbar** — `(contentExtent, viewportExtent, offset, trackExtent) → (thumbStart, thumbExtent)` plus hover and drag state. One definition, integer-exact, covered by property-based tests asserting the thumb stays within the track at every input.  | not started | proposed `ScrollbarState`                     |
-| STM3 | **Selection** — one Regular value with a normalized anchor/focus invariant, expressed so the standard selection algorithms apply to it. Every backend renders it; none owns it.                                                                          | not started | proposed `SelectionState`                     |
-| STM4 | **Hover** — topmost hit wins; reports whether the hot element changed, so a caller can repaint only on change. Requires hit identity to reach the display list.                                                                                          | partial     | `state.d` `HoverState`; [`INP10`](./input.md) |
-| STM5 | **Disclosure** — a generic opened/collapsed set over a Regular key, serving **both** tree expand/collapse (keyed by node path) and content folding (keyed by source span). Written once, used by both.                                                   | not started | proposed `DisclosureState`                    |
-| STM6 | **Timeline** — a small mode machine for transient effects (idle / in / hold / out) advanced by `step(state, dt)`, replacing hand-decremented counters. Backends with no frame clock may collapse it to an event-scoped mode without changing the caller. | not started | proposed `TimelineState`                      |
-| STM7 | **Focus** — which element has keyboard focus, with a deterministic traversal order, so keyboard navigation is defined once rather than per backend.                                                                                                      | not started | proposed `FocusState`                         |
-| STM8 | Machines must be **Regular values** — copyable, comparable — so a view's behavior can be snapshotted, replayed and diffed in tests.                                                                                                                      | not started | [principles.md](./principles.md) `PRN6`       |
+| ID   | Requirement                                                                                                                                                                                                                                              | Status            | Traces to                                                                                     |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | --------------------------------------------------------------------------------------------- |
+| STM1 | A state machine must be **fully presentation-independent**: pure logic over abstract input producing state plus derived geometry in abstract units, with no draw calls and no device units. `@safe`, ideally `@nogc`, and testable with no canvas.       | full (`49fa8e50`) | `state.d`                                                                                     |
+| STM2 | **Scrollbar** — `(contentExtent, viewportExtent, offset, trackExtent) → (thumbStart, thumbExtent)` plus hover and drag state. One definition, integer-exact, covered by property-based tests asserting the thumb stays within the track at every input.  | full (`49fa8e50`) | `state.d` `scrollbarThumb`/`ScrollState` (incl. the inverse track-drag mapping)               |
+| STM3 | **Selection** — one Regular value with a normalized anchor/focus invariant, expressed so the standard selection algorithms apply to it. Every backend renders it; none owns it.                                                                          | full (`49fa8e50`) | `state.d` `Selection!T` (any ordered position type)                                           |
+| STM4 | **Hover** — topmost hit wins; reports whether the hot element changed, so a caller can repaint only on change. Requires hit identity to reach the display list.                                                                                          | full (`f166e099`) | `state.d` `HoverState` + `hoverTargets`; [`INP10`](./input.md)                                |
+| STM5 | **Disclosure** — a generic opened/collapsed set over a Regular key, serving **both** tree expand/collapse (keyed by node path) and content folding (keyed by source span). Written once, used by both.                                                   | full (`49fa8e50`) | `state.d` `DisclosureState!Key` (default polarity + exception set; `zR`/`zM` are O(1) resets) |
+| STM6 | **Timeline** — a small mode machine for transient effects (idle / in / hold / out) advanced by `step(state, dt)`, replacing hand-decremented counters. Backends with no frame clock may collapse it to an event-scoped mode without changing the caller. | full (`49fa8e50`) | `state.d` `Timeline` (`holdUntilDismissed` + `dismissed()` is the event-scoped collapse)      |
+| STM7 | **Focus** — which element has keyboard focus, with a deterministic traversal order, so keyboard navigation is defined once rather than per backend.                                                                                                      | full (`49fa8e50`) | `state.d` `FocusState`                                                                        |
+| STM8 | Machines must be **Regular values** — copyable, comparable — so a view's behavior can be snapshotted, replayed and diffed in tests.                                                                                                                      | full (`49fa8e50`) | every machine; snapshot/replay asserted in the disclosure test                                |
 
 > [!NOTE]
-> `STM4` is shipped but has **zero consumers**, because a widget's hit identity is
-> authored and then dropped before it reaches the display list. `INP10` closes
-> that gap; until then every interactive backend keeps its own hit map, which is
-> exactly the duplication this level exists to remove.
+> The machines are shipped; their **per-backend counterparts still stand** until
+> the hue chrome port (M9) replaces them — the two scrollbar formulas, the three
+> selection models, the four bare timers. Each machine's first consumer migration
+> is that milestone's work; until then the divergence is contained, not removed.
 
 > [!NOTE]
 > `STM5` is one machine serving two features that look unrelated. A tree's
@@ -52,13 +52,13 @@ state`, a pure function; the caller assigns the result. Timers are not bare
 
 ## Milestones
 
-| Milestone | Scope                                                           | Status      | Requirements   |
-| --------- | --------------------------------------------------------------- | ----------- | -------------- |
-| S0        | Hover wired to real hit identity                                | not started | `STM4`         |
-| S1        | Scrollbar and selection lifted from per-backend implementations | not started | `STM2`, `STM3` |
-| S2        | Disclosure, shared by tree and folding                          | not started | `STM5`         |
-| S3        | Timeline, replacing ad-hoc counters                             | not started | `STM6`         |
-| S4        | Focus and keyboard traversal order                              | not started | `STM7`         |
+| Milestone | Scope                                                           | Status                                            | Requirements   |
+| --------- | --------------------------------------------------------------- | ------------------------------------------------- | -------------- |
+| S0        | Hover wired to real hit identity                                | full (`f166e099`)                                 | `STM4`         |
+| S1        | Scrollbar and selection lifted from per-backend implementations | partial (`49fa8e50`; backends migrate in M9)      | `STM2`, `STM3` |
+| S2        | Disclosure, shared by tree and folding                          | partial (`49fa8e50`; consumed by M11/M12)         | `STM5`         |
+| S3        | Timeline, replacing ad-hoc counters                             | partial (`49fa8e50`; the GUI timers retire in M9) | `STM6`         |
+| S4        | Focus and keyboard traversal order                              | partial (`49fa8e50`; keyboard nav wires up in M9) | `STM7`         |
 
 ## Module coverage
 
