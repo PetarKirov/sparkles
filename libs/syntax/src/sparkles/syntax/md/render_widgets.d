@@ -41,6 +41,13 @@ struct MdViewOptions
     /// Nesting budget: markdown ⊃ fence ⊃ markdown recursion stops here and
     /// degrades to plain text (totality — `RND5`).
     int depthBudget = 8;
+
+    /// Optional fence-body renderer (`XFM3`'s nested pipeline at the view
+    /// level): `(infoLang, body) → per-line styled spans` — e.g. syntax
+    /// highlighting through `highlightInjected`, or a twoslash sub-view.
+    /// `null` (or an empty result) renders the fence as plain code lines.
+    TextSpan[][] delegate(const(char)[] infoLang, const(char)[] body_) @safe
+        fenceRenderer;
 }
 
 /// The whole document as its own tree (the common non-embedded case).
@@ -67,7 +74,7 @@ private uint blocksColumn(ref Builder b, in MdBlock[] blocks,
     return b.container(WidgetKind.column, rows, gap: 1);
 }
 
-private uint viewBlock(ref Builder b, in MdBlock blk, const(char)[] src,
+private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
     in MdViewOptions opt)
 {
     if (opt.depthBudget <= 0) // recursion cap: degrade to the raw source slice
@@ -120,26 +127,43 @@ private uint viewBlock(ref Builder b, in MdBlock blk, const(char)[] src,
 
         case codeFence:
         {
-            // A bordered code panel of pre-formatted lines (fence-body
-            // highlighting plugs in through the composition pipeline later).
+            // A bordered code panel. The body's lines come from the nested
+            // pipeline when a fenceRenderer is supplied (syntax highlighting,
+            // a twoslash sub-view); plain pre-formatted code otherwise.
             auto rows = new uint[](0);
             const code = sliceOf(src, blk.codeBody);
-            size_t start = 0;
-            void line(const(char)[] t) @safe
-            {
-                rows ~= b.add(Widget(kind: WidgetKind.text,
-                    text: t.length ? t : " ", slot: Slot.code, hitId: opt.hitId,
-                    textStyle: codeStyle(opt)));
-            }
 
-            foreach (i, char c; code)
-                if (c == '\n')
+            TextSpan[][] styled;
+            if (opt.fenceRenderer !is null)
+                styled = opt.fenceRenderer(blk.infoLang, code);
+            if (styled.length)
+            {
+                foreach (line; styled)
+                    rows ~= b.add(Widget(kind: WidgetKind.rich,
+                        spans: line.length ? line
+                            : [TextSpan(" ", Slot.code, codeStyle(opt))],
+                        slot: Slot.code, hitId: opt.hitId,
+                        textStyle: codeStyle(opt)));
+            }
+            else
+            {
+                size_t start = 0;
+                void line(const(char)[] t) @safe
                 {
-                    line(code[start .. i]);
-                    start = i + 1;
+                    rows ~= b.add(Widget(kind: WidgetKind.text,
+                        text: t.length ? t : " ", slot: Slot.code,
+                        hitId: opt.hitId, textStyle: codeStyle(opt)));
                 }
-            if (start < code.length)
-                line(code[start .. $]);
+
+                foreach (i, char c; code)
+                    if (c == '\n')
+                    {
+                        line(code[start .. i]);
+                        start = i + 1;
+                    }
+                if (start < code.length)
+                    line(code[start .. $]);
+            }
             const body_ = b.container(WidgetKind.column, rows);
             return b.add(Widget(kind: WidgetKind.panel, children: [body_],
                 slot: Slot.surface, paintBackground: true, stretch: true,
@@ -422,6 +446,47 @@ version (unittest)
         sawA |= op.text == "after";
     }
     assert(sawB && sawH && sawA);
+}
+
+@("md.render_widgets.fenceRendererIsTheNestedPipeline")
+@safe unittest
+{
+    // A fake nested pipeline: "highlight" a fence body by styling each line's
+    // first word — proving the hook shape without a grammar bundle (XFM3).
+    const src = "let x = 1\nlet y = 2\n";
+    const doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.codeFence, infoLang: "d",
+            codeBody: Span(0, src.length)),
+    ]), src);
+
+    TextSpan[][] fakeHighlight(const(char)[] lang, const(char)[] body_) @safe
+    {
+        TextSpan[][] lines;
+        size_t start = 0;
+        foreach (i, char c; body_)
+            if (c == '\n')
+            {
+                lines ~= [TextSpan(body_[start .. start + 3], Slot.chromeAccent),
+                    TextSpan(body_[start + 3 .. i], Slot.code)];
+                start = i + 1;
+            }
+        return lines;
+    }
+
+    auto opt = MdViewOptions(fenceRenderer: &fakeHighlight);
+    auto c = renderDoc(doc, opt);
+    bool sawKeyword, sawRest;
+    foreach (ref op; c.ops)
+    {
+        // chromeAccent resolves to the accent blue (the paint round-trip
+        // keeps resolved visuals, not slots).
+        if (op.kind == OpKind.textRun && op.text == "let"
+            && op.visual.fg == RgbColor(0x37, 0x72, 0xcf))
+            sawKeyword = true;
+        if (op.kind == OpKind.textRun && op.text == " y = 2")
+            sawRest = true;
+    }
+    assert(sawKeyword && sawRest);
 }
 
 @("md.render_widgets.depthBudgetDegradesToPlainText")
