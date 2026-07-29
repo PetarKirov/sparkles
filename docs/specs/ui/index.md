@@ -110,8 +110,10 @@ own it, so coverage is auditable in both directions: requirement → code (the
 
 | Source file                                  | Primary spec + areas                                                                   |
 | -------------------------------------------- | -------------------------------------------------------------------------------------- |
-| `libs/ui/src/sparkles/ui/geometry.d`         | [layout](./layout.md) — `LAY3`, `LAY5`, `LAY6`                                         |
-| `libs/ui/src/sparkles/ui/layout.d`           | [layout](./layout.md) — `LAY2`–`LAY9`                                                  |
+| `libs/ui/src/sparkles/ui/geometry.d`         | [layout](./layout.md) — `LAY3`, `LAY6`                                                 |
+| `libs/ui/src/sparkles/ui/layout.d`           | [layout](./layout.md) — `LAY1`–`LAY8`, `LAY11`, `LAY12`                                |
+| `libs/ui/src/sparkles/ui/wrap.d`             | [layout](./layout.md) — `LAY10`                                                        |
+| `libs/ui/src/sparkles/ui/tracks.d`           | [layout](./layout.md) — `LAY9`                                                         |
 | `libs/ui/src/sparkles/ui/style.d`            | [theme](./theme.md) — `THM1`–`THM5`                                                    |
 | `libs/ui/src/sparkles/ui/theme.d`            | [theme](./theme.md) — `THM6`–`THM9`                                                    |
 | `libs/ui/src/sparkles/ui/canvas.d`           | [backends](./backends.md) — `TGT1`, `TGT5`                                             |
