@@ -1,14 +1,31 @@
 /**
 The layout level (LAY) of $(MREF sparkles,ui): $(LREF layout) turns a
 $(REF WidgetTree, sparkles,ui,widget) into a $(LREF Frame) per node — an absolute
-$(REF Rect, sparkles,ui,geometry) on the cell grid. Two passes, both `@safe pure`:
-a bottom-up $(I measure) (intrinsic size, honoring `fit`/`fixed` + min/max clamps)
-and a top-down $(I place) (`row`/`column`/`stack`/`panel`/`popup` box flow with
-`gap` and `padding`).
+$(REF Rect, sparkles,ui,geometry) on the cell grid — in four `O(n)` passes, all
+`@safe pure`:
 
-The full flex/grid vocabulary (`grow`/`percent` distribution, wrapping) is the
-deferred `LAY2` work; U1 resolves exactly what the twoslash chrome needs — fit
-containers with fixed leaves — and treats `grow`/`percent` as `fit`.
+$(NUMBERED_LIST
+    * $(B natural width), bottom-up — each node's intrinsic extent with no bound,
+    * $(B width allocation), top-down — the parent's content width resolves
+        `grow`/`percent`, distributes leftover space and reclaims overflow,
+    * $(B height for width), bottom-up — heights measured against the width each
+        node was $(I actually allocated) (where wrapping text reports its line
+        count), and
+    * $(B height allocation + place), top-down — `column` distributes heights
+        the way `row` distributed widths, and every node gets its absolute
+        origin.
+)
+
+Splitting each axis into a measure and an allocation is GTK's
+`measure(orientation, for_size)` protocol: the width↔height cycle ("wrapping
+needs a width; the width comes from layout") is broken by $(I ordering), not
+iteration. Every extent is an integer cell; leftover space is distributed with
+`divmod` plus explicit remainder assignment so the parts always sum exactly to
+the whole (see `docs/specs/ui/layout.md`, `LAY4`/`LAY6`).
+
+Text is measured through an injected measurer ($(LREF isTextMeasure)); the
+default $(LREF CellMeasure) counts one column per codepoint, and a backend passes
+its canvas's grapheme-aware measurer instead.
 */
 module sparkles.ui.layout;
 
@@ -24,141 +41,359 @@ struct Frame
     Rect rect;
 }
 
-/// Lays `tree` out within `c`, returning a `Frame` per node.
-Frame[] layout(in WidgetTree tree, in Constraints c = Constraints.init) pure nothrow
+/// The default text measurer: one column per codepoint
+/// ($(REF cellsOf, sparkles,ui,geometry)) — the same advance the GUI painter
+/// and the HTML `ch` unit use. Cell-grid backends pass their grapheme-aware
+/// measurer instead (`LAY5`).
+struct CellMeasure
 {
-    // A `Builder` adds children before their container, so a forward walk
-    // measures every child before the parent that aggregates it (bottom-up).
-    auto sizes = new Size[](tree.nodes.length);
-    foreach (i, ref node; tree.nodes)
-        sizes[i] = measure(tree, cast(uint) i, sizes);
-
-    auto frames = new Frame[](tree.nodes.length);
-    place(tree, tree.root, Point(0, 0), sizes, frames);
-    return frames;
+    /// The display-column width of `s`.
+    int width(scope const(char)[] s) const pure nothrow @nogc
+        => cast(int) cellsOf(s);
 }
 
-/// Intrinsic size of node `idx`. Children (lower-indexed in a `Builder` arena)
-/// are already measured into `sizes` by the forward walk.
-private Size measure(in WidgetTree tree, uint idx, in Size[] sizes) pure nothrow
-{
-    const node = tree.nodes[idx];
+/// The text-measurer capability: `true` iff `T` reports a run's column width.
+/// Deliberately unconstrained in attributes — a canvas-backed measurer may be
+/// `@system`; the engine's attributes are inferred from the concrete type.
+enum bool isTextMeasure(T) = __traits(compiles, (ref T m) {
+    int w = m.width("x");
+});
 
-    Size content;
-    final switch (node.kind) with (WidgetKind)
+static assert(isTextMeasure!CellMeasure);
+
+/// Lays `tree` out within `c`, returning a `Frame` per node. An unbounded axis
+/// (`int.max`, the default) sizes the root to its content; a bounded one is the
+/// viewport the root resolves against (`fit` clamps, `grow` fills, `percent`
+/// takes its share). Text runs are measured through `tm`.
+Frame[] layout(TM = CellMeasure)(
+    in WidgetTree tree, in Constraints c = Constraints.init, TM tm = TM.init)
+if (isTextMeasure!TM)
+{
+    const n = tree.nodes.length;
+    auto natW = new int[](n);   // pass 1: natural widths (bottom-up)
+    auto alloW = new int[](n);  // pass 2: allocated widths (top-down)
+    auto natH = new int[](n);   // pass 3: heights for allocated width (bottom-up)
+    auto frames = new Frame[](n);
+
+    // -- shared helpers ------------------------------------------------------
+
+    // A child's extent within `avail` cells of parent content, on the axis
+    // where no leftover distribution happens (the cross axis, or the root).
+    int resolveAgainst(in SizeSpec spec, int natural, int avail)
     {
-        case text:
-            content = Size(cast(int) cellsOf(node.text), 1);
-            break;
-        case glyph:
-            content = Size(1, 1);
-            break;
-        case line:
-            content = Size(absInt(node.lineTo.x), node.lineTo.y == 0 ? 1 : absInt(node.lineTo.y));
-            break;
-        case box:
-            content = Size(0, 0);
-            break;
-        case row:
-            foreach (k, ci; node.children)
+        int v;
+        final switch (spec.kind) with (SizeSpec.Kind)
+        {
+            case fit:
+                v = natural <= avail ? natural : avail;
+                break;
+            case fixed:
+                v = spec.value;
+                break;
+            case grow:
+                v = avail;
+                break;
+            case percent:
+                v = avail * spec.value / 100;
+                break;
+        }
+        return spec.clamp(v);
+    }
+
+    // The natural (unbounded) resolution of `spec`: `grow`/`percent` have no
+    // extent to take a share of, so their natural size is their content.
+    static int resolveNatural(in SizeSpec spec, int content)
+    {
+        const v = spec.kind == SizeSpec.Kind.fixed ? spec.value : content;
+        return spec.clamp(v);
+    }
+
+    // The root against one viewport axis: unbounded keeps the natural size.
+    int resolveRoot(in SizeSpec spec, int natural, int avail)
+        => avail == int.max ? resolveNatural(spec, natural)
+            : resolveAgainst(spec, natural, avail);
+
+    // Main-axis distribution (`row` widths / `column` heights): children start
+    // from their base extent (`fixed`/`percent` as declared, `fit`/`grow` at
+    // natural), leftover space goes to `grow` children by weight — integer
+    // divmod, the remaining cells one each to the first growers — and overflow
+    // is reclaimed from non-`fixed` children in proportion to their slack above
+    // `min`. The parts always sum exactly to the whole while no clamp binds.
+    void distributeMain(
+        scope const(uint)[] children, bool horizontal, int avail, int gap,
+        scope int[] extents)
+    {
+        int used = children.length > 1 ? gap * (cast(int) children.length - 1) : 0;
+        int totalWeight;
+
+        foreach (k, ci; children)
+        {
+            const child = tree.nodes[ci];
+            const spec = horizontal ? child.width : child.height;
+            const natural = horizontal ? natW[ci] : natH[ci];
+            final switch (spec.kind) with (SizeSpec.Kind)
             {
-                const cs = sizes[ci];
-                content.width += cs.width + (k ? node.gap : 0);
-                if (cs.height > content.height)
-                    content.height = cs.height;
+                case fit, grow:
+                    extents[k] = spec.clamp(natural);
+                    break;
+                case fixed:
+                    extents[k] = spec.clamp(spec.value);
+                    break;
+                case percent:
+                    extents[k] = spec.clamp(avail * spec.value / 100);
+                    break;
             }
-            break;
-        case column:
-            foreach (k, ci; node.children)
+            used += extents[k];
+            if (spec.kind == SizeSpec.Kind.grow)
+                totalWeight += spec.value > 0 ? spec.value : 1;
+        }
+
+        if (used < avail && totalWeight > 0)
+        {
+            // Leftover to the growers: floor share by weight, then the
+            // remainder one cell each to the first growers in order.
+            const leftover = avail - used;
+            int handedOut;
+            foreach (k, ci; children)
             {
-                const cs = sizes[ci];
-                content.height += cs.height + (k ? node.gap : 0);
-                if (cs.width > content.width)
-                    content.width = cs.width;
+                const spec = horizontal ? tree.nodes[ci].width : tree.nodes[ci].height;
+                if (spec.kind != SizeSpec.Kind.grow)
+                    continue;
+                const weight = spec.value > 0 ? spec.value : 1;
+                const share = leftover * weight / totalWeight;
+                extents[k] = spec.clamp(extents[k] + share);
+                handedOut += share;
             }
-            break;
-        case stack, panel, popup:
+            int remainder = leftover - handedOut;
+            foreach (k, ci; children)
+            {
+                if (remainder == 0)
+                    break;
+                const spec = horizontal ? tree.nodes[ci].width : tree.nodes[ci].height;
+                if (spec.kind != SizeSpec.Kind.grow)
+                    continue;
+                extents[k] = spec.clamp(extents[k] + 1);
+                remainder--;
+            }
+        }
+        else if (used > avail)
+        {
+            // Overflow: reclaim from non-`fixed` children in proportion to
+            // their slack above `min` (divmod again; if total slack cannot
+            // cover the deficit, the row genuinely overflows and painting
+            // clips downstream).
+            int deficit = used - avail;
+            int totalSlack;
+            foreach (k, ci; children)
+            {
+                const spec = horizontal ? tree.nodes[ci].width : tree.nodes[ci].height;
+                if (spec.kind != SizeSpec.Kind.fixed)
+                    totalSlack += extents[k] > spec.min ? extents[k] - spec.min : 0;
+            }
+            if (deficit > totalSlack)
+                deficit = totalSlack;
+            if (deficit > 0)
+            {
+                int reclaimed;
+                foreach (k, ci; children)
+                {
+                    const spec = horizontal ? tree.nodes[ci].width : tree.nodes[ci].height;
+                    if (spec.kind == SizeSpec.Kind.fixed)
+                        continue;
+                    const slack = extents[k] > spec.min ? extents[k] - spec.min : 0;
+                    const give = deficit * slack / totalSlack;
+                    extents[k] -= give;
+                    reclaimed += give;
+                }
+                int remainder = deficit - reclaimed;
+                foreach (k, ci; children)
+                {
+                    if (remainder == 0)
+                        break;
+                    const spec = horizontal ? tree.nodes[ci].width : tree.nodes[ci].height;
+                    if (spec.kind == SizeSpec.Kind.fixed || extents[k] <= spec.min)
+                        continue;
+                    extents[k]--;
+                    remainder--;
+                }
+            }
+        }
+    }
+
+    // -- pass 1: natural width, bottom-up -------------------------------------
+    // A `Builder` adds children before their container, so a forward walk sees
+    // every child measured before the parent that aggregates it.
+
+    int naturalWidth(uint idx)
+    {
+        const node = tree.nodes[idx];
+        int content;
+        final switch (node.kind) with (WidgetKind)
+        {
+            case text:
+                content = tm.width(node.text);
+                break;
+            case glyph:
+                content = 1;
+                break;
+            case line:
+                content = absInt(node.lineTo.x);
+                break;
+            case box:
+                break;
+            case row:
+                foreach (k, ci; node.children)
+                    content += natW[ci] + (k ? node.gap : 0);
+                break;
+            case column, stack, panel, popup:
+                foreach (ci; node.children)
+                    if (natW[ci] > content)
+                        content = natW[ci];
+                break;
+        }
+        return resolveNatural(node.width, content + node.padding.horizontal);
+    }
+
+    // -- pass 2: width allocation, top-down ------------------------------------
+
+    void allocWidth(uint idx, int allocated)
+    {
+        alloW[idx] = allocated;
+        const node = tree.nodes[idx];
+        if (node.children.length == 0)
+            return;
+        auto content = allocated - node.padding.horizontal;
+        if (content < 0)
+            content = 0;
+
+        if (node.kind == WidgetKind.row)
+        {
+            auto widths = new int[](node.children.length);
+            distributeMain(node.children, true, content, node.gap, widths);
+            foreach (k, ci; node.children)
+                allocWidth(ci, widths[k]);
+        }
+        else // column/stack/panel/popup: the cross axis
+        {
             foreach (ci; node.children)
             {
-                const cs = sizes[ci];
-                if (cs.width > content.width)
-                    content.width = cs.width;
-                if (cs.height > content.height)
-                    content.height = cs.height;
+                const child = tree.nodes[ci];
+                auto cw = resolveAgainst(child.width, natW[ci], content);
+                // Cross-axis stretch: widen the child's box to the content
+                // width (full-width dividers/sections); its own descendants
+                // stay start-aligned at their natural widths.
+                if (child.stretch && cw < content)
+                    cw = content;
+                allocWidth(ci, cw);
             }
-            break;
+        }
     }
 
-    // Padding grows a container's box; margins are handled by the parent's flow.
-    content.width += node.padding.horizontal;
-    content.height += node.padding.vertical;
+    // -- pass 3: height for allocated width, bottom-up -------------------------
 
-    return Size(
-        resolveAxis(node.width, content.width),
-        resolveAxis(node.height, content.height),
-    );
-}
-
-/// Resolves one axis of sizing against the measured content extent. `fit` keeps
-/// the content; `fixed` overrides; `grow`/`percent` fall back to `fit` in U1.
-/// The spec's min/max always clamp.
-private int resolveAxis(in SizeSpec spec, int content) pure nothrow @nogc
-{
-    int v;
-    final switch (spec.kind) with (SizeSpec.Kind)
+    int naturalHeight(uint idx)
     {
-        case fit, grow, percent:
-            v = content;
-            break;
-        case fixed:
-            v = spec.value;
-            break;
+        const node = tree.nodes[idx];
+        int content;
+        final switch (node.kind) with (WidgetKind)
+        {
+            case text:
+                content = 1;
+                break;
+            case glyph:
+                content = 1;
+                break;
+            case line:
+                content = node.lineTo.y == 0 ? 1 : absInt(node.lineTo.y);
+                break;
+            case box:
+                break;
+            case row:
+                foreach (ci; node.children)
+                    if (natH[ci] > content)
+                        content = natH[ci];
+                break;
+            case column:
+                foreach (k, ci; node.children)
+                    content += natH[ci] + (k ? node.gap : 0);
+                break;
+            case stack, panel, popup:
+                foreach (ci; node.children)
+                    if (natH[ci] > content)
+                        content = natH[ci];
+                break;
+        }
+        return resolveNatural(node.height, content + node.padding.vertical);
     }
-    return spec.clamp(v);
-}
 
-/// Positions node `idx` (and its subtree) with its top-left at `origin`.
-private void place(in WidgetTree tree, uint idx, in Point origin,
-    in Size[] sizes, Frame[] frames) pure nothrow
-{
-    const node = tree.nodes[idx];
-    const size = sizes[idx];
-    frames[idx].rect = Rect(origin, size);
+    // -- pass 4: height allocation + place, top-down ---------------------------
 
-    const contentX = origin.x + node.padding.left;
-    const contentY = origin.y + node.padding.top;
-
-    final switch (node.kind) with (WidgetKind)
+    void place(uint idx, in Point origin, int allocatedH)
     {
-        case text, glyph, line, box:
-            break; // leaves
-        case row:
-            int x = contentX;
-            foreach (child; node.children)
-            {
-                place(tree, child, Point(x, contentY), sizes, frames);
-                x += sizes[child].width + node.gap;
-            }
-            break;
-        case column:
-            const cw = size.width - node.padding.horizontal; // column content width
-            int y = contentY;
-            foreach (child; node.children)
-            {
-                place(tree, child, Point(contentX, y), sizes, frames);
-                // Cross-axis stretch: widen a `stretch` child to the column width so
-                // its background/border spans edge-to-edge (full-width dividers). Its
-                // own descendants stay left-aligned within the widened box.
-                if (tree.nodes[child].stretch && cw > frames[child].rect.width)
-                    frames[child].rect.size.width = cw;
-                y += sizes[child].height + node.gap;
-            }
-            break;
-        case stack, panel, popup:
-            foreach (child; node.children)
-                place(tree, child, Point(contentX, contentY), sizes, frames);
-            break;
+        frames[idx].rect = Rect(origin, Size(alloW[idx], allocatedH));
+        const node = tree.nodes[idx];
+        if (node.children.length == 0)
+            return;
+
+        const contentX = origin.x + node.padding.left;
+        const contentY = origin.y + node.padding.top;
+        auto content = allocatedH - node.padding.vertical;
+        if (content < 0)
+            content = 0;
+
+        final switch (node.kind) with (WidgetKind)
+        {
+            case text, glyph, line, box:
+                break; // leaves (children.length == 0 already returned)
+            case row:
+                int x = contentX;
+                foreach (ci; node.children)
+                {
+                    const child = tree.nodes[ci];
+                    auto ch = resolveAgainst(child.height, natH[ci], content);
+                    if (child.stretch && ch < content)
+                        ch = content;
+                    place(ci, Point(x, contentY), ch);
+                    x += alloW[ci] + node.gap;
+                }
+                break;
+            case column:
+                auto heights = new int[](node.children.length);
+                distributeMain(node.children, false, content, node.gap, heights);
+                int y = contentY;
+                foreach (k, ci; node.children)
+                {
+                    place(ci, Point(contentX, y), heights[k]);
+                    y += heights[k] + node.gap;
+                }
+                break;
+            case stack, panel, popup:
+                foreach (ci; node.children)
+                {
+                    const child = tree.nodes[ci];
+                    auto ch = resolveAgainst(child.height, natH[ci], content);
+                    if (child.stretch && ch < content)
+                        ch = content;
+                    place(ci, Point(contentX, contentY), ch);
+                }
+                break;
+        }
     }
+
+    // -- run the passes ---------------------------------------------------------
+
+    foreach (i; 0 .. n)
+        natW[i] = naturalWidth(cast(uint) i);
+
+    allocWidth(tree.root, resolveRoot(tree.rootNode.width, natW[tree.root], c.maxW));
+
+    foreach (i; 0 .. n)
+        natH[i] = naturalHeight(cast(uint) i);
+
+    place(tree.root, Point(0, 0),
+        resolveRoot(tree.rootNode.height, natH[tree.root], c.maxH));
+
+    return frames;
 }
 
 private int absInt(int v) nothrow @nogc pure => v < 0 ? -v : v;
@@ -237,4 +472,147 @@ private int absInt(int v) nothrow @nogc pure => v < 0 ? -v : v;
     assert(frames[panel].rect == Rect(0, 0, 7, 3));
     // Child sits at the padded content origin.
     assert(frames[t].rect == Rect(1, 1, 5, 1));
+}
+
+@("ui.layout.growDistributionIsIntegerExact")
+@safe unittest
+{
+    import sparkles.ui.widget : Builder;
+
+    // Three equal growers in a 10-cell row: 10 = 3+3+3 with the 1 leftover cell
+    // handed to the first grower — 4, 3, 3. The parts always sum to the whole.
+    auto b = Builder();
+    const g0 = b.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow()));
+    const g1 = b.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow()));
+    const g2 = b.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow()));
+    Widget rowW = Widget(kind: WidgetKind.row, children: [g0, g1, g2],
+        width: SizeSpec.fixed(10), height: SizeSpec.fixed(1));
+    const row = b.add(rowW);
+    auto tree = b.finish(row);
+
+    auto frames = layout(tree);
+    assert(frames[g0].rect.width == 4);
+    assert(frames[g1].rect.width == 3);
+    assert(frames[g2].rect.width == 3);
+    assert(frames[g0].rect.x == 0 && frames[g1].rect.x == 4 && frames[g2].rect.x == 7);
+
+    // The exactness property at every width: the parts sum to the whole.
+    foreach (w; 1 .. 32)
+    {
+        auto b2 = Builder();
+        const c0 = b2.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow(2)));
+        const c1 = b2.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow(3)));
+        const c2 = b2.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow()));
+        Widget r = Widget(kind: WidgetKind.row, children: [c0, c1, c2],
+            width: SizeSpec.fixed(w));
+        const ri = b2.add(r);
+        auto fr = layout(b2.finish(ri));
+        assert(fr[c0].rect.width + fr[c1].rect.width + fr[c2].rect.width == w);
+    }
+}
+
+@("ui.layout.growSharesLeftoverAfterFixedContent")
+@safe unittest
+{
+    import sparkles.ui.widget : Builder;
+
+    // A text label and a grower in a 20-cell row: the grower takes exactly the
+    // leftover (20 - 5 - 1 gap = 14).
+    auto b = Builder();
+    const label = b.add(Widget(kind: WidgetKind.text, text: "hello")); // 5×1
+    const fill = b.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow()));
+    Widget rowW = Widget(kind: WidgetKind.row, children: [label, fill],
+        width: SizeSpec.fixed(20), gap: 1);
+    const row = b.add(rowW);
+    auto tree = b.finish(row);
+
+    auto frames = layout(tree);
+    assert(frames[label].rect == Rect(0, 0, 5, 1));
+    assert(frames[fill].rect.x == 6 && frames[fill].rect.width == 14);
+}
+
+@("ui.layout.percentOfParentContent")
+@safe unittest
+{
+    import sparkles.ui.widget : Builder;
+
+    // percent resolves against the parent's *content* extent (after padding).
+    auto b = Builder();
+    const half = b.add(Widget(kind: WidgetKind.box, width: SizeSpec.percent(50)));
+    Widget colW = Widget(kind: WidgetKind.column, children: [half],
+        width: SizeSpec.fixed(22), padding: Insets.symmetric(0, 1));
+    const col = b.add(colW);
+    auto tree = b.finish(col);
+
+    auto frames = layout(tree);
+    assert(frames[col].rect.width == 22);
+    assert(frames[half].rect.width == 10); // 50% of 22 - 2 padding = 20
+    assert(frames[half].rect.x == 1);      // at the padded content origin
+}
+
+@("ui.layout.rootConstraintsBoundFitAndFillGrow")
+@safe unittest
+{
+    import sparkles.ui.widget : Builder;
+
+    // A fit column wider than the viewport clamps to it; a grow child fills it.
+    auto b = Builder();
+    const wide = b.add(Widget(kind: WidgetKind.text,
+        text: "this text is much wider than the viewport"));
+    const bar = b.add(Widget(kind: WidgetKind.box, width: SizeSpec.grow()));
+    const col = b.container(WidgetKind.column, [wide, bar]);
+    auto tree = b.finish(col);
+
+    auto frames = layout(tree, Constraints(maxW: 10));
+    assert(frames[col].rect.width == 10);  // fit clamped by the viewport
+    assert(frames[bar].rect.width == 10);  // grow fills the column's content
+    // The overlong text is allocated the content width (clipping is paint's job).
+    assert(frames[wide].rect.width == 10);
+}
+
+@("ui.layout.overflowShrinksProportionallyToSlack")
+@safe unittest
+{
+    import sparkles.ui.widget : Builder;
+
+    // Two fit texts (8 + 6 = 14) in a 10-cell row: the 4-cell deficit is
+    // reclaimed in proportion to slack above min — and the parts still sum to
+    // the whole. A `min` clamp is honored: a child at min gives nothing more.
+    auto b = Builder();
+    const t0 = b.add(Widget(kind: WidgetKind.text, text: "eight!!!"));  // 8×1
+    Widget keep = Widget(kind: WidgetKind.text, text: "sixsix");        // 6×1
+    keep.width.min = 6;                                                 // incompressible
+    const t1 = b.add(keep);
+    Widget rowW = Widget(kind: WidgetKind.row, children: [t0, t1],
+        width: SizeSpec.fixed(10));
+    const row = b.add(rowW);
+    auto tree = b.finish(row);
+
+    auto frames = layout(tree);
+    assert(frames[t1].rect.width == 6);                     // held at min
+    assert(frames[t0].rect.width == 4);                     // absorbed the deficit
+    assert(frames[t0].rect.width + frames[t1].rect.width == 10);
+}
+
+@("ui.layout.injectedTextMeasure")
+@safe unittest
+{
+    import sparkles.ui.widget : Builder;
+
+    // A measurer that counts every codepoint double-wide: the engine sizes
+    // text with it, proving measurement is injected rather than hardcoded.
+    static struct DoubleWide
+    {
+        int width(scope const(char)[] s) const pure nothrow @nogc
+            => cast(int)(cellsOf(s) * 2);
+    }
+
+    auto b = Builder();
+    const t = b.add(Widget(kind: WidgetKind.text, text: "abc"));
+    const row = b.container(WidgetKind.row, [t]);
+    auto tree = b.finish(row);
+
+    auto frames = layout(tree, Constraints.init, DoubleWide());
+    assert(frames[t].rect.width == 6);
+    assert(frames[row].rect.width == 6);
 }

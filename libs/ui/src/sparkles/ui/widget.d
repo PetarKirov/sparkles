@@ -52,7 +52,6 @@ struct Widget
     SizeSpec width = SizeSpec.fit_;  /// horizontal sizing
     SizeSpec height = SizeSpec.fit_; /// vertical sizing
     Insets padding;                  /// inner padding (containers)
-    Insets margin;                   /// outer margin
     int gap;                         /// inter-child gap (row/column)
 
     const(char)[] text;      /// `text` payload (borrowed — must outlive the tree)
