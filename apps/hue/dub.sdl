@@ -36,6 +36,9 @@ configuration "application" {
 
     // The shared raylib text core; pulls raylib-d + libs "raylib" transitively.
     dependency "sparkles:raylib-text" path="../.."
+    // The sparkles:ui → raylib bridge (RaylibCanvas + input synthesis),
+    // extracted from the old in-app src/gui_canvas.d.
+    dependency "sparkles:ui-raylib" path="../.."
     // The off-screen VT that decodes ` ```ansi ` fenced blocks (gui_ansi.d).
     dependency "sparkles:ghostty" path="../.."
     versions "HueGui"
