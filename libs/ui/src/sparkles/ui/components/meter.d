@@ -38,34 +38,17 @@ void writeMeter(Writer)(
     in MeterGlyphs glyphs = MeterGlyphs.init)
 {
     import std.range.primitives : put;
+    import sparkles.ui.components.meter_model : meterFill;
 
-    if (fraction < 0 || fraction != fraction) // NaN guards as empty
-        fraction = 0;
-    if (fraction > 1)
-        fraction = 1;
+    // The fill *rule* — clamping, rounding, the carry, the exact padding — is
+    // the model's; this only picks a glyph per counted cell.
+    const fill = meterFill(fraction, width, glyphs.subCell);
 
-    const cells = fraction * width;
-    const full = cast(size_t) cells;
-    const eighth = cast(size_t) ((cells - full) * 8 + 0.5);
-
-    size_t used;
-    foreach (_; 0 .. full)
-    {
+    foreach (_; 0 .. fill.full)
         put(w, glyphs.full);
-        used++;
-    }
-    if (used < width && eighth > 0 && eighth < 8 && glyphs.subCell)
-    {
-        put(w, eighthBlocks[eighth]);
-        used++;
-    }
-    else if (used < width && eighth == 8)
-    {
-        // Rounding carried the partial cell to a full one.
-        put(w, glyphs.full);
-        used++;
-    }
-    foreach (_; used .. width)
+    if (fill.eighth)
+        put(w, eighthBlocks[fill.eighth]);
+    foreach (_; 0 .. fill.empty)
         put(w, glyphs.empty);
 }
 
