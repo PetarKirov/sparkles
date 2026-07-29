@@ -79,6 +79,29 @@ private void emit(in WidgetTree tree, uint idx, in Frame[] frames, in Palette pa
                     text: ln, slot: node.slot, visual: vis,
                 );
             break;
+        case rich:
+            // One op per styled span, advancing along the row; each span
+            // resolves its own slot/chrome against the node's as fallback.
+            import sparkles.ui.geometry : cellsOf;
+            import sparkles.ui.style : TextStyle;
+
+            int x = rect.x;
+            foreach (ref span; node.spans)
+            {
+                const slot = span.slot == Slot.inherit ? node.slot : span.slot;
+                const style = span.textStyle == TextStyle.init
+                    ? node.textStyle : span.textStyle;
+                const w = cast(int) cellsOf(span.text);
+                ops ~= DrawOp(
+                    kind: OpKind.textRun,
+                    rect: Rect(x, rect.y, w, 1),
+                    text: span.text, slot: slot,
+                    visual: resolveVisual(pal, slot, node.decoration, style,
+                        pageFg, pageBg),
+                );
+                x += w;
+            }
+            break;
         case glyph:
             ops ~= DrawOp(
                 kind: OpKind.glyph, rect: rect, glyph: node.glyph,
@@ -274,6 +297,38 @@ private void emit(in WidgetTree tree, uint idx, in Frame[] frames, in Palette pa
     assert(ops[1].kind == OpKind.textRun && ops[1].text == "one");
     assert(ops[2].kind == OpKind.textRun && ops[2].text == "two");
     assert(ops[3].kind == OpKind.popClip);
+}
+
+@("ui.display_list.richTextEmitsOneRunPerSpan")
+@safe unittest
+{
+    import sparkles.ui.widget : Builder, TextSpan;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.style : defaultTwoslashPalette;
+
+    // A syntax-highlighted signature as ONE node of styled spans — no backend
+    // overpaint, no per-token widget row.
+    auto b = Builder();
+    Widget sig = Widget(kind: WidgetKind.rich, slot: Slot.code, spans: [
+        TextSpan("const", Slot.error),  // stand-in slots with distinct colors
+        TextSpan(" title: "),           // inherits the node slot (code)
+        TextSpan("string", Slot.docs),
+    ]);
+    const t = b.add(sig);
+    auto tree = b.finish(t);
+
+    const pal = defaultTwoslashPalette();
+    auto frames = layout(tree);
+    assert(frames[t].rect.width == 5 + 8 + 6); // spans measured end to end
+
+    auto ops = buildDisplayList(tree, frames, pal,
+        RgbColor(0x22, 0x22, 0x22), RgbColor(0xff, 0xff, 0xff));
+    assert(ops.length == 3);
+    assert(ops[0].text == "const" && ops[0].rect.x == 0 && ops[0].rect.width == 5);
+    assert(ops[1].text == " title: " && ops[1].rect.x == 5);
+    assert(ops[2].text == "string" && ops[2].rect.x == 13);
+    assert(ops[0].visual.fg != ops[1].visual.fg);      // spans carry their slots
+    assert(ops[1].slot == Slot.code);                  // inherit → the node slot
 }
 
 @("ui.display_list.borderOnlyBoxStillEmits")

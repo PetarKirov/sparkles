@@ -98,6 +98,28 @@ private void emitNode(Writer)(ref Writer w, in WidgetTree tree, uint idx,
             put(w, "</span>");
             break;
 
+        case rich:
+            // One <span> per styled span; each resolves its own slot/chrome
+            // against the node's as fallback (the browser concatenates them
+            // inline, matching the cell backends' advance).
+            import sparkles.ui.style : TextStyle;
+
+            foreach (ref span; node.spans)
+            {
+                const slot = span.slot == Slot.inherit ? node.slot : span.slot;
+                const style = span.textStyle == TextStyle.init
+                    ? node.textStyle : span.textStyle;
+                const sv = resolveVisual(pal, slot, node.decoration, style,
+                    pageFg, pageBg);
+                put(w, "<span style=\"");
+                textStyle(w, sv);
+                visibilityCss(w, node);
+                put(w, "\">");
+                escape(w, span.text);
+                put(w, "</span>");
+            }
+            break;
+
         case glyph:
             put(w, "<span style=\"");
             textStyle(w, vis);
