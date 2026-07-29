@@ -652,3 +652,120 @@ unittest
     assert(f.isFocused(9));
     assert(!FocusState.cleared.next(null).isFocused(7)); // empty order clears
 }
+
+// ── Element state (WGT5) ─────────────────────────────────────────────────────
+
+/**
+Per-element state addressed by `Widget.key` (`WGT5`): scroll offsets, focus
+and animation phase survive a view rebuild because $(B identity) — not
+equality — decides which element is "the same one" across frames. Element
+state lives here, never in the widget value, which is what keeps widget
+equality total (and conflating the two is the classic reconciliation bug).
+
+One store per state type; a view steps the state it `require`s and writes the
+derived values (e.g. `ScrollState.offset` → `Widget.childOffset`) back into
+the tree it builds. After a rebuild, $(LREF ElementStore.retain) sweeps state
+whose element no longer exists.
+*/
+struct ElementStore(S)
+{
+    private size_t[] keys;
+    private S[] states;
+
+@safe:
+
+    /// The state for `key`, created as `initial` on first sight. Returns a
+    /// reference so the caller steps it in place.
+    ref S require(size_t key, S initial = S.init) return
+    {
+        foreach (i, k; keys)
+            if (k == key)
+                return states[i];
+        keys ~= key;
+        states ~= initial;
+        return states[$ - 1];
+    }
+
+    /// The state for `key`, or `null` when the element has none yet.
+    inout(S)* find(size_t key) inout return
+    {
+        foreach (i, k; keys)
+            if (k == key)
+                return &states[i];
+        return null;
+    }
+
+    /// Drops state whose key is not in `live` — call after a rebuild with the
+    /// new tree's keys so vanished elements don't leak state (or resurrect it).
+    void retain(scope const size_t[] live)
+    {
+        size_t kept;
+        foreach (i, k; keys)
+        {
+            bool found;
+            foreach (l; live)
+                if (l == k)
+                {
+                    found = true;
+                    break;
+                }
+            if (found)
+            {
+                keys[kept] = keys[i];
+                states[kept] = states[i];
+                kept++;
+            }
+        }
+        keys = keys[0 .. kept];
+        states = states[0 .. kept];
+    }
+
+    /// Number of live elements.
+    size_t length() const pure nothrow @nogc => keys.length;
+}
+
+/// The keys present in `tree`, in arena order — `ElementStore.retain`'s input.
+size_t[] elementKeys(in WidgetTree tree) pure nothrow
+{
+    size_t[] keys;
+    foreach (ref node; tree.nodes)
+        if (node.key != 0)
+            keys ~= node.key;
+    return keys;
+}
+
+@("ui.state.elementStore.identityCarriesStateAcrossRebuilds")
+@safe unittest
+{
+    ElementStore!ScrollState store;
+
+    // Frame 1: a scroll view keyed 42 scrolls down.
+    store.require(42) = store.require(42).scrolledBy(7, 100, 10);
+    assert(store.require(42).offset == 7);
+
+    // Frame 2 (a rebuild): the same key finds the same state.
+    assert(store.find(42) !is null && store.find(42).offset == 7);
+    assert(store.find(99) is null);
+
+    // The element vanishes from the tree: retain sweeps its state, so a later
+    // element reusing the key starts fresh instead of resurrecting it.
+    store.require(99);
+    store.retain([99]);
+    assert(store.length == 1 && store.find(42) is null);
+    assert(store.require(42).offset == 0);
+}
+
+@("ui.state.elementKeys.collectsKeyedNodes")
+@safe unittest
+{
+    import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+    auto b = Builder();
+    Widget viewport = Widget(kind: WidgetKind.column, key: 42, clipY: true);
+    const v = b.add(viewport);
+    const t = b.add(Widget(kind: WidgetKind.text, text: "anonymous"));
+    const root = b.container(WidgetKind.column, [v, t]);
+    auto tree = b.finish(root);
+
+    assert(elementKeys(tree) == [42]); // key 0 nodes are anonymous
+}

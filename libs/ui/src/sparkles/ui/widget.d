@@ -102,6 +102,13 @@ struct Widget
 
     uint[] children;         /// child node indices (empty for leaves)
     size_t hitId;            /// hover/hit id (0 = not hit-testable)
+    /// Element identity (`WGT5`; 0 = anonymous): the renderer's per-element
+    /// state store is addressed by this key, so scroll offsets, focus and
+    /// animation phase survive a rebuild. $(B Identity) decides "is this the
+    /// same element" (state carries over); $(B equality) decides "may I skip
+    /// repainting" — element state lives in the store, never in this value,
+    /// which is what keeps `==` total.
+    size_t key;
 
     /// Scroll offset subtracted from every child's origin, in cells (`LAY7`).
     /// The *value* is written by the view; the scroll position it mirrors is
