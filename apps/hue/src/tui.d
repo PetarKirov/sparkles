@@ -13,6 +13,7 @@ module tui;
 version (Posix):
 
 import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.term_color : mix;
 import sparkles.base.text.writers : writeInteger;
 
 import sparkles.syntax : ColorDepth, HighlightEvent, LabelSet, ResolvedTheme,
@@ -22,6 +23,7 @@ import sparkles.tui : Cell, CellStyle, Color, Grid, PosixEvents, Terminal,
     TerminalOptions, TextAttr, UnderlineStyle;
 import sparkles.tui.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
     match, PointerAction, PointerButton, PointerEvent, ResizeEvent, WheelEvent;
+import sparkles.ui.state : scrollbarThumb, ScrollState, Selection;
 
 import ansi_model : Attr;
 import gui_preview : BandKind, buildRawPlines, layoutPreview, PreviewLine,
@@ -31,13 +33,6 @@ import previewer : BackgroundMode;
 
 private enum RgbColor fallbackFg = RgbColor(0xcc, 0xcc, 0xcc);
 private enum RgbColor fallbackBg = RgbColor(0x1e, 0x1e, 0x1e);
-
-// Linear blend a→b by t∈[0,1] (matches gui.d's 3-arg `mix`, a private helper).
-private RgbColor mix(RgbColor a, RgbColor b, double t) @safe pure nothrow @nogc
-{
-    ubyte c(ubyte x, ubyte y) => cast(ubyte)(x + cast(int)((cast(int) y - x) * t));
-    return RgbColor(c(a.r, b.r), c(a.g, b.g), c(a.b, b.b));
-}
 
 // A cell style from the preview's neutral RgbColor + `Attr` bits (underline is a
 // first-class field on the compact style, not a `TextAttr` bit).
@@ -108,10 +103,11 @@ struct PreviewTui
     private size_t qlen;
     private SmallBuffer!(char, 4096) scratch;
 
-    // Selection (mouse drag) → OSC 52 copy. `selAnchor`/`selCursor` are visual
-    // line indices (-1 ⇒ no selection); `selBg` tints the selected lines. `clip`
-    // holds a pending OSC 52 sequence that the loop flushes after a copy.
-    private long selAnchor = -1, selCursor = -1;
+    // Selection (mouse drag) → OSC 52 copy: the shared STM3 machine over
+    // visual line indices ("no selection" is a mode, not -1); `selBg` tints
+    // the selected lines. `clip` holds a pending OSC 52 sequence that the
+    // loop flushes after a copy.
+    private Selection!long sel;
     private RgbColor selBg;
     private SmallBuffer!char clip;
     private bool clipReady;
@@ -162,11 +158,11 @@ struct PreviewTui
 
     private void clampSel() @safe pure nothrow @nogc
     {
+        if (!sel.active)
+            return;
         const last = cast(long) plines.length - 1;
-        if (selAnchor > last) selAnchor = last;
-        if (selCursor > last) selCursor = last;
-        if (selAnchor < 0) selAnchor = 0;
-        if (selCursor < 0) selCursor = 0;
+        long clamp(long v) => v > last ? last : (v < 0 ? 0 : v);
+        sel = Selection!long(true, clamp(sel.anchor), clamp(sel.focus));
     }
 
     // Copy the selected visual lines' **original source** (SEL parity): the min
@@ -175,10 +171,9 @@ struct PreviewTui
     // via OSC 52. Clears the selection.
     private void copySelection() @system
     {
-        if (selAnchor < 0 || plines.length == 0)
+        if (!sel.active || plines.length == 0)
             return;
-        const lo = selAnchor < selCursor ? selAnchor : selCursor;
-        const hi = selAnchor < selCursor ? selCursor : selAnchor;
+        const lo = sel.lo, hi = sel.hi;
         size_t a = size_t.max, b;
         bool any;
         foreach (i; lo .. hi + 1)
@@ -199,11 +194,11 @@ struct PreviewTui
         }
         if (!any || a >= b || b > source.length)
         {
-            selAnchor = selCursor = -1;
+            sel = Selection!long.cleared;
             return;
         }
         writeClipboard(source[a .. b]);
-        selAnchor = selCursor = -1;
+        sel = Selection!long.cleared;
     }
 
     // Queue `text` for the system clipboard via OSC 52 (`ESC ] 52 ; c ; <b64> BEL`),
@@ -276,17 +271,10 @@ struct PreviewTui
         const rows = bodyRows();
         const first = cast(size_t) top;
         const last = first + rows > plines.length ? plines.length : first + rows;
-        long sLo = -1, sHi = -1;
-        if (selAnchor >= 0)
-        {
-            sLo = selAnchor < selCursor ? selAnchor : selCursor;
-            sHi = selAnchor < selCursor ? selCursor : selAnchor;
-        }
         ushort y = 1;
         foreach (i; first .. last)
         {
-            const sel = sLo >= 0 && cast(long) i >= sLo && cast(long) i <= sHi;
-            paintLine(g, y, plines[i], sel);
+            paintLine(g, y, plines[i], sel.contains(cast(long) i));
             ++y;
         }
         paintScrollbar(g);
@@ -377,16 +365,13 @@ struct PreviewTui
         const rows = bodyRows();
         if (cast(long) plines.length <= rows || g.cols < 2)
             return;
-        int thumb = cast(int)(cast(long) rows * rows / cast(long) plines.length);
-        if (thumb < 1) thumb = 1;
-        if (thumb > rows) thumb = rows;
-        const denom = maxTop();
-        const thumbTop = denom > 0 ? cast(int)(top * (rows - thumb) / denom) : 0;
+        // The one thumb formula (STM2) — the GUI renders the same geometry.
+        const thumb = scrollbarThumb(plines.length, rows, top, rows);
 
         const col = cast(ushort)(g.cols - 1);
         foreach (r; 0 .. rows)
         {
-            const inThumb = r >= thumbTop && r < thumbTop + thumb;
+            const inThumb = r >= thumb.start && r < thumb.start + thumb.extent;
             g.putText(col, cast(ushort)(r + 1), inThumb ? "█" : "░",
                 cellStyle(inThumb ? sbThumb : sbTrack, true, pageBg, 0));
         }
@@ -486,8 +471,10 @@ struct PreviewTui
         {
             if (e.pos.x == width - 1) // the scrollbar column (last)
             {
-                const span = rows > 1 ? rows - 1 : 1;
-                top = cast(long)(e.pos.y - 1) * maxTop / span;
+                // The STM2 inverse mapping: thumb-aware, so a drag lands the
+                // thumb's leading edge where the pointer is.
+                top = ScrollState(top)
+                    .draggedTo(e.pos.y - 1, plines.length, rows, rows).offset;
                 clampTop();
             }
             else
@@ -506,9 +493,8 @@ struct PreviewTui
                         return true;
                     }
                 }
-                if (e.action == PointerAction.press)
-                    selAnchor = line;
-                selCursor = line;
+                sel = e.action == PointerAction.press
+                    ? Selection!long.started(line) : sel.extended(line);
                 clampSel();
             }
         }

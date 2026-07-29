@@ -187,12 +187,13 @@ struct ThumbGeometry
 /**
 The one thumb formula (`STM2`) — every backend renders this; none owns its own.
 `content`/`viewport` are in content units (lines, cells); `track` is the
-scrollbar's length in cells. Integer-exact: the thumb spans the whole track
-when everything fits, never leaves it, and reaches the far end exactly at
-`offset == content - viewport`.
+scrollbar's length in the backend's track units — cells for the TUI, pixels
+for the GUI, whose grabbable-minimum thumb is `minExtent` (1 cell vs ~24 px).
+Integer-exact: the thumb spans the whole track when everything fits, never
+leaves it, and reaches the far end exactly at `offset == content - viewport`.
 */
-ThumbGeometry scrollbarThumb(long content, long viewport, long offset, int track)
-    pure nothrow @nogc
+ThumbGeometry scrollbarThumb(long content, long viewport, long offset, int track,
+    int minExtent = 1) pure nothrow @nogc
 {
     if (track <= 0)
         return ThumbGeometry(0, 0);
@@ -200,6 +201,8 @@ ThumbGeometry scrollbarThumb(long content, long viewport, long offset, int track
         return ThumbGeometry(0, track); // everything visible: thumb = track
 
     auto extent = cast(int) (cast(long) track * viewport / content);
+    if (extent < minExtent)
+        extent = minExtent;
     if (extent < 1)
         extent = 1;
     if (extent > track)

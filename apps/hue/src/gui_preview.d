@@ -33,6 +33,7 @@ import sparkles.syntax : MdDoc, MdBlock, MdBlockKind, MdInline, MdInlineKind, Co
     LabelId, toRgb, RgbColor, GrammarRegistry, TsConfigCache, canonicalLanguage,
     extractMarkdown, highlightInjected;
 import sparkles.base.smallbuffer : SmallBuffer;
+import sparkles.base.term_color : mix;
 import sparkles.ui.components.table : MappedTable, TableGridMap, drawTableMapped;
 import sparkles.test_runner.attributes : benchmark;
 
@@ -1559,12 +1560,6 @@ private string langIcon(const(char)[] lang) @safe pure nothrow
     case "": return "";
     default: return "\U0000F121"; //  generic code
     }
-}
-
-private RgbColor mix(RgbColor a, RgbColor b, double t) @safe pure nothrow @nogc
-{
-    ubyte ch(ubyte x, ubyte y) => cast(ubyte)(x + (y - x) * t);
-    return RgbColor(ch(a.r, b.r), ch(a.g, b.g), ch(a.b, b.b));
 }
 
 // Shared, CTFE-built fillers of the only two units `repeat` is ever called with
