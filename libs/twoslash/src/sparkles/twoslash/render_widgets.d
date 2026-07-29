@@ -29,7 +29,8 @@ module sparkles.twoslash.render_widgets;
 
 import sparkles.ui.geometry : cellsOf, Insets;
 import sparkles.ui.style : BorderStyle, Decoration, FontRole, Palette, Slot, TextStyle;
-import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
+import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
+import sparkles.ui.wrap : TextWrap;
 
 import sparkles.twoslash.overlay : BelowBlock, errIsWarning, planTwoslash,
     TwoslashPlan, withoutQuickinfoPrefix;
@@ -278,17 +279,10 @@ private uint popupSection(ref Builder b, uint[] rows, bool divider)
 
 // ── JSDoc docs → widget rows (markdown, wrapped) ───────────────────────────
 
-/// The popup docs wrap width, in cells.
+/// The popup docs width *maximum*, in cells — a style metric handed to the
+/// layout engine (`Widget.width.max`), which wraps the rich run itself
+/// (`LAY10`: no packing loop in the view).
 private enum docsMaxWidth = 56;
-
-/// A word carrying its resolved inline style, for greedy line-wrapping.
-private struct DocWord
-{
-    const(char)[] text;
-    TextStyle style;
-    Slot slot;
-    bool chip; /// inline `code` ⇒ a rounded mono pill
-}
 
 /// Renders `docs` (JSDoc markdown) into wrapped, inline-styled widget rows via the
 /// `sparkles:syntax` `MdDoc` model. Empty parse (no grammar) ⇒ plain-line fallback.
@@ -379,10 +373,10 @@ private void listItemRows(ref Builder b, in MdBlock item, const(char)[] src,
 {
     const inls = item.inlines.length ? item.inlines
         : (item.children.length ? item.children[0].inlines : null);
-    DocWord[] words;
-    words ~= DocWord(text: "•", style: docsBase(), slot: Slot.muted);
-    flattenInlines(inls, src, docsBase(), Slot.docs, words);
-    packWords(b, words, hit, indent + 1, rows);
+    TextSpan[] spans;
+    spans ~= TextSpan("• ", Slot.muted, docsBase(), noBreak: true);
+    inlinesToSpans(inls, src, docsBase(), Slot.docs, spans);
+    rows ~= richRow(b, spans, hit, indent + 1);
 }
 
 /// A fenced code block: each source line as a mono row (pre-formatted, not wrapped).
@@ -411,39 +405,53 @@ private uint codeLine(ref Builder b, const(char)[] text, size_t hit, int indent)
 private void wrapInlines(ref Builder b, in MdInline[] inls, const(char)[] src,
     TextStyle base, Slot slot, size_t hit, int indent, ref uint[] rows) @safe
 {
-    DocWord[] words;
-    flattenInlines(inls, src, base, slot, words);
-    packWords(b, words, hit, indent, rows);
+    TextSpan[] spans;
+    inlinesToSpans(inls, src, base, slot, spans);
+    if (spans.length)
+        rows ~= richRow(b, spans, hit, indent);
 }
 
-private void flattenInlines(in MdInline[] inls, const(char)[] src, TextStyle base,
-    Slot slot, ref DocWord[] words) @safe
+/// One wrapping rich run: the engine breaks it (`wrapSpans`) against the
+/// node's own width maximum — the WGT6 × LAY10 composition that retired the
+/// view-side word packer.
+private uint richRow(ref Builder b, TextSpan[] spans, size_t hit, int indent) @safe
+{
+    Widget w = Widget(kind: WidgetKind.rich, slot: Slot.docs, hitId: hit,
+        wrap: TextWrap.greedy, spans: spans, textStyle: docsBase(),
+        padding: indent > 0 ? Insets(0, 0, 0, indent) : Insets.init,
+        decoration: Decoration(borderRadius: M.popupRadius)); // pill corners
+    w.width.max = docsMaxWidth;
+    return b.add(w);
+}
+
+private void inlinesToSpans(in MdInline[] inls, const(char)[] src, TextStyle base,
+    Slot slot, ref TextSpan[] spans) @safe
 {
     foreach (ref const inl; inls)
         final switch (inl.kind) with (MdInlineKind)
         {
             case text:
-                pushWords(sliceOf(src, inl.span), base, slot, false, words);
+                pushProse(sliceOf(src, inl.span), base, slot, spans);
                 break;
             case strong:
                 {
                     auto sb = base;
                     sb.bold = true;
-                    flattenInlines(inl.children, src, sb, slot, words);
+                    inlinesToSpans(inl.children, src, sb, slot, spans);
                 }
                 break;
             case emphasis:
                 {
                     auto se = base;
                     se.italic = true;
-                    flattenInlines(inl.children, src, se, slot, words);
+                    inlinesToSpans(inl.children, src, se, slot, spans);
                 }
                 break;
             case strikethrough:
                 {
                     auto ss = base;
                     ss.strikethrough = true;
-                    flattenInlines(inl.children, src, ss, slot, words);
+                    inlinesToSpans(inl.children, src, ss, slot, spans);
                 }
                 break;
             case codeSpan:
@@ -454,111 +462,57 @@ private void flattenInlines(in MdInline[] inls, const(char)[] src, TextStyle bas
                     sc.fontRole = FontRole.code;
                     const t = sliceOf(src, inl.span);
                     if (t.length)
-                        words ~= DocWord(text: t, style: sc, slot: Slot.chip, chip: true);
+                        spans ~= TextSpan(t, Slot.chip, sc,
+                            paintBackground: true, noBreak: true);
                 }
                 break;
             case link:
                 {
                     auto sl = base;
                     sl.underline = UnderlineStyle.single;
-                    flattenInlines(inl.children, src, sl, Slot.info, words);
+                    inlinesToSpans(inl.children, src, sl, Slot.info, spans);
                 }
                 break;
             case image:
-                flattenInlines(inl.children, src, base, slot, words);
+                inlinesToSpans(inl.children, src, base, slot, spans);
                 break;
             case lineBreak:
-                words ~= DocWord(text: "\n", style: base, slot: slot); // hard break
+                spans ~= TextSpan("\n", slot, base); // hard break
                 break;
         }
 }
 
-/// Splits `text` on ASCII whitespace, appending each word with the given style.
-private void pushWords(const(char)[] text, TextStyle style, Slot slot, bool chip,
-    ref DocWord[] words) @safe
+/// Prose text as one styled span: whitespace runs (markdown soft wraps,
+/// tabs, newlines) collapse to single spaces, edges included — the breaker
+/// then owns every line-breaking decision.
+private void pushProse(const(char)[] text, TextStyle style, Slot slot,
+    ref TextSpan[] spans) @safe
 {
-    size_t i;
-    while (i < text.length)
+    if (!text.length)
+        return;
+    char[] norm;
+    norm.reserve(text.length);
+    bool ws;
+    foreach (char c; text)
     {
-        while (i < text.length && (text[i] == ' ' || text[i] == '\t' || text[i] == '\n'))
-            ++i;
-        const start = i;
-        while (i < text.length && text[i] != ' ' && text[i] != '\t' && text[i] != '\n')
-            ++i;
-        if (i > start)
-            words ~= DocWord(text: text[start .. i], style: style, slot: slot, chip: chip);
-    }
-}
-
-/// Greedily packs styled words into `row` widgets no wider than `docsMaxWidth`
-/// (minus `indent`); a `"\n"` word forces a break. Words join with an explicit
-/// space widget (`gap: 0` rows) EXCEPT before closing punctuation (`,`/`.`/`)`…),
-/// so an inline `code` pill followed by a comma reads `code,` not `code ,`.
-private void packWords(ref Builder b, DocWord[] words, size_t hit, int indent,
-    ref uint[] rows) @safe
-{
-    uint[] cur;
-    int curW;
-    bool first = true;
-    const limit = docsMaxWidth - indent > 8 ? docsMaxWidth - indent : 8;
-
-    void flush()
-    {
-        if (cur.length)
-            rows ~= b.container(WidgetKind.row, cur.dup, gap: 0,
-                padding: indent > 0 ? Insets(0, 0, 0, indent) : Insets.init);
-        cur = null;
-        curW = 0;
-        first = true;
-    }
-
-    foreach (ref const w; words)
-    {
-        if (w.text == "\n")
+        if (c == ' ' || c == '\t' || c == '\n')
         {
-            flush();
+            ws = true;
             continue;
         }
-        const ww = cast(int) cellsOf(w.text);
-        const sep = !first && !startsWithClosePunct(w.text);
-        if (!first && curW + (sep ? 1 : 0) + ww > limit)
-            flush();
-        if (!first && !startsWithClosePunct(w.text))
+        if (ws)
         {
-            cur ~= spaceWidget(b, hit);
-            ++curW;
+            norm ~= ' ';
+            ws = false;
         }
-        cur ~= wordWidget(b, w, hit);
-        curW += ww;
-        first = false;
+        norm ~= c;
     }
-    flush();
+    if (ws)
+        norm ~= ' ';
+    if (norm.length)
+        spans ~= TextSpan(norm, slot, style); // freshly allocated, never mutated
 }
 
-/// A single styled word widget (an inline `code` word ⇒ a rounded mono pill).
-private uint wordWidget(ref Builder b, DocWord w, size_t hit) @safe
-    => b.add(Widget(kind: WidgetKind.text, text: w.text, slot: w.slot, hitId: hit,
-        paintBackground: w.chip, textStyle: w.style,
-        decoration: w.chip ? Decoration(borderRadius: M.popupRadius) : Decoration.init));
-
-/// A 1-cell space between inline words (docs face, no background).
-private uint spaceWidget(ref Builder b, size_t hit) @safe
-    => b.add(Widget(kind: WidgetKind.text, text: " ", slot: Slot.docs, hitId: hit,
-        textStyle: docsBase()));
-
-/// `true` iff `t` begins with punctuation that hugs the preceding word (no space).
-private bool startsWithClosePunct(const(char)[] t) @safe pure nothrow @nogc
-{
-    if (t.length == 0)
-        return false;
-    switch (t[0])
-    {
-        case ',', '.', ';', ':', '!', '?', ')', ']', '}', '%':
-            return true;
-        default:
-            return false;
-    }
-}
 
 /// `src[span]` guarded against a malformed range.
 private const(char)[] sliceOf(const(char)[] src, in Span s) @safe
@@ -598,24 +552,19 @@ private uint buildPopupTagMd(ref Builder b, ref GrammarRegistry registry,
 
     if (tag.length > 1 && tag[1].length)
     {
-        DocWord[] words;
+        TextSpan[] spans;
+        spans ~= TextSpan(" ", Slot.docs, docsBase()); // gap after the chip
         MdDoc doc = extractMarkdown(registry, tag[1]);
         if (doc.root.children.length)
             foreach (ref const blk; doc.root.children)
-                flattenInlines(blk.inlines, tag[1], docsBase(), Slot.docs, words);
+                inlinesToSpans(blk.inlines, tag[1], docsBase(), Slot.docs, spans);
         else
-            pushWords(tag[1], docsBase(), Slot.docs, false, words);
+            pushProse(tag[1], docsBase(), Slot.docs, spans);
 
-        // A space before the chip's value, then each word (no space before hugging
-        // punctuation), on one row (tag values are short).
-        foreach (ref const w; words)
-        {
-            if (w.text == "\n")
-                continue;
-            if (!startsWithClosePunct(w.text))
-                parts ~= spaceWidget(b, hit);
-            parts ~= wordWidget(b, w, hit);
-        }
+        // The value on one unwrapped rich run (tag values are short).
+        parts ~= b.add(Widget(kind: WidgetKind.rich, slot: Slot.docs, hitId: hit,
+            spans: spans, textStyle: docsBase(),
+            decoration: Decoration(borderRadius: M.popupRadius)));
     }
     return b.container(WidgetKind.row, parts, gap: 0);
 }
