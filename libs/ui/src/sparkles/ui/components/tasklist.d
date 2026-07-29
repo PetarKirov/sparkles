@@ -8,13 +8,13 @@ piped output only the completed-task transitions appear, one line each.
 `renderTaskLine`/`renderTaskList` are pure producers (unit-testable, theme-
 driven); $(LREF TaskReporter) is the stateful driver the apps use.
 +/
-module sparkles.core_cli.ui.tasklist;
+module sparkles.ui.components.tasklist;
 
 import core.time : Duration, MonoTime;
 
-import sparkles.core_cli.ui.live : LiveRegion;
-import sparkles.core_cli.ui.progress : spinnerFrame;
-import sparkles.core_cli.ui.theme : Semantic, Theme;
+import sparkles.ui.components.live : LiveRegion;
+import sparkles.ui.components.progress : spinnerFrame;
+import sparkles.ui.components.theme : Semantic, Theme;
 
 /// The lifecycle of one task.
 enum TaskStatus { pending, running, ok, failed, skipped }
@@ -276,7 +276,7 @@ struct TaskReporter
 
 version (unittest)
 {
-    import sparkles.core_cli.ui.theme : StatusGlyphs;
+    import sparkles.ui.components.theme : StatusGlyphs;
 
     // Colors off ⇒ plain-text lines the assertions can read directly.
     private enum Theme plain = Theme(colors: false, unicode: true);
@@ -320,7 +320,7 @@ unittest
 unittest
 {
     import std.algorithm.searching : canFind, startsWith;
-    import sparkles.core_cli.ui.live : LiveRegion;
+    import sparkles.ui.components.live : LiveRegion;
 
     string bytes;
     auto region = LiveRegion(
@@ -347,7 +347,7 @@ unittest
 unittest
 {
     import std.algorithm.searching : canFind;
-    import sparkles.core_cli.ui.live : LiveRegion;
+    import sparkles.ui.components.live : LiveRegion;
 
     string bytes;
     auto region = LiveRegion(
@@ -370,7 +370,7 @@ unittest
 unittest
 {
     import std.algorithm.searching : canFind;
-    import sparkles.core_cli.ui.live : LiveRegion;
+    import sparkles.ui.components.live : LiveRegion;
 
     string bytes;
     auto region = LiveRegion(
@@ -409,7 +409,7 @@ unittest
 @system
 unittest
 {
-    import sparkles.core_cli.ui.live : LiveRegion;
+    import sparkles.ui.components.live : LiveRegion;
 
     string bytes;
     auto region = LiveRegion(

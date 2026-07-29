@@ -6,7 +6,7 @@ dependency "sparkles:core-cli" path="../../.."
 targetPath "build"
 +/
 
-import sparkles.core_cli.ui.header;
+import sparkles.ui.components.header;
 import std.stdio : writeln;
 
 void main()

@@ -448,7 +448,7 @@ import std.format : format;
 import std.array : appender;
 import std.utf : byDchar;
 import sparkles.base.text.grapheme : byGraphemeCluster;
-import sparkles.core_cli.ui.table : drawTable;
+import sparkles.ui.components.table : drawTable;
 
 void main()
 {

@@ -108,8 +108,8 @@ import sparkles.core_cli.process_utils :
     executeMonitored, MonitoredResult, ResourceUsage, selfRssBytes;
 import sparkles.base.styled_template : styledText, styledWritelnErr;
 import sparkles.core_cli.term_unstyle : unstyle;
-import sparkles.core_cli.ui.box : BoxProps, drawBox, TitleOverflow;
-import sparkles.core_cli.ui.header : drawHeader, HeaderProps, HeaderStyle;
+import sparkles.ui.components.box : BoxProps, drawBox, TitleOverflow;
+import sparkles.ui.components.header : drawHeader, HeaderProps, HeaderStyle;
 
 // in-app modules
 import dub_deps : parseSubPackages, rewriteInTreeDeps;
@@ -958,10 +958,10 @@ private ExecutionResult[] executeExamplesParallel(Example[] examples, string rep
     import std.parallelism : task;
     import std.range : take;
     import sparkles.base.term_caps : detectTermCaps;
-    import sparkles.core_cli.ui.live : stdoutLiveRegion;
-    import sparkles.core_cli.ui.meter : ProgressBar;
-    import sparkles.core_cli.ui.progress : spinnerFrame;
-    import sparkles.core_cli.ui.theme : makeTheme, Semantic;
+    import sparkles.ui.components.live : stdoutLiveRegion;
+    import sparkles.ui.components.meter : ProgressBar;
+    import sparkles.ui.components.progress : spinnerFrame;
+    import sparkles.ui.components.theme : makeTheme, Semantic;
 
     auto results = new ExecutionResult[](examples.length);
 
@@ -1613,9 +1613,9 @@ private int runDubTestsChecklist(string repoRoot, string[] subPackages, bool fai
 {
     import sparkles.core_cli.process_utils : runStreaming;
     import sparkles.base.term_caps : detectTermCaps;
-    import sparkles.core_cli.ui.live : stdoutLiveRegion;
-    import sparkles.core_cli.ui.tasklist : TaskReporter;
-    import sparkles.core_cli.ui.theme : makeTheme;
+    import sparkles.ui.components.live : stdoutLiveRegion;
+    import sparkles.ui.components.tasklist : TaskReporter;
+    import sparkles.ui.components.theme : makeTheme;
 
     static string lastLines(string s, size_t n)
     {

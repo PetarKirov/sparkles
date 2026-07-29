@@ -36,7 +36,7 @@ import gui_preview : PreviewModel, PreviewLine, PreviewRun, BandKind, PreviewDoc
 import gui_ansi : Attr;
 
 // 2D table grid selection (TBL): the screen↔cell map + pure region/serialize logic.
-import sparkles.core_cli.ui.table : GridHit, CellSpan;
+import sparkles.ui.components.table : GridHit, CellSpan;
 import table_select : TableRegion, TableCopyFormat, tableSelection, serializeTable;
 
 // Selective import avoids sparkles.syntax.Color clashing with raylib.Color:

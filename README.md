@@ -269,7 +269,7 @@ Important
 
 import std.stdio : writeln;
 
-import sparkles.core_cli.ui.table;
+import sparkles.ui.components.table;
 
 void main()
 {
@@ -310,7 +310,7 @@ output:
 
 import std.stdio : write;
 
-import sparkles.core_cli.ui.table;
+import sparkles.ui.components.table;
 import sparkles.base.text.width : Align;
 
 void main()
@@ -349,7 +349,7 @@ void main()
 
 import std.stdio : writeln;
 
-import sparkles.core_cli.ui.box;
+import sparkles.ui.components.box;
 
 void main()
 {
@@ -384,7 +384,7 @@ void main()
 
 import std.stdio : writeln;
 
-import sparkles.core_cli.ui.header;
+import sparkles.ui.components.header;
 
 void main()
 {
@@ -420,7 +420,7 @@ Make text clickable in terminal emulators that support [OSC 8](https://gist.gith
 
 import std.stdio : writeln;
 
-import sparkles.core_cli.ui.osc_link;
+import sparkles.ui.components.osc_link;
 import sparkles.base.term_style : Style;
 
 void main()
@@ -452,7 +452,7 @@ progress lines:
 
 import std.stdio : writeln;
 
-import sparkles.core_cli.ui.meter : meter, ProgressBar;
+import sparkles.ui.components.meter : meter, ProgressBar;
 
 void main()
 {
@@ -483,7 +483,7 @@ table's first column):
 
 import std.stdio : writeln;
 
-import sparkles.core_cli.ui.tree : renderTree, TreeNode;
+import sparkles.ui.components.tree : renderTree, TreeNode;
 
 void main()
 {
@@ -524,8 +524,8 @@ remains — no escape codes. The row renderers are pure and theme-driven:
 
 import std.stdio : writeln;
 
-import sparkles.core_cli.ui.tasklist : renderTaskList, TaskItem, TaskStatus;
-import sparkles.core_cli.ui.theme : Theme;
+import sparkles.ui.components.tasklist : renderTaskList, TaskItem, TaskStatus;
+import sparkles.ui.components.theme : Theme;
 
 void main()
 {
@@ -563,8 +563,8 @@ side by side (padded by visible width, so styled/CJK content lines up):
 
 import std.stdio : writeln;
 
-import sparkles.core_cli.ui.box : BoxProps, drawBox;
-import sparkles.core_cli.ui.layout : hjoin, kvList;
+import sparkles.ui.components.box : BoxProps, drawBox;
+import sparkles.ui.components.layout : hjoin, kvList;
 
 void main()
 {

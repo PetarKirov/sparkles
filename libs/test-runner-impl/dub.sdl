@@ -18,7 +18,16 @@ dflags "-preview=in" "-preview=dip1000" "-allinst"
 // recompile it. In-monorepo `base`/`core-cli` cannot depend on this package
 // (dub rejects the resulting cycle); they source-include it instead.
 dependency "sparkles:base" path="../.."
-dependency "sparkles:core-cli" path="../.."
+
+// The reporting UI (result tables, progress lines, OSC-8 links, the live
+// region) comes from the toolkit, not from the CLI package. `sparkles:ui`
+// depends only on `base`/`input`/`math`, so this edge closes no cycle — whereas
+// `core-cli` sits above the runner and did.
+//
+// This is also why `sparkles:ui` cannot take the fast `dependency
+// "sparkles:test-runner"` route for its own tests: that would close
+// `ui -> test-runner -> impl -> ui`. It source-includes the runner instead.
+dependency "sparkles:ui" path="../.."
 
 targetType "library"
 

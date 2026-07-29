@@ -66,8 +66,8 @@ import sparkles.base.term_style : Style, stylize;
 import sparkles.core_cli.args : CliOption, parseCliArgs;
 import sparkles.core_cli.help_formatting : HelpInfo;
 import sparkles.core_cli.process_utils : enforceExitStatus, executeMonitored;
-import sparkles.core_cli.ui.header : drawHeader, HeaderProps, HeaderStyle;
-import sparkles.core_cli.ui.table : drawTable;
+import sparkles.ui.components.header : drawHeader, HeaderProps, HeaderStyle;
+import sparkles.ui.components.table : drawTable;
 
 import sparkles.wired.json : toJSON;
 

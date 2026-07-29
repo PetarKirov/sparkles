@@ -662,7 +662,7 @@ handling in [`drawTable`][table-src] (which already unstyles for width via `visi
 [sean-parent-gp]: ../sean-parent/generic-programming.md
 [dbi-guidelines]: ../../guidelines/design-by-introspection-01-guidelines.md
 [functional-guidelines]: ../../guidelines/functional-declarative-programming-guidelines.md
-[table-src]: ../../../libs/core-cli/src/sparkles/core_cli/ui/table/render.d
+[table-src]: ../../../libs/ui/src/sparkles/ui/components/table/render.d
 
 ## External Sources
 

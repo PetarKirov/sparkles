@@ -572,7 +572,7 @@ private UnitTestResult runDefaultMode(Test[] tests, in RunnerOptions options, bo
     const threads = options.threads ? options.threads : totalCPUs;
 
     bool ranLive = false;
-    static if (hasCoreCliLive)
+    static if (hasLiveRegion)
     {
         // The same animate-or-not policy as the bench spinner (tty and no
         // color opt-outs), asked about stdout — the line redraws beneath the
@@ -896,7 +896,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     // concurrently with a measurement. While the ticker is on, the stderr
     // spinner stays off (one animation); a run with stdout redirected but
     // stderr on the terminal keeps today's spinner instead.
-    static if (hasCoreCliBenchTicker)
+    static if (hasBenchTicker)
         const bool ticker = all.length > 0
             && progressEnabled(options.noColors, stderrStream: false);
     else
@@ -913,9 +913,9 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
     TableGeometry geometry; // run-long column floors: streamed tables only widen
     string curKey;
 
-    static if (hasCoreCliBenchTicker)
+    static if (hasBenchTicker)
     {
-        import sparkles.core_cli.ui.live : LiveRegion, stdoutLiveRegion;
+        import sparkles.ui.components.live : LiveRegion, stdoutLiveRegion;
         import sparkles.test_runner.reporting : benchFrameLines;
 
         LiveRegion region;   // one per streamed group while the ticker is on
@@ -951,7 +951,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         if (bucket.length == 0)
             return;
         progress.clear(); // erase the spinner before the table
-        static if (hasCoreCliBenchTicker)
+        static if (hasBenchTicker)
         {
             if (regionLive)
             {
@@ -983,7 +983,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
             flush();
         curKey = s.key;
 
-        static if (hasCoreCliBenchTicker)
+        static if (hasBenchTicker)
             if (ticker && !regionLive)
             {
                 if (!firstFlush)
@@ -999,7 +999,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
         // Spinner label: the group + the case name when grouping (`name` alone is
         // just the varying dimension), else the case name.
         progress.tick(keys.length ? groupKeyDisplay(s.key) ~ "  " ~ s.c.name : s.c.name);
-        static if (hasCoreCliBenchTicker)
+        static if (hasBenchTicker)
             tickerFrame(BenchStats(name: s.c.name, labels: s.c.labels));
         try
         {
@@ -1038,7 +1038,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
             totalRows++;
             progress.clear();
             bool printedAbove = false;
-            static if (hasCoreCliBenchTicker)
+            static if (hasBenchTicker)
                 if (regionLive)
                 {
                     // Permanent lines above the live frame — the frame repaints
@@ -1092,7 +1092,7 @@ private UnitTestResult runBenchMode(Test[] tests, in RunnerOptions options, bool
 /// Whether `sparkles:core-cli` is in the tested package's dependency closure
 /// (see `reporting.d` for the pattern) — its `detectTermCaps` is the shared
 /// implementation of the console-preparation policy this runner used to inline.
-private enum bool hasCoreCliTermCaps = __traits(compiles, {
+private enum bool hasTermCaps = __traits(compiles, {
     import sparkles.base.term_caps : detectTermCaps;
 });
 
@@ -1131,7 +1131,7 @@ unittest
 /// keeps the same `--no-colors`/`$NO_COLOR`/tty behaviour.
 private bool prepareConsole(bool noColors)
 {
-    static if (hasCoreCliTermCaps)
+    static if (hasTermCaps)
     {
         import sparkles.base.term_caps : detectTermCaps;
 
@@ -1156,21 +1156,21 @@ private bool prepareConsole(bool noColors)
     }
 }
 
-/// Whether `core-cli`'s live-region components are importable (same pattern as
-/// `reporting.d`'s gates: `core-cli` cannot be a dub dependency of this package).
-private enum bool hasCoreCliLive = __traits(compiles, {
-    import sparkles.core_cli.ui.live : stdoutLiveRegion;
-    import sparkles.core_cli.ui.progress : ProgressLine;
+/// Whether the toolkit's live-region components are importable (same pattern as
+/// `reporting.d`'s gate: absent when a package source-includes the runner).
+private enum bool hasLiveRegion = __traits(compiles, {
+    import sparkles.ui.components.live : stdoutLiveRegion;
+    import sparkles.ui.components.progress : ProgressLine;
 });
 
 /// Likewise for the `--bench` live results table (the "ticker"): a `LiveRegion`
 /// repainting `drawTableLines` frames.
-private enum bool hasCoreCliBenchTicker = __traits(compiles, {
-    import sparkles.core_cli.ui.live : stdoutLiveRegion;
-    import sparkles.core_cli.ui.table : drawTableLines;
+private enum bool hasBenchTicker = __traits(compiles, {
+    import sparkles.ui.components.live : stdoutLiveRegion;
+    import sparkles.ui.components.table : drawTableLines;
 });
 
-static if (hasCoreCliLive)
+static if (hasLiveRegion)
 /// The tty variant of the parallel run: a polled `N/M` progress line under the
 /// streaming result lines. Workers never touch the terminal — they append their
 /// finished output to a mutex-guarded queue and bump an atomic counter; the
@@ -1189,8 +1189,8 @@ private void runParallelLive(
     import std.array : appender;
     import std.parallelism : task, TaskPool;
     import std.string : lineSplitter;
-    import sparkles.core_cli.ui.live : stdoutLiveRegion;
-    import sparkles.core_cli.ui.progress : ProgressLine;
+    import sparkles.ui.components.live : stdoutLiveRegion;
+    import sparkles.ui.components.progress : ProgressLine;
 
     auto pool = new TaskPool(threads < 1 ? 1 : threads);
     scope (exit)

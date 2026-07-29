@@ -5,7 +5,7 @@
     targetPath "build"
 +/
 
-// The theme layer (`sparkles.core_cli.ui.theme`): one `BorderStyle` selector
+// The theme layer (`sparkles.ui.components.theme`): one `BorderStyle` selector
 // picks a consistent charset across box, header, and table; `StatusGlyphs`
 // names the checklist vocabulary with ASCII fallbacks; `Semantic` maps roles to
 // styles in one place. `makeTheme(detectTermCaps())` resolves all of it from
@@ -17,10 +17,10 @@ module theme_example;
 import std.stdio : writefln, writeln;
 
 import sparkles.base.term_caps : detectTermCaps, TermCaps;
-import sparkles.core_cli.ui.box : drawBox;
-import sparkles.core_cli.ui.header : drawHeader, HeaderProps;
-import sparkles.core_cli.ui.table : drawTable, TableProps;
-import sparkles.core_cli.ui.theme;
+import sparkles.ui.components.box : drawBox;
+import sparkles.ui.components.header : drawHeader, HeaderProps;
+import sparkles.ui.components.table : drawTable, TableProps;
+import sparkles.ui.components.theme;
 
 void main()
 {

@@ -23,7 +23,7 @@ import sparkles.base.prettyprint : prettyPrint, PrettyPrintOptions;
 import sparkles.build_primitives.dir_walk : repositoryGitIgnoreStack, walkDir;
 import sparkles.build_primitives.gitignore : GitIgnore, GitIgnoreStack;
 import sparkles.core_cli.args : CliOption, HelpInfo, parseCliArgs;
-import sparkles.core_cli.ui.tree : renderTree, TreeNode;
+import sparkles.ui.components.tree : renderTree, TreeNode;
 
 enum ListingMode
 {

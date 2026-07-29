@@ -9,7 +9,7 @@ per-area breakdown) renders directly.
 (`├─`/`└─` connectors, `│` continuation rails); an ASCII fallback charset
 covers non-UTF-8 terminals.
 +/
-module sparkles.core_cli.ui.tree;
+module sparkles.ui.components.tree;
 
 /// One node of a flattened tree: pre-order position + depth define the shape.
 /// A node is a child of the nearest preceding node with a smaller depth.

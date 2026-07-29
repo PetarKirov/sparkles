@@ -4,11 +4,11 @@ Demo runner utilities for showcasing UI components.
 Provides a structured way to display multiple sections with headers,
 useful for examples and demonstrations.
 +/
-module sparkles.core_cli.ui.demo;
+module sparkles.ui.components.demo;
 
 import std.stdio : writeln;
 
-import sparkles.core_cli.ui.header : drawHeader, HeaderProps, HeaderStyle;
+import sparkles.ui.components.header : drawHeader, HeaderProps, HeaderStyle;
 
 @safe:
 

@@ -4,10 +4,10 @@ table (see `docs/specs/core-cli/table.md` §2–3): the authoring forms
 (dense `Cell[][]`, sparse `Placement[]`, `string[][]` sugar), the HTML
 slot-grid placement algorithm, and validation. No rendering concern lives
 here (nothing in this module touches `TableProps`); the renderer is
-`sparkles.core_cli.ui.table.render`, and both are re-exported through the
-`sparkles.core_cli.ui.table` package module.
+`sparkles.ui.components.table.render`, and both are re-exported through the
+`sparkles.ui.components.table` package module.
 +/
-module sparkles.core_cli.ui.table.grid;
+module sparkles.ui.components.table.grid;
 
 import std.algorithm : all, map, maxElement;
 import std.algorithm.comparison : max;
@@ -75,7 +75,7 @@ unittest
 /// One content object anchored at `(row, col)` covering a `rowSpan × colSpan`
 /// rectangle of slots. `implicit` marks a filler synthesized for a slot no authored
 /// cell covers (keeps the grid fully populated).
-package(sparkles.core_cli.ui.table) struct Anchor
+package(sparkles.ui.components.table) struct Anchor
 {
     size_t row, col, rowSpan, colSpan;
     string content;
@@ -86,7 +86,7 @@ package(sparkles.core_cli.ui.table) struct Anchor
 
 /// The resolved grid: dimensions, the anchor list, and a slot→anchor map so
 /// `owner(r, c)` is O(1). Coverage is derived from this, never stored per anchor.
-package(sparkles.core_cli.ui.table) struct SlotGrid
+package(sparkles.ui.components.table) struct SlotGrid
 {
     size_t numRows, numCols;
     Anchor[] anchors;
@@ -145,13 +145,13 @@ struct TableError
 }
 
 /// A resolved grid together with any table-model errors found while placing it.
-package(sparkles.core_cli.ui.table) struct Resolved
+package(sparkles.ui.components.table) struct Resolved
 {
     SlotGrid grid;
     TableError[] errors;
 }
 
-package(sparkles.core_cli.ui.table) Cell[][] toCells(in string[][] rows) @safe pure nothrow
+package(sparkles.ui.components.table) Cell[][] toCells(in string[][] rows) @safe pure nothrow
 {
     auto out_ = new Cell[][](rows.length);
     foreach (r, row; rows)
@@ -168,7 +168,7 @@ package(sparkles.core_cli.ui.table) Cell[][] toCells(in string[][] rows) @safe p
 /// clamp rowspans past the last authored row, then fill every uncovered slot with an
 /// implicit empty anchor so the grid is fully populated (always renderable). Overlaps
 /// and clamped rowspans are recorded as `TableError`s.
-package(sparkles.core_cli.ui.table) Resolved resolveGrid(in Cell[][] rows) @safe pure nothrow
+package(sparkles.ui.components.table) Resolved resolveGrid(in Cell[][] rows) @safe pure nothrow
 {
     Anchor[] anchors;
     TableError[] errors;
@@ -238,7 +238,7 @@ package(sparkles.core_cli.ui.table) Resolved resolveGrid(in Cell[][] rows) @safe
 /// `(row, col)` (no cursor). Same first-writer-wins overlap handling, rowspan clamp,
 /// and implicit sparse-fill as the dense path, producing an identical `SlotGrid` — so
 /// both feed the one renderer. Grid dimensions are inferred from the max extents used.
-package(sparkles.core_cli.ui.table) Resolved resolveGrid(in Placement[] placements) @safe pure nothrow
+package(sparkles.ui.components.table) Resolved resolveGrid(in Placement[] placements) @safe pure nothrow
 {
     Anchor[] anchors;
     TableError[] errors;
@@ -289,7 +289,7 @@ package(sparkles.core_cli.ui.table) Resolved resolveGrid(in Placement[] placemen
 /// Clamp any rowspan past the last row, fill every uncovered slot with an implicit
 /// empty anchor, and build the slot→anchor map. Shared by both `resolveGrid` overloads
 /// so dense and sparse inputs produce the same fully-populated (always renderable) grid.
-package(sparkles.core_cli.ui.table) SlotGrid finalizeGrid(Anchor[] anchors, bool[][] occ, size_t[][] owner,
+package(sparkles.ui.components.table) SlotGrid finalizeGrid(Anchor[] anchors, bool[][] occ, size_t[][] owner,
     size_t numRows, size_t numCols) @safe pure nothrow
 {
     foreach (ref a; anchors)
@@ -313,7 +313,7 @@ package(sparkles.core_cli.ui.table) SlotGrid finalizeGrid(Anchor[] anchors, bool
     return SlotGrid(numRows, numCols, anchors, slotOwner);
 }
 
-package(sparkles.core_cli.ui.table) size_t owner(in SlotGrid g, size_t r, size_t c) @safe pure nothrow @nogc
+package(sparkles.ui.components.table) size_t owner(in SlotGrid g, size_t r, size_t c) @safe pure nothrow @nogc
     => g.slotOwner[r * g.numCols + c];
 
 /// Validate a table's cell placement, returning the first table-model error (overlap

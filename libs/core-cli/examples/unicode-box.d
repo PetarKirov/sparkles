@@ -35,8 +35,8 @@ import std.range.primitives : ElementType, empty, front, popFront;
 import std.stdio : stdout, write, writeln;
 
 import sparkles.core_cli.args;
-import sparkles.core_cli.ui.box : BoxProps, drawBoxChunks, TitleOverflow;
-import sparkles.core_cli.ui.osc_link : oscLink;
+import sparkles.ui.components.box : BoxProps, drawBoxChunks, TitleOverflow;
+import sparkles.ui.components.osc_link : oscLink;
 import sparkles.base.term_style : Style, stylize;
 import sparkles.base.text.grapheme : visibleWidth;
 

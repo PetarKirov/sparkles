@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// Interactive playground for sparkles.core_cli.ui.table.drawTable. Loads
+// Interactive playground for sparkles.ui.components.table.drawTable. Loads
 // spk-table.wasm (the REAL drawTable compiled to wasm by `nix build .#table-wasm`)
 // and re-renders live as you tweak Storybook-style controls. All rendering logic
 // lives in D; this component only builds a JSON request, calls `spk_table_render`,

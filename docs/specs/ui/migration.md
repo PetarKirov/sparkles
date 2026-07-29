@@ -27,15 +27,40 @@ working at every commit.
 
 ## Consolidation (`MIG1`–`MIG7`)
 
-| ID   | Requirement                                                                                                                                                                                                                                                                                                                                                            | Status            | Traces to                              |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | -------------------------------------- |
-| MIG1 | Terminal **capability probing** moves to `sparkles:base`, and the terminal's **cell-geometry types** move to `sparkles:tui`, so no UI package depends on `core-cli` for either.                                                                                                                                                                                        | full (`31fb39c5`) | `base.term_caps`; `tui.geometry`       |
-| MIG2 | `core-cli`'s UI components move into `sparkles:ui` and are **restructured** as presentation-free view models plus widget views — in three separate steps, not one (see the phase note below).                                                                                                                                                                          | not started       | [widgets.md](./widgets.md) `VMD`       |
-| MIG3 | Existing consumers must keep working at every step. The **adapter direction flips mid-migration**: string emitters stay canonical while they are the only implementation, and become thin adapters over the widget path only once that path exists.                                                                                                                    | not started       | adapter shims                          |
-| MIG4 | `core-cli`'s **help output** must be expressed as widgets, so the last UI concern leaves the package and help rendering gains the same theming and capability gating as everything else.                                                                                                                                                                               | not started       | `core_cli.help_formatting`             |
-| MIG5 | The toolkit must adopt the repository's **grapheme-correct width authority** rather than its own codepoint count, resolving the current disagreement between the layout pass and the cell backend.                                                                                                                                                                     | not started       | [`LAY5`](./layout.md)                  |
-| MIG6 | The test runner's use of the moved components must stay **introspection-guarded**. It cannot take a dependency on them (that would be a cycle when testing `base`/`core-cli`, which source-include the runner), so it detects them with `__traits(compiles, …)` and degrades when absent. The move retargets those guards; it must not make the imports unconditional. | not started       | `test_runner.reporting` `hasCoreCliUi` |
-| MIG7 | `sparkles:core-cli` is a **published package**. The moved modules must leave `deprecated public import` shims behind for at least one release rather than vanishing from under external consumers.                                                                                                                                                                     | not started       | deprecation shims                      |
+| ID   | Requirement                                                                                                                                                                                                                                                                                                                                                               | Status            | Traces to                                 |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | ----------------------------------------- |
+| MIG1 | Terminal **capability probing** moves to `sparkles:base`, and the terminal's **cell-geometry types** move to `sparkles:tui`, so no UI package depends on `core-cli` for either.                                                                                                                                                                                           | full (`31fb39c5`) | `base.term_caps`; `tui.geometry`          |
+| MIG2 | `core-cli`'s UI components move into `sparkles:ui` and are **restructured** as presentation-free view models plus widget views — in three separate steps, not one (see the phase note below).                                                                                                                                                                             | partial (2a done) | [widgets.md](./widgets.md) `VMD`          |
+| MIG3 | Existing consumers must keep working at every step. The **adapter direction flips mid-migration**: string emitters stay canonical while they are the only implementation, and become thin adapters over the widget path only once that path exists.                                                                                                                       | not started       | adapter shims                             |
+| MIG4 | `core-cli`'s **help output** must be expressed as widgets, so the last UI concern leaves the package and help rendering gains the same theming and capability gating as everything else.                                                                                                                                                                                  | not started       | `core_cli.help_formatting`                |
+| MIG5 | The toolkit must adopt the repository's **grapheme-correct width authority** rather than its own codepoint count, resolving the current disagreement between the layout pass and the cell backend.                                                                                                                                                                        | not started       | [`LAY5`](./layout.md)                     |
+| MIG6 | The test runner's use of the moved components must stay **introspection-guarded**. `base`/`core-cli`/`test-utils` source-include the runner rather than depending on it, and in those builds the toolkit is absent — so it detects the components with `__traits(compiles, …)` and degrades. The move retargets those guards; it must not make the imports unconditional. | full (`M3a`)      | `test_runner.reporting` `hasUiComponents` |
+| MIG7 | `sparkles:core-cli` is a **published package**, so the move is a breaking change for external consumers. Compatibility shims under the old module names are **not possible** (see below); the break is instead documented in the changelog and the module mapping published.                                                                                              | full (`M3a`)      | `docs/specs/ui/migration.md`; changelog   |
+
+### Why `sparkles.core_cli.ui.*` cannot be a compatibility shim
+
+The obvious kindness — leave `sparkles.core_cli.ui.box` behind as a
+`public import sparkles.ui.components.box` — **does not compile**, and the reason
+is worth recording because it is not obvious.
+
+Keeping that shim means `sparkles:core-cli` hosts a package named
+`sparkles.core_cli.ui` _while its own modules import `sparkles.ui._`* (prompts
+needs the theme and the live region). From inside package `sparkles.core_cli`,
+the name `sparkles.ui.components.theme`then resolves through the nearer`sparkles.core_cli.ui`, and the compiler reports the symbols as missing:
+
+```
+prompts.d: Error: module `sparkles.ui.components.theme` import `Semantic` not found
+```
+
+It reproduces with a plain selective import and with `static import` alike, and
+it disappears the moment the shim package is removed. The collision is between
+the _package names_, so no import style avoids it: a package cannot both shadow
+`sparkles.ui` and depend on it.
+
+Since `core-cli` must import the toolkit (`PKG4` keeps prompts and help there),
+the shims lose. External consumers get a documented break and a module mapping —
+`sparkles.core_cli.ui.X` → `sparkles.ui.components.X` — which is a mechanical
+find-and-replace.
 
 ### The three phases of `MIG2`, and why they cannot be one
 
@@ -55,7 +80,7 @@ So `MIG2` is three steps, each independently green:
 
 | Phase | Scope                                                                                                                                                                                | Canonical implementation |
 | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------ |
-| 2a    | **Mechanical move** — modules relocate, imports rewrite, deprecation shims land. Output must be **byte-identical**; goldens unchanged.                                               | the string emitters      |
+| 2a    | **Mechanical move** — modules relocate, imports rewrite, imports rewrite. Output must be **byte-identical**; goldens unchanged.                                                      | the string emitters      |
 | 2b    | **View-model extraction** — the presentation-free half (grid model, column widths, tree flattening, meter fill) is separated out and tested with no renderer. Emitters call into it. | the string emitters      |
 | 2c    | **Widget views** — added on top once the layout and widget capabilities exist; the emitters become adapters that render a widget tree through the cell backend.                      | the widget tree          |
 

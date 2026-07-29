@@ -1,6 +1,6 @@
 // wasm32-wasip1 entry module backing the interactive drawTable playground in
 // docs/libs/core-cli/table.md. Compiled by `nix build .#table-wasm` against the
-// real `sparkles.core_cli.ui.table` (the LDC WASI fork gives us full Phobos + a
+// real `sparkles.ui.components.table` (the LDC WASI fork gives us full Phobos + a
 // GC), then shrunk with wasm-opt and served as docs/public/spk-table.wasm.
 //
 // ABI (mirrors libs/base/wasm/spk_text_wasm.d's shared-scratch-buffer pattern):
@@ -22,11 +22,11 @@ import std.json : parseJSON, JSONValue, JSONType;
 import std.algorithm : map;
 import std.array : array;
 
-import sparkles.core_cli.ui.table :
+import sparkles.ui.components.table :
     drawTable, TableProps, TableGlyphs, EmphasisGlyphs, Cell, Placement, presetGlyphs;
 import sparkles.base.text.width : Align;
 import sparkles.base.text.grapheme : byGraphemeCluster;
-import sparkles.core_cli.ui.table : VAlign;
+import sparkles.ui.components.table : VAlign;
 
 // Shared scratch buffer: JS writes the JSON request at offset 0 and reads the
 // rendered UTF-8 (or an error message) back from a caller-chosen output offset.

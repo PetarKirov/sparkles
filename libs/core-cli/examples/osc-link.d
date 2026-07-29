@@ -10,7 +10,7 @@ module osc_link_example;
 
 import std.stdio : writeln;
 
-import sparkles.core_cli.ui.osc_link;
+import sparkles.ui.components.osc_link;
 import sparkles.base.term_style : Style;
 
 void main()

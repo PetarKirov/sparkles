@@ -15,7 +15,7 @@ The region writes through an injected sink (testable without a terminal); use
 $(LREF stdoutLiveRegion) for the real thing, and `scope (exit) region.finish();`
 so a thrown exception never leaves the cursor hidden.
 +/
-module sparkles.core_cli.ui.live;
+module sparkles.ui.components.live;
 
 import sparkles.base.term_control : CtlSeq, writeCursorUp;
 

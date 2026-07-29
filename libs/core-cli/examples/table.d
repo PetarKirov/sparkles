@@ -14,8 +14,8 @@
 // measures content in *terminal cells* (via `sparkles.base.text`) rather than
 // bytes — a misaligned column would be immediately visible.
 
-import sparkles.core_cli.ui.demo : Section, runDemo;
-import sparkles.core_cli.ui.table :
+import sparkles.ui.components.demo : Section, runDemo;
+import sparkles.ui.components.table :
     drawTable, Cell, Placement, TableProps, TableGlyphs, VAlign, stylePresets,
     validateTable, TableError;
 import sparkles.base.styled_template : styledText;
@@ -318,7 +318,7 @@ private string streamingNote()
     import std.algorithm.iteration : joiner, map;
     import std.conv : text, to;
     import std.range : enumerate;
-    import sparkles.core_cli.ui.table : drawTableChunks, drawTableLines;
+    import sparkles.ui.components.table : drawTableChunks, drawTableLines;
 
     auto cells = [["a", "b"], ["1", "2"]];
     string out_;

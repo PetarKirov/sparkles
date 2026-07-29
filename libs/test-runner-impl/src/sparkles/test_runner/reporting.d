@@ -19,20 +19,22 @@ import sparkles.test_runner.ctfe_trace : CtfeTestCost;
 import sparkles.test_runner.metrics : MetricClass, MetricDescriptor;
 import sparkles.test_runner.model : Test, TestLocation, TestResult, Thrown;
 
-/// Whether `sparkles:core-cli` is in the tested package's dependency closure.
-/// It cannot be a dub dependency of this package (that would be a cycle when
-/// testing `base`/`core-cli` themselves), so its UI niceties are detected by
-/// introspection and skipped when absent.
-private enum bool hasCoreCliUi = __traits(compiles, {
-    import sparkles.core_cli.ui.osc_link : oscLink;
-    import sparkles.core_cli.ui.table : drawTable;
-    import sparkles.core_cli.ui.progress : ProgressLine;
+/// Whether the `sparkles:ui` components are in the tested package's dependency
+/// closure. This package *does* depend on them, but `base`/`core-cli`/`test-utils`
+/// source-include the runner rather than depending on it (that would be a cycle
+/// when testing themselves), and in those builds the toolkit is absent — so the
+/// UI niceties are detected by introspection and skipped when missing. Keep this
+/// a guard, never an unconditional import: `docs/specs/ui/migration.md` `MIG6`.
+private enum bool hasUiComponents = __traits(compiles, {
+    import sparkles.ui.components.osc_link : oscLink;
+    import sparkles.ui.components.table : drawTable;
+    import sparkles.ui.components.progress : ProgressLine;
 });
 
-/// Likewise for `core-cli`'s terminal-size query, used to width-truncate result
-/// lines. Absent in `base`'s own test build (no `core-cli` there), where it
-/// degrades to `0` = unknown = no truncation.
-private enum bool hasCoreCliTermCaps = __traits(compiles, {
+/// Likewise for the terminal-size query used to width-truncate result lines.
+/// It lives in `sparkles:base`, so it is available wherever the runner is —
+/// the guard remains only so a `-betterC`/freestanding build can drop it.
+private enum bool hasTermCaps = __traits(compiles, {
     import sparkles.base.term_caps : terminalSize;
 });
 
@@ -43,7 +45,7 @@ private enum bool hasCoreCliTermCaps = __traits(compiles, {
 /// draws there, and `dub test -- --bench > file` leaves only stderr on the tty.
 package uint detectTerminalWidth(bool stderrStream = false)
 {
-    static if (hasCoreCliTermCaps)
+    static if (hasTermCaps)
     {
         import sparkles.base.term_caps : StdStream, terminalSize;
 
@@ -98,12 +100,12 @@ string formatLocation(in TestLocation location, bool colored) @safe
         return null;
 
     const label = text(location.file, ':', location.line);
-    static if (hasCoreCliUi)
+    static if (hasUiComponents)
     {
         if (colored)
         {
             import std.path : absolutePath;
-            import sparkles.core_cli.ui.osc_link : oscLink;
+            import sparkles.ui.components.osc_link : oscLink;
 
             const uri = text("file://", location.file.absolutePath, "#L", location.line);
             return "[" ~ oscLink(label, uri) ~ "]";
@@ -693,12 +695,12 @@ package string[] benchFrameLines(in BenchStats[] rows, BenchStats inflight,
     size_t spin, bool colored, string metricFilter, string sortBy,
     in string[] groupKeys, size_t nameFloor, ref TableGeometry geometry) @system
 {
-    static if (hasCoreCliUi)
+    static if (hasUiComponents)
     {
         import std.algorithm.searching : canFind;
         import std.array : array;
-        import sparkles.core_cli.ui.progress : spinnerFrame;
-        import sparkles.core_cli.ui.table : drawTableLines, TableProps;
+        import sparkles.ui.components.progress : spinnerFrame;
+        import sparkles.ui.components.table : drawTableLines, TableProps;
         import sparkles.test_runner.metrics : labelKeyUnion;
 
         if (rows.length == 0 && inflight.name.length == 0)
@@ -841,7 +843,7 @@ unittest
     assert(fast > 0 && slow > 0, rendered);
     // Only the gated drawTable build resolves a shared dot column; the plain
     // fallback deliberately degrades decimal to right alignment.
-    static if (hasCoreCliUi)
+    static if (hasUiComponents)
         assert(fast == slow, rendered);
 }
 
@@ -880,7 +882,7 @@ unittest
 @system
 unittest
 {
-    static if (hasCoreCliUi)
+    static if (hasUiComponents)
     {
         import std.algorithm.searching : canFind;
         import std.array : join;
@@ -913,7 +915,7 @@ unittest
 @system
 unittest
 {
-    static if (hasCoreCliUi)
+    static if (hasUiComponents)
     {
         import std.array : join;
 
@@ -1148,9 +1150,9 @@ package string renderCells(
     string title = null, in size_t[] minWidths = null)
 @system // drawTable is @system
 {
-    static if (hasCoreCliUi)
+    static if (hasUiComponents)
     {
-        import sparkles.core_cli.ui.table : drawTable, TableProps;
+        import sparkles.ui.components.table : drawTable, TableProps;
 
         return drawTable(cells, TableProps(
             headerRows: headerRows, columnAligns: aligns.dup, title: title,
@@ -1327,7 +1329,7 @@ package bool progressEnabled(bool noColors, bool stderrStream = true)
     if (noColors || environment.get("NO_COLOR", "").length != 0
         || environment.get("TERM", "") == "dumb")
         return false;
-    static if (hasCoreCliTermCaps)
+    static if (hasTermCaps)
     {
         import sparkles.base.term_caps : isTerminal, StdStream;
 
@@ -1392,12 +1394,12 @@ package struct BenchProgress
         done++;
         frame++;
 
-        static if (hasCoreCliUi)
+        static if (hasUiComponents)
         {
             import sparkles.base.smallbuffer : SmallBuffer;
             import sparkles.base.term_control : CtlSeq;
             import sparkles.base.text.width : truncateField;
-            import sparkles.core_cli.ui.progress : ProgressLine;
+            import sparkles.ui.components.progress : ProgressLine;
 
             if (started == MonoTime.init)
                 started = MonoTime.currTime;

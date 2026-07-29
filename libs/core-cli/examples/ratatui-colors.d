@@ -28,7 +28,7 @@ import sparkles.base.term_style : TermStyle, writeStyleTransition;
 import sparkles.base.text.width : Align, alignField;
 import sparkles.base.text.writers : writeInteger;
 import sparkles.base.term_caps : detectTermCaps;
-import sparkles.core_cli.ui.header : drawHeader;
+import sparkles.ui.components.header : drawHeader;
 
 /// One assembled output line; ample and inline, so `clear()` (and reuse across
 /// rows) never touches the heap.

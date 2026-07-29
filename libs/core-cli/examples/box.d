@@ -8,9 +8,9 @@
 import std.algorithm : map, joiner;
 import std.conv : to;
 
-import sparkles.core_cli.ui.box : drawBox, BoxProps, TitleOverflow;
-import sparkles.core_cli.ui.demo : Section, runDemo;
-import sparkles.core_cli.ui.table : drawTable;
+import sparkles.ui.components.box : drawBox, BoxProps, TitleOverflow;
+import sparkles.ui.components.demo : Section, runDemo;
+import sparkles.ui.components.table : drawTable;
 import sparkles.base.term_style : Style, stylize, styleSample;
 import sparkles.base.styled_template : styledText;
 import sparkles.base.prettyprint : prettyPrint, PrettyPrintOptions;

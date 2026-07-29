@@ -5,7 +5,7 @@
     targetPath "build"
 +/
 
-// Proportional bars (`sparkles.core_cli.ui.meter`): eighth-cell precision
+// Proportional bars (`sparkles.ui.components.meter`): eighth-cell precision
 // meters, the count/max form, the ASCII fallback, and the composed
 // `ProgressBar` / `ProgressLine` one-liners that live regions repaint.
 
@@ -14,8 +14,8 @@ module meter_example;
 import core.time : msecs;
 import std.stdio : writefln, writeln;
 
-import sparkles.core_cli.ui.meter : meter, meterGlyphs, ProgressBar;
-import sparkles.core_cli.ui.progress : ProgressLine, spinnerFrame;
+import sparkles.ui.components.meter : meter, meterGlyphs, ProgressBar;
+import sparkles.ui.components.progress : ProgressLine, spinnerFrame;
 
 void main()
 {

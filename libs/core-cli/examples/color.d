@@ -26,7 +26,7 @@ string allNonColorTextOptions()
 
 void main()
 {
-    import sparkles.core_cli.ui.table;
+    import sparkles.ui.components.table;
     enum text = "asd";
     string[][] table = new string[][colorStyles.length];
     foreach (i, color; colorStyles)
