@@ -1,4 +1,4 @@
-// `hue --gui` — the raylib adapter for `sparkles:ui`.
+// The raylib adapter for `sparkles:ui` (`TGT6`).
 //
 // `RaylibCanvas` satisfies the `sparkles.ui.canvas.isCanvas` capability concept
 // (fillRect / textRun / glyph / line / measure) by folding each primitive into a
@@ -12,11 +12,7 @@
 // `paint`. Colors come already-resolved on each `Visual` (fg/bg + alpha), so the
 // canvas never consults a palette or theme — it only paints.
 //
-// Compiled only by the `gui` build configuration (version(HueGui)); inert in the
-// terminal / unittest builds (which never link raylib). See gui.d.
-module gui_canvas;
-
-version (HueGui):
+module sparkles.ui_raylib.raylib_canvas;
 
 import raylib;
 
@@ -25,10 +21,8 @@ import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.base.term_style : TextAttr, UnderlineStyle;
 
 import sparkles.ui.canvas : isCanvas, LineStyle;
-import sparkles.ui.geometry : Insets, Point, Rect, Size;
+import sparkles.ui.geometry : cellsOf, Insets, Point, Rect, Size;
 import sparkles.ui.style : BorderStyle, Visual;
-
-import gui_text : columnWidth;
 
 /// A resolved `Visual`'s foreground as a raylib `Color` (with its alpha).
 Color rlFg(in Visual v) pure nothrow @nogc @trusted
@@ -250,9 +244,10 @@ struct RaylibCanvas
     }
 
     /// The cell extent of a text run (height 1). The width authority is
-    /// `columnWidth`, the same one `drawText` advances by.
+    /// `cellsOf` — the toolkit's one width authority, the same one-column-per-
+    /// codepoint advance `drawText` uses.
     Size measure(scope const(char)[] text) @system
-        => Size(cast(int) columnWidth(text), 1);
+        => Size(cast(int) cellsOf(text), 1);
 
     /// NUL-terminates `s` in the scratch buffer for a raylib string draw.
     private const(char)[] cstr(scope const(char)[] s) @system

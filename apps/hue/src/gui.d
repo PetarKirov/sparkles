@@ -62,7 +62,7 @@ import sparkles.ui.canvas : LineStyle, OpKind;
 import sparkles.ui.layout : layout;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.interp.immediate : paint;
-import gui_canvas : RaylibCanvas, rlBg;
+import sparkles.ui_raylib : RaylibCanvas, rlBg;
 
 // The multi-document set the twoslash view navigates with `[`/`]` (`GNV1`), plus
 // the two entry points a navigation reload needs.
