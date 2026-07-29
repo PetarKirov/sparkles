@@ -921,17 +921,12 @@ int runGui(
                     }
                     copied = pl.copyFence == copiedFence && copiedTimer > 0;
                 }
-                else // whole-table copy (per --table-copy), like a grid selection
+                else // whole-table copy: the raw markdown source (like the code button)
                 {
-                    if (clicked && pl.copyTable < cast(int) tables.length)
+                    if (clicked && pl.selSrcStart != size_t.max
+                        && pl.selSrcEnd <= source.length)
                     {
-                        const tv = tables[pl.copyTable];
-                        const reg = TableRegion(rowLo: 0, rowHi: tv.map.numRows - 1,
-                            colLo: 0, colHi: tv.map.numCols - 1);
-                        const txt = serializeTable(reg,
-                            (size_t r, size_t c) => tv.map.cellText(r, c), tableFmt);
-                        if (txt.length)
-                            SetClipboardText(txt.toStringz);
+                        SetClipboardText(source[pl.selSrcStart .. pl.selSrcEnd].toStringz);
                         copiedTable = pl.copyTable;
                         copiedFence = -1;
                         copiedTimer = 1.2f;
