@@ -8,9 +8,9 @@ the paint hot path.
 
 A canvas draws four primitives — $(LREF DrawOp) is their reified, backend-neutral
 form, the boundary between the pure model (`buildDisplayList`) and the impure
-painter (`interp/immediate.paint`). This module also defines the abstract input
-events ($(LREF PointerEvent)/$(LREF WheelEvent)/$(LREF KeyEvent)) the state
-machines in $(MREF sparkles,ui,state) consume.
+painter (`interp/immediate.paint`). Input is $(B not) defined here: the state
+machines in $(MREF sparkles,ui,state) consume the shared `sparkles:input`
+vocabulary, which backends produce.
 */
 module sparkles.ui.canvas;
 
@@ -52,31 +52,6 @@ struct DrawOp
     LineStyle lineStyle;
     Slot slot;          /// the semantic role this op was resolved from
     Visual visual;      /// resolved appearance
-}
-
-/// A pointer position + button state, in cell coordinates.
-struct PointerEvent
-{
-    Point pos;     /// cursor position on the cell grid
-    bool pressed;  /// is the primary button down?
-    bool inside;   /// is the pointer within the viewport at all?
-}
-
-/// A scroll delta, in cells.
-struct WheelEvent
-{
-    int dx;
-    int dy;
-}
-
-/// A key press, decoded to a codepoint plus modifier flags (enough for the
-/// interactive TUI overlay; extend as needed).
-struct KeyEvent
-{
-    dchar key;   /// the codepoint (or 0 for a non-textual key)
-    bool ctrl;
-    bool alt;
-    bool shift;
 }
 
 /**
