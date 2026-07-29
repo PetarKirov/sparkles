@@ -34,7 +34,9 @@ import sparkles.base.term_control : CtlSeq;
 import sparkles.core_cli.key_input : stdioKeySession;
 import sparkles.base.term_caps : isTerminal, StdStream;
 
+import document : ContentKind, Document, DocumentPipeline;
 import previewer : BackgroundMode, backgroundOptions, Previewer, runLoop, TermOut;
+import source_set : SourceSet;
 import table_select : TableCopyFormat;
 
 struct CliParams
@@ -252,6 +254,38 @@ private bool displayAvailable()
             || environment.get("WAYLAND_DISPLAY", "").length != 0;
 }
 
+/// The render sink a run paints into — one choice, made once. The old code
+/// spread this across `wantGui`, `html`, and an `interactive` tty check; the
+/// content question ("what is this document?") lives in `document.detect`.
+enum Backend : ubyte
+{
+    gui,  /// the raylib window
+    tui,  /// the interactive terminal (alt screen)
+    html, /// static HTML on stdout
+    ansi, /// static ANSI on stdout (piped / redirected)
+}
+
+/// Picks the sink: explicit flags win (`--gui`; `--no-gui`/`--tui`/`--html`
+/// force the terminal), then autodetect — a GUI build with a display and a
+/// tty opens the window; a tty gets the interactive viewer; anything else
+/// streams ANSI.
+private Backend pickBackend(in CliParams cli)
+{
+    bool guiCompiledIn = false;
+    version (HueGui) guiCompiledIn = true;
+
+    if (cli.gui)
+        return Backend.gui; // even without GUI support: the sink reports it
+    if (cli.html)
+        return Backend.html;
+    if (!cli.noGui && !cli.tui && guiCompiledIn
+        && isTerminal(StdStream.stdout) && displayAvailable())
+        return Backend.gui;
+    if (isTerminal(StdStream.stdin) && isTerminal(StdStream.stdout))
+        return Backend.tui;
+    return Backend.ansi;
+}
+
 int main(string[] args)
 {
     const cli = args.parseCliArgs!CliParams(
@@ -264,257 +298,206 @@ int main(string[] args)
 
     initLogger(LogLevel.warning); // hue only emits degradation warnings
 
-    bool html = cli.html;
-    string themeName = cli.theme;
-    const bgMode = parseBackgroundMode(cli.background);
-
-    // Twoslash mode consumes a JSON payload (its own `code` + nodes) instead of
-    // a source file — a fourth consumer of the syntax pipeline that overlays the
-    // twoslash decorations. See src/twoslash_mode.d.
-    if (cli.twoslash.length)
-        return runTwoslashMode(cli, themeName);
-
-    // A directory target is a multi-document set (`SRC4`). With `--html` it renders
-    // as a static gallery; with `--gui` it opens the interactive index view
-    // (`GAL5`) below; otherwise it degrades to a listing.
-    const dirTarget = args.length > 1 && isDirectoryPath(args[1]);
-    if (dirTarget && !cli.gui)
-        return runDirectoryTarget(cli, args[1], twoslash: false, themeName);
-
-    // With a path argument, highlight that file; otherwise highlight hue's own
-    // source, embedded at compile time via `import()`. That works from any
-    // install location — the build-time `__FILE_FULL_PATH__` would not exist in
-    // a released (nix-packaged or copied) binary.
-    import source_set : collectSources, SourceSet;
-
-    // With a directory target the set drives the viewer; the first entry is the
-    // document loaded up front (the index view opens on top of it).
-    SourceSet docSet;
-    bool haveSet;
-    if (dirTarget)
-    {
-        docSet = collectSources(args[1], twoslash: false);
-        if (docSet.empty)
-        {
-            stderr.writeln("hue: no renderable files in '", args[1], "'");
-            return 1;
-        }
-        haveSet = true;
-    }
-
-    const hasFile = args.length > 1;
-    const sourcePath = haveSet ? docSet.current.path : (hasFile ? args[1] : "app.d");
-    const source = haveSet ? readText(sourcePath)
-        : (hasFile ? readText(sourcePath) : import("app.d"));
-    const lang = canonicalLanguage(sourcePath.extension.chompPrefix("."));
-
-    // Markdown files render the decorated preview by default in every sink (MOD8);
-    // `--markdown` forces it for a non-.md extension, `--raw` suppresses it.
-    const isMarkdownPreview = !cli.raw && (lang == "markdown" || cli.markdown);
+    // `--twoslash <path>` is the old mode spelling: it now only names the
+    // target and forces the kind (a `*.twoslash.json` path needs no flag).
+    const forceTwoslash = cli.twoslash.length != 0;
+    string target = forceTwoslash ? cli.twoslash : (args.length > 1 ? args[1] : "");
 
     const labels = LabelSet.standard();
-
     // `.get`'s default is `lazy`, so the warning fires only on a miss.
-    const theme = resolveTheme(builtinThemes.get(themeName, {
-            warning(i"theme '$(themeName)' not found; falling back to the default dark theme");
+    const theme = resolveTheme(builtinThemes.get(cli.theme, {
+            warning(i"theme '$(cli.theme)' not found; falling back to the default dark theme");
             return builtinDark;
         }()), labels);
 
-    // Engine side: any failure falls back to plain text. Use the injection-aware
-    // path so that markdown (and other languages with injections.scm) get their
-    // fenced code blocks / inline content highlighted by nested grammars.
-    SmallBuffer!HighlightEvent events;
     auto registry = GrammarRegistry.fromEnvironment();
     auto cache = TsConfigCache.create(&registry, labels);
+    auto pipeline = DocumentPipeline(&registry, &cache, cli.markdown, cli.raw);
 
-    auto res = highlightInjected(cache, lang, source, events);
-    if (res.hasError)
+    const backend = pickBackend(cli);
+
+    // A directory target is a multi-document set (`SRC4`). Interactive sinks
+    // open the set (the GUI index view / `[`-`]` navigation); static sinks
+    // render the gallery (`--html`) or a listing.
+    import source_set : collectSources, SourceSet;
+
+    SourceSet docSet;
+    bool haveSet;
+    if (isDirectoryPath(target))
     {
-        warning(i"no grammar for '$(lang)' — rendering as plain text");
-        events ~= HighlightEvent.sourceSpan(0, source.length);
-    }
-
-    // Render the whole file to ANSI and write it — used by both non-interactive
-    // paths (piped/redirected output, and no key session available).
-    int emitAnsiWholeFile()
-    {
-        import gui_preview : layoutPreview, quoteBarColors;
-        import preview_ansi : renderPreviewAnsi;
-
-        SmallBuffer!char output;
-        const depth = detectColorDepth();
-        if (isMarkdownPreview)
+        const openSet = backend == Backend.gui
+            || (forceTwoslash && backend == Backend.tui);
+        if (!openSet)
+            return runDirectoryTarget(cli, target, forceTwoslash, cli.theme);
+        docSet = collectSources(target, twoslash: forceTwoslash);
+        if (docSet.empty)
         {
-            // A markdown file renders the decorated preview (ANS3): the shared
-            // layoutPreview painted to SGR cells by preview_ansi, so the terminal
-            // matches the GUI. `--raw` takes the source path below.
-            const pageFg = toRgb(theme.defaults.fg, hardFallbackFg);
-            const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
-            auto model = buildMdPreview(registry, cache, source);
-            auto plines = layoutPreview(model, theme, pageFg, pageBg, previewWidth());
-            renderPreviewAnsi(output, plines, pageFg, pageBg,
-                quoteBarColors(theme, pageFg, pageBg), depth, bgMode);
-        }
-        else
-        {
-            renderAnsi(source, events[], theme, output,
-                bgMode.backgroundOptions(depth, italics: true));
-        }
-        write(output[]);
-        return 0;
-    }
-
-    // Sorted theme names, plus the parallel theme values the previewer/GUI index
-    // per frame (avoids per-frame GC AA lookups; `.keys` already returns a fresh
-    // array, so no `.dup`). Shared by the GUI and terminal previewer paths.
-    string[] names = builtinThemes.keys;
-    import std.algorithm.sorting : sort;
-    import std.algorithm.iteration : map;
-    import std.array : array;
-    sort(names);
-    immutable(Theme)[] themes = names.map!(n => *(n in builtinThemes)).array;
-
-    size_t idx = 0;
-    foreach (i, n; names) if (n == themeName) { idx = i; break; }
-
-    // Third sink: the raylib GPU window. A third consumer of the same
-    // (source, events, theme) triple — folds styled runs into draw calls
-    // instead of ANSI/HTML. Compiled only into the `gui` build; the default
-    // terminal build has no window.
-    //
-    // Mode selection: explicit flags win — `--gui` forces the window (even with
-    // no display; raylib surfaces any failure), `--no-gui`/`--tui`/`--html`
-    // force the terminal. With no mode flag, autodetect on a GUI-enabled build:
-    // open the window when a display is available and stdout is a tty, otherwise
-    // fall through to the terminal dispatch below.
-    bool guiCompiledIn = false;
-    version (HueGui) guiCompiledIn = true;
-
-    bool wantGui;
-    if (cli.gui)
-        wantGui = true;
-    else if (cli.noGui || cli.tui || html)
-        wantGui = false;
-    else
-        wantGui = guiCompiledIn && isTerminal(StdStream.stdout) && displayAvailable();
-
-    if (wantGui)
-    {
-        version (HueGui)
-        {
-            import gui : runGui;
-            import gui_preview : PreviewModel;
-
-            // Markdown files open in a rendered preview (Tab toggles to raw);
-            // other files pass an empty model and use the raw view only.
-            PreviewModel preview;
-            if (isMarkdownPreview)
-                preview = buildMdPreview(registry, cache, source);
-
-            // The document loader the viewer calls when navigating a set (`GNV1`):
-            // app.d owns the grammar registry + cache, so the GUI never duplicates
-            // this pipeline.
-            import gui : LoadedDoc;
-
-            LoadedDoc loadDoc(string path) @system
-            {
-                LoadedDoc doc;
-                doc.source = readText(path);
-                const l = canonicalLanguage(path.extension.chompPrefix("."));
-                SmallBuffer!HighlightEvent ev;
-                if (highlightInjected(cache, l, doc.source, ev).hasError)
-                    ev ~= HighlightEvent.sourceSpan(0, doc.source.length);
-                doc.events = ev[].dup;
-                // Same rule as the up-front document (`CLI9` --raw wins).
-                if (!cli.raw && (l == "markdown" || cli.markdown))
-                    doc.preview = buildMdPreview(registry, cache, doc.source);
-                return doc;
-            }
-
-            return runGui(baseName(sourcePath), source, events[], labels, names,
-                themes, idx, preview, cli.font, cli.fontSize,
-                cli.windowWidth, cli.windowHeight, cli.lineNumbers, cli.codeLineNumbers,
-                cli.ansiCopy == "strip", parseTableCopy(cli.tableCopy),
-                haveSet ? &docSet : null, haveSet ? &loadDoc : null);
-        }
-        else
-        {
-            // Reached only via explicit `--gui` on a build without GUI support
-            // (autodetect never sets wantGui here — guiCompiledIn is false).
-            stderr.writeln("hue: this build has no GUI support (built with " ~
-                "-c no-gui); use the default build: dub build :hue");
+            stderr.writeln("hue: no renderable files in '", target, "'");
             return 1;
         }
+        haveSet = true;
+        target = docSet.current.path;
     }
 
-    const interactive = !html &&
-        isTerminal(StdStream.stdin) && isTerminal(StdStream.stdout);
-
-    if (!interactive)
+    // One loader for every sink. With no target, hue views its own source,
+    // embedded at compile time via `import()` (a released binary has no
+    // build-tree `__FILE_FULL_PATH__` to read).
+    Document doc;
+    try
+        doc = target.length
+            ? pipeline.load(target, forceTwoslash)
+            : pipeline.fromSource("app.d", "app.d", import("app.d"), "d");
+    catch (Exception e)
     {
-        if (html)
-        {
-            // A markdown file renders the rich HTML preview (HTM5); `--raw` and a
-            // non-markdown file emit highlighted source.
-            if (isMarkdownPreview)
-                return emitMarkdownHtml(source, theme, registry, cache);
+        stderr.writeln("hue: ", e.msg);
+        return 1;
+    }
 
-            // The `.syn-root` rule writeThemeStylesheet emits carries the
-            // default fg/bg; give the wrapper that class so it applies, instead
-            // of re-deriving the same colors into a duplicate `pre {}` rule.
+    final switch (backend)
+    {
+        case Backend.gui:
+            return runGuiSink(cli, doc, labels, theme, cache,
+                haveSet ? &docSet : null, &pipeline);
+        case Backend.html:
+            return runHtmlSink(doc, theme, registry, cache);
+        case Backend.tui:
+            return runTuiSink(cli, doc, labels, theme, cache,
+                haveSet ? &docSet : null);
+        case Backend.ansi:
+            return runAnsiSink(cli, doc, theme, cache);
+    }
+}
+
+// ── The four sinks — each a `final switch` over the document's kind ─────────
+
+/// Static ANSI to stdout (piped / redirected / non-tty).
+private int runAnsiSink(in CliParams cli, ref Document doc,
+    in ResolvedTheme theme, ref TsConfigCache cache) @system
+{
+    // The headless TUI-frame capture hook works from a pipe (see runTuiSink).
+    if (doc.kind == ContentKind.twoslash && tryTwoslashCapture(doc, theme, cache))
+        return 0;
+
+    SmallBuffer!char output;
+    const depth = detectColorDepth();
+    const bgMode = parseBackgroundMode(cli.background);
+    final switch (doc.kind) with (ContentKind)
+    {
+        case twoslash:
+            renderTwoslashAnsi(doc.twoslash, doc.events, theme, cache, output,
+                TwoslashAnsiOptions(depth: depth, italics: true, emitBackground: true));
+            break;
+        case markdown:
+            // The decorated preview (ANS3): the shared layoutPreview painted to
+            // SGR cells, so the terminal matches the GUI.
+            import gui_preview : layoutPreview, quoteBarColors;
+            import preview_ansi : renderPreviewAnsi;
+
+            const pageFg = toRgb(theme.defaults.fg, hardFallbackFg);
+            const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
+            auto plines = layoutPreview(doc.preview, theme, pageFg, pageBg,
+                previewWidth());
+            renderPreviewAnsi(output, plines, pageFg, pageBg,
+                quoteBarColors(theme, pageFg, pageBg), depth, bgMode);
+            break;
+        case code:
+            renderAnsi(doc.source, doc.events, theme, output,
+                bgMode.backgroundOptions(depth, italics: true));
+            break;
+    }
+    write(output[]);
+    return 0;
+}
+
+/// Static HTML to stdout.
+private int runHtmlSink(ref Document doc, in ResolvedTheme theme,
+    ref GrammarRegistry registry, ref TsConfigCache cache) @system
+{
+    final switch (doc.kind) with (ContentKind)
+    {
+        case twoslash:
+            import gallery : twoslashFragment;
+
+            write(twoslashFragment(doc.twoslash, doc.events, theme, cache));
+            return 0;
+        case markdown:
+            // The rich preview (HTM5); `--raw` loads the document as `code`.
+            return emitMarkdownHtml(doc.source, theme, registry, cache);
+        case code:
             // The same builder feeds the gallery, so both emit identical content.
             import gallery : plainFragment;
 
-            write(plainFragment(source, events[], theme));
+            write(plainFragment(doc.source, doc.events, theme));
             return 0;
+    }
+}
+
+/// The interactive terminal (alt screen). Posix gets the full-screen viewers;
+/// elsewhere the theme-selection previewer (no raw-termios TUI) fills in.
+private int runTuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
+    in ResolvedTheme theme, ref TsConfigCache cache,
+    scope SourceSet* docSet) @system
+{
+    import source_set : SourceSet;
+
+    if (doc.kind == ContentKind.twoslash)
+    {
+        if (tryTwoslashCapture(doc, theme, cache))
+            return 0;
+        version (Posix)
+        {
+            import twoslash_tui : runTuiTwoslash;
+
+            return runTuiTwoslash(doc.title, doc.twoslash, doc.events, theme,
+                cache, docSet);
         }
-        return emitAnsiWholeFile();
+        else
+        {
+            // No interactive twoslash TUI off-Posix: degrade to the ANSI render.
+            return runAnsiSink(cli, doc, theme, cache);
+        }
     }
 
+    const bgMode = parseBackgroundMode(cli.background);
     const depth = detectColorDepth();
+    auto themeSet = sortedThemes(cli.theme);
 
     version (Posix)
     {
         // The full-screen scrolling viewer (tui.md T1): the terminal port of the
-        // GUI, painting the shared PreviewLine[] into alt-screen cells. A markdown
-        // file starts in the decorated preview (Tab toggles to raw source); other
-        // files show highlighted source. Scroll with arrows / PageUp-Down /
-        // Home-End (or j/k/g/G), cycle themes with ←/→, quit with q.
-        import gui_preview : PreviewModel;
+        // GUI. A markdown document starts in the decorated preview (Tab toggles
+        // to raw); code shows highlighted source.
         import tui : PreviewTui, runPreviewTui;
 
-        PreviewModel tuiModel;
-        if (isMarkdownPreview)
-            tuiModel = buildMdPreview(registry, cache, source);
         auto t = PreviewTui(
-            title: baseName(sourcePath),
-            source: source,
-            events: events[],
-            model: tuiModel,
+            title: doc.title,
+            source: doc.source,
+            events: doc.events,
+            model: doc.preview,
             labels: labels,
-            names: names,
-            themes: themes,
+            names: themeSet.names,
+            themes: themeSet.themes,
             background: bgMode,
             depth: depth,
         );
-        return runPreviewTui(t, idx, isMarkdownPreview);
+        return runPreviewTui(t, themeSet.idx, doc.kind == ContentKind.markdown);
     }
     else
     {
-        // Non-Posix: the shipped theme-selection previewer (no raw-termios TUI).
+        // Non-Posix: the shipped theme-selection previewer.
         auto sessFactory = stdioKeySession();
         if (sessFactory is null)
-            return emitAnsiWholeFile();
+            return runAnsiSink(cli, doc, theme, cache);
         auto sess = sessFactory();
         scope (exit) sess.finish();
 
         auto prev = Previewer(
-            title: baseName(sourcePath),
-            source: source,
-            events: events[],
+            title: doc.title,
+            source: doc.source,
+            events: doc.events,
             labels: labels,
-            names: names,
-            themes: themes,
+            names: themeSet.names,
+            themes: themeSet.themes,
             background: bgMode,
         );
 
@@ -523,7 +506,7 @@ int main(string[] args)
         sink.put(CtlSeq.hideCursor);
         sink.flush();
 
-        const result = runLoop(prev, sink, sess, idx, depth);
+        const result = runLoop(prev, sink, sess, themeSet.idx, depth);
 
         // Restore the terminal (the alt screen's contents are discarded on exit).
         // On selection (Enter), print the whole file highlighted with the chosen
@@ -535,6 +518,122 @@ int main(string[] args)
         sink.flush();
         return 0;
     }
+}
+
+/// The raylib window (a build without it reports rather than falls through —
+/// `--gui` is explicit intent).
+private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
+    in ResolvedTheme theme, ref TsConfigCache cache,
+    scope SourceSet* docSet, scope DocumentPipeline* pipeline) @system
+{
+    import source_set : SourceSet;
+
+    version (HueGui)
+    {
+        if (doc.kind == ContentKind.twoslash)
+        {
+            import gui : runGuiTwoslash;
+
+            return runGuiTwoslash(doc.title, doc.twoslash, doc.events, labels,
+                theme, cache, docSet, cli.lineNumbers);
+        }
+
+        import gui : LoadedDoc, runGui;
+
+        // The document loader the viewer calls when navigating a set (`GNV1`):
+        // the one pipeline again — the GUI never duplicates it.
+        LoadedDoc loadDoc(string path) @system
+        {
+            auto d = pipeline.load(path);
+            return LoadedDoc(d.source, d.events, d.preview);
+        }
+
+        auto themeSet = sortedThemes(cli.theme);
+        return runGui(doc.title, doc.source, doc.events, labels, themeSet.names,
+            themeSet.themes, themeSet.idx, doc.preview, cli.font, cli.fontSize,
+            cli.windowWidth, cli.windowHeight, cli.lineNumbers, cli.codeLineNumbers,
+            cli.ansiCopy == "strip", parseTableCopy(cli.tableCopy),
+            docSet, docSet !is null ? &loadDoc : null);
+    }
+    else
+    {
+        stderr.writeln("hue: this build has no GUI support (built with " ~
+            "-c no-gui); use the default build: dub build :hue");
+        return 1;
+    }
+}
+
+/// Sorted theme names + the parallel theme values the previewer/GUI index per
+/// frame (avoids per-frame GC AA lookups), plus the start index for `name`.
+private auto sortedThemes(string name)
+{
+    import std.algorithm.iteration : map;
+    import std.algorithm.sorting : sort;
+    import std.array : array;
+
+    static struct ThemeSet
+    {
+        string[] names;
+        immutable(Theme)[] themes;
+        size_t idx;
+    }
+
+    ThemeSet s;
+    s.names = builtinThemes.keys;
+    sort(s.names);
+    s.themes = s.names.map!(n => *(n in builtinThemes)).array;
+    foreach (i, n; s.names)
+        if (n == name)
+        {
+            s.idx = i;
+            break;
+        }
+    return s;
+}
+
+/**
+QA-capture hook: `HUE_TWOSLASH_TUI_CAPTURE=<cols>x<rows>[,<selIdx>]` renders one
+TUI frame to a styled `<pre>` on stdout (a headless browser screenshots it), so
+the TUI mode is captured headlessly alongside GUI/HTML. Works from a pipe as
+well as a tty. See apps/hue/tools. Returns `true` when it emitted.
+*/
+private bool tryTwoslashCapture(ref Document doc, in ResolvedTheme theme,
+    ref TsConfigCache cache) @system
+{
+    version (Posix)
+    {
+        import std.process : environment;
+
+        const cap = environment.get("HUE_TWOSLASH_TUI_CAPTURE", "");
+        if (!cap.length)
+            return false;
+
+        import twoslash_tui : captureTuiFrameHtml;
+        import std.string : split;
+        import std.conv : to;
+
+        int cols = 100, rows = 30, sel = -1;
+        try
+        {
+            auto parts = cap.split(",");
+            auto wh = parts[0].split("x");
+            if (wh.length == 2)
+            {
+                cols = wh[0].to!int;
+                rows = wh[1].to!int;
+            }
+            if (parts.length > 1)
+                sel = parts[1].to!int;
+        }
+        catch (Exception)
+        {
+        }
+        write(captureTuiFrameHtml(doc.title, doc.twoslash, doc.events, theme,
+            cache, cols, rows, sel));
+        return true;
+    }
+    else
+        return false;
 }
 
 /// Prose + callout + table styling for the markdown HTML preview, layered over
@@ -604,20 +703,6 @@ int emitMarkdownHtml(scope const(char)[] source, in ResolvedTheme theme,
 /// Build the markdown preview model, supplying the off-screen-VT ansi-fence
 /// decoder only on a GUI-enabled build (`gui_ansi.decodeAnsi` pulls
 /// sparkles:ghostty). Without it — the terminal / HTML paths and the `no-gui`
-/// build — ` ```ansi ` fences degrade to stripped plain text (see gui_preview).
-private auto buildMdPreview(ref GrammarRegistry registry, ref TsConfigCache cache,
-    scope const(char)[] source) @system
-{
-    import gui_preview : buildPreviewModel;
-
-    version (HueGui)
-    {
-        import gui_ansi : decodeAnsi;
-        return buildPreviewModel(registry, cache, source, &decodeAnsi);
-    }
-    else
-        return buildPreviewModel(registry, cache, source);
-}
 
 /// The column width the terminal markdown preview wraps to: the terminal width
 /// (capped for prose readability), or 80 when it can't be detected (piped).
@@ -635,152 +720,3 @@ private int previewWidth() @system
 /// GUI's `hardFallback*`), so the preview always has a sane backdrop.
 private enum RgbColor hardFallbackFg = RgbColor(0xcc, 0xcc, 0xcc);
 private enum RgbColor hardFallbackBg = RgbColor(0x1e, 0x1e, 0x1e);
-
-/**
-The `--twoslash <nodes.json>` path: load a TypeScript twoslash payload, highlight
-its `code` as TypeScript, and render the twoslash overlay — as HTML (`--html`),
-the raylib GUI (`--gui`), or ANSI (the default). The nodes are opaque data; the
-overlay renderers live in `sparkles:twoslash`.
-*/
-int runTwoslashMode(in CliParams cli, string themeName) @system
-{
-    import source_set : SourceSet;
-
-    // The document set, when `--twoslash` names a directory (`GNV1`).
-    SourceSet docSet;
-    bool haveSet;
-
-    // `--twoslash <dir>` is a set of payloads: `--html` renders the static gallery
-    // (`GAL2`), `--gui` opens the first payload with `[`/`]` navigation (`GNV1`).
-    string[] setPaths;
-    if (isDirectoryPath(cli.twoslash))
-    {
-        // `--html` renders the static gallery; an interactive run (GUI or TUI)
-        // opens the set and navigates it.
-        const wantInteractive = cli.gui
-            || (isTerminal(StdStream.stdout) && isTerminal(StdStream.stdin));
-        if (cli.html || !wantInteractive)
-            return runDirectoryTarget(cli, cli.twoslash, twoslash: true, themeName);
-
-        import source_set : collectSources;
-
-        auto found = collectSources(cli.twoslash, twoslash: true);
-        if (found.empty)
-        {
-            stderr.writeln("hue: no *.twoslash.json payloads in '", cli.twoslash, "'");
-            return 1;
-        }
-        docSet = found;
-        haveSet = true;
-        setPaths = [found.current.path];
-    }
-
-    auto twRes = loadTwoslashFile(setPaths.length ? setPaths[0] : cli.twoslash);
-    if (twRes.hasError)
-    {
-        stderr.writeln("hue: ", twRes.error.msg);
-        return 1;
-    }
-    const tw = twRes.value;
-
-    const labels = LabelSet.standard();
-    const theme = resolveTheme(builtinThemes.get(themeName, {
-            warning(i"theme '$(themeName)' not found; falling back to the default dark theme");
-            return builtinDark;
-        }()), labels);
-
-    // Highlight the display source as TypeScript (twoslash's own language),
-    // degrading to plain text without the grammar — the overlay never fails.
-    auto registry = GrammarRegistry.fromEnvironment();
-    auto cache = TsConfigCache.create(&registry, labels);
-    SmallBuffer!HighlightEvent events;
-    auto res = highlightInjected(cache, "typescript", tw.code, events);
-    if (res.hasError)
-    {
-        warning(i"no typescript grammar — rendering the snippet as plain text");
-        events ~= HighlightEvent.sourceSpan(0, tw.code.length);
-    }
-
-    if (cli.gui)
-    {
-        version (HueGui)
-        {
-            import gui : runGuiTwoslash;
-
-            const guiTitle = haveSet ? docSet.current.name : baseName(cli.twoslash);
-            return runGuiTwoslash(guiTitle, tw, events[], labels, theme, cache,
-                haveSet ? &docSet : null, cli.lineNumbers);
-        }
-        else
-        {
-            stderr.writeln("hue: this build has no GUI support; " ~
-                "rebuild the gui configuration: dub build :hue -c gui");
-            return 1;
-        }
-    }
-
-    if (cli.html)
-    {
-        import gallery : twoslashFragment;
-
-        write(twoslashFragment(tw, events[], theme, cache));
-        return 0;
-    }
-
-    // QA-capture hook: HUE_TWOSLASH_TUI_CAPTURE=<cols>x<rows>[,<selIdx>] renders one
-    // TUI frame to a styled <pre> on stdout (a headless browser screenshots it), so
-    // the TUI mode is captured headlessly alongside GUI/HTML. See apps/hue/tools.
-    version (Posix)
-    {
-        import std.process : environment;
-
-        const cap = environment.get("HUE_TWOSLASH_TUI_CAPTURE", "");
-        if (cap.length)
-        {
-            import twoslash_tui : captureTuiFrameHtml;
-            import std.string : split;
-            import std.conv : to;
-
-            int cols = 100, rows = 30, sel = -1;
-            try
-            {
-                auto parts = cap.split(",");
-                auto wh = parts[0].split("x");
-                if (wh.length == 2)
-                {
-                    cols = wh[0].to!int;
-                    rows = wh[1].to!int;
-                }
-                if (parts.length > 1)
-                    sel = parts[1].to!int;
-            }
-            catch (Exception)
-            {
-            }
-            write(captureTuiFrameHtml(baseName(cli.twoslash), tw, events[], theme, cache,
-                cols, rows, sel));
-            return 0;
-        }
-    }
-
-    // An interactive terminal: the live TUI overlay (mouse + keyboard). A pipe or
-    // redirect (not a tty) falls through to the non-interactive ANSI render below,
-    // so `hue --twoslash x.json | less` and CI capture still work.
-    version (Posix)
-    {
-        if (isTerminal(StdStream.stdout) && isTerminal(StdStream.stdin))
-        {
-            import twoslash_tui : runTuiTwoslash;
-
-            const tuiTitle = haveSet ? docSet.current.name : baseName(cli.twoslash);
-            return runTuiTwoslash(tuiTitle, tw, events[], theme, cache,
-                haveSet ? &docSet : null);
-        }
-    }
-
-    SmallBuffer!char output;
-    renderTwoslashAnsi(tw, events[], theme, cache, output,
-        TwoslashAnsiOptions(depth: detectColorDepth(), italics: true, emitBackground: true));
-    write(output[]);
-    return 0;
-}
