@@ -22,6 +22,9 @@ dependency "sparkles:twoslash" path="../.."
 // the library cell-diff each frame. Pulled by every config (the cell grid is
 // cross-platform; the raw-mode loop is Posix-gated inside the lib).
 dependency "sparkles:tui" path="../.."
+// The sparkles:ui → sparkles:tui bridge (GridCanvas), extracted from the old
+// in-app src/tui_canvas.d.
+dependency "sparkles:ui-tui" path="../.."
 
 // Default build (BLD1): the raylib GPU backend (src/gui.d, version(HueGui)) and
 // the preview support modules (gui_text.d layout, gui_ansi.d libghostty bridge,

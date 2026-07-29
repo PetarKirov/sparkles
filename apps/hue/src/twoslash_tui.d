@@ -1,6 +1,6 @@
 // `hue --twoslash` in an interactive terminal — the TUI counterpart of the raylib
 // GUI, built on `sparkles:tui` (raw mode, SGR-1006 mouse, retained-grid diff loop)
-// and the shared `sparkles:ui` paint model (via `tui_canvas.GridCanvas`).
+// and the shared `sparkles:ui` paint model (via `sparkles:ui-tui`'s GridCanvas).
 //
 // The code is rendered directly into the cell grid with its syntax-theme colors
 // (per-token, not a widget concern); the twoslash overlay — highlight tints, error
@@ -46,7 +46,7 @@ import sparkles.ui.widget : WidgetTree;
 
 import sparkles.base.term_color : Color;
 
-import tui_canvas : GridCanvas, paintGrid;
+import sparkles.ui_tui : GridCanvas, paintGrid;
 
 private enum padCols = 1; // left margin, matching the GUI's twoslashPadCells
 
