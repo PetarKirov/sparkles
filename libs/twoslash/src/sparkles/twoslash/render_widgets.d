@@ -289,14 +289,17 @@ private enum docsMaxWidth = 56;
 private uint[] markdownDocsRows(ref Builder b, ref GrammarRegistry registry,
     const(char)[] docs, size_t hit) @system
 {
+    import sparkles.syntax.md.render_widgets : MdViewOptions, viewMarkdownInto;
+
     MdDoc doc = extractMarkdown(registry, docs);
     if (doc.root.children.length == 0)
         return plainDocsRows(b, docs, hit);
-    uint[] rows;
-    blocksToRows(b, doc.root.children, docs, hit, 0, rows);
-    return rows;
+    // The shared composable markdown view — "JSDoc renders through the same
+    // markdown view" — with the popup's docs face/slot/width and hit identity.
+    return [viewMarkdownInto(b, doc, MdViewOptions(
+        maxWidth: docsMaxWidth, hitId: hit,
+        baseStyle: docsBase(), proseSlot: Slot.docs))];
 }
-
 /// Docs fallback (no markdown grammar): the raw text split on newlines into rows,
 /// so a `\n` reads as a line break instead of a tofu glyph.
 private uint[] plainDocsRows(ref Builder b, const(char)[] docs, size_t hit)
@@ -318,200 +321,8 @@ private uint docsLine(ref Builder b, const(char)[] text, size_t hit)
         slot: Slot.docs, hitId: hit,
         textStyle: TextStyle(fontRole: FontRole.docs, fontScale: M.docsFontScale)));
 
-/// A blank spacer row between markdown blocks.
-private uint docsSpacer(ref Builder b, size_t hit)
-    => docsLine(b, " ", hit);
-
 private TextStyle docsBase() pure nothrow @nogc
     => TextStyle(fontRole: FontRole.docs, fontScale: M.docsFontScale);
-
-/// Maps a run of markdown blocks to widget rows (a blank spacer between blocks).
-private void blocksToRows(ref Builder b, in MdBlock[] blocks, const(char)[] src,
-    size_t hit, int indent, ref uint[] rows) @safe
-{
-    foreach (i, ref const blk; blocks)
-    {
-        if (i && rows.length)
-            rows ~= docsSpacer(b, hit);
-        final switch (blk.kind) with (MdBlockKind)
-        {
-            case paragraph:
-                wrapInlines(b, blk.inlines, src, docsBase(), Slot.docs, hit, indent, rows);
-                break;
-            case heading:
-                {
-                    auto h = docsBase();
-                    h.bold = true;
-                    wrapInlines(b, blk.inlines, src, h, Slot.docs, hit, indent, rows);
-                }
-                break;
-            case list:
-                foreach (ref const item; blk.children)
-                    listItemRows(b, item, src, hit, indent, rows);
-                break;
-            case codeFence:
-                codeFenceRows(b, blk, src, hit, indent, rows);
-                break;
-            case blockQuote:
-                blocksToRows(b, blk.children, src, hit, indent + 2, rows);
-                break;
-            case thematicBreak:
-                rows ~= docsLine(b, "───", hit); // a horizontal rule
-                break;
-            case document, listItem, table, tableRow, tableCell, htmlBlock:
-                // Unexpected here / handled by their parent — flatten any inlines.
-                wrapInlines(b, blk.inlines, src, docsBase(), Slot.docs, hit, indent, rows);
-                break;
-        }
-    }
-}
-
-/// A list item: a `•` bullet then the item's (first paragraph's) inline text,
-/// wrapped with a hanging indent.
-private void listItemRows(ref Builder b, in MdBlock item, const(char)[] src,
-    size_t hit, int indent, ref uint[] rows) @safe
-{
-    const inls = item.inlines.length ? item.inlines
-        : (item.children.length ? item.children[0].inlines : null);
-    TextSpan[] spans;
-    spans ~= TextSpan("• ", Slot.muted, docsBase(), noBreak: true);
-    inlinesToSpans(inls, src, docsBase(), Slot.docs, spans);
-    rows ~= richRow(b, spans, hit, indent + 1);
-}
-
-/// A fenced code block: each source line as a mono row (pre-formatted, not wrapped).
-private void codeFenceRows(ref Builder b, in MdBlock blk, const(char)[] src,
-    size_t hit, int indent, ref uint[] rows) @safe
-{
-    const code = sliceOf(src, blk.codeBody);
-    size_t start = 0;
-    foreach (i, char c; code)
-        if (c == '\n')
-        {
-            rows ~= codeLine(b, code[start .. i], hit, indent + 1);
-            start = i + 1;
-        }
-    if (start < code.length)
-        rows ~= codeLine(b, code[start .. $], hit, indent + 1);
-}
-
-private uint codeLine(ref Builder b, const(char)[] text, size_t hit, int indent)
-    => b.add(Widget(kind: WidgetKind.text, text: text, slot: Slot.code, hitId: hit,
-        padding: Insets(0, 0, 0, indent),
-        textStyle: TextStyle(fontRole: FontRole.code, fontScale: M.docsFontScale)));
-
-/// Flattens an inline run into `words`, threading style through emphasis/strong/
-/// strikethrough/link and slicing text/codeSpan leaves from `src`.
-private void wrapInlines(ref Builder b, in MdInline[] inls, const(char)[] src,
-    TextStyle base, Slot slot, size_t hit, int indent, ref uint[] rows) @safe
-{
-    TextSpan[] spans;
-    inlinesToSpans(inls, src, base, slot, spans);
-    if (spans.length)
-        rows ~= richRow(b, spans, hit, indent);
-}
-
-/// One wrapping rich run: the engine breaks it (`wrapSpans`) against the
-/// node's own width maximum — the WGT6 × LAY10 composition that retired the
-/// view-side word packer.
-private uint richRow(ref Builder b, TextSpan[] spans, size_t hit, int indent) @safe
-{
-    Widget w = Widget(kind: WidgetKind.rich, slot: Slot.docs, hitId: hit,
-        wrap: TextWrap.greedy, spans: spans, textStyle: docsBase(),
-        padding: indent > 0 ? Insets(0, 0, 0, indent) : Insets.init,
-        decoration: Decoration(borderRadius: M.popupRadius)); // pill corners
-    w.width.max = docsMaxWidth;
-    return b.add(w);
-}
-
-private void inlinesToSpans(in MdInline[] inls, const(char)[] src, TextStyle base,
-    Slot slot, ref TextSpan[] spans) @safe
-{
-    foreach (ref const inl; inls)
-        final switch (inl.kind) with (MdInlineKind)
-        {
-            case text:
-                pushProse(sliceOf(src, inl.span), base, slot, spans);
-                break;
-            case strong:
-                {
-                    auto sb = base;
-                    sb.bold = true;
-                    inlinesToSpans(inl.children, src, sb, slot, spans);
-                }
-                break;
-            case emphasis:
-                {
-                    auto se = base;
-                    se.italic = true;
-                    inlinesToSpans(inl.children, src, se, slot, spans);
-                }
-                break;
-            case strikethrough:
-                {
-                    auto ss = base;
-                    ss.strikethrough = true;
-                    inlinesToSpans(inl.children, src, ss, slot, spans);
-                }
-                break;
-            case codeSpan:
-                {
-                    // A code span stays one pill (not word-split), so `Deep Thought`
-                    // reads as a single chip.
-                    auto sc = base;
-                    sc.fontRole = FontRole.code;
-                    const t = sliceOf(src, inl.span);
-                    if (t.length)
-                        spans ~= TextSpan(t, Slot.chip, sc,
-                            paintBackground: true, noBreak: true);
-                }
-                break;
-            case link:
-                {
-                    auto sl = base;
-                    sl.underline = UnderlineStyle.single;
-                    inlinesToSpans(inl.children, src, sl, Slot.info, spans);
-                }
-                break;
-            case image:
-                inlinesToSpans(inl.children, src, base, slot, spans);
-                break;
-            case lineBreak:
-                spans ~= TextSpan("\n", slot, base); // hard break
-                break;
-        }
-}
-
-/// Prose text as one styled span: whitespace runs (markdown soft wraps,
-/// tabs, newlines) collapse to single spaces, edges included — the breaker
-/// then owns every line-breaking decision.
-private void pushProse(const(char)[] text, TextStyle style, Slot slot,
-    ref TextSpan[] spans) @safe
-{
-    if (!text.length)
-        return;
-    char[] norm;
-    norm.reserve(text.length);
-    bool ws;
-    foreach (char c; text)
-    {
-        if (c == ' ' || c == '\t' || c == '\n')
-        {
-            ws = true;
-            continue;
-        }
-        if (ws)
-        {
-            norm ~= ' ';
-            ws = false;
-        }
-        norm ~= c;
-    }
-    if (ws)
-        norm ~= ' ';
-    if (norm.length)
-        spans ~= TextSpan(norm, slot, style); // freshly allocated, never mutated
-}
 
 
 /// `src[span]` guarded against a malformed range.
@@ -552,6 +363,8 @@ private uint buildPopupTagMd(ref Builder b, ref GrammarRegistry registry,
 
     if (tag.length > 1 && tag[1].length)
     {
+        import sparkles.syntax.md.render_widgets : inlinesToSpans, pushProse;
+
         TextSpan[] spans;
         spans ~= TextSpan(" ", Slot.docs, docsBase()); // gap after the chip
         MdDoc doc = extractMarkdown(registry, tag[1]);
@@ -733,8 +546,11 @@ version (unittest)
 {
     import sparkles.base.term_style : TextAttr;
 
-    // A hand-built paragraph "x b c" where "b" is strong and "c" is a code span —
-    // exercises the markdown mapper without needing a grammar bundle.
+    import sparkles.syntax.md.render_widgets : MdViewOptions, viewMarkdownInto;
+
+    // A hand-built paragraph "x b c" where "b" is strong and "c" is a code
+    // span — the SHARED markdown view under the popup's docs options ("JSDoc
+    // renders through the same markdown view"). No grammar bundle needed.
     const src = "x b c";
     MdInline[] inls = [
         MdInline(kind: MdInlineKind.text, span: Span(0, 2)), // "x "
@@ -743,12 +559,13 @@ version (unittest)
         MdInline(kind: MdInlineKind.text, span: Span(3, 4)), // " "
         MdInline(kind: MdInlineKind.codeSpan, span: Span(4, 5)), // "c"
     ];
-    MdBlock[] blocks = [MdBlock(kind: MdBlockKind.paragraph, inlines: inls)];
+    const doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.paragraph, inlines: inls)]), src);
 
     auto b = Builder();
-    uint[] rows;
-    blocksToRows(b, blocks, src, 1, 0, rows);
-    auto c = render(b.finish(b.container(WidgetKind.column, rows)));
+    const root = viewMarkdownInto(b, doc, MdViewOptions(
+        hitId: 1, baseStyle: docsBase(), proseSlot: Slot.docs));
+    auto c = render(b.finish(root));
 
     bool sawBold, sawChip;
     foreach (ref op; c.ops)
