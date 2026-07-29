@@ -44,37 +44,33 @@ TreeGlyphs treeGlyphs(bool unicode) @safe pure nothrow @nogc
 /// missing levels as blanks — rendering never fails.
 string[] renderTree(in TreeNode[] nodes, in TreeGlyphs glyphs = TreeGlyphs.init) @safe pure
 {
+    import sparkles.ui.components.tree_model : treeRows;
+
+    const rows = treeRows(nodes);
+
+    // Rich's four-state guide model: `railAtLevel[d]` says whether the ancestor
+    // that owns level `d` still has later siblings, so a rail is drawn under it
+    // rather than a blank. Each row updates its own level for the rows beneath.
+    bool[] railAtLevel;
     string[] lines;
     lines.reserve(nodes.length);
     foreach (i, ref node; nodes)
     {
+        const row = rows[i];
+        if (railAtLevel.length <= row.depth)
+            railAtLevel.length = row.depth + 1;
+
         string prefix;
-        if (node.depth > 0)
+        if (row.depth > 0)
         {
-            // Guides under each ancestor level: a rail while that ancestor has
-            // a later sibling, blank once it does not.
-            foreach (level; 1 .. node.depth)
-                prefix ~= hasLaterSibling(nodes, i, level) ? glyphs.rail : glyphs.blank;
-            prefix ~= hasLaterSibling(nodes, i, node.depth) ? glyphs.tee : glyphs.corner;
+            foreach (level; 1 .. row.depth)
+                prefix ~= railAtLevel[level] ? glyphs.rail : glyphs.blank;
+            prefix ~= row.isLastChild ? glyphs.corner : glyphs.tee;
         }
+        railAtLevel[row.depth] = !row.isLastChild;
         lines ~= prefix ~ node.label;
     }
     return lines;
-}
-
-/// Does the (transitive) parent chain of `nodes[i]` at `level` have a later
-/// sibling — i.e. does any node after `i` sit at exactly `level` before the
-/// walk rises above it?
-private bool hasLaterSibling(in TreeNode[] nodes, size_t i, size_t level) @safe pure nothrow @nogc
-{
-    foreach (j; i + 1 .. nodes.length)
-    {
-        if (nodes[j].depth < level)
-            return false;
-        if (nodes[j].depth == level)
-            return true;
-    }
-    return false;
 }
 
 // ---------------------------------------------------------------------------
