@@ -25,9 +25,19 @@ Folding decomposes into three concerns, each landing on an existing seam:
 2. **Fold state** (`FLD2`) — _what is collapsed_ — is a **presentation-independent
    state machine** (the [`ui-architecture` `STM`](./ui-architecture.md) level 1):
    a set of collapsed regions, consumed identically by every backend.
-3. **Rendering** — _how a collapse looks_ — elides the folded region's interior
-   from the wrapped `PreviewLine[]` ([`gui.md` `RND2`](./gui.md)) and draws a
-   placeholder + gutter marker, per backend.
+3. **Rendering** — _how a collapse looks_ — replaces the folded region's subtree
+   with a **placeholder widget** and draws a gutter marker, once, for every
+   backend.
+
+> [!NOTE]
+> `FLD3` below is written against the flat `PreviewLine[]` render model, which
+> the [port onto `sparkles:ui`](./ui-architecture.md) replaces with a widget
+> tree. Swapping a subtree for a placeholder is both simpler than eliding lines
+> from a flat list and correct under nesting — a fold inside an embedded code
+> block inside a folded section. The fold **state** requirement (`FLD2`) is
+> unaffected: it becomes the toolkit's shared disclosure machine
+> ([`STM5`](../ui/state-machines.md)), which also serves
+> [tree](./tree-view.md) expand/collapse.
 
 It shares the parse tree with the [tree-sitter inspector overlay](./overlays.md)
 (`TSI`) and reuses the same source-span discipline as

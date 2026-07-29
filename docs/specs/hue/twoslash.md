@@ -1,20 +1,21 @@
-# `hue --twoslash` / `hue --markdown` — Feature Requirements (planned · branch-only)
+# `hue --twoslash` / `hue --markdown` — Feature Requirements
 
-_**Status:** planned / **branch-only** · **Date:** 2026-07-23 · **Scope:** the
-`hue` integration of `sparkles:twoslash` — the `--twoslash` and `--markdown`
-rendering modes and the raylib twoslash overlay._
+_**Status:** shipped · **Date:** 2026-07-29 · **Scope:** the
+`hue` integration of `sparkles:twoslash` — the twoslash and markdown rendering
+paths and the raylib twoslash overlay._
 
-> [!IMPORTANT]
-> Every requirement in this document is **implemented only on the
-> `feat/syntax-twoslash` branch** (worktree `sparkles-syntax-twoslash`), which is
-> **unpushed and not merged** into `feat/hue-preview-polish` (the branch the other
-> hue specs describe). On the current branch there is no `libs/twoslash/` and no
-> `twoslash`/`--markdown` code in `apps/hue/`. These rows are therefore **planned
-> (branch-only)** relative to the shipped hue: the design and code exist and are
-> green (`dub test :twoslash` ≈ 37 tests, `nix build .#hue`), but they land in hue
-> only when `feat/syntax-twoslash` merges. The library-side requirements are
-> owned by `docs/specs/twoslash/SPEC.md` (also on that branch); this doc covers
-> the **hue surface** and references the library for internals.
+> [!NOTE]
+> `libs/twoslash/` and hue's twoslash and markdown paths are **merged and
+> shipped**; the rows below carrying `planned/branch-only` statuses predate that
+> merge and are reconciled as each is re-verified. The library-side requirements
+> are owned by `docs/specs/twoslash/SPEC.md`; this doc covers the **hue surface**
+> and references the library for internals.
+>
+> Forward-looking: `--twoslash` is scheduled to stop being a _mode_. It becomes an
+> **overlay artifact** ([`OVL4`](./overlays.md)) over an ordinary document, and a
+> ` ```ts twoslash ` fence inside markdown embeds the same view — see
+> [ui-architecture.md](./ui-architecture.md) `UIA6` and
+> [pipeline.md](./pipeline.md) `XFM3`.
 
 Twoslash ([issue #120](https://github.com/PetarKirov/sparkles/issues/120)) makes
 `hue` a D-native [Twoslash](https://twoslash.netlify.app/) renderer: it consumes a

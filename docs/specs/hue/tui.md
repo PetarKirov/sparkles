@@ -1,19 +1,18 @@
 # `hue` TUI — Feature Requirements (full-screen terminal viewer)
 
-_**Status:** planned (extends the shipped previewer) · **Date:** 2026-07-23 ·
+_**Status:** shipped (T1–T4); T5 outstanding · **Date:** 2026-07-29 ·
 **Scope:** the interactive **terminal** mode — a full-screen TUI with scrolling,
 a scrollbar, mouse support, selection, wrapping, line numbers, and the markdown
-preview. It grows the current minimal theme-selection previewer (`previewer.d`,
-[`PRV*`](./feature-requirements.md)) into a terminal port of the [GUI](./gui.md)
-viewer._
+preview. It is the terminal port of the [GUI](./gui.md) viewer._
 
 > [!NOTE]
-> Today's interactive tty mode is a **minimal theme-selection previewer** — a
-> viewport slice with ↑/↓ theme cycling ([`PRV1`–`PRV8`](./feature-requirements.md),
-> shipped). This document specifies the **full TUI** it becomes; every row here is
-> `not started` unless it cites a `PRV`/`NFR` commit for a capability the
-> previewer already has (marked `partial`). Status legend and ID conventions: see
-> the [overview](./index.md).
+> The full-screen viewer **is shipped** (`tui.d`, on `sparkles:tui`) and is the
+> interactive tty mode on POSIX. The older minimal theme-selection previewer
+> (`previewer.d`, [`PRV1`–`PRV8`](./feature-requirements.md)) survives only as the
+> non-POSIX fallback and is scheduled for removal, with theme selection folding
+> into this viewer as a widget overlay — see
+> [ui-architecture.md](./ui-architecture.md) `UIA4`. Status legend and ID
+> conventions: see the [overview](./index.md).
 
 ## Design & scope
 
