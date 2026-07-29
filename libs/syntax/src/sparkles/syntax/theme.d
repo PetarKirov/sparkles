@@ -1,12 +1,17 @@
 /**
-The theme layer: label selectors → styles, resolved once per vocabulary.
+Resolving a theme's syntax rules against a label vocabulary.
 
-A $(LREF Theme) is plain data — ordered $(LREF ThemeRule)s mapping dotted
-selectors to $(LREF StyleSpec)s. $(LREF resolveTheme) folds it against a
-`LabelSet` into a $(LREF ResolvedTheme): a flat `labelId → StyleSpec` table
-indexed in O(1) on the render path. Resolution is longest-dot-prefix (the
-same rule `LabelSet.resolve` applies to capture names), whole-spec-wins (no
-attribute cascade), and last-rule-wins among equal selectors.
+$(REF Theme, sparkles,ui,theme) itself lives in `sparkles:ui` — a theme is an
+application's whole design language (syntax rules, semantic slots, chrome
+metrics, glyph sets), and the toolkit owns that vocabulary. It carries the rules
+as opaque data and $(B cannot resolve them): resolution needs a `LabelSet`, which
+is a syntax-highlighting concept. That half is here.
+
+$(LREF resolveTheme) folds a theme against a `LabelSet` into a
+$(LREF ResolvedTheme): a flat `labelId → StyleSpec` table indexed in O(1) on the
+render path. Resolution is longest-dot-prefix (the same rule `LabelSet.resolve`
+applies to capture names), whole-spec-wins (no attribute cascade), and
+last-rule-wins among equal selectors.
 
 `ResolvedTheme` is public API for every backend — including future
 non-markup consumers (a GPU text renderer indexes it with `StyledSpan.label`
@@ -19,33 +24,13 @@ import sparkles.syntax.color : Color;
 import sparkles.syntax.event : LabelId;
 import sparkles.syntax.label : LabelSet;
 
-// The resolved-style vocabulary lives in `base` so `styled_template` and
-// `syntax` share one type; re-exported here so `sparkles.syntax.theme.StyleSpec`
-// (and `TextAttr`/`UnderlineStyle`) still resolve for every backend.
-public import sparkles.base.term_style : TextAttr, UnderlineStyle, TermStyle;
+// The theme value and its style vocabulary. `StyleSpec` is `base`'s `TermStyle`,
+// so nothing syntax-specific crosses the boundary — re-exported here so
+// `sparkles.syntax.theme.Theme`/`StyleSpec` keep resolving for every backend.
+public import sparkles.ui.theme : StyleSpec, TermStyle, TextAttr, Theme,
+    ThemeRule, UnderlineStyle;
 
 @safe:
-
-/// The style a theme assigns to one label — `sparkles.base.term_style.TermStyle`:
-/// optional fore-/background/underline colors, font flags, and underline shape.
-/// `Color.Kind.unset` means "not specified".
-alias StyleSpec = TermStyle;
-
-/// One theme rule: a dotted label selector and the style it assigns.
-struct ThemeRule
-{
-    string selector; /// dotted label name, matched by longest-dot-prefix
-    StyleSpec style; /// the whole spec assigned on match (no cascade)
-}
-
-/// A theme as plain data. See the module header for resolution semantics.
-struct Theme
-{
-    string name;                             /// display name
-    Color defaultFg = Color.defaultColor;    /// unlabeled-text foreground
-    Color defaultBg = Color.defaultColor;    /// document background
-    ThemeRule[] rules;                       /// ordered; later wins among equal selectors
-}
 
 /**
 A theme resolved against a label vocabulary: `labelId → StyleSpec` in O(1).

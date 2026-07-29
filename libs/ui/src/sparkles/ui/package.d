@@ -16,6 +16,8 @@ module sparkles.ui;
 
 public import sparkles.ui.geometry;
 public import sparkles.ui.style;
+public import sparkles.ui.theme;
+public import sparkles.ui.themes;
 public import sparkles.ui.canvas;
 public import sparkles.ui.widget;
 public import sparkles.ui.layout;

@@ -19,6 +19,7 @@ configuration "library" {
     targetType "sourceLibrary"
     dependency "sparkles:base" path="../.."
     dependency "sparkles:tree-sitter" path="../.."
+    dependency "sparkles:ui" path="../.."
 }
 
 configuration "unittest" {
@@ -27,6 +28,7 @@ configuration "unittest" {
     dependency "sparkles:test-runner" path="../.."
     dependency "sparkles:base" path="../.."
     dependency "sparkles:tree-sitter" path="../.."
+    dependency "sparkles:ui" path="../.."
 
     dflags "-checkaction=context" "-allinst"
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
