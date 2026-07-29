@@ -27,12 +27,12 @@ a target that cannot serve one should say so where the toolkit can act on it.
 
 ## Shipped targets (`TGT3`–`TGT6`)
 
-| ID   | Requirement                                                                                                                                                                                         | Status      | Traces to                       |
-| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ------------------------------- |
-| TGT3 | An **immediate** interpreter must walk the display list and issue draw calls per frame.                                                                                                             | full        | `interp/immediate.d`            |
-| TGT4 | An **HTML** target must serialize the tree to markup and CSS, with semantic class names and an external stylesheet, and must express tier-0 interactivity in **pure CSS** with no script.           | partial     | `interp/html.d`                 |
-| TGT5 | Every target must **declare its capabilities** — which chrome features it honours and which input tiers it serves — as data the toolkit can inspect, so degradation is reported rather than silent. | not started | proposed capability declaration |
-| TGT6 | Concrete canvases must live in **sibling packages** (`sparkles:ui-tui`, `sparkles:ui-raylib`), so the toolkit stays backend-free and a consumer links only what it uses.                            | not started | proposed adapter packages       |
+| ID   | Requirement                                                                                                                                                                                         | Status                        | Traces to                                                                        |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------- | -------------------------------------------------------------------------------- |
+| TGT3 | An **immediate** interpreter must walk the display list and issue draw calls per frame.                                                                                                             | full                          | `interp/immediate.d`                                                             |
+| TGT4 | An **HTML** target must serialize the tree to markup and CSS, with semantic class names and an external stylesheet, and must express tier-0 interactivity in **pure CSS** with no script.           | partial                       | `interp/html.d`                                                                  |
+| TGT5 | Every target must **declare its capabilities** — which chrome features it honours and which input tiers it serves — as data the toolkit can inspect, so degradation is reported rather than silent. | not started                   | proposed capability declaration                                                  |
+| TGT6 | Concrete canvases must live in **sibling packages** (`sparkles:ui-tui`, `sparkles:ui-raylib`), so the toolkit stays backend-free and a consumer links only what it uses.                            | full (`2c8356e1`, `6b0c9714`) | `libs/ui-tui` (`GridCanvas`), `libs/ui-raylib` (`RaylibCanvas` + `RaylibEvents`) |
 
 ## Current degradations
 
@@ -69,13 +69,13 @@ the existing ones **without editing `sparkles:ui`**. That holds only if:
 
 ## Milestones
 
-| Milestone | Scope                                                      | Status      | Requirements |
-| --------- | ---------------------------------------------------------- | ----------- | ------------ |
-| B0        | Adapter packages extracted from their current consumer     | not started | `TGT6`       |
-| B1        | Clip state carried through the display list                | not started | `TGT2`       |
-| B2        | HTML target: semantic classes, stylesheet, pure-CSS tier 0 | not started | `TGT4`       |
-| B3        | Declared capabilities, with reported degradation           | not started | `TGT5`       |
-| B4        | Parity harness across every target                         | partial     | `TGT10`      |
+| Milestone | Scope                                                      | Status                        | Requirements |
+| --------- | ---------------------------------------------------------- | ----------------------------- | ------------ |
+| B0        | Adapter packages extracted from their current consumer     | full (`2c8356e1`, `6b0c9714`) | `TGT6`       |
+| B1        | Clip state carried through the display list                | not started                   | `TGT2`       |
+| B2        | HTML target: semantic classes, stylesheet, pure-CSS tier 0 | not started                   | `TGT4`       |
+| B3        | Declared capabilities, with reported degradation           | not started                   | `TGT5`       |
+| B4        | Parity harness across every target                         | partial                       | `TGT10`      |
 
 ## Module coverage
 
