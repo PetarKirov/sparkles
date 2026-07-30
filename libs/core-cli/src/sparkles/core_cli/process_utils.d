@@ -679,3 +679,199 @@ CapturedResult runStreaming(Sink)(
     assert(calls == 1);
     assert(failing.stdout == "partial\n");
 }
+
+// -- resident children --------------------------------------------------------
+
+version (Posix)
+{
+    /**
+    A long-lived child process with line-oriented stdio — the seam an
+    interactive viewer needs for a resident oracle (spawn once, exchange
+    small JSON lines, never block the render loop).
+
+    The child's stdout is switched to `O_NONBLOCK`, so `tryReadLine` returns
+    immediately — with a complete line, or `null` when none has arrived —
+    and a polling loop stays a polling loop. Writes go through `sendLine`
+    (line-buffered flush). `alive` reaps non-blockingly; `terminate` sends
+    SIGTERM and waits. The destructor terminates a still-running child so a
+    dropped session cannot leak processes.
+    */
+    struct ResidentProcess
+    {
+        import std.process : Pid, ProcessPipes;
+
+        private ProcessPipes _pipes;
+        private bool _spawned;
+        private bool _exited;
+        private int _status;
+        private char[] _pending;
+
+        @disable this(this);
+
+        /// Spawns `argv` with piped stdin/stdout (stderr passes through).
+        static ResidentProcess spawn(scope const(char[])[] argv,
+            string workDir = null) @trusted
+        {
+            import core.sys.posix.fcntl : F_GETFL, F_SETFL, fcntl, O_NONBLOCK;
+            import std.process : Config, pipeProcess, Redirect;
+
+            ResidentProcess p;
+            p._pipes = pipeProcess(argv, Redirect.stdin | Redirect.stdout,
+                null, Config.none, workDir);
+            const fd = p._pipes.stdout.fileno;
+            const flags = fcntl(fd, F_GETFL);
+            if (flags >= 0)
+                fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+            p._spawned = true;
+            return p;
+        }
+
+        ~this() @trusted
+        {
+            if (_spawned && !checkExited())
+                terminate();
+        }
+
+        /// Whether the child is still running (reaps non-blockingly).
+        bool alive() @trusted
+            => _spawned && !checkExited();
+
+        /// The exit status once `alive` turned false.
+        int status() const @safe pure nothrow @nogc => _status;
+
+        /// Writes one line to the child's stdin (appending the newline).
+        void sendLine(scope const(char)[] line) @trusted
+        {
+            _pipes.stdin.writeln(line);
+            _pipes.stdin.flush();
+        }
+
+        /// Closes the child's stdin (EOF — the conventional shutdown signal).
+        void closeInput() @trusted
+        {
+            if (_pipes.stdin.isOpen)
+                _pipes.stdin.close();
+        }
+
+        /**
+        One complete line from the child, without its terminator, or `null`
+        when none is available yet. Non-blocking: partial lines accumulate
+        internally until their newline arrives.
+        */
+        string tryReadLine() @trusted
+        {
+            import core.stdc.errno : EAGAIN, errno, EWOULDBLOCK;
+            import core.sys.posix.unistd : read;
+
+            // Drain whatever the pipe holds right now.
+            for (;;)
+            {
+                char[4096] chunk = void;
+                const n = read(_pipes.stdout.fileno, chunk.ptr, chunk.length);
+                if (n > 0)
+                {
+                    _pending ~= chunk[0 .. n];
+                    continue;
+                }
+                break; // EOF (0) or EAGAIN/other (<0): stop draining
+            }
+
+            foreach (i, c; _pending)
+                if (c == '\n')
+                {
+                    auto line = _pending[0 .. i].idup;
+                    _pending = _pending[i + 1 .. $];
+                    return line;
+                }
+            return null;
+        }
+
+        /// SIGTERM + blocking wait.
+        void terminate() @trusted
+        {
+            import core.sys.posix.signal : SIGTERM;
+            import std.process : kill, wait;
+
+            if (!_spawned || checkExited())
+                return;
+            try
+            {
+                kill(_pipes.pid, SIGTERM);
+                _status = wait(_pipes.pid);
+            }
+            catch (Exception)
+            {
+            }
+            _exited = true;
+        }
+
+        private bool checkExited() @trusted
+        {
+            import std.process : tryWait;
+
+            if (_exited)
+                return true;
+            try
+            {
+                const r = tryWait(_pipes.pid);
+                if (r.terminated)
+                {
+                    _status = r.status;
+                    _exited = true;
+                }
+            }
+            catch (Exception)
+                _exited = true;
+            return _exited;
+        }
+    }
+
+    @("processUtils.ResidentProcess.echoRoundTrip")
+    @system unittest
+    {
+        import core.thread : Thread;
+        import core.time : msecs;
+
+        auto p = ResidentProcess.spawn(["cat"]);
+        assert(p.alive);
+
+        p.sendLine("hello");
+        p.sendLine("world");
+
+        string[] got;
+        foreach (_; 0 .. 200)
+        {
+            for (;;)
+            {
+                const line = p.tryReadLine();
+                if (line is null)
+                    break;
+                got ~= line;
+            }
+            if (got.length >= 2)
+                break;
+            Thread.sleep(5.msecs);
+        }
+        assert(got == ["hello", "world"], got.length ? got[0] : "nothing");
+
+        // EOF on stdin ends `cat`; the reap shows a clean exit.
+        p.closeInput();
+        foreach (_; 0 .. 200)
+        {
+            if (!p.alive)
+                break;
+            Thread.sleep(5.msecs);
+        }
+        assert(!p.alive);
+        assert(p.status == 0);
+    }
+
+    @("processUtils.ResidentProcess.terminate")
+    @system unittest
+    {
+        auto p = ResidentProcess.spawn(["cat"]);
+        assert(p.alive);
+        p.terminate();
+        assert(!p.alive);
+    }
+}
