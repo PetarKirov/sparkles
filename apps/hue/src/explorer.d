@@ -129,6 +129,10 @@ struct ExplorerTui
     long sel;                     // index into `rows`
     long top;
     int width, height;
+    /// Rows of pane chrome above/below the tree (the TUI pane's header +
+    /// status bars; the GUI pane has none). One value, so the wheel, the
+    /// drag, and the thumb all share one scroll space.
+    int chromeRows = 2;
 
     bool searching;
     char[128] qbuf;
@@ -320,8 +324,8 @@ struct ExplorerTui
             }
     }
 
-    private int bodyRows() const @safe pure nothrow @nogc
-        => height > 2 ? height - 2 : 1;
+    int bodyRows() const @safe pure nothrow @nogc
+        => height > chromeRows ? height - chromeRows : 1;
 
     /// Scrolls the viewport by `dy` rows (the wheel), leaving the cursor
     /// where it is; the next cursor move re-snaps the view to it.
