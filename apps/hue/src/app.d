@@ -263,10 +263,21 @@ enum defaultGuiFont =
     "Iosevka Term,Iosevka,Source Code Pro,DejaVu Sans Mono,monospace";
 
 /// The grammar registry every sink resolves through. Desktop: the nix grammar
-/// bundle via `$SPARKLES_TS_GRAMMAR_PATH`. Android will switch this to the
-/// soname layout (APK-bundled parser libraries + queries extracted from
-/// assets) once the bootstrap lands — this seam is where that decision lives.
-private GrammarRegistry defaultRegistry() @safe => GrammarRegistry.fromEnvironment();
+/// bundle via `$SPARKLES_TS_GRAMMAR_PATH`. Android: the soname layout —
+/// parsers are APK native libraries the dynamic linker resolves, queries come
+/// from the extracted assets.
+private GrammarRegistry defaultRegistry() @safe
+{
+    version (Android)
+    {
+        import android_glue : androidDataDir;
+        import android_paths : grammarQueriesRoot;
+
+        return GrammarRegistry.fromSonames(grammarQueriesRoot(androidDataDir()));
+    }
+    else
+        return GrammarRegistry.fromEnvironment();
+}
 
 /// Heuristic for whether a graphical display is available, used to pick the GUI
 /// vs the terminal by default (no `--gui`/`--no-gui`). On Linux/BSD a display is

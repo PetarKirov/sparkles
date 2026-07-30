@@ -1,11 +1,19 @@
 /**
 Grammar discovery: the search-path registry and language-name normalization.
 
-The directory convention (produced by the nix `ts-grammars` bundle): each
-search-path entry contains `<lang>/parser` (the compiled grammar) and
-`<lang>/queries/*.scm`. `$SPARKLES_TS_GRAMMAR_PATH` holds one or more such
-directories (path-separator-separated; first hit wins, so a dev can shadow
-one grammar ahead of the bundle).
+Two layouts:
+$(LIST
+    * $(B Search path) (the desktop default, produced by the nix `ts-grammars`
+        bundle): each entry contains `<lang>/parser` (the compiled grammar)
+        and `<lang>/queries/*.scm`. `$SPARKLES_TS_GRAMMAR_PATH` holds one or
+        more such directories (path-separator-separated; first hit wins, so a
+        dev can shadow one grammar ahead of the bundle).
+    * $(B Sonames) (`fromSonames` — the Android APK): parsers are shipped as
+        `libtree_sitter_<lang>.so` native libraries the dynamic linker
+        resolves by bare soname (the app's linker namespace includes the
+        APK's lib dir — no paths, no env vars), while `queries/` live under
+        one plain directory of extracted assets.
+)
 
 Every lookup returns `TsExpected` — a missing grammar is an error value the
 caller turns into the plain-text fallback, never a crash (the totality law).
@@ -15,11 +23,33 @@ module sparkles.syntax.ts.registry;
 import sparkles.tree_sitter.errors : TsError, TsErrorCode, TsExpected, tsErr, tsOk;
 import sparkles.tree_sitter.loader : Grammar, loadGrammar;
 
+/// The Android APK soname of a grammar: `libtree_sitter_<lang>.so` with `-`
+/// folded to `_` (matching the `tree_sitter_<lang_>` symbol convention; the
+/// nix side names the shipped libraries identically).
+string grammarSoname(scope const(char)[] languageName) @safe pure nothrow
+{
+    auto s = new char[](languageName.length);
+    foreach (i, char c; languageName)
+        s[i] = c == '-' ? '_' : c;
+    return "libtree_sitter_" ~ s ~ ".so";
+}
+
+///
+@("ts.registry.grammarSoname")
+@safe pure nothrow
+unittest
+{
+    assert(grammarSoname("d") == "libtree_sitter_d.so");
+    assert(grammarSoname("c-sharp") == "libtree_sitter_c_sharp.so");
+    assert(grammarSoname("markdown-inline") == "libtree_sitter_markdown_inline.so");
+}
+
 /// See the module header.
 struct GrammarRegistry
 {
     private string[] _dirs;
     private Grammar[string] _cache;
+    private bool _sonameLayout;
 
     /// Builds the registry from `$SPARKLES_TS_GRAMMAR_PATH`.
     static GrammarRegistry fromEnvironment() @safe
@@ -46,6 +76,12 @@ struct GrammarRegistry
     static GrammarRegistry fromDirs(string[] dirs) @safe pure nothrow @nogc
         => GrammarRegistry(dirs);
 
+    /// Builds the soname-layout registry (the Android APK): parsers resolve
+    /// by `dlopen(grammarSoname(lang))` through the dynamic linker;
+    /// `queries/` live under `<queriesRoot>/<lang>/queries/`.
+    static GrammarRegistry fromSonames(string queriesRoot) @safe pure nothrow
+        => GrammarRegistry([queriesRoot], null, _sonameLayout: true);
+
     /// The search directories, in priority order.
     const(string)[] dirs() const @safe pure nothrow @nogc
         => _dirs;
@@ -64,6 +100,19 @@ struct GrammarRegistry
         if (auto cached = languageName in _cache)
             return tsOk(*cached);
 
+        if (_sonameLayout)
+        {
+            // No exists-gate (a bare soname is not a checkable path); the
+            // dynamic linker's refusal IS the absence signal, so a failed
+            // dlopen maps to the plain-text degrade, not an error surface.
+            auto loaded = loadGrammar(grammarSoname(languageName), languageName);
+            if (loaded.hasError && loaded.error.code == TsErrorCode.dlopenFailed)
+                return tsErr!Grammar(TsErrorCode.grammarNotFound);
+            if (!loaded.hasError)
+                _cache[languageName.idup] = loaded.value;
+            return loaded;
+        }
+
         foreach (dir; _dirs)
         {
             const so = buildPath(dir, languageName, "parser");
@@ -78,14 +127,27 @@ struct GrammarRegistry
     }
 
     /**
-    Reads `queries/<kind>.scm` for the language, from the same search-path
-    entry that provides its `parser` (one consistent view per language).
+    Reads `queries/<kind>.scm` for the language — from the same search-path
+    entry that provides its `parser` (one consistent view per language), or,
+    in the soname layout, straight from `<queriesRoot>/<lang>/queries/` (the
+    parser is a linker-resolved library there, not a checkable sibling).
     */
     TsExpected!string queryText(const(char)[] languageName,
         const(char)[] kind = "highlights") @safe
     {
         import std.file : exists, readText;
         import std.path : buildPath;
+
+        if (_sonameLayout)
+        {
+            foreach (dir; _dirs)
+            {
+                const scm = buildPath(dir, languageName, "queries", kind ~ ".scm");
+                if (scm.exists)
+                    return tsOk(readText(scm));
+            }
+            return tsErr!string(TsErrorCode.queryFileMissing);
+        }
 
         foreach (dir; _dirs)
         {
@@ -166,6 +228,35 @@ unittest
     auto query = registry.queryText("json");
     assert(query.hasError);
     assert(query.error.code == TsErrorCode.grammarNotFound);
+}
+
+@("ts.registry.sonameLayout")
+@system
+unittest
+{
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+
+    const root = buildPath(tempDir, "sparkles-soname-registry-test");
+    mkdirRecurse(buildPath(root, "json", "queries"));
+    scope (exit) rmdirRecurse(root);
+    write(buildPath(root, "json", "queries", "highlights.scm"), "(pair) @x");
+
+    auto registry = GrammarRegistry.fromSonames(root);
+
+    // Queries read straight from the extracted tree — no parser sibling gate.
+    auto q = registry.queryText("json");
+    assert(!q.hasError && q.value == "(pair) @x");
+    assert(registry.queryText("json", "locals").error.code
+        == TsErrorCode.queryFileMissing);
+    assert(registry.queryText("nonexistent").error.code
+        == TsErrorCode.queryFileMissing);
+
+    // A soname the dynamic linker refuses is the plain-text degrade, not an
+    // error surface.
+    version (Posix)
+        assert(registry.grammar("nonexistent").error.code
+            == TsErrorCode.grammarNotFound);
 }
 
 @("ts.registry.searchPathSplitting")
