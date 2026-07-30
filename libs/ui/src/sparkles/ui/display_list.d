@@ -46,7 +46,23 @@ private void emit(in WidgetTree tree, uint idx, in Frame[] frames, in Palette pa
     // a viewport). Zero-sized frames are kept — a border-only box measures 0×0.
     if (!rect.empty && rect.intersection(clip).empty)
         return;
+
+    // The node-level syntax channel: resolved colors from the content's theme
+    // override the slot resolution (the widget twin of `TextSpan.fg`).
+    static void applyOverrides(ref Visual vis, in Widget node)
+    {
+        if (node.hasFgOverride)
+            vis.fg = node.fgOverride;
+        if (node.hasBgOverride)
+        {
+            vis.bg = node.bgOverride;
+            vis.hasBg = true;
+        }
+        if (node.hasBorderOverride)
+            vis.border.color = node.borderOverride;
+    }
     Visual vis = resolveVisual(pal, node.slot, node.decoration, node.textStyle, pageFg, pageBg);
+    applyOverrides(vis, node);
 
     // The background fill is gated by `paintBackground`; a border/shadow/arrow rides
     // the decoration independently (a box can have a border but no fill — the
