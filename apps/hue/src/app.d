@@ -473,19 +473,38 @@ int main(string[] args)
         return 1;
     }
 
+    int rc;
     final switch (backend)
     {
         case Backend.gui:
-            return runGuiSink(cli, doc, labels, theme, cache,
+            rc = runGuiSink(cli, doc, labels, theme, cache,
                 haveSet ? &docSet : null, &pipeline, dirTarget);
+            break;
         case Backend.html:
-            return runHtmlSink(doc, theme, registry, cache);
+            rc = runHtmlSink(doc, theme, registry, cache);
+            break;
         case Backend.tui:
-            return runTuiSink(cli, doc, labels, theme, cache,
+            rc = runTuiSink(cli, doc, labels, theme, cache,
                 haveSet ? &docSet : null, &pipeline);
+            break;
         case Backend.ansi:
-            return runAnsiSink(cli, doc, theme, cache);
+            rc = runAnsiSink(cli, doc, theme, cache);
+            break;
     }
+
+    // Android may recreate the activity (rotation, task eviction) in the SAME
+    // process, calling android_main → main again — and a statically linked
+    // druntime cannot rt_init twice (it crashes on the new glue thread). Exit
+    // the process when the activity goes; Android spawns a fresh one for the
+    // next launch. The standard NativeActivity engine pattern.
+    version (Android)
+    {
+        import core.stdc.stdlib : exit;
+
+        exit(rc);
+    }
+
+    return rc;
 }
 
 // ── The four sinks — each a `final switch` over the document's kind ─────────
@@ -635,6 +654,28 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
         import gui : LoadedDoc, runGui;
         import sparkles.raylib_text : FontSet;
 
+        // A directory target opens in the tree; decided before the Android
+        // default below widens treeRoot (browsing samples is opt-in there —
+        // the built-in document stays the landing view).
+        const startInTree = treeRoot.length != 0;
+
+        // Android: with no explicit directory target, the explorer roots at
+        // the extracted sample documents — the app-accessible browse surface.
+        version (Android)
+        {
+            import std.file : exists;
+
+            import android_glue : androidDataDir;
+            import android_paths : docsDir;
+
+            if (treeRoot.length == 0)
+            {
+                const dd = docsDir(androidDataDir());
+                if (dd.exists)
+                    treeRoot = dd;
+            }
+        }
+
         // The document loader the viewer calls when navigating a set (`GNV1`):
         // the one pipeline again — the GUI never duplicates it. A twoslash
         // payload rides along, so mixed sets navigate through one window.
@@ -651,7 +692,7 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             cli.windowWidth, cli.windowHeight, cli.lineNumbers, cli.codeLineNumbers,
             cli.ansiCopy == "strip", parseTableCopy(cli.tableCopy),
             docSet, &loadDoc, &cache, doc.twoslash,
-            doc.path, startInTree: treeRoot.length != 0, treeRoot,
+            doc.path, startInTree: startInTree, treeRoot,
             FontSet.FaceOverrides(cli.fontBold, cli.fontItalic,
                 cli.fontBoldItalic), doc.lang,
             cli.include.dup, cli.exclude.dup, cli.treeWidth,

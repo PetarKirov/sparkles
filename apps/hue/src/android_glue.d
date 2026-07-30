@@ -102,8 +102,10 @@ string androidDataDir() @trusted
 void installLogcatSink(LogLevel level) @safe
 {
     import std.logger : globalLogLevel, sharedLog;
+    import sparkles.base.logger : coreGlobalLogLevel;
 
     globalLogLevel = level;
+    coreGlobalLogLevel = level; // the IES wrappers filter on the core level
     auto logger = new shared LogcatLogger(level);
     sharedLog = logger;
     sharedCoreLog = logger;

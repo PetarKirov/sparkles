@@ -20,7 +20,7 @@
         <activity
             android:name="android.app.NativeActivity"
             android:exported="true"
-            android:configChanges="orientation|screenSize|screenLayout|keyboard|keyboardHidden|density"
+            android:configChanges="keyboard|keyboardHidden|density"
             android:screenOrientation="fullUser">
             <meta-data android:name="android.app.lib_name" android:value="hello" />
             <intent-filter>
