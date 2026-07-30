@@ -152,7 +152,6 @@ struct ExplorerTui
     string picked;  // the chosen file (empty = none yet)
     string current; // the open document's path — highlighted in the tree (XPL3)
     GitStatusCache git;   // async per-root status snapshot (XPF1)
-    private char pending; // the ']'/'[' prefix of the ]g/[g sequences
 
     // Theme-derived interaction colors (XPL3/XPL5): the cursor row's tint and
     // the open document's accent come from the theme, matching the viewer's
@@ -650,29 +649,19 @@ struct ExplorerTui
             case Key.escape:
                 return false;
             case Key.char_:
-            {
-                const pk = pending;
-                pending = 0;
                 switch (e.ch)
                 {
                     case 'q': return false;
                     case 'j': ++sel; clamp(); break;
                     case 'k': --sel; clamp(); break;
-                    case 'g':
-                        // g = top; ]g / [g = next/prev git change (XPF1).
-                        if (pk == ']')
-                            jumpChange(1);
-                        else if (pk == '[')
-                            jumpChange(-1);
-                        else
-                        {
-                            sel = 0;
-                            clamp();
-                        }
-                        break;
+                    case 'g': sel = 0; clamp(); break;
                     case 'G': sel = cast(long) rows.length - 1; clamp(); break;
                     case '/': searching = true; qlen = 0; rebuild(); break;
-                    case ']', '[': pending = cast(char) e.ch; break;
+                    // Next/prev git change (XPF1) — the tree pane owns the
+                    // brackets while focused (the viewer keeps them for
+                    // document navigation).
+                    case ']': jumpChange(1); break;
+                    case '[': jumpChange(-1); break;
                     case 'r': refreshNow(); break;
                     case 'H': toggleHidden(); break;
                     case 'I': toggleIgnored(); break;
@@ -682,7 +671,6 @@ struct ExplorerTui
                     default: break;
                 }
                 break;
-            }
             default: break;
         }
         return true;
