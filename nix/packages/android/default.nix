@@ -10,7 +10,10 @@
 # scoped nixpkgs import — nothing in the default package set references it.
 {
   imports = [
+    ./build-apk.nix
+    ./hello.nix
     ./ndk.nix
+    ./raylib.nix
     ./sdk.nix
   ];
 }
