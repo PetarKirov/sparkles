@@ -1,0 +1,88 @@
+--- a/src/platforms/rcore_android.c	2026-07-31 01:05:44.239375745 +0300
++++ b/src/platforms/rcore_android.c	2026-07-31 01:06:22.492114482 +0300
+@@ -743,6 +743,9 @@
+     UpdateGestures();
+ #endif
+
++    // Window-resized flag lives for exactly one frame (matches the desktop platforms)
++    CORE.Window.resizedLastFrame = false;
++
+     // Reset keys/chars pressed registered
+     CORE.Input.Keyboard.keyPressedQueueCount = 0;
+     CORE.Input.Keyboard.charPressedQueueCount = 0;
+@@ -1036,6 +1039,43 @@
+     return 0;
+ }
+
++// ANDROID: Refresh every window-size-derived dimension after the native window
++// changed size in place (an orientation change while the activity keeps running,
++// i.e. orientation|screenSize in configChanges). No-op while the size is
++// unchanged. NOTE: Resets any screen-to-display scaling to the native window
++// size (the InitWindow(0, 0) fullscreen case, which is what a rotating app is)
++static void AndroidUpdateWindowSize(struct android_app *app)
++{
++    if ((app->window == NULL) || !CORE.Window.ready) return;
++
++    int32_t width = ANativeWindow_getWidth(app->window);
++    int32_t height = ANativeWindow_getHeight(app->window);
++    if ((width <= 0) || (height <= 0)) return;
++    if ((width == (int32_t)CORE.Window.display.width) &&
++        (height == (int32_t)CORE.Window.display.height)) return;
++
++    CORE.Window.display.width = width;
++    CORE.Window.display.height = height;
++    CORE.Window.screen.width = width;
++    CORE.Window.screen.height = height;
++    CORE.Window.render.width = width;
++    CORE.Window.render.height = height;
++    CORE.Window.currentFbo.width = width;
++    CORE.Window.currentFbo.height = height;
++    CORE.Window.renderOffset.x = 0;
++    CORE.Window.renderOffset.y = 0;
++
++    // 0x0 buffer geometry: the buffers follow the window size from here on
++    EGLint displayFormat = 0;
++    eglGetConfigAttrib(platform.device, platform.config, EGL_NATIVE_VISUAL_ID, &displayFormat);
++    ANativeWindow_setBuffersGeometry(app->window, 0, 0, displayFormat);
++
++    SetupViewport(width, height);
++    CORE.Window.resizedLastFrame = true;
++
++    TRACELOG(LOG_INFO, "ANDROID: Window resized in place: %i x %i", width, height);
++}
++
+ // ANDROID: Process activity lifecycle commands
+ static void AndroidCommandCallback(struct android_app *app, int32_t cmd)
+ {
+@@ -1069,6 +1109,10 @@
+                     eglMakeCurrent(platform.device, platform.surface, platform.surface, platform.context);
+
+                     platform.contextRebindRequired = false;
++
++                    // The window may have come back with a different size
++                    // (device rotated while the app was in the background)
++                    AndroidUpdateWindowSize(app);
+                 }
+                 else
+                 {
+@@ -1160,12 +1204,19 @@
+         case APP_CMD_SAVE_STATE: break;
+         case APP_CMD_STOP: break;
+         case APP_CMD_DESTROY: break;
++        case APP_CMD_WINDOW_RESIZED:
++        case APP_CMD_CONTENT_RECT_CHANGED:
++        {
++            AndroidUpdateWindowSize(app);
++        } break;
+         case APP_CMD_CONFIG_CHANGED:
+         {
+             //AConfiguration_fromAssetManager(platform.app->config, platform.app->activity->assetManager);
+             //print_cur_config(platform.app);
+
+-            // Check screen orientation here!
++            // An orientation change resizes the native window in place; the
++            // window may already carry the new size when this command lands
++            AndroidUpdateWindowSize(app);
+         } break;
+         default: break;
+     }
