@@ -6,10 +6,10 @@
 // their ancestors), and Enter handing the selected file to the `workspace`,
 // which shows it in the viewer pane beside the tree (`XPL2`).
 //
-// Posix-only; a piped directory target keeps the static listing.
+// Cross-platform (the cell grid and the event vocabulary are; the raw-mode
+// loop that feeds it lives in `workspace`). A piped directory target keeps
+// the static listing.
 module explorer;
-
-version (Posix):
 
 import std.algorithm.sorting : sort;
 import std.file : dirEntries, SpanMode;
@@ -17,7 +17,7 @@ import std.path : baseName, buildPath;
 
 import sparkles.syntax : LabelSet, ResolvedTheme, resolveTheme, RgbColor,
     Theme, toRgb;
-import sparkles.tui : CellStyle, Color, Grid, PosixEvents, Terminal;
+import sparkles.tui : CellStyle, Color, Grid;
 import sparkles.tui.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
     match, PointerAction, PointerButton, PointerEvent, ResizeEvent, WheelEvent;
 import sparkles.ui.components.chrome : headerBar;
@@ -234,7 +234,7 @@ struct ExplorerTui
     private int bodyRows() const @safe pure nothrow @nogc
         => height > 2 ? height - 2 : 1;
 
-    private void clamp() @safe pure nothrow @nogc
+    void clamp() @safe pure nothrow @nogc
     {
         const n = cast(long) rows.length;
         if (sel >= n) sel = n ? n - 1 : 0;
@@ -341,8 +341,9 @@ struct ExplorerTui
         );
     }
 
-    // Enter/→ on a dir toggles it; on a file, picks it (ends the session).
-    private bool activate() @system
+    /// Enter/→ on a dir toggles it; on a file, picks it (`picked` is set and
+    /// `false` returned — the host opens it and clears `picked`).
+    bool activate() @system
     {
         if (sel >= cast(long) rows.length)
             return true;

@@ -354,6 +354,7 @@ int main(string[] args)
 
     SourceSet docSet;
     bool haveSet;
+    string dirTarget;
     if (isDirectoryPath(target))
     {
         // The interactive terminal opens the split-pane workspace (`XPL2`)
@@ -386,6 +387,7 @@ int main(string[] args)
             return 1;
         }
         haveSet = true;
+        dirTarget = target; // the explorer pane roots here (XPL2)
         target = docSet.current.path;
     }
 
@@ -407,7 +409,7 @@ int main(string[] args)
     {
         case Backend.gui:
             return runGuiSink(cli, doc, labels, theme, cache,
-                haveSet ? &docSet : null, &pipeline);
+                haveSet ? &docSet : null, &pipeline, dirTarget);
         case Backend.html:
             return runHtmlSink(doc, theme, registry, cache);
         case Backend.tui:
@@ -548,7 +550,8 @@ private int runTuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
 /// `--gui` is explicit intent).
 private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
     in ResolvedTheme theme, ref TsConfigCache cache,
-    scope SourceSet* docSet, scope DocumentPipeline* pipeline) @system
+    scope SourceSet* docSet, scope DocumentPipeline* pipeline,
+    string treeRoot = null) @system
 {
     import source_set : SourceSet;
 
@@ -570,7 +573,8 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             themeSet.themes, themeSet.idx, doc.preview, cli.font, cli.fontSize,
             cli.windowWidth, cli.windowHeight, cli.lineNumbers, cli.codeLineNumbers,
             cli.ansiCopy == "strip", parseTableCopy(cli.tableCopy),
-            docSet, docSet !is null ? &loadDoc : null, &cache, doc.twoslash);
+            docSet, &loadDoc, &cache, doc.twoslash,
+            doc.path, startInTree: treeRoot.length != 0, treeRoot);
     }
     else
     {
