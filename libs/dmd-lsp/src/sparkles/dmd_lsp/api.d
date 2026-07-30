@@ -119,9 +119,17 @@ struct AnalyzedModule
     {
         import std.string : strip;
 
+        import sparkles.dmd_lsp.ddoc : renderDdocText;
         import sparkles.dmd_lsp.visitor : findTipData;
 
         auto data = findTipData(module_, line, col, line, col + 1, addsize: false);
+        if (data.doc.length && data.symbol !is null)
+        {
+            // Real DDoc rendering (sections -> chips, macros -> CommonMark).
+            auto rendered = renderDdocText(data.doc, data.symbol);
+            return Tip(kind: data.kind, code: data.code,
+                doc: rendered.docs, tags: rendered.tags);
+        }
         return Tip(kind: data.kind, code: data.code, doc: data.doc.strip);
     }
 
@@ -193,9 +201,15 @@ struct Tip
     /// The rendered declaration, e.g. `int test.S.fun(int par)`.
     string code;
 
-    /// The declaration's DDoc comment, stripped (spec `DOC1`); empty when the
-    /// declaration carries none.
+    /// The declaration's documentation, rendered from DDoc to CommonMark
+    /// (summary + description + Examples + custom sections; spec `DOC1`/
+    /// `DOC2`); empty when the declaration carries none.
     string doc;
+
+    /// `[name, text]` chip pairs from the standard DDoc sections: one
+    /// `["param", "x desc"]` per `Params:` row, plus returns/throws/see/
+    /// deprecated/authors/… (spec `DOC3`).
+    string[][] tags;
 
     /// Whether the query resolved to anything.
     bool found() const @safe pure nothrow @nogc => kind.length != 0 || code.length != 0;
