@@ -61,6 +61,17 @@ struct MdViewOptions
 
     /// The decoration charset (Nerd-glyph defaults; the theme glyph channel).
     MdViewGlyphs glyphs;
+
+    /// Non-zero makes fence header bands copy targets: a fence's header gets
+    /// `hitId = fenceHitBase + codeBody.start` and shows the copy glyph, so an
+    /// interactive backend maps a click back to the fence's source span with
+    /// no per-fence counter — identity is source-anchored, like fold keys.
+    size_t fenceHitBase = 0;
+
+    /// The `codeBody.start` of the fence just copied (`size_t.max` = none):
+    /// its header shows the copied glyph instead of the copy glyph — the
+    /// feedback state lives in the app, the view stays a pure function of it.
+    size_t copiedFence = size_t.max;
 }
 
 /**
@@ -129,6 +140,8 @@ struct MdViewGlyphs
     string importantIcon = "\U000F017E"; /// 󰅾
     string warningIcon = "\U000F002A";   /// 󰀪
     string cautionIcon = "\U000F0CE6";   /// 󰳦
+    string copyIcon = "\U0000F0C5";      ///  (fence header copy affordance)
+    string copiedIcon = "\U0000F00C";    ///  (feedback after a copy)
 }
 
 /// The whole document as its own tree (the common non-embedded case).
@@ -295,30 +308,43 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
             if (styled.length)
             {
                 foreach (line; styled)
+                {
+                    // Renderer offsets are body-relative; anchor them to the
+                    // fence body's source position (the identity channel).
+                    foreach (ref s; line)
+                        if (s.srcStart != size_t.max)
+                        {
+                            s.srcStart += blk.codeBody.start;
+                            s.srcEnd += blk.codeBody.start;
+                        }
                     rows ~= b.add(Widget(kind: WidgetKind.rich,
                         spans: line.length ? line
                             : [TextSpan(" ", Slot.code, codeStyle(opt))],
                         slot: Slot.code, hitId: opt.hitId,
                         textStyle: codeStyle(opt)));
+                }
             }
             else
             {
                 size_t start = 0;
-                void line(const(char)[] t) @safe
+                void line(const(char)[] t, size_t at) @safe
                 {
-                    rows ~= b.add(Widget(kind: WidgetKind.text,
-                        text: t.length ? t : " ", slot: Slot.code,
-                        hitId: opt.hitId, textStyle: codeStyle(opt)));
+                    rows ~= b.add(Widget(kind: WidgetKind.rich, spans: [
+                        TextSpan(t.length ? t : " ", Slot.code, codeStyle(opt),
+                            srcStart: blk.codeBody.start + at,
+                            srcEnd: blk.codeBody.start + at + t.length)],
+                        slot: Slot.code, hitId: opt.hitId,
+                        textStyle: codeStyle(opt)));
                 }
 
                 foreach (i, char c; code)
                     if (c == '\n')
                     {
-                        line(code[start .. i]);
+                        line(code[start .. i], start);
                         start = i + 1;
                     }
                 if (start < code.length)
-                    line(code[start .. $]);
+                    line(code[start .. $], start);
             }
             const body_ = b.container(WidgetKind.column, rows);
             // Padded on every side so a cell backend's box-glyph perimeter
@@ -340,8 +366,18 @@ private uint viewBlock(ref Builder b, ref const MdBlock blk, const(char)[] src,
                 ~ (blk.infoLang.length ? blk.infoLang : "code");
             if (blk.label.length)
                 lbl = lbl ~ " " ~ blk.label;
+            // With a fence hit base the whole band is a copy target, its
+            // identity anchored at the body's source position; the glyph is
+            // the affordance, the copied state comes from the app.
+            size_t headerHit = opt.hitId;
+            if (opt.fenceHitBase != 0)
+            {
+                headerHit = opt.fenceHitBase + blk.codeBody.start;
+                lbl = lbl ~ "  " ~ (opt.copiedFence == blk.codeBody.start
+                    ? opt.glyphs.copiedIcon : opt.glyphs.copyIcon);
+            }
             Widget header = Widget(kind: WidgetKind.text, text: lbl,
-                slot: Slot.code, hitId: opt.hitId, stretch: true,
+                slot: Slot.code, hitId: headerHit, stretch: true,
                 paintBackground: true, padding: Insets.symmetric(0, 1),
                 textStyle: codeStyle(opt),
                 bgOverride: opt.theme.codeHeaderBg, hasBgOverride: true,
@@ -504,7 +540,8 @@ void inlinesToSpans(in MdInline[] inls, const(char)[] src, TextStyle base,
         final switch (inl.kind) with (MdInlineKind)
         {
             case text:
-                pushProse(sliceOf(src, inl.span), base, slot, spans);
+                pushProse(sliceOf(src, inl.span), base, slot, spans,
+                    inl.span.start);
                 break;
             case strong:
             {
@@ -536,7 +573,8 @@ void inlinesToSpans(in MdInline[] inls, const(char)[] src, TextStyle base,
                     spans ~= TextSpan(t, Slot.chip, s,
                         paintBackground: true, noBreak: true,
                         fg: vt !is null ? vt.codeFg : RgbColor.init,
-                        hasFg: vt !is null);
+                        hasFg: vt !is null,
+                        srcStart: inl.span.start, srcEnd: inl.span.end);
                 break;
             }
             case link:
@@ -565,9 +603,10 @@ void inlinesToSpans(in MdInline[] inls, const(char)[] src, TextStyle base,
 
 /// Prose text as one styled span: whitespace runs (markdown soft wraps, tabs,
 /// newlines) collapse to single spaces, edges included — the line breaker then
-/// owns every breaking decision.
+/// owns every breaking decision. `srcStart` (when given) stamps the source
+/// identity the normalized text came from.
 void pushProse(const(char)[] text, TextStyle style, Slot slot,
-    ref TextSpan[] spans)
+    ref TextSpan[] spans, size_t srcStart = size_t.max)
 {
     if (!text.length)
         return;
@@ -591,7 +630,9 @@ void pushProse(const(char)[] text, TextStyle style, Slot slot,
     if (ws)
         norm ~= ' ';
     if (norm.length)
-        spans ~= TextSpan(norm, slot, style); // freshly allocated, never mutated
+        spans ~= TextSpan(norm, slot, style, // freshly allocated, never mutated
+            srcStart: srcStart,
+            srcEnd: srcStart != size_t.max ? srcStart + text.length : 0);
 }
 
 // ── Callouts (GitHub admonitions) ───────────────────────────────────────────
@@ -772,7 +813,8 @@ TextSpan[][] delegate(const(char)[], const(char)[]) @safe highlightedFenceRender
             const spec = (*theme)[ls.span.label];
             lines[ls.line] ~= TextSpan(
                 body_[ls.span.start .. ls.span.end], Slot.code,
-                TextStyle.init, fg: toRgb(spec.fg, pageFg), hasFg: true);
+                TextStyle.init, fg: toRgb(spec.fg, pageFg), hasFg: true,
+                srcStart: ls.span.start, srcEnd: ls.span.end); // body-relative
         }
         return lines;
     };
@@ -1019,6 +1061,51 @@ version (unittest)
 
 private RgbColor mixBand(in MdViewTheme vt, RgbColor accent) @safe
     => mix(vt.pageBg, accent, 0.12);
+
+@("md.render_widgets.identityChannel.srcOffsetsAndFenceHit")
+@safe unittest
+{
+    import sparkles.syntax.label : LabelSet;
+    import sparkles.syntax.theme : resolveTheme;
+    import sparkles.syntax.themes : builtinDark;
+    import sparkles.ui.widget : WidgetKind;
+
+    // The identity channel: prose spans carry their source byte offsets, a
+    // plain fence line carries body-exact offsets, and with a fenceHitBase
+    // the (themed) header band's hit id is anchored at the body's source
+    // position. Un-themed fences have no header band and so no copy target.
+    const src = "hello world x = 1\ny = 2";
+    const doc = MdDoc(MdBlock(kind: MdBlockKind.document, children: [
+        MdBlock(kind: MdBlockKind.paragraph, inlines: [
+            MdInline(kind: MdInlineKind.text, span: Span(0, 11))]),
+        MdBlock(kind: MdBlockKind.codeFence, infoLang: "d",
+            codeBody: Span(12, src.length)),
+    ]), src);
+
+    const labels = LabelSet.standard();
+    const vt = MdViewTheme.derive(resolveTheme(builtinDark, labels),
+        RgbColor(0xcc, 0xcc, 0xcc), RgbColor(0x1e, 0x1e, 0x1e));
+    MdViewOptions opt = {fenceHitBase: 1 << 20, theme: vt};
+    auto tree = viewMarkdown(doc, opt);
+
+    bool sawProse, sawFenceLine2, sawHit;
+    foreach (ref const n; tree.nodes)
+    {
+        if (n.kind == WidgetKind.rich)
+            foreach (ref const s; n.spans)
+            {
+                if (s.text == "hello world"
+                    && s.srcStart == 0 && s.srcEnd == 11)
+                    sawProse = true;
+                if (s.text == "y = 2" && s.srcStart == 18
+                    && s.srcEnd == src.length)
+                    sawFenceLine2 = true;
+            }
+        if (n.hitId == (1 << 20) + 12)
+            sawHit = true;
+    }
+    assert(sawProse && sawFenceLine2 && sawHit);
+}
 
 @("md.render_widgets.calloutDetectedFromRawSource")
 @safe unittest

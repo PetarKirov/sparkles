@@ -28,7 +28,7 @@ module sparkles.ui.state;
 import sparkles.input : PointerAction, PointerEvent;
 import sparkles.ui.geometry : Point, Rect;
 import sparkles.ui.layout : childClipOf, Frame, unclipped;
-import sparkles.ui.widget : Visibility, WidgetTree;
+import sparkles.ui.widget : Visibility, WidgetKind, WidgetTree;
 
 @safe:
 
@@ -173,6 +173,110 @@ unittest
     // Row 2 belongs to the scrolled-out token — but it is clipped, so nothing.
     h.update(PointerEvent(action: PointerAction.move, pos: Point(2, 2)), targets);
     assert(h.hot == 0);
+}
+
+// ── Document rows (the identity channel, aggregated) ────────────────────────
+
+/// One visual row of a laid-out document: its concatenated visible text (for
+/// incremental search) and the source byte range its content came from (for
+/// line-granular selection and copy) — `TextSpan.srcStart` aggregated per row.
+struct DocRow
+{
+    const(char)[] text;
+    size_t srcStart = size_t.max;
+    size_t srcEnd;
+}
+
+/**
+Aggregates a laid-out tree into per-visual-row text + source ranges: every
+visible text/rich node contributes its (wrapped) lines at their frame rows.
+Rows are indexed from the root's top; text appends in tree walk order (left to
+right for a column-of-rows document). Synthetic spans (icons, bullets, guides)
+carry no source identity and never widen a row's range.
+*/
+DocRow[] documentRows(in WidgetTree tree, in Frame[] frames)
+{
+    const total = frames.length ? frames[tree.root].rect.height : 0;
+    auto rows = new DocRow[](total > 0 ? total : 0);
+
+    void addText(int y, const(char)[] text, size_t srcStart, size_t srcEnd)
+    {
+        if (y < 0 || y >= cast(int) rows.length)
+            return;
+        rows[y].text ~= text;
+        if (srcStart != size_t.max)
+        {
+            if (srcStart < rows[y].srcStart)
+                rows[y].srcStart = srcStart;
+            if (srcEnd > rows[y].srcEnd)
+                rows[y].srcEnd = srcEnd;
+        }
+    }
+
+    void walk(uint idx)
+    {
+        const node = tree.nodes[idx];
+        if (node.visibility != Visibility.visible)
+            return;
+        const rect = frames[idx].rect;
+        final switch (node.kind) with (WidgetKind)
+        {
+            case text:
+                if (frames[idx].lines.length)
+                    foreach (li, ln; frames[idx].lines)
+                        addText(rect.y + cast(int) li, ln, size_t.max, 0);
+                else
+                    addText(rect.y, node.text, size_t.max, 0);
+                break;
+            case rich:
+                if (frames[idx].spanLines.length)
+                {
+                    foreach (li, line; frames[idx].spanLines)
+                        foreach (ref const s; line)
+                            addText(rect.y + cast(int) li, s.text,
+                                s.srcStart, s.srcEnd);
+                }
+                else
+                    foreach (ref const s; node.spans)
+                        addText(rect.y, s.text, s.srcStart, s.srcEnd);
+                break;
+            case glyph, line, box:
+                break;
+            case row, column, stack, panel, popup:
+                foreach (ci; node.children)
+                    walk(ci);
+                break;
+        }
+    }
+
+    walk(tree.root);
+    return rows;
+}
+
+@("ui.state.documentRows.textAndSourceRanges")
+@safe unittest
+{
+    import sparkles.ui.geometry : SizeSpec;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind;
+    import sparkles.ui.wrap : TextWrap;
+
+    // A wrapped rich paragraph with source identity + a synthetic leader.
+    auto b = Builder();
+    Widget para = Widget(kind: WidgetKind.rich, wrap: TextWrap.greedy, spans: [
+        TextSpan("• ", noBreak: true),                    // synthetic
+        TextSpan("alpha beta gamma", srcStart: 100, srcEnd: 116),
+    ]);
+    para.width.max = 9;
+    const t = b.add(para);
+    auto tree = b.finish(b.container(WidgetKind.column, [t]));
+    auto frames = layout(tree);
+
+    auto rows = documentRows(tree, frames);
+    assert(rows.length >= 2);
+    assert(rows[0].text == "• alpha" || rows[0].text == "• alpha ");
+    assert(rows[0].srcStart == 100);           // the leader added no identity
+    assert(rows[1].srcStart > 100 && rows[1].srcEnd <= 116);
 }
 
 // ── Scrollbar (STM2) ─────────────────────────────────────────────────────────
