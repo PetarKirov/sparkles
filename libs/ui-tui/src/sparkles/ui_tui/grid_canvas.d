@@ -144,7 +144,9 @@ struct GridCanvas
             const bw = v.border.width;
             const bottomOnly = bw.bottom > 0 && bw.top == 0 && bw.left == 0 && bw.right == 0;
             const fullBox = bw.top > 0 && bw.bottom > 0 && bw.left > 0 && bw.right > 0;
-            if (bottomOnly)
+            if (bottomOnly && v.border.style == BorderStyle.solid && r.height == 1)
+                ruleRow(r, v); // a thematic break: `─` glyphs, not an underline
+            else if (bottomOnly)
                 underlineRow(r, v);
             else if (fullBox)
                 drawBoxBorder(r, v);
@@ -152,6 +154,20 @@ struct GridCanvas
             // error/tag left bar) has no cell analog and is dropped — the block's
             // background tint (if any) still conveys it.
         }
+    }
+
+    /// A solid bottom-only border on a one-row box → a `─` rule row (the
+    /// thematic break; an underline on blank cells would be near-invisible).
+    private void ruleRow(in Rect r, in Visual v) scope
+    {
+        foreach (x; r.x .. r.x + r.width)
+            if (inBounds(x, r.y))
+            {
+                auto c = &cell(x, r.y);
+                auto st = c.style;
+                st.fg = Color.fromRgb(v.border.color);
+                c.setCodepoint('─', 1, st);
+            }
     }
 
     /// A bottom-only border → a cell underline on the rect's last row (dotted /

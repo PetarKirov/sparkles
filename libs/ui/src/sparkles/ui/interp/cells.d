@@ -18,6 +18,7 @@ module sparkles.ui.interp.cells;
 import std.range.primitives : put;
 
 import sparkles.ui.canvas : isCanvas, LineStyle;
+import sparkles.ui.style : BorderStyle;
 import sparkles.ui.geometry : cellsOf, Point, Rect, Size;
 import sparkles.ui.style : Visual;
 
@@ -107,19 +108,85 @@ struct CellGrid
 
     // --- isCanvas primitives ---
 
-    /// Composites `v.bg` (respecting its alpha) over the cells of `r`.
+    /// Composites `v.bg` (respecting its alpha) over the cells of `r`, then
+    /// draws the box chrome the cell grid can express: a full border becomes
+    /// box-drawing glyphs on the perimeter, a solid bottom-only border on a
+    /// one-row box becomes a `─` rule, any other bottom-only border a cell
+    /// underline. Other single-side accents have no cell analog and drop.
     void fillRect(in Rect r, in Visual v)
     {
-        if (!v.hasBg)
-            return;
-        foreach (y; r.y .. r.y + r.height)
-            foreach (x; r.x .. r.x + r.width)
-                if (inBounds(x, y))
+        if (v.hasBg)
+            foreach (y; r.y .. r.y + r.height)
+                foreach (x; r.x .. r.x + r.width)
+                    if (inBounds(x, y))
+                    {
+                        auto c = &at(x, y);
+                        c.bg = blend(c.hasBg ? c.bg : pageBg, v.bg, v.bgAlpha);
+                        c.hasBg = true;
+                    }
+
+        if (v.border.any)
+        {
+            const bw = v.border.width;
+            const bottomOnly = bw.bottom > 0 && bw.top == 0 && bw.left == 0
+                && bw.right == 0;
+            const fullBox = bw.top > 0 && bw.bottom > 0 && bw.left > 0
+                && bw.right > 0;
+            if (bottomOnly && v.border.style == BorderStyle.solid && r.height == 1)
+            {
+                // A thematic break: `─` glyphs, not an invisible underline row.
+                foreach (x; r.x .. r.x + r.width)
+                    if (inBounds(x, r.y))
+                    {
+                        auto c = &at(x, r.y);
+                        c.glyph = '─';
+                        c.fg = v.border.color;
+                    }
+            }
+            else if (bottomOnly)
+            {
+                const y = r.y + r.height - 1;
+                foreach (x; r.x .. r.x + r.width)
+                    if (inBounds(x, y))
+                    {
+                        auto c = &at(x, y);
+                        c.underline = true;
+                        c.curly = false;
+                        c.underColor = v.border.color;
+                    }
+            }
+            else if (fullBox && r.width >= 2 && r.height >= 2)
+            {
+                const rounded = v.borderRadius > 0;
+                const x0 = r.x, y0 = r.y;
+                const x1 = r.x + r.width - 1, y1 = r.y + r.height - 1;
+                void setc(int x, int y, dchar g)
                 {
+                    if (!inBounds(x, y))
+                        return;
                     auto c = &at(x, y);
-                    c.bg = blend(c.hasBg ? c.bg : pageBg, v.bg, v.bgAlpha);
-                    c.hasBg = true;
+                    c.glyph = g;
+                    c.fg = v.border.color;
                 }
+
+                foreach (x; x0 + 1 .. x1)
+                {
+                    setc(x, y0, '─');
+                    setc(x, y1, '─');
+                }
+                foreach (y; y0 + 1 .. y1)
+                {
+                    setc(x0, y, '│');
+                    setc(x1, y, '│');
+                }
+                setc(x0, y0, rounded ? '╭' : '┌');
+                setc(x1, y0, rounded ? '╮' : '┐');
+                setc(x0, y1, rounded ? '╰' : '└');
+                setc(x1, y1, rounded ? '╯' : '┘');
+                if (v.arrow)
+                    setc(x0 + 1 + v.arrowOffset, y0, '┴');
+            }
+        }
     }
 
     /// Writes `text` (one column per codepoint) at `at` in `v.fg`.
