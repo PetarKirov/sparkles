@@ -12,6 +12,7 @@ dflags "-preview=in" "-preview=dip1000"
 configuration "library" {
     targetType "library"
     dependency "sparkles:base" path="../.."
+    dependency "sparkles:dmd-lsp" path="../.."
     dependency "sparkles:twoslash-protocol" path="../.."
     dependency "sparkles:wired" path="../.."
 }
@@ -21,10 +22,14 @@ configuration "unittest" {
     // so `dub test` recompiles only this package, not the runner sources.
     dependency "sparkles:test-runner" path="../.."
     dependency "sparkles:base" path="../.."
+    dependency "sparkles:dmd-lsp" path="../.."
     dependency "sparkles:twoslash-protocol" path="../.."
     dependency "sparkles:wired" path="../.."
 
-    dflags "-checkaction=context" "-allinst"
+    // No -checkaction=context / -allinst (the repo-standard unittest flags):
+    // like sparkles:dmd-lsp, they leak into the dmd:frontend dependency's
+    // compilation in the same invocation — undefined _d_assert_fail
+    // instantiations at link, and -allinst over the 40 MB frontend.
     dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
     dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
     lflags "--export-dynamic" platform="linux-ldc"
