@@ -19,6 +19,7 @@ configuration "library" {
     targetType "sourceLibrary"
     dependency "sparkles:base" path="../.."
     dependency "sparkles:syntax" path="../.."
+    dependency "sparkles:twoslash-protocol" path="../.."
     dependency "sparkles:wired" path="../.."
     dependency "sparkles:ui" path="../.."
 }
@@ -29,6 +30,7 @@ configuration "unittest" {
     dependency "sparkles:test-runner" path="../.."
     dependency "sparkles:base" path="../.."
     dependency "sparkles:syntax" path="../.."
+    dependency "sparkles:twoslash-protocol" path="../.."
     dependency "sparkles:wired" path="../.."
     dependency "sparkles:ui" path="../.."
 
