@@ -1,0 +1,231 @@
+{
+    "code": "// NB: `total` is backticked below on purpose — DDoc auto-emphasis wraps the\n// parameter name again, so the popup shows a nested code span.\n/++\nRenders a progress meter.\n\nParams:\n    value = the current position; values outside `[0, `total`]` are\n            silently clamped rather than rejected\n    total = the end of the range; must be positive\n    width = the meter's width in cells\nReturns: The rendered bar, exactly width characters wide.\n+/\nstring meter(double value, double total, size_t width)\n    => value >= total ? \"full\" : \"partial\";\n",
+    "language": "d",
+    "nodes": [
+        {
+            "character": 0,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "",
+            "id": "",
+            "length": 6,
+            "level": "",
+            "line": 12,
+            "name": "",
+            "start": 451,
+            "tags": [],
+            "text": "(alias) object.string = string",
+            "type": "hover"
+        },
+        {
+            "character": 7,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "Renders a progress `meter`.",
+            "id": "",
+            "length": 5,
+            "level": "",
+            "line": 12,
+            "name": "",
+            "start": 458,
+            "tags": [
+                [
+                    "param",
+                    "value the current position; values outside `[0, ``total``]` are silently clamped rather than rejected"
+                ],
+                [
+                    "param",
+                    "total the end of the range; must be positive"
+                ],
+                [
+                    "param",
+                    "width the `meter`'s `width` in cells"
+                ],
+                [
+                    "returns",
+                    "The rendered bar, exactly `width` characters wide."
+                ]
+            ],
+            "text": "string sample.meter(double value, double total, ulong width)",
+            "type": "hover"
+        },
+        {
+            "character": 7,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "Renders a progress `meter`.",
+            "id": "",
+            "length": 5,
+            "level": "",
+            "line": 12,
+            "name": "",
+            "start": 458,
+            "tags": [
+                [
+                    "param",
+                    "value the current position; values outside `[0, ``total``]` are silently clamped rather than rejected"
+                ],
+                [
+                    "param",
+                    "total the end of the range; must be positive"
+                ],
+                [
+                    "param",
+                    "width the `meter`'s `width` in cells"
+                ],
+                [
+                    "returns",
+                    "The rendered bar, exactly `width` characters wide."
+                ]
+            ],
+            "text": "string sample.meter(double value, double total, ulong width)",
+            "type": "query"
+        },
+        {
+            "character": 20,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "the current position; values outside `[0, ``total``]` are silently clamped rather than rejected",
+            "id": "",
+            "length": 5,
+            "level": "",
+            "line": 12,
+            "name": "",
+            "start": 471,
+            "tags": [
+                [
+                    "param",
+                    "value the current position; values outside `[0, ``total``]` are silently clamped rather than rejected"
+                ]
+            ],
+            "text": "(parameter) double value",
+            "type": "hover"
+        },
+        {
+            "character": 34,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "the end of the range; must be positive",
+            "id": "",
+            "length": 5,
+            "level": "",
+            "line": 12,
+            "name": "",
+            "start": 485,
+            "tags": [
+                [
+                    "param",
+                    "total the end of the range; must be positive"
+                ]
+            ],
+            "text": "(parameter) double total",
+            "type": "hover"
+        },
+        {
+            "character": 41,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "",
+            "id": "",
+            "length": 6,
+            "level": "",
+            "line": 12,
+            "name": "",
+            "start": 492,
+            "tags": [],
+            "text": "(alias) object.size_t = ulong",
+            "type": "hover"
+        },
+        {
+            "character": 48,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "the `meter`'s `width` in cells",
+            "id": "",
+            "length": 5,
+            "level": "",
+            "line": 12,
+            "name": "",
+            "start": 499,
+            "tags": [
+                [
+                    "param",
+                    "width the `meter`'s `width` in cells"
+                ]
+            ],
+            "text": "(parameter) ulong width",
+            "type": "hover"
+        },
+        {
+            "character": 7,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "the current position; values outside `[0, ``total``]` are silently clamped rather than rejected",
+            "id": "",
+            "length": 5,
+            "level": "",
+            "line": 13,
+            "name": "",
+            "start": 513,
+            "tags": [
+                [
+                    "param",
+                    "value the current position; values outside `[0, ``total``]` are silently clamped rather than rejected"
+                ]
+            ],
+            "text": "(parameter) double value",
+            "type": "hover"
+        },
+        {
+            "character": 7,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "the current position; values outside `[0, ``total``]` are silently clamped rather than rejected",
+            "id": "",
+            "length": 5,
+            "level": "",
+            "line": 13,
+            "name": "",
+            "start": 513,
+            "tags": [
+                [
+                    "param",
+                    "value the current position; values outside `[0, ``total``]` are silently clamped rather than rejected"
+                ]
+            ],
+            "text": "(parameter) double value",
+            "type": "query"
+        },
+        {
+            "character": 16,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "the end of the range; must be positive",
+            "id": "",
+            "length": 5,
+            "level": "",
+            "line": 13,
+            "name": "",
+            "start": 522,
+            "tags": [
+                [
+                    "param",
+                    "total the end of the range; must be positive"
+                ]
+            ],
+            "text": "(parameter) double total",
+            "type": "hover"
+        }
+    ],
+    "offsetEncoding": "utf-8"
+}

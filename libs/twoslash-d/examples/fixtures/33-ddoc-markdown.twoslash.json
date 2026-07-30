@@ -1,0 +1,39 @@
+{
+    "code": "// NB: a GFM table does not survive the translator (delimiter row dropped,\n// body rows blank-line separated), so this stops at the constructs below.\n/++\n# Retry policy\n\nRetries happen on:\n\n- connection resets\n- *transient* DNS failures\n\nEscalate to **operations** after three attempts, per the\n[backoff guide](https://dlang.org).\n+/\nenum maxAttempts = 3;\n",
+    "language": "d",
+    "nodes": [
+        {
+            "character": 5,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "# Retry policy\n\nRetries happen on:\n\n- connection resets\n- *transient* DNS failures\n\nEscalate to **operations** after three attempts, per the\n[backoff guide](https://dlang.org).",
+            "id": "",
+            "length": 11,
+            "level": "",
+            "line": 13,
+            "name": "",
+            "start": 339,
+            "tags": [],
+            "text": "(constant) int sample.maxAttempts = 3",
+            "type": "hover"
+        },
+        {
+            "character": 5,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "# Retry policy\n\nRetries happen on:\n\n- connection resets\n- *transient* DNS failures\n\nEscalate to **operations** after three attempts, per the\n[backoff guide](https://dlang.org).",
+            "id": "",
+            "length": 11,
+            "level": "",
+            "line": 13,
+            "name": "",
+            "start": 339,
+            "tags": [],
+            "text": "(constant) int sample.maxAttempts = 3",
+            "type": "query"
+        }
+    ],
+    "offsetEncoding": "utf-8"
+}

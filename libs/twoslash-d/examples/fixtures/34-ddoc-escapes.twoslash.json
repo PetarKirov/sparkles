@@ -1,0 +1,160 @@
+{
+    "code": "/++\nEscapes `<html>` markup: the literal \\$(NOT_A_MACRO) stays as text, and\nsnake_case_name keeps every underscore it was written with.\n\nParams:\n    snake_case_name = the text to escape, underscores and all\n    count = how many replacements to allow; the _count spelling in this\n            sentence suppresses the usual identifier emphasis\nReturns: The escaped text, with `<` and `&` replaced.\n+/\nstring escapeHtml(string snake_case_name, int count) => snake_case_name;\n",
+    "language": "d",
+    "nodes": [
+        {
+            "character": 0,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "",
+            "id": "",
+            "length": 6,
+            "level": "",
+            "line": 10,
+            "name": "",
+            "start": 398,
+            "tags": [],
+            "text": "(alias) object.string = string",
+            "type": "hover"
+        },
+        {
+            "character": 7,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "Escapes `<html>` markup: the literal $(NOT_A_MACRO) stays as text, and\n`snake_case_name` keeps every underscore it was written with.",
+            "id": "",
+            "length": 10,
+            "level": "",
+            "line": 10,
+            "name": "",
+            "start": 405,
+            "tags": [
+                [
+                    "param",
+                    "snake_case_name the text to escape, underscores and all"
+                ],
+                [
+                    "param",
+                    "count how many replacements to allow; the count spelling in this sentence suppresses the usual identifier emphasis"
+                ],
+                [
+                    "returns",
+                    "The escaped text, with `<` and `&` replaced."
+                ]
+            ],
+            "text": "string sample.escapeHtml(string snake_case_name, int count)",
+            "type": "hover"
+        },
+        {
+            "character": 7,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "Escapes `<html>` markup: the literal $(NOT_A_MACRO) stays as text, and\n`snake_case_name` keeps every underscore it was written with.",
+            "id": "",
+            "length": 10,
+            "level": "",
+            "line": 10,
+            "name": "",
+            "start": 405,
+            "tags": [
+                [
+                    "param",
+                    "snake_case_name the text to escape, underscores and all"
+                ],
+                [
+                    "param",
+                    "count how many replacements to allow; the count spelling in this sentence suppresses the usual identifier emphasis"
+                ],
+                [
+                    "returns",
+                    "The escaped text, with `<` and `&` replaced."
+                ]
+            ],
+            "text": "string sample.escapeHtml(string snake_case_name, int count)",
+            "type": "query"
+        },
+        {
+            "character": 18,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "",
+            "id": "",
+            "length": 6,
+            "level": "",
+            "line": 10,
+            "name": "",
+            "start": 416,
+            "tags": [],
+            "text": "(alias) object.string = string",
+            "type": "hover"
+        },
+        {
+            "character": 25,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "the text to escape, underscores and all",
+            "id": "",
+            "length": 15,
+            "level": "",
+            "line": 10,
+            "name": "",
+            "start": 423,
+            "tags": [
+                [
+                    "param",
+                    "snake_case_name the text to escape, underscores and all"
+                ]
+            ],
+            "text": "(parameter) string snake_case_name",
+            "type": "hover"
+        },
+        {
+            "character": 46,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "how many replacements to allow; the count spelling in this sentence suppresses the usual identifier emphasis",
+            "id": "",
+            "length": 5,
+            "level": "",
+            "line": 10,
+            "name": "",
+            "start": 444,
+            "tags": [
+                [
+                    "param",
+                    "count how many replacements to allow; the count spelling in this sentence suppresses the usual identifier emphasis"
+                ]
+            ],
+            "text": "(parameter) int count",
+            "type": "hover"
+        },
+        {
+            "character": 56,
+            "code": 0,
+            "completions": [],
+            "completionsPrefix": "",
+            "docs": "the text to escape, underscores and all",
+            "id": "",
+            "length": 15,
+            "level": "",
+            "line": 10,
+            "name": "",
+            "start": 454,
+            "tags": [
+                [
+                    "param",
+                    "snake_case_name the text to escape, underscores and all"
+                ]
+            ],
+            "text": "(parameter) string snake_case_name",
+            "type": "hover"
+        }
+    ],
+    "offsetEncoding": "utf-8"
+}
