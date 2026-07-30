@@ -27,6 +27,9 @@ signature text under $(D Slot.code).
 */
 module sparkles.twoslash.render_widgets;
 
+import sparkles.base.term_color : RgbColor, toRgb;
+import sparkles.syntax.event : byStyledLine, HighlightEvent;
+import sparkles.syntax.theme : ResolvedTheme;
 import sparkles.ui.geometry : cellsOf, Insets;
 import sparkles.ui.style : BorderStyle, Decoration, FontRole, Palette, Slot, TextStyle;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
@@ -76,6 +79,90 @@ private Decoration accentDeco(Slot slot) pure nothrow @nogc
         borderStyle: BorderStyle.solid,
         borderSlot: slot,
     );
+
+/**
+The $(B whole) twoslash document as one widget tree (the `D11` composition
+target): every source line is a rich run of resolved-color spans (the theme's
+syntax channel, with the identity channel's byte offsets), inline decorations
+are fused in as stacked overlays (a highlight's background tint under the
+text, an error's wavy underline over it), and each below-line meta block sits
+directly under its code line. Hover needs no extra machinery: nodes are
+source-anchored (`Node.start`/`length`), so a backend maps a pointer to a node
+through $(REF sourceOffsetAt, sparkles,ui,state) and gets the token's on-screen
+geometry from $(REF selectionRects, sparkles,ui,state).
+*/
+WidgetTree viewTwoslashDocument(const TwoslashReturn tw,
+    const(HighlightEvent)[] events, scope const(ResolvedTheme)* theme,
+    RgbColor pageFg)
+{
+    import sparkles.ui.canvas : LineStyle;
+    import sparkles.ui.geometry : Point, SizeSpec;
+
+    auto plan = planTwoslash(tw);
+    auto b = Builder();
+
+    // Styled runs bucketed per source line, as identity-carrying spans.
+    size_t total = 1;
+    foreach (ch; tw.code)
+        if (ch == '\n')
+            ++total;
+    auto spansByLine = new TextSpan[][](total);
+    foreach (ls; byStyledLine(tw.code, events))
+    {
+        if (ls.line >= total)
+            continue;
+        const spec = (*theme)[ls.span.label];
+        spansByLine[ls.line] ~= TextSpan(
+            tw.code[ls.span.start .. ls.span.end], Slot.code,
+            TextStyle.init, fg: toRgb(spec.fg, pageFg), hasFg: true,
+            srcStart: ls.span.start, srcEnd: ls.span.end);
+    }
+
+    uint[] rows;
+    foreach (line; 0 .. total)
+    {
+        auto spans = spansByLine[line].length ? spansByLine[line]
+            : [TextSpan(" ")];
+        const code = b.add(Widget(kind: WidgetKind.rich, spans: spans,
+            slot: Slot.code));
+
+        // Overlay decorations for this line: tints under the text (added
+        // first ⇒ painted first), squiggles over it.
+        uint[] under, over;
+        foreach (ref const d; plan.inlineDecorations)
+        {
+            if (d.line != line)
+                continue;
+            const cols = cast(int) cellsOf(tw.code[d.start .. d.end]);
+            const at = Insets(0, 0, 0, cast(int) d.character);
+            if (d.kind == NodeType.highlight)
+            {
+                const tint = b.add(Widget(kind: WidgetKind.box,
+                    slot: Slot.highlight, paintBackground: true,
+                    width: SizeSpec.fixed(cols), height: SizeSpec.fixed(1)));
+                under ~= b.container(WidgetKind.column, [tint], padding: at);
+            }
+            else if (d.kind == NodeType.error)
+            {
+                const n = tw.nodes[d.node];
+                const slot = errIsWarning(n.level) ? Slot.warn : Slot.error;
+                const wavy = b.add(Widget(kind: WidgetKind.line, slot: slot,
+                    lineStyle: LineStyle.wavy, lineTo: Point(cols, 0)));
+                over ~= b.container(WidgetKind.column, [wavy], padding: at);
+            }
+        }
+
+        rows ~= under.length || over.length
+            ? b.container(WidgetKind.stack, under ~ code ~ over)
+            : code;
+
+        foreach (ref const blk; plan.belowBlocks)
+            if (blk.line == line)
+                rows ~= buildBelowBlock(b, tw.nodes[blk.node], blk.node);
+    }
+
+    return b.finish(b.container(WidgetKind.column, rows));
+}
 
 /**
 Builds the below-line meta overlay for `tw`: a `column` of per-node blocks in
@@ -427,6 +514,64 @@ version (unittest)
         paint(c, ops);
         return c;
     }
+}
+
+@("render_widgets.viewTwoslashDocument.codeOverlaysAndBlocks")
+@safe unittest
+{
+    import sparkles.syntax : builtinDark, HighlightEvent, LabelSet, resolveTheme;
+    import sparkles.ui.canvas : LineStyle, OpKind;
+    import sparkles.ui.geometry : Rect;
+
+    // Two lines: a highlight on "x" (line 0) and an error on "a" (line 1,
+    // col 10) with its below-line message block.
+    const code = "let x = 1\nconst b = a\n";
+    const tw = TwoslashReturn(code: code, nodes: [
+        Node(type: NodeType.highlight, start: 4, length: 1, line: 0, character: 4),
+        Node(type: NodeType.error, start: 20, length: 1, line: 1,
+            character: 10, text: "Cannot find name 'a'.", level: "error"),
+    ]);
+    const ev = [HighlightEvent.sourceSpan(0, code.length)];
+
+    const labels = LabelSet.standard();
+    const rt = resolveTheme(builtinDark, labels);
+    auto tree = viewTwoslashDocument(tw, ev,
+        (() @trusted => &rt)(), RgbColor(0xcc, 0xcc, 0xcc));
+
+    // The code lines are identity-carrying rich spans.
+    bool sawLine0, sawLine1;
+    foreach (ref const n; tree.nodes)
+        if (n.kind == WidgetKind.rich)
+            foreach (ref const s; n.spans)
+            {
+                if (s.text == "let x = 1" && s.srcStart == 0)
+                    sawLine0 = true;
+                if (s.text == "const b = a" && s.srcStart == 10)
+                    sawLine1 = true;
+            }
+    assert(sawLine0 && sawLine1);
+
+    auto c = render(tree);
+    const err = RgbColor(0xd4, 0x56, 0x56);
+    bool sawWavy, sawTint, sawMsg;
+    size_t wavyAt, codeAt = size_t.max;
+    foreach (i, ref op; c.ops)
+    {
+        if (op.kind == OpKind.line && op.lineStyle == LineStyle.wavy
+            && op.visual.fg == err && op.rect.x == 10 && op.rect.y == 1)
+        {
+            sawWavy = true;
+            wavyAt = i;
+        }
+        if (op.kind == OpKind.fillRect && op.rect == Rect(4, 0, 1, 1))
+            sawTint = true;
+        if (op.kind == OpKind.textRun && op.text == "Cannot find name 'a'.")
+            sawMsg = true; // the below block, directly under its line
+        if (op.kind == OpKind.textRun && op.text == "const b = a")
+            codeAt = i;
+    }
+    assert(sawWavy && sawTint && sawMsg);
+    assert(codeAt < wavyAt, "the squiggle paints over its code line");
 }
 
 @("render_widgets.viewTwoslash.errorBlock")
