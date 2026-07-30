@@ -204,6 +204,10 @@
             # reader (dub test :wired skips those tests when unset).
             export JSON_TEST_SUITE=${config.packages.json-test-suite}
 
+            # druntime/phobos sources matching the pinned dmd:frontend, for
+            # sparkles:dmd-lsp semantic analysis (BLD3). Tests skip when unset.
+            export SPARKLES_DMD_IMPORT_PATH=${config.packages.dmd-import-paths}/druntime:${config.packages.dmd-import-paths}/phobos
+
             ${benchIsaHook}
 
             # PyD-embedded Python (text-conformance Layer 10): make libpython
