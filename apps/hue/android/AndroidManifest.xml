@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The hue APK manifest: a pure NativeActivity app — no Java, no DEX
+    (hasCode="false"). The framework's android.app.NativeActivity loads
+    lib/<abi>/libhue.so (android.app.lib_name) directly; raylib's
+    PLATFORM_ANDROID backend inside it provides ANativeActivity_onCreate /
+    android_main and calls hue's main().
+
+    configChanges keeps rotation/keyboard changes from destroying the
+    activity — raylib handles the EGL surface churn; without it every
+    rotation restarts the process.
+
+    extractNativeLibs="true": the grammar parser libraries are dlopen'd by
+    soname from the app's linker namespace; extracted real files also keep
+    ndk-stack symbolization simple. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="dev.sparkles.hue"
+    android:versionCode="1"
+    android:versionName="0.1.0">
+
+    <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="35" />
+    <uses-feature android:glEsVersion="0x00020000" android:required="true" />
+
+    <application
+        android:label="hue"
+        android:hasCode="false"
+        android:extractNativeLibs="true">
+        <activity
+            android:name="android.app.NativeActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboard|keyboardHidden|density"
+            android:screenOrientation="fullUser">
+            <meta-data android:name="android.app.lib_name" android:value="hue" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

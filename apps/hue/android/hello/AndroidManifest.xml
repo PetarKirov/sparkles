@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The M1 smoke-test APK (packages.hello-apk): proves the whole risky spine —
+    LDC's static druntime inside a .so, raylib's android_main → D main()
+    handoff, EGL/GLES2 init, the APK tooling, and 16 KB page alignment —
+    before any hue code is involved. Same shape as ../AndroidManifest.xml,
+    distinct package id so it can live beside the real app. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="dev.sparkles.hue.hello"
+    android:versionCode="1"
+    android:versionName="0.1.0">
+
+    <uses-sdk android:minSdkVersion="21" android:targetSdkVersion="35" />
+    <uses-feature android:glEsVersion="0x00020000" android:required="true" />
+
+    <application
+        android:label="hue hello"
+        android:hasCode="false"
+        android:extractNativeLibs="true">
+        <activity
+            android:name="android.app.NativeActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboard|keyboardHidden|density"
+            android:screenOrientation="fullUser">
+            <meta-data android:name="android.app.lib_name" android:value="hello" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
