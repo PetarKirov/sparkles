@@ -22,6 +22,8 @@ import sparkles.syntax.md.model : MdBlock, MdBlockKind, Span;
 import sparkles.syntax.md.render_widgets : foldableSpans, MdViewOptions,
     MdViewTheme, viewMarkdown;
 import sparkles.syntax.ts.injection : TsConfigCache;
+import sparkles.twoslash.protocol : NodeType, TwoslashReturn;
+import sparkles.twoslash.render_widgets : viewHoverPopup, viewTwoslashDocument;
 
 import sparkles.tui : Cell, CellStyle, Color, Grid, PosixEvents, Terminal,
     TerminalOptions, TextAttr, UnderlineStyle;
@@ -33,8 +35,9 @@ import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : Constraints, Point, Rect, SizeSpec;
 import sparkles.ui.layout : Frame, layout;
 import sparkles.ui.state : DisclosureState, DocRow, documentRows, HoverTarget,
-    hoverTargets, scrollbarThumb, ScrollState, Selection;
-import sparkles.ui.style : Slot;
+    hoverTargets, scrollbarThumb, ScrollState, Selection, selectionRects,
+    sourceOffsetAt;
+import sparkles.ui.style : defaultTwoslashPalette, schemeForBackground, Slot;
 import sparkles.ui.widget : Builder, Widget, WidgetKind, WidgetTree;
 import sparkles.ui_tui : paintGrid;
 
@@ -91,6 +94,7 @@ struct PreviewTui
     const(char)[] source;
     const(HighlightEvent)[] events;
     PreviewModel model;             // present ⇒ a markdown file (preview available)
+    TwoslashReturn tw;              // non-empty code ⇒ a twoslash document
     TsConfigCache* cache;           // fence highlighting for the widget markdown
                                     // path (null ⇒ plain fence bodies)
     LabelSet labels;
@@ -159,6 +163,11 @@ struct PreviewTui
     private DisclosureState!size_t folds = DisclosureState!size_t(true);
     private Span[] foldable;
 
+    // Twoslash hover popups in the pane: the hover-typed node indices (for
+    // `p` cycling) and the selected one (-1 = none; click toggles).
+    private size_t[] hoverNodes;
+    private int hoverSel = -1;
+
     private const(char)[] query() const return @safe pure nothrow @nogc => qbuf[0 .. qlen];
 
     /// The pane is consuming typed text (the workspace must not steal keys).
@@ -188,10 +197,11 @@ struct PreviewTui
         return clip[];
     }
 
-    // The markdown preview renders through the widget tree; raw source (and
-    // non-markdown files) keep the styled-line path.
+    // The decorated views render through the widget tree — the markdown
+    // preview and the twoslash document alike; raw source keeps the
+    // styled-line path (Tab toggles).
     private bool usingWidgets() const @safe pure nothrow @nogc
-        => showPreview && model.present;
+        => showPreview && (model.present || tw.code.length != 0);
 
     /// Visual line count of the active view — the scroll/selection/search space.
     private long lineCount() const @safe pure nothrow @nogc
@@ -225,6 +235,25 @@ struct PreviewTui
     private void rebuildMd() @system
     {
         const w = width < 9 ? 8 : width - 1;
+        if (tw.code.length)
+        {
+            // A twoslash document: the whole-document widget view (code as
+            // resolved spans + fused decorations + interleaved blocks).
+            mdTree = viewTwoslashDocument(tw, events, &theme, pageFg, cache);
+            mdFrames = layout(mdTree, Constraints(maxW: w));
+            mdOps = buildDisplayList(mdTree, mdFrames,
+                defaultTwoslashPalette(schemeForBackground(pageBg)),
+                pageFg, pageBg);
+            mdRows = documentRows(mdTree, mdFrames);
+            mdTargets = hoverTargets(mdTree, mdFrames);
+            mdFences.length = 0;
+            foldable = null;
+            hoverNodes.length = 0;
+            foreach (ni, ref const n; tw.nodes)
+                if (n.type == NodeType.hover)
+                    hoverNodes ~= ni;
+            return;
+        }
         MdViewOptions opt = {
             theme: MdViewTheme.derive(theme, pageFg, pageBg),
             fenceHitBase: fenceHitBase,
@@ -378,13 +407,15 @@ struct PreviewTui
     /// content swaps, scroll/search/selection/folds reset, layout rebuilds.
     void setDocument(string title_, const(char)[] source_,
         const(HighlightEvent)[] events_, PreviewModel model_,
-        bool startPreview) @system
+        bool startPreview, TwoslashReturn tw_ = TwoslashReturn.init) @system
     {
         title = title_;
         source = source_;
         events = events_;
         model = model_;
-        showPreview = startPreview && model.present;
+        tw = tw_;
+        hoverSel = -1;
+        showPreview = startPreview && (model.present || tw.code.length != 0);
         top = 0;
         sel = Selection!long.cleared;
         searching = false;
@@ -404,7 +435,10 @@ struct PreviewTui
         paintHeader(g);
 
         if (usingWidgets)
+        {
             paintMarkdown(g);
+            paintHoverPopup(g);
+        }
         else
         {
             const rows = bodyRows();
@@ -442,6 +476,25 @@ struct PreviewTui
             foreach (x; 0 .. (width > 1 ? width - 1 : 0))
                 g[cast(ushort)(originX + x), cast(ushort) gy].style.bg = selFill;
         }
+    }
+
+    // The selected hover token's popup (twoslash documents), composited over
+    // the pane below the token — the shared viewHoverPopup chrome. The token
+    // rect comes from the identity channel.
+    private void paintHoverPopup(ref Grid g) @system
+    {
+        if (hoverSel < 0 || hoverSel >= cast(int) hoverNodes.length)
+            return;
+        const n = tw.nodes[hoverNodes[hoverSel]];
+        auto rs = selectionRects(mdTree, mdFrames, n.start, n.start + n.length);
+        if (!rs.length)
+            return;
+        auto tree = viewHoverPopup(tw, hoverNodes[hoverSel]);
+        auto frames = layout(tree);
+        auto ops = buildDisplayList(tree, frames,
+            defaultTwoslashPalette(schemeForBackground(pageBg)), pageFg, pageBg);
+        paintGrid(g, pageBg, ops, originX + rs[0].x,
+            cast(int)(rs[0].y - top + 2));
     }
 
     // Paint a one-row chrome bar (the shared WGT17 headerBar view) at grid row
@@ -641,11 +694,20 @@ struct PreviewTui
                 }
                 break;
             case Key.escape:
+                if (hoverSel >= 0)
+                {
+                    hoverSel = -1;
+                    break;
+                }
                 return false;
             case Key.char_:
                 switch (e.ch)
                 {
                     case 'q': return false;
+                    case 'p': // cycle the twoslash hover popups
+                        if (hoverNodes.length)
+                            hoverSel = (hoverSel + 1) % cast(int) hoverNodes.length;
+                        break;
                     case 'j': top += 1; clampTop(); break;
                     case 'k': top -= 1; clampTop(); break;
                     case 'g': top = 0; break;
@@ -688,6 +750,27 @@ struct PreviewTui
                 // body's source offset. Otherwise start (press) or extend
                 // (drag) a line selection.
                 const line = top + (e.pos.y - 1);
+                if (usingWidgets && e.action == PointerAction.press
+                    && tw.code.length)
+                {
+                    const off = sourceOffsetAt(mdTree, mdFrames,
+                        Point(e.pos.x, cast(int) line));
+                    if (off >= 0)
+                        foreach (i, ni; hoverNodes)
+                            if (off >= cast(long) tw.nodes[ni].start
+                                && off < cast(long)(tw.nodes[ni].start
+                                    + tw.nodes[ni].length))
+                            {
+                                hoverSel = hoverSel == cast(int) i
+                                    ? -1 : cast(int) i;
+                                return true;
+                            }
+                    if (hoverSel >= 0)
+                    {
+                        hoverSel = -1; // a click elsewhere dismisses the popup
+                        return true;
+                    }
+                }
                 if (usingWidgets && e.action == PointerAction.press)
                 {
                     const p = Point(e.pos.x, cast(int) line);
@@ -938,4 +1021,66 @@ unittest
     t.sel = Selection!long.started(ph);
     t.handle(Event(KeyEvent(key: Key.char_, ch: 'z')));
     assert(t.mdRows.length == openRows, "the fold reopened");
+}
+
+@("tui.twoslash.paneRendersAndPopups")
+@system
+unittest
+{
+    import sparkles.syntax : builtinDark, LabelSet;
+    import sparkles.twoslash.protocol : Node;
+    import std.algorithm.searching : canFind;
+
+    // A twoslash document in the viewer pane: squiggle + message + a hover
+    // token whose popup toggles by 'p' and by click.
+    const code = "const b = a\n";
+    TwoslashReturn tw = {code: code, nodes: [
+        Node(type: NodeType.error, start: 10, length: 1, line: 0,
+            character: 10, text: "Cannot find name 'a'.", level: "error"),
+        Node(type: NodeType.hover, start: 6, length: 1, line: 0,
+            character: 6, text: "const b: any"),
+    ]};
+
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    PreviewTui t;
+    t.labels = LabelSet.standard();
+    t.names = names[];
+    t.themes = themes[];
+    t.resize(60, 14);
+    t.setDocument("x.twoslash.json", code,
+        [HighlightEvent.sourceSpan(0, code.length)], PreviewModel.init,
+        startPreview: true, tw);
+
+    Grid g;
+    g.resize(60, 14);
+    t.paint(g);
+
+    string row(ushort y)
+    {
+        string s;
+        foreach (x; 0 .. g.cols)
+            s ~= g[cast(ushort) x, y].grapheme;
+        return s;
+    }
+    assert(row(1).canFind("const b = a"), row(1));
+    assert(row(3).canFind("Cannot find name 'a'."), row(3));
+
+    // 'p' cycles the hover popups: the signature composites over the pane.
+    t.handle(Event(KeyEvent(key: Key.char_, ch: 'p')));
+    t.paint(g);
+    bool sawSig;
+    foreach (y; 0 .. g.rows)
+        if (row(cast(ushort) y).canFind("const b: any"))
+            sawSig = true;
+    assert(sawSig, "hover popup signature composited");
+
+    // Esc dismisses the popup first (and only then would quit).
+    assert(t.handle(Event(KeyEvent(key: Key.escape))));
+    t.paint(g);
+    sawSig = false;
+    foreach (y; 0 .. g.rows)
+        if (row(cast(ushort) y).canFind("const b: any"))
+            sawSig = true;
+    assert(!sawSig, "popup dismissed");
 }

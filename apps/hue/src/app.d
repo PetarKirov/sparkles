@@ -360,7 +360,7 @@ int main(string[] args)
         // with the explorer focused: picking a file fills the viewer pane
         // beside it — one loop, no full-screen transitions.
         version (Posix)
-            if (backend == Backend.tui && !forceTwoslash)
+            if (backend == Backend.tui)
             {
                 import workspace : runWorkspace, WorkspaceDoc;
 
@@ -370,7 +370,7 @@ int main(string[] args)
                     delegate WorkspaceDoc(string path) @system {
                         auto d = pl.load(path);
                         return WorkspaceDoc(d.title, d.source, d.events,
-                            d.preview);
+                            d.preview, d.twoslash);
                     },
                     themeSet.names, themeSet.themes, themeSet.idx, labels,
                     &cache);
@@ -507,23 +507,9 @@ private int runTuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
 {
     import source_set : SourceSet;
 
-    if (doc.kind == ContentKind.twoslash)
-    {
-        if (tryTwoslashCapture(doc, theme, cache))
-            return 0;
-        version (Posix)
-        {
-            import twoslash_tui : runTuiTwoslash;
-
-            return runTuiTwoslash(doc.title, doc.twoslash, doc.events, theme,
-                cache, docSet);
-        }
-        else
-        {
-            // No interactive twoslash TUI off-Posix: degrade to the ANSI render.
-            return runAnsiSink(cli, doc, theme, cache);
-        }
-    }
+    // The headless QA capture hook still short-circuits a twoslash target.
+    if (doc.kind == ContentKind.twoslash && tryTwoslashCapture(doc, theme, cache))
+        return 0;
 
     auto themeSet = sortedThemes(cli.theme);
 
@@ -540,11 +526,13 @@ private int runTuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
             auto pl = pipeline; // capture the pointer, not the scope param
             loader = delegate WorkspaceDoc(string path) @system {
                 auto d = pl.load(path);
-                return WorkspaceDoc(d.title, d.source, d.events, d.preview);
+                return WorkspaceDoc(d.title, d.source, d.events, d.preview,
+                    d.twoslash);
             };
         }
         return runWorkspace(doc.path, isDir: false,
-            WorkspaceDoc(doc.title, doc.source, doc.events, doc.preview),
+            WorkspaceDoc(doc.title, doc.source, doc.events, doc.preview,
+                doc.twoslash),
             loader, themeSet.names, themeSet.themes, themeSet.idx, labels,
             &cache);
     }

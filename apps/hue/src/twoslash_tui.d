@@ -1,6 +1,8 @@
-// `hue --twoslash` in an interactive terminal — the TUI counterpart of the raylib
-// GUI, built on `sparkles:tui` (raw mode, SGR-1006 mouse, retained-grid diff loop)
-// and the shared `sparkles:ui` paint model (via `sparkles:ui-tui`'s GridCanvas).
+// The headless twoslash TUI-frame capture (`HUE_TWOSLASH_TUI_CAPTURE`) — the
+// QA harness renders one frame to a styled `<pre>` for uniform screenshots.
+// The interactive twoslash TUI lives in the `workspace` viewer pane now
+// (`PreviewTui` hosts twoslash documents); this module keeps only the
+// capture renderer.
 //
 // The whole document — code lines as resolved-color spans, highlight tints,
 // error undercurls, and below-line meta blocks — is ONE widget tree
@@ -16,7 +18,6 @@ module twoslash_tui;
 
 version (Posix):
 
-import sparkles.tui.app : runApp;
 import sparkles.tui.cell : CellStyle, Grid;
 import sparkles.tui.input : EndOfInput, Event, Key, KeyEvent, match,
     PointerAction, PointerEvent, WheelEvent;
@@ -33,8 +34,6 @@ import sparkles.syntax : HighlightEvent, LabelSet,
     ResolvedTheme, RgbColor, toRgb;
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.syntax.ts.highlighter : highlightInjected;
-import sparkles.twoslash.ingest : loadTwoslashFile;
-import source_set : SourceSet;
 
 import sparkles.ui.canvas : DrawOp;
 import sparkles.ui.display_list : buildDisplayList;
@@ -50,33 +49,6 @@ import sparkles.base.term_color : Color;
 import sparkles.ui_tui : paintGrid;
 
 private enum padCols = 1; // left margin, matching the GUI's twoslashPadCells
-
-/**
-Runs the interactive terminal twoslash overlay for `tw` (its `code` already
-highlighted into `events`) until the user quits. Returns 0. The `tw`/`theme`
-data is borrowed for the session (the caller must keep it alive across the call).
-*/
-int runTuiTwoslash(
-    string title,
-    in TwoslashReturn tw,
-    const(HighlightEvent)[] events,
-    in ResolvedTheme theme,
-    ref TsConfigCache cache,
-    SourceSet* set = null,
-) @system
-{
-    auto app = TwoslashTui(&tw, theme);
-    app.name = title;
-    app.set = set;
-    app.cache = &cache;
-    app.events = events;
-    if (set !is null && !set.empty)
-        app.summary = set.current.summary;
-    app.rebuildView();
-
-    runApp(&app.render, &app.handle);
-    return 0;
-}
 
 /**
 Renders a single TUI frame (no terminal, no input) to a self-contained styled
@@ -206,12 +178,7 @@ private struct TwoslashTui
     int scrollRow;
     int selIdx = -1;      // index into `selectable`, or -1 for none
 
-    // Document-set navigation (`GNV1`/`GNV2`): `[`/`]` walk the set, the status
-    // bar names the current entry. Null when viewing a single payload.
-    SourceSet* set;
-    TsConfigCache* cache;
-    string name;
-    string summary;
+    TsConfigCache* cache; // query-signature re-highlighting (may be null)
 
     /// The payload being viewed.
     ref const(TwoslashReturn) tw() const scope return => *twPtr;
@@ -292,140 +259,6 @@ private struct TwoslashTui
         grid.fill(0, y, grid.cols, st);
         grid.putText(0, y, " Tab/→ next  ← prev  ↑↓ scroll  click: select  q: quit ", st);
 
-        // With a document set, name the current entry and its position on the
-        // right of the same bar (`GNV2`).
-        if (set !is null && !set.empty)
-        {
-            import std.conv : text;
-
-            const right = text(name, "  ", summary, "  ", set.index + 1, "/", set.length,
-                "  [ ] prev/next ");
-            if (right.length + 2 < grid.cols)
-                grid.putText(cast(ushort)(grid.cols - right.length), y, right, st);
-        }
-    }
-
-    /// Loads the set's currently-selected payload in place (`GNV1`): re-read,
-    /// re-highlight, re-plan. A payload that fails to load leaves the current one.
-    private bool loadSelected() @system
-    {
-        if (set is null || set.empty || cache is null)
-            return false;
-        const entry = set.current;
-        auto res = loadTwoslashFile(entry.path);
-        if (res.hasError)
-            return false;
-
-        auto owned = new TwoslashReturn;
-        *owned = res.value;
-
-        SmallBuffer!HighlightEvent ev;
-        if (highlightInjected(*cache, "typescript", owned.code, ev).hasError)
-            ev ~= HighlightEvent.sourceSpan(0, owned.code.length);
-
-        twPtr = owned;
-        plan = planTwoslash(*owned);
-        events = ev[].dup;
-
-        selectable = null;
-        foreach (ref const d; plan.inlineDecorations)
-            if (d.kind == NodeType.hover)
-                selectable ~= d.node;
-        rebuildView();
-
-        name = entry.name;
-        summary = entry.summary;
-        scrollRow = 0;   // a new document starts at the top (`GNV3`)
-        selIdx = -1;
-        return true;
-    }
-
-    /// Handles one input event; returns `false` to quit.
-    bool handle(in Event ev) @system
-    {
-        return ev.match!(
-            (in KeyEvent k) => handleKey(k),
-            (in PointerEvent p) { handlePointer(p); return true; },
-            (in WheelEvent w) { scroll(w.dy); return true; },
-            (in EndOfInput _) => false,
-            _ => true,
-        );
-    }
-
-    private void scroll(int dy) scope
-    {
-        if (dy < 0 && scrollRow > 0)
-            --scrollRow;
-        else if (dy > 0)
-            ++scrollRow;
-    }
-
-    private bool handleKey(in KeyEvent ev) scope
-    {
-        switch (ev.key)
-        {
-            case Key.escape:
-                return false;
-            case Key.char_:
-                if (ev.ch == 'q')
-                    return false;
-                // `[` / `]` walk the document set (`GNV1`).
-                if ((ev.ch == '[' || ev.ch == ']') && set !is null && !set.empty)
-                    if (set.move(ev.ch == '[' ? -1 : 1))
-                        loadSelected();
-                break;
-            case Key.tab:
-                cycle(ev.mods.shift ? -1 : 1);
-                break;
-            case Key.right:
-                cycle(1);
-                break;
-            case Key.left:
-                cycle(-1);
-                break;
-            case Key.up:
-                if (scrollRow > 0)
-                    --scrollRow;
-                break;
-            case Key.down:
-                ++scrollRow;
-                break;
-            case Key.pageUp:
-                scrollRow = scrollRow > 10 ? scrollRow - 10 : 0;
-                break;
-            case Key.pageDown:
-                scrollRow += 10;
-                break;
-            default:
-                break;
-        }
-        return true;
-    }
-
-    private void handlePointer(in PointerEvent ev) scope
-    {
-        if (ev.action != PointerAction.press)
-            return;
-        // The decoder delivers 0-based screen cells; the rects are document
-        // cells — shift by the left pad and the scroll offset.
-        const p = Point(ev.pos.x - padCols, ev.pos.y + scrollRow);
-        foreach (i, ref const rect; targetRects)
-            if (rect.contains(p))
-            {
-                selIdx = cast(int) i;
-                return;
-            }
-    }
-
-    /// Advances the selection by `step` (wrapping); a no-op with no hover tokens.
-    private void cycle(int step) scope
-    {
-        if (selectable.length == 0)
-            return;
-        const n = cast(int) selectable.length;
-        selIdx = selIdx < 0
-            ? (step > 0 ? 0 : n - 1)
-            : ((selIdx + step) % n + n) % n;
     }
 
 }
