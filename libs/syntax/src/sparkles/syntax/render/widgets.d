@@ -14,6 +14,7 @@ import sparkles.base.term_color : RgbColor;
 import sparkles.base.term_style : TextAttr;
 import sparkles.syntax.color : toRgb;
 import sparkles.syntax.event : byStyledLine, HighlightEvent;
+import sparkles.syntax.md.model : Span;
 import sparkles.syntax.theme : ResolvedTheme, StyleSpec;
 import sparkles.ui.style : Slot, TextStyle;
 import sparkles.ui.widget : Builder, TextSpan, Widget, WidgetKind, WidgetTree;
@@ -38,10 +39,17 @@ line start, so line numbering and goto-line cover every line.
 Rows wrap with `wrap` (greedy by default — the raw view reflows to the pane
 width; a token wider than the pane overflows its row and clips, like a fence
 panel's). Pass `TextWrap.none` for a non-reflowing view.
+
+`foldedRegions` (source byte spans, `FSR4`) collapse line-wise to one
+placeholder row each — `▸ first-line ⋯ N lines` — carrying the whole
+region's identity (selection-copy over a fold yields the folded source) and,
+with a non-zero `foldHitBase`, the unfold hit id `foldHitBase + span.start`
+(the same contract as the markdown view's placeholders).
 */
 WidgetTree viewCodeDocument(const(char)[] source,
     const(HighlightEvent)[] events, scope const(ResolvedTheme)* theme,
-    RgbColor pageFg, TextWrap wrap = TextWrap.greedy)
+    RgbColor pageFg, TextWrap wrap = TextWrap.greedy,
+    const(Span)[] foldedRegions = null, size_t foldHitBase = 0)
 {
     // Line starts, with `lineCount` semantics: a trailing newline does not
     // open an extra line; an empty source has none.
@@ -67,10 +75,47 @@ WidgetTree viewCodeDocument(const(char)[] source,
             srcStart: ls.span.start, srcEnd: ls.span.end);
     }
 
+    size_t lineEnd(size_t li) => li + 1 < n ? starts[li + 1] : source.length;
+
     auto b = Builder();
     auto rows = new uint[](0);
-    foreach (li; 0 .. n)
+    for (size_t li = 0; li < n; ++li)
     {
+        // A folded region starting on this line collapses line-wise to one
+        // placeholder (the outermost when several start here).
+        const(Span)* fr = null;
+        foreach (ref const r; foldedRegions)
+            if (r.start >= starts[li] && r.start < lineEnd(li)
+                && (fr is null || r.end > fr.end))
+                fr = (() @trusted => &r)();
+        if (fr !is null)
+        {
+            import sparkles.base.smallbuffer : SmallBuffer;
+            import sparkles.base.text.writers : writeInteger;
+
+            const first = li;
+            while (li + 1 < n && starts[li + 1] < fr.end)
+                ++li;
+            const lines = li - first + 1;
+            size_t firstLen = lineEnd(first) - starts[first];
+            if (firstLen && source[starts[first] + firstLen - 1] == '\n')
+                --firstLen;
+            SmallBuffer!(char, 32) cnt;
+            writeInteger(cnt, lines);
+            const clampedEnd = fr.end > source.length ? source.length : fr.end;
+            TextSpan[] ph = [
+                TextSpan("▸ ", Slot.code, noBreak: true),
+                TextSpan(source[starts[first] .. starts[first] + firstLen],
+                    Slot.code, noBreak: true,
+                    srcStart: starts[first], srcEnd: clampedEnd),
+                TextSpan("  ⋯ " ~ cnt[].idup ~ " lines", Slot.gutter,
+                    noBreak: true),
+            ];
+            rows ~= b.add(Widget(kind: WidgetKind.rich, spans: ph,
+                slot: Slot.code,
+                hitId: foldHitBase != 0 ? foldHitBase + fr.start : 0));
+            continue;
+        }
         const blank = !byLine[li].length;
         auto spans = blank
             ? [TextSpan(" ", Slot.code,
@@ -168,4 +213,42 @@ WidgetTree viewCodeDocument(const(char)[] source,
         RgbColor(0xcc, 0xcc, 0xcc));
     // The childless column is a well-formed empty document.
     assert(tree.nodes.length == 1);
+}
+
+@("render.widgets.viewCodeDocument.foldPlaceholder")
+@safe unittest
+{
+    import sparkles.syntax.label : LabelSet;
+    import sparkles.syntax.theme : resolveTheme;
+    import sparkles.syntax.themes : builtinDark;
+    import sparkles.ui.layout : layout;
+    import sparkles.ui.state : documentRows, hoverTargets;
+
+    const src = "void f()\n{\n    int a;\n    int b;\n}\nint tail;\n";
+    const labels = LabelSet.standard();
+    const rt = resolveTheme(builtinDark, labels);
+    const ev = [HighlightEvent.sourceSpan(0, src.length)];
+
+    // Fold the whole function (bytes 0..34 — through the closing brace).
+    enum hitBase = size_t.max / 4 * 3 + 1;
+    auto tree = viewCodeDocument(src, ev, (() @trusted => &rt)(),
+        RgbColor(0xcc, 0xcc, 0xcc), TextWrap.greedy,
+        [Span(0, 34)], hitBase);
+    auto frames = layout(tree);
+    auto rows = documentRows(tree, frames);
+
+    // Five folded lines collapse to one placeholder; the tail line remains.
+    assert(rows.length == 2, "placeholder + tail");
+    assert(rows[0].text.length && rows[0].srcStart == 0 && rows[0].srcEnd == 34,
+        "the placeholder carries the whole region's identity");
+    import std.algorithm.searching : canFind;
+    assert(rows[0].text.canFind("5 lines"), rows[0].text);
+    assert(rows[1].text.canFind("int tail;"));
+
+    // The placeholder is an unfold click target keyed by the span start.
+    bool sawHit;
+    foreach (ref const t; hoverTargets(tree, frames))
+        if (t.hitId == hitBase + 0)
+            sawHit = true;
+    assert(sawHit, "unfold hit id");
 }
