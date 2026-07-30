@@ -44,6 +44,25 @@ configuration "application" {
     versions "HueGui"
 }
 
+// Android build (BLD5): the same GUI closure as `application`, but emitted as
+// a shared library — raylib's PLATFORM_ANDROID backend owns `android_main()`
+// (inside the APK's NativeActivity) and calls this library's `main()`. dub
+// cannot drive the cross build (nix does, with a raw ldc2 invocation — see
+// nix/packages/android/); this configuration records the intent/import story
+// and lets a host toolchain type-check the closure: `dub build :hue -c android`.
+// The Posix TUI modules (tui.d, workspace.d, twoslash_tui.d) stay in the
+// source set — on the Android *triple* the app never imports them
+// (`version (Android)` gates in app.d), so the module-graph-driven nix build
+// skips them; on a *host* type-check they compile as on desktop.
+configuration "android" {
+    targetType "dynamicLibrary"
+
+    dependency "sparkles:raylib-text" path="../.."
+    dependency "sparkles:ui-raylib" path="../.."
+    dependency "sparkles:ghostty" path="../.."
+    versions "HueGui"
+}
+
 // Raylib-/ghostty-free terminal-only build (BLD2) — the minimal-closure variant
 // for headless installs. It still ships the markdown preview: the preview model
 // (gui_preview.d), its metrics (gui_text.d), and the neutral types
