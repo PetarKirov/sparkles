@@ -161,6 +161,20 @@ struct WorkspaceTui
     /// Applies one event; returns false to quit.
     bool handle(in Event e) @system
     {
+        // The wheel scrolls the pane under the CURSOR, not the focused one.
+        {
+            bool done;
+            e.match!((in WheelEvent wv) {
+                if (treeVisible && wv.pos.x < tree.width)
+                {
+                    tree.scrollBy(3 * wv.dy);
+                    done = true;
+                }
+            }, (_) {});
+            if (done)
+                return true;
+        }
+
         // Global keys — only when no pane is consuming typed text.
         const typing = (treeFocused && tree.inputActive)
             || (!treeFocused && viewer.inputActive);
@@ -370,11 +384,11 @@ unittest
     assert(row(0)[w.viewer.originX .. $].canFind("alpha.d"), row(0));
     assert(row(1)[w.viewer.originX .. $].canFind("int alpha;"), row(1));
 
-    // XPL3: the open file's row is highlighted (chromeAccent), the other not.
+    // XPL3: the open file's label carries the theme accent, the other not.
     bool alphaAccented;
     foreach (ref const n; w.tree.data.nodes)
         if (n.value.name == "alpha.d")
-            alphaAccented = n.value.slot == Slot.chromeAccent;
+            alphaAccented = n.value.hasLabelFg && n.value.labelFg == w.tree.accent;
     assert(alphaAccented, "the open document is highlighted in the tree");
 
     // XPL4: ']' opens the next file and the tree follows.

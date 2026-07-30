@@ -41,7 +41,7 @@ import sparkles.syntax.md.render_widgets : foldableSpans,
     highlightedFenceRenderer, MdViewOptions, MdViewTheme, viewMarkdown;
 
 // The explorer pane (XPL2): the same tree model the TUI workspace uses.
-import explorer : ExplorerTui;
+import explorer : ExplorerTui, explorerGlyphs;
 import sparkles.ui.components.tree_widget : treeView;
 
 // 2D table grid selection (TBL): pure region/serialize logic over grid hits.
@@ -70,6 +70,7 @@ import sparkles.ui.style : defaultTwoslashPalette, Palette, resolveSlot,
 import sparkles.ui.geometry : Constraints, Point, Rect;
 import sparkles.ui.canvas : DrawOp, LineStyle, OpKind;
 import sparkles.ui.layout : Frame, layout;
+import sparkles.ui.state;
 import sparkles.ui.state : DisclosureState, DocRow, documentRows, HoverTarget,
     hoverTargets, KeyedRect, keyedRects, scrollbarThumb, selectionRects,
     sourceOffsetAt, Timeline;
@@ -926,7 +927,15 @@ int runGui(
                 if (pressed(KeyboardKey.KEY_END))
                     top = maxTop;
             }
-            top -= cast(long)(GetMouseWheelMove() * 3);
+            // The wheel scrolls the pane under the cursor (tree or document).
+            const wheel = GetMouseWheelMove();
+            if (wheel != 0)
+            {
+                if (treeVisible && GetMousePosition().x < treeCols * cellW)
+                    tree.scrollBy(cast(long)(-wheel * 3));
+                else
+                    top -= cast(long)(wheel * 3);
+            }
             if (pressed(KeyboardKey.KEY_PAGE_DOWN))
                 top += visibleRows;
             if (pressed(KeyboardKey.KEY_PAGE_UP))
@@ -1536,7 +1545,7 @@ int runGui(
                 ? tree.rows[cast(size_t) tree.sel].node : uint.max;
             const tv = treeView(tb, tree.data, tree.rows[tFirst .. tLast],
                 (uint i) @safe => tree.open.isOpen(tree.data.nodes[i].value.path),
-                selNode);
+                selNode, explorerGlyphs, tree.selBg, hasSelectionBg: true);
             Widget paneW = Widget(kind: WidgetKind.column, children: [tv],
                 width: SizeSpec.fixed(treeCols), clipX: true);
             auto wt = tb.finish(tb.add(paneW));
@@ -1545,6 +1554,18 @@ int runGui(
             auto tCanvas = RaylibCanvas(&fonts, &buf, cellW, cellH,
                 0, cast(float)(treeTopRows * cellH));
             paint(tCanvas, tOps);
+
+            // The pane's scrollbar when the tree overflows (STM2, thin rail).
+            if (cast(long) tree.rows.length > tree.height && tree.height > 0)
+            {
+                const thumb = sparkles.ui.state.scrollbarThumb(
+                    tree.rows.length, tree.height, tree.top, tree.height);
+                const sx = treeCols * cellW - 4;
+                DrawRectangle(sx, treeTopRows * cellH,
+                    3, tree.height * cellH, rl(tree.sbTrack));
+                DrawRectangle(sx, (treeTopRows + cast(int) thumb.start) * cellH,
+                    3, cast(int) thumb.extent * cellH, rl(tree.sbThumb));
+            }
         }
 
         // Scrollbar: an animated-width thumb, plus a faint track while hovered

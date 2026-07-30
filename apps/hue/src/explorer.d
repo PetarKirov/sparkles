@@ -15,6 +15,7 @@ import std.algorithm.sorting : sort;
 import std.file : dirEntries, SpanMode;
 import std.path : baseName, buildPath;
 
+import sparkles.base.term_color : mix;
 import sparkles.syntax : LabelSet, ResolvedTheme, resolveTheme, RgbColor,
     Theme, toRgb;
 import sparkles.tui : CellStyle, Color, Grid;
@@ -22,7 +23,7 @@ import sparkles.tui.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
     match, PointerAction, PointerButton, PointerEvent, ResizeEvent, WheelEvent;
 import sparkles.ui.components.chrome : headerBar;
 import sparkles.ui.components.tree_widget : FlatTreeRow, flatten, TreeData,
-    treeView;
+    TreeGlyphs, treeView;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.geometry : SizeSpec;
 import sparkles.ui.layout : layout;
@@ -44,15 +45,20 @@ struct FsEntry
     string path;
     bool isDir;
     bool openDir;       // stamped at rebuild from the disclosure state
-    Slot slot = Slot.inherit;
     RgbColor iconFg;
     bool hasIconFg;
+    RgbColor labelFg;   // the open document's theme accent (XPL3)
+    bool hasLabelFg;
 
     const(char)[] label() const @safe pure nothrow @nogc => name;
     const(char)[] icon() const @safe pure nothrow @nogc
         => isDir ? (openDir ? "\U0000F115 " : "\U0000F114 ") //  open /  closed
             : fsIcon(name).glyph;
 }
+
+/// The explorer's tree charset: no separate disclosure marker — the folder
+/// icon (open/closed) already carries that state (`XPL6`).
+enum TreeGlyphs explorerGlyphs = TreeGlyphs(closed: "", open: "", leaf: "");
 
 /// A file-type icon: the Nerd glyph + its conventional brand color (`XPL6`,
 /// the vscode-icons / snacks-explorer look). Directories use the folder pair.
@@ -128,6 +134,11 @@ struct ExplorerTui
 
     string picked;  // the chosen file (empty = none yet)
     string current; // the open document's path — highlighted in the tree (XPL3)
+
+    // Theme-derived interaction colors (XPL3/XPL5): the cursor row's tint and
+    // the open document's accent come from the theme, matching the viewer's
+    // selection chrome. Recomputed by rebuild, so a theme change re-skins.
+    RgbColor selBg, accent, sbTrack, sbThumb;
 
     /// Selects + reveals `path` (`XPL4`): every ancestor directory under the
     /// root is opened, the tree rebuilds, and the node's row is selected and
@@ -232,11 +243,21 @@ struct ExplorerTui
         else
             addFiltered(root, uint.max);
 
+        // Interaction colors from the theme (the viewer's selection language).
+        const linkC = toRgb(theme[theme.labels.resolve("markup.link")].fg, pageFg);
+        selBg = mix(pageBg, linkC, 0.35);
+        accent = linkC;
+        sbTrack = mix(pageBg, linkC, 0.22);
+        sbThumb = mix(pageBg, linkC, 0.5);
+
         // The open document keeps its highlight through rebuilds (XPL3).
         if (current.length)
             foreach (ref n; data.nodes)
                 if (n.value.path == current)
-                    n.value.slot = Slot.chromeAccent;
+                {
+                    n.value.labelFg = accent;
+                    n.value.hasLabelFg = true;
+                }
 
         rows = flatten(data, (uint i) @safe
             => qlen != 0 || open.isOpen(data.nodes[i].value.path));
@@ -297,6 +318,18 @@ struct ExplorerTui
     private int bodyRows() const @safe pure nothrow @nogc
         => height > 2 ? height - 2 : 1;
 
+    /// Scrolls the viewport by `dy` rows (the wheel), leaving the cursor
+    /// where it is; the next cursor move re-snaps the view to it.
+    void scrollBy(long dy) @safe pure nothrow @nogc
+    {
+        top += dy;
+        const maxTop = cast(long) rows.length - bodyRows;
+        if (top > maxTop)
+            top = maxTop;
+        if (top < 0)
+            top = 0;
+    }
+
     void clamp() @safe pure nothrow @nogc
     {
         const n = cast(long) rows.length;
@@ -304,6 +337,10 @@ struct ExplorerTui
         if (sel < 0) sel = 0;
         if (sel < top) top = sel;
         if (sel >= top + bodyRows) top = sel - bodyRows + 1;
+        // Never leave dead space below (a reveal before the pane had its
+        // real height can overshoot; the next sized clamp pulls back).
+        const maxTop = n - bodyRows;
+        if (top > maxTop) top = maxTop;
         if (top < 0) top = 0;
     }
 
@@ -333,7 +370,7 @@ struct ExplorerTui
             ? rows[cast(size_t) sel].node : uint.max;
         const tree = treeView(b, data, rows[first .. last],
             (uint i) @safe => qlen != 0 || open.isOpen(data.nodes[i].value.path),
-            selNode);
+            selNode, explorerGlyphs, selBg, hasSelectionBg: true);
 
         Widget colW = Widget(kind: WidgetKind.column, children: [hdr, tree],
             width: SizeSpec.fixed(width));
@@ -355,16 +392,18 @@ struct ExplorerTui
             themeValue.effectivePalette, pageFg, pageBg),
             0, height > 0 ? height - 1 : 0);
 
-        // Scrollbar in the last column when the tree overflows.
-        if (cast(long) rows.length > bodyRows && g.cols >= 2)
+        // Scrollbar in the pane's last column when the tree overflows —
+        // the one thumb formula (STM2), theme-tinted like the viewer's.
+        if (cast(long) rows.length > bodyRows && width >= 2
+            && width <= g.cols)
         {
             const thumb = scrollbarThumb(rows.length, bodyRows, top, bodyRows);
-            const col = cast(ushort)(g.cols - 1);
+            const col = cast(ushort)(width - 1);
             foreach (r; 0 .. bodyRows)
             {
                 const inThumb = r >= thumb.start && r < thumb.start + thumb.extent;
                 CellStyle st;
-                st.fg = Color.fromRgb(inThumb ? pageFg : pageBg);
+                st.fg = Color.fromRgb(inThumb ? sbThumb : sbTrack);
                 st.bg = Color.fromRgb(pageBg);
                 g.putText(col, cast(ushort)(r + 1), inThumb ? "█" : "░", st);
             }
