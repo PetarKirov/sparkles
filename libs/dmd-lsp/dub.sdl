@@ -1,0 +1,49 @@
+name "dmd-lsp"
+description "DMD-frontend-as-a-library semantic core (ported from VisualD dmdserver)"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+importPaths "src"
+
+// The LanguageServer flavor of the DMD frontend: rainers/dmd@dmdserver plus
+// dub-packaging commits (versions "LanguageServer" in the library subpackages,
+// glue/astbase fixes), pinned by SHA on the dmdserver-dub branch — see
+// docs/specs/dmd-lsp/feature-requirements.md (BLD1/BLD2) for the pin and
+// upgrade procedure. The identifier propagates up from the dependency, so this
+// package (and its dependents) compile the dmd.* module interfaces with the
+// same declarations the library was built with.
+dependency "dmd:frontend" repository="git+https://github.com/PetarKirov/dmd.git" \
+    version="f0d906d5557550c188d18cf3ef47c72fec6e1785"
+
+// DMD emits the reference to `Edition`'s TypeInfo initializer into dmd:lexer
+// while the definition lives in dmd:frontend, and dub lists the archives
+// frontend → lexer, so by the time the linker reaches the reference it has
+// already passed the definition. Naming the symbol up front pulls `astenums.o`
+// out of frontend.a while that archive is still on the table. LDC emits both
+// into one object and needs nothing. Without it, no dmd build of this package
+// or its dependents links at all.
+lflags "--undefined=_D3dmd8astenums7Edition6__initZ" platform="linux-dmd"
+
+// Deliberately NO -preview=in / -preview=dip1000 (the repo standard): the
+// dmd.* frontend sources this package imports (and, under -allinst, template
+// instantiations pulled from them) are not dip1000-clean — see BLD4.
+
+configuration "library" {
+    targetType "library"
+}
+
+configuration "unittest" {
+    // Fast path: depend on the runner shim (pulls the prebuilt impl library),
+    // so `dub test` recompiles only this package, not the runner sources.
+    dependency "sparkles:test-runner" path="../.."
+
+    // Also no -checkaction=context (the other repo-standard unittest flag):
+    // it leaks into the dmd:frontend dependency's compilation in the same
+    // invocation, whose objects then reference `_d_assert_fail` instantiations
+    // that never get emitted — an undefined-symbol link failure.
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
