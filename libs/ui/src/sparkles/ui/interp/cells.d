@@ -41,6 +41,16 @@ struct Cell
     RgbColor underColor;
 }
 
+/// How $(LREF CellGrid.writeAnsi) emits backgrounds — the terminal
+/// `--background` modes: `spans` only where content set one, `full` fills
+/// every cell (page background included), `none` never.
+enum BgEmit : ubyte
+{
+    spans, /// only cells whose content set a background (the default)
+    full,  /// every cell, the page background filling the rest
+    none,  /// foreground only
+}
+
 /// Alpha-composites `over` onto `base` (`a` = 0 keeps `base`, 255 = `over`).
 RgbColor blend(in RgbColor base, in RgbColor over, ubyte a) pure nothrow @nogc
 {
@@ -258,19 +268,21 @@ struct CellGrid
     run of glyphs terminated by a reset + newline. A full frame (no cursor
     positioning); the diff path handles incremental repaints.
     */
-    void writeAnsi(Writer)(ref Writer w, ColorDepth depth = ColorDepth.trueColor) const
+    void writeAnsi(Writer)(ref Writer w, ColorDepth depth = ColorDepth.trueColor,
+        BgEmit bg = BgEmit.spans) const
     {
         foreach (y; 0 .. height)
         {
             foreach (x; 0 .. width)
-                writeCell(w, cells[y * width + x], depth);
+                writeCell(w, cells[y * width + x], depth, bg);
             put(w, "\x1b[0m");
             if (y + 1 < height)
                 put(w, '\n');
         }
     }
 
-    private void writeCell(Writer)(ref Writer w, in Cell c, ColorDepth depth) const
+    private void writeCell(Writer)(ref Writer w, in Cell c, ColorDepth depth,
+        BgEmit bg = BgEmit.spans) const
     {
         import std.utf : encode;
 
@@ -278,10 +290,12 @@ struct CellGrid
         // where run-coalescing matters.
         put(w, "\x1b[0m\x1b[");
         writeSgrColor(w, Color.fromRgb(c.fg), depth, ColorChannel.foreground);
-        if (c.hasBg)
+        const emitBg = bg == BgEmit.full || (bg == BgEmit.spans && c.hasBg);
+        if (emitBg)
         {
             put(w, ';');
-            writeSgrColor(w, Color.fromRgb(c.bg), depth, ColorChannel.background);
+            writeSgrColor(w, Color.fromRgb(c.hasBg ? c.bg : pageBg), depth,
+                ColorChannel.background);
         }
         if (c.underline)
             put(w, c.curly ? ";4:3" : ";4");
