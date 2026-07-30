@@ -379,34 +379,75 @@ struct ViewerModel
 
     // ── folding ─────────────────────────────────────────────────────────────
 
-    /// Toggles the innermost fold containing byte `off` — unfold the
-    /// innermost folded region first, else fold the innermost foldable one.
-    /// Returns true (and rebuilds) when a region toggled.
-    bool toggleFoldAt(long off)
+    /// A directed fold operation at a byte offset (`FLD5`'s vim family).
+    enum FoldOp : ubyte
+    {
+        toggle, /// `za`: unfold the innermost folded region, else fold
+        close,  /// `zc`: fold the innermost still-open foldable region
+        open,   /// `zo`: unfold the innermost folded region
+    }
+
+    /// Applies `op` to the innermost qualifying region containing byte
+    /// `off`. Returns true (and rebuilds) when a region changed.
+    bool foldAt(long off, FoldOp op = FoldOp.toggle)
     {
         if (off < 0)
             return false;
-        size_t best = size_t.max, bestLen = size_t.max;
-        foreach (sp; foldable)
-            if (!folds.isOpen(sp.start) && off >= cast(long) sp.start
-                && off < cast(long) sp.end && sp.end - sp.start < bestLen)
-            {
-                best = sp.start;
-                bestLen = sp.end - sp.start;
-            }
-        if (best == size_t.max)
+        // The innermost region containing `off` in the given disclosure
+        // state — folded regions for open/toggle, open ones for close.
+        size_t innermost(bool wantOpen)
+        {
+            size_t best = size_t.max, bestLen = size_t.max;
             foreach (sp; foldable)
-                if (folds.isOpen(sp.start) && off >= cast(long) sp.start
-                    && off < cast(long) sp.end && sp.end - sp.start < bestLen)
+                if (folds.isOpen(sp.start) == wantOpen
+                    && off >= cast(long) sp.start && off < cast(long) sp.end
+                    && sp.end - sp.start < bestLen)
                 {
                     best = sp.start;
                     bestLen = sp.end - sp.start;
                 }
+            return best;
+        }
+
+        size_t best = op == FoldOp.close ? innermost(true) : innermost(false);
+        if (best == size_t.max && op == FoldOp.toggle)
+            best = innermost(true);
         if (best == size_t.max)
             return false;
         folds = folds.toggled(best);
         rebuild();
         return true;
+    }
+
+    /// ditto — the unfold-first toggle (`za`).
+    bool toggleFoldAt(long off) => foldAt(off, FoldOp.toggle);
+
+    /// `zR` / `zM`: open every fold, or fold every foldable region — O(1)
+    /// resets on the disclosure machine's polarity + exception set.
+    void setAllFolds(bool folded)
+    {
+        folds = DisclosureState!size_t(true);
+        if (folded)
+            foreach (sp; foldable)
+                folds = folds.closed(sp.start);
+        rebuild();
+    }
+
+    /// `FLD6`: unfolds every folded region containing byte `off` (a search
+    /// or goto target inside a fold becomes visible before the jump).
+    /// Returns true (and rebuilds) when anything opened.
+    bool revealOffset(size_t off)
+    {
+        bool changed;
+        foreach (sp; foldable)
+            if (!folds.isOpen(sp.start) && off >= sp.start && off < sp.end)
+            {
+                folds = folds.opened(sp.start);
+                changed = true;
+            }
+        if (changed)
+            rebuild();
+        return changed;
     }
 
     /// Marks fence `bodyStart` as just-copied (its header shows the ✔) and

@@ -402,12 +402,14 @@ int runGui(
         return openPath(set.current.path, set.current.name, set.current.summary);
     }
 
-    // Center the given match in the viewport (as far as clamping allows).
+    // Center the given match in the viewport (as far as clamping allows) —
+    // unfolding any region that hides it first (`FLD6`).
     void jumpToMatch(size_t i, int visibleRows)
     {
         if (vm.matches.length == 0)
             return;
         vm.curMatch = i % vm.matches.length;
+        vm.revealOffset(vm.matches[vm.curMatch].start);
         vm.top = vm.visualOfMatch(vm.matches[vm.curMatch]) - visibleRows / 2;
     }
 
@@ -513,7 +515,7 @@ int runGui(
 
     // 'z': toggle the innermost fold at the text selection (else the top
     // visible row) — the model owns the region choice and the rebuild.
-    void toggleFold()
+    void foldAtCursor(ViewerModel.FoldOp op)
     {
         long off = -1;
         if (regime == Regime.text && selMax() > selMin())
@@ -525,8 +527,13 @@ int runGui(
             if (vm.rows[t0].srcStart != size_t.max)
                 off = cast(long) vm.rows[t0].srcStart;
         }
-        vm.toggleFoldAt(off);
+        vm.foldAt(off, op);
     }
+
+    // The vim fold family: 'z' arms a pending sequence for ~a second; the
+    // next key picks the op (a/z toggle, c close, o open, R all-open,
+    // M all-fold).
+    int foldSeqFrames;
 
     int frame = 0;
     while (!WindowShouldClose())
@@ -625,7 +632,10 @@ int runGui(
                     try
                     {
                         const n = query[].to!long;
-                        vm.top = vm.visualOfSrc(cast(size_t)(n > 0 ? n - 1 : 0));
+                        const line = cast(size_t)(n > 0 ? n - 1 : 0);
+                        if (line < vm.lineStarts.length)
+                            vm.revealOffset(vm.lineStarts[line]); // FLD6
+                        vm.top = vm.visualOfSrc(line);
                     }
                     catch (Exception)
                     {
@@ -824,11 +834,15 @@ int runGui(
                 relayout();
             }
 
-            // Ctrl-C copies the vm.current selection to the clipboard; plain 'c'
+            // A pending fold sequence claims the next key (see below).
+            const foldSeq = !treeFocused && foldSeqFrames > 0;
+
+            // Ctrl-C copies the current selection to the clipboard; plain 'c'
             // toggles the in-panel code-block line numbers.
             if (ctrl && IsKeyPressed(KeyboardKey.KEY_C))
                 copySelection();
-            else if (!ctrl && !treeFocused && pressed(KeyboardKey.KEY_C))
+            else if (!ctrl && !treeFocused && !foldSeq
+                && pressed(KeyboardKey.KEY_C))
             {
                 codeLineNumbers = !codeLineNumbers;
                 vm.widthCols = -1;
@@ -843,11 +857,31 @@ int runGui(
                 copyModeMsg = ansiStrip ? "ansi-copy: strip" : "ansi-copy: raw";
                 toast = Timeline.triggered(toastCfg);
             }
-            // 'z' toggles the innermost fold at the selection (else the vm.top
-            // row) — the FLD5 keyboard entry, over the row's source identity
-            // (a no-op in views without foldable spans).
-            if (!treeFocused && pressed(KeyboardKey.KEY_Z))
-                toggleFold();
+            // The FLD5 fold family over the row's source identity (no-ops
+            // in views without foldable spans): 'z' arms the sequence; then
+            // a/z toggle, c close, o open, Shift-R open-all, Shift-M
+            // fold-all. The armed state expires after ~1 s.
+            if (foldSeq)
+            {
+                --foldSeqFrames;
+                bool consumed = true;
+                if (pressed(KeyboardKey.KEY_A) || pressed(KeyboardKey.KEY_Z))
+                    foldAtCursor(ViewerModel.FoldOp.toggle);
+                else if (pressed(KeyboardKey.KEY_C))
+                    foldAtCursor(ViewerModel.FoldOp.close);
+                else if (pressed(KeyboardKey.KEY_O))
+                    foldAtCursor(ViewerModel.FoldOp.open);
+                else if (pressed(KeyboardKey.KEY_R))
+                    vm.setAllFolds(false);
+                else if (pressed(KeyboardKey.KEY_M))
+                    vm.setAllFolds(true);
+                else
+                    consumed = false;
+                if (consumed)
+                    foldSeqFrames = 0;
+            }
+            else if (!treeFocused && pressed(KeyboardKey.KEY_Z))
+                foldSeqFrames = 60;
             if (pressed(KeyboardKey.KEY_T))
             {
                 tableFmt = tableFmt == TableCopyFormat.tsv
