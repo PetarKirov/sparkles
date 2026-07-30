@@ -125,6 +125,14 @@ AnalyzeResult analyzeTwoslash(string filename, string annotatedSource,
         nodes ~= node;
     }
 
+    // --- `^^^` highlight spans (pure notation; no oracle involved).
+    foreach (h; notation.highlights)
+        nodes ~= Node(
+            type: NodeType.highlight,
+            start: h.offset,
+            length: h.length,
+            text: h.text);
+
     // --- custom tag lines.
     foreach (t; notation.tags)
         nodes ~= Node(
