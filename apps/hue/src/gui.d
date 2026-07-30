@@ -40,6 +40,10 @@ import sparkles.syntax.md.model : MdBlock, MdBlockKind, Span;
 import sparkles.syntax.md.render_widgets : foldableSpans,
     highlightedFenceRenderer, MdViewOptions, MdViewTheme, viewMarkdown;
 
+// The explorer pane (XPL2): the same tree model the TUI workspace uses.
+import explorer : ExplorerTui;
+import sparkles.ui.components.tree_widget : treeView;
+
 // 2D table grid selection (TBL): pure region/serialize logic over grid hits.
 import sparkles.ui.components.table : GridHit;
 import table_select : TableRegion, TableCopyFormat, tableSelection, serializeTable;
@@ -179,6 +183,9 @@ int runGui(
     DocLoader loadDoc = null,            // loads a set entry (supplied by app.d)
     TsConfigCache* tsCache = null,       // fence highlighting for the widget view
     TwoslashReturn twoslash = TwoslashReturn.init, // twoslash document payload
+    string docPath = null,               // on-disk path (reveal in the tree)
+    bool startInTree = false,            // a directory target opens in the tree
+    string treeRoot = null,              // explorer root (default: docPath's dir)
 ) @system
 {
     import std.stdio : stderr;
@@ -315,10 +322,21 @@ int runGui(
     // Preview columns available for the current window/font: the screen minus the
     // 1-cell left text padding, the scrollbar gutter on the right, and the line-
     // number gutter. Re-laying-out on change keeps wrapping correct.
+    // The explorer pane (XPL2): tree left, document right — the TUI
+    // workspace's model, painted through RaylibCanvas. 'e' toggles it.
+    import std.path : dirName;
+
+    ExplorerTui tree;
+    bool treeVisible = startInTree;
+    bool treeFocused = startInTree;
+    enum treeCols = 32;
+    int treePx() => treeVisible ? (treeCols + 1) * fonts.cellW() : 0;
+
     int widthCols()
     {
         const cw = fonts.cellW();
-        const w = (GetScreenWidth() - cw - scrollbarGutter() - gutterCols() * cw) / cw;
+        const w = (GetScreenWidth() - cw - scrollbarGutter() - gutterCols() * cw
+            - treePx()) / cw;
         return w < 8 ? 8 : w;
     }
 
@@ -453,10 +471,22 @@ int runGui(
         scrollbarThumb = mix(pageBg, linkC, 0.5);
         SetWindowTitle(text("hue — ", title, " — ", names[i],
             " (", i + 1, "/", names.length, ")").toStringz);
+        // The explorer pane follows the theme too — page colors and the
+        // palette its slots resolve against, not just the syntax colors.
+        tree.theme = current;
+        tree.themeValue = &themes[i];
+        tree.pageFg = pageFg;
+        tree.pageBg = pageBg;
+        if (tree.root.length)
+            tree.rebuild();
         relayout();  // preview colors follow the theme
     }
 
+    tree.root = treeRoot.length ? treeRoot
+        : (docPath.length ? dirName(docPath) : ".");
     applyTheme(themeIdx);
+    if (docPath.length)
+        tree.reveal(docPath);
 
     auto lineStarts = buildLineStarts(curSource);
 
@@ -469,26 +499,21 @@ int runGui(
     Match[] matches;
     size_t curMatch;
 
-    // The index view (`GAL5`): a directory target opens on the list of documents.
-    // A deliberately minimal list — the file-tree explorer (`TVU1`) supersedes it.
-    bool indexMode = set !is null && !set.empty && loadDoc !is null;
-    long indexTop;
 
     /// Loads the set's currently-selected document in place (`GNV1`): re-read,
     /// re-highlight, rebuild the preview model, relayout. Scroll and search reset;
     /// the theme and the view toggles persist (`GNV3`). A document that fails to
     /// load is reported and the previous one stays on screen.
-    bool loadSelected()
+    bool openPath(string path, string name, string summary)
     {
-        if (set is null || set.empty || loadDoc is null)
+        if (loadDoc is null)
             return false;
-        const entry = set.current;
         LoadedDoc doc;
         try
-            doc = loadDoc(entry.path);
+            doc = loadDoc(path);
         catch (Exception ex)
         {
-            stderr.writeln("hue: ", entry.path, ": ", ex.msg);
+            stderr.writeln("hue: ", path, ": ", ex.msg);
             return false;
         }
 
@@ -496,8 +521,8 @@ int runGui(
         curEvents = doc.events;
         curPreview = doc.preview;
         curTw = doc.twoslash;
-        curName = entry.name;
-        curSummary = entry.summary;
+        curName = name;
+        curSummary = summary;
         srcTotal = lineCount(curSource);
         lineStarts = buildLineStarts(curSource);
         showPreview = curPreview.present || curTw.code.length != 0;
@@ -511,7 +536,32 @@ int runGui(
         lastWidthCols = -1; // force the re-layout even at an unchanged width
         relayout();
         SetWindowTitle(("hue — " ~ curName).toStringz);
+        tree.reveal(path); // the explorer follows the open document (XPL3/4)
         return true;
+    }
+
+    // Enter/l/double-click on a tree row opens a file (or toggles a dir).
+    void activateTree()
+    {
+        if (tree.sel >= cast(long) tree.rows.length)
+            return;
+        if (!tree.activate() && tree.picked.length)
+        {
+            import std.path : baseName;
+
+            const path = tree.picked;
+            tree.picked = null;
+            if (openPath(path, baseName(path), ""))
+                treeFocused = false;
+        }
+    }
+
+    /// ditto — the set's currently-selected entry (`GNV1`).
+    bool loadSelected()
+    {
+        if (set is null || set.empty)
+            return false;
+        return openPath(set.current.path, set.current.name, set.current.summary);
     }
 
     // Recompute all match ranges for the current query — an extra decoration
@@ -698,79 +748,6 @@ int runGui(
         const screenH = GetScreenHeight();
         const visibleRows = screenH / cellH;
 
-        // The index view (`GAL5`): the document list a directory target opens on.
-        // ↑/↓ (j/k) move, Enter/click opens, `i` returns here from a document.
-        if (indexMode)
-        {
-            const rows = set.entries.length;
-            if (pressed(KeyboardKey.KEY_DOWN) || pressed(KeyboardKey.KEY_J))
-                set.move(1);
-            if (pressed(KeyboardKey.KEY_UP) || pressed(KeyboardKey.KEY_K))
-                set.move(-1);
-            if (IsKeyPressed(KeyboardKey.KEY_HOME))
-                set.index = 0;
-            if (IsKeyPressed(KeyboardKey.KEY_END) && rows)
-                set.index = rows - 1;
-
-            // Keep the selection in view.
-            const listRows = visibleRows - 2;
-            if (cast(long) set.index < indexTop)
-                indexTop = cast(long) set.index;
-            if (listRows > 0 && cast(long) set.index >= indexTop + listRows)
-                indexTop = cast(long) set.index - listRows + 1;
-
-            const my = GetMouseY();
-            const hoveredRow = indexTop + (my - 2 * cellH) / cellH;
-            if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT)
-                && hoveredRow >= 0 && hoveredRow < cast(long) rows)
-            {
-                set.index = cast(size_t) hoveredRow;
-                if (loadSelected())
-                    indexMode = false;
-            }
-            if (IsKeyPressed(KeyboardKey.KEY_ENTER) || IsKeyPressed(KeyboardKey.KEY_SPACE))
-                if (loadSelected())
-                    indexMode = false;
-
-            BeginDrawing();
-            ClearBackground(rl(pageBg));
-
-            drawText(fonts, cstrOf(buf, text(rows, " documents   ↑↓ move   enter open   q quit")),
-                cast(float) cellW, 0, TextStyle(0), rl(gutterFg));
-
-            foreach (r; 0 .. listRows)
-            {
-                const e = indexTop + r;
-                if (e < 0 || e >= cast(long) rows)
-                    break;
-                const yy = cast(float)((r + 2) * cellH);
-                const selected = cast(size_t) e == set.index;
-                if (selected)
-                    DrawRectangle(0, cast(int) yy, screenW, cellH,
-                        rl(mix(pageBg, pageFg, 0.14)));
-                drawText(fonts, cstrOf(buf, set.entries[e].name), cast(float) cellW, yy,
-                    TextStyle(selected ? TextStyle.bold : 0), rl(pageFg));
-                const sx = cast(float)((2 + maxNameCols(set.entries)) * cellW);
-                drawText(fonts, cstrOf(buf, set.entries[e].summary), sx, yy,
-                    TextStyle(0), rl(gutterFg));
-            }
-
-            EndDrawing();
-            fonts.flushPending();
-
-            // The index is a capturable frame too, so the QA harness can golden it.
-            if (shotPath.length)
-            {
-                if (++frame == 20)
-                    TakeScreenshot(shotPath.toStringz);
-                if (frame >= 21)
-                    break;
-            }
-
-            if (IsKeyPressed(KeyboardKey.KEY_Q) || IsKeyPressed(KeyboardKey.KEY_ESCAPE))
-                break;
-            continue;
-        }
 
         // Reflow (both views wrap) when the window width in columns changes — but
         // debounced: only once the width has held steady for `resizeSettleFrames`
@@ -873,20 +850,85 @@ int runGui(
         {
             // Normal mode: scroll, theme cycling, font sizing, match nav, and the
             // keys that enter the input modes.
-            // Scroll: wheel, ↑/↓ (one line), j/k, PageUp/Down, Home/End.
+
+            // 'e' toggles the explorer pane (XPL2); focus follows visibility.
+            if (pressed(KeyboardKey.KEY_E))
+            {
+                treeVisible = !treeVisible;
+                treeFocused = treeVisible;
+                lastWidthCols = -1;
+                relayout();
+            }
+
+            if (treeFocused && treeVisible)
+            {
+                // The explorer pane's keys: row navigation + open/close.
+                tree.height = visibleRows;
+                if (pressed(KeyboardKey.KEY_J) || pressed(KeyboardKey.KEY_DOWN))
+                {
+                    ++tree.sel;
+                    tree.clamp();
+                }
+                if (pressed(KeyboardKey.KEY_K) || pressed(KeyboardKey.KEY_UP))
+                {
+                    --tree.sel;
+                    tree.clamp();
+                }
+                if (pressed(KeyboardKey.KEY_HOME))
+                {
+                    tree.sel = 0;
+                    tree.clamp();
+                }
+                if (pressed(KeyboardKey.KEY_END))
+                {
+                    tree.sel = cast(long) tree.rows.length - 1;
+                    tree.clamp();
+                }
+                if (IsKeyPressed(KeyboardKey.KEY_ENTER) || pressed(KeyboardKey.KEY_L))
+                    activateTree();
+                if (pressed(KeyboardKey.KEY_H))
+                {
+                    // Close the selected dir, or jump to the parent row.
+                    if (tree.sel < cast(long) tree.rows.length)
+                    {
+                        const node = tree.rows[cast(size_t) tree.sel].node;
+                        const v = tree.data.nodes[node].value;
+                        if (v.isDir && tree.open.isOpen(v.path))
+                        {
+                            tree.open = tree.open.closed(v.path);
+                            tree.rebuild();
+                        }
+                        else if (tree.data.nodes[node].parent != uint.max)
+                        {
+                            const par = tree.data.nodes[node].parent;
+                            foreach (i, ref const r; tree.rows)
+                                if (r.node == par)
+                                {
+                                    tree.sel = cast(long) i;
+                                    break;
+                                }
+                            tree.clamp();
+                        }
+                    }
+                }
+            }
+            else
+            {
+                // Scroll: wheel, ↑/↓ (one line), j/k, PageUp/Down, Home/End.
+                if (pressed(KeyboardKey.KEY_J) || pressed(KeyboardKey.KEY_DOWN))
+                    ++top;
+                if (pressed(KeyboardKey.KEY_K) || pressed(KeyboardKey.KEY_UP))
+                    --top;
+                if (pressed(KeyboardKey.KEY_HOME))
+                    top = 0;
+                if (pressed(KeyboardKey.KEY_END))
+                    top = maxTop;
+            }
             top -= cast(long)(GetMouseWheelMove() * 3);
             if (pressed(KeyboardKey.KEY_PAGE_DOWN))
                 top += visibleRows;
             if (pressed(KeyboardKey.KEY_PAGE_UP))
                 top -= visibleRows;
-            if (pressed(KeyboardKey.KEY_J) || pressed(KeyboardKey.KEY_DOWN))
-                ++top;
-            if (pressed(KeyboardKey.KEY_K) || pressed(KeyboardKey.KEY_UP))
-                --top;
-            if (pressed(KeyboardKey.KEY_HOME))
-                top = 0;
-            if (pressed(KeyboardKey.KEY_END))
-                top = maxTop;
 
             // Live theme cycling (← previous, → next, wrapping).
             if (pressed(KeyboardKey.KEY_RIGHT))
@@ -930,8 +972,10 @@ int runGui(
                     loadSelected();
                 if (IsKeyPressed(KeyboardKey.KEY_I))
                 {
-                    indexMode = true;
-                    continue;
+                    treeVisible = true;
+                    treeFocused = true;
+                    lastWidthCols = -1;
+                    relayout();
                 }
             }
 
@@ -944,7 +988,7 @@ int runGui(
             }
 
             // 'l' toggles the file line-number gutter (changes the wrap width).
-            if (pressed(KeyboardKey.KEY_L))
+            if (!treeFocused && pressed(KeyboardKey.KEY_L))
             {
                 lineNumbers = !lineNumbers;
                 lastWidthCols = -1; // gutter width changed → reflow
@@ -955,7 +999,7 @@ int runGui(
             // toggles the in-panel code-block line numbers.
             if (ctrl && IsKeyPressed(KeyboardKey.KEY_C))
                 copySelection();
-            else if (!ctrl && pressed(KeyboardKey.KEY_C))
+            else if (!ctrl && !treeFocused && pressed(KeyboardKey.KEY_C))
             {
                 codeLineNumbers = !codeLineNumbers;
                 lastWidthCols = -1;
@@ -972,7 +1016,7 @@ int runGui(
             }
             // 'z' toggles the innermost fold at the selection (else the top
             // row) — the FLD5 keyboard entry, over the row's source identity.
-            if (mdActive && pressed(KeyboardKey.KEY_Z))
+            if (mdActive && !treeFocused && pressed(KeyboardKey.KEY_Z))
                 toggleFold();
             if (pressed(KeyboardKey.KEY_T))
             {
@@ -984,13 +1028,13 @@ int runGui(
             }
 
             // Enter an input mode: '/' search (raw view only), 'g' goto-line.
-            if (!showPreview && IsKeyPressed(KeyboardKey.KEY_SLASH))
+            if (!treeFocused && !showPreview && IsKeyPressed(KeyboardKey.KEY_SLASH))
             {
                 mode = Mode.search;
                 query.clear();
                 matches = null;
             }
-            else if (IsKeyPressed(KeyboardKey.KEY_G))
+            else if (!treeFocused && IsKeyPressed(KeyboardKey.KEY_G))
             {
                 mode = Mode.gotoLine;
                 query.clear();
@@ -1057,7 +1101,46 @@ int runGui(
         const padX = cellW;
         const rightPad = scrollbarGutter();
         const gcols = gutterCols();
-        const gutterPx = padX + gcols * cellW; // == contentX (text column start)
+        // Text starts after the tree pane (when visible), the 1-cell left
+        // padding, and the line-number gutter.
+        const gutterPx = treePx() + padX + gcols * cellW;
+
+        // The explorer pane (XPL2): the tree's widget view painted through
+        // RaylibCanvas at the window's left edge, viewport-sliced, with a
+        // hairline divider. The whole pane clips at its own width.
+        // With a set header bar, the pane starts under it (the bar overlays
+        // the top row).
+        const treeTopRows = set !is null && !set.empty ? 1 : 0;
+        if (treeVisible)
+        {
+            tree.height = visibleRows - treeTopRows;
+            tree.clamp();
+            DrawRectangle(0, 0, treeCols * cellW, screenH,
+                rl(mix(pageBg, pageFg, 0.03)));
+            DrawRectangle(treeCols * cellW + cellW / 2, 0, 1, screenH,
+                rl(gutterFg));
+
+            import sparkles.ui.geometry : SizeSpec;
+            import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+            auto tb = Builder();
+            const tFirst = cast(size_t) tree.top;
+            const tLast = tFirst + visibleRows > tree.rows.length
+                ? tree.rows.length : tFirst + visibleRows;
+            const selNode = tree.sel < cast(long) tree.rows.length
+                ? tree.rows[cast(size_t) tree.sel].node : uint.max;
+            const tv = treeView(tb, tree.data, tree.rows[tFirst .. tLast],
+                (uint i) @safe => tree.open.isOpen(tree.data.nodes[i].value.path),
+                selNode);
+            Widget paneW = Widget(kind: WidgetKind.column, children: [tv],
+                width: SizeSpec.fixed(treeCols), clipX: true);
+            auto wt = tb.finish(tb.add(paneW));
+            auto tOps = buildDisplayList(wt, layout(wt),
+                themes[themeIdx].effectivePalette, pageFg, pageBg);
+            auto tCanvas = RaylibCanvas(&fonts, &buf, cellW, cellH,
+                0, cast(float)(treeTopRows * cellH));
+            paint(tCanvas, tOps);
+        }
 
         if (mdActive)
         {
@@ -1230,6 +1313,24 @@ int runGui(
         {
             const mp = GetMousePosition();
             const overSb = mp.x >= screenW - scrollbarGutter();
+            const overTree = treeVisible && mp.x < treeCols * cellW;
+            if (overTree && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT))
+            {
+                treeFocused = true;
+                const row = tree.top
+                    + cast(long)((mp.y - treeTopRows * cellH) / cellH);
+                if (row >= 0 && row < cast(long) tree.rows.length)
+                {
+                    const again = row == tree.sel;
+                    tree.sel = row;
+                    tree.clamp();
+                    if (again)
+                        activateTree();
+                }
+            }
+            else if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT)
+                && !overSb && !overTree)
+                treeFocused = false;
             const shiftMod = IsKeyDown(KeyboardKey.KEY_LEFT_SHIFT) || IsKeyDown(KeyboardKey.KEY_RIGHT_SHIFT);
             const altMod = IsKeyDown(KeyboardKey.KEY_LEFT_ALT) || IsKeyDown(KeyboardKey.KEY_RIGHT_ALT);
             if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT) && !overSb && !copyClicked)
