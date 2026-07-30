@@ -12,8 +12,11 @@
   imports = [
     ./build-apk.nix
     ./hello.nix
+    ./hue.nix
+    ./libghostty-vt.nix
     ./ndk.nix
     ./raylib.nix
     ./sdk.nix
+    ./tree-sitter.nix
   ];
 }
