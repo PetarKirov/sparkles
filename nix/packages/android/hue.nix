@@ -183,6 +183,20 @@
               fi
             done
 
+            # Sample documents — the explorer's browse surface on-device
+            # (markdown incl. ` ```ansi ` fences, a D source, a twoslash
+            # payload: one of each render path).
+            mkdir -p $out/docs
+            cp ${../../../docs/libs/base/tutorial/getting-started.md} \
+              $out/docs/getting-started.md
+            # Real SGR escapes in its ansi fences — the libghostty-vt render
+            # path is visibly exercised (colors, not stripped text).
+            cp ${../../../docs/libs/base/how-to/prettyprint-values.md} \
+              $out/docs/prettyprint-values.md
+            cp ${../../../apps/hue/src/gui_touch.d} $out/docs/gui_touch.d
+            cp ${../../../libs/twoslash/examples/fixtures/12-async.twoslash.json} \
+              $out/docs/async-example.twoslash.json
+
             (cd $out && find . -type f -printf '%P\n' | sort > asset-manifest.txt)
             (cd $out && find . -type f ! -name bundle-hash -print0 | sort -z \
               | xargs -0 sha256sum | sha256sum | cut -d' ' -f1 > bundle-hash)
