@@ -11,6 +11,8 @@ import std.stdio : stderr, writeln;
 
 import sparkles.core_cli.args : CliOption, HelpInfo, parseCliArgs;
 
+import sparkles.dmd_lsp.api : AnalyzerConfig;
+
 struct CliParams
 {
     @CliOption("out", "Output path for a file target, or output directory for a directory target; defaults to `<input-minus-.d>.twoslash.json` beside each input.")
@@ -21,6 +23,15 @@ struct CliParams
 
     @CliOption("dflags", "Extra compiler flags (space-separated), merged with the sample's `// @dflags:` directives.")
     string dflags;
+
+    @CliOption("dub", "Analyze the input in the context of its enclosing dub project: `dub describe` supplies the import paths, string-import paths, version identifiers and dflags of the nearest dub.sdl/dub.json. Off by default, so a standalone sample is never influenced by a project that happens to contain it.")
+    bool dub;
+
+    @CliOption("dub-config", "With --dub: the dub configuration to describe (default: dub's own default configuration).")
+    string dubConfig;
+
+    @CliOption("dub-build", "With --dub: the dub build type to describe, e.g. unittest (default: dub's own default, debug).")
+    string dubBuild;
 
     @CliOption("verify", "Re-extract and diff against the existing payload instead of writing; exit 1 on drift (the golden-fixture guard).")
     bool verify;
@@ -93,6 +104,12 @@ private int runDirectory(in CliParams cli, string dir)
             child ~= ["--import", p];
         if (cli.dflags.length)
             child ~= ["--dflags", cli.dflags];
+        if (cli.dub)
+            child ~= "--dub";
+        if (cli.dubConfig.length)
+            child ~= ["--dub-config", cli.dubConfig];
+        if (cli.dubBuild.length)
+            child ~= ["--dub-build", cli.dubBuild];
         if (cli.verify)
             child ~= "--verify";
         if (cli.quiet)
@@ -117,7 +134,6 @@ private int runFile(in CliParams cli, string samplePath, string outPath)
     import std.file : readText;
     import std.path : setExtension;
 
-    import sparkles.dmd_lsp.api : AnalyzerConfig;
     import sparkles.twoslash_d.analyze : analyzeTwoslash;
     import sparkles.twoslash_d.emit : declareDPayload;
 
@@ -128,6 +144,11 @@ private int runFile(in CliParams cli, string samplePath, string outPath)
     auto config = AnalyzerConfig(
         importPaths: cli.importPaths.dup,
         dflags: cli.dflags.splitter(' ').filter!(f => f.length).array);
+
+    // `--dub` (PRJ5): the enclosing project's settings, appended behind any
+    // explicit `--import`/`--dflags` so those keep priority.
+    if (cli.dub && !applyDubContext(cli, samplePath, config))
+        return 1;
 
     // `--import` prepends to the environment default rather than replacing it.
     if (config.importPaths.length)
@@ -142,6 +163,48 @@ private int runFile(in CliParams cli, string samplePath, string outPath)
     return cli.verify
         ? verifyPayload(cli, samplePath, outPath, result.payload)
         : writePayload(cli, samplePath, outPath, result.payload);
+}
+
+/**
+Folds the enclosing dub project's build settings into `config` (`PRJ5`).
+
+Project settings are $(I appended): an explicit `--import`/`--dflags` stays
+ahead of them in the search order, and the environment's druntime/phobos tail
+is appended after both by the caller. Returns false when `--dub` was asked for
+but cannot be honored — a silent fallback would produce a payload full of
+"undefined identifier" nodes that looks like a source defect.
+*/
+private bool applyDubContext(in CliParams cli, string samplePath,
+    ref AnalyzerConfig config)
+{
+    import sparkles.dmd_lsp.project : DubQuery, dubProjectFor;
+
+    const proj = dubProjectFor(samplePath,
+        DubQuery(config: cli.dubConfig, buildType: cli.dubBuild));
+
+    if (!proj.found)
+    {
+        stderr.writeln("error: --dub: no dub.sdl/dub.json above ", samplePath);
+        return false;
+    }
+    if (!proj.usable)
+    {
+        stderr.writeln("error: --dub: ", proj.error);
+        return false;
+    }
+
+    config.importPaths ~= proj.analyzer.importPaths;
+    config.stringImportPaths ~= proj.analyzer.stringImportPaths;
+    config.versionIds ~= proj.analyzer.versionIds;
+    config.debugIds ~= proj.analyzer.debugIds;
+    config.dflags ~= proj.analyzer.dflags;
+
+    if (!cli.quiet)
+        writeln("dub project ", proj.root, ": ",
+            proj.analyzer.importPaths.length, " import paths, ",
+            proj.analyzer.versionIds.length, " versions, ",
+            proj.analyzer.dflags.length, " dflags");
+    return true;
 }
 
 private int writePayload(P)(in CliParams cli, string samplePath, string outPath, P payload)
