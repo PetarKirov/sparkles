@@ -86,21 +86,21 @@ resolved to `line`/`character` against the post-cut display code.
 The commit-level execution plan; each lands green on its own. Track A has no
 DMD dependency; Track B needs the fork pin.
 
-| Milestone | Track | Scope                                                                                       | Status      |
-| --------- | ----- | ------------------------------------------------------------------------------------------- | ----------- |
-| L0        | A     | This spec                                                                                   | in progress |
-| L1        | A     | `sparkles.base.text.lineindex` — byte ↔ line/col                                            | not started |
-| L2        | A     | Extract `libs/twoslash-protocol`; add `language` + `offsetEncoding` (`NTN4`)                | not started |
-| L3        | A     | Parameterize the popup/highlight language in `overlay.d` + hue (`EXT5`)                     | not started |
-| L4        | A     | `sparkles:twoslash-d` notation parser (`NTN1`–`NTN3`)                                       | not started |
-| L5        | B     | Fork branch `dmdserver-dub` + pin + `dmd-import-paths` nix plumbing (`BLD1`–`BLD4`)         | in progress |
-| L6        | B     | `sparkles:dmd-lsp` analysis core + diagnostics (`COR1`–`COR6`)                              | not started |
-| L7        | B     | `semvisitor.d` port — tips, identifier types (`TIP1`–`TIP3`, `DOC1`)                        | not started |
-| L8        | B     | `twoslash-d` node assembly + emit + golden fixtures (`NTN2`, `DOC2`)                        | not started |
-| L9        | B     | `apps/twoslash-extract` CLI (`EXT1`–`EXT4`)                                                 | not started |
-| L10       | B     | hue showcase fixtures; reconcile [hue/twoslash.md](../hue/twoslash.md) `NOT`/`DMD` statuses | not started |
-| L11       | B     | Diátaxis docs (`docs/libs/dmd-lsp/`, `docs/libs/twoslash-d/`) + `AGENTS.md` rows            | not started |
-| L12       | —     | _(follow-up)_ `apps/ci` twoslash verification (`@errors:` glob via `{{_}}`)                 | not started |
+| Milestone | Track | Scope                                                                                       | Status                                                   |
+| --------- | ----- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| L0        | A     | This spec                                                                                   | full (`bd21a054`)                                        |
+| L1        | A     | `sparkles.base.text.lineindex` — byte ↔ line/col                                            | full (`34369c9c`)                                        |
+| L2        | A     | Extract `libs/twoslash-protocol`; add `language` + `offsetEncoding` (`NTN4`)                | full (`a0626e09`)                                        |
+| L3        | A     | Parameterize the popup/highlight language in `overlay.d` + hue (`EXT5`)                     | full (`1344c42b`)                                        |
+| L4        | A     | `sparkles:twoslash-d` notation parser (`NTN1`–`NTN3`)                                       | full (`f8c9a846`)                                        |
+| L5        | B     | Fork branch `dmdserver-dub` + pin + `dmd-import-paths` nix plumbing (`BLD1`–`BLD4`)         | full (`acef0edd`)                                        |
+| L6        | B     | `sparkles:dmd-lsp` analysis core + diagnostics (`COR1`–`COR6`)                              | full (`ec71308d`)                                        |
+| L7        | B     | `semvisitor.d` port — tips, identifier types (`TIP1`–`TIP3`, `DOC1`)                        | full (`032f3b35`)                                        |
+| L8        | B     | `twoslash-d` node assembly + emit + golden fixtures (`NTN2`, `DOC2`)                        | full (`618e98a0`)                                        |
+| L9        | B     | `apps/twoslash-extract` CLI (`EXT1`–`EXT4`)                                                 | full (`5aa94285`)                                        |
+| L10       | B     | hue showcase fixtures; reconcile [hue/twoslash.md](../hue/twoslash.md) `NOT`/`DMD` statuses | partial (corpus `67c04784`; spec reconciliation pending) |
+| L11       | B     | Diátaxis docs (`docs/libs/dmd-lsp/`, `docs/libs/twoslash-d/`) + `AGENTS.md` rows            | not started                                              |
+| L12       | —     | _(follow-up)_ `apps/ci` twoslash verification (`@errors:` glob via `{{_}}`)                 | not started                                              |
 
 Issue #124's D3 (completions, references) and D4 (JSON-RPC LSP server) are
 follow-on milestones behind the same core.
