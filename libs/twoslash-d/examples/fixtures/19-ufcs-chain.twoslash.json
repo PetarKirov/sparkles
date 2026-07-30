@@ -45,9 +45,32 @@
         },
         {
             "character": 25,
+            "docs": "``filter`!(predicate)(`range`)` returns a new `range` containing only elements `x` in ``range`` for\nwhich `predicate(x)` returns `true`.\n\nThe predicate is passed to `unaryFun`, and can be either a string, or\nany callable that can be executed via `pred(element)`.",
             "length": 6,
             "line": 3,
             "start": 125,
+            "tags": [
+                [
+                    "param",
+                    "predicate Function to apply to each element of `range`"
+                ],
+                [
+                    "returns",
+                    "An input `range` that contains the filtered elements. If ``range`` is at least a forward `range`, the return value of ``filter``\n    will also be a forward `range`."
+                ],
+                [
+                    "see",
+                    "[Filter (higher-order function)](http://en.wikipedia.org/wiki/Filter_(higher-order_function)),\n    `filterBidirectional`"
+                ],
+                [
+                    "param",
+                    "range An input `range` of elements"
+                ],
+                [
+                    "returns",
+                    "A `range` containing only elements `x` in ``range`` for\n        which `predicate(x)` returns `true`."
+                ]
+            ],
             "text": "sample.scaled.FilterResult!(__lambda_L7_C34, int[]) sample.scaled.filter!(int[])(int[] range) pure nothrow @nogc @safe",
             "type": "hover"
         },
@@ -77,9 +100,28 @@
         },
         {
             "character": 24,
+            "docs": "Implements the homonym function (also known as `transform`) present\nin many languages of functional flavor. The call ``map`!(fun)(range)`\nreturns a range of which elements are obtained by applying `fun(a)`\nleft to right for all elements `a` in `range`. The original ranges are\nnot changed. Evaluation is done lazily.",
             "length": 3,
             "line": 4,
             "start": 170,
+            "tags": [
+                [
+                    "param",
+                    "fun one or more transformation functions"
+                ],
+                [
+                    "see",
+                    "[Map (higher-order function)](http://en.wikipedia.org/wiki/Map_(higher-order_function))"
+                ],
+                [
+                    "param",
+                    "r an input range"
+                ],
+                [
+                    "returns",
+                    "A range with each fun applied to all the elements. If there is more than one\n        fun, the element type will be `Tuple` containing one element for each fun."
+                ]
+            ],
             "text": "sample.scaled.MapResult!(__lambda_L8_C30, FilterResult!(__lambda_L7_C34, int[])) sample.scaled.map!(sample.scaled.FilterResult!(__lambda_L7_C34, int[]))(sample.scaled.FilterResult!(__lambda_L7_C34, int[]) r) pure nothrow @nogc @safe",
             "type": "hover"
         },
@@ -93,17 +135,39 @@
         },
         {
             "character": 19,
+            "docs": "Allocates an `array` and initializes it with copies of the elements\n of range ``r``.\n\nNarrow strings are handled as follows:\n\n- If autodecoding is turned on (default), then they are handled as a separate overload.\n- If autodecoding is turned off, then this is equivalent to duplicating the `array`.",
             "length": 5,
             "line": 5,
             "start": 208,
+            "tags": [
+                [
+                    "param",
+                    "r range (or aggregate with `opApply` function) whose elements are copied into the allocated `array`"
+                ],
+                [
+                    "returns",
+                    "allocated and initialized `array`"
+                ]
+            ],
             "text": "int[] std.array.array!(sample.scaled.MapResult!(__lambda_L8_C30, FilterResult!(__lambda_L7_C34, int[])))(sample.scaled.MapResult!(__lambda_L8_C30, FilterResult!(__lambda_L7_C34, int[])) r) pure nothrow @safe",
             "type": "hover"
         },
         {
             "character": 19,
+            "docs": "Allocates an `array` and initializes it with copies of the elements\n of range ``r``.\n\nNarrow strings are handled as follows:\n\n- If autodecoding is turned on (default), then they are handled as a separate overload.\n- If autodecoding is turned off, then this is equivalent to duplicating the `array`.",
             "length": 5,
             "line": 5,
             "start": 208,
+            "tags": [
+                [
+                    "param",
+                    "r range (or aggregate with `opApply` function) whose elements are copied into the allocated `array`"
+                ],
+                [
+                    "returns",
+                    "allocated and initialized `array`"
+                ]
+            ],
             "text": "int[] std.array.array!(sample.scaled.MapResult!(__lambda_L8_C30, FilterResult!(__lambda_L7_C34, int[])))(sample.scaled.MapResult!(__lambda_L8_C30, FilterResult!(__lambda_L7_C34, int[])) r) pure nothrow @safe",
             "type": "query"
         }

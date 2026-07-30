@@ -20,6 +20,7 @@
         },
         {
             "character": 11,
+            "docs": "Ditto",
             "length": 4,
             "line": 2,
             "start": 33,
@@ -36,9 +37,28 @@
         },
         {
             "character": 19,
+            "docs": "Implements the homonym function (also known as `transform`) present\nin many languages of functional flavor. The call ``map`!(fun)(range)`\nreturns a range of which elements are obtained by applying `fun(a)`\nleft to right for all elements `a` in `range`. The original ranges are\nnot changed. Evaluation is done lazily.",
             "length": 3,
             "line": 2,
             "start": 41,
+            "tags": [
+                [
+                    "param",
+                    "fun one or more transformation functions"
+                ],
+                [
+                    "see",
+                    "[Map (higher-order function)](http://en.wikipedia.org/wiki/Map_(higher-order_function))"
+                ],
+                [
+                    "param",
+                    "r an input range"
+                ],
+                [
+                    "returns",
+                    "A range with each fun applied to all the elements. If there is more than one\n        fun, the element type will be `Tuple` containing one element for each fun."
+                ]
+            ],
             "text": "sample.squares.MapResult!(__lambda_L6_C25, Result) sample.squares.map!(std.range.iota!(int, int).Result)(std.range.iota!(int, int).Result r) pure nothrow @nogc @safe",
             "type": "hover"
         },
