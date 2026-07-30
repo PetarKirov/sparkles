@@ -506,13 +506,17 @@ int runGui(
     long selMin() => anchorLo < headLo ? anchorLo : headLo;
     long selMax() => anchorHi > headHi ? anchorHi : headHi;
 
-    // Copy the vm.current selection: a text range → `source[min..max]` (SGR-stripped
-    // when `ansiStrip`); a table region → TSV / markdown cells (SEL7/TBL2).
+    // Copy the current selection: a text range → `vm.source[min..max]`
+    // (SGR-stripped when `ansiStrip`); a table region → TSV / markdown cells
+    // (SEL7/TBL2). Always slices `vm.source` — the DISPLAYED document — not
+    // the `source` parameter hue launched with: after navigating a set or
+    // opening a file from the explorer the two differ, and the selection/
+    // fence offsets belong to the current document.
     void copySelection()
     {
-        if (regime == Regime.text && selMax() > selMin() && selMax() <= source.length)
+        if (regime == Regime.text && selMax() > selMin() && selMax() <= vm.source.length)
         {
-            auto txt = source[cast(size_t) selMin() .. cast(size_t) selMax()];
+            auto txt = vm.source[cast(size_t) selMin() .. cast(size_t) selMax()];
             SetClipboardText((ansiStrip ? stripSgr(txt) : txt).toStringz);
         }
         else if (regime == Regime.table && selTable >= 0)
@@ -526,8 +530,8 @@ int runGui(
             {
                 foreach (ref const mc; vm.cellList)
                     if (mc.table == selTable && mc.row == r && mc.col == c
-                        && mc.span.end <= source.length)
-                        return source[mc.span.start .. mc.span.end];
+                        && mc.span.end <= vm.source.length)
+                        return vm.source[mc.span.start .. mc.span.end];
                 return "";
             }
             const txt = serializeTable(reg, &cellText, tableFmt);
@@ -1178,9 +1182,13 @@ int runGui(
                         const bodyStart = tgt.hitId - vm.fenceHitBase;
                         foreach (ref const f; vm.fences)
                             if (f.body.start == bodyStart
-                                && f.body.end <= source.length)
+                                && f.body.end <= vm.source.length)
                             {
-                                auto fbody = source[f.body.start .. f.body.end];
+                                // vm.source, not the launch-time `source`
+                                // parameter: the fence offsets belong to the
+                                // DISPLAYED document (explorer/set navigation
+                                // rebinds it).
+                                auto fbody = vm.source[f.body.start .. f.body.end];
                                 // Match the selection copy mode (SEL7).
                                 const txt = (ansiStrip && f.isAnsi)
                                     ? stripSgr(fbody) : fbody;
