@@ -78,11 +78,16 @@ struct Analyzer
         _analyzed = true;
 
         auto parsed = parseModule(filename, source);
-        Module.rootModule = parsed.module_;
+        // parseModule stops short of Module.resolvePackage, leaving the
+        // module named after its file and outside the global symbol table —
+        // a sample's own `module pkg.name;` declaration would have no effect
+        // and every tip would carry the filename-derived name.
+        auto mod = parsed.module_.resolvePackage();
+        Module.rootModule = mod;
         if (!_sink.hasErrors)
-            fullSemantic(parsed.module_);
+            fullSemantic(mod);
 
-        return AnalyzedModule(parsed.module_, _sink.diagnostics);
+        return AnalyzedModule(mod, _sink.diagnostics);
     }
 }
 
