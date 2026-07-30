@@ -66,7 +66,7 @@ import sparkles.ui.geometry : Constraints, Point, Rect;
 import sparkles.ui.canvas : DrawOp, LineStyle, OpKind;
 import sparkles.ui.layout : layout;
 import sparkles.ui.state : scrollbarThumb, selectionRects, sourceOffsetAt,
-    Timeline;
+    SplitState, Timeline;
 import sparkles.ui.display_list : buildDisplayList;
 import sparkles.ui.interp.immediate : paint;
 import sparkles.ui_raylib : RaylibCanvas;
@@ -299,7 +299,10 @@ int runGui(
     tree.excludeGlobs = excludeGlobs;
     bool treeVisible = startInTree;
     bool treeFocused = startInTree;
-    const treeCols = treeWidth < 12 ? 12 : treeWidth;
+    // The tree/document split (STM8): --tree-width seeds it; dragging the
+    // divider resizes it live (cell-granular, like the TUI's).
+    auto split = SplitState(treeWidth < 12 ? 12 : treeWidth);
+    int treeCols() => split.size;
     int treePx() => treeVisible ? (treeCols + 1) * fonts.cellW() : 0;
 
     int widthCols()
@@ -940,6 +943,33 @@ int runGui(
             }
         }
 
+        // The pane divider (STM8): hovering it shows the resize cursor; a
+        // grab drags the split live. The drag owns the pointer, so nothing
+        // below starts a selection or a scrollbar drag mid-resize.
+        if (treeVisible)
+        {
+            const mp = GetMousePosition();
+            const divX = treeCols * cellW + cellW / 2;
+            const zone = mp.x >= divX - 4 && mp.x <= divX + 4;
+            SetMouseCursor(zone || split.dragging
+                ? MouseCursor.MOUSE_CURSOR_RESIZE_EW
+                : MouseCursor.MOUSE_CURSOR_DEFAULT);
+            if (zone && !split.dragging
+                && IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT))
+                split = split.started(cast(int)(mp.x / cellW));
+            if (split.dragging)
+            {
+                const maxCols = (screenW / cellW) / 2 < 12
+                    ? 12 : (screenW / cellW) / 2;
+                split = IsMouseButtonReleased(MouseButton.MOUSE_BUTTON_LEFT)
+                    ? split.released()
+                    : split.draggedTo(cast(int)(mp.x / cellW), 12, maxCols);
+                // The width change reflows through the resize debounce.
+            }
+        }
+        else
+            SetMouseCursor(MouseCursor.MOUSE_CURSOR_DEFAULT);
+
         // Interactive scrollbar (hover-expand + thumb drag + track click),
         // adapted from apps/terminal's ScrollbarState. Runs every frame so the
         // width animates even while a search is being typed.
@@ -1282,7 +1312,8 @@ int runGui(
             const shiftMod = IsKeyDown(KeyboardKey.KEY_LEFT_SHIFT) || IsKeyDown(KeyboardKey.KEY_RIGHT_SHIFT);
             const altMod = IsKeyDown(KeyboardKey.KEY_LEFT_ALT) || IsKeyDown(KeyboardKey.KEY_RIGHT_ALT);
             if (IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_LEFT) && !overSb
-                && !overTree && !copyClicked && !treeSb.isDragging && !sb.isDragging)
+                && !overTree && !copyClicked && !treeSb.isDragging && !sb.isDragging
+                && !split.dragging)
             {
                 const h = hitAt(mp.x, mp.y);
                 selecting = h.ok;
