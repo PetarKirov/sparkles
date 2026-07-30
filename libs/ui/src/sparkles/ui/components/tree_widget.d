@@ -222,6 +222,16 @@ uint treeView(T)(ref Builder b, in TreeData!T data, in FlatTreeRow[] rows,
             w.bgOverride = selectionBg;
             w.hasBgOverride = true;
         }
+        // Optional per-node row band (VMD6) — e.g. the open document's
+        // marker — behind everything but the cursor row.
+        static if (__traits(compiles, { bool b3 = v.hasRowBg; w.bgOverride = v.rowBg; }))
+            if (v.hasRowBg && node != selected)
+            {
+                w.bgOverride = v.rowBg;
+                w.hasBgOverride = true;
+                w.paintBackground = true;
+                w.stretch = true;
+            }
         rowIds[i] = b.add(w);
     }
     return b.container(WidgetKind.column, rowIds);
