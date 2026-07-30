@@ -86,7 +86,7 @@ struct DocumentPipeline
                     throw new Exception(twRes.error.toString);
                 Document doc = {
                     path: path, title: baseName(path), kind: twoslash,
-                    source: twRes.value.code, lang: "typescript",
+                    source: twRes.value.code, lang: twRes.value.effectiveLanguage,
                     twoslash: twRes.value,
                 };
                 doc.events = highlight(doc.lang, doc.source);

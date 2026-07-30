@@ -87,7 +87,7 @@ cache the widget model carries the per-token color itself, so no backend
 overpaints the toolkit's output to re-highlight it — the hover popup and the
 `^?` query line share this one mapping.
 */
-TextSpan[] signatureSpans(ref TsConfigCache cache,
+TextSpan[] signatureSpans(ref TsConfigCache cache, scope const(char)[] language,
     scope const(ResolvedTheme)* theme, RgbColor pageFg,
     const(char)[] sig) @system
 {
@@ -97,7 +97,7 @@ TextSpan[] signatureSpans(ref TsConfigCache cache,
     if (!sig.length)
         return null;
     SmallBuffer!HighlightEvent ev;
-    highlightSignature(cache, sig, ev);
+    highlightSignature(cache, language, sig, ev);
     TextSpan[] spans;
     foreach (sp; byStyledSpan(ev[]))
     {
@@ -134,7 +134,7 @@ WidgetTree viewTwoslashDocument(const TwoslashReturn tw,
     // overpaints the toolkit's output to re-highlight it (`WGT6`).
     TextSpan[] sigSpans(const Node n) @trusted
         => cache is null || n.type != NodeType.query ? null
-            : signatureSpans(*cache, theme, pageFg, n.text);
+            : signatureSpans(*cache, tw.effectiveLanguage, theme, pageFg, n.text);
 
     // Styled runs bucketed per source line, as identity-carrying spans.
     size_t total = 1;

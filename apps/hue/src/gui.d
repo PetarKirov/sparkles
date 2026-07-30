@@ -2224,7 +2224,8 @@ private Rectangle drawPopup(ref FontSet fonts, ref SmallBuffer!(char, 4096) buf,
 
     // Render JSDoc docs as markdown (bold/italic/code/links/lists/fences), via the
     // grammar registry — falls back to plain lines without it.
-    auto sig = signatureSpans(cache, (() @trusted => &theme)(), pageFg,
+    auto sig = signatureSpans(cache, tw.effectiveLanguage,
+        (() @trusted => &theme)(), pageFg,
         withoutQuickinfoPrefix(tw.nodes[nodeIndex].text));
     auto tree = viewHoverPopup(tw, nodeIndex, cache.registry, sig);
     auto frames = layout(tree);

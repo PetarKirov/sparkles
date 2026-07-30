@@ -145,13 +145,13 @@ ref Writer renderTwoslashAnsi(Writer)(
         // Below-line meta blocks anchored to this line.
         foreach (ref const b; below[])
             if (b.line == line)
-                writeMeta(w, theme, cache, pal, tw.nodes[b.node], styled, options);
+                writeMeta(w, theme, cache, tw.effectiveLanguage, pal, tw.nodes[b.node], styled, options);
 
         // Hover expansion (opt-in): a `↳ type` line under the hovered token.
         if (options.hovers)
             foreach (ref const d; decos)
                 if (d.kind == NodeType.hover && d.line == line)
-                    writeHover(w, theme, cache, tw.nodes[d.node], d, styled);
+                    writeHover(w, theme, cache, tw.effectiveLanguage, tw.nodes[d.node], d, styled);
 
         if (lineEnd >= code.length)
             break;
@@ -164,7 +164,7 @@ ref Writer renderTwoslashAnsi(Writer)(
     // code (sorted by line, so this preserves their order).
     foreach (ref const b; below[])
         if (b.line > line)
-            writeMeta(w, theme, cache, pal, tw.nodes[b.node], styled, options);
+            writeMeta(w, theme, cache, tw.effectiveLanguage, pal, tw.nodes[b.node], styled, options);
 
     return w;
 }
@@ -222,7 +222,8 @@ private void renderCodeLine(Writer)(ref Writer w, scope const(char)[] code,
 /// come from `pal` via $(LREF slotFgSeq); `dim` completion de-emphasis stays a
 /// terminal attribute.
 private void writeMeta(Writer)(ref Writer w, in ResolvedTheme theme, ref TsConfigCache cache,
-    in Palette pal, in Node node, bool styled, in TwoslashAnsiOptions options) @system
+    scope const(char)[] language, in Palette pal, in Node node, bool styled,
+    in TwoslashAnsiOptions options) @system
 {
     SmallBuffer!(char, 32) seqBuf;
     final switch (node.type)
@@ -241,7 +242,7 @@ private void writeMeta(Writer)(ref Writer w, in ResolvedTheme theme, ref TsConfi
             // Re-highlight the query type signature, indented under the caret.
             writeSpaces(w, node.character);
             SmallBuffer!HighlightEvent sig;
-            highlightSignature(cache, node.text, sig);
+            highlightSignature(cache, language, node.text, sig);
             renderAnsi(node.text, sig[], theme, w,
                 AnsiOptions(depth: styled ? options.depth : ColorDepth.none,
                     italics: options.italics));
@@ -287,7 +288,7 @@ private void writeMeta(Writer)(ref Writer w, in ResolvedTheme theme, ref TsConfi
 
 /// The opt-in hover expansion: `↳ type` under the hovered token.
 private void writeHover(Writer)(ref Writer w, in ResolvedTheme theme, ref TsConfigCache cache,
-    in Node node, in InlineDecoration d, bool styled) @system
+    scope const(char)[] language, in Node node, in InlineDecoration d, bool styled) @system
 {
     writeSpaces(w, d.character);
     if (styled)
@@ -296,7 +297,7 @@ private void writeHover(Writer)(ref Writer w, in ResolvedTheme theme, ref TsConf
     if (styled)
         put(w, sgrReset);
     SmallBuffer!HighlightEvent sig;
-    highlightSignature(cache, node.text, sig);
+    highlightSignature(cache, language, node.text, sig);
     renderAnsi(node.text, sig[], theme, w,
         AnsiOptions(depth: styled ? ColorDepth.ansi256 : ColorDepth.none));
     put(w, '\n');
