@@ -62,6 +62,16 @@ struct Dims
     size_t rows, cols;
 }
 
+/// A gutter fold marker (`FLD5`): the visual row a foldable region begins
+/// on (the outermost when several start there), its fold key, and whether
+/// the region is currently open (`▾`) or folded (`▸`).
+struct FoldMarker
+{
+    size_t row;
+    size_t key;
+    bool open;
+}
+
 /// Maps `gui_ansi.Attr` bits onto the toolkit's per-span text chrome — the
 /// decoded-ANSI fence renderer stamps these on its resolved-color spans.
 TextStyle attrsToTextStyle(ubyte attrs) pure nothrow @nogc @safe
@@ -125,6 +135,7 @@ struct ViewerModel
     size_t copiedFenceSrc = size_t.max; /// body start of the just-copied fence
     DisclosureState!size_t folds = DisclosureState!size_t(true);
     Span[] foldable;
+    FoldMarker[] foldMarkers;       /// gutter markers, derived with the rows
     int widthCols = -1;             /// the width the pipeline is laid out for
 
     // Source-anchored identity bases (disjoint id spaces — see the md view).
@@ -262,6 +273,22 @@ struct ViewerModel
         rows = documentRows(tree, frames);
         targets = withTargets ? hoverTargets(tree, frames) : null;
         rebuildMatchRects();
+
+        // Gutter fold markers: the row each foldable region begins on.
+        // Both lists are ordered by source position, so one two-pointer
+        // pass suffices; same-row nested starts keep the outermost.
+        foldMarkers = null;
+        size_t ri = 0;
+        foreach (sp; foldable)
+        {
+            while (ri < rows.length && (rows[ri].srcStart == size_t.max
+                || rows[ri].srcEnd <= sp.start))
+                ++ri;
+            if (ri < rows.length && rows[ri].srcStart != size_t.max
+                && sp.start >= rows[ri].srcStart && sp.start < rows[ri].srcEnd
+                && (!foldMarkers.length || foldMarkers[$ - 1].row != ri))
+                foldMarkers ~= FoldMarker(ri, sp.start, folds.isOpen(sp.start));
+        }
     }
 
     // The address of `current` for the view functions — a small @trusted
@@ -552,10 +579,13 @@ struct ViewerModel
         [HighlightEvent.sourceSpan(0, src.length)], PreviewModel.init,
         TwoslashReturn.init, "d");
 
-    // The raw code view has CST fold ranges (FSR1) and full rows.
+    // The raw code view has CST fold ranges (FSR1) and full rows, and the
+    // gutter markers land on the regions' first rows, open (FLD5).
     assert(!vm.showPreview && vm.foldable.length, "CST regions found");
     const openRows = vm.rows.length;
     assert(openRows == 6);
+    assert(vm.foldMarkers.length, "gutter markers derived");
+    assert(vm.foldMarkers[0].row == 0 && vm.foldMarkers[0].open);
 
     // zc at the function body folds it to a placeholder row.
     assert(vm.foldAt(2, ViewerModel.FoldOp.close));
@@ -565,6 +595,13 @@ struct ViewerModel
         if (r.text.canFind("lines") && r.text.canFind("▸"))
             sawPlaceholder = true;
     assert(sawPlaceholder, "fold placeholder rendered");
+
+    // The folded region's marker flips to ▸ on the placeholder row.
+    bool sawFolded;
+    foreach (ref const fm; vm.foldMarkers)
+        if (!fm.open)
+            sawFolded = true;
+    assert(sawFolded, "a folded marker");
 
     // zR restores everything.
     vm.setAllFolds(false);
