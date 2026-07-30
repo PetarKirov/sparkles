@@ -198,6 +198,15 @@ int runGui(
     // PNG, and exits — the golden-frame harness the syntax spec's totality and
     // M5's byte-identical-render checks rely on (skipTest-gated when headless).
     const shotPath = environment.get("HUE_GUI_SCREENSHOT", "");
+    // HUE_GUI_SCREENSHOT_FRAME=<n> delays the capture (default 20) so a QA
+    // harness can drive synthetic input first.
+    int shotFrame = 20;
+    try
+        if (environment.get("HUE_GUI_SCREENSHOT_FRAME", null).length)
+            shotFrame = environment.get("HUE_GUI_SCREENSHOT_FRAME").to!int;
+    catch (Exception)
+    {
+    }
     // Debug/CI: HUE_GUI_TOP=<n> sets the initial scroll line (clamped) so a
     // golden capture can exercise the culled viewport; HUE_GUI_FONTSIZE overrides
     // the --font-size for deterministic captures.
@@ -1178,6 +1187,11 @@ int runGui(
         const topLine = cast(size_t) top;
 
         BeginDrawing();
+        // GL scissor state is global; a scissor leaked from any earlier path
+        // (or left over across the buffer swap) would CLIP the clear below —
+        // exactly the "documents ghost over each other" failure. Start every
+        // frame from a clean state so the clear always covers the window.
+        EndScissorMode();
         ClearBackground(rl(pageBg));
 
         // One-cell background padding on the left, the scrollbar gutter on the
@@ -1708,6 +1722,7 @@ int runGui(
             drawText(fonts, cstrOf(buf, copyModeMsg), 4, cast(float) barY, TextStyle(0), rl(pageBg));
         }
 
+        EndScissorMode(); // never let a scissor survive the frame
         EndDrawing();
 
         // On-demand atlas growth: drawText requests any covered-but-unrasterized
@@ -1721,9 +1736,9 @@ int runGui(
             // uploads over the first frames, and under a headless GL context the
             // framebuffer swap lags the draw, so an early TakeScreenshot grabs a
             // black frame. ~20 frames is reliably past both.
-            if (++frame == 20)
+            if (++frame == shotFrame)
                 TakeScreenshot(shotPath.toStringz);
-            if (frame >= 21)
+            if (frame >= shotFrame + 1)
                 break;
         }
     }
