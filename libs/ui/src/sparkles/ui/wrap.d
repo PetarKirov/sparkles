@@ -47,6 +47,11 @@ struct TextSpan
     RgbColor fg;
     /// ditto
     bool hasFg;
+    /// A resolved background override, gated by `hasBg` — pre-styled content
+    /// (a decoded ANSI fence) carries its own cell background the same way.
+    RgbColor bg;
+    /// ditto
+    bool hasBg;
     /// The source byte range this span's text came from (`size_t.max` start =
     /// synthetic — an icon, bullet, or gutter). The $(B identity channel):
     /// selection, search jumps and copy map screen content back to the source
