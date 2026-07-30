@@ -21,8 +21,9 @@ import sparkles.syntax : HighlightEvent, LabelSet, resolveTheme, RgbColor,
 import sparkles.syntax.ts.injection : TsConfigCache;
 import sparkles.tui : CellStyle, Color, Grid, PosixEvents, Terminal;
 import sparkles.tui.input : EndOfInput, Event, isEndOfInput, Key, KeyEvent,
-    match, PointerEvent, ResizeEvent, WheelEvent;
+    match, PointerAction, PointerButton, PointerEvent, ResizeEvent, WheelEvent;
 import sparkles.ui.geometry : Point;
+import sparkles.ui.state : SplitState;
 import sparkles.ui.style : Slot;
 
 import ansi_model : BackgroundMode;
@@ -62,14 +63,19 @@ struct WorkspaceTui
     private RgbColor pageFg, pageBg;
     private size_t lastThemeIdx = size_t.max;
 
-    int treeCols = 32; /// sidebar width incl. its own chrome (--tree-width)
+    /// The tree/document split (STM8): `--tree-width` seeds it; dragging
+    /// the divider column resizes it live. `size` is the sidebar width in
+    /// cells (incl. its own chrome).
+    SplitState split = SplitState(32);
+    private enum minTreeCols = 12;
 
     /// Recomputes the pane geometry for the current terminal size.
     void arrange(int w, int h) @system
     {
         width = w;
         height = h;
-        const tw = treeVisible ? (w / 2 < treeCols ? w / 2 : treeCols) : 0;
+        split = split.clamped(minTreeCols, w / 2 < minTreeCols ? minTreeCols : w / 2);
+        const tw = treeVisible ? split.size : 0;
         tree.width = tw;
         tree.height = h;
         // One divider column between the panes.
@@ -177,6 +183,34 @@ struct WorkspaceTui
                 return true;
         }
 
+        // The divider drag (STM8): a grab on the divider column resizes the
+        // tree pane live; the drag owns the pointer until release.
+        {
+            bool consumed;
+            e.match!((in PointerEvent p) {
+                if (!treeVisible)
+                    return;
+                if (split.dragging)
+                {
+                    split = p.action == PointerAction.release
+                        ? split.released()
+                        : split.draggedTo(p.pos.x, minTreeCols,
+                            width / 2 < minTreeCols ? minTreeCols : width / 2);
+                    arrange(width, height);
+                    consumed = true;
+                }
+                else if (p.action == PointerAction.press
+                    && p.button == PointerButton.left
+                    && p.pos.x == tree.width)
+                {
+                    split = split.started(p.pos.x);
+                    consumed = true;
+                }
+            }, (_) {});
+            if (consumed)
+                return true;
+        }
+
         // Global keys — only when no pane is consuming typed text.
         const typing = (treeFocused && tree.inputActive)
             || (!treeFocused && viewer.inputActive);
@@ -273,7 +307,7 @@ int runWorkspace(string target, bool isDir, WorkspaceDoc initial,
 {
     WorkspaceTui w;
     w.loadDoc = loadDoc;
-    w.treeCols = treeWidth < 12 ? 12 : treeWidth;
+    w.split = SplitState(treeWidth < 12 ? 12 : treeWidth);
     w.tree.includeGlobs = includeGlobs;
     w.tree.excludeGlobs = excludeGlobs;
 
@@ -448,4 +482,57 @@ unittest
     assert(!w.treeVisible && w.viewer.originX == 0);
     w.paint(g);
     assert(row(1).canFind("int beta;"), row(1));
+}
+
+@("workspace.splitDivider.dragResizesTheTree")
+@system
+unittest
+{
+    import std.file : mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import sparkles.syntax : builtinDark, LabelSet;
+
+    const root = buildPath(tempDir(), "hue-workspace-split-test");
+    mkdirRecurse(root);
+    scope (exit) rmdirRecurse(root);
+    write(buildPath(root, "a.d"), "int a;\n");
+
+    static immutable(Theme)[1] themes = [builtinDark];
+    static immutable string[1] names = ["dark"];
+    WorkspaceTui w;
+    w.tree.root = root;
+    w.tree.themeValue = &themes[0];
+    w.tree.theme = resolveTheme(themes[0], LabelSet.standard());
+    w.viewer.names = names[];
+    w.viewer.themes = themes[];
+    w.viewer.labels = LabelSet.standard();
+    w.treeVisible = true;
+    w.tree.rebuild();
+    w.arrange(100, 12);
+    assert(w.tree.width == 32, "the default split");
+
+    // Grab the divider column, drag right by 6, release (STM8).
+    const div = w.tree.width;
+    assert(w.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.press, pos: Point(div, 4)))));
+    assert(w.split.dragging);
+    assert(w.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.drag, pos: Point(div + 6, 4)))));
+    assert(w.tree.width == 38, "the pane followed the drag");
+    assert(w.viewer.originX == 39, "the viewer moved with the divider");
+    assert(w.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.release, pos: Point(div + 6, 4)))));
+    assert(!w.split.dragging && w.tree.width == 38);
+
+    // The drag clamps: far left pins at the minimum, far right at half.
+    w.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.press, pos: Point(38, 4))));
+    w.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.drag, pos: Point(0, 4))));
+    assert(w.tree.width == 12, "clamped at the minimum");
+    w.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.drag, pos: Point(99, 4))));
+    assert(w.tree.width == 50, "clamped at half the screen");
+    w.handle(Event(PointerEvent(button: PointerButton.left,
+        action: PointerAction.release, pos: Point(99, 4))));
 }

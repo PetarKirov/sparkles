@@ -21,6 +21,7 @@ $(LIST
         $(I and) content folding (`STM5`)
     * $(LREF Timeline) — transient effects as modes, not bare counters (`STM6`)
     * $(LREF FocusState) — keyboard focus + deterministic traversal (`STM7`)
+    * $(LREF SplitState) — a draggable pane divider (`STM8`)
 )
 */
 module sparkles.ui.state;
@@ -959,6 +960,82 @@ unittest
     f = f.previous(order); // wraps to the end
     assert(f.isFocused(9));
     assert(!FocusState.cleared.next(null).isFocused(7)); // empty order clears
+}
+
+// ── Pane splitter (STM8) ─────────────────────────────────────────────────────
+
+/**
+A draggable divider between two panes as a value (`STM8`): the leading
+pane's size plus the drag in progress, advanced by transformations that
+clamp against the host's `[minSize, maxSize]` — the workspace's
+tree/document split, or any two-pane layout. Units are the caller's (cells
+or pixels); the machine only does arithmetic on them, so both a cell grid
+and a pixel canvas run the same drag.
+*/
+struct SplitState
+{
+    int size;      /// the leading pane's current size
+    bool dragging;
+    private int grabPos;  // pointer position at grab
+    private int grabSize; // pane size at grab
+
+@safe pure nothrow @nogc:
+
+    /// Grabs the divider at pointer position `pos`.
+    SplitState started(int pos) const
+        => SplitState(size, true, pos, size);
+
+    /// Dragged to pointer position `pos`: the pane resizes by the pointer's
+    /// delta since the grab, clamped to `[minSize, maxSize]`. A no-op
+    /// unless dragging — hosts can feed every motion event unconditionally.
+    SplitState draggedTo(int pos, int minSize, int maxSize) const
+    {
+        if (!dragging)
+            return this;
+        auto s = grabSize + (pos - grabPos);
+        if (s < minSize)
+            s = minSize;
+        if (s > maxSize)
+            s = maxSize;
+        return SplitState(s, true, grabPos, grabSize);
+    }
+
+    /// Released: the size stays, the drag ends.
+    SplitState released() const => SplitState(size);
+
+    /// Clamped into `[minSize, maxSize]` — e.g. after a window resize
+    /// shrinks the space the pane may occupy.
+    SplitState clamped(int minSize, int maxSize) const
+    {
+        auto s = size < minSize ? minSize : (size > maxSize ? maxSize : size);
+        return SplitState(s, dragging, grabPos, grabSize);
+    }
+}
+
+@("ui.state.split.dragClampAndRelease")
+@safe pure nothrow @nogc
+unittest
+{
+    // Grab at 32, drag right by 8, left past the minimum, release.
+    auto sp = SplitState(32).started(32);
+    assert(sp.dragging && sp.size == 32);
+    sp = sp.draggedTo(40, 12, 60);
+    assert(sp.size == 40);
+    sp = sp.draggedTo(0, 12, 60);
+    assert(sp.size == 12);          // clamped at the minimum
+    sp = sp.draggedTo(100, 12, 60);
+    assert(sp.size == 60);          // clamped at the maximum
+    sp = sp.released();
+    assert(!sp.dragging && sp.size == 60);
+
+    // Not dragging ⇒ motion is a no-op; clamped() still applies bounds.
+    assert(sp.draggedTo(5, 12, 60).size == 60);
+    assert(sp.clamped(12, 40).size == 40);
+
+    // The delta is grab-relative, so a grab away from the divider's exact
+    // column drags without a jump.
+    auto off = SplitState(32).started(33).draggedTo(41, 12, 60);
+    assert(off.size == 40);
 }
 
 // ── Element state (WGT5) ─────────────────────────────────────────────────────
