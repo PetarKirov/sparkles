@@ -47,37 +47,37 @@ Two decisions shape the port beyond a mechanical rewrite:
 
 ## hue's consumption (`UIA`)
 
-| ID   | Requirement                                                                                                                                                                                                  | Status      | Traces to                                                                     |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------- | ----------------------------------------------------------------------------- |
-| UIA1 | hue's interactive UI must be built on the **canvas-first toolkit** [`sparkles:ui`](../ui/index.md), across the GUI, TUI and HTML targets.                                                                    | partial     | `sparkles:ui`; twoslash overlay in `gui.d`/`twoslash_tui.d`                   |
-| UIA2 | hue must contain **no rendering code of its own** — no per-backend painters, no backend-specific chrome. Anything hue draws that the toolkit lacks is a missing widget, to be added there and consumed here. | not started | [ui/widgets.md](../ui/widgets.md) `WGT7`+                                     |
-| UIA3 | hue must not reach for native OS or HTML toolkit widgets on any target; every visual comes from toolkit primitives.                                                                                          | full        | canvas-first contract                                                         |
-| UIA4 | hue's existing **per-backend widgets must be ported** onto the toolkit — one definition, three targets — and their predecessors deleted in the same change, so no third copy is created.                     | not started | see the port inventory below                                                  |
-| UIA5 | hue's frame-loop state must be a **single owned view-state value** driving the toolkit's state machines, replacing peer locals and mutating closures.                                                        | not started | [ui/principles.md](../ui/principles.md) `PRN1`, `PRN7`                        |
-| UIA6 | hue's views must be **re-entrant**, so any content kind can embed another at any depth and the same view serves both the top-level document and a nested one.                                                | not started | [ui/widgets.md](../ui/widgets.md) `WGT2`; [pipeline.md](./pipeline.md) `XFM3` |
+| ID   | Requirement                                                                                                                                                                                                  | Status                                                                                                                                                             | Traces to                                                                     |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
+| UIA1 | hue's interactive UI must be built on the **canvas-first toolkit** [`sparkles:ui`](../ui/index.md), across the GUI, TUI and HTML targets.                                                                    | partial                                                                                                                                                            | `sparkles:ui`; twoslash overlay in `gui.d`/`twoslash_tui.d`                   |
+| UIA2 | hue must contain **no rendering code of its own** — no per-backend painters, no backend-specific chrome. Anything hue draws that the toolkit lacks is a missing widget, to be added there and consumed here. | partial — the markdown/twoslash/explorer views and all chrome are toolkit trees; the raw-source painter (`PreviewLine[]`) and the popup-signature overpaint remain | [ui/widgets.md](../ui/widgets.md) `WGT7`+                                     |
+| UIA3 | hue must not reach for native OS or HTML toolkit widgets on any target; every visual comes from toolkit primitives.                                                                                          | full                                                                                                                                                               | canvas-first contract                                                         |
+| UIA4 | hue's existing **per-backend widgets must be ported** onto the toolkit — one definition, three targets — and their predecessors deleted in the same change, so no third copy is created.                     | partial — see the inventory (each swap deleted its predecessor); raw view + gutters pending                                                                        | see the port inventory below                                                  |
+| UIA5 | hue's frame-loop state must be a **single owned view-state value** driving the toolkit's state machines, replacing peer locals and mutating closures.                                                        | partial — the shared STMs replaced ad-hoc state; the `ViewerModel` Whole is open                                                                                   | [ui/principles.md](../ui/principles.md) `PRN1`, `PRN7`                        |
+| UIA6 | hue's views must be **re-entrant**, so any content kind can embed another at any depth and the same view serves both the top-level document and a nested one.                                                | full (`bc3e1f17`) — `viewMarkdownInto` / `viewTwoslashDocument` / fence sub-views / popup JSDoc, all re-entrant with a depth budget                                | [ui/widgets.md](../ui/widgets.md) `WGT2`; [pipeline.md](./pipeline.md) `XFM3` |
 
 ## Port inventory
 
 The components hue implements per backend today, and the toolkit widget each
 becomes. "Copies" counts the independent implementations being collapsed.
 
-| hue component                         | Copies | Becomes                                                            | Status      |
-| ------------------------------------- | ------ | ------------------------------------------------------------------ | ----------- |
-| Popup / hover card / below-line block | 1      | shipped — the toolkit's popup and panel containers                 | full        |
-| Diagnostic squiggle, highlight tint   | 1      | shipped — stroked line, filled rect                                | full        |
-| Preview line painter                  | 3      | the document view over rich text                                   | not started |
-| Header / status bar                   | 6      | [`WGT17`](../ui/widgets.md)                                        | not started |
-| Scrollbar                             | 2      | [`WGT10`](../ui/widgets.md) over [`STM2`](../ui/state-machines.md) | not started |
-| Line-number gutter                    | 4      | [`WGT18`](../ui/widgets.md)                                        | not started |
-| Selection highlight                   | 3      | [`STM3`](../ui/state-machines.md)                                  | not started |
-| Table                                 | 1      | [`WGT11`](../ui/widgets.md) over the track sizer                   | not started |
-| Code-block chrome ([`COD`](./gui.md)) | 1      | panel + gutter + button                                            | not started |
-| Copy button ([`COD3`](./gui.md))      | 2      | [`WGT15`](../ui/widgets.md) + [`STM6`](../ui/state-machines.md)    | not started |
-| Text-input bar (search / goto)        | 2      | [`WGT14`](../ui/widgets.md)                                        | not started |
-| Toast                                 | 1      | [`WGT16`](../ui/widgets.md)                                        | not started |
-| Document index view                   | 2      | the [explorer](./tree-view.md) — [`WGT12`](../ui/widgets.md)       | not started |
-| Theme picker list                     | 1      | [`WGT13`](../ui/widgets.md)                                        | not started |
-| Box / frame drawing                   | 3      | panel decoration, per-backend degradation                          | not started |
+| hue component                         | Copies | Becomes                                                            | Status                                                                                                                  |
+| ------------------------------------- | ------ | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- |
+| Popup / hover card / below-line block | 1      | shipped — the toolkit's popup and panel containers                 | full                                                                                                                    |
+| Diagnostic squiggle, highlight tint   | 1      | shipped — stroked line, filled rect                                | full                                                                                                                    |
+| Preview line painter                  | 3      | the document view over rich text                                   | full (`155ce512`) — the composable markdown view, all three sinks; the flattener deleted                                |
+| Header / status bar                   | 6      | [`WGT17`](../ui/widgets.md)                                        | full — `headerBar` on every backend                                                                                     |
+| Scrollbar                             | 2      | [`WGT10`](../ui/widgets.md) over [`STM2`](../ui/state-machines.md) | full — one `scrollbarThumb`/`draggedTo` formula                                                                         |
+| Line-number gutter                    | 4      | [`WGT18`](../ui/widgets.md)                                        | partial — one derivation per view (`srcLineOf` over the identity channel in the GUI preview); the raw views keep theirs |
+| Selection highlight                   | 3      | [`STM3`](../ui/state-machines.md)                                  | full (`23fab77e`) — `Selection`/`selectionRects` over the identity channel                                              |
+| Table                                 | 1      | [`WGT11`](../ui/widgets.md) over the track sizer                   | full — the track sizer + source-anchored cell keys (2-D selection preserved)                                            |
+| Code-block chrome ([`COD`](./gui.md)) | 1      | panel + gutter + button                                            | full — the fence panel + header band through the markdown view; in-panel line numbers are a recorded fidelity gap       |
+| Copy button ([`COD3`](./gui.md))      | 2      | [`WGT15`](../ui/widgets.md) + [`STM6`](../ui/state-machines.md)    | full (`8b5949a8`) — the fence header band, source-anchored ids, one feedback behavior                                   |
+| Text-input bar (search / goto)        | 2      | [`WGT14`](../ui/widgets.md)                                        | partial — TUI status-bar input is a widget bar; the GUI input line is still drawn directly                              |
+| Toast                                 | 1      | [`WGT16`](../ui/widgets.md)                                        | partial — `Timeline`-driven, still painted directly in the GUI                                                          |
+| Document index view                   | 2      | the [explorer](./tree-view.md) — [`WGT12`](../ui/widgets.md)       | partial (`d47a0d01`) — the TUI explorer; the GUI keeps its list                                                         |
+| Theme picker list                     | 1      | [`WGT13`](../ui/widgets.md)                                        | full — live ←/→ theme cycling in both interactive backends (previewer.d deleted)                                        |
+| Box / frame drawing                   | 3      | panel decoration, per-backend degradation                          | full — panel decorations through each canvas                                                                            |
 
 > [!NOTE]
 > The copy counts are the argument. A header bar written six times, twice within
@@ -87,13 +87,13 @@ becomes. "Copies" counts the independent implementations being collapsed.
 
 ## Milestones
 
-| Milestone | Scope                                                                           | Status          | Requirements                                            |
-| --------- | ------------------------------------------------------------------------------- | --------------- | ------------------------------------------------------- |
-| U0        | Research grounding (UI-layout catalog; the `sparkles:tui` render-core decision) | done (research) | [`LAY2`](../ui/layout.md), [`TGT2`](../ui/backends.md)  |
-| U1        | Level 1 — presentation-free state machines                                      | partial         | [`STM*`](../ui/state-machines.md)                       |
-| U2        | Level 2 — the layout model, decided and implemented                             | partial         | [`LAY*`](../ui/layout.md)                               |
-| U3        | Level 3 — the widget model + immediate / retained / SSG interpreters            | partial         | [`WGT*`](../ui/widgets.md), [`TGT*`](../ui/backends.md) |
-| U4        | Port hue's GUI/TUI/HTML widgets onto the toolkit                                | not started     | `UIA4`                                                  |
+| Milestone | Scope                                                                           | Status                      | Requirements                                            |
+| --------- | ------------------------------------------------------------------------------- | --------------------------- | ------------------------------------------------------- |
+| U0        | Research grounding (UI-layout catalog; the `sparkles:tui` render-core decision) | done (research)             | [`LAY2`](../ui/layout.md), [`TGT2`](../ui/backends.md)  |
+| U1        | Level 1 — presentation-free state machines                                      | partial                     | [`STM*`](../ui/state-machines.md)                       |
+| U2        | Level 2 — the layout model, decided and implemented                             | partial                     | [`LAY*`](../ui/layout.md)                               |
+| U3        | Level 3 — the widget model + immediate / retained / SSG interpreters            | partial                     | [`WGT*`](../ui/widgets.md), [`TGT*`](../ui/backends.md) |
+| U4        | Port hue's GUI/TUI/HTML widgets onto the toolkit                                | partial — see the inventory | `UIA4`                                                  |
 
 The partial statuses are honest about what shipped: the layout model is decided
 and a subset implemented; all three interpreters exist; but only the twoslash
