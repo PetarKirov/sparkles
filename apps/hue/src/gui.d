@@ -705,6 +705,12 @@ int runGui(
                     tree.toggleIgnored(); // XPF2
                 if (pressed(KeyboardKey.KEY_U))
                     tree.rerootParent(); // XPF3
+                // Next/prev git change (XPF1) — the pane owns the brackets
+                // while focused.
+                if (pressed(KeyboardKey.KEY_RIGHT_BRACKET))
+                    tree.jumpChange(1);
+                if (pressed(KeyboardKey.KEY_LEFT_BRACKET))
+                    tree.jumpChange(-1);
                 if (pressed(KeyboardKey.KEY_C))
                     tree.closeAll(); // XPF3
                 if (treeShift && pressed(KeyboardKey.KEY_H))
@@ -803,9 +809,14 @@ int runGui(
             // set; `i` returns to the index view (`GNV1`/`GAL5`).
             if (set !is null && !set.empty && loadDoc !is null)
             {
-                const back = IsKeyPressed(KeyboardKey.KEY_LEFT_BRACKET)
+                // With the tree focused the brackets belong to the pane
+                // (next/prev git change); the mouse back/forward buttons
+                // navigate the set regardless of focus.
+                const back = (!treeFocused
+                        && IsKeyPressed(KeyboardKey.KEY_LEFT_BRACKET))
                     || IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_BACK);
-                const fwd = IsKeyPressed(KeyboardKey.KEY_RIGHT_BRACKET)
+                const fwd = (!treeFocused
+                        && IsKeyPressed(KeyboardKey.KEY_RIGHT_BRACKET))
                     || IsMouseButtonPressed(MouseButton.MOUSE_BUTTON_FORWARD);
                 if ((back || fwd) && set.move(back ? -1 : 1))
                     loadSelected();

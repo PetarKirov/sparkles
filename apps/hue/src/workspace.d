@@ -194,8 +194,23 @@ struct WorkspaceTui
                         arrange(width, height);
                         handled = true;
                         break;
-                    case '[': openAdjacent(-1); handled = true; break;
-                    case ']': openAdjacent(+1); handled = true; break;
+                    // With the tree focused the brackets belong to the pane
+                    // (next/prev git change); the viewer keeps them for
+                    // document navigation (XPL4).
+                    case '[':
+                        if (!treeFocused)
+                        {
+                            openAdjacent(-1);
+                            handled = true;
+                        }
+                        break;
+                    case ']':
+                        if (!treeFocused)
+                        {
+                            openAdjacent(+1);
+                            handled = true;
+                        }
+                        break;
                     default: break;
                 }
             }, (_) {});
@@ -407,7 +422,15 @@ unittest
             alphaAccented = n.value.hasLabelFg && n.value.labelFg == w.tree.accent;
     assert(alphaAccented, "the open document is highlighted in the tree");
 
-    // XPL4: ']' opens the next file and the tree follows.
+    // With the tree focused, ']' belongs to the pane (git-change jump) —
+    // the document must NOT switch (XPF1's focus-dependent brackets).
+    w.treeFocused = true; // (openDoc hands focus to the viewer)
+    const before = w.tree.current;
+    assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ']'))));
+    assert(w.tree.current == before, "tree-focused ']' switches no document");
+
+    // XPL4: ']' (viewer-focused) opens the next file and the tree follows.
+    w.treeFocused = false;
     assert(w.handle(Event(KeyEvent(key: Key.char_, ch: ']'))));
     assert(w.tree.current.canFind("beta.d"));
     w.paint(g);
