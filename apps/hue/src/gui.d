@@ -747,6 +747,8 @@ int runGui(
         const screenW = GetScreenWidth();
         const screenH = GetScreenHeight();
         const visibleRows = screenH / cellH;
+        // With a set header bar, the tree pane starts under it.
+        const treeTopRows = set !is null && !set.empty ? 1 : 0;
 
 
         // Reflow (both views wrap) when the window width in columns changes — but
@@ -1105,43 +1107,6 @@ int runGui(
         // padding, and the line-number gutter.
         const gutterPx = treePx() + padX + gcols * cellW;
 
-        // The explorer pane (XPL2): the tree's widget view painted through
-        // RaylibCanvas at the window's left edge, viewport-sliced, with a
-        // hairline divider. The whole pane clips at its own width.
-        // With a set header bar, the pane starts under it (the bar overlays
-        // the top row).
-        const treeTopRows = set !is null && !set.empty ? 1 : 0;
-        if (treeVisible)
-        {
-            tree.height = visibleRows - treeTopRows;
-            tree.clamp();
-            DrawRectangle(0, 0, treeCols * cellW, screenH,
-                rl(mix(pageBg, pageFg, 0.03)));
-            DrawRectangle(treeCols * cellW + cellW / 2, 0, 1, screenH,
-                rl(gutterFg));
-
-            import sparkles.ui.geometry : SizeSpec;
-            import sparkles.ui.widget : Builder, Widget, WidgetKind;
-
-            auto tb = Builder();
-            const tFirst = cast(size_t) tree.top;
-            const tLast = tFirst + visibleRows > tree.rows.length
-                ? tree.rows.length : tFirst + visibleRows;
-            const selNode = tree.sel < cast(long) tree.rows.length
-                ? tree.rows[cast(size_t) tree.sel].node : uint.max;
-            const tv = treeView(tb, tree.data, tree.rows[tFirst .. tLast],
-                (uint i) @safe => tree.open.isOpen(tree.data.nodes[i].value.path),
-                selNode);
-            Widget paneW = Widget(kind: WidgetKind.column, children: [tv],
-                width: SizeSpec.fixed(treeCols), clipX: true);
-            auto wt = tb.finish(tb.add(paneW));
-            auto tOps = buildDisplayList(wt, layout(wt),
-                themes[themeIdx].effectivePalette, pageFg, pageBg);
-            auto tCanvas = RaylibCanvas(&fonts, &buf, cellW, cellH,
-                0, cast(float)(treeTopRows * cellH));
-            paint(tCanvas, tOps);
-        }
-
         if (mdActive)
         {
             // The widget path: paint the tree's precomputed ops through the
@@ -1183,7 +1148,8 @@ int runGui(
         }
         else
             drawPreview(fonts, plines, topLine, visibleRows, cellW, cellH,
-                pageFg, pageBg, gutterFg, quoteBars, padX, rightPad, gcols, buf);
+                pageFg, pageBg, gutterFg, quoteBars, padX, rightPad, gcols, buf,
+                treePx());
 
         copiedFlash = copiedFlash.stepped(frameMs(), copiedCfg);
         // The ✔ glyph lives in the widget tree: rebuild when the flash ends so
@@ -1547,6 +1513,40 @@ int runGui(
             }
         }
 
+        // The explorer pane (XPL2): the tree's widget view painted through
+        // RaylibCanvas at the window's left edge, viewport-sliced, with a
+        // hairline divider. The whole pane clips at its own width.
+        if (treeVisible)
+        {
+            tree.height = visibleRows - treeTopRows;
+            tree.clamp();
+            DrawRectangle(0, 0, treeCols * cellW, screenH,
+                rl(mix(pageBg, pageFg, 0.03)));
+            DrawRectangle(treeCols * cellW + cellW / 2, 0, 1, screenH,
+                rl(gutterFg));
+
+            import sparkles.ui.geometry : SizeSpec;
+            import sparkles.ui.widget : Builder, Widget, WidgetKind;
+
+            auto tb = Builder();
+            const tFirst = cast(size_t) tree.top;
+            const tLast = tFirst + visibleRows > tree.rows.length
+                ? tree.rows.length : tFirst + visibleRows;
+            const selNode = tree.sel < cast(long) tree.rows.length
+                ? tree.rows[cast(size_t) tree.sel].node : uint.max;
+            const tv = treeView(tb, tree.data, tree.rows[tFirst .. tLast],
+                (uint i) @safe => tree.open.isOpen(tree.data.nodes[i].value.path),
+                selNode);
+            Widget paneW = Widget(kind: WidgetKind.column, children: [tv],
+                width: SizeSpec.fixed(treeCols), clipX: true);
+            auto wt = tb.finish(tb.add(paneW));
+            auto tOps = buildDisplayList(wt, layout(wt),
+                themes[themeIdx].effectivePalette, pageFg, pageBg);
+            auto tCanvas = RaylibCanvas(&fonts, &buf, cellW, cellH,
+                0, cast(float)(treeTopRows * cellH));
+            paint(tCanvas, tOps);
+        }
+
         // Scrollbar: an animated-width thumb, plus a faint track while hovered
         // or dragging. Colors follow the theme's muted gutter tone.
         if (maxTop > 0)
@@ -1638,12 +1638,14 @@ private void drawPreview(
     int rightPad,
     int gutterCols,
     ref SmallBuffer!(char, 4096) buf,
+    int paneX = 0,
 ) @system
 {
     const screenW = GetScreenWidth();
-    // Content starts after the 1-cell left padding and the line-number gutter;
-    // bands span from there to the scrollbar gutter on the right.
-    const originX = padX + gutterCols * cellW;
+    // Content starts after the workspace's tree pane (`paneX`), the 1-cell
+    // left padding, and the line-number gutter; bands span from there to the
+    // scrollbar gutter on the right.
+    const originX = paneX + padX + gutterCols * cellW;
     const bandW = (screenW - rightPad) - originX;
     foreach (row; 0 .. visibleRows)
     {

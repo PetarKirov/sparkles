@@ -179,7 +179,19 @@ uint treeView(T)(ref Builder b, in TreeData!T data, in FlatTreeRow[] rows,
         ref const v = data.nodes[node].value;
         static if (__traits(compiles, { const(char)[] s = v.icon; }))
             if (v.icon.length)
-                spans ~= TextSpan(v.icon, Slot.info);
+            {
+                auto ic = TextSpan(v.icon, Slot.info);
+                // Optional per-node icon color (VMD6): a file-type brand hue
+                // rides the resolved-color channel, bypassing the slot.
+                static if (__traits(compiles,
+                    { bool b = v.hasIconFg; ic.fg = v.iconFg; }))
+                    if (v.hasIconFg)
+                    {
+                        ic.fg = v.iconFg;
+                        ic.hasFg = true;
+                    }
+                spans ~= ic;
+            }
         Slot labelSlot = Slot.inherit;
         static if (__traits(compiles, { Slot s = v.slot; }))
             labelSlot = v.slot;
