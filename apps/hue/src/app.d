@@ -262,6 +262,34 @@ enum defaultGuiFont =
     "CaskaydiaCove Nerd Font Mono,Cascadia Code,Hack Nerd Font Mono,Hack," ~
     "Iosevka Term,Iosevka,Source Code Pro,DejaVu Sans Mono,monospace";
 
+version (Android)
+{
+    /// The bundled on-device family (nix/packages/android/hue.nix ships all
+    /// four styled faces + charset sidecars); the desktop list follows so a
+    /// bundle-less build still finds something.
+    enum androidGuiFontFamily = "Maple Mono NF CN";
+    enum androidGuiFont = androidGuiFontFamily ~ "," ~ defaultGuiFont;
+
+    /// Uiua's non-ASCII primitive glyphs, formatted subscripts, and
+    /// canonicalized identifier suffixes render from the bundled Uiua386 —
+    /// the Android spelling of ghostty's font-codepoint-map (mirrors the
+    /// machine config's uiua386glyphs.nix).
+    enum androidUiuaCodepointMap =
+        "U+00A4,U+00AC,U+00AF-U+00B1,U+00D7,U+00F7,U+02D9,U+02DC,U+03B7," ~
+        "U+03C0,U+03C4,U+1D62-U+1D63,U+2032-U+2034,U+203C,U+2045," ~
+        "U+207F-U+2089,U+208B,U+2091,U+2099,U+2102,U+2198-U+2199,U+21A5," ~
+        "U+21A7,U+21AF,U+21BB,U+21CC,U+21E1,U+2202,U+220A,U+2218,U+221A," ~
+        "U+221E,U+2220,U+2227-U+222B,U+2235,U+223F,U+224D,U+2260-U+2261," ~
+        "U+2264-U+2265,U+2282-U+2283,U+228F,U+2293,U+2295,U+2297," ~
+        "U+2299-U+229C,U+229E-U+229F,U+22A1-U+22A3,U+22A5,U+22B8,U+22C5," ~
+        "U+22D5,U+22EF,U+2305,U+2308,U+230A,U+2315,U+231D-U+231F,U+2335," ~
+        "U+2346,U+2349,U+234F,U+2356,U+235A,U+235C,U+2361-U+2365,U+2369," ~
+        "U+25A1,U+25B3,U+25BD,U+25C7,U+25CC,U+25E0-U+25E1,U+25EB,U+25F0," ~
+        "U+25F4,U+25FF,U+2607,U+266D,U+2682,U+27DC,U+2919-U+291A,U+2938," ~
+        "U+29B7,U+29C5-U+29C6,U+29C8,U+29CB,U+29FB,U+2A02,U+2A2A,U+2A2C," ~
+        "U+2A5C,U+2B1A,U+2BFE,U+1D110=Uiua386";
+}
+
 /// The grammar registry every sink resolves through. Desktop: the nix grammar
 /// bundle via `$SPARKLES_TS_GRAMMAR_PATH`. Android: the soname layout —
 /// parsers are APK native libraries the dynamic linker resolves, queries come
@@ -687,16 +715,35 @@ private int runGuiSink(in CliParams cli, ref Document doc, in LabelSet labels,
         }
 
         auto themeSet = sortedThemes(cli.theme);
+        // Font selection: Android has no CLI, so the bundled defaults stand
+        // in for the desktop flags — the Maple family for the primary and
+        // all three styled faces (the fontconfig-free override resolution
+        // picks its -Bold/-Italic/-BoldItalic siblings) + the Uiua386
+        // codepoint map.
+        version (Android)
+        {
+            const fontName = androidGuiFont;
+            const faceOv = FontSet.FaceOverrides(androidGuiFontFamily,
+                androidGuiFontFamily, androidGuiFontFamily);
+            string[] cpMaps = [androidUiuaCodepointMap];
+        }
+        else
+        {
+            const fontName = cli.font;
+            const faceOv = FontSet.FaceOverrides(cli.fontBold, cli.fontItalic,
+                cli.fontBoldItalic);
+            string[] cpMaps = null;
+        }
+
         return runGui(doc.title, doc.source, doc.events, labels, themeSet.names,
-            themeSet.themes, themeSet.idx, doc.preview, cli.font, cli.fontSize,
+            themeSet.themes, themeSet.idx, doc.preview, fontName, cli.fontSize,
             cli.windowWidth, cli.windowHeight, cli.lineNumbers, cli.codeLineNumbers,
             cli.ansiCopy == "strip", parseTableCopy(cli.tableCopy),
             docSet, &loadDoc, &cache, doc.twoslash,
             doc.path, startInTree: startInTree, treeRoot,
-            FontSet.FaceOverrides(cli.fontBold, cli.fontItalic,
-                cli.fontBoldItalic), doc.lang,
+            faceOv, doc.lang,
             cli.include.dup, cli.exclude.dup, cli.treeWidth,
-            cli.tabWidth, cli.listWhitespace);
+            cli.tabWidth, cli.listWhitespace, cpMaps);
     }
     else
     {
