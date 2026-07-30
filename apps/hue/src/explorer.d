@@ -149,6 +149,12 @@ struct ExplorerTui
     bool showHidden;
     bool showIgnored = true;
 
+    // Glob filters (XPF2, snacks precedence: include overrides hidden,
+    // ignored, AND exclude). Matched against the entry name and its
+    // root-relative path; a dir passes when it might contain includes.
+    string[] includeGlobs;
+    string[] excludeGlobs;
+
     string picked;  // the chosen file (empty = none yet)
     string current; // the open document's path — highlighted in the tree (XPL3)
     GitStatusCache git;   // async per-root status snapshot (XPF1)
@@ -191,8 +197,9 @@ struct ExplorerTui
     /// The pane is consuming typed text (the workspace must not steal keys).
     bool inputActive() const @safe pure nothrow @nogc => searching;
 
-    // Shallow directory listing: dirs first, each group name-sorted. Dotfiles
-    // show only under the hidden toggle (XPF2); `.git` itself never does.
+    // Shallow directory listing: dirs first, each group name-sorted. All
+    // visibility policy (hidden / ignored / globs) lives in `visible`;
+    // `.git` itself never lists.
     private FsEntry[] listDir(string dir) @system
     {
         FsEntry[] entries;
@@ -200,8 +207,7 @@ struct ExplorerTui
             foreach (e; dirEntries(dir, SpanMode.shallow))
             {
                 const nm = baseName(e.name);
-                if (nm.length == 0 || (!showHidden && nm[0] == '.')
-                    || nm == ".git")
+                if (nm.length == 0 || nm == ".git")
                     continue;
                 auto fe = FsEntry(nm, e.name, e.isDir);
                 // The type's brand color (dirs: the conventional folder amber).
@@ -253,7 +259,7 @@ struct ExplorerTui
         {
             foreach (e; listDir(dir))
             {
-                if (hiddenByGit(e))
+                if (!visible(e))
                     continue;
                 const isOpen = e.isDir && open.isOpen(e.path);
                 e.openDir = isOpen; // the disclosure-state icon (XPL6)
@@ -330,7 +336,7 @@ struct ExplorerTui
         bool any;
         foreach (e; listDir(dir))
         {
-            if (hiddenByGit(e))
+            if (!visible(e))
                 continue;
             if (e.isDir)
             {
@@ -506,11 +512,54 @@ struct ExplorerTui
         );
     }
 
-    // The ignored toggle's filter (XPF2): with `showIgnored` off, entries the
-    // git snapshot marks ignored disappear from the listing passes.
-    private bool hiddenByGit(in FsEntry e) @safe
-        => !showIgnored && git.map.present
-            && git.map.statusOf(e.path, e.isDir) == GitStatus.ignored;
+    // The entry's root-relative path (for `/`-carrying glob patterns).
+    // (`ref const`, not `in`: dip1000 would make the returned slice scope.)
+    private const(char)[] relOf(ref const FsEntry e) const @safe pure nothrow @nogc
+    {
+        const p = e.path;
+        if (p.length > root.length + 1 && p[0 .. root.length] == root
+            && p[root.length] == '/')
+            return p[root.length + 1 .. $];
+        return p;
+    }
+
+    private static bool globAny(scope const(char)[] name,
+        scope const(char)[] rel, scope const(string)[] globs) @safe
+    {
+        import std.path : globMatch;
+
+        foreach (g; globs)
+            if (globMatch(name, g) || globMatch(rel, g))
+                return true;
+        return false;
+    }
+
+    // The one visibility predicate (XPF2, snacks precedence): `include`
+    // overrides hidden, ignored, and `exclude`; a dir always passes the
+    // include gate (its subtree may contain includes) but still honors
+    // hidden/ignored/exclude when it matches none.
+    private bool visible(ref const FsEntry e) @safe
+    {
+        const rel = relOf(e);
+        if (includeGlobs.length && globAny(e.name, rel, includeGlobs))
+            return true;
+        // A dir passes the include gate when a path-carrying include glob
+        // descends into it (`build/*.log` keeps `build/` reachable).
+        if (includeGlobs.length && e.isDir)
+            foreach (g; includeGlobs)
+                if (g.length > rel.length + 1 && g[0 .. rel.length] == rel
+                    && g[rel.length] == '/')
+                    return true;
+        if (!showHidden && e.name.length && e.name[0] == '.')
+            return false;
+        if (!showIgnored && git.map.present
+            && git.map.statusOf(e.path, e.isDir) == GitStatus.ignored)
+            return false;
+        if (excludeGlobs.length && !e.isDir
+            && globAny(e.name, rel, excludeGlobs))
+            return false;
+        return true;
+    }
 
     /// XPF2: runtime visibility toggles (`H` / `I`).
     void toggleHidden() @system
@@ -1006,4 +1055,69 @@ unittest
     x.reveal(buildPath(outside, "elsewhere.d"));
     assert(x.root == outside);
     assert(listed("elsewhere.d"));
+}
+
+@("explorer.globs.snacksPrecedence")
+@system
+unittest
+{
+    import std.file : exists, mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import sparkles.syntax : builtinDark, LabelSet;
+    import git_status : GitStatus, GitStatusMap;
+
+    const root = buildPath(tempDir(), "hue-explorer-globs-test");
+    if (root.exists)
+        rmdirRecurse(root);
+    mkdirRecurse(buildPath(root, "build"));
+    scope (exit) rmdirRecurse(root);
+    write(buildPath(root, ".env"), "");
+    write(buildPath(root, "keep.d"), "int k;\n");
+    write(buildPath(root, "noise.log"), "");
+    write(buildPath(root, "build", "keep.log"), "");
+
+    static immutable Theme dark = builtinDark;
+    ExplorerTui x;
+    x.root = root;
+    x.themeValue = &dark;
+    x.theme = resolveTheme(dark, LabelSet.standard());
+    x.pageFg = fallbackFg;
+    x.pageBg = fallbackBg;
+    x.width = 44;
+    x.height = 12;
+    x.git.map = GitStatusMap(["build": GitStatus.ignored], null, root, true);
+    x.open = x.open.opened(buildPath(root, "build"));
+
+    bool listed(string name)
+    {
+        foreach (ref const r; x.rows)
+            if (x.data.nodes[r.node].value.name == name)
+                return true;
+        return false;
+    }
+
+    // Exclude hides matches (by name or root-relative path).
+    x.excludeGlobs = ["*.log"];
+    x.rebuild();
+    assert(listed("keep.d") && !listed("noise.log") && !listed("keep.log"));
+
+    // Include overrides exclude…
+    x.includeGlobs = ["noise.*"];
+    x.rebuild();
+    assert(listed("noise.log") && !listed("keep.log"));
+
+    // …and hidden…
+    x.includeGlobs = [".env"];
+    x.rebuild();
+    assert(listed(".env"));
+
+    // …and ignored (build/ is git-ignored and the toggle is off).
+    x.showIgnored = false;
+    x.includeGlobs = ["build/*.log"];
+    x.excludeGlobs = null;
+    x.rebuild();
+    assert(listed("keep.log"), "include overrides ignored");
+    x.includeGlobs = null;
+    x.rebuild();
+    assert(!listed("build"), "the ignored dir hides without the include");
 }
