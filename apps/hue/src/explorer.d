@@ -3,11 +3,10 @@
 // over the filesystem, with the case study's lazy `open` (user intent, the
 // shared `DisclosureState`) / `expanded` (children read) split, a live filter
 // in broot's tree-as-search-result mode (rebuild per keystroke, matches +
-// their ancestors), and Enter handing the selected file back to the caller —
-// the preview pane is just the existing viewer on the returned path.
+// their ancestors), and Enter handing the selected file to the `workspace`,
+// which shows it in the viewer pane beside the tree (`XPL2`).
 //
-// Posix-only (the raw-mode loop is); a piped directory target keeps the
-// static listing.
+// Posix-only; a piped directory target keeps the static listing.
 module explorer;
 
 version (Posix):
@@ -35,12 +34,14 @@ import sparkles.ui_tui : paintGrid;
 private enum RgbColor fallbackFg = RgbColor(0xcc, 0xcc, 0xcc);
 private enum RgbColor fallbackBg = RgbColor(0x1e, 0x1e, 0x1e);
 
-/// One filesystem node. `label`/`icon` are the tree view's DbI capabilities.
-private struct FsEntry
+/// One filesystem node. `label`/`icon`/`slot` are the tree view's DbI
+/// capabilities; `slot` highlights the currently open document (`XPL3`).
+struct FsEntry
 {
     string name;
     string path;
     bool isDir;
+    Slot slot = Slot.inherit;
 
     const(char)[] label() const @safe pure nothrow @nogc => name;
     const(char)[] icon() const @safe pure nothrow @nogc
@@ -49,7 +50,8 @@ private struct FsEntry
 
 /// The explorer session: the arena is rebuilt (cheap, flat) whenever the open
 /// set or the filter changes — the tree IS a function of (fs, open, query).
-private struct ExplorerTui
+/// Full-screen (`runExplorer`) or the workspace's left pane.
+struct ExplorerTui
 {
     string root;
     ResolvedTheme theme;
@@ -67,10 +69,35 @@ private struct ExplorerTui
     char[128] qbuf;
     size_t qlen;
 
-    string picked; // the chosen file (empty = none yet)
+    string picked;  // the chosen file (empty = none yet)
+    string current; // the open document's path — highlighted in the tree (XPL3)
+
+    /// Selects + reveals `path` (`XPL4`): every ancestor directory under the
+    /// root is opened, the tree rebuilds, and the node's row is selected and
+    /// scrolled into view. Also marks it as the current document.
+    void reveal(string path) @system
+    {
+        import std.path : dirname = dirName;
+
+        current = path;
+        for (auto d = dirname(path); d.length > root.length
+            && d != "/" && d != "."; d = dirname(d))
+            open = open.opened(d);
+        rebuild();
+        foreach (i, ref const r; rows)
+            if (data.nodes[r.node].value.path == path)
+            {
+                sel = cast(long) i;
+                break;
+            }
+        clamp();
+    }
 
     private const(char)[] query() const return @safe pure nothrow @nogc
         => qbuf[0 .. qlen];
+
+    /// The pane is consuming typed text (the workspace must not steal keys).
+    bool inputActive() const @safe pure nothrow @nogc => searching;
 
     // Shallow directory listing: dirs first, each group name-sorted; dotfiles
     // and VCS internals are skipped (the explorer shows the working tree).
@@ -142,6 +169,12 @@ private struct ExplorerTui
             addChildren(root, uint.max, true);
         else
             addFiltered(root, uint.max);
+
+        // The open document keeps its highlight through rebuilds (XPL3).
+        if (current.length)
+            foreach (ref n; data.nodes)
+                if (n.value.path == current)
+                    n.value.slot = Slot.chromeAccent;
 
         rows = flatten(data, (uint i) @safe
             => qlen != 0 || open.isOpen(data.nodes[i].value.path));
@@ -216,7 +249,8 @@ private struct ExplorerTui
         CellStyle page;
         page.fg = Color.fromRgb(pageFg);
         page.bg = Color.fromRgb(pageBg);
-        g.clearTo(page);
+        g.fillRect(0, 0, cast(ushort)(width < g.cols ? width : g.cols),
+            g.rows, page);
 
         // Header + tree + status through one widget pipeline. The tree is
         // viewport-sliced (guides are per-row, so slicing is safe).
@@ -406,52 +440,6 @@ private struct ExplorerTui
             return true;
         }, (in EndOfInput _) => false, _ => true);
     }
-}
-
-/**
-Runs the explorer over `dir` until the user picks a file (returned) or quits
-(`null`). The caller shows the picked document and loops back in — the
-preview pane is the whole existing viewer, per the composition model.
-*/
-string runExplorer(string dir, immutable(Theme)* theme, in LabelSet labels)
-    @system
-{
-    ExplorerTui x;
-    x.root = dir;
-    x.themeValue = theme;
-    x.theme = resolveTheme(*theme, labels);
-    x.pageFg = toRgb(x.theme.defaults.fg, fallbackFg);
-    x.pageBg = toRgb(x.theme.defaults.bg, fallbackBg);
-    x.rebuild();
-
-    auto term = Terminal.open();
-    if (!term.active)
-        return null;
-    scope (exit) term.close();
-
-    auto events = PosixEvents.start();
-
-    Grid g;
-    for (;;)
-    {
-        const sz = term.size();
-        x.width = sz.width;
-        x.height = sz.height;
-        x.clamp();
-
-        g.resize(sz.width, sz.height);
-        x.paint(g);
-        term.draw(g);
-
-        const ev = events.next();
-        if (ev.isEndOfInput)
-            break;
-        if (ev.match!((in ResizeEvent _) => true, _ => false))
-            continue;
-        if (!x.handle(ev))
-            break;
-    }
-    return x.picked.length ? x.picked : null;
 }
 
 @("explorer.tree.lazyOpenFilterAndPaint")
