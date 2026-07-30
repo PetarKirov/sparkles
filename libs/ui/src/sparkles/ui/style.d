@@ -46,6 +46,7 @@ enum Slot : ubyte
     highlightBorder, /// highlighted-range border
     surface,         /// popup / panel background (opaque)
     border,          /// popup / panel border line
+    hoverUnderline,  /// hoverable-token underline (`.twoslash-hover`, always on)
     shadow,          /// popup drop shadow
     matched,         /// matched prefix in a completion list (inherits page fg)
     unmatched,       /// unmatched remainder in a completion list (muted)
@@ -273,6 +274,11 @@ Palette defaultTwoslashPalette(ColorScheme scheme = ColorScheme.light) pure noth
         p.fg[docs] = dark ? Color.fromRgb(0xa0, 0xa0, 0xa0) : Color.fromRgb(0x88, 0x88, 0x88);
         p.fg[border] = Color.fromRgb(0x88, 0x88, 0x88);
         p.fgAlpha[border] = 0x88;
+        // The hoverable-token underline: the same neutral grey as the popup
+        // border, but fainter — it is always on, under every hover span, so it
+        // must read as a hint rather than as chrome.
+        p.fg[hoverUnderline] = Color.fromRgb(0x88, 0x88, 0x88);
+        p.fgAlpha[hoverUnderline] = 0x55;
         p.fg[shadow] = Color.fromRgb(0x00, 0x00, 0x00);
         p.fgAlpha[shadow] = 0x14; // rgba(0,0,0,0.08)
 
@@ -409,6 +415,7 @@ private struct VarBinding
 
 private static immutable VarBinding[] twoslashVars = [
     VarBinding("--twoslash-border-color", Slot.border, false),
+    VarBinding("--twoslash-underline-color", Slot.hoverUnderline, false),
     VarBinding("--twoslash-highlighted-border", Slot.highlightBorder, false),
     VarBinding("--twoslash-highlighted-bg", Slot.highlight, true),
     VarBinding("--twoslash-popup-bg", Slot.surface, true),
@@ -613,4 +620,5 @@ unittest
     assert(s.canFind("  --twoslash-highlighted-border: #c37d0d50;\n"));
     assert(s.canFind("  --twoslash-popup-bg: #f8f8f8;\n"));     // opaque ⇒ no alpha
     assert(s.canFind("  --twoslash-border-color: #88888888;\n")); // CSS #8888 = rgba, alpha 0x88
+    assert(s.canFind("  --twoslash-underline-color: #88888855;\n")); // fainter than the border
 }

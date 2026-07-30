@@ -6,7 +6,7 @@
 
 :root {
   --twoslash-border-color: #8888;
-  --twoslash-underline-color: currentColor;
+  --twoslash-underline-color: #88888855;
   --twoslash-highlighted-border: #c37d0d50;
   --twoslash-highlighted-bg: #c37d0d20;
   --twoslash-popup-bg: #f8f8f8;

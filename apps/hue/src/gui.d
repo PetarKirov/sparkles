@@ -1773,78 +1773,6 @@ int runGui(
                 selecting = false;
         }
 
-        // Twoslash hover: pointer → byte (the identity channel) → hover node;
-        // the token's dotted underline fades in and the popup (the shared
-        // viewHoverPopup chrome via drawPopup) draws on vm.top, with pointer
-        // hysteresis so moving down into the open popup keeps it open.
-        if (vm.showPreview && vm.tw.code.length && tsCache !is null)
-        {
-            const mp = GetMousePosition();
-            size_t overNode = 0;
-            if (mp.x >= gutterPx)
-            {
-                const off = sourceOffsetAt(vm.tree, vm.frames,
-                    Point(cast(int)((mp.x - gutterPx) / cellW) + dhx,
-                        cast(int)(vm.top + cast(long)((mp.y - docY0) / cellH))));
-                if (off >= 0)
-                    foreach (ni, ref const n; vm.tw.nodes)
-                        if (n.type == NodeType.hover && off >= cast(long) n.start
-                            && off < cast(long)(n.start + n.length))
-                            overNode = ni + 1;
-            }
-            if (overNode == 0 && hotNode != 0 && havePopup
-                && mp.x >= hotPopup.x && mp.x <= hotPopup.x + hotPopup.width
-                && mp.y >= hotPopup.y && mp.y <= hotPopup.y + hotPopup.height)
-                overNode = hotNode; // still over the open popup → keep it open
-            bool forced = false;
-            if (forceHover >= 0)
-            {
-                int seen = 0;
-                foreach (ni, ref const n; vm.tw.nodes)
-                    if (n.type == NodeType.hover && seen++ == forceHover)
-                    {
-                        overNode = ni + 1;
-                        forced = true;
-                        break;
-                    }
-            }
-            if (overNode != hotNode)
-                fade = Timeline.init;
-            hotNode = overNode;
-            if (hotNode != 0)
-            {
-                if (!fade.visible)
-                    fade = Timeline.triggered(fadeCfg);
-                fade = forced ? Timeline(Timeline.Phase.hold, 0)
-                    : fade.stepped(frameMs(), fadeCfg);
-            }
-            havePopup = false;
-            if (hotNode != 0)
-            {
-                // The token's geometry through the identity channel.
-                const n = vm.tw.nodes[hotNode - 1];
-                auto rects = selectionRects(vm.tree, vm.frames,
-                    n.start, n.start + n.length);
-                if (rects.length)
-                {
-                    const r = rects[0];
-                    const hx = gutterPx + r.x * cellW;
-                    const hy = cast(int)(docY0 + (r.y - vm.top) * cellH);
-                    const hw = r.width * cellW;
-                    const uy = hy + cellH - 2;
-                    const uc = Color(vm.pageFg.r, vm.pageFg.g, vm.pageFg.b,
-                        cast(ubyte)(fade.alphaPercent(fadeCfg) * 255 / 100));
-                    for (int i = 0; i + 2 <= hw; i += 4)
-                        DrawRectangle(hx + i, uy, 2, 1, uc);
-                    hotPopup = drawPopup(fonts, buf, vm.tw, hotNode - 1,
-                        cast(float) hx, cast(float)(hy + cellH),
-                        cellW, cellH, vm.current, *tsCache,
-                        defaultTwoslashPalette(schemeForBackground(vm.pageBg)),
-                        vm.pageFg, vm.pageBg);
-                    havePopup = true;
-                }
-            }
-        }
 
         BeginDrawing();
         // GL scissor state is global; a scissor leaked from any earlier path
@@ -2004,6 +1932,86 @@ int runGui(
                         cast(int)(docY0 + row * cellH), r.width * cellW, cellH,
                         i == vm.curMatch ? currentMatchTint : matchTint);
                 }
+
+        // Twoslash hover: pointer → byte (the identity channel) → hover node;
+        // the token's dotted underline fades in and the popup (the shared
+        // viewHoverPopup chrome via drawPopup) draws on vm.top, with pointer
+        // hysteresis so moving down into the open popup keeps it open.
+        if (vm.showPreview && vm.tw.code.length && tsCache !is null)
+        {
+            const mp = GetMousePosition();
+            size_t overNode = 0;
+            if (mp.x >= gutterPx)
+            {
+                const off = sourceOffsetAt(vm.tree, vm.frames,
+                    Point(cast(int)((mp.x - gutterPx) / cellW) + dhx,
+                        cast(int)(vm.top + cast(long)((mp.y - docY0) / cellH))));
+                if (off >= 0)
+                    foreach (ni, ref const n; vm.tw.nodes)
+                        if (n.type == NodeType.hover && off >= cast(long) n.start
+                            && off < cast(long)(n.start + n.length))
+                            overNode = ni + 1;
+            }
+            if (overNode == 0 && hotNode != 0 && havePopup
+                && mp.x >= hotPopup.x && mp.x <= hotPopup.x + hotPopup.width
+                && mp.y >= hotPopup.y && mp.y <= hotPopup.y + hotPopup.height)
+                overNode = hotNode; // still over the open popup → keep it open
+            bool forced = false;
+            if (forceHover >= 0)
+            {
+                int seen = 0;
+                foreach (ni, ref const n; vm.tw.nodes)
+                    if (n.type == NodeType.hover && seen++ == forceHover)
+                    {
+                        overNode = ni + 1;
+                        forced = true;
+                        break;
+                    }
+            }
+            if (overNode != hotNode)
+                fade = Timeline.init;
+            hotNode = overNode;
+            if (hotNode != 0)
+            {
+                if (!fade.visible)
+                    fade = Timeline.triggered(fadeCfg);
+                fade = forced ? Timeline(Timeline.Phase.hold, 0)
+                    : fade.stepped(frameMs(), fadeCfg);
+            }
+            havePopup = false;
+            if (hotNode != 0)
+            {
+                // The token's geometry through the identity channel.
+                const n = vm.tw.nodes[hotNode - 1];
+                auto rects = selectionRects(vm.tree, vm.frames,
+                    n.start, n.start + n.length);
+                if (rects.length)
+                {
+                    const r = rects[0];
+                    const hx = gutterPx + r.x * cellW;
+                    const hy = cast(int)(docY0 + (r.y - vm.top) * cellH);
+                    const hw = r.width * cellW;
+                    const uy = hy + cellH - 2;
+                    // The hot token's emphasis stroke: the same hue as the
+                    // always-on `Slot.hoverUnderline` marker under every hover
+                    // span, but at the fade's full strength so the pointed-at
+                    // token stands out from its neighbours.
+                    const uv = resolveSlot(
+                        defaultTwoslashPalette(schemeForBackground(vm.pageBg)),
+                        Slot.hoverUnderline, vm.pageFg, vm.pageBg);
+                    const uc = Color(uv.fg.r, uv.fg.g, uv.fg.b,
+                        cast(ubyte)(fade.alphaPercent(fadeCfg) * 255 / 100));
+                    for (int i = 0; i + 2 <= hw; i += 4)
+                        DrawRectangle(hx + i, uy, 2, 1, uc);
+                    hotPopup = drawPopup(fonts, buf, vm.tw, hotNode - 1,
+                        cast(float) hx, cast(float)(hy + cellH),
+                        cellW, cellH, vm.current, *tsCache,
+                        defaultTwoslashPalette(schemeForBackground(vm.pageBg)),
+                        vm.pageFg, vm.pageBg);
+                    havePopup = true;
+                }
+            }
+        }
 
         // The explorer pane (XPL2): the tree's widget view painted through
         // RaylibCanvas at the window's left edge, viewport-sliced, with a

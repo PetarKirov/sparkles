@@ -71,6 +71,16 @@ private Decoration surfaceDeco(bool arrow, int arrowOffset = 1) pure nothrow @no
         arrowOffset: arrowOffset,
     );
 
+/// The always-on hover marker: a `1px dotted` bottom-only border colored from
+/// `Slot.hoverUnderline` — the `.twoslash-hover` underline, on a border-only
+/// (unfilled) box so it rides under the code text without tinting it.
+private Decoration hoverUnderlineDeco() pure nothrow @nogc
+    => Decoration(
+        borderWidth: Insets(0, 0, M.borderWidth, 0),
+        borderStyle: BorderStyle.dotted,
+        borderSlot: Slot.hoverUnderline,
+    );
+
 /// A left accent bar (`3px solid`) — the `.twoslash-error-line` / `-tag-line`
 /// marker, colored from `slot`. The block's translucent background comes from the
 /// same slot via `paintBackground`.
@@ -176,6 +186,20 @@ WidgetTree viewTwoslashDocument(const TwoslashReturn tw,
                     slot: Slot.highlight, paintBackground: true,
                     width: SizeSpec.fixed(cols), height: SizeSpec.fixed(1)));
                 under ~= b.container(WidgetKind.column, [tint], padding: at);
+            }
+            else if (d.kind == NodeType.hover)
+            {
+                // Discoverability: a hoverable token is marked by a permanent
+                // dotted underline (the CSS `.twoslash-hover` bottom border),
+                // baked into the prebuilt display list rather than drawn on
+                // pointer motion. A border-only box paints no fill, so the
+                // code text above it is untouched; the TUI degrades the
+                // bottom-only dotted border to a dotted cell underline.
+                const rule = b.add(Widget(kind: WidgetKind.box,
+                    slot: Slot.hoverUnderline, paintBackground: false,
+                    decoration: hoverUnderlineDeco(),
+                    width: SizeSpec.fixed(cols), height: SizeSpec.fixed(1)));
+                under ~= b.container(WidgetKind.column, [rule], padding: at);
             }
             else if (d.kind == NodeType.error)
             {
@@ -622,6 +646,59 @@ version (unittest)
     }
     assert(sawWavy && sawTint && sawMsg);
     assert(codeAt < wavyAt, "the squiggle paints over its code line");
+}
+
+@("render_widgets.viewTwoslashDocument.hoverUnderline")
+@safe unittest
+{
+    import sparkles.syntax : builtinDark, HighlightEvent, LabelSet, resolveTheme;
+    import sparkles.ui.canvas : OpKind;
+    import sparkles.ui.geometry : Rect;
+
+    // A hover on `x` (line 0, col 6) — no below-line block, but the token must
+    // still be discoverable: an always-on dotted underline under its cells.
+    const code = "const x = 1\n";
+    const tw = TwoslashReturn(code: code, nodes: [
+        Node(type: NodeType.hover, start: 6, length: 1, line: 0, character: 6,
+            text: "const x: 1"),
+    ]);
+    const ev = [HighlightEvent.sourceSpan(0, code.length)];
+
+    const labels = LabelSet.standard();
+    const rt = resolveTheme(builtinDark, labels);
+    auto tree = viewTwoslashDocument(tw, ev,
+        (() @trusted => &rt)(), RgbColor(0xcc, 0xcc, 0xcc));
+
+    // The display list carries the semantic slot; the recorded canvas ops carry
+    // only the resolved Visual (a canvas primitive never sees a slot).
+    auto ops = buildDisplayList(tree, layout(tree), defaultTwoslashPalette(),
+        RgbColor(0x22, 0x22, 0x22), RgbColor(0xff, 0xff, 0xff));
+    bool sawSlot;
+    foreach (ref op; ops)
+        if (op.kind == OpKind.fillRect && op.slot == Slot.hoverUnderline)
+            sawSlot = true;
+    assert(sawSlot, "the underline names Slot.hoverUnderline");
+
+    auto c = render(tree);
+    size_t ruleAt = size_t.max, codeAt = size_t.max;
+    foreach (i, ref op; c.ops)
+    {
+        // Border-only (no fill), 1px dotted along the bottom of the token's one
+        // cell, in the faint palette grey Slot.hoverUnderline resolves to.
+        if (op.kind == OpKind.fillRect && op.visual.border.style == BorderStyle.dotted)
+        {
+            assert(!op.visual.hasBg);
+            assert(op.visual.border.width == Insets(0, 0, 1, 0));
+            assert(op.visual.border.color == RgbColor(0x88, 0x88, 0x88));
+            assert(op.visual.border.alpha == 0x55);
+            assert(op.rect == Rect(6, 0, 1, 1));
+            ruleAt = i;
+        }
+        if (op.kind == OpKind.textRun && op.text == "const x = 1")
+            codeAt = i;
+    }
+    assert(ruleAt != size_t.max, "a hover span gets an always-on underline");
+    assert(ruleAt < codeAt, "the underline paints under its code line");
 }
 
 @("render_widgets.viewTwoslash.errorBlock")
