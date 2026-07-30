@@ -19,7 +19,7 @@ import std.string : chompPrefix;
 import sparkles.base.logger : warning;
 import sparkles.base.smallbuffer : SmallBuffer;
 import sparkles.syntax : canonicalLanguage, GrammarRegistry, HighlightEvent,
-    highlightInjected, ResolvedTheme, RgbColor, TsConfigCache;
+    highlightInjected, MdBlock, ResolvedTheme, RgbColor, TsConfigCache;
 import sparkles.twoslash : loadTwoslashFile, TwoslashReturn;
 
 import gui_preview : PreviewModel;
@@ -109,8 +109,32 @@ struct DocumentPipeline
         };
         doc.events = highlight(lang, source);
         if (doc.kind == ContentKind.markdown)
+        {
             doc.preview = buildMdPreview(source);
+            // A degenerate preview — e.g. a pure VitePress YAML front-matter
+            // page, which the model does not model (MDP17) — renders as
+            // nothing in every sink. Fall back to the raw highlighted view
+            // rather than showing an empty document (totality: RND5).
+            if (!hasRenderableContent(doc.preview.doc.root))
+            {
+                doc.kind = ContentKind.code;
+                doc.preview = PreviewModel.init;
+            }
+        }
         return doc;
+    }
+
+    /// `true` iff the block tree yields any visible preview content — an
+    /// inline span, a fence body, or a table (a lone thematic break or
+    /// consumed front-matter does not count).
+    private static bool hasRenderableContent(in MdBlock b) @safe pure nothrow @nogc
+    {
+        if (b.inlines.length || b.codeBody.end > b.codeBody.start)
+            return true;
+        foreach (ref const c; b.children)
+            if (hasRenderableContent(c))
+                return true;
+        return false;
     }
 
     private HighlightEvent[] highlight(string lang, scope const(char)[] source)
@@ -193,4 +217,27 @@ auto hueFenceRenderer(TsConfigCache* cache, const(ResolvedTheme)* theme,
             lines ~= [TextSpan(plain[start .. $], fg: pageFg, hasFg: true)];
         return lines;
     };
+}
+
+@("document.frontmatterOnlyFallsBackToRaw")
+@system unittest
+{
+    // A pure VitePress front-matter page yields no renderable markdown
+    // content — the pipeline degrades it to the raw highlighted view
+    // instead of an empty preview (MDP17 records front-matter as unmodeled).
+    import sparkles.syntax : LabelSet;
+
+    DocumentPipeline p;
+    auto reg = GrammarRegistry.fromEnvironment();
+    const labels = LabelSet.standard();
+    auto cache = TsConfigCache.create(&reg, labels);
+    p.registry = &reg;
+    p.cache = &cache;
+
+    auto doc = p.fromSource("x.md", "x.md",
+        "---\nlayout: home\nhero:\n  name: Sparkles\n---\n", "markdown");
+    assert(doc.kind == ContentKind.code, "degenerate preview falls back to raw");
+
+    auto real_ = p.fromSource("y.md", "y.md", "# Title\n\nbody\n", "markdown");
+    assert(real_.kind == ContentKind.markdown);
 }
