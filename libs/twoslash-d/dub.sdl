@@ -1,0 +1,31 @@
+name "twoslash-d"
+description "D-native twoslash analyzer: notation parsing + node assembly over sparkles:dmd-lsp"
+authors "Petar Kirov"
+copyright "Copyright © 2026, Petar Kirov"
+license "BSL-1.0"
+
+targetPath "build"
+importPaths "src"
+
+dflags "-preview=in" "-preview=dip1000"
+
+configuration "library" {
+    targetType "library"
+    dependency "sparkles:base" path="../.."
+    dependency "sparkles:twoslash-protocol" path="../.."
+    dependency "sparkles:wired" path="../.."
+}
+
+configuration "unittest" {
+    // Fast path: depend on the runner shim (pulls the prebuilt impl library),
+    // so `dub test` recompiles only this package, not the runner sources.
+    dependency "sparkles:test-runner" path="../.."
+    dependency "sparkles:base" path="../.."
+    dependency "sparkles:twoslash-protocol" path="../.."
+    dependency "sparkles:wired" path="../.."
+
+    dflags "-checkaction=context" "-allinst"
+    dflags "-defaultlib=libphobos2.so" "-L-fuse-ld=gold" platform="linux-dmd"
+    dflags "--link-defaultlib-shared" "--linker=gold" platform="linux-ldc"
+    lflags "--export-dynamic" platform="linux-ldc"
+}
