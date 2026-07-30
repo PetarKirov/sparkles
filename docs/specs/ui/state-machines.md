@@ -52,13 +52,13 @@ state`, a pure function; the caller assigns the result. Timers are not bare
 
 ## Milestones
 
-| Milestone | Scope                                                           | Status                                            | Requirements   |
-| --------- | --------------------------------------------------------------- | ------------------------------------------------- | -------------- |
-| S0        | Hover wired to real hit identity                                | full (`f166e099`)                                 | `STM4`         |
-| S1        | Scrollbar and selection lifted from per-backend implementations | partial (`49fa8e50`; backends migrate in M9)      | `STM2`, `STM3` |
-| S2        | Disclosure, shared by tree and folding                          | partial (`49fa8e50`; consumed by M11/M12)         | `STM5`         |
-| S3        | Timeline, replacing ad-hoc counters                             | partial (`49fa8e50`; the GUI timers retire in M9) | `STM6`         |
-| S4        | Focus and keyboard traversal order                              | partial (`49fa8e50`; keyboard nav wires up in M9) | `STM7`         |
+| Milestone | Scope                                                           | Status                                                                            | Requirements   |
+| --------- | --------------------------------------------------------------- | --------------------------------------------------------------------------------- | -------------- |
+| S0        | Hover wired to real hit identity                                | full (`f166e099`)                                                                 | `STM4`         |
+| S1        | Scrollbar and selection lifted from per-backend implementations | full (`23fab77e`) — one thumb/drag formula and one selection model across TUI+GUI | `STM2`, `STM3` |
+| S2        | Disclosure, shared by tree and folding                          | full (`9fc03551`) — consumed by the explorer (tree) and folding (both backends)   | `STM5`         |
+| S3        | Timeline, replacing ad-hoc counters                             | full — copied-flash, toast and hover-fade all `Timeline`                          | `STM6`         |
+| S4        | Focus and keyboard traversal order                              | partial (`49fa8e50`; keyboard nav wires up in M9)                                 | `STM7`         |
 
 ## Module coverage
 
