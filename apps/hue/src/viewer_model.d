@@ -1,0 +1,472 @@
+// The GUI viewer's Whole (`PRN1`/`MIG9`, Sean Parent's C1 diagnosis): one
+// value that owns the document, its theme-resolved colors, the widget-pipeline
+// artifacts, folding, scroll, and search — the state `runGui` used to keep as
+// ~25 free locals related only by lexical scope. Raylib-free, so the whole
+// view/relayout/search/fold surface is unit-testable without a window; gui.d
+// keeps windowing, input translation, and painting.
+module viewer_model;
+
+import ansi_model : AnsiLine, Attr;
+import document : hueFenceRenderer;
+import gui_preview : PreviewModel, quoteBarColors, quoteBarCycle;
+import gui_text : buildLineStarts, findMatches, lineCount, Match;
+
+import sparkles.base.term_color : mix;
+import sparkles.base.term_style : UnderlineStyle;
+import sparkles.syntax : HighlightEvent, LabelSet, ResolvedTheme, resolveTheme,
+    RgbColor, Theme, toRgb;
+import sparkles.syntax.md.model : MdBlock, MdBlockKind, Span;
+import sparkles.syntax.md.render_widgets : foldableSpans, MdViewOptions,
+    MdViewTheme, viewMarkdown;
+import sparkles.syntax.render.widgets : viewCodeDocument;
+import sparkles.syntax.ts.injection : TsConfigCache;
+import sparkles.twoslash.protocol : TwoslashReturn;
+import sparkles.twoslash.render_widgets : viewTwoslashDocument;
+
+import sparkles.ui.canvas : DrawOp;
+import sparkles.ui.display_list : buildDisplayList;
+import sparkles.ui.geometry : Constraints, Rect;
+import sparkles.ui.layout : Frame, layout;
+import sparkles.ui.state : DisclosureState, DocRow, documentRows, HoverTarget,
+    hoverTargets, KeyedRect, keyedRects, selectionRects;
+import sparkles.ui.style : defaultTwoslashPalette, schemeForBackground,
+    TextStyle;
+import sparkles.ui.widget : TextSpan, WidgetTree;
+
+/// Sane concrete fallbacks when a theme leaves the page fore-/background unset
+/// (a GPU/grid surface has no "terminal default" to defer to).
+enum RgbColor hardFallbackFg = RgbColor(0xcd, 0xd6, 0xf4);
+/// ditto
+enum RgbColor hardFallbackBg = RgbColor(0x1e, 0x1e, 0x2e);
+
+/// A fenced code block's identity artifacts: its body span and whether it is
+/// a pre-styled ` ```ansi ` fence (copy honors the ansi-copy mode for those).
+struct MdFence
+{
+    Span body;
+    bool isAnsi;
+}
+
+/// One table cell in document order: its table index, grid position, and
+/// source span — the resolving context for keyed-cell hits and table copy.
+struct MdCell
+{
+    int table;
+    size_t row, col;
+    Span span;
+}
+
+/// A table's grid dimensions.
+struct Dims
+{
+    size_t rows, cols;
+}
+
+/// Maps `gui_ansi.Attr` bits onto the toolkit's per-span text chrome — the
+/// decoded-ANSI fence renderer stamps these on its resolved-color spans.
+TextStyle attrsToTextStyle(ubyte attrs) pure nothrow @nogc @safe
+{
+    TextStyle t;
+    t.bold = (attrs & Attr.bold) != 0;
+    t.italic = (attrs & Attr.italic) != 0;
+    t.strikethrough = (attrs & Attr.strikethrough) != 0;
+    if (attrs & Attr.underline)
+        t.underline = UnderlineStyle.single;
+    return t;
+}
+
+/**
+The viewer's document + view-state Whole. The host configures the theme
+list once, feeds documents through $(LREF setDocument), and drives
+$(LREF applyTheme) / $(LREF relayout); every derived artifact (the laid-out
+tree, its ops, the row identity index, hit targets, keyed cells, fence and
+cell structure, match rects) is owned here and stays mutually consistent —
+there is no second copy for a painter to disagree with.
+*/
+struct ViewerModel
+{
+    // ── configuration (set once by the host) ────────────────────────────────
+    const(string)[] names;          /// theme names, parallel to `themes`
+    immutable(Theme)[] themes;
+    LabelSet labels;
+    TsConfigCache* cache;           /// fence highlighting (null ⇒ plain bodies)
+    /// Optional ` ```ansi ` fence decoder (the GUI's off-screen VT); without
+    /// it ansi fences degrade to SGR-stripped plain text (hueFenceRenderer).
+    AnsiLine[] delegate(const(char)[]) @system decodeAnsi;
+
+    // ── the document ────────────────────────────────────────────────────────
+    string title;
+    string summary;
+    const(char)[] source;
+    const(HighlightEvent)[] events;
+    PreviewModel preview;
+    TwoslashReturn tw;              /// empty `code` ⇒ not a twoslash document
+    size_t srcTotal;                /// source (physical) line count
+    size_t[] lineStarts;
+    bool showPreview;               /// decorated view vs raw source (Tab)
+
+    // ── theme-resolved values ───────────────────────────────────────────────
+    size_t themeIdx;
+    ResolvedTheme current;
+    RgbColor pageFg, pageBg, gutterFg;
+    RgbColor[quoteBarCycle] quoteBars;
+    RgbColor sbTrack, sbThumb;      /// link-tinted scrollbar chrome
+
+    // ── the widget pipeline (derived; rebuilt as one) ───────────────────────
+    WidgetTree tree;
+    Frame[] frames;
+    DrawOp[] ops;
+    DocRow[] rows;                  /// the identity channel, per visual row
+    HoverTarget[] targets;
+    KeyedRect[] cells;              /// source-keyed table-cell rects
+    MdFence[] fences;
+    MdCell[] cellList;
+    size_t copiedFenceSrc = size_t.max; /// body start of the just-copied fence
+    DisclosureState!size_t folds = DisclosureState!size_t(true);
+    Span[] foldable;
+    int widthCols = -1;             /// the width the pipeline is laid out for
+
+    // Source-anchored identity bases (disjoint id spaces — see the md view).
+    enum size_t fenceHitBase = size_t.max / 2 + 1;
+    enum size_t foldHitBase = size_t.max / 4 * 3 + 1;
+    enum size_t tableKeyBase = 1;
+
+    // ── scroll + search ─────────────────────────────────────────────────────
+    long top;                       /// first visible visual row
+    Match[] matches;
+    size_t curMatch;
+    Rect[][] matchRects;            /// per-match rects via the identity channel
+
+@system:
+
+    /// Replaces the viewed document: content swaps, scroll/search/folds
+    /// reset, the pipeline rebuilds at the current width.
+    void setDocument(string title_, string summary_, const(char)[] source_,
+        const(HighlightEvent)[] events_, PreviewModel preview_,
+        TwoslashReturn tw_)
+    {
+        title = title_;
+        summary = summary_;
+        source = source_;
+        events = events_;
+        preview = preview_;
+        tw = tw_;
+        srcTotal = lineCount(source);
+        lineStarts = buildLineStarts(source);
+        showPreview = preview.present || tw.code.length != 0;
+        top = 0;
+        matches = null;
+        matchRects = null;
+        curMatch = 0;
+        copiedFenceSrc = size_t.max;
+        folds = DisclosureState!size_t(true);
+        rebuild();
+    }
+
+    /// Resolves theme `i` (colors + quote bars + scrollbar tint) and rebuilds
+    /// the pipeline so the view follows.
+    void applyTheme(size_t i)
+    {
+        themeIdx = i;
+        current = resolveTheme(themes[i], labels);
+        pageFg = toRgb(current.defaults.fg, hardFallbackFg);
+        pageBg = toRgb(current.defaults.bg, hardFallbackBg);
+        gutterFg = mix(pageFg, pageBg, 0.5); // muted line numbers
+        quoteBars = quoteBarColors(current, pageFg, pageBg);
+        // Scrollbar chrome: tint toward the theme's link color so the hover
+        // track and thumb read as a distinct hue against the grayscale bands.
+        const linkC = toRgb(current[current.labels.resolve("markup.link")].fg,
+            pageFg);
+        sbTrack = mix(pageBg, linkC, 0.22);
+        sbThumb = mix(pageBg, linkC, 0.5);
+        rebuild();
+    }
+
+    /// Lays the pipeline out for a new width.
+    void relayout(int widthCols_)
+    {
+        widthCols = widthCols_;
+        rebuild();
+    }
+
+    /// Rebuilds the active view's pipeline: view → layout → display list,
+    /// plus the derived row index, hit targets, keyed cells, document
+    /// structure, and the search-match rects — all in lockstep.
+    void rebuild()
+    {
+        if (showPreview && tw.code.length)
+        {
+            // A twoslash document: the whole-document widget view (code lines
+            // as resolved spans + fused decorations + interleaved blocks).
+            tree = viewTwoslashDocument(tw, events, thisCurrent(), pageFg,
+                cache);
+            frames = layout(tree, Constraints(maxW: widthCols));
+            ops = buildDisplayList(tree, frames,
+                defaultTwoslashPalette(schemeForBackground(pageBg)),
+                pageFg, pageBg);
+            derive(withTargets: true);
+            cells = null;
+            fences.length = 0;
+            cellList.length = 0;
+            foldable = null;
+            return;
+        }
+        if (!showPreview || !preview.present)
+        {
+            // The raw view: the highlighted source as the same widget
+            // pipeline (one painter for every view kind).
+            tree = viewCodeDocument(source, events, thisCurrent(), pageFg);
+            frames = layout(tree, Constraints(maxW: widthCols));
+            ops = buildDisplayList(tree, frames,
+                themes[themeIdx].effectivePalette, pageFg, pageBg);
+            derive(withTargets: false);
+            cells = null;
+            fences.length = 0;
+            cellList.length = 0;
+            foldable = null;
+            return;
+        }
+        MdViewOptions opt = {
+            theme: MdViewTheme.derive(current, pageFg, pageBg),
+            fenceHitBase: fenceHitBase,
+            tableKeyBase: tableKeyBase,
+            copiedFence: copiedFenceSrc,
+            fenceRenderer: fenceRenderer(),
+            foldedSpans: folds.exceptions,
+            foldHitBase: foldHitBase,
+        };
+        foldable = foldableSpans(preview.doc);
+        tree = viewMarkdown(preview.doc, opt);
+        frames = layout(tree, Constraints(maxW: widthCols));
+        ops = buildDisplayList(tree, frames,
+            themes[themeIdx].effectivePalette, pageFg, pageBg);
+        derive(withTargets: true);
+        cells = keyedRects(tree, frames);
+        collectStructure();
+    }
+
+    private void derive(bool withTargets)
+    {
+        rows = documentRows(tree, frames);
+        targets = withTargets ? hoverTargets(tree, frames) : null;
+        rebuildMatchRects();
+    }
+
+    // The address of `current` for the view functions — a small @trusted
+    // escape because `this` is addressable for the model's whole life.
+    private const(ResolvedTheme)* thisCurrent() @trusted
+        => &current;
+
+    // The fence renderer: ` ```ansi ` fences decode through the host's
+    // off-screen VT (resolved fg + bg + attrs) when it supplied a decoder;
+    // every other language goes through the shared injection-aware
+    // highlighter; without a cache, plain bodies.
+    private TextSpan[][] delegate(const(char)[], const(char)[]) @safe
+        fenceRenderer()
+    {
+        if (decodeAnsi is null)
+            return cache !is null
+                ? hueFenceRenderer(cache, thisCurrent(), pageFg) : null;
+        auto highlight = cache !is null
+            ? hueFenceRenderer(cache, thisCurrent(), pageFg) : null;
+        auto decode = decodeAnsi;
+        auto fg = pageFg;
+        return delegate TextSpan[][] (const(char)[] lang, const(char)[] body_)
+            @trusted {
+            if (lang != "ansi")
+                return highlight !is null ? highlight(lang, body_) : null;
+            TextSpan[][] lines;
+            foreach (ref ln; decode(body_))
+            {
+                TextSpan[] spans;
+                foreach (ref sp; ln.spans)
+                    spans ~= TextSpan(sp.text,
+                        textStyle: attrsToTextStyle(sp.attrs),
+                        fg: sp.fgDefault ? fg : sp.fg, hasFg: true,
+                        bg: sp.bg, hasBg: !sp.bgDefault);
+                lines ~= spans;
+            }
+            return lines;
+        };
+    }
+
+    // Document structure resolved once per rebuild: fence bodies (for the
+    // copy affordance) and table cells in document order.
+    private void collectStructure()
+    {
+        fences.length = 0;
+        cellList.length = 0;
+        int tableIdx = -1;
+        void collect(in MdBlock blk)
+        {
+            if (blk.kind == MdBlockKind.codeFence)
+                fences ~= MdFence(blk.codeBody, blk.infoLang == "ansi");
+            if (blk.kind == MdBlockKind.table)
+            {
+                ++tableIdx;
+                foreach (ri, ref const row; blk.children)
+                    foreach (ci, ref const cell; row.children)
+                        cellList ~= MdCell(tableIdx, ri, ci, cell.span);
+            }
+            foreach (ref const c; blk.children)
+                collect(c);
+        }
+        collect(preview.doc.root);
+    }
+
+    /// A table's grid dimensions from the collected cell list.
+    Dims tableDims(int table) const @safe pure nothrow @nogc
+    {
+        Dims d;
+        foreach (ref const mc; cellList)
+            if (mc.table == table)
+            {
+                if (mc.row + 1 > d.rows)
+                    d.rows = mc.row + 1;
+                if (mc.col + 1 > d.cols)
+                    d.cols = mc.col + 1;
+            }
+        return d;
+    }
+
+    // ── search ──────────────────────────────────────────────────────────────
+
+    /// Recomputes the match set (and its on-screen rects) for `query`.
+    void search(scope const(char)[] query)
+    {
+        matches = findMatches(source, query, lineStarts);
+        curMatch = 0;
+        rebuildMatchRects();
+    }
+
+    /// Clears the query's matches (Esc).
+    void clearSearch()
+    {
+        matches = null;
+        matchRects = null;
+        curMatch = 0;
+    }
+
+    private void rebuildMatchRects()
+    {
+        matchRects.length = matches.length;
+        foreach (i, ref const m; matches)
+            matchRects[i] = selectionRects(tree, frames, m.start, m.end);
+    }
+
+    /// The first visual row at/after source line `srcLine` (goto-line).
+    long visualOfSrc(size_t srcLine) const @safe pure nothrow @nogc
+    {
+        const target = srcLine < lineStarts.length
+            ? lineStarts[srcLine] : source.length;
+        foreach (idx, ref const r; rows)
+            if (r.srcStart != size_t.max
+                && (r.srcStart >= target || r.srcEnd > target))
+                return cast(long) idx;
+        return rows.length ? cast(long) rows.length - 1 : 0;
+    }
+
+    /// The visual row a match falls on (the row whose source range covers
+    /// its byte offset), else its source line's first row.
+    long visualOfMatch(in Match m) const @safe pure nothrow @nogc
+    {
+        foreach (idx, ref const r; rows)
+            if (r.srcStart != size_t.max && r.srcStart <= m.start
+                && m.start < r.srcEnd)
+                return cast(long) idx;
+        return visualOfSrc(m.line);
+    }
+
+    // ── folding ─────────────────────────────────────────────────────────────
+
+    /// Toggles the innermost fold containing byte `off` — unfold the
+    /// innermost folded region first, else fold the innermost foldable one.
+    /// Returns true (and rebuilds) when a region toggled.
+    bool toggleFoldAt(long off)
+    {
+        if (off < 0)
+            return false;
+        size_t best = size_t.max, bestLen = size_t.max;
+        foreach (sp; foldable)
+            if (!folds.isOpen(sp.start) && off >= cast(long) sp.start
+                && off < cast(long) sp.end && sp.end - sp.start < bestLen)
+            {
+                best = sp.start;
+                bestLen = sp.end - sp.start;
+            }
+        if (best == size_t.max)
+            foreach (sp; foldable)
+                if (folds.isOpen(sp.start) && off >= cast(long) sp.start
+                    && off < cast(long) sp.end && sp.end - sp.start < bestLen)
+                {
+                    best = sp.start;
+                    bestLen = sp.end - sp.start;
+                }
+        if (best == size_t.max)
+            return false;
+        folds = folds.toggled(best);
+        rebuild();
+        return true;
+    }
+
+    /// Marks fence `bodyStart` as just-copied (its header shows the ✔) and
+    /// rebuilds; `clearCopied` reverts when the host's flash ends.
+    void markCopied(size_t bodyStart)
+    {
+        copiedFenceSrc = bodyStart;
+        rebuild();
+    }
+
+    /// ditto
+    void clearCopied()
+    {
+        copiedFenceSrc = size_t.max;
+        rebuild();
+    }
+}
+
+@("viewer_model.rawAndPreviewShareOnePipeline")
+@system unittest
+{
+    import std.process : environment;
+    import sparkles.syntax : builtinDark;
+    import sparkles.test_runner.skip : skipTest;
+
+    if (environment.get("SPARKLES_TS_GRAMMAR_PATH", "").length == 0)
+        skipTest("SPARKLES_TS_GRAMMAR_PATH not set (enter `nix develop`)");
+
+    // A tiny markdown document; no grammar cache (plain fences).
+    ViewerModel vm;
+    vm.names = ["dark"];
+    vm.themes = [builtinDark];
+    vm.labels = LabelSet.standard();
+    vm.widthCols = 40;
+    vm.applyTheme(0);
+
+    const src = "# Title\n\nbody text\n";
+    PreviewModel pm;
+    import sparkles.syntax : extractMarkdown, GrammarRegistry;
+
+    auto reg = GrammarRegistry.fromEnvironment();
+    pm.doc = extractMarkdown(reg, src);
+    pm.present = true;
+    vm.setDocument("t.md", "", src,
+        [HighlightEvent.sourceSpan(0, src.length)], pm, TwoslashReturn.init);
+
+    // The preview view: decorated rows, foldable sections.
+    assert(vm.showPreview && vm.rows.length);
+    assert(vm.foldable.length); // the heading section folds
+
+    // Tab to raw: the same pipeline, code rows with identity.
+    vm.showPreview = false;
+    vm.rebuild();
+    assert(vm.rows.length == 3);
+    assert(vm.rows[0].srcStart == 0);
+    assert(vm.foldable.length == 0);
+
+    // Search runs on the source and lands on the raw rows.
+    vm.search("body");
+    assert(vm.matches.length == 1);
+    assert(vm.visualOfMatch(vm.matches[0]) == 2);
+    assert(vm.matchRects.length == 1 && vm.matchRects[0].length == 1);
+}
