@@ -10,10 +10,10 @@
 #     enclosing project's import paths/versions/dflags — PRJ2; dub probes the
 #     compiler it defaults to, so one must be on PATH as well).
 #
-# Both are wrapped in with `--set-default`/`--prefix`, so `nix run
-# .#twoslash-extract` — and `hue`'s live-types oracle, which spawns this
-# binary (see hue.nix) — work outside the devshell, while a caller who
-# exports their own still wins.
+# The wrapper carries both (`--set-default` for the paths, `--prefix` for the
+# tools), so `nix run .#twoslash-extract` — and `hue`'s live-types oracle,
+# which spawns this binary (see hue.nix) — work outside the devshell, while a
+# caller who exports their own import paths still wins.
 { lib, ... }:
 {
   perSystem =
@@ -31,6 +31,13 @@
       packages.twoslash-extract = config.legacyPackages.buildSparklesApp (finalAttrs: {
         pname = "twoslash-extract";
         version = "0.1.0";
+
+        # `dmd:frontend`'s pre-generate step (`config.d`) shells out to
+        # `git describe` for the compiler version string. It falls back to the
+        # checked-in VERSION file when git *fails*, but throws outright when
+        # the binary is missing — so git must exist at build time even though
+        # the fetched source has no `.git`.
+        nativeBuildInputs = [ pkgs.gitMinimal ];
 
         # A genuine runtime reference (see postFixup), so buildSparklesApp
         # subtracts it from the disallowed-leak set instead of rejecting it —
