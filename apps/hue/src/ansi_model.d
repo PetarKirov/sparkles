@@ -1,8 +1,8 @@
-// Ghostty-free presentation types shared by the markdown-preview model and its
-// painters. Split out of `gui_ansi.d` so the preview model (`gui_preview.d`) and
-// the terminal painter (`preview_ansi.d`) compile into the raylib-/ghostty-free
-// `no-gui` build: only `decodeAnsi` (the off-screen libghostty-vt bridge) still
-// lives in `gui_ansi.d` and is pulled in solely by the GUI build.
+// Ghostty-free presentation types shared by the markdown-preview model and
+// the ANSI decoder. Split out of `gui_ansi.d` so the preview model
+// (`gui_preview.d`) compiles into the raylib-/ghostty-free `no-gui` build:
+// only `decodeAnsi` (the off-screen libghostty-vt bridge) still lives in
+// `gui_ansi.d` and is pulled in solely by the GUI build.
 module ansi_model;
 
 import sparkles.base.term_color : RgbColor;
@@ -36,10 +36,9 @@ AnsiOptions backgroundOptions(BackgroundMode mode, ColorDepth depth, bool italic
     );
 }
 
-/// Neutral text-attribute bits shared by the preview presentation model
-/// (`gui_preview.PreviewRun`), the ANSI decoder (`gui_ansi`), and the painters
-/// (`gui.d` maps them onto `sparkles.raylib_text.TextStyle`; `preview_ansi` onto
-/// SGR).
+/// Neutral text-attribute bits shared by the ANSI decoder (`gui_ansi`) and
+/// the views that consume decoded spans (`gui.d`/`document.d` map them onto
+/// the toolkit's `TextStyle`).
 enum Attr : ubyte
 {
     bold          = 1 << 0,
