@@ -202,6 +202,35 @@ struct AnalyzedModule
             tags: [["param", doc.length ? name ~ " " ~ doc : name]]);
     }
 
+    /**
+    Completion candidates at `line`:`col` (both 1-based), prefix-filtered by
+    `prefix` (the identifier characters already typed). Backed by the ported
+    `findExpansions` scope walk; sorted by name.
+    */
+    CompletionItem[] completionsAt(uint line, uint col, string prefix = "") @system
+    {
+        import std.algorithm.sorting : sort;
+
+        import sparkles.dmd_lsp.visitor : findExpansions;
+
+        CompletionItem[] items;
+        foreach (entry; findExpansions(module_, cast(int) line, cast(int) col, prefix))
+        {
+            // entry = "name:KIND[:tip…]"
+            import std.string : indexOf;
+
+            const c1 = entry.indexOf(':');
+            if (c1 < 0)
+                continue;
+            auto rest = entry[c1 + 1 .. $];
+            const c2 = rest.indexOf(':');
+            const code = c2 < 0 ? rest : rest[0 .. c2];
+            items ~= CompletionItem(entry[0 .. c1], completionKind(code));
+        }
+        items.sort!((a, b) => a.name < b.name);
+        return items;
+    }
+
     /// Where the symbol at `line`:`col` (both 1-based) is declared, or
     /// `DefinitionPos.init` — `found` is `false` — if nothing resolves there.
     DefinitionPos definitionAt(uint line, uint col) @system
@@ -302,4 +331,37 @@ struct DefinitionPos
     });
     assert(!result.hasErrors);
     assert(result.module_ !is null);
+}
+
+/// One completion candidate: the inserted name plus a renderer-facing kind
+/// (the TS/twoslash icon vocabulary where a counterpart exists — unknown
+/// kinds fall back to the property icon by the render contract).
+struct CompletionItem
+{
+    string name;
+    string kind;
+}
+
+private string completionKind(scope const(char)[] code) @safe pure nothrow @nogc
+{
+    switch (code)
+    {
+        case "MTHD": return "method";
+        case "FUNC": return "function";
+        case "PROP": return "property";
+        case "VAR": return "variable";
+        case "CLSS": return "class";
+        case "IFAC": return "interface";
+        case "STRU": return "struct";
+        case "UNIO": return "union";
+        case "ENUM": return "enum";
+        case "EVAL": return "enum member";
+        case "ALIA": return "alias";
+        case "TMPL": return "template";
+        case "NMIX": return "mixin";
+        case "MOD": return "module";
+        case "PKG": return "module";
+        case "OVR": return "function";
+        default: return "text";
+    }
 }

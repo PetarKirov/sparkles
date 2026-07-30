@@ -38,6 +38,13 @@ struct QueryMarker
     size_t offset;
 }
 
+/// A `^|` completion marker: the byte offset (into `fullSource`) of the
+/// caret position on the previous kept line.
+struct CompletionMarker
+{
+    size_t offset;
+}
+
 /// A `^^^` highlight: a caret-run span on the previous kept line, with an
 /// optional trailing annotation.
 struct HighlightMarker
@@ -77,6 +84,7 @@ struct ParsedNotation
     Removal[] removals;
 
     QueryMarker[] queries;
+    CompletionMarker[] completions;
     HighlightMarker[] highlights;
     TagDirective[] tags;
 
@@ -176,6 +184,13 @@ ParsedNotation parseNotation(string source) @safe pure
                 {
                     if (kept.length)
                         result.queries ~= QueryMarker(
+                            kept[$ - 1].fullStart + caretCol);
+                    continue;
+                }
+                if (body == "^|")
+                {
+                    if (kept.length)
+                        result.completions ~= CompletionMarker(
                             kept[$ - 1].fullStart + caretCol);
                     continue;
                 }
