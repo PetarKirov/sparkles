@@ -419,17 +419,34 @@ private int runAnsiSink(in CliParams cli, ref Document doc,
                 TwoslashAnsiOptions(depth: depth, italics: true, emitBackground: true));
             break;
         case markdown:
-            // The decorated preview (ANS3): the shared layoutPreview painted to
-            // SGR cells, so the terminal matches the GUI.
-            import gui_preview : layoutPreview, quoteBarColors;
-            import preview_ansi : renderPreviewAnsi;
+            // The decorated preview (ANS3), rendered through the composable
+            // markdown widget view — the M10 swap: viewMarkdown → layout →
+            // CellGrid → ANSI. One view, every backend.
+            import sparkles.syntax.md.render_widgets : MdViewOptions,
+                MdViewTheme, viewMarkdown;
+            import sparkles.ui.display_list : buildDisplayList;
+            import sparkles.ui.geometry : Constraints;
+            import sparkles.ui.interp.cells : BgEmit, CellGrid;
+            import sparkles.ui.interp.immediate : paint;
+            import sparkles.ui.layout : layout;
+            import sparkles.ui.style : defaultTwoslashPalette;
 
             const pageFg = toRgb(theme.defaults.fg, hardFallbackFg);
             const pageBg = toRgb(theme.defaults.bg, hardFallbackBg);
-            auto plines = layoutPreview(doc.preview, theme, pageFg, pageBg,
-                previewWidth());
-            renderPreviewAnsi(output, plines, pageFg, pageBg,
-                quoteBarColors(theme, pageFg, pageBg), depth, bgMode);
+            MdViewOptions opt = {
+                theme: MdViewTheme.derive(theme, pageFg, pageBg),
+                fenceRenderer: hueFenceRenderer(&cache, &theme, pageFg),
+            };
+            auto tree = viewMarkdown(doc.preview.doc, opt);
+            auto frames = layout(tree, Constraints(maxW: previewWidth()));
+            const r = frames[tree.root].rect;
+            auto grid = CellGrid(r.width, r.height, pageFg, pageBg);
+            paint(grid, buildDisplayList(tree, frames, defaultTwoslashPalette(),
+                pageFg, pageBg));
+            grid.writeAnsi(output, depth,
+                bgMode == BackgroundMode.full ? BgEmit.full
+                : bgMode == BackgroundMode.spans ? BgEmit.spans : BgEmit.none);
+            output ~= '\n';
             break;
         case code:
             renderAnsi(doc.source, doc.events, theme, output,
@@ -704,6 +721,39 @@ int emitMarkdownHtml(scope const(char)[] source, in ResolvedTheme theme,
 /// Build the markdown preview model, supplying the off-screen-VT ansi-fence
 /// decoder only on a GUI-enabled build (`gui_ansi.decodeAnsi` pulls
 /// sparkles:ghostty). Without it — the terminal / HTML paths and the `no-gui`
+
+/**
+The fence renderer for hue's markdown widget view: ` ```ansi ` fences carry
+pre-styled terminal output — without an off-screen VT (the `no-gui` build and
+these static sinks) their SGR is stripped to plain text; every other language
+goes through the shared injection-aware highlighter.
+*/
+private auto hueFenceRenderer(TsConfigCache* cache, const(ResolvedTheme)* theme,
+    RgbColor pageFg) @system
+{
+    import gui_preview : stripSgr;
+    import sparkles.syntax.md.render_widgets : highlightedFenceRenderer;
+    import sparkles.ui.widget : TextSpan;
+
+    auto highlight = highlightedFenceRenderer(cache, theme, pageFg);
+    return delegate TextSpan[][] (const(char)[] lang, const(char)[] body_) @trusted {
+        if (lang != "ansi")
+            return highlight(lang, body_);
+        // Strip SGR, one plain span per line.
+        const plain = stripSgr(body_);
+        TextSpan[][] lines;
+        size_t start = 0;
+        foreach (i, char c; plain)
+            if (c == '\n')
+            {
+                lines ~= [TextSpan(plain[start .. i], fg: pageFg, hasFg: true)];
+                start = i + 1;
+            }
+        if (start < plain.length)
+            lines ~= [TextSpan(plain[start .. $], fg: pageFg, hasFg: true)];
+        return lines;
+    };
+}
 
 /// The column width the terminal markdown preview wraps to: the terminal width
 /// (capped for prose readability), or 80 when it can't be detected (piped).
