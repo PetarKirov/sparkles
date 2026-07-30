@@ -13,7 +13,7 @@ module explorer;
 
 import std.algorithm.sorting : sort;
 import std.file : dirEntries, SpanMode;
-import std.path : baseName, buildPath;
+import std.path : baseName, buildPath, dirName;
 
 import git_status : GitBadge, gitBadge, GitStatus, GitStatusCache;
 
@@ -144,6 +144,11 @@ struct ExplorerTui
     char[128] qbuf;
     size_t qlen;
 
+    // Visibility toggles (XPF2), state shown in the status bar: dotfiles are
+    // hidden by default; git-ignored entries are listed (dimmed) by default.
+    bool showHidden;
+    bool showIgnored = true;
+
     string picked;  // the chosen file (empty = none yet)
     string current; // the open document's path — highlighted in the tree (XPL3)
     GitStatusCache git;   // async per-root status snapshot (XPF1)
@@ -159,7 +164,13 @@ struct ExplorerTui
     /// scrolled into view. Also marks it as the current document.
     void reveal(string path) @system
     {
+        import std.algorithm.searching : startsWith;
         import std.path : dirname = dirName;
+
+        // A path outside the root re-roots outward to its directory (XPF3).
+        if (root.length && path != root
+            && !path.startsWith(root == "/" ? root : root ~ "/"))
+            setRoot(dirname(path));
 
         current = path;
         for (auto d = dirname(path); d.length > root.length
@@ -181,16 +192,17 @@ struct ExplorerTui
     /// The pane is consuming typed text (the workspace must not steal keys).
     bool inputActive() const @safe pure nothrow @nogc => searching;
 
-    // Shallow directory listing: dirs first, each group name-sorted; dotfiles
-    // and VCS internals are skipped (the explorer shows the working tree).
-    private static FsEntry[] listDir(string dir) @system
+    // Shallow directory listing: dirs first, each group name-sorted. Dotfiles
+    // show only under the hidden toggle (XPF2); `.git` itself never does.
+    private FsEntry[] listDir(string dir) @system
     {
         FsEntry[] entries;
         try
             foreach (e; dirEntries(dir, SpanMode.shallow))
             {
                 const nm = baseName(e.name);
-                if (nm.length == 0 || nm[0] == '.')
+                if (nm.length == 0 || (!showHidden && nm[0] == '.')
+                    || nm == ".git")
                     continue;
                 auto fe = FsEntry(nm, e.name, e.isDir);
                 // The type's brand color (dirs: the conventional folder amber).
@@ -242,6 +254,8 @@ struct ExplorerTui
         {
             foreach (e; listDir(dir))
             {
+                if (hiddenByGit(e))
+                    continue;
                 const isOpen = e.isDir && open.isOpen(e.path);
                 e.openDir = isOpen; // the disclosure-state icon (XPL6)
                 const idx = data.add(e, parent);
@@ -317,6 +331,8 @@ struct ExplorerTui
         bool any;
         foreach (e; listDir(dir))
         {
+            if (hiddenByGit(e))
+                continue;
             if (e.isDir)
             {
                 // Probe the subtree first; add the dir only when it has matches.
@@ -428,7 +444,9 @@ struct ExplorerTui
         auto sb = Builder();
         const status = sb.add(Widget(kind: WidgetKind.text,
             text: searching ? text("/", query, "▏")
-                : "↑↓ move · ⏎/→ open · ← close · / filter · q quit",
+                : text("⏎ open · / filter · H", showHidden ? "✓" : "",
+                    " hidden · I", showIgnored ? "✓" : "",
+                    " ignored · r refresh · q quit"),
             slot: searching ? Slot.inherit : Slot.gutter));
         const bar = headerBar(sb, [status], null, null);
         Widget barCol = Widget(kind: WidgetKind.column, children: [bar],
@@ -487,6 +505,63 @@ struct ExplorerTui
             (in EndOfInput _) => false,
             _ => true,
         );
+    }
+
+    // The ignored toggle's filter (XPF2): with `showIgnored` off, entries the
+    // git snapshot marks ignored disappear from the listing passes.
+    private bool hiddenByGit(in FsEntry e) @safe
+        => !showIgnored && git.map.present
+            && git.map.statusOf(e.path, e.isDir) == GitStatus.ignored;
+
+    /// XPF2: runtime visibility toggles (`H` / `I`).
+    void toggleHidden() @system
+    {
+        showHidden = !showHidden;
+        rebuild();
+    }
+
+    /// ditto
+    void toggleIgnored() @system
+    {
+        showIgnored = !showIgnored;
+        rebuild();
+    }
+
+    /// XPF3: re-root to the selected dir (a file re-roots to its parent).
+    void rerootSel() @system
+    {
+        if (sel >= cast(long) rows.length)
+            return;
+        ref const v = data.nodes[rows[cast(size_t) sel].node].value;
+        setRoot(v.isDir ? v.path : dirName(v.path));
+    }
+
+    /// XPF3: re-root one level up.
+    void rerootParent() @system
+    {
+        const p = dirName(root);
+        if (p.length && p != root)
+            setRoot(p);
+    }
+
+    private void setRoot(string r) @system
+    {
+        if (r == root)
+            return;
+        root = r;
+        git = GitStatusCache.init; // a new root gets a fresh snapshot
+        sel = 0;
+        top = 0;
+        rebuild();
+    }
+
+    /// XPF3: collapse every open dir (the open set resets; the root listing
+    /// stays loaded — `expanded` runs one level past `open` as always).
+    void closeAll() @system
+    {
+        open = DisclosureState!string.init;
+        sel = 0;
+        rebuild();
     }
 
     /// Manual refresh (`XPF4`, the deliberate alternative to FS watching):
@@ -599,6 +674,11 @@ struct ExplorerTui
                     case '/': searching = true; qlen = 0; rebuild(); break;
                     case ']', '[': pending = cast(char) e.ch; break;
                     case 'r': refreshNow(); break;
+                    case 'H': toggleHidden(); break;
+                    case 'I': toggleIgnored(); break;
+                    case 'R': rerootSel(); break;
+                    case 'u': rerootParent(); break;
+                    case 'c': closeAll(); break;
                     default: break;
                 }
                 break;
@@ -854,4 +934,88 @@ unittest
     assert(x.sel != first, "a second change exists");
     x.jumpChange(-1);
     assert(x.sel == first);
+}
+
+@("explorer.togglesRerootAndCloseAll")
+@system
+unittest
+{
+    import std.algorithm.searching : canFind, startsWith;
+    import std.file : exists, mkdirRecurse, rmdirRecurse, tempDir, write;
+    import std.path : buildPath;
+    import sparkles.syntax : builtinDark, LabelSet;
+    import git_status : GitStatus, GitStatusMap;
+
+    // No git needed: the ignored toggle is driven by a hand-built snapshot.
+    const root = buildPath(tempDir(), "hue-explorer-toggles-test");
+    if (root.exists)
+        rmdirRecurse(root);
+    mkdirRecurse(buildPath(root, "src"));
+    mkdirRecurse(buildPath(root, "build"));
+    scope (exit) rmdirRecurse(root);
+    write(buildPath(root, ".hidden.conf"), "");
+    write(buildPath(root, "keep.d"), "int k;\n");
+    write(buildPath(root, "src", "app.d"), "void main() {}\n");
+    write(buildPath(root, "build", "out.o"), "");
+
+    static immutable Theme dark = builtinDark;
+    ExplorerTui x;
+    x.root = root;
+    x.themeValue = &dark;
+    x.theme = resolveTheme(dark, LabelSet.standard());
+    x.pageFg = fallbackFg;
+    x.pageBg = fallbackBg;
+    x.width = 44;
+    x.height = 12;
+    // The snapshot marks build/ ignored (as `!! build/` would).
+    x.git.map = GitStatusMap(["build": GitStatus.ignored], null, root, true);
+    x.rebuild();
+
+    bool listed(string name)
+    {
+        foreach (ref const r; x.rows)
+            if (x.data.nodes[r.node].value.name == name)
+                return true;
+        return false;
+    }
+
+    // Defaults: dotfiles hidden, ignored listed (dimmed).
+    assert(!listed(".hidden.conf") && listed("build") && listed("keep.d"));
+
+    // XPF2: the toggles flip visibility (state is in the status bar).
+    x.toggleIgnored();
+    assert(!listed("build"));
+    x.toggleHidden();
+    assert(listed(".hidden.conf"));
+    x.toggleHidden();
+    x.toggleIgnored();
+    assert(listed("build") && !listed(".hidden.conf"));
+
+    // XPF3: re-root into src/ and back out; the fresh cache clears the map.
+    foreach (i, ref const r; x.rows)
+        if (x.data.nodes[r.node].value.name == "src")
+            x.sel = cast(long) i;
+    x.rerootSel();
+    assert(x.root.canFind("src"));
+    assert(listed("app.d") && !listed("keep.d"));
+    x.rerootParent();
+    assert(x.root == root);
+    assert(listed("keep.d"));
+
+    // XPF3: close-all resets the open set (the root listing remains).
+    x.open = x.open.opened(buildPath(root, "src"));
+    x.rebuild();
+    assert(listed("app.d"));
+    x.closeAll();
+    assert(!listed("app.d") && listed("src"));
+
+    // reveal() outside the root re-roots outward (XPF3 × XPL4).
+    const outside = buildPath(tempDir(),
+        "hue-explorer-toggles-test-outside");
+    mkdirRecurse(outside);
+    scope (exit) rmdirRecurse(outside);
+    write(buildPath(outside, "elsewhere.d"), "int e;\n");
+    x.reveal(buildPath(outside, "elsewhere.d"));
+    assert(x.root == outside);
+    assert(listed("elsewhere.d"));
 }
