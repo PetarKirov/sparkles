@@ -1267,6 +1267,7 @@ int runGui(
             }
         }
         else
+        {
             // The raw view under the same pane clip (long lines don't wrap).
             BeginScissorMode(treePx(), docY0,
                 screenW - rightPad - treePx(), screenH - docY0);
@@ -1274,6 +1275,7 @@ int runGui(
                 pageFg, pageBg, gutterFg, quoteBars, padX, rightPad, gcols, buf,
                 treePx(), docY0);
             EndScissorMode();
+        }
 
         copiedFlash = copiedFlash.stepped(frameMs(), copiedCfg);
         // The ✔ glyph lives in the widget tree: rebuild when the flash ends so
