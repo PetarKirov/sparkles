@@ -356,6 +356,32 @@ int main(string[] args)
     bool haveSet;
     if (isDirectoryPath(target))
     {
+        // The interactive terminal opens the file explorer (`TVU1`): the tree
+        // picks a file, the existing viewer shows it, quitting the viewer
+        // returns to the tree — the preview pane is the whole viewer.
+        version (Posix)
+            if (backend == Backend.tui && !forceTwoslash)
+            {
+                import explorer : runExplorer;
+
+                auto themeSet = sortedThemes(cli.theme);
+                for (;;)
+                {
+                    const picked = runExplorer(target,
+                        &themeSet.themes[themeSet.idx], labels);
+                    if (picked is null)
+                        return 0;
+                    Document pickedDoc;
+                    try
+                        pickedDoc = pipeline.load(picked);
+                    catch (Exception e)
+                    {
+                        stderr.writeln("hue: ", e.msg);
+                        continue;
+                    }
+                    runTuiSink(cli, pickedDoc, labels, theme, cache, null);
+                }
+            }
         const openSet = backend == Backend.gui
             || (forceTwoslash && backend == Backend.tui);
         if (!openSet)
